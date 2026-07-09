@@ -48,6 +48,46 @@ func renderJudgmentDiagnostics(items []judgment.Judgment, policy judgment.Policy
 	return newJudgmentRenderContext().render(items, policy, mode)
 }
 
+// RenderJudgments renders previously produced semantic judgments without
+// rerunning obligation producers. Judgment policy controls disposition, while
+// diagnostic policy controls opt-in families, suppression, and severity
+// overrides.
+func RenderJudgments(items []judgment.Judgment, config Config) []diagnostic.Diagnostic {
+	if len(items) == 0 {
+		return nil
+	}
+	judgmentPolicy := config.Judgment.Normalized()
+	ctx := newJudgmentRenderContext()
+	out := make([]diagnostic.Diagnostic, 0, len(items))
+	for _, item := range items {
+		spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+		if !ok {
+			continue
+		}
+		render, ok := judgmentDiagnosticRenderers[spec.Render]
+		if !ok {
+			continue
+		}
+		d, ok := render(ctx, item, judgmentPolicy.Policy, judgmentPolicy.Strictness)
+		if !ok || !config.Policy.Enabled(d.Code, spec.DiagnosticDefault == judgment.DiagnosticDefaultEnabled) {
+			continue
+		}
+		d, ok = config.Policy.ApplyOne(d)
+		if !ok {
+			continue
+		}
+		if d.Position.File == "" && len(item.Spans) != 0 {
+			d.Position.File = item.Spans[0].File
+		}
+		out = append(out, d)
+	}
+	out = diagnostic.Deduplicate(out)
+	diagnostic.Sort(out)
+	out = applyDiagnosticPrecedence(out, defaultDiagnosticPrecedenceRules())
+	out = diagnostic.CoalesceSamePrimary(out)
+	return out
+}
+
 func (ctx judgmentRenderContext) render(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
 	if len(items) == 0 {
 		return nil

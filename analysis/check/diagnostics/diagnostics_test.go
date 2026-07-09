@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -122,6 +123,33 @@ func TestProduceWithConfigAppliesDiagnosticPolicy(t *testing.T) {
 	}
 }
 
+func TestProduceJudgmentsRenderRoundTrip(t *testing.T) {
+	result := runDiagnosticsResult(t, `local x: number = "no"`)
+	items := ProduceJudgments(result, "test.lua")
+	if len(items) == 0 {
+		t.Fatal("ProduceJudgments returned no semantic records")
+	}
+	for _, item := range items {
+		if item.ResultVersion != result.ResultVersion() {
+			t.Fatalf("judgment ResultVersion = %d, want %d", item.ResultVersion, result.ResultVersion())
+		}
+		if item.Subject.Anchor.IsZero() {
+			t.Fatalf("judgment %s has no subject anchor", item.Code)
+		}
+	}
+
+	got := RenderJudgments(items, Config{})
+	want := ProduceWithConfig(result, Config{})
+	for i := range want {
+		if want[i].Position.File == "" {
+			want[i].Position.File = "test.lua"
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RenderJudgments(ProduceJudgments) = %#v, want %#v", got, want)
+	}
+}
+
 func TestProduceSuppressesAssignmentCascadeFromUnresolvedRoot(t *testing.T) {
 	diags := runDiagnosticsFull(t, `local n: number = provider.meta()`, nil, signaturelookup.Source{})
 	if len(diags) != 1 {
@@ -177,6 +205,9 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 	for i, producer := range diagnosticProducers() {
 		if producer.produce == nil {
 			t.Fatalf("producer %d has nil produce function", i)
+		}
+		if producer.judgments == nil {
+			t.Fatalf("producer %d has nil judgment function", i)
 		}
 		if len(producer.codes) == 0 {
 			t.Fatalf("producer %d must declare emitted diagnostic codes", i)

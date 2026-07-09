@@ -45,34 +45,34 @@ func reachableCallJudgmentContext(result *body.Result, sourceFile string) pass.C
 	return ctx
 }
 
-func (c producerContext) produceJudgments(result *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContext(result, "")), c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
+func (c producerContext) judgments(result *body.Result, producers ...pass.Producer) []judgment.Judgment {
+	return pass.New(producers...).Run(judgmentContext(result, c.sourceFile))
 }
 
-func (c producerContext) produceJudgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	items := pass.New(producers...).Run(pass.Context{
+func (c producerContext) judgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []judgment.Judgment {
+	return pass.New(producers...).Run(pass.Context{
+		FunctionKey:   c.sourceFile,
+		SourceFile:    c.sourceFile,
 		ResultVersion: resultVersion(result),
 		Reader:        internalreadmodel.NewWithParents(result, parent),
 	})
-	return renderJudgmentDiagnostics(items, c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
 
-func (c producerContext) produceJudgmentsWithParents(result *body.Result, parents []*body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	return renderJudgmentDiagnostics(pass.New(producers...).Run(judgmentContextWithParents(result, parents, "")), c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
+func (c producerContext) judgmentsWithParents(result *body.Result, parents []*body.Result, producers ...pass.Producer) []judgment.Judgment {
+	return pass.New(producers...).Run(judgmentContextWithParents(result, parents, c.sourceFile))
 }
 
-func (c producerContext) produceReachableJudgments(result *body.Result, producers ...pass.Producer) []diagnostic.Diagnostic {
-	return renderJudgmentDiagnostics(pass.New(producers...).Run(reachableJudgmentContext(result, "")), c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
+func (c producerContext) reachableJudgments(result *body.Result, producers ...pass.Producer) []judgment.Judgment {
+	return pass.New(producers...).Run(reachableJudgmentContext(result, c.sourceFile))
 }
 
-func (c producerContext) produceDirectCallContractJudgments(result *body.Result) []diagnostic.Diagnostic {
-	ctx := reachableCallJudgmentContext(result, "")
-	items := firstDirectCallContractJudgmentPerCall(
+func (c producerContext) directCallContractJudgments(result *body.Result) []judgment.Judgment {
+	ctx := reachableCallJudgmentContext(result, c.sourceFile)
+	return firstDirectCallContractJudgmentPerCall(
 		pass.New(pass.CallCallee{}).Run(ctx),
 		pass.New(pass.CallArity{}).Run(ctx),
 		pass.New(pass.CallArguments{}).Run(ctx),
 	)
-	return renderJudgmentDiagnostics(items, c.judgmentPolicy.Policy, c.judgmentPolicy.Strictness)
 }
 
 func resultVersion(result *body.Result) uint64 {

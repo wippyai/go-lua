@@ -44,8 +44,9 @@ const (
 )
 
 type producerContext struct {
-	parent  *body.Result
-	parents []*body.Result
+	parent     *body.Result
+	parents    []*body.Result
+	sourceFile string
 
 	judgmentPolicy judgment.PolicyConfig
 
@@ -55,24 +56,29 @@ type producerContext struct {
 type diagnosticProducer struct {
 	codes          []diagnostic.Code
 	defaultEnabled bool
+	judgments      func(result *body.Result, context producerContext) []judgment.Judgment
 	produce        func(result *body.Result, context producerContext) []diagnostic.Diagnostic
 }
 
 func judgmentProducer(judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-		return context.produceJudgments(result, producers...)
+	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []judgment.Judgment {
+		return context.judgments(result, producers...)
 	})
 }
 
 func diagnosticProducerForJudgments(
 	judgmentCodes []judgment.Code,
-	produce func(result *body.Result, context producerContext) []diagnostic.Diagnostic,
+	produce func(result *body.Result, context producerContext) []judgment.Judgment,
 ) diagnosticProducer {
-	return diagnosticProducer{
+	out := diagnosticProducer{
 		codes:          diagnosticCodesForJudgments(judgmentCodes...),
 		defaultEnabled: defaultDiagnosticEnabledForJudgments(judgmentCodes...),
-		produce:        produce,
+		judgments:      produce,
 	}
+	out.produce = func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+		return renderJudgmentDiagnostics(produce(result, context), context.judgmentPolicy.Policy, context.judgmentPolicy.Strictness)
+	}
+	return out
 }
 
 func diagnosticCodesForJudgments(judgmentCodes ...judgment.Code) []diagnostic.Code {
@@ -121,23 +127,23 @@ func defaultDiagnosticEnabledForJudgments(judgmentCodes ...judgment.Code) bool {
 }
 
 func parentJudgmentProducer(judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-		return context.produceJudgmentsWithParent(result, context.parent, producers...)
+	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []judgment.Judgment {
+		return context.judgmentsWithParent(result, context.parent, producers...)
 	})
 }
 
 func reachableJudgmentProducer(judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
-		return context.produceReachableJudgments(result, producers...)
+	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []judgment.Judgment {
+		return context.reachableJudgments(result, producers...)
 	})
 }
 
 func parentStackJudgmentProducer(judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []judgment.Judgment {
 		if result == nil {
 			return nil
 		}
-		return context.produceJudgmentsWithParents(result, context.parents, producers...)
+		return context.judgmentsWithParents(result, context.parents, producers...)
 	})
 }
 
@@ -146,14 +152,14 @@ func directCallContractJudgmentProducer() diagnosticProducer {
 		judgment.CodeCallCallee,
 		judgment.CodeCallArity,
 		judgment.CodeCallArgType,
-	}, func(result *body.Result, context producerContext) []diagnostic.Diagnostic {
+	}, func(result *body.Result, context producerContext) []judgment.Judgment {
 		if result == nil {
 			return nil
 		}
 		if context.suppressDirectCallContracts {
 			return nil
 		}
-		return context.produceDirectCallContractJudgments(result)
+		return context.directCallContractJudgments(result)
 	})
 }
 
@@ -247,6 +253,44 @@ func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnost
 	diagnostic.Sort(out)
 	out = applyDiagnosticPrecedence(out, defaultDiagnosticPrecedenceRules())
 	out = diagnostic.CoalesceSamePrimary(out)
+	return out
+}
+
+// ProduceJudgments runs the canonical obligation producer set over result and
+// its reportable nested bodies. The returned semantic records have stable
+// subject anchors and per-body ResultVersion values and have not been filtered
+// by diagnostic policy.
+func ProduceJudgments(result *body.Result, sourceFile string) []judgment.Judgment {
+	return produceJudgmentsWithParents(result, sourceFile, nil)
+}
+
+func produceJudgmentsWithParents(
+	result *body.Result,
+	sourceFile string,
+	parentResult *body.Result,
+	parentResults ...*body.Result,
+) []judgment.Judgment {
+	context := producerContext{
+		parent:     parentResult,
+		parents:    append([]*body.Result(nil), parentResults...),
+		sourceFile: sourceFile,
+
+		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
+	}
+	var out []judgment.Judgment
+	for _, producer := range diagnosticProducers() {
+		if producer.judgments == nil {
+			continue
+		}
+		out = append(out, producer.judgments(result, context)...)
+	}
+	if result == nil {
+		return out
+	}
+	for _, fn := range result.ReportableFunctionResults() {
+		childParents := append(append([]*body.Result(nil), parentResults...), result)
+		out = append(out, produceJudgmentsWithParents(fn, sourceFile, result, childParents...)...)
+	}
 	return out
 }
 
