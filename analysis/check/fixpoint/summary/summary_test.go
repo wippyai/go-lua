@@ -390,7 +390,7 @@ func TestJoinReturnValueGroupsSameLiteralDiscriminant(t *testing.T) {
 	}
 }
 
-func TestJoinReturnValueCapsTaggedVariantWidth(t *testing.T) {
+func TestJoinReturnValueRetainsEveryTaggedVariant(t *testing.T) {
 	reg := standard.Registry()
 	var joined product.Value
 	for i := 0; i < 9; i++ {
@@ -409,8 +409,8 @@ func TestJoinReturnValueCapsTaggedVariantWidth(t *testing.T) {
 	if !ok {
 		t.Fatalf("joined capped return has no type: %#v", joined)
 	}
-	if union, ok := got.(*typ.Union); ok && len(union.Members) > 8 {
-		t.Fatalf("joined return union width = %d, want capped to <= 8: %v", len(union.Members), got)
+	if union, ok := got.(*typ.Union); !ok || len(union.Members) != 9 {
+		t.Fatalf("joined return union width = %d, want every 9 tagged alternatives: %v", len(union.Members), got)
 	}
 }
 

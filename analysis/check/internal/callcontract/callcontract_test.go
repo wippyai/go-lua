@@ -256,7 +256,7 @@ func TestPlanGenericInferenceConflictsOwnsGroupingAndDedup(t *testing.T) {
 	}
 }
 
-func TestPlanGenericInferenceConflictsCapsEvidenceContributions(t *testing.T) {
+func TestPlanGenericInferenceConflictsRetainsAllEvidenceContributions(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	trace := GenericCallTrace{Contributions: []InferenceContribution{
 		{Param: param, Index: 0, Type: typ.String, Path: []InferencePathStep{{Kind: InferencePathField, Name: "a"}}},
@@ -270,8 +270,8 @@ func TestPlanGenericInferenceConflictsCapsEvidenceContributions(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("PlanGenericInferenceConflicts produced %d conflicts, want one", len(got))
 	}
-	if len(got[0].Contributions) != 4 {
-		t.Fatalf("contributions = %d, want cap at 4: %#v", len(got[0].Contributions), got[0].Contributions)
+	if len(got[0].Contributions) != 5 {
+		t.Fatalf("contributions = %d, want all 5 finite contributions: %#v", len(got[0].Contributions), got[0].Contributions)
 	}
 }
 

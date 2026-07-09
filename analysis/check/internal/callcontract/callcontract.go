@@ -440,9 +440,6 @@ func inferenceConflictContributions(index int, param *typ.TypeParam, trace Gener
 		}
 		seen[key] = struct{}{}
 		out = append(out, contribution)
-		if len(out) >= 4 {
-			break
-		}
 	}
 	return out
 }

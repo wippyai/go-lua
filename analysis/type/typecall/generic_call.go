@@ -717,9 +717,6 @@ func appendInferenceContribution(existing []InferenceContribution, contribution 
 	if contribution.Param == nil || contribution.Type == nil {
 		return existing
 	}
-	if len(existing) >= 8 {
-		return existing
-	}
 	return append(existing, contribution)
 }
 

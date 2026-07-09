@@ -12,8 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-const maxReturnTypeAlternativeCount = 8
-
 func joinedTaggedReturnValue(reg *axis.Registry, joined, left, right product.Value) (product.Value, bool) {
 	t, ok := joinedReturnVariantType(reg, left, right)
 	if !ok {
@@ -39,14 +37,11 @@ func joinedReturnVariantType(reg *axis.Registry, left, right product.Value) (typ
 		if !ok {
 			return nil, false
 		}
-		if len(members) <= maxReturnTypeAlternativeCount {
-			return returnVariantCandidate(records, typenormalize.UnionForEvidence(members...))
-		}
-		joined, ok := joinReturnRecords(records)
-		if !ok {
-			return nil, false
-		}
-		return returnVariantCandidate(records, joined)
+		// Literal discriminant tags originate at syntactic return sites. The
+		// analyzed program has finitely many such sites, so retaining each tag is
+		// the natural finite bound; a fixed width would silently lose a valid
+		// return correlation.
+		return returnVariantCandidate(records, typenormalize.UnionForEvidence(members...))
 	}
 	return nil, false
 }

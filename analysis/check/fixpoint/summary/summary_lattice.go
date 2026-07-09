@@ -188,8 +188,9 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	return NormalizeOwned(reg, out)
 }
 
-// JoinReturnValue joins one function-summary return slot, preserving bounded
-// tagged-record alternatives before falling back to the ordinary product join.
+// JoinReturnValue joins one function-summary return slot, preserving every
+// syntactically-derived tagged-record alternative before falling back to the
+// ordinary product join.
 func JoinReturnValue(reg *axis.Registry, left, right product.Value) product.Value {
 	joined := product.Join(reg, left, right)
 	if tagged, ok := joinedTaggedReturnValue(reg, joined, left, right); ok {
@@ -220,24 +221,13 @@ func boundedJoinedReturnValue(reg *axis.Registry, prev, next product.Value) (pro
 	if product.Equal(reg, joined, product.Top()) {
 		return product.Value{}, false
 	}
-	t, ok := typevalue.TypeOf(reg, joined)
-	if !ok || returnTypeAlternativeCount(t) > maxReturnTypeAlternativeCount {
+	if _, ok := typevalue.TypeOf(reg, joined); !ok {
 		return product.Value{}, false
 	}
 	if !taggedJoin && (!product.LessOrEq(reg, prev, joined) || !product.LessOrEq(reg, next, joined)) {
 		return product.Value{}, false
 	}
 	return joined, true
-}
-
-func returnTypeAlternativeCount(t typ.Type) int {
-	if t == nil {
-		return 0
-	}
-	if union, ok := t.(*typ.Union); ok {
-		return len(union.Members)
-	}
-	return 1
 }
 
 func preserveJoinedReturnTypeWitness(reg *axis.Registry, joined, left, right product.Value) product.Value {
