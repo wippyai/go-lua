@@ -210,6 +210,17 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 	return out, nil
 }
 
+// CanonicalOperationalEffectsBytes encodes operational effects through the
+// descriptor-driven manifest wire codec. The returned JSON is stable across
+// input slice order and is suitable for content digests.
+func CanonicalOperationalEffectsBytes(e *signature.OperationalEffects) ([]byte, error) {
+	w, err := encodeOperationalEffects(e)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(w)
+}
+
 func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalEffects, error) {
 	if w == nil {
 		return signature.OperationalEffects{}, nil

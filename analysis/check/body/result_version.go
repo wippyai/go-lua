@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -19,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -102,6 +104,15 @@ func (w *bodyDigestWriter) writeString(label, value string) {
 	w.writeRawInt(len(value))
 	w.writeByte(':')
 	w.writeRaw(value)
+	w.writeByte(';')
+}
+
+func (w *bodyDigestWriter) writeBytes(label string, value []byte) {
+	w.writeRaw(label)
+	w.writeRaw(":x:")
+	w.writeRawInt(len(value))
+	w.writeByte(':')
+	_, _ = w.h.Write(value)
 	w.writeByte(';')
 }
 
@@ -240,15 +251,7 @@ func graphRPO(graph cfg.Graph) []cfg.Point {
 }
 
 func (w *bodyDigestWriter) writeInstruction(body *wir.Body, inst wir.Instruction) {
-	inst.Point = 0
-	inst.ExprID = 0
-	inst.CallExpr = 0
-	inst.CallSpan = wir.Span{}
-	inst.CalleeSpan = wir.Span{}
-	inst.ExprSpan = wir.Span{}
-	inst.TargetSpan = wir.Span{}
-	inst.ContainerSpan = wir.Span{}
-	fmt.Fprintf(&w.h, "inst:%#v;", inst)
+	w.writeInstructionDescriptor(inst)
 	w.writeOperand(body, "dst", inst.Dst)
 	w.writeOperand(body, "a", inst.A)
 	w.writeOperand(body, "b", inst.B)
@@ -281,6 +284,78 @@ func (w *bodyDigestWriter) writeInstruction(body *wir.Body, inst wir.Instruction
 	}
 	w.writeOperand(body, "call-callee", inst.Call.Callee)
 	w.writeOperand(body, "call-receiver", inst.Call.Receiver)
+}
+
+func (w *bodyDigestWriter) writeInstructionDescriptor(inst wir.Instruction) {
+	w.label("instruction")
+	w.writeInt("op", int(inst.Op))
+	w.writeOperandRange("list-range", inst.List)
+	w.writeTableEntryRange("table-entry-range", inst.TableEntries)
+	w.writeBool("static-string-keys-complete", inst.StaticStringKeysComplete)
+	w.writeSegmentRange("dynamic-suffix-range", inst.DynamicSuffix)
+	w.writeImpliedCheckRange("implied-check-range", inst.ImpliedChecks)
+	w.writeImpliedCheckRange("sufficient-check-range", inst.SufficientChecks)
+	w.writeBranchDiffRange("diff-constraint-range", inst.DiffConstraints)
+	w.writeOperandRange("result-range", inst.Results)
+	w.writeInt("operator", int(inst.Operator))
+	w.writeInt("iter", int(inst.Iter))
+	w.writeInt("claim", int(inst.Claim))
+	w.writeInt("assign", int(inst.Assign))
+	w.writeUint64("type-ref", uint64(inst.Type))
+	w.writeUint64("check-ref", uint64(inst.Check))
+	w.writeUint64("func-ref", uint64(inst.Func))
+	w.writeInt("call-context", int(inst.CallContext))
+	w.writeBool("call-final", inst.CallFinal)
+	w.writeBool("call-expanded", inst.CallExpanded)
+	w.writeBool("call-adjusted", inst.CallAdjusted)
+	w.writeBool("call-open-tail", inst.CallOpenTail)
+	w.writeBool("call-condition-negated", inst.CallConditionNegated)
+	w.writeCallArgumentMetaRange("call-argument-range", inst.CallArgs)
+	w.writeTypeRefRange("call-type-argument-range", inst.CallTypeArgs)
+	w.writeReturnValueMetaRange("return-value-range", inst.ReturnValues)
+	w.writeBool("select-default", inst.SelectDefault)
+	w.writeBool("list-spread", inst.ListSpread)
+	w.writeBool("result-spread", inst.ResultSpread)
+}
+
+func (w *bodyDigestWriter) writeOperandRange(label string, value wir.OperandRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeTableEntryRange(label string, value wir.TableEntryRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeSegmentRange(label string, value wir.SegmentRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeImpliedCheckRange(label string, value wir.ImpliedCheckRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeBranchDiffRange(label string, value wir.BranchDiffConstraintRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeCallArgumentMetaRange(label string, value wir.CallArgumentMetaRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeTypeRefRange(label string, value wir.TypeRefRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
+}
+
+func (w *bodyDigestWriter) writeReturnValueMetaRange(label string, value wir.ReturnValueMetaRange) {
+	w.writeUint64(label+":start", uint64(value.Start))
+	w.writeUint64(label+":len", uint64(value.Len))
 }
 
 func (w *bodyDigestWriter) writeOperand(body *wir.Body, label string, op wir.Operand) {
@@ -458,21 +533,17 @@ func (w *bodyDigestWriter) writeManifest(label string, m *manifest.Manifest) {
 		w.writeString(label+":signature-name", name)
 		w.writeTypeIdentity(label+":signature-type", sig.Type)
 		w.writeString(label+":signature-effect", sig.Effect.String())
-		w.writeString(label+":signature-operational-effects", fmt.Sprintf("%#v", sig.OperationalEffects))
+		w.writeCanonicalOperationalEffects(label+":signature-operational-effects", sig.OperationalEffects)
 	}
-	type protocolEntry struct {
-		name       string
-		definition string
-	}
-	protocols := make([]protocolEntry, 0, len(m.TypestateProtocols))
+	protocols := make([]typestateProtocolEntry, 0, len(m.TypestateProtocols))
 	for protocol, definition := range m.TypestateProtocols {
-		protocols = append(protocols, protocolEntry{name: string(protocol), definition: fmt.Sprintf("%#v", definition)})
+		protocols = append(protocols, typestateProtocolEntry{name: string(protocol), definition: definition})
 	}
 	sort.Slice(protocols, func(i, j int) bool { return protocols[i].name < protocols[j].name })
 	w.writeInt(label+":typestate-count", len(protocols))
 	for _, protocol := range protocols {
 		w.writeString(label+":typestate-protocol", protocol.name)
-		w.writeString(label+":typestate-definition", protocol.definition)
+		w.writeCanonicalTypestateDefinition(label+":typestate-definition", protocol.definition)
 	}
 	registrations := append([]manifest.CallbackPhaseRegistration(nil), m.CallbackPhaseRegistrations...)
 	sort.Slice(registrations, func(i, j int) bool {
@@ -504,6 +575,29 @@ func (w *bodyDigestWriter) writeManifest(label string, m *manifest.Manifest) {
 		w.writeStringSlice(label+":callback-invocation-before", invocation.Before)
 		w.writeStringSlice(label+":callback-invocation-after", invocation.After)
 	}
+}
+
+type typestateProtocolEntry struct {
+	name       string
+	definition typestate.Definition
+}
+
+func (w *bodyDigestWriter) writeCanonicalOperationalEffects(label string, effects *signature.OperationalEffects) {
+	encoded, err := manifest.CanonicalOperationalEffectsBytes(effects)
+	if err != nil {
+		w.writeString(label, "<invalid-operational-effects>")
+		return
+	}
+	w.writeBytes(label, encoded)
+}
+
+func (w *bodyDigestWriter) writeCanonicalTypestateDefinition(label string, definition typestate.Definition) {
+	encoded, err := manifest.CanonicalTypestateDefinitionBytes(definition)
+	if err != nil {
+		w.writeString(label, "<invalid-typestate-definition>")
+		return
+	}
+	w.writeBytes(label, encoded)
 }
 
 func (w *bodyDigestWriter) writeTypeIdentity(label string, t typ.Type) {

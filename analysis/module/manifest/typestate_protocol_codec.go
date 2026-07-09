@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -40,6 +41,17 @@ func encodeTypestateProtocol(def typestate.Definition) (typestateProtocolWire, e
 		})
 	}
 	return out, nil
+}
+
+// CanonicalTypestateDefinitionBytes encodes a typestate definition through the
+// manifest wire codec. The returned JSON is stable across declaration order
+// and is suitable for content digests.
+func CanonicalTypestateDefinitionBytes(def typestate.Definition) ([]byte, error) {
+	w, err := encodeTypestateProtocol(def)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(w)
 }
 
 func decodeTypestateProtocol(w typestateProtocolWire) (typestate.Definition, error) {
