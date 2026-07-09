@@ -91,6 +91,10 @@ type dynamicIndexWriteReader interface {
 	DynamicIndexWrite(cfg.Point) (factflow.DynamicIndexWrite, bool)
 }
 
+type stableShapeSourceReader interface {
+	SourceHasStableShapeBeforeBoundary(cfg.Point, factflow.ValueSource) bool
+}
+
 // FromResult projects one completed check result into a fixed-point summary.
 func FromResult(result ResultReader) summary.Summary {
 	if result == nil {
@@ -153,6 +157,7 @@ func FromResult(result ResultReader) summary.Summary {
 	if arity > 0 {
 		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
+	out.HeapTableObjects = markStableReturnHeapObjects(reg, result, out.HeapTableObjects, out.Returns)
 	return summary.NormalizeOwned(reg, out)
 }
 

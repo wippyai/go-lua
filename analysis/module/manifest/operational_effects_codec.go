@@ -142,6 +142,7 @@ type returnAllocationTemplateWire struct {
 type allocationObjectWire struct {
 	ID             string                       `json:"id"`
 	Type           *typeWire                    `json:"type,omitempty"`
+	StableShape    bool                         `json:"stableShape,omitempty"`
 	StaticMembers  []allocationStaticMemberWire `json:"staticMembers,omitempty"`
 	DynamicEntries []allocationDynamicEntryWire `json:"dynamicEntries,omitempty"`
 }
@@ -696,7 +697,7 @@ func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (
 	if object.ID == "" {
 		return allocationObjectWire{}, fmt.Errorf("missing object id")
 	}
-	out := allocationObjectWire{ID: string(object.ID)}
+	out := allocationObjectWire{ID: string(object.ID), StableShape: object.StableShape}
 	if object.Type != nil {
 		encoded, err := encodeType(object.Type)
 		if err != nil {
@@ -816,7 +817,7 @@ func decodeAllocationObjectTemplate(w allocationObjectWire) (signature.Allocatio
 	if w.ID == "" {
 		return signature.AllocationObjectTemplate{}, fmt.Errorf("missing object id")
 	}
-	out := signature.AllocationObjectTemplate{ID: signature.AllocationTemplateID(w.ID)}
+	out := signature.AllocationObjectTemplate{ID: signature.AllocationTemplateID(w.ID), StableShape: w.StableShape}
 	if w.Type != nil {
 		t, err := decodeType(w.Type)
 		if err != nil {
