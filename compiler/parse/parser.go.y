@@ -136,12 +136,15 @@ func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast
 %nonassoc T2Colon /* :: cast - nonassoc to prefer reduce over shift for labels */
 %left TAs TBang /* type cast (as) and non-nil assertion */
 
-/* Known shift/reduce conflicts (14 total, all resolved correctly by shift):
-   - 3 Lua inherent: prefixexp '(' ambiguity (call vs grouping) - cannot be eliminated
-   - 5 type optional: simpletypeexpr TQuestion binds tighter than union/intersection
-   - 2 function return: (params) -> typeexpr followed by |/& binds to return type
-   - 2 type decl: type Name pattern - shift to continue parsing type name
-   - 2 generic: TIdent '<' in type context - shift for generic args
+/* Known shift/reduce conflicts (39 total, all resolved by shift):
+   - Lua prefix/call and typed parameter ambiguities
+   - optional, union, and intersection type binding
+   - function return types and generic argument lookahead
+   - record/interface field and annotation lookahead
+
+   The generated parser is pinned by go:generate and CI. Any grammar change
+   that changes these resolutions must regenerate parser.go and pass the full
+   parser/fixture suite.
 */
 
 %%
@@ -376,8 +379,8 @@ var:
         prefixexp '[' expr ']' {
             $$ = &ast.AttrGetExpr{Object: $1, Key: $3, KeySyntax: ast.AttrKeyIndex}
             $$.CopyPos($1)
-            $$.SetLastLine($4.Pos.Line)
-            $$.SetLastColumn($4.Pos.Column + 1)
+            $$.SetLastLine($<token>4.Pos.Line)
+            $$.SetLastColumn($<token>4.Pos.Column + 1)
         } | 
         prefixexp '.' TIdent {
             key := &ast.StringExpr{Value:$3.Str}

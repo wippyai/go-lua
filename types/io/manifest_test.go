@@ -1,6 +1,8 @@
 package io
 
 import (
+	"encoding/base64"
+	"errors"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -12,6 +14,33 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestDecodeLegacyManifestReturnsMigrationSignal(t *testing.T) {
+	// Produced by go-lua v1.5.16's binary manifest codec from a representative
+	// record/type/global manifest. Keep the fixture immutable so detection stays
+	// compatible with real persisted cache entries.
+	const encoded = "SU5BTQgAAAAAAAAAAA0AAABjb21wYXQvbW9kdWxlAQ8CAAAABQAAAGNvdW50AwEABAAAAG5hbWUEAAAAAAABAAAABwAAAFBheWxvYWQOBAUAAAAAAQAAAA0AAABjb21wYXRfZ2xvYmFsAQ=="
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("DecodeString: %v", err)
+	}
+	if _, err := DecodeManifest(data); !errors.Is(err, ErrLegacyManifestWire) {
+		t.Fatalf("DecodeManifest error = %v, want ErrLegacyManifestWire", err)
+	}
+}
+
+func TestDecodeLegacyStandaloneTypeReturnsMigrationSignal(t *testing.T) {
+	// v1 binary type encoding for typ.String is its one-byte kind tag.
+	if _, err := Decode([]byte{4}); !errors.Is(err, ErrLegacyTypeWire) {
+		t.Fatalf("Decode error = %v, want ErrLegacyTypeWire", err)
+	}
+}
+
+func TestDecodeMalformedNonLegacyTypeDoesNotReturnMigrationSignal(t *testing.T) {
+	if _, err := Decode([]byte{0xff}); err == nil || errors.Is(err, ErrLegacyTypeWire) {
+		t.Fatalf("Decode error = %v, want non-legacy syntax error", err)
+	}
+}
 
 func TestEncodeDecodeTypeUsesCanonicalManifestCodec(t *testing.T) {
 	want := typ.NewRecord().

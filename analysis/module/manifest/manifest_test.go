@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -28,6 +30,52 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestManifestWireFormatVersion(t *testing.T) {
+	m := New("example/versioned")
+	m.SetExport(typ.String)
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	version, ok := wire["formatVersion"].(float64)
+	if !ok {
+		t.Fatalf("formatVersion = %#v, want JSON number", wire["formatVersion"])
+	}
+	if got := int(version); got != WireFormatVersion {
+		t.Fatalf("formatVersion = %d, want %d", got, WireFormatVersion)
+	}
+
+	delete(wire, "formatVersion")
+	unversioned, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if _, err := Decode(unversioned); err != nil {
+		t.Fatalf("Decode unversioned canonical JSON: %v", err)
+	}
+
+	wire["formatVersion"] = float64(WireFormatVersion + 1)
+	future, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("json.Marshal future: %v", err)
+	}
+	if _, err := Decode(future); !errors.Is(err, ErrUnsupportedWireFormat) {
+		t.Fatalf("Decode future error = %v, want ErrUnsupportedWireFormat", err)
+	}
+}
+
+func TestManifestRejectsLegacyBinaryWithMigrationSignal(t *testing.T) {
+	legacy := []byte{'I', 'N', 'A', 'M', 8, 0, 0, 0}
+	if _, err := Decode(legacy); !errors.Is(err, ErrLegacyWireFormat) {
+		t.Fatalf("Decode legacy error = %v, want ErrLegacyWireFormat", err)
+	}
+}
 
 func TestManifestDefineTypeAndSetExport(t *testing.T) {
 	m := New("example/module")
@@ -2211,7 +2259,7 @@ func TestManifestEncodeOrdersNamedTypesDeterministically(t *testing.T) {
 	alpha := strings.Index(text, `"name": "Alpha"`)
 	middle := strings.Index(text, `"name": "Middle"`)
 	zed := strings.Index(text, `"name": "Zed"`)
-	if alpha < 0 || middle < 0 || zed < 0 || !(alpha < middle && middle < zed) {
+	if alpha < 0 || middle < 0 || zed < 0 || alpha >= middle || middle >= zed {
 		t.Fatalf("named types are not sorted:\n%s", text)
 	}
 }

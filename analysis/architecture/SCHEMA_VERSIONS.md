@@ -6,6 +6,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 
 | Surface | Constant | Current | Covers | Bump when |
 | --- | --- | --- | --- | --- |
+| Canonical manifest wire | `manifest.WireFormatVersion` | v1 | Top-level JSON manifest envelope and its type, signature, effect, typestate, callback-phase, and ambient-global fields. | A wire field is removed, renamed, reinterpreted, or made newly required; additive optional fields still require a compatibility review. |
 | Checker embedding | `embedding.EmbeddingSchemaVersion` | v1 | Stable document/source/resolution identity DTOs: `DocumentID`, digest-bound source locations and snapshots, unit plans/imports, resolution snapshots, `SolveSeq`, and `BodyInputDigest`. | An exported embedding DTO field, initial document scheme, or its identity/versioning semantics changes. |
 | Judgment IR | `judgment.JIRSchemaVersion` | v11 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
@@ -31,6 +32,14 @@ surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
 
 ## Journal
+
+- D21: Registered canonical manifest JSON wire v1. The decoder continues to
+  accept the short-lived unversioned canonical JSON shape as v1, rejects future
+  versions closed, and identifies the pre-abstract-interpreter binary `INAM`
+  format with a typed migration error. `INAM` embeds removed type/effect
+  domains and cannot be converted losslessly; cache owners must treat that
+  error as a cache miss and rebuild the manifest from source. Standalone legacy
+  binary type payloads use the equivalent `types/io.ErrLegacyTypeWire` signal.
 
 - D20: Post-union repin: Judgment IR v11 is the single consumer contract for
   the declared typestate-requirement codes, `BodyInputDigest` and digest-bound

@@ -27,6 +27,13 @@ jobs:
           go-version: "1.23.x"
           cache: true
 
+      - name: Verify generated parser
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: |
+          go generate ./compiler/parse
+          git diff --exit-code -- compiler/parse/parser.go
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9.2.0
         env:

@@ -5,6 +5,9 @@
 package io
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -17,6 +20,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	legacytyp "github.com/wippyai/go-lua/types/typ"
 )
+
+var (
+	// ErrLegacyManifestWire is returned for the pre-abstract-interpreter INAM
+	// manifest format. Callers that own a cache should treat it as a cache miss
+	// and rebuild from source rather than silently dropping legacy semantics.
+	ErrLegacyManifestWire = typemanifest.ErrLegacyWireFormat
+	// ErrLegacyTypeWire is the equivalent migration signal for the old
+	// standalone binary type codec.
+	ErrLegacyTypeWire = errors.New("types/io: legacy binary type wire format")
+)
+
+// legacyTypeKindMax is the last kind tag emitted by the v1 binary type codec
+// (Recursive). That format had no magic prefix, so a recognized leading tag is
+// the only protocol discriminator available after canonical JSON rejects the
+// payload.
+const legacyTypeKindMax byte = 31
 
 // Manifest captures module-boundary type metadata for legacy callers.
 type Manifest struct {
@@ -277,9 +296,23 @@ func Encode(t typ.Type) ([]byte, error) {
 func Decode(data []byte) (typ.Type, error) {
 	m, err := typemanifest.Decode(data)
 	if err != nil {
+		var syntaxError *json.SyntaxError
+		if errors.As(err, &syntaxError) && looksLikeLegacyTypeWire(data) {
+			return nil, fmt.Errorf("%w: %v", ErrLegacyTypeWire, err)
+		}
 		return nil, err
 	}
 	return m.Export, nil
+}
+
+func looksLikeLegacyTypeWire(data []byte) bool {
+	if len(data) == 0 || data[0] > legacyTypeKindMax {
+		return false
+	}
+	// A canonical object may have leading JSON whitespace whose byte value also
+	// overlaps a legacy kind tag. Preserve JSON classification when its first
+	// non-space byte is the object delimiter.
+	return !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{"))
 }
 
 func FromCanonical(canonical *typemanifest.Manifest) *Manifest {

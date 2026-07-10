@@ -16,6 +16,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+// WireFormatVersion identifies the canonical JSON manifest envelope. The
+// module's Manifest.Version remains consumer metadata and is intentionally
+// independent from this codec version.
+const WireFormatVersion = 1
+
+var (
+	// ErrLegacyWireFormat identifies the pre-abstract-interpreter binary INAM
+	// format. Those manifests contain type/effect domains that no longer have a
+	// lossless representation and must be rebuilt by the owning cache.
+	ErrLegacyWireFormat = errors.New("manifest: legacy binary wire format")
+	// ErrUnsupportedWireFormat identifies a canonical JSON envelope produced by
+	// a newer, unsupported codec version.
+	ErrUnsupportedWireFormat = errors.New("manifest: unsupported wire format")
+)
+
 // Manifest is the stable module-boundary type metadata exchanged between
 // compiled modules. It intentionally does not own checker stores, query caches,
 // or interprocedural state.
@@ -232,6 +247,7 @@ func Encode(m *Manifest) ([]byte, error) {
 	}
 
 	wm := manifestWire{
+		FormatVersion:              WireFormatVersion,
 		Path:                       m.Path,
 		Version:                    m.Version,
 		Globals:                    append([]string(nil), m.Globals...),
@@ -333,6 +349,9 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 			err = fmt.Errorf("manifest: invalid wire: %v", recovered)
 		}
 	}()
+	if bytes.HasPrefix(data, []byte("INAM")) {
+		return nil, ErrLegacyWireFormat
+	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("manifest: decode empty data")
 	}
@@ -340,6 +359,11 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	var wm manifestWire
 	if err := json.Unmarshal(data, &wm); err != nil {
 		return nil, err
+	}
+	// FormatVersion 0 is the short-lived unversioned JSON format emitted by the
+	// abstract branch before the envelope was pinned. Its shape is canonical v1.
+	if wm.FormatVersion != 0 && wm.FormatVersion != WireFormatVersion {
+		return nil, fmt.Errorf("%w: got v%d, support v%d", ErrUnsupportedWireFormat, wm.FormatVersion, WireFormatVersion)
 	}
 
 	m := New(wm.Path)
@@ -401,6 +425,7 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 }
 
 type manifestWire struct {
+	FormatVersion              int                             `json:"formatVersion"`
 	Path                       string                          `json:"path"`
 	Version                    string                          `json:"version,omitempty"`
 	Export                     *typeWire                       `json:"export,omitempty"`
@@ -447,11 +472,7 @@ func encodeCallbackPhaseRegistrations(in []CallbackPhaseRegistration) []callback
 		if registration.Function == "" || registration.CallbackParam < 0 || registration.Phase == "" {
 			continue
 		}
-		out = append(out, callbackPhaseRegistrationWire{
-			Function:      registration.Function,
-			CallbackParam: registration.CallbackParam,
-			Phase:         registration.Phase,
-		})
+		out = append(out, callbackPhaseRegistrationWire(registration))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Function != out[j].Function {
