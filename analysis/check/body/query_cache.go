@@ -130,9 +130,10 @@ type cachedProductValue struct {
 }
 
 type cachedProductValueCache[K comparable] struct {
-	values    map[K]cachedProductValue
-	inline    [resultQueryInline]cachedProductValueEntry[K]
-	inlineLen int
+	values     map[K]cachedProductValue
+	inProgress map[K]cachedProductValue
+	inline     [resultQueryInline]cachedProductValueEntry[K]
+	inlineLen  int
 }
 
 type cachedProductValueEntry[K comparable] struct {
@@ -175,11 +176,37 @@ func (c *resultQueryCache) pathValue(
 	return value, ok
 }
 
+// boundaryPathValue resolves a boundary path in two phases. The seed is the
+// value projected from the sealed boundary-node output; it is published as an
+// in-progress result before follow-up recovery/proof reads run. Those reads
+// may legitimately ask for the same (boundary node, path), in which case the
+// sealed value is the stable answer rather than a reason to replay resolution.
+func (c *resultQueryCache) boundaryPathValue(
+	key pathValueCacheKey,
+	seed func() (product.Value, bool),
+	resolve func() (product.Value, bool),
+) (value product.Value, ok bool) {
+	if seed == nil || resolve == nil {
+		return product.Value{}, false
+	}
+	if cached, found := c.pathValues.lookup(key); found {
+		return cached.value, cached.ok
+	}
+	value, ok = seed()
+	c.pathValues.begin(key, cachedProductValue{value: value, ok: ok})
+	defer func() {
+		c.pathValues.finish(key)
+		c.pathValues.remember(key, cachedProductValue{value: value, ok: ok})
+	}()
+	return resolve()
+}
+
 func (c *cachedProductValueCache[K]) reset() {
 	if c == nil {
 		return
 	}
 	c.values = nil
+	c.inProgress = nil
 	for i := 0; i < c.inlineLen; i++ {
 		c.inline[i] = cachedProductValueEntry[K]{}
 	}
@@ -197,10 +224,38 @@ func (c *cachedProductValueCache[K]) lookup(key K) (cachedProductValue, bool) {
 		}
 	}
 	if c.values == nil {
-		return cachedProductValue{}, false
+		if c.inProgress == nil {
+			return cachedProductValue{}, false
+		}
+		cached, ok := c.inProgress[key]
+		return cached, ok
 	}
 	cached, ok := c.values[key]
+	if ok {
+		return cached, true
+	}
+	if c.inProgress == nil {
+		return cachedProductValue{}, false
+	}
+	cached, ok = c.inProgress[key]
 	return cached, ok
+}
+
+func (c *cachedProductValueCache[K]) begin(key K, value cachedProductValue) {
+	if c == nil {
+		return
+	}
+	if c.inProgress == nil {
+		c.inProgress = make(map[K]cachedProductValue)
+	}
+	c.inProgress[key] = value
+}
+
+func (c *cachedProductValueCache[K]) finish(key K) {
+	if c == nil || c.inProgress == nil {
+		return
+	}
+	delete(c.inProgress, key)
 }
 
 func (c *cachedProductValueCache[K]) remember(key K, value cachedProductValue) {

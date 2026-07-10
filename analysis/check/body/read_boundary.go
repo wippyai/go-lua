@@ -848,13 +848,33 @@ func (r *Result) beforeBoundarySourceRead(point cfg.Point) func(cfg.Point) state
 // PathValueAtBoundary projects a path's product value at the diagnostic read
 // boundary for point.
 func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
-	return r.cachedPathValue(sourceValueReadBoundary, point, p, func() (product.Value, bool) {
-		return r.computePathValueAtBoundary(point, p)
+	if r == nil || p.IsEmpty() {
+		return product.Value{}, false
+	}
+	key, ok := r.pathValueCacheKey(sourceValueReadBoundary, point, p)
+	if !ok {
+		return product.Value{}, false
+	}
+	var sealed product.Value
+	var sealedOK bool
+	return r.queries.boundaryPathValue(key, func() (product.Value, bool) {
+		// The initial projection reads only the sealed boundary-node output.
+		// Publish it before recovery/proof refinement can follow sources back
+		// to this same boundary path.
+		sealed, sealedOK = r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt)
+		return sealed, sealedOK
+	}, func() (product.Value, bool) {
+		return r.refinePathValueAtBoundary(point, p, sealed, sealedOK)
 	})
 }
 
 func (r *Result) computePathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
-	if value, ok := r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt); ok {
+	value, ok := r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt)
+	return r.refinePathValueAtBoundary(point, p, value, ok)
+}
+
+func (r *Result) refinePathValueAtBoundary(point cfg.Point, p pathdom.Path, value product.Value, ok bool) (product.Value, bool) {
+	if ok {
 		if recovered, recoveredOK := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, p, value); recoveredOK {
 			value = recovered
 		}

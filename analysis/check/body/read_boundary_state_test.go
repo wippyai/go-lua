@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -12,7 +13,44 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestBoundaryPathResolutionReturnsSealedValueDuringSelfReentry(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(19)
+	sym := symbol.ID(19)
+	p := path.NewPath(sym, "recursive")
+	sealed := typevalue.FromType(reg, typ.String)
+
+	result := &Result{registry: reg}
+	key, ok := result.pathValueCacheKey(sourceValueReadBoundary, point, p)
+	if !ok {
+		t.Fatal("pathValueCacheKey returned false")
+	}
+
+	got, ok := result.queries.boundaryPathValue(key, func() (product.Value, bool) {
+		return sealed, true
+	}, func() (product.Value, bool) {
+		// This mirrors a boundary path refinement whose source reads the same
+		// boundary node output again. Before the cycle guard this re-entered
+		// indefinitely because the cache was populated only after resolve.
+		return result.queries.boundaryPathValue(key, func() (product.Value, bool) {
+			t.Fatal("self-reentrant resolution must use the in-progress sealed value")
+			return product.Value{}, false
+		}, func() (product.Value, bool) {
+			t.Fatal("self-reentrant resolution must not recompute")
+			return product.Value{}, false
+		})
+	})
+	if !ok {
+		t.Fatal("boundaryPathValue returned false")
+	}
+	if !product.Equal(reg, got, sealed) {
+		t.Fatalf("boundaryPathValue = %v, want sealed value %v", got, sealed)
+	}
+}
 
 func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 	point := cfg.Point(7)
