@@ -40,6 +40,12 @@ type LawSuite[T any] struct {
 	// Format optionally renders an element for diagnostic messages.
 	// If nil, fmt.Sprintf("%+v", e) is used.
 	Format func(T) string
+
+	// WideningBound is the maximum number of iterations permitted for each
+	// sample-derived ascending widening chain. Zero uses the conservative
+	// default. Domain suites should set this explicitly when their widening
+	// design has a documented finite stabilization bound.
+	WideningBound int
 }
 
 // Run asserts every lattice law against Sample and reports per-law,
@@ -70,8 +76,11 @@ func (s LawSuite[T]) Run(t reporter) {
 	s.checkJoinIdempotent(t)
 	s.checkJoinCommutative(t)
 	s.checkJoinAssociative(t)
+	s.checkJoinBottomIdentity(t)
+	s.checkJoinTopAbsorption(t)
 	s.checkJoinUpperBound(t)
 	s.checkJoinLeastUpperBound(t)
+	s.checkOrderConsistentWithJoin(t)
 	s.checkMeetIdempotent(t)
 	s.checkMeetCommutative(t)
 	s.checkMeetAssociative(t)
@@ -79,6 +88,7 @@ func (s LawSuite[T]) Run(t reporter) {
 	s.checkAbsorption(t)
 	s.checkWideningOverApproximates(t)
 	s.checkWideningChainTerminates(t)
+	s.checkNarrowingBetweenJoinAndWiden(t)
 }
 
 func (s LawSuite[T]) domainValid() bool {
@@ -200,6 +210,32 @@ func (s LawSuite[T]) checkJoinAssociative(t reporter) {
 	}
 }
 
+func (s LawSuite[T]) checkJoinBottomIdentity(t reporter) {
+	t.Helper()
+	bottom := s.Domain.Bottom()
+	for _, x := range s.Sample {
+		if got := s.Domain.Join(bottom, x); !s.Domain.Equal(got, x) {
+			s.report(t, "Join bottom identity", "Join(Bottom,%s)=%s, expected %s", s.fmt(x), s.fmt(got), s.fmt(x))
+		}
+		if got := s.Domain.Join(x, bottom); !s.Domain.Equal(got, x) {
+			s.report(t, "Join bottom identity", "Join(%s,Bottom)=%s, expected %s", s.fmt(x), s.fmt(got), s.fmt(x))
+		}
+	}
+}
+
+func (s LawSuite[T]) checkJoinTopAbsorption(t reporter) {
+	t.Helper()
+	top := s.Domain.Top()
+	for _, x := range s.Sample {
+		if got := s.Domain.Join(top, x); !s.Domain.Equal(got, top) {
+			s.report(t, "Join top absorption", "Join(Top,%s)=%s, expected Top=%s", s.fmt(x), s.fmt(got), s.fmt(top))
+		}
+		if got := s.Domain.Join(x, top); !s.Domain.Equal(got, top) {
+			s.report(t, "Join top absorption", "Join(%s,Top)=%s, expected Top=%s", s.fmt(x), s.fmt(got), s.fmt(top))
+		}
+	}
+}
+
 func (s LawSuite[T]) checkJoinUpperBound(t reporter) {
 	s.checkUpperBound(t, upperBoundLaw[T]{
 		op:       s.Domain.Join,
@@ -245,6 +281,23 @@ func (s LawSuite[T]) checkJoinLeastUpperBound(t reporter) {
 				if s.Domain.LessOrEq(a, c) && s.Domain.LessOrEq(b, c) && !s.Domain.LessOrEq(j, c) {
 					s.report(t, "Join least-upper-bound", "%s ⊑ %s and %s ⊑ %s but Join(%s,%s)=%s ⊑ %s fails", s.fmt(a), s.fmt(c), s.fmt(b), s.fmt(c), s.fmt(a), s.fmt(b), s.fmt(j), s.fmt(c))
 				}
+			}
+		}
+	}
+}
+
+// checkOrderConsistentWithJoin pins the operational form used by the solver:
+// a is below b exactly when joining a into b leaves b unchanged. This catches
+// agreement bugs that can satisfy individual upper-bound checks while still
+// causing a worklist to miss or repeat updates.
+func (s LawSuite[T]) checkOrderConsistentWithJoin(t reporter) {
+	t.Helper()
+	for _, a := range s.Sample {
+		for _, b := range s.Sample {
+			lessOrEq := s.Domain.LessOrEq(a, b)
+			joinIsB := s.Domain.Equal(s.Domain.Join(a, b), b)
+			if lessOrEq != joinIsB {
+				s.report(t, "Order/join consistency", "%s ⊑ %s is %v but Join(%s,%s)=b is %v", s.fmt(a), s.fmt(b), lessOrEq, s.fmt(a), s.fmt(b), joinIsB)
 			}
 		}
 	}
@@ -351,24 +404,32 @@ func (s LawSuite[T]) checkWideningOverApproximates(t reporter) {
 	})
 }
 
-// chainTerminationBound caps how many widening iterations we permit before
+// defaultChainTerminationBound caps how many widening iterations we permit before
 // declaring the chain non-terminating. A correct widening on any domain
 // realized in this checker must stabilize well under this bound for the
 // ascending chains driven by sample inputs; exceeding it indicates a
 // missing widening operator. (Cousot widening guarantees termination but
 // not a fixed worst-case bound; this is a generous engineering limit.)
-const chainTerminationBound = 256
+const defaultChainTerminationBound = 256
+
+func (s LawSuite[T]) wideningBound() int {
+	if s.WideningBound > 0 {
+		return s.WideningBound
+	}
+	return defaultChainTerminationBound
+}
 
 func (s LawSuite[T]) checkWideningChainTerminates(t reporter) {
 	t.Helper()
 	// For every pair (seed, growth), simulate the ascending chain
 	//   sᵢ₊₁ = Widen(sᵢ, Join(sᵢ, growth))
 	// and verify it stabilizes within chainTerminationBound iterations.
+	bound := s.wideningBound()
 	for _, seed := range s.Sample {
 		for _, growth := range s.Sample {
 			cur := seed
 			stable := false
-			for i := 0; i < chainTerminationBound; i++ {
+			for i := 0; i < bound; i++ {
 				next := s.Domain.Widen(cur, s.Domain.Join(cur, growth))
 				if s.Domain.Equal(next, cur) {
 					stable = true
@@ -377,7 +438,31 @@ func (s LawSuite[T]) checkWideningChainTerminates(t reporter) {
 				cur = next
 			}
 			if !stable {
-				s.report(t, "Widen ascending-chain termination", "chain from seed=%s growth=%s did not stabilize within %d iterations (final=%s) — domain lacks a proper widening operator", s.fmt(seed), s.fmt(growth), chainTerminationBound, s.fmt(cur))
+				s.report(t, "Widen ascending-chain termination", "chain from seed=%s growth=%s did not stabilize within %d iterations (final=%s) — domain lacks a proper widening operator", s.fmt(seed), s.fmt(growth), bound, s.fmt(cur))
+			}
+		}
+	}
+}
+
+// checkNarrowingBetweenJoinAndWiden checks the post-widen recovery contract.
+// Starting from a widened upper bound and the exact join that justified it,
+// narrowing may regain precision but must not fall below the true join or
+// escape above the widened value.
+func (s LawSuite[T]) checkNarrowingBetweenJoinAndWiden(t reporter) {
+	t.Helper()
+	if s.Domain.Narrow == nil {
+		return
+	}
+	for _, a := range s.Sample {
+		for _, b := range s.Sample {
+			join := s.Domain.Join(a, b)
+			widen := s.Domain.Widen(a, b)
+			narrow := s.Domain.Narrow(widen, join)
+			if !s.Domain.LessOrEq(join, narrow) {
+				s.report(t, "Narrow soundness", "Join(%s,%s)=%s ⊑ Narrow(Widen=%s,Join)=%s fails", s.fmt(a), s.fmt(b), s.fmt(join), s.fmt(widen), s.fmt(narrow))
+			}
+			if !s.Domain.LessOrEq(narrow, widen) {
+				s.report(t, "Narrow boundedness", "Narrow(Widen(%s,%s)=%s,Join=%s)=%s ⊑ widened value fails", s.fmt(a), s.fmt(b), s.fmt(widen), s.fmt(join), s.fmt(narrow))
 			}
 		}
 	}
