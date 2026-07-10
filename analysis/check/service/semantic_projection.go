@@ -9,9 +9,11 @@ import (
 	semanticreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -22,16 +24,16 @@ import (
 // bytes. It is built after the solve, before publication; query reads never
 // touch mutable checker worklists or run another analysis.
 type semanticQuerySnapshot struct {
-	entryFile string
-	sources   map[string][]byte
-	binders   []BinderInfo
-	bodies    []queryBody
-	symbols   []DocumentSymbol
-	calls     []BodyCallRelations
-	anchors   []anchoredSubject
-	repairs   []RepairAction
-	exprs     []expressionAt
-	tokens    []SemanticToken
+	entryDocument embedding.DocumentID
+	sources       map[embedding.DocumentID]embedding.SourceSnapshot
+	binders       []BinderInfo
+	bodies        []queryBody
+	symbols       []DocumentSymbol
+	calls         []BodyCallRelations
+	anchors       []anchoredSubject
+	repairs       []RepairAction
+	exprs         []expressionAt
+	tokens        []SemanticToken
 }
 
 type queryBody struct {
@@ -51,7 +53,9 @@ type anchoredSubject struct {
 }
 
 type semanticProjectionBuilder struct {
-	file      string
+	document  embedding.DocumentID
+	digest    embedding.Digest
+	file      string // Display only; semantic joins use document and digest.
 	source    []byte
 	root      *body.Result
 	bodies    []projectionBody
@@ -73,6 +77,8 @@ func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result
 	entryFile := documentLabel(input, input.EntryDocument)
 	entrySource := input.Sources[input.EntryDocument]
 	b := semanticProjectionBuilder{
+		document:  input.EntryDocument,
+		digest:    entrySource.ContentDigest,
 		file:      entryFile,
 		source:    append([]byte(nil), entrySource.Content...),
 		root:      root,
@@ -80,21 +86,21 @@ func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result
 		binders:   make(map[uint64]*BinderInfo),
 		seenExprs: make(map[ast.Expr]map[cfg.Point]struct{}),
 	}
-	b.collectBodies(root, BodyID("root"), SourceLocation{File: entryFile, Span: wholeSourceSpan(b.source)})
+	b.collectBodies(root, BodyID("root"), b.locationForSpan(wholeSourceSpan(b.source)))
 	b.collectBinderDefinitionsAndOccurrences(stmts)
 	b.collectExpressions()
 
 	result := &semanticQuerySnapshot{
-		entryFile: entryFile,
-		sources: map[string][]byte{
-			entryFile: append([]byte(nil), entrySource.Content...),
+		entryDocument: input.EntryDocument,
+		sources: map[embedding.DocumentID]embedding.SourceSnapshot{
+			input.EntryDocument: entrySource.Clone(),
 		},
 		bodies:  make([]queryBody, 0, len(b.bodies)),
-		anchors: anchorsFromJudgments(entryFile, judgments),
-		repairs: repairActionsFromJudgmentsWithSource(entryFile, b.source, judgments),
+		anchors: anchorsFromJudgments(input.EntryDocument, entrySource.ContentDigest, entryFile, judgments),
+		repairs: repairActionsFromJudgmentsWithSource(input.EntryDocument, entrySource.ContentDigest, entryFile, b.source, judgments),
 	}
 	for document, snapshot := range input.Sources {
-		result.sources[documentLabel(input, document)] = append([]byte(nil), snapshot.Content...)
+		result.sources[document] = snapshot.Clone()
 	}
 	for _, item := range b.bodies {
 		result.bodies = append(result.bodies, queryBody{id: item.id, location: item.location})
@@ -126,23 +132,9 @@ func (b *semanticProjectionBuilder) collectBodies(result *body.Result, id BodyID
 }
 
 func (b *semanticProjectionBuilder) collectBinderDefinitionsAndOccurrences(stmts []ast.Stmt) {
-	captures := make(map[*ast.FunctionExpr]map[symbol.ID]struct{})
-	for _, item := range b.bodies {
-		if item.function == nil {
-			continue
-		}
-		set := make(map[symbol.ID]struct{})
-		for _, capture := range b.root.DirectCaptures(item.function) {
-			if capture.Captured != 0 {
-				set[capture.Captured] = struct{}{}
-			}
-		}
-		captures[item.function] = set
-	}
-
 	var walkStmts func([]ast.Stmt, *ast.FunctionExpr)
 	var walkExpr func(ast.Expr, *ast.FunctionExpr, BinderOccurrenceRole)
-	addOccurrence := func(ident *ast.IdentExpr, fn *ast.FunctionExpr, role BinderOccurrenceRole) {
+	addOccurrence := func(ident *ast.IdentExpr, _ *ast.FunctionExpr, _ BinderOccurrenceRole) {
 		if ident == nil || b.root == nil {
 			return
 		}
@@ -150,17 +142,9 @@ func (b *semanticProjectionBuilder) collectBinderDefinitionsAndOccurrences(stmts
 		if !ok || id == 0 {
 			return
 		}
-		if fn != nil {
-			if _, captured := captures[fn][id]; captured {
-				role = BinderCapture
-			}
-		}
-		info := b.ensureBinder(id)
-		loc := b.locationForSpan(ast.SpanOf(ident))
-		if !loc.Valid() || occurrenceAlreadyPresent(info.Occurrences, role, loc) {
-			return
-		}
-		info.Occurrences = append(info.Occurrences, BinderOccurrence{Role: role, Location: loc, Scope: b.scopeForLocation(loc)})
+		// The binder owns the definitive occurrence set and roles. The AST walk
+		// below only discovers which binder declarations need projecting.
+		b.ensureBinder(id)
 	}
 
 	walkExpr = func(expr ast.Expr, fn *ast.FunctionExpr, role BinderOccurrenceRole) {
@@ -286,6 +270,33 @@ func (b *semanticProjectionBuilder) collectBinderDefinitionsAndOccurrences(stmts
 		}
 	}
 	walkStmts(stmts, nil)
+	b.projectBinderOccurrences()
+}
+
+func (b *semanticProjectionBuilder) projectBinderOccurrences() {
+	for symbolID, info := range b.binders {
+		for _, occurrence := range b.root.BinderOccurrences(symbol.ID(symbolID)) {
+			location := b.locationForSpan(occurrence.Span)
+			role, ok := binderOccurrenceRole(occurrence.Role)
+			if !ok || !location.Valid() || occurrenceAlreadyPresent(info.Occurrences, role, location) {
+				continue
+			}
+			info.Occurrences = append(info.Occurrences, BinderOccurrence{Role: role, Location: location, Scope: b.scopeForLocation(location)})
+		}
+	}
+}
+
+func binderOccurrenceRole(role bind.OccurrenceRole) (BinderOccurrenceRole, bool) {
+	switch role {
+	case bind.OccurrenceRead:
+		return BinderRead, true
+	case bind.OccurrenceWrite:
+		return BinderWrite, true
+	case bind.OccurrenceCapture:
+		return BinderCapture, true
+	default:
+		return "", false
+	}
 }
 
 func (b *semanticProjectionBuilder) defineFunction(fn *ast.FunctionExpr) {
@@ -303,11 +314,11 @@ func (b *semanticProjectionBuilder) defineFunction(fn *ast.FunctionExpr) {
 		}
 	}
 	b.defineBinder(id, name, b.functionDefinitionLocation(fn))
-	for index, slot := range b.root.FunctionParamSlots(fn) {
-		b.defineBinder(slot.Symbol, slot.Name, b.parameterLocation(fn, index, slot.Name))
+	for _, slot := range b.root.FunctionParamSlots(fn) {
+		b.defineBinder(slot.Symbol, slot.Name, SourceLocation{})
 	}
 	if id, ok := b.root.VarargSymbol(fn); ok {
-		b.defineBinder(id, "...", b.parameterLocation(fn, -1, "..."))
+		b.defineBinder(id, "...", SourceLocation{})
 	}
 }
 
@@ -316,6 +327,9 @@ func (b *semanticProjectionBuilder) defineBinder(id symbol.ID, name string, loca
 		return
 	}
 	item := b.ensureBinder(id)
+	if declaration, ok := b.root.BinderDeclaration(id); ok && declaration.Valid() {
+		location = b.locationForSpan(declaration.Span)
+	}
 	if item.Name == "" && name != "" {
 		item.Name = name
 	}
@@ -355,17 +369,14 @@ func (b *semanticProjectionBuilder) scopeForLocation(location SourceLocation) So
 	if !location.Valid() {
 		return SourceLocation{}
 	}
-	start, _, ok := offsetsForSpan(b.source, sourceSpan(location.Span))
-	if !ok {
-		return SourceLocation{}
-	}
-	best := SourceLocation{File: b.file, Span: wholeSourceSpan(b.source)}
+	start := location.ByteSpan.StartByte
+	best := b.locationForSpan(wholeSourceSpan(b.source))
 	bestWidth := len(b.source) + 1
 	for _, body := range b.bodies {
-		if !body.location.Valid() || !locationContains(b.source, body.location, b.file, start) {
+		if !body.location.Valid() || !locationContains(body.location, b.document, b.digest, start) {
 			continue
 		}
-		if width := locationWidth(b.source, body.location); width < bestWidth {
+		if width := locationWidth(body.location); width < bestWidth {
 			best, bestWidth = body.location, width
 		}
 	}
@@ -446,6 +457,7 @@ func (b *semanticProjectionBuilder) collectExpressions() {
 func (b *semanticProjectionBuilder) sortedBinders() []BinderInfo {
 	out := make([]BinderInfo, 0, len(b.binders))
 	for _, item := range b.binders {
+		b.certifyBinder(item)
 		copy := *item
 		copy.Occurrences = append([]BinderOccurrence(nil), item.Occurrences...)
 		sort.SliceStable(copy.Occurrences, func(i, j int) bool { return locationLess(copy.Occurrences[i].Location, copy.Occurrences[j].Location) })
@@ -453,6 +465,33 @@ func (b *semanticProjectionBuilder) sortedBinders() []BinderInfo {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SymbolID < out[j].SymbolID })
 	return out
+}
+
+func (b *semanticProjectionBuilder) certifyBinder(item *BinderInfo) {
+	if item == nil {
+		return
+	}
+	expected := b.root.BinderOccurrences(symbol.ID(item.SymbolID))
+	complete := len(expected) == len(item.Occurrences)
+	seen := make(map[embedding.ByteSpan]struct{}, len(item.Occurrences))
+	for _, occurrence := range item.Occurrences {
+		if !occurrence.Location.Valid() || occurrence.Location.Document != b.document || occurrence.Location.ContentDigest != b.digest {
+			complete = false
+			continue
+		}
+		span := occurrence.Location.ByteSpan
+		if _, exists := seen[span]; exists {
+			complete = false
+			continue
+		}
+		seen[span] = struct{}{}
+		if item.Definition.Valid() && sourceLocationsOverlap(b.source, item.Definition, occurrence.Location) {
+			complete = false
+		}
+	}
+	item.OccurrencesComplete = complete
+	declaration, hasDeclaration := b.root.BinderDeclaration(symbol.ID(item.SymbolID))
+	item.Renameable = complete && item.ModuleLocal && hasDeclaration && declaration.Valid() && !declaration.Synthetic && item.Definition.Valid()
 }
 
 // semanticTokens joins already-solved binder, typestate, and placement facts
@@ -601,12 +640,10 @@ func binderSourceLocations(binder BinderInfo) []SourceLocation {
 }
 
 func sourceLocationsOverlap(data []byte, left, right SourceLocation) bool {
-	if left.File != right.File || !left.Valid() || !right.Valid() {
+	if left.Document != right.Document || left.ContentDigest != right.ContentDigest || !left.Valid() || !right.Valid() {
 		return false
 	}
-	leftStart, leftEnd, leftOK := offsetsForSpan(data, sourceSpan(left.Span))
-	rightStart, rightEnd, rightOK := offsetsForSpan(data, sourceSpan(right.Span))
-	return leftOK && rightOK && leftStart < rightEnd && rightStart < leftEnd
+	return left.ByteSpan.StartByte < right.ByteSpan.EndByte && right.ByteSpan.StartByte < left.ByteSpan.EndByte
 }
 
 func semanticTokenSiteLocation(location SourceLocation) SourceLocation {
@@ -615,6 +652,7 @@ func semanticTokenSiteLocation(location SourceLocation) SourceLocation {
 	}
 	location.Span.EndLine = location.Span.StartLine
 	location.Span.EndCol = location.Span.StartCol
+	location.ByteSpan.EndByte = location.ByteSpan.StartByte + 1
 	return location
 }
 
@@ -745,19 +783,15 @@ func (b *semanticProjectionBuilder) functionTarget(target symbol.ID) (symbol.ID,
 	return 0, false
 }
 
-func anchorsFromJudgments(defaultFile string, items []judgment.Judgment) []anchoredSubject {
+func anchorsFromJudgments(defaultDocument embedding.DocumentID, defaultDigest embedding.Digest, defaultFile string, items []judgment.Judgment) []anchoredSubject {
 	var out []anchoredSubject
 	for _, item := range items {
 		if item.Subject.Anchor.IsZero() {
 			continue
 		}
 		for _, span := range item.Spans {
-			file := span.File
-			if file == "" {
-				file = defaultFile
-			}
-			location := SourceLocation{File: file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
-			if location.Valid() {
+			location, ok := judgmentLocation(defaultDocument, defaultDigest, defaultFile, span)
+			if ok {
 				out = append(out, anchoredSubject{location: location, anchor: item.Subject.Anchor})
 			}
 		}
@@ -767,10 +801,10 @@ func anchorsFromJudgments(defaultFile string, items []judgment.Judgment) []ancho
 }
 
 func repairActionsFromJudgments(defaultFile string, items []judgment.Judgment) []RepairAction {
-	return repairActionsFromJudgmentsWithSource(defaultFile, nil, items)
+	return repairActionsFromJudgmentsWithSource(embedding.FileDocument(defaultFile), embedding.DigestBytes(nil), defaultFile, nil, items)
 }
 
-func repairActionsFromJudgmentsWithSource(defaultFile string, data []byte, items []judgment.Judgment) []RepairAction {
+func repairActionsFromJudgmentsWithSource(defaultDocument embedding.DocumentID, defaultDigest embedding.Digest, defaultFile string, data []byte, items []judgment.Judgment) []RepairAction {
 	registry := judgment.DefaultRegistry()
 	var out []RepairAction
 	for _, item := range items {
@@ -778,7 +812,7 @@ func repairActionsFromJudgmentsWithSource(defaultFile string, data []byte, items
 		if !ok || len(spec.Repairs) == 0 {
 			continue
 		}
-		target, ok := judgmentTarget(defaultFile, item)
+		target, ok := judgmentTarget(defaultDocument, defaultDigest, defaultFile, item)
 		if !ok {
 			continue
 		}
@@ -797,7 +831,7 @@ func repairActionsFromJudgmentsWithSource(defaultFile string, data []byte, items
 			if descriptor.Kind == judgment.RepairAddAnnotation {
 				action.Payload.Type = typeformat.Short(item.Expected.Type)
 			}
-			action.Payload.Edits = repairEdits(defaultFile, data, item, descriptor.Kind)
+			action.Payload.Edits = repairEdits(defaultDocument, defaultDigest, defaultFile, data, item, descriptor.Kind)
 			out = append(out, action)
 		}
 	}
@@ -810,38 +844,51 @@ func repairActionsFromJudgmentsWithSource(defaultFile string, data []byte, items
 	return out
 }
 
-func repairEdits(defaultFile string, data []byte, item judgment.Judgment, kind judgment.RepairKind) []RepairEdit {
+func repairEdits(defaultDocument embedding.DocumentID, defaultDigest embedding.Digest, defaultFile string, data []byte, item judgment.Judgment, kind judgment.RepairKind) []RepairEdit {
 	if len(data) == 0 || kind != judgment.RepairRemoveRedundantClaim || item.Code != judgment.CodeAdviceRedundantClaim || len(item.Spans) < 2 {
 		return nil
 	}
-	claim, claimOK := judgmentLocation(defaultFile, item.Spans[0])
-	operand, operandOK := judgmentLocation(defaultFile, item.Spans[1])
-	if !claimOK || !operandOK || claim.File != operand.File {
+	claim, claimOK := judgmentLocation(defaultDocument, defaultDigest, defaultFile, item.Spans[0])
+	operand, operandOK := judgmentLocation(defaultDocument, defaultDigest, defaultFile, item.Spans[1])
+	if !claimOK || !operandOK || claim.Document != operand.Document || claim.ContentDigest != operand.ContentDigest {
 		return nil
 	}
-	start, end, ok := offsetsForSpan(data, sourceSpan(operand.Span))
-	if !ok || start >= end {
+	start, end := operand.ByteSpan.StartByte, operand.ByteSpan.EndByte
+	if start < 0 || end > len(data) || start >= end {
 		return nil
 	}
 	return []RepairEdit{{Target: claim, NewText: string(data[start:end])}}
 }
 
-func judgmentTarget(defaultFile string, item judgment.Judgment) (SourceLocation, bool) {
+func judgmentTarget(defaultDocument embedding.DocumentID, defaultDigest embedding.Digest, defaultFile string, item judgment.Judgment) (SourceLocation, bool) {
 	for _, span := range item.Spans {
-		if location, ok := judgmentLocation(defaultFile, span); ok {
+		if location, ok := judgmentLocation(defaultDocument, defaultDigest, defaultFile, span); ok {
 			return location, true
 		}
 	}
 	return SourceLocation{}, false
 }
 
-func judgmentLocation(defaultFile string, span judgment.SpanRef) (SourceLocation, bool) {
-	file := span.File
-	if file == "" {
-		file = defaultFile
+func judgmentLocation(defaultDocument embedding.DocumentID, defaultDigest embedding.Digest, defaultFile string, span judgment.SpanRef) (SourceLocation, bool) {
+	if span.Location.Valid() {
+		return SourceLocation{
+			Document:      span.Location.Document,
+			ContentDigest: span.Location.ContentDigest,
+			ByteSpan:      span.Location.Span,
+			Span:          SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol},
+			File:          defaultFile,
+		}, true
 	}
-	location := SourceLocation{File: file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
-	return location, location.Valid()
+	if !defaultDocument.Valid() || defaultDigest.IsZero() || span.StartLine <= 0 || span.StartCol <= 0 {
+		return SourceLocation{}, false
+	}
+	return SourceLocation{
+		Document:      defaultDocument,
+		ContentDigest: defaultDigest,
+		ByteSpan:      embedding.ByteSpan{},
+		Span:          SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol},
+		File:          defaultFile,
+	}, true
 }
 
 func judgmentHasNilCause(item judgment.Judgment) bool {
@@ -855,15 +902,28 @@ func judgmentHasNilCause(item judgment.Judgment) bool {
 }
 
 func (b *semanticProjectionBuilder) locationForSpan(span source.Span) SourceLocation {
-	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+	if !span.Valid() {
+		return SourceLocation{}
+	}
+	start, end, ok := offsetsForSpan(b.source, span)
+	if !ok {
+		return SourceLocation{}
+	}
+	return SourceLocation{
+		Document:      b.document,
+		ContentDigest: b.digest,
+		ByteSpan:      embedding.ByteSpan{StartByte: start, EndByte: end},
+		Span:          SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol},
+		File:          b.file,
+	}
 }
 
 func (b *semanticProjectionBuilder) locationForFactSpan(span factflow.SourceSpan) SourceLocation {
-	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+	return b.locationForSpan(source.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol})
 }
 
 func (b *semanticProjectionBuilder) locationForBodySpan(span body.SourceSpan) SourceLocation {
-	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+	return b.locationForSpan(source.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol})
 }
 
 func (b *semanticProjectionBuilder) locationForPosition(position ast.Position, name string) SourceLocation {
@@ -874,43 +934,7 @@ func (b *semanticProjectionBuilder) locationForPosition(position ast.Position, n
 	if endCol < position.Column || (endLine == position.Line && endCol == position.Column) {
 		endCol = position.Column + len(name) - 1
 	}
-	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: position.Line, StartCol: position.Column, EndLine: endLine, EndCol: endCol}}
-}
-
-func (b *semanticProjectionBuilder) parameterLocation(fn *ast.FunctionExpr, index int, name string) SourceLocation {
-	if fn == nil || name == "" {
-		return SourceLocation{}
-	}
-	start, end, ok := offsetsForSpan(b.source, ast.SpanOf(fn))
-	if !ok {
-		return b.locationForSpan(ast.SpanOf(fn))
-	}
-	open := bytesIndexByte(b.source[start:end], '(')
-	if open < 0 {
-		return b.locationForSpan(ast.SpanOf(fn))
-	}
-	segment := b.source[start+open : end]
-	needle := []byte(name)
-	seen := 0
-	for at := 0; ; {
-		found := bytesIndex(segment[at:], needle)
-		if found < 0 {
-			break
-		}
-		found += at
-		leftOK := found == 0 || !identifierByte(segment[found-1])
-		right := found + len(needle)
-		rightOK := right >= len(segment) || !identifierByte(segment[right])
-		if leftOK && rightOK {
-			if index < 0 || seen == index {
-				line, col := lineColumnAt(b.source, start+open+found)
-				return SourceLocation{File: b.file, Span: SourceSpan{StartLine: line, StartCol: col, EndLine: line, EndCol: col + len(name) - 1}}
-			}
-			seen++
-		}
-		at = found + len(needle)
-	}
-	return b.locationForSpan(ast.SpanOf(fn))
+	return b.locationForSpan(source.Span{StartLine: position.Line, StartCol: position.Column, EndLine: endLine, EndCol: endCol})
 }
 
 func (b *semanticProjectionBuilder) functionDefinitionLocation(fn *ast.FunctionExpr) SourceLocation {
@@ -921,7 +945,7 @@ func (b *semanticProjectionBuilder) functionDefinitionLocation(fn *ast.FunctionE
 	if !span.Valid() {
 		return SourceLocation{}
 	}
-	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.StartLine, EndCol: span.StartCol + len("function") - 1}}
+	return b.locationForSpan(source.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.StartLine, EndCol: span.StartCol + len("function") - 1})
 }
 
 func binderKindFromWIR(kind wir.SymbolKind) BinderKind {
@@ -973,8 +997,17 @@ func occurrenceAlreadyPresent(items []BinderOccurrence, role BinderOccurrenceRol
 	return false
 }
 func locationLess(left, right SourceLocation) bool {
-	if left.File != right.File {
-		return left.File < right.File
+	if left.Document != right.Document {
+		return left.Document.String() < right.Document.String()
+	}
+	if left.ContentDigest != right.ContentDigest {
+		return left.ContentDigest.String() < right.ContentDigest.String()
+	}
+	if left.ByteSpan.StartByte != right.ByteSpan.StartByte {
+		return left.ByteSpan.StartByte < right.ByteSpan.StartByte
+	}
+	if left.ByteSpan.EndByte != right.ByteSpan.EndByte {
+		return left.ByteSpan.EndByte < right.ByteSpan.EndByte
 	}
 	if left.Span.StartLine != right.Span.StartLine {
 		return left.Span.StartLine < right.Span.StartLine
@@ -987,9 +1020,9 @@ func locationLess(left, right SourceLocation) bool {
 	}
 	return left.Span.EndCol < right.Span.EndCol
 }
-func wholeSourceSpan(data []byte) SourceSpan {
+func wholeSourceSpan(data []byte) source.Span {
 	line, col := lineColumnAt(data, len(data))
-	return SourceSpan{StartLine: 1, StartCol: 1, EndLine: line, EndCol: col}
+	return source.Span{StartLine: 1, StartCol: 1, EndLine: line, EndCol: col}
 }
 
 func offsetsForSpan(data []byte, span source.Span) (int, int, bool) {

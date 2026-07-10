@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
-	"github.com/wippyai/go-lua/compiler/source"
+	"github.com/wippyai/go-lua/analysis/embedding"
 )
 
 func (s *BatchSession) BinderOccurrences(ctx context.Context, req BinderOccurrencesRequest) (BinderOccurrencesResponse, error) {
@@ -27,13 +27,13 @@ func (s *BatchSession) SemanticTokens(ctx context.Context, req SemanticTokensReq
 	if snapshot.semantic == nil {
 		return SemanticTokensResponse{Meta: meta}, nil
 	}
-	file := req.File
-	if file == "" {
-		file = snapshot.semantic.entryFile
+	document, source, ok := semanticSource(snapshot.semantic, req.Document, req.ContentDigest)
+	if !ok {
+		return SemanticTokensResponse{Meta: meta}, nil
 	}
 	items := make([]SemanticToken, 0, len(snapshot.semantic.tokens))
 	for _, item := range snapshot.semantic.tokens {
-		if item.Location.File != file {
+		if item.Location.Document != document || item.Location.ContentDigest != source.ContentDigest {
 			continue
 		}
 		items = append(items, cloneSemanticToken(item))
@@ -50,27 +50,23 @@ func (s *BatchSession) PositionLookup(ctx context.Context, req PositionLookupReq
 	if semantic == nil {
 		return PositionLookupResponse{Meta: meta}, nil
 	}
-	file := req.File
-	if file == "" {
-		file = semantic.entryFile
-	}
-	data, ok := semantic.sources[file]
+	document, source, ok := semanticSource(semantic, req.Document, req.ContentDigest)
 	if !ok {
 		return PositionLookupResponse{Meta: meta}, nil
 	}
-	offset, ok := offsetForPosition(data, req.Position)
+	offset, ok := offsetForPosition(source.Content, req.Position)
 	if !ok {
 		return PositionLookupResponse{Meta: meta}, nil
 	}
 	response := PositionLookupResponse{Meta: meta, Found: true}
-	if body, ok := innermostBody(semantic.bodies, data, file, offset); ok {
+	if body, ok := innermostBody(semantic.bodies, document, source.ContentDigest, offset); ok {
 		response.Body = EnclosingBody{ID: body.id, Location: body.location}
 	}
-	response.SubjectAnchors = anchorsAt(semantic.anchors, data, file, offset)
-	if expr, ok := innermostExpression(semantic.exprs, data, file, offset); ok && expr.display != "" {
+	response.SubjectAnchors = anchorsAt(semantic.anchors, document, source.ContentDigest, offset)
+	if expr, ok := innermostExpression(semantic.exprs, document, source.ContentDigest, offset); ok && expr.display != "" {
 		response.Expression = &ExpressionType{Location: expr.location, Display: expr.display}
 	}
-	if binder, ok := binderAt(semantic.binders, data, file, offset); ok {
+	if binder, ok := binderAt(semantic.binders, document, source.ContentDigest, offset); ok {
 		copy := cloneBinderInfo(binder)
 		response.Binder = &copy
 	}
@@ -85,18 +81,32 @@ func (s *BatchSession) DocumentSymbols(ctx context.Context, req DocumentSymbolsR
 	if snapshot.semantic == nil {
 		return DocumentSymbolsResponse{Meta: meta}, nil
 	}
-	file := req.File
-	if file == "" {
-		file = snapshot.semantic.entryFile
+	document, source, ok := semanticSource(snapshot.semantic, req.Document, req.ContentDigest)
+	if !ok {
+		return DocumentSymbolsResponse{Meta: meta}, nil
 	}
 	items := make([]DocumentSymbol, 0, len(snapshot.semantic.symbols))
 	for _, item := range snapshot.semantic.symbols {
-		if item.Location.File != file {
+		if item.Location.Document != document || item.Location.ContentDigest != source.ContentDigest {
 			continue
 		}
 		items = append(items, cloneDocumentSymbol(item))
 	}
 	return DocumentSymbolsResponse{Meta: meta, Symbols: items}, nil
+}
+
+func semanticSource(semantic *semanticQuerySnapshot, document embedding.DocumentID, digest embedding.Digest) (embedding.DocumentID, embedding.SourceSnapshot, bool) {
+	if semantic == nil {
+		return embedding.DocumentID{}, embedding.SourceSnapshot{}, false
+	}
+	if !document.Valid() {
+		document = semantic.entryDocument
+	}
+	source, ok := semantic.sources[document]
+	if !ok || !source.ContentDigest.IsZero() && !digest.IsZero() && source.ContentDigest != digest {
+		return embedding.DocumentID{}, embedding.SourceSnapshot{}, false
+	}
+	return document, source, true
 }
 
 func (s *BatchSession) CallRelations(ctx context.Context, req CallRelationsRequest) (CallRelationsResponse, error) {
@@ -151,48 +161,39 @@ func offsetForPosition(data []byte, position SourcePosition) (int, bool) {
 	return position.Offset, true
 }
 
-func locationContains(data []byte, location SourceLocation, file string, offset int) bool {
-	if location.File != file || !location.Valid() {
-		return false
-	}
-	start, end, ok := offsetsForSpan(data, sourceSpan(location.Span))
-	return ok && offset >= start && offset < end
+func locationContains(location SourceLocation, document embedding.DocumentID, digest embedding.Digest, offset int) bool {
+	return location.Valid() && location.Document == document && location.ContentDigest == digest && offset >= location.ByteSpan.StartByte && offset < location.ByteSpan.EndByte
 }
 
-func sourceSpan(span SourceSpan) source.Span {
-	return source.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}
-}
-
-func locationWidth(data []byte, location SourceLocation) int {
-	start, end, ok := offsetsForSpan(data, sourceSpan(location.Span))
-	if !ok || end < start {
+func locationWidth(location SourceLocation) int {
+	if !location.Valid() || location.ByteSpan.EndByte < location.ByteSpan.StartByte {
 		return int(^uint(0) >> 1)
 	}
-	return end - start
+	return location.ByteSpan.EndByte - location.ByteSpan.StartByte
 }
 
-func innermostBody(items []queryBody, data []byte, file string, offset int) (queryBody, bool) {
+func innermostBody(items []queryBody, document embedding.DocumentID, digest embedding.Digest, offset int) (queryBody, bool) {
 	var best queryBody
 	bestWidth := int(^uint(0) >> 1)
 	for _, item := range items {
-		if !locationContains(data, item.location, file, offset) {
+		if !locationContains(item.location, document, digest, offset) {
 			continue
 		}
-		if width := locationWidth(data, item.location); width < bestWidth {
+		if width := locationWidth(item.location); width < bestWidth {
 			best, bestWidth = item, width
 		}
 	}
 	return best, bestWidth != int(^uint(0)>>1)
 }
 
-func innermostExpression(items []expressionAt, data []byte, file string, offset int) (expressionAt, bool) {
+func innermostExpression(items []expressionAt, document embedding.DocumentID, digest embedding.Digest, offset int) (expressionAt, bool) {
 	var best expressionAt
 	bestWidth := int(^uint(0) >> 1)
 	for _, item := range items {
-		if !locationContains(data, item.location, file, offset) {
+		if !locationContains(item.location, document, digest, offset) {
 			continue
 		}
-		width := locationWidth(data, item.location)
+		width := locationWidth(item.location)
 		if width < bestWidth || width == bestWidth && locationLess(item.location, best.location) {
 			best, bestWidth = item, width
 		}
@@ -200,17 +201,17 @@ func innermostExpression(items []expressionAt, data []byte, file string, offset 
 	return best, bestWidth != int(^uint(0)>>1)
 }
 
-func binderAt(items []BinderInfo, data []byte, file string, offset int) (BinderInfo, bool) {
+func binderAt(items []BinderInfo, document embedding.DocumentID, digest embedding.Digest, offset int) (BinderInfo, bool) {
 	var best BinderInfo
 	bestLocation := SourceLocation{}
 	bestWidth := int(^uint(0) >> 1)
 	for _, item := range items {
 		locations := append([]SourceLocation{item.Definition}, occurrenceLocations(item.Occurrences)...)
 		for _, location := range locations {
-			if !locationContains(data, location, file, offset) {
+			if !locationContains(location, document, digest, offset) {
 				continue
 			}
-			width := locationWidth(data, location)
+			width := locationWidth(location)
 			if width < bestWidth || width == bestWidth && locationLess(location, bestLocation) || width == bestWidth && location == bestLocation && item.SymbolID < best.SymbolID {
 				best, bestLocation, bestWidth = item, location, width
 			}
@@ -219,10 +220,10 @@ func binderAt(items []BinderInfo, data []byte, file string, offset int) (BinderI
 	return best, bestWidth != int(^uint(0)>>1)
 }
 
-func anchorsAt(items []anchoredSubject, data []byte, file string, offset int) []judgment.SubjectAnchor {
+func anchorsAt(items []anchoredSubject, document embedding.DocumentID, digest embedding.Digest, offset int) []judgment.SubjectAnchor {
 	seen := make(map[string]judgment.SubjectAnchor)
 	for _, item := range items {
-		if locationContains(data, item.location, file, offset) {
+		if locationContains(item.location, document, digest, offset) {
 			seen[item.anchor.StableKey()] = item.anchor
 		}
 	}

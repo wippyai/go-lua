@@ -1,11 +1,14 @@
 package service
 
-import "github.com/wippyai/go-lua/analysis/check/judgment"
+import (
+	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/embedding"
+)
 
 // EmbeddingSchemaVersion pins the versioned, renderer-independent checker
 // embedding surface. It is deliberately separate from JIRSchemaVersion: JIR
 // pins judgments, while this pin covers navigation and repair DTOs.
-const EmbeddingSchemaVersion = 5
+const EmbeddingSchemaVersion = 6
 
 // SourceSpan is the current source-location value used by the embedding
 // surface. It is intentionally isolated from identity/display policy so a
@@ -20,13 +23,22 @@ type SourceSpan struct {
 
 func (s SourceSpan) Valid() bool { return s.StartLine > 0 && s.StartCol > 0 }
 
-// SourceLocation identifies a location in today's file-based service input.
+// SourceLocation identifies a location in one exact materialized source
+// snapshot. Document, ContentDigest, and ByteSpan are the semantic identity;
+// Span and File are display conveniences retained only for adapters that have
+// not yet migrated their rendering paths.
 type SourceLocation struct {
+	Document      embedding.DocumentID
+	ContentDigest embedding.Digest
+	ByteSpan      embedding.ByteSpan
+	Span          SourceSpan
+	// Deprecated: display label only; never use as a semantic key.
 	File string
-	Span SourceSpan
 }
 
-func (l SourceLocation) Valid() bool { return l.File != "" && l.Span.Valid() }
+func (l SourceLocation) Valid() bool {
+	return l.Document.Valid() && !l.ContentDigest.IsZero() && l.ByteSpan.Valid()
+}
 
 // BinderKind is the closed value-binder vocabulary exposed to embedding
 // clients. It mirrors WIR SymbolInfo rather than leaking bind internals.
@@ -70,6 +82,13 @@ type BinderInfo struct {
 	Definition  SourceLocation
 	Scope       SourceLocation
 	Occurrences []BinderOccurrence
+	// OccurrencesComplete certifies that Definition and Occurrences are the
+	// full, exact, non-overlapping binder source set for this completed result.
+	OccurrencesComplete bool
+	// Renameable is true only when the checker also proves that the binder has
+	// a real, editable declaration token. Synthetic binders (such as implicit
+	// self and vararg) are intentionally false even when their uses are complete.
+	Renameable bool
 }
 
 type BinderOccurrencesRequest struct{ Selector ResultSelector }
@@ -115,8 +134,12 @@ type SemanticToken struct {
 }
 
 type SemanticTokensRequest struct {
-	Selector ResultSelector
-	File     string
+	Selector      ResultSelector
+	Document      embedding.DocumentID
+	ContentDigest embedding.Digest
+	// Deprecated: ignored as semantic identity. Zero Document selects the
+	// result entry document for compatibility with existing adapters.
+	File string
 }
 
 type SemanticTokensResponse struct {
@@ -134,7 +157,11 @@ type SourcePosition struct {
 }
 
 type PositionLookupRequest struct {
-	Selector ResultSelector
+	Selector      ResultSelector
+	Document      embedding.DocumentID
+	ContentDigest embedding.Digest
+	// Deprecated: ignored as semantic identity. Zero Document selects the
+	// result entry document for compatibility with existing adapters.
 	File     string
 	Position SourcePosition
 }
@@ -178,8 +205,12 @@ type DocumentSymbol struct {
 }
 
 type DocumentSymbolsRequest struct {
-	Selector ResultSelector
-	File     string
+	Selector      ResultSelector
+	Document      embedding.DocumentID
+	ContentDigest embedding.Digest
+	// Deprecated: ignored as semantic identity. Zero Document selects the
+	// result entry document for compatibility with existing adapters.
+	File string
 }
 
 type DocumentSymbolsResponse struct {

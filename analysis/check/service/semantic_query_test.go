@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	lifecyclefx "github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -75,6 +76,138 @@ func TestSemanticQueryBinderOccurrencesIncludeCaptures(t *testing.T) {
 	}
 	if got := countOccurrenceRole(value.Occurrences, BinderCapture); got != 1 {
 		t.Fatalf("value capture occurrences = %d, want 1: %#v", got, value.Occurrences)
+	}
+}
+
+func TestSemanticQueryBinderProjectionUsesOwnedDeclarationsAndCertification(t *testing.T) {
+	source := `local function f(first, second)
+	return second + first
+end
+local normal = second
+return f(normal, 2)
+`
+	session, tag := solveSemanticQueryFixture(t, source)
+	result, err := session.BinderOccurrences(context.Background(), BinderOccurrencesRequest{Selector: selectorFor(tag)})
+	if err != nil {
+		t.Fatalf("BinderOccurrences: %v", err)
+	}
+
+	second := binderNamed(result.Binders, "second")
+	if second == nil {
+		t.Fatal("second parameter binder missing")
+	}
+	headerOffset := strings.Index(source, "second)")
+	if headerOffset < 0 {
+		t.Fatal("second parameter header missing")
+	}
+	if second.Definition.Document != embedding.FileDocument("main.lua") || second.Definition.ContentDigest != embedding.DigestBytes([]byte(source)) || second.Definition.ByteSpan != (embedding.ByteSpan{StartByte: headerOffset, EndByte: headerOffset + len("second")}) {
+		t.Fatalf("second definition = %#v, want exact header declaration at byte %d", second.Definition, headerOffset)
+	}
+	if !second.OccurrencesComplete || !second.Renameable {
+		t.Fatalf("second certification = complete:%v renameable:%v, want both true", second.OccurrencesComplete, second.Renameable)
+	}
+	for _, occurrence := range second.Occurrences {
+		if occurrence.Location.ByteSpan == second.Definition.ByteSpan {
+			t.Fatalf("second occurrence duplicates declaration: %#v", second)
+		}
+	}
+
+	normal := binderNamed(result.Binders, "normal")
+	if normal == nil || !normal.OccurrencesComplete || !normal.Renameable {
+		t.Fatalf("normal local certification = %#v, want a complete renameable local", normal)
+	}
+}
+
+func TestSemanticQuerySyntheticBindersAreNeverRenameable(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		binder string
+	}{
+		{
+			name: "implicit self",
+			source: `local t = {}
+function t:m(v)
+	return self, v
+end
+return t
+`,
+			binder: "self",
+		},
+		{
+			name: "vararg",
+			source: `local function f(...)
+	return ...
+end
+return f(1, 2)
+`,
+			binder: "...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session, tag := solveSemanticQueryFixture(t, tt.source)
+			result, err := session.BinderOccurrences(context.Background(), BinderOccurrencesRequest{Selector: selectorFor(tag)})
+			if err != nil {
+				t.Fatalf("BinderOccurrences: %v", err)
+			}
+			binder := binderNamed(result.Binders, tt.binder)
+			if binder == nil {
+				t.Fatalf("%s binder missing", tt.binder)
+			}
+			if binder.Renameable {
+				t.Fatalf("synthetic binder = %#v, must not be renameable", binder)
+			}
+			if tt.binder == "self" && binder.Definition.Valid() {
+				t.Fatalf("implicit self definition = %#v, must not invent a source declaration", binder.Definition)
+			}
+			if !binder.OccurrencesComplete || len(binder.Occurrences) == 0 {
+				t.Fatalf("synthetic binder occurrences = %#v, want complete exact occurrences", binder)
+			}
+		})
+	}
+}
+
+func TestSemanticQueryLocationIdentityDisambiguatesSameLabelDocuments(t *testing.T) {
+	entryDocument := embedding.MemDocument("entry")
+	otherDocument := embedding.MemDocument("other")
+	entrySource := []byte("local target = 1\nreturn target\n")
+	otherSource := []byte("return 0\n")
+	for attempt := 0; attempt < 100; attempt++ {
+		session := NewBatchSession()
+		input := UnitInput{
+			ID:            UnitID("same-label"),
+			ModulePath:    "example/same-label",
+			EntryDocument: entryDocument,
+			Sources: map[embedding.DocumentID]embedding.SourceSnapshot{
+				entryDocument: {Document: entryDocument, Content: entrySource},
+				otherDocument: {Document: otherDocument, Content: otherSource},
+			},
+			DocumentLabels: embedding.StaticLabels{
+				entryDocument: "same.lua",
+				otherDocument: "same.lua",
+			},
+		}
+		if _, err := session.UpsertUnit(context.Background(), input); err != nil {
+			t.Fatalf("UpsertUnit: %v", err)
+		}
+		tag, err := session.EnsureSolved(context.Background(), SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+		if err != nil {
+			t.Fatalf("EnsureSolved: %v", err)
+		}
+		offset := strings.LastIndex(string(entrySource), "target")
+		lookup, err := session.PositionLookup(context.Background(), PositionLookupRequest{
+			Selector:      selectorFor(tag),
+			Document:      entryDocument,
+			ContentDigest: embedding.DigestBytes(entrySource),
+			Position:      SourcePosition{Offset: offset},
+		})
+		if err != nil {
+			t.Fatalf("PositionLookup: %v", err)
+		}
+		if !lookup.Found || lookup.Binder == nil || lookup.Binder.Name != "target" {
+			t.Fatalf("attempt %d PositionLookup = %#v, want entry target binder", attempt, lookup)
+		}
 	}
 }
 

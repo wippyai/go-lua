@@ -90,6 +90,9 @@ func locationForSpan(document embedding.DocumentID, snapshot embedding.SourceSna
 	end := start
 	if endLine > 0 && endColumn > 0 {
 		end = byteOffset(snapshot.Content, endLine, endColumn)
+		if end < len(snapshot.Content) {
+			end++ // Compiler spans have inclusive ends; embedding spans are half-open.
+		}
 		if end < start {
 			end = start
 		}
