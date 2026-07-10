@@ -9,10 +9,13 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	typesignature "github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	legacytyp "github.com/wippyai/go-lua/types/typ"
 )
 
 // Manifest captures module-boundary type metadata for legacy callers.
@@ -290,6 +293,17 @@ func FromCanonical(canonical *typemanifest.Manifest) *Manifest {
 	for name, t := range canonical.Types {
 		m.DefineType(name, t)
 	}
+	for _, name := range canonical.Globals {
+		m.AddGlobal(name, canonical.GlobalTypes[name])
+	}
+	for name, t := range canonical.GlobalTypes {
+		m.AddGlobal(name, t)
+	}
+	for name, sig := range canonical.FunctionSignatures {
+		if summary := summaryFromCanonicalSignature(sig); summary != nil {
+			m.DefineSummary(name, summary)
+		}
+	}
 	return m
 }
 
@@ -309,7 +323,168 @@ func (m *Manifest) toCanonical() *typemanifest.Manifest {
 	for name, t := range m.Types {
 		canonical.DefineType(name, t)
 	}
+	for name, t := range m.Globals {
+		canonical.DefineGlobal(name)
+		canonical.DefineGlobalType(name, t)
+	}
+	for name, summary := range m.Summaries {
+		if sig, ok := canonicalFunctionSignature(summary); ok {
+			canonical.DefineFunctionSignature(name, sig)
+		}
+	}
 	return canonical
+}
+
+// canonicalFunctionSignature lowers the representable portion of a legacy
+// function summary into the canonical module-boundary representation. Legacy
+// summaries do not carry parameter names, optional parameters, or variadics,
+// so the resulting function type intentionally has unnamed required params.
+func canonicalFunctionSignature(summary *FunctionSummary) (typesignature.Function, bool) {
+	if summary == nil {
+		return typesignature.Function{}, false
+	}
+	for _, t := range summary.Params {
+		if t == nil {
+			return typesignature.Function{}, false
+		}
+	}
+	for _, t := range summary.Returns {
+		if t == nil {
+			return typesignature.Function{}, false
+		}
+	}
+
+	fn := typ.Func().ReserveParams(len(summary.Params))
+	for _, t := range summary.Params {
+		fn.Param("", t)
+	}
+	fn.Returns(summary.Returns...)
+
+	sig := typesignature.Function{Type: fn.Build()}
+	if effects := canonicalOperationalEffects(summary); !effects.IsEmpty() {
+		sig.OperationalEffects = &effects
+	}
+	if row := errorReturnEffects(summary.Returns); !row.Pure() {
+		sig.Effect = row
+	}
+	return sig, true
+}
+
+func canonicalOperationalEffects(summary *FunctionSummary) typesignature.OperationalEffects {
+	var effects typesignature.OperationalEffects
+	if len(summary.ParamRelations) > 0 {
+		effects.ParamRelations = append([]typesignature.ParamRelation(nil), summary.ParamRelations...)
+	} else {
+		for param, escapes := range summary.ParamEscapes {
+			if !escapes || param >= len(summary.Params) {
+				continue
+			}
+			// The old bit only establishes that a value escapes; it does not say
+			// whether it is retained, stored, sent, or exported. Opaque/shared
+			// is the canonical conservative representation for that unknown kind.
+			effects.ParamRelations = append(effects.ParamRelations, typesignature.ParamRelation{
+				Param:                param,
+				EscapeClass:          typesignature.EscapeOpaque,
+				PlacementConsequence: typesignature.PlacementConsequenceSharedHeap,
+			})
+		}
+	}
+	if summary.ReturnsParam >= 0 && summary.ReturnsParam < len(summary.Params) && len(summary.Returns) > 0 {
+		// ReturnsParam was the legacy summary's single, first-return identity
+		// channel. Later return slots have no corresponding legacy metadata.
+		effects.ReturnFlows = []typesignature.ReturnFlow{{
+			ReturnIndex: 0,
+			Kind:        typesignature.ReturnFlowParam,
+			Param:       summary.ReturnsParam,
+		}}
+	}
+	return effects
+}
+
+func errorReturnEffects(resultTypes []typ.Type) effect.Row {
+	errorIndex := len(resultTypes) - 1
+	if errorIndex < 1 || !isLegacyLuaErrorOptional(resultTypes[errorIndex]) {
+		return effect.Row{}
+	}
+	row := effect.Empty
+	for valueIndex := 0; valueIndex < errorIndex; valueIndex++ {
+		row = row.With(returns.ErrorReturn{ValueIndex: valueIndex, ErrorIndex: errorIndex})
+	}
+	return row
+}
+
+// isLegacyLuaErrorOptional recognizes the standard Wippy LuaError error slot.
+// The manifest codec sorts interface methods, while the legacy singleton keeps
+// its declaration order, so TypeEquals alone is not stable across a manifest
+// encode/decode round trip. Compare the entire interface contract by method
+// name and function type instead; this deliberately does not treat a type
+// named "Error" as sufficient evidence.
+func isLegacyLuaErrorOptional(t typ.Type) bool {
+	optional, ok := unwrap.Alias(t).(*typ.Optional)
+	if !ok || optional.Inner == nil {
+		return false
+	}
+	if typ.TypeEquals(optional.Inner, legacytyp.LuaError) {
+		return true
+	}
+
+	want, ok := legacytyp.LuaError.(*typ.Interface)
+	if !ok {
+		return false
+	}
+	got, ok := unwrap.Alias(optional.Inner).(*typ.Interface)
+	if !ok || got.Name != want.Name || len(got.Methods) != len(want.Methods) {
+		return false
+	}
+	for _, wantMethod := range want.Methods {
+		var gotMethod *typ.Method
+		for i := range got.Methods {
+			if got.Methods[i].Name == wantMethod.Name {
+				gotMethod = &got.Methods[i]
+				break
+			}
+		}
+		if gotMethod == nil || !typ.TypeEquals(gotMethod.Type, wantMethod.Type) {
+			return false
+		}
+	}
+	return true
+}
+
+// summaryFromCanonicalSignature preserves the subset of canonical signatures
+// that has an exact legacy FunctionSummary representation. Generic, variadic,
+// and optional-parameter signatures have no legacy wire fields, so they are
+// deliberately left canonical rather than being flattened into a different
+// callable contract.
+func summaryFromCanonicalSignature(sig typesignature.Function) *FunctionSummary {
+	if sig.Type == nil || len(sig.Type.TypeParams) != 0 || sig.Type.Variadic != nil {
+		return nil
+	}
+	params := make([]typ.Type, len(sig.Type.Params))
+	for i, param := range sig.Type.Params {
+		if param.Optional || param.Type == nil {
+			return nil
+		}
+		params[i] = param.Type
+	}
+	for _, result := range sig.Type.Returns {
+		if result == nil {
+			return nil
+		}
+	}
+
+	summary := NewSummary(params, sig.Type.Returns)
+	if sig.OperationalEffects == nil {
+		return summary
+	}
+	summary.SetParamRelations(sig.OperationalEffects.ParamRelations)
+	for _, flow := range sig.OperationalEffects.ReturnFlows {
+		if flow.ReturnIndex == 0 && flow.Kind == typesignature.ReturnFlowParam && flow.Param >= 0 && flow.Param < len(params) {
+			summary.ReturnsParam = flow.Param
+			break
+		}
+	}
+	return summary
 }
 
 func (m *Manifest) invalidateCaches() {
