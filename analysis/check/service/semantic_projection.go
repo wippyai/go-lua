@@ -89,7 +89,7 @@ func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result
 		},
 		bodies:  make([]queryBody, 0, len(b.bodies)),
 		anchors: anchorsFromJudgments(entryFile, judgments),
-		repairs: repairActionsFromJudgments(entryFile, judgments),
+		repairs: repairActionsFromJudgmentsWithSource(entryFile, b.source, judgments),
 	}
 	for document, snapshot := range input.Sources {
 		result.sources[documentLabel(input, document)] = append([]byte(nil), snapshot.Content...)
@@ -601,6 +601,10 @@ func anchorsFromJudgments(defaultFile string, items []judgment.Judgment) []ancho
 }
 
 func repairActionsFromJudgments(defaultFile string, items []judgment.Judgment) []RepairAction {
+	return repairActionsFromJudgmentsWithSource(defaultFile, nil, items)
+}
+
+func repairActionsFromJudgmentsWithSource(defaultFile string, data []byte, items []judgment.Judgment) []RepairAction {
 	registry := judgment.DefaultRegistry()
 	var out []RepairAction
 	for _, item := range items {
@@ -623,10 +627,11 @@ func repairActionsFromJudgments(defaultFile string, items []judgment.Judgment) [
 					continue
 				}
 			}
-			action := RepairAction{Kind: descriptor.Kind, Target: target}
+			action := RepairAction{Code: item.Code, Kind: descriptor.Kind, Target: target}
 			if descriptor.Kind == judgment.RepairAddAnnotation {
 				action.Payload.Type = typeformat.Short(item.Expected.Type)
 			}
+			action.Payload.Edits = repairEdits(defaultFile, data, item, descriptor.Kind)
 			out = append(out, action)
 		}
 	}
@@ -639,18 +644,38 @@ func repairActionsFromJudgments(defaultFile string, items []judgment.Judgment) [
 	return out
 }
 
+func repairEdits(defaultFile string, data []byte, item judgment.Judgment, kind judgment.RepairKind) []RepairEdit {
+	if len(data) == 0 || kind != judgment.RepairRemoveRedundantClaim || item.Code != judgment.CodeAdviceRedundantClaim || len(item.Spans) < 2 {
+		return nil
+	}
+	claim, claimOK := judgmentLocation(defaultFile, item.Spans[0])
+	operand, operandOK := judgmentLocation(defaultFile, item.Spans[1])
+	if !claimOK || !operandOK || claim.File != operand.File {
+		return nil
+	}
+	start, end, ok := offsetsForSpan(data, sourceSpan(operand.Span))
+	if !ok || start >= end {
+		return nil
+	}
+	return []RepairEdit{{Target: claim, NewText: string(data[start:end])}}
+}
+
 func judgmentTarget(defaultFile string, item judgment.Judgment) (SourceLocation, bool) {
 	for _, span := range item.Spans {
-		file := span.File
-		if file == "" {
-			file = defaultFile
-		}
-		location := SourceLocation{File: file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
-		if location.Valid() {
+		if location, ok := judgmentLocation(defaultFile, span); ok {
 			return location, true
 		}
 	}
 	return SourceLocation{}, false
+}
+
+func judgmentLocation(defaultFile string, span judgment.SpanRef) (SourceLocation, bool) {
+	file := span.File
+	if file == "" {
+		file = defaultFile
+	}
+	location := SourceLocation{File: file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+	return location, location.Valid()
 }
 
 func judgmentHasNilCause(item judgment.Judgment) bool {

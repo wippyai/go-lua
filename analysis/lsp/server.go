@@ -174,6 +174,8 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 		result, err = s.prepareRename(ctx, request.Params)
 	case methodRename:
 		result, err = s.rename(ctx, request.Params)
+	case methodCodeAction:
+		result, err = s.codeActions(ctx, request.Params)
 	default:
 		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "method not found", request.Method)
 	}
@@ -629,6 +631,56 @@ func (s *Server) rename(ctx context.Context, raw []byte) (any, error) {
 	return workspaceEdit{Changes: map[string][]workspaceTextEdit{document.uri: edits}}, nil
 }
 
+func (s *Server) codeActions(ctx context.Context, raw []byte) (any, error) {
+	var params codeActionParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid codeAction params", err.Error())
+	}
+	if len(params.Context.Only) != 0 && !containsCodeActionKind(params.Context.Only, "quickfix") {
+		return []codeAction{}, nil
+	}
+	documentID, err := s.codec.DocumentForURI(params.TextDocument.URI)
+	if err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid document URI", err.Error())
+	}
+	document, ok, err := s.currentSemanticDocument(ctx, documentID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	repairs, err := s.session.RepairActions(ctx, service.RepairActionsRequest{
+		Selector: service.ResultSelector{UnitID: document.unitID, SolveSeq: document.tag.SolveSeq, Profile: document.tag.Profile},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read repair actions: %w", err)
+	}
+	actions := make([]codeAction, 0, len(repairs.Actions))
+	for _, repair := range repairs.Actions {
+		targetRange, targetOK := document.protocolRange(repair.Target)
+		if !targetOK || !rangesOverlap(targetRange, params.Range) || len(repair.Payload.Edits) == 0 {
+			continue
+		}
+		edits := make([]workspaceTextEdit, 0, len(repair.Payload.Edits))
+		complete := true
+		for _, repairEdit := range repair.Payload.Edits {
+			mappedRange, mapped := document.protocolRange(repairEdit.Target)
+			if !mapped {
+				complete = false
+				break
+			}
+			edits = append(edits, workspaceTextEdit{Range: mappedRange, NewText: repairEdit.NewText})
+		}
+		if !complete {
+			continue
+		}
+		actions = append(actions, codeAction{
+			Title: repairTitle(string(repair.Kind)),
+			Kind:  "quickfix",
+			Edit:  workspaceEdit{Changes: map[string][]workspaceTextEdit{document.uri: edits}},
+		})
+	}
+	return actions, nil
+}
+
 func (s *Server) renameBinderAtPosition(ctx context.Context, uri string, position Position) (semanticDocument, *service.BinderInfo, error) {
 	document, binder, err := s.binderAtPosition(ctx, uri, position)
 	if err != nil {
@@ -834,6 +886,38 @@ func binderLocations(binder service.BinderInfo) []service.SourceLocation {
 
 func rangeContainsPosition(item Range, position Position) bool {
 	return positionBeforeOrEqual(item.Start, position) && positionBeforeOrEqual(position, item.End)
+}
+
+func rangesOverlap(left, right Range) bool {
+	return positionBeforeOrEqual(left.Start, right.End) && positionBeforeOrEqual(right.Start, left.End)
+}
+
+func containsCodeActionKind(items []string, wanted string) bool {
+	for _, item := range items {
+		if item == wanted || strings.HasPrefix(item, wanted+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func repairTitle(kind string) string {
+	switch kind {
+	case "remove_redundant_claim":
+		return "Remove redundant type claim"
+	case "remove_redundant_guard":
+		return "Remove redundant guard"
+	case "hoist_invariant_read":
+		return "Hoist invariant read"
+	case "initialize_discriminant":
+		return "Initialize discriminant"
+	case "add_nil_guard":
+		return "Add nil guard"
+	case "add_annotation":
+		return "Add type annotation"
+	default:
+		return "Apply checker repair"
+	}
 }
 
 func positionBeforeOrEqual(left, right Position) bool {

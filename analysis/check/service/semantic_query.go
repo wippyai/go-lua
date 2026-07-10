@@ -5,7 +5,7 @@ import "github.com/wippyai/go-lua/analysis/check/judgment"
 // EmbeddingSchemaVersion pins the versioned, renderer-independent checker
 // embedding surface. It is deliberately separate from JIRSchemaVersion: JIR
 // pins judgments, while this pin covers navigation and repair DTOs.
-const EmbeddingSchemaVersion = 3
+const EmbeddingSchemaVersion = 4
 
 // SourceSpan is the current source-location value used by the embedding
 // surface. It is intentionally isolated from identity/display policy so a
@@ -175,13 +175,23 @@ type CallRelationsResponse struct {
 // candidate. Payload contains semantic values only; user-facing wording and
 // edit mechanics remain frontend concerns.
 type RepairAction struct {
+	Code    judgment.Code
 	Kind    judgment.RepairKind
 	Target  SourceLocation
 	Payload RepairPayload
 }
 
+// RepairEdit is one exact, source-bound change verified by the checker when
+// projecting a descriptor-declared repair. Frontends must apply these edits as
+// given and must not infer additional edits from diagnostic text.
+type RepairEdit struct {
+	Target  SourceLocation
+	NewText string
+}
+
 type RepairPayload struct {
-	Type string
+	Type  string
+	Edits []RepairEdit
 }
 
 type RepairActionsRequest struct {

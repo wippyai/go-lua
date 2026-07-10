@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/service"
+	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lsp/jsonrpc2"
 )
 
@@ -397,6 +399,66 @@ func TestInProcessRenameProjectsCompleteOccurrenceWorkspaceEdit(t *testing.T) {
 	}
 }
 
+func TestInProcessCodeActionUsesStructuredEditAndClearsDiagnostic(t *testing.T) {
+	policy := diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		diagnostic.Code(judgment.DiagnosticCodeAdviceRedundantClaim): diagnostic.Enable(),
+	}}
+	server, uri := openSolvedDocumentWithOptions(t, "local value: number = 1\nlocal redundant = value as number\nreturn redundant\n", Options{
+		Debounce: time.Millisecond,
+		Resolver: FileConventionsResolver{Template: service.UnitInput{DiagnosticPolicy: policy}},
+	})
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+	before := waitForDocumentVersion(t, server, 1)
+	diagnostics, err := server.session.Diagnostics(context.Background(), service.ListDiagnosticsRequest{Selector: service.ResultSelector{UnitID: before.UnitID, SolveSeq: before.SolveSeq, Profile: before.Profile}})
+	if err != nil || !containsDiagnosticCode(diagnostics.Rendered, string(judgment.DiagnosticCodeAdviceRedundantClaim)) {
+		t.Fatalf("diagnostics before repair = %#v, %v; want redundant-claim diagnostic", diagnostics.Rendered, err)
+	}
+
+	result, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodCodeAction, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"range":        map[string]any{"start": map[string]any{"line": 1, "character": 0}, "end": map[string]any{"line": 1, "character": 33}},
+		"context":      map[string]any{"only": []string{"quickfix"}},
+	})})
+	if problem != nil {
+		t.Fatalf("code actions: %v", problem)
+	}
+	actions, ok := result.([]codeAction)
+	if !ok || len(actions) != 1 || actions[0].Kind != "quickfix" || len(actions[0].Edit.Changes[uri]) != 1 {
+		t.Fatalf("code actions = %#v, want one descriptor-backed quickfix", result)
+	}
+	buffer := newTextBuffer([]byte("local value: number = 1\nlocal redundant = value as number\nreturn redundant\n"))
+	edit := actions[0].Edit.Changes[uri][0]
+	if err := buffer.apply([]TextDocumentContentChangeEvent{{Range: &edit.Range, Text: edit.NewText}}); err != nil {
+		t.Fatalf("apply code action: %v", err)
+	}
+	if got, want := string(buffer.bytes()), "local value: number = 1\nlocal redundant = value\nreturn redundant\n"; got != want {
+		t.Fatalf("applied code action = %q, want %q", got, want)
+	}
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodDidChange, Params: paramsJSON(t, map[string]any{
+		"textDocument":   map[string]any{"uri": uri, "version": 2},
+		"contentChanges": []map[string]any{{"text": string(buffer.bytes())}},
+	})}); problem != nil {
+		t.Fatalf("apply repaired document: %v", problem)
+	}
+	after := waitForDocumentVersion(t, server, 2)
+	diagnostics, err = server.session.Diagnostics(context.Background(), service.ListDiagnosticsRequest{Selector: service.ResultSelector{UnitID: after.UnitID, SolveSeq: after.SolveSeq, Profile: after.Profile}})
+	if err != nil {
+		t.Fatalf("diagnostics after repair: %v", err)
+	}
+	if containsDiagnosticCode(diagnostics.Rendered, string(judgment.DiagnosticCodeAdviceRedundantClaim)) {
+		t.Fatalf("diagnostics after repair = %#v, want redundant-claim diagnostic gone", diagnostics.Rendered)
+	}
+}
+
+func containsDiagnosticCode(items []diagnostic.Diagnostic, code string) bool {
+	for _, item := range items {
+		if string(item.Code) == code {
+			return true
+		}
+	}
+	return false
+}
+
 func documentSymbolNamed(items []documentSymbol, name string, kind int) *documentSymbol {
 	for index := range items {
 		if items[index].Name == name && items[index].Kind == kind {
@@ -408,7 +470,12 @@ func documentSymbolNamed(items []documentSymbol, name string, kind int) *documen
 
 func openSolvedDocument(t *testing.T, text string) (*Server, string) {
 	t.Helper()
-	server := NewServer(service.NewBatchSession(), Options{Debounce: time.Millisecond})
+	return openSolvedDocumentWithOptions(t, text, Options{Debounce: time.Millisecond})
+}
+
+func openSolvedDocumentWithOptions(t *testing.T, text string, options Options) (*Server, string) {
+	t.Helper()
+	server := NewServer(service.NewBatchSession(), options)
 	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize}); problem != nil {
 		t.Fatalf("initialize: %v", problem)
 	}
@@ -421,6 +488,12 @@ func openSolvedDocument(t *testing.T, text string) (*Server, string) {
 	}); problem != nil {
 		t.Fatalf("didOpen: %v", problem)
 	}
+	_ = waitForDocumentVersion(t, server, 1)
+	return server, uri
+}
+
+func waitForDocumentVersion(t *testing.T, server *Server, version int64) service.ResultTag {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		server.mu.Lock()
@@ -430,14 +503,17 @@ func openSolvedDocument(t *testing.T, text string) (*Server, string) {
 		}
 		server.mu.Unlock()
 		if unitID != "" {
-			if _, ok := server.session.LastComplete(context.Background(), service.ResultRequest{Selector: service.ResultSelector{UnitID: unitID}}); ok {
-				return server, uri
+			if completed, ok := server.session.LastComplete(context.Background(), service.ResultRequest{Selector: service.ResultSelector{UnitID: unitID}}); ok {
+				tag := completed.Tag()
+				if tag.DocumentVersion == version {
+					return tag
+				}
 			}
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("document solve did not complete")
-	return nil, ""
+	t.Fatalf("document version %d solve did not complete", version)
+	return service.ResultTag{}
 }
 
 type blockFirstSolveSession struct {
@@ -542,13 +618,14 @@ func assertCapabilities(t *testing.T, payload []byte) {
 				DocumentSymbolProvider    bool            `json:"documentSymbolProvider"`
 				RenameProvider            bool            `json:"renameProvider"`
 				PrepareRenameProvider     bool            `json:"prepareRenameProvider"`
+				CodeActionProvider        bool            `json:"codeActionProvider"`
 			} `json:"capabilities"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(payload, &response); err != nil {
 		t.Fatalf("decode initialize result: %v", err)
 	}
-	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || !response.Result.Capabilities.RenameProvider || !response.Result.Capabilities.PrepareRenameProvider {
+	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || !response.Result.Capabilities.RenameProvider || !response.Result.Capabilities.PrepareRenameProvider || !response.Result.Capabilities.CodeActionProvider {
 		t.Fatalf("advertised capabilities = %s", payload)
 	}
 }

@@ -162,6 +162,11 @@ func (b *textBuffer) rangeForCompilerSpan(startLine, startColumn, endLine, endCo
 		if err != nil {
 			return Range{}, err
 		}
+		// Compiler spans name their final byte with one-indexed inclusive
+		// coordinates. LSP ranges are exclusive at the end.
+		if end < len(b.content) {
+			end++
+		}
 	}
 	return b.rangeForSpan(embedding.ByteSpan{StartByte: start, EndByte: end})
 }

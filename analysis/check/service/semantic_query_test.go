@@ -159,12 +159,20 @@ return redundant
 	}
 	declared := declaredRepairKinds()
 	for _, action := range result.Actions {
-		if _, ok := declared[action.Kind]; !ok || !action.Target.Valid() {
+		if _, ok := declared[action.Kind]; !ok || !action.Target.Valid() || action.Code == "" {
 			t.Fatalf("repair action = %#v, want a declared kind and target", action)
 		}
 	}
 	if !hasRepairKind(result.Actions, judgment.RepairRemoveRedundantClaim) {
 		t.Fatalf("repair actions = %#v, want redundant-claim action", result.Actions)
+	}
+	for _, action := range result.Actions {
+		if action.Kind != judgment.RepairRemoveRedundantClaim {
+			continue
+		}
+		if len(action.Payload.Edits) != 1 || action.Payload.Edits[0].NewText != "value" {
+			t.Fatalf("redundant-claim repair payload = %#v, want exact operand replacement", action.Payload)
+		}
 	}
 	nilGuard := repairActionsFromJudgments("main.lua", []judgment.Judgment{{
 		Code:     judgment.CodeCallCallee,

@@ -110,17 +110,13 @@ func (s *BatchSession) RepairActions(ctx context.Context, req RepairActionsReque
 	items := make([]RepairAction, 0, len(snapshot.semantic.repairs))
 	for _, item := range snapshot.semantic.repairs {
 		if len(allowed) != 0 {
-			// RepairAction intentionally does not duplicate judgment code. The
-			// action set is therefore selected by reconstructing descriptor
-			// membership below from the immutable judgment list.
-			continue
+			if _, ok := allowed[item.Code]; !ok {
+				continue
+			}
 		}
-		items = append(items, item)
+		items = append(items, cloneRepairAction(item))
 	}
-	if len(allowed) != 0 {
-		items = repairActionsForCodes(snapshot.semantic.entryFile, snapshot.judgments, allowed)
-	}
-	return RepairActionsResponse{Meta: meta, Actions: append([]RepairAction(nil), items...)}, nil
+	return RepairActionsResponse{Meta: meta, Actions: items}, nil
 }
 
 func offsetForPosition(data []byte, position SourcePosition) (int, bool) {
@@ -265,4 +261,9 @@ func repairActionsForCodes(defaultFile string, items []judgment.Judgment, allowe
 		}
 	}
 	return repairActionsFromJudgments(defaultFile, filtered)
+}
+
+func cloneRepairAction(item RepairAction) RepairAction {
+	item.Payload.Edits = append([]RepairEdit(nil), item.Payload.Edits...)
+	return item
 }
