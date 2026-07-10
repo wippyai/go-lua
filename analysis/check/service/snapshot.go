@@ -20,6 +20,7 @@ type completedSnapshot struct {
 	summaries        summary.Snapshot
 	summaryDigests   map[summary.SummaryKey]summary.Digest
 	diagnosticConfig diagnostics.Config
+	semantic         *semanticQuerySnapshot
 }
 
 func cloneResultTag(tag ResultTag) ResultTag {

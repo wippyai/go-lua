@@ -179,6 +179,7 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	bodies, bodyVersions := collectBodyResults(checked.RootResult())
 	snapshot := checked.Snapshot()
 	summaryDigests := digestSummaries(checked.RootResult(), snapshot)
+	semantic := projectSemanticQueries(input, stmts, checked.RootResult(), items)
 
 	return &completedSnapshot{
 		tag: ResultTag{
@@ -199,6 +200,7 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 		summaries:        snapshot,
 		summaryDigests:   summaryDigests,
 		diagnosticConfig: diagnosticConfig,
+		semantic:         semantic,
 	}, nil
 }
 

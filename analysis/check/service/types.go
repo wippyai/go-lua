@@ -320,4 +320,9 @@ type WorkspaceSession interface {
 	PlacementPlan(context.Context, PlacementPlanRequest) (PlacementPlanResponse, error)
 	SummarySnapshot(context.Context, SummarySnapshotRequest) (SummarySnapshotResponse, error)
 	BodyInputDigests(context.Context, BodyInputDigestsRequest) (BodyInputDigestsResponse, error)
+	BinderOccurrences(context.Context, BinderOccurrencesRequest) (BinderOccurrencesResponse, error)
+	PositionLookup(context.Context, PositionLookupRequest) (PositionLookupResponse, error)
+	DocumentSymbols(context.Context, DocumentSymbolsRequest) (DocumentSymbolsResponse, error)
+	CallRelations(context.Context, CallRelationsRequest) (CallRelationsResponse, error)
+	RepairActions(context.Context, RepairActionsRequest) (RepairActionsResponse, error)
 }

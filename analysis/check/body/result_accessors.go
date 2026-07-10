@@ -662,6 +662,16 @@ func (r *Result) SymbolHasWrite(id symbol.ID) bool {
 	return r.bindings != nil && r.bindings.HasWrite(id)
 }
 
+// WIRSymbolInfo returns the lowered symbol metadata for id. It is a read-only
+// projection of the prepared WIR body and lets embedding surfaces retain the
+// closed WIR symbol vocabulary without reaching into lowering internals.
+func (r *Result) WIRSymbolInfo(id symbol.ID) (wir.SymbolInfo, bool) {
+	if r == nil || r.wir == nil || id == 0 {
+		return wir.SymbolInfo{}, false
+	}
+	return r.wir.SymbolInfo(path.SymbolID(id))
+}
+
 // SymbolStaticType returns the stable root type inferred or declared for id
 // during WIR lowering.
 func (r *Result) SymbolStaticType(id symbol.ID) (typ.Type, bool) {
@@ -882,6 +892,31 @@ func (r *Result) LocalSymbols(stmt *ast.LocalAssignStmt) []symbol.ID {
 		return nil
 	}
 	return r.bindings.LocalSymbols(stmt)
+}
+
+// NumForSymbol returns the binder identity introduced by a numeric for loop.
+func (r *Result) NumForSymbol(stmt *ast.NumberForStmt) (symbol.ID, bool) {
+	if r == nil || r.bindings == nil || stmt == nil {
+		return 0, false
+	}
+	return r.bindings.NumForSymbol(stmt)
+}
+
+// GenericForSymbols returns the binder identities introduced by a generic for
+// loop in source order.
+func (r *Result) GenericForSymbols(stmt *ast.GenericForStmt) []symbol.ID {
+	if r == nil || r.bindings == nil || stmt == nil {
+		return nil
+	}
+	return r.bindings.GenericForSymbols(stmt)
+}
+
+// VarargSymbol returns the parameter binder for a function's vararg slot.
+func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+	if r == nil || r.bindings == nil || fn == nil {
+		return 0, false
+	}
+	return r.bindings.VarargSymbol(fn)
 }
 
 func (r *Result) LocalOrigin(id symbol.ID) (bind.LocalOrigin, bool) {
