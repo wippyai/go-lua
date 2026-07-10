@@ -1,5 +1,14 @@
 # LSP Server Design
 
+> **Superseded foundation.** The source-identity, resolver, result-tag, debug
+> correlation, and incrementality assumptions in this historical server
+> proposal are superseded by [LSP Core Design](lsp_core_design.md). In
+> particular, `DocumentVersion`/`ResultVersion` are not durable identities,
+> body-level reuse is not yet implemented, and hosts must materialize source
+> and resolution snapshots before invoking the checker. This document remains
+> useful only for the later server-side scheduling and projection discussion,
+> subject to that foundation.
+
 Status: v2 design contract after adversarial review. Not yet wired.
 
 ## Principle

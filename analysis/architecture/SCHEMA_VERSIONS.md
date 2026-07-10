@@ -6,6 +6,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 
 | Surface | Constant | Current | Covers | Bump when |
 | --- | --- | --- | --- | --- |
+| Checker embedding | `embedding.EmbeddingSchemaVersion` | v1 | Stable document/source/resolution identity DTOs: `DocumentID`, digest-bound source locations and snapshots, unit plans/imports, resolution snapshots, `SolveSeq`, and `BodyInputDigest`. | An exported embedding DTO field, initial document scheme, or its identity/versioning semantics changes. |
 | Judgment IR | `judgment.JIRSchemaVersion` | v10 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
 | Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v8 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
@@ -29,6 +30,12 @@ surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
 
 ## Journal
+
+- D17: Registered checker embedding schema v1 and its reflection-hash guard.
+  This is independent of JIR: it pins the stable document identity/snapshot
+  algebra used to materialize service inputs before a solve. `DocumentID`
+  equality is `(Scheme, OpaqueKey)` only; source/provider/editor revisions,
+  content digests, and workspace resolution views remain distinct snapshots.
 
 - D16: Bumped boundary lane schema to v8 and Judgment IR to v10. Added the
   additive manifest `OperationalEffects.typestateRequirements` wire lane and
