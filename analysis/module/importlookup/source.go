@@ -23,7 +23,7 @@ func (s Source) LookupExport(path string) (typ.Type, bool) {
 		if m == nil || m.Path != path || m.Export == nil {
 			continue
 		}
-		return m.Export, true
+		return m.ScopeType(m.Export), true
 	}
 	return nil, false
 }

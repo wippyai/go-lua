@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -48,5 +49,26 @@ func TestSourceResolveTypeRefWithModulePrefix(t *testing.T) {
 	}
 	if got, ok := source.ResolveTypeRefWithModulePrefix("app.store", nil); ok || got != nil {
 		t.Fatalf("ResolveTypeRefWithModulePrefix(empty suffix) = %v/%v, want unresolved", got, ok)
+	}
+}
+
+func TestSourceLookupResolvesNestedBareReferenceInOwningManifest(t *testing.T) {
+	entry := typetable.NewRecord().Field("id", typ.String).Build()
+	registry := manifest.New("registry")
+	registry.DefineType("Entry", entry)
+	registry.DefineType("Page", typetable.NewRecord().Field("entry", typ.NewRef("", "Entry")).Build())
+	fs := manifest.New("fs")
+	fs.DefineType("Entry", typetable.NewRecord().Field("name", typ.String).Build())
+
+	got, ok := (Source{Manifests: []*manifest.Manifest{registry, fs}}).Lookup("registry", "Page")
+	if !ok {
+		t.Fatal("Lookup(registry, Page) missing")
+	}
+	page, ok := got.(*typ.Record)
+	if !ok || page.GetField("entry") == nil {
+		t.Fatalf("Lookup(registry, Page) = %T %[1]v, want record with entry", got)
+	}
+	if !typ.TypeEquals(page.GetField("entry").Type, entry) {
+		t.Fatalf("registry Page.entry = %v, want registry Entry %v", page.GetField("entry").Type, entry)
 	}
 }

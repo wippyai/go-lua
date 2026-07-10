@@ -57,7 +57,7 @@ func (s Source) Lookup(modulePath, name string) (typ.Type, bool) {
 		if t == nil {
 			continue
 		}
-		return t, true
+		return m.ScopeType(t), true
 	}
 	return nil, false
 }
@@ -80,7 +80,7 @@ func (s Source) lookupUnqualified(name string) (typ.Type, bool) {
 		if found {
 			return nil, false
 		}
-		out = t
+		out = m.ScopeType(t)
 		found = true
 	}
 	return out, found

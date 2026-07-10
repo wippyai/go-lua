@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -34,5 +35,27 @@ func TestSourceLookupExportLaterManifestOverridesEarlier(t *testing.T) {
 	source := Source{Manifests: []*manifest.Manifest{first, second}}
 	if got, ok := source.LookupExport("provider"); !ok || got != typ.Number {
 		t.Fatalf("LookupExport(provider) = %v/%v, want later number/true", got, ok)
+	}
+}
+
+func TestSourceLookupExportResolvesBareReferenceInOwningManifest(t *testing.T) {
+	entry := typetable.NewRecord().Field("id", typ.String).Build()
+	registry := manifest.New("registry")
+	registry.DefineType("Entry", entry)
+	registry.SetExport(typetable.NewRecord().Field("get", typ.Func().Returns(typ.NewRef("", "Entry")).Build()).Build())
+	fs := manifest.New("fs")
+	fs.DefineType("Entry", typetable.NewRecord().Field("name", typ.String).Build())
+
+	got, ok := (Source{Manifests: []*manifest.Manifest{registry, fs}}).LookupExport("registry")
+	if !ok {
+		t.Fatal("LookupExport(registry) missing")
+	}
+	export, ok := got.(*typ.Record)
+	if !ok || export.GetField("get") == nil {
+		t.Fatalf("LookupExport(registry) = %T %[1]v, want record with get", got)
+	}
+	fn, ok := export.GetField("get").Type.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], entry) {
+		t.Fatalf("registry get = %v, want return registry Entry %v", export.GetField("get").Type, entry)
 	}
 }

@@ -53,7 +53,7 @@ func (s Source) Lookup(name string) (signature.Function, bool) {
 			continue
 		}
 		if sig, ok := lookupManifestSignature(m, name); ok {
-			return sig.Clone(), true
+			return m.ScopeSignature(sig).Clone(), true
 		}
 	}
 	if s.IncludeStdlib {
@@ -131,7 +131,7 @@ func (s Source) Signatures() map[string]signature.Function {
 			if s.IncludeStdlib && m.Path != "" && isBareStdlibName(name) {
 				continue
 			}
-			out[name] = sig.Clone()
+			out[name] = m.ScopeSignature(sig).Clone()
 		}
 	}
 	return out

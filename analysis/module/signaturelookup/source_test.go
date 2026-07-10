@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
@@ -62,6 +63,28 @@ func TestLookupManifestLocalMemberByQualifiedModulePath(t *testing.T) {
 	}
 	if !want.Equals(got) {
 		t.Fatalf("Lookup(sql.get) = %v, want sql-local get %v", got, want)
+	}
+}
+
+func TestLookupResolvesBareReturnReferenceInOwningManifest(t *testing.T) {
+	entry := typetable.NewRecord().Field("id", typ.String).Build()
+	registry := manifest.New("registry")
+	registry.DefineType("Entry", entry)
+	registry.DefineFunctionSignature("registry.get", signature.Function{
+		Type: typ.Func().Returns(typ.NewRef("", "Entry")).Build(),
+	})
+	fs := manifest.New("fs")
+	fs.DefineType("Entry", typetable.NewRecord().Field("name", typ.String).Build())
+	fs.DefineFunctionSignature("fs.get", signature.Function{
+		Type: typ.Func().Returns(typ.NewRef("", "Entry")).Build(),
+	})
+
+	got, ok := (Source{Manifests: []*manifest.Manifest{registry, fs}}).Lookup("registry.get")
+	if !ok || got.Type == nil || len(got.Type.Returns) != 1 {
+		t.Fatalf("Lookup(registry.get) = %#v/%v, want one-return signature", got, ok)
+	}
+	if !typ.TypeEquals(got.Type.Returns[0], entry) {
+		t.Fatalf("registry.get return = %v, want registry Entry %v", got.Type.Returns[0], entry)
 	}
 }
 
