@@ -115,7 +115,7 @@ func keyMembershipDomain() lattice.Lattice[keyMembershipLane] {
 			}
 			return keyMembershipPathMustLessOrEq(a.path, b.path) &&
 				keyMembershipPathMustLessOrEq(a.dynamicAll, b.dynamicAll) &&
-				dynamicIndexValueOriginMayLessOrEq(a.valueOrigins, b.valueOrigins) &&
+				(b.dynamicTop || dynamicIndexValueOriginMayLessOrEq(a.valueOrigins, b.valueOrigins)) &&
 				dynamicIndexReadOriginMustLessOrEq(a.readOrigins, b.readOrigins) &&
 				pendingDynamicAllRestoreMustLessOrEq(a.pendingRestores, b.pendingRestores) &&
 				keyMembershipDynamicMayLessOrEq(a, b)
@@ -127,6 +127,14 @@ func keyMembershipDomain() lattice.Lattice[keyMembershipLane] {
 			if b.bottom {
 				return a.clone()
 			}
+			// dynamicTop is the lane-wide unknown element. In particular,
+			// valueOrigins is a may set, so retaining its finite entries beside
+			// dynamicTop would make Top fail to absorb a dynamic membership state.
+			// Return the canonical top spelling rather than an observationally
+			// equivalent-but-order-inconsistent mixed representation.
+			if a.dynamicTop || b.dynamicTop {
+				return keyMembershipLane{dynamicTop: true}
+			}
 			return keyMembershipLane{
 				path:            keyMembershipSetIntersection(a.path, b.path),
 				dynamic:         keyMembershipSetUnion(a.dynamic, b.dynamic),
@@ -134,7 +142,6 @@ func keyMembershipDomain() lattice.Lattice[keyMembershipLane] {
 				valueOrigins:    dynamicIndexValueOriginSetUnion(a.valueOrigins, b.valueOrigins),
 				readOrigins:     dynamicIndexReadOriginSetIntersection(a.readOrigins, b.readOrigins),
 				pendingRestores: pendingDynamicAllRestoreSetIntersection(a.pendingRestores, b.pendingRestores),
-				dynamicTop:      a.dynamicTop || b.dynamicTop,
 			}
 		},
 		Widen: func(prev, next keyMembershipLane) keyMembershipLane {
