@@ -223,10 +223,12 @@ Core queries used:
 
 Incrementality: exactly the `lsp_design.md` contract. The adapter owns protocol
 translation and capability negotiation. Core owns dirty closure, single-flight
-solve, result publication, and last-complete cache reads.
+solve, result publication, and last-complete cache reads. Syntax-invalid open
+documents may expose parser feedback and a stale completed result; they do not
+create a partial checker result.
 
-Out of scope for v1: macro/build-system integration, speculative type recovery
-on partial parses, rename, formatting, and any LSP-only type inference.
+Out of scope for v1: macro/build-system integration, recovery type inference,
+rename, formatting, and any LSP-only type inference.
 
 ### 3. In-Runtime
 
@@ -562,8 +564,9 @@ This is intentionally a projection over `CompletedResult`, not a separate solve.
    escapes to concurrent readers.
 
 5. **The SDK asks broader questions than `readmodel.Reader` answers.**
-   Current readmodel methods are obligation-producer iterators. Agents need
-   point/path types, call relations, summary relations, and witness traces.
+   The current `Reader.ForEach...` APIs are narrow solved-occurrence iterators
+   for diagnostic passes. Agents need point/path types, call relations, summary
+   relations, and witness traces.
    First step: implement `ListJudgments`, `JudgmentsByAnchor`, `PlacementPlan`,
    and `SummarySnapshot` first, because existing data already supports them.
    Then add narrowly tested readmodel/query DTOs for `TypeAt`, `FactsAtPoint`,

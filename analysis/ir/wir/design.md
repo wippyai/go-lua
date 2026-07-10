@@ -131,9 +131,12 @@ Encoding impact, per decision:
 - **Const literals keep raw spelling** so the backend chooses int vs float
   encoding.
 - **Guard-elimination sites** (where JIR judgments authorize dropping a runtime
-  guard): `StaticMemberWrite`/`MakeTable` field access, `DynamicIndexRead`/`DynamicIndexWrite` bounds,
-  `Call` callee/arg-type guards, and `Claim` (cast/assert narrowings). These
-  instructions are where a proven judgment lets codegen emit the unchecked op.
+  guard): `StaticMemberWrite`/`MakeTable` field access,
+  `DynamicIndexRead`/`DynamicIndexWrite` bounds, and `Call` callee/arg-type
+  guards. These instructions are where a proven judgment lets codegen emit the
+  unchecked op. `Claim` is a runtime checkcast boundary: it is never trusted or
+  self-eliminating; an independent pre-claim proof may report it redundant but
+  does not make the claim instruction a guard-elimination license.
 
 ### Source local debug identity (`DbgLocal` projection)
 

@@ -104,17 +104,18 @@ Invalidation is conservative:
 
 Aliasing through mutable heap paths is handled by existing subtree/equivalence
 invalidation. Where alias information is missing, losing the implication is the
-sound result. Merging, widening, or cap overflow may drop implications; no rule
-promotes a conditioned fact to an unconditional proof unless the trigger has
-already been established in the current state.
+sound result. Merging or widening may drop implications; no rule promotes a
+conditioned fact to an unconditional proof unless the trigger has already been
+established in the current state.
 
 ## Termination
 
 The discriminant universe is finite per body because phase 1 selects only
-syntactic boolean roots and literal-string tag paths. The number of published
-conditioned facts is bounded by the body cap of 64. The path-evidence lane stores
-implications in a finite must set, so each point has a finite ascending chain for
-these facts.
+syntactic boolean roots and literal-string tag paths, and every published
+implication comes from a syntactic branch plus assignment or channel-select
+site. The path-evidence lane stores those implications in a finite must set, so
+each point has a finite ascending chain for these facts; there is no fixed
+per-body quantity cap.
 
 Existing widening remains sufficient. At loop heads, the state product calls the
 path-evidence lane's `Widen`; the lane uses must-set widening, which can only

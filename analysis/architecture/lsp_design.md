@@ -40,9 +40,10 @@ tagged results.
   for module-boundary propagation.
 - **Macro/build-system integration, formatting, rename-across-crates.** Out of scope for
   v1; rename is a later item and rides subject refs, not a bespoke index.
-- **Speculative type-inference-on-partial-parse.** On an unparseable buffer we serve the
-  last completed solve for unaffected body digests and a parse diagnostic for the broken
-  region; we do not invent a recovery type system.
+- **Partial checker results.** The service does not publish a partial solve or
+  partial-result flag. On an unparseable buffer it may serve the last completed
+  result for its own document version as stale, alongside parser feedback; it
+  never infers from a malformed AST.
 
 ## Architecture
 
@@ -223,8 +224,9 @@ equivalent.
 1. **Dependency graph precision.** Which binder and local-summary edges are required for
    the first useful implementation, and which can be conservatively approximated by
    invalidating more bodies?
-2. **Partial parse body mapping.** How much of the previous `BodyID` map can be reused
-   when the edited document has syntax errors around a body boundary?
+2. **Stale-result body mapping.** Which previous `BodyID` anchors remain useful
+   for display while an edited document has syntax errors around a body boundary,
+   before the next completed solve is published?
 3. **Result tag shape.** Should `ResultVersion` be a server-local ordinal, a digest of
    the solved projection, or both for better LSP/client cache behavior?
 4. **Profile-independent family list.** The design requires an audited list before a
