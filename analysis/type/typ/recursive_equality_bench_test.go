@@ -63,3 +63,70 @@ func BenchmarkRecursiveFamilyOpenRecursiveCache(b *testing.B) {
 		}
 	}
 }
+
+// benchmarkLiveOpenRecursiveScan is the pre-cache traversal retained as a
+// benchmark control. The production predicate must remain materially cheaper
+// than this full graph walk after its first lookup.
+type benchmarkOpenRecursiveScan struct {
+	small    [64]recursiveTraversalMemoKey
+	smallLen int
+	entries  map[recursiveTraversalMemoKey]struct{}
+}
+
+func (s *benchmarkOpenRecursiveScan) contains(t Type) bool {
+	t = unwrapAnnotatedOrNil(t)
+	if t == nil {
+		return false
+	}
+	if rec, ok := t.(*Recursive); ok {
+		rec.ensureContainsClosedFlag()
+		return !rec.containsFlagsClosed
+	}
+	if !knownContainsRecursive(t) || !s.enter(t) {
+		return false
+	}
+	return WalkChildren(t, func(child Type) bool {
+		return s.contains(child)
+	})
+}
+
+func (s *benchmarkOpenRecursiveScan) enter(t Type) bool {
+	key, ok := recursiveTraversalMemo(t)
+	if !ok {
+		return true
+	}
+	for i := 0; i < s.smallLen; i++ {
+		if s.small[i] == key {
+			return false
+		}
+	}
+	if _, ok := s.entries[key]; ok {
+		return false
+	}
+	if s.entries == nil && s.smallLen < len(s.small) {
+		s.small[s.smallLen] = key
+		s.smallLen++
+		return true
+	}
+	if s.entries == nil {
+		s.entries = make(map[recursiveTraversalMemoKey]struct{}, len(s.small)+1)
+		for i := 0; i < s.smallLen; i++ {
+			s.entries[s.small[i]] = struct{}{}
+		}
+		s.smallLen = 0
+	}
+	s.entries[key] = struct{}{}
+	return true
+}
+
+func BenchmarkRecursiveFamilyOpenRecursiveLiveRescan(b *testing.B) {
+	typeFamily := benchmarkRecursiveFamily(48)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var scan benchmarkOpenRecursiveScan
+		if scan.contains(typeFamily) {
+			b.Fatal("closed recursive family must not be open")
+		}
+	}
+}
