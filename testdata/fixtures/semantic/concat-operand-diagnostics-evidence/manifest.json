@@ -23,20 +23,20 @@
             "file": "main.lua",
             "line": 2,
             "column": 25,
-            "kind": "abstract fact",
-            "trust": "proven",
+            "kind": "missing proof",
+            "trust": "unknown",
             "contains": [
-              "right operand `maybe` has type nil"
+              "no guard on this path proves maybe is non-nil"
             ]
           },
           {
             "file": "main.lua",
             "line": 2,
             "column": 25,
-            "kind": "missing proof",
-            "trust": "unknown",
+            "kind": "abstract fact",
+            "trust": "proven",
             "contains": [
-              "no guard on this path proves maybe is non-nil"
+              "right operand `maybe` has type nil"
             ]
           }
         ],
