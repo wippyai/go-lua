@@ -18,8 +18,8 @@ type registryRuntime struct {
 	reg           *axis.Registry
 	err           error
 	axes          []axisRuntimeAxis
-	canonicalAxes []axisRuntimeAxis
-	byID          map[string]axisRuntimeAxis
+	canonicalAxes []uint16
+	byID          map[string]uint16
 	reducers      []reducerEntry
 
 	bottomSlots []slot
@@ -31,6 +31,7 @@ type registryRuntime struct {
 type axisRuntimeAxis struct {
 	spec      axis.ErasedSpec
 	id        string
+	ordinal   uint16
 	keyHash   uint64
 	topAny    any
 	topType   reflect.Type
@@ -106,7 +107,7 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 
 	specs := reg.SpecsView()
 	rt.axes = make([]axisRuntimeAxis, 0, specs.Len())
-	rt.byID = make(map[string]axisRuntimeAxis, specs.Len())
+	rt.byID = make(map[string]uint16, specs.Len())
 	rt.bottomSlots = make([]slot, 0, specs.Len())
 	for i := 0; i < specs.Len(); i++ {
 		spec := specs.At(i)
@@ -129,15 +130,24 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 			bottomAny: spec.BottomAny(),
 		}
 		rt.axes = append(rt.axes, meta)
-		rt.byID[id] = meta
 	}
-	rt.canonicalAxes = append(rt.canonicalAxes, rt.axes...)
-	sort.Slice(rt.canonicalAxes, func(i, j int) bool {
-		return rt.canonicalAxes[i].id < rt.canonicalAxes[j].id
+	order := make([]int, len(rt.axes))
+	for i := range order {
+		order[i] = i
+	}
+	sort.Slice(order, func(i, j int) bool {
+		return rt.axes[order[i]].id < rt.axes[order[j]].id
 	})
-	for i := range rt.canonicalAxes {
-		meta := rt.canonicalAxes[i]
-		rt.bottomSlots = append(rt.bottomSlots, slot{key: meta.id, value: meta.bottomAny})
+	rt.canonicalAxes = make([]uint16, len(order))
+	for ordinal, index := range order {
+		if ordinal > int(^uint16(0)) {
+			rt.err = fmt.Errorf("product: registry has too many axes")
+			return rt
+		}
+		rt.axes[index].ordinal = uint16(ordinal)
+		rt.byID[rt.axes[index].id] = uint16(index)
+		rt.canonicalAxes[ordinal] = uint16(index)
+		rt.bottomSlots = append(rt.bottomSlots, slot{ordinal: uint16(ordinal), value: rt.axes[index].bottomAny})
 	}
 
 	reducers := reg.ReducersView()
@@ -158,6 +168,16 @@ func (rt *registryRuntime) bottomValue() Value {
 }
 
 func (rt *registryRuntime) axis(id string) (axisRuntimeAxis, bool) {
-	info, ok := rt.byID[id]
-	return info, ok
+	index, ok := rt.byID[id]
+	if !ok {
+		return axisRuntimeAxis{}, false
+	}
+	return rt.axes[index], true
+}
+
+func (rt *registryRuntime) axisOrdinal(ordinal uint16) axisRuntimeAxis {
+	if int(ordinal) >= len(rt.canonicalAxes) {
+		panic("product: slot ordinal outside registry")
+	}
+	return rt.axes[rt.canonicalAxes[ordinal]]
 }

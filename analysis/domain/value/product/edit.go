@@ -26,8 +26,10 @@ type Editor struct {
 	source   Value
 	presence presence.Value
 	slots    []slot
+	inline   [inlineSlotCount]slot
 	owned    bool
 	changed  bool
+	bottom   bool
 }
 
 // Edit returns an Editor seeded with v's current shape, presence, and slots.
@@ -39,6 +41,7 @@ func Edit(reg *axis.Registry, v Value) Editor {
 		source:   v,
 		presence: PresenceOf(v),
 		slots:    v.slotsView(),
+		bottom:   PresenceOf(v).IsBottom(),
 	}
 }
 
@@ -58,7 +61,7 @@ func EditSet[T any](ed *Editor, key axis.Key[T], value T) {
 	if wantType != info.topType {
 		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
 	}
-	if existing, ok := slotValue(ed.slots, key.ID()); ok {
+	if existing, ok := slotValue(ed.slots, info.ordinal); ok {
 		if info.spec.EqualAny(existing, value) {
 			return
 		}
@@ -66,10 +69,13 @@ func EditSet[T any](ed *Editor, key axis.Key[T], value T) {
 		return
 	}
 	ed.ensureOwned()
+	if info.spec.EqualAny(value, info.bottomAny) {
+		ed.bottom = true
+	}
 	if info.spec.IsTopAny(value) {
-		ed.slots = deleteSlot(ed.slots, key.ID())
+		ed.slots = deleteSlot(ed.slots, info.ordinal)
 	} else {
-		ed.slots = upsertSlot(ed.slots, key.ID(), value)
+		ed.slots = upsertSlot(ed.slots, info.ordinal, value)
 	}
 	ed.changed = true
 }
@@ -80,6 +86,9 @@ func (ed *Editor) SetPresence(p presence.Value) {
 		return
 	}
 	ed.presence = p
+	if p.IsBottom() {
+		ed.bottom = true
+	}
 	ed.changed = true
 }
 
@@ -89,20 +98,33 @@ func (ed *Editor) Done() Value {
 	if !ed.changed {
 		return ed.source
 	}
-	return internRuntime(ed.rt, ShapeOf(ed.source), ed.presence, ed.slots)
+	if ed.bottom {
+		return ed.rt.bottomValue()
+	}
+	if anyReducerApplicable(ed.rt, ed.rt.reducers, ed.slots) {
+		owned := make([]slot, len(ed.slots))
+		copy(owned, ed.slots)
+		return internRuntime(ed.rt, ShapeOf(ed.source), ed.presence, owned)
+	}
+	return internCanonicalNoBottom(ed.rt, ShapeOf(ed.source), ed.presence, ed.slots)
 }
 
 func (ed *Editor) ensureOwned() {
 	if ed.owned {
 		return
 	}
-	ed.slots = copySlots(ed.source)
+	if len(ed.slots) <= inlineSlotCount {
+		count := copy(ed.inline[:], ed.slots)
+		ed.slots = ed.inline[:count]
+	} else {
+		ed.slots = copySlots(ed.source)
+	}
 	ed.owned = true
 }
 
-func slotValue(slots []slot, key string) (any, bool) {
+func slotValue(slots []slot, ordinal uint16) (any, bool) {
 	for i := range slots {
-		if slots[i].key == key {
+		if slots[i].ordinal == ordinal {
 			return slots[i].value, true
 		}
 	}

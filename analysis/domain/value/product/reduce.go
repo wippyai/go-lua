@@ -20,11 +20,15 @@ type reducerEntry struct {
 // axis it reads must be present (a top axis is never stored as a slot, so an
 // absent read axis means the reducer would observe top and no-op). An empty
 // reads list means the reducer is always applicable.
-func (e reducerEntry) applicable(slots []slot) bool {
+func (e reducerEntry) applicable(rt *registryRuntime, slots []slot) bool {
 	for _, read := range e.reads {
+		info, ok := rt.axis(read)
+		if !ok {
+			return false
+		}
 		found := false
 		for i := range slots {
-			if slots[i].key == read {
+			if slots[i].ordinal == info.ordinal {
 				found = true
 				break
 			}
@@ -36,9 +40,9 @@ func (e reducerEntry) applicable(slots []slot) bool {
 	return true
 }
 
-func anyReducerApplicable(reducers []reducerEntry, slots []slot) bool {
+func anyReducerApplicable(rt *registryRuntime, reducers []reducerEntry, slots []slot) bool {
 	for i := range reducers {
-		if reducers[i].applicable(slots) {
+		if reducers[i].applicable(rt, slots) {
 			return true
 		}
 	}
@@ -51,7 +55,7 @@ func reduce(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) (S
 		return ShapeBottom, presence.Bottom(), rt.bottomSlots
 	}
 
-	if len(rt.reducers) == 0 || !anyReducerApplicable(rt.reducers, slots) {
+	if len(rt.reducers) == 0 || !anyReducerApplicable(rt, rt.reducers, slots) {
 		return shape, p, slots
 	}
 
@@ -128,7 +132,7 @@ func (e *reduceEditor) GetAny(key string) (any, bool) {
 		return nil, false
 	}
 	for i := range e.values {
-		if e.values[i].key == key {
+		if e.values[i].ordinal == info.ordinal {
 			return e.values[i].value, true
 		}
 	}
@@ -145,7 +149,7 @@ func (e *reduceEditor) SetAny(key string, value any) {
 	}
 	if info.spec.IsTopAny(value) {
 		for i := range e.values {
-			if e.values[i].key == key {
+			if e.values[i].ordinal == info.ordinal {
 				e.values = append(e.values[:i], e.values[i+1:]...)
 				e.changed = true
 				return
@@ -154,7 +158,7 @@ func (e *reduceEditor) SetAny(key string, value any) {
 		return
 	}
 	for i := range e.values {
-		if e.values[i].key == key {
+		if e.values[i].ordinal == info.ordinal {
 			if !info.spec.EqualAny(e.values[i].value, value) {
 				e.values[i].value = value
 				e.changed = true
@@ -162,7 +166,7 @@ func (e *reduceEditor) SetAny(key string, value any) {
 			return
 		}
 	}
-	e.values = append(e.values, slot{key: key, value: value})
+	e.values = append(e.values, slot{ordinal: info.ordinal, value: value})
 	e.needsSort = true
 	e.changed = true
 }
@@ -190,10 +194,7 @@ func (e *reduceEditor) isProductBottom() bool {
 		return true
 	}
 	for i := range e.values {
-		info, ok := e.rt.axis(e.values[i].key)
-		if !ok {
-			panic("product: unregistered axis slot " + e.values[i].key)
-		}
+		info := e.rt.axisOrdinal(e.values[i].ordinal)
 		if info.spec.EqualAny(e.values[i].value, info.bottomAny) {
 			return true
 		}
@@ -206,7 +207,7 @@ func (e *reduceEditor) slots() []slot {
 		return nil
 	}
 	if e.needsSort {
-		sort.Slice(e.values, func(i, j int) bool { return e.values[i].key < e.values[j].key })
+		sort.Slice(e.values, func(i, j int) bool { return e.values[i].ordinal < e.values[j].ordinal })
 		e.needsSort = false
 	}
 	return e.values

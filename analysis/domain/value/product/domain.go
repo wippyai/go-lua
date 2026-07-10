@@ -123,13 +123,13 @@ func mergeRuntime(
 	var small [8]slot
 	slots := small[:0]
 	for i := range rt.canonicalAxes {
-		spec := rt.canonicalAxes[i]
+		spec := rt.axisOrdinal(uint16(i))
 		value := axisMerge(spec, rt.axisValue(spec, a), rt.axisValue(spec, b))
 		if !spec.spec.IsTopAny(value) {
-			slots = append(slots, slot{key: spec.id, value: value})
+			slots = append(slots, slot{ordinal: spec.ordinal, value: value})
 		}
 	}
-	return internRuntime(rt,
+	return internConstructedRuntime(rt,
 		shapeMerge(ShapeOf(a), ShapeOf(b)),
 		presenceMerge(PresenceOf(a), PresenceOf(b)),
 		slots,
@@ -155,13 +155,13 @@ func meetRuntime(rt *registryRuntime, a, b Value) Value {
 	var small [8]slot
 	slots := small[:0]
 	for i := range rt.canonicalAxes {
-		spec := rt.canonicalAxes[i]
+		spec := rt.axisOrdinal(uint16(i))
 		value := spec.spec.MeetAny(rt.axisValue(spec, a), rt.axisValue(spec, b))
 		if !spec.spec.IsTopAny(value) {
-			slots = append(slots, slot{key: spec.id, value: value})
+			slots = append(slots, slot{ordinal: spec.ordinal, value: value})
 		}
 	}
-	return internRuntime(rt,
+	return internConstructedRuntime(rt,
 		shapeMeet(ShapeOf(a), ShapeOf(b)),
 		presence.Meet(PresenceOf(a), PresenceOf(b)),
 		slots,

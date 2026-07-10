@@ -30,9 +30,36 @@ func internRuntime(rt *registryRuntime, shape Shape, p presence.Value, slots []s
 		return Top()
 	}
 
+	return internCanonicalNoReducer(rt, shape, p, slots)
+}
+
+// internCanonicalNoReducer probes a known-canonical, reducer-free candidate.
+// Keeping this path separate is important: reduceEditor's erased Writer makes
+// its slice parameter escape even when no reducer can run. The schema-owned
+// constructor uses this function for its stack candidate.
+func internCanonicalNoReducer(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) Value {
+	shape = normalizeShape(shape)
+	p = normalizePresence(p)
+	shape, p, _ = reducePresenceShape(shape, p)
+	if rt.isProductBottom(p, slots) {
+		shape, p, slots = ShapeBottom, presence.Bottom(), rt.bottomSlots
+	}
+	return internCanonicalNoBottom(rt, shape, p, slots)
+}
+
+// internCanonicalNoBottom is the allocation-sensitive half of interning. Its
+// caller has already established that the candidate cannot be product bottom.
+// Keeping that proof outside the probe lets a stack candidate remain on stack.
+func internCanonicalNoBottom(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) Value {
+	shape = normalizeShape(shape)
+	p = normalizePresence(p)
+	shape, p, _ = reducePresenceShape(shape, p)
+	if shape == ShapeTop && presence.Equal(p, presence.Top()) && len(slots) == 0 {
+		return Top()
+	}
+
 	h := rt.stableHash(shape, p, slots)
 	globalInterner.mu.Lock()
-	defer globalInterner.mu.Unlock()
 
 	bucket := globalInterner.nodes[rt.reg]
 	if bucket == nil {
@@ -42,6 +69,7 @@ func internRuntime(rt *registryRuntime, shape Shape, p presence.Value, slots []s
 
 	for _, existing := range bucket[h] {
 		if rt.sameNode(existing, shape, p, slots) {
+			globalInterner.mu.Unlock()
 			return Value{n: existing}
 		}
 	}
@@ -50,6 +78,7 @@ func internRuntime(rt *registryRuntime, shape Shape, p presence.Value, slots []s
 	copy(stored, slots)
 	n := &node{reg: rt.reg, shape: shape, presence: p, slots: stored, hash: h}
 	bucket[h] = append(bucket[h], n)
+	globalInterner.mu.Unlock()
 	return Value{n: n}
 }
 

@@ -56,8 +56,11 @@ type node struct {
 }
 
 type slot struct {
-	key   string
-	value any
+	// ordinal is assigned by the frozen product schema.  It is deliberately
+	// private: callers keep using stable external axis IDs while product nodes
+	// and all hot product operations use this dense identity.
+	ordinal uint16
+	value   any
 }
 
 func Top() Value {
@@ -101,7 +104,7 @@ func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
 	if presence.Equal(PresenceOf(v), p) {
 		return v
 	}
-	return internRuntime(rt, ShapeOf(v), p, copySlots(v))
+	return internBorrowedRuntime(rt, ShapeOf(v), p, v.slotsView())
 }
 
 // WithCompatiblePresenceFrom applies source's concrete presence to base when
@@ -132,7 +135,7 @@ func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
 		panic(fmt.Sprintf("product: unregistered axis %q", key.ID()))
 	}
 	wantType := reflect.TypeFor[T]()
-	if raw, ok := lookupSlot(v, key.ID()); ok {
+	if raw, ok := lookupSlot(v, info.ordinal); ok {
 		if gotType := reflect.TypeOf(raw); gotType != info.topType {
 			panic(fmt.Sprintf("product: axis %q has value type %v, want registered axis type %v", key.ID(), gotType, info.topType))
 		}
@@ -171,28 +174,22 @@ func Set[T any](reg *axis.Registry, v Value, key axis.Key[T], value T) Value {
 	if wantType != info.topType {
 		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
 	}
-	if existing, ok := lookupSlot(v, key.ID()); ok {
+	if existing, ok := lookupSlot(v, info.ordinal); ok {
 		if info.spec.EqualAny(existing, value) {
 			return v
 		}
 	} else if info.spec.IsTopAny(value) {
 		return v
 	}
-	slots := copySlots(v)
-	if info.spec.IsTopAny(value) {
-		slots = deleteSlot(slots, key.ID())
-	} else {
-		slots = upsertSlot(slots, key.ID(), value)
-	}
-	return internRuntime(rt, ShapeOf(v), PresenceOf(v), slots)
+	return rt.setAxis(v, info, value)
 }
 
-func lookupSlot(v Value, key string) (any, bool) {
+func lookupSlot(v Value, ordinal uint16) (any, bool) {
 	if v.n == nil {
 		return nil, false
 	}
 	for _, slot := range v.n.slots {
-		if slot.key == key {
+		if slot.ordinal == ordinal {
 			return slot.value, true
 		}
 	}
@@ -218,9 +215,9 @@ func copySlots(v Value) []slot {
 	return out
 }
 
-func deleteSlot(slots []slot, key string) []slot {
+func deleteSlot(slots []slot, ordinal uint16) []slot {
 	for i, candidate := range slots {
-		if candidate.key != key {
+		if candidate.ordinal != ordinal {
 			continue
 		}
 		out := make([]slot, 0, len(slots)-1)
@@ -231,21 +228,21 @@ func deleteSlot(slots []slot, key string) []slot {
 	return slots
 }
 
-func upsertSlot(slots []slot, key string, value any) []slot {
+func upsertSlot(slots []slot, ordinal uint16, value any) []slot {
 	for i := range slots {
-		if slots[i].key == key {
+		if slots[i].ordinal == ordinal {
 			slots[i].value = value
 			return slots
 		}
-		if key < slots[i].key {
+		if ordinal < slots[i].ordinal {
 			out := make([]slot, 0, len(slots)+1)
 			out = append(out, slots[:i]...)
-			out = append(out, slot{key: key, value: value})
+			out = append(out, slot{ordinal: ordinal, value: value})
 			out = append(out, slots[i:]...)
 			return out
 		}
 	}
-	return append(slots, slot{key: key, value: value})
+	return append(slots, slot{ordinal: ordinal, value: value})
 }
 
 func shapeLessOrEq(a, b Shape) bool {

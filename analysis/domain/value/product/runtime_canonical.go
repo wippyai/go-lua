@@ -1,10 +1,6 @@
 package product
 
-import (
-	"sort"
-
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-)
+import "sort"
 
 func (rt *registryRuntime) canonicalSlots(slots []slot) []slot {
 	if len(slots) == 0 {
@@ -13,53 +9,41 @@ func (rt *registryRuntime) canonicalSlots(slots []slot) []slot {
 	if rt.slotsAlreadyCanonical(slots) {
 		return slots
 	}
-	byKey := make(map[string]any, len(slots))
+	byOrdinal := make(map[uint16]any, len(slots))
 	for _, slot := range slots {
-		if slot.key == presence.Key.ID() {
-			panic("product: presence is a core lane, not a sparse axis")
-		}
-		info, ok := rt.axis(slot.key)
-		if !ok {
-			panic("product: unregistered axis slot " + slot.key)
-		}
+		info := rt.axisOrdinal(slot.ordinal)
 		if info.spec.IsTopAny(slot.value) {
-			delete(byKey, slot.key)
+			delete(byOrdinal, slot.ordinal)
 			continue
 		}
-		byKey[slot.key] = slot.value
+		byOrdinal[slot.ordinal] = slot.value
 	}
-	if len(byKey) == 0 {
+	if len(byOrdinal) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(byKey))
-	for key := range byKey {
-		keys = append(keys, key)
+	ordinals := make([]uint16, 0, len(byOrdinal))
+	for ordinal := range byOrdinal {
+		ordinals = append(ordinals, ordinal)
 	}
-	sort.Strings(keys)
-	out := make([]slot, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, slot{key: key, value: byKey[key]})
+	sort.Slice(ordinals, func(i, j int) bool { return ordinals[i] < ordinals[j] })
+	out := make([]slot, 0, len(ordinals))
+	for _, ordinal := range ordinals {
+		out = append(out, slot{ordinal: ordinal, value: byOrdinal[ordinal]})
 	}
 	return out
 }
 
 func (rt *registryRuntime) slotsAlreadyCanonical(slots []slot) bool {
-	var prev string
+	var prev uint16
 	for i, slot := range slots {
-		if slot.key == presence.Key.ID() {
-			panic("product: presence is a core lane, not a sparse axis")
-		}
-		info, ok := rt.axis(slot.key)
-		if !ok {
-			panic("product: unregistered axis slot " + slot.key)
-		}
+		info := rt.axisOrdinal(slot.ordinal)
 		if info.spec.IsTopAny(slot.value) {
 			return false
 		}
-		if i > 0 && prev >= slot.key {
+		if i > 0 && prev >= slot.ordinal {
 			return false
 		}
-		prev = slot.key
+		prev = slot.ordinal
 	}
 	return true
 }

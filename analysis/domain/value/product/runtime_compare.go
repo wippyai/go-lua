@@ -8,11 +8,11 @@ func (rt *registryRuntime) sameNode(n *node, shape Shape, p presence.Value, slot
 	}
 	for i, left := range n.slots {
 		right := slots[i]
-		if left.key != right.key {
+		if left.ordinal != right.ordinal {
 			return false
 		}
-		info, ok := rt.axis(left.key)
-		if !ok || !info.spec.EqualAny(left.value, right.value) {
+		info := rt.axisOrdinal(left.ordinal)
+		if !info.spec.EqualAny(left.value, right.value) {
 			return false
 		}
 	}
@@ -20,14 +20,11 @@ func (rt *registryRuntime) sameNode(n *node, shape Shape, p presence.Value, slot
 }
 
 func (rt *registryRuntime) isProductBottom(p presence.Value, slots []slot) bool {
-	if presence.Equal(p, presence.Bottom()) {
+	if p == presence.Bottom() {
 		return true
 	}
 	for _, slot := range slots {
-		info, ok := rt.axis(slot.key)
-		if !ok {
-			panic("product: unregistered axis slot " + slot.key)
-		}
+		info := rt.axes[rt.canonicalAxes[slot.ordinal]]
 		if info.spec.EqualAny(slot.value, info.bottomAny) {
 			return true
 		}
