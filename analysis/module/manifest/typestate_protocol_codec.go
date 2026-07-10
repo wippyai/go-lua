@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 )
@@ -163,6 +164,9 @@ func validateEffectRowTypestateUsage(defs map[typestate.Protocol]typestate.Defin
 
 func validateOperationalTypestateUsage(defs map[typestate.Protocol]typestate.Definition, effects signature.OperationalEffects) error {
 	for _, fact := range effects.LifecycleEffects {
+		if err := validateOperationalLifecycleTarget(fact.Target); err != nil {
+			return err
+		}
 		switch fact.Kind {
 		case signature.LifecycleAcquire:
 			if err := validateLifecycleAcquire(defs, fact.Protocol, fact.To, fact.Obligation); err != nil {
@@ -181,6 +185,19 @@ func validateOperationalTypestateUsage(defs map[typestate.Protocol]typestate.Def
 		}
 	}
 	return nil
+}
+
+func validateOperationalLifecycleTarget(target pathdom.Path) error {
+	if target.IsPlaceholder() {
+		if target.PlaceholderIndex() < 0 {
+			return fmt.Errorf("lifecycle target has negative parameter index %d", target.PlaceholderIndex())
+		}
+		return nil
+	}
+	if _, ok := returnSlotPathIndex(target); ok {
+		return nil
+	}
+	return fmt.Errorf("lifecycle target %q is not a parameter or return slot", target.String())
 }
 
 func validateLifecycleAcquire(defs map[typestate.Protocol]typestate.Definition, protocol typestate.Protocol, state typestate.State, obligation typestate.Obligation) error {

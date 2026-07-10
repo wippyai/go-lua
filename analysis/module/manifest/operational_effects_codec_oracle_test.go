@@ -131,6 +131,13 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 		},
 		LifecycleEffects: []signature.LifecycleEffect{
 			{
+				Target:     pathdom.Path{Root: "ret[0]"},
+				Kind:       signature.LifecycleAcquire,
+				Protocol:   typestate.Protocol("connection"),
+				To:         typestate.State("open"),
+				Obligation: typestate.Obligation{Final: typestate.State("closed")},
+			},
+			{
 				Target:     pathdom.NewPlaceholder(0).Field("tx"),
 				Kind:       signature.LifecycleAcquire,
 				Protocol:   typestate.Protocol("transaction"),

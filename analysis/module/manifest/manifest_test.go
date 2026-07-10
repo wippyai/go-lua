@@ -558,13 +558,16 @@ func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
 		wire lifecycleEffectWire
 		want string
 	}{
-		{"acquire target missing param", lifecycleEffectWire{Target: &placeholderPathWire{}, Kind: "acquire", Protocol: "resource", To: "active"}, "placeholder path param missing"},
-		{"acquire missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "acquire", To: "active"}, "missing protocol"},
-		{"acquire missing state", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "acquire", Protocol: "resource"}, "acquire missing state"},
-		{"transition missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "transition", To: "closed"}, "missing protocol"},
-		{"transition missing target state", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "transition", Protocol: "resource", From: "open"}, "transition missing target state"},
-		{"transition missing source state", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "transition", Protocol: "resource", To: "closed"}, "transition missing source state"},
-		{"escape missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "escape"}, "missing protocol"},
+		{"acquire target missing root", lifecycleEffectWire{Target: &boundaryPathWire{}, Kind: "acquire", Protocol: "resource", To: "active"}, "boundary path must set exactly one of param or return"},
+		{"acquire missing protocol", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0)}, Kind: "acquire", To: "active"}, "missing protocol"},
+		{"acquire missing state", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0)}, Kind: "acquire", Protocol: "resource"}, "acquire missing state"},
+		{"transition missing protocol", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0)}, Kind: "transition", To: "closed"}, "missing protocol"},
+		{"transition missing target state", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0)}, Kind: "transition", Protocol: "resource", From: "open"}, "transition missing target state"},
+		{"transition missing source state", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0)}, Kind: "transition", Protocol: "resource", To: "closed"}, "transition missing source state"},
+		{"escape missing protocol", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0)}, Kind: "escape"}, "missing protocol"},
+		{"negative param target", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(-1)}, Kind: "escape", Protocol: "resource"}, "negative placeholder index -1"},
+		{"negative return target", lifecycleEffectWire{Target: &boundaryPathWire{Return: encodeInt(-1)}, Kind: "escape", Protocol: "resource"}, "negative return index -1"},
+		{"ambiguous boundary target", lifecycleEffectWire{Target: &boundaryPathWire{Param: encodeInt(0), Return: encodeInt(0)}, Kind: "escape", Protocol: "resource"}, "boundary path must set exactly one of param or return"},
 	}
 	for _, tt := range decodeTests {
 		t.Run("decode "+tt.name, func(t *testing.T) {
@@ -701,6 +704,19 @@ func TestManifestRejectsLifecycleEffectsOutsideDeclaredFSM(t *testing.T) {
 				}},
 			}},
 			want: `does not declare transition "finished" -> "active"`,
+		},
+		{
+			name: "operational lifecycle target is not boundary relative",
+			sig: signature.Function{Type: typ.Func().Param("tx", typ.Any).Build(), OperationalEffects: &signature.OperationalEffects{
+				LifecycleEffects: []signature.LifecycleEffect{{
+					Target:   pathdom.Path{Root: "local"},
+					Kind:     signature.LifecycleTransition,
+					Protocol: "transaction",
+					From:     "active",
+					To:       "finished",
+				}},
+			}},
+			want: `lifecycle target "local" is not a parameter or return slot`,
 		},
 	}
 	for _, tt := range tests {

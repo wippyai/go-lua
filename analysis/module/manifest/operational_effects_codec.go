@@ -151,13 +151,13 @@ type returnFlowWire struct {
 }
 
 type lifecycleEffectWire struct {
-	Target   *placeholderPathWire `json:"target,omitempty"`
-	Kind     string               `json:"kind"`
-	Protocol string               `json:"protocol"`
-	From     string               `json:"from,omitempty"`
-	To       string               `json:"to,omitempty"`
-	Final    string               `json:"final,omitempty"`
-	Finals   []string             `json:"finals,omitempty"`
+	Target   *boundaryPathWire `json:"target,omitempty"`
+	Kind     string            `json:"kind"`
+	Protocol string            `json:"protocol"`
+	From     string            `json:"from,omitempty"`
+	To       string            `json:"to,omitempty"`
+	Final    string            `json:"final,omitempty"`
+	Finals   []string          `json:"finals,omitempty"`
 }
 
 type returnAllocationTemplateWire struct {
@@ -646,7 +646,11 @@ func decodeDynamicValueKeyMembership(w dynamicValueKeyMembershipWire) (signature
 }
 
 func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWire, error) {
-	target, err := encodePlaceholderPath(effect.Target)
+	// Lifecycle effects may describe a resource passed into a call or one
+	// created in a result slot.  Use the shared boundary-path codec rather than
+	// the older parameter-only codec so an acquisition such as connect() ->
+	// ret[0]:open survives manifest transport.
+	target, err := encodeBoundaryPath(effect.Target)
 	if err != nil {
 		return lifecycleEffectWire{}, fmt.Errorf("target: %w", err)
 	}
@@ -689,7 +693,7 @@ func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWir
 }
 
 func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, error) {
-	target, err := decodePlaceholderPath(w.Target)
+	target, err := decodeBoundaryPath(w.Target)
 	if err != nil {
 		return signature.LifecycleEffect{}, fmt.Errorf("target: %w", err)
 	}
@@ -738,7 +742,7 @@ func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, er
 }
 
 func compareLifecycleEffectWire(a, b lifecycleEffectWire) int {
-	if c := comparePlaceholderPathWire(a.Target, b.Target); c != 0 {
+	if c := compareBoundaryPathWire(a.Target, b.Target); c != 0 {
 		return c
 	}
 	pairs := [][2]string{
@@ -1099,6 +1103,9 @@ func decodePlaceholderPath(w *placeholderPathWire) (pathdom.Path, error) {
 func encodeBoundaryPath(p pathdom.Path) (*boundaryPathWire, error) {
 	switch {
 	case p.IsPlaceholder():
+		if index := p.PlaceholderIndex(); index < 0 {
+			return nil, fmt.Errorf("negative placeholder index %d", index)
+		}
 		return &boundaryPathWire{
 			Param:  encodeInt(p.PlaceholderIndex()),
 			Suffix: segment.FormatSegments(p.Segments),
