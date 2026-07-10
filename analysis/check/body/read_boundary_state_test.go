@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -11,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -23,15 +25,30 @@ func TestBoundaryPathResolutionReturnsSealedValueDuringSelfReentry(t *testing.T)
 	sym := symbol.ID(19)
 	p := path.NewPath(sym, "recursive")
 	sealed := typevalue.FromType(reg, typ.String)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 19, HasExpr: true}
+	builder := visibility.NewBuilder()
+	builder.Define(point, sym, "recursive")
 
-	result := &Result{registry: reg}
+	result := &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		facts: factflow.NewFacts(factflow.FactsInput{PathAssignments: map[cfg.Point]factflow.PathAssignment{
+			point: factflow.NewPathAssignment(p, source),
+		}}),
+		published: PublishedFacts{nodeOutputs: map[cfg.Point]state.State{
+			point: state.State{}.WriteValue(reg, statekey.SymbolValue(sym), sealed),
+		}},
+	}
+	if !result.needsBoundaryNodeOutput(point) {
+		t.Fatal("path assignment must require the boundary node output")
+	}
 	key, ok := result.pathValueCacheKey(sourceValueReadBoundary, point, p)
 	if !ok {
 		t.Fatal("pathValueCacheKey returned false")
 	}
 
 	got, ok := result.queries.boundaryPathValue(key, func() (product.Value, bool) {
-		return sealed, true
+		return result.computePathValue(sourceValueReadBoundary, point, p, result.boundaryStateAt)
 	}, func() (product.Value, bool) {
 		// This mirrors a boundary path refinement whose source reads the same
 		// boundary node output again. Before the cycle guard this re-entered
