@@ -326,7 +326,7 @@ func (r *Result) concatOperand(point cfg.Point, operand ast.Expr, side string, c
 		return ConcatOperandOccurrence{}, false
 	}
 	t, ok := r.concatOperandType(point, operand)
-	if !ok || !concatOperandNilRisk(t) {
+	if !ok || (!concatOperandNilRisk(t) && !r.concatOperandExplicitTop(point, operand)) {
 		return ConcatOperandOccurrence{}, false
 	}
 	if withoutNil := proof.ProjectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
@@ -343,6 +343,17 @@ func (r *Result) concatOperand(point cfg.Point, operand ast.Expr, side string, c
 		OperandSpan:      sourceSpanFromAST(ast.SpanOf(operand)),
 		Operand:          operand,
 	}, true
+}
+
+// concatOperandExplicitTop keeps explicit any/unknown assertions visible at a
+// concat boundary. Ordinary unresolved gradual values remain non-reportable;
+// their use retains the existing permissive gradual behavior.
+func (r *Result) concatOperandExplicitTop(point cfg.Point, operand ast.Expr) bool {
+	if r == nil || operand == nil {
+		return false
+	}
+	value, ok := r.ExpressionValueAtBoundary(point, operand)
+	return ok && r.ValueHasExplicitTopOrigin(value)
 }
 
 func (r *Result) concatOperandType(point cfg.Point, operand ast.Expr) (typ.Type, bool) {
