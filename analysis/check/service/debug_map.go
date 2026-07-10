@@ -108,7 +108,7 @@ func canonicalDebugMapBytes(schemaVersion int, entries []DebugMapEntry) []byte {
 		writeDebugBool(&out, entry.MaySuspend)
 		writeDebugUint64(&out, uint64(len(entry.Visible)))
 		for _, local := range entry.Visible {
-			writeDebugUint64(&out, local.Symbol)
+			writeDebugUint64(&out, uint64(local.LocalID))
 			writeDebugString(&out, local.Name)
 			writeDebugUint64(&out, uint64(local.Kind))
 		}

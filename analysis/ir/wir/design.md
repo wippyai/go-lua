@@ -222,14 +222,17 @@ ordered entries are the wire representation of:
 DebugPointID -> {
     source span,
     enclosing source anchor,
-    visible DbgLocal source-symbol set,
+    visible DbgLocal set (body-local local IDs),
     may-suspend-at-point,
 }
 ```
 
 Only source-anchored observable phases are emitted; entry, exit, and pure CFG
 joins have ordinals but no source-map row. The map digest is over the versioned
-canonical entry encoding, not Go map iteration.
+canonical entry encoding, not Go map iteration. A map `DbgLocal.LocalID` is its
+first-visibility ordinal in that body's projection; it is scoped by the body
+digest and intentionally does not serialize the binder's per-Result
+`path.Path.Symbol` number.
 
 Every body artifact has the DTO:
 

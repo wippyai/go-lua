@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
-const expectedDebugMapSchemaVersion1Hash = "f7bfc57faa8a49ba9cbd95b82fd5f915bb9a0afb9c7f227e323bf38985c89bcf"
+const expectedDebugMapSchemaVersion1Hash = "64069d7a1c02b93619ad3dc4d6195e79a08fa133fcae48193403217f23c90375"
 
 func TestDebugMapSchemaVersionPinsCurrentSurface(t *testing.T) {
 	surface := debugMapSchemaSurface()

@@ -5,13 +5,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
-// DbgLocal is the source-level local identity visible at a debug point. Symbol
-// distinguishes shadowed locals; Slot remains codegen-owned as specified by
-// the frozen WIR DbgLocal contract.
+// DbgLocal is the source-level local identity visible at a debug point.
+// LocalID is an ordinal in this body's canonical debug-local projection, so it
+// distinguishes shadowed locals without leaking a binder-global symbol number.
+// Its external identity is always the enclosing body/artifact digest plus this
+// ordinal; Slot remains codegen-owned as specified by the frozen WIR contract.
 type DbgLocal struct {
-	Symbol uint64
-	Name   string
-	Kind   wir.SymbolKind
+	LocalID uint32
+	Name    string
+	Kind    wir.SymbolKind
 }
 
 // DebugAnchor is the point's source anchor within its enclosing body. The
@@ -43,6 +45,7 @@ func (r *Result) DebugMap() []DebugMapEntry {
 		return nil
 	}
 	var out []DebugMapEntry
+	localIDs := r.debugLocalOrdinals()
 	for _, point := range r.wir.DebugPoints() {
 		baseSpan, ok := r.debugPointSpan(point.Point, wir.DebugPhaseBefore)
 		if !ok {
@@ -62,7 +65,7 @@ func (r *Result) DebugMap() []DebugMapEntry {
 				ID:         id,
 				SourceSpan: sourceSpanFromWIR(span),
 				Anchor:     debugAnchorFromWIR(span),
-				Visible:    r.debugVisibleLocals(point.Point, phase),
+				Visible:    r.debugVisibleLocals(point.Point, phase, localIDs),
 				MaySuspend: maySuspend,
 			})
 		}
@@ -86,7 +89,25 @@ func (r *Result) debugPhasesAt(point cfg.Point, maySuspend bool) []wir.DebugPhas
 	return phases
 }
 
-func (r *Result) debugVisibleLocals(point cfg.Point, phase wir.DebugPhase) []DbgLocal {
+func (r *Result) debugLocalOrdinals() map[wir.SymbolID]uint32 {
+	if r == nil || r.wir == nil {
+		return nil
+	}
+	out := make(map[wir.SymbolID]uint32)
+	for _, point := range r.wir.DebugPoints() {
+		for _, phase := range []wir.DebugPhase{wir.DebugPhaseBefore, wir.DebugPhaseAfter} {
+			for _, id := range r.wir.DebugLocalVisibility(point.Point, phase) {
+				if _, exists := out[id]; exists || !r.isDbgLocal(id) {
+					continue
+				}
+				out[id] = uint32(len(out) + 1)
+			}
+		}
+	}
+	return out
+}
+
+func (r *Result) debugVisibleLocals(point cfg.Point, phase wir.DebugPhase, localIDs map[wir.SymbolID]uint32) []DbgLocal {
 	if r == nil || r.wir == nil {
 		return nil
 	}
@@ -96,17 +117,29 @@ func (r *Result) debugVisibleLocals(point cfg.Point, phase wir.DebugPhase) []Dbg
 	}
 	out := make([]DbgLocal, 0, len(ids))
 	for _, id := range ids {
-		info, ok := r.wir.SymbolInfo(id)
-		if !ok || (info.Kind != wir.SymbolParam && info.Kind != wir.SymbolLocal) {
+		if !r.isDbgLocal(id) {
+			continue
+		}
+		info, _ := r.wir.SymbolInfo(id)
+		localID := localIDs[id]
+		if localID == 0 {
 			continue
 		}
 		out = append(out, DbgLocal{
-			Symbol: uint64(id),
-			Name:   r.wir.SymbolName(id),
-			Kind:   info.Kind,
+			LocalID: localID,
+			Name:    r.wir.SymbolName(id),
+			Kind:    info.Kind,
 		})
 	}
 	return out
+}
+
+func (r *Result) isDbgLocal(id wir.SymbolID) bool {
+	if r == nil || r.wir == nil || id == 0 {
+		return false
+	}
+	info, ok := r.wir.SymbolInfo(id)
+	return ok && (info.Kind == wir.SymbolParam || info.Kind == wir.SymbolLocal)
 }
 
 func (r *Result) debugPointSpan(point cfg.Point, phase wir.DebugPhase) (wir.Span, bool) {

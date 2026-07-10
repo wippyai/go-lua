@@ -116,7 +116,7 @@ return leaf() + unrelated()
 `)
 	after := solveDebugFixture(t, `
 local function leaf(): number
-	return 42
+local added = 10; return added
 end
 
 local function unrelated(): number
