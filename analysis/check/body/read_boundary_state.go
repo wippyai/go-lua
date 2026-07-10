@@ -11,7 +11,6 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/access"
@@ -93,32 +92,7 @@ func (r *Result) boundaryRead(point cfg.Point) state.State {
 }
 
 func (r *Result) nodeOutputAt(point cfg.Point) (state.State, bool) {
-	if r == nil {
-		return state.State{}, false
-	}
-	if out, ok := r.boundary[point]; ok {
-		return out, true
-	}
-	graph := r.Graph()
-	if r.registry == nil || graph == nil || r.boundaryXfer == nil {
-		return state.State{}, false
-	}
-	in, ok := r.solvedStateAt(point)
-	if !ok {
-		return state.State{}, false
-	}
-	out := r.boundaryXfer(transfer.NodeContext{
-		Graph:    graph,
-		Registry: r.registry,
-		Point:    point,
-		Node:     graph.Node(point),
-		Read:     r.stateRead,
-	}, in)
-	if r.boundary == nil {
-		r.boundary = make(map[cfg.Point]state.State)
-	}
-	r.boundary[point] = out
-	return out, true
+	return r.publishedNodeOutput(point)
 }
 
 func (r *Result) stateRead(point cfg.Point) state.State {

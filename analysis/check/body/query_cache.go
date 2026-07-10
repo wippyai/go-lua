@@ -22,7 +22,6 @@ type resultQueryCache struct {
 	sourceValues           cachedProductValueCache[sourceValueCacheKey]
 	pathValues             cachedProductValueCache[pathValueCacheKey]
 	callOutcomes           map[cfg.Point]callpayload.CallOutcome
-	edgeNormal             map[edgeNormalCacheKey]bool
 	normalReachable        map[cfg.Point]bool
 	normalReachableSet     bool
 	memberReadSources      []dominatingMemberReadPresenceSource
@@ -60,7 +59,6 @@ func (c *resultQueryCache) reset() {
 	c.sourceValues.reset()
 	c.pathValues.reset()
 	c.callOutcomes = nil
-	c.edgeNormal = nil
 	c.normalReachable = nil
 	c.normalReachableSet = false
 	c.memberReadSources = nil
@@ -140,11 +138,6 @@ type cachedProductValueCache[K comparable] struct {
 type cachedProductValueEntry[K comparable] struct {
 	key   K
 	value cachedProductValue
-}
-
-type edgeNormalCacheKey struct {
-	from cfg.Point
-	to   cfg.Point
 }
 
 type cachedSignatureType struct {
@@ -280,21 +273,6 @@ func (c *resultQueryCache) rememberCallOutcome(point cfg.Point, outcome callpayl
 		c.callOutcomes = make(map[cfg.Point]callpayload.CallOutcome, c.callOutcomeCapacity)
 	}
 	c.callOutcomes[point] = outcome
-}
-
-func (c *resultQueryCache) edgeCanCompleteNormally(key edgeNormalCacheKey) (bool, bool) {
-	if c.edgeNormal == nil {
-		return false, false
-	}
-	normal, ok := c.edgeNormal[key]
-	return normal, ok
-}
-
-func (c *resultQueryCache) rememberEdgeCanCompleteNormally(key edgeNormalCacheKey, normal bool) {
-	if c.edgeNormal == nil {
-		c.edgeNormal = make(map[edgeNormalCacheKey]bool)
-	}
-	c.edgeNormal[key] = normal
 }
 
 func (c *resultQueryCache) signatureType(name string) (cachedSignatureType, bool) {

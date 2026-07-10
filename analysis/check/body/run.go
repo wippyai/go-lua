@@ -349,6 +349,13 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		stateLanes:            append([]state.LaneID(nil), config.StateLanes...),
 		queries:               newResultQueryCache(s.facts),
 	}
+	// Seal the immutable query surface after the solver, including narrowing,
+	// has converged. This replaces lazy node/edge transfer replay in diagnostics
+	// and readmodels with compact published facts.
+	result.sealObservations()
+	if config.Stats != nil {
+		addObservationStats(&config.Stats.Observation, result.observation)
+	}
 	result.finalizeReturnSlotsFromBoundaryValues()
 	result.resultVersion = computeResultVersion(s, config, entryState, initial)
 	return result, nil
@@ -462,6 +469,16 @@ func transferStats(stats *Stats) *transfer.Stats {
 		return nil
 	}
 	return &stats.Transfer
+}
+
+func addObservationStats(dst *ObservationStats, src ObservationStats) {
+	if dst == nil {
+		return
+	}
+	dst.PlannedBoundaryOutputs += src.PlannedBoundaryOutputs
+	dst.PlannedEdgeReachability += src.PlannedEdgeReachability
+	dst.ProjectedBoundaryOutputs += src.ProjectedBoundaryOutputs
+	dst.ProjectedEdgeReachability += src.ProjectedEdgeReachability
 }
 
 func (s *Static) solveTypeValues(config SolveConfig) *typevalue.Cache {

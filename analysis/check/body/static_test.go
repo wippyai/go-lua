@@ -176,16 +176,16 @@ func TestPreparedSolveBoundaryCacheDoesNotLeak(t *testing.T) {
 		t.Fatal("first boundary source read failed")
 	}
 	assertProductEqual(t, reg, firstGot, firstWant)
-	if first.boundary == nil {
-		t.Fatal("first solve did not populate its boundary cache")
+	if first.published.nodeOutputs == nil {
+		t.Fatal("first solve did not seal planned boundary facts")
 	}
 
 	secondWant := markedValue(reg, markKey, markHigh)
 	second := solvePreparedForTest(t, prepared, SolveConfig{
 		CallOutcome: staticCallOutcome(secondWant),
 	})
-	if second.boundary != nil {
-		t.Fatal("second solve started with a boundary cache")
+	if second.published.nodeOutputs == nil {
+		t.Fatal("second solve did not seal planned boundary facts")
 	}
 	secondGot, ok := second.LocalAssignmentSourceValueAtBoundary(point, fact.Source)
 	if !ok {

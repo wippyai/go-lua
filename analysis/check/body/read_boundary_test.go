@@ -340,9 +340,9 @@ func TestPathProjectionContextsAreScopedByReadMode(t *testing.T) {
 		flow: transfer.Result{
 			point: state.State{}.WriteValue(reg, statekey.SymbolValue(sym), before),
 		},
-		boundary: map[cfg.Point]state.State{
+		published: PublishedFacts{nodeOutputs: map[cfg.Point]state.State{
 			point: state.State{}.WriteValue(reg, statekey.SymbolValue(sym), boundary),
-		},
+		}},
 	}
 
 	gotBoundary, ok := result.PathValueAtBoundary(point, p)
@@ -364,9 +364,11 @@ func TestPathProjectionContextsAreScopedByReadMode(t *testing.T) {
 func TestEdgeCanCompleteNormallyCachesSolvedTransferProjection(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
-	from := graph.AddNode(cfg.NodeAssign)
+	from := graph.AddNode(cfg.NodeBranch)
 	to := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), from, false)
 	graph.AddEdge(from, to, false)
+	graph.AddEdge(to, graph.Exit(), false)
 
 	sym := symbol.ID(41)
 	st := state.State{}.WriteValue(reg, statekey.SymbolValue(sym), typevalue.FromType(reg, typ.String))
@@ -387,6 +389,8 @@ func TestEdgeCanCompleteNormallyCachesSolvedTransferProjection(t *testing.T) {
 			return in
 		},
 	}
+	result.sealObservations()
+	sealedBoundaryCalls, sealedEdgeCalls := boundaryCalls, edgeCalls
 
 	if !result.EdgeCanCompleteNormally(from, to) {
 		t.Fatal("first EdgeCanCompleteNormally returned false")
@@ -394,11 +398,11 @@ func TestEdgeCanCompleteNormallyCachesSolvedTransferProjection(t *testing.T) {
 	if !result.EdgeCanCompleteNormally(from, to) {
 		t.Fatal("second EdgeCanCompleteNormally returned false")
 	}
-	if boundaryCalls != 1 {
-		t.Fatalf("boundary transfer calls = %d, want 1", boundaryCalls)
+	if boundaryCalls != sealedBoundaryCalls {
+		t.Fatalf("boundary transfer replayed after seal: %d calls, want %d", boundaryCalls, sealedBoundaryCalls)
 	}
-	if edgeCalls != 1 {
-		t.Fatalf("edge transfer calls = %d, want 1", edgeCalls)
+	if edgeCalls != sealedEdgeCalls {
+		t.Fatalf("edge transfer replayed after seal: %d calls, want %d", edgeCalls, sealedEdgeCalls)
 	}
 }
 

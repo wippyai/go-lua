@@ -149,17 +149,26 @@ func (r *Result) computeNormalReachability() map[cfg.Point]bool {
 // transfer functions as the body solve so summary projection can distinguish
 // syntactic bypasses from paths proven unreachable by the analyzed state.
 func (r *Result) EdgeCanCompleteNormally(from, to cfg.Point) bool {
-	key := edgeNormalCacheKey{from: from, to: to}
-	if r != nil {
-		if cached, ok := r.queries.edgeCanCompleteNormally(key); ok {
-			return cached
+	if normal, ok := r.publishedEdgeNormal(from, to); ok {
+		return normal
+	}
+	graph := r.Graph()
+	if graph != nil && r.registry != nil && !graph.IsBranch(from) {
+		// FactsEdgeTransfer leaves non-branch edges unchanged. A same-node
+		// no-normal-return fact is a planned boundary output; otherwise the
+		// solved input reachability is the complete edge fact.
+		if out, ok := r.publishedNodeOutput(from); ok {
+			domain, err := state.TryDomainWithOptionalLanes(r.registry, r.stateLanes)
+			if err != nil {
+				domain = state.Domain(r.registry)
+			}
+			return !domain.Equal(state.NormalizeForDomain(domain, out), domain.Bottom())
 		}
+		return r.PointReachable(from)
 	}
-	normal := r.computeEdgeCanCompleteNormally(from, to)
-	if r != nil {
-		r.queries.rememberEdgeCanCompleteNormally(key, normal)
-	}
-	return normal
+	// A Result assembled by a narrow unit test may not have passed through the
+	// publication path. Completed body results always read PublishedFacts.
+	return r.computeEdgeCanCompleteNormally(from, to)
 }
 
 func (r *Result) computeEdgeCanCompleteNormally(from, to cfg.Point) bool {

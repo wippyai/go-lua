@@ -15,5 +15,9 @@ func RebindBoundaryProviders(result *Result, prepared *Static, config SolveConfi
 	result.signatureArg = signatureArgumentType
 	result.typeValues = typeValues
 	result.queries.reset()
+	// Rebinding changes closures consulted by boundary projection. The cached
+	// transfer solution is valid only when its tracked summary reads are valid,
+	// but PublishedFacts must still be rebuilt against the current closures.
+	result.sealObservations()
 	return result
 }

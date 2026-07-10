@@ -87,6 +87,17 @@ type Stats struct {
 	StaticFunctionPrepares int
 	BodySolves             int
 	Transfer               transfer.Stats
+	Observation            ObservationStats
+}
+
+// ObservationStats reports deterministic seal work. The current fallback path
+// intentionally has no speculative records: every planned output is projected
+// once after final narrowing rather than trusting a pre-narrowing capture.
+type ObservationStats struct {
+	PlannedBoundaryOutputs    int
+	PlannedEdgeReachability   int
+	ProjectedBoundaryOutputs  int
+	ProjectedEdgeReachability int
 }
 
 // Static is the reusable, entry-independent analysis artifact for one bound
@@ -198,9 +209,10 @@ type Result struct {
 	exprRefinements       sourcevalue.ExpressionRefinements
 	typeNS                *typeresolve.Resolver
 	flow                  transfer.Result
-	boundary              map[cfg.Point]state.State
 	boundaryXfer          transfer.NodeTransfer
 	edgeXfer              transfer.EdgeTransfer
+	published             PublishedFacts
+	observation           ObservationStats
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues
 	customExpressionValue bool
