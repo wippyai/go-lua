@@ -3,6 +3,7 @@ package readmodel
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // ForEachNonNilAssertion visits runtime non-nil assertions in deterministic RPO
@@ -40,6 +41,9 @@ func (r Reader) ForEachConcatOperand(visit func(ConcatOperand) bool) bool {
 	return r.result.ForEachConcatOperandOccurrence(func(occ body.ConcatOperandOccurrence) bool {
 		value, _ := r.result.ExpressionValueAtBoundary(occ.Point, occ.Operand)
 		provenance := r.nilabilityProvenance(occ.Point, occ.Operand, value)
+		if typ.IsAny(occ.TypeWithPresence) || typ.IsUnknown(occ.TypeWithPresence) {
+			provenance.UntrustedTopOrigin = true
+		}
 		item := ConcatOperand{
 			Point:            occ.Point,
 			Side:             occ.Side,

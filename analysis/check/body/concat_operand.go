@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -353,7 +354,19 @@ func (r *Result) concatOperandExplicitTop(point cfg.Point, operand ast.Expr) boo
 		return false
 	}
 	value, ok := r.ExpressionValueAtBoundary(point, operand)
-	return ok && r.ValueHasExplicitTopOrigin(value)
+	if ok && r.ValueHasExplicitTopOrigin(value) {
+		return true
+	}
+	p, ok := r.ExpressionPath(operand)
+	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+		return false
+	}
+	kind, ok := r.SymbolKind(p.Symbol)
+	if !ok || kind != symbol.Local {
+		return false
+	}
+	declared, ok := r.SymbolDeclaredType(p.Symbol)
+	return ok && typ.IsAny(declared)
 }
 
 func (r *Result) concatOperandType(point cfg.Point, operand ast.Expr) (typ.Type, bool) {
