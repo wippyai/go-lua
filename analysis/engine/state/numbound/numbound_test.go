@@ -70,8 +70,8 @@ func TestElemLatticeLaws(t *testing.T) {
 
 func TestElemWidenAscendingChainTerminates(t *testing.T) {
 	d := elemDomain()
-	prev := Floor{Lo: -10}
-	for i := int64(-9); i < 1000; i++ {
+	prev := Floor{Lo: 10}
+	for i := int64(9); i > -1000; i-- {
 		next := d.Widen(prev, Floor{Lo: i})
 		if next.Lo > i {
 			t.Fatalf("Widen must not invent a higher floor: got %d", next.Lo)
@@ -117,8 +117,8 @@ func TestMapWidenTerminates(t *testing.T) {
 	d := MapDomain()
 	ks := keyspace.New()
 	x := keyOf(ks, t, "x")
-	acc := lift_mustValues(map[keyspace.Key]Floor{x: {Lo: -10}})
-	for i := int64(-9); i < 1000; i++ {
+	acc := lift_mustValues(map[keyspace.Key]Floor{x: {Lo: 10}})
+	for i := int64(9); i > -1000; i-- {
 		next := lift_mustValues(map[keyspace.Key]Floor{x: {Lo: i}})
 		widened := d.Widen(acc, next)
 		if d.Equal(widened, acc) {

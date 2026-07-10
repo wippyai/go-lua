@@ -15,7 +15,7 @@ type Direction uint8
 const (
 	// Lower records facts of the form value(path) >= bound. Larger bounds are
 	// more precise, join keeps the minimum, and widening collapses strict
-	// increases to Top.
+	// decreases to Top.
 	Lower Direction = iota
 	// Upper records facts of the form value(path) <= bound. Smaller bounds are
 	// more precise, join keeps the maximum, and widening snaps strict increases
@@ -82,10 +82,16 @@ func elemWiden(spec Spec, prev, next int64) int64 {
 		}
 		return spec.Top
 	}
-	if next > prev {
+	// Lower bounds use the dual numeric order: a smaller numeric lower bound
+	// is less precise and therefore higher in the lattice. A strict decrease is
+	// the ascending loop chain that widening must collapse. The old comparison
+	// widened strict increases instead, which are refinements and cannot arise
+	// from the Join-accumulated worklist predecessor; repeated decrements then
+	// escaped widening one integer at a time.
+	if next < prev {
 		return spec.Top
 	}
-	return min(prev, next)
+	return prev
 }
 
 func elemNarrow(spec Spec, prev, next int64) int64 {

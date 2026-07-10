@@ -40,7 +40,7 @@ func TestGenericBoundCoreDualOrderAndWiden(t *testing.T) {
 			t.Fatalf("%s widen result %d is not above both operands", name, widened)
 		}
 	}
-	if lower.Widen(2, 5) != testMinBound || lower.Widen(5, 2) != 2 {
+	if lower.Widen(2, 5) != 2 || lower.Widen(5, 2) != testMinBound {
 		t.Fatalf("lower widening did not preserve floor behavior")
 	}
 	if upper.Widen(5, 12) != 20 || upper.Widen(20, 30) != testMaxBound {
