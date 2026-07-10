@@ -39,6 +39,46 @@ func TestScopeTypeKeepsUnknownBareReferenceModuleQualified(t *testing.T) {
 	}
 }
 
+func TestScopeTypeResolvesNestedLocalDefinitionReferences(t *testing.T) {
+	entryID := typetable.NewRecord().Field("value", typ.String).Build()
+	entry := typetable.NewRecord().Field("id", typ.NewRef("", "EntryID")).Build()
+	m := New("registry")
+	m.DefineType("EntryID", entryID)
+	m.DefineType("Entry", entry)
+
+	scoped := m.ScopeType(typ.Func().Returns(typ.NewRef("", "Entry")).Build())
+	fn, ok := scoped.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("ScopeType(function) = %T %[1]v, want one-return function", scoped)
+	}
+	resolvedEntry, ok := fn.Returns[0].(*typ.Record)
+	if !ok || resolvedEntry.GetField("id") == nil {
+		t.Fatalf("first return = %T %[1]v, want Entry record with id", fn.Returns[0])
+	}
+	if !typ.TypeEquals(resolvedEntry.GetField("id").Type, entryID) {
+		t.Fatalf("Entry.id = %v, want registry EntryID %v", resolvedEntry.GetField("id").Type, entryID)
+	}
+}
+
+func TestScopeTypeBreaksNamedReferenceCyclesAtModuleIdentity(t *testing.T) {
+	m := New("registry")
+	m.DefineType("Entry", typetable.NewRecord().Field("next", typ.NewRef("", "Entry")).Build())
+
+	scoped := m.ScopeType(typ.Func().Returns(typ.NewRef("", "Entry")).Build())
+	fn, ok := scoped.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("ScopeType(function) = %T %[1]v, want one-return function", scoped)
+	}
+	entry, ok := fn.Returns[0].(*typ.Record)
+	if !ok || entry.GetField("next") == nil {
+		t.Fatalf("first return = %T %[1]v, want Entry record with next", fn.Returns[0])
+	}
+	want := typ.NewRef("registry", "Entry")
+	if !typ.TypeEquals(entry.GetField("next").Type, want) {
+		t.Fatalf("Entry.next = %v, want module-qualified recursive identity %v", entry.GetField("next").Type, want)
+	}
+}
+
 func TestScopeTypePreservesRecursiveLocalIdentityAcrossLookups(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().

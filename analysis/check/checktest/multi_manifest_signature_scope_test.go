@@ -37,6 +37,65 @@ end
 	}
 }
 
+func TestManifestSignatureScopesNestedOwningDefinitions(t *testing.T) {
+	registry := manifest.New("registry")
+	entryID := typetable.NewRecord().Field("value", typ.String).Build()
+	entry := typetable.NewRecord().Field("id", typ.NewRef("", "EntryID")).Build()
+	errorType := typ.NewInterface("Error", []typ.Method{
+		{Name: "kind", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	get := typ.Func().
+		Param("id", typ.String).
+		Returns(typ.NewRef("", "Entry"), typeexpr.Optional(typ.NewRef("", "Error"))).
+		Build()
+	registry.DefineType("EntryID", entryID)
+	registry.DefineType("Entry", entry)
+	registry.DefineType("Error", errorType)
+	registry.SetExport(typetable.NewRecord().Field("get", get).Build())
+	registry.DefineFunctionSignature("registry.get", signature.Function{
+		Type:   get,
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
+	})
+
+	fs := fsLikeManifest()
+	fs.DefineType("EntryID", typetable.NewRecord().Field("name", typ.String).Build())
+
+	program := `
+local id: string = "entry"
+local e, err = registry.get(id)
+if err == nil then
+    local s: string = e.id.value
+end
+`
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{
+			name: "registry only",
+			opts: []Option{
+				WithGlobals("registry"),
+				WithManifest("registry", registry),
+			},
+		},
+		{
+			name: "registry and fs",
+			opts: []Option{
+				WithGlobals("registry"),
+				WithManifest("registry", registry),
+				WithManifest("fs", fs),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Check(program, tc.opts...)
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want nested registry EntryID reference to remain precise", result.Diagnostics)
+			}
+		})
+	}
+}
+
 func registryLikeManifest() *manifest.Manifest {
 	entry := typetable.NewRecord().Field("id", typ.String).Build()
 	errorType := typ.NewInterface("Error", []typ.Method{

@@ -16,6 +16,24 @@ func (m *Manifest) ScopeType(t typ.Type) typ.Type {
 	if m == nil || m.Path == "" || t == nil {
 		return t
 	}
+	return manifestTypeScoper{
+		manifest:  m,
+		resolving: make(map[string]bool),
+		scoped:    make(map[string]typ.Type),
+	}.scope(t)
+}
+
+// manifestTypeScoper expands local definitions while retaining a module path
+// at recursive reference edges. A manifest definition may itself contain a
+// local reference (Entry -> EntryID), so replacing only the outermost
+// reference would still leak an unqualified name into the consumer namespace.
+type manifestTypeScoper struct {
+	manifest  *Manifest
+	resolving map[string]bool
+	scoped    map[string]typ.Type
+}
+
+func (s manifestTypeScoper) scope(t typ.Type) typ.Type {
 	return transform.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
 		// A recursive definition is already its own identity boundary. Descending
 		// into its body would re-expand its local self references every time a
@@ -28,10 +46,20 @@ func (m *Manifest) ScopeType(t typ.Type) typ.Type {
 		if !ok || ref.Module != "" || ref.Name == "" || ref.Name == "self" {
 			return nil, false
 		}
-		if local := m.Types[ref.Name]; local != nil {
-			return local, true
+		if local := s.manifest.Types[ref.Name]; local != nil {
+			if scoped, ok := s.scoped[ref.Name]; ok {
+				return scoped, true
+			}
+			if s.resolving[ref.Name] {
+				return typ.NewRef(s.manifest.Path, ref.Name), true
+			}
+			s.resolving[ref.Name] = true
+			scoped := s.scope(local)
+			delete(s.resolving, ref.Name)
+			s.scoped[ref.Name] = scoped
+			return scoped, true
 		}
-		return typ.NewRef(m.Path, ref.Name), true
+		return typ.NewRef(s.manifest.Path, ref.Name), true
 	})
 }
 
