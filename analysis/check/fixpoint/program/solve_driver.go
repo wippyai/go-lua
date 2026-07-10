@@ -214,6 +214,7 @@ func checkConfigWithSummaries(
 	out.CallOutcomeFactory = func(ctx body.CallOutcomeContext) callpayload.CallOutcomeProvider {
 		providerConfig := callresult.ProviderConfig{
 			Summaries:               summaries,
+			ProtectedCall:           ctx.ProtectedCall,
 			ContextKeyFor:           contextKeyFor,
 			KeyFor:                  keyFor,
 			CalleeValue:             callresult.CalleeValueFunc(ctx.CalleeValue),
@@ -227,6 +228,7 @@ func checkConfigWithSummaries(
 		}
 		primary := callresult.OutcomeProvider(callresult.ProviderConfig{
 			Summaries:               providerConfig.Summaries,
+			ProtectedCall:           providerConfig.ProtectedCall,
 			ContextKeyFor:           providerConfig.ContextKeyFor,
 			KeyFor:                  providerConfig.KeyFor,
 			CalleeValue:             providerConfig.CalleeValue,
@@ -238,10 +240,11 @@ func checkConfigWithSummaries(
 			KeySpace:                providerConfig.KeySpace,
 			TypeValues:              providerConfig.TypeValues,
 		})
+		protected := callresult.ProtectedCallTypestateOutcomeProvider(providerConfig)
 		if baseFactory == nil {
-			return primary
+			return calloutcome.ComposeSupplemental(primary, protected)
 		}
-		return calloutcome.ComposeSupplemental(primary, baseFactory(ctx))
+		return calloutcome.ComposeSupplemental(primary, protected, baseFactory(ctx))
 	}
 	out.SignatureArgumentTypeFactory = func(ctx body.CallOutcomeContext) body.SignatureArgumentTypeFunc {
 		provider := body.SignatureArgumentTypeFunc(callresult.SummaryArgumentTypeProvider(callresult.ProviderConfig{

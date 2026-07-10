@@ -309,6 +309,53 @@ type OpenObligation struct {
 	Locality   Locality
 }
 
+// Resources returns every tracked resource in deterministic order. It is the
+// narrow transport surface used by interprocedural outcome projection: callers
+// can retain only the resources that existed at a callback boundary without
+// exposing the store's mutable representation.
+func (s Store) Resources() []Resource {
+	if s.top || len(s.slots) == 0 {
+		return nil
+	}
+	out := make([]Resource, 0, len(s.slots))
+	for resource := range s.slots {
+		out = append(out, resource)
+	}
+	sort.Slice(out, func(i, j int) bool { return resourceLess(out[i], out[j]) })
+	return out
+}
+
+// Restrict returns the exact slots for resources. It intentionally omits
+// invalid-transition site facts: those facts belong to the callback body that
+// established them and must not be replayed at a protected caller boundary.
+func (s Store) Restrict(resources []Resource) Store {
+	if s.top || len(resources) == 0 {
+		return Store{}
+	}
+	out := Store{}
+	for _, resource := range resources {
+		if slot, ok := s.slots[resource]; ok {
+			out.set(resource, slot)
+		}
+	}
+	return out
+}
+
+// Overlay replaces the slots present in snapshot while retaining every other
+// resource. It is used to materialize one protected callback outcome against
+// the caller's entry state before normal and exceptional outcomes are joined.
+// Invalid-transition facts are deliberately not imported across that boundary.
+func (s Store) Overlay(snapshot Store) Store {
+	if s.top || snapshot.top || len(snapshot.slots) == 0 {
+		return s.Clone()
+	}
+	next := s.Clone()
+	for resource, slot := range snapshot.slots {
+		next.set(resource, slot)
+	}
+	return next
+}
+
 // Clone returns an independent copy.
 func (s Store) Clone() Store {
 	if s.top {

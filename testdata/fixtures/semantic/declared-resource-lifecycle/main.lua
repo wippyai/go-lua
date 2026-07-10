@@ -47,3 +47,20 @@ local function final_only_on_pcall_error()
         error("boom")
     end)
 end
+
+local function leak_on_pcall_error_path()
+    local conn = resource.connect()
+    pcall(function()
+        error("boom")
+    end)
+end
+
+local function final_on_pcall_normal_and_error_paths(flag)
+    local conn = resource.connect()
+    pcall(function()
+        resource.close(conn)
+        if flag then
+            error("boom")
+        end
+    end)
+end

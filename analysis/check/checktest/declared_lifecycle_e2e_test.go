@@ -85,21 +85,34 @@ end
 	})
 }
 
-// Error-path transport through pcall is intentionally not modeled by the
-// interprocedural lifecycle summary. A final transition that happens only before
-// a raised error must therefore remain unproven at the caller, never be treated
-// as satisfying the obligation. This pins the known L-gap as a warning rather
-// than an unsound clean result.
-func TestDeclaredLifecyclePCallErrorPathFinalRemainsUnproven(t *testing.T) {
+func TestDeclaredLifecyclePCallJoinsNormalAndExceptionalTypestate(t *testing.T) {
 	resources := declaredLifecycleResourceManifest(t)
-	result := Check(`
+	opts := []Option{WithStdlib(), WithManifest("resource", resources), WithGlobals("connect", "close", "flag")}
+
+	t.Run("leak-on-caught-error-path", func(t *testing.T) {
+		result := Check(`
+local conn = connect()
+pcall(function()
+    error("boom")
+end)
+`, opts...)
+		requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeResourceUnreleased, diagnostic.SeverityWarning, "connection", "expected", "closed")
+	})
+
+	t.Run("release-on-normal-and-error-paths", func(t *testing.T) {
+		result := Check(`
 local conn = connect()
 pcall(function()
     close(conn)
-    error("boom")
+    if flag then
+        error("boom")
+    end
 end)
-`, WithStdlib(), WithManifest("resource", resources), WithGlobals("connect", "close"))
-	requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeResourceUnreleased, diagnostic.SeverityWarning, "connection", "expected", "closed")
+`, opts...)
+		if len(result.Diagnostics) != 0 {
+			t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+		}
+	})
 }
 
 func requireDeclaredLifecycleDiagnostic(t *testing.T, result Result, code diagnostic.Code, severity diagnostic.Severity, wants ...string) {

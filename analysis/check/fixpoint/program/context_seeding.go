@@ -357,7 +357,17 @@ func collectProtectedCallCallbackContextKeys(
 			captureSeedSource{result: prepass, point: point, scope: captureSeedAtContext},
 		)
 		entry, hasParamEntry := applyProtectedCallArgumentParamEntryState(config.Registry, keys.bindings, prepass, keys, point, site, callbackFn, spec.paramArgStart, entry)
-		if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
+		// A protected callback executes against the caller's captured ownership
+		// state. Carry the complete typestate lane into its context so a close or
+		// release before error can be projected back through pcall's caught exit.
+		// Resource identities are canonical caller-path keys, so unrelated slots
+		// remain inert unless the callback actually reaches them.
+		typestates := callerEntry.TypestateSnapshot()
+		hasTypestateEntry := len(typestates.Resources()) != 0
+		if hasTypestateEntry {
+			entry = entry.WithTypestateSnapshot(typestates)
+		}
+		if !hasPathEntry && !hasCaptureEntry && !hasParamEntry && !hasTypestateEntry {
 			continue
 		}
 		callbackType, _ := lowerFunctionExprType(callbackFn, keys.bindings, config.ModuleTypes)

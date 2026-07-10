@@ -136,6 +136,10 @@ func callOutcomeWithOneField(t *testing.T, fieldName string) CallOutcome {
 		}
 		return out
 	}
+	if fieldName == "ProtectedCallTypestate" {
+		out.ProtectedCallTypestate = callboundary.ProtectedCallTypestate{HasNormal: true}
+		return out
+	}
 	value := reflect.ValueOf(&out).Elem().FieldByName(fieldName)
 	if !value.IsValid() {
 		t.Fatalf("CallOutcome.%s does not exist", fieldName)

@@ -231,6 +231,7 @@ type Result struct {
 type CallOutcomeContext struct {
 	Facts                       factflow.Facts
 	Sources                     sourcevalue.SourceValues
+	ProtectedCall               func(transfer.NodeContext, factflow.CallSiteView) bool
 	CalleeValue                 CalleeValueFunc
 	ReceiverCallable            ReceiverCallableFunc
 	ReturnPresenceRelationsPath ReturnPresenceRelationsForPathFunc

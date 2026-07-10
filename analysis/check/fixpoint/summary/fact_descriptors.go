@@ -266,6 +266,25 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 				out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
 			},
 		}),
+		summarySlotDescriptor("ProtectedCallTypestate", nil, SummarySlotOps{
+			empty: func(s Summary) bool { return s.ProtectedCallTypestate.Empty() },
+			assignClone: func(src Summary, dst *Summary) {
+				dst.ProtectedCallTypestate = src.ProtectedCallTypestate.Clone()
+			},
+			normalizeOwned: func(_ *axis.Registry, _ *Summary) {},
+			equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+				return a.ProtectedCallTypestate.Equal(b.ProtectedCallTypestate)
+			},
+			lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+				return a.ProtectedCallTypestate.LessOrEq(b.ProtectedCallTypestate)
+			},
+			assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+				out.ProtectedCallTypestate = callboundary.JoinProtectedCallTypestate(a.ProtectedCallTypestate, b.ProtectedCallTypestate)
+			},
+			assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+				out.ProtectedCallTypestate = callboundary.JoinProtectedCallTypestate(prev.ProtectedCallTypestate, next.ProtectedCallTypestate)
+			},
+		}),
 		summarySlotDescriptor("HeapTableObjects", nil, SummarySlotOps{
 			empty:       func(s Summary) bool { return len(s.HeapTableObjects) == 0 },
 			assignClone: func(src Summary, dst *Summary) { dst.HeapTableObjects = cloneHeapTableObjects(src.HeapTableObjects) },

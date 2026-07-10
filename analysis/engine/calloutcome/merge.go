@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -196,6 +197,11 @@ var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("su
 	"NormalReturnFacts": {
 		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
 			out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
+		},
+	},
+	"ProtectedCallTypestate": {
+		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+			out.ProtectedCallTypestate = callboundary.JoinProtectedCallTypestate(out.ProtectedCallTypestate, second.ProtectedCallTypestate)
 		},
 	},
 	"HeapTableObjects": {

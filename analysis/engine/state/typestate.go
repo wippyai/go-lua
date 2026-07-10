@@ -93,6 +93,34 @@ func (s State) TypestateSnapshot() typestate.Store {
 	return s.typestates.Clone()
 }
 
+// OverlayTypestateSnapshot replaces only the resources carried by snapshot.
+// It preserves the caller's unrelated typestate facts and is therefore safe
+// for protected-call outcome transport, where a callback may only affect a
+// captured subset of the caller's resources.
+func (s State) OverlayTypestateSnapshot(snapshot typestate.Store) State {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return s
+	}
+	next := s.typestates.Overlay(snapshot)
+	if typestate.Equal(next, s.typestates) {
+		return s
+	}
+	out := s.reachable()
+	out.typestates = next
+	return out
+}
+
+// WithTypestateSnapshot replaces the complete typestate lane. It is the
+// controlled join boundary for protected-call normal and exceptional outcomes.
+func (s State) WithTypestateSnapshot(snapshot typestate.Store) State {
+	if !s.laneEnabled(laneTypestatesBit) || typestate.Equal(snapshot, s.typestates) {
+		return s
+	}
+	out := s.reachable()
+	out.typestates = snapshot.Clone()
+	return out
+}
+
 // TypestateSlot returns the exact tracked slot for resource, if one is known.
 func (s State) TypestateSlot(resource typestate.Resource) (typestate.Slot, bool) {
 	if !s.laneEnabled(laneTypestatesBit) {

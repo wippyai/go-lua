@@ -188,7 +188,7 @@
       },
       {
         "file": "main.lua",
-        "line": 44,
+        "line": 52,
         "column": 18,
         "severity": "warning",
         "code": "effect.lifecycle.unreleased",
@@ -198,7 +198,7 @@
         "evidence": [
           {
             "file": "main.lua",
-            "line": 44,
+            "line": 52,
             "column": 18,
             "kind": "abstract fact",
             "trust": "proven",
@@ -213,7 +213,7 @@
         "render_contains": ["because:"],
         "render_ordered_contains": [
           "warning[effect.lifecycle.unreleased]: resource `conn` remains in connection state `open` at function exit; expected `closed`",
-          "--> main.lua:44:18",
+          "--> main.lua:52:18",
           "local conn = resource.connect()",
           "because:",
           "1. proven: this call acquires `conn` as connection:`open` and requires `closed` before local ownership ends",
@@ -226,7 +226,7 @@
         "labels": [
           {
             "file": "main.lua",
-            "line": 44,
+            "line": 52,
             "column": 18,
             "contains": ["resource acquired"]
           }

@@ -23,6 +23,7 @@ type Summary struct {
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
 	NormalReturnFacts               callboundary.NormalReturnFacts
+	ProtectedCallTypestate          callboundary.ProtectedCallTypestate
 	HeapTableObjects                map[identity.ID]heapidentity.TableObject
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnConditionSlotRefinements  []ReturnConditionSlotRefinement

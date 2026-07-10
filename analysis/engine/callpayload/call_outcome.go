@@ -47,6 +47,7 @@ type CallOutcome struct {
 	MaySuspend      bool
 
 	NormalReturnFacts          callboundary.NormalReturnFacts
+	ProtectedCallTypestate     callboundary.ProtectedCallTypestate
 	HeapTableObjects           map[identity.ID]heapidentity.TableObject
 	Placements                 map[identity.ID]placement.Value
 	ParamObligations           []CallParamObligation

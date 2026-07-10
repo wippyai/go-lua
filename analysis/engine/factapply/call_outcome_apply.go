@@ -92,7 +92,7 @@ func applyCallOutcomeFacts(
 	// view, those facts are stale for the caller and must be invalidated by the
 	// shared exposure model.
 	out = applyCallParamExposures(ctx, resolver, widen, out, paramBindings, outcome.ParamExposures)
-	return out
+	return applyProtectedCallTypestate(out, outcome.ProtectedCallTypestate)
 }
 
 func paramPathWriteValueWithDeclaredContract(

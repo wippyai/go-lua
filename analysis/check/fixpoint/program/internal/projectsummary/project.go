@@ -136,6 +136,7 @@ func FromResult(result ResultReader) summary.Summary {
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		NormalReturnFacts:               projectNormalReturnFacts(reg, result, exit),
+		ProtectedCallTypestate:          projectProtectedCallTypestate(result, exit, true),
 		HeapTableObjects:                heapTableObjects,
 		HeapKeySpace:                    heapKeySpace,
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
@@ -179,6 +180,7 @@ func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summar
 		ReturnFlows:                     projectReturnFlows(result),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
+		ProtectedCallTypestate:          projectProtectedCallTypestate(result, state.State{}, false),
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
 		MaySuspend:                      projectMaySuspend(result),
 	}

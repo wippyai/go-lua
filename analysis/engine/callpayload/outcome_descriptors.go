@@ -57,6 +57,11 @@ var callOutcomeDescriptors = func() callboundary.BoundaryFactTable[CallOutcomeLa
 			func(o CallOutcome) bool { return o.MaySuspend }),
 		callOutcomeLaneDescriptor("NormalReturnFacts", nil, true,
 			func(o CallOutcome) bool { return !o.NormalReturnFacts.Empty() }),
+		// This is a caught-control supplement to an otherwise authoritative pcall
+		// result, not competing normal-return evidence. It must therefore merge
+		// even after the stdlib signature supplies result-slot authority.
+		callOutcomeLaneDescriptor("ProtectedCallTypestate", nil, false,
+			func(o CallOutcome) bool { return !o.ProtectedCallTypestate.Empty() }),
 		callOutcomeLaneDescriptor("HeapTableObjects", nil, true,
 			func(o CallOutcome) bool { return len(o.HeapTableObjects) != 0 }),
 		callOutcomeLaneDescriptor("Placements", nil, true,

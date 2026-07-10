@@ -39,6 +39,7 @@ type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []
 // ProviderConfig configures summary-backed call outcomes.
 type ProviderConfig struct {
 	Summaries               summary.Reader
+	ProtectedCall           func(transfer.NodeContext, factflow.CallSiteView) bool
 	ContextKeyFor           KeyFunc
 	KeyFor                  KeyFunc
 	CalleeValue             CalleeValueFunc

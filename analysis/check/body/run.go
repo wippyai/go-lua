@@ -544,12 +544,21 @@ func (s *Static) callOutcomeContext(typeValues *typevalue.Cache) CallOutcomeCont
 	return CallOutcomeContext{
 		Facts:                       s.facts,
 		Sources:                     s.sources,
+		ProtectedCall:               s.isProtectedCallSite,
 		CalleeValue:                 s.calleeValue,
 		ReceiverCallable:            s.receiverFn,
 		ReturnPresenceRelationsPath: s.returnPresenceRelationsForPath,
 		KeySpace:                    s.visibility.KeySpace(),
 		TypeValues:                  typeValues,
 	}
+}
+
+func (s *Static) isProtectedCallSite(ctx transfer.NodeContext, site factflow.CallSiteView) bool {
+	if s == nil || s.signatureID == nil || site.MethodName() != "" {
+		return false
+	}
+	name, ok := s.signatureID.nameForCallSiteView(ctx, site)
+	return ok && (name == "pcall" || name == "xpcall")
 }
 
 func (s *Static) returnPresenceRelationsForPath(point cfg.Point, p pathdom.Path) []callpayload.CallReturnPresenceRelation {

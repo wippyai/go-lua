@@ -151,6 +151,9 @@ func summaryWithOneLane(t *testing.T, fieldName string) Summary {
 			PathRefinements: []callboundary.PathValueFact{{}},
 		}}
 	}
+	if fieldName == "ProtectedCallTypestate" {
+		return Summary{ProtectedCallTypestate: callboundary.ProtectedCallTypestate{HasNormal: true}}
+	}
 	var out Summary
 	value := reflect.ValueOf(&out).Elem().FieldByName(fieldName)
 	if !value.IsValid() {
