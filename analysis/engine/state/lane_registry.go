@@ -1,0 +1,41 @@
+package state
+
+var defaultLaneCatalog = newLaneCatalog([]laneSpec{
+	valuesLaneSpec,
+	pathEvidenceLaneSpec,
+	dynamicIndexLaneSpec,
+	heapTableIdentityLaneSpec,
+	frozenTablesLaneSpec,
+	effectDeltasLaneSpec,
+	escapeEventsLaneSpec,
+	channelSelectLaneSpec,
+	storeRelationsLaneSpec,
+	keyMembershipsLaneSpec,
+	typestatesLaneSpec,
+	placementLaneSpec,
+	lenFloorsLaneSpec,
+	numFloorsLaneSpec,
+	numCeilsLaneSpec,
+	diffRelationsLaneSpec,
+	userLatticesLaneSpec,
+})
+
+var (
+	laneValuesBit            = defaultLaneCatalog.mustLaneBit(LaneValues)
+	lanePathEvidenceBit      = defaultLaneCatalog.mustLaneBit(LanePathEvidence)
+	laneDynamicIndexBit      = defaultLaneCatalog.mustLaneBit(LaneDynamicIndex)
+	laneHeapTableIdentityBit = defaultLaneCatalog.mustLaneBit(LaneHeapTableIdentity)
+	laneFrozenTablesBit      = defaultLaneCatalog.mustLaneBit(LaneFrozenTables)
+	laneEffectDeltasBit      = defaultLaneCatalog.mustLaneBit(LaneEffectDeltas)
+	laneEscapeEventsBit      = defaultLaneCatalog.mustLaneBit(LaneEscapeEvents)
+	laneChannelSelectBit     = defaultLaneCatalog.mustLaneBit(LaneChannelSelect)
+	laneStoreRelationsBit    = defaultLaneCatalog.mustLaneBit(LaneStoreRelations)
+	laneKeyMembershipBit     = defaultLaneCatalog.mustLaneBit(LaneKeyMemberships)
+	laneTypestatesBit        = defaultLaneCatalog.mustLaneBit(LaneTypestates)
+	lanePlacementBit         = defaultLaneCatalog.mustLaneBit(LanePlacement)
+	laneLenFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneLenFloors)
+	laneNumFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneNumFloors)
+	laneNumCeilsBit          = defaultLaneCatalog.mustLaneBit(LaneNumCeils)
+	laneDiffRelationsBit     = defaultLaneCatalog.mustLaneBit(LaneDiffRelations)
+	laneUserLatticesBit      = defaultLaneCatalog.mustLaneBit(LaneUserLattices)
+)

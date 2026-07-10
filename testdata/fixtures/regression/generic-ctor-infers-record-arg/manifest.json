@@ -1,0 +1,4 @@
+{
+  "description": "A generic constructor called with a record literal of proven-concrete fields infers its type parameter from the argument, so the instantiated return matches a named-alias instantiation (Validation<Config>) at the declared return position.",
+  "files": ["main.lua"]
+}

@@ -1,0 +1,11 @@
+{
+  "description": "Corpus-shaped builder tables keep required prefix fields while later known aliases append methods, and consumers see only the exported module snapshot.",
+  "files": [
+    "service.lua",
+    "route_builder.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "description": "A type-cast/assertion call T(arg) returns a trusted cast result, but strict any-boundary policy does not launder the original argument variable into the cast type.",
+  "files": ["main.lua"],
+  "check": {"errors": 3}
+}

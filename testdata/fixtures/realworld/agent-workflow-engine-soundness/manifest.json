@@ -8,5 +8,370 @@
     "engine.lua",
     "main.lua"
   ],
-  "packages": ["time"]
+  "packages": [
+    "time"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 19,
+        "column": 18,
+        "severity": "error",
+        "code": "type.call.direct.not_callable",
+        "message_contains": [
+          "cannot call handler",
+          "may be nil"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "handler has a callable type, but may also be nil",
+          "no guard on this path proves handler is non-nil before this call"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "handler has a callable type, but may also be nil"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 18,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves handler is non-nil before this call"
+            ]
+          }
+        ],
+        "render_contains": [
+          "--> main.lua:19:18",
+          "local produced = handler(store.state, msg)",
+          "because:",
+          "Guard `handler` with a nil check"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.not_callable]: cannot call handler because it may be nil",
+          "--> main.lua:19:18",
+          "local produced = handler(store.state, msg)",
+          "because:",
+          "proven: handler has a callable type, but may also be nil",
+          "missing proof: no guard on this path proves handler is non-nil before this call",
+          "help: Guard `handler` with a nil check before calling it."
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid call",
+          "^~"
+        ],
+        "help_contains": [
+          "Guard `handler` with a nil check"
+        ],
+        "label_contains": [
+          "call target"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 18,
+            "contains": [
+              "call target"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 22,
+        "column": 29,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign cached.content",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "cached.content can be string or nil here",
+          "bad_content is declared as string",
+          "no guard on this path proves cached.content is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 29,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "cached.content can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 20,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "bad_content is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 29,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves cached.content is non-nil"
+            ]
+          }
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 29,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 20,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign cached.content because it may be nil",
+          "--> main.lua:22:29",
+          "local bad_content: string = cached.content",
+          "because:",
+          "cached.content can be string or nil here",
+          "no guard on this path proves cached.content is non-nil"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign cached.content because it may be nil",
+          "--> main.lua:22:29",
+          "local bad_content: string = cached.content",
+          "because:",
+          "proven: cached.content can be string or nil here",
+          "claimed: bad_content is declared as string",
+          "missing proof: no guard on this path proves cached.content is non-nil",
+          "help: Guard `cached.content` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 24,
+        "column": 25,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "cannot pass store.state.last_activity",
+          "argument 1",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (store.state.last_activity) can be time.Time or nil here",
+          "now.sub parameter 1 expects time.Time",
+          "no guard on this path proves store.state.last_activity is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 24,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 (store.state.last_activity) can be time.Time or nil here"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "now.sub parameter 1 expects time.Time"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 24,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": [
+              "no guard on this path proves store.state.last_activity is non-nil"
+            ]
+          }
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 24,
+            "column": 25,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "render_contains": [
+          "--> main.lua:24:25",
+          "local elapsed = now:sub(store.state.last_activity)",
+          "because:",
+          "argument 1 (store.state.last_activity) can be time.Time or nil here",
+          "no guard on this path proves store.state.last_activity is non-nil"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: cannot pass store.state.last_activity as argument 1 because it may be nil",
+          "--> main.lua:24:25",
+          "local elapsed = now:sub(store.state.last_activity)",
+          "because:",
+          "proven: argument 1 (store.state.last_activity) can be time.Time or nil here",
+          "claimed: now.sub parameter 1 expects time.Time",
+          "missing proof: no guard on this path proves store.state.last_activity is non-nil",
+          "help: Guard `store.state.last_activity` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid argument",
+          "^~",
+          "want time.Time"
+        ],
+        "help_contains": [
+          "parameter type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 28,
+        "column": 28,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign tags[\"source\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "tags[\"source\"] can be string or nil here",
+          "bad_source is declared as string",
+          "tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 28,
+            "column": 28,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "tags[\"source\"] can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 28,
+            "column": 19,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "bad_source is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 28,
+            "column": 28,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 28,
+            "column": 28,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 28,
+            "column": 19,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign tags[\"source\"] because it may be nil",
+          "--> main.lua:28:28",
+          "local bad_source: string = tags[\"source\"]",
+          "because:",
+          "tags[\"source\"] can be string or nil here",
+          "tags[\"source\"] is an indexed read that can miss or read nil"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign tags[\"source\"] because it may be nil",
+          "--> main.lua:28:28",
+          "local bad_source: string = tags[\"source\"]",
+          "because:",
+          "proven: tags[\"source\"] can be string or nil here",
+          "claimed: bad_source is declared as string",
+          "missing proof: tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `tags[\"source\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
+  }
 }

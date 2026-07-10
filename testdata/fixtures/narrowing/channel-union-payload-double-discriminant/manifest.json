@@ -1,0 +1,4 @@
+{
+  "description": "Channel identity narrowing selects the channel payload union, then the payload kind tag selects the precise variant.",
+  "packages": ["channel"]
+}

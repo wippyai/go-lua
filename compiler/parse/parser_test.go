@@ -31,6 +31,71 @@ func parseOneString(t *testing.T, input string) ast.Stmt {
 	return stmts[0]
 }
 
+func TestParseAttrGetKeySyntax(t *testing.T) {
+	stmt := parseOneString(t, `local a, b, c = obj.foo, obj["foo"], obj[1]`)
+	local, ok := stmt.(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("got %T, want *ast.LocalAssignStmt", stmt)
+	}
+	if len(local.Exprs) != 3 {
+		t.Fatalf("got %d exprs, want 3", len(local.Exprs))
+	}
+	dot, ok := local.Exprs[0].(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("expr 0 = %T, want *ast.AttrGetExpr", local.Exprs[0])
+	}
+	if dot.KeySyntax != ast.AttrKeyDot {
+		t.Fatalf("dot KeySyntax = %v, want AttrKeyDot", dot.KeySyntax)
+	}
+	bracketString, ok := local.Exprs[1].(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("expr 1 = %T, want *ast.AttrGetExpr", local.Exprs[1])
+	}
+	if bracketString.KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("string index KeySyntax = %v, want AttrKeyIndex", bracketString.KeySyntax)
+	}
+	if bracketString.Column() != 26 || bracketString.LastColumn() != 36 {
+		t.Fatalf("string index span = %d:%d, want 26:36", bracketString.Column(), bracketString.LastColumn())
+	}
+	bracketNumber, ok := local.Exprs[2].(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("expr 2 = %T, want *ast.AttrGetExpr", local.Exprs[2])
+	}
+	if bracketNumber.KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("number index KeySyntax = %v, want AttrKeyIndex", bracketNumber.KeySyntax)
+	}
+	if bracketNumber.Column() != 38 || bracketNumber.LastColumn() != 44 {
+		t.Fatalf("number index span = %d:%d, want 38:44", bracketNumber.Column(), bracketNumber.LastColumn())
+	}
+}
+
+func TestParseTableFieldKeySyntax(t *testing.T) {
+	stmt := parseOneString(t, `local t = {foo = 1, ["foo"] = 2, [1] = 3}`)
+	local, ok := stmt.(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("got %T, want *ast.LocalAssignStmt", stmt)
+	}
+	if len(local.Exprs) != 1 {
+		t.Fatalf("got %d exprs, want 1", len(local.Exprs))
+	}
+	table, ok := local.Exprs[0].(*ast.TableExpr)
+	if !ok {
+		t.Fatalf("expr = %T, want *ast.TableExpr", local.Exprs[0])
+	}
+	if len(table.Fields) != 3 {
+		t.Fatalf("got %d fields, want 3", len(table.Fields))
+	}
+	if table.Fields[0].KeySyntax != ast.AttrKeyDot {
+		t.Fatalf("name field syntax = %v, want AttrKeyDot", table.Fields[0].KeySyntax)
+	}
+	if table.Fields[1].KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("string index field syntax = %v, want AttrKeyIndex", table.Fields[1].KeySyntax)
+	}
+	if table.Fields[2].KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("numeric index field syntax = %v, want AttrKeyIndex", table.Fields[2].KeySyntax)
+	}
+}
+
 func TestParseLocalWithType(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -245,41 +310,38 @@ func TestParseArrayType(t *testing.T) {
 	}
 }
 
-// Array of optional elements via type alias (workaround for {T?} ambiguity with optional record fields)
+// Array of optional primitive elements.
 func TestParseArrayTypeOptionalElement(t *testing.T) {
-	// Note: Direct {number?} syntax conflicts with optional record field syntax {name?: type}
-	// Use a type alias as workaround: type OptNum = number?; then {OptNum}
-	input := `
-		type OptNum = number?
-		local arr: {OptNum} = {}
-	`
+	input := "local arr: {number?} = {}"
 	stmts, err := Parse(strings.NewReader(input), "test")
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	if len(stmts) != 2 {
-		t.Fatalf("got %d stmts, want 2", len(stmts))
+	if len(stmts) != 1 {
+		t.Fatalf("got %d stmts, want 1", len(stmts))
 	}
-	local, ok := stmts[1].(*ast.LocalAssignStmt)
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
-		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[1])
+		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[0])
 	}
 	if len(local.Types) != 1 || local.Types[0] == nil {
 		t.Fatalf("types = %v, want single type", local.Types)
 	}
 
-	// Should be ArrayTypeExpr with TypeRefExpr element (resolved to optional later)
 	arr, ok := local.Types[0].(*ast.ArrayTypeExpr)
 	if !ok {
 		t.Fatalf("type = %T, want *ast.ArrayTypeExpr", local.Types[0])
 	}
-	// At parse time, OptNum is a primitive/type ref, not yet resolved
-	ref, ok := arr.Element.(*ast.PrimitiveTypeExpr)
+	opt, ok := arr.Element.(*ast.OptionalTypeExpr)
 	if !ok {
-		t.Fatalf("element = %T, want *ast.PrimitiveTypeExpr", arr.Element)
+		t.Fatalf("element = %T, want *ast.OptionalTypeExpr", arr.Element)
 	}
-	if ref.Name != "OptNum" {
-		t.Errorf("element name = %q, want 'OptNum'", ref.Name)
+	prim, ok := opt.Inner.(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("inner = %T, want *ast.PrimitiveTypeExpr", opt.Inner)
+	}
+	if prim.Name != testTypeNumber {
+		t.Errorf("inner name = %q, want '%s'", prim.Name, testTypeNumber)
 	}
 }
 
@@ -495,12 +557,31 @@ func TestParseCastExpr(t *testing.T) {
 	if cast.Type == nil {
 		t.Error("cast.Type is nil")
 	}
+	if cast.Syntax != ast.CastSyntaxAs {
+		t.Fatalf("cast.Syntax = %v, want CastSyntaxAs", cast.Syntax)
+	}
 	prim, ok := cast.Type.(*ast.PrimitiveTypeExpr)
 	if !ok {
 		t.Fatalf("cast.Type = %T, want *ast.PrimitiveTypeExpr", cast.Type)
 	}
 	if prim.Name != "User" {
 		t.Errorf("cast type = %q, want 'User'", prim.Name)
+	}
+}
+
+func TestParseCastExprColonColonSyntax(t *testing.T) {
+	input := "local x = data :: User"
+	stmts, err := Parse(strings.NewReader(input), "test")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	local := stmts[0].(*ast.LocalAssignStmt)
+	cast, ok := local.Exprs[0].(*ast.CastExpr)
+	if !ok {
+		t.Fatalf("expr = %T, want *ast.CastExpr", local.Exprs[0])
+	}
+	if cast.Syntax != ast.CastSyntaxColonColon {
+		t.Fatalf("cast.Syntax = %v, want CastSyntaxColonColon", cast.Syntax)
 	}
 }
 
@@ -1511,11 +1592,18 @@ func TestParse_ColonColonCast(t *testing.T) {
 			}
 			local1 := stmts1[0].(*ast.LocalAssignStmt)
 			local2 := stmts2[0].(*ast.LocalAssignStmt)
-			_, ok1 := local1.Exprs[0].(*ast.CastExpr)
-			_, ok2 := local2.Exprs[0].(*ast.CastExpr)
+			cast1, ok1 := local1.Exprs[0].(*ast.CastExpr)
+			cast2, ok2 := local2.Exprs[0].(*ast.CastExpr)
 			if !ok1 || !ok2 {
 				t.Errorf("Both should produce CastExpr: :: = %T, as = %T",
 					local1.Exprs[0], local2.Exprs[0])
+				continue
+			}
+			if cast1.Syntax != ast.CastSyntaxColonColon {
+				t.Errorf(":: cast syntax = %v, want CastSyntaxColonColon", cast1.Syntax)
+			}
+			if cast2.Syntax != ast.CastSyntaxAs {
+				t.Errorf("as cast syntax = %v, want CastSyntaxAs", cast2.Syntax)
 			}
 		}
 	})
@@ -1814,7 +1902,7 @@ func TestParseError_String(t *testing.T) {
 		{
 			name: "basic error",
 			err: &Error{
-				Pos:     ast.Position{Source: "test.lua", Line: 1, Column: 5},
+				Pos:     ast.Position{File: "test.lua", Line: 1, Column: 5},
 				Message: "unexpected token",
 			},
 			wantStr: "unexpected token",
@@ -1822,7 +1910,7 @@ func TestParseError_String(t *testing.T) {
 		{
 			name: "EOF error",
 			err: &Error{
-				Pos:     ast.Position{Source: "test.lua", Line: EOF},
+				Pos:     ast.Position{File: "test.lua", Line: EOF},
 				Message: "unexpected end of file",
 			},
 			wantStr: "unexpected end of file",

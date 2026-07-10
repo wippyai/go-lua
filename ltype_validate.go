@@ -4,13 +4,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
-
-// ValidatorFunc validates an LValue against an annotation argument.
-type ValidatorFunc func(val LValue, arg any) *validate.Error
 
 // ValidationContext wraps validate.Registry for LValue validation.
 type ValidationContext struct {
@@ -25,17 +23,6 @@ func NewValidationContext() *ValidationContext {
 // DefaultValidationContext returns context with built-in validators.
 func DefaultValidationContext() *ValidationContext {
 	return &ValidationContext{registry: validate.Default}
-}
-
-// RegisterValidator adds a validator that works with LValue.
-func (vc *ValidationContext) RegisterValidator(name string, fn ValidatorFunc) {
-	vc.registry.RegisterValidator(name, func(val any, arg any) *validate.Error {
-		lv, ok := val.(LValue)
-		if !ok {
-			return nil
-		}
-		return fn(lv, arg)
-	})
 }
 
 // Validate checks value against type with annotations.
@@ -180,10 +167,10 @@ func (vc *ValidationContext) validateValue(val LValue, t typ.Type, path *pathBui
 	}
 }
 
-func (vc *ValidationContext) checkAnnotations(val LValue, annotations []typ.Annotation, path *pathBuilder, errors *[]*validate.Error) {
+func (vc *ValidationContext) checkAnnotations(val LValue, annotations []annotation.Annotation, path *pathBuilder, errors *[]*validate.Error) {
 	for _, ann := range annotations {
 		if fn := vc.registry.Get(ann.Name); fn != nil {
-			if err := fn(val, ann.Arg); err != nil {
+			if err := fn(val, annotationValidationArg(ann.Arg)); err != nil {
 				err.Field = path.String()
 				*errors = append(*errors, err)
 			}
@@ -226,7 +213,7 @@ func validateBasic(val LValue, t typ.Type) bool {
 		}
 		return false
 	case kind.Array, kind.Map, kind.Record, kind.Tuple,
-		kind.Sum, kind.Interface, kind.Intersection:
+		kind.Interface, kind.Intersection:
 		_, ok := val.(*LTable)
 		return ok
 	case kind.Recursive:
@@ -234,9 +221,6 @@ func validateBasic(val LValue, t typ.Type) bool {
 			return validateBasic(val, rec.Body)
 		}
 		return true
-	case kind.Platform:
-		_, ok := val.(*LUserData)
-		return ok
 	case kind.Generic, kind.TypeParam, kind.Self, kind.Meta:
 		return true
 	default:

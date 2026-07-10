@@ -216,11 +216,23 @@ type InterfaceDefStmt struct {
 	Methods []InterfaceMethodExpr
 }
 
-// CastExpr represents an unsafe type cast: expr :: Type
+type CastSyntax uint8
+
+const (
+	// CastSyntaxUnknown records unspecified syntax for hand-built or manual AST nodes.
+	CastSyntaxUnknown CastSyntax = iota
+	// CastSyntaxAs records source `as` syntax.
+	CastSyntaxAs
+	// CastSyntaxColonColon records source `::` syntax.
+	CastSyntaxColonColon
+)
+
+// CastExpr represents an unsafe type cast: expr as Type or expr :: Type.
 type CastExpr struct {
 	ExprBase
-	Expr Expr
-	Type TypeExpr
+	Expr   Expr
+	Type   TypeExpr
+	Syntax CastSyntax
 }
 
 // NonNilAssertExpr represents a non-nil assertion: expr!

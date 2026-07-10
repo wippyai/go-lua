@@ -1,0 +1,35 @@
+package state
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+)
+
+func (s State) ReadEffectDelta(key effectdelta.Key) effectdelta.Value {
+	if !s.laneEnabled(laneEffectDeltasBit) {
+		return effectdelta.Value{}
+	}
+	return s.effectDeltas.read(key)
+}
+
+func (s State) WriteEffectDelta(key effectdelta.Key, delta effectdelta.Value) State {
+	if key.Target.Kind == keyspace.KindInvalid || !s.laneEnabled(laneEffectDeltasBit) {
+		return s
+	}
+	requireFiniteLaneForWrite(s.effectDeltas.top, "finite-write", "effect delta", "effect-delta")
+	if delta.Change == effectdelta.ChangeBottom {
+		deltas, changed := s.effectDeltas.without(key)
+		if !changed {
+			return s
+		}
+		out := s.reachable()
+		out.effectDeltas = deltas
+		return out
+	}
+	if s.effectDeltas.read(key) == delta {
+		return s
+	}
+	out := s.reachable()
+	out.effectDeltas = s.effectDeltas.with(key, delta)
+	return out
+}

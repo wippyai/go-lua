@@ -1,0 +1,7 @@
+{
+  "description": "Threshold widening should use a #table-derived threshold so a while-loop counter stays bounded by #thresholds.",
+  "check": {},
+  "run": {
+    "skip": "checker-only threshold-widening fixture"
+  }
+}

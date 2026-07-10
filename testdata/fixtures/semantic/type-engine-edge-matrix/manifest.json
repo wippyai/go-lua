@@ -1,0 +1,7 @@
+{
+  "description": "A 400-case static semantic matrix covering positive inference and negative soundness boundaries across primitives, records, optionals, maps, generics, callbacks, unions, and untrusted any.",
+  "serial": true,
+  "files": [
+    "main.lua"
+  ]
+}

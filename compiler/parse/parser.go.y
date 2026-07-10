@@ -2,25 +2,9 @@
 package parse
 
 import (
-  "strconv"
-  "strings"
   "github.com/wippyai/go-lua/compiler/ast"
+  "github.com/wippyai/go-lua/compiler/parse/numparse"
 )
-
-func parseNumber(s string) (interface{}, error) {
-  if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-    i, err := strconv.ParseInt(s, 0, 64)
-    return i, err
-  }
-  f, err := strconv.ParseFloat(s, 64)
-  if err != nil {
-    return f, err
-  }
-  if f == float64(int64(f)) && !strings.Contains(s, ".") && !strings.ContainsAny(s, "eE") {
-    return int64(f), nil
-  }
-  return f, nil
-}
 
 func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {
   if node == nil {
@@ -370,7 +354,7 @@ funcname1:
             key:= &ast.StringExpr{Value:$3.Str}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            fn := &ast.AttrGetExpr{Object: $1.Func, Key: key}
+            fn := &ast.AttrGetExpr{Object: $1.Func, Key: key, KeySyntax: ast.AttrKeyDot}
             fn.CopyPos($1.Func)
             fn.SetLastPosFromToken($3.Pos)
             $$ = &ast.FuncName{Func: fn}
@@ -390,14 +374,16 @@ var:
             $$.SetPosFromToken($1.Pos)
         } |
         prefixexp '[' expr ']' {
-            $$ = &ast.AttrGetExpr{Object: $1, Key: $3}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: $3, KeySyntax: ast.AttrKeyIndex}
             $$.CopyPos($1)
+            $$.SetLastLine($4.Pos.Line)
+            $$.SetLastColumn($4.Pos.Column + 1)
         } | 
         prefixexp '.' TIdent {
             key := &ast.StringExpr{Value:$3.Str}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -405,7 +391,7 @@ var:
             key := &ast.StringExpr{Value:"type"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -413,7 +399,7 @@ var:
             key := &ast.StringExpr{Value:"interface"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -421,7 +407,7 @@ var:
             key := &ast.StringExpr{Value:"readonly"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -429,7 +415,7 @@ var:
             key := &ast.StringExpr{Value:"as"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -437,7 +423,7 @@ var:
             key := &ast.StringExpr{Value:"asserts"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -445,7 +431,7 @@ var:
             key := &ast.StringExpr{Value:"is"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         }
@@ -625,12 +611,12 @@ expr:
             $$.CopyLastPos($2)
         } |
         expr TAs typeexpr {
-            $$ = &ast.CastExpr{Expr: $1, Type: $3}
+            $$ = &ast.CastExpr{Expr: $1, Type: $3, Syntax: ast.CastSyntaxAs}
             $$.CopyPos($1)
             $$.CopyLastPos($3)
         } |
         expr T2Colon typeexpr {
-            $$ = &ast.CastExpr{Expr: $1, Type: $3}
+            $$ = &ast.CastExpr{Expr: $1, Type: $3, Syntax: ast.CastSyntaxColonColon}
             $$.CopyPos($1)
             $$.CopyLastPos($3)
         } |
@@ -764,22 +750,22 @@ funcbody:
 
 parlist:
         T3Comma {
-            $$ = &ast.ParList{HasVargs: true, Names: []string{}}
+            $$ = &ast.ParList{HasVargs: true, VarargPosition: $1.Pos, Names: []string{}}
         } |
         T3Comma ':' typeexpr {
-            $$ = &ast.ParList{HasVargs: true, VarargType: $3, Names: []string{}}
+            $$ = &ast.ParList{HasVargs: true, VarargType: $3, VarargPosition: $1.Pos, Names: []string{}}
         } |
         typednamelist {
-            names, _, types := splitTypedNames($1)
-            $$ = &ast.ParList{HasVargs: false, Names: names, Types: types}
+            names, positions, types := splitTypedNames($1)
+            $$ = &ast.ParList{HasVargs: false, Names: names, NamePositions: positions, Types: types}
         } |
         typednamelist ',' T3Comma {
-            names, _, types := splitTypedNames($1)
-            $$ = &ast.ParList{HasVargs: true, Names: names, Types: types}
+            names, positions, types := splitTypedNames($1)
+            $$ = &ast.ParList{HasVargs: true, VarargPosition: $3.Pos, Names: names, NamePositions: positions, Types: types}
         } |
         typednamelist ',' T3Comma ':' typeexpr {
-            names, _, types := splitTypedNames($1)
-            $$ = &ast.ParList{HasVargs: true, VarargType: $5, Names: names, Types: types}
+            names, positions, types := splitTypedNames($1)
+            $$ = &ast.ParList{HasVargs: true, VarargType: $5, VarargPosition: $3.Pos, Names: names, NamePositions: positions, Types: types}
         }
 
 
@@ -809,10 +795,10 @@ fieldlist:
 
 field:
         fieldname '=' expr {
-            $$ = &ast.Field{Key: &ast.StringExpr{Value:$1}, Value: $3}
+            $$ = &ast.Field{Key: &ast.StringExpr{Value:$1}, KeySyntax: ast.AttrKeyDot, Value: $3}
         } |
         '[' expr ']' '=' expr {
-            $$ = &ast.Field{Key: $2, Value: $5}
+            $$ = &ast.Field{Key: $2, KeySyntax: ast.AttrKeyIndex, Value: $5}
         } |
         expr {
             $$ = &ast.Field{Value: $1}
@@ -963,8 +949,13 @@ primarytypeexpr:
             $$.SetPosFromToken($1.Pos)
         } |
         TNumber {
-            num, _ := parseNumber($1.Str)
-            $$ = &ast.LiteralTypeExpr{Value: num}
+            if i, ok := numparse.ParseIntegerLiteral($1.Str); ok {
+                $$ = &ast.LiteralTypeExpr{Value: i}
+            } else if f, ok := numparse.ParseFloatLiteral($1.Str); ok {
+                $$ = &ast.LiteralTypeExpr{Value: f}
+            } else {
+                $$ = &ast.LiteralTypeExpr{}
+            }
             $$.SetPosFromToken($1.Pos)
         } |
         TIdent {
@@ -1148,7 +1139,7 @@ closegt:
             yylex.(*Lexer).PendingGT = &ast.Token{
                 Type: '>',
                 Str:  ">",
-                Pos:  ast.Position{Source: $1.Pos.Source, Line: $1.Pos.Line, Column: $1.Pos.Column + 1},
+                Pos:  ast.Position{File: $1.Pos.File, Line: $1.Pos.Line, Column: $1.Pos.Column + 1},
             }
         }
 

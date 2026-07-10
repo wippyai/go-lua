@@ -10,8 +10,682 @@
     "runtime.lua",
     "main.lua"
   ],
-  "packages": ["time"],
+  "packages": [
+    "time"
+  ],
   "check": {
-    "errors": 6
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 43,
+        "column": 33,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign run_result.value.last_status",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "run_result.value.last_status can be string or nil here",
+          "last_status is declared as string",
+          "no guard on this path proves run_result.value.last_status is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 43,
+            "column": 33,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "run_result.value.last_status can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 43,
+            "column": 24,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "last_status is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 43,
+            "column": 33,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves run_result.value.last_status is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local last_status: string = run_result.value.last_status",
+          "because:",
+          "run_result.value.last_status"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign run_result.value.last_status because it may be nil",
+          "--> main.lua:43:33",
+          "local last_status: string = run_result.value.last_status",
+          "because:",
+          "proven: run_result.value.last_status can be string or nil here",
+          "claimed: last_status is declared as string",
+          "missing proof: no guard on this path proves run_result.value.last_status is non-nil",
+          "help: Guard `run_result.value.last_status` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 43,
+            "column": 24,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 43,
+            "column": 33,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 46,
+        "column": 41,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store.state.records[\"missing\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store.state.records[\"missing\"] can be nil here",
+          "record is declared as protocol.DeliveryRecord",
+          "store.state.records[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 46,
+            "column": 41,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store.state.records[\"missing\"] can be nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 46,
+            "column": 15,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "record is declared as protocol.DeliveryRecord"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 46,
+            "column": 41,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "store.state.records[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local record: protocol.DeliveryRecord = store.state.records[\"missing\"]",
+          "because:",
+          "store.state.records[\"missing\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store.state.records[\"missing\"] because it may be nil",
+          "--> main.lua:46:41",
+          "local record: protocol.DeliveryRecord = store.state.records[\"missing\"]",
+          "because:",
+          "proven: store.state.records[\"missing\"] can be nil here",
+          "claimed: record is declared as protocol.DeliveryRecord",
+          "missing proof: store.state.records[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `store.state.records[\"missing\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want protocol.DeliveryRecord"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 46,
+            "column": 15,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 46,
+            "column": 41,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 47,
+        "column": 43,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store.state.cached_receipts[\"missing\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store.state.cached_receipts[\"missing\"] can be nil here",
+          "receipt is declared as protocol.DeliveryReceipt",
+          "store.state.cached_receipts[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 47,
+            "column": 43,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store.state.cached_receipts[\"missing\"] can be nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 47,
+            "column": 16,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "receipt is declared as protocol.DeliveryReceipt"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 47,
+            "column": 43,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "store.state.cached_receipts[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local receipt: protocol.DeliveryReceipt = store.state.cached_receipts[\"missing\"]",
+          "because:",
+          "store.state.cached_receipts[\"missing\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store.state.cached_receipts[\"missing\"] because it may be nil",
+          "--> main.lua:47:43",
+          "local receipt: protocol.DeliveryReceipt = store.state.cached_receipts[\"missing\"]",
+          "because:",
+          "proven: store.state.cached_receipts[\"missing\"] can be nil here",
+          "claimed: receipt is declared as protocol.DeliveryReceipt",
+          "missing proof: store.state.cached_receipts[\"missing\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `store.state.cached_receipts[\"missing\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want protocol.DeliveryReceipt"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 47,
+            "column": 16,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 47,
+            "column": 43,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 48,
+        "column": 44,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign app.transports[\"email\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "app.transports[\"email\"] can be nil here",
+          "handler is declared as protocol.TransportHandler",
+          "app.transports[\"email\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 48,
+            "column": 44,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "app.transports[\"email\"] can be nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 48,
+            "column": 16,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "handler is declared as protocol.TransportHandler"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 48,
+            "column": 44,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "app.transports[\"email\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local handler: protocol.TransportHandler = app.transports[\"email\"]",
+          "because:",
+          "app.transports[\"email\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign app.transports[\"email\"] because it may be nil",
+          "--> main.lua:48:44",
+          "local handler: protocol.TransportHandler = app.transports[\"email\"]",
+          "because:",
+          "proven: app.transports[\"email\"] can be nil here",
+          "claimed: handler is declared as protocol.TransportHandler",
+          "missing proof: app.transports[\"email\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `app.transports[\"email\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want protocol.TransportHandler"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 48,
+            "column": 16,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 48,
+            "column": 44,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 50,
+        "column": 25,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "cannot pass store.state.last_delivery_at",
+          "argument 1",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (store.state.last_delivery_at) can be time.Time or nil here",
+          "now.sub parameter 1 expects time.Time",
+          "no guard on this path proves store.state.last_delivery_at is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 50,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 (store.state.last_delivery_at) can be time.Time or nil here"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "now.sub parameter 1 expects time.Time"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 50,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": [
+              "no guard on this path proves store.state.last_delivery_at is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "now:sub(store.state.last_delivery_at)",
+          "because:",
+          "store.state.last_delivery_at"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: cannot pass store.state.last_delivery_at as argument 1 because it may be nil",
+          "--> main.lua:50:25",
+          "now:sub(store.state.last_delivery_at)",
+          "because:",
+          "proven: argument 1 (store.state.last_delivery_at) can be time.Time or nil here",
+          "claimed: now.sub parameter 1 expects time.Time",
+          "missing proof: no guard on this path proves store.state.last_delivery_at is non-nil",
+          "help: Guard `store.state.last_delivery_at` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid argument",
+          "^~",
+          "want time.Time"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 50,
+            "column": 25,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "parameter type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 51,
+        "column": 24,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign email_one.meta.tags[\"source\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "email_one.meta.tags[\"source\"] can be string or nil here",
+          "source is declared as string",
+          "email_one.meta.tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "email_one.meta.tags[\"source\"] can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 15,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "source is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 24,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "email_one.meta.tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local source: string = email_one.meta.tags[\"source\"]",
+          "because:",
+          "email_one.meta.tags[\"source\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign email_one.meta.tags[\"source\"] because it may be nil",
+          "--> main.lua:51:24",
+          "local source: string = email_one.meta.tags[\"source\"]",
+          "because:",
+          "proven: email_one.meta.tags[\"source\"] can be string or nil here",
+          "claimed: source is declared as string",
+          "missing proof: email_one.meta.tags[\"source\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `email_one.meta.tags[\"source\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 15,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 24,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 53,
+        "column": 32,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store:lookup_record(...).last_status",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store:lookup_record(...).last_status can be \"retrying\" | \"sent\" | \"queued\" or nil here",
+          "missing_status is declared as string",
+          "no guard on this path proves store:lookup_record(...).last_status is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 53,
+            "column": 32,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store:lookup_record(...).last_status can be \"retrying\" | \"sent\" | \"queued\" or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 53,
+            "column": 23,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "missing_status is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 53,
+            "column": 32,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store:lookup_record(...) may be nil before reading .last_status"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 53,
+            "column": 32,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves store:lookup_record(...).last_status is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "store:lookup_record(\"msg-1\").last_status",
+          "because:",
+          "store:lookup_record(...).last_status"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store:lookup_record(...).last_status because it may be nil",
+          "--> main.lua:53:32",
+          "store:lookup_record(\"msg-1\").last_status",
+          "because:",
+          "proven: store:lookup_record(...).last_status can be \"retrying\" | \"sent\" | \"queued\" or nil here",
+          "claimed: missing_status is declared as string",
+          "proven: store:lookup_record(...) may be nil before reading .last_status",
+          "missing proof: no guard on this path proves store:lookup_record(...).last_status is non-nil",
+          "help: Guard `store:lookup_record(...).last_status` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 53,
+            "column": 23,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 53,
+            "column": 32,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
   }
 }

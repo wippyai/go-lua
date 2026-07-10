@@ -1,0 +1,13 @@
+{
+  "description": "Cross-module typed witnesses project decoded records, decoded arrays, and process-style Channel<T> wrappers without JSON/process-specific checker rules.",
+  "packages": ["channel"],
+  "files": [
+    "protocol.lua",
+    "json.lua",
+    "process.lua",
+    "main.lua"
+  ],
+  "run": {
+    "skip": "checker-only cross-module typed witness surface"
+  }
+}

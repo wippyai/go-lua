@@ -1,0 +1,8 @@
+{
+  "description": "Cross-module generic array callbacks preserve imported alias identities through module exports and staged call re-inference.",
+  "files": [
+    "protocol.lua",
+    "builder.lua",
+    "main.lua"
+  ]
+}

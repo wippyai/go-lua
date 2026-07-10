@@ -1,0 +1,10 @@
+{
+  "description": "Literal arguments select the corresponding tagged return variant while non-literal arguments keep the union.",
+  "files": [
+    "lib.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 2
+  }
+}

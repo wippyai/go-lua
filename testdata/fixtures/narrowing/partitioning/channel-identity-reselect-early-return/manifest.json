@@ -1,0 +1,7 @@
+{
+  "description": "A reassigned channel.select result republishes channel identity payload correlation for the later guard.",
+  "packages": ["channel"],
+  "run": {
+    "skip": "checker-only channel identity partitioning fixture"
+  }
+}

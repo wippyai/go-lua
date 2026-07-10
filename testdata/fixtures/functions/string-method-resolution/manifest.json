@@ -1,0 +1,4 @@
+{
+  "description": "Colon-method calls on a string-compatible receiver resolve through the standard string library to precise return types, the same as the global string.* form: s:upper()/s:sub()/s:rep() return string, s:len()/s:byte() return integer, and chaining composes. Resolution gates on string-compatibility, so a string-typed alias resolves identically. The return types are precise, not any: a string result is not assignable to number.",
+  "files": ["main.lua"]
+}

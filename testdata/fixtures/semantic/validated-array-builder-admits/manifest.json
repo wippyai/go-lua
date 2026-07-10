@@ -1,0 +1,3 @@
+{
+  "description": "A validated array builder may produce a typed array from untrusted mixed input by inserting only proven elements."
+}

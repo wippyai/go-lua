@@ -1,0 +1,3 @@
+{
+  "description": "A nested variant write through an unresolved map key invalidates earlier exact literal and guard-derived payload facts under the map entry."
+}

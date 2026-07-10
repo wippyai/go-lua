@@ -1,0 +1,3 @@
+{
+  "description": "Missing keys on maps inside an inferred returned object remain optional even after other keys are written."
+}

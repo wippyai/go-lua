@@ -1,0 +1,13 @@
+{
+  "description": "A channel.select receive handler with all nested union payload variants handled stays clean.",
+  "packages": ["channel"],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.union.exhaustiveness",
+        "enabled": true,
+        "severity": "warning"
+      }
+    ]
+  }
+}

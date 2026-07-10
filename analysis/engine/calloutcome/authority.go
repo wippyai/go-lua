@@ -1,0 +1,44 @@
+package calloutcome
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+// HasAuthoritativePostReturnEvidence reports whether outcome carries return or
+// post-return state evidence strong enough to block supplemental fallback facts.
+// Weak top/any/unknown result slots are not authority; they remain fallback
+// evidence that stronger providers may refine.
+func HasAuthoritativePostReturnEvidence(reg *axis.Registry, outcome callpayload.CallOutcome) bool {
+	return outcomeHasAuthoritativeResult(reg, outcome.Results) ||
+		outcome.HasPostReturnEvidence()
+}
+
+func outcomeHasAuthoritativeResult(reg *axis.Registry, results []callpayload.CallResult) bool {
+	for _, result := range results {
+		if resultValueHasAuthority(reg, result.Value) {
+			return true
+		}
+	}
+	return false
+}
+
+func resultValueHasAuthority(reg *axis.Registry, value product.Value) bool {
+	if reg == nil ||
+		product.Equal(reg, value, product.Bottom(reg)) ||
+		product.Equal(reg, value, product.Top()) {
+		return false
+	}
+	ev := product.Get(reg, value, evidence.Key)
+	if ev.IsExplicitTop() || ev.IsGradualTop() {
+		return false
+	}
+	if t, ok := typevalue.TypeOf(reg, value); ok {
+		return !typ.IsAny(t) && !typ.IsUnknown(t)
+	}
+	return true
+}

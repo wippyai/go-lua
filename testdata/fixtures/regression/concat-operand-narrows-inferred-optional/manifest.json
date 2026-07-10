@@ -1,0 +1,5 @@
+{
+  "description": "A call-result optional (string.match) narrowed by an `if not x` guard is proven present at a later concat, so the operand is not reported as possibly nil. The flow-solved value state narrows inferred optionals the same as declared ones.",
+  "files": ["main.lua"],
+  "stdlib": true
+}

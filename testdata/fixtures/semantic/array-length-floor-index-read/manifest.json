@@ -1,0 +1,3 @@
+{
+  "description": "Array reads drop optional nil only when numeric index bounds are within known array length floors; stale proofs are killed by escapes and mutations."
+}

@@ -1,0 +1,30 @@
+{
+  "description": "A local holder keeps its own placement while the held payload escapes through a send.",
+  "packages": ["process"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_stack": 1,
+      "max_stack": 1,
+      "min_shared_heap": 1,
+      "max_shared_heap": 1,
+      "min_stack_kind": {
+        "lua.table": 1
+      },
+      "max_stack_kind": {
+        "lua.table": 1
+      },
+      "min_shared_heap_kind": {
+        "lua.table": 1
+      },
+      "max_shared_heap_kind": {
+        "lua.table": 1
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

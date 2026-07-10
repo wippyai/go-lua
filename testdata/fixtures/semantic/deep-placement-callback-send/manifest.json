@@ -1,0 +1,105 @@
+{
+  "description": "Cross-module callback-built nested table entries preserve deep placement when an exact map entry is sent.",
+  "files": [
+    "protocol.lua",
+    "builder.lua",
+    "main.lua"
+  ],
+  "packages": [
+    "process"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 15,
+        "column": 31,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign batch.items[\"route-1\"].child.meta.route",
+          "string",
+          "not number"
+        ],
+        "min_evidence": 2,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 15,
+            "column": 31,
+            "contains": [
+              "batch.items[\"route-1\"].child.meta.route has type string"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "line": 15,
+            "column": 22,
+            "contains": [
+              "bad_route is declared as number"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "batch.items[\"route-1\"].child.meta.route has type string",
+          "bad_route is declared as number"
+        ],
+        "render_contains": [
+          "local bad_route: number = batch.items[\"route-1\"].child.meta.route",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign batch.items[\"route-1\"].child.meta.route because it is string, not number",
+          "--> main.lua:15:31",
+          "local bad_route: number = batch.items[\"route-1\"].child.meta.route -- expect-error",
+          "because:",
+          "1. proven: batch.items[\"route-1\"].child.meta.route has type string",
+          "2. claimed: bad_route is declared as number",
+          "help: Use a value compatible with the expected type, or change the target type if `batch.items[\"route-1\"].child.meta.route` is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 15,
+            "column": 31,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "line": 15,
+            "column": 22,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ],
+    "placement": {
+      "require_complete": true,
+      "min_stack": 1,
+      "min_shared_heap": 3,
+      "min_shared_depth": 3,
+      "min_seal_before_share": 3,
+      "min_shared_heap_kind": {
+        "manifest.allocation": 3
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  }
+}

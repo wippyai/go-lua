@@ -1,0 +1,100 @@
+{
+  "description": "Advice should report loop-invariant member reads only when the read path is stable and the receiver is non-nil.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.invariant_loop_read",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "placement": {
+      "min_hoistable_loads": 1,
+      "max_hoistable_loads": 1
+    },
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 17,
+        "severity": "hint",
+        "code": "advice.invariant_loop_read",
+        "message_contains": [
+          "config.limit is loop-invariant"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "config.limit is not written by the loop body",
+          "config is non-nil"
+        ],
+        "evidence": [
+          {
+            "line": 7,
+            "column": 17,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "config.limit is not written by the loop body"
+            ]
+          },
+          {
+            "line": 7,
+            "column": 17,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "config is non-nil on all loop paths"
+            ]
+          }
+        ],
+        "render_contains": [
+          "hint[advice.invariant_loop_read]",
+          "config.limit is loop-invariant"
+        ],
+        "render_ordered_contains": [
+          "hint[advice.invariant_loop_read]: config.limit is loop-invariant and can be hoisted",
+          "--> main.lua:7:17",
+          "7 |   local limit = config.limit",
+          "because:",
+          "1. proven: config.limit is not written by the loop body",
+          "2. proven: config is non-nil on all loop paths",
+          "where:",
+          "--> main.lua:6:1",
+          "6 | while i < 3 do",
+          "help: Read `config.limit` once before the loop when that makes the code clearer or cheaper."
+        ],
+        "render_not_contains": [
+          "missing proof:"
+        ],
+        "help_contains": [
+          "Read `config.limit` once before the loop"
+        ],
+        "label_contains": [
+          "loop read"
+        ],
+        "min_labels": 2,
+        "labels": [
+          {
+            "line": 7,
+            "column": 17,
+            "contains": [
+              "loop read"
+            ]
+          },
+          {
+            "line": 6,
+            "column": 1,
+            "contains": [
+              "loop head"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

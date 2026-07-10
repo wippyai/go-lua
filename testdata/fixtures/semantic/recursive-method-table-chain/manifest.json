@@ -1,0 +1,3 @@
+{
+  "description": "Recursive method tables should publish receiver mutation effects and preserve optional child reads."
+}

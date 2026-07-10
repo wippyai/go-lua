@@ -1,0 +1,193 @@
+{
+  "description": "Channel lifecycle typestate reports provable send/close misuse while escaping unknown aliases to silence.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 19,
+        "column": 5,
+        "severity": "error",
+        "code": "channel.send.closed",
+        "message_contains": [
+          "cannot send on closed channel",
+          "`ch`"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "send call runs after `ch` is proven closed"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "send call runs after `ch` is proven closed"
+            ]
+          }
+        ],
+        "label_contains": [
+          "channel lifecycle call"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 5,
+            "contains": [
+              "channel lifecycle call"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Send before closing the channel"
+        ],
+        "render_contains": [
+          "error[channel.send.closed]: cannot send on closed channel `ch`",
+          "ch:send(\"late\")",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[channel.send.closed]: cannot send on closed channel `ch`",
+          "--> main.lua:19:5",
+          "ch:send(\"late\")",
+          "because:",
+          "1. proven: this send call runs after `ch` is proven closed",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 26,
+        "column": 5,
+        "severity": "error",
+        "code": "channel.send.closed",
+        "message_contains": [
+          "cannot send on closed channel",
+          "`ch`"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "send call runs after `ch` is proven closed"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 26,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "send call runs after `ch` is proven closed"
+            ]
+          }
+        ],
+        "label_contains": [
+          "channel lifecycle call"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 26,
+            "column": 5,
+            "contains": [
+              "channel lifecycle call"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Send before closing the channel"
+        ],
+        "render_contains": [
+          "error[channel.send.closed]: cannot send on closed channel `ch`",
+          "ch:send(\"late\")",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[channel.send.closed]: cannot send on closed channel `ch`",
+          "--> main.lua:26:5",
+          "ch:send(\"late\")",
+          "because:",
+          "1. proven: this send call runs after `ch` is proven closed",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 40,
+        "column": 5,
+        "severity": "error",
+        "code": "channel.close.closed",
+        "message_contains": [
+          "cannot close already closed channel",
+          "`ch`"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "close call runs after `ch` is proven closed"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 40,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "close call runs after `ch` is proven closed"
+            ]
+          }
+        ],
+        "label_contains": [
+          "channel lifecycle call"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 40,
+            "column": 5,
+            "contains": [
+              "channel lifecycle call"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Avoid closing the same channel twice"
+        ],
+        "render_contains": [
+          "error[channel.close.closed]: cannot close already closed channel `ch`",
+          "ch:close()",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[channel.close.closed]: cannot close already closed channel `ch`",
+          "--> main.lua:40:5",
+          "ch:close()",
+          "because:",
+          "1. proven: this close call runs after `ch` is proven closed",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

@@ -11,8 +11,540 @@
     "runtime.lua",
     "main.lua"
   ],
-  "packages": ["time"],
+  "packages": [
+    "time"
+  ],
   "check": {
-    "errors": 6
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 74,
+        "column": 24,
+        "severity": "error",
+        "code": "type.call.direct.not_callable",
+        "message_contains": [
+          "cannot call missing_handler",
+          "may be nil"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "missing_handler has a callable type, but may also be nil",
+          "no guard on this path proves missing_handler is non-nil before this call"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 74,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "missing_handler has a callable type, but may also be nil"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 74,
+            "column": 24,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves missing_handler is non-nil before this call"
+            ]
+          }
+        ],
+        "render_contains": [
+          "missing_handler(store.state, render_request.envelope, now)",
+          "because:",
+          "Guard `missing_handler` with a nil check"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.not_callable]: cannot call missing_handler because it may be nil",
+          "--> main.lua:74:24",
+          "missing_handler(store.state, render_request.envelope, now)",
+          "because:",
+          "proven: missing_handler has a callable type, but may also be nil",
+          "missing proof: no guard on this path proves missing_handler is non-nil before this call",
+          "help: Guard `missing_handler` with a nil check before calling it."
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid call",
+          "^~"
+        ],
+        "help_contains": [
+          "Guard `missing_handler` with a nil check"
+        ],
+        "label_contains": [
+          "call target"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 74,
+            "column": 24,
+            "contains": [
+              "call target"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 78,
+        "column": 35,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign",
+          "cached_render.seen_at",
+          "time.Time",
+          "not integer"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "cached_render.seen_at has type time.Time",
+          "seen_seconds is declared as integer"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 78,
+            "column": 35,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "cached_render.seen_at has type time.Time"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 78,
+            "column": 25,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "seen_seconds is declared as integer"
+            ]
+          }
+        ],
+        "render_contains": [
+          "cannot assign cached_render.seen_at because it is time.Time, not integer",
+          "local seen_seconds: integer = cached_render.seen_at",
+          "because:",
+          "cached_render.seen_at"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign cached_render.seen_at because it is time.Time, not integer",
+          "--> main.lua:78:35",
+          "local seen_seconds: integer = cached_render.seen_at",
+          "because:",
+          "proven: cached_render.seen_at has type time.Time",
+          "claimed: seen_seconds is declared as integer",
+          "help: Use a value compatible with the expected type"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want integer"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 78,
+            "column": 25,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 78,
+            "column": 35,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 79,
+        "column": 34,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store.state.flags[\"did_index\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store.state.flags[\"did_index\"] can be boolean or nil here",
+          "cached_flag is declared as boolean",
+          "store.state.flags[\"did_index\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 79,
+            "column": 34,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store.state.flags[\"did_index\"] can be boolean or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 79,
+            "column": 24,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "cached_flag is declared as boolean"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 79,
+            "column": 34,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "store.state.flags[\"did_index\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local cached_flag: boolean = store.state.flags[\"did_index\"]",
+          "because:",
+          "store.state.flags[\"did_index\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store.state.flags[\"did_index\"] because it may be nil",
+          "--> main.lua:79:34",
+          "local cached_flag: boolean = store.state.flags[\"did_index\"]",
+          "because:",
+          "proven: store.state.flags[\"did_index\"] can be boolean or nil here",
+          "claimed: cached_flag is declared as boolean",
+          "missing proof: store.state.flags[\"did_index\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `store.state.flags[\"did_index\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want boolean"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 79,
+            "column": 24,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 79,
+            "column": 34,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 81,
+        "column": 33,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store.state.plugin_counts[\"fallback\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store.state.plugin_counts[\"fallback\"] can be integer or nil here",
+          "fallback_total is declared as integer",
+          "store.state.plugin_counts[\"fallback\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 81,
+            "column": 33,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store.state.plugin_counts[\"fallback\"] can be integer or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 81,
+            "column": 23,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "fallback_total is declared as integer"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 81,
+            "column": 33,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "store.state.plugin_counts[\"fallback\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local fallback_total: integer = store.state.plugin_counts[\"fallback\"]",
+          "because:",
+          "store.state.plugin_counts[\"fallback\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store.state.plugin_counts[\"fallback\"] because it may be nil",
+          "--> main.lua:81:33",
+          "local fallback_total: integer = store.state.plugin_counts[\"fallback\"]",
+          "because:",
+          "proven: store.state.plugin_counts[\"fallback\"] can be integer or nil here",
+          "claimed: fallback_total is declared as integer",
+          "missing proof: store.state.plugin_counts[\"fallback\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `store.state.plugin_counts[\"fallback\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want integer"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 81,
+            "column": 23,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 81,
+            "column": 33,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 82,
+        "column": 28,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store.state.audit_tags[\"last\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store.state.audit_tags[\"last\"] can be string or nil here",
+          "last_audit is declared as string",
+          "store.state.audit_tags[\"last\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 82,
+            "column": 28,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store.state.audit_tags[\"last\"] can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 82,
+            "column": 19,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "last_audit is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 82,
+            "column": 28,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "store.state.audit_tags[\"last\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local last_audit: string = store.state.audit_tags[\"last\"]",
+          "because:",
+          "store.state.audit_tags[\"last\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store.state.audit_tags[\"last\"] because it may be nil",
+          "--> main.lua:82:28",
+          "local last_audit: string = store.state.audit_tags[\"last\"]",
+          "because:",
+          "proven: store.state.audit_tags[\"last\"] can be string or nil here",
+          "claimed: last_audit is declared as string",
+          "missing proof: store.state.audit_tags[\"last\"] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+          "help: Guard `store.state.audit_tags[\"last\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 82,
+            "column": 19,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 82,
+            "column": 28,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 83,
+        "column": 25,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "cannot pass store.state.last_tick",
+          "argument 1",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (store.state.last_tick) can be time.Time or nil here",
+          "now.sub parameter 1 expects time.Time",
+          "no guard on this path proves store.state.last_tick is non-nil"
+        ],
+        "evidence": [
+          {
+            "line": 83,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 (store.state.last_tick) can be time.Time or nil here"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "now.sub parameter 1 expects time.Time"
+            ]
+          },
+          {
+            "line": 83,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": [
+              "no guard on this path proves store.state.last_tick is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "now:sub(store.state.last_tick)",
+          "because:",
+          "store.state.last_tick"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: cannot pass store.state.last_tick as argument 1 because it may be nil",
+          "--> main.lua:83:25",
+          "now:sub(store.state.last_tick)",
+          "because:",
+          "proven: argument 1 (store.state.last_tick) can be time.Time or nil here",
+          "claimed: now.sub parameter 1 expects time.Time",
+          "missing proof: no guard on this path proves store.state.last_tick is non-nil",
+          "help: Guard `store.state.last_tick` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid argument",
+          "^~",
+          "want time.Time"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "line": 83,
+            "column": 25,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "parameter type"
+        ]
+      }
+    ]
   }
 }

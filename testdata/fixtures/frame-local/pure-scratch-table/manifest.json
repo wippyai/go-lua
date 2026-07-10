@@ -1,0 +1,19 @@
+{
+  "description": "A pure-compute scratch table used only in the current body qualifies for FrameLocal.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_allocation_sites": 1,
+      "min_stack": 1,
+      "max_stack": 1,
+      "min_frame_local": 1,
+      "max_frame_local": 1,
+      "min_dies_before_suspension": 1,
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only frame-local fixture"
+  }
+}

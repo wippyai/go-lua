@@ -1,0 +1,1 @@
+{ "description": "type(v) == E narrows v when E resolves to a single string-literal type: a kind: \"number\" singleton local and a literal-typed structure field. Clean only if both narrow v to number.", "files": ["main.lua"] }

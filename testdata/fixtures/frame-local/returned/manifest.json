@@ -1,0 +1,15 @@
+{
+  "description": "A returned scratch table does not qualify for FrameLocal.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_allocation_sites": 1,
+      "max_frame_local": 0,
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only frame-local fixture"
+  }
+}

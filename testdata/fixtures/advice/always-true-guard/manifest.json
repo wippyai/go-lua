@@ -1,0 +1,74 @@
+{
+  "description": "Advice should report singleton-boolean branch guards and skip ordinary boolean parameters.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.always_true_guard",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 2,
+        "column": 4,
+        "severity": "hint",
+        "code": "advice.always_true_guard",
+        "message_contains": [
+          "condition is proven always true"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "condition is proven to be true"
+        ],
+        "evidence": [
+          {
+            "line": 2,
+            "column": 4,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "condition is proven to be true on every reachable path"
+            ]
+          }
+        ],
+        "render_contains": [
+          "hint[advice.always_true_guard]",
+          "condition is proven always true"
+        ],
+        "render_ordered_contains": [
+          "hint[advice.always_true_guard]: condition is proven always true",
+          "--> main.lua:2:4",
+          "2 | if flag then",
+          "because:",
+          "1. proven: condition is proven to be true on every reachable path",
+          "help: Remove the guard or move the guarded code out of the branch."
+        ],
+        "render_not_contains": [
+          "condition is proven always false"
+        ],
+        "help_contains": [
+          "Remove the guard"
+        ],
+        "label_contains": [
+          "constant guard"
+        ],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 2,
+            "column": 4,
+            "contains": [
+              "constant guard"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

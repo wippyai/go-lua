@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/subtype"
-	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/subst"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 
@@ -414,17 +415,6 @@ func validateValueDepth(val LValue, t typ.Type, resolver *typeResolver, depth in
 		}
 		return validateValueDepth(val, tt.Body, resolver, depth+1)
 
-	case *typ.Sum:
-		// Sum types are tagged unions. At runtime, a value is a table
-		// with a discriminant field. Accept any table.
-		_, ok := val.(*LTable)
-		return ok
-
-	case *typ.Platform:
-		// Platform types represent opaque host types (userdata).
-		_, ok := val.(*LUserData)
-		return ok
-
 	case *typ.Generic:
 		return false
 
@@ -792,18 +782,6 @@ func validateWithErrorDepth(val LValue, t typ.Type, resolver *typeResolver, path
 		}
 		return validateWithErrorDepth(val, tt.Body, resolver, path, depth+1)
 
-	case *typ.Sum:
-		if _, ok := val.(*LTable); ok {
-			return true, nil
-		}
-		return false, newTypeError(path, typeName, luaTypeName(val))
-
-	case *typ.Platform:
-		if _, ok := val.(*LUserData); ok {
-			return true, nil
-		}
-		return false, newTypeError(path, typeName, luaTypeName(val))
-
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)
 		if expanded != nil && expanded != tt {
@@ -839,19 +817,41 @@ func toValidationLuaError(L *LState, verr *validationError) *Error {
 	return e
 }
 
-func validateAnnotations(val LValue, annotations []typ.Annotation, path string) *validate.Error {
+func validateAnnotations(val LValue, annotations []annotation.Annotation, path string) *validate.Error {
 	if len(annotations) == 0 {
 		return nil
 	}
 	for _, ann := range annotations {
 		if fn := validate.Default.Get(ann.Name); fn != nil {
-			if err := fn(val, ann.Arg); err != nil {
+			if err := fn(val, annotationValidationArg(ann.Arg)); err != nil {
 				if path != "" && err.Field == "" {
 					err.Field = path
 				}
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func annotationValidationArg(arg annotation.Payload) any {
+	if arg.IsNone() {
+		return nil
+	}
+	if v, ok := arg.AsString(); ok {
+		return v
+	}
+	if v, ok := arg.AsBool(); ok {
+		return v
+	}
+	if v, ok := arg.AsInt(); ok {
+		return v
+	}
+	if v, ok := arg.AsInt64(); ok {
+		return v
+	}
+	if v, ok := arg.AsFloat64(); ok {
+		return v
 	}
 	return nil
 }

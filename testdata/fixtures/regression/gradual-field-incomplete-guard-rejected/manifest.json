@@ -1,0 +1,4 @@
+{
+  "description": "Incomplete proofs do not pin a gradual any field to a concrete type: a truthy guard proves presence but not type, and type(x.f) == 'table' proves table-ness but not element types. The field stays gradual and is not assignable to a concrete scalar or typed container.",
+  "files": ["main.lua"]
+}

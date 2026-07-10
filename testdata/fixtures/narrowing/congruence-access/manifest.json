@@ -1,0 +1,4 @@
+{
+  "description": "Congruence over access: proven path equality carries a member narrowing across equal objects. p==q makes q.f equivalent to p.f, so p.f~=nil narrows q.f; the transfer follows transitive chains (a==b==c) and nested members. Soundness: when a symbol is reassigned (moved) after the equality, or no equality is proven, the stale congruence is dropped and the read stays optional.",
+  "files": ["main.lua"]
+}

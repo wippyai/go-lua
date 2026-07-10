@@ -1,0 +1,4 @@
+{
+  "description": "A #x > 0 (or #x >= 1, #x ~= 0) non-empty guard raises the proven length floor of x to >= 1 on its true edge, so an in-range index read (x[1], x[#x]) in the guarded block drops its soundly-optional nil. The empty/false edge and out-of-floor indices stay optional.",
+  "files": ["main.lua"]
+}

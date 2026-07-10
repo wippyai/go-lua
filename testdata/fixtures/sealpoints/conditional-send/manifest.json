@@ -1,0 +1,10 @@
+{
+  "description": "A Message is built then sent only on the urgent branch (frozen first) and mutated on the other branch; the send is Proven-if-sealed-at-P where P is the freeze that dominates the send on that path (line 14), the join being input-dependent so the overall verdict is conditional.",
+  "packages": ["process"],
+  "check": {
+    "skip": "pending: send-safety seal-point judgments (task ad6c114f) not yet emitted"
+  },
+  "run": {
+    "skip": "checker-only send-safety fixture"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "description": "Actor main event loop: per-iteration scratch stays frame-local, the module cache is actor-local, and only the input-dependent forward is a deferred+promote escape.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "placement": {
+      "min_stack": 3,
+      "min_owned_heap": 1
+    },
+    "skip": "pending: field-granular / derivation-sensitive / closure-capture placement precision (task 150f00f9) not yet landed"
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

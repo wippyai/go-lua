@@ -1,0 +1,3 @@
+{
+  "description": "A raw callback with no validation cannot satisfy a typed callback contract at assignment or call boundary."
+}

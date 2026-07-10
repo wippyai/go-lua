@@ -3,9 +3,12 @@ package lua
 import (
 	"testing"
 
+	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/parse"
-	typeio "github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ---------------------------------------------------------------------------
@@ -23,13 +26,13 @@ func FuzzManifestToValidation(f *testing.F) {
 		typ  typ.Type
 	}{
 		{"Num", typ.Number},
-		{"Pt", typ.NewRecord().Field("x", typ.Number).Build()},
-		{"Opt", typ.NewOptional(typ.String)},
+		{"Pt", typetable.NewRecord().Field("x", typ.Number).Build()},
+		{"Opt", typeexpr.Optional(typ.String)},
 		{"Arr", typ.NewArray(typ.Number)},
 	} {
-		m := typeio.NewManifest("m")
+		m := typemanifest.New("m")
 		m.DefineType(entry.name, entry.typ)
-		encoded, err := typeio.EncodeManifest(m)
+		encoded, err := typemanifest.Encode(m)
 		if err == nil && len(encoded) <= 512 {
 			f.Add(encoded)
 		}
@@ -48,7 +51,7 @@ func FuzzManifestToValidation(f *testing.F) {
 			return
 		}
 
-		manifest, err := typeio.DecodeManifest(data)
+		manifest, err := typemanifest.Decode(data)
 		if err != nil || manifest == nil {
 			return
 		}
@@ -91,19 +94,19 @@ func FuzzManifestToValidation(f *testing.F) {
 func FuzzTypeDecodeToValidation(f *testing.F) {
 	seeds := []typ.Type{
 		typ.Number, typ.String, typ.Boolean,
-		typ.NewOptional(typ.Number),
+		typeexpr.Optional(typ.Number),
 		typ.NewArray(typ.String),
 		typ.NewMap(typ.String, typ.Number),
-		typ.NewRecord().Field("x", typ.Number).OptField("y", typ.String).Build(),
-		typ.NewUnion(typ.Number, typ.String),
+		typetable.NewRecord().Field("x", typ.Number).OptField("y", typ.String).Build(),
+		typeexpr.Union(typ.Number, typ.String),
 		typ.LiteralString("active"),
 		typ.NewInterface("table", nil),
 		typ.NewTuple(typ.Number, typ.String),
-		typ.NewAnnotated(typ.Number, []typ.Annotation{{Name: "min", Arg: float64(0)}}),
+		typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "min", Arg: annotation.Float64Arg(0)}}),
 	}
 
 	for _, seed := range seeds {
-		data, err := typeio.Encode(seed)
+		data, err := encodeFuzzType(seed)
 		if err == nil {
 			f.Add(data)
 		}
@@ -122,7 +125,7 @@ func FuzzTypeDecodeToValidation(f *testing.F) {
 			return
 		}
 
-		decoded, err := typeio.Decode(data)
+		decoded, err := decodeFuzzType(data)
 		if err != nil || decoded == nil {
 			return
 		}
@@ -146,6 +149,22 @@ func FuzzTypeDecodeToValidation(f *testing.F) {
 		}
 		L.Close()
 	})
+}
+
+const fuzzSingleTypeName = "__type"
+
+func encodeFuzzType(t typ.Type) ([]byte, error) {
+	m := typemanifest.New("single")
+	m.DefineType(fuzzSingleTypeName, t)
+	return typemanifest.Encode(m)
+}
+
+func decodeFuzzType(data []byte) (typ.Type, error) {
+	m, err := typemanifest.Decode(data)
+	if err != nil || m == nil || m.Types == nil {
+		return nil, err
+	}
+	return m.Types[fuzzSingleTypeName], nil
 }
 
 // ---------------------------------------------------------------------------
@@ -255,23 +274,23 @@ func FuzzLuaWithManifestTypes(f *testing.F) {
 	f.Add(`local v, err = Input:is(nil); return v, err`)
 
 	// Build a manifest with several types
-	manifest := typeio.NewManifest("fuzz")
-	manifest.DefineType("Point", typ.NewRecord().
+	manifest := typemanifest.New("fuzz")
+	manifest.DefineType("Point", typetable.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build())
-	manifest.DefineType("Status", typ.NewUnion(
+	manifest.DefineType("Status", typeexpr.Union(
 		typ.LiteralString("active"),
 		typ.LiteralString("draft"),
 		typ.LiteralString("archived"),
 	))
-	manifest.DefineType("Input", typ.NewRecord().
+	manifest.DefineType("Input", typetable.NewRecord().
 		Field("id", typ.String).
 		OptField("name", typ.String).
 		OptField("tags", typ.NewArray(typ.String)).
 		OptField("meta", typ.NewInterface("table", nil)).
 		Build())
-	manifestData, err := typeio.EncodeManifest(manifest)
+	manifestData, err := typemanifest.Encode(manifest)
 	if err != nil {
 		return
 	}

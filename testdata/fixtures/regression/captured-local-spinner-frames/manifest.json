@@ -1,0 +1,10 @@
+{
+  "description": "A closure-captured local literal string array from the real seam runner keeps its element type through a modulo index.",
+  "files": ["main.lua"],
+  "check": {
+    "errors": 0
+  },
+  "run": {
+    "skip": "checker-only corpus-derived captured local spinner fixture"
+  }
+}

@@ -93,7 +93,8 @@ function Builder:build(): protocol.Middleware
             end
 
             if store then
-                local snapshot = store:lookup(token)
+                local session_store_ref: session_store.SessionStore = store
+                local snapshot = session_store_ref:lookup(token)
                 if not snapshot then
                     return {
                         ok = false,

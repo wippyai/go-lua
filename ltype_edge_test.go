@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // errMessage extracts the message string from a validation error.
@@ -59,7 +62,7 @@ func TestOptionalInterface_Table(t *testing.T) {
 	defer L.Close()
 
 	// table? — the exact pattern that fails in production
-	optTable := &LType{inner: typ.NewOptional(typ.NewInterface("table", nil))}
+	optTable := &LType{inner: typeexpr.Optional(typ.NewInterface("table", nil))}
 
 	tbl := L.NewTable()
 	tbl.RawSetString("key", LString("value"))
@@ -91,7 +94,7 @@ func TestOptionalInterface_TableIs(t *testing.T) {
 	defer L.Close()
 
 	// table? validated via :is() — the exact call path that fails
-	optTable := &LType{inner: typ.NewOptional(typ.NewInterface("table", nil))}
+	optTable := &LType{inner: typeexpr.Optional(typ.NewInterface("table", nil))}
 
 	tbl := L.NewTable()
 	tbl.RawSetString("key", LString("value"))
@@ -148,8 +151,8 @@ func TestOptionalRecord(t *testing.T) {
 	defer L.Close()
 
 	// {x: number}?
-	inner := typ.NewRecord().Field("x", typ.Number).Build()
-	optRecord := &LType{inner: typ.NewOptional(inner)}
+	inner := typetable.NewRecord().Field("x", typ.Number).Build()
+	optRecord := &LType{inner: typeexpr.Optional(inner)}
 
 	valid := L.NewTable()
 	valid.RawSetString("x", LNumber(1))
@@ -183,7 +186,7 @@ func TestOptionalArray(t *testing.T) {
 	defer L.Close()
 
 	// {number}?
-	optArray := &LType{inner: typ.NewOptional(typ.NewArray(typ.Number))}
+	optArray := &LType{inner: typeexpr.Optional(typ.NewArray(typ.Number))}
 
 	valid := L.NewTable()
 	valid.Append(LNumber(1))
@@ -218,7 +221,7 @@ func TestOptionalMap(t *testing.T) {
 	defer L.Close()
 
 	// {[string]: number}?
-	optMap := &LType{inner: typ.NewOptional(typ.NewMap(typ.String, typ.Number))}
+	optMap := &LType{inner: typeexpr.Optional(typ.NewMap(typ.String, typ.Number))}
 
 	valid := L.NewTable()
 	valid.RawSetString("a", LNumber(1))
@@ -252,7 +255,7 @@ func TestOptionalUnion(t *testing.T) {
 	defer L.Close()
 
 	// (number | string)?
-	optUnion := &LType{inner: typ.NewOptional(typ.NewUnion(typ.Number, typ.String))}
+	optUnion := &LType{inner: typeexpr.Optional(typeexpr.Union(typ.Number, typ.String))}
 
 	tests := []struct {
 		name  string
@@ -280,7 +283,7 @@ func TestOptionalLiteral(t *testing.T) {
 	defer L.Close()
 
 	// "active"?
-	optLiteral := &LType{inner: typ.NewOptional(typ.LiteralString("active"))}
+	optLiteral := &LType{inner: typeexpr.Optional(typ.LiteralString("active"))}
 
 	tests := []struct {
 		name  string
@@ -307,10 +310,10 @@ func TestOptionalAnnotated(t *testing.T) {
 	defer L.Close()
 
 	// (number @min(0))?
-	annotated := typ.NewAnnotated(typ.Number, []typ.Annotation{
-		{Name: "min", Arg: float64(0)},
+	annotated := typ.NewAnnotated(typ.Number, []annotation.Annotation{
+		{Name: "min", Arg: annotation.Float64Arg(0)},
 	})
-	optAnnotated := &LType{inner: typ.NewOptional(annotated)}
+	optAnnotated := &LType{inner: typeexpr.Optional(annotated)}
 
 	tests := []struct {
 		name  string
@@ -337,7 +340,7 @@ func TestOptionalFunction(t *testing.T) {
 	defer L.Close()
 
 	// function?
-	optFunc := &LType{inner: typ.NewOptional(typ.Func().Param("x", typ.Number).Returns(typ.String).Build())}
+	optFunc := &LType{inner: typeexpr.Optional(typ.Func().Param("x", typ.Number).Returns(typ.String).Build())}
 
 	luaFn := L.NewFunction(func(L *LState) int { return 0 })
 	goFn := LGoFunc(func(L *LState) int { return 0 })
@@ -374,7 +377,7 @@ func TestRecordWithOptionalTableFields(t *testing.T) {
 	// Mirrors the UpdateInput type from the user's binding
 	tableIface := typ.NewInterface("table", nil)
 	updateInput := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("name", typ.String).
 			OptField("meta", tableIface).
@@ -454,7 +457,7 @@ func TestRecordWithOptionalTableFieldsIs(t *testing.T) {
 	// Same structure but test via :is() for error message quality
 	tableIface := typ.NewInterface("table", nil)
 	updateInput := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("content", tableIface).
 			Build(),
@@ -515,9 +518,9 @@ func TestRecordWithTypeLevelOptional(t *testing.T) {
 	// content field is non-optional, but type is table?
 	tableIface := typ.NewInterface("table", nil)
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
-			Field("content", typ.NewOptional(tableIface)).
+			Field("content", typeexpr.Optional(tableIface)).
 			Build(),
 	}
 
@@ -646,9 +649,9 @@ func TestErrorMessages_FieldPath(t *testing.T) {
 	defer L.Close()
 
 	// Nested: {a: {b: {c: number}}}
-	inner := typ.NewRecord().Field("c", typ.Number).Build()
-	mid := typ.NewRecord().Field("b", inner).Build()
-	outer := &LType{inner: typ.NewRecord().Field("a", mid).Build()}
+	inner := typetable.NewRecord().Field("c", typ.Number).Build()
+	mid := typetable.NewRecord().Field("b", inner).Build()
+	outer := &LType{inner: typetable.NewRecord().Field("a", mid).Build()}
 
 	bad := L.NewTable()
 	aTable := L.NewTable()
@@ -736,7 +739,7 @@ func TestErrorMessages_ExpectedVsGot(t *testing.T) {
 		},
 		{
 			"record rejects number",
-			&LType{inner: typ.NewRecord().Field("x", typ.Number).Build()},
+			&LType{inner: typetable.NewRecord().Field("x", typ.Number).Build()},
 			LNumber(42),
 			"expected", "expected table, got table",
 		},
@@ -775,12 +778,12 @@ func TestRecordWithOptionalNestedRecord(t *testing.T) {
 	defer L.Close()
 
 	// {name: string, address: {street: string, zip: string}?}
-	address := typ.NewRecord().
+	address := typetable.NewRecord().
 		Field("street", typ.String).
 		Field("zip", typ.String).
 		Build()
 	person := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("address", address).
 			Build(),
@@ -826,7 +829,7 @@ func TestArrayOfOptionalElements(t *testing.T) {
 	defer L.Close()
 
 	// {(number?)}  — array where elements can be number or nil
-	arrOfOpt := &LType{inner: typ.NewArray(typ.NewOptional(typ.Number))}
+	arrOfOpt := &LType{inner: typ.NewArray(typeexpr.Optional(typ.Number))}
 
 	valid := L.NewTable()
 	valid.Append(LNumber(1))
@@ -862,7 +865,7 @@ func TestMapWithOptionalValues(t *testing.T) {
 	defer L.Close()
 
 	// {[string]: number?}
-	mapOfOpt := &LType{inner: typ.NewMap(typ.String, typ.NewOptional(typ.Number))}
+	mapOfOpt := &LType{inner: typ.NewMap(typ.String, typeexpr.Optional(typ.Number))}
 
 	valid := L.NewTable()
 	valid.RawSetString("a", LNumber(1))
@@ -895,15 +898,15 @@ func TestUnionOfRecords(t *testing.T) {
 	defer L.Close()
 
 	// {kind: "a", x: number} | {kind: "b", y: string}
-	recA := typ.NewRecord().
+	recA := typetable.NewRecord().
 		Field("kind", typ.LiteralString("a")).
 		Field("x", typ.Number).
 		Build()
-	recB := typ.NewRecord().
+	recB := typetable.NewRecord().
 		Field("kind", typ.LiteralString("b")).
 		Field("y", typ.String).
 		Build()
-	unionRec := &LType{inner: typ.NewUnion(recA, recB)}
+	unionRec := &LType{inner: typeexpr.Union(recA, recB)}
 
 	validA := L.NewTable()
 	validA.RawSetString("kind", LString("a"))
@@ -942,7 +945,7 @@ func TestRecordWithArrayField(t *testing.T) {
 
 	// {name: string, tags: {string}}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("tags", typ.NewArray(typ.String)).
 			Build(),
@@ -985,7 +988,7 @@ func TestRecordWithMapField(t *testing.T) {
 
 	// {config: {[string]: string}}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("config", typ.NewMap(typ.String, typ.String)).
 			Build(),
 	}
@@ -1027,7 +1030,7 @@ func TestRecordRequiredFieldMissing(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("a", typ.String).
 			Field("b", typ.Number).
 			OptField("c", typ.Boolean).
@@ -1057,7 +1060,7 @@ func TestRecordOptionalFieldWrongType(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("count", typ.Number).
 			Build(),
@@ -1095,7 +1098,7 @@ func TestRecordAllFieldsOptional(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			OptField("a", typ.String).
 			OptField("b", typ.Number).
 			Build(),
@@ -1256,7 +1259,7 @@ func TestOptionalAliasType(t *testing.T) {
 
 	// type Score = number; Score?
 	alias := typ.NewAlias("Score", typ.Number)
-	optAlias := &LType{inner: typ.NewOptional(alias)}
+	optAlias := &LType{inner: typeexpr.Optional(alias)}
 
 	tests := []struct {
 		name  string
@@ -1374,9 +1377,9 @@ func TestIntersectionTypeValidation(t *testing.T) {
 	defer L.Close()
 
 	// {x: number} & {y: string} — value must satisfy both
-	recA := typ.NewRecord().Field("x", typ.Number).Build()
-	recB := typ.NewRecord().Field("y", typ.String).Build()
-	intersection := &LType{inner: typ.NewIntersection(recA, recB)}
+	recA := typetable.NewRecord().Field("x", typ.Number).Build()
+	recB := typetable.NewRecord().Field("y", typ.String).Build()
+	intersection := &LType{inner: typeexpr.Intersection(recA, recB)}
 
 	// Has both x and y
 	valid := L.NewTable()
@@ -1415,9 +1418,9 @@ func TestIntersectionTypeIs(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	recA := typ.NewRecord().Field("x", typ.Number).Build()
-	recB := typ.NewRecord().Field("y", typ.String).Build()
-	intersection := &LType{inner: typ.NewIntersection(recA, recB)}
+	recA := typetable.NewRecord().Field("x", typ.Number).Build()
+	recB := typetable.NewRecord().Field("y", typ.String).Build()
+	intersection := &LType{inner: typeexpr.Intersection(recA, recB)}
 
 	valid := L.NewTable()
 	valid.RawSetString("x", LNumber(1))
@@ -1445,12 +1448,12 @@ func TestRecordWithAnnotatedOptionalField(t *testing.T) {
 	defer L.Close()
 
 	// {name: string, score: (number @min(0) @max(100))?}
-	annotatedNum := typ.NewAnnotated(typ.Number, []typ.Annotation{
-		{Name: "min", Arg: float64(0)},
-		{Name: "max", Arg: float64(100)},
+	annotatedNum := typ.NewAnnotated(typ.Number, []annotation.Annotation{
+		{Name: "min", Arg: annotation.Float64Arg(0)},
+		{Name: "max", Arg: annotation.Float64Arg(100)},
 	})
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("score", annotatedNum).
 			Build(),
@@ -1600,10 +1603,10 @@ func TestRecordWithRefField_Resolved(t *testing.T) {
 	// Simulates: type Status = "active" | "draft"
 	// type Input = {id: string, status: Status?}
 	// At runtime, the Record stores status as Ref("Status") which the resolver maps.
-	statusType := typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft"))
+	statusType := typeexpr.Union(typ.LiteralString("active"), typ.LiteralString("draft"))
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("status", typ.NewRef("", "Status")).
 			Build(),
@@ -1648,10 +1651,10 @@ func TestRecordWithRefField_ResolvedIs(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	statusType := typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft"))
+	statusType := typeexpr.Union(typ.LiteralString("active"), typ.LiteralString("draft"))
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("status", typ.NewRef("", "Status")).
 			Build(),
@@ -1688,7 +1691,7 @@ func TestRecordWithRefToTable_NoBuiltin(t *testing.T) {
 	// Record with content: Ref("table") — simulates what happens when
 	// the manifest stores table as a Ref instead of inline Interface
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("content", typ.NewRef("", "table")).
 			Build(),
@@ -1728,7 +1731,7 @@ func TestRecordWithRefToTable_WithBuiltin(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("content", typ.NewRef("", "table")).
 			Build(),
@@ -1753,37 +1756,6 @@ func TestRecordWithRefToTable_WithBuiltin(t *testing.T) {
 
 	if val == LNil {
 		t.Errorf("resolved Ref('table') should pass; error: %v", errVal)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Group 16: Sum type handling
-// ---------------------------------------------------------------------------
-
-func TestSumTypeValidation(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-
-	// Sum types at runtime — currently unhandled
-	sumType := &LType{
-		inner: typ.NewSum("Status", []typ.Variant{
-			{Tag: "Active", Types: nil},
-			{Tag: "Suspended", Types: nil},
-		}),
-	}
-
-	// Sum types use tables for runtime representation
-	tbl := L.NewTable()
-	tbl.RawSetString("tag", LString("Active"))
-
-	// At minimum, sum validation should not panic and should
-	// produce a useful error or accept tables
-	result := sumType.Validate(L, tbl)
-	_ = result // Document behavior, don't assert specific outcome yet
-
-	// Non-table should definitely fail
-	if sumType.Validate(L, LString("Active")) {
-		t.Error("sum type should reject non-table values")
 	}
 }
 
@@ -1834,7 +1806,7 @@ func TestStructuredError_TypeMismatch(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("age", typ.Number).
 			Build(),
@@ -1873,7 +1845,7 @@ func TestStructuredError_MissingRequired(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			Build(),
@@ -1910,8 +1882,8 @@ func TestStructuredError_NestedField(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	inner := typ.NewRecord().Field("zip", typ.String).Build()
-	outer := &LType{inner: typ.NewRecord().Field("addr", inner).Build()}
+	inner := typetable.NewRecord().Field("zip", typ.String).Build()
+	outer := &LType{inner: typetable.NewRecord().Field("addr", inner).Build()}
 
 	bad := L.NewTable()
 	a := L.NewTable()
@@ -1976,8 +1948,8 @@ func TestStructuredError_ConstraintViolation(t *testing.T) {
 	defer L.Close()
 
 	annotated := &LType{
-		inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
-			{Name: "min", Arg: float64(0)},
+		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
+			{Name: "min", Arg: annotation.Float64Arg(0)},
 		}),
 	}
 
@@ -2003,9 +1975,9 @@ func TestStructuredError_NestedConstraint(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("score", typ.Number, false, []typ.Annotation{
-				{Name: "max", Arg: float64(100)},
+		inner: typetable.NewRecord().
+			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
+				{Name: "max", Arg: annotation.Float64Arg(100)},
 			}).
 			Build(),
 	}
@@ -2083,7 +2055,7 @@ func TestStructuredError_ErrorMethods(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Build(),
 		name: "TestRec",
@@ -2147,7 +2119,7 @@ func TestRecordWithMapComponent(t *testing.T) {
 
 	// {name: string, [string]: number} — record with known fields AND dynamic map
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			MapComponent(typ.String, typ.Number).
 			Build(),
@@ -2190,7 +2162,7 @@ func TestRecordWithMapComponentIs(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			MapComponent(typ.String, typ.Number).
 			Build(),
@@ -2266,7 +2238,7 @@ func TestUnionLiterals(t *testing.T) {
 
 	// "active" | "draft" | "archived"
 	statusUnion := &LType{
-		inner: typ.NewUnion(
+		inner: typeexpr.Union(
 			typ.LiteralString("active"),
 			typ.LiteralString("draft"),
 			typ.LiteralString("archived"),
@@ -2301,7 +2273,7 @@ func TestUnionLiteralsErrorDetail(t *testing.T) {
 	defer L.Close()
 
 	statusUnion := &LType{
-		inner: typ.NewUnion(
+		inner: typeexpr.Union(
 			typ.LiteralString("active"),
 			typ.LiteralString("draft"),
 		),
@@ -2338,8 +2310,8 @@ func TestDoubleOptional(t *testing.T) {
 	defer L.Close()
 
 	// number?? should normalize to number? (NewOptional already handles this)
-	inner := typ.NewOptional(typ.Number)
-	outer := typ.NewOptional(inner)
+	inner := typeexpr.Optional(typ.Number)
+	outer := typeexpr.Optional(inner)
 
 	doubleOpt := &LType{inner: outer}
 
@@ -2412,7 +2384,7 @@ func TestLuaIntegration_StructuredErrors(t *testing.T) {
 	OpenErrors(L)
 
 	personType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("age", typ.Number).
 			OptField("email", typ.String).
@@ -2469,12 +2441,12 @@ func TestLuaIntegration_NestedStructuredErrors(t *testing.T) {
 	OpenBase(L)
 	OpenErrors(L)
 
-	addrType := typ.NewRecord().
+	addrType := typetable.NewRecord().
 		Field("street", typ.String).
 		Field("zip", typ.String).
 		Build()
 	personType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("address", addrType).
 			Build(),
@@ -2505,13 +2477,13 @@ func TestLuaIntegration_AnnotationErrors(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("score", typ.Number, false, []typ.Annotation{
-				{Name: "min", Arg: float64(0)},
-				{Name: "max", Arg: float64(100)},
+		inner: typetable.NewRecord().
+			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
+				{Name: "min", Arg: annotation.Float64Arg(0)},
+				{Name: "max", Arg: annotation.Float64Arg(100)},
 			}).
-			AnnotatedField("name", typ.String, false, []typ.Annotation{
-				{Name: "min_len", Arg: float64(1)},
+			AnnotatedField("name", typ.String, false, []annotation.Annotation{
+				{Name: "min_len", Arg: annotation.Float64Arg(1)},
 			}).
 			Build(),
 		name: "Input",
@@ -2557,7 +2529,7 @@ func TestRecursiveTypeValidation(t *testing.T) {
 
 	// type Node = { value: number, next: Node? }
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
@@ -2613,7 +2585,7 @@ func TestRecursiveTypeValidationIs(t *testing.T) {
 	OpenErrors(L)
 
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
@@ -2645,12 +2617,12 @@ func TestRecursiveOptionalType(t *testing.T) {
 
 	// Node? — optional recursive
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
 	})
-	optNode := &LType{inner: typ.NewOptional(nodeType)}
+	optNode := &LType{inner: typeexpr.Optional(nodeType)}
 
 	tests := []struct {
 		name  string
@@ -2676,148 +2648,6 @@ func TestRecursiveOptionalType(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Group 26: Sum type validation
-// ---------------------------------------------------------------------------
-
-func TestSumTypeValidationFull(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-
-	sumType := &LType{
-		inner: typ.NewSum("Color", []typ.Variant{
-			{Tag: "Red", Types: nil},
-			{Tag: "Green", Types: nil},
-			{Tag: "RGB", Types: []typ.Type{typ.Number, typ.Number, typ.Number}},
-		}),
-		name: "Color",
-	}
-
-	tbl := L.NewTable()
-	tbl.RawSetString("tag", LString("Red"))
-
-	tests := []struct {
-		name  string
-		value LValue
-		ok    bool
-	}{
-		{"table passes", tbl, true},
-		{"empty table passes", L.NewTable(), true},
-		{"string fails", LString("Red"), false},
-		{"number fails", LNumber(1), false},
-		{"nil fails", LNil, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := sumType.Validate(L, tt.value); got != tt.ok {
-				t.Errorf("Validate() = %v, want %v", got, tt.ok)
-			}
-		})
-	}
-}
-
-func TestSumTypeIs(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-	OpenErrors(L)
-
-	sumType := &LType{
-		inner: typ.NewSum("Result", []typ.Variant{
-			{Tag: "Ok", Types: []typ.Type{typ.String}},
-			{Tag: "Err", Types: []typ.Type{typ.String}},
-		}),
-		name: "Result",
-	}
-
-	isMethod := L.typeGetField(sumType, "is")
-
-	// Table passes
-	tbl := L.NewTable()
-	L.Push(isMethod)
-	L.Push(tbl)
-	L.Call(1, 2)
-	val := L.Get(-2)
-	errVal := L.Get(-1)
-	L.Pop(2)
-	if val == LNil {
-		t.Errorf("sum should accept table; error: %v", errMessage(errVal))
-	}
-
-	// Non-table fails with structured error
-	L.Push(isMethod)
-	L.Push(LString("not a table"))
-	L.Call(1, 2)
-	val = L.Get(-2)
-	errVal = L.Get(-1)
-	L.Pop(2)
-	if val != LNil {
-		t.Error("sum should reject string")
-	}
-	if errGot(errVal) != "string" {
-		t.Errorf("got should be 'string', got %q", errGot(errVal))
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Group 27: Platform type validation
-// ---------------------------------------------------------------------------
-
-func TestPlatformTypeValidation(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-
-	fileType := &LType{inner: typ.NewPlatform("File"), name: "File"}
-
-	ud := &LUserData{Value: "file handle"}
-
-	tests := []struct {
-		name  string
-		value LValue
-		ok    bool
-	}{
-		{"userdata passes", ud, true},
-		{"table fails", L.NewTable(), false},
-		{"string fails", LString("file"), false},
-		{"number fails", LNumber(0), false},
-		{"nil fails", LNil, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := fileType.Validate(L, tt.value); got != tt.ok {
-				t.Errorf("Validate() = %v, want %v", got, tt.ok)
-			}
-		})
-	}
-}
-
-func TestOptionalPlatformType(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-
-	optFile := &LType{inner: typ.NewOptional(typ.NewPlatform("File"))}
-	ud := &LUserData{Value: "file handle"}
-
-	tests := []struct {
-		name  string
-		value LValue
-		ok    bool
-	}{
-		{"userdata passes", ud, true},
-		{"nil passes", LNil, true},
-		{"string fails", LString("file"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := optFile.Validate(L, tt.value); got != tt.ok {
-				t.Errorf("Validate() = %v, want %v", got, tt.ok)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Group 28: Annotation edge cases
 // ---------------------------------------------------------------------------
 
@@ -2827,9 +2657,9 @@ func TestAnnotation_OnOptionalField(t *testing.T) {
 
 	// {name: string @min_len(1)?} — optional field with annotated type
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("name", typ.String, true, []typ.Annotation{
-				{Name: "min_len", Arg: float64(1)},
+		inner: typetable.NewRecord().
+			AnnotatedField("name", typ.String, true, []annotation.Annotation{
+				{Name: "min_len", Arg: annotation.Float64Arg(1)},
 			}).
 			Build(),
 	}
@@ -2861,9 +2691,9 @@ func TestAnnotation_PatternOnField(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("email", typ.String, false, []typ.Annotation{
-				{Name: "pattern", Arg: "^[^@]+@[^@]+$"},
+		inner: typetable.NewRecord().
+			AnnotatedField("email", typ.String, false, []annotation.Annotation{
+				{Name: "pattern", Arg: annotation.StringArg("^[^@]+@[^@]+$")},
 			}).
 			Build(),
 	}
@@ -2910,10 +2740,10 @@ func TestAnnotation_MultipleOnSameField(t *testing.T) {
 
 	// score: number @min(0) @max(100) — multiple annotations
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("score", typ.Number, false, []typ.Annotation{
-				{Name: "min", Arg: float64(0)},
-				{Name: "max", Arg: float64(100)},
+		inner: typetable.NewRecord().
+			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
+				{Name: "min", Arg: annotation.Float64Arg(0)},
+				{Name: "max", Arg: annotation.Float64Arg(100)},
 			}).
 			Build(),
 	}
@@ -2947,8 +2777,8 @@ func TestAnnotation_MinLenOnArray(t *testing.T) {
 
 	// {string} @min_len(1) — array must have at least 1 element
 	arrType := &LType{
-		inner: typ.NewAnnotated(typ.NewArray(typ.String), []typ.Annotation{
-			{Name: "min_len", Arg: float64(1)},
+		inner: typ.NewAnnotated(typ.NewArray(typ.String), []annotation.Annotation{
+			{Name: "min_len", Arg: annotation.Float64Arg(1)},
 		}),
 	}
 
@@ -2997,7 +2827,7 @@ func TestRecordFieldLookupDict(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Build(),
 	}
@@ -3023,7 +2853,7 @@ func TestOpenRecord(t *testing.T) {
 
 	// Open record: {name: string, ...}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			SetOpen(true).
 			Build(),
@@ -3049,7 +2879,7 @@ func TestEmptyRecord(t *testing.T) {
 	defer L.Close()
 
 	// {} — empty record accepts any table
-	rec := &LType{inner: typ.NewRecord().Build()}
+	rec := &LType{inner: typetable.NewRecord().Build()}
 
 	tests := []struct {
 		name  string
@@ -3124,8 +2954,8 @@ func TestAnnotation_MinOnInteger(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []typ.Annotation{
-		{Name: "min", Arg: float64(0)},
+	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []annotation.Annotation{
+		{Name: "min", Arg: annotation.Float64Arg(0)},
 	})}
 
 	tests := []struct {
@@ -3153,8 +2983,8 @@ func TestAnnotation_MaxOnInteger(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []typ.Annotation{
-		{Name: "max", Arg: float64(100)},
+	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []annotation.Annotation{
+		{Name: "max", Arg: annotation.Float64Arg(100)},
 	})}
 
 	tests := []struct {
@@ -3180,8 +3010,8 @@ func TestAnnotation_MinLenOnString(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
-		{Name: "min_len", Arg: float64(3)},
+	ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
+		{Name: "min_len", Arg: annotation.Float64Arg(3)},
 	})}
 
 	tests := []struct {
@@ -3208,8 +3038,8 @@ func TestAnnotation_MaxLenZero(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
-		{Name: "max_len", Arg: float64(0)},
+	ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
+		{Name: "max_len", Arg: annotation.Float64Arg(0)},
 	})}
 
 	tests := []struct {
@@ -3235,8 +3065,8 @@ func TestAnnotation_MinLenOnTable(t *testing.T) {
 	defer L.Close()
 
 	// @min_len on table checks LTable.Len() which counts the array part
-	ann := &LType{inner: typ.NewAnnotated(typ.NewInterface("table", nil), []typ.Annotation{
-		{Name: "min_len", Arg: float64(1)},
+	ann := &LType{inner: typ.NewAnnotated(typ.NewInterface("table", nil), []annotation.Annotation{
+		{Name: "min_len", Arg: annotation.Float64Arg(1)},
 	})}
 
 	empty := L.NewTable()
@@ -3292,8 +3122,8 @@ func TestAnnotation_PatternEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
-				{Name: "pattern", Arg: tt.pattern},
+			ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
+				{Name: "pattern", Arg: annotation.StringArg(tt.pattern)},
 			})}
 			if got := ann.Validate(L, LString(tt.value)); got != tt.ok {
 				t.Errorf("Validate(%q) = %v, want %v", tt.value, got, tt.ok)
@@ -3308,9 +3138,9 @@ func TestAnnotation_PatternStructuredError(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("code", typ.String, false, []typ.Annotation{
-				{Name: "pattern", Arg: "^[A-Z]{3}$"},
+		inner: typetable.NewRecord().
+			AnnotatedField("code", typ.String, false, []annotation.Annotation{
+				{Name: "pattern", Arg: annotation.StringArg("^[A-Z]{3}$")},
 			}).
 			Build(),
 	}
@@ -3343,8 +3173,8 @@ func TestAnnotation_WrongBaseType(t *testing.T) {
 
 	// @min on a string type — the min validator silently passes
 	// because toNumber fails on string. The TYPE check catches the error.
-	ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
-		{Name: "min", Arg: float64(0)},
+	ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
+		{Name: "min", Arg: annotation.Float64Arg(0)},
 	})}
 
 	// String value: type check passes, min annotation silently passes (can't extract number)
@@ -3363,8 +3193,8 @@ func TestAnnotation_MinLenOnWrongType(t *testing.T) {
 	defer L.Close()
 
 	// @min_len on number type — length check silently passes
-	ann := &LType{inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
-		{Name: "min_len", Arg: float64(1)},
+	ann := &LType{inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
+		{Name: "min_len", Arg: annotation.Float64Arg(1)},
 	})}
 
 	// Number passes type check, min_len silently passes (can't get length of number)
@@ -3380,20 +3210,20 @@ func TestAnnotation_CombinedRecord(t *testing.T) {
 
 	// Full real-world-like record with multiple annotated fields
 	rec := &LType{
-		inner: typ.NewRecord().
-			AnnotatedField("name", typ.String, false, []typ.Annotation{
-				{Name: "min_len", Arg: float64(1)},
-				{Name: "max_len", Arg: float64(255)},
+		inner: typetable.NewRecord().
+			AnnotatedField("name", typ.String, false, []annotation.Annotation{
+				{Name: "min_len", Arg: annotation.Float64Arg(1)},
+				{Name: "max_len", Arg: annotation.Float64Arg(255)},
 			}).
-			AnnotatedField("email", typ.String, false, []typ.Annotation{
-				{Name: "pattern", Arg: "^[^@]+@[^@]+$"},
+			AnnotatedField("email", typ.String, false, []annotation.Annotation{
+				{Name: "pattern", Arg: annotation.StringArg("^[^@]+@[^@]+$")},
 			}).
-			AnnotatedField("age", typ.Number, false, []typ.Annotation{
-				{Name: "min", Arg: float64(0)},
-				{Name: "max", Arg: float64(200)},
+			AnnotatedField("age", typ.Number, false, []annotation.Annotation{
+				{Name: "min", Arg: annotation.Float64Arg(0)},
+				{Name: "max", Arg: annotation.Float64Arg(200)},
 			}).
-			AnnotatedField("bio", typ.String, true, []typ.Annotation{
-				{Name: "max_len", Arg: float64(1000)},
+			AnnotatedField("bio", typ.String, true, []annotation.Annotation{
+				{Name: "max_len", Arg: annotation.Float64Arg(1000)},
 			}).
 			Build(),
 		name: "UserInput",
@@ -3536,7 +3366,7 @@ func TestTypeCall_ErrorFormat(t *testing.T) {
 	OpenBase(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Build(),
 		name: "Point",
@@ -3611,7 +3441,7 @@ func TestTupleNilHoles(t *testing.T) {
 	defer L.Close()
 
 	// (number, string) — table with nil in position 2
-	tuple := &LType{inner: typ.NewTuple(typ.Number, typ.NewOptional(typ.String))}
+	tuple := &LType{inner: typ.NewTuple(typ.Number, typeexpr.Optional(typ.String))}
 
 	tbl := L.NewTable()
 	tbl.Append(LNumber(1))
@@ -3632,8 +3462,8 @@ func TestRecordFieldOptionalAndTypeOptional(t *testing.T) {
 
 	// Field is optional AND type is Optional(number) — double optional
 	rec := &LType{
-		inner: typ.NewRecord().
-			OptField("count", typ.NewOptional(typ.Number)).
+		inner: typetable.NewRecord().
+			OptField("count", typeexpr.Optional(typ.Number)).
 			Build(),
 	}
 
@@ -3734,7 +3564,7 @@ func TestValidateAndIsConsistency(t *testing.T) {
 		{"number", LTypeNumber},
 		{"string", LTypeString},
 		{"boolean", LTypeBoolean},
-		{"optional number", &LType{inner: typ.NewOptional(typ.Number)}},
+		{"optional number", &LType{inner: typeexpr.Optional(typ.Number)}},
 		{"table", &LType{inner: typ.NewInterface("table", nil)}},
 		{"array", &LType{inner: typ.NewArray(typ.Number)}},
 	}

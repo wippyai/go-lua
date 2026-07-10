@@ -1,0 +1,280 @@
+{
+  "description": "Declared db-like connection and transaction protocols enforce return-slot acquisition, final-state obligations, aliases, opaque escape, and error-path uncertainty.",
+  "packages": ["resource"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 5,
+        "severity": "error",
+        "code": "typestate.invalid_requirement",
+        "message_contains": ["connection", "expected `open`", "found `closed`"],
+        "evidence_contains": ["requires", "`open`", "`closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["requires `conn` to be in `open`", "solved state is `closed`"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "error[typestate.invalid_requirement]: invalid typestate requirement for resource `conn` in protocol connection: expected `open`, found `closed`",
+          "--> main.lua:6:5",
+          "resource.query(conn)",
+          "because:",
+          "1. proven: this call requires `conn` to be in `open`, but solved state is `closed`",
+          "help: Call this operation only when `conn` is in `open` state."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Call this operation"],
+        "label_contains": ["invalid typestate requirement"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 5,
+            "contains": ["invalid typestate requirement"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 13,
+        "column": 5,
+        "severity": "error",
+        "code": "typestate.invalid_requirement",
+        "message_contains": ["connection", "expected `open`", "found `closed`"],
+        "evidence_contains": ["requires", "`open`", "`closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["requires `conn` to be in `open`", "solved state is `closed`"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "error[typestate.invalid_requirement]: invalid typestate requirement for resource `conn` in protocol connection: expected `open`, found `closed`",
+          "--> main.lua:13:5",
+          "resource.query(conn)",
+          "because:",
+          "1. proven: this call requires `conn` to be in `open`, but solved state is `closed`",
+          "help: Call this operation only when `conn` is in `open` state."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Call this operation"],
+        "label_contains": ["invalid typestate requirement"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 5,
+            "contains": ["invalid typestate requirement"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 20,
+        "column": 5,
+        "severity": "error",
+        "code": "typestate.invalid_transition",
+        "message_contains": ["transaction", "expected `active`", "found `committed`"],
+        "evidence_contains": ["requires", "`active`", "`committed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 20,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["requires `tx` to be in `active`", "solved state is `committed`"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "error[typestate.invalid_transition]: invalid transition for resource `tx` in protocol transaction: expected `active`, found `committed`",
+          "--> main.lua:20:5",
+          "resource.commit(tx)",
+          "because:",
+          "1. proven: this transition requires `tx` to be in `active`, but solved state is `committed`",
+          "help: Transition `tx` only when it is in `active` state."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Transition"],
+        "label_contains": ["invalid lifecycle transition"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 20,
+            "column": 5,
+            "contains": ["invalid lifecycle transition"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 25,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 25,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["acquires `conn` as connection:`open`", "requires `closed` before local ownership ends"]
+          },
+          {
+            "file": "main.lua",
+            "line": 27,
+            "column": 9,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["transitions `conn` in protocol connection from `open` to `closed`", "reachable path"]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": ["exit state still has `conn` in protocol connection at a non-final state", "no proof reaches `closed` or escapes ownership on every path"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "warning[effect.lifecycle.unreleased]: resource `conn` remains in a non-final connection state at function exit; expected `closed`",
+          "--> main.lua:25:18",
+          "local conn = resource.connect()",
+          "because:",
+          "1. proven: this call acquires `conn` as connection:`open` and requires `closed` before local ownership ends",
+          "2. proven: this call transitions `conn` in protocol connection from `open` to `closed` on a reachable path",
+          "--> main.lua:27:9",
+          "resource.close(conn)",
+          "3. missing proof: exit state still has `conn` in protocol connection at a non-final state; no proof reaches `closed` or escapes ownership on every path",
+          "help: Transition `conn` to `closed` or escape ownership on every return path."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 25,
+            "column": 18,
+            "contains": ["resource acquired"]
+          },
+          {
+            "file": "main.lua",
+            "line": 27,
+            "column": 9,
+            "contains": ["lifecycle transition"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 52,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 52,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["acquires `conn` as connection:`open`", "requires `closed` before local ownership ends"]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": ["exit state still has `conn` in protocol connection at `open`", "no proof reaches `closed` or escapes ownership on every path"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "warning[effect.lifecycle.unreleased]: resource `conn` remains in connection state `open` at function exit; expected `closed`",
+          "--> main.lua:52:18",
+          "local conn = resource.connect()",
+          "because:",
+          "1. proven: this call acquires `conn` as connection:`open` and requires `closed` before local ownership ends",
+          "2. missing proof: exit state still has `conn` in protocol connection at `open`; no proof reaches `closed` or escapes ownership on every path",
+          "help: Transition `conn` to `closed` or escape ownership on every return path."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 52,
+            "column": 18,
+            "contains": ["resource acquired"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 69,
+        "column": 5,
+        "severity": "warning",
+        "code": "typestate.unproven_requirement",
+        "message_contains": ["cannot prove", "expected `open`"],
+        "evidence_contains": ["no proof establishes", "`open`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 69,
+            "column": 5,
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": ["no proof establishes `conn` in `open` state"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "warning[typestate.unproven_requirement]: cannot prove typestate requirement for resource `conn`: expected `open`",
+          "--> main.lua:69:5",
+          "resource.query(conn)",
+          "because:",
+          "1. missing proof: no proof establishes `conn` in `open` state at this call",
+          "help: Establish that `conn` is in `open` state before this call."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Establish"],
+        "label_contains": ["unproven typestate requirement"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 69,
+            "column": 5,
+            "contains": ["unproven typestate requirement"]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

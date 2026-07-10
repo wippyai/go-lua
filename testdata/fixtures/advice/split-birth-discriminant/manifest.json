@@ -1,0 +1,139 @@
+{
+  "description": "Advice should report split-born discriminants only when a locally born record tag is written apart from payload fields and used downstream as a discriminant.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.split_birth_discriminant",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 1,
+        "severity": "hint",
+        "code": "advice.split_birth_discriminant",
+        "message_contains": [
+          "split.kind is assigned apart from its payload"
+        ],
+        "min_evidence": 4,
+        "evidence_contains": [
+          "split is born as a table here",
+          "split.kind is assigned literal \"ok\" here",
+          "split.value is assigned separately",
+          "split.kind is used as a discriminant here"
+        ],
+        "evidence": [
+          {
+            "line": 5,
+            "column": 15,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "split is born as a table here"
+            ]
+          },
+          {
+            "line": 6,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "split.kind is assigned literal \"ok\" here"
+            ]
+          },
+          {
+            "line": 7,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "split.value is assigned separately"
+            ]
+          },
+          {
+            "line": 10,
+            "column": 4,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": [
+              "split.kind is used as a discriminant here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "hint[advice.split_birth_discriminant]",
+          "split.kind is assigned apart from its payload"
+        ],
+        "render_ordered_contains": [
+          "hint[advice.split_birth_discriminant]: split.kind is assigned apart from its payload",
+          "--> main.lua:6:1",
+          "6 | split.kind = \"ok\"",
+          "because:",
+          "1. proven: split is born as a table here",
+          "--> main.lua:5:15",
+          "5 | local split = {}",
+          "2. proven: split.kind is assigned literal \"ok\" here",
+          "3. proven: split.value is assigned separately",
+          "--> main.lua:7:1",
+          "7 | split.value = compute()",
+          "4. proven: split.kind is used as a discriminant here",
+          "--> main.lua:10:4",
+          "10 | if split.kind == \"ok\" then",
+          "help: Construct the variant in one table literal so the tag and payload are born atomically."
+        ],
+        "render_not_contains": [
+          "missing proof:"
+        ],
+        "help_contains": [
+          "Construct the variant in one table literal"
+        ],
+        "label_contains": [
+          "tag write",
+          "payload write",
+          "discriminant use"
+        ],
+        "min_labels": 4,
+        "labels": [
+          {
+            "line": 6,
+            "column": 1,
+            "contains": [
+              "tag write"
+            ]
+          },
+          {
+            "line": 5,
+            "column": 15,
+            "contains": [
+              "table birth"
+            ]
+          },
+          {
+            "line": 7,
+            "column": 1,
+            "contains": [
+              "payload write"
+            ]
+          },
+          {
+            "line": 10,
+            "column": 4,
+            "contains": [
+              "discriminant use"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "description": "Async closure writes after return must not become synchronous returned-table member proofs",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 12,
+        "column": 19,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign async_obj:get_value(...)",
+          "any",
+          "not number"
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 12,
+            "column": 19,
+            "contains": [
+              "async_obj:get_value(...) has type any"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "line": 12,
+            "column": 10,
+            "contains": [
+              "v is declared as number"
+            ]
+          },
+          {
+            "kind": "unvalidated value",
+            "trust": "unknown",
+            "line": 12,
+            "column": 19,
+            "contains": [
+              "async_obj:get_value(...) comes from any/unknown"
+            ]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "line": 12,
+            "column": 19,
+            "contains": [
+              "no proof on this path shows async_obj:get_value(...) satisfies the declared type"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "async_obj:get_value(...) has type any",
+          "v is declared as number",
+          "async_obj:get_value(...) comes from any/unknown",
+          "no proof on this path shows async_obj:get_value(...) satisfies the declared type"
+        ],
+        "render_contains": [
+          "local v: number = async_obj:get_value()",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign async_obj:get_value(...) because it is any, not number",
+          "--> main.lua:12:19",
+          "local v: number = async_obj:get_value()",
+          "because:",
+          "1. proven: async_obj:get_value(...) has type any",
+          "2. claimed: v is declared as number",
+          "3. unvalidated value: async_obj:get_value(...) comes from any/unknown",
+          "4. missing proof: no proof on this path shows async_obj:get_value(...) satisfies the declared type",
+          "help: Use a value compatible with the expected type, or change the target type if `async_obj:get_value(...)` is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 12,
+            "column": 19,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "line": 12,
+            "column": 10,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
+  }
+}

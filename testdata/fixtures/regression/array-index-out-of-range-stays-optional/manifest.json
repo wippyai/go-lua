@@ -1,0 +1,4 @@
+{
+  "description": "Boundary twin of in-range index narrowing: an index with no proven bound, or one provably past the length, stays soundly-optional (nil | T) and is not assignable to a non-optional element. The nil is dropped only on a proven-in-range index.",
+  "files": ["main.lua"]
+}

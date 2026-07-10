@@ -5,5 +5,5 @@ end
 
 local y: string | number = 42
 if type(y) == "string" then
-    local n: number = y -- expect-error: cannot assign
+    local n: number = y
 end

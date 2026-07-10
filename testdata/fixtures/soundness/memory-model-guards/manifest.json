@@ -1,0 +1,5 @@
+{
+  "description": "Memory-model soundness guards: each expect-error function is a way a user could otherwise feed the JIT a wrong-typed value (covariant write-through, map any-alias, missing required fields, float floor-division, return-operator typing, gmatch any, empty-literal absent field, multi-assign under-supply, fresh-value escape, interprocedural mutation vs guard narrowing, non-nil assertion on a provably-nil value, covariant record alias widening across cast/reassign/field-store/index-store/sub-object exposure sites). The concrete-cast case is a positive runtime-validation check.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

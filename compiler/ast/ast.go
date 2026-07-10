@@ -10,7 +10,13 @@
 //   - TypeExpr: type annotations for the optional type system
 package ast
 
-import "github.com/wippyai/go-lua/types/diag"
+import "github.com/wippyai/go-lua/compiler/source"
+
+// Position identifies a source location.
+type Position = source.Position
+
+// Span defines a source range.
+type Span = source.Span
 
 // PositionHolder provides source location info for AST nodes.
 type PositionHolder interface {
@@ -76,12 +82,12 @@ func (n *Node) SetLastColumn(col int) {
 	n.lastcol = col
 }
 
-// SpanOf extracts a diagnostic span from a PositionHolder.
-func SpanOf(p PositionHolder) diag.Span {
+// SpanOf extracts a source span from a PositionHolder.
+func SpanOf(p PositionHolder) Span {
 	if p == nil {
-		return diag.Span{}
+		return Span{}
 	}
-	return diag.Span{
+	return Span{
 		StartLine: p.Line(),
 		StartCol:  p.Column(),
 		EndLine:   p.LastLine(),
@@ -133,16 +139,19 @@ func (n *Node) CopyLastPos(src PositionHolder) {
 
 // Field represents a key-value pair in a table constructor.
 type Field struct {
-	Key   Expr
-	Value Expr
+	Key       Expr
+	KeySyntax AttrKeySyntax // Dot/name, bracket, or unspecified syntax for hand-built/manual ASTs
+	Value     Expr
 }
 
 // ParList represents a function parameter list.
 type ParList struct {
-	HasVargs   bool
-	VarargType TypeExpr // Type annotation for variadic (...: T)
-	Names      []string
-	Types      []TypeExpr // Type annotations, parallel to Names (nil entries = inferred)
+	HasVargs       bool
+	VarargType     TypeExpr // Type annotation for variadic (...: T)
+	VarargPosition Position // Exact parser token position for the `...` syntax.
+	Names          []string
+	NamePositions  []Position // Per-name declaration token positions, parallel to Names.
+	Types          []TypeExpr // Type annotations, parallel to Names (nil entries = inferred)
 }
 
 // FuncName represents a function name in a function definition statement.

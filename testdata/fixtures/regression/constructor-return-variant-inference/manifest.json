@@ -1,0 +1,10 @@
+{
+  "description": "Constructor return summaries preserve discriminant/payload correlation across local and imported functions.",
+  "files": [
+    "variants.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 1
+  }
+}

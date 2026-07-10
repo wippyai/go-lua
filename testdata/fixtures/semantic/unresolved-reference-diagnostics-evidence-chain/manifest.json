@@ -1,0 +1,126 @@
+{
+  "description": "Unresolved type and value references preserve precise lookup evidence and label the unresolved name.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "severity": "error",
+        "code": "type.reference.unresolved",
+        "message_contains": [
+          "unknown type",
+          "LocalPoint"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "no type named LocalPoint is declared in this scope"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 10,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "no type named LocalPoint is declared"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.reference.unresolved]: unknown type LocalPoint",
+          "local p: LocalPoint = {x = 1}",
+          "because:",
+          "proven: no type named LocalPoint is declared"
+        ],
+        "render_ordered_contains": [
+          "error[type.reference.unresolved]: unknown type LocalPoint",
+          "--> main.lua:5:10",
+          "local p: LocalPoint = {x = 1}",
+          "because:",
+          "proven: no type named LocalPoint is declared",
+          "help: Declare the type in scope"
+        ],
+        "render_not_contains": [
+          "^~"        ],
+        "help_contains": [
+          "Declare the type in scope"
+        ],
+        "label_contains": [
+          "unknown type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 10,
+            "contains": [
+              "unknown type"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "error",
+        "code": "value.reference.unresolved",
+        "message_contains": [
+          "unknown value",
+          "missing_count"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "no value named missing_count is declared, predeclared, imported, or configured global in this scope"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 15,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "no value named missing_count is declared"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[value.reference.unresolved]: unknown value missing_count",
+          "local total = missing_count + 1",
+          "because:",
+          "proven: no value named missing_count is declared"
+        ],
+        "render_ordered_contains": [
+          "error[value.reference.unresolved]: unknown value missing_count",
+          "--> main.lua:6:15",
+          "local total = missing_count + 1",
+          "because:",
+          "proven: no value named missing_count is declared",
+          "help: Declare the value"
+        ],
+        "render_not_contains": [
+          "^~"        ],
+        "help_contains": [
+          "Declare the value"
+        ],
+        "label_contains": [
+          "unknown value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 15,
+            "contains": [
+              "unknown value"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

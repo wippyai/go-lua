@@ -1,0 +1,1 @@
+{"description":"A module-captured array filled by table.insert in one function keeps its element type when read in another function (the insert widens the captured container's element).","files":["main.lua"]}

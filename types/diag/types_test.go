@@ -102,6 +102,19 @@ func TestCodeName(t *testing.T) {
 	}
 }
 
+func TestNamedCodeName(t *testing.T) {
+	code := NamedCode("type.assignment")
+	if got := code.Name(); got != "type.assignment" {
+		t.Fatalf("NamedCode(type.assignment).Name() = %q", got)
+	}
+	if again := NamedCode("type.assignment"); again != code {
+		t.Fatalf("NamedCode returned unstable code: %d then %d", code, again)
+	}
+	if fallback := NamedCode(""); fallback != ErrTypeMismatch {
+		t.Fatalf("NamedCode(\"\") = %d, want ErrTypeMismatch", fallback)
+	}
+}
+
 func TestCodeNameFormat(t *testing.T) {
 	for c := ErrTypeMismatch; c <= ErrInvalidOperand; c++ {
 		name := c.Name()

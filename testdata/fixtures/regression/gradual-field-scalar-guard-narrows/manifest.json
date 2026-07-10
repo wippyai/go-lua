@@ -1,0 +1,4 @@
+{
+  "description": "A scalar type-guard on a gradual any field (type(x.f) == 'string') proves the field's type, so the narrowed field flows into a typed parameter and a typed-record field without error.",
+  "files": ["main.lua"]
+}

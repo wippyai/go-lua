@@ -1,0 +1,25 @@
+{
+  "description": "A value received through channel.select and stored into an already shared holder is treated conservatively at the receive target.",
+  "packages": ["channel", "process"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 3,
+      "max_stack": 0,
+      "max_owned_heap": 0,
+      "max_shared_heap": 3,
+      "min_seal_before_share": 3,
+      "min_shared_heap_kind": {
+        "lua.table": 3
+      },
+      "max_shared_heap_kind": {
+        "lua.table": 3
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

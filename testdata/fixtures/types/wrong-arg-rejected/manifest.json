@@ -1,0 +1,94 @@
+{
+  "description": "Passing a number where a string parameter is declared must be rejected.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 21,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1 (x) is 5, not string"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (x) has literal value 5",
+          "takes_string parameter 1 expects string",
+          "no proof on this path shows x satisfies the parameter type"
+        ],
+        "evidence": [
+          {
+            "trust": "proven",
+            "contains": [
+              "argument 1 (x) has literal value 5"
+            ],
+            "kind": "abstract fact",
+            "file": "main.lua",
+            "line": 3,
+            "column": 21
+          },
+          {
+            "trust": "claimed",
+            "contains": [
+              "takes_string parameter 1 expects string"
+            ],
+            "kind": "user assertion"
+          },
+          {
+            "trust": "refuted",
+            "contains": [
+              "no proof on this path shows x satisfies the parameter type"
+            ],
+            "kind": "missing proof",
+            "file": "main.lua",
+            "line": 3,
+            "column": 21
+          }
+        ],
+        "render_contains": [
+          "argument 1 (x) is 5, not string",
+          "return takes_string(x)",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1 (x) is 5, not string",
+          "--> main.lua:3:21",
+          "return takes_string(x)",
+          "because:",
+          "1. proven: argument 1 (x) has literal value 5",
+          "2. claimed: takes_string parameter 1 expects string",
+          "3. missing proof: no proof on this path shows x satisfies the parameter type",
+          "help: Pass `x` as a value compatible with the parameter type, or change the callee signature if that argument is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Pass `x` as a value compatible with the parameter type, or change the callee signature if that argument is valid."
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "contains": [
+              "argument value"
+            ],
+            "file": "main.lua",
+            "line": 3,
+            "column": 21
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

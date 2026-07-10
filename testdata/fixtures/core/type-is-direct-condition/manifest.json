@@ -1,0 +1,5 @@
+{
+  "description": "A successful Point:is(data) condition does not prove the original data:any variable satisfies Point; use the returned value.",
+  "files": ["main.lua"],
+  "check": {"errors": 1}
+}

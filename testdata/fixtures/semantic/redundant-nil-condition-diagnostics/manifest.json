@@ -1,0 +1,199 @@
+{
+  "description": "Redundant nil-condition diagnostics should show the exact predicate, prior proof, and stability without vague duplicated wording.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.condition.redundant",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 12,
+        "severity": "hint",
+        "code": "lint.condition.redundant",
+        "message_contains": [
+          "condition is always true here"
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 7,
+            "column": 12,
+            "contains": [
+              "current check: cache.value ~= nil"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 6,
+            "column": 8,
+            "contains": [
+              "prior guard established cache.value is not nil"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "cache.value is unchanged between the prior guard and this check"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "current check: cache.value ~= nil",
+          "prior guard established cache.value is not nil",
+          "cache.value is unchanged between the prior guard and this check"
+        ],
+        "render_contains": [
+          "hint[lint.condition.redundant]: condition is always true here",
+          "if cache.value ~= nil then",
+          "current check: cache.value ~= nil",
+          "prior guard established cache.value is not nil",
+          "cache.value is unchanged between the prior guard and this check"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.condition.redundant]: condition is always true here",
+          "--> main.lua:7:12",
+          "if cache.value ~= nil then",
+          "because:",
+          "1. proven: current check: cache.value ~= nil",
+          "2. proven: prior guard established cache.value is not nil",
+          "--> main.lua:6:8",
+          "if cache.value ~= nil then",
+          "3. proven: cache.value is unchanged between the prior guard and this check",
+          "help: Remove this repeated check, or move any needed work into the branch already guarded above."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "checked for non-nil",
+          "checked for nil"
+        ],
+        "help_contains": [
+          "Remove this repeated check"
+        ],
+        "labels": [
+          {
+            "line": 7,
+            "column": 12,
+            "contains": [
+              "current check"
+            ]
+          },
+          {
+            "line": 6,
+            "column": 8,
+            "contains": [
+              "prior guard"
+            ]
+          }
+        ],
+        "label_contains": [
+          "current check",
+          "prior guard"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 13,
+        "column": 12,
+        "severity": "hint",
+        "code": "lint.condition.redundant",
+        "message_contains": [
+          "condition is always false here"
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 13,
+            "column": 12,
+            "contains": [
+              "current check: cache.value ~= nil"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 12,
+            "column": 8,
+            "contains": [
+              "prior guard established cache.value is nil"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "cache.value is unchanged between the prior guard and this check"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "current check: cache.value ~= nil",
+          "prior guard established cache.value is nil",
+          "cache.value is unchanged between the prior guard and this check"
+        ],
+        "render_contains": [
+          "hint[lint.condition.redundant]: condition is always false here",
+          "if cache.value ~= nil then",
+          "current check: cache.value ~= nil",
+          "prior guard established cache.value is nil",
+          "cache.value is unchanged between the prior guard and this check"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.condition.redundant]: condition is always false here",
+          "--> main.lua:13:12",
+          "if cache.value ~= nil then",
+          "because:",
+          "1. proven: current check: cache.value ~= nil",
+          "2. proven: prior guard established cache.value is nil",
+          "--> main.lua:12:8",
+          "if cache.value == nil then",
+          "3. proven: cache.value is unchanged between the prior guard and this check",
+          "help: Remove this unreachable branch, or change the prior guard if this path should still run."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "checked for non-nil",
+          "checked for nil"
+        ],
+        "help_contains": [
+          "Remove this unreachable branch"
+        ],
+        "labels": [
+          {
+            "line": 13,
+            "column": 12,
+            "contains": [
+              "current check"
+            ]
+          },
+          {
+            "line": 12,
+            "column": 8,
+            "contains": [
+              "prior guard"
+            ]
+          }
+        ],
+        "label_contains": [
+          "current check",
+          "prior guard"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

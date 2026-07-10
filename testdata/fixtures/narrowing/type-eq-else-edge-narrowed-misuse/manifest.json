@@ -1,0 +1,6 @@
+{
+  "description": "A literal number makes the else edge of type(v) == \"number\" unreachable, so the dead call does not produce a diagnostic.",
+  "check": {
+    "diagnostics": []
+  }
+}

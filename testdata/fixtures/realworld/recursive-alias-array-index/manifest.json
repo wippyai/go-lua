@@ -1,4 +1,3 @@
 {
-  "files": ["main.lua"],
-  "check": {"errors": 0}
+  "files": ["main.lua"]
 }

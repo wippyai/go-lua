@@ -113,7 +113,7 @@ function FlowGraph:create_template_nodes(template, parent_node_id)
             }
 
             if last_template_node_id then
-                local prev_node = (self.nodes[last_template_node_id] :: any)
+                local prev_node = self.nodes[last_template_node_id]
                 if not prev_node.config.data_targets then
                     prev_node.config.data_targets = table.create(1, 0)
                 end
@@ -159,7 +159,7 @@ function FlowGraph:create_template_nodes(template, parent_node_id)
             }
 
             if last_template_node_id then
-                local prev_node = (self.nodes[last_template_node_id] :: any)
+                local prev_node = self.nodes[last_template_node_id]
                 if not prev_node.config.data_targets then
                     prev_node.config.data_targets = table.create(1, 0)
                 end
@@ -207,7 +207,7 @@ function FlowGraph:create_template_nodes(template, parent_node_id)
             }
 
             if last_template_node_id then
-                local prev_node = (self.nodes[last_template_node_id] :: any)
+                local prev_node = self.nodes[last_template_node_id]
                 if not prev_node.config.data_targets then
                     prev_node.config.data_targets = table.create(1, 0)
                 end
@@ -250,7 +250,7 @@ function FlowGraph:create_template_nodes(template, parent_node_id)
     end
 
     if last_template_node_id then
-        local last_node = (self.nodes[last_template_node_id] :: any)
+        local last_node = self.nodes[last_template_node_id]
         if not last_node.config.data_targets then
             last_node.config.data_targets = table.create(1, 0)
         end
@@ -287,6 +287,9 @@ function FlowGraph:add_reference(name, node_id)
 end
 
 function FlowGraph:resolve_reference(name)
+    if not name then
+        return nil, "Undefined node reference"
+    end
     local node_id = self.references[name]
     if not node_id then
         return nil, "Undefined node reference: " .. name
@@ -298,11 +301,11 @@ function FlowGraph:compute_auto_chain()
     for i = 1, #self.node_order - 1 do
         local current_node_id = self.node_order[i]
         local next_node_id = self.node_order[i + 1]
-        local current_node = (self.nodes[current_node_id] :: any)
-        local next_node = (self.nodes[next_node_id] :: any)
+        local current_node = self.nodes[current_node_id]
+        local next_node = self.nodes[next_node_id]
 
         if not current_node.parent_node_id and not next_node.parent_node_id then
-            local current_edges = (self.edges[current_node_id] :: any)
+            local current_edges = self.edges[current_node_id]
 
             local has_any_targets = false
             for _, edge in ipairs(current_edges.targets) do
@@ -366,23 +369,23 @@ function FlowGraph:detect_cycles()
         rec_stack[node_id] = true
         table.insert(path, node_id)
 
-        local edges = (self.edges[node_id] :: any)
+        local edges = self.edges[node_id]
         if edges then
-            for _, edge in ipairs(edges.targets) do
-                if edge.target_node_id then
-                    local has_cycle, cycle_desc = dfs(edge.target_node_id, path)
-                    if has_cycle then
-                        return true, cycle_desc
-                    end
-                end
-            end
-            for _, edge in ipairs(edges.error_targets) do
-                if edge.target_node_id then
-                    local has_cycle, cycle_desc = dfs(edge.target_node_id, path)
-                    if has_cycle then
-                        return true, cycle_desc
-                    end
-                end
+			for _, edge in ipairs(edges.targets) do
+				if edge.target_node_id then
+					local has_cycle, cycle_desc = dfs(edge.target_node_id, path)
+					if has_cycle then
+						return true, cycle_desc
+					end
+				end
+			end
+			for _, edge in ipairs(edges.error_targets) do
+				if edge.target_node_id then
+						local has_cycle, cycle_desc = dfs(edge.target_node_id, path)
+					if has_cycle then
+						return true, cycle_desc
+					end
+				end
             end
         end
 
@@ -408,7 +411,7 @@ function compiler.build_graph(operations, session_context)
         return nil, "No operations provided"
     end
 
-    local graph = FlowGraph.new() :: any
+    local graph = FlowGraph.new()
 
     if session_context and session_context.node_id then
         graph.session_parent_id = session_context.node_id
@@ -557,8 +560,8 @@ function compiler.build_graph(operations, session_context)
                 graph.last_route_from_static = false
             elseif graph.last_static_id then
                 for _, static_source in ipairs(graph.static_data_sources) do
-                    if (static_source :: any).static_id == graph.last_static_id then
-                        table.insert((static_source :: any).routes, {
+                    if static_source.static_id == graph.last_static_id then
+                        table.insert(static_source.routes, {
                             target_name = op.config.target,
                             input_key = op.config.input_key or graph.last_node_name or "default",
                             transform = op.config.transform
@@ -637,7 +640,7 @@ function compiler.build_graph(operations, session_context)
             if #graph.pending_routes == 0 then
                 return nil, "Cannot add condition: no preceding route from a node"
             end
-            (graph.pending_routes[#graph.pending_routes] :: any).condition = op.config.condition
+            graph.pending_routes[#graph.pending_routes].condition = op.config.condition
         end
 
         local success, err = graph:add_operation(op.type, op.config)
@@ -647,9 +650,9 @@ function compiler.build_graph(operations, session_context)
     end
 
     for _, route in ipairs(graph.pending_routes) do
-        local route_entry = (route :: any)
+        local route_entry = route
         if route_entry.is_workflow_terminal then
-            local edges = (graph.edges[route_entry.from_node_id] :: any)
+            local edges = graph.edges[route_entry.from_node_id]
             local edge_list = route_entry.is_error and edges.error_targets or edges.targets
             table.insert(edge_list, {
                 target_node_id = nil,
@@ -663,7 +666,7 @@ function compiler.build_graph(operations, session_context)
             if resolve_err then
                 return nil, resolve_err
             end
-            local edges = (graph.edges[route_entry.from_node_id] :: any)
+            local edges = graph.edges[route_entry.from_node_id]
             local edge_list = route_entry.is_error and edges.error_targets or edges.targets
             table.insert(edge_list, {
                 target_node_id = target_node_id,
@@ -687,8 +690,8 @@ end
 function compiler.find_root_nodes(graph)
     local nodes_with_incoming = table.create(0, 32)
 
-    for _, edges in pairs((graph :: any).edges) do
-        local edge_set = (edges :: any)
+    for _, edges in pairs(graph.edges) do
+        local edge_set = edges
         for _, edge in ipairs(edge_set.targets) do
             if edge.target_node_id and not edge.is_auto_chain then
                 nodes_with_incoming[edge.target_node_id] = true
@@ -702,8 +705,8 @@ function compiler.find_root_nodes(graph)
     end
 
     local roots = table.create(8, 0)
-    for node_id, node_def in pairs((graph :: any).nodes) do
-        if not nodes_with_incoming[node_id] and not (node_def :: any).parent_node_id then
+    for node_id, node_def in pairs(graph.nodes) do
+        if not nodes_with_incoming[node_id] and not node_def.parent_node_id then
             table.insert(roots, node_id)
         end
     end
@@ -714,8 +717,8 @@ end
 function compiler.find_leaf_nodes(graph)
     local leaves = table.create(8, 0)
 
-    for node_id, edges in pairs((graph :: any).edges) do
-        local edge_set = (edges :: any)
+    for node_id, edges in pairs(graph.edges) do
+        local edge_set = edges
         local has_node_targets = false
         for _, edge in ipairs(edge_set.targets) do
             if edge.target_node_id then
@@ -740,8 +743,8 @@ end
 function compiler.validate_graph(graph)
     local nodes_with_incoming = table.create(0, 32)
 
-    for _, edges in pairs((graph :: any).edges) do
-        local edge_set = (edges :: any)
+    for _, edges in pairs(graph.edges) do
+        local edge_set = edges
         for _, edge in ipairs(edge_set.targets) do
             if edge.target_node_id then
                 nodes_with_incoming[edge.target_node_id] = true
@@ -754,14 +757,14 @@ function compiler.validate_graph(graph)
         end
     end
 
-    local has_workflow_input = (graph :: any).input_data ~= nil
+    local has_workflow_input = graph.input_data ~= nil
     local input_target_nodes = table.create(0, 8)
 
     if has_workflow_input then
-        if #(graph :: any).input_routes > 0 then
-            for _, route in ipairs((graph :: any).input_routes) do
-                local route_entry = (route :: any)
-                local target_id, err = (graph :: any):resolve_reference(route_entry.target_name)
+        if #graph.input_routes > 0 then
+            for _, route in ipairs(graph.input_routes) do
+                local route_entry = route
+                local target_id, err = graph:resolve_reference(route_entry.target_name)
                 if not err and target_id then
                     input_target_nodes[target_id] = true
                 end
@@ -777,11 +780,11 @@ function compiler.validate_graph(graph)
     end
 
     local static_target_nodes = table.create(0, 8)
-    for _, static_source in ipairs((graph :: any).static_data_sources) do
-        local src = (static_source :: any)
+    for _, static_source in ipairs(graph.static_data_sources) do
+        local src = static_source
         for _, route in ipairs(src.routes) do
-            local route_entry = (route :: any)
-            local target_id, err = (graph :: any):resolve_reference(route_entry.target_name)
+            local route_entry = route
+            local target_id, err = graph:resolve_reference(route_entry.target_name)
             if not err and target_id then
                 static_target_nodes[target_id] = true
             end
@@ -789,8 +792,8 @@ function compiler.validate_graph(graph)
     end
 
     local dead_nodes = table.create(8, 0)
-    for node_id, node_def in pairs((graph :: any).nodes) do
-        local nd = (node_def :: any)
+    for node_id, node_def in pairs(graph.nodes) do
+        local nd = node_def
         if nd.status ~= consts.STATUS.TEMPLATE and not nd.parent_node_id then
             local has_incoming = nodes_with_incoming[node_id]
             local has_input = input_target_nodes[node_id]
@@ -812,8 +815,8 @@ function compiler.validate_graph(graph)
 
     local nodes_with_default_inputs = table.create(0, 32)
 
-    for source_node_id, edges in pairs((graph :: any).edges) do
-        local edge_set = (edges :: any)
+    for source_node_id, edges in pairs(graph.edges) do
+        local edge_set = edges
         for _, edge in ipairs(edge_set.targets) do
             if edge.target_node_id then
                 local discriminator = edge.input_key or "default"
@@ -824,11 +827,11 @@ function compiler.validate_graph(graph)
         end
     end
 
-    if (graph :: any).input_data then
-        if #(graph :: any).input_routes > 0 then
-            for _, route in ipairs((graph :: any).input_routes) do
-                local route_entry = (route :: any)
-                local target_id, err = (graph :: any):resolve_reference(route_entry.target_name)
+    if graph.input_data then
+        if #graph.input_routes > 0 then
+            for _, route in ipairs(graph.input_routes) do
+                local route_entry = route
+                local target_id, err = graph:resolve_reference(route_entry.target_name)
                 if not err and target_id then
                     local discriminator = route_entry.input_key or "default"
                     if discriminator == "default" or discriminator == "" then
@@ -846,11 +849,11 @@ function compiler.validate_graph(graph)
         end
     end
 
-    for _, static_source in ipairs((graph :: any).static_data_sources) do
-        local src = (static_source :: any)
+    for _, static_source in ipairs(graph.static_data_sources) do
+        local src = static_source
         for _, route in ipairs(src.routes) do
-            local route_entry = (route :: any)
-            local target_id, err = (graph :: any):resolve_reference(route_entry.target_name)
+            local route_entry = route
+            local target_id, err = graph:resolve_reference(route_entry.target_name)
             if not err and target_id then
                 local discriminator = route_entry.input_key or "default"
                 if discriminator == "default" or discriminator == "" then
@@ -861,8 +864,8 @@ function compiler.validate_graph(graph)
     end
 
     local conflicts = table.create(8, 0)
-    for node_id, node_def in pairs((graph :: any).nodes) do
-        local nd = (node_def :: any)
+    for node_id, node_def in pairs(graph.nodes) do
+        local nd = node_def
         if nodes_with_default_inputs[node_id] then
             local has_args = nd.config.args ~= nil
             local has_string_transform = type(nd.config.input_transform) == "string"
@@ -892,11 +895,11 @@ function compiler.validate_graph(graph)
     local has_auto_output = false
     local leaf_nodes = table.create(8, 0)
 
-    for node_id, edges in pairs((graph :: any).edges) do
-        local edge_set = (edges :: any)
-        local node_def = (graph :: any).nodes[node_id]
-        if node_def and (node_def :: any).status ~= consts.STATUS.TEMPLATE then
-            local nd = (node_def :: any)
+    for node_id, edges in pairs(graph.edges) do
+        local edge_set = edges
+        local node_def = graph.nodes[node_id]
+        if node_def and node_def.status ~= consts.STATUS.TEMPLATE then
+            local nd = node_def
             local has_node_targets = false
             for _, edge in ipairs(edge_set.targets) do
                 if edge.target_node_id then
@@ -920,7 +923,7 @@ function compiler.validate_graph(graph)
     end
 
     for _, leaf_info in ipairs(leaf_nodes) do
-        local li = (leaf_info :: any)
+        local li = leaf_info
         if not li.has_success_route and not li.has_error_route then
             has_auto_output = true
             break
@@ -930,7 +933,7 @@ function compiler.validate_graph(graph)
     if not has_success_terminal and not has_auto_output then
         local problematic_nodes = table.create(#leaf_nodes, 0)
         for _, leaf_info in ipairs(leaf_nodes) do
-            local li = (leaf_info :: any)
+            local li = leaf_info
             if li.has_error_route and not li.has_success_route then
                 local title = li.metadata and li.metadata.title or "unnamed"
                 table.insert(problematic_nodes, string.format("%s (%s)", title, li.node_id:sub(1, 12)))
@@ -956,20 +959,20 @@ function compiler.compile_to_commands(graph, session_context)
         return nil, "Graph is required"
     end
 
-    local commands = table.create(#(graph :: any).node_order * 2, 0)
+    local commands = table.create(#graph.node_order * 2, 0)
     local input_data_id = nil
     local is_nested = session_context and session_context.dataflow_id
 
     -- Step 1: Create workflow input data object (only for non-nested workflows)
-    if (graph :: any).input_data and not is_nested then
+    if graph.input_data and not is_nested then
         input_data_id = uuid.v7()
         table.insert(commands, {
             type = consts.COMMAND_TYPES.CREATE_DATA,
             payload = {
                 data_id = input_data_id,
                 data_type = consts.DATA_TYPE.WORKFLOW_INPUT,
-                content = (graph :: any).input_data,
-                content_type = type((graph :: any).input_data) == "table" and consts.CONTENT_TYPE.JSON or consts.CONTENT_TYPE.TEXT
+                content = graph.input_data,
+                content_type = type(graph.input_data) == "table" and consts.CONTENT_TYPE.JSON or consts.CONTENT_TYPE.TEXT
             }
         })
     end
@@ -980,15 +983,15 @@ function compiler.compile_to_commands(graph, session_context)
         return nil, leaf_err
     end
 
-    for _, node_id in ipairs((graph :: any).node_order) do
-        local node_def = ((graph :: any).nodes[node_id] :: any)
+    for _, node_id in ipairs(graph.node_order) do
+        local node_def = graph.nodes[node_id]
         local config = {}
 
         for k, v in pairs(node_def.config) do
             config[k] = v
         end
 
-        local edges = ((graph :: any).edges[node_id] :: any)
+        local edges = graph.edges[node_id]
         local has_explicit_edges = false
 
         for _, edge in ipairs(edges.targets) do
@@ -1010,7 +1013,7 @@ function compiler.compile_to_commands(graph, session_context)
 
             for _, edge in ipairs(edges.targets) do
                 if edge.is_workflow_terminal then
-                    local has_parent = node_def.parent_node_id or (graph :: any).session_parent_id
+                    local has_parent = node_def.parent_node_id or graph.session_parent_id
                     local output_type = has_parent and consts.DATA_TYPE.NODE_OUTPUT or consts.DATA_TYPE.WORKFLOW_OUTPUT
 
                     local target = {
@@ -1024,7 +1027,7 @@ function compiler.compile_to_commands(graph, session_context)
                     }
 
                     if output_type == consts.DATA_TYPE.NODE_OUTPUT then
-                        (target :: any).node_id = node_id
+                        target.node_id = node_id
                     end
 
                     table.insert(config.data_targets, target)
@@ -1044,7 +1047,7 @@ function compiler.compile_to_commands(graph, session_context)
 
             for _, edge in ipairs(edges.error_targets) do
                 if edge.is_workflow_terminal then
-                    local has_parent = node_def.parent_node_id or (graph :: any).session_parent_id
+                    local has_parent = node_def.parent_node_id or graph.session_parent_id
                     local output_type = has_parent and consts.DATA_TYPE.NODE_OUTPUT or consts.DATA_TYPE.WORKFLOW_OUTPUT
 
                     local target = {
@@ -1058,7 +1061,7 @@ function compiler.compile_to_commands(graph, session_context)
                     }
 
                     if output_type == consts.DATA_TYPE.NODE_OUTPUT then
-                        (target :: any).node_id = node_id
+                        target.node_id = node_id
                     end
 
                     table.insert(config.error_targets, target)
@@ -1087,7 +1090,7 @@ function compiler.compile_to_commands(graph, session_context)
             end
 
             if is_leaf and not is_template then
-                local has_parent = node_def.parent_node_id or (graph :: any).session_parent_id
+                local has_parent = node_def.parent_node_id or graph.session_parent_id
                 local output_data_type = has_parent and consts.DATA_TYPE.NODE_OUTPUT or consts.DATA_TYPE.WORKFLOW_OUTPUT
 
                 config.data_targets = table.create(1, 0)
@@ -1102,7 +1105,7 @@ function compiler.compile_to_commands(graph, session_context)
                 }
 
                 if output_data_type == consts.DATA_TYPE.NODE_OUTPUT then
-                    (target :: any).node_id = node_id
+                    target.node_id = node_id
                 end
 
                 table.insert(config.data_targets, target)
@@ -1115,12 +1118,12 @@ function compiler.compile_to_commands(graph, session_context)
             status = node_def.status,
             config = config,
             metadata = node_def.metadata
-        } :: any
+        }
 
         if node_def.parent_node_id then
             node_payload.parent_node_id = node_def.parent_node_id
-        elseif (graph :: any).session_parent_id then
-            node_payload.parent_node_id = (graph :: any).session_parent_id
+        elseif graph.session_parent_id then
+            node_payload.parent_node_id = graph.session_parent_id
         end
 
         table.insert(commands, {
@@ -1130,13 +1133,13 @@ function compiler.compile_to_commands(graph, session_context)
     end
 
     -- Step 3: Create static data sources (nodes now exist)
-    local static_data_ids = table.create(0, #(graph :: any).static_data_sources)
+    local static_data_ids = table.create(0, #graph.static_data_sources)
 
-    for _, static_source in ipairs((graph :: any).static_data_sources) do
-        local src = (static_source :: any)
+    for _, static_source in ipairs(graph.static_data_sources) do
+        local src = static_source
         if #src.routes > 0 then
-            local first_route = (src.routes[1] :: any)
-            local target_node_id, err = (graph :: any):resolve_reference(first_route.target_name)
+            local first_route = src.routes[1]
+            local target_node_id, err = graph:resolve_reference(first_route.target_name)
             if err then
                 return nil, err
             end
@@ -1146,9 +1149,9 @@ function compiler.compile_to_commands(graph, session_context)
                 local transform_env = {
                     output = src.data
                 }
-                local transformed, eval_err = expr.eval(first_route.transform :: string, transform_env)
+                local transformed, eval_err = expr.eval(first_route.transform, transform_env)
                 if eval_err then
-                    return nil, "Static data route transform failed: " .. (eval_err :: string)
+                    return nil, "Static data route transform failed: " .. tostring(eval_err)
                 end
                 content = transformed
             end
@@ -1169,8 +1172,8 @@ function compiler.compile_to_commands(graph, session_context)
             })
 
             for i = 2, #src.routes do
-                local route = (src.routes[i] :: any)
-                local route_target_id, route_err = (graph :: any):resolve_reference(route.target_name)
+                local route = src.routes[i]
+                local route_target_id, route_err = graph:resolve_reference(route.target_name)
                 if route_err then
                     return nil, route_err
                 end
@@ -1192,24 +1195,24 @@ function compiler.compile_to_commands(graph, session_context)
     end
 
     -- Step 4: Create nested workflow input routing (nodes now exist)
-    if (graph :: any).input_data and is_nested then
-        if #(graph :: any).input_routes > 0 then
-            for _, route in ipairs((graph :: any).input_routes) do
-                local route_entry = (route :: any)
-                local target_node_id, err = (graph :: any):resolve_reference(route_entry.target_name)
+    if graph.input_data and is_nested then
+        if #graph.input_routes > 0 then
+            for _, route in ipairs(graph.input_routes) do
+                local route_entry = route
+                local target_node_id, err = graph:resolve_reference(route_entry.target_name)
                 if err then
                     return nil, err
                 end
 
-                local content = (graph :: any).input_data
+                local content = graph.input_data
                 if route_entry.transform then
                     local transform_env = {
-                        input = (graph :: any).input_data,
-                        output = (graph :: any).input_data
+                        input = graph.input_data,
+                        output = graph.input_data
                     }
-                    local transformed, eval_err = expr.eval(route_entry.transform :: string, transform_env)
+                    local transformed, eval_err = expr.eval(route_entry.transform, transform_env)
                     if eval_err then
-                        return nil, "Input route transform failed: " .. (eval_err :: string)
+                        return nil, "Input route transform failed: " .. tostring(eval_err)
                     end
                     content = transformed
                 end
@@ -1240,8 +1243,8 @@ function compiler.compile_to_commands(graph, session_context)
                         data_type = consts.DATA_TYPE.NODE_INPUT,
                         node_id = node_id,
                         discriminator = "default",
-                        content = (graph :: any).input_data,
-                        content_type = type((graph :: any).input_data) == "table" and consts.CONTENT_TYPE.JSON or
+                        content = graph.input_data,
+                        content_type = type(graph.input_data) == "table" and consts.CONTENT_TYPE.JSON or
                             consts.CONTENT_TYPE.TEXT
                     }
                 })
@@ -1256,10 +1259,10 @@ function compiler.compile_to_commands(graph, session_context)
             return nil, roots_err
         end
 
-        if #(graph :: any).input_routes > 0 then
-            for _, route in ipairs((graph :: any).input_routes) do
-                local route_entry = (route :: any)
-                local target_node_id, err = (graph :: any):resolve_reference(route_entry.target_name)
+        if #graph.input_routes > 0 then
+            for _, route in ipairs(graph.input_routes) do
+                local route_entry = route
+                local target_node_id, err = graph:resolve_reference(route_entry.target_name)
                 if err then
                     return nil, err
                 end

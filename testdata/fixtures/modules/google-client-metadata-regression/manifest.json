@@ -1,6 +1,90 @@
 {
   "description": "Reduced google client path: decoding optional http response body without a guard is a sound checker error",
-  "check": {"errors": 1},
+  "check": {
+    "diagnostics": [
+      {
+        "file": "client.lua",
+        "line": 86,
+        "column": 43,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "cannot pass response.body as argument 1 because it may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (response.body) can be string or nil here",
+          "json.decode parameter 1 expects string",
+          "no guard on this path proves response.body is non-nil"
+        ],
+        "evidence": [
+          {
+            "trust": "proven",
+            "contains": [
+              "argument 1 (response.body) can be string or nil here"
+            ],
+            "kind": "abstract fact",
+            "file": "client.lua",
+            "line": 86,
+            "column": 43
+          },
+          {
+            "trust": "claimed",
+            "contains": [
+              "json.decode parameter 1 expects string"
+            ],
+            "kind": "user assertion"
+          },
+          {
+            "trust": "refuted",
+            "contains": [
+              "no guard on this path proves response.body is non-nil"
+            ],
+            "kind": "missing proof",
+            "file": "client.lua",
+            "line": 86,
+            "column": 43
+          }
+        ],
+        "render_contains": [
+          "cannot pass response.body as argument 1 because it may be nil",
+          "    local parsed, parse_err = json.decode(response.body)",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: cannot pass response.body as argument 1 because it may be nil",
+          "--> client.lua:86:43",
+          "    local parsed, parse_err = json.decode(response.body)",
+          "because:",
+          "1. proven: argument 1 (response.body) can be string or nil here",
+          "2. claimed: json.decode parameter 1 expects string",
+          "3. missing proof: no guard on this path proves response.body is non-nil",
+          "help: Guard `response.body` with a nil check, provide a default argument value, or change the parameter type to accept nil."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Guard `response.body` with a nil check, provide a default argument value, or change the parameter type to accept nil."
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "contains": [
+              "argument value"
+            ],
+            "file": "client.lua",
+            "line": 86,
+            "column": 43
+          }
+        ]
+      }
+    ]
+  },
   "files": [
     "json.lua",
     "http_client.lua",

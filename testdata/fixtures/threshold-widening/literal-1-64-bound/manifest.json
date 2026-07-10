@@ -1,0 +1,7 @@
+{
+  "description": "Threshold widening should keep a while-loop counter bounded by the literal threshold 64 so values[i] is in-bounds.",
+  "check": {},
+  "run": {
+    "skip": "checker-only threshold-widening fixture"
+  }
+}

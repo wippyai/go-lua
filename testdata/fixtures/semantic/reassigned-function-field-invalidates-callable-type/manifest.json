@@ -1,0 +1,85 @@
+{
+  "description": "A function field reassigned to a non-function value does not retain its stale path-based callable type.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "severity": "error",
+        "code": "type.assignment",
+        "column": 7,
+        "message_contains": [
+          "cannot assign",
+          "fun() -> string"
+        ],
+        "min_evidence": 2,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 7,
+            "column": 7,
+            "contains": [
+              "assigned value has literal value 42"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "line": 7,
+            "column": 1,
+            "contains": [
+              "M.f is declared as fun() -> string"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "assigned value has literal value 42",
+          "M.f is declared as fun() -> string"
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign M.f because assigned value is 42, not fun() -> string",
+          "M.f = 42"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign M.f because assigned value is 42, not fun() -> string",
+          "--> main.lua:7:7",
+          "M.f = 42",
+          "because:",
+          "1. proven: assigned value has literal value 42",
+          "2. claimed: M.f is declared as fun() -> string",
+          "help: Use a value compatible with the expected type, or change the target type if the assigned value is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Use a value compatible with the expected type",
+          "change the target type"
+        ],
+        "min_labels": 2,
+        "labels": [
+          {
+            "line": 7,
+            "column": 7,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "line": 7,
+            "column": 1,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ]
+      }
+    ]
+  }
+}

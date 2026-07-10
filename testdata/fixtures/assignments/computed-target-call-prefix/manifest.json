@@ -1,0 +1,65 @@
+{
+  "description": "An assignment whose target has a call prefix and no tracked root symbol (make()[\"field\"] = 1) no longer abandons the chunk. The assignment is accepted and the following statement is fully analyzed, so the argument-type error on need_string(42) is detected with its evidence chain.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 10,
+        "column": 13,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": ["argument 1", "not string"],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "argument 1 has literal value 42",
+          "need_string parameter 1 expects string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 10,
+            "column": 13,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["argument 1 has literal value 42"]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": ["need_string parameter 1 expects string"]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]:",
+          "need_string(42)",
+          "because:",
+          "satisfies the parameter type"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1 is 42, not string",
+          "--> main.lua:10:13",
+          "need_string(42)",
+          "because:",
+          "proven: argument 1 has literal value 42",
+          "claimed: need_string parameter 1 expects string",
+          "help: Pass a value for argument 1 that satisfies the parameter type"
+        ],
+        "render_not_contains": ["^~", "where:"],
+        "help_contains": [
+          "satisfies the parameter type",
+          "change the callee signature"
+        ],
+        "min_labels": 1,
+        "label_contains": ["argument value"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 10,
+            "column": 13,
+            "contains": ["argument value"]
+          }
+        ]
+      }
+    ]
+  }
+}

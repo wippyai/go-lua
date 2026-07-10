@@ -1,10 +1,7 @@
 {
-  "description": "Imported not_nil on nested field path plus imported eq(type(x), 'table') preserves len and indexing",
+  "description": "Imported not_nil + eq(type(x),'table') remove a typed-sequence field's optionality, but an arbitrary index read into the unknown-length sequence stays optional",
   "files": [
     "test.lua",
     "main.lua"
-  ],
-  "check": {
-    "errors": 0
-  }
+  ]
 }

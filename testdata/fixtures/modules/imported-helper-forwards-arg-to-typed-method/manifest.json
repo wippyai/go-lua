@@ -1,0 +1,120 @@
+{
+  "description": "An unannotated helper whose body forwards a parameter into an imported string-typed method proves that parameter is a string; an any flowing through the helper is rejected at the helper call site.",
+  "files": [
+    "bedrock_client.lua",
+    "main.lua"
+  ],
+  "check": {
+    "render_options": {
+      "witness_trace": true
+    },
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 12,
+        "column": 24,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 2 (model_id) comes from any/unknown; no proof shows it is string"
+        ],
+        "min_evidence": 5,
+        "evidence_contains": [
+          "argument 1 (model_id) has type any",
+          "inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string",
+          "user asserted any; not abstract-interpreter proof",
+          "model_id comes from any/unknown",
+          "no proof on this path shows argument 1 (model_id) is string"
+        ],
+        "evidence": [
+          {
+            "trust": "proven",
+            "contains": [
+              "argument 1 (model_id) has type any"
+            ],
+            "kind": "abstract fact",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
+          },
+          {
+            "trust": "proven",
+            "contains": [
+              "inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string"
+            ],
+            "kind": "abstract fact"
+          },
+          {
+            "trust": "claimed",
+            "contains": [
+              "user asserted any; not abstract-interpreter proof"
+            ],
+            "kind": "user assertion",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
+          },
+          {
+            "trust": "unknown",
+            "contains": [
+              "model_id comes from any/unknown"
+            ],
+            "reason": "explicit boundary validation",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
+          },
+          {
+            "trust": "unknown",
+            "contains": [
+              "no proof on this path shows argument 1 (model_id) is string"
+            ],
+            "kind": "missing proof",
+            "reason": "boundary validation missing",
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
+          }
+        ],
+        "render_contains": [
+          "argument 2 (model_id) comes from any/unknown; no proof shows it is string",
+          "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 2 (model_id) comes from any/unknown; no proof shows it is string",
+          "--> main.lua:12:24",
+          "helper(bedrock_client, model_id) -- expect-error: no proof shows it is string",
+          "because:",
+          "1. proven: argument 1 (model_id) has type any",
+          "2. proven: inside helper, argument 1 (model_id) is passed to client.invoke parameter 1, which requires string",
+          "3. unvalidated value: model_id comes from any/unknown",
+          "4. claimed: user asserted any; not abstract-interpreter proof",
+          "5. missing proof: no proof on this path shows argument 1 (model_id) is string",
+          "help: Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Validate or narrow `model_id` before passing it; any/unknown values do not prove parameter contracts."
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "contains": [
+              "argument value"
+            ],
+            "file": "main.lua",
+            "line": 12,
+            "column": 24
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,10 +1,13 @@
-// Package bytecode provides serialization and deserialization of compiled Lua bytecode.
+// Package bytecode serializes compiled Lua function prototypes for local cache
+// storage. The format is internal to go-lua and only promises compatibility
+// across matching bytecode versions.
 package bytecode
 
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 
@@ -12,45 +15,42 @@ import (
 )
 
 const (
-	version     = 2          // v2: added TypeInfo
 	headerMagic = 0x4C554143 // "LUAC"
+	version     = 2          // v2 includes FunctionProto.TypeInfo.
 )
 
 var (
-	ErrInvalidHeader     = errors.New("invalid bytecode header")
-	ErrVersionMismatch   = errors.New("bytecode version mismatch")
-	ErrCorruptedBytecode = errors.New("corrupted bytecode")
+	ErrInvalidHeader       = errors.New("invalid bytecode header")
+	ErrVersionMismatch     = errors.New("bytecode version mismatch")
+	ErrCorruptedBytecode   = errors.New("corrupted bytecode")
+	ErrUnsupportedConstant = errors.New("unsupported bytecode constant")
 )
 
-// Dump serializes a FunctionProto to bytes.
+// Dump serializes proto into the go-lua bytecode cache format.
 func Dump(proto *lua.FunctionProto) ([]byte, error) {
-	var buf bytes.Buffer
-	w := &writer{w: &buf}
-
-	// Header
-	w.writeUint32(headerMagic)
-	w.writeByte(version)
-
-	// Write the proto
-	if err := w.writeProto(proto); err != nil {
-		return nil, err
+	if proto == nil {
+		return nil, ErrCorruptedBytecode
 	}
 
+	var buf bytes.Buffer
+	w := &writer{w: &buf}
+	w.writeUint32(headerMagic)
+	w.writeByte(version)
+	w.writeProto(proto)
+	if w.err != nil {
+		return nil, w.err
+	}
 	return buf.Bytes(), nil
 }
 
-// Undump deserializes bytes to a FunctionProto.
+// Undump deserializes a FunctionProto produced by Dump.
 func Undump(data []byte) (*lua.FunctionProto, error) {
 	r := &reader{r: bytes.NewReader(data)}
-
-	// Header
 	magic := r.readUint32()
-	if magic != headerMagic {
+	if r.err != nil || magic != headerMagic {
 		return nil, ErrInvalidHeader
 	}
-
-	ver := r.readByte()
-	if ver != version {
+	if ver := r.readByte(); r.err != nil || ver != version {
 		return nil, ErrVersionMismatch
 	}
 
@@ -58,25 +58,24 @@ func Undump(data []byte) (*lua.FunctionProto, error) {
 	if err != nil {
 		return nil, err
 	}
+	if r.r.Len() != 0 {
+		return nil, ErrCorruptedBytecode
+	}
 
-	// Rebuild stringConstants cache from Constants for all protos
 	rebuildStringConstants(proto)
-	// Propagate root type info to nested protos for runtime type usage.
 	if len(proto.TypeInfo) > 0 {
 		proto.SetTypeInfo(proto.TypeInfo)
 	}
-
 	return proto, nil
 }
 
-// rebuildStringConstants rebuilds the stringConstants cache from Constants.
-// This is needed because stringConstants is not serialized but is used by the VM.
-func rebuildStringConstants(p *lua.FunctionProto) {
-	p.RebuildStringConstants()
-
-	// Recursively rebuild for nested protos
-	for _, np := range p.FunctionPrototypes {
-		rebuildStringConstants(np)
+func rebuildStringConstants(proto *lua.FunctionProto) {
+	if proto == nil {
+		return
+	}
+	proto.RebuildStringConstants()
+	for _, child := range proto.FunctionPrototypes {
+		rebuildStringConstants(child)
 	}
 }
 
@@ -85,11 +84,11 @@ type writer struct {
 	err error
 }
 
-func (w *writer) writeByte(b byte) {
+func (w *writer) writeByte(v byte) {
 	if w.err != nil {
 		return
 	}
-	_, w.err = w.w.Write([]byte{b})
+	_, w.err = w.w.Write([]byte{v})
 }
 
 func (w *writer) writeUint32(v uint32) {
@@ -110,89 +109,84 @@ func (w *writer) writeInt(v int) {
 	w.writeUint64(uint64(v))
 }
 
+func (w *writer) writeBytes(data []byte) {
+	w.writeUint32(uint32(len(data)))
+	if w.err != nil || len(data) == 0 {
+		return
+	}
+	_, w.err = w.w.Write(data)
+}
+
 func (w *writer) writeString(s string) {
+	w.writeBytes([]byte(s))
+}
+
+func (w *writer) writeProto(proto *lua.FunctionProto) {
 	if w.err != nil {
 		return
 	}
-	data := []byte(s)
-	w.writeUint32(uint32(len(data)))
-	if len(data) > 0 {
-		_, w.err = w.w.Write(data)
-	}
-}
-
-func (w *writer) writeProto(p *lua.FunctionProto) error {
-	if w.err != nil {
-		return w.err
+	if proto == nil {
+		w.err = ErrCorruptedBytecode
+		return
 	}
 
-	// Basic info
-	w.writeString(p.SourceName)
-	w.writeInt(p.LineDefined)
-	w.writeInt(p.LastLineDefined)
-	w.writeByte(p.NumUpvalues)
-	w.writeByte(p.NumParameters)
-	w.writeByte(p.IsVarArg)
-	w.writeByte(p.NumUsedRegisters)
+	w.writeString(proto.SourceName)
+	w.writeInt(proto.LineDefined)
+	w.writeInt(proto.LastLineDefined)
+	w.writeByte(proto.NumUpvalues)
+	w.writeByte(proto.NumParameters)
+	w.writeByte(proto.IsVarArg)
+	w.writeByte(proto.NumUsedRegisters)
 
-	// Code
-	w.writeUint32(uint32(len(p.Code)))
-	for _, c := range p.Code {
-		w.writeUint32(c)
+	w.writeUint32(uint32(len(proto.Code)))
+	for _, op := range proto.Code {
+		w.writeUint32(op)
 	}
 
-	// Constants
-	w.writeUint32(uint32(len(p.Constants)))
-	for _, c := range p.Constants {
-		w.writeConstant(c)
+	w.writeUint32(uint32(len(proto.Constants)))
+	for _, constant := range proto.Constants {
+		w.writeConstant(constant)
 	}
 
-	// Nested protos
-	w.writeUint32(uint32(len(p.FunctionPrototypes)))
-	for _, np := range p.FunctionPrototypes {
-		if err := w.writeProto(np); err != nil {
-			return err
-		}
+	w.writeUint32(uint32(len(proto.FunctionPrototypes)))
+	for _, child := range proto.FunctionPrototypes {
+		w.writeProto(child)
 	}
 
-	// Debug info
-	w.writeUint32(uint32(len(p.DbgSourcePositions)))
-	for _, pos := range p.DbgSourcePositions {
+	w.writeUint32(uint32(len(proto.DbgSourcePositions)))
+	for _, pos := range proto.DbgSourcePositions {
 		w.writeInt(pos)
 	}
 
-	w.writeUint32(uint32(len(p.DbgLocals)))
-	for _, local := range p.DbgLocals {
+	w.writeUint32(uint32(len(proto.DbgLocals)))
+	for _, local := range proto.DbgLocals {
+		if local == nil {
+			w.err = ErrCorruptedBytecode
+			return
+		}
 		w.writeString(local.Name)
 		w.writeInt(local.StartPc)
 		w.writeInt(local.EndPc)
 	}
 
-	w.writeUint32(uint32(len(p.DbgCalls)))
-	for _, call := range p.DbgCalls {
+	w.writeUint32(uint32(len(proto.DbgCalls)))
+	for _, call := range proto.DbgCalls {
 		w.writeString(call.Name)
 		w.writeInt(call.Pc)
 	}
 
-	w.writeUint32(uint32(len(p.DbgUpvalues)))
-	for _, uv := range p.DbgUpvalues {
-		w.writeString(uv)
+	w.writeUint32(uint32(len(proto.DbgUpvalues)))
+	for _, upvalue := range proto.DbgUpvalues {
+		w.writeString(upvalue)
 	}
 
-	// TypeInfo (only for root proto)
-	w.writeUint32(uint32(len(p.TypeInfo)))
-	if len(p.TypeInfo) > 0 {
-		_, w.err = w.w.Write(p.TypeInfo)
-	}
-
-	return w.err
+	w.writeBytes(proto.TypeInfo)
 }
 
 func (w *writer) writeConstant(v lua.LValue) {
 	if w.err != nil {
 		return
 	}
-
 	switch val := v.(type) {
 	case *lua.LNilType:
 		w.writeByte(byte(lua.LTNil))
@@ -213,7 +207,11 @@ func (w *writer) writeConstant(v lua.LValue) {
 		w.writeByte(byte(lua.LTString))
 		w.writeString(string(val))
 	default:
-		w.writeByte(byte(lua.LTNil))
+		if v == nil {
+			w.err = ErrCorruptedBytecode
+			return
+		}
+		w.err = fmt.Errorf("%w: %s", ErrUnsupportedConstant, v.Type())
 	}
 }
 
@@ -256,25 +254,25 @@ func (r *reader) readInt() int {
 	return int(r.readUint64())
 }
 
-func (r *reader) readString() string {
+func (r *reader) readBytes() []byte {
 	if r.err != nil {
-		return ""
+		return nil
 	}
 	length := r.readUint32()
-	if length == 0 {
-		return ""
+	if r.err != nil || length == 0 {
+		return nil
 	}
 	data := make([]byte, length)
 	_, r.err = io.ReadFull(r.r, data)
-	return string(data)
+	return data
+}
+
+func (r *reader) readString() string {
+	return string(r.readBytes())
 }
 
 func (r *reader) readProto() (*lua.FunctionProto, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-
-	p := &lua.FunctionProto{
+	proto := &lua.FunctionProto{
 		SourceName:       r.readString(),
 		LineDefined:      r.readInt(),
 		LastLineDefined:  r.readInt(),
@@ -283,43 +281,42 @@ func (r *reader) readProto() (*lua.FunctionProto, error) {
 		IsVarArg:         r.readByte(),
 		NumUsedRegisters: r.readByte(),
 	}
+	if r.err != nil {
+		return nil, ErrCorruptedBytecode
+	}
 
-	// Code
 	codeLen := r.readUint32()
-	p.Code = make([]uint32, codeLen)
-	for i := uint32(0); i < codeLen; i++ {
-		p.Code[i] = r.readUint32()
+	proto.Code = make([]uint32, codeLen)
+	for i := range proto.Code {
+		proto.Code[i] = r.readUint32()
 	}
 
-	// Constants
 	constLen := r.readUint32()
-	p.Constants = make([]lua.LValue, constLen)
-	for i := uint32(0); i < constLen; i++ {
-		p.Constants[i] = r.readConstant()
+	proto.Constants = make([]lua.LValue, constLen)
+	for i := range proto.Constants {
+		proto.Constants[i] = r.readConstant()
 	}
 
-	// Nested protos
-	protoLen := r.readUint32()
-	p.FunctionPrototypes = make([]*lua.FunctionProto, protoLen)
-	for i := uint32(0); i < protoLen; i++ {
-		np, err := r.readProto()
+	childLen := r.readUint32()
+	proto.FunctionPrototypes = make([]*lua.FunctionProto, childLen)
+	for i := range proto.FunctionPrototypes {
+		child, err := r.readProto()
 		if err != nil {
 			return nil, err
 		}
-		p.FunctionPrototypes[i] = np
+		proto.FunctionPrototypes[i] = child
 	}
 
-	// Debug info
 	posLen := r.readUint32()
-	p.DbgSourcePositions = make([]int, posLen)
-	for i := uint32(0); i < posLen; i++ {
-		p.DbgSourcePositions[i] = r.readInt()
+	proto.DbgSourcePositions = make([]int, posLen)
+	for i := range proto.DbgSourcePositions {
+		proto.DbgSourcePositions[i] = r.readInt()
 	}
 
 	localLen := r.readUint32()
-	p.DbgLocals = make([]*lua.DbgLocalInfo, localLen)
-	for i := uint32(0); i < localLen; i++ {
-		p.DbgLocals[i] = &lua.DbgLocalInfo{
+	proto.DbgLocals = make([]*lua.DbgLocalInfo, localLen)
+	for i := range proto.DbgLocals {
+		proto.DbgLocals[i] = &lua.DbgLocalInfo{
 			Name:    r.readString(),
 			StartPc: r.readInt(),
 			EndPc:   r.readInt(),
@@ -327,41 +324,33 @@ func (r *reader) readProto() (*lua.FunctionProto, error) {
 	}
 
 	callLen := r.readUint32()
-	p.DbgCalls = make([]lua.DbgCall, callLen)
-	for i := uint32(0); i < callLen; i++ {
-		p.DbgCalls[i] = lua.DbgCall{
+	proto.DbgCalls = make([]lua.DbgCall, callLen)
+	for i := range proto.DbgCalls {
+		proto.DbgCalls[i] = lua.DbgCall{
 			Name: r.readString(),
 			Pc:   r.readInt(),
 		}
 	}
 
-	uvLen := r.readUint32()
-	p.DbgUpvalues = make([]string, uvLen)
-	for i := uint32(0); i < uvLen; i++ {
-		p.DbgUpvalues[i] = r.readString()
+	upvalueLen := r.readUint32()
+	proto.DbgUpvalues = make([]string, upvalueLen)
+	for i := range proto.DbgUpvalues {
+		proto.DbgUpvalues[i] = r.readString()
 	}
 
-	// TypeInfo
-	typeInfoLen := r.readUint32()
-	if typeInfoLen > 0 {
-		p.TypeInfo = make([]byte, typeInfoLen)
-		_, r.err = io.ReadFull(r.r, p.TypeInfo)
-	}
-
+	proto.TypeInfo = r.readBytes()
 	if r.err != nil {
 		return nil, ErrCorruptedBytecode
 	}
-
-	return p, nil
+	return proto, nil
 }
 
 func (r *reader) readConstant() lua.LValue {
+	tag := lua.LValueType(r.readByte())
 	if r.err != nil {
 		return lua.LNil
 	}
-
-	typ := lua.LValueType(r.readByte())
-	switch typ {
+	switch tag {
 	case lua.LTNil:
 		return lua.LNil
 	case lua.LTBool:
@@ -376,6 +365,7 @@ func (r *reader) readConstant() lua.LValue {
 	case lua.LTString:
 		return lua.LString(r.readString())
 	default:
+		r.err = ErrCorruptedBytecode
 		return lua.LNil
 	}
 }

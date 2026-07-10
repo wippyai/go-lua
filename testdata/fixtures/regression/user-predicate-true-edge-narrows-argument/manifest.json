@@ -1,0 +1,4 @@
+{
+  "description": "A local function whose body returns a builtin type guard is a one-sided type predicate; calling it in a guard narrows the argument to the tested kind on the true edge, so a typed use of the argument type-checks.",
+  "files": ["main.lua"]
+}

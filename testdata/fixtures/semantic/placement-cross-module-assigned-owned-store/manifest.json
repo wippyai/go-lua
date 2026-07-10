@@ -1,0 +1,25 @@
+{
+  "description": "A local alias re-export of ownership.store preserves the imported store effect across module boundaries.",
+  "files": ["protocol.lua", "storage.lua", "main.lua"],
+  "packages": ["ownership"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_stack": 4,
+      "min_owned_heap": 4,
+      "min_owned_heap_depth": 3,
+      "min_owner_identity": 4,
+      "min_stack_kind": {
+        "lua.table": 4
+      },
+      "min_owned_heap_kind": {
+        "lua.table": 4
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only ownership placement package"
+  }
+}

@@ -3,7 +3,10 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestLTypeBasic(t *testing.T) {
@@ -84,7 +87,7 @@ func TestLTypeOptional(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	optNumber := &LType{inner: typ.NewOptional(typ.Number)}
+	optNumber := &LType{inner: typeexpr.Optional(typ.Number)}
 
 	tests := []struct {
 		name     string
@@ -112,7 +115,7 @@ func TestLTypeRecord(t *testing.T) {
 
 	// type Point = {x: number, y: number}
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -201,7 +204,7 @@ func TestLTypeUnion(t *testing.T) {
 	defer L.Close()
 
 	// number | string
-	numOrStr := &LType{inner: typ.NewUnion(typ.Number, typ.String)}
+	numOrStr := &LType{inner: typeexpr.Union(typ.Number, typ.String)}
 
 	tests := []struct {
 		name     string
@@ -230,7 +233,7 @@ func TestLTypeGetField(t *testing.T) {
 
 	// type Point = {x: number, y: number}
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -368,7 +371,7 @@ func TestLTypeMethods(t *testing.T) {
 
 	// Create test types
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -377,7 +380,7 @@ func TestLTypeMethods(t *testing.T) {
 
 	arrayType := &LType{inner: typ.NewArray(typ.Number)}
 	mapType := &LType{inner: typ.NewMap(typ.String, typ.Number)}
-	optType := &LType{inner: typ.NewOptional(typ.Number)}
+	optType := &LType{inner: typeexpr.Optional(typ.Number)}
 	fnType := &LType{inner: typ.Func().Param("a", typ.Number).Returns(typ.String).Build()}
 
 	// Test :kind()
@@ -495,7 +498,7 @@ func TestLTypeIterators(t *testing.T) {
 	// Test :fields() iterator
 	t.Run("fields iterator", func(t *testing.T) {
 		pointType := &LType{
-			inner: typ.NewRecord().
+			inner: typetable.NewRecord().
 				Field("x", typ.Number).
 				Field("y", typ.Number).
 				Build(),
@@ -537,7 +540,7 @@ func TestLTypeIterators(t *testing.T) {
 	// Test :variants() iterator
 	t.Run("variants iterator", func(t *testing.T) {
 		unionType := &LType{
-			inner: typ.NewUnion(typ.Number, typ.String, typ.Boolean),
+			inner: typeexpr.Union(typ.Number, typ.String, typ.Boolean),
 		}
 
 		variantsMethod := L.typeGetField(unionType, "variants")
@@ -612,7 +615,7 @@ func TestLTypeIsMethod(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -669,7 +672,7 @@ func TestLTypeVMCall(t *testing.T) {
 
 	// Register a type as global
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -701,7 +704,7 @@ func TestLTypeVMCall_ArityAndMixedArgs(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -735,7 +738,7 @@ func TestLTypeVMFieldAccess(t *testing.T) {
 
 	// Register types
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -783,7 +786,7 @@ func TestLTypeVMFieldAccess_MethodPrecedence(t *testing.T) {
 
 	// Record field named "is" should not shadow the Type:is method.
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("is", typ.Number).
 			Build(),
 		name: "Point",
@@ -849,7 +852,7 @@ func TestLTypeVMIterators(t *testing.T) {
 
 	// Register type
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -878,7 +881,7 @@ func TestLTypeToString(t *testing.T) {
 	L.SetGlobal("Number", LTypeNumber)
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Build(),
 		name: "Point",
@@ -938,7 +941,7 @@ func TestTypeMethodIs_ReturnsValueOnSuccess(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -981,7 +984,7 @@ func TestTypeMethodIs_ReturnsErrorOnFailure(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -1020,7 +1023,7 @@ func TestTypeMethodIs_OptionalFieldMissing(t *testing.T) {
 	defer L.Close()
 
 	personType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("age", typ.Number).
 			Build(),
@@ -1056,8 +1059,8 @@ func TestTypeMethodIs_AnnotatedType(t *testing.T) {
 	defer L.Close()
 
 	annotated := &LType{
-		inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
-			{Name: "min", Arg: float64(0)},
+		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
+			{Name: "min", Arg: annotation.Float64Arg(0)},
 		}),
 		name: "NonNegative",
 	}
@@ -1101,8 +1104,8 @@ func TestTypeMethodIs_AnnotatedArrayMinLen(t *testing.T) {
 	defer L.Close()
 
 	annotated := &LType{
-		inner: typ.NewAnnotated(typ.NewArray(typ.Number), []typ.Annotation{
-			{Name: "min_len", Arg: float64(1)},
+		inner: typ.NewAnnotated(typ.NewArray(typ.Number), []annotation.Annotation{
+			{Name: "min_len", Arg: annotation.Float64Arg(1)},
 		}),
 		name: "NumList",
 	}
@@ -1206,7 +1209,7 @@ func TestTypeMethodIs_UnionType(t *testing.T) {
 
 	// number | string
 	unionType := &LType{
-		inner: typ.NewUnion(typ.Number, typ.String),
+		inner: typeexpr.Union(typ.Number, typ.String),
 	}
 
 	tests := []struct {
@@ -1260,7 +1263,7 @@ func TestTypeMethodIs_OptionalType(t *testing.T) {
 
 	// number?
 	optionalType := &LType{
-		inner: typ.NewOptional(typ.Number),
+		inner: typeexpr.Optional(typ.Number),
 	}
 
 	tests := []struct {
@@ -1315,7 +1318,7 @@ func TestTypeMethodIs_VMLuaUsage(t *testing.T) {
 
 	// Register a type
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -1354,7 +1357,7 @@ func TestTypeMethodIs_FlowNarrowingPattern(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -1550,7 +1553,7 @@ func TestLTypeRecordWithTableField(t *testing.T) {
 
 	// {kind: string, data: table}
 	commandType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("kind", typ.String).
 			Field("data", typ.NewInterface("table", nil)).
 			Build(),

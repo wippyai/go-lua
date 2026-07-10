@@ -1,0 +1,14 @@
+{
+  "description": "Real-derived Wippy scheduler create integration: actor/scope/context funcs dispatch into a typed scheduler target and repository create payload.",
+  "files": [
+    "security.lua",
+    "schedule_calculator.lua",
+    "schedule_repo.lua",
+    "target.lua",
+    "funcs.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

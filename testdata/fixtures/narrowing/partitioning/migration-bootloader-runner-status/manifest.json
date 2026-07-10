@@ -1,0 +1,140 @@
+{
+  "description": "Negative corpus-derived migration bootloader fixture: the real runner accumulator writes result.error from execute_migration(...): any, so status==error cannot soundly prove BootloaderResult.message is string.",
+  "files": ["runner.lua", "main.lua"],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "type.operator.concat_operand",
+        "enabled": false
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 96,
+        "column": 27,
+        "severity": "error",
+        "code": "type.return.contract",
+        "message_contains": [
+          "returned value 1.message comes from any/unknown",
+          "declared return type string"
+        ],
+        "min_evidence": 5,
+        "evidence_contains": [
+          "returned value 1.message has type any",
+          "returned value 1.message must satisfy declared return type string",
+          "user asserted any; not abstract-interpreter proof",
+          "returned value 1.message comes from any/unknown",
+          "no proof on this path shows returned value 1.message satisfies the declared return type"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 96,
+            "column": 27,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "returned value 1.message has type any"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 36,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "returned value 1.message must satisfy declared return type string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 96,
+            "column": 27,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "user asserted any; not abstract-interpreter proof"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 96,
+            "column": 27,
+            "kind": "unvalidated value",
+            "trust": "unknown",
+            "reason": "explicit boundary validation",
+            "contains": [
+              "returned value 1.message comes from any/unknown"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 96,
+            "column": 27,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no proof on this path shows returned value 1.message satisfies the declared return type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.return.contract]: returned value 1.message comes from any/unknown",
+          "message = \"Migration failed: \" .. result.error",
+          "because:",
+          "missing proof: no proof on this path shows returned value 1.message satisfies the declared return type"
+        ],
+        "render_ordered_contains": [
+          "error[type.return.contract]: returned value 1.message comes from any/unknown; no proof shows it satisfies declared return type string",
+          "--> main.lua:96:27",
+          "message = \"Migration failed: \" .. result.error",
+          "because:",
+          "1. proven: returned value 1.message has type any",
+          "2. claimed: returned value 1.message must satisfy declared return type string",
+          "--> main.lua:22:36",
+          "22 | local function run(options: any?): BootloaderResult",
+          "3. claimed: user asserted any; not abstract-interpreter proof",
+          "4. unvalidated value: returned value 1.message comes from any/unknown",
+          "5. missing proof: no proof on this path shows returned value 1.message satisfies the declared return type",
+          "help: Return a value compatible with the declared return type"
+        ],
+        "render_not_contains": [
+          "-- expect-error",
+          "legacy",
+          "want "
+        ],
+        "help_contains": [
+          "Return a value compatible with the declared return type"
+        ],
+        "label_contains": [
+          "returned value",
+          "declared return type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 96,
+            "column": 27,
+            "contains": [
+              "returned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 36,
+            "contains": [
+              "declared return type"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "checker-only corpus-derived migration bootloader fixture"
+  }
+}

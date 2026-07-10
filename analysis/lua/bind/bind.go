@@ -1,0 +1,40 @@
+package bind
+
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/compiler/ast"
+)
+
+// BindFunction binds a single function expression with a fresh global seed.
+func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
+	r := newResult(opts)
+	b := binder{result: r}
+	b.bindFunction(fn, false, functionOriginDetails{
+		kind:       FunctionOriginLiteral,
+		localIndex: -1,
+	})
+	return r
+}
+
+// BindChunk binds a chunk statement list with a fresh global seed.
+func BindChunk(stmts []ast.Stmt, opts Options) *Result {
+	r := newResult(opts)
+	b := binder{result: r}
+	b.pushScope()
+	b.bindStmts(stmts)
+	b.popScope()
+	return r
+}
+
+// PredeclaredGlobalNames returns deterministic non-empty global names.
+func PredeclaredGlobalNames[T any](globals map[string]T) []string {
+	names := make([]string, 0, len(globals))
+	for name := range globals {
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}

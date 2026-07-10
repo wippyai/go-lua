@@ -1,0 +1,88 @@
+{
+  "description": "Channel identity narrowing survives a local alias of the selected channel reference.",
+  "packages": ["channel"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 13,
+        "column": 34,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign result.value",
+          "not Tick"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "result.value has type",
+          "wrong_tick is declared as Tick"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 34,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "result.value has type {id: string, kind: \"event\"}"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 13,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "wrong_tick is declared as Tick"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Use a value compatible with the expected type",
+          "change the target type"
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign result.value",
+          "local wrong_tick: Tick = result.value",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign result.value",
+          "--> main.lua:13:34",
+          "local wrong_tick: Tick = result.value",
+          "because:",
+          "proven: result.value has type {id: string, kind: \"event\"}",
+          "claimed: wrong_tick is declared as Tick",
+          "help: Use a value compatible with the expected type"
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 13,
+            "column": 34,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 13,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

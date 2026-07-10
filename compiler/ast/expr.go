@@ -65,11 +65,24 @@ type IdentExpr struct {
 	Value string // Identifier name
 }
 
+// AttrKeySyntax records how an AttrGetExpr key appeared in source.
+type AttrKeySyntax uint8
+
+const (
+	// AttrKeyUnknown records unspecified syntax for hand-built or manual AST nodes.
+	AttrKeyUnknown AttrKeySyntax = iota
+	// AttrKeyDot is source dot syntax: obj.key.
+	AttrKeyDot
+	// AttrKeyIndex is source bracket syntax: obj[key].
+	AttrKeyIndex
+)
+
 // AttrGetExpr represents a table field access (obj.key or obj[key]).
 type AttrGetExpr struct {
 	ExprBase
-	Object Expr // Table expression
-	Key    Expr // Key expression
+	Object    Expr          // Table expression
+	Key       Expr          // Key expression
+	KeySyntax AttrKeySyntax // Dot, bracket, or unspecified syntax for hand-built/manual ASTs
 }
 
 // TableExpr represents a table constructor ({...}).
@@ -87,6 +100,17 @@ type FuncCallExpr struct {
 	Args      []Expr     // Call arguments
 	TypeArgs  []TypeExpr // Explicit type arguments for generic calls
 	AdjustRet bool       // Whether return count should be adjusted
+}
+
+// CanProduceMultipleValues reports whether expr can expand to multiple Lua values
+// when it appears in the final slot of an expression list.
+func CanProduceMultipleValues(expr Expr) bool {
+	switch expr.(type) {
+	case *FuncCallExpr, *Comma3Expr:
+		return true
+	default:
+		return false
+	}
 }
 
 // LogicalOpExpr represents a logical operator (and, or).

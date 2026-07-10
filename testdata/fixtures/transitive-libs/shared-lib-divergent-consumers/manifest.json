@@ -1,0 +1,25 @@
+{
+  "description": "One library allocation site (lib.lua box) analyzed once yields a relational escape/placement summary over boundary placeholders; three consumers with divergent escape profiles each substitute their own facts and reach different placement conclusions for the same box (send -> Shared, local derive-then-drop -> proven-local, ownership.store -> ActorLocal retained).",
+  "packages": ["process", "ownership"],
+  "files": ["lib.lua", "consumer_send.lua", "consumer_local.lua", "consumer_store.lua", "main.lua"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 1,
+      "min_owned_heap": 1,
+      "min_seal_before_share": 1,
+      "min_shared_heap_kind": {
+        "lua.table": 1
+      },
+      "min_owned_heap_kind": {
+        "lua.table": 1
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    },
+    "skip": "pending: manifest relational escape/placement lanes + placement-polymorphic summaries (tasks 3eb96899, 150f00f9) not yet landed"
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

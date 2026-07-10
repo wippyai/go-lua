@@ -6,10 +6,10 @@ type PageResponse = {
 }
 
 local all_pages = page_registry.find_all()
-local page = all_pages[1]
+local page = all_pages[1]!
 
 local page_info: PageResponse = {
-    id = page.id,
+    id = page.id!,
     configOverrides = page.config_overrides :: {[string]: any}?,
 }
 

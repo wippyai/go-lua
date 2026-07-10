@@ -1,0 +1,4 @@
+{
+  "description": "Boundary twin: a one-sided type predicate proves nothing on its FALSE edge (the body is a conjunction, so a false result is not the negation of the type test). The argument stays gradual there and is not assignable to the tested type.",
+  "files": ["main.lua"]
+}

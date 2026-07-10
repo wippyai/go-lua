@@ -18,7 +18,7 @@ function M.setup(): registry.Registry
 
     r:register("count", function(args: {[string]: any}): (PluginResult?, string?)
         local items = args.items
-        if not items then
+        if type(items) ~= "table" then
             return nil, "items is required"
         end
         local n = #items

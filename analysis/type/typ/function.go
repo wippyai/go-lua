@@ -1,0 +1,211 @@
+package typ
+
+import (
+	"strings"
+
+	"github.com/wippyai/go-lua/analysis/type/kind"
+)
+
+// Param represents a function parameter with name, type, and optionality.
+type Param struct {
+	Name     string
+	Type     Type
+	Optional bool // True if parameter has a default value
+}
+
+// Function represents a function type with parameters and returns.
+//
+// Functions support generics via TypeParams, variadic arguments via Variadic,
+// and multiple return values via Returns.
+type Function struct {
+	TypeParams []*TypeParam // Generic type parameters (empty for non-generic)
+	Params     []Param      // Positional parameters
+	Variadic   Type         // Variadic element type (nil if not variadic)
+	Returns    []Type       // Return types (empty for void functions)
+	hash       uint64
+	typeProperties
+	strCache stringCache
+}
+
+// FunctionBuilder provides a fluent API for constructing function types.
+//
+// Example:
+//
+//	fn := typ.Func().
+//	    Param("x", typ.Number).
+//	    Param("y", typ.Number).
+//	    Returns(typ.Number).
+//	    Build()
+type FunctionBuilder struct {
+	typeParams []*TypeParam
+	params     []Param
+	variadic   Type
+	returns    []Type
+}
+
+// Func starts building a function type.
+func Func() *FunctionBuilder {
+	return &FunctionBuilder{}
+}
+
+// ReserveParams avoids reallocating while appending known effective parameters.
+func (b *FunctionBuilder) ReserveParams(n int) *FunctionBuilder {
+	if b == nil || n <= 1 || cap(b.params) >= n {
+		return b
+	}
+	params := make([]Param, len(b.params), n)
+	copy(params, b.params)
+	b.params = params
+	return b
+}
+
+// TypeParam adds a type parameter for generic functions.
+func (b *FunctionBuilder) TypeParam(name string, constraint Type) *FunctionBuilder {
+	b.typeParams = append(b.typeParams, NewTypeParam(name, constraint))
+	return b
+}
+
+// TypeParamRef adds an already-created type parameter binder. Use this when the
+// function's binder and the scope entries used to resolve its annotations must
+// be the same node.
+func (b *FunctionBuilder) TypeParamRef(param *TypeParam) *FunctionBuilder {
+	if param == nil {
+		return b
+	}
+	b.typeParams = append(b.typeParams, param)
+	return b
+}
+
+// Param adds a required parameter.
+func (b *FunctionBuilder) Param(name string, t Type) *FunctionBuilder {
+	b.params = append(b.params, Param{Name: name, Type: t})
+	return b
+}
+
+// OptParam adds an optional parameter.
+func (b *FunctionBuilder) OptParam(name string, t Type) *FunctionBuilder {
+	b.params = append(b.params, Param{Name: name, Type: t, Optional: true})
+	return b
+}
+
+// Variadic sets variadic parameter type.
+func (b *FunctionBuilder) Variadic(t Type) *FunctionBuilder {
+	b.variadic = t
+	return b
+}
+
+// Returns sets return types.
+func (b *FunctionBuilder) Returns(types ...Type) *FunctionBuilder {
+	b.returns = types
+	return b
+}
+
+// Build creates the function type.
+func (b *FunctionBuilder) Build() *Function {
+	return newCanonicalFunction(
+		b.typeParams,
+		b.params,
+		b.variadic,
+		b.returns,
+	)
+}
+
+// CloneFunction returns an ownership-isolated copy of an already-canonical
+// function type. It preserves the immutable hash/flag metadata and copies only
+// the exported slice fields, avoiding a semantic rebuild. The private string
+// cache is intentionally reset because sync.Once must not be copied after use.
+func CloneFunction(fn *Function) *Function {
+	if fn == nil {
+		return nil
+	}
+	return &Function{
+		TypeParams:     append([]*TypeParam(nil), fn.TypeParams...),
+		Params:         append([]Param(nil), fn.Params...),
+		Variadic:       fn.Variadic,
+		Returns:        append([]Type(nil), fn.Returns...),
+		hash:           fn.hash,
+		typeProperties: fn.typeProperties,
+	}
+}
+
+func (f *Function) Kind() kind.Kind { return kind.Function }
+
+func (f *Function) String() string {
+	return f.strCache.get(func() string {
+		var sb strings.Builder
+
+		sb.WriteString("fun")
+
+		if len(f.TypeParams) > 0 {
+			sb.WriteString("<")
+
+			for i, tp := range f.TypeParams {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+
+				sb.WriteString(tp.String())
+			}
+
+			sb.WriteString(">")
+		}
+
+		sb.WriteString("(")
+
+		for i, p := range f.Params {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+
+			if p.Name != "" {
+				sb.WriteString(p.Name)
+				sb.WriteString(": ")
+			}
+
+			sb.WriteString(p.Type.String())
+
+			if p.Optional {
+				sb.WriteString("?")
+			}
+		}
+
+		if f.Variadic != nil {
+			if len(f.Params) > 0 {
+				sb.WriteString(", ")
+			}
+
+			sb.WriteString("...")
+			sb.WriteString(f.Variadic.String())
+		}
+
+		sb.WriteString(")")
+
+		if len(f.Returns) > 0 {
+			sb.WriteString(" -> ")
+
+			if len(f.Returns) == 1 {
+				sb.WriteString(f.Returns[0].String())
+			} else {
+				sb.WriteString("(")
+
+				for i, r := range f.Returns {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+
+					sb.WriteString(r.String())
+				}
+
+				sb.WriteString(")")
+			}
+		}
+
+		return sb.String()
+	})
+}
+
+func (f *Function) Hash() uint64 { return f.hash }
+
+func (f *Function) Equals(other Type) bool {
+	return typeEquals(f, other)
+}

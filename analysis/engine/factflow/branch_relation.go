@@ -1,0 +1,88 @@
+package factflow
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+)
+
+// BranchPresenceRelation describes one branch-triggered presence implication:
+// when triggerPath is refined to triggerPresence on an edge, targetPath may be
+// refined to targetPresence on the same edge.
+type BranchPresenceRelation struct {
+	triggerPath     path.Path
+	triggerPresence presence.Value
+	targetPath      path.Path
+	targetPresence  presence.Value
+}
+
+// BranchPresenceRelationSet groups branch-triggered presence relations emitted
+// at the same CFG branch point.
+type BranchPresenceRelationSet struct {
+	relations []BranchPresenceRelation
+}
+
+// NewBranchPresenceRelation creates a branch presence implication.
+func NewBranchPresenceRelation(
+	triggerPath path.Path,
+	triggerPresence presence.Value,
+	targetPath path.Path,
+	targetPresence presence.Value,
+) BranchPresenceRelation {
+	return BranchPresenceRelation{
+		triggerPath:     triggerPath.Clone(),
+		triggerPresence: triggerPresence,
+		targetPath:      targetPath.Clone(),
+		targetPresence:  targetPresence,
+	}
+}
+
+// NewBranchPresenceRelationSet creates a relation set.
+func NewBranchPresenceRelationSet(relations ...BranchPresenceRelation) BranchPresenceRelationSet {
+	return BranchPresenceRelationSet{relations: copyBranchPresenceRelationSlice(relations)}
+}
+
+// TriggerPath returns the branch-refined path that activates the implication.
+func (r BranchPresenceRelation) TriggerPath() path.Path { return r.triggerPath.Clone() }
+
+// TriggerPathRef returns the trigger path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchPresenceRelation) TriggerPathRef() path.Path { return r.triggerPath }
+
+// TriggerPresence returns the triggering presence state.
+func (r BranchPresenceRelation) TriggerPresence() presence.Value { return r.triggerPresence }
+
+// TargetPath returns the path refined when the implication activates.
+func (r BranchPresenceRelation) TargetPath() path.Path { return r.targetPath.Clone() }
+
+// TargetPathRef returns the target path for immediate read-only use.
+// Callers must not mutate or retain the returned path.
+func (r BranchPresenceRelation) TargetPathRef() path.Path { return r.targetPath }
+
+// TargetPresence returns the target presence state.
+func (r BranchPresenceRelation) TargetPresence() presence.Value { return r.targetPresence }
+
+func (r BranchPresenceRelation) copy() BranchPresenceRelation {
+	r.triggerPath = r.triggerPath.Clone()
+	r.targetPath = r.targetPath.Clone()
+	return r
+}
+
+// Relations returns the branch presence relations in deterministic order.
+func (s BranchPresenceRelationSet) Relations() []BranchPresenceRelation {
+	return copyBranchPresenceRelationSlice(s.relations)
+}
+
+func (s BranchPresenceRelationSet) copy() BranchPresenceRelationSet {
+	return BranchPresenceRelationSet{relations: copyBranchPresenceRelationSlice(s.relations)}
+}
+
+func copyBranchPresenceRelationSlice(in []BranchPresenceRelation) []BranchPresenceRelation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchPresenceRelation, len(in))
+	for i, fact := range in {
+		out[i] = fact.copy()
+	}
+	return out
+}

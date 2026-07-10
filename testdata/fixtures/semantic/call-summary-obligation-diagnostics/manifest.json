@@ -1,0 +1,94 @@
+{
+  "description": "Call-site callee obligations render the user-level argument flow chain instead of internal summary wording.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 9,
+        "column": 11,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 2 is \"bad\", not number"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (payload) has literal value \"bad\"",
+          "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number",
+          "no proof on this path shows argument 1 (payload) is number"
+        ],
+        "evidence": [
+          {
+            "trust": "proven",
+            "contains": [
+              "argument 1 (payload) has literal value \"bad\""
+            ],
+            "kind": "abstract fact",
+            "file": "main.lua",
+            "line": 9,
+            "column": 11
+          },
+          {
+            "trust": "proven",
+            "contains": [
+              "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number"
+            ],
+            "kind": "abstract fact"
+          },
+          {
+            "trust": "unknown",
+            "contains": [
+              "no proof on this path shows argument 1 (payload) is number"
+            ],
+            "kind": "missing proof",
+            "file": "main.lua",
+            "line": 9,
+            "column": 11
+          }
+        ],
+        "render_contains": [
+          "argument 2 is \"bad\", not number",
+          "invoke(p, \"bad\")",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 2 is \"bad\", not number",
+          "--> main.lua:9:11",
+          "invoke(p, \"bad\")",
+          "because:",
+          "1. proven: argument 1 (payload) has literal value \"bad\"",
+          "2. proven: inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number",
+          "3. missing proof: no proof on this path shows argument 1 (payload) is number",
+          "help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid."
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "contains": [
+              "argument value"
+            ],
+            "file": "main.lua",
+            "line": 9,
+            "column": 11
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

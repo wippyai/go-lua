@@ -1,0 +1,6 @@
+{
+  "description": "Large dynamic dataflow-node fixture must terminate without recursive param-hint over-specialization",
+  "check": {
+    "errors": 0
+  }
+}

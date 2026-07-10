@@ -1,0 +1,105 @@
+{
+  "files": ["main.lua"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 15,
+        "column": 26,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign cfg.host",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "cfg.host can be string or nil here",
+          "host is declared as string",
+          "no guard on this path proves cfg.host is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 26,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "cfg.host can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 17,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "host is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 26,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves cfg.host is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign cfg.host because it may be nil",
+          "local host: string = cfg.host",
+          "because:",
+          "help: Guard `cfg.host` with a nil check"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign cfg.host because it may be nil",
+          "--> main.lua:15:26",
+          "local host: string = cfg.host",
+          "because:",
+          "proven: cfg.host can be string or nil here",
+          "claimed: host is declared as string",
+          "missing proof: no guard on this path proves cfg.host is non-nil",
+          "help: Guard `cfg.host` with a nil check"
+        ],
+        "render_not_contains": [
+          "-- expect-error",
+          "legacy",
+          "want "
+        ],
+        "help_contains": [
+          "Guard `cfg.host` with a nil check",
+          "change the target type to accept nil"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "declared type",
+          "assigned value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 26,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 17,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

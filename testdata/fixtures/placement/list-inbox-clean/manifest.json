@@ -1,0 +1,12 @@
+{
+  "description": "CLEAN: a fold over rows that returns a scalar; rows are borrowed and dropped, no allocation escapes.",
+  "check": {
+    "placement": {
+      "min_stack": 1
+    },
+    "skip": "pending: field-granular / derivation-sensitive / closure-capture placement precision (task 150f00f9) not yet landed"
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

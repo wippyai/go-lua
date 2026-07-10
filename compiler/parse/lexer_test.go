@@ -500,8 +500,8 @@ func TestScannerPosition(t *testing.T) {
 	if tok.Pos.Line != 1 {
 		t.Errorf("'local' line = %d, want 1", tok.Pos.Line)
 	}
-	if tok.Pos.Source != "test.lua" {
-		t.Errorf("source = %q, want 'test.lua'", tok.Pos.Source)
+	if tok.Pos.File != "test.lua" {
+		t.Errorf("source = %q, want 'test.lua'", tok.Pos.File)
 	}
 
 	// Skip 'x'
@@ -531,7 +531,7 @@ func TestLexerInterface(t *testing.T) {
 func TestErrorFormat(t *testing.T) {
 	// Test Error struct formatting
 	err := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: 10, Column: 5},
+		Pos:     ast.Position{File: "test.lua", Line: 10, Column: 5},
 		Message: "test error",
 		Token:   "foo",
 	}
@@ -548,7 +548,7 @@ func TestErrorFormat(t *testing.T) {
 
 	// Test EOF error format
 	errEOF := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: EOF},
+		Pos:     ast.Position{File: "test.lua", Line: EOF},
 		Message: "unexpected EOF",
 	}
 	strEOF := errEOF.Error()
@@ -560,7 +560,7 @@ func TestErrorFormat(t *testing.T) {
 func TestErrorRender(t *testing.T) {
 	source := "local x = 1\nlocal y = @\nlocal z = 3"
 	err := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: 2, Column: 11},
+		Pos:     ast.Position{File: "test.lua", Line: 2, Column: 11},
 		Message: "unexpected character '@'",
 		Token:   "@",
 		Source:  source,
@@ -585,7 +585,7 @@ func TestErrorRender(t *testing.T) {
 
 func TestErrorRenderNoSource(t *testing.T) {
 	err := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: 10, Column: 5},
+		Pos:     ast.Position{File: "test.lua", Line: 10, Column: 5},
 		Message: "test error",
 		Token:   "foo",
 		Source:  "",
@@ -601,7 +601,7 @@ func TestErrorRenderEdgeCases(t *testing.T) {
 	// Test with column out of range
 	source := "short"
 	err := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: 1, Column: 100},
+		Pos:     ast.Position{File: "test.lua", Line: 1, Column: 100},
 		Message: "test",
 		Token:   "",
 		Source:  source,
@@ -613,7 +613,7 @@ func TestErrorRenderEdgeCases(t *testing.T) {
 
 	// Test with column < 1
 	err2 := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: 1, Column: 0},
+		Pos:     ast.Position{File: "test.lua", Line: 1, Column: 0},
 		Message: "test",
 		Token:   "",
 		Source:  source,
@@ -625,7 +625,7 @@ func TestErrorRenderEdgeCases(t *testing.T) {
 
 	// Test with multi-char token
 	err3 := &Error{
-		Pos:     ast.Position{Source: "test.lua", Line: 1, Column: 1},
+		Pos:     ast.Position{File: "test.lua", Line: 1, Column: 1},
 		Message: "test",
 		Token:   "local",
 		Source:  source,

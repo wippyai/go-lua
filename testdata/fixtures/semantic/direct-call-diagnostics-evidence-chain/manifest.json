@@ -1,0 +1,225 @@
+{
+  "description": "Direct-call diagnostics preserve code, evidence, and labels for argument, arity, and callable-target failures.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "column": 8,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1",
+          "not string"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "argument 1 has literal value 42",
+          "encode parameter 1 expects string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 8,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 has literal value 42"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "encode parameter 1 expects string"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]:",
+          "encode(42, \"bad\")",
+          "because:",
+          "Pass a value for argument 1 that satisfies the parameter type"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1 is 42, not string",
+          "--> main.lua:5:8",
+          "encode(42, \"bad\")",
+          "because:",
+          "proven: argument 1 has literal value 42",
+          "claimed: encode parameter 1 expects string",
+          "help: Pass a value for argument 1 that satisfies the parameter type"
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "internal",
+          "summary",
+          "want "
+        ],
+        "help_contains": [
+          "Pass a value for argument 1 that satisfies the parameter type",
+          "change the callee signature"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 8,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 1,
+        "severity": "error",
+        "code": "type.call.direct.too_few_args",
+        "message_contains": [
+          "expects 2 arguments",
+          "got 1"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "call to encode passes 1 argument",
+          "encode declares 2 parameters"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "call to encode passes 1 argument"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "encode declares 2 parameters"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.too_few_args]: encode expects 2 arguments, got 1",
+          "encode(\"ok\")",
+          "because:",
+          "Pass the missing required arguments"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.too_few_args]: encode expects 2 arguments, got 1",
+          "--> main.lua:6:1",
+          "encode(\"ok\")",
+          "because:",
+          "1. proven: call to encode passes 1 argument",
+          "2. claimed: encode declares 2 parameters",
+          "help: Pass the missing required arguments, or change the callee signature if fewer arguments are valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "internal",
+          "summary",
+          "want "
+        ],
+        "help_contains": [
+          "Pass the missing required arguments",
+          "change the callee signature"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "call expression"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 1,
+            "contains": [
+              "call expression"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 9,
+        "column": 1,
+        "severity": "error",
+        "code": "type.call.direct.not_callable",
+        "message_contains": [
+          "target",
+          "not callable"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "target has literal value 1"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 9,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "target has literal value 1"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.not_callable]: target is 1, not callable",
+          "target()",
+          "because:",
+          "replace `target` with a callable expression"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.not_callable]: target is 1, not callable",
+          "--> main.lua:9:1",
+          "target()",
+          "because:",
+          "1. proven: target has literal value 1",
+          "help: Call a function value, or replace `target` with a callable expression before this call."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "internal",
+          "summary",
+          "want "
+        ],
+        "help_contains": [
+          "replace `target` with a callable expression"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "call target"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 9,
+            "column": 1,
+            "contains": [
+              "call target"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

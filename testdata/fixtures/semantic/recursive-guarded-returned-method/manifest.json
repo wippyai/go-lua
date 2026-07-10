@@ -1,0 +1,3 @@
+{
+  "description": "A recursive returned object may guard an optional child before calling a method on it."
+}

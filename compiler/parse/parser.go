@@ -3,30 +3,14 @@
 //line parser.go.y:2
 package parse
 
-import __yyfmt__ "fmt"
-
-//line parser.go.y:2
-
 import (
+	__yyfmt__ "fmt"
+
 	"github.com/wippyai/go-lua/compiler/ast"
-	"strconv"
-	"strings"
+	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
-func parseNumber(s string) (interface{}, error) {
-	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-		i, err := strconv.ParseInt(s, 0, 64)
-		return i, err
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return f, err
-	}
-	if f == float64(int64(f)) && !strings.Contains(s, ".") && !strings.ContainsAny(s, "eE") {
-		return int64(f), nil
-	}
-	return f, nil
-}
+//line parser.go.y:2
 
 func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {
 	if node == nil {
@@ -1406,7 +1390,7 @@ yydefault:
 			key := &ast.StringExpr{Value: yyDollar[3].token.Str}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			fn := &ast.AttrGetExpr{Object: yyDollar[1].funcname.Func, Key: key}
+			fn := &ast.AttrGetExpr{Object: yyDollar[1].funcname.Func, Key: key, KeySyntax: ast.AttrKeyDot}
 			fn.CopyPos(yyDollar[1].funcname.Func)
 			fn.SetLastPosFromToken(yyDollar[3].token.Pos)
 			yyVAL.funcname = &ast.FuncName{Func: fn}
@@ -1434,8 +1418,10 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:392
 		{
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: yyDollar[3].expr}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: yyDollar[3].expr, KeySyntax: ast.AttrKeyIndex}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
+			yyVAL.expr.SetLastLine(yyDollar[4].token.Pos.Line)
+			yyVAL.expr.SetLastColumn(yyDollar[4].token.Pos.Column + 1)
 		}
 	case 46:
 		yyDollar = yyS[yypt-3 : yypt+1]
@@ -1444,7 +1430,7 @@ yydefault:
 			key := &ast.StringExpr{Value: yyDollar[3].token.Str}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1455,7 +1441,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "type"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1466,7 +1452,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "interface"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1477,7 +1463,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "readonly"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1488,7 +1474,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "as"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1499,7 +1485,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "asserts"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1510,7 +1496,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "is"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1801,7 +1787,7 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:627
 		{
-			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr}
+			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr, Syntax: ast.CastSyntaxAs}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.CopyLastPos(yyDollar[3].typeexpr)
 		}
@@ -1809,7 +1795,7 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:632
 		{
-			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr}
+			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr, Syntax: ast.CastSyntaxColonColon}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.CopyLastPos(yyDollar[3].typeexpr)
 		}
@@ -2002,34 +1988,34 @@ yydefault:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:766
 		{
-			yyVAL.parlist = &ast.ParList{HasVargs: true, Names: []string{}}
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargPosition: yyDollar[1].token.Pos, Names: []string{}}
 		}
 	case 118:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:769
 		{
-			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[3].typeexpr, Names: []string{}}
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[3].typeexpr, VarargPosition: yyDollar[1].token.Pos, Names: []string{}}
 		}
 	case 119:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:772
 		{
-			names, _, types := splitTypedNames(yyDollar[1].typednames)
-			yyVAL.parlist = &ast.ParList{HasVargs: false, Names: names, Types: types}
+			names, positions, types := splitTypedNames(yyDollar[1].typednames)
+			yyVAL.parlist = &ast.ParList{HasVargs: false, Names: names, NamePositions: positions, Types: types}
 		}
 	case 120:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:776
 		{
-			names, _, types := splitTypedNames(yyDollar[1].typednames)
-			yyVAL.parlist = &ast.ParList{HasVargs: true, Names: names, Types: types}
+			names, positions, types := splitTypedNames(yyDollar[1].typednames)
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargPosition: yyDollar[3].token.Pos, Names: names, NamePositions: positions, Types: types}
 		}
 	case 121:
 		yyDollar = yyS[yypt-5 : yypt+1]
 //line parser.go.y:780
 		{
-			names, _, types := splitTypedNames(yyDollar[1].typednames)
-			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[5].typeexpr, Names: names, Types: types}
+			names, positions, types := splitTypedNames(yyDollar[1].typednames)
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[5].typeexpr, VarargPosition: yyDollar[3].token.Pos, Names: names, NamePositions: positions, Types: types}
 		}
 	case 122:
 		yyDollar = yyS[yypt-2 : yypt+1]
@@ -2069,13 +2055,13 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:811
 		{
-			yyVAL.field = &ast.Field{Key: &ast.StringExpr{Value: yyDollar[1].fieldname}, Value: yyDollar[3].expr}
+			yyVAL.field = &ast.Field{Key: &ast.StringExpr{Value: yyDollar[1].fieldname}, KeySyntax: ast.AttrKeyDot, Value: yyDollar[3].expr}
 		}
 	case 128:
 		yyDollar = yyS[yypt-5 : yypt+1]
 //line parser.go.y:814
 		{
-			yyVAL.field = &ast.Field{Key: yyDollar[2].expr, Value: yyDollar[5].expr}
+			yyVAL.field = &ast.Field{Key: yyDollar[2].expr, KeySyntax: ast.AttrKeyIndex, Value: yyDollar[5].expr}
 		}
 	case 129:
 		yyDollar = yyS[yypt-1 : yypt+1]
@@ -2320,8 +2306,13 @@ yydefault:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:965
 		{
-			num, _ := parseNumber(yyDollar[1].token.Str)
-			yyVAL.typeexpr = &ast.LiteralTypeExpr{Value: num}
+			if i, ok := numparse.ParseIntegerLiteral(yyDollar[1].token.Str); ok {
+				yyVAL.typeexpr = &ast.LiteralTypeExpr{Value: i}
+			} else if f, ok := numparse.ParseFloatLiteral(yyDollar[1].token.Str); ok {
+				yyVAL.typeexpr = &ast.LiteralTypeExpr{Value: f}
+			} else {
+				yyVAL.typeexpr = &ast.LiteralTypeExpr{}
+			}
 			yyVAL.typeexpr.SetPosFromToken(yyDollar[1].token.Pos)
 		}
 	case 166:
@@ -2631,7 +2622,7 @@ yydefault:
 			yylex.(*Lexer).PendingGT = &ast.Token{
 				Type: '>',
 				Str:  ">",
-				Pos:  ast.Position{Source: yyDollar[1].token.Pos.Source, Line: yyDollar[1].token.Pos.Line, Column: yyDollar[1].token.Pos.Column + 1},
+				Pos:  ast.Position{File: yyDollar[1].token.Pos.File, Line: yyDollar[1].token.Pos.Line, Column: yyDollar[1].token.Pos.Column + 1},
 			}
 		}
 	case 210:

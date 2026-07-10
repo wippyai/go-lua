@@ -1,7 +1,118 @@
 {
   "description": "Using any-typed session timestamps in time.Time:sub is a sound checker error",
-  "packages": ["time"],
-  "check": {"errors": 1},
+  "packages": [
+    "time"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 25,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1 (last_activity)",
+          "comes from any/unknown",
+          "no proof shows it is time.Time"
+        ],
+        "min_evidence": 4,
+        "evidence_contains": [
+          "argument 1 (last_activity) has type any",
+          "now.sub parameter 1 expects time.Time",
+          "last_activity comes from any/unknown",
+          "no proof on this path shows last_activity satisfies the parameter type"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 (last_activity) has type any"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "now.sub parameter 1 expects time.Time"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "kind": "unvalidated value",
+            "trust": "unknown",
+            "reason": "explicit boundary validation",
+            "contains": [
+              "last_activity comes from any/unknown"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no proof on this path shows last_activity satisfies the parameter type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]:",
+          "--> main.lua:7:25",
+          "now:sub(last_activity)",
+          "because:",
+          "proven: argument 1 (last_activity) has type any",
+          "claimed: now.sub parameter 1 expects time.Time",
+          "unvalidated value: last_activity comes from any/unknown",
+          "missing proof: no proof on this path shows last_activity satisfies the parameter type",
+          "help: Validate or narrow `last_activity`"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]:",
+          "--> main.lua:7:25",
+          "now:sub(last_activity)",
+          "because:",
+          "proven: argument 1 (last_activity) has type any",
+          "claimed: now.sub parameter 1 expects time.Time",
+          "unvalidated value: last_activity comes from any/unknown",
+          "missing proof: no proof on this path shows last_activity satisfies the parameter type",
+          "help: Validate or narrow `last_activity`"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid argument",
+          "^~",
+          "want time.Time"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Validate or narrow",
+          "parameter contracts"
+        ]
+      }
+    ]
+  },
   "files": [
     "session_state.lua",
     "main.lua"

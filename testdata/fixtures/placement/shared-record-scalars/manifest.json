@@ -1,0 +1,23 @@
+{
+  "description": "A shared record with scalar-only fields promotes only the record allocation.",
+  "packages": ["process"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 1,
+      "max_shared_heap": 1,
+      "max_stack": 0,
+      "min_shared_heap_kind": {
+        "lua.table": 1
+      },
+      "max_shared_heap_kind": {
+        "lua.table": 1
+      },
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "checker-only placement fixture"
+  }
+}

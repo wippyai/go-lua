@@ -1,0 +1,8 @@
+{
+  "description": "Cross-module any export remains untrusted; imported aliases do not turn raw fields into a precise record.",
+  "files": [
+    "protocol.lua",
+    "provider.lua",
+    "main.lua"
+  ]
+}

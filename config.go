@@ -19,7 +19,7 @@ const LNumberBit = 64
 const Version = "Lua 5.3 - Wippy Modification"
 
 var PathEnvVar = "LUA_PATH"
-var LDir string // todo: drop it
+var LDir string
 var PathDefault string
 var DirSep string
 var PathSep = ";"

@@ -1,0 +1,3 @@
+{
+  "description": "Recursive parent/child records should converge while preserving optional sequence lookups."
+}

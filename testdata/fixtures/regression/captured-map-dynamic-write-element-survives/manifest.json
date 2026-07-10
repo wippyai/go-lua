@@ -1,0 +1,1 @@
+{"description":"A module-captured map filled by a dynamic-keyed write in one function keeps its typed element when iterated in another function; a write to a different key does not erase the element type.","files":["main.lua"]}

@@ -1,0 +1,89 @@
+{
+  "description": "A direct dynamic-index write through an alias invalidates a prior presence guard on the matching static field.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 11,
+        "column": 27,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign box.value",
+          "it is nil"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "box.value has type nil",
+          "after is declared as string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 27,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "box.value has type nil"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 18,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "after is declared as string"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign box.value because it is nil, not string",
+          "local after: string = box.value -- expect-error"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign box.value because it is nil, not string",
+          "--> main.lua:11:27",
+          "local after: string = box.value -- expect-error",
+          "because:",
+          "1. proven: box.value has type nil",
+          "2. claimed: after is declared as string",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string"
+        ],
+        "help_contains": [
+          "Use a value compatible with the expected type",
+          "change the target type"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 27,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 18,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

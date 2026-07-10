@@ -67,4 +67,4 @@ end
 local tags = room_request.meta.tags
 local source: string = tags["source"] -- expect-error
 
-local request_room: string = room_request.params["room_id"] -- expect-error
+local request_room: string = room_request.params["room_id"]

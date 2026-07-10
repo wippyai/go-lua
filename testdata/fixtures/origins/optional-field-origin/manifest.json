@@ -1,0 +1,91 @@
+{
+  "description": "A record field typed string? is read via a method call without a guard. The origin trace cites the field's optional declaration as the birth of the nil possibility, flowing to the unguarded read.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 4,
+        "column": 12,
+        "severity": "error",
+        "code": "type.nil.unsafe_use",
+        "message_contains": [
+          "c.hook",
+          "may be nil"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "field hook declared optional at main.lua:1",
+          "c.hook reaches use at main.lua:4"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 1,
+            "column": 28,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "field hook declared optional at main.lua:1",
+              "type string?"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 12,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "c.hook reaches use at main.lua:4",
+              "method call on possibly-nil field"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.nil.unsafe_use]:",
+          "c.hook:len()",
+          "because:",
+          "declared optional",
+          "reaches use"
+        ],
+        "render_ordered_contains": [
+          "error[type.nil.unsafe_use]: c.hook may be nil at method call",
+          "--> main.lua:4:12",
+          "return c.hook:len()",
+          "because:",
+          "1. claimed: field hook declared optional at main.lua:1 (type string?)",
+          "2. proven: c.hook reaches use at main.lua:4 (method call on possibly-nil field)",
+          "help: Guard c.hook against nil before the method call."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "internal",
+          "summary",
+          "want "
+        ],
+        "help_contains": [
+          "Guard c.hook against nil before the method call"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "possibly-nil field"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 12,
+            "contains": [
+              "possibly-nil field"
+            ]
+          }
+        ]
+      }
+    ],
+    "skip": "pending: origin-chain witness traces (task 13897ee5) not yet rendered"
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

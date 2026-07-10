@@ -1,0 +1,123 @@
+{
+  "description": "A channel.select receive handler that narrows to a union payload must still report a missing payload variant in the nested handler chain.",
+  "packages": ["channel"],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.union.exhaustiveness",
+        "enabled": true,
+        "severity": "warning"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 15,
+        "column": 12,
+        "severity": "warning",
+        "code": "lint.union.exhaustiveness",
+        "message_contains": [
+          "discriminated union handling is not exhaustive",
+          "event.kind == \"canceled\""
+        ],
+        "min_evidence": 5,
+        "evidence_contains": [
+          "branch chain checks discriminant `event.kind`",
+          "possible cases: `event.kind == \"canceled\"`, `event.kind == \"failed\"`, `event.kind == \"ready\"`",
+          "handled cases: `event.kind == \"failed\"`, `event.kind == \"ready\"`",
+          "missing cases: `event.kind == \"canceled\"`",
+          "no default branch handles the remaining union cases"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 12,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "branch chain checks discriminant `event.kind`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 12,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "possible cases: `event.kind == \"canceled\"`, `event.kind == \"failed\"`, `event.kind == \"ready\"`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 12,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "handled cases: `event.kind == \"failed\"`, `event.kind == \"ready\"`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 12,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "missing cases: `event.kind == \"canceled\"`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 12,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no default branch handles the remaining union cases"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Handle each missing case"
+        ],
+        "label_contains": [
+          "union case check"
+        ],
+        "render_contains": [
+          "warning[lint.union.exhaustiveness]",
+          "event.kind == \"canceled\"",
+          "if event.kind == \"ready\" then"
+        ],
+        "render_ordered_contains": [
+          "warning[lint.union.exhaustiveness]: discriminated union handling is not exhaustive; missing case: `event.kind == \"canceled\"`",
+          "--> main.lua:15:12",
+          "if event.kind == \"ready\" then",
+          "because:",
+          "proven: branch chain checks discriminant `event.kind`",
+          "proven: possible cases: `event.kind == \"canceled\"`, `event.kind == \"failed\"`, `event.kind == \"ready\"`",
+          "proven: handled cases: `event.kind == \"failed\"`, `event.kind == \"ready\"`",
+          "missing proof: missing cases: `event.kind == \"canceled\"`",
+          "missing proof: no default branch handles the remaining union cases",
+          "help: Handle each missing case, or add an else branch when a fallback is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 15,
+            "column": 12,
+            "contains": [
+              "union case check"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

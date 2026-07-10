@@ -1,0 +1,9 @@
+{
+  "description": "A larger actor-supervisor app combining untrusted validation, recursive route topology, handler maps, discriminated results, and soundness canaries.",
+  "files": [
+    "protocol.lua",
+    "validator.lua",
+    "runtime.lua",
+    "main.lua"
+  ]
+}

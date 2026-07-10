@@ -1,0 +1,7 @@
+{
+  "description": "Nested channel.select payload correlation through five-level recursive union shapes.",
+  "packages": ["channel"],
+  "files": [
+    "main.lua"
+  ]
+}

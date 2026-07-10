@@ -1,0 +1,9 @@
+{
+  "description": "Typed Channel<T> payloads, select identity, callback obligations, and coroutine.spawn captures remain precise across module boundaries.",
+  "packages": ["channel"],
+  "files": [
+    "protocol.lua",
+    "runtime.lua",
+    "main.lua"
+  ]
+}

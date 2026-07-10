@@ -1,17 +1,252 @@
-local json = require("json")
-local uuid = require("uuid")
-local expr = require("expr")
-local consts = require("consts")
-
-local default_deps = {
-    commit = require("commit"),
-    data_reader = require("data_reader"),
-    process = process
-}
-
 local node = {}
 local methods = {}
 local mt = { __index = methods }
+
+type Json = {
+    decode: (source: string) -> (unknown, string?),
+}
+
+type Uuid = {
+    v7: () -> string,
+}
+
+type Expr = {
+    eval: (source: string, env: unknown) -> (unknown, string?),
+}
+
+type Consts = {
+    MESSAGE_TOPIC: {
+        YIELD_REPLY_PREFIX: string,
+        YIELD_REQUEST: string,
+    },
+    CONTENT_TYPE: {
+        JSON: string,
+        TEXT: string,
+        REFERENCE: string,
+    },
+    DATA_TYPE: {
+        NODE_INPUT: string,
+        NODE_OUTPUT: string,
+        NODE_YIELD: string,
+    },
+    COMMAND_TYPES: {
+        CREATE_NODE: string,
+        CREATE_DATA: string,
+        UPDATE_NODE: string,
+    },
+    STATUS: {
+        PENDING: string,
+    },
+}
+
+type RouteTarget = {
+    data_type: string?,
+    key: string?,
+    discriminator: string?,
+    node_id: string?,
+    condition: string?,
+    transform: string?,
+    content_type: string?,
+    metadata: unknown?,
+}
+
+type InputTransform = string | {[string]: string}
+
+type NodeConfig = {
+    input_transform: InputTransform?,
+    data_targets: {RouteTarget}?,
+    error_targets: {RouteTarget}?,
+}
+
+type NodeDefinition = {
+    config: NodeConfig?,
+    metadata: {[string]: unknown}?,
+}
+
+type NodeArgs = {
+    node_id: string,
+    dataflow_id: string,
+    node: NodeDefinition?,
+    path: {string}?,
+}
+
+type DataRecord = {
+    content: unknown?,
+    content_type: string?,
+    metadata: {[string]: unknown}?,
+    key: string?,
+    discriminator: string?,
+    data_id: string?,
+}
+
+type DataMap = {[string]: DataRecord}
+
+type DataOptions = {
+    content_type: string?,
+    data_id: string?,
+    key: string?,
+    discriminator: string?,
+    node_id: string?,
+    metadata: unknown?,
+}
+
+type FetchOptions = {
+    replace_references: boolean?,
+}
+
+type DataReaderQuery = {
+    with_data: (self: DataReaderQuery, data_id: string) -> DataReaderQuery,
+    with_nodes: (self: DataReaderQuery, node_id: string) -> DataReaderQuery,
+    with_data_types: (self: DataReaderQuery, data_type: string) -> DataReaderQuery,
+    fetch_options: (self: DataReaderQuery, options: FetchOptions) -> DataReaderQuery,
+    one: (self: DataReaderQuery) -> DataRecord?,
+    all: (self: DataReaderQuery) -> {DataRecord},
+}
+
+type DataReader = {
+    with_dataflow: (dataflow_id: string) -> DataReaderQuery,
+}
+
+type YieldResponse = {
+    response_data: {
+        run_node_results: {unknown}?,
+    }?,
+}
+
+type YieldChannel = {
+    receive: (self: YieldChannel) -> (YieldResponse?, boolean),
+}
+
+type Process = {
+    listen: (topic: string) -> YieldChannel,
+    send: (pid: string, topic: string, payload: unknown) -> boolean,
+}
+
+type Commit = {
+    submit: (dataflow_id: string, op_id: string, commands: {unknown}) -> (boolean, string?),
+}
+
+type NodeDeps = {
+    commit: Commit,
+    data_reader: DataReader,
+    process: Process,
+}
+
+type NodeInstance = {
+    node_id: string,
+    dataflow_id: string,
+    node: NodeDefinition,
+    path: {string},
+    _config: NodeConfig,
+    data_targets: {RouteTarget},
+    error_targets: {RouteTarget},
+    _metadata: {[string]: unknown},
+    _queued_commands: {unknown},
+    _created_data_ids: {string},
+    _cached_inputs: unknown?,
+    _yield_channel: YieldChannel,
+    _yield_reply_topic: string,
+    _last_yield_id: string?,
+    _deps: NodeDeps,
+}
+
+local json: Json = {
+    decode = function(_source: string): (unknown, string?)
+        return nil, nil
+    end
+}
+
+local uuid: Uuid = {
+    v7 = function(): string
+        return ""
+    end
+}
+
+local expr: Expr = {
+    eval = function(_source: string, _env: unknown): (unknown, string?)
+        return nil, nil
+    end
+}
+
+local consts: Consts = {
+    MESSAGE_TOPIC = {
+        YIELD_REPLY_PREFIX = "yield_reply.",
+        YIELD_REQUEST = "yield_request",
+    },
+    CONTENT_TYPE = {
+        JSON = "application/json",
+        TEXT = "text/plain",
+        REFERENCE = "reference",
+    },
+    DATA_TYPE = {
+        NODE_INPUT = "node_input",
+        NODE_OUTPUT = "node_output",
+        NODE_YIELD = "node_yield",
+    },
+    COMMAND_TYPES = {
+        CREATE_NODE = "create_node",
+        CREATE_DATA = "create_data",
+        UPDATE_NODE = "update_node",
+    },
+    STATUS = {
+        PENDING = "pending",
+    },
+}
+
+local reader: DataReaderQuery
+reader = {
+    with_data = function(self: DataReaderQuery, _data_id: string): DataReaderQuery
+        return self
+    end,
+    with_nodes = function(self: DataReaderQuery, _node_id: string): DataReaderQuery
+        return self
+    end,
+    with_data_types = function(self: DataReaderQuery, _data_type: string): DataReaderQuery
+        return self
+    end,
+    fetch_options = function(self: DataReaderQuery, _options: FetchOptions): DataReaderQuery
+        return self
+    end,
+    one = function(_self: DataReaderQuery): DataRecord?
+        return nil
+    end,
+    all = function(_self: DataReaderQuery): {DataRecord}
+        return {}
+    end,
+}
+
+local data_reader: DataReader = {
+    with_dataflow = function(_dataflow_id: string): DataReaderQuery
+        return reader
+    end
+}
+
+local yield_channel: YieldChannel = {
+    receive = function(_self: YieldChannel): (YieldResponse?, boolean)
+        return nil, false
+    end
+}
+
+local process_api: Process = {
+    listen = function(_topic: string): YieldChannel
+        return yield_channel
+    end,
+    send = function(_pid: string, _topic: string, _payload: unknown): boolean
+        return true
+    end,
+}
+
+local commit: Commit = {
+    submit = function(_dataflow_id: string, _op_id: string, _commands: {unknown}): (boolean, string?)
+        return true, nil
+    end
+}
+
+local default_deps: NodeDeps = {
+    commit = commit,
+    data_reader = data_reader,
+    process = process_api
+}
 
 local function merge_metadata(existing, new_fields)
     local existing_count = 0
@@ -44,7 +279,7 @@ local function merge_metadata(existing, new_fields)
     return result
 end
 
-local function create_transform_env(raw_inputs)
+local function create_transform_env(raw_inputs: DataMap)
     local input_count = 0
     for _ in pairs(raw_inputs) do
         input_count = input_count + 1
@@ -68,13 +303,13 @@ local function create_transform_env(raw_inputs)
     }
 end
 
-local function resolve_dataflow_references(self, value)
+local function resolve_dataflow_references(self: NodeInstance, value: unknown): unknown
     if type(value) ~= "table" then
         return value
     end
 
-    if value._dataflow_ref then
-        local reader = (self._deps.data_reader.with_dataflow(self.dataflow_id) :: any)
+    if type(value._dataflow_ref) == "string" then
+        local reader = self._deps.data_reader.with_dataflow(self.dataflow_id)
             :with_data(value._dataflow_ref)
             :fetch_options({ replace_references = true })
 
@@ -90,7 +325,7 @@ local function resolve_dataflow_references(self, value)
     end
 
     if #value > 0 and value[1] and value[1]._dataflow_ref then
-        local resolved = {}
+        local resolved: {unknown} = {}
         for i, item in ipairs(value) do
             resolved[i] = resolve_dataflow_references(self, item)
         end
@@ -100,7 +335,7 @@ local function resolve_dataflow_references(self, value)
     return value
 end
 
-function node.new(args, deps)
+function node.new(args: NodeArgs, deps: NodeDeps?)
     if not args then
         return nil, "Node args required"
     end
@@ -108,45 +343,45 @@ function node.new(args, deps)
         return nil, "Node args must contain node_id and dataflow_id"
     end
 
-    deps = deps or default_deps
+    local effective_deps: NodeDeps = deps or default_deps
 
     local yield_reply_topic = consts.MESSAGE_TOPIC.YIELD_REPLY_PREFIX .. args.node_id
-    local yield_channel = (deps.process :: any).listen(yield_reply_topic)
+    local yield_channel = effective_deps.process.listen(yield_reply_topic)
 
-    local instance = {
+    local instance: NodeInstance = {
         node_id = args.node_id,
         dataflow_id = args.dataflow_id,
         node = args.node or {},
-        path = args.path or table.create(1, 0),
+        path = args.path or (table.create(1, 0) :: {string}),
 
         _config = (args.node and args.node.config) or {},
-        data_targets = (args.node and args.node.config and args.node.config.data_targets) or table.create(0, 0),
-        error_targets = (args.node and args.node.config and args.node.config.error_targets) or table.create(0, 0),
+        data_targets = (args.node and args.node.config and args.node.config.data_targets) or (table.create(0, 0) :: {RouteTarget}),
+        error_targets = (args.node and args.node.config and args.node.config.error_targets) or (table.create(0, 0) :: {RouteTarget}),
 
         _metadata = (args.node and args.node.metadata) or {},
         _queued_commands = table.create(10, 0),
-        _created_data_ids = table.create(5, 0),
+        _created_data_ids = table.create(5, 0) :: {string},
         _cached_inputs = nil,
 
         _yield_channel = yield_channel,
         _yield_reply_topic = yield_reply_topic,
         _last_yield_id = nil,
 
-        _deps = deps
+        _deps = effective_deps
     }
 
     if not instance.path[1] or instance.path[1] ~= args.node_id then
         table.insert(instance.path, args.node_id)
     end
 
-    return setmetatable(instance, mt) :: any, nil
+    return setmetatable(instance, mt), nil
 end
 
 function methods:config()
     return self._config
 end
 
-function methods:_transform_inputs_with_expr(raw_inputs, transform_config)
+function methods:_transform_inputs_with_expr(raw_inputs: DataMap, transform_config: InputTransform)
     local env = create_transform_env(raw_inputs)
 
     if type(transform_config) == "string" then
@@ -193,14 +428,14 @@ function methods:_transform_inputs_with_expr(raw_inputs, transform_config)
     return result, nil
 end
 
-function methods:_load_raw_inputs()
-    local input_data = (self._deps.data_reader.with_dataflow(self.dataflow_id) :: any)
+function methods:_load_raw_inputs(): DataMap
+    local input_data = self._deps.data_reader.with_dataflow(self.dataflow_id)
         :with_nodes(self.node_id)
         :with_data_types(consts.DATA_TYPE.NODE_INPUT)
         :fetch_options({ replace_references = true })
         :all()
 
-    local inputs_map = table.create(0, #input_data)
+    local inputs_map: DataMap = table.create(0, #input_data)
 
     for _, input in ipairs(input_data) do
         local parsed_content = input.content
@@ -295,7 +530,7 @@ function methods:with_child_nodes(definitions)
     return child_ids, nil
 end
 
-function methods:data(data_type, content, options)
+function methods:data(data_type, content, options: DataOptions?)
     if not data_type or data_type == "" then
         return nil, "Node [" .. self.node_id .. "] data type is required"
     end
@@ -390,7 +625,7 @@ function methods:submit()
     end
 end
 
-function methods.yield(self: table, options)
+function methods.yield(self: NodeInstance, options)
     options = options or {}
 
     local yield_id = uuid.v7()
@@ -433,7 +668,7 @@ function methods.yield(self: table, options)
         }
     }
 
-    local success = (self._deps.process :: any).send(
+    local success = self._deps.process.send(
         "dataflow." .. self.dataflow_id,
         consts.MESSAGE_TOPIC.YIELD_REQUEST,
         yield_signal

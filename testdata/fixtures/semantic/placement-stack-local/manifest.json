@@ -1,0 +1,11 @@
+{
+  "description": "Object literals with no escape remain stack-placement candidates in the VM placement plan.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_stack": 2,
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  }
+}

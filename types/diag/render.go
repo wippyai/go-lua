@@ -29,6 +29,14 @@ type colorScheme struct {
 	reset, bold, error, warning, hint, gutter string
 }
 
+// RenderOptions controls optional diagnostic rendering behavior.
+type RenderOptions struct {
+	// WitnessTrace is reserved for renderers with structured evidence. This
+	// legacy diagnostic model stores Explanation as free text, so enabling the
+	// flag preserves the existing output.
+	WitnessTrace bool
+}
+
 var noColors = colorScheme{}
 
 var ansiColors = colorScheme{
@@ -55,6 +63,11 @@ func (d Diagnostic) Render(source SourceLines) string {
 	return d.render(source, noColors)
 }
 
+// RenderWithOptions formats the diagnostic without colors using options.
+func (d Diagnostic) RenderWithOptions(source SourceLines, opts RenderOptions) string {
+	return d.render(source, noColors)
+}
+
 // RenderColored formats the diagnostic in Rust-style with ANSI colors.
 //
 // Uses ANSI escape codes for terminal color output:
@@ -63,6 +76,11 @@ func (d Diagnostic) Render(source SourceLines) string {
 //   - Cyan for hints
 //   - Blue for line numbers and markers
 func (d Diagnostic) RenderColored(source SourceLines) string {
+	return d.render(source, ansiColors)
+}
+
+// RenderColoredWithOptions formats the diagnostic with ANSI colors using options.
+func (d Diagnostic) RenderColoredWithOptions(source SourceLines, opts RenderOptions) string {
 	return d.render(source, ansiColors)
 }
 
@@ -268,11 +286,33 @@ func (c *Collector) RenderAll(source SourceLines) string {
 	return b.String()
 }
 
+// RenderAllWithOptions formats all diagnostics without colors using options.
+func (c *Collector) RenderAllWithOptions(source SourceLines, opts RenderOptions) string {
+	var b strings.Builder
+	for _, d := range c.All() {
+		b.WriteString(d.RenderWithOptions(source, opts))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 // RenderAllColored formats all diagnostics with colors.
 func (c *Collector) RenderAllColored(source SourceLines) string {
 	var b strings.Builder
 	for _, d := range c.All() {
 		b.WriteString(d.RenderColored(source))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// RenderAllColoredWithOptions formats all diagnostics with colors using options.
+func (c *Collector) RenderAllColoredWithOptions(source SourceLines, opts RenderOptions) string {
+	var b strings.Builder
+	for _, d := range c.All() {
+		b.WriteString(d.RenderColoredWithOptions(source, opts))
 		b.WriteString("\n")
 	}
 

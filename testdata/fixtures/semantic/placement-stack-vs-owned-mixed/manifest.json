@@ -1,0 +1,1 @@
+{ "description": "Mixed placement: one stored graph is owned-heap, an unstored local stays stack.", "packages": ["ownership"], "check": { "placement": { "require_complete": true, "min_stack": 1, "min_owned_heap": 1, "max_unknown": 0 } }, "run": { "skip": "placement-only" } }

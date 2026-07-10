@@ -1,460 +1,198 @@
 package io
 
 import (
-	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
+	checker "github.com/wippyai/go-lua/compiler/check"
+	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestNewManifest(t *testing.T) {
-	m := NewManifest("test/path")
-	if m.Path != "test/path" {
-		t.Errorf("Path = %q, want %q", m.Path, "test/path")
-	}
-	if m.Types == nil {
-		t.Error("Types should be initialized")
-	}
-	if m.Summaries == nil {
-		t.Error("Summaries should be initialized")
-	}
-	if m.Globals == nil {
-		t.Error("Globals should be initialized")
-	}
-}
-
-func TestNewSummary(t *testing.T) {
-	params := []typ.Type{typ.String, typ.Number}
-	returns := []typ.Type{typ.Boolean}
-	s := NewSummary(params, returns)
-
-	if len(s.Params) != 2 {
-		t.Errorf("Params len = %d, want 2", len(s.Params))
-	}
-	if len(s.Returns) != 1 {
-		t.Errorf("Returns len = %d, want 1", len(s.Returns))
-	}
-	if s.ReturnsParam != -1 {
-		t.Errorf("ReturnsParam = %d, want -1", s.ReturnsParam)
-	}
-}
-
-func TestManifest_DefineType(t *testing.T) {
-	m := NewManifest("test")
-	m.DefineType("MyType", typ.String)
-
-	got, ok := m.LookupType("MyType")
-	if !ok {
-		t.Fatal("LookupType should find defined type")
-	}
-	if got != typ.String {
-		t.Errorf("got %v, want string", got)
-	}
-}
-
-func TestManifest_LookupType_ResolvesLocalRefs(t *testing.T) {
-	m := NewManifest("test")
-	customization := typ.NewRecord().
-		Field("custom_css", typ.String).
-		Field("css_variables", typ.NewMap(typ.String, typ.String)).
-		Field("icons", typ.NewMap(typ.String, typ.String)).
+func TestEncodeDecodeTypeUsesCanonicalManifestCodec(t *testing.T) {
+	want := typ.NewRecord().
+		Field("name", typ.String).
+		OptField("age", typ.Number).
 		Build()
-	facadeConfig := typ.NewRecord().
-		Field("customization", typ.NewRef("", "Customization")).
-		Build()
-	m.DefineType("Customization", customization)
-	m.DefineType("FacadeConfig", facadeConfig)
 
-	got, ok := m.LookupType("FacadeConfig")
-	if !ok || got == nil {
-		t.Fatal("LookupType should resolve FacadeConfig")
-	}
-	rec, ok := got.(*typ.Record)
-	if !ok {
-		t.Fatalf("expected record, got %T", got)
-	}
-	field := rec.GetField("customization")
-	if field == nil {
-		t.Fatal("expected customization field")
-	}
-	if _, isRef := field.Type.(*typ.Ref); isRef {
-		t.Fatalf("expected resolved type, still got ref: %v", field.Type)
-	}
-	if !typ.TypeEquals(field.Type, customization) {
-		t.Fatalf("expected customization record, got %v", field.Type)
-	}
-}
-
-func TestManifest_DefineSummary(t *testing.T) {
-	m := NewManifest("test")
-	s := NewSummary(nil, nil)
-	m.DefineSummary("myFunc", s)
-
-	got, ok := m.LookupSummary("myFunc")
-	if !ok {
-		t.Fatal("LookupSummary should find defined summary")
-	}
-	if got != s {
-		t.Error("got different summary")
-	}
-}
-
-func TestManifest_SetExport_Basic(t *testing.T) {
-	m := NewManifest("test")
-	m.SetExport(typ.String)
-	if m.Export != typ.String {
-		t.Error("Export should be set")
-	}
-}
-
-func TestManifest_AddGlobal(t *testing.T) {
-	m := NewManifest("test")
-	m.AddGlobal("print", typ.Any)
-	if m.Globals["print"] != typ.Any {
-		t.Error("Global should be set")
-	}
-}
-
-func TestManifest_AllTypes(t *testing.T) {
-	m := NewManifest("test")
-	m.DefineType("A", typ.String)
-	m.DefineType("B", typ.Number)
-
-	all := m.AllTypes()
-	if len(all) != 2 {
-		t.Errorf("AllTypes len = %d, want 2", len(all))
-	}
-}
-
-func TestManifest_AllTypes_Nil(t *testing.T) {
-	var m *Manifest
-	all := m.AllTypes()
-	if all != nil {
-		t.Error("nil manifest AllTypes should return nil")
-	}
-}
-
-func TestManifest_AllSummaries(t *testing.T) {
-	m := NewManifest("test")
-	m.DefineSummary("a", NewSummary(nil, nil))
-	m.DefineSummary("b", NewSummary(nil, nil))
-
-	all := m.AllSummaries()
-	if len(all) != 2 {
-		t.Errorf("AllSummaries len = %d, want 2", len(all))
-	}
-}
-
-func TestManifest_AllGlobals(t *testing.T) {
-	m := NewManifest("test")
-	m.AddGlobal("x", typ.String)
-
-	all := m.AllGlobals()
-	if len(all) != 1 {
-		t.Errorf("AllGlobals len = %d, want 1", len(all))
-	}
-}
-
-func TestFunctionSummary_Clone(t *testing.T) {
-	s := &FunctionSummary{
-		Params:       []typ.Type{typ.String},
-		Returns:      []typ.Type{typ.Boolean},
-		ReturnsParam: 0,
-	}
-	clone := s.Clone()
-	if clone == s {
-		t.Error("Clone should return different instance")
-	}
-	if len(clone.Params) != 1 {
-		t.Error("Clone should copy params")
-	}
-	if len(clone.Returns) != 1 {
-		t.Error("Clone should copy returns")
-	}
-}
-
-func TestFunctionSummary_Clone_Full(t *testing.T) {
-	s := &FunctionSummary{
-		Params:       []typ.Type{typ.String, typ.Number},
-		Returns:      []typ.Type{typ.Boolean},
-		ReturnsParam: 1,
-		ParamEscapes: []bool{true, false},
-	}
-	clone := s.Clone()
-	if len(clone.ParamEscapes) != 2 {
-		t.Errorf("ParamEscapes len = %d, want 2", len(clone.ParamEscapes))
-	}
-	if !clone.ParamEscapes[0] || clone.ParamEscapes[1] {
-		t.Error("ParamEscapes values not preserved")
-	}
-}
-
-func TestFunctionSummary_Clone_Nil(t *testing.T) {
-	var s *FunctionSummary
-	clone := s.Clone()
-	if clone != nil {
-		t.Error("nil summary Clone should return nil")
-	}
-}
-
-func TestFunctionSummary_Clone_WithConditions(t *testing.T) {
-	s := &FunctionSummary{
-		Params:  []typ.Type{typ.String},
-		Returns: []typ.Type{typ.Boolean},
-		Requires: constraint.FromConstraints(
-			constraint.NotNil{Path: constraint.Path{Root: "$0"}},
-		),
-		Ensures: constraint.FromConstraints(
-			constraint.Truthy{Path: constraint.Path{Root: "result"}},
-		),
-	}
-	clone := s.Clone()
-	if !clone.Requires.HasConstraints() {
-		t.Error("Requires should be cloned")
-	}
-	if !clone.Ensures.HasConstraints() {
-		t.Error("Ensures should be cloned")
-	}
-}
-
-func TestManifest_Encode_Decode(t *testing.T) {
-	m := NewManifest("test/module")
-	m.DefineType("MyType", typ.String)
-	m.SetExport(typ.Number)
-
-	data, err := m.Encode()
+	data, err := Encode(want)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("decoded type = %s, want %s", got, want)
+	}
+}
 
-	decoded, err := DecodeManifest(data)
+func TestManifestEncodeDecodePreservesCanonicalFields(t *testing.T) {
+	m := NewManifest("app.mod")
+	m.Version = 7
+	m.DefineType("UserID", typ.String)
+	m.SetExport(typ.NewRecord().
+		Field("get", typ.Func().Param("id", typ.String).Returns(typ.Any).Build()).
+		Build())
+	m.AddGlobal("legacy", typ.Boolean)
+
+	data, err := m.Encode()
+	if err != nil {
+		t.Fatalf("Manifest.Encode failed: %v", err)
+	}
+	got, err := DecodeManifest(data)
 	if err != nil {
 		t.Fatalf("DecodeManifest failed: %v", err)
 	}
-	if decoded.Path != "test/module" {
-		t.Errorf("Path = %q, want %q", decoded.Path, "test/module")
+
+	if got.Path != m.Path || got.Version != m.Version {
+		t.Fatalf("decoded manifest identity = %s/%d, want %s/%d", got.Path, got.Version, m.Path, m.Version)
+	}
+	if _, ok := got.LookupType("UserID"); !ok {
+		t.Fatalf("decoded manifest missing type UserID")
+	}
+	if !typ.TypeEquals(got.Export, m.Export) {
+		t.Fatalf("decoded export = %s, want %s", got.Export, m.Export)
+	}
+	if globals := got.AllGlobals(); !typ.TypeEquals(globals["legacy"], typ.Boolean) {
+		t.Fatalf("decoded global legacy = %v, want boolean", globals["legacy"])
 	}
 }
 
-func TestManifest_EnrichedExport_DoesNotApplySummaryToNestedSameName(t *testing.T) {
-	m := NewManifest("test")
-
-	topValidate := typ.Func().Param("x", typ.String).Returns(typ.Boolean).Build()
-	nestedValidate := typ.Func().Param("x", typ.String).Returns(typ.Boolean).Build()
-	nestedRecord := typ.NewRecord().Field("validate", nestedValidate).Build()
-	exportRec := typ.NewRecord().
-		Field("validate", topValidate).
-		Field("nested", nestedRecord).
-		Build()
-	m.SetExport(exportRec)
-
-	summary := NewSummary([]typ.Type{typ.String}, []typ.Type{typ.Boolean})
-	summary.Ensures = constraint.FromConstraints(constraint.Truthy{
-		Path: constraint.Path{Root: "result"},
+func TestFunctionSummaryParamEscapesDeriveFromParamRelations(t *testing.T) {
+	s := NewSummary([]typ.Type{typ.Any, typ.Any, typ.Any}, nil)
+	s.ParamEscapes = []bool{true, true, true}
+	s.SetParamRelations([]signature.ParamRelation{
+		{
+			Param:                0,
+			EscapeClass:          signature.EscapeNone,
+			PlacementConsequence: signature.PlacementConsequenceKeep,
+		},
+		{
+			Param:                1,
+			EscapeClass:          signature.EscapeBorrow,
+			PlacementConsequence: signature.PlacementConsequenceKeep,
+		},
+		{
+			Param:                2,
+			EscapeClass:          signature.EscapeStore,
+			PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+		},
 	})
-	m.DefineSummary("validate", summary)
-
-	enriched := m.EnrichedExport()
-	rec, ok := enriched.(*typ.Record)
-	if !ok {
-		t.Fatalf("expected record export, got %T", enriched)
+	if got := s.ParamEscapes; len(got) != 3 || got[0] || got[1] || !got[2] {
+		t.Fatalf("ParamEscapes = %#v, want derived [false false true]", got)
 	}
-
-	topField := rec.GetField("validate")
-	if topField == nil {
-		t.Fatal("missing top-level validate field")
-	}
-	topFn, ok := topField.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("top-level validate is not a function: %T", topField.Type)
-	}
-	if topFn.Refinement == nil {
-		t.Fatal("expected top-level validate to be enriched")
-	}
-
-	nestedField := rec.GetField("nested")
-	if nestedField == nil {
-		t.Fatal("missing nested field")
-	}
-	nestedRec, ok := nestedField.Type.(*typ.Record)
-	if !ok {
-		t.Fatalf("nested field is not a record: %T", nestedField.Type)
-	}
-	nestedValidateField := nestedRec.GetField("validate")
-	if nestedValidateField == nil {
-		t.Fatal("missing nested validate field")
-	}
-	nestedFn, ok := nestedValidateField.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("nested validate is not a function: %T", nestedValidateField.Type)
-	}
-	if nestedFn.Refinement != nil {
-		t.Fatalf("nested validate should not be enriched, got refinement %#v", nestedFn.Refinement)
+	clone := s.Clone()
+	if got := clone.ParamEscapes; len(got) != 3 || got[0] || got[1] || !got[2] {
+		t.Fatalf("clone ParamEscapes = %#v, want derived [false false true]", got)
 	}
 }
 
-func TestManifest_EnrichedExport_ResolvesLocalRefs(t *testing.T) {
-	m := NewManifest("test")
-	customization := typ.NewRecord().
-		Field("custom_css", typ.String).
-		Field("css_variables", typ.NewMap(typ.String, typ.String)).
-		Field("icons", typ.NewMap(typ.String, typ.String)).
+func TestLegacyManifestToCanonicalPreservesRegistryGetSignature(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	get := typ.Func().
+		Param("id", typ.String).
+		Returns(entry, typ.NewOptional(typ.LuaError)).
 		Build()
-	export := typ.NewRecord().
-		Field("customization", typ.NewRef("", "Customization")).
-		Build()
-	m.DefineType("Customization", customization)
-	m.SetExport(export)
 
-	enriched := m.EnrichedExport()
-	rec, ok := enriched.(*typ.Record)
+	legacy := NewManifest("registry")
+	legacy.DefineType("Entry", entry)
+	legacy.SetExport(typ.NewInterface("registry", []typ.Method{{Name: "get", Type: get}}))
+	legacy.DefineSummary("get", NewSummary(
+		[]typ.Type{typ.String},
+		[]typ.Type{entry, typ.NewOptional(typ.LuaError)},
+	))
+
+	canonical := legacy.ToCanonical()
+	legacyGet, ok := canonical.FunctionSignatures["get"]
 	if !ok {
-		t.Fatalf("expected record export, got %T", enriched)
+		t.Fatalf("legacy conversion dropped registry.get summary: %#v", canonical.FunctionSignatures)
 	}
-	field := rec.GetField("customization")
-	if field == nil {
-		t.Fatal("expected customization field")
-	}
-	if _, isRef := field.Type.(*typ.Ref); isRef {
-		t.Fatalf("expected resolved export field type, got ref: %v", field.Type)
-	}
-	if !typ.TypeEquals(field.Type, customization) {
-		t.Fatalf("expected customization record, got %v", field.Type)
-	}
+	assertRegistryGetSignature(t, legacyGet, entry)
+	assertRegistryConsumerClean(t, canonical)
+
+	equivalent := manifest.New("registry")
+	equivalent.DefineType("Entry", entry)
+	equivalent.SetExport(typ.NewInterface("registry", []typ.Method{{Name: "get", Type: get}}))
+	equivalent.DefineFunctionSignature("get", signature.Function{
+		Type:   get,
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
+	})
+	assertRegistryConsumerClean(t, equivalent)
 }
 
-func TestDecodeManifest_InvalidMagic(t *testing.T) {
-	_, err := DecodeManifest([]byte{0, 0, 0, 0})
-	if !errors.Is(err, ErrInvalidManifest) {
-		t.Errorf("expected ErrInvalidManifest, got %v", err)
+func TestManifestEncodeDecodeRetainsLegacyFunctionSummary(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	legacy := NewManifest("registry")
+	legacy.DefineSummary("registry.get", NewSummary(
+		[]typ.Type{typ.String},
+		[]typ.Type{entry, typ.NewOptional(typ.LuaError)},
+	))
+
+	data, err := legacy.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
 	}
-}
-
-func TestApplyFunctionSummary_Nil(t *testing.T) {
-	fn := typ.Func().Build()
-	result := ApplyFunctionSummary(fn, nil)
-	if result != fn {
-		t.Error("nil summary should return original function")
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-}
-
-func TestApplyFunctionSummary_EmptySummary(t *testing.T) {
-	fn := typ.Func().Param("x", typ.String).Returns(typ.Number).Build()
-	summary := NewSummary(nil, nil)
-	result := ApplyFunctionSummary(fn, summary)
-	if result != fn {
-		t.Error("empty summary should return original function")
-	}
-}
-
-func TestApplyFunctionSummary_WithOptionalAndVariadic(t *testing.T) {
-	fn := typ.Func().
-		Param("x", typ.String).
-		OptParam("y", typ.Number).
-		Variadic(typ.Any).
-		Returns(typ.Boolean).
-		Build()
-	summary := NewSummary([]typ.Type{typ.String, typ.Number}, []typ.Type{typ.Boolean})
-	summary.Ensures = constraint.FromConstraints(constraint.NotNil{Path: constraint.Path{Root: "result"}})
-
-	result := ApplyFunctionSummary(fn, summary)
-	if result == nil {
-		t.Fatal("result should not be nil")
-	}
-	if len(result.Params) != 2 {
-		t.Errorf("expected 2 params, got %d", len(result.Params))
-	}
-	if result.Variadic == nil {
-		t.Error("variadic should be preserved")
-	}
-	if !result.Params[1].Optional {
-		t.Error("second param should be optional")
-	}
-
-	result = ApplyFunctionSummary(nil, &FunctionSummary{})
-	if result != nil {
-		t.Error("nil function should return nil")
-	}
-}
-
-func TestManifest_EnrichedExport_Empty(t *testing.T) {
-	m := NewManifest("test")
-	if m.EnrichedExport() != nil {
-		t.Error("manifest with no export should return nil")
-	}
-}
-
-func TestManifest_EnrichedExport_SummarySuffixFallback(t *testing.T) {
-	m := NewManifest("test")
-
-	baseFn := typ.Func().
-		Param("v", typ.Any).
-		OptParam("msg", typ.String).
-		Returns(typ.Any).
-		Build()
-	m.SetExport(typ.NewRecord().Field("not_nil", baseFn).Build())
-
-	summary := NewSummary([]typ.Type{typ.Any, typ.NewOptional(typ.String)}, []typ.Type{typ.Any})
-	summary.Ensures = constraint.FromConstraints(constraint.NotNil{Path: constraint.ParamPath(0)})
-	m.DefineSummary("test.not_nil", summary)
-
-	enriched := m.EnrichedExport()
-	rec, ok := enriched.(*typ.Record)
+	summary, ok := decoded.LookupSummary("registry.get")
 	if !ok {
-		t.Fatalf("expected record export, got %T", enriched)
+		t.Fatalf("decoded summaries = %#v, want registry.get", decoded.AllSummaries())
 	}
-	field := rec.GetField("not_nil")
-	if field == nil {
-		t.Fatal("missing not_nil field")
+	if len(summary.Params) != 1 || !typ.TypeEquals(summary.Params[0], typ.String) || len(summary.Returns) != 2 || summary.Returns[1].String() != "Error?" {
+		t.Fatalf("decoded summary = %#v (returns %v), want registry.get(string) -> (Entry, LuaError?)", summary, summary.Returns)
 	}
-	fn, ok := field.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("not_nil field is not function: %T", field.Type)
-	}
-	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
-	if !ok || refinement == nil || !refinement.OnReturn.HasConstraints() {
-		t.Fatalf("expected suffix-matched summary refinement on not_nil, got %#v", fn.Refinement)
-	}
-
-	if _, found := m.LookupSummary("not_nil"); !found {
-		t.Fatal("expected LookupSummary suffix fallback for not_nil")
+	decodedEntry, ok := summary.Returns[0].(*typ.Record)
+	if !ok || decodedEntry.GetField("id") == nil || !typ.TypeEquals(decodedEntry.GetField("id").Type, typ.String) {
+		t.Fatalf("decoded registry.get entry return = %v, want Entry{id: string}", summary.Returns[0])
 	}
 }
 
-func TestManifest_EnrichedExport_SummarySuffixAmbiguityDoesNotGuess(t *testing.T) {
-	m := NewManifest("test")
-	baseFn := typ.Func().
-		Param("actual", typ.Any).
-		Param("expected", typ.Any).
-		Build()
-	m.SetExport(typ.NewRecord().Field("eq", baseFn).Build())
+func assertRegistryGetSignature(t *testing.T, sig signature.Function, entry typ.Type) {
+	t.Helper()
+	if sig.Type == nil || len(sig.Type.Params) != 1 || !typ.TypeEquals(sig.Type.Params[0].Type, typ.String) {
+		t.Fatalf("registry.get params = %#v, want one string parameter", sig.Type)
+	}
+	if len(sig.Type.Returns) != 2 || !typ.TypeEquals(sig.Type.Returns[0], entry) ||
+		!typ.TypeEquals(sig.Type.Returns[1], typ.NewOptional(typ.LuaError)) {
+		t.Fatalf("registry.get returns = %#v, want (Entry, LuaError?)", sig.Type.Returns)
+	}
+	record, ok := sig.Type.Returns[0].(*typ.Record)
+	if !ok || record.GetField("id") == nil || !typ.TypeEquals(record.GetField("id").Type, typ.String) {
+		t.Fatalf("registry.get first return = %v, want Entry{id: string}", sig.Type.Returns[0])
+	}
+	for _, label := range sig.Effect.Labels {
+		if got, ok := effect.NormalizeLabel(label).(returns.ErrorReturn); ok && got == (returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}) {
+			return
+		}
+	}
+	t.Fatalf("registry.get effect = %v, want ErrorReturn(0, 1)", sig.Effect)
+}
 
-	s1 := NewSummary([]typ.Type{typ.Any, typ.Any}, nil)
-	s1.Ensures = constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(0)})
-	s2 := NewSummary([]typ.Type{typ.Any, typ.Any}, nil)
-	s2.Ensures = constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(1)})
-	m.DefineSummary("assert.eq", s1)
-	m.DefineSummary("test.eq", s2)
-
-	enriched := m.EnrichedExport()
-	rec, ok := enriched.(*typ.Record)
-	if !ok {
-		t.Fatalf("expected record export, got %T", enriched)
+func assertRegistryConsumerClean(t *testing.T, registry *manifest.Manifest) {
+	t.Helper()
+	chunk, err := parse.ParseString(`
+local e, err = registry.get("k")
+if err == nil then
+    local s: string = e.id
+end
+`, "consumer.lua")
+	if err != nil {
+		t.Fatalf("parse consumer: %v", err)
 	}
-	field := rec.GetField("eq")
-	if field == nil {
-		t.Fatal("missing eq field")
-	}
-	fn, ok := field.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("eq field is not function: %T", field.Type)
-	}
-	if fn.Refinement != nil {
-		t.Fatalf("ambiguous suffix summaries must not be applied, got refinement %#v", fn.Refinement)
-	}
-
-	if _, found := m.LookupSummary("eq"); found {
-		t.Fatal("expected LookupSummary to reject ambiguous suffix match")
+	database := db.New()
+	database.Connect("registry", registry)
+	session := checker.NewChecker(database, checker.Deps{}).CheckChunkWithImports(chunk, "consumer.lua", map[string]*manifest.Manifest{
+		"registry": registry,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("registry consumer diagnostics = %#v, want none", session.Diagnostics)
 	}
 }

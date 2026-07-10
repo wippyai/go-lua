@@ -2,15 +2,6 @@ package ast
 
 import "fmt"
 
-// Position represents a location in source code.
-type Position struct {
-	Source    string // Source file name
-	Line      int    // Start line number (1-based)
-	Column    int    // Start column number (1-based)
-	EndLine   int    // End line number (0 means same as Line)
-	EndColumn int    // End column number (0 means same as Column)
-}
-
 // Token represents a lexical token from the scanner.
 type Token struct {
 	Type int      // Token type identifier

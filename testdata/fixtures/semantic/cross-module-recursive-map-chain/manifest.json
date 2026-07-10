@@ -1,0 +1,8 @@
+{
+  "description": "Cross-module recursive map aliases should preserve optional dynamic lookup semantics.",
+  "files": [
+    "protocol.lua",
+    "builder.lua",
+    "main.lua"
+  ]
+}

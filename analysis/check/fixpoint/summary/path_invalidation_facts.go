@@ -1,0 +1,37 @@
+package summary
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+)
+
+type pathInvalidationFactKey pathdom.PathKey
+
+// pathInvalidationLane is the canonical keyed-fact-set lattice for path
+// invalidations: one fact per path, with an ancestor path subsuming its
+// descendants.
+var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.PathInvalidationFact]{
+	Key: pathInvalidationKeyOf,
+	EqualFact: func(a, b callboundary.PathInvalidationFact) bool {
+		return pathInvalidationKeyOf(a) == pathInvalidationKeyOf(b) &&
+			a.PreserveStructuralWitness == b.PreserveStructuralWitness
+	},
+	Less:  func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Less(b.Path) },
+	Valid: func(f callboundary.PathInvalidationFact) bool { return !f.Path.IsEmpty() },
+	CloneFact: func(f callboundary.PathInvalidationFact) callboundary.PathInvalidationFact {
+		f.Path = f.Path.Clone()
+		return f
+	},
+	Prefer: func(kept, incoming callboundary.PathInvalidationFact) bool {
+		return kept.PreserveStructuralWitness && !incoming.PreserveStructuralWitness
+	},
+	Dominates: func(super, sub callboundary.PathInvalidationFact) bool {
+		return sub.Path.HasPrefix(super.Path) &&
+			(!super.PreserveStructuralWitness || sub.PreserveStructuralWitness)
+	},
+}
+
+func pathInvalidationKeyOf(f callboundary.PathInvalidationFact) pathInvalidationFactKey {
+	return pathInvalidationFactKey(f.Path.Key())
+}
