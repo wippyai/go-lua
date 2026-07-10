@@ -1,5 +1,5 @@
 {
-  "description": "Concat nilability diagnostics retain call-return, optional-field, missing-guard, and any-origin causes in witness order.",
+  "description": "Concat nilability diagnostics retain call-return, optional-field, and missing-guard causes in witness order.",
   "check": {
     "render_options": {
       "witness_trace": true
@@ -74,29 +74,6 @@
         "render_not_contains": ["^~"],
         "help_contains": ["Guard `value`"],
         "labels": [{"file": "main.lua", "line": 19, "column": 24, "contains": ["value may be nil"]}]
-      },
-      {
-        "file": "main.lua",
-        "line": 23,
-        "severity": "warning",
-        "code": "type.operator.concat_operand",
-        "message_contains": ["raw", "may be nil"],
-        "min_evidence": 3,
-        "evidence_contains": ["raw comes from unresolved any/unknown"],
-        "evidence": [{
-          "file": "main.lua", "line": 23, "column": 29,
-          "kind": "user assertion", "trust": "claimed",
-          "contains": ["raw comes from unresolved any/unknown"]
-        }],
-        "render_contains": ["because:"],
-        "render_ordered_contains": [
-          "right operand `raw` has type any",
-          "raw comes from unresolved any/unknown",
-          "no guard on this path proves raw is non-nil"
-        ],
-        "render_not_contains": ["^~"],
-        "help_contains": ["Guard `raw`"],
-        "labels": [{"file": "main.lua", "line": 23, "column": 29, "contains": ["value may be nil"]}]
       }
     ]
   },

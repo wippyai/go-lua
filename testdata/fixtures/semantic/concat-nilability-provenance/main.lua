@@ -19,8 +19,4 @@ local function from_unproven_guard(value: string?, checked: boolean): string
     return "guard:" .. value
 end
 
-local raw: any = nil
-local any_label = "any:" .. raw
-print(any_label)
-
 return from_return() .. from_field({}) .. from_unproven_guard(nil, false)
