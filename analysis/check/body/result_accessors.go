@@ -307,6 +307,13 @@ func (r *Result) SourceCall(point cfg.Point) (SourceCallFact, bool) {
 	return fact.copy(), true
 }
 
+// CallPointForExpr resolves a source call expression to its lowered CFG call
+// point. Readmodel provenance uses it to connect a value use back to the
+// callee result that produced it.
+func (r *Result) CallPointForExpr(call *ast.FuncCallExpr) (cfg.Point, bool) {
+	return r.callExprPoint(call)
+}
+
 func (r *Result) CallSite(point cfg.Point) (factflow.CallSiteView, bool) {
 	if r == nil {
 		return factflow.CallSiteView{}, false

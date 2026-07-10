@@ -1,7 +1,9 @@
 {
   "description": "Concat operand diagnostics explain the concrete optional operand without repeating the source-frame role.",
   "check": {
-    "witness_trace": true,
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",

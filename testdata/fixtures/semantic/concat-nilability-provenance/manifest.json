@@ -1,7 +1,9 @@
 {
   "description": "Concat nilability diagnostics retain call-return, optional-field, missing-guard, and any-origin causes in witness order.",
   "check": {
-    "witness_trace": true,
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",
@@ -11,14 +13,23 @@
         "message_contains": ["nilable_return", "may be nil"],
         "min_evidence": 3,
         "evidence_contains": [
-          "nilable_return return 1 has type string? and may be nil",
+          "nilable_return return 1 has type nil and may be nil",
           "no guard on this path proves nilable_return(...) is non-nil"
         ],
+        "evidence": [{
+          "file": "main.lua", "line": 6, "column": 25,
+          "kind": "abstract fact", "trust": "proven",
+          "contains": ["nilable_return return 1 has type nil and may be nil"]
+        }],
+        "render_contains": ["because:"],
         "render_ordered_contains": [
-          "nilable_return return 1 has type string? and may be nil",
-          "right operand `nilable_return(...)` can be string or nil here",
+          "nilable_return return 1 has type nil and may be nil",
+          "right operand `nilable_return(...)` has type nil",
           "no guard on this path proves nilable_return(...) is non-nil"
-        ]
+        ],
+        "render_not_contains": ["^~"],
+        "help_contains": ["Guard `nilable_return(...)`"],
+        "labels": [{"file": "main.lua", "line": 6, "column": 25, "contains": ["value may be nil"]}]
       },
       {
         "file": "main.lua",
@@ -28,10 +39,19 @@
         "message_contains": ["payload.name", "may be nil"],
         "min_evidence": 3,
         "evidence_contains": ["payload.name is an optional field and may be nil"],
+        "evidence": [{
+          "file": "main.lua", "line": 12, "column": 24,
+          "kind": "abstract fact", "trust": "proven",
+          "contains": ["payload.name is an optional field and may be nil"]
+        }],
+        "render_contains": ["because:"],
         "render_ordered_contains": [
           "payload.name is an optional field and may be nil",
           "no guard on this path proves payload.name is non-nil"
-        ]
+        ],
+        "render_not_contains": ["^~"],
+        "help_contains": ["Guard `payload.name`"],
+        "labels": [{"file": "main.lua", "line": 12, "column": 24, "contains": ["value may be nil"]}]
       },
       {
         "file": "main.lua",
@@ -41,10 +61,19 @@
         "message_contains": ["value", "may be nil"],
         "min_evidence": 2,
         "evidence_contains": ["no guard on this path proves value is non-nil"],
+        "evidence": [{
+          "file": "main.lua", "line": 19, "column": 24,
+          "kind": "missing proof", "trust": "unknown",
+          "contains": ["no guard on this path proves value is non-nil"]
+        }],
+        "render_contains": ["because:"],
         "render_ordered_contains": [
-          "right operand `value` can be string or nil here",
+          "right operand `value` has type nil",
           "no guard on this path proves value is non-nil"
-        ]
+        ],
+        "render_not_contains": ["^~"],
+        "help_contains": ["Guard `value`"],
+        "labels": [{"file": "main.lua", "line": 19, "column": 24, "contains": ["value may be nil"]}]
       },
       {
         "file": "main.lua",
@@ -54,10 +83,20 @@
         "message_contains": ["raw", "may be nil"],
         "min_evidence": 3,
         "evidence_contains": ["raw comes from unresolved any/unknown"],
+        "evidence": [{
+          "file": "main.lua", "line": 23, "column": 29,
+          "kind": "user assertion", "trust": "claimed",
+          "contains": ["raw comes from unresolved any/unknown"]
+        }],
+        "render_contains": ["because:"],
         "render_ordered_contains": [
+          "right operand `raw` has type any",
           "raw comes from unresolved any/unknown",
           "no guard on this path proves raw is non-nil"
-        ]
+        ],
+        "render_not_contains": ["^~"],
+        "help_contains": ["Guard `raw`"],
+        "labels": [{"file": "main.lua", "line": 23, "column": 29, "contains": ["value may be nil"]}]
       }
     ]
   },

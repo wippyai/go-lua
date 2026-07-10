@@ -4,6 +4,7 @@ import (
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -19,11 +20,16 @@ func (r Reader) nilabilityProvenance(point cfg.Point, expr ast.Expr, value produ
 		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
 	}
+	if projected, ok := r.result.ExpressionTypeBeforeBoundary(point, expr); ok && (typ.IsAny(projected) || typ.IsUnknown(projected)) {
+		provenance.UntrustedTopOrigin = true
+	}
 	if attr, ok := expr.(*ast.AttrGetExpr); ok && attr.KeySyntax == ast.AttrKeyDot {
 		provenance.OptionalField = true
 	}
-	if _, ok := expr.(*ast.FuncCallExpr); ok {
-		provenance.CallResult = r.nilabilityCallResult(point)
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		if callPoint, found := r.result.CallPointForExpr(call); found {
+			provenance.CallResult = r.nilabilityCallResult(callPoint)
+		}
 	}
 	return provenance
 }
@@ -36,13 +42,16 @@ func (r Reader) nilabilityCallResult(point cfg.Point) readapi.CallResultAssignme
 	if !ok {
 		return readapi.CallResultAssignmentSource{}
 	}
-	contract, ok := r.callContractAt(point)
-	if !ok {
-		return readapi.CallResultAssignmentSource{}
+	contract, hasContract := r.callContractAt(point)
+	name := r.callContractSourceName(site)
+	if hasContract && contract.Source.Name != "" {
+		name = contract.Source.Name
 	}
-	name := contract.Source.Name
-	if name == "" {
-		name = r.callContractSourceName(site)
+	if !hasContract {
+		// A converged local result can be more precise than the call-contract
+		// surface. The source call is still authoritative provenance: retain
+		// the callee-to-result edge even when no declaration span is available.
+		return readapi.CallResultAssignmentSource{Present: true, CallableName: name, ResultIndex: 0}
 	}
 	_, produced := contract.Contract.ResultAt(0)
 	if !produced {
