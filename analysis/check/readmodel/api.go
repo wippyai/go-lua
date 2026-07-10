@@ -39,6 +39,7 @@ type Reader interface {
 	ForEachConcatOperand(func(ConcatOperand) bool) bool
 	ForEachFrozenTableMutation(func(FrozenTableMutation) bool) bool
 	ForEachLifecycleObligation(func(LifecycleObligation) bool) bool
+	ForEachTypestateInvalidTransition(func(TypestateInvalidTransition) bool) bool
 	ForEachUnusedLocal(func(UnusedLocal) bool) bool
 	ForEachDeadAssignment(func(DeadAssignment) bool) bool
 	ForEachChannelSelectExhaustiveness(func(ChannelSelectExhaustiveness) bool) bool
@@ -841,6 +842,19 @@ type LifecycleObligation struct {
 	Current  string
 	Finals   []string
 	Sites    []LifecycleSite
+}
+
+// TypestateInvalidTransition is the solved read model for a call whose
+// declared lifecycle source state is provably not the resource's current
+// state. It is generic across every declared typestate protocol.
+type TypestateInvalidTransition struct {
+	Point    cfg.Point
+	Span     SourceSpan
+	Resource string
+	Protocol string
+	Expected string
+	Found    string
+	Target   string
 }
 
 // UnusedLocal is the solved read model for a local declaration whose symbol has

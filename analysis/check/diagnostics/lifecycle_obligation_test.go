@@ -14,11 +14,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func TestLifecycleResourceUnreleasedWarningIsOptInAndEvidenceBacked(t *testing.T) {
+func TestLifecycleResourceUnreleasedWarningIsDefaultAndEvidenceBacked(t *testing.T) {
 	src := "local tx = {}\nbegin(tx)\n"
 	result := runDiagnosticsResultFull(t, src, []string{"begin"}, lifecycleSignatureSource())
-	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
-		t.Fatalf("default diagnostics = %#v, want lifecycle warning disabled by default", diagnosticMessages(diags))
+	if diags := ProduceWithConfig(result, Config{}); len(diags) != 1 || diags[0].Code != CodeResourceUnreleased || diags[0].Severity != diagnostic.SeverityWarning {
+		t.Fatalf("default diagnostics = %#v, want one lifecycle warning", diagnosticMessages(diags))
 	}
 
 	diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig())

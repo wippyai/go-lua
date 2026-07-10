@@ -68,7 +68,7 @@ func applyNormalReturnLifecycleFacts(ctx normalReturnApplyContext, out state.Sta
 		case callboundary.LifecycleAcquire:
 			out = out.AcquireTypestate(resource, fact.To, fact.Obligation)
 		case callboundary.LifecycleTransition:
-			out = out.TransitionTypestate(resource, fact.From, fact.To)
+			out = out.TransitionTypestateAt(resource, fact.From, fact.To, uint32(ctx.point))
 		case callboundary.LifecycleEscape:
 			out = out.EscapeTypestate(resource)
 		}

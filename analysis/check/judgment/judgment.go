@@ -28,6 +28,7 @@ const (
 	CodeNumericForOperand            Code = "for.numeric.operand"
 	CodeFrozenTable                  Code = "effect.freeze.mutation"
 	CodeLifecycle                    Code = "effect.lifecycle.unreleased"
+	CodeTypestateInvalidTransition   Code = "typestate.invalid_transition"
 	CodeUnusedLocal                  Code = "lint.unused.local"
 	CodeDeadAssignment               Code = "lint.dead.assignment"
 	CodeChannelSelect                Code = "channel.select.exhaustiveness"
@@ -309,6 +310,7 @@ const (
 	EvidenceDetailLifecycleTransition
 	EvidenceDetailLifecycleEscape
 	EvidenceDetailLifecycleMissingProof
+	EvidenceDetailTypestateInvalidTransition
 	EvidenceDetailDeadAssignmentOverwrite
 	EvidenceDetailDeadAssignmentExit
 	EvidenceDetailChannelSelectResult

@@ -76,6 +76,9 @@ func judgmentSubjectAnchor(ctx Context, item judgment.Judgment) judgment.Subject
 	case judgment.CodeLifecycle:
 		anchor.Role = "effect.lifecycle"
 		anchor.BindingKey = strings.TrimPrefix(key, "lifecycle:")
+	case judgment.CodeTypestateInvalidTransition:
+		anchor.Role = "typestate.invalid_transition"
+		anchor.BindingKey = strings.TrimPrefix(key, "typestate-transition:")
 	case judgment.CodeUnusedLocal:
 		anchor.Role = "lint.unused_local"
 		anchor.BindingKey = stripLegacyPointKey(key, "unused-local")

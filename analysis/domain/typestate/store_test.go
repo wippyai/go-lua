@@ -265,3 +265,46 @@ func TestMeetDropsIncompatibleProtocolStates(t *testing.T) {
 		t.Fatalf("meet = %#v, want bottom for incompatible states", got)
 	}
 }
+
+func TestTransitionRetainsProvenInvalidStateWithSite(t *testing.T) {
+	resource := Resource{ID: "db.conn", Protocol: "connection"}
+	got := Empty().
+		Acquire(resource, "open", Obligation{Final: "closed"}).
+		TransitionAt(resource, "open", "closed", 12).
+		TransitionAt(resource, "open", "closed", 19)
+
+	invalid := got.InvalidTransitions()
+	if len(invalid) != 1 {
+		t.Fatalf("invalid transitions = %#v, want one", invalid)
+	}
+	if invalid[0].Resource != resource || invalid[0].Expected != "open" || invalid[0].Found != "closed" || invalid[0].Site != 19 {
+		t.Fatalf("invalid transition = %#v, want closed double-transition at site 19", invalid[0])
+	}
+}
+
+func TestTransitionSilencesUnknownAndEscapedResources(t *testing.T) {
+	resource := Resource{ID: "db.conn", Protocol: "connection"}
+	unknown := Empty().TransitionAt(resource, "open", "closed", 1)
+	if invalid := unknown.InvalidTransitions(); len(invalid) != 0 {
+		t.Fatalf("unknown invalid transitions = %#v, want none", invalid)
+	}
+	escaped := Empty().Acquire(resource, "open", Obligation{Final: "closed"}).Escape(resource).TransitionAt(resource, "open", "closed", 2)
+	if invalid := escaped.InvalidTransitions(); len(invalid) != 0 {
+		t.Fatalf("escaped invalid transitions = %#v, want none", invalid)
+	}
+}
+
+func TestInvalidTransitionsJoinAndAliasCanonicalization(t *testing.T) {
+	left := Resource{ID: "left", Protocol: "connection"}
+	right := Resource{ID: "right", Protocol: "connection"}
+	canonical := Resource{ID: "canonical", Protocol: "connection"}
+	withInvalid := Empty().Acquire(left, "open", Obligation{Final: "closed"}).TransitionAt(left, "closed", "open", 7)
+	joined := Join(Empty(), withInvalid).MapResources(func(Resource) Resource { return canonical })
+	invalid := joined.InvalidTransitions()
+	if len(invalid) != 1 || invalid[0].Resource != canonical || invalid[0].Expected != "closed" || invalid[0].Found != "open" {
+		t.Fatalf("joined invalid transitions = %#v, want canonical failure", invalid)
+	}
+	if invalid := Join(withInvalid, Empty().Acquire(right, "open", Obligation{Final: "closed"})).InvalidTransitions(); len(invalid) != 1 {
+		t.Fatalf("join invalid transitions = %#v, want failure preserved", invalid)
+	}
+}

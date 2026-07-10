@@ -110,6 +110,17 @@ func (s State) OpenTypestateObligations() []typestate.OpenObligation {
 	return s.typestates.OpenObligations()
 }
 
+// TypestateInvalidTransitions returns proven transition-precondition failures
+// retained by the solved typestate store. The opaque site is assigned by the
+// call-boundary applier so post-solve readers can report the operation that
+// attempted the invalid transition.
+func (s State) TypestateInvalidTransitions() []typestate.InvalidTransition {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return nil
+	}
+	return s.typestates.InvalidTransitions()
+}
+
 // AcquireTypestate records ownership of a protocol resource.
 func (s State) AcquireTypestate(resource typestate.Resource, current typestate.State, obligation typestate.Obligation) State {
 	if !s.laneEnabled(laneTypestatesBit) {
@@ -130,6 +141,21 @@ func (s State) TransitionTypestate(resource typestate.Resource, from, to typesta
 		return s
 	}
 	next := s.typestates.Transition(resource, from, to)
+	if typestate.Equal(next, s.typestates) {
+		return s
+	}
+	out := s.reachable()
+	out.typestates = next
+	return out
+}
+
+// TransitionTypestateAt is TransitionTypestate with the source call-site
+// identity recorded for any proven invalid transition.
+func (s State) TransitionTypestateAt(resource typestate.Resource, from, to typestate.State, site uint32) State {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return s
+	}
+	next := s.typestates.TransitionAt(resource, from, to, site)
 	if typestate.Equal(next, s.typestates) {
 		return s
 	}

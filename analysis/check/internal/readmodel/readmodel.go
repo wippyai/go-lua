@@ -46,6 +46,7 @@ type NumericForOperand = readapi.NumericForOperand
 type ConcatOperand = readapi.ConcatOperand
 type FrozenTableMutation = readapi.FrozenTableMutation
 type LifecycleObligation = readapi.LifecycleObligation
+type TypestateInvalidTransition = readapi.TypestateInvalidTransition
 type UnusedLocal = readapi.UnusedLocal
 type DeadAssignment = readapi.DeadAssignment
 type DeadAssignmentOverwrite = readapi.DeadAssignmentOverwrite

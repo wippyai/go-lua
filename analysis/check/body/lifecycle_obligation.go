@@ -1,8 +1,10 @@
 package body
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 )
@@ -182,17 +184,16 @@ func (r *Result) collectLifecycleTraceSites(graph cfg.Graph) []lifecycleTraceSit
 		if !r.callSiteExists(point) {
 			continue
 		}
-		bindings := r.callGuardCallBindingsAt(point)
 		span := r.callSpanAt(point)
 		for _, fact := range outcome.NormalReturnFacts.LifecycleFacts {
 			if fact.Kind == callboundary.LifecycleNone || fact.Protocol == "" {
 				continue
 			}
-			target, ok := fact.Target.Substitute(bindings)
+			target, ok := r.lifecycleFactTargetAt(point, fact)
 			if !ok || target.IsEmpty() {
 				continue
 			}
-			resource, ok := r.TypestateResourceAtCallEntry(point, target, fact.Protocol)
+			resource, ok := r.lifecycleFactResourceAt(point, fact, target)
 			if !ok {
 				continue
 			}
@@ -215,7 +216,84 @@ func (r *Result) collectLifecycleTraceSites(graph cfg.Graph) []lifecycleTraceSit
 			})
 		}
 	}
+	// Return-slot lifecycle facts are applied while the assignment consuming the
+	// call result is materialized, not necessarily at the call node itself.
+	// Recover those acquisition sites from the result source so a returned
+	// resource retains its source location and declared obligation evidence.
+	for _, point := range graph.RPO() {
+		assignment, ok := r.RootAssignment(point)
+		if !ok || !r.PointNormallyReachable(point) {
+			continue
+		}
+		source := assignment.Source()
+		if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.ResultIndex < 0 {
+			continue
+		}
+		callPoint := source.CallPoint
+		outcome, ok := r.CallOutcomeAt(callPoint)
+		if !ok || len(outcome.NormalReturnFacts.LifecycleFacts) == 0 {
+			continue
+		}
+		for _, fact := range outcome.NormalReturnFacts.LifecycleFacts {
+			index, returned := callboundary.ReturnSlotIndex(fact.Target)
+			if !returned || index != source.ResultIndex || fact.Kind == callboundary.LifecycleNone || fact.Protocol == "" {
+				continue
+			}
+			resource, ok := r.TypestateResourceAtBoundary(point, assignment.TargetPathRef(), fact.Protocol)
+			if !ok {
+				continue
+			}
+			kind, ok := lifecycleSiteKind(fact.Kind)
+			if !ok {
+				continue
+			}
+			out = append(out, lifecycleTraceSite{
+				point: callPoint,
+				site: LifecycleSite{
+					Point:       callPoint,
+					Kind:        kind,
+					Resource:    resource.ID.String(),
+					Protocol:    string(resource.Protocol),
+					From:        string(fact.From),
+					To:          string(fact.To),
+					TargetLabel: r.DisplayPath(assignment.TargetPathRef()),
+					Span:        r.callSpanAt(callPoint),
+				},
+			})
+		}
+	}
 	return out
+}
+
+func (r *Result) lifecycleFactTargetAt(point cfg.Point, fact callboundary.LifecycleFact) (pathdom.Path, bool) {
+	if index, returned := callboundary.ReturnSlotIndex(fact.Target); returned {
+		site, ok := r.CallSiteView(point)
+		if !ok {
+			return pathdom.Path{}, false
+		}
+		var target pathdom.Path
+		found := false
+		site.ForEachResultTarget(func(result factflow.CallResultTargetView) bool {
+			if result.ResultIndex() != index || result.TargetPathEmpty() {
+				return true
+			}
+			target = result.TargetPathRef().AppendSegments(fact.Target.Segments)
+			found = true
+			return false
+		})
+		return target, found
+	}
+	return fact.Target.Substitute(r.callGuardCallBindingsAt(point))
+}
+
+func (r *Result) lifecycleFactResourceAt(point cfg.Point, fact callboundary.LifecycleFact, target pathdom.Path) (typestate.Resource, bool) {
+	if _, returned := callboundary.ReturnSlotIndex(fact.Target); returned {
+		// A return-slot acquisition is materialized by this call itself, so its
+		// canonical identity exists only at the post-call boundary. Parameter
+		// transitions retain the call-entry lookup used by the applier.
+		return r.TypestateResourceAtBoundary(point, target, fact.Protocol)
+	}
+	return r.TypestateResourceAtCallEntry(point, target, fact.Protocol)
 }
 
 func lifecycleSiteKind(kind callboundary.LifecycleKind) (LifecycleSiteKind, bool) {

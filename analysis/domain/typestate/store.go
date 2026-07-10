@@ -143,6 +143,18 @@ type Slot struct {
 	Locality   Locality
 }
 
+// InvalidTransition is a proven lifecycle operation whose declared source
+// state does not match the resource state at the call site. Site is an opaque
+// CFG-point number supplied by the engine; keeping it in the solved typestate
+// domain lets the diagnostic layer report the exact offending operation after
+// fixpoint joins.
+type InvalidTransition struct {
+	Resource Resource
+	Expected State
+	Found    State
+	Site     uint32
+}
+
 // Open reports whether this resource may still be locally owned with an
 // unsatisfied obligation.
 func (s Slot) Open() bool {
@@ -151,8 +163,9 @@ func (s Slot) Open() bool {
 
 // Store is a normalized map from resource identity to typestate slot.
 type Store struct {
-	top   bool
-	slots map[Resource]Slot
+	top      bool
+	slots    map[Resource]Slot
+	invalids map[InvalidTransition]struct{}
 }
 
 // Empty returns the bottom store.
@@ -173,19 +186,37 @@ func (s Store) Acquire(resource Resource, current State, obligation Obligation) 
 	return next
 }
 
-// Transition moves a resource from one protocol state to another. The
-// transition is ignored when the current abstract state proves a different
-// state; callers must explicitly join ambiguous paths before applying facts.
+// Transition moves a resource from one protocol state to another. A proven
+// source-state mismatch is retained as an InvalidTransition with no source
+// site. Engine callers should prefer TransitionAt so diagnostics can point at
+// the offending operation.
 func (s Store) Transition(resource Resource, from State, to State) Store {
+	return s.transitionAt(resource, from, to, 0)
+}
+
+// TransitionAt is Transition with an opaque call-site identity for a proven
+// invalid transition. Missing, escaped, or abstractly unknown resources remain
+// silent: they do not prove that the declared precondition was violated.
+func (s Store) TransitionAt(resource Resource, from State, to State, site uint32) Store {
+	return s.transitionAt(resource, from, to, site)
+}
+
+func (s Store) transitionAt(resource Resource, from State, to State, site uint32) Store {
 	if s.top {
 		return s
 	}
 	next := s.Clone()
 	slot, ok := next.slots[resource]
 	if !ok || slot.Locality == LocalityBottom || slot.Locality == LocalityClosed || slot.Locality == LocalityEscaped {
+		if ok && slot.Locality == LocalityClosed && from != "" && slot.Current != "" {
+			next.setInvalidTransition(InvalidTransition{Resource: resource, Expected: from, Found: slot.Current, Site: site})
+		}
 		return next
 	}
 	if slot.Locality != LocalityUnknown && from != "" && slot.Current != from {
+		if slot.Current != "" {
+			next.setInvalidTransition(InvalidTransition{Resource: resource, Expected: from, Found: slot.Current, Site: site})
+		}
 		return next
 	}
 	slot.Current = to
@@ -194,6 +225,35 @@ func (s Store) Transition(resource Resource, from State, to State) Store {
 	}
 	next.set(resource, slot)
 	return next
+}
+
+// InvalidTransitions returns every proven transition-precondition failure in
+// deterministic order. They are may-facts: a failure observed on any reachable
+// normal path remains reportable after control-flow joins.
+func (s Store) InvalidTransitions() []InvalidTransition {
+	if s.top || len(s.invalids) == 0 {
+		return nil
+	}
+	out := make([]InvalidTransition, 0, len(s.invalids))
+	for invalid := range s.invalids {
+		out = append(out, invalid)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if resourceLess(out[i].Resource, out[j].Resource) {
+			return true
+		}
+		if resourceLess(out[j].Resource, out[i].Resource) {
+			return false
+		}
+		if out[i].Expected != out[j].Expected {
+			return out[i].Expected < out[j].Expected
+		}
+		if out[i].Found != out[j].Found {
+			return out[i].Found < out[j].Found
+		}
+		return out[i].Site < out[j].Site
+	})
+	return out
 }
 
 // Escape transfers the local obligation to an external owner.
@@ -254,12 +314,21 @@ func (s Store) Clone() Store {
 	if s.top {
 		return Store{top: true}
 	}
-	if len(s.slots) == 0 {
+	if len(s.slots) == 0 && len(s.invalids) == 0 {
 		return Store{}
 	}
-	out := Store{slots: make(map[Resource]Slot, len(s.slots))}
+	out := Store{}
+	if len(s.slots) != 0 {
+		out.slots = make(map[Resource]Slot, len(s.slots))
+	}
 	for resource, slot := range s.slots {
 		out.slots[resource] = slot
+	}
+	if len(s.invalids) != 0 {
+		out.invalids = make(map[InvalidTransition]struct{}, len(s.invalids))
+		for invalid := range s.invalids {
+			out.invalids[invalid] = struct{}{}
+		}
 	}
 	return out
 }
@@ -271,10 +340,13 @@ func (s Store) MapResources(mapper func(Resource) Resource) Store {
 	if s.top {
 		return Store{top: true}
 	}
-	if len(s.slots) == 0 || mapper == nil {
+	if (len(s.slots) == 0 && len(s.invalids) == 0) || mapper == nil {
 		return s.Clone()
 	}
-	out := Store{slots: make(map[Resource]Slot, len(s.slots))}
+	out := Store{}
+	if len(s.slots) != 0 {
+		out.slots = make(map[Resource]Slot, len(s.slots))
+	}
 	for resource, slot := range s.slots {
 		nextResource := mapper(resource)
 		if nextResource.ID == "" || nextResource.Protocol == "" {
@@ -285,6 +357,14 @@ func (s Store) MapResources(mapper func(Resource) Resource) Store {
 			continue
 		}
 		out.set(nextResource, slot)
+	}
+	for invalid := range s.invalids {
+		nextResource := mapper(invalid.Resource)
+		if nextResource.ID == "" || nextResource.Protocol == "" {
+			nextResource = invalid.Resource
+		}
+		invalid.Resource = nextResource
+		out.setInvalidTransition(invalid)
 	}
 	return out
 }
@@ -303,17 +383,32 @@ func (s *Store) set(resource Resource, slot Slot) {
 	s.slots[resource] = slot
 }
 
+func (s *Store) setInvalidTransition(invalid InvalidTransition) {
+	if s.top || invalid.Resource.ID == "" || invalid.Resource.Protocol == "" || invalid.Expected == "" || invalid.Found == "" {
+		return
+	}
+	if s.invalids == nil {
+		s.invalids = make(map[InvalidTransition]struct{}, 1)
+	}
+	s.invalids[invalid] = struct{}{}
+}
+
 // Equal reports semantic store equality.
 func Equal(a, b Store) bool {
 	if a.top || b.top {
 		return a.top == b.top
 	}
-	if len(a.slots) != len(b.slots) {
+	if len(a.slots) != len(b.slots) || len(a.invalids) != len(b.invalids) {
 		return false
 	}
 	for resource, left := range a.slots {
 		right, ok := b.slots[resource]
 		if !ok || left != right {
+			return false
+		}
+	}
+	for invalid := range a.invalids {
+		if _, ok := b.invalids[invalid]; !ok {
 			return false
 		}
 	}
@@ -345,6 +440,11 @@ func LessOrEq(a, b Store) bool {
 			return false
 		}
 	}
+	for invalid := range a.invalids {
+		if _, ok := b.invalids[invalid]; !ok {
+			return false
+		}
+	}
 	return true
 }
 
@@ -353,13 +453,16 @@ func Join(a, b Store) Store {
 	if a.top || b.top {
 		return Store{top: true}
 	}
-	if len(a.slots) == 0 {
+	if len(a.slots) == 0 && len(a.invalids) == 0 {
 		return b.Clone()
 	}
-	if len(b.slots) == 0 {
+	if len(b.slots) == 0 && len(b.invalids) == 0 {
 		return a.Clone()
 	}
-	out := Store{slots: make(map[Resource]Slot, len(a.slots)+len(b.slots))}
+	out := Store{}
+	if len(a.slots)+len(b.slots) != 0 {
+		out.slots = make(map[Resource]Slot, len(a.slots)+len(b.slots))
+	}
 	for resource, left := range a.slots {
 		if right, ok := b.slots[resource]; ok {
 			out.set(resource, joinSlot(left, right))
@@ -373,6 +476,12 @@ func Join(a, b Store) Store {
 		}
 		out.set(resource, right)
 	}
+	for invalid := range a.invalids {
+		out.setInvalidTransition(invalid)
+	}
+	for invalid := range b.invalids {
+		out.setInvalidTransition(invalid)
+	}
 	return out
 }
 
@@ -384,10 +493,10 @@ func Meet(a, b Store) Store {
 	if b.top {
 		return a.Clone()
 	}
-	if len(a.slots) == 0 || len(b.slots) == 0 {
-		return Store{}
+	out := Store{}
+	if len(a.slots) != 0 && len(b.slots) != 0 {
+		out.slots = make(map[Resource]Slot)
 	}
-	out := Store{slots: make(map[Resource]Slot)}
 	for resource, left := range a.slots {
 		right, ok := b.slots[resource]
 		if !ok {
@@ -395,8 +504,10 @@ func Meet(a, b Store) Store {
 		}
 		out.set(resource, meetSlot(left, right))
 	}
-	if len(out.slots) == 0 {
-		return Store{}
+	for invalid := range a.invalids {
+		if _, ok := b.invalids[invalid]; ok {
+			out.setInvalidTransition(invalid)
+		}
 	}
 	return out
 }

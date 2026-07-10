@@ -62,6 +62,7 @@ const (
 	RenderReturn                   RenderKey = "return"
 	RenderSendIsolation            RenderKey = "send_isolation"
 	RenderTableDispatch            RenderKey = "table_dispatch"
+	RenderTypestateInvalid         RenderKey = "typestate_invalid_transition"
 	RenderUnresolvedType           RenderKey = "unresolved_type"
 	RenderUnresolvedValue          RenderKey = "unresolved_value"
 	RenderUnusedLocal              RenderKey = "unused_local"
@@ -102,6 +103,7 @@ const (
 	DiagnosticCodeDiscriminatedUnionExhaustive DiagnosticCode = "lint.union.exhaustiveness"
 	DiagnosticCodeFrozenTableMutation          DiagnosticCode = "effect.freeze.mutation"
 	DiagnosticCodeResourceUnreleased           DiagnosticCode = "effect.lifecycle.unreleased"
+	DiagnosticCodeTypestateInvalidTransition   DiagnosticCode = "typestate.invalid_transition"
 	DiagnosticCodeSendIsolation                DiagnosticCode = "send.isolation"
 	DiagnosticCodeAdviceRedundantClaim         DiagnosticCode = "advice.redundant_claim"
 	DiagnosticCodeAdviceAlwaysTrueGuard        DiagnosticCode = "advice.always_true_guard"
@@ -139,7 +141,8 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 	codeSpec(CodeNonNilAssertion, FamilyAssertion, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderNonNilAssertion, diag(DiagnosticCodeNonNilAssertAlwaysNil), EvidenceAbstractFact),
 	codeSpec(CodeNumericForOperand, FamilyFor, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderNumericFor, diag(DiagnosticCodeNumericForOperand), EvidenceAbstractFact),
 	codeSpec(CodeFrozenTable, FamilyEffect, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderFrozenTable, diag(DiagnosticCodeFrozenTableMutation), EvidenceAbstractFact),
-	codeSpec(CodeLifecycle, FamilyEffect, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderLifecycle, diag(DiagnosticCodeResourceUnreleased), EvidenceMissingProof),
+	codeSpec(CodeLifecycle, FamilyEffect, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultEnabled, RenderLifecycle, diag(DiagnosticCodeResourceUnreleased), EvidenceMissingProof),
+	codeSpec(CodeTypestateInvalidTransition, FamilyEffect, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderTypestateInvalid, diag(DiagnosticCodeTypestateInvalidTransition), EvidenceAbstractFact),
 	codeSpec(CodeUnusedLocal, FamilyLint, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderUnusedLocal, diag(DiagnosticCodeUnusedLocal), EvidenceAbstractFact),
 	codeSpec(CodeDeadAssignment, FamilyLint, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderDeadAssignment, diag(DiagnosticCodeDeadAssignment), EvidenceAbstractFact),
 	codeSpec(CodeChannelSelect, FamilyChannel, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultEnabled, RenderChannelSelect, diag(DiagnosticCodeChannelSelectExhaustive), EvidenceAbstractFact, EvidenceMissingProof),
