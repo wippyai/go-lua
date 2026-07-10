@@ -19,7 +19,7 @@ const expectedJIRSchemaVersion6Hash = "ef8025767752746b3aacfdac58d2b772cdeb6968c
 const expectedJIRSchemaVersion7Hash = "38feb16136be8affed6fcd892f17f18754979fb3cc275f5f6b657026423fdac5"
 const expectedJIRSchemaVersion8Hash = "df0403785c8831fc6ff0b05adbe3404777b090ab243c099a9d1cf7b992afadc2"
 const expectedJIRSchemaVersion9Hash = "7675b7b249b58ec34d72269503bce87dc0186165c6144079e2285137210a8e76"
-const expectedJIRSchemaVersion10Hash = "ba75944cc3c74d7b173b351dfc5aab9e866a97f859fa37a2eefcf6e6d2d41b4a"
+const expectedJIRSchemaVersion10Hash = "b579ac73e856a635b41a141e9cf410e19f4772d130910d40ca72b6d524962c6b"
 
 func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(jirSchemaSurface())

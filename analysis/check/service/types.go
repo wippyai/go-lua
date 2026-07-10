@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -14,18 +15,26 @@ import (
 
 // UnitID is the session-stable identity of one independently solved source
 // unit.
-type UnitID string
+type UnitID = embedding.UnitID
 
 // BodyID is a deterministic path within a materialized program result. The
 // chunk root is "root" and nested bodies use slash-separated child ordinals.
 type BodyID string
 
-// UnitInput is the complete batch-check input for one source unit. The
-// reference implementation checks EntryFile as the program chunk; every source
-// snapshot participates in UnitDigest so changes cannot reuse a stale result.
+// UnitInput is the complete materialized batch-check input for one source unit.
+// Sources are keyed by stable DocumentID and carry exact immutable bytes. The
+// reference implementation checks EntryDocument as the program chunk; every
+// snapshot participates in UnitDigest so a solve cannot reuse stale inputs.
 type UnitInput struct {
-	ID                UnitID
-	ModulePath        string
+	ID               UnitID
+	ModulePath       string
+	EntryDocument    embedding.DocumentID
+	Sources          map[embedding.DocumentID]embedding.SourceSnapshot
+	DocumentLabels   embedding.StaticLabels
+	Plan             embedding.UnitPlan
+	ResolutionDigest embedding.Digest
+	// EntryFile and SourceFiles are deprecated compatibility input only. Use
+	// NewUnitInputFromFiles to adapt a map[string][]byte to file DocumentIDs.
 	EntryFile         string
 	SourceFiles       map[string][]byte
 	ExternalManifests map[string]*manifest.Manifest
@@ -39,11 +48,30 @@ type UnitInput struct {
 	DocumentVersion   int64
 }
 
+// NewUnitInputFromFiles adapts the legacy file-path map surface to immutable
+// file-scheme SourceSnapshots. File labels remain exactly the supplied paths.
+func NewUnitInputFromFiles(id UnitID, modulePath, entryFile string, files map[string][]byte) UnitInput {
+	sources := make(map[embedding.DocumentID]embedding.SourceSnapshot, len(files))
+	labels := make(embedding.StaticLabels, len(files))
+	for path, content := range files {
+		document := embedding.FileDocument(path)
+		sources[document] = embedding.SourceSnapshot{Document: document, Content: append([]byte(nil), content...)}
+		labels[document] = path
+	}
+	return UnitInput{
+		ID:             id,
+		ModulePath:     modulePath,
+		EntryDocument:  embedding.FileDocument(entryFile),
+		Sources:        sources,
+		DocumentLabels: labels,
+	}
+}
+
 // UnitState describes the normalized source snapshot retained by the session.
 type UnitState struct {
 	UnitID        UnitID
 	UnitDigest    Digest
-	SourceDigests map[string]Digest
+	SourceDigests map[embedding.DocumentID]Digest
 	Profile       string
 	Changed       bool
 }
@@ -77,19 +105,19 @@ type SolveRequest struct {
 
 // ResultTag is the public version key for one immutable completed result.
 type ResultTag struct {
-	UnitID          UnitID
-	SolveSeq        uint64
-	UnitDigest      Digest
-	ManifestDigest  Digest
-	SourceDigests   map[string]Digest
-	BodyVersions    map[BodyID]uint64
-	Profile         string
-	DocumentVersion int64
+	UnitID           UnitID
+	SolveSeq         embedding.SolveSeq
+	UnitDigest       Digest
+	ManifestDigest   Digest
+	SourceDigests    map[embedding.DocumentID]Digest
+	BodyInputDigests map[BodyID]embedding.BodyInputDigest
+	Profile          string
+	DocumentVersion  int64
 }
 
 type BodyResultRef struct {
-	ID            BodyID
-	ResultVersion uint64
+	ID          BodyID
+	InputDigest embedding.BodyInputDigest
 }
 
 // CompletedResult is an immutable handle to a published result snapshot. Its
@@ -173,9 +201,9 @@ func (v SummaryView) Entries() []summary.EntrySummary {
 }
 
 type ResultSelector struct {
-	UnitID        UnitID
-	ResultVersion uint64 // SolveSeq; zero selects the latest complete result.
-	Profile       string
+	UnitID   UnitID
+	SolveSeq embedding.SolveSeq // zero selects the latest complete result.
+	Profile  string
 }
 
 type ResultRequest struct {
@@ -188,7 +216,7 @@ type QueryMeta struct {
 }
 
 type SourceRange struct {
-	File      string
+	Document  embedding.DocumentID
 	StartLine int
 	StartCol  int
 	EndLine   int
@@ -267,13 +295,13 @@ type SummarySnapshotResponse struct {
 	Digests   map[summary.SummaryKey]summary.Digest
 }
 
-type BodyResultVersionsRequest struct {
+type BodyInputDigestsRequest struct {
 	Selector ResultSelector
 }
 
-type BodyResultVersionsResponse struct {
-	Meta     QueryMeta
-	Versions map[BodyID]uint64
+type BodyInputDigestsResponse struct {
+	Meta    QueryMeta
+	Digests map[BodyID]embedding.BodyInputDigest
 }
 
 // WorkspaceSession is the core checker service surface. Implementations safely
@@ -291,5 +319,5 @@ type WorkspaceSession interface {
 	ManifestBytes(context.Context, ExportManifestRequest) (ExportManifestResponse, error)
 	PlacementPlan(context.Context, PlacementPlanRequest) (PlacementPlanResponse, error)
 	SummarySnapshot(context.Context, SummarySnapshotRequest) (SummarySnapshotResponse, error)
-	BodyResultVersions(context.Context, BodyResultVersionsRequest) (BodyResultVersionsResponse, error)
+	BodyInputDigests(context.Context, BodyInputDigestsRequest) (BodyInputDigestsResponse, error)
 }

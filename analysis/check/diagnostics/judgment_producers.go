@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/embedding"
 )
 
 func produceJudgmentsWithPolicy(result *body.Result, sourceFile string, policy judgment.Policy, mode judgment.StrictnessMode, producers ...pass.Producer) []diagnostic.Diagnostic {
@@ -22,10 +23,10 @@ func judgmentContext(result *body.Result, sourceFile string) pass.Context {
 
 func judgmentContextWithParents(result *body.Result, parents []*body.Result, sourceFile string) pass.Context {
 	return pass.Context{
-		FunctionKey:   sourceFile,
-		SourceFile:    sourceFile,
-		ResultVersion: resultVersion(result),
-		Reader:        internalreadmodel.NewWithParents(result, parents...),
+		FunctionKey:     sourceFile,
+		SourceFile:      sourceFile,
+		BodyInputDigest: bodyInputDigest(result),
+		Reader:          internalreadmodel.NewWithParents(result, parents...),
 	}
 }
 
@@ -51,10 +52,10 @@ func (c producerContext) judgments(result *body.Result, producers ...pass.Produc
 
 func (c producerContext) judgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []judgment.Judgment {
 	return pass.New(producers...).Run(pass.Context{
-		FunctionKey:   c.sourceFile,
-		SourceFile:    c.sourceFile,
-		ResultVersion: resultVersion(result),
-		Reader:        internalreadmodel.NewWithParents(result, parent),
+		FunctionKey:     c.sourceFile,
+		SourceFile:      c.sourceFile,
+		BodyInputDigest: bodyInputDigest(result),
+		Reader:          internalreadmodel.NewWithParents(result, parent),
 	})
 }
 
@@ -75,9 +76,9 @@ func (c producerContext) directCallContractJudgments(result *body.Result) []judg
 	)
 }
 
-func resultVersion(result *body.Result) uint64 {
+func bodyInputDigest(result *body.Result) embedding.BodyInputDigest {
 	if result == nil {
 		return 0
 	}
-	return result.ResultVersion()
+	return embedding.BodyInputDigest(result.ResultVersion())
 }

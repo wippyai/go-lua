@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -947,9 +948,13 @@ func JoinEvidenceChains(a, b EvidenceChain) EvidenceChain {
 	return out
 }
 
-// SpanRef points at a source range captured during lowering or solved-state
-// projection. File is optional when Point/Subject already determines it.
+// SpanRef points at a digest-bound source range captured during lowering or
+// solved-state projection. Location is the semantic identity. File remains a
+// legacy display label for pre-embedding producers and render compatibility;
+// consumers must not use it as a cache key or source identity.
 type SpanRef struct {
+	Location embedding.SourceLocation
+	// Deprecated: display projection only. New producers set Location.
 	File      string
 	StartLine int
 	StartCol  int
@@ -957,18 +962,27 @@ type SpanRef struct {
 	EndCol    int
 }
 
+// DisplayFile returns the legacy renderer label without making it semantic
+// identity. The reference file scheme preserves the historical path exactly.
+func (s SpanRef) DisplayFile() string {
+	if s.File != "" {
+		return s.File
+	}
+	return embedding.DefaultDocumentLabel(s.Location.Document)
+}
+
 // Judgment is the semantic obligation record emitted after solve and consumed
 // by rendering/dedup/policy layers.
 type Judgment struct {
-	Code          Code
-	Point         cfg.Point
-	ResultVersion uint64
-	Subject       SubjectRef
-	Expected      TypeRef
-	Actual        ValueRef
-	Verdict       Verdict
-	Evidence      EvidenceChain
-	Spans         []SpanRef
+	Code            Code
+	Point           cfg.Point
+	BodyInputDigest embedding.BodyInputDigest
+	Subject         SubjectRef
+	Expected        TypeRef
+	Actual          ValueRef
+	Verdict         Verdict
+	Evidence        EvidenceChain
+	Spans           []SpanRef
 }
 
 type evidenceJoinState struct {

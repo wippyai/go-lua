@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -125,9 +126,11 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	stmts, err := parse.ParseString(string(input.SourceFiles[input.EntryFile]), input.EntryFile)
+	entry := input.Sources[input.EntryDocument]
+	entryLabel := documentLabel(input, input.EntryDocument)
+	stmts, err := parse.ParseString(string(entry.Content), entryLabel)
 	if err != nil {
-		return nil, fmt.Errorf("checker service: parse %s: %w", input.EntryFile, err)
+		return nil, fmt.Errorf("checker service: parse %s: %w", entryLabel, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -164,12 +167,14 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	if err != nil {
 		return nil, fmt.Errorf("checker service: encode manifest %s: %w", input.ID, err)
 	}
-	items := diagnostics.ProduceJudgments(checked.RootResult(), input.EntryFile)
+	items := diagnostics.ProduceJudgments(checked.RootResult(), entryLabel)
+	bindJudgmentLocations(items, input)
 	diagnosticConfig := diagnostics.Config{
 		Policy:   cloneDiagnosticPolicy(input.DiagnosticPolicy),
 		Judgment: input.JudgmentPolicy,
 	}
 	rendered := diagnostics.RenderJudgments(items, diagnosticConfig)
+	bindDiagnosticLocations(rendered, input)
 	placement := placementplan.FromProgramResult(checked)
 	bodies, bodyVersions := collectBodyResults(checked.RootResult())
 	snapshot := checked.Snapshot()
@@ -177,13 +182,13 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 
 	return &completedSnapshot{
 		tag: ResultTag{
-			UnitID:          input.ID,
-			UnitDigest:      unit.digest,
-			ManifestDigest:  digestBytes(manifestData),
-			SourceDigests:   cloneMap(unit.sourceDigests),
-			BodyVersions:    bodyVersions,
-			Profile:         profile,
-			DocumentVersion: documentVersion,
+			UnitID:           input.ID,
+			UnitDigest:       unit.digest,
+			ManifestDigest:   digestBytes(manifestData),
+			SourceDigests:    cloneMap(unit.sourceDigests),
+			BodyInputDigests: bodyVersions,
+			Profile:          profile,
+			DocumentVersion:  documentVersion,
 		},
 		bodies:           bodies,
 		judgments:        cloneJudgments(items),
@@ -223,16 +228,16 @@ func manifestGlobalTypes(manifests []*manifest.Manifest) map[string]typ.Type {
 	return out
 }
 
-func collectBodyResults(root *body.Result) ([]BodyResultRef, map[BodyID]uint64) {
+func collectBodyResults(root *body.Result) ([]BodyResultRef, map[BodyID]embedding.BodyInputDigest) {
 	var bodies []BodyResultRef
-	versions := make(map[BodyID]uint64)
+	versions := make(map[BodyID]embedding.BodyInputDigest)
 	var visit func(*body.Result, BodyID)
 	visit = func(result *body.Result, id BodyID) {
 		if result == nil {
 			return
 		}
-		version := result.ResultVersion()
-		bodies = append(bodies, BodyResultRef{ID: id, ResultVersion: version})
+		version := embedding.BodyInputDigest(result.ResultVersion())
+		bodies = append(bodies, BodyResultRef{ID: id, InputDigest: version})
 		versions[id] = version
 		for index, child := range result.FunctionResults() {
 			visit(child, BodyID(fmt.Sprintf("%s/%d", id, index)))

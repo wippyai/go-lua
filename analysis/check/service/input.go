@@ -10,6 +10,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -23,7 +24,7 @@ var (
 type retainedUnit struct {
 	input         UnitInput
 	digest        Digest
-	sourceDigests map[string]Digest
+	sourceDigests map[embedding.DocumentID]Digest
 	// generation changes on every accepted upsert. It prevents an outside-lock
 	// solve from publishing against a unit snapshot replaced underneath it.
 	generation uint64
@@ -36,17 +37,18 @@ func normalizeUnitInput(input UnitInput) (retainedUnit, error) {
 	if input.ModulePath == "" {
 		input.ModulePath = string(input.ID)
 	}
-	if len(input.SourceFiles) == 0 {
-		return retainedUnit{}, errors.New("checker service: unit has no source files")
+	sources, labels, entry, err := materializeSources(input)
+	if err != nil {
+		return retainedUnit{}, err
 	}
-	input.SourceFiles = cloneSourceFiles(input.SourceFiles)
-	if input.EntryFile == "" {
-		paths := sortedKeys(input.SourceFiles)
-		input.EntryFile = paths[0]
-	}
-	if _, ok := input.SourceFiles[input.EntryFile]; !ok {
-		return retainedUnit{}, fmt.Errorf("checker service: entry file %q is not in source files", input.EntryFile)
-	}
+	input.Sources = sources
+	input.DocumentLabels = labels
+	input.EntryDocument = entry
+	// The legacy raw-file fields are accepted only at the boundary. Retained
+	// solve inputs are document-keyed and cannot accidentally use labels as
+	// semantic source identity.
+	input.EntryFile = ""
+	input.SourceFiles = nil
 
 	manifests, err := cloneManifests(input.ExternalManifests)
 	if err != nil {
@@ -58,9 +60,9 @@ func normalizeUnitInput(input UnitInput) (retainedUnit, error) {
 	input.StateLanes = state.NewLaneSet(input.StateLanes...).IDs()
 	input.DiagnosticPolicy = cloneDiagnosticPolicy(input.DiagnosticPolicy)
 
-	sourceDigests := make(map[string]Digest, len(input.SourceFiles))
-	for path, data := range input.SourceFiles {
-		sourceDigests[path] = digestBytes(data)
+	sourceDigests := make(map[embedding.DocumentID]Digest, len(input.Sources))
+	for document, snapshot := range input.Sources {
+		sourceDigests[document] = snapshot.ContentDigest
 	}
 	digest, err := unitInputDigest(input, sourceDigests)
 	if err != nil {
@@ -73,16 +75,88 @@ func normalizeUnitInput(input UnitInput) (retainedUnit, error) {
 	}, nil
 }
 
-func unitInputDigest(input UnitInput, sourceDigests map[string]Digest) (Digest, error) {
+func materializeSources(input UnitInput) (map[embedding.DocumentID]embedding.SourceSnapshot, embedding.StaticLabels, embedding.DocumentID, error) {
+	if len(input.Sources) != 0 && len(input.SourceFiles) != 0 {
+		return nil, nil, embedding.DocumentID{}, errors.New("checker service: provide Sources or deprecated SourceFiles, not both")
+	}
+	sources := make(map[embedding.DocumentID]embedding.SourceSnapshot)
+	labels := make(embedding.StaticLabels)
+	for document, label := range input.DocumentLabels {
+		if !document.Valid() {
+			return nil, nil, embedding.DocumentID{}, errors.New("checker service: label has invalid document id")
+		}
+		labels[document] = label
+	}
+	if len(input.Sources) != 0 {
+		for document, snapshot := range input.Sources {
+			if !document.Valid() {
+				return nil, nil, embedding.DocumentID{}, errors.New("checker service: source has invalid document id")
+			}
+			if snapshot.Document != document {
+				return nil, nil, embedding.DocumentID{}, fmt.Errorf("checker service: source snapshot document %q does not match map key %q", snapshot.Document, document)
+			}
+			verified, err := snapshot.Verify()
+			if err != nil {
+				return nil, nil, embedding.DocumentID{}, err
+			}
+			sources[document] = verified
+			if _, ok := labels[document]; !ok {
+				labels[document] = embedding.DefaultDocumentLabel(document)
+			}
+		}
+	} else {
+		for path, data := range input.SourceFiles {
+			document := embedding.FileDocument(path)
+			verified, err := (embedding.SourceSnapshot{Document: document, Content: data}).Verify()
+			if err != nil {
+				return nil, nil, embedding.DocumentID{}, err
+			}
+			sources[document] = verified
+			labels[document] = path
+		}
+	}
+	if len(sources) == 0 {
+		return nil, nil, embedding.DocumentID{}, errors.New("checker service: unit has no sources")
+	}
+	entry := input.EntryDocument
+	if !entry.Valid() && input.Plan.Entry.Valid() {
+		entry = input.Plan.Entry
+	}
+	if !entry.Valid() && input.EntryFile != "" {
+		entry = embedding.FileDocument(input.EntryFile)
+	}
+	if !entry.Valid() {
+		entry = embedding.SortedDocuments(sources)[0]
+	}
+	if _, ok := sources[entry]; !ok {
+		return nil, nil, embedding.DocumentID{}, fmt.Errorf("checker service: entry document %q is not in sources", entry)
+	}
+	if input.Plan.ID != "" && input.Plan.ID != embedding.UnitID(input.ID) {
+		return nil, nil, embedding.DocumentID{}, fmt.Errorf("checker service: unit plan id %q does not match input id %q", input.Plan.ID, input.ID)
+	}
+	if input.Plan.Entry.Valid() && input.Plan.Entry != entry {
+		return nil, nil, embedding.DocumentID{}, fmt.Errorf("checker service: unit plan entry %q does not match input entry %q", input.Plan.Entry, entry)
+	}
+	for _, document := range input.Plan.Sources {
+		if _, ok := sources[document]; !ok {
+			return nil, nil, embedding.DocumentID{}, fmt.Errorf("checker service: unit plan source %q is not materialized", document)
+		}
+	}
+	return sources, labels, entry, nil
+}
+
+func unitInputDigest(input UnitInput, sourceDigests map[embedding.DocumentID]Digest) (Digest, error) {
 	w := newDigestWriter()
-	w.string("checker-service-unit-v1")
+	w.string("checker-service-unit-v2")
 	w.string(input.ModulePath)
-	w.string(input.EntryFile)
-	for _, path := range sortedKeys(sourceDigests) {
-		w.string(path)
-		digest := sourceDigests[path]
+	writeDocumentID(w, input.EntryDocument)
+	for _, document := range sortedDocumentDigests(sourceDigests) {
+		writeDocumentID(w, document)
+		digest := sourceDigests[document]
 		w.bytes(digest[:])
 	}
+	w.bytes(input.ResolutionDigest[:])
+	writeUnitPlan(w, input.Plan)
 	for _, path := range sortedKeys(input.ExternalManifests) {
 		w.string(path)
 		data, err := manifest.Encode(input.ExternalManifests[path])
@@ -112,6 +186,56 @@ func unitInputDigest(input UnitInput, sourceDigests map[string]Digest) (Digest, 
 	writeDiagnosticPolicy(w, input.DiagnosticPolicy)
 	writeJudgmentPolicy(w, input.JudgmentPolicy)
 	return w.sum(), nil
+}
+
+func writeDocumentID(w *digestWriter, document embedding.DocumentID) {
+	w.string(string(document.Scheme))
+	w.string(document.OpaqueKey)
+}
+
+func sortedDocumentDigests(items map[embedding.DocumentID]Digest) []embedding.DocumentID {
+	keys := make([]embedding.DocumentID, 0, len(items))
+	for document := range items {
+		keys = append(keys, document)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Scheme != keys[j].Scheme {
+			return keys[i].Scheme < keys[j].Scheme
+		}
+		return keys[i].OpaqueKey < keys[j].OpaqueKey
+	})
+	return keys
+}
+
+func writeUnitPlan(w *digestWriter, plan embedding.UnitPlan) {
+	w.string(string(plan.ID))
+	w.string(plan.ModulePath)
+	writeDocumentID(w, plan.Entry)
+	sources := append([]embedding.DocumentID(nil), plan.Sources...)
+	sort.Slice(sources, func(i, j int) bool {
+		if sources[i].Scheme != sources[j].Scheme {
+			return sources[i].Scheme < sources[j].Scheme
+		}
+		return sources[i].OpaqueKey < sources[j].OpaqueKey
+	})
+	for _, document := range sources {
+		writeDocumentID(w, document)
+	}
+	imports := append([]embedding.UnitImport(nil), plan.Imports...)
+	sort.Slice(imports, func(i, j int) bool {
+		if imports[i].Alias != imports[j].Alias {
+			return imports[i].Alias < imports[j].Alias
+		}
+		if imports[i].TargetUnit != imports[j].TargetUnit {
+			return imports[i].TargetUnit < imports[j].TargetUnit
+		}
+		return imports[i].ManifestDigest.String() < imports[j].ManifestDigest.String()
+	})
+	for _, imported := range imports {
+		w.string(imported.Alias)
+		w.string(string(imported.TargetUnit))
+		w.bytes(imported.ManifestDigest[:])
+	}
 }
 
 func writeDiagnosticPolicy(w *digestWriter, policy diagnostic.Policy) {

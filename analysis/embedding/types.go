@@ -192,6 +192,17 @@ type StaticLabels map[DocumentID]string
 
 func (l StaticLabels) Label(id DocumentID) string { return l[id] }
 
+// DefaultDocumentLabel supplies the reference display projection. The file
+// scheme intentionally renders its opaque path unchanged so legacy fixture
+// output remains byte-identical. Product hosts normally provide their own
+// labeler for registry and memory documents.
+func DefaultDocumentLabel(id DocumentID) string {
+	if id.Scheme == DocumentSchemeFile {
+		return id.OpaqueKey
+	}
+	return id.String()
+}
+
 // SortedDocuments returns IDs in deterministic scheme/key order.
 func SortedDocuments(items map[DocumentID]SourceSnapshot) []DocumentID {
 	out := make([]DocumentID, 0, len(items))

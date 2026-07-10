@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -65,7 +66,7 @@ return exported
 	if err != nil {
 		t.Fatalf("UpsertUnit: %v", err)
 	}
-	if state.UnitDigest.IsZero() || state.SourceDigests["main.lua"].IsZero() || !state.Changed {
+	if state.UnitDigest.IsZero() || state.SourceDigests[embedding.FileDocument("main.lua")].IsZero() || !state.Changed {
 		t.Fatalf("unit state = %#v, want new content digests", state)
 	}
 
@@ -76,8 +77,8 @@ return exported
 	if tag.SolveSeq == 0 || tag.UnitDigest != state.UnitDigest || tag.ManifestDigest.IsZero() {
 		t.Fatalf("result tag = %#v, want complete digest tag", tag)
 	}
-	if len(tag.BodyVersions) < 2 || tag.BodyVersions["root"] == 0 {
-		t.Fatalf("body versions = %#v, want root and nested function", tag.BodyVersions)
+	if len(tag.BodyInputDigests) < 2 || tag.BodyInputDigests["root"] == 0 {
+		t.Fatalf("body input digests = %#v, want root and nested function", tag.BodyInputDigests)
 	}
 
 	completed, ok := session.LastComplete(ctx, ResultRequest{Selector: selectorFor(tag)})
@@ -92,8 +93,8 @@ return exported
 		if item.Subject.Anchor.IsZero() {
 			t.Fatalf("judgment %s has no subject anchor", item.Code)
 		}
-		if item.ResultVersion == 0 || !containsBodyVersion(tag.BodyVersions, item.ResultVersion) {
-			t.Fatalf("judgment %s ResultVersion = %d, body versions = %#v", item.Code, item.ResultVersion, tag.BodyVersions)
+		if item.BodyInputDigest == 0 || !containsBodyInputDigest(tag.BodyInputDigests, item.BodyInputDigest) {
+			t.Fatalf("judgment %s BodyInputDigest = %d, body input digests = %#v", item.Code, item.BodyInputDigest, tag.BodyInputDigests)
 		}
 	}
 	if len(completed.RenderedDiagnostics()) == 0 {
@@ -172,15 +173,105 @@ return exported
 	if len(summaries.Summaries) == 0 || len(summaries.Digests) != len(summaries.Summaries) {
 		t.Fatalf("summary query entries/digests = %d/%d", len(summaries.Summaries), len(summaries.Digests))
 	}
-	versions, err := session.BodyResultVersions(ctx, BodyResultVersionsRequest{Selector: selectorFor(tag)})
+	versions, err := session.BodyInputDigests(ctx, BodyInputDigestsRequest{Selector: selectorFor(tag)})
 	if err != nil {
-		t.Fatalf("BodyResultVersions: %v", err)
+		t.Fatalf("BodyInputDigests: %v", err)
 	}
-	if !reflect.DeepEqual(versions.Versions, tag.BodyVersions) {
-		t.Fatalf("body version query = %#v, want %#v", versions.Versions, tag.BodyVersions)
+	if !reflect.DeepEqual(versions.Digests, tag.BodyInputDigests) {
+		t.Fatalf("body input digest query = %#v, want %#v", versions.Digests, tag.BodyInputDigests)
 	}
 
 	assertCompletedResultIsDefensivelyImmutable(t, completed)
+}
+
+func TestDocumentKeyedUnitInputBindsResultLocationsAndPreservesDisplay(t *testing.T) {
+	ctx := context.Background()
+	document := embedding.RegistryDocument("component:orders/source:lua")
+	content := []byte("local value = missing_value\n")
+	input := UnitInput{
+		ID:            "registry-orders",
+		ModulePath:    "registry/orders",
+		EntryDocument: document,
+		Sources: map[embedding.DocumentID]embedding.SourceSnapshot{
+			document: {Document: document, ProviderRevision: "registry-42", Content: content},
+		},
+		DocumentLabels: embedding.StaticLabels{document: "orders.lua"},
+		Plan: embedding.UnitPlan{
+			ID:      "registry-orders",
+			Entry:   document,
+			Sources: []embedding.DocumentID{document},
+			Imports: []embedding.UnitImport{{Alias: "shared", TargetUnit: "registry-shared", ManifestDigest: digestBytes([]byte("shared-manifest"))}},
+		},
+		ResolutionDigest: digestBytes([]byte("workspace-view-42")),
+	}
+	session := NewBatchSession()
+	state, err := session.UpsertUnit(ctx, input)
+	if err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+	digest := state.SourceDigests[document]
+	if digest.IsZero() || digest != digestBytes(content) {
+		t.Fatalf("source digest = %s, want digest of materialized content", digest)
+	}
+	tag := mustSolve(t, session, SolveRequest{UnitID: input.ID})
+	if tag.SourceDigests[document] != digest {
+		t.Fatalf("result tag source digests = %#v, want registry document key", tag.SourceDigests)
+	}
+	completed, ok := session.LastComplete(ctx, ResultRequest{Selector: selectorFor(tag)})
+	if !ok {
+		t.Fatal("completed result missing")
+	}
+	for _, item := range completed.Judgments() {
+		for _, span := range item.Spans {
+			if span.Location.Document != document || span.Location.ContentDigest != digest || !span.Location.Valid() {
+				t.Fatalf("judgment span location = %#v, want digest-bound registry location", span.Location)
+			}
+			if span.File != "orders.lua" {
+				t.Fatalf("judgment span display = %q, want label projection", span.File)
+			}
+		}
+	}
+	for _, item := range completed.RenderedDiagnostics() {
+		if item.Location.Document != document || item.Location.ContentDigest != digest || !item.Location.Valid() {
+			t.Fatalf("diagnostic location = %#v, want digest-bound registry location", item.Location)
+		}
+		if item.Position.File != "orders.lua" {
+			t.Fatalf("diagnostic display = %q, want label projection", item.Position.File)
+		}
+	}
+}
+
+func TestFileCompatibilityConstructorPreservesDiagnosticRenderBytes(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("local value = missing_value\n")
+	legacy := UnitInput{
+		ID:          "legacy",
+		ModulePath:  "example/legacy",
+		EntryFile:   "main.lua",
+		SourceFiles: map[string][]byte{"main.lua": content},
+	}
+	modern := NewUnitInputFromFiles("modern", "example/legacy", "main.lua", map[string][]byte{"main.lua": content})
+	legacySession := NewBatchSession()
+	modernSession := NewBatchSession()
+	if _, err := legacySession.UpsertUnit(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modernSession.UpsertUnit(ctx, modern); err != nil {
+		t.Fatal(err)
+	}
+	legacyTag := mustSolve(t, legacySession, SolveRequest{UnitID: legacy.ID})
+	modernTag := mustSolve(t, modernSession, SolveRequest{UnitID: modern.ID})
+	legacyResult, _ := legacySession.LastComplete(ctx, ResultRequest{Selector: selectorFor(legacyTag)})
+	modernResult, _ := modernSession.LastComplete(ctx, ResultRequest{Selector: selectorFor(modernTag)})
+	legacyDiagnostic := legacyResult.RenderedDiagnostics()[0]
+	modernDiagnostic := modernResult.RenderedDiagnostics()[0]
+	options := diagnostic.RenderOptions{Sources: diagnostic.SourceMap{"main.lua": string(content)}}
+	if got, want := diagnostic.Render(modernDiagnostic, options), diagnostic.Render(legacyDiagnostic, options); got != want {
+		t.Fatalf("file compatibility changed render bytes\nwant:\n%s\ngot:\n%s", want, got)
+	}
+	if modernDiagnostic.Location.Document != embedding.FileDocument("main.lua") {
+		t.Fatalf("modern file location = %#v, want file document id", modernDiagnostic.Location)
+	}
 }
 
 func TestBatchSessionDeterminismAndDigestScopedInvalidation(t *testing.T) {
@@ -236,7 +327,7 @@ return value
 	if err != nil {
 		t.Fatalf("edited upsert B: %v", err)
 	}
-	if !bState.Changed || bState.UnitDigest == b1.UnitDigest || bState.SourceDigests["b.lua"] == b1.SourceDigests["b.lua"] {
+	if !bState.Changed || bState.UnitDigest == b1.UnitDigest || bState.SourceDigests[embedding.FileDocument("b.lua")] == b1.SourceDigests[embedding.FileDocument("b.lua")] {
 		t.Fatalf("edited B state = %#v, previous tag = %#v", bState, b1)
 	}
 	staleB, err := session.PlacementPlan(ctx, PlacementPlanRequest{Selector: ResultSelector{UnitID: unitB.ID, Profile: unitB.Profile}})
@@ -247,10 +338,10 @@ return value
 		t.Fatal("last complete B result was not marked stale after edit")
 	}
 	b2 := mustSolve(t, session, SolveRequest{UnitID: unitB.ID})
-	if b2.UnitDigest == b1.UnitDigest || b2.SourceDigests["b.lua"] == b1.SourceDigests["b.lua"] {
+	if b2.UnitDigest == b1.UnitDigest || b2.SourceDigests[embedding.FileDocument("b.lua")] == b1.SourceDigests[embedding.FileDocument("b.lua")] {
 		t.Fatalf("B source edit reused unit/source digest: before=%#v after=%#v", b1, b2)
 	}
-	if b2.ManifestDigest != b1.ManifestDigest || !reflect.DeepEqual(b2.BodyVersions, b1.BodyVersions) {
+	if b2.ManifestDigest != b1.ManifestDigest || !reflect.DeepEqual(b2.BodyInputDigests, b1.BodyInputDigests) {
 		t.Fatalf("comment-only edit changed semantic digests: before=%#v after=%#v", b1, b2)
 	}
 
@@ -351,10 +442,10 @@ func TestUnitInputDigestPropagatesManifestEncodeError(t *testing.T) {
 	input := UnitInput{
 		ID:                "unit-a",
 		ModulePath:        "example/a",
-		EntryFile:         "main.lua",
+		EntryDocument:     embedding.FileDocument("main.lua"),
 		ExternalManifests: map[string]*manifest.Manifest{"bad.lua": unencodableManifest()},
 	}
-	digest, err := unitInputDigest(input, map[string]Digest{"main.lua": digestBytes([]byte("x"))})
+	digest, err := unitInputDigest(input, map[embedding.DocumentID]Digest{embedding.FileDocument("main.lua"): digestBytes([]byte("x"))})
 	if err == nil {
 		t.Fatal("unitInputDigest: want error for unencodable external manifest, got nil")
 	}
@@ -622,10 +713,11 @@ func heavySolveInput(id UnitID) UnitInput {
 func assertCompletedResultIsDefensivelyImmutable(t *testing.T, completed CompletedResult) {
 	t.Helper()
 	tag := completed.Tag()
-	originalSource := tag.SourceDigests["main.lua"]
-	tag.SourceDigests["main.lua"] = Digest{}
-	tag.BodyVersions["root"] = 0
-	if again := completed.Tag(); again.SourceDigests["main.lua"] != originalSource || again.BodyVersions["root"] == 0 {
+	mainDocument := embedding.FileDocument("main.lua")
+	originalSource := tag.SourceDigests[mainDocument]
+	tag.SourceDigests[mainDocument] = Digest{}
+	tag.BodyInputDigests["root"] = 0
+	if again := completed.Tag(); again.SourceDigests[mainDocument] != originalSource || again.BodyInputDigests["root"] == 0 {
 		t.Fatal("mutating returned tag changed completed snapshot")
 	}
 	items := completed.Judgments()
@@ -770,10 +862,10 @@ func entryFor(t *testing.T, entries []summary.EntrySummary, key summary.SummaryK
 }
 
 func selectorFor(tag ResultTag) ResultSelector {
-	return ResultSelector{UnitID: tag.UnitID, ResultVersion: tag.SolveSeq, Profile: tag.Profile}
+	return ResultSelector{UnitID: tag.UnitID, SolveSeq: tag.SolveSeq, Profile: tag.Profile}
 }
 
-func containsBodyVersion(versions map[BodyID]uint64, want uint64) bool {
+func containsBodyInputDigest(versions map[BodyID]embedding.BodyInputDigest, want embedding.BodyInputDigest) bool {
 	for _, got := range versions {
 		if got == want {
 			return true
@@ -796,7 +888,7 @@ func assertStableResultContent(t *testing.T, left, right ResultTag) {
 	if left.UnitDigest != right.UnitDigest ||
 		left.ManifestDigest != right.ManifestDigest ||
 		!reflect.DeepEqual(left.SourceDigests, right.SourceDigests) ||
-		!reflect.DeepEqual(left.BodyVersions, right.BodyVersions) {
+		!reflect.DeepEqual(left.BodyInputDigests, right.BodyInputDigests) {
 		t.Fatalf("identical solves changed content digests:\nleft  %#v\nright %#v", left, right)
 	}
 }

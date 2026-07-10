@@ -18,7 +18,7 @@ func (s *BatchSession) selectedResult(ctx context.Context, selector ResultSelect
 	snapshot, meta, ok := s.resultForSelectorLocked(selector)
 	s.mu.RUnlock()
 	if !ok {
-		return nil, QueryMeta{}, fmt.Errorf("%w: unit=%s profile=%s solve_seq=%d", ErrResultNotFound, selector.UnitID, selector.Profile, selector.ResultVersion)
+		return nil, QueryMeta{}, fmt.Errorf("%w: unit=%s profile=%s solve_seq=%d", ErrResultNotFound, selector.UnitID, selector.Profile, selector.SolveSeq)
 	}
 	return snapshot, meta, nil
 }
@@ -178,12 +178,12 @@ func (s *BatchSession) SummarySnapshot(ctx context.Context, req SummarySnapshotR
 	return SummarySnapshotResponse{Meta: meta, Summaries: entries, Digests: digests}, nil
 }
 
-func (s *BatchSession) BodyResultVersions(ctx context.Context, req BodyResultVersionsRequest) (BodyResultVersionsResponse, error) {
+func (s *BatchSession) BodyInputDigests(ctx context.Context, req BodyInputDigestsRequest) (BodyInputDigestsResponse, error) {
 	snapshot, meta, err := s.selectedResult(ctx, req.Selector)
 	if err != nil {
-		return BodyResultVersionsResponse{}, err
+		return BodyInputDigestsResponse{}, err
 	}
-	return BodyResultVersionsResponse{Meta: meta, Versions: cloneMap(snapshot.tag.BodyVersions)}, nil
+	return BodyInputDigestsResponse{Meta: meta, Digests: cloneMap(snapshot.tag.BodyInputDigests)}, nil
 }
 
 func judgmentPolicyConfigZero(config judgment.PolicyConfig) bool {
@@ -243,7 +243,7 @@ func codeSpecs(items []judgment.Judgment) []judgment.CodeSpec {
 
 func judgmentInRange(item judgment.Judgment, sourceRange SourceRange) bool {
 	for _, span := range item.Spans {
-		if sourceRange.File != "" && span.File != sourceRange.File {
+		if sourceRange.Document.Valid() && span.Location.Document != sourceRange.Document {
 			continue
 		}
 		if rangesOverlap(span.StartLine, span.StartCol, span.EndLine, span.EndCol, sourceRange) {
@@ -254,7 +254,7 @@ func judgmentInRange(item judgment.Judgment, sourceRange SourceRange) bool {
 }
 
 func diagnosticInRange(item diagnostic.Diagnostic, sourceRange SourceRange) bool {
-	if sourceRange.File != "" && item.Position.File != sourceRange.File {
+	if sourceRange.Document.Valid() && item.Location.Document != sourceRange.Document {
 		return false
 	}
 	return rangesOverlap(item.Span.StartLine, item.Span.StartCol, item.Span.EndLine, item.Span.EndCol, sourceRange)

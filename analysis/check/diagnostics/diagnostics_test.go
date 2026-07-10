@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -130,8 +131,8 @@ func TestProduceJudgmentsRenderRoundTrip(t *testing.T) {
 		t.Fatal("ProduceJudgments returned no semantic records")
 	}
 	for _, item := range items {
-		if item.ResultVersion != result.ResultVersion() {
-			t.Fatalf("judgment ResultVersion = %d, want %d", item.ResultVersion, result.ResultVersion())
+		if item.BodyInputDigest != embedding.BodyInputDigest(result.ResultVersion()) {
+			t.Fatalf("judgment BodyInputDigest = %d, want %d", item.BodyInputDigest, result.ResultVersion())
 		}
 		if item.Subject.Anchor.IsZero() {
 			t.Fatalf("judgment %s has no subject anchor", item.Code)

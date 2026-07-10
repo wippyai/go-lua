@@ -24,7 +24,7 @@ type completedSnapshot struct {
 
 func cloneResultTag(tag ResultTag) ResultTag {
 	tag.SourceDigests = cloneMap(tag.SourceDigests)
-	tag.BodyVersions = cloneMap(tag.BodyVersions)
+	tag.BodyInputDigests = cloneMap(tag.BodyInputDigests)
 	return tag
 }
 

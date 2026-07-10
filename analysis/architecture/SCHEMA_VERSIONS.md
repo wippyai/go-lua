@@ -37,6 +37,13 @@ constant + journal a D-entry`.
   equality is `(Scheme, OpaqueKey)` only; source/provider/editor revisions,
   content digests, and workspace resolution views remain distinct snapshots.
 
+- D18: Judgment IR judgment/span surface changed with the embedding migration:
+  `Judgment.ResultVersion` is now the explicitly named `BodyInputDigest`, and
+  `SpanRef` carries a digest-bound `embedding.SourceLocation`. The legacy
+  `SpanRef.File` remains a display-only compatibility projection while
+  materialized service results populate the semantic location. Version unified
+  with D16's bump at the post-integration repin.
+
 - D16: Bumped boundary lane schema to v8 and Judgment IR to v10. Added the
   additive manifest `OperationalEffects.typestateRequirements` wire lane and
   the caller-relative `CallOutcome.TypestateRequirements` obligation lane.

@@ -6,6 +6,7 @@ package pass
 import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -13,7 +14,7 @@ import (
 type Context struct {
 	FunctionKey                   string
 	SourceFile                    string
-	ResultVersion                 uint64
+	BodyInputDigest               embedding.BodyInputDigest
 	Reader                        readmodel.Reader
 	SuppressCallerOwnedParameters bool
 	PointReachable                func(cfg.Point) bool
@@ -55,7 +56,7 @@ func (p Pass) Run(ctx Context) []judgment.Judgment {
 			if ctx.PointReachable != nil && !ctx.PointReachable(item.Point) {
 				continue
 			}
-			item.ResultVersion = ctx.ResultVersion
+			item.BodyInputDigest = ctx.BodyInputDigest
 			out = append(out, item)
 		}
 	}

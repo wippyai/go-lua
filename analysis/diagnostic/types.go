@@ -3,6 +3,7 @@ package diagnostic
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/compiler/source"
 )
 
@@ -46,6 +47,10 @@ func (c Code) String() string {
 
 // Diagnostic is the analysis-facing diagnostic value model.
 type Diagnostic struct {
+	// Location is the digest-bound semantic location. Position.File and label
+	// File fields are display projections retained for terminal fixtures and
+	// compatibility with existing renderers.
+	Location    embedding.SourceLocation
 	Position    Position
 	Span        Span
 	Code        Code
@@ -60,6 +65,7 @@ type Diagnostic struct {
 // Producers should provide the semantic fields and the primary span; New keeps
 // Position in sync with Span for terminal, LSP, and test consumers.
 type DiagnosticSpec struct {
+	Location    embedding.SourceLocation
 	File        string
 	Span        Span
 	Code        Code
@@ -75,6 +81,7 @@ func New(spec DiagnosticSpec) Diagnostic {
 	position := PositionFromSpan(spec.Span)
 	position.File = spec.File
 	return Diagnostic{
+		Location:    spec.Location,
 		Position:    position,
 		Span:        spec.Span,
 		Code:        spec.Code,
@@ -106,6 +113,8 @@ func PositionFromSpanInFile(file string, span Span) Position {
 
 // Label marks a secondary source location with an annotation message.
 type Label struct {
+	Location embedding.SourceLocation
+	// Deprecated: display projection only.
 	File      string
 	Span      Span
 	Message   string

@@ -3,13 +3,15 @@ package service
 import (
 	"context"
 	"sync"
+
+	"github.com/wippyai/go-lua/analysis/embedding"
 )
 
 type resultKey struct {
 	unitID     UnitID
 	unitDigest Digest
 	profile    string
-	solveSeq   uint64
+	solveSeq   embedding.SolveSeq
 }
 
 type unitProfileKey struct {
@@ -27,8 +29,8 @@ type BatchSession struct {
 	units              map[UnitID]retainedUnit
 	results            map[resultKey]*completedSnapshot
 	latest             map[unitProfileKey]resultKey
-	bySeq              map[uint64]resultKey
-	nextSeq            uint64
+	bySeq              map[embedding.SolveSeq]resultKey
+	nextSeq            embedding.SolveSeq
 	nextUnitGeneration uint64
 }
 
@@ -39,7 +41,7 @@ func NewBatchSession() *BatchSession {
 		units:   make(map[UnitID]retainedUnit),
 		results: make(map[resultKey]*completedSnapshot),
 		latest:  make(map[unitProfileKey]resultKey),
-		bySeq:   make(map[uint64]resultKey),
+		bySeq:   make(map[embedding.SolveSeq]resultKey),
 	}
 }
 
@@ -114,8 +116,8 @@ func (s *BatchSession) resultForSelectorLocked(selector ResultSelector) (*comple
 	}
 	var key resultKey
 	var ok bool
-	if selector.ResultVersion != 0 {
-		key, ok = s.bySeq[selector.ResultVersion]
+	if selector.SolveSeq != 0 {
+		key, ok = s.bySeq[selector.SolveSeq]
 		ok = ok && key.unitID == selector.UnitID && (profile == "" || key.profile == profile)
 	} else {
 		key, ok = s.latest[unitProfileKey{unitID: selector.UnitID, profile: profile}]
