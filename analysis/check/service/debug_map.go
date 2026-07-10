@@ -14,12 +14,12 @@ import (
 // DebugMapSchemaVersion pins the exported artifact debug-map DTO and canonical
 // byte encoding. Bump it with its hash guard and SCHEMA_VERSIONS.md entry when
 // either changes.
-const DebugMapSchemaVersion = 1
+const DebugMapSchemaVersion = 2
 
 // EngineBuildTag is the single engine-version component stamped into static
 // artifact IDs. A release changes this constant exactly once when the emitted
 // artifact/debug semantics change; development builds use the checked-in tag.
-const EngineBuildTag = "go-lua-engine-debug-map-v1"
+const EngineBuildTag = "go-lua-engine-debug-map-v2"
 
 // DebugPointID and DebugPhase are the lowering-owned, body-local execution
 // identity vocabulary re-exported at the completed-result boundary.

@@ -68,29 +68,31 @@ type projectionBody struct {
 }
 
 func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result, judgments []judgment.Judgment) *semanticQuerySnapshot {
+	entryFile := documentLabel(input, input.EntryDocument)
+	entrySource := input.Sources[input.EntryDocument]
 	b := semanticProjectionBuilder{
-		file:      input.EntryFile,
-		source:    append([]byte(nil), input.SourceFiles[input.EntryFile]...),
+		file:      entryFile,
+		source:    append([]byte(nil), entrySource.Content...),
 		root:      root,
 		byFunc:    make(map[*ast.FunctionExpr]projectionBody),
 		binders:   make(map[uint64]*BinderInfo),
 		seenExprs: make(map[ast.Expr]map[cfg.Point]struct{}),
 	}
-	b.collectBodies(root, BodyID("root"), SourceLocation{File: input.EntryFile, Span: wholeSourceSpan(b.source)})
+	b.collectBodies(root, BodyID("root"), SourceLocation{File: entryFile, Span: wholeSourceSpan(b.source)})
 	b.collectBinderDefinitionsAndOccurrences(stmts)
 	b.collectExpressions()
 
 	result := &semanticQuerySnapshot{
-		entryFile: input.EntryFile,
+		entryFile: entryFile,
 		sources: map[string][]byte{
-			input.EntryFile: append([]byte(nil), input.SourceFiles[input.EntryFile]...),
+			entryFile: append([]byte(nil), entrySource.Content...),
 		},
 		bodies:  make([]queryBody, 0, len(b.bodies)),
-		anchors: anchorsFromJudgments(input.EntryFile, judgments),
-		repairs: repairActionsFromJudgments(input.EntryFile, judgments),
+		anchors: anchorsFromJudgments(entryFile, judgments),
+		repairs: repairActionsFromJudgments(entryFile, judgments),
 	}
-	for file, data := range input.SourceFiles {
-		result.sources[file] = append([]byte(nil), data...)
+	for document, snapshot := range input.Sources {
+		result.sources[documentLabel(input, document)] = append([]byte(nil), snapshot.Content...)
 	}
 	for _, item := range b.bodies {
 		result.bodies = append(result.bodies, queryBody{id: item.id, location: item.location})
