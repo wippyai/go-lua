@@ -141,8 +141,10 @@ Encoding impact, per decision:
 ### Source local debug identity (`DbgLocal` projection)
 
 The runtime/JIT debug contract for named locals is frozen as a projection over
-existing WIR metadata. WIR does not carry, and should not grow, a parallel debug
-locals table. A backend that needs Lua-style debug locals projects:
+WIR metadata. WIR does not carry a parallel table of names or backend slots.
+It does record the source-symbol visibility set at debug before/after points so
+the projection can close lexical live ranges. A backend that needs Lua-style
+debug locals projects:
 
 ```
 DbgLocal{
@@ -170,7 +172,7 @@ as local slots. `SymbolGlobal` and `SymbolFunction` are not named-local rows.
 | `startPoint` | `Instruction.Point`; point windows from `Body.PointInstructions(point)` and `Body.SetPointRange(point,start,end)` | For local declarations, use the point of the root-writing assignment instruction stamped by `lowerLocalAssign` (`AssignLocalDeclaration`). Loop bindings are instruction-backed too: numeric-for exposes the loop variable in `OpIterate.Results`; generic-for emits per-variable `OpAssign var = _` binding points. Parameters, and any entry-seeded captured local slot a backend chooses to expose, start at the body's `cfg.Graph.Entry()` point, where WIR emits `OpEntry`. |
 | `startPC` | backend point-to-PC map | Translate `startPoint` after instruction selection. The flat `Body` instruction index is not the contract; `cfg.Point` is. |
 | `slot` | root `path.Path.Symbol` from a root `OperandPath`; backend allocator result | WIR freezes the source slot identity key, not the final VM register number. The backend allocates a numeric slot from that root symbol / path-ref identity and writes that number into `DbgLocal.slot`. If it needs state-cell identity, it may use `AddressResolver.Resolve(point, op, AccessWriteLocal)` or `AccessReadBefore`, but those point-sensitive keys are not VM slots. |
-| `endPoint` / `endPC` | not currently stored | Open item. WIR has enough points and operand occurrences to run a liveness pass, but it does not store lexical-scope end markers or live-range end points. The intended derivation is a backend liveness/slot-allocation pass over `cfg.Graph`, `Body.PointInstructions`, and root operand uses, then translation through the same point-to-PC map used for `startPC`. |
+| `endPoint` / `endPC` | `Body.DebugLocalVisibility(point, before/after)` | The lowering-time lexical visibility projection supplies the end boundary: a row's final visible after-phase and the next observable phase where it is absent delimit its live range. Codegen translates those phases through its point-to-PC map. No second local table or backend slot assignment is stored in WIR. |
 
 Definition discovery is structural. Walk reachable points (usually
 `graph.RPO()`), inspect each point's `Body.PointInstructions(point)`, and decode
@@ -179,18 +181,14 @@ opcode-specific fields. This is the same kind of structural projection used by
 `visibilityfacts.DefinitionsFromWIR`; it is not a semantic conclusion from the
 type checker.
 
-Current gaps are deliberately documented rather than patched here:
-
-- **Live-range ends.** No existing `analysis/ir/wir` field gives a precise
-  `endPoint`; compute it in the backend from liveness, or add a future
-  structural live-range source only with runtime-lane sign-off.
-- **Unreferenced, untyped parameters.** `wirlower` records their internal
-  `SymbolInfo` through `recordFunctionBodyMetadata`, but `Body` currently has no
-  exported symbol-table iterator or parameter-root list. A consumer can discover
-  parameter rows that appear in root operands or other exported metadata, but a
-  completely unused untyped parameter is not enumerable from the public WIR
-  surface alone. If this must be exposed, add a structural parameter/root view,
-  not a debug-only side table.
+The prior **live-range end marker** gap is now closed for observable debug
+points. Lowering records lexical source-symbol visibility at `before` and
+`after`; `call` and `suspend` use before visibility, and `return` uses after
+visibility. A backend can therefore derive an exact debug-range end from map
+membership even though WIR intentionally has no standalone `endPoint` field.
+Parameters are seeded into the function's lexical visibility scope before its
+entry instruction, including otherwise-unused parameters when the body has an
+observable point.
 
 Stability rules:
 
@@ -206,6 +204,60 @@ Stability rules:
 - Any change that would make `name`, `startPoint`, or the root-symbol slot key
   derive differently from existing WIR requires explicit sign-off from both this
   checker lane and the runtime/JIT lane.
+
+### Artifact-scoped debug map
+
+Lowering assigns every CFG point a body-local ordinal from the body's canonical
+RPO traversal. `wir.DebugPointID{Ordinal, Phase}` is the observable execution
+identity; `Phase` is the closed vocabulary `before`, `after`, `call`, `return`,
+and `suspend`. The ordinal is deterministic only for fixed source, CFG builder,
+and toolchain. It is never a global counter and is never an external identity
+without the exact body digest (normally the `StaticArtifactID` below).
+
+`service.CompletedResult.DebugMaps()` exports one schema-pinned,
+deterministically encoded map per body next to `ResultTag.BodyVersions`. Its
+ordered entries are the wire representation of:
+
+```text
+DebugPointID -> {
+    source span,
+    enclosing source anchor,
+    visible DbgLocal source-symbol set,
+    may-suspend-at-point,
+}
+```
+
+Only source-anchored observable phases are emitted; entry, exit, and pure CFG
+joins have ordinals but no source-map row. The map digest is over the versioned
+canonical entry encoding, not Go map iteration.
+
+Every body artifact has the DTO:
+
+```text
+StaticArtifactID{
+    unit digest,
+    body digest,
+    profile,
+    engine build tag,
+    debug-map digest,
+}
+```
+
+Its canonical string form is length-delimited and begins
+`static-artifact-v1|unit=...|body=...|profile=...|engine=...|debug-map=...`.
+`service.EngineBuildTag` is the sole build-version component. Release builds
+bump that constant when emitted artifact/debug semantics change; this forces a
+new identity even when the source inputs are unchanged.
+
+Arena codegen copies the exact body debug map into the compiled artifact. Live
+facts join by `(StaticArtifactID, DebugPointID.Ordinal, DebugPointID.Phase)`;
+an API that carries phase separately may spell the same tuple
+`(StaticArtifactID, DebugPointID, phase)`, but this Go DTO embeds phase in
+`DebugPointID` so the two cannot diverge. Source navigation follows
+`DebugPointID -> enclosing anchor -> editor snapshot whose source digest matches
+the artifact`; it must display an artifact/editor mismatch rather than make an
+anchor-only join. Deployment, actor/frame, and resource/object instance remain
+runtime-owned identity dimensions outside this static map.
 
 ## Extended dialect decisions (Stage 4)
 

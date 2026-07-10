@@ -143,6 +143,25 @@ func (r CompletedResult) Bodies() []BodyResultRef {
 	return append([]BodyResultRef(nil), r.snapshot.bodies...)
 }
 
+// DebugMaps returns deterministic per-body DebugPointID maps published with
+// the body's ResultVersion. The maps are defensively cloned.
+func (r CompletedResult) DebugMaps() []BodyDebugMap {
+	if r.snapshot == nil {
+		return nil
+	}
+	return cloneBodyDebugMaps(r.snapshot.debugMaps)
+}
+
+// StaticArtifacts returns the exact artifact identity for every completed body.
+// Runtime facts must join on this identity plus DebugPointID, never on a bare
+// body version or cfg.Point.
+func (r CompletedResult) StaticArtifacts() []StaticArtifact {
+	if r.snapshot == nil {
+		return nil
+	}
+	return cloneStaticArtifacts(r.snapshot.staticArtifacts)
+}
+
 func (r CompletedResult) Judgments() []judgment.Judgment {
 	if r.snapshot == nil {
 		return nil

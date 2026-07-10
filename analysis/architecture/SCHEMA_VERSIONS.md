@@ -14,6 +14,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | Hoistable load DTO | `readmodel.HoistableLoadSchemaVersion` | v1 | Codegen-facing exported `readmodel.HoistableLoad` record shape. | A `HoistableLoad` field is added, removed, renamed, or changes type. |
 | Allocation site DTO | `readmodel.AllocationSiteSchemaVersion` | v2 | Codegen-facing exported `readmodel.AllocationSite` and `readmodel.AllocationField` record shapes. | An `AllocationSite`/`AllocationField` field is added, removed, renamed, or changes type. |
 | Allocation site fact | `body.AllocationSiteFactSchemaVersion` | v3 | Internal solved `body.AllocationSiteFact` record shape plus its `StableShapeField`/`SourceSpan` payload types. | An `AllocationSiteFact` field, or a payload type it embeds, is added, removed, renamed, or changes type. |
+| Artifact debug map | `service.DebugMapSchemaVersion` | v1 | `BodyDebugMap`, `DebugMapEntry`, phase vocabulary, canonical entry encoding, and `StaticArtifactID` DTO form. | A debug-map/anchor/local field, phase label, canonical encoding, or static-artifact ID component changes. |
 
 ## Bump Discipline
 
@@ -31,11 +32,13 @@ constant + journal a D-entry`.
 
 ## Journal
 
-- D17: Registered checker embedding schema v1 and its reflection-hash guard.
-  This is independent of JIR: it pins the stable document identity/snapshot
-  algebra used to materialize service inputs before a solve. `DocumentID`
-  equality is `(Scheme, OpaqueKey)` only; source/provider/editor revisions,
-  content digests, and workspace resolution views remain distinct snapshots.
+- D19: Added the v1 artifact debug-map schema. WIR lowering assigns
+  body-scoped RPO sequence-point ordinals and phase-qualified IDs; completed
+  results publish canonical per-body maps and static artifact IDs. The map's
+  lexical before/after visibility sets close the prior DbgLocal live-range-end
+  marker gap for observable points. Runtime consumers must join live facts on
+  the exact static artifact plus ordinal and phase, never on `cfg.Point` or a
+  bare body version.
 
 - D18: Judgment IR judgment/span surface changed with the embedding migration:
   `Judgment.ResultVersion` is now the explicitly named `BodyInputDigest`, and
@@ -43,6 +46,12 @@ constant + journal a D-entry`.
   `SpanRef.File` remains a display-only compatibility projection while
   materialized service results populate the semantic location. Version unified
   with D16's bump at the post-integration repin.
+
+- D17: Registered checker embedding schema v1 and its reflection-hash guard.
+  This is independent of JIR: it pins the stable document identity/snapshot
+  algebra used to materialize service inputs before a solve. `DocumentID`
+  equality is `(Scheme, OpaqueKey)` only; source/provider/editor revisions,
+  content digests, and workspace resolution views remain distinct snapshots.
 
 - D16: Bumped boundary lane schema to v8 and Judgment IR to v10. Added the
   additive manifest `OperationalEffects.typestateRequirements` wire lane and

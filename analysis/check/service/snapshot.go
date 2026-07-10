@@ -21,6 +21,8 @@ type completedSnapshot struct {
 	summaryDigests   map[summary.SummaryKey]summary.Digest
 	diagnosticConfig diagnostics.Config
 	semantic         *semanticQuerySnapshot
+	debugMaps        []BodyDebugMap
+	staticArtifacts  []StaticArtifact
 }
 
 func cloneResultTag(tag ResultTag) ResultTag {

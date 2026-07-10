@@ -177,6 +177,8 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	bindDiagnosticLocations(rendered, input)
 	placement := placementplan.FromProgramResult(checked)
 	bodies, bodyVersions := collectBodyResults(checked.RootResult())
+	debugMaps := collectBodyDebugMaps(checked.RootResult())
+	staticArtifacts := collectStaticArtifacts(unit.digest, profile, debugMaps)
 	snapshot := checked.Snapshot()
 	summaryDigests := digestSummaries(checked.RootResult(), snapshot)
 	semantic := projectSemanticQueries(input, stmts, checked.RootResult(), items)
@@ -201,6 +203,8 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 		summaryDigests:   summaryDigests,
 		diagnosticConfig: diagnosticConfig,
 		semantic:         semantic,
+		debugMaps:        cloneBodyDebugMaps(debugMaps),
+		staticArtifacts:  cloneStaticArtifacts(staticArtifacts),
 	}, nil
 }
 
@@ -247,6 +251,50 @@ func collectBodyResults(root *body.Result) ([]BodyResultRef, map[BodyID]embeddin
 	}
 	visit(root, BodyID("root"))
 	return bodies, versions
+}
+
+func collectBodyDebugMaps(root *body.Result) []BodyDebugMap {
+	var out []BodyDebugMap
+	var visit func(*body.Result, BodyID)
+	visit = func(result *body.Result, id BodyID) {
+		if result == nil {
+			return
+		}
+		entries := result.DebugMap()
+		item := BodyDebugMap{
+			BodyID:        id,
+			BodyDigest:    embedding.BodyInputDigest(result.ResultVersion()),
+			SchemaVersion: DebugMapSchemaVersion,
+			Entries:       entries,
+		}
+		item.Digest = digestBytes(item.CanonicalBytes())
+		out = append(out, item)
+		for index, child := range result.FunctionResults() {
+			visit(child, BodyID(fmt.Sprintf("%s/%d", id, index)))
+		}
+	}
+	visit(root, BodyID("root"))
+	return out
+}
+
+func collectStaticArtifacts(unitDigest Digest, profile string, maps []BodyDebugMap) []StaticArtifact {
+	if len(maps) == 0 {
+		return nil
+	}
+	out := make([]StaticArtifact, 0, len(maps))
+	for _, debugMap := range maps {
+		out = append(out, StaticArtifact{
+			BodyID: debugMap.BodyID,
+			ID: StaticArtifactID{
+				UnitDigest:     unitDigest,
+				BodyDigest:     debugMap.BodyDigest,
+				Profile:        profile,
+				EngineBuildTag: EngineBuildTag,
+				DebugMapDigest: debugMap.Digest,
+			},
+		})
+	}
+	return out
 }
 
 func digestSummaries(root *body.Result, snapshot summary.Snapshot) map[summary.SummaryKey]summary.Digest {
