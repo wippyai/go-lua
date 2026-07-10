@@ -586,6 +586,24 @@ func (r *Result) FunctionParamSlots(fn *ast.FunctionExpr) []bind.ParamSlot {
 	return r.bindings.ParamSlots(fn)
 }
 
+// BinderDeclaration returns the exact parser/binder-owned declaration for a
+// lexical symbol. Consumers must not rediscover declarations by scanning text.
+func (r *Result) BinderDeclaration(id symbol.ID) (bind.Declaration, bool) {
+	if r == nil || r.bindings == nil || id == 0 {
+		return bind.Declaration{}, false
+	}
+	return r.bindings.Declaration(id)
+}
+
+// BinderOccurrences returns every exact runtime occurrence recorded by the
+// binder, including reads, writes, and closure captures.
+func (r *Result) BinderOccurrences(id symbol.ID) []bind.Occurrence {
+	if r == nil || r.bindings == nil || id == 0 {
+		return nil
+	}
+	return r.bindings.Occurrences(id)
+}
+
 func (r *Result) FunctionTypeParams(fn *ast.FunctionExpr) []bind.TypeDecl {
 	if r == nil || r.bindings == nil || fn == nil {
 		return nil

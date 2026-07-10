@@ -750,22 +750,22 @@ funcbody:
 
 parlist:
         T3Comma {
-            $$ = &ast.ParList{HasVargs: true, Names: []string{}}
+            $$ = &ast.ParList{HasVargs: true, VarargPosition: $1.Pos, Names: []string{}}
         } |
         T3Comma ':' typeexpr {
-            $$ = &ast.ParList{HasVargs: true, VarargType: $3, Names: []string{}}
+            $$ = &ast.ParList{HasVargs: true, VarargType: $3, VarargPosition: $1.Pos, Names: []string{}}
         } |
         typednamelist {
-            names, _, types := splitTypedNames($1)
-            $$ = &ast.ParList{HasVargs: false, Names: names, Types: types}
+            names, positions, types := splitTypedNames($1)
+            $$ = &ast.ParList{HasVargs: false, Names: names, NamePositions: positions, Types: types}
         } |
         typednamelist ',' T3Comma {
-            names, _, types := splitTypedNames($1)
-            $$ = &ast.ParList{HasVargs: true, Names: names, Types: types}
+            names, positions, types := splitTypedNames($1)
+            $$ = &ast.ParList{HasVargs: true, VarargPosition: $3.Pos, Names: names, NamePositions: positions, Types: types}
         } |
         typednamelist ',' T3Comma ':' typeexpr {
-            names, _, types := splitTypedNames($1)
-            $$ = &ast.ParList{HasVargs: true, VarargType: $5, Names: names, Types: types}
+            names, positions, types := splitTypedNames($1)
+            $$ = &ast.ParList{HasVargs: true, VarargType: $5, VarargPosition: $3.Pos, Names: names, NamePositions: positions, Types: types}
         }
 
 

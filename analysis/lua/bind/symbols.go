@@ -3,7 +3,35 @@ package bind
 import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/source"
 )
+
+// OccurrenceRole classifies one binder-owned runtime reference.
+type OccurrenceRole uint8
+
+const (
+	OccurrenceRead OccurrenceRole = iota + 1
+	OccurrenceWrite
+	OccurrenceCapture
+)
+
+// Declaration records the parser-owned source token that introduces a value
+// binder. Synthetic binders may have a syntax span but cannot be renamed as a
+// textual identifier without a checker-verified transformation.
+type Declaration struct {
+	Span      source.Span
+	Synthetic bool
+}
+
+func (d Declaration) Valid() bool { return d.Span.Valid() }
+
+// Occurrence records one exact parser/binder-owned runtime reference.
+type Occurrence struct {
+	Role OccurrenceRole
+	Span source.Span
+}
+
+func (o Occurrence) Valid() bool { return o.Span.Valid() }
 
 type globalSymbol struct {
 	id          symbol.ID
@@ -49,6 +77,26 @@ func (r *Result) WriteIdents(id symbol.ID) []*ast.IdentExpr {
 		return nil
 	}
 	return cloneIdentExprs(r.writeIdents[id])
+}
+
+// Declaration returns the source declaration owned by the binder for id.
+// A missing or synthetic declaration must never be re-derived from source
+// text by a consumer.
+func (r *Result) Declaration(id symbol.ID) (Declaration, bool) {
+	if r == nil || id == 0 {
+		return Declaration{}, false
+	}
+	declaration, ok := r.declarations[id]
+	return declaration, ok
+}
+
+// Occurrences returns every runtime occurrence of id with its exact role and
+// parser span. The returned slice never aliases binder-owned storage.
+func (r *Result) Occurrences(id symbol.ID) []Occurrence {
+	if r == nil || id == 0 {
+		return nil
+	}
+	return append([]Occurrence(nil), r.occurrences[id]...)
 }
 
 // HasWrite reports whether id is assigned through ordinary assignment syntax.
@@ -229,6 +277,37 @@ func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
 	return id
 }
 
+func (r *Result) setDeclaration(id symbol.ID, declaration Declaration) {
+	if r == nil || id == 0 {
+		return
+	}
+	r.declarations[id] = declaration
+}
+
+func (r *Result) addOccurrence(id symbol.ID, occurrence Occurrence) {
+	if r == nil || id == 0 || !occurrence.Valid() {
+		return
+	}
+	r.occurrences[id] = append(r.occurrences[id], occurrence)
+}
+
+func declarationForPosition(position ast.Position, name string, synthetic bool) Declaration {
+	if !position.Valid() || name == "" {
+		return Declaration{Synthetic: synthetic}
+	}
+	endLine, endColumn := position.EndLine, position.EndColumn
+	if endLine == 0 {
+		endLine = position.Line
+	}
+	if endLine == position.Line && endColumn < position.Column+len(name)-1 {
+		endColumn = position.Column + len(name) - 1
+	}
+	return Declaration{
+		Span:      source.Span{StartLine: position.Line, StartCol: position.Column, EndLine: endLine, EndCol: endColumn},
+		Synthetic: synthetic,
+	}
+}
+
 func (r *Result) global(name string, predeclared bool) symbol.ID {
 	if g, ok := r.globals[name]; ok {
 		if predeclared && !g.predeclared {
@@ -334,6 +413,7 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 		return
 	}
 	b.result.readIdents[id] = append(b.result.readIdents[id], ident)
+	b.result.addOccurrence(id, Occurrence{Role: b.occurrenceRole(id, OccurrenceRead), Span: ast.SpanOf(ident)})
 	b.recordDirectCapture(id)
 	b.recordDirectGlobalRead(id)
 }
@@ -373,5 +453,21 @@ func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
 	}
 	b.result.identSymbols[ident] = id
 	b.result.writeIdents[id] = append(b.result.writeIdents[id], ident)
+	b.result.addOccurrence(id, Occurrence{Role: b.occurrenceRole(id, OccurrenceWrite), Span: ast.SpanOf(ident)})
 	b.recordDirectCapture(id)
+}
+
+func (b *binder) occurrenceRole(id symbol.ID, role OccurrenceRole) OccurrenceRole {
+	current := b.currentFunction()
+	if current == nil {
+		return role
+	}
+	kind, ok := b.result.kinds[id]
+	if !ok || (kind != symbol.Local && kind != symbol.Param) {
+		return role
+	}
+	if b.result.declaringFunctions[id] != current {
+		return OccurrenceCapture
+	}
+	return role
 }

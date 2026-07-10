@@ -86,6 +86,7 @@ func (b *binder) bindLocalAssign(stmt *ast.LocalAssignStmt) {
 	pending := make(map[string]symbol.ID, len(stmt.Names))
 	for i, name := range stmt.Names {
 		id := b.newSymbol(name, symbol.Local)
+		b.result.setDeclaration(id, declarationForPosition(namePosition(stmt.NamePositions, i), name, false))
 		ids[i] = id
 		if name != "" {
 			pending[name] = id
@@ -134,6 +135,7 @@ func (b *binder) bindNumberFor(stmt *ast.NumberForStmt) {
 	b.bindExpr(stmt.Step)
 
 	id := b.newSymbol(stmt.Name, symbol.Local)
+	b.result.setDeclaration(id, declarationForPosition(stmt.NamePosition, stmt.Name, false))
 	b.result.numForSymbols[stmt] = id
 
 	b.pushScope()
@@ -149,6 +151,7 @@ func (b *binder) bindGenericFor(stmt *ast.GenericForStmt) {
 	b.pushScope()
 	for i, name := range stmt.Names {
 		id := b.newSymbol(name, symbol.Local)
+		b.result.setDeclaration(id, declarationForPosition(namePosition(stmt.NamePositions, i), name, false))
 		ids[i] = id
 		b.define(name, id)
 	}
@@ -230,7 +233,7 @@ func (b *binder) bindExprMode(expr ast.Expr, mode exprBindMode) {
 	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr:
 	case *ast.Comma3Expr:
 		if mode == exprBindRuntime {
-			b.bindVararg()
+			b.bindVararg(expr)
 		}
 	case *ast.IdentExpr:
 		if mode == exprBindTypeQuery {

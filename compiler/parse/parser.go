@@ -1988,34 +1988,34 @@ yydefault:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:766
 		{
-			yyVAL.parlist = &ast.ParList{HasVargs: true, Names: []string{}}
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargPosition: yyDollar[1].token.Pos, Names: []string{}}
 		}
 	case 118:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:769
 		{
-			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[3].typeexpr, Names: []string{}}
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[3].typeexpr, VarargPosition: yyDollar[1].token.Pos, Names: []string{}}
 		}
 	case 119:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:772
 		{
-			names, _, types := splitTypedNames(yyDollar[1].typednames)
-			yyVAL.parlist = &ast.ParList{HasVargs: false, Names: names, Types: types}
+			names, positions, types := splitTypedNames(yyDollar[1].typednames)
+			yyVAL.parlist = &ast.ParList{HasVargs: false, Names: names, NamePositions: positions, Types: types}
 		}
 	case 120:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:776
 		{
-			names, _, types := splitTypedNames(yyDollar[1].typednames)
-			yyVAL.parlist = &ast.ParList{HasVargs: true, Names: names, Types: types}
+			names, positions, types := splitTypedNames(yyDollar[1].typednames)
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargPosition: yyDollar[3].token.Pos, Names: names, NamePositions: positions, Types: types}
 		}
 	case 121:
 		yyDollar = yyS[yypt-5 : yypt+1]
 //line parser.go.y:780
 		{
-			names, _, types := splitTypedNames(yyDollar[1].typednames)
-			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[5].typeexpr, Names: names, Types: types}
+			names, positions, types := splitTypedNames(yyDollar[1].typednames)
+			yyVAL.parlist = &ast.ParList{HasVargs: true, VarargType: yyDollar[5].typeexpr, VarargPosition: yyDollar[3].token.Pos, Names: names, NamePositions: positions, Types: types}
 		}
 	case 122:
 		yyDollar = yyS[yypt-2 : yypt+1]

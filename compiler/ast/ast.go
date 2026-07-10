@@ -146,10 +146,12 @@ type Field struct {
 
 // ParList represents a function parameter list.
 type ParList struct {
-	HasVargs   bool
-	VarargType TypeExpr // Type annotation for variadic (...: T)
-	Names      []string
-	Types      []TypeExpr // Type annotations, parallel to Names (nil entries = inferred)
+	HasVargs       bool
+	VarargType     TypeExpr // Type annotation for variadic (...: T)
+	VarargPosition Position // Exact parser token position for the `...` syntax.
+	Names          []string
+	NamePositions  []Position // Per-name declaration token positions, parallel to Names.
+	Types          []TypeExpr // Type annotations, parallel to Names (nil entries = inferred)
 }
 
 // FuncName represents a function name in a function definition statement.

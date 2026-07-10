@@ -9,6 +9,7 @@ import (
 type ParamSlot struct {
 	Symbol       symbol.ID
 	Name         string
+	Position     ast.Position
 	Type         ast.TypeExpr
 	SourceIndex  int
 	Vararg       bool
@@ -314,7 +315,7 @@ func (b *binder) recordDirectGlobalRead(id symbol.ID) {
 	b.result.directGlobalReads[current] = append(b.result.directGlobalReads[current], id)
 }
 
-func (b *binder) bindVararg() {
+func (b *binder) bindVararg(expr *ast.Comma3Expr) {
 	current := b.currentFunction()
 	if current == nil {
 		return
@@ -323,6 +324,7 @@ func (b *binder) bindVararg() {
 	if !ok || id == 0 {
 		return
 	}
+	b.result.addOccurrence(id, Occurrence{Role: b.occurrenceRole(id, OccurrenceRead), Span: ast.SpanOf(expr)})
 	b.recordDirectCapture(id)
 }
 
@@ -359,6 +361,7 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin function
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
 		id := b.newSymbol("self", symbol.Param)
+		b.result.setDeclaration(id, Declaration{Synthetic: true})
 		params = append(params, id)
 		b.define("self", id)
 		slots = append(slots, ParamSlot{
@@ -370,11 +373,14 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin function
 	}
 	for i, name := range names {
 		id := b.newSymbol(name, symbol.Param)
+		position := positionAt(fn.ParList, i)
+		b.result.setDeclaration(id, declarationForPosition(position, name, false))
 		params = append(params, id)
 		b.define(name, id)
 		slots = append(slots, ParamSlot{
 			Symbol:      id,
 			Name:        name,
+			Position:    position,
 			Type:        typeAt(types, i),
 			SourceIndex: i,
 		})
@@ -385,10 +391,16 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin function
 	b.result.paramSymbols[fn] = params
 	if hasVargs {
 		id := b.newSymbol("...", symbol.Param)
+		varargPosition := ast.Position{}
+		if fn.ParList != nil {
+			varargPosition = fn.ParList.VarargPosition
+		}
+		b.result.setDeclaration(id, declarationForPosition(varargPosition, "...", true))
 		b.result.varargSymbols[fn] = id
 		slots = append(slots, ParamSlot{
 			Symbol:      id,
 			Name:        "...",
+			Position:    varargPosition,
 			Type:        varargType,
 			SourceIndex: len(names),
 			Vararg:      true,
@@ -403,6 +415,20 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin function
 
 	b.visibleDeferred = oldVisibleDeferred
 	b.functionStack = b.functionStack[:len(b.functionStack)-1]
+}
+
+func positionAt(parlist *ast.ParList, index int) ast.Position {
+	if parlist == nil || index < 0 || index >= len(parlist.NamePositions) {
+		return ast.Position{}
+	}
+	return parlist.NamePositions[index]
+}
+
+func namePosition(positions []ast.Position, index int) ast.Position {
+	if index < 0 || index >= len(positions) {
+		return ast.Position{}
+	}
+	return positions[index]
 }
 
 func (b *binder) bindFunctionTypeSignature(fn *ast.FunctionExpr) {
