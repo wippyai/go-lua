@@ -1,0 +1,67 @@
+{
+  "description": "Concat nilability diagnostics retain call-return, optional-field, missing-guard, and any-origin causes in witness order.",
+  "check": {
+    "witness_trace": true,
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "warning",
+        "code": "type.operator.concat_operand",
+        "message_contains": ["nilable_return", "may be nil"],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "nilable_return return 1 has type string? and may be nil",
+          "no guard on this path proves nilable_return(...) is non-nil"
+        ],
+        "render_ordered_contains": [
+          "nilable_return return 1 has type string? and may be nil",
+          "right operand `nilable_return(...)` can be string or nil here",
+          "no guard on this path proves nilable_return(...) is non-nil"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 12,
+        "severity": "warning",
+        "code": "type.operator.concat_operand",
+        "message_contains": ["payload.name", "may be nil"],
+        "min_evidence": 3,
+        "evidence_contains": ["payload.name is an optional field and may be nil"],
+        "render_ordered_contains": [
+          "payload.name is an optional field and may be nil",
+          "no guard on this path proves payload.name is non-nil"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 19,
+        "severity": "warning",
+        "code": "type.operator.concat_operand",
+        "message_contains": ["value", "may be nil"],
+        "min_evidence": 2,
+        "evidence_contains": ["no guard on this path proves value is non-nil"],
+        "render_ordered_contains": [
+          "right operand `value` can be string or nil here",
+          "no guard on this path proves value is non-nil"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 23,
+        "severity": "warning",
+        "code": "type.operator.concat_operand",
+        "message_contains": ["raw", "may be nil"],
+        "min_evidence": 3,
+        "evidence_contains": ["raw comes from unresolved any/unknown"],
+        "render_ordered_contains": [
+          "raw comes from unresolved any/unknown",
+          "no guard on this path proves raw is non-nil"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

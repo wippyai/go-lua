@@ -23,8 +23,8 @@ return label
 	}
 	requireLabelMessage(t, diag, "value may be nil")
 	evidence := diag.Explanation.Evidence()
-	if len(evidence) != 1 {
-		t.Fatalf("evidence = %#v, want one operand-type fact", evidence)
+	if len(evidence) != 2 {
+		t.Fatalf("evidence = %#v, want operand fact and missing nil guard", evidence)
 	}
 	requireEvidenceMessage(t, diag, "right operand `maybe` can be string or nil here")
 	if diag.Help != "Guard `maybe` or provide a default string before using `..`." {
@@ -83,6 +83,7 @@ return "prefix:" .. maybe
 		"\n" +
 		"because:\n" +
 		"  1. proven: right operand `maybe` can be string or nil here\n" +
+		"  2. missing proof: no guard on this path proves maybe is non-nil\n" +
 		"\n" +
 		"help: Guard `maybe` or provide a default string before using `..`."
 	assertRenderedEqual(t, rendered, want)

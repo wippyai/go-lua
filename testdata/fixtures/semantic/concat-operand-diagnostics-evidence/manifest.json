@@ -1,6 +1,7 @@
 {
   "description": "Concat operand diagnostics explain the concrete optional operand without repeating the source-frame role.",
   "check": {
+    "witness_trace": true,
     "diagnostics": [
       {
         "file": "main.lua",
@@ -11,7 +12,7 @@
         "message_contains": [
           "right operand `maybe` of `..` may be nil"
         ],
-        "min_evidence": 1,
+        "min_evidence": 2,
         "evidence_contains": [
           "right operand `maybe` has type nil"
         ],
@@ -24,6 +25,16 @@
             "trust": "proven",
             "contains": [
               "right operand `maybe` has type nil"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 2,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves maybe is non-nil"
             ]
           }
         ],
@@ -38,6 +49,7 @@
           "return \"prefix:\" .. maybe",
           "because:",
           "proven: right operand `maybe` has type nil",
+          "missing proof: no guard on this path proves maybe is non-nil",
           "help: Guard `maybe` or provide a default string before using `..`."
         ],
         "render_not_contains": [

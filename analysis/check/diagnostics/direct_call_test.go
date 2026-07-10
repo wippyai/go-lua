@@ -131,6 +131,7 @@ because:
   1. proven: maybe has a callable type, but may also be nil
   2. claimed: maybe must be non-nil before it is called
   3. missing proof: no guard on this path proves maybe is non-nil before this call
+  4. missing proof: no guard on this path proves maybe is non-nil
 
 help: Guard ` + "`maybe`" + ` with a nil check before calling it.`
 	if rendered != want {

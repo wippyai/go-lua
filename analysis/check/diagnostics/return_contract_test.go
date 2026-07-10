@@ -159,6 +159,7 @@ because:
   |                                                ↓ declared return type
 1 | local function pick(xs: {number}, i: integer): number
   3. missing proof: returned value 1 (xs[i]) is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared return type here
+  4. missing proof: no guard on this path proves xs[i] is non-nil
 
 help: Guard ` + "`xs[i]`" + ` with a nil check, return a default value, or change the return type to accept nil.`
 	if rendered != want {
@@ -332,6 +333,8 @@ because:
   3. claimed: user asserted any; not abstract-interpreter proof
   4. unvalidated value: returned value 1 (v[1]) comes from any/unknown
   5. missing proof: returned value 1 (v[1]) is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared return type here
+  6. claimed: v[1] comes from unresolved any/unknown
+  7. missing proof: no guard on this path proves v[1] is non-nil
 
 help: Guard ` + "`v[1]`" + ` with a nil check, return a default value, or change the return type to accept nil.`
 	if rendered != want {
