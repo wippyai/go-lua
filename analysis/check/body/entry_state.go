@@ -197,10 +197,16 @@ func ambientModuleGlobalEntrySeeds(
 		return nil
 	}
 	seeds := make([]state.ValueSeed, 0, len(exports.Manifests))
-	for _, m := range exports.Manifests {
+	seen := make(map[string]struct{}, len(exports.Manifests))
+	for i := len(exports.Manifests) - 1; i >= 0; i-- {
+		m := exports.Manifests[i]
 		if m == nil || m.Path == "" || m.Export == nil {
 			continue
 		}
+		if _, exists := seen[m.Path]; exists {
+			continue
+		}
+		seen[m.Path] = struct{}{}
 		if globalTypes[m.Path] != nil {
 			continue
 		}
@@ -212,7 +218,11 @@ func ambientModuleGlobalEntrySeeds(
 		if valueSlot == 0 {
 			continue
 		}
-		exportValue := typeValues.FromTypeWithWitness(reg, m.Export)
+		exportType, ok := exports.LookupExport(m.Path)
+		if !ok || exportType == nil {
+			continue
+		}
+		exportValue := typeValues.FromTypeWithWitness(reg, exportType)
 		seeds = append(seeds, state.ValueSeed{Slot: valueSlot, Value: exportValue})
 	}
 	return seeds

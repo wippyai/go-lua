@@ -220,6 +220,45 @@ func TestEntrySeedPlanLetsConfiguredGlobalTypeOwnModuleNameCollision(t *testing.
 	}
 }
 
+func TestAmbientModuleGlobalEntrySeedScopesExportToOwningManifest(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	stmts := parseChunk(t, `local value = registry.get()`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"registry"}})
+	id, ok := bindings.GlobalSymbol("registry")
+	if !ok {
+		t.Fatal("registry global symbol not bound")
+	}
+
+	entry := typetable.NewRecord().Field("id", typ.String).Build()
+	registry := manifest.New("registry")
+	registry.DefineType("Entry", entry)
+	registry.SetExport(typetable.NewRecord().
+		Field("get", typ.Func().Returns(typ.NewRef("", "Entry")).Build()).
+		Build())
+	fs := manifest.New("fs")
+	fs.DefineType("Entry", typetable.NewRecord().Field("name", typ.String).Build())
+
+	seeds := ambientModuleGlobalEntrySeeds(reg, typeValues, bindings, importlookup.Source{
+		Manifests: []*manifest.Manifest{registry, fs},
+	}, nil)
+	if len(seeds) != 1 || seeds[0].Slot != key.SymbolValue(id) {
+		t.Fatalf("ambient module seeds = %#v, want one registry seed", seeds)
+	}
+	seeded, ok := typevalue.TypeOf(reg, seeds[0].Value)
+	if !ok {
+		t.Fatalf("registry seed has no type: %#v", seeds[0].Value)
+	}
+	get, ok := access.Field(seeded, "get")
+	if !ok {
+		t.Fatalf("registry seed type = %v, want get member", seeded)
+	}
+	getFn, ok := get.(*typ.Function)
+	if !ok || len(getFn.Returns) != 1 || !typ.TypeEquals(getFn.Returns[0], entry) {
+		t.Fatalf("registry.get type = %v, want return registry Entry %v", get, entry)
+	}
+}
+
 func TestCheckChunkDedupesConfiguredGlobalSeedsBySlot(t *testing.T) {
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()
