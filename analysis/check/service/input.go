@@ -57,7 +57,9 @@ func normalizeUnitInput(input UnitInput) (retainedUnit, error) {
 	input.ExternalManifests = manifests
 	input.Globals = normalizedStrings(input.Globals)
 	input.GlobalTypes = cloneGlobalTypes(input.GlobalTypes)
-	input.StateLanes = state.NewLaneSet(input.StateLanes...).IDs()
+	// Nil selects the default State lanes; a non-nil empty slice deliberately
+	// disables every lane. Preserve that distinction while retaining input.
+	input.StateLanes = state.CloneLanes(input.StateLanes)
 	input.DiagnosticPolicy = cloneDiagnosticPolicy(input.DiagnosticPolicy)
 
 	sourceDigests := make(map[embedding.DocumentID]Digest, len(input.Sources))
