@@ -42,6 +42,13 @@ type AllocationSiteFact struct {
 	FrameLocalUseProof      bool
 	DiesBeforeSuspension    bool
 	HasDiesBeforeSuspension bool
+	licenses                placement.AllocationSiteLicenses
+}
+
+// Licenses returns the canonical allocation-site proof record. The exported
+// booleans above are its schema-pinned wire projection.
+func (f AllocationSiteFact) Licenses() placement.AllocationSiteLicenses {
+	return f.licenses
 }
 
 // AllocationSiteFacts returns table-allocation facts attached to OpMakeTable
@@ -95,7 +102,7 @@ func (r *Result) ForEachDecomposableAllocationSiteFact(visit func(AllocationSite
 	}
 	visited := false
 	r.ForEachAllocationSiteFact(func(fact AllocationSiteFact) bool {
-		if !fact.Decomposable {
+		if !fact.Licenses().State(placement.LicenseDecomposable).Proven() {
 			return true
 		}
 		visited = true
@@ -155,6 +162,16 @@ func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAn
 		inst.StaticStringKeysComplete &&
 		!inst.ListSpread &&
 		useProof
+	fact.licenses = placement.NewAllocationSiteLicenses(
+		fact.Decomposable, fact.FrameLocalUseProof,
+		fact.DiesBeforeSuspension, fact.HasDiesBeforeSuspension,
+		fact.Placement, fact.HasPlacement,
+	)
+	projection := fact.licenses.Projection()
+	fact.Decomposable = projection.Decomposable
+	fact.FrameLocalUseProof = projection.FrameLocalUseProof
+	fact.DiesBeforeSuspension = projection.DiesBeforeSuspension
+	fact.HasDiesBeforeSuspension = projection.HasDiesBeforeSuspension
 	return fact, true
 }
 

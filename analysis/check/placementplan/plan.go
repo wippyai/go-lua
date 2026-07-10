@@ -97,6 +97,8 @@ type Plan struct {
 	Blockers       []Blocker
 	Entries        []Entry
 	HoistableLoads []readapi.HoistableLoad
+
+	licenses map[identity.ID]placement.AllocationSiteLicenses
 }
 
 func FromProgramResult(result checkprogram.Result) Plan {
@@ -135,16 +137,10 @@ func Merge(plans ...Plan) Plan {
 			if entry.HasObject {
 				aggregate.objects[entry.ID] = struct{}{}
 			}
-			if entry.AllocationSite {
-				aggregate.addAllocationSite(entry.ID, entry.Decomposable, entry.FrameLocalUseProof)
-			}
-			aggregate.addFrameLocal(entry.ID, entry.FrameLocal)
+			aggregate.addLicenses(entry.ID, plan.licensesFor(entry))
 			aggregate.addChildren(entry.ID, entry.Children)
 			if entry.Frozen {
 				aggregate.frozen[entry.ID] = struct{}{}
-			}
-			if entry.HasDiesBeforeSuspension {
-				aggregate.addDiesBeforeSuspension(entry.ID, entry.DiesBeforeSuspension)
 			}
 			if entry.Target == TargetNoFact {
 				continue
@@ -160,6 +156,37 @@ func Merge(plans ...Plan) Plan {
 		}
 	}
 	return aggregate.plan()
+}
+
+func (p Plan) licensesFor(entry Entry) placement.AllocationSiteLicenses {
+	if licenses, ok := p.licenses[entry.ID]; ok && entryMatchesLicenseProjection(entry, licenses.Projection()) {
+		return licenses
+	}
+	return allocationSiteLicensesFromEntry(entry)
+}
+
+func entryMatchesLicenseProjection(entry Entry, projection placement.AllocationSiteLicenseProjection) bool {
+	return entry.AllocationSite == projection.AllocationSite &&
+		entry.Decomposable == projection.Decomposable &&
+		entry.FrameLocalUseProof == projection.FrameLocalUseProof &&
+		entry.FrameLocal == projection.FrameLocal &&
+		entry.DiesBeforeSuspension == projection.DiesBeforeSuspension &&
+		entry.HasDiesBeforeSuspension == projection.HasDiesBeforeSuspension
+}
+
+func allocationSiteLicensesFromEntry(entry Entry) placement.AllocationSiteLicenses {
+	licenses := placement.AllocationSiteLicenses{}.
+		With(placement.LicenseAllocationSite, placement.LicenseStateFor(entry.AllocationSite)).
+		With(placement.LicenseFrameLocal, placement.LicenseStateFor(entry.FrameLocal))
+	if entry.AllocationSite {
+		licenses = licenses.
+			With(placement.LicenseDecomposable, placement.LicenseStateFor(entry.Decomposable)).
+			With(placement.LicenseFrameLocalUse, placement.LicenseStateFor(entry.FrameLocalUseProof))
+	}
+	if entry.HasDiesBeforeSuspension {
+		licenses = licenses.With(placement.LicenseDiesBeforeSuspension, placement.LicenseStateFor(entry.DiesBeforeSuspension))
+	}
+	return licenses
 }
 
 func (p Plan) Placement(id identity.ID) (placement.Value, bool) {
@@ -265,17 +292,11 @@ type aggregate struct {
 	incomplete     bool
 	blockers       map[Blocker]struct{}
 	objects        map[identity.ID]struct{}
-	allocations    map[identity.ID]allocationProperties
+	licenses       map[identity.ID]placement.AllocationSiteLicenses
 	children       map[identity.ID]map[identity.ID]struct{}
 	placements     map[identity.ID]placement.Value
 	frozen         map[identity.ID]struct{}
 	hoistableLoads map[hoistableLoadKey]readapi.HoistableLoad
-}
-
-type allocationProperties struct {
-	allocationSite, decomposable, frameLocalUseProof bool
-	frameLocal, hasFrameLocal                        bool
-	diesBeforeSuspension, hasDiesBeforeSuspension    bool
 }
 
 type hoistableLoadKey struct {
@@ -289,7 +310,7 @@ func newAggregate() aggregate {
 	return aggregate{
 		blockers:       make(map[Blocker]struct{}),
 		objects:        make(map[identity.ID]struct{}),
-		allocations:    make(map[identity.ID]allocationProperties),
+		licenses:       make(map[identity.ID]placement.AllocationSiteLicenses),
 		children:       make(map[identity.ID]map[identity.ID]struct{}),
 		placements:     make(map[identity.ID]placement.Value),
 		frozen:         make(map[identity.ID]struct{}),
@@ -309,10 +330,7 @@ func (a *aggregate) addResult(result *body.Result) {
 		a.addState(result.Registry(), exit)
 	}
 	result.ForEachAllocationSiteFact(func(fact body.AllocationSiteFact) bool {
-		a.addAllocationSite(fact.Identity, fact.Decomposable, fact.FrameLocalUseProof)
-		if fact.HasDiesBeforeSuspension {
-			a.addDiesBeforeSuspension(fact.Identity, fact.DiesBeforeSuspension)
-		}
+		a.addLicenses(fact.Identity, fact.Licenses())
 		return true
 	})
 	internalreadmodel.New(result).ForEachHoistableLoad(func(load internalreadmodel.HoistableLoad) bool {
@@ -356,12 +374,13 @@ func (a *aggregate) addState(reg *axis.Registry, st state.State) {
 }
 
 func (a *aggregate) plan() Plan {
-	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements)+len(a.allocations))
+	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements)+len(a.licenses))
 	for id := range a.objects {
 		ids[id] = struct{}{}
 	}
-	for id, facts := range a.allocations {
-		if facts.allocationSite || facts.hasDiesBeforeSuspension {
+	for id, licenses := range a.licenses {
+		projection := licenses.Projection()
+		if projection.AllocationSite || projection.HasDiesBeforeSuspension {
 			ids[id] = struct{}{}
 		}
 	}
@@ -387,16 +406,17 @@ func (a *aggregate) plan() Plan {
 		Blockers:       orderedBlockers(a.blockers),
 		Entries:        make([]Entry, 0, len(ordered)),
 		HoistableLoads: orderedHoistableLoads(a.hoistableLoads),
+		licenses:       make(map[identity.ID]placement.AllocationSiteLicenses, len(ordered)),
 	}
 	for _, id := range ordered {
 		value, hasPlacement := a.placements[id]
 		if !hasPlacement {
 			value = placement.Bottom
 		}
-		facts := a.allocations[id]
-		frameLocal := facts.frameLocalProof(value, hasPlacement)
+		licenses := a.licenses[id]
+		projection := licenses.Projection()
 		target := targetForPlacement(value, hasPlacement)
-		if frameLocal {
+		if projection.FrameLocal {
 			target = TargetFrameLocal
 		}
 		entry := Entry{
@@ -404,71 +424,33 @@ func (a *aggregate) plan() Plan {
 			Placement:          value,
 			Target:             target,
 			HasObject:          mapContains(a.objects, id),
-			AllocationSite:     facts.allocationSite,
-			Decomposable:       facts.decomposable,
-			FrameLocalUseProof: facts.frameLocalUseProof,
-			FrameLocal:         frameLocal,
+			AllocationSite:     projection.AllocationSite,
+			Decomposable:       projection.Decomposable,
+			FrameLocalUseProof: projection.FrameLocalUseProof,
+			FrameLocal:         projection.FrameLocal,
 			Frozen:             mapContains(a.frozen, id),
 			Children:           orderedIDs(a.children[id]),
 		}
-		if facts.hasDiesBeforeSuspension {
-			entry.DiesBeforeSuspension = facts.diesBeforeSuspension
+		if projection.HasDiesBeforeSuspension {
+			entry.DiesBeforeSuspension = projection.DiesBeforeSuspension
 			entry.HasDiesBeforeSuspension = true
 		}
 		entry = annotate(entry, hasPlacement)
 		out.Entries = append(out.Entries, entry)
+		out.licenses[id] = licenses
 	}
 	return out
 }
 
-func (a *aggregate) addAllocationSite(id identity.ID, decomposable bool, frameLocalUseProof bool) {
+func (a *aggregate) addLicenses(id identity.ID, licenses placement.AllocationSiteLicenses) {
 	if id == (identity.ID{}) {
 		return
 	}
-	facts := a.allocations[id]
-	facts.decomposable = mergeProof(facts.decomposable, decomposable, facts.allocationSite)
-	facts.frameLocalUseProof = mergeProof(facts.frameLocalUseProof, frameLocalUseProof, facts.allocationSite)
-	facts.allocationSite = true
-	a.allocations[id] = facts
-}
-
-func (a *aggregate) addFrameLocal(id identity.ID, frameLocal bool) {
-	if id == (identity.ID{}) {
+	if current, ok := a.licenses[id]; ok {
+		a.licenses[id] = current.Join(licenses)
 		return
 	}
-	facts := a.allocations[id]
-	facts.frameLocal = mergeProof(facts.frameLocal, frameLocal, facts.hasFrameLocal)
-	facts.hasFrameLocal = true
-	a.allocations[id] = facts
-}
-
-func (p allocationProperties) frameLocalProof(value placement.Value, hasPlacement bool) bool {
-	if p.hasFrameLocal {
-		return p.frameLocal
-	}
-	return p.allocationSite &&
-		p.frameLocalUseProof &&
-		hasPlacement &&
-		value == placement.Stack &&
-		p.hasDiesBeforeSuspension &&
-		p.diesBeforeSuspension
-}
-
-func (a *aggregate) addDiesBeforeSuspension(id identity.ID, dies bool) {
-	if id == (identity.ID{}) {
-		return
-	}
-	facts := a.allocations[id]
-	facts.diesBeforeSuspension = mergeProof(facts.diesBeforeSuspension, dies, facts.hasDiesBeforeSuspension)
-	facts.hasDiesBeforeSuspension = true
-	a.allocations[id] = facts
-}
-
-func mergeProof(current, incoming, known bool) bool {
-	if !known {
-		return incoming
-	}
-	return current && incoming
+	a.licenses[id] = licenses
 }
 
 func (a *aggregate) addHoistableLoad(load readapi.HoistableLoad) {

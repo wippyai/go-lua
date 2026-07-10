@@ -200,6 +200,37 @@ func TestMergePreservesAllocationSiteLicense(t *testing.T) {
 	}
 }
 
+func TestMergeUsesTriStateAllocationSiteLicenseJoin(t *testing.T) {
+	id := testID(451)
+	allProven := placement.AllocationSiteLicenses{}
+	for _, kind := range placement.AllocationSiteLicenseKinds() {
+		allProven = allProven.With(kind, placement.LicenseProven)
+	}
+	unknown := allProven.With(placement.LicenseDecomposable, placement.LicenseUnknown)
+	refuted := allProven.With(placement.LicenseFrameLocal, placement.LicenseRefuted)
+
+	for _, tc := range []struct {
+		name  string
+		right placement.AllocationSiteLicenses
+		kind  placement.LicenseKind
+		want  placement.LicenseState
+	}{
+		{name: "proven join unknown is unknown", right: unknown, kind: placement.LicenseDecomposable, want: placement.LicenseUnknown},
+		{name: "refuted absorbs", right: refuted, kind: placement.LicenseFrameLocal, want: placement.LicenseRefuted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leftAggregate := newAggregate()
+			leftAggregate.addLicenses(id, allProven)
+			rightAggregate := newAggregate()
+			rightAggregate.addLicenses(id, tc.right)
+			merged := Merge(leftAggregate.plan(), rightAggregate.plan())
+			if got := merged.licenses[id].State(tc.kind); got != tc.want {
+				t.Fatalf("merged %s state = %v, want %v", licenseKindName(tc.kind), got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMergePreservesFrameLocalLicense(t *testing.T) {
 	id := testID(46)
 	left := Plan{Entries: []Entry{{
@@ -248,6 +279,65 @@ func TestMergePreservesFrameLocalLicense(t *testing.T) {
 	}
 	if plan.FrameLocal(id) {
 		t.Fatalf("FrameLocal(%s) = true after conflicting merge, want false", id)
+	}
+}
+
+func TestAllocationSiteLicenseProjectionIsTotal(t *testing.T) {
+	id := testID(47)
+	for _, kind := range placement.AllocationSiteLicenseKinds() {
+		t.Run(licenseKindName(kind), func(t *testing.T) {
+			licenses := placement.AllocationSiteLicenses{}.
+				With(placement.LicenseAllocationSite, placement.LicenseProven).
+				With(kind, placement.LicenseProven)
+			aggregate := newAggregate()
+			aggregate.addLicenses(id, licenses)
+			plan := aggregate.plan()
+			entry, ok := entryByID(plan, id)
+			if !ok {
+				t.Fatalf("projected plan omitted allocation-site license %s", licenseKindName(kind))
+			}
+			switch kind {
+			case placement.LicenseAllocationSite:
+				if !entry.AllocationSite {
+					t.Fatal("allocation-site license did not reach Entry.AllocationSite")
+				}
+			case placement.LicenseDecomposable:
+				if !entry.Decomposable {
+					t.Fatal("decomposable license did not reach Entry.Decomposable")
+				}
+			case placement.LicenseFrameLocalUse:
+				if !entry.FrameLocalUseProof {
+					t.Fatal("frame-local-use license did not reach Entry.FrameLocalUseProof")
+				}
+			case placement.LicenseFrameLocal:
+				if !entry.FrameLocal {
+					t.Fatal("frame-local license did not reach Entry.FrameLocal")
+				}
+			case placement.LicenseDiesBeforeSuspension:
+				if !entry.HasDiesBeforeSuspension || !entry.DiesBeforeSuspension {
+					t.Fatal("suspension license did not reach Entry.DiesBeforeSuspension")
+				}
+			default:
+				t.Fatalf("unhandled allocation-site license kind %d", kind)
+			}
+		})
+	}
+}
+
+func licenseKindName(kind placement.LicenseKind) string {
+	switch kind {
+	case placement.LicenseAllocationSite:
+		return "allocation-site"
+	case placement.LicenseDecomposable:
+		return "decomposable"
+	case placement.LicenseFrameLocalUse:
+		return "frame-local-use"
+	case placement.LicenseFrameLocal:
+		return "frame-local"
+	case placement.LicenseDiesBeforeSuspension:
+		return "dies-before-suspension"
+	default:
+		return "invalid"
 	}
 }
 
