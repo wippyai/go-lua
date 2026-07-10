@@ -38,6 +38,17 @@ func BenchmarkJoinWitness(b *testing.B) {
 	}
 }
 
+func BenchmarkLessOrEqWitness(b *testing.B) {
+	reg := benchReg()
+	a := Set(reg, Top(), typewitness.Key, typewitness.Of(typ.Number))
+	c := Set(reg, Top(), typewitness.Key, typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = LessOrEq(reg, a, c)
+	}
+}
+
 func BenchmarkSetRuntimeKindOnUnionWitness(b *testing.B) {
 	reg := benchReg()
 	base := Set(reg, Top(), typewitness.Key, typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})))

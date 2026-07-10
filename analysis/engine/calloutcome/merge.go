@@ -55,6 +55,9 @@ func compactProviders(providers []callpayload.CallOutcomeProvider) []callpayload
 // ComposeSupplemental. It is for providers that derive a local supplemental payload
 // while adapting another source of call evidence.
 func MergeSupplemental(reg *axis.Registry, primary, supplemental callpayload.CallOutcome) callpayload.CallOutcome {
+	if supplemental.Empty() {
+		return primary
+	}
 	out := withSupplementalResultSlots(reg, primary, supplemental.Results)
 	return withSupplementalFacts(reg, out, supplemental)
 }
