@@ -1,0 +1,119 @@
+{
+  "description": "Shape-polymorphic advice reports only locally born record-like tables with static fields added on non-uniform paths at a returned or field-read boundary.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.shape.polymorphic",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 9,
+        "column": 10,
+        "severity": "hint",
+        "code": "advice.shape.polymorphic",
+        "message_contains": [
+          "delta has a path-dependent field shape"
+        ],
+        "render_contains": [
+          "hint[advice.shape.polymorphic]"
+        ],
+        "min_evidence": 6,
+        "evidence_contains": [
+          "delta is born as a table here",
+          "delta.args is added only on some paths",
+          "delta.content is added only on some paths",
+          "delta.tool_call is added only on some paths",
+          "StableShape is refused because delta has a non-uniform field set",
+          "delta is used where a fixed shape matters"
+        ],
+        "help_contains": [
+          "Construct all variants with one fixed-shape constructor",
+          "all fields present"
+        ],
+        "label_contains": [
+          "table birth",
+          "conditionally present field",
+          "shape-relevant use"
+        ],
+        "min_labels": 5,
+        "evidence": [
+          {
+            "line": 2,
+            "column": 17,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["delta is born as a table here"]
+          },
+          {
+            "line": 5,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["delta.args is added only on some paths"]
+          },
+          {
+            "line": 7,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["delta.content is added only on some paths"]
+          },
+          {
+            "line": 4,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["delta.tool_call is added only on some paths"]
+          },
+          {
+            "line": 9,
+            "column": 10,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["StableShape is refused because delta has a non-uniform field set"]
+          },
+          {
+            "line": 9,
+            "column": 10,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "reason": "unspecified",
+            "contains": ["delta is used where a fixed shape matters"]
+          }
+        ],
+        "labels": [
+          {"line": 9, "column": 10, "contains": ["shape-relevant use"]},
+          {"line": 2, "column": 17, "contains": ["table birth"]},
+          {"line": 5, "column": 5, "contains": ["conditionally present field"]},
+          {"line": 7, "column": 5, "contains": ["conditionally present field"]},
+          {"line": 4, "column": 5, "contains": ["conditionally present field"]}
+        ],
+        "render_ordered_contains": [
+          "hint[advice.shape.polymorphic]: delta has a path-dependent field shape",
+          "--> main.lua:9:10",
+          "because:",
+          "1. proven: delta is born as a table here",
+          "2. proven: delta.args is added only on some paths",
+          "3. proven: delta.content is added only on some paths",
+          "4. proven: delta.tool_call is added only on some paths",
+          "5. proven: StableShape is refused because delta has a non-uniform field set",
+          "6. proven: delta is used where a fixed shape matters",
+          "help: Construct all variants with one fixed-shape constructor (all fields present, absent ones nil/default)."
+        ],
+        "render_not_contains": ["missing proof:"]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}
