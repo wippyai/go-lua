@@ -55,9 +55,16 @@ func equalRuntime(rt *registryRuntime, a, b Value) bool {
 	if !presence.Equal(PresenceOf(a), PresenceOf(b)) {
 		return false
 	}
-	for i := range rt.axes {
-		spec := rt.axes[i]
-		if !spec.spec.EqualAny(rt.axisValue(spec, a), rt.axisValue(spec, b)) {
+	aSlots, bSlots := a.slotsView(), b.slotsView()
+	if len(aSlots) != len(bSlots) {
+		return false
+	}
+	for i := range aSlots {
+		if aSlots[i].ordinal != bSlots[i].ordinal {
+			return false
+		}
+		spec := rt.axisOrdinal(aSlots[i].ordinal)
+		if !spec.spec.EqualAny(aSlots[i].value, bSlots[i].value) {
 			return false
 		}
 	}
@@ -81,13 +88,29 @@ func lessOrEqRuntime(rt *registryRuntime, a, b Value) bool {
 	if !presenceSpec.LessOrEq(PresenceOf(a), PresenceOf(b)) {
 		return false
 	}
-	for i := range rt.axes {
-		spec := rt.axes[i]
-		if !spec.spec.LessOrEqAny(rt.axisValue(spec, a), rt.axisValue(spec, b)) {
+	// Slots are sorted and omit Top. Merge the two sparse lanes instead of
+	// scanning every registered axis: absent/absent is Top/Top, a present left
+	// value is always <= an absent right Top, and an absent left Top cannot be
+	// <= a present non-Top right value. This keeps the hot comparison path out
+	// of erased dispatch unless both values actually constrain the same axis.
+	aSlots, bSlots := a.slotsView(), b.slotsView()
+	ai, bi := 0, 0
+	for ai < len(aSlots) {
+		if bi == len(bSlots) || aSlots[ai].ordinal < bSlots[bi].ordinal {
+			ai++
+			continue
+		}
+		if bSlots[bi].ordinal < aSlots[ai].ordinal {
 			return false
 		}
+		spec := rt.axisOrdinal(aSlots[ai].ordinal)
+		if !spec.spec.LessOrEqAny(aSlots[ai].value, bSlots[bi].value) {
+			return false
+		}
+		ai++
+		bi++
 	}
-	return true
+	return bi == len(bSlots)
 }
 
 func Join(reg *axis.Registry, a, b Value) Value {
@@ -122,12 +145,23 @@ func mergeRuntime(
 	}
 	var small [8]slot
 	slots := small[:0]
-	for i := range rt.canonicalAxes {
-		spec := rt.axisOrdinal(uint16(i))
-		value := axisMerge(spec, rt.axisValue(spec, a), rt.axisValue(spec, b))
+	aSlots, bSlots := a.slotsView(), b.slotsView()
+	for ai, bi := 0, 0; ai < len(aSlots) && bi < len(bSlots); {
+		if aSlots[ai].ordinal < bSlots[bi].ordinal {
+			ai++ // value merge Top is Top
+			continue
+		}
+		if bSlots[bi].ordinal < aSlots[ai].ordinal {
+			bi++ // Top merge value is Top
+			continue
+		}
+		spec := rt.axisOrdinal(aSlots[ai].ordinal)
+		value := axisMerge(spec, aSlots[ai].value, bSlots[bi].value)
 		if !spec.spec.IsTopAny(value) {
 			slots = append(slots, slot{ordinal: spec.ordinal, value: value})
 		}
+		ai++
+		bi++
 	}
 	return internConstructedRuntime(rt,
 		shapeMerge(ShapeOf(a), ShapeOf(b)),
@@ -154,11 +188,23 @@ func meetRuntime(rt *registryRuntime, a, b Value) Value {
 	}
 	var small [8]slot
 	slots := small[:0]
-	for i := range rt.canonicalAxes {
-		spec := rt.axisOrdinal(uint16(i))
-		value := spec.spec.MeetAny(rt.axisValue(spec, a), rt.axisValue(spec, b))
-		if !spec.spec.IsTopAny(value) {
-			slots = append(slots, slot{ordinal: spec.ordinal, value: value})
+	aSlots, bSlots := a.slotsView(), b.slotsView()
+	for ai, bi := 0, 0; ai < len(aSlots) || bi < len(bSlots); {
+		switch {
+		case bi == len(bSlots) || (ai < len(aSlots) && aSlots[ai].ordinal < bSlots[bi].ordinal):
+			slots = append(slots, aSlots[ai]) // value meet Top is value
+			ai++
+		case ai == len(aSlots) || bSlots[bi].ordinal < aSlots[ai].ordinal:
+			slots = append(slots, bSlots[bi]) // Top meet value is value
+			bi++
+		default:
+			spec := rt.axisOrdinal(aSlots[ai].ordinal)
+			value := spec.spec.MeetAny(aSlots[ai].value, bSlots[bi].value)
+			if !spec.spec.IsTopAny(value) {
+				slots = append(slots, slot{ordinal: spec.ordinal, value: value})
+			}
+			ai++
+			bi++
 		}
 	}
 	return internConstructedRuntime(rt,

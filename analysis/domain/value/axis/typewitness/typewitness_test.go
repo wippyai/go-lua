@@ -2,12 +2,26 @@ package typewitness
 
 import (
 	"testing"
+	"unsafe"
 
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestValueStaysSmallAndInternsRecursiveSignatures(t *testing.T) {
+	if got := unsafe.Sizeof(Value{}); got != 24 {
+		t.Fatalf("typewitness Value size = %d, want 24 bytes", got)
+	}
+	recursive := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewArray(self)
+	})
+	first, second := Of(recursive), Of(recursive)
+	if first.recursive == nil || first.recursive != second.recursive {
+		t.Fatal("equivalent recursive signatures must use one canonical handle")
+	}
+}
 
 func TestOfPreservesOpenTypeParameter(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)

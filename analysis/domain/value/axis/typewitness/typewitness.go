@@ -1,6 +1,8 @@
 package typewitness
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
@@ -44,7 +46,7 @@ func reduceByRuntimeKind(w axis.Writer) bool {
 		return false
 	}
 	tw, ok := twAny.(Value)
-	if !ok || tw.state != concrete {
+	if !ok || tw.t == nil {
 		return false
 	}
 	rkAny, ok := w.GetAny(runtimekind.Key.ID())
@@ -77,14 +79,43 @@ const (
 
 // Value carries exact type evidence proven by runtime type witnesses.
 type Value struct {
-	state       state
-	t           typ.Type
-	recursiveOK bool
-	recursive   typ.RecursiveIdentitySignature
+	t         typ.Type
+	recursive *recursiveSignature
 }
 
-func Bottom() Value { return Value{state: bottom} }
-func Top() Value    { return Value{state: top} }
+// recursiveSignature is interned because recursive identity sets are immutable
+// canonical values. Keeping the 80-byte typ signature behind this pointer keeps
+// the frequently erased Value small while preserving the exact, stable hash
+// representation used outside this package.
+type recursiveSignature struct {
+	signature typ.RecursiveIdentitySignature
+}
+
+var recursiveSignatures = struct {
+	mu      sync.Mutex
+	byValue map[typ.RecursiveIdentitySignature]*recursiveSignature
+}{
+	byValue: make(map[typ.RecursiveIdentitySignature]*recursiveSignature),
+}
+
+// bottomSignature is a private sentinel. Concrete values always have a type,
+// Top has neither field, and Bottom has this sentinel; that encodes all three
+// states without growing Value past its type interface plus one pointer.
+var bottomSignature = &recursiveSignature{}
+
+func internRecursiveSignature(signature typ.RecursiveIdentitySignature) *recursiveSignature {
+	recursiveSignatures.mu.Lock()
+	defer recursiveSignatures.mu.Unlock()
+	if interned := recursiveSignatures.byValue[signature]; interned != nil {
+		return interned
+	}
+	interned := &recursiveSignature{signature: signature}
+	recursiveSignatures.byValue[signature] = interned
+	return interned
+}
+
+func Bottom() Value { return Value{recursive: bottomSignature} }
+func Top() Value    { return Value{} }
 
 func Of(t typ.Type) Value {
 	t = unwrap.Alias(t)
@@ -113,11 +144,10 @@ func Of(t typ.Type) Value {
 		}
 		t = canonical
 	}
-	value := Value{state: concrete, t: t}
+	value := Value{t: t}
 	if typ.ContainsRecursive(t) {
 		if sig, ok := typ.RecursiveIdentitySignatureOf(t); ok {
-			value.recursiveOK = true
-			value.recursive = sig
+			value.recursive = internRecursiveSignature(sig)
 		}
 	}
 	return value
@@ -132,24 +162,24 @@ func openInstantiatedWitnessAllowed(t typ.Type) bool {
 	return ok
 }
 
-func (v Value) IsBottom() bool { return v.state == bottom }
-func (v Value) IsTop() bool    { return v.state == top }
+func (v Value) IsBottom() bool { return v.t == nil && v.recursive == bottomSignature }
+func (v Value) IsTop() bool    { return v.t == nil && v.recursive == nil }
 
 func (v Value) Type() (typ.Type, bool) {
-	if v.state != concrete || v.t == nil {
+	if v.t == nil {
 		return nil, false
 	}
 	return v.t, true
 }
 
 func Join(a, b Value) Value {
-	if a.state == bottom {
+	if a.IsBottom() {
 		return b
 	}
-	if b.state == bottom {
+	if b.IsBottom() {
 		return a
 	}
-	if a.state == top || b.state == top {
+	if a.IsTop() || b.IsTop() {
 		return Top()
 	}
 	if witnessTypeLeq(a.t, b.t) {
@@ -165,10 +195,10 @@ func Join(a, b Value) Value {
 // in some alternative of b. It is intentionally a cheap structural/literal-family
 // containment, not full subtyping, so it stays allocation-free on the hot path.
 func LessOrEq(a, b Value) bool {
-	if a.state == bottom || b.state == top {
+	if a.IsBottom() || b.IsTop() {
 		return true
 	}
-	if a.state == top || b.state == bottom {
+	if a.IsTop() || b.IsBottom() {
 		return false
 	}
 	return witnessTypeLeq(a.t, b.t)
@@ -181,13 +211,13 @@ func LessOrEq(a, b Value) bool {
 // heads; but literal scalar growth such as 0, 1, 2 should widen to integer, not
 // erase the proof entirely.
 func Widen(prev, next Value) Value {
-	if prev.state == bottom {
+	if prev.IsBottom() {
 		return next
 	}
-	if next.state == bottom {
+	if next.IsBottom() {
 		return prev
 	}
-	if prev.state == top || next.state == top {
+	if prev.IsTop() || next.IsTop() {
 		return Top()
 	}
 	if LessOrEq(next, prev) {
@@ -432,13 +462,13 @@ func sameWitnessType(a, b typ.Type) bool {
 }
 
 func Meet(a, b Value) Value {
-	if a.state == bottom || b.state == bottom {
+	if a.IsBottom() || b.IsBottom() {
 		return Bottom()
 	}
-	if a.state == top {
+	if a.IsTop() {
 		return b
 	}
-	if b.state == top {
+	if b.IsTop() {
 		return a
 	}
 	if witnessTypeLeq(a.t, b.t) {
@@ -543,14 +573,11 @@ func normalizeWitnessUnion(a, b typ.Type) typ.Type {
 }
 
 func Equal(a, b Value) bool {
-	if a.state != b.state {
-		return false
+	if a.t == nil || b.t == nil {
+		return a.t == nil && b.t == nil && a.recursive == b.recursive
 	}
-	if a.state != concrete {
-		return true
-	}
-	if a.recursiveOK && b.recursiveOK {
-		if !a.recursive.Equal(b.recursive) {
+	if a.recursive != nil && b.recursive != nil {
+		if !a.recursive.signature.Equal(b.recursive.signature) {
 			return false
 		}
 		return typ.TypeEquals(a.t, b.t)
@@ -559,13 +586,19 @@ func Equal(a, b Value) bool {
 }
 
 func (v Value) Hash() uint64 {
-	h := internal.MixHash(internal.FnvString("typewitness"), uint64(v.state))
-	if v.state == concrete && v.t != nil {
-		if v.recursiveOK {
+	kind := top
+	if v.t != nil {
+		kind = concrete
+	} else if v.IsBottom() {
+		kind = bottom
+	}
+	h := internal.MixHash(internal.FnvString("typewitness"), uint64(kind))
+	if v.t != nil {
+		if v.recursive != nil {
 			h = internal.MixHash(h, internal.FnvString("recursive.identity"))
-			h = internal.MixHash(h, uint64(v.recursive.SmallLen))
-			for i := 0; i < v.recursive.SmallLen; i++ {
-				h = internal.MixHash(h, v.recursive.Small[i])
+			h = internal.MixHash(h, uint64(v.recursive.signature.SmallLen))
+			for i := 0; i < v.recursive.signature.SmallLen; i++ {
+				h = internal.MixHash(h, v.recursive.signature.Small[i])
 			}
 		}
 		h = internal.MixHash(h, typ.EqualityHash(v.t))
