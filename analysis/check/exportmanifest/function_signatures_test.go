@@ -1038,6 +1038,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		},
 	}
 	want := signature.OperationalEffects{
+		SuspensionKnown: true,
 		ReturnPresenceRelations: []signature.ReturnPresenceRelation{{
 			TriggerIndex:    1,
 			TriggerPresence: presence.Present(),

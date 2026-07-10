@@ -299,9 +299,33 @@ func operationalEffectBoolLane(
 	get func(OperationalEffects) bool,
 	set func(*OperationalEffects, bool),
 ) operationalEffectLane {
+	return operationalEffectBoolLaneWithEmptiness(fieldName, get, set, true)
+}
+
+// operationalEffectCertificationLane builds a bool lane that clones, compares,
+// and round-trips normally but never marks the struct non-empty. A certification
+// rider travels with proven facts; on its own it is not a fact worth emitting,
+// so an operational-effects object carrying only a certification stays absent.
+func operationalEffectCertificationLane(
+	fieldName string,
+	get func(OperationalEffects) bool,
+	set func(*OperationalEffects, bool),
+) operationalEffectLane {
+	return operationalEffectBoolLaneWithEmptiness(fieldName, get, set, false)
+}
+
+func operationalEffectBoolLaneWithEmptiness(
+	fieldName string,
+	get func(OperationalEffects) bool,
+	set func(*OperationalEffects, bool),
+	countsForEmptiness bool,
+) operationalEffectLane {
 	return operationalEffectLane{
 		fieldName: fieldName,
 		empty: func(e OperationalEffects) bool {
+			if !countsForEmptiness {
+				return true
+			}
 			return !get(e)
 		},
 		clone: func(e OperationalEffects, out *OperationalEffects) {
@@ -314,7 +338,7 @@ func operationalEffectBoolLane(
 }
 
 var operationalEffectLanes = []operationalEffectLane{
-	operationalEffectBoolLane("SuspensionKnown",
+	operationalEffectCertificationLane("SuspensionKnown",
 		func(e OperationalEffects) bool { return e.SuspensionKnown },
 		func(e *OperationalEffects, value bool) { e.SuspensionKnown = value }),
 	operationalEffectBoolLane("MaySuspend",
