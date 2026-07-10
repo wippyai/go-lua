@@ -168,6 +168,8 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 		result, err = s.references(ctx, request.Params)
 	case methodDocumentHighlight:
 		result, err = s.documentHighlight(ctx, request.Params)
+	case methodDocumentSymbol:
+		result, err = s.documentSymbols(ctx, request.Params)
 	default:
 		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "method not found", request.Method)
 	}
@@ -543,6 +545,35 @@ func (s *Server) documentHighlight(ctx context.Context, raw []byte) (any, error)
 	return highlights, nil
 }
 
+func (s *Server) documentSymbols(ctx context.Context, raw []byte) (any, error) {
+	var params documentSymbolParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid documentSymbol params", err.Error())
+	}
+	document, err := s.codec.DocumentForURI(params.TextDocument.URI)
+	if err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid document URI", err.Error())
+	}
+	current, ok, err := s.currentSemanticDocument(ctx, document)
+	if err != nil || !ok {
+		return nil, err
+	}
+	response, err := s.session.DocumentSymbols(ctx, service.DocumentSymbolsRequest{
+		Selector: service.ResultSelector{UnitID: current.unitID, SolveSeq: current.tag.SolveSeq, Profile: current.tag.Profile},
+		File:     document.OpaqueKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read document symbols: %w", err)
+	}
+	items := make([]documentSymbol, 0, len(response.Symbols))
+	for _, item := range response.Symbols {
+		if symbol, ok := current.protocolDocumentSymbol(item); ok {
+			items = append(items, symbol)
+		}
+	}
+	return items, nil
+}
+
 func (s *Server) binderAtPosition(ctx context.Context, uri string, position Position) (semanticDocument, *service.BinderInfo, error) {
 	document, err := s.codec.DocumentForURI(uri)
 	if err != nil {
@@ -626,6 +657,32 @@ func (d semanticDocument) protocolLocation(location service.SourceLocation) (Loc
 		return Location{}, false
 	}
 	return Location{URI: d.uri, Range: item}, true
+}
+
+func (d semanticDocument) protocolDocumentSymbol(item service.DocumentSymbol) (documentSymbol, bool) {
+	location, ok := d.protocolLocation(item.Location)
+	if !ok {
+		return documentSymbol{}, false
+	}
+	result := documentSymbol{
+		Name:           item.Name,
+		Kind:           protocolDocumentSymbolKind(item.Kind),
+		Range:          location.Range,
+		SelectionRange: location.Range,
+	}
+	for _, child := range item.Children {
+		if mapped, ok := d.protocolDocumentSymbol(child); ok {
+			result.Children = append(result.Children, mapped)
+		}
+	}
+	return result, true
+}
+
+func protocolDocumentSymbolKind(kind service.DocumentSymbolKind) int {
+	if kind == service.DocumentSymbolFunction {
+		return 12 // Function
+	}
+	return 8 // Field
 }
 
 func highlightKind(role service.BinderOccurrenceRole) int {

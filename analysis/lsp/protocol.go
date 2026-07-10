@@ -16,6 +16,7 @@ const (
 	methodDefinition            = "textDocument/definition"
 	methodReferences            = "textDocument/references"
 	methodDocumentHighlight     = "textDocument/documentHighlight"
+	methodDocumentSymbol        = "textDocument/documentSymbol"
 	textDocumentSyncIncremental = 2
 )
 
@@ -100,6 +101,19 @@ type documentHighlight struct {
 	Kind  int   `json:"kind,omitempty"`
 }
 
+type documentSymbolParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+type documentSymbol struct {
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail,omitempty"`
+	Kind           int              `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []documentSymbol `json:"children,omitempty"`
+}
+
 type diagnosticRelatedInformation struct {
 	Location Location `json:"location"`
 	Message  string   `json:"message"`
@@ -158,6 +172,7 @@ type serverCapabilities struct {
 	DefinitionProvider        bool                    `json:"definitionProvider"`
 	ReferencesProvider        bool                    `json:"referencesProvider"`
 	DocumentHighlightProvider bool                    `json:"documentHighlightProvider"`
+	DocumentSymbolProvider    bool                    `json:"documentSymbolProvider"`
 }
 
 type textDocumentSyncOptions struct {
@@ -184,6 +199,7 @@ func defaultInitializeResult() initializeResult {
 			DefinitionProvider:        true,
 			ReferencesProvider:        true,
 			DocumentHighlightProvider: true,
+			DocumentSymbolProvider:    true,
 		},
 		ServerInfo: serverInfo{Name: "go-lua-lsp"},
 	}

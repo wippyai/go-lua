@@ -319,6 +319,44 @@ func TestInProcessBinderNavigationUsesOccurrencesAndUTF16Ranges(t *testing.T) {
 	}
 }
 
+func TestInProcessDocumentSymbolsPreserveServiceHierarchy(t *testing.T) {
+	server, uri := openSolvedDocument(t, "function outer()\n  function inner()\n    return 1\n  end\n  return inner()\nend\nreturn { outer = outer }\n")
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	result, problem := server.Handle(context.Background(), jsonrpc2.Request{
+		Method: methodDocumentSymbol,
+		Params: paramsJSON(t, map[string]any{
+			"textDocument": map[string]any{"uri": uri},
+		}),
+	})
+	if problem != nil {
+		t.Fatalf("document symbols: %v", problem)
+	}
+	symbols, ok := result.([]documentSymbol)
+	if !ok {
+		t.Fatalf("document symbols = %#v, want []documentSymbol", result)
+	}
+	outer := documentSymbolNamed(symbols, "outer", 12)
+	if outer == nil || len(outer.Children) != 1 || outer.Children[0].Name != "inner" || outer.Children[0].Kind != 12 {
+		t.Fatalf("document symbols = %#v, want hierarchical outer/inner functions", symbols)
+	}
+	if outer.Range.Start != outer.SelectionRange.Start {
+		t.Fatalf("outer symbol range = %#v, want matching service location ranges", outer)
+	}
+	if field := documentSymbolNamed(symbols, "outer", 8); field == nil {
+		t.Fatalf("document symbols = %#v, want module field", symbols)
+	}
+}
+
+func documentSymbolNamed(items []documentSymbol, name string, kind int) *documentSymbol {
+	for index := range items {
+		if items[index].Name == name && items[index].Kind == kind {
+			return &items[index]
+		}
+	}
+	return nil
+}
+
 func openSolvedDocument(t *testing.T, text string) (*Server, string) {
 	t.Helper()
 	server := NewServer(service.NewBatchSession(), Options{Debounce: time.Millisecond})
@@ -452,13 +490,14 @@ func assertCapabilities(t *testing.T, payload []byte) {
 				DefinitionProvider        bool            `json:"definitionProvider"`
 				ReferencesProvider        bool            `json:"referencesProvider"`
 				DocumentHighlightProvider bool            `json:"documentHighlightProvider"`
+				DocumentSymbolProvider    bool            `json:"documentSymbolProvider"`
 			} `json:"capabilities"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(payload, &response); err != nil {
 		t.Fatalf("decode initialize result: %v", err)
 	}
-	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider {
+	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider {
 		t.Fatalf("advertised capabilities = %s", payload)
 	}
 }
