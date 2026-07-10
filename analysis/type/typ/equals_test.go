@@ -489,6 +489,35 @@ func TestTypeEqualsCycleDetection(t *testing.T) {
 	}
 }
 
+func TestTypeEqualsClosedSelfRecursiveRecordsTerminate(t *testing.T) {
+	left := NewRecursive("Node", func(self Type) Type {
+		return newRecord().OptField("next", self).Build()
+	})
+	right := NewRecursive("Node", func(self Type) Type {
+		return newRecord().OptField("next", self).Build()
+	})
+
+	// The body reaches its enclosing Recursive node.  This is the minimal
+	// closed cycle exported recursive types use; checking its openness and
+	// comparing independent but equivalent graphs must both terminate.
+	if knownContainsOpenRecursive(left) || knownContainsOpenRecursive(right) {
+		t.Fatal("closed self-recursive records must not be open-recursive")
+	}
+	if !TypeEquals(left, right) {
+		t.Fatal("equivalent closed self-recursive records should compare equal")
+	}
+}
+
+func TestTypeEqualsHashPrefilterRejectsOpenRecursiveCacheWithoutLiveScan(t *testing.T) {
+	// A positive open-recursive cache is deliberately conservative: it may be
+	// stale after a placeholder body closes, but equality must not re-walk its
+	// graph from the hash prefilter to discover that fact.
+	stale := &Record{typeProperties: typeProperties{containsOpenRecursive: true}}
+	if typeEqualsCanUseHashPrefilter(stale, Number) {
+		t.Fatal("open-recursive cache must bypass the equality hash prefilter")
+	}
+}
+
 func TestTypeEqualsOpenRecursiveWrapperUsesCoinductiveWalk(t *testing.T) {
 	left := NewRecursivePlaceholder("Node")
 	right := NewRecursivePlaceholder("Node")
