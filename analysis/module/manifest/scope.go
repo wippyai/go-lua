@@ -17,6 +17,13 @@ func (m *Manifest) ScopeType(t typ.Type) typ.Type {
 		return t
 	}
 	return transform.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		// A recursive definition is already its own identity boundary. Descending
+		// into its body would re-expand its local self references every time a
+		// manifest source returns the type, turning a finite recursive graph into
+		// an ever-growing tree at successive lookup boundaries.
+		if _, ok := node.(*typ.Recursive); ok {
+			return node, true
+		}
 		ref, ok := node.(*typ.Ref)
 		if !ok || ref.Module != "" || ref.Name == "" || ref.Name == "self" {
 			return nil, false
