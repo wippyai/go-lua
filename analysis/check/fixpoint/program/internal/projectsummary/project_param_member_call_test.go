@@ -387,3 +387,38 @@ func TestCapturedPathObligationsUseCallSiteSourcesWithoutSemanticCallFact(t *tes
 		t.Fatalf("captured obligation type = %v/%v, want string", gotType, ok)
 	}
 }
+
+// TestParamObligationsConcatCycleTerminates proves that a self-referential
+// concat expression graph (an ExpressionOperation "..'" whose operand source
+// resolves back to the same ExprRef) is walked exactly once. Before the seen
+// guard covered the concat descent, addTypedValueSourceObligationSeen and
+// addConcatOperandSourceObligationSeen recursed forever on such a cycle, which
+// overflowed the stack while projecting param obligations on real programs.
+func TestParamObligationsConcatCycleTerminates(t *testing.T) {
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, true)
+	graph.AddEdge(assign, graph.Exit(), true)
+
+	selfSource, ok := factflow.NewExpressionValueSource(factflow.ExprRef(10), 0, 0, 0, factflow.ValueSourceShape{Final: true, Adjusted: true})
+	if !ok {
+		t.Fatal("NewExpressionValueSource failed")
+	}
+	concat, ok := factflow.NewBinaryExpressionOperation("..", selfSource, selfSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation failed")
+	}
+
+	result := memberCallSiteOnlyResult{
+		graph:   graph,
+		point:   assign,
+		ks:      keyspace.New(),
+		exprOps: map[factflow.ExprRef]factflow.ExpressionOperation{factflow.ExprRef(10): concat},
+	}
+
+	p := paramObligationProjector{reg: standard.Registry(), result: result, point: assign}
+
+	// A cyclic concat source recurses forever without the seen guard, overflowing
+	// the stack. With the guard the walk visits ExprRef 10 once and returns.
+	p.addTypedValueSourceObligation(nil, selfSource, typ.String, 0)
+}

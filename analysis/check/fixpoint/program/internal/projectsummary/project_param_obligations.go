@@ -1378,6 +1378,13 @@ func (p paramObligationProjector) addTypedValueSourceObligationSeen(
 				op.Kind() == factflow.ExpressionOperationBinary &&
 				op.Op() == ".." &&
 				concatResultSatisfies(want) {
+				if _, ok := seen[source.ExprRef]; ok {
+					return
+				}
+				if seen == nil {
+					seen = make(map[factflow.ExprRef]struct{}, 1)
+				}
+				seen[source.ExprRef] = struct{}{}
 				p.addConcatOperandSourceObligationSeen(out, op.Left(), seen)
 				p.addConcatOperandSourceObligationSeen(out, op.Right(), seen)
 				return
