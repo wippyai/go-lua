@@ -74,6 +74,7 @@ return "prefix:" .. maybe
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
+		WitnessTrace:        true,
 	})
 	want := "warning[type.operator.concat_operand]: right operand `maybe` of `..` may be nil\n" +
 		" --> test.lua:2:21\n" +

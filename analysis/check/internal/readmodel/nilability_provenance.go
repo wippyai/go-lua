@@ -4,32 +4,24 @@ import (
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // nilabilityProvenance projects already-solved source facts for a nilable use.
 // It does not infer new facts: the body owns optional receiver evidence and the
 // call-contract readmodel owns result-slot provenance.
-func (r Reader) nilabilityProvenance(point cfg.Point, expr ast.Expr, value product.Value) readapi.NilabilityProvenance {
+func (r Reader) nilabilityProvenance(point cfg.Point, expr any, value product.Value) readapi.NilabilityProvenance {
 	if r.result == nil {
 		return readapi.NilabilityProvenance{}
 	}
 	provenance := readapi.NilabilityProvenance{
-		NilableAccesses:    assignmentNilableAccessEvidenceFromBody(r.result.AssignmentNilableAccessEvidence(point, expr)),
+		NilableAccesses:    assignmentNilableAccessEvidenceFromBody(r.result.NilabilityAccessEvidenceFor(point, expr)),
 		ExplicitTopOrigin:  r.ValueHasExplicitTopOrigin(value),
 		UntrustedTopOrigin: r.ValueHasUntrustedTopOrigin(value),
 	}
-	if projected, ok := r.result.ExpressionTypeBeforeBoundary(point, expr); ok && (typ.IsAny(projected) || typ.IsUnknown(projected)) {
-		provenance.UntrustedTopOrigin = true
-	}
-	if attr, ok := expr.(*ast.AttrGetExpr); ok && attr.KeySyntax == ast.AttrKeyDot {
-		provenance.OptionalField = true
-	}
-	if call, ok := expr.(*ast.FuncCallExpr); ok {
-		if callPoint, found := r.result.CallPointForExpr(call); found {
-			provenance.CallResult = r.nilabilityCallResult(callPoint)
-		}
+	info := r.result.NilabilitySourceInfoFor(expr)
+	provenance.OptionalField = info.OptionalField
+	if info.HasCallPoint {
+		provenance.CallResult = r.nilabilityCallResult(info.CallPoint)
 	}
 	return provenance
 }

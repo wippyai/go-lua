@@ -689,11 +689,8 @@ func (o ConcatOperand) NilRisk() bool {
 // ConcatOperandNilRisk reports whether a projected operand type can include nil
 // and is concrete enough to report.
 func ConcatOperandNilRisk(t typ.Type) bool {
-	if t == nil || typ.IsNever(t) {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
 		return false
-	}
-	if typ.IsAny(t) || typ.IsUnknown(t) {
-		return true
 	}
 	return ProjectionHasNil(t)
 }
