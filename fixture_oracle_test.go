@@ -360,6 +360,15 @@ func TestCuratedGate(t *testing.T) {
 		// export `data_func:any`, but the concrete call path with a literal string
 		// must remain clean without teaching the driver a page-registry special case.
 		"narrowing/dynamic-registry-renderer-guard",
+		// Cross-module aliases must resolve in parameter and return annotation
+		// positions, rather than degrading an imported type to any.
+		"modules/imported-qualified-type-alias-signature",
+		// A host manifest's ambient global and its module-qualified type name are
+		// separate resolution paths; both must remain available to consumers.
+		"modules/host-global-qualified-type",
+		// An M-table field assigned from a stable local function must retain the
+		// inferred function signature through export and require.
+		"modules/imported-stable-local-function-export",
 	}
 
 	suites, err := discoverFixtures("testdata/fixtures")

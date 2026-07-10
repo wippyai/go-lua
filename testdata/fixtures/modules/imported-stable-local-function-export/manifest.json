@@ -1,0 +1,70 @@
+{
+  "description": "A function exported through a stable M-table local alias preserves its inferred string return type for require consumers.",
+  "files": [
+    "component.lua",
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 4,
+        "column": 26,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign component.singleton_component_id(...) because it is \"component-1\", not number"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "component.singleton_component_id(...) has literal value \"component-1\"",
+          "wrong_id is declared as number"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 26,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "component.singleton_component_id(...) has literal value \"component-1\""
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": ["wrong_id is declared as number"]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign component.singleton_component_id(...) because it is \"component-1\", not number",
+          "local wrong_id: number = component.singleton_component_id(\"component-1\")",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign component.singleton_component_id(...) because it is \"component-1\", not number",
+          "--> main.lua:4:26",
+          "local wrong_id: number = component.singleton_component_id(\"component-1\")",
+          "because:",
+          "1. proven: component.singleton_component_id(...) has literal value \"component-1\"",
+          "2. claimed: wrong_id is declared as number"
+        ],
+        "render_not_contains": ["^~", "where:"],
+        "help_contains": [
+          "Use a value compatible with the expected type, or change the target type if `component.singleton_component_id(...)` is valid."
+        ],
+        "min_labels": 1,
+        "label_contains": ["assigned value"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 26,
+            "contains": ["assigned value"]
+          }
+        ]
+      }
+    ]
+  }
+}

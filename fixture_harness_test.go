@@ -31,7 +31,7 @@ type fixtureSuite struct {
 	Description     string        `json:"description,omitempty"`
 	Files           []string      `json:"files,omitempty"`
 	Stdlib          *bool         `json:"stdlib,omitempty"`
-	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "resource", "time", "funcs", "uuid"
+	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "resource", "stream", "time", "funcs", "uuid"
 	DeadlineSeconds int           `json:"deadline_seconds,omitempty"`
 	Serial          bool          `json:"serial,omitempty"`
 	Check           *fixtureCheck `json:"check,omitempty"`
@@ -1421,6 +1421,8 @@ func resolvePackageManifest(name string) *typemanifest.Manifest {
 		return testutil.ProcessManifest()
 	case "resource":
 		return fixtureResourceManifest()
+	case "stream":
+		return fixtureStreamManifest()
 	case "ownership":
 		return fixtureOwnershipManifest()
 	case "time":
@@ -1529,6 +1531,22 @@ func fixtureResourceManifest() *typemanifest.Manifest {
 			Target: pathdom.NewPlaceholder(0), Protocol: "connection", State: "open",
 		}}},
 	})
+	return m
+}
+
+// fixtureStreamManifest is a host-style package: loading it installs the
+// `stream` global while the same manifest exposes stream.Stream to type lookup.
+func fixtureStreamManifest() *typemanifest.Manifest {
+	m := typemanifest.New("stream")
+	streamType := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	moduleType := typetable.NewRecord().
+		Field("open", typ.Func().Param("name", typ.String).Returns(streamType).Build()).
+		Build()
+	m.DefineType("Stream", streamType)
+	m.SetExport(moduleType)
+	m.DefineGlobalType("stream", moduleType)
 	return m
 }
 
