@@ -70,8 +70,9 @@ func (r *Result) ForEachShapePolymorphicOccurrence(visit func(ShapePolymorphicOc
 			if len(fields) == 0 {
 				continue
 			}
+			allFields := r.shapePolymorphicStaticFieldsAtUse(birth, use, writes)
 			visited = true
-			if !visit(ShapePolymorphicOccurrence{Point: use.point, Receiver: birth.root, BirthPoint: birth.point, BirthSpan: birth.span, UsePoint: use.point, UseSpan: use.span, ConditionalFields: fields, UnionFields: shapePolymorphicUnionFields(birth.fields, fields)}) {
+			if !visit(ShapePolymorphicOccurrence{Point: use.point, Receiver: birth.root, BirthPoint: birth.point, BirthSpan: birth.span, UsePoint: use.point, UseSpan: use.span, ConditionalFields: fields, UnionFields: shapePolymorphicUnionFields(birth.fields, allFields)}) {
 				return true
 			}
 		}
@@ -144,6 +145,24 @@ func shapePolymorphicUnionFields(initial []string, conditional []ShapeConditiona
 		out = append(out, name)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func (r *Result) shapePolymorphicStaticFieldsAtUse(birth shapePolymorphicBirth, use shapePolymorphicUse, writes []splitBirthFieldWrite) []ShapeConditionalFieldOccurrence {
+	byName := map[string]ShapeConditionalFieldOccurrence{}
+	for _, write := range writes {
+		if !write.receiver.Equal(birth.root) || !r.PointCanReach(birth.point, write.point) || !r.PointCanReach(write.point, use.point) {
+			continue
+		}
+		if _, exists := byName[write.field]; !exists {
+			byName[write.field] = ShapeConditionalFieldOccurrence{Point: write.point, Name: write.field, Span: write.span}
+		}
+	}
+	out := make([]ShapeConditionalFieldOccurrence, 0, len(byName))
+	for _, field := range byName {
+		out = append(out, field)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
