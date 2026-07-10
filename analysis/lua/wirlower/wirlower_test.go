@@ -9,7 +9,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -469,6 +472,44 @@ local point = Point(raw)
 	if got == nil || !typ.TypeEquals(got, want) {
 		t.Fatalf("OpCall.Type = %v, want %v", got, want)
 	}
+}
+
+func TestBuiltinTypeCallIgnoresSameNamedManifestType(t *testing.T) {
+	registry := manifest.New("registry")
+	registry.DefineType("Entry", typetable.NewRecord().Field("id", typ.String).Build())
+	fs := manifest.New("fs")
+	fs.DefineType("type", typetable.NewRecord().Field("shadowed", typ.String).Build())
+
+	stmts, err := parse.ParseString(`
+local e = registry_get()
+if type(e.id) == "string" then
+    local s: string = e.id
+    local tag: "string" = type(e.id)
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"registry_get", "type"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	resolver := typeresolve.NewWithExternal(bindings, typelookup.Source{Manifests: []*manifest.Manifest{registry, fs}})
+	body := wirlower.LowerWithResolver("main", stmts, bindings, built, resolver)
+
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpCall || inst.Call.Callee.Kind != wir.OperandPath {
+			continue
+		}
+		callee := body.Path(wir.PathRef(inst.Call.Callee.Ref))
+		if callee.Root != "type" || len(callee.Segments) != 0 {
+			continue
+		}
+		if inst.Type != 0 {
+			t.Fatalf("builtin type() OpCall.Type = %d/%v, want no declared-type target", inst.Type, body.Type(inst.Type))
+		}
+		return
+	}
+	t.Fatalf("missing builtin type() OpCall:\n%s", wir.Print(body, built.Graph))
 }
 
 func TestCallCarriesExplicitTypeArguments(t *testing.T) {

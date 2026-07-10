@@ -96,6 +96,53 @@ end
 	}
 }
 
+func TestManifestTypeNamedTypeDoesNotShadowBuiltinTypePredicate(t *testing.T) {
+	entry := typetable.NewRecord().Field("id", typeexpr.Union(typ.String, typ.Number)).Build()
+	registry := manifest.New("registry")
+	registry.DefineGlobalType("registry_get", typ.Func().Returns(entry).Build())
+	registry.SetExport(typ.Unknown)
+
+	fs := manifest.New("fs")
+	fs.DefineType("type", typetable.NewRecord().Field("shadowed", typ.String).Build())
+	fs.SetExport(typ.Unknown)
+
+	program := `
+local e = registry_get()
+if type(e.id) == "string" then
+    local s: string = e.id
+    local tag: "string" = type(e.id)
+end
+`
+
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{
+			name: "registry only",
+			opts: []Option{
+				WithStdlib(),
+				WithManifest("registry", registry),
+			},
+		},
+		{
+			name: "registry and fs type named type",
+			opts: []Option{
+				WithStdlib(),
+				WithManifest("registry", registry),
+				WithManifest("fs", fs),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Check(program, tc.opts...)
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want builtin type() to refine e.id to string", result.Diagnostics)
+			}
+		})
+	}
+}
+
 func registryLikeManifest() *manifest.Manifest {
 	entry := typetable.NewRecord().Field("id", typ.String).Build()
 	errorType := typ.NewInterface("Error", []typ.Method{
