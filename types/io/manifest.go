@@ -46,7 +46,8 @@ type Manifest struct {
 	Types   map[string]typ.Type
 	Globals map[string]typ.Type
 
-	Summaries map[string]*FunctionSummary
+	Summaries          map[string]*FunctionSummary
+	FunctionSignatures map[string]typesignature.Function
 
 	cacheMu            sync.RWMutex
 	cachedLookupValues map[string]lookupValueResult
@@ -75,10 +76,11 @@ type ManifestQuerier interface {
 
 func NewManifest(path string) *Manifest {
 	return &Manifest{
-		Path:      path,
-		Types:     make(map[string]typ.Type),
-		Globals:   make(map[string]typ.Type),
-		Summaries: make(map[string]*FunctionSummary),
+		Path:               path,
+		Types:              make(map[string]typ.Type),
+		Globals:            make(map[string]typ.Type),
+		Summaries:          make(map[string]*FunctionSummary),
+		FunctionSignatures: make(map[string]typesignature.Function),
 	}
 }
 
@@ -157,6 +159,33 @@ func (m *Manifest) DefineSummary(name string, summary *FunctionSummary) {
 	}
 	m.Summaries[name] = summary
 	m.invalidateCaches()
+}
+
+// DefineFunctionSignature records the full canonical signature for a module
+// member. It is the lossless compatibility path for callers that have migrated
+// beyond legacy FunctionSummary's reduced escape/return vocabulary.
+func (m *Manifest) DefineFunctionSignature(name string, sig typesignature.Function) {
+	if m == nil || name == "" || sig.Type == nil {
+		return
+	}
+	if m.FunctionSignatures == nil {
+		m.FunctionSignatures = make(map[string]typesignature.Function)
+	}
+	m.FunctionSignatures[name] = sig.Clone()
+	m.invalidateCaches()
+}
+
+// AllFunctionSignatures returns cloned canonical signatures keyed by their
+// module-local or qualified lookup names.
+func (m *Manifest) AllFunctionSignatures() map[string]typesignature.Function {
+	if m == nil || len(m.FunctionSignatures) == 0 {
+		return nil
+	}
+	out := make(map[string]typesignature.Function, len(m.FunctionSignatures))
+	for name, sig := range m.FunctionSignatures {
+		out[name] = sig.Clone()
+	}
+	return out
 }
 
 func (m *Manifest) SetExport(t typ.Type) {
@@ -333,6 +362,7 @@ func FromCanonical(canonical *typemanifest.Manifest) *Manifest {
 		m.AddGlobal(name, t)
 	}
 	for name, sig := range canonical.FunctionSignatures {
+		m.DefineFunctionSignature(name, sig)
 		if summary := summaryFromCanonicalSignature(sig); summary != nil {
 			m.DefineSummary(name, summary)
 		}
@@ -361,9 +391,15 @@ func (m *Manifest) toCanonical() *typemanifest.Manifest {
 		canonical.DefineGlobalType(name, t)
 	}
 	for name, summary := range m.Summaries {
+		if _, canonical := m.FunctionSignatures[name]; canonical {
+			continue
+		}
 		if sig, ok := canonicalFunctionSignature(summary); ok {
 			canonical.DefineFunctionSignature(name, sig)
 		}
+	}
+	for name, sig := range m.FunctionSignatures {
+		canonical.DefineFunctionSignature(name, sig.Clone())
 	}
 	return canonical
 }

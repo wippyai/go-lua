@@ -42,6 +42,29 @@ func TestDecodeMalformedNonLegacyTypeDoesNotReturnMigrationSignal(t *testing.T) 
 	}
 }
 
+func TestCompatibilityManifestPreservesCanonicalFunctionSignatures(t *testing.T) {
+	fn := typ.Func().Param("value", typ.String).Returns(typ.Boolean).Build()
+	want := signature.Function{
+		Type:   fn,
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
+	}
+	m := NewManifest("compat/signature")
+	m.DefineFunctionSignature("send", want)
+
+	encoded, err := m.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, err := DecodeManifest(encoded)
+	if err != nil {
+		t.Fatalf("DecodeManifest: %v", err)
+	}
+	got, ok := decoded.AllFunctionSignatures()["send"]
+	if !ok || !got.Equals(want) {
+		t.Fatalf("signature = %#v/%v, want %#v", got, ok, want)
+	}
+}
+
 func TestEncodeDecodeTypeUsesCanonicalManifestCodec(t *testing.T) {
 	want := typ.NewRecord().
 		Field("name", typ.String).
