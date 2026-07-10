@@ -608,17 +608,22 @@ func TestFactsNodeTransferObjectLiteralPlacementDoesNotDemotePromotedIdentity(t 
 	assertPlacement(t, got, id, placement.SharedHeap)
 }
 
-func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
+func TestReturnedFreshObjectGraphNeverContainsStack(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(67)
 	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(74), HasExpr: true}
-	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(75), HasExpr: true}
-	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
-	entryValue := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	nestedSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(75), HasExpr: true}
+	leafSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(76), HasExpr: true}
+	rootID := testTableLiteralID(objectSource.ExprRef)
+	nestedID := testTableLiteralID(nestedSource.ExprRef)
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	nestedValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(nestedID))
+	leafValue := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
-			entrySource:  entryValue,
+			nestedSource: nestedValue,
+			leafSource:   leafValue,
 		},
 	}
 	resolver := visibility.NewResolver(visibility.NewTable(nil))
@@ -631,7 +636,10 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("child"), nestedSource, factflow.SourceSpan{}, ""),
+				}),
+				nestedSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), leafSource, factflow.SourceSpan{}, ""),
 				}),
 			},
 		}),
@@ -643,12 +651,19 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 	}, state.State{})
 
 	assertValue(t, reg, got, key.ReturnSlot(0), rootValue)
-	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
-	if len(sources.calls) != 2 {
-		t.Fatalf("resolver calls = %d, want return root plus one cached entry read", len(sources.calls))
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".child", nestedValue)
+	assertHeapStaticMember(t, reg, ks, got, nestedSource.ExprRef, ".leaf", leafValue)
+	for _, id := range []identity.ID{rootID, nestedID} {
+		if gotPlacement := got.ReadPlacement(id); gotPlacement == placement.Stack {
+			t.Fatalf("returned fresh graph placement[%v] = stack, want heap", id)
+		}
+		assertPlacement(t, got, id, placement.OwnedHeap)
 	}
-	if sources.calls[0].source != objectSource || sources.calls[1].source != entrySource {
-		t.Fatalf("resolver calls = %#v, want root, entry", sources.calls)
+	if len(sources.calls) != 3 {
+		t.Fatalf("resolver calls = %d, want return root plus two cached entry reads", len(sources.calls))
+	}
+	if sources.calls[0].source != objectSource || sources.calls[1].source != nestedSource || sources.calls[2].source != leafSource {
+		t.Fatalf("resolver calls = %#v, want root, nested, leaf", sources.calls)
 	}
 }
 

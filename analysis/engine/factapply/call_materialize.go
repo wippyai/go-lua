@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -311,7 +310,7 @@ func applyReturn(
 			value = product.Top()
 		} else {
 			out, _ = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, value, true, typeValues)
-			out = markReachableHeapObjectValuePlacement(ctx.Registry, out, value, placement.OwnedHeap, map[identity.ID]struct{}{})
+			out = applyPlacementTransition(ctx.Registry, out, value, placement.EscapeTransitionReturn)
 			if !hasDeclaredContract && returnSlotAllowsHeapContainerProjection(ctx.Registry, typeValues, value) {
 				if projected, projectedOK := sourceprojection.HeapObjectContainerType(ctx.Registry, typeValues, out, value); projectedOK {
 					value = typevalue.WithWitness(ctx.Registry, value, projected)

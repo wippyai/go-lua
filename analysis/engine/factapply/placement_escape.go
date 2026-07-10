@@ -184,14 +184,32 @@ func mergePlacementIdentityProjection(
 }
 
 func escapeEventPlacement(kind callboundary.EscapeEventKind) (placement.Value, bool) {
-	switch kind {
-	case callboundary.EscapeEventSend, callboundary.EscapeEventExport, callboundary.EscapeEventOpaque:
-		return placement.SharedHeap, true
-	case callboundary.EscapeEventStore, callboundary.EscapeEventRetain:
-		return placement.OwnedHeap, true
-	default:
-		return placement.Bottom, false
+	return escapeEventTransition(kind).Placement()
+}
+
+var escapeEventTransitions = map[callboundary.EscapeEventKind]placement.EscapeTransition{
+	callboundary.EscapeEventRetain: placement.EscapeTransitionRetain,
+	callboundary.EscapeEventStore:  placement.EscapeTransitionStore,
+	callboundary.EscapeEventSend:   placement.EscapeTransitionSend,
+	callboundary.EscapeEventExport: placement.EscapeTransitionExport,
+	callboundary.EscapeEventOpaque: placement.EscapeTransitionOpaque,
+}
+
+func escapeEventTransition(kind callboundary.EscapeEventKind) placement.EscapeTransition {
+	return escapeEventTransitions[kind]
+}
+
+func applyPlacementTransition(
+	reg *axis.Registry,
+	out state.State,
+	value product.Value,
+	transition placement.EscapeTransition,
+) state.State {
+	target, ok := transition.Placement()
+	if !ok {
+		return out
 	}
+	return markReachableHeapObjectValuePlacement(reg, out, value, target, map[identity.ID]struct{}{})
 }
 
 func markReachableHeapPlacement(
