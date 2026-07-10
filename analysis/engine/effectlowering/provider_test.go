@@ -289,6 +289,17 @@ func TestAmbientChannelLifecycleOutcomeProviderClosedReceiveReturnsOptionalPaylo
 	assertTypeWitness(t, reg, got.Results[1].Value, typ.Boolean)
 }
 
+func TestChannelLifecycleDefinitionDeclaresRuntimeTransitions(t *testing.T) {
+	if err := ChannelLifecycleDefinition.Validate(); err != nil {
+		t.Fatalf("ChannelLifecycleDefinition.Validate: %v", err)
+	}
+	if !ChannelLifecycleDefinition.AllowsTransition(ChannelStateOpen, ChannelStateOpen) ||
+		!ChannelLifecycleDefinition.AllowsTransition(ChannelStateOpen, ChannelStateClosed) ||
+		!ChannelLifecycleDefinition.IsFinal(ChannelStateClosed) {
+		t.Fatalf("channel lifecycle definition = %#v, want declared open transitions and final closed state", ChannelLifecycleDefinition)
+	}
+}
+
 func TestSignatureOutcomeProviderLowersLifecycleLabels(t *testing.T) {
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{

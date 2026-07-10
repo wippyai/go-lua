@@ -501,12 +501,16 @@ func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.C
 	}
 	providers = append(providers, config.CallOutcome, s.callOutcomeSupplement)
 	frontProviders := []callpayload.CallOutcomeProvider{
+		effectlowering.AmbientTypestateEscapeOutcomeProvider(effectlowering.AmbientTypestateEscapeOutcomeProviderConfig{
+			NameForSite: s.signatureID.nameForCallSiteView,
+			Signatures:  s.signatures,
+			Facts:       s.facts,
+			KeySpace:    s.visibility.KeySpace(),
+			Resolver:    s.visibility,
+		}),
 		effectlowering.AmbientChannelLifecycleOutcomeProvider(effectlowering.AmbientChannelLifecycleOutcomeProviderConfig{
 			ReceiverType: channelMethodReceiverTypeProvider(s.registry, s.facts, s.visibility, s.sources, typeValues),
 			NameForSite:  s.signatureID.nameForCallSiteView,
-			Signatures:   s.signatures,
-			ArgumentType: effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
-			Sources:      s.sources,
 			KeySpace:     s.visibility.KeySpace(),
 			Resolver:     s.visibility,
 		}),

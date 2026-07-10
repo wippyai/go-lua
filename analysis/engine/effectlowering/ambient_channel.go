@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -31,6 +30,19 @@ const (
 	ChannelStateClosed typestate.State = "closed"
 )
 
+// ChannelLifecycleDefinition is the ambient runtime's declared protocol. The
+// lifecycle machinery consumes it exactly like a manifest-declared FSM: send
+// is an open-state-preserving operation and close finalizes an open channel.
+var ChannelLifecycleDefinition = typestate.Definition{
+	Protocol:    ChannelLifecycleProtocol,
+	States:      []typestate.State{ChannelStateOpen, ChannelStateClosed},
+	FinalStates: []typestate.State{ChannelStateClosed},
+	Transitions: []typestate.TransitionDecl{
+		{From: ChannelStateOpen, To: ChannelStateOpen},
+		{From: ChannelStateOpen, To: ChannelStateClosed},
+	},
+}
+
 // ReceiverTypeFunc resolves a colon-call receiver type at the call boundary.
 type ReceiverTypeFunc func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
 
@@ -42,9 +54,6 @@ type AmbientChannelSendOutcomeProviderConfig struct {
 type AmbientChannelLifecycleOutcomeProviderConfig struct {
 	ReceiverType ReceiverTypeFunc
 	NameForSite  SignatureSiteNameFunc
-	Signatures   SignatureLookup
-	ArgumentType SignatureArgumentTypeFunc
-	Sources      sourcevalue.SourceValues
 	KeySpace     *keyspace.KeySpace
 	Resolver     *visibility.Resolver
 }
@@ -88,16 +97,11 @@ func AmbientChannelSendOutcomeProvider(config AmbientChannelSendOutcomeProviderC
 }
 
 // AmbientChannelLifecycleOutcomeProvider lowers the ambient channel runtime
-// surface into typestate facts over the existing lifecycle axis. Unknown calls
-// that receive a channel argument escape that local proof, so closed-state
-// evidence is not reused after potential aliasing by opaque code.
+// surface into declared typestate facts. Protocol-independent opaque-call
+// escape is handled by AmbientTypestateEscapeOutcomeProvider.
 func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcomeProviderConfig) callpayload.CallOutcomeProvider {
 	receiverType := config.ReceiverType
 	nameForSite := config.NameForSite
-	signatures := config.Signatures
-	argumentType := config.ArgumentType
-	sources := config.Sources
-	args := signatureArgumentReader{keySpace: config.KeySpace}
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if name, ok := channelSignatureName(ctx, site, nameForSite); ok {
 			if isChannelNewSignatureName(name) {
@@ -123,6 +127,14 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 			}
 			if receiverIsChannel {
 				switch site.MethodName() {
+				case "send":
+					return channelLifecycleOutcome(callboundary.LifecycleFact{
+						Target:   pathdom.NewPlaceholder(0),
+						Kind:     callboundary.LifecycleTransition,
+						Protocol: ChannelLifecycleProtocol,
+						From:     ChannelStateOpen,
+						To:       ChannelStateOpen,
+					})
 				case "close":
 					return channelLifecycleOutcome(callboundary.LifecycleFact{
 						Target:   pathdom.NewPlaceholder(0),
@@ -143,16 +155,7 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 				return callpayload.CallOutcome{}
 			}
 		}
-		if channelCallHasKnownSignature(ctx, site, nameForSite, signatures) {
-			return callpayload.CallOutcome{}
-		}
-		facts := channelOpaqueEscapeFacts(ctx, site, in, read, argumentType, sources, args, receiverIsChannel)
-		if len(facts) == 0 {
-			return callpayload.CallOutcome{}
-		}
-		return callpayload.CallOutcome{
-			NormalReturnFacts: callboundary.NormalReturnFacts{LifecycleFacts: facts},
-		}
+		return callpayload.CallOutcome{}
 	}
 }
 
@@ -219,85 +222,4 @@ func isChannelNewSignatureName(name string) bool {
 
 func isChannelKnownModuleSignatureName(name string) bool {
 	return name == "channel.select" || isChannelNewSignatureName(name)
-}
-
-func channelCallHasKnownSignature(ctx transfer.NodeContext, site factflow.CallSiteView, nameForSite SignatureSiteNameFunc, signatures SignatureLookup) bool {
-	if signatures == nil {
-		return false
-	}
-	name, ok := channelSignatureName(ctx, site, nameForSite)
-	if !ok || name == "" {
-		return false
-	}
-	if isChannelKnownModuleSignatureName(name) {
-		return true
-	}
-	_, ok = signatures.Lookup(name)
-	return ok
-}
-
-func channelOpaqueEscapeFacts(
-	ctx transfer.NodeContext,
-	site factflow.CallSiteView,
-	in state.State,
-	read func(cfg.Point) state.State,
-	argumentType SignatureArgumentTypeFunc,
-	sources sourcevalue.SourceValues,
-	args signatureArgumentReader,
-	receiverIsChannel bool,
-) []callboundary.LifecycleFact {
-	var out []callboundary.LifecycleFact
-	if receiverIsChannel {
-		out = append(out, channelLifecycleEscapeFact(pathdom.NewPlaceholder(0)))
-	}
-	offset := 0
-	if _, ok := site.ReceiverPath(); ok {
-		offset = 1
-	}
-	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		if !args.callArgumentSourceCanBindPath(source) {
-			return true
-		}
-		t, ok := channelArgumentSourceType(ctx, source, in, read, argumentType, sources)
-		if !ok {
-			return true
-		}
-		if _, ok := ambient.ChannelPayloadType(t); !ok {
-			return true
-		}
-		out = append(out, channelLifecycleEscapeFact(pathdom.NewPlaceholder(i+offset)))
-		return true
-	})
-	return out
-}
-
-func channelLifecycleEscapeFact(target pathdom.Path) callboundary.LifecycleFact {
-	return callboundary.LifecycleFact{
-		Target:   target,
-		Kind:     callboundary.LifecycleEscape,
-		Protocol: ChannelLifecycleProtocol,
-	}
-}
-
-func channelArgumentSourceType(
-	ctx transfer.NodeContext,
-	source factflow.ValueSource,
-	in state.State,
-	read func(cfg.Point) state.State,
-	argumentType SignatureArgumentTypeFunc,
-	sources sourcevalue.SourceValues,
-) (typ.Type, bool) {
-	if argumentType != nil {
-		if t, ok := argumentType(ctx, source, in, read); ok {
-			return t, true
-		}
-	}
-	if sources == nil {
-		return nil, false
-	}
-	value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
-	if !ok {
-		return nil, false
-	}
-	return typevalue.WitnessOf(ctx.Registry, value)
 }

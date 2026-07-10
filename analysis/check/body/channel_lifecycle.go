@@ -1,11 +1,8 @@
 package body
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/ambient"
 )
 
 // ChannelLifecycleOperation classifies a runtime channel operation that is
@@ -27,20 +24,20 @@ type ChannelLifecycleMisuseProof struct {
 	Span      SourceSpan
 }
 
-// ChannelLifecycleMisuseProofs returns send/close calls whose channel receiver
-// is provably closed at call entry. Unknown, joined, or escaped channel state is
-// intentionally silent.
+// ChannelLifecycleMisuseProofs adapts generic invalid-transition facts for the
+// ambient channel presentation. State inspection and invalidity proof live in
+// TypestateInvalidTransitionProofs; this layer only preserves the historic
+// channel diagnostic vocabulary.
 func (r *Result) ChannelLifecycleMisuseProofs() []ChannelLifecycleMisuseProof {
-	if r == nil || r.Graph() == nil {
+	if r == nil {
 		return nil
 	}
-	receiverType := channelMethodReceiverTypeProvider(r.registry, r.facts, r.visibility, r.sources, r.typeValues)
 	var out []ChannelLifecycleMisuseProof
-	for _, point := range r.Graph().RPO() {
-		if !r.PointNormallyReachable(point) {
+	for _, proof := range r.TypestateInvalidTransitionProofs() {
+		if proof.Protocol != string(effectlowering.ChannelLifecycleProtocol) {
 			continue
 		}
-		site, ok := r.CallSiteView(point)
+		site, ok := r.CallSiteView(proof.Point)
 		if !ok {
 			continue
 		}
@@ -48,45 +45,12 @@ func (r *Result) ChannelLifecycleMisuseProofs() []ChannelLifecycleMisuseProof {
 		if !ok {
 			continue
 		}
-		receiver, ok := site.ReceiverPath()
-		if !ok || receiver.IsEmpty() {
-			continue
-		}
-		in, ok := r.StateAt(point)
-		if !ok {
-			continue
-		}
-		ctx := transfer.NodeContext{
-			Graph:    r.Graph(),
-			Registry: r.registry,
-			Point:    point,
-			Read:     r.boundaryRead,
-			Node:     r.Graph().Node(point),
-		}
-		receiverStaticType, ok := receiverType(ctx, site, in, r.boundaryRead)
-		if !ok {
-			continue
-		}
-		if _, ok := ambient.ChannelPayloadType(receiverStaticType); !ok {
-			continue
-		}
-		resource, ok := r.TypestateResourceAtCallEntry(point, receiver, effectlowering.ChannelLifecycleProtocol)
-		if !ok {
-			continue
-		}
-		slot, ok := in.TypestateSlot(resource)
-		if !ok || slot.Current != effectlowering.ChannelStateClosed ||
-			slot.Locality == typestate.LocalityUnknown ||
-			slot.Locality == typestate.LocalityEscaped ||
-			slot.Locality == typestate.LocalityBottom {
-			continue
-		}
 		out = append(out, ChannelLifecycleMisuseProof{
-			Point:     point,
+			Point:     proof.Point,
 			Operation: operation,
-			Channel:   r.DisplayPath(receiver),
-			State:     string(slot.Current),
-			Span:      r.callSpanAt(point),
+			Channel:   proof.Target,
+			State:     proof.Found,
+			Span:      proof.Span,
 		})
 	}
 	return out

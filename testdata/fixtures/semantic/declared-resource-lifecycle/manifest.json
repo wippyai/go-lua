@@ -1,0 +1,76 @@
+{
+  "description": "Declared db-like connection and transaction protocols enforce return-slot acquisition, final-state obligations, aliases, opaque escape, and error-path uncertainty.",
+  "packages": ["resource"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 5,
+        "severity": "error",
+        "code": "typestate.invalid_transition",
+        "message_contains": ["connection", "expected `open`", "found `closed`"],
+        "evidence_contains": ["requires", "`open`", "`closed`"],
+        "min_evidence": 1,
+        "render_contains": ["because:"],
+        "help_contains": ["Transition"],
+        "label_contains": ["invalid lifecycle transition"]
+      },
+      {
+        "file": "main.lua",
+        "line": 13,
+        "column": 5,
+        "severity": "error",
+        "code": "typestate.invalid_transition",
+        "message_contains": ["connection", "expected `open`", "found `closed`"],
+        "evidence_contains": ["requires", "`open`", "`closed`"],
+        "min_evidence": 1,
+        "render_contains": ["because:"],
+        "help_contains": ["Transition"],
+        "label_contains": ["invalid lifecycle transition"]
+      },
+      {
+        "file": "main.lua",
+        "line": 20,
+        "column": 5,
+        "severity": "error",
+        "code": "typestate.invalid_transition",
+        "message_contains": ["transaction", "expected `active`", "found `committed`"],
+        "evidence_contains": ["requires", "`active`", "`committed`"],
+        "min_evidence": 1,
+        "render_contains": ["because:"],
+        "help_contains": ["Transition"],
+        "label_contains": ["invalid lifecycle transition"]
+      },
+      {
+        "file": "main.lua",
+        "line": 25,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "render_contains": ["because:"],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"]
+      },
+      {
+        "file": "main.lua",
+        "line": 44,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "render_contains": ["because:"],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

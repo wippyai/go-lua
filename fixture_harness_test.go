@@ -18,6 +18,8 @@ import (
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -29,7 +31,7 @@ type fixtureSuite struct {
 	Description     string        `json:"description,omitempty"`
 	Files           []string      `json:"files,omitempty"`
 	Stdlib          *bool         `json:"stdlib,omitempty"`
-	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs", "uuid"
+	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "resource", "time", "funcs", "uuid"
 	DeadlineSeconds int           `json:"deadline_seconds,omitempty"`
 	Serial          bool          `json:"serial,omitempty"`
 	Check           *fixtureCheck `json:"check,omitempty"`
@@ -1417,6 +1419,8 @@ func resolvePackageManifest(name string) *typemanifest.Manifest {
 		return testutil.FuncsManifest()
 	case "process":
 		return testutil.ProcessManifest()
+	case "resource":
+		return fixtureResourceManifest()
 	case "ownership":
 		return fixtureOwnershipManifest()
 	case "time":
@@ -1441,6 +1445,85 @@ func fixtureOwnershipManifest() *typemanifest.Manifest {
 		}),
 	})
 	m.SetExport(typ.Unknown)
+	return m
+}
+
+// fixtureResourceManifest is a manifest-only db-like resource surface used by
+// the declared lifecycle fixture. It deliberately uses return-slot acquire
+// effects so the fixture exercises manifest transport, call binding, aliasing,
+// transitions, obligations, and opaque-call escape end to end.
+func fixtureResourceManifest() *typemanifest.Manifest {
+	m := typemanifest.New("resource")
+	for _, def := range []typestate.Definition{
+		{
+			Protocol:    "connection",
+			States:      []typestate.State{"open", "closed"},
+			FinalStates: []typestate.State{"closed"},
+			Transitions: []typestate.TransitionDecl{{From: "open", To: "open"}, {From: "open", To: "closed"}},
+		},
+		{
+			Protocol:    "transaction",
+			States:      []typestate.State{"active", "committed", "rolledback"},
+			FinalStates: []typestate.State{"committed", "rolledback"},
+			Transitions: []typestate.TransitionDecl{{From: "active", To: "committed"}, {From: "active", To: "rolledback"}},
+		},
+	} {
+		if err := m.DefineTypestateProtocol(def); err != nil {
+			panic(err)
+		}
+	}
+	m.DefineFunctionSignature("resource.connect", signature.Function{
+		Type: typ.Func().Returns(typ.Any).Build(),
+		OperationalEffects: &signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+			Target:     pathdom.Path{Root: "ret[0]"},
+			Kind:       signature.LifecycleAcquire,
+			Protocol:   "connection",
+			To:         "open",
+			Obligation: typestate.Obligation{Final: "closed"},
+		}}},
+	})
+	m.DefineFunctionSignature("resource.begin", signature.Function{
+		Type: typ.Func().Param("conn", typ.Any).Returns(typ.Any).Build(),
+		OperationalEffects: &signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+			Target:     pathdom.Path{Root: "ret[0]"},
+			Kind:       signature.LifecycleAcquire,
+			Protocol:   "transaction",
+			To:         "active",
+			Obligation: typestate.Obligation{Finals: typestate.NewFinalStates("committed", "rolledback")},
+		}}},
+	})
+	operations := []struct {
+		name     string
+		protocol typestate.Protocol
+		from     typestate.State
+		to       typestate.State
+	}{
+		{"close", "connection", "open", "closed"},
+		{"query", "connection", "open", "open"},
+		{"commit", "transaction", "active", "committed"},
+		{"rollback", "transaction", "active", "rolledback"},
+	}
+	export := typetable.NewRecord().
+		Field("connect", typ.Func().Returns(typ.Any).Build()).
+		Field("begin", typ.Func().Param("conn", typ.Any).Returns(typ.Any).Build()).
+		Field("close", typ.Func().Param("resource", typ.Any).Build()).
+		Field("query", typ.Func().Param("resource", typ.Any).Build()).
+		Field("commit", typ.Func().Param("resource", typ.Any).Build()).
+		Field("rollback", typ.Func().Param("resource", typ.Any).Build()).
+		Build()
+	m.SetExport(export)
+	for _, operation := range operations {
+		m.DefineFunctionSignature("resource."+operation.name, signature.Function{
+			Type: typ.Func().Param("resource", typ.Any).Build(),
+			OperationalEffects: &signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+				Target:   pathdom.NewPlaceholder(0),
+				Kind:     signature.LifecycleTransition,
+				Protocol: operation.protocol,
+				From:     operation.from,
+				To:       operation.to,
+			}}},
+		})
+	}
 	return m
 }
 
