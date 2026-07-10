@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	analysistest "github.com/wippyai/go-lua/analysis/check/checktest"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
@@ -11,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
+	legacyio "github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -103,6 +106,96 @@ local value: number = assert.value()
 	if len(session.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want current import alias to seed typed global", session.Diagnostics)
 	}
+}
+
+func TestCheckerLegacyManifestAdapterPreservesSummaryReturnRecord(t *testing.T) {
+	chunk, err := parse.ParseString(`
+local e, err = registry.get("k")
+if err == nil then
+    local s: string = e.id
+end
+`, "consumer.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	legacy := legacyRegistryManifestForAdapterTest()
+	canonical := canonicalRegistryManifestForAdapterTest()
+	cases := []struct {
+		name      string
+		manifest  *typemanifest.Manifest
+		wantClean bool
+	}{
+		{name: "legacy fields without summaries", manifest: legacyFieldsOnlyCanonical(legacy), wantClean: false},
+		{name: "legacy adapter", manifest: legacy.ToCanonical(), wantClean: true},
+		{name: "canonical manifest", manifest: canonical, wantClean: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			database := db.New()
+			database.Connect("registry", tc.manifest)
+			checker := NewChecker(database, Deps{})
+			session := checker.CheckChunkWithImports(chunk, "consumer.lua", map[string]*typemanifest.Manifest{
+				"registry": tc.manifest,
+			})
+			if tc.wantClean && len(session.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want registry.get summary to preserve e.id: string", session.Diagnostics)
+			}
+			if !tc.wantClean && len(session.Diagnostics) == 0 {
+				t.Fatal("dropped legacy summary unexpectedly proved e.id: string")
+			}
+		})
+	}
+}
+
+func legacyRegistryManifestForAdapterTest() *legacyio.Manifest {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	legacy := legacyio.NewManifest("registry")
+	legacy.DefineType("Entry", entry)
+	legacy.DefineSummary("registry.get", legacyio.NewSummary(
+		[]typ.Type{typ.String},
+		[]typ.Type{entry, typ.NewOptional(typ.LuaError)},
+	))
+	legacy.SetExport(typ.NewRecord().
+		Field("get", typ.Func().
+			Param("key", typ.String).
+			Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build())
+	return legacy
+}
+
+// legacyFieldsOnlyCanonical models the adapter before it carried summaries:
+// identity, export, and named types made the crossing, but function facts did
+// not. Keeping this contrast makes the regression observable after the fix.
+func legacyFieldsOnlyCanonical(legacy *legacyio.Manifest) *typemanifest.Manifest {
+	canonical := typemanifest.New(legacy.Path)
+	canonical.SetExport(legacy.Export)
+	for name, t := range legacy.Types {
+		canonical.DefineType(name, t)
+	}
+	return canonical
+}
+
+func canonicalRegistryManifestForAdapterTest() *typemanifest.Manifest {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	get := typ.Func().
+		Param("key", typ.String).
+		Returns(entry, typ.NewOptional(typ.LuaError)).
+		Build()
+	canonical := typemanifest.New("registry")
+	canonical.DefineType("Entry", entry)
+	canonical.SetExport(typ.NewRecord().
+		Field("get", typ.Func().
+			Param("key", typ.String).
+			Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build())
+	canonical.DefineFunctionSignature("registry.get", signature.Function{
+		Type:   get,
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
+	})
+	return canonical
 }
 
 func TestCheckerResolvesRequireThroughCurrentImportAlias(t *testing.T) {

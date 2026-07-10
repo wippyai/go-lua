@@ -3,7 +3,13 @@ package io
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	checker "github.com/wippyai/go-lua/compiler/check"
+	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -53,8 +59,8 @@ func TestManifestEncodeDecodePreservesCanonicalFields(t *testing.T) {
 	if !typ.TypeEquals(got.Export, m.Export) {
 		t.Fatalf("decoded export = %s, want %s", got.Export, m.Export)
 	}
-	if globals := got.AllGlobals(); len(globals) != 0 {
-		t.Fatalf("globals should remain legacy in-memory only, got %v", globals)
+	if globals := got.AllGlobals(); !typ.TypeEquals(globals["legacy"], typ.Boolean) {
+		t.Fatalf("decoded global legacy = %v, want boolean", globals["legacy"])
 	}
 }
 
@@ -84,5 +90,109 @@ func TestFunctionSummaryParamEscapesDeriveFromParamRelations(t *testing.T) {
 	clone := s.Clone()
 	if got := clone.ParamEscapes; len(got) != 3 || got[0] || got[1] || !got[2] {
 		t.Fatalf("clone ParamEscapes = %#v, want derived [false false true]", got)
+	}
+}
+
+func TestLegacyManifestToCanonicalPreservesRegistryGetSignature(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	get := typ.Func().
+		Param("id", typ.String).
+		Returns(entry, typ.NewOptional(typ.LuaError)).
+		Build()
+
+	legacy := NewManifest("registry")
+	legacy.DefineType("Entry", entry)
+	legacy.SetExport(typ.NewInterface("registry", []typ.Method{{Name: "get", Type: get}}))
+	legacy.DefineSummary("get", NewSummary(
+		[]typ.Type{typ.String},
+		[]typ.Type{entry, typ.NewOptional(typ.LuaError)},
+	))
+
+	canonical := legacy.ToCanonical()
+	legacyGet, ok := canonical.FunctionSignatures["get"]
+	if !ok {
+		t.Fatalf("legacy conversion dropped registry.get summary: %#v", canonical.FunctionSignatures)
+	}
+	assertRegistryGetSignature(t, legacyGet, entry)
+	assertRegistryConsumerClean(t, canonical)
+
+	equivalent := manifest.New("registry")
+	equivalent.DefineType("Entry", entry)
+	equivalent.SetExport(typ.NewInterface("registry", []typ.Method{{Name: "get", Type: get}}))
+	equivalent.DefineFunctionSignature("get", signature.Function{
+		Type:   get,
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
+	})
+	assertRegistryConsumerClean(t, equivalent)
+}
+
+func TestManifestEncodeDecodeRetainsLegacyFunctionSummary(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	legacy := NewManifest("registry")
+	legacy.DefineSummary("registry.get", NewSummary(
+		[]typ.Type{typ.String},
+		[]typ.Type{entry, typ.NewOptional(typ.LuaError)},
+	))
+
+	data, err := legacy.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	summary, ok := decoded.LookupSummary("registry.get")
+	if !ok {
+		t.Fatalf("decoded summaries = %#v, want registry.get", decoded.AllSummaries())
+	}
+	if len(summary.Params) != 1 || !typ.TypeEquals(summary.Params[0], typ.String) || len(summary.Returns) != 2 || summary.Returns[1].String() != "Error?" {
+		t.Fatalf("decoded summary = %#v (returns %v), want registry.get(string) -> (Entry, LuaError?)", summary, summary.Returns)
+	}
+	decodedEntry, ok := summary.Returns[0].(*typ.Record)
+	if !ok || decodedEntry.GetField("id") == nil || !typ.TypeEquals(decodedEntry.GetField("id").Type, typ.String) {
+		t.Fatalf("decoded registry.get entry return = %v, want Entry{id: string}", summary.Returns[0])
+	}
+}
+
+func assertRegistryGetSignature(t *testing.T, sig signature.Function, entry typ.Type) {
+	t.Helper()
+	if sig.Type == nil || len(sig.Type.Params) != 1 || !typ.TypeEquals(sig.Type.Params[0].Type, typ.String) {
+		t.Fatalf("registry.get params = %#v, want one string parameter", sig.Type)
+	}
+	if len(sig.Type.Returns) != 2 || !typ.TypeEquals(sig.Type.Returns[0], entry) ||
+		!typ.TypeEquals(sig.Type.Returns[1], typ.NewOptional(typ.LuaError)) {
+		t.Fatalf("registry.get returns = %#v, want (Entry, LuaError?)", sig.Type.Returns)
+	}
+	record, ok := sig.Type.Returns[0].(*typ.Record)
+	if !ok || record.GetField("id") == nil || !typ.TypeEquals(record.GetField("id").Type, typ.String) {
+		t.Fatalf("registry.get first return = %v, want Entry{id: string}", sig.Type.Returns[0])
+	}
+	for _, label := range sig.Effect.Labels {
+		if got, ok := effect.NormalizeLabel(label).(returns.ErrorReturn); ok && got == (returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}) {
+			return
+		}
+	}
+	t.Fatalf("registry.get effect = %v, want ErrorReturn(0, 1)", sig.Effect)
+}
+
+func assertRegistryConsumerClean(t *testing.T, registry *manifest.Manifest) {
+	t.Helper()
+	chunk, err := parse.ParseString(`
+local e, err = registry.get("k")
+if err == nil then
+    local s: string = e.id
+end
+`, "consumer.lua")
+	if err != nil {
+		t.Fatalf("parse consumer: %v", err)
+	}
+	database := db.New()
+	database.Connect("registry", registry)
+	session := checker.NewChecker(database, checker.Deps{}).CheckChunkWithImports(chunk, "consumer.lua", map[string]*manifest.Manifest{
+		"registry": registry,
+	})
+	if len(session.Diagnostics) != 0 {
+		t.Fatalf("registry consumer diagnostics = %#v, want none", session.Diagnostics)
 	}
 }
