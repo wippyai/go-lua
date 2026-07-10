@@ -33,6 +33,7 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -155,7 +156,7 @@ func publishOrdinaryAssignmentFunctionSignatures(
 			continue
 		}
 		expr := ordinaryAssignmentRHSExpr(fact)
-		fn, ok := expr.(*ast.FunctionExpr)
+		fn, ok := ordinaryAssignmentFunctionExpression(root, expr)
 		if ok {
 			sig, ok := functionExpressionSignature(prog, root, fn, name, fact.Path)
 			if ok {
@@ -167,6 +168,57 @@ func publishOrdinaryAssignmentFunctionSignatures(
 			m.DefineFunctionSignature(name, sig.Clone())
 		}
 	}
+}
+
+// ordinaryAssignmentFunctionExpression resolves a function assigned through a
+// stable local binding, in addition to a function literal written directly on
+// the exported table. The latter is handled syntactically; the former needs
+// the binder-owned origin because the assignment RHS is only an identifier.
+//
+// A local with an ordinary write is deliberately not followed: its original
+// function declaration may no longer be the value exported at this point.
+func ordinaryAssignmentFunctionExpression(result *body.Result, expr ast.Expr) (*ast.FunctionExpr, bool) {
+	if fn, ok := expr.(*ast.FunctionExpr); ok {
+		return fn, true
+	}
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 || len(p.Segments) != 0 || result.SymbolHasWrite(p.Symbol) {
+		return nil, false
+	}
+	return functionForStableLocalSymbol(result, p.Symbol)
+}
+
+func functionForStableLocalSymbol(result *body.Result, symbolID symbol.ID) (*ast.FunctionExpr, bool) {
+	if result == nil || symbolID == 0 {
+		return nil, false
+	}
+	for _, child := range result.FunctionResults() {
+		if fn, ok := functionForStableLocalSymbolInResult(result, child, symbolID); ok {
+			return fn, true
+		}
+	}
+	return nil, false
+}
+
+func functionForStableLocalSymbolInResult(root, current *body.Result, symbolID symbol.ID) (*ast.FunctionExpr, bool) {
+	if current == nil || current.IsCallContextResult() {
+		return nil, false
+	}
+	fn := current.Function()
+	if fn != nil {
+		if origin, ok := root.FunctionOrigin(fn); ok && origin.HasTargetSymbol && origin.TargetSymbol == symbolID {
+			return fn, true
+		}
+	}
+	for _, child := range current.FunctionResults() {
+		if fn, ok := functionForStableLocalSymbolInResult(root, child, symbolID); ok {
+			return fn, true
+		}
+	}
+	return nil, false
 }
 
 func functionDefinitionExportMember(result *body.Result, root pathdom.Path, name *ast.FuncName) (segment.Segment, bool) {
