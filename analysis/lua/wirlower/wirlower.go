@@ -2062,6 +2062,12 @@ func (b *builder) typeValueRef(e ast.Expr) (wir.TypeRef, bool) {
 				return ref, ref != 0
 			}
 		}
+		// `type` is a value-namespace builtin. A manifest may independently
+		// declare a type named `type`, but that declaration must never turn a
+		// call through the builtin global into a value-level type cast.
+		if b.bindings.ResolvesToGlobal(ident, "type") {
+			return 0, false
+		}
 	}
 	parts, ok := valueexpr.TypeValueRefParts(e)
 	if !ok {
