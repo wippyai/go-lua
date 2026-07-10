@@ -52,6 +52,7 @@ const (
 	CodeAdviceAlwaysTrueGuard        Code = "advice.always_true_guard"
 	CodeAdviceInvariantLoopRead      Code = "advice.invariant_loop_read"
 	CodeAdviceSplitBirthDiscriminant Code = "advice.split_birth_discriminant"
+	CodeAdviceShapePolymorphic       Code = "advice.shape.polymorphic"
 )
 
 // Verdict classifies whether the solved state proves or refutes an obligation.
@@ -358,6 +359,10 @@ const (
 	EvidenceDetailAdviceTagWrite
 	EvidenceDetailAdvicePayloadWrite
 	EvidenceDetailAdviceDiscriminantUse
+	EvidenceDetailAdviceShapeConditionalField
+	EvidenceDetailAdviceShapeStableRefused
+	EvidenceDetailAdviceShapeUse
+	EvidenceDetailAdviceShapeUnionField
 )
 
 // EvidenceDetail carries renderer-independent detail for one evidence node.
@@ -473,6 +478,22 @@ func AdviceDiscriminantUseEvidenceDetail(subject string) EvidenceDetail {
 		Kind:  EvidenceDetailAdviceDiscriminantUse,
 		Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject}},
 	}
+}
+
+func AdviceShapeConditionalFieldEvidenceDetail(subject, field string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceShapeConditionalField, Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject, Field: field}}}
+}
+
+func AdviceShapeStableRefusedEvidenceDetail(subject string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceShapeStableRefused, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof, Params: EvidenceCauseParams{Subject: subject}}}
+}
+
+func AdviceShapeUseEvidenceDetail(subject string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceShapeUse, Cause: EvidenceCause{Kind: EvidenceCauseFlowAssign, Params: EvidenceCauseParams{Subject: subject}}}
+}
+
+func AdviceShapeUnionFieldEvidenceDetail(subject, field string) EvidenceDetail {
+	return EvidenceDetail{Kind: EvidenceDetailAdviceShapeUnionField, Cause: EvidenceCause{Kind: EvidenceCauseBirth, Params: EvidenceCauseParams{Subject: subject, Field: field}}}
 }
 
 func ResultShapeUnionEvidenceDetail(receiver, discriminant string) EvidenceDetail {

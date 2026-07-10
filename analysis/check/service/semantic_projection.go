@@ -831,6 +831,9 @@ func repairActionsFromJudgmentsWithSource(defaultDocument embedding.DocumentID, 
 			if descriptor.Kind == judgment.RepairAddAnnotation {
 				action.Payload.Type = typeformat.Short(item.Expected.Type)
 			}
+			if descriptor.Kind == judgment.RepairConstructFixedShape {
+				action.Payload.Fields = shapePolymorphicRepairFields(item)
+			}
 			action.Payload.Edits = repairEdits(defaultDocument, defaultDigest, defaultFile, data, item, descriptor.Kind)
 			out = append(out, action)
 		}
@@ -841,6 +844,22 @@ func repairActionsFromJudgmentsWithSource(defaultDocument embedding.DocumentID, 
 		}
 		return locationLess(out[i].Target, out[j].Target)
 	})
+	return out
+}
+
+func shapePolymorphicRepairFields(item judgment.Judgment) []string {
+	seen := map[string]struct{}{}
+	for _, evidence := range item.Evidence {
+		if (evidence.Detail.Kind != judgment.EvidenceDetailAdviceShapeConditionalField && evidence.Detail.Kind != judgment.EvidenceDetailAdviceShapeUnionField) || evidence.Detail.Cause.Params.Field == "" {
+			continue
+		}
+		seen[evidence.Detail.Cause.Params.Field] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for field := range seen {
+		out = append(out, field)
+	}
+	sort.Strings(out)
 	return out
 }
 

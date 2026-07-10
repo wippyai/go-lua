@@ -24,6 +24,8 @@ func (ProofContext) Advice(item judgment.Judgment, primary diagnostic.Span) (adv
 		return adviceInvariantLoopReadPresentation(item, primary), true
 	case judgment.CodeAdviceSplitBirthDiscriminant:
 		return adviceSplitBirthDiscriminantPresentation(item, primary), true
+	case judgment.CodeAdviceShapePolymorphic:
+		return adviceShapePolymorphicPresentation(item, primary), true
 	default:
 		return advicePresentation{}, false
 	}
@@ -136,6 +138,22 @@ func adviceSplitBirthDiscriminantPresentation(item judgment.Judgment, primary di
 	}
 }
 
+func adviceShapePolymorphicPresentation(item judgment.Judgment, primary diagnostic.Span) advicePresentation {
+	labels := []diagnostic.Label{sourceLabel(primary, labelAdviceShapeUse)}
+	var evidence []diagnostic.Evidence
+	for _, itemEvidence := range item.Evidence {
+		span := diagnosticJudgmentEvidenceSpanOr(itemEvidence, primary)
+		switch itemEvidence.Detail.Kind {
+		case judgment.EvidenceDetailAdviceTableBirth:
+			labels = appendDistinctSourceLabel(labels, span, primary, labelAdviceTableBirth)
+		case judgment.EvidenceDetailAdviceShapeConditionalField:
+			labels = appendDistinctSourceLabel(labels, span, primary, labelAdviceShapeConditionalField)
+		}
+		evidence = append(evidence, diagnostic.Evidence{Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Cause: diagnosticCauseFromJudgmentEvidence(itemEvidence), Span: span, Message: adviceEvidenceMessage(itemEvidence)})
+	}
+	return advicePresentation{Message: display.AdviceShapePolymorphicMessage(item.Subject.Label), Help: display.AdviceShapePolymorphicHelp(), Labels: labels, Explanation: diagnostic.NewExplanation(evidence...)}
+}
+
 func adviceGuardMessage(item judgment.Judgment) (judgment.Evidence, string, bool) {
 	evidence, ok := item.FirstEvidenceKindDetail(judgment.EvidenceAbstractFact, judgment.EvidenceDetailAdviceGuardValue)
 	if !ok {
@@ -178,6 +196,14 @@ func adviceCauseMessage(detail judgment.EvidenceDetail) (string, bool) {
 		return fmt.Sprintf("%s is assigned separately", params.Subject), true
 	case judgment.EvidenceDetailAdviceDiscriminantUse:
 		return fmt.Sprintf("%s is used as a discriminant here", params.Subject), true
+	case judgment.EvidenceDetailAdviceShapeConditionalField:
+		return fmt.Sprintf("%s is added only on some paths", params.Subject+"."+params.Field), true
+	case judgment.EvidenceDetailAdviceShapeStableRefused:
+		return fmt.Sprintf("StableShape is refused because %s has a non-uniform field set", params.Subject), true
+	case judgment.EvidenceDetailAdviceShapeUse:
+		return fmt.Sprintf("%s is used where a fixed shape matters", params.Subject), true
+	case judgment.EvidenceDetailAdviceShapeUnionField:
+		return fmt.Sprintf("%s.%s belongs in the fixed-shape constructor", params.Subject, params.Field), true
 	default:
 		return "", false
 	}

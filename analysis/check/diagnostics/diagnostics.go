@@ -44,6 +44,7 @@ const (
 	CodeAdviceAlwaysTrueGuard        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceAlwaysTrueGuard)
 	CodeAdviceInvariantLoopRead      diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceInvariantLoopRead)
 	CodeAdviceSplitBirthDiscriminant diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceSplitBirthDiscriminant)
+	CodeAdviceShapePolymorphic       diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceShapePolymorphic)
 )
 
 type producerContext struct {
@@ -230,11 +231,13 @@ func diagnosticProducers() []diagnosticProducer {
 				judgment.CodeAdviceAlwaysTrueGuard,
 				judgment.CodeAdviceInvariantLoopRead,
 				judgment.CodeAdviceSplitBirthDiscriminant,
+				judgment.CodeAdviceShapePolymorphic,
 			},
 			pass.AdviceRedundantClaims{},
 			pass.AdviceAlwaysTrueGuards{},
 			pass.AdviceInvariantLoopReads{},
 			pass.AdviceSplitBirthDiscriminants{},
+			pass.AdviceShapePolymorphic{},
 		),
 	}
 }

@@ -276,3 +276,14 @@ func (diagnosticDisplay) AdviceSplitBirthDiscriminantMessage(tag string) string 
 func (diagnosticDisplay) AdviceSplitBirthDiscriminantHelp() string {
 	return "Construct the variant in one table literal so the tag and payload are born atomically."
 }
+
+func (diagnosticDisplay) AdviceShapePolymorphicMessage(receiver string) string {
+	if receiver == "" {
+		return "table has a path-dependent field shape"
+	}
+	return fmt.Sprintf("%s has a path-dependent field shape", receiver)
+}
+
+func (diagnosticDisplay) AdviceShapePolymorphicHelp() string {
+	return "Construct all variants with one fixed-shape constructor (all fields present, absent ones nil/default)."
+}

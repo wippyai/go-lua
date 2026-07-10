@@ -8,7 +8,7 @@ import (
 // EmbeddingSchemaVersion pins the versioned, renderer-independent checker
 // embedding surface. It is deliberately separate from JIRSchemaVersion: JIR
 // pins judgments, while this pin covers navigation and repair DTOs.
-const EmbeddingSchemaVersion = 6
+const EmbeddingSchemaVersion = 7
 
 // SourceSpan is the current source-location value used by the embedding
 // surface. It is intentionally isolated from identity/display policy so a
@@ -266,8 +266,9 @@ type RepairEdit struct {
 }
 
 type RepairPayload struct {
-	Type  string
-	Edits []RepairEdit
+	Type   string
+	Fields []string
+	Edits  []RepairEdit
 }
 
 type RepairActionsRequest struct {

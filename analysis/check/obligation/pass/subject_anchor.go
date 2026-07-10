@@ -130,6 +130,9 @@ func judgmentSubjectAnchor(ctx Context, item judgment.Judgment) judgment.Subject
 	case judgment.CodeAdviceSplitBirthDiscriminant:
 		anchor.Role = "advice.split_birth_discriminant"
 		anchor.BindingKey = stripLegacyPointKey(key, "advice-split-birth")
+	case judgment.CodeAdviceShapePolymorphic:
+		anchor.Role = "advice.shape.polymorphic"
+		anchor.BindingKey = stripLegacyPointKey(key, "advice-shape-polymorphic")
 	}
 	if item.Subject.Label != "" {
 		anchor.BindingName = item.Subject.Label

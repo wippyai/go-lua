@@ -449,6 +449,18 @@ return redundant
 	if len(annotation) != 1 || annotation[0].Kind != judgment.RepairAddAnnotation || annotation[0].Payload.Type == "" {
 		t.Fatalf("annotation repairs = %#v, want structured annotation payload", annotation)
 	}
+	fixedShape := repairActionsFromJudgments("main.lua", []judgment.Judgment{{
+		Code:  judgment.CodeAdviceShapePolymorphic,
+		Spans: []judgment.SpanRef{{File: "main.lua", StartLine: 3, StartCol: 1, EndLine: 3, EndCol: 4}},
+		Evidence: judgment.EvidenceChain{
+			{Detail: judgment.AdviceShapeConditionalFieldEvidenceDetail("delta", "content")},
+			{Detail: judgment.AdviceShapeConditionalFieldEvidenceDetail("delta", "args")},
+			{Detail: judgment.AdviceShapeConditionalFieldEvidenceDetail("delta", "content")},
+		},
+	}})
+	if len(fixedShape) != 1 || fixedShape[0].Kind != judgment.RepairConstructFixedShape || !reflect.DeepEqual(fixedShape[0].Payload.Fields, []string{"args", "content"}) {
+		t.Fatalf("fixed-shape repairs = %#v, want one atomic fixed-shape action naming sorted union fields", fixedShape)
+	}
 }
 
 func TestSemanticQueryRepeatedSolvesAreDeterministic(t *testing.T) {

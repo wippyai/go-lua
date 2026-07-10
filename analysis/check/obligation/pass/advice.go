@@ -51,6 +51,16 @@ func (AdviceSplitBirthDiscriminants) Name() string {
 	return "advice.split_birth_discriminant"
 }
 
+// AdviceShapePolymorphic emits hint-level judgments for record-like tables
+// whose static field set is proven to differ across paths at a shape-relevant use.
+type AdviceShapePolymorphic struct{}
+
+func (AdviceShapePolymorphic) Name() string { return "advice.shape.polymorphic" }
+
+func (AdviceShapePolymorphic) Produce(ctx Context) []judgment.Judgment {
+	return produceReaderJudgments(ctx, readmodel.Reader.ForEachShapePolymorphic, adviceShapePolymorphicJudgment)
+}
+
 func (AdviceSplitBirthDiscriminants) Produce(ctx Context) []judgment.Judgment {
 	return produceReaderJudgments(ctx, readmodel.Reader.ForEachSplitBirthDiscriminant, adviceSplitBirthDiscriminantJudgment)
 }
@@ -137,5 +147,37 @@ func adviceSplitBirthDiscriminantJudgment(ctx Context, functionKey string, item 
 		Verdict:  judgment.VerdictProven,
 		Evidence: evidence,
 		Spans:    spans,
+	}
+}
+
+func adviceShapePolymorphicJudgment(ctx Context, functionKey string, item readmodel.ShapePolymorphic) judgment.Judgment {
+	useSpan := spanFromReadModel(ctx.SourceFile, item.UseSpan)
+	birthSpan := spanFromReadModel(ctx.SourceFile, item.BirthSpan)
+	evidence := judgment.EvidenceChain{provenAbstractEvidence(item.BirthPoint, "advice:shape:birth", judgment.AdviceTableBirthEvidenceDetail(item.ReceiverLabel), birthSpan)}
+	spans := []judgment.SpanRef{useSpan, birthSpan}
+	conditional := make(map[string]struct{}, len(item.ConditionalFields))
+	for _, field := range item.ConditionalFields {
+		conditional[field.Name] = struct{}{}
+	}
+	for _, field := range item.UnionFields {
+		if _, isConditional := conditional[field]; isConditional {
+			continue
+		}
+		evidence = append(evidence, provenAbstractEvidence(item.BirthPoint, "advice:shape:fixed-field", judgment.AdviceShapeUnionFieldEvidenceDetail(item.ReceiverLabel, field), birthSpan))
+	}
+	for _, field := range item.ConditionalFields {
+		span := spanFromReadModel(ctx.SourceFile, field.Span)
+		evidence = append(evidence, provenAbstractEvidence(field.Point, "advice:shape:conditional-field", judgment.AdviceShapeConditionalFieldEvidenceDetail(item.ReceiverLabel, field.Name), span))
+		spans = append(spans, span)
+	}
+	evidence = append(evidence,
+		provenAbstractEvidence(item.UsePoint, "advice:shape:stable-refused", judgment.AdviceShapeStableRefusedEvidenceDetail(item.ReceiverLabel), useSpan),
+		provenAbstractEvidence(item.UsePoint, "advice:shape:use", judgment.AdviceShapeUseEvidenceDetail(item.ReceiverLabel), useSpan),
+	)
+	return judgment.Judgment{
+		Code: judgment.CodeAdviceShapePolymorphic, Point: item.UsePoint,
+		Subject: subjectRef(functionKey, judgment.SubjectExpression, fmt.Sprintf("advice-shape-polymorphic:%d:%s", item.UsePoint, item.ReceiverLabel), item.ReceiverLabel),
+		Actual:  judgment.NewValueRef(0, nil).WithLabel(item.ReceiverLabel), Verdict: judgment.VerdictProven,
+		Evidence: evidence, Spans: spans,
 	}
 }

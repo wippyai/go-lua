@@ -58,6 +58,7 @@ type Reader interface {
 	ForEachAlwaysTrueGuard(func(AlwaysTrueGuard) bool) bool
 	ForEachInvariantLoopRead(func(InvariantLoopRead) bool) bool
 	ForEachSplitBirthDiscriminant(func(SplitBirthDiscriminant) bool) bool
+	ForEachShapePolymorphic(func(ShapePolymorphic) bool) bool
 	ForEachClosureCapture(func(ClosureCapture) bool) bool
 	ForEachAllocationSite(func(AllocationSite) bool) bool
 	ForEachHoistableLoad(func(HoistableLoad) bool) bool
@@ -192,6 +193,26 @@ type SplitBirthDiscriminant struct {
 // receiver.
 type SplitBirthPayloadWrite struct {
 	Point cfg.Point
+	Label string
+	Span  SourceSpan
+}
+
+// ShapePolymorphic is a locally born record-like table with provably
+// non-uniform static fields at a return or static member-read boundary.
+type ShapePolymorphic struct {
+	Point             cfg.Point
+	ReceiverLabel     string
+	BirthPoint        cfg.Point
+	BirthSpan         SourceSpan
+	UsePoint          cfg.Point
+	UseSpan           SourceSpan
+	ConditionalFields []ShapeConditionalField
+	UnionFields       []string
+}
+
+type ShapeConditionalField struct {
+	Point cfg.Point
+	Name  string
 	Label string
 	Span  SourceSpan
 }

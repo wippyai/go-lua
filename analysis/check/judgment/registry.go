@@ -112,6 +112,7 @@ const (
 	DiagnosticCodeAdviceAlwaysTrueGuard        DiagnosticCode = "advice.always_true_guard"
 	DiagnosticCodeAdviceInvariantLoopRead      DiagnosticCode = "advice.invariant_loop_read"
 	DiagnosticCodeAdviceSplitBirthDiscriminant DiagnosticCode = "advice.split_birth_discriminant"
+	DiagnosticCodeAdviceShapePolymorphic       DiagnosticCode = "advice.shape.polymorphic"
 )
 
 // RepairKind names a structured, renderer-independent repair family. A code
@@ -125,6 +126,7 @@ const (
 	RepairRemoveRedundantGuard   RepairKind = "remove_redundant_guard"
 	RepairHoistInvariantRead     RepairKind = "hoist_invariant_read"
 	RepairInitializeDiscriminant RepairKind = "initialize_discriminant"
+	RepairConstructFixedShape    RepairKind = "construct_fixed_shape"
 	RepairAddNilGuard            RepairKind = "add_nil_guard"
 	RepairAddAnnotation          RepairKind = "add_annotation"
 )
@@ -191,6 +193,7 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 	codeSpecWithRepairs(CodeAdviceAlwaysTrueGuard, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceAlwaysTrueGuard), repairs(RepairRemoveRedundantGuard), EvidenceAbstractFact),
 	codeSpecWithRepairs(CodeAdviceInvariantLoopRead, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceInvariantLoopRead), repairs(RepairHoistInvariantRead), EvidenceAbstractFact),
 	codeSpecWithRepairs(CodeAdviceSplitBirthDiscriminant, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceSplitBirthDiscriminant), repairs(RepairInitializeDiscriminant), EvidenceAbstractFact),
+	codeSpecWithRepairs(CodeAdviceShapePolymorphic, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceShapePolymorphic), repairs(RepairConstructFixedShape), EvidenceAbstractFact),
 })
 
 func diag(codes ...DiagnosticCode) []DiagnosticCode {
