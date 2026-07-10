@@ -492,24 +492,48 @@ end
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"registry_get", "type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	resolver := typeresolve.NewWithExternal(bindings, typelookup.Source{Manifests: []*manifest.Manifest{registry, fs}})
-	body := wirlower.LowerWithResolver("main", stmts, bindings, built, resolver)
 
-	for i := 0; i < body.Len(); i++ {
-		inst := body.Instr(i)
-		if inst.Op != wir.OpCall || inst.Call.Callee.Kind != wir.OperandPath {
-			continue
-		}
-		callee := body.Path(wir.PathRef(inst.Call.Callee.Ref))
-		if callee.Root != "type" || len(callee.Segments) != 0 {
-			continue
-		}
-		if inst.Type != 0 {
-			t.Fatalf("builtin type() OpCall.Type = %d/%v, want no declared-type target", inst.Type, body.Type(inst.Type))
-		}
-		return
+	for _, tc := range []struct {
+		name      string
+		manifests []*manifest.Manifest
+	}{
+		{name: "registry only", manifests: []*manifest.Manifest{registry}},
+		{name: "registry and fs type named type", manifests: []*manifest.Manifest{registry, fs}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := typeresolve.NewWithExternal(bindings, typelookup.Source{Manifests: tc.manifests})
+			body := wirlower.LowerWithResolver("main", stmts, bindings, built, resolver)
+			typeCalls := 0
+			typePredicateChecks := 0
+
+			for i := 0; i < body.Len(); i++ {
+				inst := body.Instr(i)
+				if inst.Op == wir.OpBranch {
+					check := body.Check(inst.Check)
+					if check.Kind == wir.CheckTypeEqual && check.Path.Root == "e" && check.TypeName == "string" {
+						typePredicateChecks++
+					}
+				}
+				if inst.Op != wir.OpCall || inst.Call.Callee.Kind != wir.OperandPath {
+					continue
+				}
+				callee := body.Path(wir.PathRef(inst.Call.Callee.Ref))
+				if callee.Root != "type" || len(callee.Segments) != 0 {
+					continue
+				}
+				typeCalls++
+				if inst.Type != 0 {
+					t.Fatalf("builtin type() OpCall.Type = %d/%v, want no declared-type target", inst.Type, body.Type(inst.Type))
+				}
+			}
+			if typeCalls != 1 {
+				t.Fatalf("builtin type() calls = %d, want 1:\n%s", typeCalls, wir.Print(body, built.Graph))
+			}
+			if typePredicateChecks != 1 {
+				t.Fatalf("builtin type() predicate checks = %d, want 1:\n%s", typePredicateChecks, wir.Print(body, built.Graph))
+			}
+		})
 	}
-	t.Fatalf("missing builtin type() OpCall:\n%s", wir.Print(body, built.Graph))
 }
 
 func TestCallCarriesExplicitTypeArguments(t *testing.T) {
