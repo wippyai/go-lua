@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,9 +36,9 @@ func TestInProcessTransportLifecycleIncrementalCancellationAndVersionedDiagnosti
 	go func() { serveDone <- ServeStream(context.Background(), peer, peer, server) }()
 	framer := jsonrpc2.NewFramer(client, client)
 
-	writeRPC(t, framer, map[string]any{"jsonrpc": "2.0", "id": 1, "method": methodInitialize, "params": map[string]any{}})
+	writeRPC(t, framer, map[string]any{"jsonrpc": "2.0", "id": 1, "method": methodInitialize, "params": map[string]any{"capabilities": initializeCapabilities(true)}})
 	initialize := readRPC(t, client, framer)
-	assertCapabilities(t, initialize)
+	assertCapabilities(t, initialize, true)
 	var correlated struct {
 		ID int `json:"id"`
 	}
@@ -134,13 +135,13 @@ func TestInProcessTransportLifecycleIncrementalCancellationAndVersionedDiagnosti
 func TestHTTPPostAndLongPollFrontend(t *testing.T) {
 	server := NewServer(service.NewBatchSession(), Options{Debounce: time.Millisecond})
 	handler := NewHTTPHandler(server)
-	request := httptest.NewRequest(http.MethodPost, "/lsp", rpcBody(t, map[string]any{"jsonrpc": "2.0", "id": "init", "method": methodInitialize}))
+	request := httptest.NewRequest(http.MethodPost, "/lsp", rpcBody(t, map[string]any{"jsonrpc": "2.0", "id": "init", "method": methodInitialize, "params": map[string]any{"capabilities": initializeCapabilities(true)}}))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("initialize HTTP status = %d, body=%s", recorder.Code, recorder.Body.String())
 	}
-	assertCapabilities(t, recorder.Body.Bytes())
+	assertCapabilities(t, recorder.Body.Bytes(), true)
 
 	server.publish(context.Background(), "test/notification", map[string]string{"ok": "yes"})
 	poll := httptest.NewRequest(http.MethodPost, "/notifications?timeoutMs=0", nil)
@@ -161,6 +162,27 @@ func TestHTTPPostAndLongPollFrontend(t *testing.T) {
 	_, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit})
 }
 
+func TestInitializeNegotiatesPrepareRenameCapability(t *testing.T) {
+	for _, prepareSupport := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prepare support %t", prepareSupport), func(t *testing.T) {
+			server := NewServer(service.NewBatchSession(), Options{Debounce: time.Hour})
+			defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+			result, problem := server.Handle(context.Background(), jsonrpc2.Request{
+				Method: methodInitialize,
+				Params: paramsJSON(t, map[string]any{"capabilities": initializeCapabilities(prepareSupport)}),
+			})
+			if problem != nil {
+				t.Fatalf("initialize: %v", problem)
+			}
+			payload, err := json.Marshal(map[string]any{"result": result})
+			if err != nil {
+				t.Fatalf("marshal initialize result: %v", err)
+			}
+			assertCapabilities(t, payload, prepareSupport)
+		})
+	}
+}
+
 func TestCloseSerializesUnitRemovalWithReopen(t *testing.T) {
 	base := service.NewBatchSession()
 	session := &blockRemoveSession{
@@ -170,7 +192,7 @@ func TestCloseSerializesUnitRemovalWithReopen(t *testing.T) {
 	}
 	server := NewServer(session, Options{Debounce: time.Hour})
 	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
-	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize}); problem != nil {
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize, Params: paramsJSON(t, map[string]any{"capabilities": initializeCapabilities(true)})}); problem != nil {
 		t.Fatalf("initialize: %v", problem)
 	}
 
@@ -446,13 +468,137 @@ func TestInProcessRenameProjectsCompleteOccurrenceWorkspaceEdit(t *testing.T) {
 		t.Fatalf("rename: %v", problem)
 	}
 	edit, ok := result.(workspaceEdit)
-	if !ok || len(edit.Changes[uri]) != 2 {
-		t.Fatalf("workspace edit = %#v, want complete definition/reference edits", result)
+	if !ok || len(edit.DocumentChanges) != 1 {
+		t.Fatalf("workspace edit = %#v, want one versioned document change", result)
 	}
-	for _, item := range edit.Changes[uri] {
+	documentChange := edit.DocumentChanges[0]
+	if documentChange.TextDocument.URI != uri || documentChange.TextDocument.Version != 1 || len(documentChange.Edits) != 2 {
+		t.Fatalf("document change = %#v, want version 1 definition/reference edits", documentChange)
+	}
+	for _, item := range documentChange.Edits {
 		if item.NewText != "renamed" {
 			t.Fatalf("rename edit = %#v, want new binder name", item)
 		}
+	}
+	assertVersionedWorkspaceEditWire(t, edit)
+}
+
+func TestInProcessRenameRefusesUnsafeBinderProjections(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		needle string
+		want   string
+	}{
+		{
+			name:   "parameter",
+			source: "local function f(value)\n  return value\nend\nreturn f(1)\n",
+			needle: "value",
+			want:   "parameters",
+		},
+		{
+			name:   "implicit self",
+			source: "local t = {}\nfunction t:m(v)\n  return self, v\nend\nreturn t\n",
+			needle: "self",
+			want:   "implicit self",
+		},
+		{
+			name:   "vararg",
+			source: "local function f(...)\n  return ...\nend\nreturn f(1)\n",
+			needle: "...",
+			want:   "varargs",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, uri := openSolvedDocument(t, test.source)
+			defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+			buffer := newTextBuffer([]byte(test.source))
+			offset := strings.LastIndex(test.source, test.needle)
+			if test.name == "vararg" {
+				offset = strings.Index(test.source, test.needle)
+			}
+			position, err := buffer.positionForOffset(offset)
+			if err != nil {
+				t.Fatalf("selected %s position: %v", test.name, err)
+			}
+			for _, method := range []string{methodPrepareRename, methodRename} {
+				_, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: method, Params: paramsJSON(t, map[string]any{
+					"textDocument": map[string]any{"uri": uri}, "position": position, "newName": "renamed",
+				})})
+				if problem == nil || !strings.Contains(problem.Message, test.want) {
+					t.Fatalf("%s %s problem = %#v, want clear %q refusal", test.name, method, problem, test.want)
+				}
+			}
+		})
+	}
+}
+
+func TestInProcessRenameRefusesDuplicateOccurrenceRanges(t *testing.T) {
+	base := service.NewBatchSession()
+	session := &duplicateBinderOccurrencesSession{WorkspaceSession: base, name: "item"}
+	server, uri := openSolvedDocumentWithSession(t, "local item = 1\nreturn item\n", session, Options{Debounce: time.Millisecond})
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	_, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri}, "position": Position{Line: 1, Character: 7}, "newName": "renamed",
+	})})
+	if problem == nil || !strings.Contains(problem.Message, "overlapping") {
+		t.Fatalf("duplicate occurrence rename problem = %#v, want overlapping-range refusal", problem)
+	}
+}
+
+func TestInProcessRenameRefusesOverlappingOccurrenceRanges(t *testing.T) {
+	base := service.NewBatchSession()
+	session := &overlappingBinderOccurrencesSession{WorkspaceSession: base, name: "item"}
+	server, uri := openSolvedDocumentWithSession(t, "local item = 1\nreturn item\n", session, Options{Debounce: time.Millisecond})
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	_, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri}, "position": Position{Line: 1, Character: 7}, "newName": "renamed",
+	})})
+	if problem == nil || !strings.Contains(problem.Message, "overlapping") {
+		t.Fatalf("overlapping occurrence rename problem = %#v, want overlapping-range refusal", problem)
+	}
+}
+
+func TestInProcessRenameRefusesWhenDocumentChangesBeforeResponse(t *testing.T) {
+	base := service.NewBatchSession()
+	session := &blockBinderOccurrencesSession{
+		WorkspaceSession: base,
+		blockCall:        2,
+		started:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	server, uri := openSolvedDocumentWithSession(t, "local item = 1\nreturn item\n", session, Options{Debounce: time.Millisecond})
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	done := make(chan *jsonrpc2.Error, 1)
+	go func() {
+		_, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodRename, Params: paramsJSON(t, map[string]any{
+			"textDocument": map[string]any{"uri": uri}, "position": Position{Line: 1, Character: 7}, "newName": "renamed",
+		})})
+		done <- problem
+	}()
+	select {
+	case <-session.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("rename did not reach its final occurrence query")
+	}
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodDidChange, Params: paramsJSON(t, map[string]any{
+		"textDocument":   map[string]any{"uri": uri, "version": 2},
+		"contentChanges": []map[string]any{{"text": "local prefix = 0\nlocal item = 1\nreturn item\n"}},
+	})}); problem != nil {
+		t.Fatalf("concurrent didChange: %v", problem)
+	}
+	close(session.release)
+	select {
+	case problem := <-done:
+		if problem == nil || !strings.Contains(problem.Message, "document changed") {
+			t.Fatalf("rename after didChange problem = %#v, want stale-edit refusal", problem)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rename did not return after concurrent didChange")
 	}
 }
 
@@ -480,11 +626,14 @@ func TestInProcessCodeActionUsesStructuredEditAndClearsDiagnostic(t *testing.T) 
 		t.Fatalf("code actions: %v", problem)
 	}
 	actions, ok := result.([]codeAction)
-	if !ok || len(actions) != 1 || actions[0].Kind != "quickfix" || len(actions[0].Edit.Changes[uri]) != 1 {
+	if !ok || len(actions) != 1 || actions[0].Kind != "quickfix" || len(actions[0].Edit.DocumentChanges) != 1 {
 		t.Fatalf("code actions = %#v, want one descriptor-backed quickfix", result)
 	}
+	if got := actions[0].Edit.DocumentChanges[0].TextDocument; got.URI != uri || got.Version != 1 {
+		t.Fatalf("code action document version = %#v, want %s at version 1", got, uri)
+	}
 	buffer := newTextBuffer([]byte("local value: number = 1\nlocal redundant = value as number\nreturn redundant\n"))
-	edit := actions[0].Edit.Changes[uri][0]
+	edit := actions[0].Edit.DocumentChanges[0].Edits[0]
 	if err := buffer.apply([]TextDocumentContentChangeEvent{{Range: &edit.Range, Text: edit.NewText}}); err != nil {
 		t.Fatalf("apply code action: %v", err)
 	}
@@ -504,6 +653,55 @@ func TestInProcessCodeActionUsesStructuredEditAndClearsDiagnostic(t *testing.T) 
 	}
 	if containsDiagnosticCode(diagnostics.Rendered, string(judgment.DiagnosticCodeAdviceRedundantClaim)) {
 		t.Fatalf("diagnostics after repair = %#v, want redundant-claim diagnostic gone", diagnostics.Rendered)
+	}
+}
+
+func TestInProcessHoverMapsThroughCapturedSnapshotBuffer(t *testing.T) {
+	session := &blockPositionLookupSession{
+		WorkspaceSession: service.NewBatchSession(),
+		started:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	source := "local value: number = 1\nlocal redundant = value as number\nreturn redundant\n"
+	server, uri := openSolvedDocumentWithSession(t, source, session, Options{Debounce: time.Millisecond})
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	done := make(chan struct {
+		result  any
+		problem *jsonrpc2.Error
+	}, 1)
+	go func() {
+		result, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodHover, Params: paramsJSON(t, map[string]any{
+			"textDocument": map[string]any{"uri": uri}, "position": Position{Line: 1, Character: 18},
+		})})
+		done <- struct {
+			result  any
+			problem *jsonrpc2.Error
+		}{result, problem}
+	}()
+	select {
+	case <-session.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("hover did not reach position lookup")
+	}
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodDidChange, Params: paramsJSON(t, map[string]any{
+		"textDocument":   map[string]any{"uri": uri, "version": 2},
+		"contentChanges": []map[string]any{{"text": "local value: number = 1\n😀local redundant = value as number\nreturn redundant\n"}},
+	})}); problem != nil {
+		t.Fatalf("concurrent didChange: %v", problem)
+	}
+	close(session.release)
+	select {
+	case response := <-done:
+		if response.problem != nil {
+			t.Fatalf("hover after didChange: %v", response.problem)
+		}
+		hover, ok := response.result.(hoverResult)
+		if !ok || hover.Range == nil || hover.Range.Start != (Position{Line: 1, Character: 18}) {
+			t.Fatalf("hover range after didChange = %#v, want captured version-1 range", response.result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hover did not return after concurrent didChange")
 	}
 }
 
@@ -531,9 +729,13 @@ func openSolvedDocument(t *testing.T, text string) (*Server, string) {
 }
 
 func openSolvedDocumentWithOptions(t *testing.T, text string, options Options) (*Server, string) {
+	return openSolvedDocumentWithSession(t, text, service.NewBatchSession(), options)
+}
+
+func openSolvedDocumentWithSession(t *testing.T, text string, session service.WorkspaceSession, options Options) (*Server, string) {
 	t.Helper()
-	server := NewServer(service.NewBatchSession(), options)
-	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize}); problem != nil {
+	server := NewServer(session, options)
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize, Params: paramsJSON(t, map[string]any{"capabilities": initializeCapabilities(true)})}); problem != nil {
 		t.Fatalf("initialize: %v", problem)
 	}
 	uri := "file:///workspace/semantic.lua"
@@ -579,6 +781,108 @@ type blockFirstSolveSession struct {
 	first    bool
 	started  chan struct{}
 	canceled chan struct{}
+}
+
+type duplicateBinderOccurrencesSession struct {
+	service.WorkspaceSession
+	name string
+}
+
+type overlappingBinderOccurrencesSession struct {
+	service.WorkspaceSession
+	name string
+}
+
+func (s *overlappingBinderOccurrencesSession) BinderOccurrences(ctx context.Context, request service.BinderOccurrencesRequest) (service.BinderOccurrencesResponse, error) {
+	response, err := s.WorkspaceSession.BinderOccurrences(ctx, request)
+	if err != nil {
+		return service.BinderOccurrencesResponse{}, err
+	}
+	for index := range response.Binders {
+		binder := &response.Binders[index]
+		if binder.Name != s.name || len(binder.Occurrences) == 0 {
+			continue
+		}
+		overlap := binder.Occurrences[0]
+		if overlap.Location.Span.StartCol < overlap.Location.Span.EndCol {
+			overlap.Location.Span.StartCol++
+		}
+		binder.Occurrences = append(binder.Occurrences, overlap)
+	}
+	return response, nil
+}
+
+func (s *duplicateBinderOccurrencesSession) BinderOccurrences(ctx context.Context, request service.BinderOccurrencesRequest) (service.BinderOccurrencesResponse, error) {
+	response, err := s.WorkspaceSession.BinderOccurrences(ctx, request)
+	if err != nil {
+		return service.BinderOccurrencesResponse{}, err
+	}
+	for index := range response.Binders {
+		binder := &response.Binders[index]
+		if binder.Name == s.name && len(binder.Occurrences) != 0 {
+			binder.Occurrences = append(binder.Occurrences, binder.Occurrences[0])
+		}
+	}
+	return response, nil
+}
+
+type blockBinderOccurrencesSession struct {
+	service.WorkspaceSession
+	mu        sync.Mutex
+	calls     int
+	blockCall int
+	started   chan struct{}
+	release   chan struct{}
+}
+
+type blockRepairActionsSession struct {
+	service.WorkspaceSession
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockRepairActionsSession) RepairActions(ctx context.Context, request service.RepairActionsRequest) (service.RepairActionsResponse, error) {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return service.RepairActionsResponse{}, ctx.Err()
+	}
+	return s.WorkspaceSession.RepairActions(ctx, request)
+}
+
+type blockPositionLookupSession struct {
+	service.WorkspaceSession
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockPositionLookupSession) PositionLookup(ctx context.Context, request service.PositionLookupRequest) (service.PositionLookupResponse, error) {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return service.PositionLookupResponse{}, ctx.Err()
+	}
+	return s.WorkspaceSession.PositionLookup(ctx, request)
+}
+
+func (s *blockBinderOccurrencesSession) BinderOccurrences(ctx context.Context, request service.BinderOccurrencesRequest) (service.BinderOccurrencesResponse, error) {
+	s.mu.Lock()
+	s.calls++
+	block := s.calls == s.blockCall
+	s.mu.Unlock()
+	if block {
+		close(s.started)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return service.BinderOccurrencesResponse{}, ctx.Err()
+		}
+	}
+	return s.WorkspaceSession.BinderOccurrences(ctx, request)
 }
 
 type blockRemoveSession struct {
@@ -658,7 +962,14 @@ func readRPC(t *testing.T, connection net.Conn, framer *jsonrpc2.Framer) []byte 
 	return payload
 }
 
-func assertCapabilities(t *testing.T, payload []byte) {
+func initializeCapabilities(prepareSupport bool) map[string]any {
+	return map[string]any{
+		"workspace":    map[string]any{"workspaceEdit": map[string]any{"documentChanges": true}},
+		"textDocument": map[string]any{"rename": map[string]any{"prepareSupport": prepareSupport}},
+	}
+}
+
+func assertCapabilities(t *testing.T, payload []byte, prepareSupport bool) {
 	t.Helper()
 	var response struct {
 		Result struct {
@@ -673,8 +984,8 @@ func assertCapabilities(t *testing.T, payload []byte) {
 				ReferencesProvider        bool            `json:"referencesProvider"`
 				DocumentHighlightProvider bool            `json:"documentHighlightProvider"`
 				DocumentSymbolProvider    bool            `json:"documentSymbolProvider"`
-				RenameProvider            bool            `json:"renameProvider"`
-				PrepareRenameProvider     bool            `json:"prepareRenameProvider"`
+				RenameProvider            json.RawMessage `json:"renameProvider"`
+				PrepareRenameProvider     json.RawMessage `json:"prepareRenameProvider"`
 				CodeActionProvider        bool            `json:"codeActionProvider"`
 				SemanticTokensProvider    struct {
 					Legend struct {
@@ -691,7 +1002,33 @@ func assertCapabilities(t *testing.T, payload []byte) {
 		t.Fatalf("decode initialize result: %v", err)
 	}
 	semantic := response.Result.Capabilities.SemanticTokensProvider
-	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || !response.Result.Capabilities.RenameProvider || !response.Result.Capabilities.PrepareRenameProvider || !response.Result.Capabilities.CodeActionProvider || !semantic.Full || semantic.Range || !reflect.DeepEqual(semantic.Legend.TokenTypes, []string{"variable", "parameter", "function"}) || !reflect.DeepEqual(semantic.Legend.TokenModifiers, []string{"typestate-tracked", "placement"}) {
+	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || len(response.Result.Capabilities.RenameProvider) == 0 || len(response.Result.Capabilities.PrepareRenameProvider) != 0 || !response.Result.Capabilities.CodeActionProvider || !semantic.Full || semantic.Range || !reflect.DeepEqual(semantic.Legend.TokenTypes, []string{"variable", "parameter", "function"}) || !reflect.DeepEqual(semantic.Legend.TokenModifiers, []string{"typestate-tracked", "placement"}) {
 		t.Fatalf("advertised capabilities = %s", payload)
+	}
+	if prepareSupport {
+		var options renameOptions
+		if err := json.Unmarshal(response.Result.Capabilities.RenameProvider, &options); err != nil || !options.PrepareProvider {
+			t.Fatalf("rename capability = %s, want prepareProvider", response.Result.Capabilities.RenameProvider)
+		}
+		return
+	}
+	var renameProvider bool
+	if err := json.Unmarshal(response.Result.Capabilities.RenameProvider, &renameProvider); err != nil || !renameProvider {
+		t.Fatalf("rename capability = %s, want boolean true", response.Result.Capabilities.RenameProvider)
+	}
+}
+
+func assertVersionedWorkspaceEditWire(t *testing.T, edit workspaceEdit) {
+	t.Helper()
+	payload, err := json.Marshal(edit)
+	if err != nil {
+		t.Fatalf("marshal workspace edit: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatalf("decode workspace edit: %v", err)
+	}
+	if _, found := fields["changes"]; found || len(fields["documentChanges"]) == 0 {
+		t.Fatalf("workspace edit wire shape = %s, want only versioned documentChanges", payload)
 	}
 }

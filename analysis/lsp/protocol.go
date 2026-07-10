@@ -129,8 +129,16 @@ type workspaceTextEdit struct {
 	NewText string `json:"newText"`
 }
 
+// textDocumentEdit is a version-fenced LSP WorkspaceEdit entry. Mutating
+// edits must use this shape rather than the unversioned changes map so the
+// client can reject an edit computed for an older overlay.
+type textDocumentEdit struct {
+	TextDocument VersionedTextDocumentIdentifier `json:"textDocument"`
+	Edits        []workspaceTextEdit             `json:"edits"`
+}
+
 type workspaceEdit struct {
-	Changes map[string][]workspaceTextEdit `json:"changes,omitempty"`
+	DocumentChanges []textDocumentEdit `json:"documentChanges,omitempty"`
 }
 
 type codeActionParams struct {
@@ -205,6 +213,25 @@ type initializeResult struct {
 	ServerInfo   serverInfo         `json:"serverInfo"`
 }
 
+// initializeParams contains only the client capabilities used to select a
+// protocol response shape. Unknown capabilities remain forward-compatible.
+type initializeParams struct {
+	Capabilities clientCapabilities `json:"capabilities"`
+}
+
+type clientCapabilities struct {
+	Workspace struct {
+		WorkspaceEdit struct {
+			DocumentChanges bool `json:"documentChanges"`
+		} `json:"workspaceEdit"`
+	} `json:"workspace"`
+	TextDocument struct {
+		Rename struct {
+			PrepareSupport bool `json:"prepareSupport"`
+		} `json:"rename"`
+	} `json:"textDocument"`
+}
+
 type serverInfo struct {
 	Name string `json:"name"`
 }
@@ -219,10 +246,13 @@ type serverCapabilities struct {
 	ReferencesProvider        bool                    `json:"referencesProvider"`
 	DocumentHighlightProvider bool                    `json:"documentHighlightProvider"`
 	DocumentSymbolProvider    bool                    `json:"documentSymbolProvider"`
-	RenameProvider            bool                    `json:"renameProvider"`
-	PrepareRenameProvider     bool                    `json:"prepareRenameProvider"`
+	RenameProvider            any                     `json:"renameProvider"`
 	CodeActionProvider        bool                    `json:"codeActionProvider"`
 	SemanticTokensProvider    semanticTokensOptions   `json:"semanticTokensProvider"`
+}
+
+type renameOptions struct {
+	PrepareProvider bool `json:"prepareProvider"`
 }
 
 type textDocumentSyncOptions struct {
@@ -262,7 +292,11 @@ var semanticTokenLegend = semanticTokensLegend{
 	},
 }
 
-func defaultInitializeResult() initializeResult {
+func defaultInitializeResult(client clientCapabilities) initializeResult {
+	renameProvider := any(true)
+	if client.TextDocument.Rename.PrepareSupport {
+		renameProvider = renameOptions{PrepareProvider: true}
+	}
 	return initializeResult{
 		Capabilities: serverCapabilities{
 			TextDocumentSync: textDocumentSyncOptions{OpenClose: true, Change: textDocumentSyncIncremental},
@@ -276,8 +310,7 @@ func defaultInitializeResult() initializeResult {
 			ReferencesProvider:        true,
 			DocumentHighlightProvider: true,
 			DocumentSymbolProvider:    true,
-			RenameProvider:            true,
-			PrepareRenameProvider:     true,
+			RenameProvider:            renameProvider,
 			CodeActionProvider:        true,
 			SemanticTokensProvider: semanticTokensOptions{
 				Legend: semanticTokenLegend,

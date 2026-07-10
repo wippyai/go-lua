@@ -72,12 +72,13 @@ type solveWork struct {
 }
 
 type semanticDocument struct {
-	uri      string
-	document embedding.DocumentID
-	unitID   embedding.UnitID
-	version  int64
-	buffer   textBuffer
-	tag      service.ResultTag
+	uri        string
+	document   embedding.DocumentID
+	unitID     embedding.UnitID
+	version    int64
+	generation uint64
+	buffer     textBuffer
+	tag        service.ResultTag
 }
 
 // Server is safe for concurrent protocol calls. Each document has one active
@@ -89,12 +90,13 @@ type Server struct {
 	resolver ModuleResolver
 	debounce time.Duration
 
-	mu        sync.Mutex
-	state     lifecycle
-	documents map[embedding.DocumentID]*openDocument
-	notify    NotificationFunc
-	rootCtx   context.Context
-	cancel    context.CancelFunc
+	mu                       sync.Mutex
+	state                    lifecycle
+	documentChangesSupported bool
+	documents                map[embedding.DocumentID]*openDocument
+	notify                   NotificationFunc
+	rootCtx                  context.Context
+	cancel                   context.CancelFunc
 }
 
 func NewServer(session service.WorkspaceSession, options Options) *Server {
@@ -146,7 +148,7 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 	var err error
 	switch request.Method {
 	case methodInitialize:
-		result, err = s.initialize()
+		result, err = s.initialize(request.Params)
 	case methodInitialized:
 		err = s.initialized()
 	case methodShutdown:
@@ -192,14 +194,19 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 	return nil, jsonrpc2.NewError(jsonrpc2.InternalError, "internal LSP server error", err.Error())
 }
 
-func (s *Server) initialize() (any, error) {
+func (s *Server) initialize(raw []byte) (any, error) {
+	var params initializeParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid initialize params", err.Error())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state != lifecycleNew {
 		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "server is already initialized", nil)
 	}
 	s.state = lifecycleRunning
-	return defaultInitializeResult(), nil
+	s.documentChangesSupported = params.Capabilities.Workspace.WorkspaceEdit.DocumentChanges
+	return defaultInitializeResult(params.Capabilities), nil
 }
 
 func (s *Server) initialized() error {
@@ -413,6 +420,7 @@ func (s *Server) hover(ctx context.Context, raw []byte) (any, error) {
 		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid hover position", err.Error())
 	}
 	unitID, version, digest := doc.unitID, doc.version, doc.buffer.digest()
+	buffer := newTextBuffer(doc.buffer.bytes())
 	s.mu.Unlock()
 
 	completed, ok := s.session.LastComplete(ctx, service.ResultRequest{Selector: service.ResultSelector{UnitID: unitID}})
@@ -437,20 +445,15 @@ func (s *Server) hover(ctx context.Context, raw []byte) (any, error) {
 		markdown.WriteString("```lua\n")
 		markdown.WriteString(lookup.Expression.Display)
 		markdown.WriteString("\n```")
-		s.mu.Lock()
-		current := s.documents[document]
-		if current != nil {
-			mapped, mapErr := current.buffer.rangeForCompilerSpan(
-				lookup.Expression.Location.Span.StartLine,
-				lookup.Expression.Location.Span.StartCol,
-				lookup.Expression.Location.Span.EndLine,
-				lookup.Expression.Location.Span.EndCol,
-			)
-			if mapErr == nil {
-				resultRange = &mapped
-			}
+		mapped, mapErr := buffer.rangeForCompilerSpan(
+			lookup.Expression.Location.Span.StartLine,
+			lookup.Expression.Location.Span.StartCol,
+			lookup.Expression.Location.Span.EndLine,
+			lookup.Expression.Location.Span.EndCol,
+		)
+		if mapErr == nil {
+			resultRange = &mapped
 		}
-		s.mu.Unlock()
 	}
 
 	selector := service.ResultSelector{UnitID: unitID, SolveSeq: tag.SolveSeq, Profile: tag.Profile}
@@ -612,7 +615,10 @@ func (s *Server) rename(ctx context.Context, raw []byte) (any, error) {
 		return nil, err
 	}
 	if params.NewName == binder.Name {
-		return workspaceEdit{Changes: map[string][]workspaceTextEdit{}}, nil
+		return workspaceEdit{}, nil
+	}
+	if !s.supportsVersionedDocumentChanges() {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename requires client support for versioned documentChanges", nil)
 	}
 	all, err := s.session.BinderOccurrences(ctx, service.BinderOccurrencesRequest{
 		Selector: service.ResultSelector{UnitID: document.unitID, SolveSeq: document.tag.SolveSeq, Profile: document.tag.Profile},
@@ -623,15 +629,14 @@ func (s *Server) rename(ctx context.Context, raw []byte) (any, error) {
 	if err := document.renameCollision(binder, params.NewName, all.Binders); err != nil {
 		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, err.Error(), nil)
 	}
-	edits := make([]workspaceTextEdit, 0, len(binder.Occurrences)+1)
-	for _, location := range binderLocations(*binder) {
-		editRange, ok := document.protocolRange(location)
-		if !ok {
-			return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename cannot prove a complete module-local occurrence set", nil)
-		}
-		edits = append(edits, workspaceTextEdit{Range: editRange, NewText: params.NewName})
+	edits, err := document.renameEdits(binder, params.NewName)
+	if err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, err.Error(), nil)
 	}
-	return workspaceEdit{Changes: map[string][]workspaceTextEdit{document.uri: edits}}, nil
+	if !s.semanticDocumentCurrent(document) {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename aborted because the document changed during the request", nil)
+	}
+	return versionedWorkspaceEdit(document, edits), nil
 }
 
 func (s *Server) codeActions(ctx context.Context, raw []byte) (any, error) {
@@ -649,6 +654,9 @@ func (s *Server) codeActions(ctx context.Context, raw []byte) (any, error) {
 	document, ok, err := s.currentSemanticDocument(ctx, documentID)
 	if err != nil || !ok {
 		return nil, err
+	}
+	if !s.supportsVersionedDocumentChanges() {
+		return []codeAction{}, nil
 	}
 	repairs, err := s.session.RepairActions(ctx, service.RepairActionsRequest{
 		Selector: service.ResultSelector{UnitID: document.unitID, SolveSeq: document.tag.SolveSeq, Profile: document.tag.Profile},
@@ -678,8 +686,11 @@ func (s *Server) codeActions(ctx context.Context, raw []byte) (any, error) {
 		actions = append(actions, codeAction{
 			Title: repairTitle(string(repair.Kind)),
 			Kind:  "quickfix",
-			Edit:  workspaceEdit{Changes: map[string][]workspaceTextEdit{document.uri: edits}},
+			Edit:  versionedWorkspaceEdit(document, edits),
 		})
+	}
+	if !s.semanticDocumentCurrent(document) {
+		return []codeAction{}, nil
 	}
 	return actions, nil
 }
@@ -717,13 +728,28 @@ func (s *Server) renameBinderAtPosition(ctx context.Context, uri string, positio
 		return semanticDocument{}, nil, err
 	}
 	if binder == nil {
+		if document.isVarargPosition(position) {
+			return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename refuses varargs until the checker supplies a certified transformation", nil)
+		}
 		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename requires a lexical binder occurrence", nil)
+	}
+	if binder.Name == "self" {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename refuses implicit self until the checker supplies a certified transformation", nil)
+	}
+	if binder.Name == "..." {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename refuses varargs until the checker supplies a certified transformation", nil)
+	}
+	if binder.Kind == service.BinderParam {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename refuses parameters until the checker certifies complete declaration and occurrence spans", nil)
 	}
 	if !binder.ModuleLocal {
 		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename rejects cross-module exported/global binders", nil)
 	}
 	if !binder.Scope.Valid() {
 		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename cannot prove the binder's lexical scope", nil)
+	}
+	if _, err := document.renameEdits(binder, ""); err != nil {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, err.Error(), nil)
 	}
 	return document, binder, nil
 }
@@ -750,7 +776,7 @@ func (s *Server) binderAtPosition(ctx context.Context, uri string, position Posi
 		return semanticDocument{}, nil, fmt.Errorf("read position lookup: %w", err)
 	}
 	if !lookup.Found || lookup.Binder == nil {
-		return semanticDocument{}, nil, nil
+		return current, nil, nil
 	}
 	occurrences, err := s.session.BinderOccurrences(ctx, service.BinderOccurrencesRequest{
 		Selector: service.ResultSelector{UnitID: current.unitID, SolveSeq: current.tag.SolveSeq, Profile: current.tag.Profile},
@@ -763,7 +789,7 @@ func (s *Server) binderAtPosition(ctx context.Context, uri string, position Posi
 			return current, &occurrences.Binders[index], nil
 		}
 	}
-	return semanticDocument{}, nil, nil
+	return current, nil, nil
 }
 
 func (s *Server) currentSemanticDocument(ctx context.Context, document embedding.DocumentID) (semanticDocument, bool, error) {
@@ -778,11 +804,12 @@ func (s *Server) currentSemanticDocument(ctx context.Context, document embedding
 		return semanticDocument{}, false, nil
 	}
 	current := semanticDocument{
-		uri:      doc.uri,
-		document: document,
-		unitID:   doc.unitID,
-		version:  doc.version,
-		buffer:   newTextBuffer(doc.buffer.bytes()),
+		uri:        doc.uri,
+		document:   document,
+		unitID:     doc.unitID,
+		version:    doc.version,
+		generation: doc.generation,
+		buffer:     newTextBuffer(doc.buffer.bytes()),
 	}
 	s.mu.Unlock()
 
@@ -795,6 +822,34 @@ func (s *Server) currentSemanticDocument(ctx context.Context, document embedding
 		return semanticDocument{}, false, nil
 	}
 	return current, true, nil
+}
+
+// semanticDocumentCurrent is the response-build fence for every mutating
+// edit. It compares the exact snapshot used for semantic queries with the
+// current overlay while holding the document mutex, then the versioned edit
+// supplies the client-side fence at application time.
+func (s *Server) semanticDocumentCurrent(snapshot semanticDocument) bool {
+	digest := snapshot.buffer.digest()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != lifecycleRunning {
+		return false
+	}
+	doc := s.documents[snapshot.document]
+	return doc != nil && doc.uri == snapshot.uri && doc.unitID == snapshot.unitID && doc.version == snapshot.version && doc.generation == snapshot.generation && doc.buffer.digest() == digest
+}
+
+func (s *Server) supportsVersionedDocumentChanges() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state == lifecycleRunning && s.documentChangesSupported
+}
+
+func versionedWorkspaceEdit(document semanticDocument, edits []workspaceTextEdit) workspaceEdit {
+	return workspaceEdit{DocumentChanges: []textDocumentEdit{{
+		TextDocument: VersionedTextDocumentIdentifier{URI: document.uri, Version: document.version},
+		Edits:        edits,
+	}}}
 }
 
 func (d semanticDocument) protocolLocation(location service.SourceLocation) (Location, bool) {
@@ -870,6 +925,49 @@ func (d semanticDocument) binderRangeAt(binder *service.BinderInfo, position Pos
 	return Range{}, false
 }
 
+// renameEdits proves that the legacy binder projection represents one complete
+// non-overlapping lexical occurrence set before the adapter turns it into text
+// edits. The checker has not yet provided a renameable certification flag, so
+// this defensive gate deliberately refuses any ambiguous projection.
+func (d semanticDocument) renameEdits(binder *service.BinderInfo, newName string) ([]workspaceTextEdit, error) {
+	if binder == nil || !binder.Definition.Valid() {
+		return nil, fmt.Errorf("rename cannot prove a distinct declaration span")
+	}
+	if len(binder.Occurrences) == 0 {
+		return nil, fmt.Errorf("rename cannot prove a non-empty occurrence set")
+	}
+	locations := binderLocations(*binder)
+	if len(locations) == 0 {
+		return nil, fmt.Errorf("rename cannot prove a non-empty occurrence set")
+	}
+	edits := make([]workspaceTextEdit, 0, len(locations))
+	for _, location := range locations {
+		mapped, ok := d.protocolRange(location)
+		if !ok || !positionBefore(mapped.Start, mapped.End) {
+			return nil, fmt.Errorf("rename cannot prove a complete, non-overlapping occurrence set")
+		}
+		edits = append(edits, workspaceTextEdit{Range: mapped, NewText: newName})
+	}
+	declaration := edits[0].Range
+	for _, edit := range edits[1:] {
+		if rangesEqual(declaration, edit.Range) {
+			return nil, fmt.Errorf("rename cannot prove a distinct declaration span")
+		}
+	}
+	sort.Slice(edits, func(i, j int) bool {
+		if edits[i].Range.Start != edits[j].Range.Start {
+			return positionBefore(edits[i].Range.Start, edits[j].Range.Start)
+		}
+		return positionBefore(edits[i].Range.End, edits[j].Range.End)
+	})
+	for index := 1; index < len(edits); index++ {
+		if rangesStrictlyOverlap(edits[index-1].Range, edits[index].Range) {
+			return nil, fmt.Errorf("rename cannot prove a complete, non-overlapping occurrence set")
+		}
+	}
+	return edits, nil
+}
+
 func (d semanticDocument) renameCollision(target *service.BinderInfo, newName string, candidates []service.BinderInfo) error {
 	for _, candidate := range candidates {
 		if candidate.SymbolID == target.SymbolID || candidate.Name != newName {
@@ -914,12 +1012,34 @@ func binderLocations(binder service.BinderInfo) []service.SourceLocation {
 	return locations
 }
 
+func (d semanticDocument) isVarargPosition(position Position) bool {
+	offset, err := d.buffer.offsetForPosition(position)
+	if err != nil {
+		return false
+	}
+	source := d.buffer.bytes()
+	for start := offset - 2; start <= offset; start++ {
+		if start >= 0 && start+3 <= len(source) && string(source[start:start+3]) == "..." {
+			return true
+		}
+	}
+	return false
+}
+
 func rangeContainsPosition(item Range, position Position) bool {
 	return positionBeforeOrEqual(item.Start, position) && positionBeforeOrEqual(position, item.End)
 }
 
 func rangesOverlap(left, right Range) bool {
 	return positionBeforeOrEqual(left.Start, right.End) && positionBeforeOrEqual(right.Start, left.End)
+}
+
+func rangesStrictlyOverlap(left, right Range) bool {
+	return positionBefore(left.Start, right.End) && positionBefore(right.Start, left.End)
+}
+
+func rangesEqual(left, right Range) bool {
+	return left.Start == right.Start && left.End == right.End
 }
 
 func containsCodeActionKind(items []string, wanted string) bool {
@@ -1043,6 +1163,10 @@ func protocolSemanticTokenModifiers(items []service.SemanticTokenModifier) (uint
 
 func positionBeforeOrEqual(left, right Position) bool {
 	return left.Line < right.Line || left.Line == right.Line && left.Character <= right.Character
+}
+
+func positionBefore(left, right Position) bool {
+	return left.Line < right.Line || left.Line == right.Line && left.Character < right.Character
 }
 
 func validLuaIdentifier(name string) bool {
