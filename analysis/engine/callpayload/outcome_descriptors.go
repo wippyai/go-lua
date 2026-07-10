@@ -70,6 +70,8 @@ var callOutcomeDescriptors = func() callboundary.BoundaryFactTable[CallOutcomeLa
 			func(o CallOutcome) bool { return len(o.ParamObligations) != 0 }),
 		callOutcomeLaneDescriptor("PathObligations", nil, false,
 			func(o CallOutcome) bool { return len(o.PathObligations) != 0 }),
+		callOutcomeLaneDescriptor("TypestateRequirements", []string{"TypestateRequirements"}, false,
+			func(o CallOutcome) bool { return len(o.TypestateRequirements) != 0 }),
 		callOutcomeLaneDescriptor("ParamPathRefinements", nil, true,
 			func(o CallOutcome) bool { return len(o.ParamPathRefinements) != 0 }),
 		callOutcomeLaneDescriptor("ParamPathWrites", nil, true,

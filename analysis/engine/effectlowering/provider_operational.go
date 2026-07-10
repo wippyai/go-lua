@@ -47,6 +47,7 @@ func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutco
 	out.SuspensionKnown = out.SuspensionKnown || effects.SuspensionKnown
 	out.MaySuspend = out.MaySuspend || effects.MaySuspend
 	out.ReturnPresenceRelations = operationalReturnPresenceRelations(*effects)
+	out.TypestateRequirements = operationalTypestateRequirements(*effects)
 	applyOperationalNormalReturnFacts(ctx, op, *effects, &out.NormalReturnFacts)
 	out.HeapTableObjects = operationalHeapTableObjects(ctx, op.typeValues, op.keySpace, op.signatureType, *effects)
 	out.Placements = operationalAllocationPlacements(ctx.Point, *effects)
@@ -530,6 +531,24 @@ func operationalLifecycleFacts(e signature.OperationalEffects) []callboundary.Li
 			From:       fact.From,
 			To:         fact.To,
 			Obligation: fact.Obligation,
+		})
+	}
+	return out
+}
+
+func operationalTypestateRequirements(e signature.OperationalEffects) []callpayload.CallTypestateRequirement {
+	if len(e.TypestateRequirements) == 0 {
+		return nil
+	}
+	out := make([]callpayload.CallTypestateRequirement, 0, len(e.TypestateRequirements))
+	for _, requirement := range e.TypestateRequirements {
+		if !requirement.Target.IsPlaceholder() || requirement.Protocol == "" || requirement.State == "" {
+			continue
+		}
+		out = append(out, callpayload.CallTypestateRequirement{
+			Target:   requirement.Target,
+			Protocol: requirement.Protocol,
+			State:    requirement.State,
 		})
 	}
 	return out

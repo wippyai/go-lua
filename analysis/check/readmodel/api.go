@@ -40,6 +40,7 @@ type Reader interface {
 	ForEachFrozenTableMutation(func(FrozenTableMutation) bool) bool
 	ForEachLifecycleObligation(func(LifecycleObligation) bool) bool
 	ForEachTypestateInvalidTransition(func(TypestateInvalidTransition) bool) bool
+	ForEachTypestateRequirement(func(TypestateRequirement) bool) bool
 	ForEachUnusedLocal(func(UnusedLocal) bool) bool
 	ForEachDeadAssignment(func(DeadAssignment) bool) bool
 	ForEachChannelSelectExhaustiveness(func(ChannelSelectExhaustiveness) bool) bool
@@ -855,6 +856,19 @@ type TypestateInvalidTransition struct {
 	Expected string
 	Found    string
 	Target   string
+}
+
+// TypestateRequirement is the solved read model for one declared lifecycle
+// call-entry precondition that remains unknown or is proven false.
+type TypestateRequirement struct {
+	Point    cfg.Point
+	Span     SourceSpan
+	Resource string
+	Protocol string
+	Expected string
+	Found    string
+	Target   string
+	Refuted  bool
 }
 
 // UnusedLocal is the solved read model for a local declaration whose symbol has

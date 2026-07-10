@@ -35,6 +35,7 @@ type OperationalEffects struct {
 	ParamRelations                  []ParamRelation
 	ReturnFlows                     []ReturnFlow
 	LifecycleEffects                []LifecycleEffect
+	TypestateRequirements           []TypestateRequirement
 	ReturnAllocationTemplates       []ReturnAllocationTemplate
 }
 
@@ -207,6 +208,15 @@ type LifecycleEffect struct {
 	From       typestate.State
 	To         typestate.State
 	Obligation typestate.Obligation
+}
+
+// TypestateRequirement declares a call-entry precondition for a protocol
+// resource. Target is parameter-relative (including a method receiver at $0);
+// it does not mutate the resource state.
+type TypestateRequirement struct {
+	Target   pathdom.Path
+	Protocol typestate.Protocol
+	State    typestate.State
 }
 
 type AllocationTemplateID string
@@ -412,6 +422,10 @@ var operationalEffectLanes = []operationalEffectLane{
 		func(e OperationalEffects) []LifecycleEffect { return e.LifecycleEffects },
 		func(e *OperationalEffects, facts []LifecycleEffect) { e.LifecycleEffects = facts },
 		cloneLifecycleEffects, equalLifecycleEffects, nil),
+	operationalEffectSliceLane("TypestateRequirements",
+		func(e OperationalEffects) []TypestateRequirement { return e.TypestateRequirements },
+		func(e *OperationalEffects, facts []TypestateRequirement) { e.TypestateRequirements = facts },
+		cloneTypestateRequirements, equalTypestateRequirements, nil),
 	operationalEffectSliceLane("ReturnAllocationTemplates",
 		func(e OperationalEffects) []ReturnAllocationTemplate { return e.ReturnAllocationTemplates },
 		func(e *OperationalEffects, facts []ReturnAllocationTemplate) { e.ReturnAllocationTemplates = facts },

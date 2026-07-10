@@ -40,6 +40,7 @@ var judgmentDiagnosticRenderers = map[judgment.RenderKey]judgmentDiagnosticRende
 	judgment.RenderSendIsolation:            renderSendIsolationJudgmentWithPolicy,
 	judgment.RenderTableDispatch:            renderTableDispatchJudgmentWithPolicy,
 	judgment.RenderTypestateInvalid:         renderTypestateInvalidTransitionJudgmentWithPolicy,
+	judgment.RenderTypestateRequirement:     renderTypestateRequirementJudgmentWithPolicy,
 	judgment.RenderUnresolvedType:           renderUnresolvedTypeJudgmentWithPolicy,
 	judgment.RenderUnresolvedValue:          renderUnresolvedValueJudgmentWithPolicy,
 	judgment.RenderUnusedLocal:              renderUnusedLocalJudgmentWithPolicy,

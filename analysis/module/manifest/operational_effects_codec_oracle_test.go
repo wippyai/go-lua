@@ -152,6 +152,10 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 				To:       typestate.State("finished"),
 			},
 		},
+		TypestateRequirements: []signature.TypestateRequirement{
+			{Target: pathdom.NewPlaceholder(0), Protocol: typestate.Protocol("connection"), State: typestate.State("open")},
+			{Target: pathdom.NewPlaceholder(1).Field("tx"), Protocol: typestate.Protocol("transaction"), State: typestate.State("active")},
+		},
 		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
 			ReturnIndex: 0,
 			Root:        "example.transform:return:0:root",
@@ -205,6 +209,7 @@ func oracleSingleLaneCases(rich signature.OperationalEffects) []struct {
 		{"ParamRelations", signature.OperationalEffects{ParamRelations: rich.ParamRelations}},
 		{"ReturnFlows", signature.OperationalEffects{ReturnFlows: rich.ReturnFlows}},
 		{"LifecycleEffects", signature.OperationalEffects{LifecycleEffects: rich.LifecycleEffects}},
+		{"TypestateRequirements", signature.OperationalEffects{TypestateRequirements: rich.TypestateRequirements}},
 		{"ReturnAllocationTemplates", signature.OperationalEffects{ReturnAllocationTemplates: rich.ReturnAllocationTemplates}},
 	}
 }
@@ -229,6 +234,7 @@ func reverseOperationalEffectSlices(e *signature.OperationalEffects) {
 	reverseSlice(e.ParamRelations)
 	reverseSlice(e.ReturnFlows)
 	reverseSlice(e.LifecycleEffects)
+	reverseSlice(e.TypestateRequirements)
 	reverseSlice(e.ReturnAllocationTemplates)
 }
 

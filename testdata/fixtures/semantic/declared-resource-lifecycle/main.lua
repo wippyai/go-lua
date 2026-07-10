@@ -64,3 +64,7 @@ local function final_on_pcall_normal_and_error_paths(flag)
         end
     end)
 end
+
+local function query_unknown_state(conn)
+    resource.query(conn)
+end

@@ -80,6 +80,7 @@ func TestCallOutcomeDescriptorsWireRefs(t *testing.T) {
 		"SuspensionKnown":         {"SuspensionKnown"},
 		"MaySuspend":              {"MaySuspend"},
 		"ReturnPresenceRelations": {"ReturnPresenceRelations"},
+		"TypestateRequirements":   {"TypestateRequirements"},
 	}
 	for _, d := range CallOutcomeDescriptors() {
 		expected := want[string(d.Kind)]

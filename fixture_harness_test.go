@@ -1499,7 +1499,6 @@ func fixtureResourceManifest() *typemanifest.Manifest {
 		to       typestate.State
 	}{
 		{"close", "connection", "open", "closed"},
-		{"query", "connection", "open", "open"},
 		{"commit", "transaction", "active", "committed"},
 		{"rollback", "transaction", "active", "rolledback"},
 	}
@@ -1524,6 +1523,12 @@ func fixtureResourceManifest() *typemanifest.Manifest {
 			}}},
 		})
 	}
+	m.DefineFunctionSignature("resource.query", signature.Function{
+		Type: typ.Func().Param("resource", typ.Any).Build(),
+		OperationalEffects: &signature.OperationalEffects{TypestateRequirements: []signature.TypestateRequirement{{
+			Target: pathdom.NewPlaceholder(0), Protocol: "connection", State: "open",
+		}}},
+	})
 	return m
 }
 

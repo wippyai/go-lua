@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -36,6 +37,7 @@ type operationalEffectsWire struct {
 	ParamRelations                  []paramRelationWire             `json:"paramRelations,omitempty"`
 	ReturnFlows                     []returnFlowWire                `json:"returnFlows,omitempty"`
 	LifecycleEffects                []lifecycleEffectWire           `json:"lifecycleEffects,omitempty"`
+	TypestateRequirements           []typestateRequirementWire      `json:"typestateRequirements,omitempty"`
 	ReturnAllocationTemplates       []returnAllocationTemplateWire  `json:"returnAllocationTemplates,omitempty"`
 }
 
@@ -158,6 +160,12 @@ type lifecycleEffectWire struct {
 	To       string            `json:"to,omitempty"`
 	Final    string            `json:"final,omitempty"`
 	Finals   []string          `json:"finals,omitempty"`
+}
+
+type typestateRequirementWire struct {
+	Target   *placeholderPathWire `json:"target,omitempty"`
+	Protocol string               `json:"protocol"`
+	State    string               `json:"state"`
 }
 
 type returnAllocationTemplateWire struct {
@@ -762,6 +770,38 @@ func compareLifecycleEffectWire(a, b lifecycleEffectWire) int {
 		}
 	}
 	return 0
+}
+
+func encodeTypestateRequirement(requirement signature.TypestateRequirement) (typestateRequirementWire, error) {
+	target, err := encodePlaceholderPath(requirement.Target)
+	if err != nil {
+		return typestateRequirementWire{}, fmt.Errorf("target: %w", err)
+	}
+	return typestateRequirementWire{Target: target, Protocol: string(requirement.Protocol), State: string(requirement.State)}, nil
+}
+
+func decodeTypestateRequirement(w typestateRequirementWire) (signature.TypestateRequirement, error) {
+	target, err := decodePlaceholderPath(w.Target)
+	if err != nil {
+		return signature.TypestateRequirement{}, fmt.Errorf("target: %w", err)
+	}
+	if w.Protocol == "" {
+		return signature.TypestateRequirement{}, errors.New("missing protocol")
+	}
+	if w.State == "" {
+		return signature.TypestateRequirement{}, errors.New("missing state")
+	}
+	return signature.TypestateRequirement{Target: target, Protocol: typestate.Protocol(w.Protocol), State: typestate.State(w.State)}, nil
+}
+
+func compareTypestateRequirementWire(a, b typestateRequirementWire) int {
+	if c := comparePlaceholderPathWire(a.Target, b.Target); c != 0 {
+		return c
+	}
+	if a.Protocol != b.Protocol {
+		return strings.Compare(a.Protocol, b.Protocol)
+	}
+	return strings.Compare(a.State, b.State)
 }
 
 func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate) (returnAllocationTemplateWire, error) {

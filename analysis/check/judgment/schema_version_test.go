@@ -19,19 +19,21 @@ const expectedJIRSchemaVersion6Hash = "ef8025767752746b3aacfdac58d2b772cdeb6968c
 const expectedJIRSchemaVersion7Hash = "38feb16136be8affed6fcd892f17f18754979fb3cc275f5f6b657026423fdac5"
 const expectedJIRSchemaVersion8Hash = "df0403785c8831fc6ff0b05adbe3404777b090ab243c099a9d1cf7b992afadc2"
 const expectedJIRSchemaVersion9Hash = "7675b7b249b58ec34d72269503bce87dc0186165c6144079e2285137210a8e76"
+const expectedJIRSchemaVersion10Hash = "ba75944cc3c74d7b173b351dfc5aab9e866a97f859fa37a2eefcf6e6d2d41b4a"
 
 func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(jirSchemaSurface())
 	want := map[int]string{
-		1: expectedJIRSchemaVersion1Hash,
-		2: expectedJIRSchemaVersion2Hash,
-		3: expectedJIRSchemaVersion3Hash,
-		4: expectedJIRSchemaVersion4Hash,
-		5: expectedJIRSchemaVersion5Hash,
-		6: expectedJIRSchemaVersion6Hash,
-		7: expectedJIRSchemaVersion7Hash,
-		8: expectedJIRSchemaVersion8Hash,
-		9: expectedJIRSchemaVersion9Hash,
+		1:  expectedJIRSchemaVersion1Hash,
+		2:  expectedJIRSchemaVersion2Hash,
+		3:  expectedJIRSchemaVersion3Hash,
+		4:  expectedJIRSchemaVersion4Hash,
+		5:  expectedJIRSchemaVersion5Hash,
+		6:  expectedJIRSchemaVersion6Hash,
+		7:  expectedJIRSchemaVersion7Hash,
+		8:  expectedJIRSchemaVersion8Hash,
+		9:  expectedJIRSchemaVersion9Hash,
+		10: expectedJIRSchemaVersion10Hash,
 	}[JIRSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected JIR schema hash for version %d: bump version constant + journal a D-entry", JIRSchemaVersion)

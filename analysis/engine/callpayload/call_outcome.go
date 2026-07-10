@@ -6,6 +6,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -52,6 +53,7 @@ type CallOutcome struct {
 	Placements                 map[identity.ID]placement.Value
 	ParamObligations           []CallParamObligation
 	PathObligations            []CallPathObligation
+	TypestateRequirements      []CallTypestateRequirement
 	ParamPathRefinements       []CallParamPathRefinement
 	ParamPathWrites            []CallParamPathWrite
 	ParamLengthFloors          []CallParamLengthFloor
@@ -219,6 +221,15 @@ type CallParamObligation struct {
 type CallPathObligation struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// CallTypestateRequirement is a diagnostic-only call-entry precondition over
+// a path-bound resource. Unlike LifecycleFacts it neither mutates nor assumes
+// a normal return; the obligation pass evaluates it against the caller state.
+type CallTypestateRequirement struct {
+	Target   pathdom.Path
+	Protocol typestate.Protocol
+	State    typestate.State
 }
 
 // CallParamObligationOrigin records why a diagnostic-only parameter

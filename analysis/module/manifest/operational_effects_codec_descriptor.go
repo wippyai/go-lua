@@ -190,6 +190,12 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		func(e *signature.OperationalEffects) *[]signature.LifecycleEffect { return &e.LifecycleEffects },
 		func(w *operationalEffectsWire) *[]lifecycleEffectWire { return &w.LifecycleEffects },
 		encodeLifecycleEffect, decodeLifecycleEffect, compareLifecycleEffectWire, nil),
+	wireLane("TypestateRequirements",
+		func(e *signature.OperationalEffects) *[]signature.TypestateRequirement {
+			return &e.TypestateRequirements
+		},
+		func(w *operationalEffectsWire) *[]typestateRequirementWire { return &w.TypestateRequirements },
+		encodeTypestateRequirement, decodeTypestateRequirement, compareTypestateRequirementWire, nil),
 	wireLane("ReturnAllocationTemplates",
 		func(e *signature.OperationalEffects) *[]signature.ReturnAllocationTemplate {
 			return &e.ReturnAllocationTemplates

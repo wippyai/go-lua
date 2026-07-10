@@ -29,6 +29,8 @@ const (
 	CodeFrozenTable                  Code = "effect.freeze.mutation"
 	CodeLifecycle                    Code = "effect.lifecycle.unreleased"
 	CodeTypestateInvalidTransition   Code = "typestate.invalid_transition"
+	CodeTypestateInvalidRequirement  Code = "typestate.invalid_requirement"
+	CodeTypestateUnprovenRequirement Code = "typestate.unproven_requirement"
 	CodeUnusedLocal                  Code = "lint.unused.local"
 	CodeDeadAssignment               Code = "lint.dead.assignment"
 	CodeChannelSelect                Code = "channel.select.exhaustiveness"

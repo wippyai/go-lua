@@ -184,6 +184,31 @@ func validateOperationalTypestateUsage(defs map[typestate.Protocol]typestate.Def
 			return fmt.Errorf("unsupported lifecycle kind %d", fact.Kind)
 		}
 	}
+	for _, requirement := range effects.TypestateRequirements {
+		if err := validateOperationalTypestateRequirementTarget(requirement.Target); err != nil {
+			return err
+		}
+		def, err := declaredTypestateProtocol(defs, requirement.Protocol)
+		if err != nil {
+			return err
+		}
+		if requirement.State == "" {
+			return fmt.Errorf("typestate requirement missing state")
+		}
+		if !def.HasState(requirement.State) {
+			return fmt.Errorf("protocol %q does not declare requirement state %q", requirement.Protocol, requirement.State)
+		}
+	}
+	return nil
+}
+
+func validateOperationalTypestateRequirementTarget(target pathdom.Path) error {
+	if !target.IsPlaceholder() {
+		return fmt.Errorf("typestate requirement target %q is not a parameter", target.String())
+	}
+	if target.PlaceholderIndex() < 0 {
+		return fmt.Errorf("typestate requirement has negative parameter index %d", target.PlaceholderIndex())
+	}
 	return nil
 }
 

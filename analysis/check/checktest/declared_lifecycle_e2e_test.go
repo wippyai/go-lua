@@ -26,7 +26,7 @@ local conn = connect()
 close(conn)
 query(conn)
 `, opts...)
-		requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeTypestateInvalidTransition, diagnostic.SeverityError, "connection", "expected `open`", "found `closed`")
+		requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeTypestateInvalidRequirement, diagnostic.SeverityError, "connection", "expected `open`", "found `closed`")
 	})
 
 	t.Run("alias-close-propagates", func(t *testing.T) {
@@ -36,7 +36,7 @@ local alias = conn
 close(alias)
 query(conn)
 `, opts...)
-		requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeTypestateInvalidTransition, diagnostic.SeverityError, "connection", "expected `open`", "found `closed`")
+		requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeTypestateInvalidRequirement, diagnostic.SeverityError, "connection", "expected `open`", "found `closed`")
 	})
 
 	t.Run("double-commit", func(t *testing.T) {
@@ -70,6 +70,26 @@ close(conn)
 		if len(result.Diagnostics) != 0 {
 			t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
 		}
+	})
+
+	t.Run("query-open-clean", func(t *testing.T) {
+		result := Check(`
+local conn = connect()
+query(conn)
+close(conn)
+`, opts...)
+		if len(result.Diagnostics) != 0 {
+			t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+		}
+	})
+
+	t.Run("query-unknown-warns", func(t *testing.T) {
+		result := Check(`
+local function use(conn)
+    query(conn)
+end
+`, opts...)
+		requireDeclaredLifecycleDiagnostic(t, result, diagnostics.CodeTypestateUnprovenRequirement, diagnostic.SeverityWarning, "expected `open`")
 	})
 
 	t.Run("opaque-callee-escape-silences", func(t *testing.T) {
@@ -183,7 +203,6 @@ func declaredLifecycleResourceManifest(t *testing.T) *manifest.Manifest {
 		to       typestate.State
 	}{
 		{"close", "connection", "open", "closed"},
-		{"query", "connection", "open", "open"},
 		{"commit", "transaction", "active", "committed"},
 		{"rollback", "transaction", "active", "rolledback"},
 	} {
@@ -198,6 +217,12 @@ func declaredLifecycleResourceManifest(t *testing.T) *manifest.Manifest {
 			}}},
 		})
 	}
+	m.DefineFunctionSignature("query", signature.Function{
+		Type: typ.Func().Param("resource", typ.Any).Build(),
+		OperationalEffects: &signature.OperationalEffects{TypestateRequirements: []signature.TypestateRequirement{{
+			Target: pathdom.NewPlaceholder(0), Protocol: "connection", State: "open",
+		}}},
+	})
 	data, err := manifest.Encode(m)
 	if err != nil {
 		t.Fatalf("manifest.Encode: %v", err)

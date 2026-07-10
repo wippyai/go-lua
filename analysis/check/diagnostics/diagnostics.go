@@ -37,6 +37,8 @@ const (
 	CodeFrozenTableMutation          diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeFrozenTableMutation)
 	CodeResourceUnreleased           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeResourceUnreleased)
 	CodeTypestateInvalidTransition   diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeTypestateInvalidTransition)
+	CodeTypestateInvalidRequirement  diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeTypestateInvalidRequirement)
+	CodeTypestateUnprovenRequirement diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeTypestateUnprovenRequirement)
 	CodeSendIsolation                diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeSendIsolation)
 	CodeAdviceRedundantClaim         diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceRedundantClaim)
 	CodeAdviceAlwaysTrueGuard        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAdviceAlwaysTrueGuard)
@@ -219,6 +221,7 @@ func diagnosticProducers() []diagnosticProducer {
 		),
 		judgmentProducer([]judgment.Code{judgment.CodeFrozenTable}, pass.FrozenTableMutations{}),
 		judgmentProducer([]judgment.Code{judgment.CodeTypestateInvalidTransition}, pass.TypestateInvalidTransitions{}),
+		judgmentProducer([]judgment.Code{judgment.CodeTypestateInvalidRequirement, judgment.CodeTypestateUnprovenRequirement}, pass.TypestateRequirements{}),
 		judgmentProducer([]judgment.Code{judgment.CodeLifecycle}, pass.LifecycleObligations{}),
 		judgmentProducer([]judgment.Code{judgment.CodeSendIsolation}, pass.SendSafety{}),
 		judgmentProducer(

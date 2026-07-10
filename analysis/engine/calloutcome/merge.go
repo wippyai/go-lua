@@ -223,6 +223,9 @@ var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("su
 	"PathObligations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallPathObligation {
 		return &o.PathObligations
 	}),
+	"TypestateRequirements": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallTypestateRequirement {
+		return &o.TypestateRequirements
+	}),
 	"ParamPathRefinements": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamPathRefinement {
 		return &o.ParamPathRefinements
 	}),
