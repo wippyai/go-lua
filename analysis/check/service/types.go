@@ -350,6 +350,7 @@ type WorkspaceSession interface {
 	SummarySnapshot(context.Context, SummarySnapshotRequest) (SummarySnapshotResponse, error)
 	BodyInputDigests(context.Context, BodyInputDigestsRequest) (BodyInputDigestsResponse, error)
 	BinderOccurrences(context.Context, BinderOccurrencesRequest) (BinderOccurrencesResponse, error)
+	SemanticTokens(context.Context, SemanticTokensRequest) (SemanticTokensResponse, error)
 	PositionLookup(context.Context, PositionLookupRequest) (PositionLookupResponse, error)
 	DocumentSymbols(context.Context, DocumentSymbolsRequest) (DocumentSymbolsResponse, error)
 	CallRelations(context.Context, CallRelationsRequest) (CallRelationsResponse, error)

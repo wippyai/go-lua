@@ -7,14 +7,16 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/wippyai/go-lua/analysis/check/service"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/service"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/lsp/jsonrpc2"
 )
 
@@ -321,6 +323,61 @@ func TestInProcessBinderNavigationUsesOccurrencesAndUTF16Ranges(t *testing.T) {
 	}
 }
 
+func TestInProcessSemanticTokensUseSolvedBinderKindsAndUTF16Deltas(t *testing.T) {
+	source := "local prefix = \"😀\"; local value = 1; value = value + 1\n"
+	server, uri := openSolvedDocument(t, source)
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	result, problem := server.Handle(context.Background(), jsonrpc2.Request{
+		Method: methodSemanticTokensFull,
+		Params: paramsJSON(t, map[string]any{
+			"textDocument": map[string]any{"uri": uri},
+		}),
+	})
+	if problem != nil {
+		t.Fatalf("semantic tokens: %v", problem)
+	}
+	tokens, ok := result.(semanticTokensResult)
+	if !ok {
+		t.Fatalf("semantic tokens result = %#v, want semanticTokensResult", result)
+	}
+	// prefix is at UTF-16 character 6. The emoji before value consumes two
+	// UTF-16 units, so value's definition starts at character 27, then its
+	// write/read occurrences start at 38 and 46. The stream is delta encoded.
+	want := []uint32{
+		0, 6, 6, 0, 0,
+		0, 21, 5, 0, 0,
+		0, 11, 5, 0, 0,
+		0, 8, 5, 0, 0,
+	}
+	if !reflect.DeepEqual(tokens.Data, want) {
+		t.Fatalf("semantic token data = %#v, want %#v", tokens.Data, want)
+	}
+}
+
+func TestSemanticTokenEncoderCarriesCustomSolvedModifiers(t *testing.T) {
+	document := semanticDocument{
+		document: embedding.FileDocument("main.lua"),
+		buffer:   newTextBuffer([]byte("😀tx\n")),
+	}
+	data, err := document.encodeSemanticTokens([]service.SemanticToken{{
+		Kind: service.SemanticTokenVariable,
+		Location: service.SourceLocation{File: "main.lua", Span: service.SourceSpan{
+			StartLine: 1, StartCol: 5, EndLine: 1, EndCol: 6,
+		}},
+		Modifiers: []service.SemanticTokenModifier{
+			service.SemanticTokenTypestateTracked,
+			service.SemanticTokenPlacement,
+		},
+	}})
+	if err != nil {
+		t.Fatalf("encode semantic tokens: %v", err)
+	}
+	if want := []uint32{0, 2, 2, 0, 3}; !reflect.DeepEqual(data, want) {
+		t.Fatalf("semantic token data = %#v, want %#v", data, want)
+	}
+}
+
 func TestInProcessDocumentSymbolsPreserveServiceHierarchy(t *testing.T) {
 	server, uri := openSolvedDocument(t, "function outer()\n  function inner()\n    return 1\n  end\n  return inner()\nend\nreturn { outer = outer }\n")
 	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
@@ -619,13 +676,22 @@ func assertCapabilities(t *testing.T, payload []byte) {
 				RenameProvider            bool            `json:"renameProvider"`
 				PrepareRenameProvider     bool            `json:"prepareRenameProvider"`
 				CodeActionProvider        bool            `json:"codeActionProvider"`
+				SemanticTokensProvider    struct {
+					Legend struct {
+						TokenTypes     []string `json:"tokenTypes"`
+						TokenModifiers []string `json:"tokenModifiers"`
+					} `json:"legend"`
+					Full  bool `json:"full"`
+					Range bool `json:"range"`
+				} `json:"semanticTokensProvider"`
 			} `json:"capabilities"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(payload, &response); err != nil {
 		t.Fatalf("decode initialize result: %v", err)
 	}
-	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || !response.Result.Capabilities.RenameProvider || !response.Result.Capabilities.PrepareRenameProvider || !response.Result.Capabilities.CodeActionProvider {
+	semantic := response.Result.Capabilities.SemanticTokensProvider
+	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || !response.Result.Capabilities.RenameProvider || !response.Result.Capabilities.PrepareRenameProvider || !response.Result.Capabilities.CodeActionProvider || !semantic.Full || semantic.Range || !reflect.DeepEqual(semantic.Legend.TokenTypes, []string{"variable", "parameter", "function"}) || !reflect.DeepEqual(semantic.Legend.TokenModifiers, []string{"typestate-tracked", "placement"}) {
 		t.Fatalf("advertised capabilities = %s", payload)
 	}
 }

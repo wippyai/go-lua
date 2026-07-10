@@ -181,7 +181,7 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	staticArtifacts := collectStaticArtifacts(unit.digest, profile, debugMaps)
 	snapshot := checked.Snapshot()
 	summaryDigests := digestSummaries(checked.RootResult(), snapshot)
-	semantic := projectSemanticQueries(input, stmts, checked.RootResult(), items)
+	semantic := projectSemanticQueries(input, stmts, checked.RootResult(), items, placement)
 
 	return &completedSnapshot{
 		tag: ResultTag{

@@ -7,6 +7,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	lifecyclefx "github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -70,6 +76,126 @@ func TestSemanticQueryBinderOccurrencesIncludeCaptures(t *testing.T) {
 	if got := countOccurrenceRole(value.Occurrences, BinderCapture); got != 1 {
 		t.Fatalf("value capture occurrences = %d, want 1: %#v", got, value.Occurrences)
 	}
+}
+
+func TestSemanticQueryTokensProjectBinderKindsDeterministically(t *testing.T) {
+	session, tag := solveSemanticQueryFixture(t, semanticQuerySource)
+	result, err := session.SemanticTokens(context.Background(), SemanticTokensRequest{Selector: selectorFor(tag), File: "main.lua"})
+	if err != nil {
+		t.Fatalf("SemanticTokens: %v", err)
+	}
+	if len(result.Tokens) == 0 {
+		t.Fatal("SemanticTokens returned no solved binder tokens")
+	}
+	var hasVariable, hasParameter, hasFunction bool
+	for _, item := range result.Tokens {
+		if !item.Location.Valid() {
+			t.Fatalf("semantic token = %#v, want a source location", item)
+		}
+		switch item.Kind {
+		case SemanticTokenVariable:
+			hasVariable = true
+		case SemanticTokenParameter:
+			hasParameter = true
+		case SemanticTokenFunction:
+			hasFunction = true
+		}
+	}
+	if !hasVariable || !hasParameter || !hasFunction {
+		t.Fatalf("semantic token kinds = %#v, want variable, parameter, and function", result.Tokens)
+	}
+
+	again, err := session.SemanticTokens(context.Background(), SemanticTokensRequest{Selector: selectorFor(tag), File: "main.lua"})
+	if err != nil {
+		t.Fatalf("SemanticTokens again: %v", err)
+	}
+	if !reflect.DeepEqual(result.Tokens, again.Tokens) {
+		t.Fatalf("semantic tokens are not deterministic\nfirst=%#v\nsecond=%#v", result.Tokens, again.Tokens)
+	}
+}
+
+func TestSemanticQueryTokensCarrySolvedPlacementModifier(t *testing.T) {
+	source := "local scratch = { a = 1, b = 2 }\nlocal value = scratch.a + scratch.b\n"
+	session := NewBatchSession()
+	input := UnitInput{
+		ID:         "semantic-token-placement",
+		ModulePath: "example/semantic-token-placement",
+		EntryFile:  "main.lua",
+		SourceFiles: map[string][]byte{
+			"main.lua": []byte(source),
+		},
+		StateLanes: enginestate.DefaultLanes(),
+	}
+	if _, err := session.UpsertUnit(context.Background(), input); err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+	tag, err := session.EnsureSolved(context.Background(), SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+	if err != nil {
+		t.Fatalf("EnsureSolved: %v", err)
+	}
+	result, err := session.SemanticTokens(context.Background(), SemanticTokensRequest{Selector: selectorFor(tag), File: "main.lua"})
+	if err != nil {
+		t.Fatalf("SemanticTokens: %v", err)
+	}
+	for _, item := range result.Tokens {
+		if semanticTokenHasModifier(item.Modifiers, SemanticTokenPlacement) {
+			return
+		}
+	}
+	t.Fatalf("semantic tokens = %#v, want a solved frame-local/decomposable placement token", result.Tokens)
+}
+
+func TestSemanticQueryTokensCarrySolvedTypestateModifier(t *testing.T) {
+	const source = "local tx = {}\nbegin(tx)\n"
+	lifecycle := manifest.New("lifecycle")
+	if err := lifecycle.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    typestate.Protocol("transaction"),
+		States:      []typestate.State{"active", "finished"},
+		FinalStates: []typestate.State{"finished"},
+		Transitions: []typestate.TransitionDecl{{From: "active", To: "finished"}},
+	}); err != nil {
+		t.Fatalf("DefineTypestateProtocol: %v", err)
+	}
+	lifecycle.DefineFunctionSignature("begin", signature.Function{
+		Type: typ.Func().Param("tx", typ.Any).Build(),
+		Effect: effect.Empty.With(lifecyclefx.Acquire{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: typestate.Protocol("transaction"),
+			State:    typestate.State("active"),
+			Obligation: typestate.Obligation{
+				Final: typestate.State("finished"),
+			},
+		}),
+	})
+	session := NewBatchSession()
+	input := UnitInput{
+		ID:         "semantic-token-typestate",
+		ModulePath: "example/semantic-token-typestate",
+		EntryFile:  "main.lua",
+		SourceFiles: map[string][]byte{
+			"main.lua": []byte(source),
+		},
+		ExternalManifests: map[string]*manifest.Manifest{"lifecycle": lifecycle},
+		Globals:           []string{"begin"},
+		StateLanes:        enginestate.DefaultLanes(),
+	}
+	if _, err := session.UpsertUnit(context.Background(), input); err != nil {
+		t.Fatalf("UpsertUnit: %v", err)
+	}
+	tag, err := session.EnsureSolved(context.Background(), SolveRequest{UnitID: input.ID, Freshness: FreshnessRequireNew})
+	if err != nil {
+		t.Fatalf("EnsureSolved: %v", err)
+	}
+	result, err := session.SemanticTokens(context.Background(), SemanticTokensRequest{Selector: selectorFor(tag), File: "main.lua"})
+	if err != nil {
+		t.Fatalf("SemanticTokens: %v", err)
+	}
+	for _, item := range result.Tokens {
+		if item.Location.Span.StartLine == 1 && item.Location.Span.StartCol == 7 && semanticTokenHasModifier(item.Modifiers, SemanticTokenTypestateTracked) {
+			return
+		}
+	}
+	t.Fatalf("semantic tokens = %#v, want the lifecycle-tracked tx binder modifier", result.Tokens)
 }
 
 func TestSemanticQueryPositionLookupUsesOffsetBoundariesAndInnermostBody(t *testing.T) {

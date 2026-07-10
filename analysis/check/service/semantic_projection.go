@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	semanticreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
+	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -30,6 +31,7 @@ type semanticQuerySnapshot struct {
 	anchors   []anchoredSubject
 	repairs   []RepairAction
 	exprs     []expressionAt
+	tokens    []SemanticToken
 }
 
 type queryBody struct {
@@ -67,7 +69,7 @@ type projectionBody struct {
 	location SourceLocation
 }
 
-func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result, judgments []judgment.Judgment) *semanticQuerySnapshot {
+func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result, judgments []judgment.Judgment, placement placementplan.Plan) *semanticQuerySnapshot {
 	entryFile := documentLabel(input, input.EntryDocument)
 	entrySource := input.Sources[input.EntryDocument]
 	b := semanticProjectionBuilder{
@@ -98,6 +100,7 @@ func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result
 		result.bodies = append(result.bodies, queryBody{id: item.id, location: item.location})
 	}
 	result.binders = b.sortedBinders()
+	result.tokens = b.semanticTokens(result.binders, placement)
 	result.symbols = b.documentSymbols(stmts)
 	result.calls = b.callRelations()
 	result.anchors = append(result.anchors, b.anchors...)
@@ -452,6 +455,169 @@ func (b *semanticProjectionBuilder) sortedBinders() []BinderInfo {
 	return out
 }
 
+// semanticTokens joins already-solved binder, typestate, and placement facts
+// into one immutable query projection. It deliberately makes no type or
+// lifecycle decision: binder kinds come from the bind/WIR projection,
+// typestate membership from solved lifecycle sites, and placement licensing
+// from the completed placement plan.
+func (b *semanticProjectionBuilder) semanticTokens(binders []BinderInfo, plan placementplan.Plan) []SemanticToken {
+	byLocation := make(map[SourceLocation]SemanticToken)
+	add := func(location SourceLocation, kind SemanticTokenKind, modifiers ...SemanticTokenModifier) {
+		if !location.Valid() {
+			return
+		}
+		item, exists := byLocation[location]
+		if !exists {
+			item = SemanticToken{Kind: kind, Location: location}
+		}
+		for _, modifier := range modifiers {
+			if modifier == "" || semanticTokenHasModifier(item.Modifiers, modifier) {
+				continue
+			}
+			item.Modifiers = append(item.Modifiers, modifier)
+		}
+		sort.Slice(item.Modifiers, func(i, j int) bool { return item.Modifiers[i] < item.Modifiers[j] })
+		byLocation[location] = item
+	}
+
+	for _, binder := range binders {
+		kind := semanticTokenKindForBinder(binder.Kind)
+		add(binder.Definition, kind)
+		for _, occurrence := range binder.Occurrences {
+			add(occurrence.Location, kind)
+		}
+	}
+
+	tracked := b.typestateTrackedBinders(binders)
+	for _, binder := range binders {
+		if _, ok := tracked[binder.SymbolID]; !ok {
+			continue
+		}
+		kind := semanticTokenKindForBinder(binder.Kind)
+		add(binder.Definition, kind, SemanticTokenTypestateTracked)
+		for _, occurrence := range binder.Occurrences {
+			add(occurrence.Location, kind, SemanticTokenTypestateTracked)
+		}
+	}
+
+	placementByIdentity := make(map[string]placementplan.Entry, len(plan.Entries))
+	for _, entry := range plan.Entries {
+		placementByIdentity[entry.ID.String()] = entry
+	}
+	for _, item := range b.bodies {
+		item.result.ForEachAllocationSiteFact(func(fact body.AllocationSiteFact) bool {
+			entry, ok := placementByIdentity[fact.Identity.String()]
+			if !ok || (!entry.FrameLocal && !entry.Decomposable) || !fact.HasBirthSpan {
+				return true
+			}
+			// A table literal is not itself a binder. Mark only its opening
+			// source character so the protocol stream remains non-overlapping
+			// with binder tokens nested inside the literal.
+			add(semanticTokenSiteLocation(b.locationForBodySpan(fact.BirthSpan)), SemanticTokenVariable, SemanticTokenPlacement)
+			return true
+		})
+	}
+
+	out := make([]SemanticToken, 0, len(byLocation))
+	for _, item := range byLocation {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Location != out[j].Location {
+			return locationLess(out[i].Location, out[j].Location)
+		}
+		return out[i].Kind < out[j].Kind
+	})
+	return out
+}
+
+func semanticTokenKindForBinder(kind BinderKind) SemanticTokenKind {
+	switch kind {
+	case BinderParam:
+		return SemanticTokenParameter
+	case BinderFunction:
+		return SemanticTokenFunction
+	default:
+		return SemanticTokenVariable
+	}
+}
+
+func semanticTokenHasModifier(items []SemanticTokenModifier, wanted SemanticTokenModifier) bool {
+	for _, item := range items {
+		if item == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *semanticProjectionBuilder) typestateTrackedBinders(binders []BinderInfo) map[uint64]struct{} {
+	tracked := make(map[uint64]struct{})
+	for _, item := range b.bodies {
+		for _, site := range item.result.LifecycleSites() {
+			if site.TargetLabel == "" {
+				continue
+			}
+			siteLocation := b.locationForBodySpan(site.Span)
+			if !siteLocation.Valid() {
+				continue
+			}
+			for _, binder := range binders {
+				if !semanticTokenTargetMatchesBinder(site.TargetLabel, binder.Name) || !binderTouchesLocation(b.source, binder, siteLocation) {
+					continue
+				}
+				tracked[binder.SymbolID] = struct{}{}
+			}
+		}
+	}
+	return tracked
+}
+
+func semanticTokenTargetMatchesBinder(target, name string) bool {
+	if name == "" || target == "" {
+		return false
+	}
+	return target == name || strings.HasPrefix(target, name+".") || strings.HasPrefix(target, name+"[")
+}
+
+func binderTouchesLocation(data []byte, binder BinderInfo, location SourceLocation) bool {
+	for _, candidate := range binderSourceLocations(binder) {
+		if sourceLocationsOverlap(data, candidate, location) {
+			return true
+		}
+	}
+	return false
+}
+
+func binderSourceLocations(binder BinderInfo) []SourceLocation {
+	locations := make([]SourceLocation, 0, len(binder.Occurrences)+1)
+	if binder.Definition.Valid() {
+		locations = append(locations, binder.Definition)
+	}
+	for _, occurrence := range binder.Occurrences {
+		locations = append(locations, occurrence.Location)
+	}
+	return locations
+}
+
+func sourceLocationsOverlap(data []byte, left, right SourceLocation) bool {
+	if left.File != right.File || !left.Valid() || !right.Valid() {
+		return false
+	}
+	leftStart, leftEnd, leftOK := offsetsForSpan(data, sourceSpan(left.Span))
+	rightStart, rightEnd, rightOK := offsetsForSpan(data, sourceSpan(right.Span))
+	return leftOK && rightOK && leftStart < rightEnd && rightStart < leftEnd
+}
+
+func semanticTokenSiteLocation(location SourceLocation) SourceLocation {
+	if !location.Valid() {
+		return SourceLocation{}
+	}
+	location.Span.EndLine = location.Span.StartLine
+	location.Span.EndCol = location.Span.StartCol
+	return location
+}
+
 func (b *semanticProjectionBuilder) documentSymbols(stmts []ast.Stmt) []DocumentSymbol {
 	byID := make(map[BodyID]*DocumentSymbol)
 	for _, item := range b.bodies {
@@ -693,6 +859,10 @@ func (b *semanticProjectionBuilder) locationForSpan(span source.Span) SourceLoca
 }
 
 func (b *semanticProjectionBuilder) locationForFactSpan(span factflow.SourceSpan) SourceLocation {
+	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+}
+
+func (b *semanticProjectionBuilder) locationForBodySpan(span body.SourceSpan) SourceLocation {
 	return SourceLocation{File: b.file, Span: SourceSpan{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
 }
 

@@ -5,7 +5,7 @@ import "github.com/wippyai/go-lua/analysis/check/judgment"
 // EmbeddingSchemaVersion pins the versioned, renderer-independent checker
 // embedding surface. It is deliberately separate from JIRSchemaVersion: JIR
 // pins judgments, while this pin covers navigation and repair DTOs.
-const EmbeddingSchemaVersion = 4
+const EmbeddingSchemaVersion = 5
 
 // SourceSpan is the current source-location value used by the embedding
 // surface. It is intentionally isolated from identity/display policy so a
@@ -77,6 +77,51 @@ type BinderOccurrencesRequest struct{ Selector ResultSelector }
 type BinderOccurrencesResponse struct {
 	Meta    QueryMeta
 	Binders []BinderInfo
+}
+
+// SemanticTokenKind is the checker-owned classification of a source token.
+// Protocol adapters translate this closed vocabulary to their token legends;
+// they must not infer kinds from lexer text.
+type SemanticTokenKind string
+
+const (
+	SemanticTokenVariable  SemanticTokenKind = "variable"
+	SemanticTokenParameter SemanticTokenKind = "parameter"
+	SemanticTokenFunction  SemanticTokenKind = "function"
+)
+
+// SemanticTokenModifier is a solved semantic property of a token. The
+// modifier vocabulary is deliberately small: protocol clients can map it to
+// custom semantic-token modifiers without inspecting checker state.
+type SemanticTokenModifier string
+
+const (
+	// SemanticTokenTypestateTracked marks a binder proven to participate in a
+	// declared lifecycle protocol at a solved call site.
+	SemanticTokenTypestateTracked SemanticTokenModifier = "typestate-tracked"
+	// SemanticTokenPlacement marks a solved allocation site with either a
+	// frame-local or decomposable placement license. The exact license remains
+	// available through PlacementPlan and hover evidence.
+	SemanticTokenPlacement SemanticTokenModifier = "placement"
+)
+
+// SemanticToken is a digest-bound, non-overlapping source classification.
+// Locations are the checker source coordinates; adapters perform only the
+// exact-snapshot UTF conversion and LSP delta encoding.
+type SemanticToken struct {
+	Kind      SemanticTokenKind
+	Location  SourceLocation
+	Modifiers []SemanticTokenModifier
+}
+
+type SemanticTokensRequest struct {
+	Selector ResultSelector
+	File     string
+}
+
+type SemanticTokensResponse struct {
+	Meta   QueryMeta
+	Tokens []SemanticToken
 }
 
 // SourcePosition accepts either a byte Offset (when Line and Column are both

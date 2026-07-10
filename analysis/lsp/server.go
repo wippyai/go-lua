@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -176,6 +177,8 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 		result, err = s.rename(ctx, request.Params)
 	case methodCodeAction:
 		result, err = s.codeActions(ctx, request.Params)
+	case methodSemanticTokensFull:
+		result, err = s.semanticTokens(ctx, request.Params)
 	default:
 		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "method not found", request.Method)
 	}
@@ -681,6 +684,33 @@ func (s *Server) codeActions(ctx context.Context, raw []byte) (any, error) {
 	return actions, nil
 }
 
+func (s *Server) semanticTokens(ctx context.Context, raw []byte) (any, error) {
+	var params semanticTokensParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid semantic tokens params", err.Error())
+	}
+	documentID, err := s.codec.DocumentForURI(params.TextDocument.URI)
+	if err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid document URI", err.Error())
+	}
+	document, ok, err := s.currentSemanticDocument(ctx, documentID)
+	if err != nil || !ok {
+		return semanticTokensResult{Data: []uint32{}}, err
+	}
+	response, err := s.session.SemanticTokens(ctx, service.SemanticTokensRequest{
+		Selector: service.ResultSelector{UnitID: document.unitID, SolveSeq: document.tag.SolveSeq, Profile: document.tag.Profile},
+		File:     documentID.OpaqueKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read semantic tokens: %w", err)
+	}
+	data, err := document.encodeSemanticTokens(response.Tokens)
+	if err != nil {
+		return nil, fmt.Errorf("encode semantic tokens: %w", err)
+	}
+	return semanticTokensResult{Data: data}, nil
+}
+
 func (s *Server) renameBinderAtPosition(ctx context.Context, uri string, position Position) (semanticDocument, *service.BinderInfo, error) {
 	document, binder, err := s.binderAtPosition(ctx, uri, position)
 	if err != nil {
@@ -918,6 +948,97 @@ func repairTitle(kind string) string {
 	default:
 		return "Apply checker repair"
 	}
+}
+
+type protocolSemanticToken struct {
+	line      int
+	start     int
+	length    int
+	kind      int
+	modifiers uint32
+}
+
+func (d semanticDocument) encodeSemanticTokens(items []service.SemanticToken) ([]uint32, error) {
+	tokens := make([]protocolSemanticToken, 0, len(items))
+	for _, item := range items {
+		mapped, ok := d.protocolRange(item.Location)
+		if !ok {
+			continue
+		}
+		// The service emits identifier and allocation-site tokens, both of
+		// which are single-line. Refuse a malformed cross-line query token
+		// rather than inventing a syntactic split in the adapter.
+		if mapped.Start.Line != mapped.End.Line || mapped.End.Character <= mapped.Start.Character {
+			return nil, fmt.Errorf("semantic token %q has an invalid single-line range", item.Kind)
+		}
+		kind, ok := protocolSemanticTokenKind(item.Kind)
+		if !ok {
+			return nil, fmt.Errorf("unknown service semantic token kind %q", item.Kind)
+		}
+		modifiers, err := protocolSemanticTokenModifiers(item.Modifiers)
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, protocolSemanticToken{
+			line:      mapped.Start.Line,
+			start:     mapped.Start.Character,
+			length:    mapped.End.Character - mapped.Start.Character,
+			kind:      kind,
+			modifiers: modifiers,
+		})
+	}
+	sort.Slice(tokens, func(i, j int) bool {
+		if tokens[i].line != tokens[j].line {
+			return tokens[i].line < tokens[j].line
+		}
+		if tokens[i].start != tokens[j].start {
+			return tokens[i].start < tokens[j].start
+		}
+		return tokens[i].length < tokens[j].length
+	})
+	data := make([]uint32, 0, len(tokens)*5)
+	previousLine, previousStart, previousEnd := 0, 0, 0
+	for index, token := range tokens {
+		if index != 0 && token.line == previousLine && token.start < previousEnd {
+			return nil, fmt.Errorf("overlapping semantic tokens at line %d", token.line)
+		}
+		deltaLine := token.line - previousLine
+		deltaStart := token.start
+		if index != 0 && deltaLine == 0 {
+			deltaStart = token.start - previousStart
+		}
+		data = append(data, uint32(deltaLine), uint32(deltaStart), uint32(token.length), uint32(token.kind), token.modifiers)
+		previousLine, previousStart, previousEnd = token.line, token.start, token.start+token.length
+	}
+	return data, nil
+}
+
+func protocolSemanticTokenKind(kind service.SemanticTokenKind) (int, bool) {
+	switch kind {
+	case service.SemanticTokenVariable:
+		return 0, true
+	case service.SemanticTokenParameter:
+		return 1, true
+	case service.SemanticTokenFunction:
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+func protocolSemanticTokenModifiers(items []service.SemanticTokenModifier) (uint32, error) {
+	var out uint32
+	for _, item := range items {
+		switch item {
+		case service.SemanticTokenTypestateTracked:
+			out |= 1 << 0
+		case service.SemanticTokenPlacement:
+			out |= 1 << 1
+		default:
+			return 0, fmt.Errorf("unknown service semantic token modifier %q", item)
+		}
+	}
+	return out, nil
 }
 
 func positionBeforeOrEqual(left, right Position) bool {

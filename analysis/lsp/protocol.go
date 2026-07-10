@@ -20,6 +20,7 @@ const (
 	methodPrepareRename         = "textDocument/prepareRename"
 	methodRename                = "textDocument/rename"
 	methodCodeAction            = "textDocument/codeAction"
+	methodSemanticTokensFull    = "textDocument/semanticTokens/full"
 	textDocumentSyncIncremental = 2
 )
 
@@ -148,6 +149,17 @@ type codeAction struct {
 	Edit  workspaceEdit `json:"edit"`
 }
 
+type semanticTokensParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// semanticTokensResult is the LSP full-token wire shape. Data is a stream of
+// five-element uint32 tuples: deltaLine, deltaStart, length, tokenType, and
+// tokenModifier bitset.
+type semanticTokensResult struct {
+	Data []uint32 `json:"data"`
+}
+
 type diagnosticRelatedInformation struct {
 	Location Location `json:"location"`
 	Message  string   `json:"message"`
@@ -210,6 +222,7 @@ type serverCapabilities struct {
 	RenameProvider            bool                    `json:"renameProvider"`
 	PrepareRenameProvider     bool                    `json:"prepareRenameProvider"`
 	CodeActionProvider        bool                    `json:"codeActionProvider"`
+	SemanticTokensProvider    semanticTokensOptions   `json:"semanticTokensProvider"`
 }
 
 type textDocumentSyncOptions struct {
@@ -221,6 +234,32 @@ type diagnosticProvider struct {
 	Identifier            string `json:"identifier"`
 	InterFileDependencies bool   `json:"interFileDependencies"`
 	WorkspaceDiagnostics  bool   `json:"workspaceDiagnostics"`
+}
+
+type semanticTokensOptions struct {
+	Legend semanticTokensLegend `json:"legend"`
+	Full   bool                 `json:"full"`
+	Range  bool                 `json:"range"`
+}
+
+type semanticTokensLegend struct {
+	TokenTypes     []string `json:"tokenTypes"`
+	TokenModifiers []string `json:"tokenModifiers"`
+}
+
+var semanticTokenLegend = semanticTokensLegend{
+	TokenTypes: []string{
+		"variable",
+		"parameter",
+		"function",
+	},
+	// These are the two go-lua semantic extensions. "placement" denotes an
+	// allocation site licensed as frame-local or decomposable; the exact class
+	// stays in the service PlacementPlan rather than becoming LSP-local logic.
+	TokenModifiers: []string{
+		"typestate-tracked",
+		"placement",
+	},
 }
 
 func defaultInitializeResult() initializeResult {
@@ -240,6 +279,11 @@ func defaultInitializeResult() initializeResult {
 			RenameProvider:            true,
 			PrepareRenameProvider:     true,
 			CodeActionProvider:        true,
+			SemanticTokensProvider: semanticTokensOptions{
+				Legend: semanticTokenLegend,
+				Full:   true,
+				Range:  false,
+			},
 		},
 		ServerInfo: serverInfo{Name: "go-lua-lsp"},
 	}

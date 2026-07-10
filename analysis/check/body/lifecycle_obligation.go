@@ -54,6 +54,16 @@ type lifecycleTraceSite struct {
 	site  LifecycleSite
 }
 
+// LifecycleSites projects every reachable, solved lifecycle fact site. It is
+// intentionally a read-only projection: callers use it to correlate existing
+// typestate facts with source, never to derive a lifecycle state.
+func (r *Result) LifecycleSites() []LifecycleSite {
+	if r == nil || r.Graph() == nil {
+		return nil
+	}
+	return lifecycleTraceSites(r.collectLifecycleTraceSites(r.Graph()))
+}
+
 // LifecycleObligationProofs returns open typestate obligations at function
 // exit with reachable lifecycle fact sites attached as proof evidence.
 func (r *Result) LifecycleObligationProofs() []LifecycleObligationProof {

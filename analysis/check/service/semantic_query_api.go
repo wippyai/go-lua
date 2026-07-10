@@ -19,6 +19,28 @@ func (s *BatchSession) BinderOccurrences(ctx context.Context, req BinderOccurren
 	return BinderOccurrencesResponse{Meta: meta, Binders: cloneBinderInfos(snapshot.semantic.binders)}, nil
 }
 
+func (s *BatchSession) SemanticTokens(ctx context.Context, req SemanticTokensRequest) (SemanticTokensResponse, error) {
+	snapshot, meta, err := s.selectedResult(ctx, req.Selector)
+	if err != nil {
+		return SemanticTokensResponse{}, err
+	}
+	if snapshot.semantic == nil {
+		return SemanticTokensResponse{Meta: meta}, nil
+	}
+	file := req.File
+	if file == "" {
+		file = snapshot.semantic.entryFile
+	}
+	items := make([]SemanticToken, 0, len(snapshot.semantic.tokens))
+	for _, item := range snapshot.semantic.tokens {
+		if item.Location.File != file {
+			continue
+		}
+		items = append(items, cloneSemanticToken(item))
+	}
+	return SemanticTokensResponse{Meta: meta, Tokens: items}, nil
+}
+
 func (s *BatchSession) PositionLookup(ctx context.Context, req PositionLookupRequest) (PositionLookupResponse, error) {
 	snapshot, meta, err := s.selectedResult(ctx, req.Selector)
 	if err != nil {
@@ -233,6 +255,10 @@ func cloneBinderInfos(items []BinderInfo) []BinderInfo {
 }
 func cloneBinderInfo(item BinderInfo) BinderInfo {
 	item.Occurrences = append([]BinderOccurrence(nil), item.Occurrences...)
+	return item
+}
+func cloneSemanticToken(item SemanticToken) SemanticToken {
+	item.Modifiers = append([]SemanticTokenModifier(nil), item.Modifiers...)
 	return item
 }
 func cloneDocumentSymbol(item DocumentSymbol) DocumentSymbol {
