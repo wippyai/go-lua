@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -229,6 +230,68 @@ func TestPublishDiagnosticsVersionZeroIsStillTagged(t *testing.T) {
 	if got, ok := decoded["version"]; !ok || string(got) != "0" {
 		t.Fatalf("publish diagnostics omitted version zero: %s", payload)
 	}
+}
+
+func TestInProcessHoverProjectsSolvedTypeAndCanonicalProofTrace(t *testing.T) {
+	server, uri := openSolvedDocument(t, "local value: number = 1\nlocal redundant = value as number\nreturn redundant\n")
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+
+	result, problem := server.Handle(context.Background(), jsonrpc2.Request{
+		Method: methodHover,
+		Params: paramsJSON(t, map[string]any{
+			"textDocument": map[string]any{"uri": uri},
+			"position":     map[string]any{"line": 1, "character": 18},
+		}),
+	})
+	if problem != nil {
+		t.Fatalf("hover: %v", problem)
+	}
+	hover, ok := result.(hoverResult)
+	if !ok {
+		t.Fatalf("hover result = %#v, want hoverResult", result)
+	}
+	if hover.Range == nil || hover.Range.Start != (Position{Line: 1, Character: 18}) {
+		t.Fatalf("hover range = %#v, want start at the hovered expression", hover.Range)
+	}
+	for _, want := range []string{"```lua", "advice.redundant_claim — proven", "proven:"} {
+		if !strings.Contains(hover.Contents.Value, want) {
+			t.Fatalf("hover markdown missing %q:\n%s", want, hover.Contents.Value)
+		}
+	}
+}
+
+func openSolvedDocument(t *testing.T, text string) (*Server, string) {
+	t.Helper()
+	server := NewServer(service.NewBatchSession(), Options{Debounce: time.Millisecond})
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize}); problem != nil {
+		t.Fatalf("initialize: %v", problem)
+	}
+	uri := "file:///workspace/semantic.lua"
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{
+		Method: methodDidOpen,
+		Params: paramsJSON(t, map[string]any{"textDocument": map[string]any{
+			"uri": uri, "languageId": "lua", "version": 1, "text": text,
+		}}),
+	}); problem != nil {
+		t.Fatalf("didOpen: %v", problem)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		server.mu.Lock()
+		var unitID service.UnitID
+		for _, document := range server.documents {
+			unitID = document.unitID
+		}
+		server.mu.Unlock()
+		if unitID != "" {
+			if _, ok := server.session.LastComplete(context.Background(), service.ResultRequest{Selector: service.ResultSelector{UnitID: unitID}}); ok {
+				return server, uri
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("document solve did not complete")
+	return nil, ""
 }
 
 type blockFirstSolveSession struct {

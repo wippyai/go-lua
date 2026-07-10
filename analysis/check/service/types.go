@@ -263,9 +263,19 @@ type JudgmentsByAnchorRequest struct {
 }
 
 type JudgmentsByAnchorResponse struct {
-	Meta      QueryMeta
-	Anchor    judgment.SubjectAnchor
-	Judgments []judgment.Judgment
+	Meta          QueryMeta
+	Anchor        judgment.SubjectAnchor
+	Judgments     []judgment.Judgment
+	Presentations []JudgmentPresentation
+}
+
+// JudgmentPresentation is the terminal-renderer evidence projection for one
+// raw semantic judgment. It lets thin protocol adapters preserve the canonical
+// proof wording and causal ordering without reimplementing diagnostic logic.
+type JudgmentPresentation struct {
+	Code     judgment.Code
+	Verdict  judgment.Verdict
+	Evidence []diagnostic.Evidence
 }
 
 type ListDiagnosticsRequest struct {

@@ -5,7 +5,7 @@ import "github.com/wippyai/go-lua/analysis/check/judgment"
 // EmbeddingSchemaVersion pins the versioned, renderer-independent checker
 // embedding surface. It is deliberately separate from JIRSchemaVersion: JIR
 // pins judgments, while this pin covers navigation and repair DTOs.
-const EmbeddingSchemaVersion = 1
+const EmbeddingSchemaVersion = 2
 
 // SourceSpan is the current source-location value used by the embedding
 // surface. It is intentionally isolated from identity/display policy so a

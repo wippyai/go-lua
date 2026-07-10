@@ -83,7 +83,27 @@ func (s *BatchSession) JudgmentsByAnchor(ctx context.Context, req JudgmentsByAnc
 		}
 		items = append(items, item)
 	}
-	return JudgmentsByAnchorResponse{Meta: meta, Anchor: anchor, Judgments: cloneJudgments(items)}, nil
+	return JudgmentsByAnchorResponse{
+		Meta:          meta,
+		Anchor:        anchor,
+		Judgments:     cloneJudgments(items),
+		Presentations: judgmentPresentations(items),
+	}, nil
+}
+
+func judgmentPresentations(items []judgment.Judgment) []JudgmentPresentation {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]JudgmentPresentation, 0, len(items))
+	for _, item := range items {
+		out = append(out, JudgmentPresentation{
+			Code:     item.Code,
+			Verdict:  item.Verdict,
+			Evidence: diagnostics.EvidenceForJudgment(item),
+		})
+	}
+	return out
 }
 
 func (s *BatchSession) Diagnostics(ctx context.Context, req ListDiagnosticsRequest) (ListDiagnosticsResponse, error) {

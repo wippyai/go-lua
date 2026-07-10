@@ -90,6 +90,26 @@ func RenderJudgments(items []judgment.Judgment, config Config) []diagnostic.Diag
 	return out
 }
 
+// EvidenceForJudgment projects the canonical diagnostic evidence for one
+// already-solved judgment. It deliberately bypasses diagnostic visibility
+// policy: proof consumers need the cause chain even for an opt-in diagnostic.
+// It neither runs obligation producers nor performs checker analysis.
+func EvidenceForJudgment(item judgment.Judgment) []diagnostic.Evidence {
+	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if !ok {
+		return nil
+	}
+	render, ok := judgmentDiagnosticRenderers[spec.Render]
+	if !ok {
+		return nil
+	}
+	diagnosticItem, ok := render(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
+	if !ok {
+		return nil
+	}
+	return diagnosticItem.Explanation.Evidence()
+}
+
 func (ctx judgmentRenderContext) render(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
 	if len(items) == 0 {
 		return nil

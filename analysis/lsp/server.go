@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -404,10 +405,12 @@ func (s *Server) hover(ctx context.Context, raw []byte) (any, error) {
 	if err != nil || !lookup.Found {
 		return nil, nil
 	}
-	value := ""
+	var markdown strings.Builder
 	var resultRange *Range
 	if lookup.Expression != nil {
-		value = "```lua\n" + lookup.Expression.Display + "\n```"
+		markdown.WriteString("```lua\n")
+		markdown.WriteString(lookup.Expression.Display)
+		markdown.WriteString("\n```")
 		s.mu.Lock()
 		current := s.documents[document]
 		if current != nil {
@@ -422,13 +425,45 @@ func (s *Server) hover(ctx context.Context, raw []byte) (any, error) {
 			}
 		}
 		s.mu.Unlock()
-	} else if lookup.Binder != nil {
-		value = "```lua\n" + lookup.Binder.Name + "\n```"
 	}
-	if value == "" {
+
+	selector := service.ResultSelector{UnitID: unitID, SolveSeq: tag.SolveSeq, Profile: tag.Profile}
+	for _, anchor := range lookup.SubjectAnchors {
+		judgments, err := s.session.JudgmentsByAnchor(ctx, service.JudgmentsByAnchorRequest{
+			Selector:  selector,
+			AnchorKey: anchor.StableKey(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("read hover judgment evidence: %w", err)
+		}
+		for _, presentation := range judgments.Presentations {
+			if markdown.Len() != 0 {
+				markdown.WriteString("\n\n")
+			}
+			markdown.WriteString("**")
+			markdown.WriteString(string(presentation.Code))
+			markdown.WriteString(" — ")
+			verdict := "unknown"
+			switch presentation.Verdict {
+			case 1:
+				verdict = "proven"
+			case 2:
+				verdict = "refuted"
+			}
+			markdown.WriteString(verdict)
+			markdown.WriteString("**")
+			for _, line := range diagnostic.EvidenceTrace(presentation.Evidence) {
+				markdown.WriteString("\n- ")
+				markdown.WriteString(line.Heading)
+				markdown.WriteString(": ")
+				markdown.WriteString(line.Message)
+			}
+		}
+	}
+	if markdown.Len() == 0 {
 		return nil, nil
 	}
-	return hoverResult{Contents: markupContent{Kind: "markdown", Value: value}, Range: resultRange}, nil
+	return hoverResult{Contents: markupContent{Kind: "markdown", Value: markdown.String()}, Range: resultRange}, nil
 }
 
 func (s *Server) requireRunningLocked() error {
