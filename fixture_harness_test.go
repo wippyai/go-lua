@@ -1641,7 +1641,10 @@ func verifyGoldenOutput(t *testing.T, s namedSuite, buf *bytes.Buffer) {
 	}
 
 	got := buf.String()
-	want := string(golden)
+	// Git may check text fixtures out with CRLF on Windows, while capturePrint
+	// deliberately emits Lua's canonical newline. Compare the content rather
+	// than the checkout's platform-specific line endings.
+	want := string(bytes.ReplaceAll(golden, []byte("\r\n"), []byte("\n")))
 	if got != want {
 		t.Errorf("output mismatch:\n--- want ---\n%s--- got ---\n%s", want, got)
 	}
