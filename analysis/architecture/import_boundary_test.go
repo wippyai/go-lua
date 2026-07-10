@@ -283,6 +283,39 @@ func TestWIRImportBoundaries(t *testing.T) {
 	}
 }
 
+func TestLSPAdapterImportBoundaries(t *testing.T) {
+	// LSP and its command are orchestration adapters. Their only repository
+	// dependencies are the published service/identity/diagnostic surfaces and
+	// the adapter's own transport package; no checker implementation package is
+	// permitted to leak into protocol handling.
+	tests := []struct {
+		pattern string
+		allowed map[string]struct{}
+	}{
+		{
+			pattern: modulePath + "/analysis/lsp/...",
+			allowed: allowSet(
+				modulePath+"/analysis/lsp/jsonrpc2",
+				modulePath+"/analysis/check/service",
+				modulePath+"/analysis/embedding",
+				modulePath+"/analysis/diagnostic",
+			),
+		},
+		{
+			pattern: modulePath + "/cmd/go-lua-lsp",
+			allowed: allowSet(
+				modulePath+"/analysis/lsp",
+				modulePath+"/analysis/check/service",
+			),
+		},
+	}
+	for _, tt := range tests {
+		for _, pkg := range productionPackages(t, tt.pattern) {
+			assertModuleImportsAllowed(t, pkg.ImportPath, pkg.Imports, tt.allowed)
+		}
+	}
+}
+
 func TestRequiredSemanticSurfacesExist(t *testing.T) {
 	required := []string{
 		modulePath + "/analysis/check/contract",
