@@ -49,7 +49,7 @@ func (w *Writer) Sum64() uint64 {
 // Write implements io.Writer.
 func (w *Writer) Write(p []byte) (int, error) {
 	for _, b := range p {
-		w.WriteByte(b)
+		w.mixByte(b)
 	}
 	return len(p), nil
 }
@@ -57,16 +57,20 @@ func (w *Writer) Write(p []byte) (int, error) {
 // WriteString writes s directly into the hash.
 func (w *Writer) WriteString(s string) (int, error) {
 	for i := range len(s) {
-		w.WriteByte(s[i])
+		w.mixByte(s[i])
 	}
 	return len(s), nil
 }
 
 // WriteByte writes one byte into the hash.
 func (w *Writer) WriteByte(b byte) error {
+	w.mixByte(b)
+	return nil
+}
+
+func (w *Writer) mixByte(b byte) {
 	w.h ^= uint64(b)
 	w.h *= fnvPrime64
-	return nil
 }
 
 // WriteUintDecimal writes v in base-10 ASCII form.

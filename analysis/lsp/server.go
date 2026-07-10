@@ -861,7 +861,7 @@ func (d semanticDocument) protocolLocation(location service.SourceLocation) (Loc
 }
 
 func (d semanticDocument) protocolRange(location service.SourceLocation) (Range, bool) {
-	if location.File != d.document.OpaqueKey {
+	if !location.BelongsToDocument(d.document) {
 		return Range{}, false
 	}
 	item, err := d.buffer.rangeForCompilerSpan(

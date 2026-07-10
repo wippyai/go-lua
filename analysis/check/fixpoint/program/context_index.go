@@ -164,11 +164,11 @@ func (idx *contextIndex) nextContextKey(baseKey summary.SummaryKey, identity con
 
 func stableContextKeyDigest(baseKey summary.SummaryKey, identity contextKeyIdentity, collision uint64) summary.Digest {
 	h := fnv.New64a()
-	fmt.Fprint(h, "call-context-key-v1:")
+	_, _ = fmt.Fprint(h, "call-context-key-v1:")
 	writeSummaryKeyDigest(h, baseKey)
-	fmt.Fprint(h, "kind:", identity.kind, ";owner:")
+	_, _ = fmt.Fprint(h, "kind:", identity.kind, ";owner:")
 	writeSummaryKeyDigest(h, identity.owner)
-	fmt.Fprint(h, "expr:", uint32(identity.expr), ";collision:", collision, ";")
+	_, _ = fmt.Fprint(h, "expr:", uint32(identity.expr), ";collision:", collision, ";")
 	return summary.Digest(h.Sum64())
 }
 

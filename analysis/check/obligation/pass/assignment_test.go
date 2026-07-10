@@ -50,7 +50,7 @@ func TestAssignmentsRefutesConcreteMismatch(t *testing.T) {
 		!strings.Contains(stable, "ord:0") {
 		t.Fatalf("stable key = %q", item.Subject.StableKey())
 	}
-	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 1 {
+	if len(item.Spans) != 1 || item.Spans[0].DisplayFile() != "test.lua" || item.Spans[0].StartLine != 1 {
 		t.Fatalf("spans = %#v, want source span on test.lua line 1", item.Spans)
 	}
 }
@@ -92,7 +92,7 @@ end`), "test.lua")
 	if item.Actual.ProjectedType == nil || item.Expected.Type == nil {
 		t.Fatalf("actual/expected = %#v/%#v, want concrete types", item.Actual, item.Expected)
 	}
-	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 2 {
+	if len(item.Spans) != 1 || item.Spans[0].DisplayFile() != "test.lua" || item.Spans[0].StartLine != 2 {
 		t.Fatalf("spans = %#v, want return expression span on test.lua line 2", item.Spans)
 	}
 }

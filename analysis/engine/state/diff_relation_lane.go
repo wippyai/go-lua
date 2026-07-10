@@ -97,7 +97,7 @@ func (l diffRelationLane) add(c RelConstraint) (diffRelationLane, bool) {
 		c.B = RelOperand{}
 		c.CoB = 0
 	}
-	lane, changed := l.mustSetLane.insert(c)
+	lane, changed := l.insert(c)
 	return diffRelationLane{lane}, changed
 }
 

@@ -794,9 +794,10 @@ func TestFactsEdgeTransferAppliesBranchDiffConstraintRelationGraphKeys(t *testin
 		t.Fatalf("true-edge relational constraints = %#v, want one relation", constraints)
 	}
 	constraint := constraints[0]
+	isSymmetricPair := (constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
+		(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))
 	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
-		!((constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
-			(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))) ||
+		!isSymmetricPair ||
 		constraint.C != state.RelLengthOperand(xsKey) {
 		t.Fatalf("true-edge relation = %#v, want i+j-len(xs)<=0 under relation graph keys", constraint)
 	}

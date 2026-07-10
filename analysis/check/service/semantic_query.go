@@ -40,6 +40,15 @@ func (l SourceLocation) Valid() bool {
 	return l.Document.Valid() && !l.ContentDigest.IsZero() && l.ByteSpan.Valid()
 }
 
+// BelongsToDocument compares semantic identity first and retains the legacy
+// file projection only for callers that have not populated Document yet.
+func (l SourceLocation) BelongsToDocument(document embedding.DocumentID) bool {
+	if l.Document.Valid() {
+		return l.Document == document
+	}
+	return l.File != "" && l.File == document.OpaqueKey
+}
+
 // BinderKind is the closed value-binder vocabulary exposed to embedding
 // clients. It mirrors WIR SymbolInfo rather than leaking bind internals.
 type BinderKind string

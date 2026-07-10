@@ -27,7 +27,8 @@ func renderReturnJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Jud
 	sourceName := item.Actual.Label
 	presentation := ctx.proof.Return(item, label, sourceName, got, want, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		File:        item.Spans[0].File,
+		Location:    item.Spans[0].Location,
+		File:        item.Spans[0].DisplayFile(),
 		Span:        span,
 		Code:        code,
 		Severity:    severity,

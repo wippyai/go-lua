@@ -1020,7 +1020,7 @@ func matchesDiagnosticLabelFile(expFile string, d diag.Diagnostic, entryFile str
 	if expFile == "" {
 		return true
 	}
-	actual := label.File
+	actual := label.DisplayFile()
 	if actual == "" {
 		actual = d.Position.File
 	}

@@ -111,7 +111,7 @@ func materializedProgramShapeDigest(keys programKeys) uint64 {
 		return 0
 	})
 	for _, key := range contextKeys {
-		fmt.Fprint(h, "ctx:")
+		_, _ = fmt.Fprint(h, "ctx:")
 		writeSummaryKeyDigest(h, key)
 	}
 	return h.Sum64()
@@ -127,7 +127,7 @@ func writeSymbolSummaryKeySetDigest(h interface{ Write([]byte) (int, error) }, v
 	}
 	slices.Sort(keys)
 	for _, key := range keys {
-		fmt.Fprintf(h, "map:%d=", key)
+		_, _ = fmt.Fprintf(h, "map:%d=", key)
 		writeSummaryKeyDigest(h, values[key])
 	}
 }
@@ -162,7 +162,7 @@ func writeIdentitySummaryKeySetDigest(h interface{ Write([]byte) (int, error) },
 		return 0
 	})
 	for _, key := range keys {
-		fmt.Fprintf(h, "id:%s/%s/%d=", key.Kind, key.Site, key.Index)
+		_, _ = fmt.Fprintf(h, "id:%s/%s/%d=", key.Kind, key.Site, key.Index)
 		writeSummaryKeyDigest(h, values[key])
 	}
 }
@@ -177,7 +177,7 @@ func writeCalleePathKeySetDigest(h interface{ Write([]byte) (int, error) }, valu
 	}
 	slices.Sort(keys)
 	for _, key := range keys {
-		fmt.Fprintf(h, "path:%s=", key)
+		_, _ = fmt.Fprintf(h, "path:%s=", key)
 		writeSummaryKeyDigest(h, values[key])
 	}
 }
@@ -192,7 +192,7 @@ func writeCalleePathMultiKeySetDigest(h interface{ Write([]byte) (int, error) },
 	}
 	slices.Sort(keys)
 	for _, key := range keys {
-		fmt.Fprintf(h, "multi:%s=", key)
+		_, _ = fmt.Fprintf(h, "multi:%s=", key)
 		summaryKeys := append([]summary.SummaryKey(nil), values[key]...)
 		slices.SortFunc(summaryKeys, func(a, b summary.SummaryKey) int {
 			if a.Less(b) {
@@ -210,7 +210,7 @@ func writeCalleePathMultiKeySetDigest(h interface{ Write([]byte) (int, error) },
 }
 
 func writeSummaryKeyDigest(h interface{ Write([]byte) (int, error) }, key summary.SummaryKey) {
-	fmt.Fprintf(
+	_, _ = fmt.Fprintf(
 		h,
 		"%d/%d/%d/%d/%d;",
 		key.Ref.Kind,

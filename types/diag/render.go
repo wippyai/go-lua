@@ -140,7 +140,7 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 		b.WriteString("\n")
 
 		b.WriteString(c.gutter)
-		b.WriteString(fmt.Sprintf("%*d | ", gutterWidth-1, d.Position.Line))
+		_, _ = fmt.Fprintf(&b, "%*d | ", gutterWidth-1, d.Position.Line)
 		b.WriteString(c.reset)
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -186,7 +186,7 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 			labelLine := expandTabs(labelLineRaw)
 			if labelLine != "" {
 				b.WriteString(c.gutter)
-				b.WriteString(fmt.Sprintf("%*d | ", gutterWidth-1, label.Span.StartLine))
+				_, _ = fmt.Fprintf(&b, "%*d | ", gutterWidth-1, label.Span.StartLine)
 				b.WriteString(c.reset)
 				b.WriteString(labelLine)
 				b.WriteString("\n")

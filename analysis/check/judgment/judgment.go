@@ -971,6 +971,14 @@ func (s SpanRef) DisplayFile() string {
 	return embedding.DefaultDocumentLabel(s.Location.Document)
 }
 
+// SetDisplayFileIfEmpty fills the legacy renderer projection without changing
+// the digest-bound source identity.
+func (s *SpanRef) SetDisplayFileIfEmpty(file string) {
+	if s != nil && s.File == "" {
+		s.File = file
+	}
+}
+
 // Judgment is the semantic obligation record emitted after solve and consumed
 // by rendering/dedup/policy layers.
 type Judgment struct {

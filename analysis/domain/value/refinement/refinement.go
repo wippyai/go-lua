@@ -226,7 +226,7 @@ func recoverCompatibleWitnessMeet(reg *axis.Registry, value, constraint product.
 	if !ok {
 		return product.Value{}, false
 	}
-	narrower := constraintWitness
+	var narrower typewitness.Value
 	switch {
 	case subtype.IsSubtype(constraintType, valueType):
 		narrower = constraintWitness

@@ -22,7 +22,8 @@ func renderCallCalleeJudgmentWithPolicy(ctx judgmentRenderContext, item judgment
 		return diagnostic.Diagnostic{}, false
 	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		File:        item.Spans[0].File,
+		Location:    item.Spans[0].Location,
+		File:        item.Spans[0].DisplayFile(),
 		Span:        span,
 		Code:        presentation.Code,
 		Severity:    severity,

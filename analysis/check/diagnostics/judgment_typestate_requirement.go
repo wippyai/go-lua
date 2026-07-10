@@ -26,12 +26,12 @@ func renderTypestateRequirementJudgmentWithPolicy(ctx judgmentRenderContext, ite
 	}
 	if item.Code == judgment.CodeTypestateInvalidRequirement {
 		message := fmt.Sprintf("invalid typestate requirement for resource %s in protocol %s: expected %s, found %s", codeName(resource), protocol, codeName(item.Expected.Label), codeName(item.Actual.Label))
-		return diagnostic.New(diagnostic.DiagnosticSpec{File: item.Spans[0].File, Span: span, Code: diagnosticCodeForJudgment(item), Severity: severity,
+		return diagnostic.New(diagnostic.DiagnosticSpec{Location: item.Spans[0].Location, File: item.Spans[0].DisplayFile(), Span: span, Code: diagnosticCodeForJudgment(item), Severity: severity,
 			Message: message, Explanation: diagnostic.NewExplanation(diagnostic.Evidence{Kind: diagnostic.EvidenceAbstractFact, Trust: diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceAbstractFact, diagnostic.TrustProven), Span: diagnosticEvidenceSpanOr(item, judgment.EvidenceAbstractFact, span), Message: fmt.Sprintf("this call requires %s to be in %s, but solved state is %s", codeName(resource), codeName(item.Expected.Label), codeName(item.Actual.Label))}),
 			Labels: []diagnostic.Label{sourceLabel(span, "invalid typestate requirement")}, Help: fmt.Sprintf("Call this operation only when %s is in %s state.", codeName(resource), codeName(item.Expected.Label))}), true
 	}
 	message := fmt.Sprintf("cannot prove typestate requirement for resource %s: expected %s", codeName(resource), codeName(item.Expected.Label))
-	return diagnostic.New(diagnostic.DiagnosticSpec{File: item.Spans[0].File, Span: span, Code: diagnosticCodeForJudgment(item), Severity: severity,
+	return diagnostic.New(diagnostic.DiagnosticSpec{Location: item.Spans[0].Location, File: item.Spans[0].DisplayFile(), Span: span, Code: diagnosticCodeForJudgment(item), Severity: severity,
 		Message: message, Explanation: diagnostic.NewExplanation(diagnostic.Evidence{Kind: diagnostic.EvidenceMissingProof, Trust: diagnosticTrustFromJudgmentEvidence(item, judgment.EvidenceMissingProof, diagnostic.TrustRefuted), Span: diagnosticEvidenceSpanOr(item, judgment.EvidenceMissingProof, span), Message: fmt.Sprintf("no proof establishes %s in %s state at this call", codeName(resource), codeName(item.Expected.Label))}),
 		Labels: []diagnostic.Label{sourceLabel(span, "unproven typestate requirement")}, Help: fmt.Sprintf("Establish that %s is in %s state before this call.", codeName(resource), codeName(item.Expected.Label))}), true
 }

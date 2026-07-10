@@ -155,16 +155,23 @@ func identifierName(s string) bool {
 	if s == "" {
 		return false
 	}
-	if !((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z') || s[0] == '_') {
+	if !identifierStartByte(s[0]) {
 		return false
 	}
 	for i := 1; i < len(s); i++ {
-		ch := s[i]
-		if !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
+		if !identifierContinueByte(s[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func identifierStartByte(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch == '_'
+}
+
+func identifierContinueByte(ch byte) bool {
+	return identifierStartByte(ch) || ch >= '0' && ch <= '9'
 }
 
 func appendSegment(prefix []segment.Segment, seg segment.Segment) []segment.Segment {

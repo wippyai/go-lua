@@ -40,8 +40,15 @@ func ReadJSONLFile(path string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	return ReadJSONL(file)
+	records, readErr := ReadJSONL(file)
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return records, nil
 }
 
 // WriteReport writes report in either "human", "text", "json", or "jsonl"

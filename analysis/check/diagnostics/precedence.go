@@ -173,7 +173,7 @@ func diagnosticCauseCoversSpan(cause, dependent diagnostic.Diagnostic) bool {
 		}
 	}
 	for _, label := range cause.Labels {
-		file := label.File
+		file := label.DisplayFile()
 		if file == "" {
 			file = cause.Position.File
 		}

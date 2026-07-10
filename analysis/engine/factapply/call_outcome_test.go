@@ -793,9 +793,10 @@ func TestFactsNodeTransferCallOutcomeAppliesReturnSlotPathLanes(t *testing.T) {
 		t.Fatalf("return-slot relational constraints = %#v, want one", constraints)
 	}
 	constraint := constraints[0]
+	isSymmetricPair := (constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
+		(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))
 	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
-		!((constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
-			(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))) ||
+		!isSymmetricPair ||
 		constraint.C != state.RelLengthOperand(itemsKey) {
 		t.Fatalf("return-slot relational constraint = %#v, want i+j-len(items)<=0", constraint)
 	}
@@ -1484,9 +1485,10 @@ func TestFactsNodeTransferCallOutcomeAppliesNormalReturnRelConstraints(t *testin
 		t.Fatalf("relational constraints = %#v, want one rebased relation", constraints)
 	}
 	constraint := constraints[0]
+	isSymmetricPair := (constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
+		(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))
 	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
-		!((constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
-			(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))) ||
+		!isSymmetricPair ||
 		constraint.C != state.RelLengthOperand(xsKey) {
 		t.Fatalf("relational constraint = %#v, want i+j-len(xs)<=0 after rebasing", constraint)
 	}

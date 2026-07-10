@@ -144,10 +144,6 @@ func (w *bodyDigestWriter) writeType(label string, t typ.Type) {
 	w.writeString(label+":display", t.String())
 }
 
-func (w *bodyDigestWriter) writeProduct(label string, value product.Value) {
-	w.writeUint64(label, w.stableProductHash(value))
-}
-
 func (w *bodyDigestWriter) stableProductHash(value product.Value) uint64 {
 	h := internalhash.NewWriter()
 	_, _ = h.WriteString("product:")

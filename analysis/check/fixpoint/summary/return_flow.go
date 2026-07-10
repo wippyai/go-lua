@@ -33,19 +33,6 @@ type returnFlowKey struct {
 	path        pathdom.PathKey
 }
 
-func returnFlowParam(returnIndex, param int) ReturnFlow {
-	return ReturnFlow{ReturnIndex: returnIndex, Kind: ReturnFlowParam, Param: param}
-}
-
-func returnFlowParamMember(returnIndex, param int, path []segment.Segment) ReturnFlow {
-	return ReturnFlow{
-		ReturnIndex: returnIndex,
-		Kind:        ReturnFlowParamMember,
-		Param:       param,
-		Path:        append([]segment.Segment(nil), path...),
-	}
-}
-
 var returnFlowLane returnFlowFactLane
 
 type returnFlowFactLane struct{}

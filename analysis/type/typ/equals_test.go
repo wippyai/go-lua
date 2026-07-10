@@ -213,8 +213,8 @@ func TestTypeEqualsDepthLimit(t *testing.T) {
 }
 
 func TestTypeEqualsDepthExhaustionFailsClosed(t *testing.T) {
-	var left Type = Number
-	var right Type = String
+	left := Type(Number)
+	right := Type(String)
 	for i := 0; i < DefaultRecursionDepth+2; i++ {
 		left = &Alias{Name: "Left", Target: left}
 		right = &Alias{Name: "Right", Target: right}

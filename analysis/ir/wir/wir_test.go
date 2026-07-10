@@ -22,10 +22,12 @@ func TestInternPoolsAreOneBasedAndDeduped(t *testing.T) {
 	}
 
 	c := Const{Kind: ConstNumber, Number: "42"}
-	if b.InternConst(c) != b.InternConst(c) {
+	constRef1, constRef2 := b.InternConst(c), b.InternConst(c)
+	if constRef1 != constRef2 {
 		t.Fatalf("const interning not deduped")
 	}
-	if b.InternType(typ.String) != b.InternType(typ.String) {
+	stringRef1, stringRef2 := b.InternType(typ.String), b.InternType(typ.String)
+	if stringRef1 != stringRef2 {
 		t.Fatalf("type interning not deduped")
 	}
 	if b.InternType(typ.String) == b.InternType(typ.Number) {
@@ -35,7 +37,8 @@ func TestInternPoolsAreOneBasedAndDeduped(t *testing.T) {
 		t.Fatalf("nil (unresolved) type must intern to none")
 	}
 	// Distinct checks are never deduped: each branch owns one.
-	if b.InternCheck(b.Check(0)) == b.InternCheck(b.Check(0)) {
+	checkRef1, checkRef2 := b.InternCheck(b.Check(0)), b.InternCheck(b.Check(0))
+	if checkRef1 == checkRef2 {
 		t.Fatalf("checks must not dedupe")
 	}
 }

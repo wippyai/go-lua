@@ -113,7 +113,7 @@ add(1, "wrong")`, "test.lua").RootResult()
 	if len(got) != 1 {
 		t.Fatalf("judgments = %d, want 1: %#v", len(got), got)
 	}
-	if got[0].Spans[0].File != "test.lua" || got[0].Spans[0].StartLine != 4 {
+	if got[0].Spans[0].DisplayFile() != "test.lua" || got[0].Spans[0].StartLine != 4 {
 		t.Fatalf("span = %#v, want test.lua line 4", got[0].Spans[0])
 	}
 }

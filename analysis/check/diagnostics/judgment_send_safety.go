@@ -20,7 +20,8 @@ func renderSendIsolationJudgmentWithPolicy(_ judgmentRenderContext, item judgmen
 		labels = append(labels, sourceLabel(proofSpan, labelSendSafetyProof))
 	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		File:        item.Spans[0].File,
+		Location:    item.Spans[0].Location,
+		File:        item.Spans[0].DisplayFile(),
 		Span:        span,
 		Code:        code,
 		Message:     sendSafetyMessage(item),

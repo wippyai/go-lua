@@ -38,7 +38,7 @@ func TestUnresolvedValuesRefutesImplicitGlobalRead(t *testing.T) {
 		!strings.Contains(stable, "ord:0") {
 		t.Fatalf("stable key = %q", stable)
 	}
-	if len(item.Spans) != 1 || item.Spans[0].File != "test.lua" || item.Spans[0].StartLine != 1 || item.Spans[0].StartCol != 11 {
+	if len(item.Spans) != 1 || item.Spans[0].DisplayFile() != "test.lua" || item.Spans[0].StartLine != 1 || item.Spans[0].StartCol != 11 {
 		t.Fatalf("spans = %#v, want missing identifier source span", item.Spans)
 	}
 	if len(item.Evidence) != 1 || item.Evidence[0].Kind != judgment.EvidenceAbstractFact || item.Evidence[0].Trust != judgment.EvidenceTrustProven {

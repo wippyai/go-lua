@@ -226,8 +226,8 @@ func TestDocumentKeyedUnitInputBindsResultLocationsAndPreservesDisplay(t *testin
 			if span.Location.Document != document || span.Location.ContentDigest != digest || !span.Location.Valid() {
 				t.Fatalf("judgment span location = %#v, want digest-bound registry location", span.Location)
 			}
-			if span.File != "orders.lua" {
-				t.Fatalf("judgment span display = %q, want label projection", span.File)
+			if span.DisplayFile() != "orders.lua" {
+				t.Fatalf("judgment span display = %q, want label projection", span.DisplayFile())
 			}
 		}
 	}

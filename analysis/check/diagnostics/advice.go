@@ -20,7 +20,8 @@ func renderAdviceJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Jud
 		return diagnostic.Diagnostic{}, false
 	}
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		File:        item.Spans[0].File,
+		Location:    item.Spans[0].Location,
+		File:        item.Spans[0].DisplayFile(),
 		Span:        span,
 		Code:        code,
 		Severity:    severity,

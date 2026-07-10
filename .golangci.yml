@@ -1,0 +1,16 @@
+version: "2"
+
+linters:
+  exclusions:
+    warn-unused: true
+    rules:
+      # These test assertion helpers return diagnostic.Diagnostic so callers
+      # can inspect the selected value. Diagnostic also implements error for
+      # production consumers, which makes ignored assertion results look like
+      # unchecked errors to errcheck even though the helpers fail through T.
+      - linters:
+          - errcheck
+        source: '^\s*requireDiagnostic(Code)?\('
+      - linters:
+          - errcheck
+        source: '^\s*requireDiagnosticShape\('

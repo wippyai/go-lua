@@ -148,20 +148,6 @@ func publishCallReturnPresenceImplication(
 	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
 }
 
-func applyPathValuePresenceImplication(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	fact factflow.PathValuePresenceImplication,
-) state.State {
-	implication, ok := pathValuePresenceImplicationAt(ctx, resolver, fact)
-	if !ok {
-		return out
-	}
-	out = out.AddPathPresenceImplication(implication)
-	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
-}
-
 func pathValuePresenceImplicationAt(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,

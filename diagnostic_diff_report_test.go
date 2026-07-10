@@ -40,7 +40,7 @@ func TestWriteDiagnosticDiffReport(t *testing.T) {
 			t.Fatalf("creating report %s: %v", outPath, err)
 		}
 		if err := diffreport.WriteReport(file, report, os.Getenv("DIFFREPORT_FORMAT")); err != nil {
-			file.Close()
+			_ = file.Close()
 			t.Fatalf("writing report %s: %v", outPath, err)
 		}
 		if err := file.Close(); err != nil {

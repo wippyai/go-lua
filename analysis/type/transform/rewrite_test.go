@@ -1000,8 +1000,11 @@ func TestRewrite_RecursiveBody(t *testing.T) {
 		t.Fatalf("expected rewritten value field, got %v", value)
 	}
 	next := body.GetField("next")
+	if next == nil {
+		t.Fatal("expected self-reference field, got nil")
+	}
 	opt, ok := next.Type.(*typ.Optional)
-	if next == nil || !ok || opt.Inner != got {
+	if !ok || opt.Inner != got {
 		t.Fatalf("expected self-reference to point at rewritten recursive node, got %v", next)
 	}
 }

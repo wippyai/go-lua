@@ -34,7 +34,7 @@ func bindJudgmentLocations(items []judgment.Judgment, input UnitInput) {
 			span := &items[itemIndex].Spans[spanIndex]
 			document, ok := span.Location.Document, span.Location.Document.Valid()
 			if !ok {
-				document, ok = documentForLabel(input, span.File)
+				document, ok = documentForLabel(input, span.DisplayFile())
 			}
 			if !ok {
 				continue
@@ -44,9 +44,7 @@ func bindJudgmentLocations(items []judgment.Judgment, input UnitInput) {
 				continue
 			}
 			span.Location = locationForSpan(document, snapshot, span.StartLine, span.StartCol, span.EndLine, span.EndCol)
-			if span.File == "" {
-				span.File = documentLabel(input, document)
-			}
+			span.SetDisplayFileIfEmpty(documentLabel(input, document))
 		}
 	}
 }
@@ -70,16 +68,14 @@ func bindDiagnosticLocations(items []diagnostic.Diagnostic, input UnitInput) {
 			label := &item.Labels[labelIndex]
 			labelDocument, labelOK := label.Location.Document, label.Location.Document.Valid()
 			if !labelOK {
-				labelDocument, labelOK = documentForLabel(input, label.File)
+				labelDocument, labelOK = documentForLabel(input, label.DisplayFile())
 			}
 			if !labelOK {
 				continue
 			}
 			if snapshot, exists := input.Sources[labelDocument]; exists {
 				label.Location = locationForSpan(labelDocument, snapshot, label.Span.StartLine, label.Span.StartCol, label.Span.EndLine, label.Span.EndCol)
-				if label.File == "" {
-					label.File = documentLabel(input, labelDocument)
-				}
+				label.SetDisplayFileIfEmpty(documentLabel(input, labelDocument))
 			}
 		}
 	}

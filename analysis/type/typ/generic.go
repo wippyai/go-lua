@@ -81,7 +81,7 @@ func (g *Generic) SetBody(body Type) {
 	h = hash.MixHash(h, body.Hash())
 	g.hash = h
 
-	g.typeProperties.include(body)
+	g.include(body)
 	g.strCache = stringCache{}
 }
 

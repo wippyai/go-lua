@@ -113,8 +113,8 @@ func lifecycleFinalStateLabel(detail judgment.EvidenceDetail) string {
 
 func lifecycleFile(item judgment.Judgment) string {
 	for _, evidence := range item.Evidence {
-		if evidence.Span.File != "" {
-			return evidence.Span.File
+		if file := evidence.Span.DisplayFile(); file != "" {
+			return file
 		}
 	}
 	return ""

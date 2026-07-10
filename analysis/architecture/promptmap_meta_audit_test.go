@@ -13,7 +13,7 @@ func TestPromptmapMetaAuditMatrixIsPresentAndWellFormed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open promptmap meta audit matrix: %v", err)
 	}
-	defer f.Close()
+	t.Cleanup(func() { _ = f.Close() })
 
 	reader := csv.NewReader(f)
 	rows, err := reader.ReadAll()

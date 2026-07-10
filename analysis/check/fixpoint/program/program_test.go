@@ -2073,7 +2073,6 @@ return mapped
 		t.Fatalf("contextual map_result param 1 = %v, want concrete Result<number>", contextualFn.Params[0].Type)
 	}
 	var sawContext bool
-	var sawResultRoot bool
 	for _, child := range result.RootResult().FunctionResults() {
 		if child == nil || !child.IsCallContextResult() || child.Graph() == nil {
 			continue
@@ -2096,7 +2095,6 @@ return mapped
 			if !rootOK {
 				continue
 			}
-			sawResultRoot = true
 			got, ok := typevalue.TypeOf(reg, value)
 			if !ok || !subtype.IsSubtype(got, typ.Number) {
 				structural, structuralOK := typevalue.StructuralTypeOf(reg, typevalue.NewCache(), value, typevalue.StructuralTypeOptions{})
@@ -2121,9 +2119,6 @@ return mapped
 	}
 	if !sawContext {
 		t.Fatalf("specialized map_result call context missing")
-	}
-	if !sawResultRoot {
-		return
 	}
 	t.Fatalf("callback call argument result.value not found")
 }

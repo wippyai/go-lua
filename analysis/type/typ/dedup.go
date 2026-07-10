@@ -89,10 +89,7 @@ func sameRecursiveIdentityGraph(a, b Type) bool {
 		return false
 	}
 	return left.all(func(id uint64) bool {
-		if !right.has(id) {
-			return false
-		}
-		return true
+		return right.has(id)
 	})
 }
 

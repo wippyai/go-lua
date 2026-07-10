@@ -30,8 +30,10 @@ func TestInProcessTransportLifecycleIncrementalCancellationAndVersionedDiagnosti
 	}
 	server := NewServer(session, Options{Debounce: time.Millisecond})
 	client, peer := net.Pipe()
-	defer client.Close()
-	defer peer.Close()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = peer.Close()
+	})
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- ServeStream(context.Background(), peer, peer, server) }()
 	framer := jsonrpc2.NewFramer(client, client)
@@ -833,23 +835,6 @@ type blockBinderOccurrencesSession struct {
 	blockCall int
 	started   chan struct{}
 	release   chan struct{}
-}
-
-type blockRepairActionsSession struct {
-	service.WorkspaceSession
-	started chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func (s *blockRepairActionsSession) RepairActions(ctx context.Context, request service.RepairActionsRequest) (service.RepairActionsResponse, error) {
-	s.once.Do(func() { close(s.started) })
-	select {
-	case <-s.release:
-	case <-ctx.Done():
-		return service.RepairActionsResponse{}, ctx.Err()
-	}
-	return s.WorkspaceSession.RepairActions(ctx, request)
 }
 
 type blockPositionLookupSession struct {

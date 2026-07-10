@@ -539,7 +539,7 @@ func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard)
 }
 
 func (s *solveState[Cell, State]) runNarrowingWithoutCancellation() {
-	s.runNarrowing(nil)
+	_ = s.runNarrowing(nil)
 }
 
 func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error {

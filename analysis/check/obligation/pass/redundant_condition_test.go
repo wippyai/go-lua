@@ -36,7 +36,7 @@ end
 		!judgmentHasEvidenceDetail(item, judgment.EvidenceDetailRedundantConditionStability) {
 		t.Fatalf("evidence = %#v, want check, proof, and stability details", item.Evidence)
 	}
-	if len(item.Spans) != 2 || item.Spans[0].File != "test.lua" || item.Spans[1].File != "test.lua" {
+	if len(item.Spans) != 2 || item.Spans[0].DisplayFile() != "test.lua" || item.Spans[1].DisplayFile() != "test.lua" {
 		t.Fatalf("spans = %#v, want current and proof spans in test.lua", item.Spans)
 	}
 }

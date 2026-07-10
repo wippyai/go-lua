@@ -214,7 +214,7 @@ func trackedSummaryReadDigests(reg *axis.Registry, deps map[summary.SummaryKey]t
 		if dep.present {
 			_, _ = h.Write([]byte("present:"))
 			payload := uint64(summary.NormalizedPayloadDigest(reg, dep.sum))
-			fmt.Fprintf(h, "%d;", payload)
+			_, _ = fmt.Fprintf(h, "%d;", payload)
 		} else {
 			_, _ = h.Write([]byte("missing"))
 		}

@@ -198,8 +198,8 @@ func subjectAnchorModule(ctx Context, item judgment.Judgment) string {
 		return ctx.SourceFile
 	}
 	for _, span := range item.Spans {
-		if span.File != "" {
-			return span.File
+		if file := span.DisplayFile(); file != "" {
+			return file
 		}
 	}
 	return item.Subject.FunctionKey

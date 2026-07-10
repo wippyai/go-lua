@@ -140,7 +140,7 @@ func typeCanBeTruthy(t typ.Type, depth int) bool {
 		}
 		return false
 	case *typ.Literal:
-		return !(v.Base == kind.Boolean && v.Value == false)
+		return v.Base != kind.Boolean || v.Value != false
 	default:
 		if v == nil {
 			return false

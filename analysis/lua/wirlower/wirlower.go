@@ -1004,7 +1004,7 @@ type callMetadata struct {
 
 func (b *builder) callMetadata(context wir.CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, openTailFinal bool) callMetadata {
 	meta := callMetadata{context: context, expr: exprIndex}
-	final := true
+	var final bool
 	allowExpansion := false
 	openTail := false
 	switch context {

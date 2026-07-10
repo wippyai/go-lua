@@ -46,7 +46,8 @@ func (ProofContext) DirectCallArgument(item judgment.Judgment, primary diagnosti
 		Help:     help,
 		Evidence: directCallArgumentJudgmentEvidence(display, item, proof, wording, primary),
 		Labels: []diagnostic.Label{{
-			File:      item.Spans[0].File,
+			Location:  item.Spans[0].Location,
+			File:      item.Spans[0].DisplayFile(),
 			Span:      primary,
 			Message:   labelArgumentValue,
 			Placement: diagnostic.LabelPlacementBelow,

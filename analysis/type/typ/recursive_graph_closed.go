@@ -86,7 +86,7 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 		}
 	}
 
-	result := true
+	var result bool
 	switch n := t.(type) {
 	case nil:
 		result = true

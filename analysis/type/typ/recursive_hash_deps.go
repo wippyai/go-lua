@@ -57,7 +57,7 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 		}
 	}
 
-	result := true
+	var result bool
 	switch n := t.(type) {
 	case nil:
 		result = true

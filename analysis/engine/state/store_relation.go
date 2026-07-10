@@ -41,7 +41,7 @@ func (l storeRelationLane) add(relation StoreRelation) (storeRelationLane, bool)
 	if relation.Source == "" || relation.Into == "" {
 		return l, false
 	}
-	lane, changed := l.mustSetLane.insert(relation)
+	lane, changed := l.insert(relation)
 	return storeRelationLane{lane}, changed
 }
 

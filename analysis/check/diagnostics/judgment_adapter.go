@@ -78,8 +78,13 @@ func RenderJudgments(items []judgment.Judgment, config Config) []diagnostic.Diag
 		if !ok {
 			continue
 		}
-		if d.Position.File == "" && len(item.Spans) != 0 {
-			d.Position.File = item.Spans[0].File
+		if len(item.Spans) != 0 {
+			if !d.Location.Document.Valid() {
+				d.Location = item.Spans[0].Location
+			}
+			if d.Position.File == "" {
+				d.Position.File = item.Spans[0].DisplayFile()
+			}
 		}
 		out = append(out, d)
 	}

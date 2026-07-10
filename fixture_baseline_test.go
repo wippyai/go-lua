@@ -65,9 +65,13 @@ func TestWriteFixtureDiagnosticBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating baseline %s: %v", outPath, err)
 	}
-	defer file.Close()
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = file.Close()
+		}
+	})
 	w := bufio.NewWriter(file)
-	defer w.Flush()
 
 	for _, s := range suites {
 		skip, _ := shouldSkipOracleSuite(s)
@@ -115,6 +119,13 @@ func TestWriteFixtureDiagnosticBaseline(t *testing.T) {
 			writeFixtureBaselineRecord(t, w, fixtureDiagnosticBaselineRecord(s.Name, entry, d))
 		}
 	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush baseline %s: %v", outPath, err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close baseline %s: %v", outPath, err)
+	}
+	closed = true
 }
 
 func writeFixtureBaselineRecord(t *testing.T, w *bufio.Writer, record fixtureBaselineRecord) {
@@ -172,7 +183,7 @@ func fixtureBaselineLabels(labels []diag.Label) []fixtureBaselineLabel {
 	out := make([]fixtureBaselineLabel, 0, len(labels))
 	for _, label := range labels {
 		out = append(out, fixtureBaselineLabel{
-			File:      label.File,
+			File:      label.DisplayFile(),
 			Span:      fixtureBaselineSpanFromDiagnostic(label.Span),
 			Message:   label.Message,
 			Placement: fixtureBaselineLabelPlacement(label.Placement),

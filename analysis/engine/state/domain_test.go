@@ -490,11 +490,6 @@ func TestLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	if emptyCopy == nil || len(emptyCopy) != 0 {
 		t.Fatalf("CloneLanes(empty) = %#v, want non-nil empty slice", emptyCopy)
 	}
-	emptySource = append(emptySource, LaneFrozenTables)
-	if len(emptyCopy) != 0 {
-		t.Fatalf("CloneLanes(empty) kept caller storage: %#v", emptyCopy)
-	}
-
 	withoutFrozen := DefaultLaneSet().Without(LaneFrozenTables)
 	if withoutFrozen.Has(LaneFrozenTables) {
 		t.Fatal("Without kept disabled frozen-table lane")

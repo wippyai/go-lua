@@ -17,7 +17,8 @@ func renderFrozenTableJudgmentWithPolicy(ctx judgmentRenderContext, item judgmen
 	span := diagnosticSpanFromJudgment(item.Spans[0])
 	presentation := ctx.proof.FrozenTable(item, span)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
-		File:        item.Spans[0].File,
+		Location:    item.Spans[0].Location,
+		File:        item.Spans[0].DisplayFile(),
 		Span:        span,
 		Code:        code,
 		Message:     presentation.Message,

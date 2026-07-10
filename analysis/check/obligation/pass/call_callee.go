@@ -39,14 +39,15 @@ func callCalleeJudgment(ctx Context, functionKey string, call readmodel.CallSite
 	}
 	verdict := judgment.VerdictRefuted
 	missingTrust := judgment.EvidenceTrustRefuted
-	if report.Kind == readmodel.CallCalleeReportMayBeNil {
+	switch report.Kind {
+	case readmodel.CallCalleeReportMayBeNil:
 		detail = judgment.CalleeMayBeNilEvidenceDetail(report.Callable)
 		if report.MemberAccess {
 			detail = judgment.MemberCalleeMayBeNilEvidenceDetail(report.Callable)
 		}
 		verdict = judgment.VerdictUnknown
 		missingTrust = judgment.EvidenceTrustUnknown
-	} else if report.Kind == readmodel.CallCalleeReportMissingMember {
+	case readmodel.CallCalleeReportMissingMember:
 		detail = judgment.MemberMissingEvidenceDetail(report.MemberName)
 	}
 	span := spanFromReadModel(ctx.SourceFile, report.Span)

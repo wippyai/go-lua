@@ -114,7 +114,7 @@ func TestMixHashMatchesOneFNV1aUint64Step(t *testing.T) {
 func TestWriterMatchesStandardLibraryFNV1a64(t *testing.T) {
 	t.Parallel()
 
-	var writer Writer = NewWriter()
+	writer := NewWriter()
 	_, _ = writer.WriteString("prefix:")
 	writer.WriteIntDecimal(-42)
 	_ = writer.WriteByte(':')
@@ -127,7 +127,7 @@ func TestWriterMatchesStandardLibraryFNV1a64(t *testing.T) {
 	writer.WriteBool(false)
 
 	std := fnv.New64a()
-	fmt.Fprintf(std, "prefix:%d:%d:%x:%t:%t", -42, uint64(123456789), uint64(0xabcdef), true, false)
+	_, _ = fmt.Fprintf(std, "prefix:%d:%d:%x:%t:%t", -42, uint64(123456789), uint64(0xabcdef), true, false)
 	if got, want := writer.Sum64(), std.Sum64(); got != want {
 		t.Fatalf("Writer digest = %d, want standard FNV-1a %d", got, want)
 	}

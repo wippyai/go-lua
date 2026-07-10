@@ -37,8 +37,8 @@ func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
 		t.Fatal("subtype comparison succeeded after recursion-depth exhaustion")
 	}
 
-	var sub typ.Type = typ.Number
-	var super typ.Type = typ.String
+	sub := typ.Type(typ.Number)
+	super := typ.Type(typ.String)
 	for i := 0; i < typ.DefaultRecursionDepth+2; i++ {
 		sub = typetable.NewRecord().Field("next", sub).Build()
 		super = typetable.NewRecord().Field("next", super).Build()

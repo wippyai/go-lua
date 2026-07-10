@@ -895,7 +895,7 @@ func TestRecursiveHashIntersection(t *testing.T) {
 }
 
 func TestRecursiveContainsGraphClosedHandlesDeepAcyclicProducts(t *testing.T) {
-	var body Type = String
+	body := Type(String)
 	for i := 0; i < 80; i++ {
 		body = NewArray(body)
 	}
@@ -992,7 +992,7 @@ func TestExportedContainsPredicatesSeeOpenRecursiveBodyMutation(t *testing.T) {
 
 func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
 	rec := NewRecursive("Deep", func(self Type) Type {
-		var body Type = self
+		body := self
 		for i := 0; i < 80; i++ {
 			body = NewArray(body)
 		}
@@ -1072,7 +1072,8 @@ func TestRecursiveHashReadonlyMapTraversesKeyAndValue(t *testing.T) {
 				return tc.wrap(NewArray(self))
 			})
 
-			if direct.Hash() != direct.Hash() {
+			firstHash, secondHash := direct.Hash(), direct.Hash()
+			if firstHash != secondHash {
 				t.Fatal("recursive ReadonlyMap hash should be stable")
 			}
 			if direct.Hash() == nested.Hash() {
@@ -1106,7 +1107,8 @@ func TestRecursiveHashStaticMemberTraversesType(t *testing.T) {
 			Build()
 	})
 
-	if direct.Hash() != direct.Hash() {
+	firstHash, secondHash := direct.Hash(), direct.Hash()
+	if firstHash != secondHash {
 		t.Fatal("recursive static-member hash should be stable")
 	}
 	if direct.Hash() == nested.Hash() {

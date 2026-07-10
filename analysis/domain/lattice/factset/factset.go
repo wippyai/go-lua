@@ -95,7 +95,7 @@ func (s Set[K, F]) normalize(in []F, clone bool) []F {
 		}
 		fact = s.maybeCloneOne(fact, clone)
 		key := s.Key(fact)
-		if kept, ok := merged[key]; ok && !(s.Prefer != nil && s.Prefer(kept, fact)) {
+		if kept, ok := merged[key]; ok && (s.Prefer == nil || !s.Prefer(kept, fact)) {
 			continue
 		}
 		merged[key] = fact

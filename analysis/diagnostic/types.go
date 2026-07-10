@@ -121,6 +121,23 @@ type Label struct {
 	Placement LabelPlacement
 }
 
+// DisplayFile returns the compatibility renderer label. Semantic consumers
+// must use Location.Document instead.
+func (l Label) DisplayFile() string {
+	if l.File != "" {
+		return l.File
+	}
+	return embedding.DefaultDocumentLabel(l.Location.Document)
+}
+
+// SetDisplayFileIfEmpty fills the compatibility renderer projection without
+// changing the digest-bound source identity.
+func (l *Label) SetDisplayFileIfEmpty(file string) {
+	if l != nil && l.File == "" {
+		l.File = file
+	}
+}
+
 // LabelPlacement controls where rich source-frame labels render relative to
 // the source line. Auto keeps the structural fallback: primary annotations below
 // the line, secondary annotations above it.

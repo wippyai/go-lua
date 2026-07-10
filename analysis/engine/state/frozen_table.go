@@ -33,7 +33,7 @@ func (l frozenTableLane) freeze(id identity.ID) (frozenTableLane, bool) {
 	if id == (identity.ID{}) {
 		return l, false
 	}
-	lane, changed := l.mustSetLane.insert(id)
+	lane, changed := l.insert(id)
 	return frozenTableLane{lane}, changed
 }
 
