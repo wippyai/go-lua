@@ -301,12 +301,16 @@ func (s *Server) didClose(ctx context.Context, raw []byte) error {
 		return nil // LSP close is safely idempotent for a previously closed file.
 	}
 	s.stopDocumentLocked(doc)
-	delete(s.documents, document)
 	unitID, uri, version := doc.unitID, doc.uri, doc.version
-	s.mu.Unlock()
 	if err := s.session.RemoveUnit(ctx, unitID); err != nil {
+		s.mu.Unlock()
 		return jsonrpc2.NewError(jsonrpc2.InternalError, "remove closed unit", err.Error())
 	}
+	// Keep close and remove serialized with didOpen. If removal happened after
+	// releasing this lock, a concurrent reopen of the same DocumentID could
+	// upsert a new unit and then have that new unit removed by this close.
+	delete(s.documents, document)
+	s.mu.Unlock()
 	s.publish(context.Background(), methodPublishDiagnostics, publishDiagnosticsParams{URI: uri, Version: version, Diagnostics: []protocolDiagnostic{}})
 	return nil
 }

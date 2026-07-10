@@ -156,12 +156,104 @@ func TestHTTPPostAndLongPollFrontend(t *testing.T) {
 	_, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit})
 }
 
+func TestCloseSerializesUnitRemovalWithReopen(t *testing.T) {
+	base := service.NewBatchSession()
+	session := &blockRemoveSession{
+		WorkspaceSession: base,
+		started:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	server := NewServer(session, Options{Debounce: time.Hour})
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodInitialize}); problem != nil {
+		t.Fatalf("initialize: %v", problem)
+	}
+
+	uri := "file:///workspace/reopen.lua"
+	openRequest := func(version int64, text string) jsonrpc2.Request {
+		return jsonrpc2.Request{
+			Method: methodDidOpen,
+			Params: paramsJSON(t, map[string]any{"textDocument": map[string]any{
+				"uri": uri, "languageId": "lua", "version": version, "text": text,
+			}}),
+		}
+	}
+	if _, problem := server.Handle(context.Background(), openRequest(1, "return 1\n")); problem != nil {
+		t.Fatalf("first open: %v", problem)
+	}
+	closeRequest := jsonrpc2.Request{
+		Method: methodDidClose,
+		Params: paramsJSON(t, map[string]any{"textDocument": map[string]any{"uri": uri}}),
+	}
+	reopenRequest := openRequest(2, "return 2\n")
+
+	closeDone := make(chan *jsonrpc2.Error, 1)
+	go func() {
+		_, problem := server.Handle(context.Background(), closeRequest)
+		closeDone <- problem
+	}()
+	select {
+	case <-session.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("close did not begin unit removal")
+	}
+
+	reopenDone := make(chan *jsonrpc2.Error, 1)
+	go func() {
+		_, problem := server.Handle(context.Background(), reopenRequest)
+		reopenDone <- problem
+	}()
+	if server.mu.TryLock() {
+		server.mu.Unlock()
+		t.Fatal("close released the server lock before removing its unit")
+	}
+
+	close(session.release)
+	if problem := <-closeDone; problem != nil {
+		t.Fatalf("close: %v", problem)
+	}
+	if problem := <-reopenDone; problem != nil {
+		t.Fatalf("reopen: %v", problem)
+	}
+}
+
+func TestPublishDiagnosticsVersionZeroIsStillTagged(t *testing.T) {
+	payload, err := json.Marshal(publishDiagnosticsParams{URI: "file:///workspace/main.lua", Version: 0, Diagnostics: []protocolDiagnostic{}})
+	if err != nil {
+		t.Fatalf("marshal publish diagnostics: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode publish diagnostics: %v", err)
+	}
+	if got, ok := decoded["version"]; !ok || string(got) != "0" {
+		t.Fatalf("publish diagnostics omitted version zero: %s", payload)
+	}
+}
+
 type blockFirstSolveSession struct {
 	service.WorkspaceSession
 	mu       sync.Mutex
 	first    bool
 	started  chan struct{}
 	canceled chan struct{}
+}
+
+type blockRemoveSession struct {
+	service.WorkspaceSession
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockRemoveSession) RemoveUnit(ctx context.Context, id service.UnitID) error {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return s.WorkspaceSession.RemoveUnit(ctx, id)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *blockFirstSolveSession) EnsureSolved(ctx context.Context, request service.SolveRequest) (service.ResultTag, error) {
@@ -198,6 +290,15 @@ func rpcBody(t *testing.T, value any) *bytes.Reader {
 		t.Fatal(err)
 	}
 	return bytes.NewReader(payload)
+}
+
+func paramsJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func readRPC(t *testing.T, connection net.Conn, framer *jsonrpc2.Framer) []byte {

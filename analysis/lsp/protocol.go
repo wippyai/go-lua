@@ -93,8 +93,11 @@ type protocolDiagnostic struct {
 }
 
 type publishDiagnosticsParams struct {
-	URI         string               `json:"uri"`
-	Version     int64                `json:"version,omitempty"`
+	URI string `json:"uri"`
+	// Version is deliberately required by this server. LSP permits clients to
+	// use version zero, so omitempty would make a valid, tagged publication
+	// appear unversioned on the wire.
+	Version     int64                `json:"version"`
 	Diagnostics []protocolDiagnostic `json:"diagnostics"`
 }
 
