@@ -534,6 +534,7 @@ type Return struct {
 	SourceIndexedRead   bool
 	SourceSpan          SourceSpan
 	DeclarationSpan     SourceSpan
+	Nilability          NilabilityProvenance
 	UntrustedTopOrigin  bool
 	ExplicitTopOrigin   bool
 	BodyParamObligation bool
@@ -663,6 +664,20 @@ type ConcatOperand struct {
 	OperandKey       string
 	TypeWithPresence typ.Type
 	OperandSpan      SourceSpan
+	Nilability       NilabilityProvenance
+}
+
+// NilabilityProvenance is the solved evidence path for a value that can still
+// contain nil at a use boundary. It deliberately reuses the same projections
+// used by assignment diagnostics: a callee result, optional receiver reads,
+// and explicit gradual origins. Obligation passes translate it into structured
+// judgment evidence; diagnostics only render that evidence.
+type NilabilityProvenance struct {
+	CallResult         CallResultAssignmentSource
+	NilableAccesses    []NilableAccessEvidence
+	OptionalField      bool
+	ExplicitTopOrigin  bool
+	UntrustedTopOrigin bool
 }
 
 // NilRisk reports whether the operand projection can include nil and should be
@@ -674,8 +689,11 @@ func (o ConcatOperand) NilRisk() bool {
 // ConcatOperandNilRisk reports whether a projected operand type can include nil
 // and is concrete enough to report.
 func ConcatOperandNilRisk(t typ.Type) bool {
-	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+	if t == nil || typ.IsNever(t) {
 		return false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
 	}
 	return ProjectionHasNil(t)
 }
@@ -1339,6 +1357,7 @@ type CallCalleeReport struct {
 	MemberAccess bool
 	MemberName   string
 	Span         SourceSpan
+	Nilability   NilabilityProvenance
 }
 
 // CallCalleeReportPlan carries the solved direct-callee information needed to
@@ -1446,6 +1465,7 @@ type CallArgument struct {
 	FunctionType              *typ.Function
 	Span                      SourceSpan
 	Label                     string
+	Nilability                NilabilityProvenance
 	Mismatch                  CallArgumentMismatch
 }
 

@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -35,6 +36,8 @@ func (r Reader) ForEachCall(visit func(CallSite) bool) bool {
 		})
 		contract, hasContract := r.callContractAt(point)
 		paramObligations := r.callParamObligationsAt(point)
+		callee := r.callCalleeReport(point, site)
+		callee = r.withCalleeNilability(point, callee)
 		call := CallSite{
 			Point:      point,
 			CallSpan:   sourceSpanFromFactflow(site.CallSpan()),
@@ -43,7 +46,7 @@ func (r Reader) ForEachCall(visit func(CallSite) bool) bool {
 			SendSafety: r.sendSafetyReports(point, args),
 			Reports:    r.callArgumentReports(point, contract, hasContract, args, paramObligations),
 			Arity:      r.callArityReport(site, contract, hasContract),
-			Callee:     r.callCalleeReport(point, site),
+			Callee:     callee,
 		}
 		visited = true
 		if !visit(call) {
@@ -61,6 +64,14 @@ func (r Reader) CallCalleeReportAt(point cfg.Point) (CallCalleeReport, bool) {
 	if !ok {
 		return CallCalleeReport{}, false
 	}
-	report := r.callCalleeReport(point, site)
+	report := r.withCalleeNilability(point, r.callCalleeReport(point, site))
 	return report, report.Kind != readapi.CallCalleeReportNone
+}
+
+func (r Reader) withCalleeNilability(point cfg.Point, report CallCalleeReport) CallCalleeReport {
+	if report.Kind != readapi.CallCalleeReportMayBeNil {
+		return report
+	}
+	report.Nilability = nilabilityProvenanceForCallee(r, point, product.Value{})
+	return report
 }

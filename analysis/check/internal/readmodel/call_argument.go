@@ -285,6 +285,7 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSiteView, index 
 		CallerOwnedParameter: r.callerOwnedParameterArgument(point, source),
 		Span:                 callArgumentSpan(site, index),
 		Label:                r.callArgumentLabel(site, index, source),
+		Nilability:           nilabilityProvenanceForCallArgument(r, point, index, value),
 	}
 	if candidate, ok := r.callArgumentBoundaryCandidate(point, source, value); ok {
 		arg.ProofCandidateValue = candidate

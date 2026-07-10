@@ -38,6 +38,9 @@ func (ProofContext) Return(item judgment.Judgment, label string, sourceName stri
 		},
 	}
 	evidence = append(evidence, returnJudgmentExtraEvidence(item, proof, subject, got, primary)...)
+	if proof.MayBeNil {
+		evidence = append(evidence, nilabilityProvenanceEvidence(item, sourceName, got, primary)...)
+	}
 	return returnPresentation{
 		Subject:  subject,
 		Message:  returnJudgmentMessage(subject, sourceName, label, got, want, proof),

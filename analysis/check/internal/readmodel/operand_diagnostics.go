@@ -38,6 +38,7 @@ func (r Reader) ForEachConcatOperand(visit func(ConcatOperand) bool) bool {
 	}
 	visited := false
 	return r.result.ForEachConcatOperandOccurrence(func(occ body.ConcatOperandOccurrence) bool {
+		value, _ := r.result.ExpressionValueAtBoundary(occ.Point, occ.Operand)
 		item := ConcatOperand{
 			Point:            occ.Point,
 			Side:             occ.Side,
@@ -45,6 +46,7 @@ func (r Reader) ForEachConcatOperand(visit func(ConcatOperand) bool) bool {
 			OperandKey:       occ.OperandKey,
 			TypeWithPresence: occ.TypeWithPresence,
 			OperandSpan:      sourceSpanFromBody(occ.OperandSpan),
+			Nilability:       r.nilabilityProvenance(occ.Point, occ.Operand, value),
 		}
 		visited = true
 		return visit(item)

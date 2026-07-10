@@ -86,19 +86,20 @@ func (ProofContext) ConcatOperand(item judgment.Judgment, primary diagnostic.Spa
 	detail := proof.Detail
 	operandName := item.Subject.Label
 	got := item.Actual.ProjectedType
+	evidence := nilabilityProvenanceEvidence(item, operandName, got, primary)
+	evidence = append(evidence, diagnostic.Evidence{
+		Kind:    diagnostic.EvidenceAbstractFact,
+		Trust:   diagnostic.TrustProven,
+		Reason:  concatOperandEvidenceReason(got),
+		Cause:   diagnosticCauseForJudgmentEvidenceKind(item, judgment.EvidenceAbstractFact),
+		Span:    primary,
+		Message: display.ConcatOperandTypeEvidence(detail.Field, operandName, got),
+	})
 	return concatOperandPresentation{
-		Message: display.ConcatOperandMessage(detail.Field, operandName),
-		Help:    display.ConcatOperandHelp(operandName),
-		Labels:  []diagnostic.Label{sourceLabel(primary, labelValueMayBeNil)},
-		Evidence: []diagnostic.Evidence{
-			{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Reason:  concatOperandEvidenceReason(got),
-				Span:    primary,
-				Message: display.ConcatOperandTypeEvidence(detail.Field, operandName, got),
-			},
-		},
+		Message:  display.ConcatOperandMessage(detail.Field, operandName),
+		Help:     display.ConcatOperandHelp(operandName),
+		Labels:   []diagnostic.Label{sourceLabel(primary, labelValueMayBeNil)},
+		Evidence: evidence,
 	}, true
 }
 

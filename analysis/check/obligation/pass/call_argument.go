@@ -207,6 +207,9 @@ func callArgumentJudgment(
 			},
 		})
 	}
+	if arg.Mismatch.Kind == readmodel.CallArgumentMismatchMayBeNil {
+		evidence = appendNilabilityProvenance(evidence, point, ctx.SourceFile, callArgumentSubjectLabel(arg), arg.Span, arg.Nilability)
+	}
 	return judgment.Judgment{
 		Code:  judgment.CodeCallArgType,
 		Point: point,

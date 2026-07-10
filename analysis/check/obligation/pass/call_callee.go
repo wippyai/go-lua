@@ -50,6 +50,32 @@ func callCalleeJudgment(ctx Context, functionKey string, call readmodel.CallSite
 		detail = judgment.MemberMissingEvidenceDetail(report.MemberName)
 	}
 	span := spanFromReadModel(ctx.SourceFile, report.Span)
+	evidence := judgment.EvidenceChain{
+		{
+			Kind:   judgment.EvidenceAbstractFact,
+			Trust:  judgment.EvidenceTrustProven,
+			Origin: judgment.OriginRef{Point: call.Point, Key: "callee:actual"},
+			Detail: detail,
+			Span:   span,
+		},
+		{
+			Kind:   judgment.EvidenceUserAssertion,
+			Trust:  judgment.EvidenceTrustClaimed,
+			Origin: judgment.OriginRef{Point: call.Point, Key: "callee:callable"},
+			Detail: detail,
+			Span:   span,
+		},
+		{
+			Kind:   judgment.EvidenceMissingProof,
+			Trust:  missingTrust,
+			Origin: judgment.OriginRef{Point: call.Point, Key: "callee:proof"},
+			Detail: detail,
+			Span:   span,
+		},
+	}
+	if report.Kind == readmodel.CallCalleeReportMayBeNil {
+		evidence = appendNilabilityProvenance(evidence, call.Point, ctx.SourceFile, report.CallableName, report.Span, report.Nilability)
+	}
 	return judgment.Judgment{
 		Code:  judgment.CodeCallCallee,
 		Point: call.Point,
@@ -58,40 +84,9 @@ func callCalleeJudgment(ctx Context, functionKey string, call readmodel.CallSite
 			judgment.SubjectCallExpression,
 			fmt.Sprintf("call:%d:callee", call.Point),
 		).WithLabel(report.CallableName),
-		Actual:  judgment.NewValueRef(0, report.Type),
-		Verdict: verdict,
-		Evidence: judgment.EvidenceChain{
-			{
-				Kind:  judgment.EvidenceAbstractFact,
-				Trust: judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{
-					Point: call.Point,
-					Key:   "callee:actual",
-				},
-				Detail: detail,
-				Span:   span,
-			},
-			{
-				Kind:  judgment.EvidenceUserAssertion,
-				Trust: judgment.EvidenceTrustClaimed,
-				Origin: judgment.OriginRef{
-					Point: call.Point,
-					Key:   "callee:callable",
-				},
-				Detail: detail,
-				Span:   span,
-			},
-			{
-				Kind:  judgment.EvidenceMissingProof,
-				Trust: missingTrust,
-				Origin: judgment.OriginRef{
-					Point: call.Point,
-					Key:   "callee:proof",
-				},
-				Detail: detail,
-				Span:   span,
-			},
-		},
-		Spans: []judgment.SpanRef{span},
+		Actual:   judgment.NewValueRef(0, report.Type),
+		Verdict:  verdict,
+		Evidence: evidence,
+		Spans:    []judgment.SpanRef{span},
 	}
 }

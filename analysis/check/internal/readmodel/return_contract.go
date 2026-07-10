@@ -403,6 +403,7 @@ func (r Reader) returnValue(occ body.ReturnValueOccurrence, expectedValue produc
 		SourceIndexedRead:   r.returnSourceIndexedReadAt(occ),
 		SourceSpan:          sourceSpanFromBody(occ.SourceSpan),
 		DeclarationSpan:     readmodelSourceSpanAt(expectedSpans, occ.Index),
+		Nilability:          r.nilabilityProvenance(occ.Point, occ.Source.Expr, value),
 		UntrustedTopOrigin:  r.ValueHasUntrustedTopOrigin(value),
 		ExplicitTopOrigin:   r.ValueHasExplicitTopOrigin(value),
 		BodyParamObligation: r.result.HasBodyOwnedParamObligations(),

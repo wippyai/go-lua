@@ -115,6 +115,9 @@ func returnJudgment(ctx Context, functionKey string, ret readmodel.Return) judgm
 			},
 		})
 	}
+	if ret.Check.Mismatch.Kind == readmodel.ReturnMismatchMayBeNil {
+		evidence = appendNilabilityProvenance(evidence, ret.Point, ctx.SourceFile, ret.SourceLabel, ret.SourceSpan, ret.Nilability)
+	}
 	return judgment.Judgment{
 		Code:  judgment.CodeReturn,
 		Point: ret.Point,

@@ -55,11 +55,15 @@ func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.
 	} else if detail.MemberAccess {
 		code = CodeNotCallable
 	}
+	evidence := callCalleeJudgmentEvidence(item, detail, name, primary)
+	if detail.Kind == judgment.EvidenceDetailCalleeMayBeNil {
+		evidence = append(evidence, nilabilityProvenanceEvidence(item, name, item.Actual.ProjectedType, primary)...)
+	}
 	return callCalleePresentation{
 		Code:     code,
 		Message:  message,
 		Help:     help,
-		Evidence: callCalleeJudgmentEvidence(item, detail, name, primary),
+		Evidence: evidence,
 		Label:    label,
 	}, true
 }

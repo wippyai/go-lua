@@ -245,6 +245,9 @@ func directCallArgumentJudgmentEvidence(display diagnosticDisplay, item judgment
 		Span:    primary,
 		Message: missingProof,
 	})
+	if callArgumentNilabilityShouldLead(proof, wording) {
+		evidence = append(evidence, nilabilityProvenanceEvidence(item, wording.SourceName, got, primary)...)
+	}
 	return evidence
 }
 

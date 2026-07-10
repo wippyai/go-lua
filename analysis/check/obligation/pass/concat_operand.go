@@ -36,6 +36,23 @@ func concatOperandJudgment(ctx Context, functionKey string, operand readmodel.Co
 		label = "operand"
 	}
 	span := spanFromReadModel(ctx.SourceFile, operand.OperandSpan)
+	evidence := judgment.EvidenceChain{
+		{
+			Kind:  judgment.EvidenceAbstractFact,
+			Trust: judgment.EvidenceTrustProven,
+			Origin: judgment.OriginRef{
+				Point: operand.Point,
+				Key:   "concat:operand",
+			},
+			Detail: judgment.EvidenceDetail{
+				Kind:  judgment.EvidenceDetailConcatOperand,
+				Field: operand.Side,
+				Cause: judgment.EvidenceCause{Kind: judgment.EvidenceCauseFlowAssign},
+			},
+			Span: span,
+		},
+	}
+	evidence = appendNilabilityProvenance(evidence, operand.Point, ctx.SourceFile, label, operand.OperandSpan, operand.Nilability)
 	return judgment.Judgment{
 		Code:  judgment.CodeConcatOperand,
 		Point: operand.Point,
@@ -44,23 +61,9 @@ func concatOperandJudgment(ctx Context, functionKey string, operand readmodel.Co
 			judgment.SubjectExpression,
 			fmt.Sprintf("concat:%d:%s", operand.Point, operand.OperandKey),
 		).WithLabel(label),
-		Actual:  judgment.NewValueRef(0, operand.TypeWithPresence).WithLabel(label),
-		Verdict: judgment.VerdictRefuted,
-		Evidence: judgment.EvidenceChain{
-			{
-				Kind:  judgment.EvidenceAbstractFact,
-				Trust: judgment.EvidenceTrustProven,
-				Origin: judgment.OriginRef{
-					Point: operand.Point,
-					Key:   "concat:operand",
-				},
-				Detail: judgment.EvidenceDetail{
-					Kind:  judgment.EvidenceDetailConcatOperand,
-					Field: operand.Side,
-				},
-				Span: span,
-			},
-		},
-		Spans: []judgment.SpanRef{span},
+		Actual:   judgment.NewValueRef(0, operand.TypeWithPresence).WithLabel(label),
+		Verdict:  judgment.VerdictRefuted,
+		Evidence: evidence,
+		Spans:    []judgment.SpanRef{span},
 	}
 }

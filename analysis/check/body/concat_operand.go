@@ -24,6 +24,7 @@ type ConcatOperandOccurrence struct {
 	OperandKey       string
 	TypeWithPresence typ.Type
 	OperandSpan      SourceSpan
+	Operand          ast.Expr
 }
 
 // ForEachConcatOperandOccurrence visits concat operands whose solved projection
@@ -340,6 +341,7 @@ func (r *Result) concatOperand(point cfg.Point, operand ast.Expr, side string, c
 		OperandKey:       side + ":" + expressionKey(point, operand),
 		TypeWithPresence: t,
 		OperandSpan:      sourceSpanFromAST(ast.SpanOf(operand)),
+		Operand:          operand,
 	}, true
 }
 
