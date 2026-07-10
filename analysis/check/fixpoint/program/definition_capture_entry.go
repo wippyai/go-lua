@@ -62,8 +62,7 @@ func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.F
 			fn,
 			caller,
 			entry,
-			captureValueReaderAt(result, point),
-			captureInvariantValueReaderAt(result, point),
+			captureSeedSource{result: result, point: point, scope: captureSeedAtDefinition},
 		)
 		if !seen {
 			continue
@@ -107,16 +106,14 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 			if keys.functions[i].hasEntryState && keys.functions[i].entryKeys != nil {
 				entry = entry.RekeyPathEvidence(keys.functions[i].entryKeys, entryKeys)
 			}
-			updated, _ := applyEscapedCapturedClosureEntryState(
+			updated, _ := applyCapturedClosureEntryState(
 				reg,
 				entryKeys,
 				keys.bindings,
 				fn,
 				caller,
 				entry,
-				captureValueReaderAt(result, point),
-				captureInvariantValueReaderAt(result, point),
-				captureFullGraphInvariantValueReaderAt(result, point),
+				captureSeedSource{result: result, point: point, scope: captureSeedAtEscapedDefinition},
 			)
 			if _, ok := seenEscape[i]; ok {
 				mergeContextEntry(reg, &keys.functions[i], entryKeys, updated)

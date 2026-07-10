@@ -80,153 +80,103 @@ func applyCapturedClosureEntryState(
 	fn *ast.FunctionExpr,
 	caller state.State,
 	entry state.State,
-	readCaptured captureValueReader,
-	readInvariant captureValueReader,
+	source captureSeedSource,
 ) (state.State, bool) {
 	env := closureCaptureSeeder{
-		reg:           reg,
-		ks:            ks,
-		bindings:      bindings,
-		caller:        caller,
-		readCaptured:  readCaptured,
-		readInvariant: readInvariant,
+		reg:      reg,
+		ks:       ks,
+		bindings: bindings,
+		caller:   caller,
+		source:   source,
 	}
 	return env.apply(fn, entry)
 }
 
-type captureValueReader func(symbol.ID) (product.Value, bool)
+type captureSeedScope uint8
 
-func applyEscapedCapturedClosureEntryState(
-	reg *axis.Registry,
-	ks *keyspace.KeySpace,
-	bindings *bind.Result,
-	fn *ast.FunctionExpr,
-	caller state.State,
-	entry state.State,
-	readCaptured captureValueReader,
-	readInvariant captureValueReader,
-	readFullInvariant captureValueReader,
-) (state.State, bool) {
-	env := closureCaptureSeeder{
-		reg:               reg,
-		ks:                ks,
-		bindings:          bindings,
-		caller:            caller,
-		readCaptured:      readCaptured,
-		readInvariant:     readInvariant,
-		readFullInvariant: readFullInvariant,
-		escapeUnknown:     true,
-	}
-	return env.apply(fn, entry)
+const (
+	captureSeedAtDefinition captureSeedScope = iota
+	captureSeedAtContext
+	captureSeedAtEscapedDefinition
+)
+
+type captureSeedSource struct {
+	result *body.Result
+	point  cfg.Point
+	scope  captureSeedScope
 }
 
-func captureValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
-	if result == nil {
-		return nil
+func (s captureSeedSource) capturedValue(id symbol.ID) (product.Value, bool) {
+	if s.result == nil || id == 0 {
+		return product.Value{}, false
 	}
-	return func(id symbol.ID) (product.Value, bool) {
-		if id == 0 {
-			return product.Value{}, false
-		}
-		if value, ok := result.SymbolValueAtBoundary(point, id); ok {
-			return value, true
-		}
-		return result.UninitializedLocalDeclarationValueAtBoundary(point, id)
-	}
-}
-
-func captureInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
-	return captureInvariantValueReaderAtWithOptions(result, point, false)
-}
-
-func contextualCaptureInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
-	return captureInvariantValueReaderAtWithOptions(result, point, true)
-}
-
-func captureFullGraphInvariantValueReaderAt(result *body.Result, point cfg.Point) captureValueReader {
-	if result == nil || result.Registry() == nil {
-		return nil
-	}
-	reg := result.Registry()
-	return func(id symbol.ID) (product.Value, bool) {
-		if id == 0 || result.SymbolHasWrite(id) {
-			return product.Value{}, false
-		}
-		value, ok := result.SymbolValueAtBoundary(point, id)
-		if !ok {
-			value, ok = result.UninitializedLocalDeclarationValueAtBoundary(point, id)
-		}
-		if !ok {
-			return product.Value{}, false
-		}
-		if !contextEntryValueUseful(reg, value) {
-			return product.Value{}, false
-		}
-		receiver := pathdom.Path{
-			Root:   result.SymbolName(id),
-			Symbol: id,
-		}
-		if result.ValueHasStructuralMutationAtBoundary(point, value, receiver) {
-			return product.Value{}, false
-		}
+	if value, ok := s.result.SymbolValueAtBoundary(s.point, id); ok {
 		return value, true
 	}
+	return s.result.UninitializedLocalDeclarationValueAtBoundary(s.point, id)
 }
 
-func captureInvariantValueReaderAtWithOptions(result *body.Result, point cfg.Point, allowPointAbsentFunctionTarget bool) captureValueReader {
-	if result == nil || result.Registry() == nil {
-		return nil
+func (s captureSeedSource) invariantValue(id symbol.ID) (product.Value, bool) {
+	if s.result == nil || s.result.Registry() == nil || id == 0 {
+		return product.Value{}, false
 	}
-	reg := result.Registry()
-	typeValues := result.TypeValues()
+	reg := s.result.Registry()
+	typeValues := s.result.TypeValues()
 	if typeValues == nil {
 		typeValues = typevalue.NewCache()
 	}
-	return func(id symbol.ID) (product.Value, bool) {
-		if id == 0 {
-			return product.Value{}, false
-		}
-		value, ok := result.SymbolValueAtBoundary(point, id)
-		if !ok {
-			value, ok = result.UninitializedLocalDeclarationValueAtBoundary(point, id)
-		}
-		if !ok {
-			if st, stateOK := result.StateAtBoundary(point); stateOK {
-				slot := statekey.SymbolValue(id)
-				if slot != 0 {
-					stateValue := st.ReadValue(reg, slot)
-					if contextEntryValueUseful(reg, stateValue) {
-						value = stateValue
-						ok = true
-					}
+	value, ok := s.capturedValue(id)
+	if !ok {
+		if st, stateOK := s.result.StateAtBoundary(s.point); stateOK {
+			slot := statekey.SymbolValue(id)
+			if slot != 0 {
+				stateValue := st.ReadValue(reg, slot)
+				if contextEntryValueUseful(reg, stateValue) {
+					value = stateValue
+					ok = true
 				}
 			}
 		}
-		hasWrite := result.SymbolHasWrite(id)
-		if hasWrite {
-			if t, ok := result.SymbolDeclaredType(id); ok && t != nil {
-				return typeValues.FromTypeWithWitness(reg, t), true
-			}
-			if allowPointAbsentFunctionTarget && ok && captureValueIsAbsent(value) && captureHasFunctionStaticType(result, id) {
-				return value, true
-			}
-			return product.Value{}, false
-		}
-		if ok {
-			if shape, ok := captureNonStackStableShape(result, point, value); ok {
-				return typeValues.FromTypeWithWitness(reg, shape), true
-			}
-		}
-		if t, ok := result.SymbolStaticType(id); ok && t != nil {
+	}
+	if s.result.SymbolHasWrite(id) {
+		if t, ok := s.result.SymbolDeclaredType(id); ok && t != nil {
 			return typeValues.FromTypeWithWitness(reg, t), true
 		}
-		if ok {
-			if t, ok := result.ValueStructuralType(value); ok && t != nil {
-				return typeValues.FromTypeWithWitness(reg, t), true
-			}
+		if s.scope == captureSeedAtContext && ok && captureValueIsAbsent(value) && captureHasFunctionStaticType(s.result, id) {
+			return value, true
 		}
 		return product.Value{}, false
 	}
+	if ok {
+		if shape, ok := captureNonStackStableShape(s.result, s.point, value); ok {
+			return typeValues.FromTypeWithWitness(reg, shape), true
+		}
+	}
+	if t, ok := s.result.SymbolStaticType(id); ok && t != nil {
+		return typeValues.FromTypeWithWitness(reg, t), true
+	}
+	if ok {
+		if t, ok := s.result.ValueStructuralType(value); ok && t != nil {
+			return typeValues.FromTypeWithWitness(reg, t), true
+		}
+	}
+	return product.Value{}, false
+}
+
+func (s captureSeedSource) fullGraphInvariantValue(id symbol.ID) (product.Value, bool) {
+	if s.scope != captureSeedAtEscapedDefinition || s.result == nil || s.result.Registry() == nil || id == 0 || s.result.SymbolHasWrite(id) {
+		return product.Value{}, false
+	}
+	reg := s.result.Registry()
+	value, ok := s.capturedValue(id)
+	if !ok || !contextEntryValueUseful(reg, value) {
+		return product.Value{}, false
+	}
+	receiver := pathdom.Path{Root: s.result.SymbolName(id), Symbol: id}
+	if s.result.ValueHasStructuralMutationAtBoundary(s.point, value, receiver) {
+		return product.Value{}, false
+	}
+	return value, true
 }
 
 func captureValueIsAbsent(value product.Value) bool {
@@ -267,18 +217,47 @@ func captureNonStackStableShape(result *body.Result, point cfg.Point, value prod
 }
 
 type closureCaptureSeeder struct {
-	reg               *axis.Registry
-	ks                *keyspace.KeySpace
-	bindings          *bind.Result
-	caller            state.State
-	readCaptured      captureValueReader
-	readInvariant     captureValueReader
-	readFullInvariant captureValueReader
-	escapeUnknown     bool
+	reg      *axis.Registry
+	ks       *keyspace.KeySpace
+	bindings *bind.Result
+	caller   state.State
+	source   captureSeedSource
 
 	seenFns              map[*ast.FunctionExpr]struct{}
 	targetFuncs          map[symbol.ID]*ast.FunctionExpr
 	calledCapturedSymbol map[*ast.FunctionExpr]map[symbol.ID]struct{}
+}
+
+type captureFactMode uint8
+
+const (
+	captureFullFactGraph captureFactMode = iota
+	captureWriteInvariantFacts
+	captureEscapedInvariantFacts
+)
+
+// CapturePolicy is computed once per captured symbol and drives fact survival.
+type CapturePolicy struct {
+	mode       captureFactMode
+	entryValue product.Value
+	heapValue  product.Value
+}
+
+type capturePolicyFacts struct {
+	structuralWrite         bool
+	opaqueCallbackReachable bool
+	requireModule           bool
+	functionValue           bool
+}
+
+func captureFactModeFor(facts capturePolicyFacts) captureFactMode {
+	if facts.structuralWrite {
+		return captureWriteInvariantFacts
+	}
+	if facts.opaqueCallbackReachable && !facts.requireModule && !facts.functionValue {
+		return captureEscapedInvariantFacts
+	}
+	return captureFullFactGraph
 }
 
 func (s *closureCaptureSeeder) apply(
@@ -304,40 +283,10 @@ func (s *closureCaptureSeeder) apply(
 		if slot == 0 {
 			continue
 		}
-		fullValue := s.fullCapturedValue(capture.Captured, slot)
-		degrade := s.captureHasWrite(capture.Captured)
-		allowInvariantStaticMembers := false
-		if !degrade &&
-			!s.captureIsRequireModule(capture.Captured) &&
-			!s.captureHasDirectNonFunctionInvariantMember(capture) &&
-			s.captureEscapesMutable(fullValue) {
-			if invariantFull, ok := s.fullGraphInvariantCapturedValue(capture.Captured, fullValue); ok {
-				fullValue = invariantFull
-			} else {
-				degrade = true
-				allowInvariantStaticMembers = true
-			}
-		}
-		if degrade {
-			entry = s.stripCapturedPathEvidence(capture, entry)
-		}
-		var pathSeen bool
-		entry, pathSeen = s.seedCapturedPathEvidence(capture, entry, degrade, allowInvariantStaticMembers)
-		seen = seen || pathSeen
-		value := s.capturedEntryValue(capture.Captured, fullValue, degrade)
-		if contextEntryValueUseful(s.reg, value) {
-			entry = entry.WriteValue(s.reg, slot, value)
-			if degrade {
-				if updated, ok := seedInvariantHeapObjectsForValue(s.reg, s.caller, entry, fullValue); ok {
-					entry = updated
-				}
-			} else {
-				if updated, ok := seedEntryHeapObjectsForValue(s.reg, s.caller, entry, value); ok {
-					entry = updated
-				}
-			}
-			seen = true
-		}
+		policy := s.capturePolicy(capture, slot)
+		var captureSeen bool
+		entry, captureSeen = s.seedCapture(capture, slot, policy, entry)
+		seen = seen || captureSeen
 		if capturedFn, ok := s.functionForCapturedSymbol(capture.Captured); ok && s.functionCallsCapturedSymbol(fn, capture.Captured) {
 			var capturedSeen bool
 			entry, capturedSeen = s.apply(capturedFn, entry)
@@ -352,7 +301,7 @@ func (s *closureCaptureSeeder) apply(
 		if slot == 0 {
 			continue
 		}
-		value := s.fullCapturedValue(global, slot)
+		value := s.captureValue(global, slot)
 		if !contextEntryValueUseful(s.reg, value) {
 			continue
 		}
@@ -365,21 +314,47 @@ func (s *closureCaptureSeeder) apply(
 	return entry, seen
 }
 
-func (s *closureCaptureSeeder) fullCapturedValue(sym symbol.ID, slot statekey.Value) product.Value {
+func (s *closureCaptureSeeder) captureValue(sym symbol.ID, slot statekey.Value) product.Value {
 	value := s.caller.ReadValue(s.reg, slot)
-	if s.readCaptured != nil {
-		if solved, ok := s.readCaptured(sym); ok && contextEntryValueUseful(s.reg, solved) {
-			return preciseCapturedValue(s.reg, value, solved)
-		}
+	if solved, ok := s.source.capturedValue(sym); ok && contextEntryValueUseful(s.reg, solved) {
+		return preciseCapturedValue(s.reg, value, solved)
 	}
 	return value
 }
 
-func (s *closureCaptureSeeder) fullGraphInvariantCapturedValue(sym symbol.ID, full product.Value) (product.Value, bool) {
-	if s == nil || s.readFullInvariant == nil {
-		return product.Value{}, false
+func (s *closureCaptureSeeder) capturePolicy(capture bind.Capture, slot statekey.Value) CapturePolicy {
+	fullValue := s.captureValue(capture.Captured, slot)
+	policy := CapturePolicy{
+		mode:       captureFullFactGraph,
+		entryValue: fullValue,
+		heapValue:  fullValue,
 	}
-	invariant, ok := s.readFullInvariant(sym)
+	facts := capturePolicyFacts{
+		structuralWrite: s.captureHasWrite(capture.Captured),
+		requireModule:   s.captureIsRequireModule(capture.Captured),
+		functionValue:   capturedValueIsFunction(s.reg, fullValue),
+	}
+	if !facts.structuralWrite &&
+		!facts.requireModule &&
+		!facts.functionValue &&
+		!s.captureHasDirectNonFunctionInvariantMember(capture) &&
+		s.captureEscapesMutable(fullValue) {
+		if invariantFull, ok := s.fullGraphInvariantCaptureValue(capture.Captured, fullValue); ok {
+			policy.entryValue = invariantFull
+			policy.heapValue = invariantFull
+		} else {
+			facts.opaqueCallbackReachable = true
+		}
+	}
+	policy.mode = captureFactModeFor(facts)
+	if policy.mode != captureFullFactGraph {
+		policy.entryValue = s.invariantCaptureValue(capture.Captured, fullValue)
+	}
+	return policy
+}
+
+func (s *closureCaptureSeeder) fullGraphInvariantCaptureValue(sym symbol.ID, full product.Value) (product.Value, bool) {
+	invariant, ok := s.source.fullGraphInvariantValue(sym)
 	if !ok || !contextEntryValueUseful(s.reg, invariant) {
 		return product.Value{}, false
 	}
@@ -403,18 +378,12 @@ func captureFullGraphCanOverlayStaticMemberWitness(reg *axis.Registry, value pro
 	}
 }
 
-func (s *closureCaptureSeeder) capturedEntryValue(sym symbol.ID, full product.Value, degrade bool) product.Value {
-	if !degrade {
-		return full
-	}
-	if s.readInvariant != nil {
-		if invariant, ok := s.readInvariant(sym); ok && contextEntryValueUseful(s.reg, invariant) {
-			if id, ok := identityvalue.ExactID(s.reg, full); ok && !identityvalue.HasExact(s.reg, invariant) {
-				invariant = identityvalue.WithExact(s.reg, invariant, id)
-			}
-			invariant = s.withInvariantHeapStaticMemberWitness(full, invariant)
-			return invariant
+func (s *closureCaptureSeeder) invariantCaptureValue(sym symbol.ID, full product.Value) product.Value {
+	if invariant, ok := s.source.invariantValue(sym); ok && contextEntryValueUseful(s.reg, invariant) {
+		if id, ok := identityvalue.ExactID(s.reg, full); ok && !identityvalue.HasExact(s.reg, invariant) {
+			invariant = identityvalue.WithExact(s.reg, invariant, id)
 		}
+		return s.withInvariantHeapStaticMemberWitness(full, invariant)
 	}
 	return product.Top()
 }
@@ -424,7 +393,7 @@ func (s *closureCaptureSeeder) captureHasWrite(sym symbol.ID) bool {
 }
 
 func (s *closureCaptureSeeder) captureEscapesMutable(full product.Value) bool {
-	return s != nil && s.escapeUnknown && capturedValueIsMutable(s.reg, full)
+	return s != nil && s.source.scope == captureSeedAtEscapedDefinition && capturedValueIsMutable(s.reg, full)
 }
 
 func (s *closureCaptureSeeder) captureIsRequireModule(sym symbol.ID) bool {
@@ -438,6 +407,10 @@ func (s *closureCaptureSeeder) captureIsRequireModule(sym symbol.ID) bool {
 func capturedValueIsMutable(reg *axis.Registry, value product.Value) bool {
 	id, ok := identityvalue.ExactID(reg, value)
 	return ok && id.Kind == "lua.table"
+}
+func capturedValueIsFunction(reg *axis.Registry, value product.Value) bool {
+	id, ok := identityvalue.ExactID(reg, value)
+	return ok && id.Kind == "lua.function"
 }
 
 func preciseCapturedValue(reg *axis.Registry, slot, solved product.Value) product.Value {
@@ -457,8 +430,31 @@ func preciseCapturedValue(reg *axis.Registry, slot, solved product.Value) produc
 	return slot
 }
 
-func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, entry state.State, degrade bool, allowInvariantStaticMembers bool) (state.State, bool) {
-	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 || (degrade && !allowInvariantStaticMembers) {
+// seedCapture consumes CapturePolicy without re-deciding capture rules.
+func (s *closureCaptureSeeder) seedCapture(capture bind.Capture, slot statekey.Value, policy CapturePolicy, entry state.State) (state.State, bool) {
+	if s == nil || s.reg == nil || capture.Captured == 0 || slot == 0 {
+		return entry, false
+	}
+	if policy.mode != captureFullFactGraph {
+		entry = s.stripCapturedPathEvidence(capture, entry)
+	}
+	entry, pathSeen := s.seedCapturedPathEvidence(capture, policy, entry)
+	if !contextEntryValueUseful(s.reg, policy.entryValue) {
+		return entry, pathSeen
+	}
+	entry = entry.WriteValue(s.reg, slot, policy.entryValue)
+	if policy.mode != captureFullFactGraph {
+		if updated, ok := seedInvariantHeapObjectsForValue(s.reg, s.caller, entry, policy.heapValue); ok {
+			entry = updated
+		}
+	} else if updated, ok := seedEntryHeapObjectsForValue(s.reg, s.caller, entry, policy.heapValue); ok {
+		entry = updated
+	}
+	return entry, true
+}
+
+func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, policy CapturePolicy, entry state.State) (state.State, bool) {
+	if s == nil || s.reg == nil || s.ks == nil || capture.Captured == 0 {
 		return entry, false
 	}
 	bottom := product.Bottom(s.reg)
@@ -466,7 +462,7 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 	edit := out.EditPathEvidence(s.reg)
 	seen := false
 	captures := []bind.Capture{capture}
-	if !degrade {
+	if policy.mode == captureFullFactGraph {
 		if snapshot := s.caller.PathRefinementsSnapshot(s.ks); !snapshot.Top {
 			for pathKey, value := range snapshot.Refinements {
 				if pathKey == "" || product.Equal(s.reg, value, bottom) {
@@ -486,10 +482,13 @@ func (s *closureCaptureSeeder) seedCapturedPathEvidence(capture bind.Capture, en
 			if pathKey == "" || product.Equal(s.reg, value, bottom) {
 				continue
 			}
-			if degrade && !captureInvariantStaticMemberValue(s.reg, value) {
+			if policy.mode == captureWriteInvariantFacts {
 				continue
 			}
-			if degrade && !captureEscapedInvariantStaticMemberPath(s.reg, s.ks, pathKey, value) {
+			if policy.mode == captureEscapedInvariantFacts && !captureInvariantStaticMemberValue(s.reg, value) {
+				continue
+			}
+			if policy.mode == captureEscapedInvariantFacts && !captureEscapedInvariantStaticMemberPath(s.reg, s.ks, pathKey, value) {
 				continue
 			}
 			rebased, ok := rebaseCapturedPathKey(pathKey, captures)
