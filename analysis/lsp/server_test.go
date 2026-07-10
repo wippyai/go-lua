@@ -260,6 +260,65 @@ func TestInProcessHoverProjectsSolvedTypeAndCanonicalProofTrace(t *testing.T) {
 	}
 }
 
+func TestInProcessBinderNavigationUsesOccurrencesAndUTF16Ranges(t *testing.T) {
+	source := "local prefix = \"😀\"; local value = 1; value = value + 1\n"
+	server, uri := openSolvedDocument(t, source)
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+	buffer := newTextBuffer([]byte(source))
+	position, err := buffer.positionForOffset(strings.LastIndex(source, "value"))
+	if err != nil {
+		t.Fatalf("source position: %v", err)
+	}
+	if want := (Position{Line: 0, Character: 46}); position != want {
+		t.Fatalf("UTF-16 request position = %#v, want %#v", position, want)
+	}
+
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"position":     position,
+	}
+	result, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodDefinition, Params: paramsJSON(t, params)})
+	if problem != nil {
+		t.Fatalf("definition: %v", problem)
+	}
+	definition, ok := result.(*Location)
+	if !ok || definition.URI != uri || definition.Range.Start != (Position{Line: 0, Character: 27}) {
+		t.Fatalf("definition = %#v, want UTF-16 definition location", result)
+	}
+
+	result, problem = server.Handle(context.Background(), jsonrpc2.Request{Method: methodReferences, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"position":     position,
+		"context":      map[string]any{"includeDeclaration": true},
+	})})
+	if problem != nil {
+		t.Fatalf("references: %v", problem)
+	}
+	references, ok := result.([]Location)
+	if !ok || len(references) != 3 {
+		t.Fatalf("references = %#v, want definition plus write/read occurrences", result)
+	}
+	for index, want := range []int{27, 38, 46} {
+		if got := references[index].Range.Start; got != (Position{Line: 0, Character: want}) {
+			t.Fatalf("reference %d start = %#v, want character %d", index, got, want)
+		}
+	}
+
+	result, problem = server.Handle(context.Background(), jsonrpc2.Request{Method: methodDocumentHighlight, Params: paramsJSON(t, params)})
+	if problem != nil {
+		t.Fatalf("document highlights: %v", problem)
+	}
+	highlights, ok := result.([]documentHighlight)
+	if !ok || len(highlights) != 3 {
+		t.Fatalf("highlights = %#v, want definition plus write/read occurrences", result)
+	}
+	for index, want := range []struct{ character, kind int }{{27, 3}, {38, 3}, {46, 2}} {
+		if got := highlights[index]; got.Range.Start != (Position{Line: 0, Character: want.character}) || got.Kind != want.kind {
+			t.Fatalf("highlight %d = %#v, want character=%d kind=%d", index, got, want.character, want.kind)
+		}
+	}
+}
+
 func openSolvedDocument(t *testing.T, text string) (*Server, string) {
 	t.Helper()
 	server := NewServer(service.NewBatchSession(), Options{Debounce: time.Millisecond})
@@ -388,15 +447,18 @@ func assertCapabilities(t *testing.T, payload []byte) {
 					OpenClose bool `json:"openClose"`
 					Change    int  `json:"change"`
 				} `json:"textDocumentSync"`
-				DiagnosticProvider json.RawMessage `json:"diagnosticProvider"`
-				HoverProvider      bool            `json:"hoverProvider"`
+				DiagnosticProvider        json.RawMessage `json:"diagnosticProvider"`
+				HoverProvider             bool            `json:"hoverProvider"`
+				DefinitionProvider        bool            `json:"definitionProvider"`
+				ReferencesProvider        bool            `json:"referencesProvider"`
+				DocumentHighlightProvider bool            `json:"documentHighlightProvider"`
 			} `json:"capabilities"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(payload, &response); err != nil {
 		t.Fatalf("decode initialize result: %v", err)
 	}
-	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider {
+	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider {
 		t.Fatalf("advertised capabilities = %s", payload)
 	}
 }

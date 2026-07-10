@@ -13,6 +13,9 @@ const (
 	methodPublishDiagnostics    = "textDocument/publishDiagnostics"
 	methodPullDiagnostics       = "textDocument/diagnostic"
 	methodHover                 = "textDocument/hover"
+	methodDefinition            = "textDocument/definition"
+	methodReferences            = "textDocument/references"
+	methodDocumentHighlight     = "textDocument/documentHighlight"
 	textDocumentSyncIncremental = 2
 )
 
@@ -77,6 +80,26 @@ type hoverParams struct {
 	Position     Position               `json:"position"`
 }
 
+type textDocumentPositionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+}
+
+type referencesParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+	Context      referenceContext       `json:"context"`
+}
+
+type referenceContext struct {
+	IncludeDeclaration bool `json:"includeDeclaration"`
+}
+
+type documentHighlight struct {
+	Range Range `json:"range"`
+	Kind  int   `json:"kind,omitempty"`
+}
+
 type diagnosticRelatedInformation struct {
 	Location Location `json:"location"`
 	Message  string   `json:"message"`
@@ -129,9 +152,12 @@ type serverInfo struct {
 // serverCapabilities intentionally lists only Wave 2A/2B-ready behavior.
 // Fields not present are not advertised.
 type serverCapabilities struct {
-	TextDocumentSync   textDocumentSyncOptions `json:"textDocumentSync"`
-	DiagnosticProvider diagnosticProvider      `json:"diagnosticProvider"`
-	HoverProvider      bool                    `json:"hoverProvider"`
+	TextDocumentSync          textDocumentSyncOptions `json:"textDocumentSync"`
+	DiagnosticProvider        diagnosticProvider      `json:"diagnosticProvider"`
+	HoverProvider             bool                    `json:"hoverProvider"`
+	DefinitionProvider        bool                    `json:"definitionProvider"`
+	ReferencesProvider        bool                    `json:"referencesProvider"`
+	DocumentHighlightProvider bool                    `json:"documentHighlightProvider"`
 }
 
 type textDocumentSyncOptions struct {
@@ -154,7 +180,10 @@ func defaultInitializeResult() initializeResult {
 				InterFileDependencies: false,
 				WorkspaceDiagnostics:  false,
 			},
-			HoverProvider: true,
+			HoverProvider:             true,
+			DefinitionProvider:        true,
+			ReferencesProvider:        true,
+			DocumentHighlightProvider: true,
 		},
 		ServerInfo: serverInfo{Name: "go-lua-lsp"},
 	}

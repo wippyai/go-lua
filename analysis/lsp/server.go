@@ -70,6 +70,15 @@ type solveWork struct {
 	buffer     textBuffer
 }
 
+type semanticDocument struct {
+	uri      string
+	document embedding.DocumentID
+	unitID   embedding.UnitID
+	version  int64
+	buffer   textBuffer
+	tag      service.ResultTag
+}
+
 // Server is safe for concurrent protocol calls. Each document has one active
 // solve at a time; newer edits cancel it and only the latest generation may
 // publish results.
@@ -153,6 +162,12 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 		result, err = s.pullDiagnostics(ctx, request.Params)
 	case methodHover:
 		result, err = s.hover(ctx, request.Params)
+	case methodDefinition:
+		result, err = s.definition(ctx, request.Params)
+	case methodReferences:
+		result, err = s.references(ctx, request.Params)
+	case methodDocumentHighlight:
+		result, err = s.documentHighlight(ctx, request.Params)
 	default:
 		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "method not found", request.Method)
 	}
@@ -464,6 +479,163 @@ func (s *Server) hover(ctx context.Context, raw []byte) (any, error) {
 		return nil, nil
 	}
 	return hoverResult{Contents: markupContent{Kind: "markdown", Value: markdown.String()}, Range: resultRange}, nil
+}
+
+func (s *Server) definition(ctx context.Context, raw []byte) (any, error) {
+	var params textDocumentPositionParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid definition params", err.Error())
+	}
+	document, binder, err := s.binderAtPosition(ctx, params.TextDocument.URI, params.Position)
+	if err != nil || binder == nil {
+		return nil, err
+	}
+	location, ok := document.protocolLocation(binder.Definition)
+	if !ok {
+		return nil, nil
+	}
+	return &location, nil
+}
+
+func (s *Server) references(ctx context.Context, raw []byte) (any, error) {
+	var params referencesParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid references params", err.Error())
+	}
+	document, binder, err := s.binderAtPosition(ctx, params.TextDocument.URI, params.Position)
+	if err != nil || binder == nil {
+		return nil, err
+	}
+	locations := make([]Location, 0, len(binder.Occurrences)+1)
+	if params.Context.IncludeDeclaration {
+		if location, ok := document.protocolLocation(binder.Definition); ok {
+			locations = append(locations, location)
+		}
+	}
+	for _, occurrence := range binder.Occurrences {
+		if location, ok := document.protocolLocation(occurrence.Location); ok {
+			locations = append(locations, location)
+		}
+	}
+	return locations, nil
+}
+
+func (s *Server) documentHighlight(ctx context.Context, raw []byte) (any, error) {
+	var params textDocumentPositionParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid documentHighlight params", err.Error())
+	}
+	document, binder, err := s.binderAtPosition(ctx, params.TextDocument.URI, params.Position)
+	if err != nil || binder == nil {
+		return nil, err
+	}
+	highlights := make([]documentHighlight, 0, len(binder.Occurrences)+1)
+	if location, ok := document.protocolLocation(binder.Definition); ok {
+		highlights = append(highlights, documentHighlight{Range: location.Range, Kind: 3}) // Write
+	}
+	for _, occurrence := range binder.Occurrences {
+		location, ok := document.protocolLocation(occurrence.Location)
+		if !ok {
+			continue
+		}
+		highlights = append(highlights, documentHighlight{Range: location.Range, Kind: highlightKind(occurrence.Role)})
+	}
+	return highlights, nil
+}
+
+func (s *Server) binderAtPosition(ctx context.Context, uri string, position Position) (semanticDocument, *service.BinderInfo, error) {
+	document, err := s.codec.DocumentForURI(uri)
+	if err != nil {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid document URI", err.Error())
+	}
+	current, ok, err := s.currentSemanticDocument(ctx, document)
+	if err != nil || !ok {
+		return semanticDocument{}, nil, err
+	}
+	offset, err := current.buffer.offsetForPosition(position)
+	if err != nil {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid document position", err.Error())
+	}
+	lookup, err := s.session.PositionLookup(ctx, service.PositionLookupRequest{
+		Selector: service.ResultSelector{UnitID: current.unitID, SolveSeq: current.tag.SolveSeq, Profile: current.tag.Profile},
+		File:     document.OpaqueKey,
+		Position: service.SourcePosition{Offset: offset},
+	})
+	if err != nil {
+		return semanticDocument{}, nil, fmt.Errorf("read position lookup: %w", err)
+	}
+	if !lookup.Found || lookup.Binder == nil {
+		return semanticDocument{}, nil, nil
+	}
+	occurrences, err := s.session.BinderOccurrences(ctx, service.BinderOccurrencesRequest{
+		Selector: service.ResultSelector{UnitID: current.unitID, SolveSeq: current.tag.SolveSeq, Profile: current.tag.Profile},
+	})
+	if err != nil {
+		return semanticDocument{}, nil, fmt.Errorf("read binder occurrences: %w", err)
+	}
+	for index := range occurrences.Binders {
+		if occurrences.Binders[index].SymbolID == lookup.Binder.SymbolID {
+			return current, &occurrences.Binders[index], nil
+		}
+	}
+	return semanticDocument{}, nil, nil
+}
+
+func (s *Server) currentSemanticDocument(ctx context.Context, document embedding.DocumentID) (semanticDocument, bool, error) {
+	s.mu.Lock()
+	if err := s.requireRunningLocked(); err != nil {
+		s.mu.Unlock()
+		return semanticDocument{}, false, err
+	}
+	doc := s.documents[document]
+	if doc == nil {
+		s.mu.Unlock()
+		return semanticDocument{}, false, nil
+	}
+	current := semanticDocument{
+		uri:      doc.uri,
+		document: document,
+		unitID:   doc.unitID,
+		version:  doc.version,
+		buffer:   newTextBuffer(doc.buffer.bytes()),
+	}
+	s.mu.Unlock()
+
+	completed, ok := s.session.LastComplete(ctx, service.ResultRequest{Selector: service.ResultSelector{UnitID: current.unitID}})
+	if !ok {
+		return semanticDocument{}, false, nil
+	}
+	current.tag = completed.Tag()
+	if current.tag.DocumentVersion != current.version || current.tag.SourceDigests[document] != current.buffer.digest() {
+		return semanticDocument{}, false, nil
+	}
+	return current, true, nil
+}
+
+func (d semanticDocument) protocolLocation(location service.SourceLocation) (Location, bool) {
+	if location.File != d.document.OpaqueKey {
+		return Location{}, false
+	}
+	item, err := d.buffer.rangeForCompilerSpan(
+		location.Span.StartLine,
+		location.Span.StartCol,
+		location.Span.EndLine,
+		location.Span.EndCol,
+	)
+	if err != nil {
+		return Location{}, false
+	}
+	return Location{URI: d.uri, Range: item}, true
+}
+
+func highlightKind(role service.BinderOccurrenceRole) int {
+	if role == service.BinderWrite {
+		return 3 // Write
+	}
+	if role == service.BinderRead || role == service.BinderCapture {
+		return 2 // Read
+	}
+	return 1 // Text
 }
 
 func (s *Server) requireRunningLocked() error {
