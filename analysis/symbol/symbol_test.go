@@ -9,17 +9,6 @@ func TestIDZero(t *testing.T) {
 	}
 }
 
-func TestNextReturnsDistinctIDs(t *testing.T) {
-	a := Next()
-	b := Next()
-	if a == 0 || b == 0 {
-		t.Fatalf("Next returned zero IDs: %d %d", a, b)
-	}
-	if a == b {
-		t.Fatalf("Next returned duplicate IDs: %d", a)
-	}
-}
-
 func TestKindValues(t *testing.T) {
 	tests := []struct {
 		kind Kind

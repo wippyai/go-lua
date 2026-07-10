@@ -19,6 +19,8 @@ type Result struct {
 	implicitGlobalSymbols map[symbol.ID]struct{}
 	typeValueRefs         map[*ast.IdentExpr]TypeDecl
 
+	nextSymbolID symbol.ID
+
 	names map[symbol.ID]string
 	kinds map[symbol.ID]symbol.Kind
 

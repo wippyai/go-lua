@@ -1,19 +1,14 @@
 // Package symbol defines lexical declaration identity for analysis.
 package symbol
 
-import "sync/atomic"
-
-// ID uniquely identifies a lexical declaration across the program.
+// ID identifies a lexical declaration within one binding pass.
+//
+// IDs are allocated bind-locally so identical source yields identical IDs
+// across independent solves. They are unique within a single binding Result and
+// are never compared against symbols produced by another Result.
 //
 // ID 0 is reserved for unresolved or unknown references.
 type ID uint64
-
-var counter uint64
-
-// Next generates a unique symbol ID.
-func Next() ID {
-	return ID(atomic.AddUint64(&counter, 1))
-}
 
 // Kind classifies how a symbol was declared.
 type Kind int

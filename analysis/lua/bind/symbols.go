@@ -216,8 +216,14 @@ func (r *Result) GenericForSymbols(stmt *ast.GenericForStmt) []symbol.ID {
 	return cloneSymbols(r.genericForSymbols[stmt])
 }
 
+// newSymbol allocates a declaration identity from this Result's own counter.
+// Numbering is bind-local so identical source produces identical symbol IDs
+// across independent solves, which keeps every downstream identity token and
+// content digest deterministic. IDs are unique within a Result; they are never
+// compared against symbols from another Result.
 func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
-	id := symbol.Next()
+	r.nextSymbolID++
+	id := r.nextSymbolID
 	r.names[id] = name
 	r.kinds[id] = kind
 	return id

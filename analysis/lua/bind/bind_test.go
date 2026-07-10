@@ -1298,6 +1298,48 @@ func TestFunctionTypeParamsBindTypeRefs(t *testing.T) {
 	}
 }
 
+func TestBindChunkAssignsDeterministicSymbolIDsAcrossIndependentBinds(t *testing.T) {
+	source := `
+local function alpha(value: number): number
+	return value + 1
+end
+
+local function beta(value: number): number
+	return value * 2
+end
+
+local function first(): number
+	return alpha(1) + beta(2)
+end
+
+return first()
+`
+	symbolsByName := func() map[string]symbol.ID {
+		stmts, err := parse.ParseString(source, "bind_test.lua")
+		if err != nil {
+			t.Fatalf("ParseString: %v", err)
+		}
+		r := BindChunk(stmts, Options{})
+		out := make(map[string]symbol.ID)
+		r.ForEachFunctionOrigin(func(origin FunctionOrigin) bool {
+			if origin.HasTargetSymbol && origin.TargetSymbol != 0 {
+				out[r.Name(origin.TargetSymbol)] = origin.Symbol
+			}
+			return true
+		})
+		if len(out) == 0 {
+			t.Fatal("no function origins bound")
+		}
+		return out
+	}
+
+	first := symbolsByName()
+	second := symbolsByName()
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("symbol IDs differ across identical binds:\nfirst:  %#v\nsecond: %#v", first, second)
+	}
+}
+
 func TestParsedMemberFunctionTypeParamsBindTypeRefs(t *testing.T) {
 	stmts, err := parse.ParseString(`
 local M = {}
