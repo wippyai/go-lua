@@ -158,6 +158,17 @@ func TestProductHashReturnsStoredNodeHash(t *testing.T) {
 	}
 }
 
+func TestSchemaOrdinalsKeepExternalStableHashes(t *testing.T) {
+	forward := mustRegistry(t, syntheticSpec().Erase(), secondSyntheticSpec().Erase())
+	reverse := mustRegistry(t, secondSyntheticSpec().Erase(), syntheticSpec().Erase())
+
+	forwardValue := Set(forward, Set(forward, Top(), syntheticKey, syntheticLow), secondSyntheticKey, syntheticHigh)
+	reverseValue := Set(reverse, Set(reverse, Top(), syntheticKey, syntheticLow), secondSyntheticKey, syntheticHigh)
+	if Hash(forward, forwardValue) != Hash(reverse, reverseValue) {
+		t.Fatalf("schema ordinal assignment changed external stable hash: forward=%d reverse=%d", Hash(forward, forwardValue), Hash(reverse, reverseValue))
+	}
+}
+
 func TestProductEqualRejectsHashMismatchBeforeAxisEquality(t *testing.T) {
 	equalCalls := 0
 	spec := syntheticSpec()
@@ -354,7 +365,7 @@ func TestProductRegistryRejectsSparseAxisWithoutMeet(t *testing.T) {
 func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
 	reg := mustRegistry(t, syntheticSpec().Erase())
 	top := Top()
-	explicit := intern(reg, ShapeTop, presence.Top(), []slot{{key: syntheticKey.ID(), value: syntheticTop}})
+	explicit := intern(reg, ShapeTop, presence.Top(), []slot{sparseTestSlot(reg, syntheticKey.ID(), syntheticTop)})
 
 	if explicit.n != nil {
 		t.Fatalf("explicit top slot should canonicalize to the nil top node, got %s", formatValue(explicit))
@@ -452,7 +463,7 @@ func TestReducePresenceShapeSparseSlots(t *testing.T) {
 	t.Run("explicit top removes sparse slot", func(t *testing.T) {
 		reg := mustRegistry(t, syntheticTopReducerSpec().Erase())
 
-		v := intern(reg, ShapeTop, presence.Absent(), []slot{{key: syntheticKey.ID(), value: syntheticLow}})
+		v := intern(reg, ShapeTop, presence.Absent(), []slot{sparseTestSlot(reg, syntheticKey.ID(), syntheticLow)})
 
 		if ShapeOf(v) != ShapeBottom {
 			t.Fatalf("ShapeOf = %s, want %s", ShapeOf(v), ShapeBottom)
@@ -565,7 +576,7 @@ func TestPresenceCannotBeSparseProductAxis(t *testing.T) {
 	})
 	mustPanic(t, func() {
 		valid := mustRegistry(t)
-		_ = intern(valid, ShapeTop, presence.Top(), []slot{{key: presence.Key.ID(), value: presence.Present()}})
+		_ = intern(valid, ShapeTop, presence.Top(), []slot{{ordinal: uint16(len(mustRuntime(valid).canonicalAxes)), value: presence.Present()}})
 	})
 }
 
@@ -632,7 +643,7 @@ func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
 		t.Fatalf("distinct synthetic axis values should contribute distinct hashes")
 	}
 
-	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{{key: syntheticKey.ID(), value: syntheticTop}})
+	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{sparseTestSlot(reg, syntheticKey.ID(), syntheticTop)})
 	if !d.Equal(explicitTop, d.Top()) || Hash(reg, explicitTop) != Hash(reg, d.Top()) {
 		t.Fatalf("synthetic explicit top must canonicalize to omission")
 	}
@@ -707,6 +718,14 @@ func mustRegistry(t *testing.T, specs ...axis.ErasedSpec) *axis.Registry {
 
 func registrySpecIDs(reg *axis.Registry) []string {
 	return specIDs(reg.Specs())
+}
+
+func sparseTestSlot(reg *axis.Registry, id string, value any) slot {
+	info, ok := mustRuntime(reg).axis(id)
+	if !ok {
+		panic("test: unregistered sparse axis " + id)
+	}
+	return slot{ordinal: info.ordinal, value: value}
 }
 
 func specIDs(specs []axis.ErasedSpec) []string {

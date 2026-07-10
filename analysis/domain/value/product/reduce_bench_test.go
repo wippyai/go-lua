@@ -48,3 +48,17 @@ func BenchmarkSetRuntimeKindOnUnionWitness(b *testing.B) {
 		_ = Set(reg, base, runtimekind.Key, rk)
 	}
 }
+
+func BenchmarkEditTwoAxes(b *testing.B) {
+	reg := benchReg()
+	wit := typewitness.Of(typ.String)
+	runtime := runtimekind.Singleton(runtimekind.String)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ed := Edit(reg, Top())
+		EditSet(&ed, typewitness.Key, wit)
+		EditSet(&ed, runtimekind.Key, runtime)
+		_ = ed.Done()
+	}
+}
