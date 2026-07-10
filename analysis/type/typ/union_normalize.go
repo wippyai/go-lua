@@ -71,5 +71,5 @@ func unionMemberContainsOpenRecursive(t Type) bool {
 	if rec, ok := unwrapAnnotated(t).(*Recursive); ok {
 		return rec.Body == nil
 	}
-	return knownContainsOpenRecursive(t)
+	return mayContainOpenRecursive(t)
 }

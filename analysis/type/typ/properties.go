@@ -8,6 +8,20 @@ type typeProperties struct {
 	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
+
+	// The construction-time bit above is conservative. The resolved value is
+	// memoized separately because a recursive placeholder can receive its body
+	// after a product containing it has been built.
+	containsOpenRecursiveComputed bool
+	containsOpenRecursiveDeps     []recursiveHashDep
+}
+
+func (p *typeProperties) invalidateOpenRecursiveCache() {
+	if p == nil {
+		return
+	}
+	p.containsOpenRecursiveComputed = false
+	p.containsOpenRecursiveDeps = nil
 }
 
 func typePropertiesOf(types ...Type) typeProperties {
@@ -43,7 +57,7 @@ func typePropertiesOfTypeParams(params []*TypeParam) typeProperties {
 }
 
 func (p *typeProperties) include(t Type) {
-	p.includeWithOpenRecursive(t, knownContainsOpenRecursive)
+	p.includeWithOpenRecursive(t, mayContainOpenRecursive)
 }
 
 func (p *typeProperties) includeWithOpenRecursive(t Type, openRecursive func(Type) bool) {

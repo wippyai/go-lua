@@ -20,7 +20,7 @@ func EqualityHash(t Type) uint64 {
 }
 
 func equalityHashNeedsRefresh(t Type) bool {
-	if knownContainsRecursive(t) || knownContainsOpenRecursive(t) || knownContainsInstantiated(t) {
+	if knownContainsRecursive(t) || mayContainOpenRecursive(t) || knownContainsInstantiated(t) {
 		return true
 	}
 	return knownContainsGeneric(t)

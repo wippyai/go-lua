@@ -937,6 +937,35 @@ func TestKnownContainsOpenRecursiveReflectsCurrentChildGraphState(t *testing.T) 
 	}
 }
 
+func TestKnownContainsOpenRecursiveCachesCompositeClosureByRevision(t *testing.T) {
+	child := NewRecursivePlaceholder("Child")
+	child.SetBody(newRecord().Field("value", String).Build())
+	wrapper := NewArray(child)
+
+	if wrapper.containsOpenRecursiveComputed {
+		t.Fatal("construction must not prove recursive graph closure")
+	}
+	if knownContainsOpenRecursive(wrapper) {
+		t.Fatal("closed child should not make wrapper open-recursive")
+	}
+	if !wrapper.containsOpenRecursiveComputed || len(wrapper.containsOpenRecursiveDeps) != 1 {
+		t.Fatal("open-recursive query must memoize the closure proof on the wrapper")
+	}
+	if got := wrapper.containsOpenRecursiveDeps[0]; got.rec != child || got.rev != child.rev {
+		t.Fatalf("closure proof dependency = %#v, want child at revision %d", got, child.rev)
+	}
+
+	child.SetBody(nil)
+	if !knownContainsOpenRecursive(wrapper) {
+		t.Fatal("child revision change must invalidate the cached closure proof")
+	}
+
+	child.SetBody(newRecord().Field("value", Number).Build())
+	if knownContainsOpenRecursive(wrapper) {
+		t.Fatal("closed replacement body must refresh the cached closure proof")
+	}
+}
+
 func TestRecursiveGraphClosureDependencyInvalidatesThroughChildSetBody(t *testing.T) {
 	child := NewRecursivePlaceholder("Child")
 	child.SetBody(newRecord().Field("value", String).Build())

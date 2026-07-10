@@ -58,7 +58,7 @@ func SameNodeOrRecursiveIdentityEqual(a, b Type) bool {
 		return false
 	}
 	if knownContainsRecursive(a) || knownContainsRecursive(b) ||
-		knownContainsOpenRecursive(a) || knownContainsOpenRecursive(b) {
+		mayContainOpenRecursive(a) || mayContainOpenRecursive(b) {
 		if !sameRecursiveIdentityGraph(a, b) {
 			return false
 		}
@@ -79,7 +79,7 @@ func sameNodeOrAcyclicEqual(a, b Type) bool {
 		return false
 	}
 	if knownContainsRecursive(a) || knownContainsRecursive(b) ||
-		knownContainsOpenRecursive(a) || knownContainsOpenRecursive(b) {
+		mayContainOpenRecursive(a) || mayContainOpenRecursive(b) {
 		return false
 	}
 	return typeEquals(a, b)

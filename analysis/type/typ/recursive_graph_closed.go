@@ -12,11 +12,24 @@ func recursiveGraphClosureForRecursive(r *Recursive) (bool, []recursiveHashDep) 
 	}
 	seen := make(map[*Recursive]bool)
 	closed := collectRecursiveGraphClosureDeps(r, seen, make(map[recursiveTraversalMemoKey]bool))
+	return closed, recursiveGraphClosureDeps(seen)
+}
+
+// recursiveGraphClosureForType proves closure for a composite node and records
+// every recursive node that proof depends on. Callers can reuse the proof until
+// one of those placeholders receives a new body.
+func recursiveGraphClosureForType(t Type) (bool, []recursiveHashDep) {
+	seen := make(map[*Recursive]bool)
+	closed := collectRecursiveGraphClosureDepsInType(t, seen, make(map[recursiveTraversalMemoKey]bool))
+	return closed, recursiveGraphClosureDeps(seen)
+}
+
+func recursiveGraphClosureDeps(seen map[*Recursive]bool) []recursiveHashDep {
 	deps := make([]recursiveHashDep, 0, len(seen))
 	for rec := range seen {
 		deps = append(deps, recursiveHashDep{rec: rec, rev: rec.rev})
 	}
-	return closed, deps
+	return deps
 }
 
 func collectRecursiveGraphClosureDeps(r *Recursive, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
