@@ -3,6 +3,7 @@ package checktest
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -11,6 +12,78 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestGeneratedManifestExportsMTableFunctionSignaturesToRequireConsumers(t *testing.T) {
+	library := CheckAndExport(`
+local M = {}
+
+function M.singleton_component_id(id: string)
+    return id
+end
+
+function M.annotated_component_id(id: string): string
+    return id
+end
+
+M.assigned_component_id = function(id: string)
+    return id
+end
+
+local function local_component_id(id: string)
+    return id
+end
+M.local_component_id = local_component_id
+
+return M
+`, "component")
+	if len(library.Errors) != 0 {
+		t.Fatalf("library diagnostics = %#v, want none", library.Errors)
+	}
+
+	encoded, err := manifest.Encode(library.Manifest)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	generated, err := manifest.Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	for _, name := range []string{
+		"component.singleton_component_id",
+		"component.annotated_component_id",
+		"component.assigned_component_id",
+		"component.local_component_id",
+	} {
+		sig, ok := generated.FunctionSignatures[name]
+		if !ok || sig.Type == nil {
+			t.Fatalf("generated signatures = %#v, want %s", generated.FunctionSignatures, name)
+		}
+		if len(sig.Type.Params) != 1 || !typ.TypeEquals(sig.Type.Params[0].Type, typ.String) ||
+			len(sig.Type.Returns) != 1 || !typ.TypeEquals(sig.Type.Returns[0], typ.String) {
+			t.Fatalf("%s signature = %v, want (string) -> string", name, sig.Type)
+		}
+	}
+
+	consumer := Check(`
+local lib = require("component")
+local inferred: string = lib.singleton_component_id("k")
+local annotated: string = lib.annotated_component_id("k")
+local assigned: string = lib.assigned_component_id("k")
+local local_function: string = lib.local_component_id("k")
+`, WithManifest("component", generated))
+	if len(consumer.Diagnostics) != 0 {
+		t.Fatalf("consumer diagnostics = %#v, want M-table function returns to remain string", consumer.Diagnostics)
+	}
+
+	contrast := Check(`
+local lib = require("component")
+local not_a_number: number = lib.singleton_component_id("k")
+`, WithManifest("component", generated))
+	if len(contrast.Diagnostics) != 1 || contrast.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("contrast diagnostics = %#v, want string-to-number assignment error rather than any", contrast.Diagnostics)
+	}
+}
 
 func TestManifestSignatureKeepsReferencesInOwningModuleScope(t *testing.T) {
 	registry := registryLikeManifest()
