@@ -361,7 +361,7 @@ func (b *semanticProjectionBuilder) collectExpressions() {
 				if _, exists := seen[use.Point]; !exists {
 					seen[use.Point] = struct{}{}
 					display := ""
-					if t, ok := reader.ExpressionTypeAt(use.Point, expr); ok && t != nil {
+					if t, ok := reader.ExpressionEvaluationType(body.ExpressionEvaluationFact{Point: use.Point, Expr: expr}); ok && t != nil {
 						display = typeformat.Short(t)
 					}
 					b.exprs = append(b.exprs, expressionAt{body: item.id, location: b.locationForSpan(ast.SpanOf(expr)), display: display})
