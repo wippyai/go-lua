@@ -52,6 +52,169 @@ func TestXPCallDirectCallPreservesSurroundingChunk(t *testing.T) {
 	}
 }
 
+// TestXPCallDirectErrorDoesNotSkipNextGoCall guards the protected-frame
+// cleanup invariant. CallK stores xpcall's continuation on its call frame. If
+// an error unwinds without clearing that metadata, the next Go-backed Lua call
+// at the same stack depth resumes the stale xpcall continuation instead of
+// invoking its own function.
+func TestXPCallDirectErrorDoesNotSkipNextGoCall(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	err := L.DoString(`
+		local ok, handled = xpcall(function()
+			error("first")
+		end, function(e)
+			return "handled: " .. tostring(e)
+		end)
+		assert(ok == false)
+		assert(string.find(handled, "handled"))
+
+		local body_ran = false
+		local next_ok, next_value = pcall(function()
+			body_ran = true
+			return "next-result"
+		end)
+		assert(next_ok == true, "next pcall must execute normally")
+		assert(next_value == "next-result", "next pcall returned the wrong result")
+		assert(body_ran == true, "next pcall body was skipped by a stale continuation")
+	`)
+	if err != nil {
+		t.Fatalf("call after failed xpcall was corrupted: %v", err)
+	}
+}
+
+// TestXPCallHandlerErrorDoesNotSkipNextGoCall covers the same cleanup path
+// when the message handler itself raises. The handler's error must become the
+// xpcall result, and no handler/continuation state may survive the return.
+func TestXPCallHandlerErrorDoesNotSkipNextGoCall(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	err := L.DoString(`
+		local ok, handled = xpcall(function()
+			error("original")
+		end, function()
+			error("handler-failed")
+		end)
+		assert(ok == false)
+		assert(string.find(tostring(handled), "handler%-failed"))
+
+		local body_ran = false
+		local next_ok = pcall(function()
+			body_ran = true
+		end)
+		assert(next_ok == true)
+		assert(body_ran == true, "handler failure left stale frame metadata")
+	`)
+	if err != nil {
+		t.Fatalf("handler failure corrupted the next call: %v", err)
+	}
+}
+
+func TestXPCallDirectErrorClearsFrameExtensions(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	if err := L.DoString(`
+		xpcall(function() error("boom") end, function(e) return e end)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	for idx, ext := range L.frameExt {
+		if ext != nil && (ext.ErrFunc != nil || ext.Continuation != nil || ext.ContinuationCtx != nil) {
+			t.Fatalf("stale protected-call metadata remains at frame index %d: %+v", idx, ext)
+		}
+	}
+}
+
+// TestPCallErrorClearsNestedFrameExtensions covers the general unwind path,
+// not only xpcall's own frame. A Go function using CallK leaves continuation
+// metadata on its frame when the called Lua function panics. The surrounding
+// pcall must discard that metadata before the frame index is reused.
+func TestPCallErrorClearsNestedFrameExtensions(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("call_with_continuation", L.NewFunction(func(L *LState) int {
+		fn := L.CheckFunction(1)
+		L.Push(fn)
+		L.CallK(0, 0, func(*LState, any, ResumeState) int { return 0 }, nil)
+		return 0
+	}))
+
+	markerCalled := false
+	L.SetGlobal("mark_called", L.NewFunction(func(*LState) int {
+		markerCalled = true
+		return 0
+	}))
+
+	err := L.DoString(`
+		local ok = pcall(function()
+			call_with_continuation(function()
+				error("nested failure")
+			end)
+		end)
+		assert(ok == false)
+
+		local next_ok = pcall(function()
+			mark_called()
+		end)
+		assert(next_ok == true)
+	`)
+	if err != nil {
+		t.Fatalf("nested protected-call unwind failed: %v", err)
+	}
+	if !markerCalled {
+		t.Fatal("next Go call was skipped by a discarded frame's continuation")
+	}
+}
+
+func TestAPIPCallErrorClearsNestedFrameExtensions(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("call_with_continuation", L.NewFunction(func(L *LState) int {
+		fn := L.CheckFunction(1)
+		L.Push(fn)
+		L.CallK(0, 0, func(*LState, any, ResumeState) int { return 0 }, nil)
+		return 0
+	}))
+
+	markerCalled := false
+	L.SetGlobal("mark_called", L.NewFunction(func(*LState) int {
+		markerCalled = true
+		return 0
+	}))
+
+	if err := L.DoString(`
+		function api_failure()
+			call_with_continuation(function()
+				error("api failure")
+			end)
+		end
+		function api_next_call()
+			mark_called()
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	L.Push(L.GetGlobal("api_failure"))
+	if err := L.PCall(0, 0, nil); err == nil {
+		t.Fatal("expected API PCall to catch the nested error")
+	}
+
+	L.Push(L.GetGlobal("api_next_call"))
+	if err := L.PCall(0, 0, nil); err != nil {
+		t.Fatalf("next API PCall failed: %v", err)
+	}
+	if !markerCalled {
+		t.Fatal("next API PCall was skipped by a discarded frame's continuation")
+	}
+}
+
 // TestXPCallDirectCallReturnsTrueOnSuccess verifies the success path under
 // direct call.
 func TestXPCallDirectCallReturnsTrueOnSuccess(t *testing.T) {

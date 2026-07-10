@@ -196,6 +196,18 @@ func (ls *LState) clearFrameExt(cf *callFrame) {
 	}
 }
 
+// unwindCallFrames discards frames down to sp and removes their extension
+// metadata first. Extensions are keyed by frame index, so a plain SetSp would
+// let a later, unrelated Go call at a reused index inherit a stale continuation
+// or xpcall error handler.
+func (ls *LState) unwindCallFrames(sp int) {
+	for i := ls.stack.Sp() - 1; i >= sp; i-- {
+		ls.clearFrameExt(ls.stack.At(i))
+	}
+	ls.stack.SetSp(sp)
+	ls.currentFrame = ls.stack.Last()
+}
+
 type callFrame struct {
 	Fn     *LFunction
 	GoFunc LGoFunc // stateless Go function (used when Fn is nil)
@@ -1925,8 +1937,7 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 							err = rcv.(*ApiError)
 							err.(*ApiError).StackTrace = ls.stackTrace(0)
 						}
-						ls.stack.SetSp(sp)
-						ls.currentFrame = ls.stack.Last()
+						ls.unwindCallFrames(sp)
 						ls.reg.SetTop(base)
 					}
 				}()
@@ -1935,15 +1946,14 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 			} else if len(err.(*ApiError).StackTrace) == 0 {
 				err.(*ApiError).StackTrace = ls.stackTrace(0)
 			}
-			ls.stack.SetSp(sp)
-			ls.currentFrame = ls.stack.Last()
+			ls.unwindCallFrames(sp)
 			ls.reg.SetTop(base)
 		}
 		// Skip stack reset if yield happened
 		if ls.yieldState != yieldNone {
 			return
 		}
-		ls.stack.SetSp(sp)
+		ls.unwindCallFrames(sp)
 		if sp == 0 {
 			ls.currentFrame = nil
 		}
