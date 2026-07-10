@@ -302,19 +302,24 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		ProjectPath: luaPathTypeProjector,
 		TypeValues:  typeValues,
 	})
+	observationPlan := compileObservationPlan(s.cfg.Graph, s.facts, callOutcome != nil)
+	observationCapture := newObservationCapture(observationPlan)
 	flow, err := transfer.TryRun(transfer.Config{
-		Context:      config.Context,
-		Graph:        s.cfg.Graph,
-		Registry:     s.registry,
-		StateLanes:   config.StateLanes,
-		StateOptions: state.DomainOptions{WidenThresholds: widenThresholds},
-		EntryState:   entryState,
-		Initial:      initial,
-		NodeTransfer: nodeTransfer,
-		EdgeTransfer: edgeTransfer,
-		WidenAt:      config.WidenAt,
-		WidenDelay:   config.WidenDelay,
-		Stats:        transferStats(config.Stats),
+		Context:                  config.Context,
+		Graph:                    s.cfg.Graph,
+		Registry:                 s.registry,
+		StateLanes:               config.StateLanes,
+		StateOptions:             state.DomainOptions{WidenThresholds: widenThresholds},
+		EntryState:               entryState,
+		Initial:                  initial,
+		NodeTransfer:             nodeTransfer,
+		EdgeTransfer:             edgeTransfer,
+		WidenAt:                  config.WidenAt,
+		WidenDelay:               config.WidenDelay,
+		Stats:                    transferStats(config.Stats),
+		ObserveNode:              observationPlan.observesNode,
+		RecordNodeObservation:    observationCapture.record,
+		FinalizeNodeObservations: observationCapture.finalize,
 	})
 	if err != nil {
 		return nil, err
@@ -347,6 +352,9 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		signatureArg:          signatureArgumentType,
 		typeValues:            typeValues,
 		stateLanes:            append([]state.LaneID(nil), config.StateLanes...),
+		observationPlan:       observationPlan,
+		capturedNodeOutputs:   observationCapture.valid,
+		observation:           observationCapture.stats,
 		queries:               newResultQueryCache(s.facts),
 	}
 	// Seal the immutable query surface after the solver, including narrowing,
@@ -475,8 +483,15 @@ func addObservationStats(dst *ObservationStats, src ObservationStats) {
 	if dst == nil {
 		return
 	}
+	dst.PlannedNodeOutputs += src.PlannedNodeOutputs
+	dst.CapturedNodeOutputs += src.CapturedNodeOutputs
+	dst.ValidatedNodeOutputs += src.ValidatedNodeOutputs
+	dst.RecomputedNodeOutputs += src.RecomputedNodeOutputs
 	dst.PlannedBoundaryOutputs += src.PlannedBoundaryOutputs
 	dst.PlannedEdgeReachability += src.PlannedEdgeReachability
+	dst.CapturedBoundaryOutputs += src.CapturedBoundaryOutputs
+	dst.ValidatedBoundaryOutputs += src.ValidatedBoundaryOutputs
+	dst.RecomputedBoundaryOutputs += src.RecomputedBoundaryOutputs
 	dst.ProjectedBoundaryOutputs += src.ProjectedBoundaryOutputs
 	dst.ProjectedEdgeReachability += src.ProjectedEdgeReachability
 }

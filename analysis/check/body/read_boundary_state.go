@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -106,46 +105,7 @@ func (r *Result) needsBoundaryNodeOutput(point cfg.Point) bool {
 	if r == nil {
 		return false
 	}
-	if _, ok := r.facts.RootAssignment(point); ok {
-		return true
-	}
-	if _, ok := r.facts.PathAssignment(point); ok {
-		return true
-	}
-	if _, ok := r.facts.PathDescendantInvalidation(point); ok {
-		return true
-	}
-	if _, ok := r.facts.DynamicIndexWrite(point); ok {
-		return true
-	}
-	if _, ok := r.facts.PathStaticMemberWrite(point); ok {
-		return true
-	}
-	if _, ok := r.facts.Return(point); ok {
-		return true
-	}
-	if callproducer.Has(r.facts, point) {
-		return true
-	}
-	if r.callOutcome != nil {
-		if r.HasCallSite(point) {
-			return true
-		}
-	}
-	if r.facts.NoNormalReturn(point) {
-		return true
-	}
-	if len(r.facts.CallResultValues(point)) != 0 {
-		return true
-	}
-	if len(r.facts.ChannelSelects(point)) != 0 {
-		return true
-	}
-	if len(r.facts.CovariantExposures(point)) != 0 {
-		return true
-	}
-	return len(r.facts.PostconditionRefinements(point)) != 0 ||
-		len(r.facts.PostconditionPathRelations(point)) != 0
+	return plannedBoundaryNodeOutput(r.facts, r.callOutcome != nil, point)
 }
 
 func (r *Result) readExprConfig(mode sourceValueReadMode) readexpr.Config {

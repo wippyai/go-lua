@@ -116,6 +116,18 @@ type EquationSystem[Cell comparable, State any] struct {
 	// the iterate sound and terminating.
 	Transfer func(cell Cell, read func(Cell) State, emit func(Cell, State))
 
+	// TransferVersioned is an optional observation-only spelling of Transfer.
+	// When present, the main worklist uses it and supplies the exact current
+	// revision of every value read. It must compute the same equation as
+	// Transfer. Narrowing deliberately continues to use Transfer: a narrowing
+	// candidate is not a final observation, and a final narrowing update can
+	// change cur without another transfer evaluation.
+	//
+	// Revisions are solve-local and have no semantic meaning outside this Solve
+	// call. They exist so a consumer can validate a captured transfer artifact
+	// against the converged working solution without re-running that transfer.
+	TransferVersioned func(cell Cell, read func(Cell) (State, uint64), emit func(Cell, State))
+
 	// WidenAt reports whether emit into a cell may apply Widen rather than plain
 	// Join. It is true at feedback-vertex / loop-head cells — enough cells to
 	// cut every cycle in the dependency graph — so that ascending chains there
@@ -163,6 +175,19 @@ func Solve[Cell comparable, State any](sys EquationSystem[Cell, State]) map[Cell
 	return s.materialize()
 }
 
+// SolveWithVersions computes the same solution as Solve and additionally
+// returns the final solve-local revision for each declared cell. The revision
+// changes whenever the solver replaces a cell, including during narrowing.
+// It is intended only for validating ephemeral observations before a result is
+// published; callers must never serialize or cache it across solves.
+func SolveWithVersions[Cell comparable, State any](sys EquationSystem[Cell, State]) (map[Cell]State, map[Cell]uint64) {
+	validateEquationSystem(sys)
+	s := newState(sys)
+	s.run()
+	s.runNarrowingWithoutCancellation()
+	return s.materialize(), s.materializeVersions()
+}
+
 // SolveContext computes the converged solution of sys, stopping cleanly when
 // ctx is canceled. A canceled solve returns no result map, so callers cannot
 // accidentally treat a partially converged worklist as a solution.
@@ -183,6 +208,26 @@ func SolveContext[Cell comparable, State any](ctx context.Context, sys EquationS
 		return nil, err
 	}
 	return s.materialize(), nil
+}
+
+// SolveContextWithVersions is the cancelable counterpart of SolveWithVersions.
+func SolveContextWithVersions[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State]) (map[Cell]State, map[Cell]uint64, error) {
+	validateEquationSystem(sys)
+	cancel := newCancellationGuard(ctx)
+	if err := cancel.err(0); err != nil {
+		return nil, nil, err
+	}
+	s := newState(sys)
+	if err := s.runWithCancellation(cancel); err != nil {
+		return nil, nil, err
+	}
+	if err := s.runNarrowing(cancel); err != nil {
+		return nil, nil, err
+	}
+	if err := cancel.err(0); err != nil {
+		return nil, nil, err
+	}
+	return s.materialize(), s.materializeVersions(), nil
 }
 
 type cancellationGuard struct {
@@ -233,12 +278,13 @@ type solveState[Cell comparable, State any] struct {
 
 	// transfer/widenAt mirror the system's functions so run does not re-read
 	// the struct each visit.
-	transfer   func(cell Cell, read func(Cell) State, emit func(Cell, State))
-	widenAt    func(Cell) bool
-	widenDelay func(Cell) int
-	abstract   func(Cell, State) State
-	stats      *Stats
-	hasWiden   bool
+	transfer          func(cell Cell, read func(Cell) State, emit func(Cell, State))
+	transferVersioned func(cell Cell, read func(Cell) (State, uint64), emit func(Cell, State))
+	widenAt           func(Cell) bool
+	widenDelay        func(Cell) int
+	abstract          func(Cell, State) State
+	stats             *Stats
+	hasWiden          bool
 
 	// order is the canonical index of each cell, fixing deterministic
 	// re-queue ordering. Only cells in sys.Cells receive an order; emitted-only
@@ -248,6 +294,10 @@ type solveState[Cell comparable, State any] struct {
 
 	// cur is the working value of every cell touched so far.
 	cur map[Cell]State
+	// versions tracks solve-local revisions of cur. A narrowing replacement is
+	// a replacement just like a main-worklist emit and must advance its version.
+	versions    map[Cell]uint64
+	nextVersion uint64
 	// initial stores non-bottom declared initials so narrowing can re-apply the
 	// transfer equations from the same boundary conditions without mutating cur
 	// during candidate construction.
@@ -310,20 +360,22 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 
 	n := len(sys.Cells)
 	s := &solveState[Cell, State]{
-		domain:     sys.Lattice,
-		transfer:   sys.Transfer,
-		widenAt:    widenAt,
-		widenDelay: widenDelay,
-		abstract:   abstract,
-		stats:      sys.Stats,
-		order:      make(map[Cell]int, n),
-		cells:      make([]Cell, 0, n),
-		cur:        make(map[Cell]State, n),
-		initial:    make(map[Cell]State, n),
-		dependents: make(map[Cell][]Cell),
-		dependEdge: make(map[edge[Cell]]struct{}),
-		queue:      make([]Cell, 0, n),
-		inQueue:    make(map[Cell]struct{}, n),
+		domain:            sys.Lattice,
+		transfer:          sys.Transfer,
+		transferVersioned: sys.TransferVersioned,
+		widenAt:           widenAt,
+		widenDelay:        widenDelay,
+		abstract:          abstract,
+		stats:             sys.Stats,
+		order:             make(map[Cell]int, n),
+		cells:             make([]Cell, 0, n),
+		cur:               make(map[Cell]State, n),
+		versions:          make(map[Cell]uint64, n),
+		initial:           make(map[Cell]State, n),
+		dependents:        make(map[Cell][]Cell),
+		dependEdge:        make(map[edge[Cell]]struct{}),
+		queue:             make([]Cell, 0, n),
+		inQueue:           make(map[Cell]struct{}, n),
 	}
 
 	// Seed initial values and the worklist in Cells order. Deduplicate so a
@@ -341,12 +393,14 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 		if initialSparse != nil {
 			if value, ok := initialSparse(c); ok {
 				s.cur[c] = value
+				s.bumpVersion(c)
 				s.initial[c] = value
 				s.declaredCur++
 			}
 		} else {
 			value := initial(c)
 			s.cur[c] = value
+			s.bumpVersion(c)
 			s.initial[c] = value
 			s.declaredCur++
 		}
@@ -363,10 +417,22 @@ func (s *solveState[Cell, State]) curOf(c Cell) State {
 	}
 	v := s.domain.Bottom()
 	s.cur[c] = v
+	s.bumpVersion(c)
 	if _, declared := s.order[c]; declared {
 		s.declaredCur++
 	}
 	return v
+}
+
+func (s *solveState[Cell, State]) bumpVersion(c Cell) {
+	s.nextVersion++
+	s.versions[c] = s.nextVersion
+}
+
+func (s *solveState[Cell, State]) versionOf(c Cell) uint64 {
+	// curOf is intentionally called first by every public read path, so a
+	// missing revision here can only denote an unobserved emitted-only cell.
+	return s.versions[c]
 }
 
 // enqueue appends a cell to the FIFO unless it is already pending.
@@ -426,6 +492,7 @@ func (s *solveState[Cell, State]) emit(d Cell, v State) {
 		return
 	}
 	s.cur[d] = next
+	s.bumpVersion(d)
 	if delayConsumed {
 		s.recordWidenChange(d)
 	}
@@ -515,6 +582,10 @@ func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard)
 	emit := func(d Cell, v State) {
 		s.emit(d, v)
 	}
+	readVersioned := func(d Cell) (State, uint64) {
+		value := read(d)
+		return value, s.versionOf(d)
+	}
 
 	var iteration uint64
 	for len(s.queue) > 0 {
@@ -532,7 +603,11 @@ func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard)
 		if s.stats != nil {
 			s.stats.TransferCalls++
 		}
-		s.transfer(c, read, emit)
+		if s.transferVersioned != nil {
+			s.transferVersioned(c, readVersioned, emit)
+		} else {
+			s.transfer(c, read, emit)
+		}
 		s.recordVisit(c)
 	}
 	return cancel.err(iteration)
@@ -636,6 +711,7 @@ func (s *solveState[Cell, State]) applyNarrowedCandidate(c Cell, candidate map[C
 		return false
 	}
 	s.cur[c] = next
+	s.bumpVersion(c)
 	return true
 }
 
@@ -650,6 +726,14 @@ func (s *solveState[Cell, State]) materialize() map[Cell]State {
 		} else {
 			out[c] = s.domain.Bottom()
 		}
+	}
+	return out
+}
+
+func (s *solveState[Cell, State]) materializeVersions() map[Cell]uint64 {
+	out := make(map[Cell]uint64, len(s.order))
+	for c := range s.order {
+		out[c] = s.versions[c]
 	}
 	return out
 }

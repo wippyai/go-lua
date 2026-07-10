@@ -90,12 +90,20 @@ type Stats struct {
 	Observation            ObservationStats
 }
 
-// ObservationStats reports deterministic seal work. The current fallback path
-// intentionally has no speculative records: every planned output is projected
-// once after final narrowing rather than trusting a pre-narrowing capture.
+// ObservationStats reports deterministic seal work. Captured outputs are
+// reused only when their point-input and every dynamic state read retain the
+// exact solve-local revision after narrowing; all other planned outputs are
+// recomputed once during the seal pass.
 type ObservationStats struct {
+	PlannedNodeOutputs        int
+	CapturedNodeOutputs       int
+	ValidatedNodeOutputs      int
+	RecomputedNodeOutputs     int
 	PlannedBoundaryOutputs    int
 	PlannedEdgeReachability   int
+	CapturedBoundaryOutputs   int
+	ValidatedBoundaryOutputs  int
+	RecomputedBoundaryOutputs int
 	ProjectedBoundaryOutputs  int
 	ProjectedEdgeReachability int
 }
@@ -212,6 +220,8 @@ type Result struct {
 	boundaryXfer          transfer.NodeTransfer
 	edgeXfer              transfer.EdgeTransfer
 	published             PublishedFacts
+	observationPlan       ObservationPlan
+	capturedNodeOutputs   map[cfg.Point]state.State
 	observation           ObservationStats
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues

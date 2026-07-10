@@ -1,6 +1,8 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -11,13 +13,15 @@ import (
 // solver point: boundary outputs are retained only for facts whose consumers
 // need same-node effects, while edge observations are reduced to booleans.
 //
-// The current implementation uses the deterministic post-fixpoint projection
-// path. This is the sound fallback for a by-value State solver: a final
-// narrowing pass can replace a point state without another node-transfer
-// evaluation, so a last-worklist capture cannot be trusted without state and
-// dynamic-summary version identities.
+// A plan is compiled from immutable prepared facts and the enabled
+// call-boundary consumer. It marks only outputs consumed by summary, proof,
+// diagnostic, placement, and semantic projections; it is not a point-state
+// index.
 type ObservationPlan struct {
 	boundaryPoints   []cfg.Point
+	boundarySet      map[cfg.Point]struct{}
+	nodePoints       []cfg.Point
+	nodeSet          map[cfg.Point]struct{}
 	edgeReachability []observationEdge
 }
 
@@ -36,31 +40,144 @@ type PublishedFacts struct {
 	edgeNormal  map[observationEdge]bool
 }
 
-func compileObservationPlan(r *Result) ObservationPlan {
-	if r == nil || r.cfg == nil || r.cfg.Graph == nil {
+func compileObservationPlan(graph cfg.Graph, facts factflow.Facts, callOutcomeEnabled bool) ObservationPlan {
+	if graph == nil {
 		return ObservationPlan{}
 	}
-	graph := r.cfg.Graph
 	plan := ObservationPlan{
 		boundaryPoints:   make([]cfg.Point, 0, graph.Size()),
+		boundarySet:      make(map[cfg.Point]struct{}),
+		nodePoints:       make([]cfg.Point, 0, graph.Size()),
+		nodeSet:          make(map[cfg.Point]struct{}),
 		edgeReachability: make([]observationEdge, 0, graph.Size()),
 	}
 	// RPO and SuccessorsReadOnly are both canonical. Keeping this order makes
 	// projection independent of map iteration and matches transfer.Run.
 	for _, point := range graph.RPO() {
-		if r.needsBoundaryNodeOutput(point) {
+		if plannedBoundaryNodeOutput(facts, callOutcomeEnabled, point) {
 			plan.boundaryPoints = append(plan.boundaryPoints, point)
+			plan.boundarySet[point] = struct{}{}
+			plan.nodePoints = append(plan.nodePoints, point)
+			plan.nodeSet[point] = struct{}{}
 		}
 		// FactsEdgeTransfer is identity on non-branch edges. Their normality is
 		// therefore represented by the input reachability (or a planned same-node
 		// no-normal-return output), not a separately retained edge record.
 		if graph.IsBranch(point) {
+			if _, alreadyPlanned := plan.nodeSet[point]; !alreadyPlanned {
+				plan.nodePoints = append(plan.nodePoints, point)
+				plan.nodeSet[point] = struct{}{}
+			}
 			for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
 				plan.edgeReachability = append(plan.edgeReachability, observationEdge{from: point, to: successor})
 			}
 		}
 	}
 	return plan
+}
+
+func (p ObservationPlan) observesBoundary(point cfg.Point) bool {
+	_, ok := p.boundarySet[point]
+	return ok
+}
+
+func (p ObservationPlan) observesNode(point cfg.Point) bool {
+	_, ok := p.nodeSet[point]
+	return ok
+}
+
+func plannedBoundaryNodeOutput(facts factflow.Facts, callOutcomeEnabled bool, point cfg.Point) bool {
+	if _, ok := facts.RootAssignment(point); ok {
+		return true
+	}
+	if _, ok := facts.PathAssignment(point); ok {
+		return true
+	}
+	if _, ok := facts.PathDescendantInvalidation(point); ok {
+		return true
+	}
+	if _, ok := facts.DynamicIndexWrite(point); ok {
+		return true
+	}
+	if _, ok := facts.PathStaticMemberWrite(point); ok {
+		return true
+	}
+	if _, ok := facts.Return(point); ok || callproducer.Has(facts, point) {
+		return true
+	}
+	if callOutcomeEnabled {
+		if _, ok := facts.CallSiteView(point); ok {
+			return true
+		}
+	}
+	if facts.NoNormalReturn(point) || len(facts.CallResultValues(point)) != 0 || facts.HasChannelSelects(point) || len(facts.CovariantExposures(point)) != 0 {
+		return true
+	}
+	return len(facts.PostconditionRefinements(point)) != 0 || len(facts.PostconditionPathRelations(point)) != 0
+}
+
+type observationCapture struct {
+	plan    ObservationPlan
+	records map[cfg.Point]transfer.NodeObservation
+	valid   map[cfg.Point]state.State
+	stats   ObservationStats
+}
+
+func newObservationCapture(plan ObservationPlan) *observationCapture {
+	return &observationCapture{
+		plan:    plan,
+		records: make(map[cfg.Point]transfer.NodeObservation, len(plan.nodePoints)),
+		stats: ObservationStats{
+			PlannedNodeOutputs:      len(plan.nodePoints),
+			PlannedBoundaryOutputs:  len(plan.boundaryPoints),
+			PlannedEdgeReachability: len(plan.edgeReachability),
+		},
+	}
+}
+
+func (c *observationCapture) record(record transfer.NodeObservation) {
+	if c == nil || !c.plan.observesNode(record.Point) {
+		return
+	}
+	c.records[record.Point] = record
+}
+
+func (c *observationCapture) finalize(finalVersion func(cfg.Point) uint64) {
+	if c == nil || finalVersion == nil {
+		return
+	}
+	for _, point := range c.plan.nodePoints {
+		record, ok := c.records[point]
+		if !ok {
+			continue
+		}
+		c.stats.CapturedNodeOutputs++
+		if finalVersion(point) != record.InputVersion {
+			continue
+		}
+		valid := true
+		for _, read := range record.Reads {
+			if finalVersion(read.Point) != read.Version {
+				valid = false
+				break
+			}
+		}
+		if !valid {
+			continue
+		}
+		if c.valid == nil {
+			c.valid = make(map[cfg.Point]state.State, len(c.plan.boundaryPoints))
+		}
+		c.valid[point] = record.Output
+		c.stats.ValidatedNodeOutputs++
+		if c.plan.observesBoundary(point) {
+			c.stats.CapturedBoundaryOutputs++
+			c.stats.ValidatedBoundaryOutputs++
+		}
+	}
+	// Records include working outputs and dynamic dependency versions. Neither
+	// belongs to a published Result after validity is decided.
+	c.records = nil
 }
 
 // sealObservations projects the final fixed point exactly once in plan order.
@@ -72,10 +189,22 @@ func (r *Result) sealObservations() {
 	if r == nil {
 		return
 	}
-	plan := compileObservationPlan(r)
+	plan := r.observationPlan
+	if len(plan.nodePoints) == 0 && len(plan.edgeReachability) == 0 {
+		if r.cfg != nil {
+			plan = compileObservationPlan(r.cfg.Graph, r.facts, r.callOutcome != nil)
+		}
+	}
 	stats := ObservationStats{
+		PlannedNodeOutputs:      len(plan.nodePoints),
 		PlannedBoundaryOutputs:  len(plan.boundaryPoints),
 		PlannedEdgeReachability: len(plan.edgeReachability),
+	}
+	if r.observation.CapturedNodeOutputs != 0 || r.observation.ValidatedNodeOutputs != 0 {
+		stats.CapturedNodeOutputs = r.observation.CapturedNodeOutputs
+		stats.ValidatedNodeOutputs = r.observation.ValidatedNodeOutputs
+		stats.CapturedBoundaryOutputs = r.observation.CapturedBoundaryOutputs
+		stats.ValidatedBoundaryOutputs = r.observation.ValidatedBoundaryOutputs
 	}
 	published := PublishedFacts{}
 	if len(plan.boundaryPoints) != 0 {
@@ -95,7 +224,10 @@ func (r *Result) sealObservations() {
 	if err != nil {
 		domain = state.Domain(r.registry)
 	}
-	outputs := make(map[cfg.Point]state.State, len(plan.boundaryPoints))
+	outputs := r.capturedNodeOutputs
+	if outputs == nil {
+		outputs = make(map[cfg.Point]state.State, len(plan.boundaryPoints))
+	}
 	outputAt := func(point cfg.Point) (state.State, bool) {
 		if out, ok := outputs[point]; ok {
 			return out, true
@@ -112,6 +244,10 @@ func (r *Result) sealObservations() {
 			Read:     r.stateRead,
 		}, in)
 		outputs[point] = out
+		stats.RecomputedNodeOutputs++
+		if plan.observesBoundary(point) {
+			stats.RecomputedBoundaryOutputs++
+		}
 		return out, true
 	}
 
@@ -146,6 +282,7 @@ func (r *Result) sealObservations() {
 		}
 	}
 	r.published = published
+	r.capturedNodeOutputs = nil
 	r.observation = stats
 }
 

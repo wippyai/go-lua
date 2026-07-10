@@ -609,6 +609,46 @@ func TestSolve_InitialSparseDoesNotLeakEmittedOnlyCellWhenKeyCountsMatch(t *test
 	}
 }
 
+func TestSolveWithVersionsAdvancesForFinalNarrowingReplacement(t *testing.T) {
+	l := capLattice{top: 2}.lattice()
+	l.Narrow = func(previous, candidate int) int {
+		if candidate < previous {
+			return candidate
+		}
+		return previous
+	}
+	var lastMainInputVersion uint64
+	sys := EquationSystem[string, int]{
+		Lattice: l,
+		Cells:   []string{"loop"},
+		Transfer: func(cell string, read func(string) int, emit func(string, int)) {
+			if read(cell) < 2 {
+				emit(cell, 2)
+				return
+			}
+			emit(cell, 1)
+		},
+		TransferVersioned: func(cell string, read func(string) (int, uint64), emit func(string, int)) {
+			value, version := read(cell)
+			lastMainInputVersion = version
+			if value < 2 {
+				emit(cell, 2)
+				return
+			}
+			emit(cell, 1)
+		},
+		WidenAt: func(string) bool { return true },
+	}
+
+	result, versions := SolveWithVersions(sys)
+	if result["loop"] != 1 {
+		t.Fatalf("final narrowed state = %d, want 1", result["loop"])
+	}
+	if versions["loop"] == lastMainInputVersion {
+		t.Fatalf("final revision %d equals last main-worklist input revision %d; narrowing replacement was not versioned", versions["loop"], lastMainInputVersion)
+	}
+}
+
 func assertMapEqual(t *testing.T, l lattice.Lattice[int], got, want map[string]int) {
 	t.Helper()
 	if len(got) != len(want) {

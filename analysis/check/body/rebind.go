@@ -15,6 +15,11 @@ func RebindBoundaryProviders(result *Result, prepared *Static, config SolveConfi
 	result.signatureArg = signatureArgumentType
 	result.typeValues = typeValues
 	result.queries.reset()
+	// Captured outputs were validated against the prior provider set. A rebind
+	// may change summary reads without rerunning the body worklist, so only the
+	// deterministic seal projection is sound here.
+	result.capturedNodeOutputs = nil
+	result.observation = ObservationStats{}
 	// Rebinding changes closures consulted by boundary projection. The cached
 	// transfer solution is valid only when its tracked summary reads are valid,
 	// but PublishedFacts must still be rebuilt against the current closures.

@@ -28,6 +28,25 @@ type Stats struct {
 	Solver solve.Stats
 }
 
+// StateRead is one solve-local dependency observed while evaluating a node
+// transfer. Version changes whenever the solver replaces that point's state,
+// including a replacement made by narrowing.
+type StateRead struct {
+	Point   cfg.Point
+	Version uint64
+}
+
+// NodeObservation is an ephemeral transfer artifact. It is produced only for
+// points selected by Config.ObserveNode and is intended to be validated and
+// projected before the solved result escapes. It is not a generic point-state
+// query index.
+type NodeObservation struct {
+	Point        cfg.Point
+	InputVersion uint64
+	Output       state.State
+	Reads        []StateRead
+}
+
 // NodeContext is the generic context passed to node transfer hooks.
 type NodeContext struct {
 	Graph    cfg.Graph
@@ -79,6 +98,15 @@ type Config struct {
 
 	// Stats, when non-nil, receives observational counters for this run.
 	Stats *Stats
+
+	// ObserveNode selects points whose latest node-transfer output should be
+	// captured. RecordNodeObservation is called in deterministic worklist order
+	// and FinalizeNodeObservations receives the final state revisions after both
+	// worklist convergence and narrowing. These hooks are solve-local; they do
+	// not retain arbitrary point state in Result.
+	ObserveNode              func(cfg.Point) bool
+	RecordNodeObservation    func(NodeObservation)
+	FinalizeNodeObservations func(finalVersion func(cfg.Point) uint64)
 }
 
 // Result maps each reachable CFG point in Graph.RPO() to its input state.
@@ -145,6 +173,7 @@ func TryRun(config Config) (Result, error) {
 	if widenAt == nil {
 		widenAt = defaultWidenAtForRPO(graph, cells)
 	}
+	observing := config.ObserveNode != nil && config.RecordNodeObservation != nil
 
 	sys := solve.EquationSystem[cfg.Point, state.State]{
 		Lattice: domain,
@@ -186,17 +215,101 @@ func TryRun(config Config) (Result, error) {
 				emit(succ, edgeOut)
 			}
 		},
+		TransferVersioned: func(point cfg.Point, read func(cfg.Point) (state.State, uint64), emit func(cfg.Point, state.State)) {
+			in, inputVersion := read(point)
+			in = normalize(in)
+			if tracksReachability && domain.Equal(in, domain.Bottom()) {
+				return
+			}
+			if !observing || !config.ObserveNode(point) {
+				// Preserve the ordinary transfer spelling for unplanned points so
+				// observation has no retention or per-read bookkeeping there.
+				out := normalize(nodeTransfer(NodeContext{
+					Graph:    graph,
+					Registry: registry,
+					Point:    point,
+					Node:     graph.Node(point),
+					Read: func(other cfg.Point) state.State {
+						value, _ := read(other)
+						return value
+					},
+				}, in))
+				for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+					cond, hasCond := graph.EdgeCond(point, succ)
+					hasCond = hasCond && graph.IsBranch(point)
+					edgeOut := normalize(edgeTransfer(EdgeContext{
+						Graph:    graph,
+						Registry: registry,
+						Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
+						HasCond:  hasCond,
+					}, out))
+					emit(succ, edgeOut)
+				}
+				return
+			}
+
+			reads := make([]StateRead, 0, 2)
+			readForNode := func(other cfg.Point) state.State {
+				value, version := read(other)
+				reads = append(reads, StateRead{Point: other, Version: version})
+				return value
+			}
+			out := normalize(nodeTransfer(NodeContext{
+				Graph:    graph,
+				Registry: registry,
+				Point:    point,
+				Node:     graph.Node(point),
+				Read:     readForNode,
+			}, in))
+			config.RecordNodeObservation(NodeObservation{
+				Point:        point,
+				InputVersion: inputVersion,
+				Output:       out,
+				Reads:        reads,
+			})
+			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				cond, hasCond := graph.EdgeCond(point, succ)
+				hasCond = hasCond && graph.IsBranch(point)
+				edgeOut := normalize(edgeTransfer(EdgeContext{
+					Graph:    graph,
+					Registry: registry,
+					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
+					HasCond:  hasCond,
+				}, out))
+				emit(succ, edgeOut)
+			}
+		},
 		WidenAt:    widenAt,
 		WidenDelay: config.WidenDelay,
 		Stats:      solverStats(config.Stats),
 	}
+	if !observing {
+		sys.TransferVersioned = nil
+	}
 
 	if config.Context == nil {
-		return Result(solve.Solve(sys)), nil
+		if !observing {
+			return Result(solve.Solve(sys)), nil
+		}
+		result, versions := solve.SolveWithVersions(sys)
+		if config.FinalizeNodeObservations != nil {
+			config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
+		}
+		return Result(result), nil
 	}
-	result, err := solve.SolveContext(config.Context, sys)
+	if !observing {
+		result, err := solve.SolveContext(config.Context, sys)
+		if err != nil {
+			return nil, err
+		}
+		return Result(result), nil
+	}
+	result, versions, err := solve.SolveContextWithVersions(config.Context, sys)
 	if err != nil {
 		return nil, err
+	}
+	if config.FinalizeNodeObservations != nil {
+		config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
 	}
 	return Result(result), nil
 }
