@@ -29,19 +29,22 @@ type Body struct {
 
 	declaredReturns []TypeRef
 
-	operandPool   []Operand
-	typeRefPool   []TypeRef
-	tableEntries  []TableEntry
-	segments      []segment.Segment
-	callArgMeta   []CallArgumentMeta
-	returnMeta    []ReturnValueMeta
-	rootTypes     []RootType
-	impliedChecks []ImpliedCheck
-	branchDiffs   []BranchDiffConstraint
-	callTargets   map[callResultTargetKey]CallResultTarget
-	evaluations   map[cfg.Point]ExpressionEvaluation
-	symbols       map[SymbolID]SymbolInfo
-	globalSymbols map[string]SymbolID
+	operandPool          []Operand
+	typeRefPool          []TypeRef
+	tableEntries         []TableEntry
+	segments             []segment.Segment
+	callArgMeta          []CallArgumentMeta
+	returnMeta           []ReturnValueMeta
+	rootTypes            []RootType
+	impliedChecks        []ImpliedCheck
+	branchDiffs          []BranchDiffConstraint
+	callTargets          map[callResultTargetKey]CallResultTarget
+	evaluations          map[cfg.Point]ExpressionEvaluation
+	symbols              map[SymbolID]SymbolInfo
+	globalSymbols        map[string]SymbolID
+	debugPointOrdinals   map[cfg.Point]uint32
+	debugPointOrder      []cfg.Point
+	debugLocalVisibility map[debugVisibilityKey][]SymbolID
 
 	pathIndex     map[path.PathKey]PathRef
 	constIndex    map[Const]ConstRef

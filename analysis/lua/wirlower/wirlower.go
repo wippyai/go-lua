@@ -86,7 +86,7 @@ func LowerWithResolverAndOptions(name string, stmts []ast.Stmt, bindings *bind.R
 	if resolver == nil {
 		resolver = typeresolve.New(bindings)
 	}
-	return lowerInto(name, stmts, bindings, built, resolver, options)
+	return lowerInto(name, stmts, nil, bindings, built, resolver, options)
 }
 
 // LowerFunctionWithResolver is the function-body form of LowerWithResolver. It
@@ -106,7 +106,7 @@ func LowerFunctionWithResolverAndOptions(name string, fn *ast.FunctionExpr, bind
 	if fn != nil {
 		stmts = fn.Stmts
 	}
-	body := lowerInto(name, stmts, bindings, built, resolver, options)
+	body := lowerInto(name, stmts, fn, bindings, built, resolver, options)
 	recordFunctionBodyMetadata(body, fn, bindings, resolver, options)
 	return body
 }
@@ -193,7 +193,7 @@ func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindi
 // function body) onto its shared graph. resolver is the shared lexical type
 // resolver, threaded through nested protos so type identities and their caches
 // stay consistent across the whole chunk.
-func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
+func lowerInto(name string, stmts []ast.Stmt, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
 	b := &builder{
 		body:                wir.NewBody(name),
 		graph:               built.Graph,
@@ -208,7 +208,11 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 		evalByExpr:          make(map[ast.Expr]cfg.Point),
 		logicalGuardEmitted: make(map[*ast.LogicalOpExpr]bool),
 		logicalValues:       make(map[*ast.LogicalOpExpr]wir.Operand),
+		debugScopes:         [][]symbol.ID{{}},
+		debugBefore:         make(map[cfg.Point][]symbol.ID),
+		debugAfter:          make(map[cfg.Point][]symbol.ID),
 	}
+	b.debugSeedFunctionParams(fn)
 	b.indexShortCircuits()
 
 	b.curPoint = b.graph.Entry()
@@ -217,7 +221,9 @@ func lowerInto(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgb
 	b.curPoint = b.graph.Exit()
 	b.emit(wir.Instruction{Op: wir.OpExit})
 
+	b.finishDebugLocalVisibility()
 	b.flush()
+	b.body.AssignDebugPointOrdinals(b.graph)
 	return b.body
 }
 
@@ -271,6 +277,13 @@ type builder struct {
 	evalByExpr          map[ast.Expr]cfg.Point
 	logicalGuardEmitted map[*ast.LogicalOpExpr]bool
 	logicalValues       map[*ast.LogicalOpExpr]wir.Operand
+
+	// debugScopes mirrors lexical value visibility while lowering. It stores
+	// only source symbol identities; WIR SymbolInfo and codegen still own names
+	// and slots respectively.
+	debugScopes [][]symbol.ID
+	debugBefore map[cfg.Point][]symbol.ID
+	debugAfter  map[cfg.Point][]symbol.ID
 }
 
 // callResult records the result temps a pre-lowered call binds together with the
@@ -304,7 +317,86 @@ func (b *builder) indexShortCircuits() {
 // short-circuit RHS patch a producer's ResultSpread before flush.
 func (b *builder) emit(inst wir.Instruction) {
 	inst.Point = b.curPoint
+	b.debugRecordBefore(inst.Point)
 	b.pointInstrs[b.curPoint] = append(b.pointInstrs[b.curPoint], inst)
+}
+
+func (b *builder) debugSeedFunctionParams(fn *ast.FunctionExpr) {
+	if b == nil || b.bindings == nil || fn == nil || len(b.debugScopes) == 0 {
+		return
+	}
+	for _, param := range b.bindings.ParamSlots(fn) {
+		if param.Symbol != 0 {
+			b.debugScopes[0] = append(b.debugScopes[0], param.Symbol)
+		}
+	}
+}
+
+func (b *builder) debugPushScope() {
+	if b != nil {
+		b.debugScopes = append(b.debugScopes, nil)
+	}
+}
+
+func (b *builder) debugPopScope() {
+	if b != nil && len(b.debugScopes) > 1 {
+		b.debugScopes = b.debugScopes[:len(b.debugScopes)-1]
+	}
+}
+
+func (b *builder) debugVisibleSymbols() []symbol.ID {
+	if b == nil || b.bindings == nil {
+		return nil
+	}
+	byName := make(map[string]symbol.ID)
+	for _, scope := range b.debugScopes {
+		for _, id := range scope {
+			if id != 0 {
+				if name := b.bindings.Name(id); name != "" {
+					byName[name] = id
+				}
+			}
+		}
+	}
+	out := make([]symbol.ID, 0, len(byName))
+	for _, id := range byName {
+		out = append(out, id)
+	}
+	return out
+}
+
+func (b *builder) debugRecordBefore(point cfg.Point) {
+	if b == nil || b.debugBefore == nil {
+		return
+	}
+	if _, exists := b.debugBefore[point]; !exists {
+		b.debugBefore[point] = b.debugVisibleSymbols()
+	}
+}
+
+// debugDeclareAt makes a lexical symbol visible after its lowering point. The
+// split retains a declaration start marker without exposing a name to its own
+// initializer.
+func (b *builder) debugDeclareAt(point cfg.Point, id symbol.ID) {
+	if b == nil || id == 0 || len(b.debugScopes) == 0 {
+		return
+	}
+	b.debugScopes[len(b.debugScopes)-1] = append(b.debugScopes[len(b.debugScopes)-1], id)
+	b.debugAfter[point] = b.debugVisibleSymbols()
+}
+
+func (b *builder) finishDebugLocalVisibility() {
+	if b == nil || b.body == nil {
+		return
+	}
+	for point, before := range b.debugBefore {
+		b.body.SetDebugLocalVisibility(point, wir.DebugPhaseBefore, before)
+		after, ok := b.debugAfter[point]
+		if !ok {
+			after = before
+		}
+		b.body.SetDebugLocalVisibility(point, wir.DebugPhaseAfter, after)
+	}
 }
 
 // flush writes every point's accumulated instructions into the Body as a
@@ -374,7 +466,9 @@ func (b *builder) lowerStmt(stmt ast.Stmt) {
 	case *ast.FuncDefStmt:
 		b.lowerFuncDef(s)
 	case *ast.DoBlockStmt:
+		b.debugPushScope()
 		b.lowerStmts(s.Stmts)
+		b.debugPopScope()
 	case *ast.BreakStmt, *ast.LabelStmt, *ast.GotoStmt, *ast.TypeDefStmt, *ast.InterfaceDefStmt:
 		// break carries no recorded point; goto/label/type declarations occupy a
 		// structural point that carries no value effect (prints as noop).
@@ -411,6 +505,9 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 				Claim: wir.ClaimAnnotation,
 				Type:  declared,
 			})
+		}
+		if symbol, ok := b.bindings.LocalSymbolAt(s, i); ok {
+			b.debugDeclareAt(b.curPoint, symbol)
 		}
 	}
 }
@@ -1077,6 +1174,7 @@ func (b *builder) lowerReturn(s *ast.ReturnStmt) {
 		List:         b.body.AppendOperands(ops),
 		ReturnValues: b.body.AppendReturnValueMeta(returnValueMeta(s.Exprs)),
 		ListSpread:   spread,
+		ExprSpan:     wirSpanFromSource(ast.SpanOf(s)),
 	})
 }
 
@@ -1091,8 +1189,12 @@ func (b *builder) lowerIf(s *ast.IfStmt) {
 	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
 	b.emitBranch(s.Condition)
+	b.debugPushScope()
 	b.lowerStmts(s.Then)
+	b.debugPopScope()
+	b.debugPushScope()
 	b.lowerStmts(s.Else)
+	b.debugPopScope()
 }
 
 func (b *builder) lowerWhile(s *ast.WhileStmt) {
@@ -1104,7 +1206,9 @@ func (b *builder) lowerWhile(s *ast.WhileStmt) {
 	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
 	b.emitBranch(s.Condition)
+	b.debugPushScope()
 	b.lowerStmts(s.Stmts)
+	b.debugPopScope()
 }
 
 func (b *builder) lowerRepeat(s *ast.RepeatStmt) {
@@ -1113,10 +1217,12 @@ func (b *builder) lowerRepeat(s *ast.RepeatStmt) {
 	if len(pts) != nCalls+1 {
 		return
 	}
+	b.debugPushScope()
 	b.lowerStmts(s.Stmts)
 	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
 	b.emitBranch(s.Condition)
+	b.debugPopScope()
 }
 
 func (b *builder) condCallCount(cond ast.Expr) int {
@@ -1135,6 +1241,7 @@ func (b *builder) emitBranch(cond ast.Expr) {
 		ImpliedChecks:    b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
 		SufficientChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchSufficientChecksOnBothEdges(cond, b.bindings))),
 		DiffConstraints:  b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
+		ExprSpan:         tableEntryValueSpan(cond),
 	}
 	if check.Kind == branchcond.CheckNone {
 		inst.A = b.lowerExpr(cond)
@@ -1165,12 +1272,18 @@ func (b *builder) lowerNumberFor(s *ast.NumberForStmt) {
 		list = append(list, b.constNumber("1"))
 	}
 	b.emit(wir.Instruction{
-		Op:      wir.OpIterate,
-		Iter:    wir.IterNumeric,
-		Results: b.body.AppendOperands([]wir.Operand{b.numForOperand(s)}),
-		List:    b.body.AppendOperands(list),
+		Op:       wir.OpIterate,
+		Iter:     wir.IterNumeric,
+		Results:  b.body.AppendOperands([]wir.Operand{b.numForOperand(s)}),
+		List:     b.body.AppendOperands(list),
+		ExprSpan: wirSpanFromSource(ast.SpanOf(s)),
 	})
+	b.debugPushScope()
+	if symbol, ok := b.bindings.NumForSymbol(s); ok {
+		b.debugDeclareAt(b.curPoint, symbol)
+	}
 	b.lowerStmts(s.Stmts)
+	b.debugPopScope()
 }
 
 func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
@@ -1188,14 +1301,21 @@ func (b *builder) lowerGenericFor(s *ast.GenericForStmt) {
 		Iter:       wir.IterGeneric,
 		List:       b.body.AppendOperands(srcOps),
 		ListSpread: spread,
+		ExprSpan:   wirSpanFromSource(ast.SpanOf(s)),
 	})
+	b.debugPushScope()
 	// one NodeAssign per loop variable: the variable binding.
 	varOps := b.genericForOperands(s)
+	symbols := b.bindings.GenericForSymbols(s)
 	for i := range s.Names {
 		b.curPoint = pts[nCalls+1+i]
 		b.emitAssign(varOps[i], wir.Operand{})
+		if i < len(symbols) {
+			b.debugDeclareAt(b.curPoint, symbols[i])
+		}
 	}
 	b.lowerStmts(s.Stmts)
+	b.debugPopScope()
 }
 
 // ---- function definitions ----------------------------------------------
@@ -1230,7 +1350,7 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 	childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
 	var ref wir.FuncRef
 	if childBuilt != nil && childBuilt.Graph != nil {
-		childBody := lowerInto(name, fn.Stmts, b.bindings, childBuilt, b.resolver, b.options)
+		childBody := lowerInto(name, fn.Stmts, fn, b.bindings, childBuilt, b.resolver, b.options)
 		recordFunctionBodyMetadata(childBody, fn, b.bindings, b.resolver, b.options)
 		sym, _ := b.bindings.FunctionSymbol(fn)
 		fnType, _ := functiontype.ValueExpression(fn, b.bindings, b.resolver)
