@@ -17,6 +17,8 @@ const (
 	methodReferences            = "textDocument/references"
 	methodDocumentHighlight     = "textDocument/documentHighlight"
 	methodDocumentSymbol        = "textDocument/documentSymbol"
+	methodPrepareRename         = "textDocument/prepareRename"
+	methodRename                = "textDocument/rename"
 	textDocumentSyncIncremental = 2
 )
 
@@ -114,6 +116,21 @@ type documentSymbol struct {
 	Children       []documentSymbol `json:"children,omitempty"`
 }
 
+type renameParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+	NewName      string                 `json:"newName"`
+}
+
+type workspaceTextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}
+
+type workspaceEdit struct {
+	Changes map[string][]workspaceTextEdit `json:"changes,omitempty"`
+}
+
 type diagnosticRelatedInformation struct {
 	Location Location `json:"location"`
 	Message  string   `json:"message"`
@@ -173,6 +190,8 @@ type serverCapabilities struct {
 	ReferencesProvider        bool                    `json:"referencesProvider"`
 	DocumentHighlightProvider bool                    `json:"documentHighlightProvider"`
 	DocumentSymbolProvider    bool                    `json:"documentSymbolProvider"`
+	RenameProvider            bool                    `json:"renameProvider"`
+	PrepareRenameProvider     bool                    `json:"prepareRenameProvider"`
 }
 
 type textDocumentSyncOptions struct {
@@ -200,6 +219,8 @@ func defaultInitializeResult() initializeResult {
 			ReferencesProvider:        true,
 			DocumentHighlightProvider: true,
 			DocumentSymbolProvider:    true,
+			RenameProvider:            true,
+			PrepareRenameProvider:     true,
 		},
 		ServerInfo: serverInfo{Name: "go-lua-lsp"},
 	}

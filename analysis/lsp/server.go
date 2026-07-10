@@ -170,6 +170,10 @@ func (s *Server) Handle(ctx context.Context, request jsonrpc2.Request) (any, *js
 		result, err = s.documentHighlight(ctx, request.Params)
 	case methodDocumentSymbol:
 		result, err = s.documentSymbols(ctx, request.Params)
+	case methodPrepareRename:
+		result, err = s.prepareRename(ctx, request.Params)
+	case methodRename:
+		result, err = s.rename(ctx, request.Params)
 	default:
 		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "method not found", request.Method)
 	}
@@ -574,6 +578,74 @@ func (s *Server) documentSymbols(ctx context.Context, raw []byte) (any, error) {
 	return items, nil
 }
 
+func (s *Server) prepareRename(ctx context.Context, raw []byte) (any, error) {
+	var params textDocumentPositionParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid prepareRename params", err.Error())
+	}
+	document, binder, err := s.renameBinderAtPosition(ctx, params.TextDocument.URI, params.Position)
+	if err != nil {
+		return nil, err
+	}
+	selectedRange, ok := document.binderRangeAt(binder, params.Position)
+	if !ok {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename cannot establish the selected binder range", nil)
+	}
+	return selectedRange, nil
+}
+
+func (s *Server) rename(ctx context.Context, raw []byte) (any, error) {
+	var params renameParams
+	if err := decodeParams(raw, &params); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidParams, "invalid rename params", err.Error())
+	}
+	if !validLuaIdentifier(params.NewName) {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename requires a valid Lua identifier", nil)
+	}
+	document, binder, err := s.renameBinderAtPosition(ctx, params.TextDocument.URI, params.Position)
+	if err != nil {
+		return nil, err
+	}
+	if params.NewName == binder.Name {
+		return workspaceEdit{Changes: map[string][]workspaceTextEdit{}}, nil
+	}
+	all, err := s.session.BinderOccurrences(ctx, service.BinderOccurrencesRequest{
+		Selector: service.ResultSelector{UnitID: document.unitID, SolveSeq: document.tag.SolveSeq, Profile: document.tag.Profile},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read rename binder occurrences: %w", err)
+	}
+	if err := document.renameCollision(binder, params.NewName, all.Binders); err != nil {
+		return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, err.Error(), nil)
+	}
+	edits := make([]workspaceTextEdit, 0, len(binder.Occurrences)+1)
+	for _, location := range binderLocations(*binder) {
+		editRange, ok := document.protocolRange(location)
+		if !ok {
+			return nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename cannot prove a complete module-local occurrence set", nil)
+		}
+		edits = append(edits, workspaceTextEdit{Range: editRange, NewText: params.NewName})
+	}
+	return workspaceEdit{Changes: map[string][]workspaceTextEdit{document.uri: edits}}, nil
+}
+
+func (s *Server) renameBinderAtPosition(ctx context.Context, uri string, position Position) (semanticDocument, *service.BinderInfo, error) {
+	document, binder, err := s.binderAtPosition(ctx, uri, position)
+	if err != nil {
+		return semanticDocument{}, nil, err
+	}
+	if binder == nil {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename requires a lexical binder occurrence", nil)
+	}
+	if !binder.ModuleLocal {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename rejects cross-module exported/global binders", nil)
+	}
+	if !binder.Scope.Valid() {
+		return semanticDocument{}, nil, jsonrpc2.NewError(jsonrpc2.InvalidRequest, "rename cannot prove the binder's lexical scope", nil)
+	}
+	return document, binder, nil
+}
+
 func (s *Server) binderAtPosition(ctx context.Context, uri string, position Position) (semanticDocument, *service.BinderInfo, error) {
 	document, err := s.codec.DocumentForURI(uri)
 	if err != nil {
@@ -644,8 +716,16 @@ func (s *Server) currentSemanticDocument(ctx context.Context, document embedding
 }
 
 func (d semanticDocument) protocolLocation(location service.SourceLocation) (Location, bool) {
-	if location.File != d.document.OpaqueKey {
+	mappedRange, ok := d.protocolRange(location)
+	if !ok {
 		return Location{}, false
+	}
+	return Location{URI: d.uri, Range: mappedRange}, true
+}
+
+func (d semanticDocument) protocolRange(location service.SourceLocation) (Range, bool) {
+	if location.File != d.document.OpaqueKey {
+		return Range{}, false
 	}
 	item, err := d.buffer.rangeForCompilerSpan(
 		location.Span.StartLine,
@@ -654,9 +734,9 @@ func (d semanticDocument) protocolLocation(location service.SourceLocation) (Loc
 		location.Span.EndCol,
 	)
 	if err != nil {
-		return Location{}, false
+		return Range{}, false
 	}
-	return Location{URI: d.uri, Range: item}, true
+	return item, true
 }
 
 func (d semanticDocument) protocolDocumentSymbol(item service.DocumentSymbol) (documentSymbol, bool) {
@@ -693,6 +773,97 @@ func highlightKind(role service.BinderOccurrenceRole) int {
 		return 2 // Read
 	}
 	return 1 // Text
+}
+
+func (d semanticDocument) binderRangeAt(binder *service.BinderInfo, position Position) (Range, bool) {
+	if binder == nil {
+		return Range{}, false
+	}
+	for _, location := range binderLocations(*binder) {
+		mappedRange, ok := d.protocolRange(location)
+		if ok && rangeContainsPosition(mappedRange, position) {
+			return mappedRange, true
+		}
+	}
+	return Range{}, false
+}
+
+func (d semanticDocument) renameCollision(target *service.BinderInfo, newName string, candidates []service.BinderInfo) error {
+	for _, candidate := range candidates {
+		if candidate.SymbolID == target.SymbolID || candidate.Name != newName {
+			continue
+		}
+		if !candidate.Scope.Valid() {
+			return fmt.Errorf("rename cannot prove that %q does not capture an unavailable binder", newName)
+		}
+		for _, targetLocation := range binderLocations(*target) {
+			contains, known := d.scopeContains(candidate.Scope, targetLocation)
+			if !known {
+				return fmt.Errorf("rename cannot prove that %q does not capture across a document boundary", newName)
+			}
+			if contains {
+				return fmt.Errorf("rename would capture or shadow the existing binder %q", newName)
+			}
+		}
+	}
+	return nil
+}
+
+func (d semanticDocument) scopeContains(scope, location service.SourceLocation) (bool, bool) {
+	scopeRange, ok := d.protocolRange(scope)
+	if !ok {
+		return false, false
+	}
+	locationRange, ok := d.protocolRange(location)
+	if !ok {
+		return false, false
+	}
+	return positionBeforeOrEqual(scopeRange.Start, locationRange.Start) && positionBeforeOrEqual(locationRange.End, scopeRange.End), true
+}
+
+func binderLocations(binder service.BinderInfo) []service.SourceLocation {
+	locations := make([]service.SourceLocation, 0, len(binder.Occurrences)+1)
+	if binder.Definition.Valid() {
+		locations = append(locations, binder.Definition)
+	}
+	for _, occurrence := range binder.Occurrences {
+		locations = append(locations, occurrence.Location)
+	}
+	return locations
+}
+
+func rangeContainsPosition(item Range, position Position) bool {
+	return positionBeforeOrEqual(item.Start, position) && positionBeforeOrEqual(position, item.End)
+}
+
+func positionBeforeOrEqual(left, right Position) bool {
+	return left.Line < right.Line || left.Line == right.Line && left.Character <= right.Character
+}
+
+func validLuaIdentifier(name string) bool {
+	if name == "" || luaKeywords[name] {
+		return false
+	}
+	for index := range name {
+		value := name[index]
+		if index == 0 {
+			if value != '_' && (value < 'A' || value > 'Z') && (value < 'a' || value > 'z') {
+				return false
+			}
+			continue
+		}
+		if value != '_' && (value < 'A' || value > 'Z') && (value < 'a' || value > 'z') && (value < '0' || value > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+var luaKeywords = map[string]bool{
+	"and": true, "break": true, "do": true, "else": true, "elseif": true, "end": true,
+	"false": true, "for": true, "function": true, "goto": true, "if": true, "in": true,
+	"local": true, "nil": true, "not": true, "or": true, "repeat": true, "return": true,
+	"then": true, "true": true, "until": true, "while": true,
 }
 
 func (s *Server) requireRunningLocked() error {

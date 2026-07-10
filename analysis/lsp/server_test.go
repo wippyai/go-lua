@@ -348,6 +348,55 @@ func TestInProcessDocumentSymbolsPreserveServiceHierarchy(t *testing.T) {
 	}
 }
 
+func TestInProcessRenameRejectsCollisionAndCrossModuleExport(t *testing.T) {
+	server, uri := openSolvedDocument(t, "local x = 1; local y = 2; return x\n")
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+	position := Position{Line: 0, Character: 6}
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodPrepareRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri}, "position": position,
+	})}); problem != nil {
+		t.Fatalf("prepare local rename: %v", problem)
+	}
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri}, "position": position, "newName": "y",
+	})}); problem == nil || !strings.Contains(problem.Message, "capture or shadow") {
+		t.Fatalf("collision rename problem = %#v, want clear capture/shadow rejection", problem)
+	}
+	if _, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodPrepareRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri}, "position": Position{Line: 0, Character: 0},
+	})}); problem == nil || !strings.Contains(problem.Message, "lexical binder") {
+		t.Fatalf("non-binder prepareRename problem = %#v, want lexical-binder rejection", problem)
+	}
+
+	exported, exportedURI := openSolvedDocument(t, "function exported() return 1 end\nreturn exported\n")
+	defer func() { _, _ = exported.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+	if _, problem := exported.Handle(context.Background(), jsonrpc2.Request{Method: methodPrepareRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": exportedURI}, "position": Position{Line: 0, Character: 9},
+	})}); problem == nil || !strings.Contains(problem.Message, "cross-module") {
+		t.Fatalf("exported prepareRename problem = %#v, want cross-module rejection", problem)
+	}
+}
+
+func TestInProcessRenameProjectsCompleteOccurrenceWorkspaceEdit(t *testing.T) {
+	server, uri := openSolvedDocument(t, "local item = 1\nreturn item\n")
+	defer func() { _, _ = server.Handle(context.Background(), jsonrpc2.Request{Method: methodExit}) }()
+	result, problem := server.Handle(context.Background(), jsonrpc2.Request{Method: methodRename, Params: paramsJSON(t, map[string]any{
+		"textDocument": map[string]any{"uri": uri}, "position": Position{Line: 1, Character: 7}, "newName": "renamed",
+	})})
+	if problem != nil {
+		t.Fatalf("rename: %v", problem)
+	}
+	edit, ok := result.(workspaceEdit)
+	if !ok || len(edit.Changes[uri]) != 2 {
+		t.Fatalf("workspace edit = %#v, want complete definition/reference edits", result)
+	}
+	for _, item := range edit.Changes[uri] {
+		if item.NewText != "renamed" {
+			t.Fatalf("rename edit = %#v, want new binder name", item)
+		}
+	}
+}
+
 func documentSymbolNamed(items []documentSymbol, name string, kind int) *documentSymbol {
 	for index := range items {
 		if items[index].Name == name && items[index].Kind == kind {
@@ -491,13 +540,15 @@ func assertCapabilities(t *testing.T, payload []byte) {
 				ReferencesProvider        bool            `json:"referencesProvider"`
 				DocumentHighlightProvider bool            `json:"documentHighlightProvider"`
 				DocumentSymbolProvider    bool            `json:"documentSymbolProvider"`
+				RenameProvider            bool            `json:"renameProvider"`
+				PrepareRenameProvider     bool            `json:"prepareRenameProvider"`
 			} `json:"capabilities"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(payload, &response); err != nil {
 		t.Fatalf("decode initialize result: %v", err)
 	}
-	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider {
+	if !response.Result.Capabilities.TextDocumentSync.OpenClose || response.Result.Capabilities.TextDocumentSync.Change != textDocumentSyncIncremental || len(response.Result.Capabilities.DiagnosticProvider) == 0 || !response.Result.Capabilities.HoverProvider || !response.Result.Capabilities.DefinitionProvider || !response.Result.Capabilities.ReferencesProvider || !response.Result.Capabilities.DocumentHighlightProvider || !response.Result.Capabilities.DocumentSymbolProvider || !response.Result.Capabilities.RenameProvider || !response.Result.Capabilities.PrepareRenameProvider {
 		t.Fatalf("advertised capabilities = %s", payload)
 	}
 }

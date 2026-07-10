@@ -54,12 +54,18 @@ func TestSemanticQueryBinderOccurrencesIncludeCaptures(t *testing.T) {
 	if captured == nil || !captured.Definition.Valid() || captured.Kind != BinderLocal {
 		t.Fatalf("captured binder = %#v, want local with definition", captured)
 	}
+	if !captured.ModuleLocal || !captured.Scope.Valid() {
+		t.Fatalf("captured binder scope = %#v, want module-local binder with lexical scope", captured)
+	}
 	if got := countOccurrenceRole(captured.Occurrences, BinderCapture); got != 2 {
 		t.Fatalf("captured capture occurrences = %d, want both read/write capture spans: %#v", got, captured.Occurrences)
 	}
 	value := binderNamed(result.Binders, "value")
 	if value == nil || value.Kind != BinderParam || !value.Definition.Valid() {
 		t.Fatalf("value binder = %#v, want parameter definition", value)
+	}
+	if !value.Scope.Valid() || len(value.Occurrences) == 0 || !value.Occurrences[0].Scope.Valid() {
+		t.Fatalf("value binder scope facts = %#v, want definition and occurrence scopes", value)
 	}
 	if got := countOccurrenceRole(value.Occurrences, BinderCapture); got != 1 {
 		t.Fatalf("value capture occurrences = %d, want 1: %#v", got, value.Occurrences)

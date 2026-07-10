@@ -5,7 +5,7 @@ import "github.com/wippyai/go-lua/analysis/check/judgment"
 // EmbeddingSchemaVersion pins the versioned, renderer-independent checker
 // embedding surface. It is deliberately separate from JIRSchemaVersion: JIR
 // pins judgments, while this pin covers navigation and repair DTOs.
-const EmbeddingSchemaVersion = 2
+const EmbeddingSchemaVersion = 3
 
 // SourceSpan is the current source-location value used by the embedding
 // surface. It is intentionally isolated from identity/display policy so a
@@ -54,6 +54,10 @@ const (
 type BinderOccurrence struct {
 	Role     BinderOccurrenceRole
 	Location SourceLocation
+	// Scope is the enclosing lexical function scope. It intentionally
+	// over-approximates block scope, allowing rename clients to reject any
+	// possible capture rather than make an unsound edit.
+	Scope SourceLocation
 }
 
 // BinderInfo is the complete reference/rename substrate for one bind.Result
@@ -62,7 +66,9 @@ type BinderInfo struct {
 	SymbolID    uint64
 	Name        string
 	Kind        BinderKind
+	ModuleLocal bool
 	Definition  SourceLocation
+	Scope       SourceLocation
 	Occurrences []BinderOccurrence
 }
 

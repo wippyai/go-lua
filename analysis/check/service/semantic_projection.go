@@ -157,7 +157,7 @@ func (b *semanticProjectionBuilder) collectBinderDefinitionsAndOccurrences(stmts
 		if !loc.Valid() || occurrenceAlreadyPresent(info.Occurrences, role, loc) {
 			return
 		}
-		info.Occurrences = append(info.Occurrences, BinderOccurrence{Role: role, Location: loc})
+		info.Occurrences = append(info.Occurrences, BinderOccurrence{Role: role, Location: loc, Scope: b.scopeForLocation(loc)})
 	}
 
 	walkExpr = func(expr ast.Expr, fn *ast.FunctionExpr, role BinderOccurrenceRole) {
@@ -318,6 +318,7 @@ func (b *semanticProjectionBuilder) defineBinder(id symbol.ID, name string, loca
 	}
 	if !item.Definition.Valid() && location.Valid() {
 		item.Definition = location
+		item.Scope = b.scopeForLocation(location)
 	}
 }
 
@@ -342,8 +343,30 @@ func (b *semanticProjectionBuilder) ensureBinder(id symbol.ID) *BinderInfo {
 			item.Kind = binderKindFromBind(kind)
 		}
 	}
+	item.ModuleLocal = item.Kind == BinderParam || item.Kind == BinderLocal || item.Kind == BinderUpvalue || item.Kind == BinderFunction
 	b.binders[key] = item
 	return item
+}
+
+func (b *semanticProjectionBuilder) scopeForLocation(location SourceLocation) SourceLocation {
+	if !location.Valid() {
+		return SourceLocation{}
+	}
+	start, _, ok := offsetsForSpan(b.source, sourceSpan(location.Span))
+	if !ok {
+		return SourceLocation{}
+	}
+	best := SourceLocation{File: b.file, Span: wholeSourceSpan(b.source)}
+	bestWidth := len(b.source) + 1
+	for _, body := range b.bodies {
+		if !body.location.Valid() || !locationContains(b.source, body.location, b.file, start) {
+			continue
+		}
+		if width := locationWidth(b.source, body.location); width < bestWidth {
+			best, bestWidth = body.location, width
+		}
+	}
+	return best
 }
 
 func (b *semanticProjectionBuilder) collectExpressions() {

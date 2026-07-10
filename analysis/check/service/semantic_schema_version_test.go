@@ -10,12 +10,12 @@ import (
 	"testing"
 )
 
-const expectedEmbeddingSchemaVersion2Hash = "722acfa57dadbde834559051a85d91b56603bf8cf15e220c169bb26abe4255a0"
+const expectedEmbeddingSchemaVersion3Hash = "7dd44debe423bf9f2206926d5a84f99195e36dd92f10467c12de5c04c2b1b8dc"
 
 func TestEmbeddingSchemaVersionPinsSemanticQuerySurface(t *testing.T) {
 	lines := embeddingSchemaSurface()
 	got := hashEmbeddingSchema(lines)
-	want := map[int]string{2: expectedEmbeddingSchemaVersion2Hash}[EmbeddingSchemaVersion]
+	want := map[int]string{3: expectedEmbeddingSchemaVersion3Hash}[EmbeddingSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected embedding schema hash for version %d: bump EmbeddingSchemaVersion", EmbeddingSchemaVersion)
 	}
