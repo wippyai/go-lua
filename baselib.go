@@ -171,20 +171,16 @@ func basePCall(L *LState) int {
 		}()
 
 		if err != nil {
-			L.stack.SetSp(sp)
-			L.currentFrame = L.stack.Last()
+			L.unwindCallFrames(sp)
 			L.reg.SetTop(base)
 			L.currentFrame.Protected = false
-			// Clear continuation info after error
-			if ext := L.getFrameExt(L.currentFrame); ext != nil {
-				ext.Continuation = nil
-				ext.ContinuationCtx = nil
-			}
+			L.clearFrameExt(L.currentFrame)
 			L.Push(LFalse)
 			L.Push(err.(*ApiError).Object)
 			return 2
 		}
 		L.currentFrame.Protected = false
+		L.clearFrameExt(L.currentFrame)
 	} else {
 		// In coroutine - use continuation for yield-transparency
 		// Still need defer/recover for error handling
@@ -211,20 +207,16 @@ func basePCall(L *LState) int {
 		}
 
 		if err != nil {
-			L.stack.SetSp(sp)
-			L.currentFrame = L.stack.Last()
+			L.unwindCallFrames(sp)
 			L.reg.SetTop(base)
 			L.currentFrame.Protected = false
-			// Clear continuation info after error
-			if ext := L.getFrameExt(L.currentFrame); ext != nil {
-				ext.Continuation = nil
-				ext.ContinuationCtx = nil
-			}
+			L.clearFrameExt(L.currentFrame)
 			L.Push(LFalse)
 			L.Push(err.(*ApiError).Object)
 			return 2
 		}
 		L.currentFrame.Protected = false
+		L.clearFrameExt(L.currentFrame)
 	}
 
 	L.Insert(LTrue, 1)
@@ -404,14 +396,15 @@ func xpcallContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 func baseXPCall(L *LState) int {
 	fn := L.CheckFunction(1)
 	errfunc := L.CheckFunction(2)
+	protectedFrame := L.currentFrame
 
 	// Mark the xpcall frame as protected. handleProtectedError (in threadRun)
 	// honors this for errors that surface after a yield inside a coroutine.
 	// The inline recover below is the boundary for synchronous errors and is
 	// the only recover layer present under a direct DoString/PCall call, which
 	// is why xpcall previously leaked its error in non-coroutine contexts.
-	L.currentFrame.Protected = true
-	L.setFrameExt(L.currentFrame).ErrFunc = errfunc
+	protectedFrame.Protected = true
+	L.setFrameExt(protectedFrame).ErrFunc = errfunc
 
 	top := L.GetTop()
 	sp := L.stack.Sp()
@@ -433,27 +426,24 @@ func baseXPCall(L *LState) int {
 		return -1
 	}
 
-	// Clear the protected marker and errfunc binding regardless of outcome.
-	L.currentFrame.Protected = false
-	if ext := L.getFrameExt(L.currentFrame); ext != nil {
-		ext.ErrFunc = nil
-	}
-
 	if errValue != nil {
 		// Invoke the handler BEFORE resetting the stack, while the errored
 		// frames are still on L.stack. This matches standard Lua semantics so
 		// the handler can inspect the throw site (debug.getlocal,
 		// debug.traceback, etc.). PCall's own errfunc path does the same.
-		handled := invokeErrorHandler(L, errfunc, errValue, sp, base)
+		handled := invokeErrorHandler(L, errfunc, errValue)
 
-		L.stack.SetSp(sp)
-		L.currentFrame = L.stack.Last()
+		L.unwindCallFrames(sp)
 		L.reg.SetTop(base)
+		protectedFrame.Protected = false
+		L.clearFrameExt(protectedFrame)
 		L.Push(LFalse)
 		L.Push(handled)
 		return 2
 	}
 
+	protectedFrame.Protected = false
+	L.clearFrameExt(protectedFrame)
 	L.Insert(LTrue, top+1)
 	return L.GetTop() - top
 }
@@ -470,19 +460,16 @@ func errorObjectFromRecover(rcv any) LValue {
 
 // invokeErrorHandler calls the xpcall error handler with the caught error
 // value while the throw-site frames are still on the stack. If the handler
-// itself raises, its error value is surfaced instead of the original. sp/base
-// are the pre-xpcall-call snapshots used to reset on handler failure.
-func invokeErrorHandler(L *LState, errfunc *LFunction, errValue LValue, sp, base int) LValue {
+// itself raises, its error value is surfaced instead of the original. Stack
+// cleanup belongs to baseXPCall so both handler outcomes use the same unwind.
+func invokeErrorHandler(L *LState, errfunc *LFunction, errValue LValue) LValue {
 	L.Push(errfunc)
 	L.Push(errValue)
 
-	var handled LValue = errValue
+	handled := errValue
 	func() {
 		defer func() {
 			if rcv := recover(); rcv != nil {
-				L.stack.SetSp(sp)
-				L.currentFrame = L.stack.Last()
-				L.reg.SetTop(base)
 				handled = errorObjectFromRecover(rcv)
 			}
 		}()
