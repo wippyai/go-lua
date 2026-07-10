@@ -114,6 +114,28 @@ const (
 	DiagnosticCodeAdviceSplitBirthDiscriminant DiagnosticCode = "advice.split_birth_discriminant"
 )
 
+// RepairKind names a structured, renderer-independent repair family. A code
+// spec only advertises a repair when its solved judgment contains enough
+// semantic evidence for the service layer to project a candidate without
+// guessing from diagnostic text.
+type RepairKind string
+
+const (
+	RepairRemoveRedundantClaim   RepairKind = "remove_redundant_claim"
+	RepairRemoveRedundantGuard   RepairKind = "remove_redundant_guard"
+	RepairHoistInvariantRead     RepairKind = "hoist_invariant_read"
+	RepairInitializeDiscriminant RepairKind = "initialize_discriminant"
+	RepairAddNilGuard            RepairKind = "add_nil_guard"
+	RepairAddAnnotation          RepairKind = "add_annotation"
+)
+
+// RepairDescriptor is declarative repair metadata attached to a judgment
+// code. The query service owns target selection and structured payload
+// projection; renderers and clients remain free to choose titles and edits.
+type RepairDescriptor struct {
+	Kind RepairKind
+}
+
 // CodeSpec is the single registration record for a semantic judgment code.
 // Renderers and policy layers may reference these specs, but producers should
 // not invent code metadata locally.
@@ -127,6 +149,7 @@ type CodeSpec struct {
 	DiagnosticCodes   []DiagnosticCode
 	DiagnosticDefault DiagnosticDefault
 	Render            RenderKey
+	Repairs           []RepairDescriptor
 }
 
 // Registry is an immutable table of known judgment codes.
@@ -135,12 +158,12 @@ type Registry struct {
 }
 
 var defaultRegistry = NewRegistry([]CodeSpec{
-	codeSpec(CodeCallArgType, FamilyCall, SubjectCallArgument, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderDirectCallArgument, diag(DiagnosticCodeDirectCallArgType), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeCallArgType, FamilyCall, SubjectCallArgument, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderDirectCallArgument, diag(DiagnosticCodeDirectCallArgType), repairs(RepairAddAnnotation), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
 	codeSpec(CodeCallArity, FamilyCall, SubjectCallExpression, VerdictRefuted, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderCallArity, diag(DiagnosticCodeDirectCallTooFewArgs, DiagnosticCodeDirectCallTooManyArgs), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
-	codeSpec(CodeCallCallee, FamilyCall, SubjectCallExpression, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderCallCallee, diag(DiagnosticCodeDirectCallNotCallable, DiagnosticCodeOptionalMethodCall, DiagnosticCodeMissingMember, DiagnosticCodeNotCallable), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
-	codeSpec(CodeAssignment, FamilyAssignment, SubjectPath, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderAssignment, diag(DiagnosticCodeAssignmentType, DiagnosticCodeDirectCallResultAssignment), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
-	codeSpec(CodeAssignmentTarget, FamilyAssignment, SubjectPath, VerdictRefuted, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderOptionalAssignmentTarget, diag(DiagnosticCodeOptionalAssignmentTarget), EvidenceAbstractFact, EvidenceMissingProof),
-	codeSpec(CodeReturn, FamilyReturn, SubjectReturnValue, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderReturn, diag(DiagnosticCodeReturnContractType), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeCallCallee, FamilyCall, SubjectCallExpression, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderCallCallee, diag(DiagnosticCodeDirectCallNotCallable, DiagnosticCodeOptionalMethodCall, DiagnosticCodeMissingMember, DiagnosticCodeNotCallable), repairs(RepairAddNilGuard), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeAssignment, FamilyAssignment, SubjectPath, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderAssignment, diag(DiagnosticCodeAssignmentType, DiagnosticCodeDirectCallResultAssignment), repairs(RepairAddAnnotation), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeAssignmentTarget, FamilyAssignment, SubjectPath, VerdictRefuted, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderOptionalAssignmentTarget, diag(DiagnosticCodeOptionalAssignmentTarget), repairs(RepairAddNilGuard), EvidenceAbstractFact, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeReturn, FamilyReturn, SubjectReturnValue, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderReturn, diag(DiagnosticCodeReturnContractType), repairs(RepairAddAnnotation), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
 	codeSpec(CodeNonNilAssertion, FamilyAssertion, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderNonNilAssertion, diag(DiagnosticCodeNonNilAssertAlwaysNil), EvidenceAbstractFact),
 	codeSpec(CodeNumericForOperand, FamilyFor, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderNumericFor, diag(DiagnosticCodeNumericForOperand), EvidenceAbstractFact),
 	codeSpec(CodeFrozenTable, FamilyEffect, SubjectPath, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderFrozenTable, diag(DiagnosticCodeFrozenTableMutation), EvidenceAbstractFact),
@@ -161,17 +184,25 @@ var defaultRegistry = NewRegistry([]CodeSpec{
 	codeSpec(CodeUnresolvedValue, FamilyValue, SubjectPath, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderUnresolvedValue, diag(DiagnosticCodeUnresolvedValueReference), EvidenceAbstractFact),
 	codeSpec(CodeUnresolvedType, FamilyType, SubjectPath, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderUnresolvedType, diag(DiagnosticCodeUnresolvedTypeReference), EvidenceAbstractFact),
 	codeSpec(CodeRedundantCondition, FamilyCondition, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultOptIn, RenderRedundantCondition, diag(DiagnosticCodeRedundantCondition), EvidenceAbstractFact),
-	codeSpec(CodeMemberRead, FamilyMember, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderMemberRead, diag(DiagnosticCodeMissingMember), EvidenceAbstractFact, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeMemberRead, FamilyMember, SubjectExpression, VerdictRefuted, PolicyRefutedError, DiagnosticDefaultEnabled, RenderMemberRead, diag(DiagnosticCodeMissingMember), repairs(RepairAddNilGuard), EvidenceAbstractFact, EvidenceMissingProof),
 	codeSpec(CodeConcatOperand, FamilyOperator, SubjectExpression, VerdictRefuted, PolicyRefutedWarning, DiagnosticDefaultEnabled, RenderConcatOperand, diag(DiagnosticCodeConcatOperand), EvidenceAbstractFact),
 	codeSpec(CodeSendIsolation, FamilySend, SubjectCallArgument, VerdictUnknown, PolicyHint, DiagnosticDefaultOptIn, RenderSendIsolation, diag(DiagnosticCodeSendIsolation), EvidenceAbstractFact),
-	codeSpec(CodeAdviceRedundantClaim, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceRedundantClaim), EvidenceAbstractFact),
-	codeSpec(CodeAdviceAlwaysTrueGuard, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceAlwaysTrueGuard), EvidenceAbstractFact),
-	codeSpec(CodeAdviceInvariantLoopRead, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceInvariantLoopRead), EvidenceAbstractFact),
-	codeSpec(CodeAdviceSplitBirthDiscriminant, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceSplitBirthDiscriminant), EvidenceAbstractFact),
+	codeSpecWithRepairs(CodeAdviceRedundantClaim, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceRedundantClaim), repairs(RepairRemoveRedundantClaim), EvidenceAbstractFact),
+	codeSpecWithRepairs(CodeAdviceAlwaysTrueGuard, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceAlwaysTrueGuard), repairs(RepairRemoveRedundantGuard), EvidenceAbstractFact),
+	codeSpecWithRepairs(CodeAdviceInvariantLoopRead, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceInvariantLoopRead), repairs(RepairHoistInvariantRead), EvidenceAbstractFact),
+	codeSpecWithRepairs(CodeAdviceSplitBirthDiscriminant, FamilyAdvice, SubjectExpression, VerdictProven, PolicyProvenHint, DiagnosticDefaultOptIn, RenderAdvice, diag(DiagnosticCodeAdviceSplitBirthDiscriminant), repairs(RepairInitializeDiscriminant), EvidenceAbstractFact),
 })
 
 func diag(codes ...DiagnosticCode) []DiagnosticCode {
 	return codes
+}
+
+func repairs(kinds ...RepairKind) []RepairDescriptor {
+	out := make([]RepairDescriptor, len(kinds))
+	for i, kind := range kinds {
+		out[i] = RepairDescriptor{Kind: kind}
+	}
+	return out
 }
 
 func codeSpec(
@@ -185,6 +216,21 @@ func codeSpec(
 	diagnosticCodes []DiagnosticCode,
 	requiredEvidence ...EvidenceKind,
 ) CodeSpec {
+	return codeSpecWithRepairs(code, family, subject, defaultVerdict, policy, diagnosticDefault, render, diagnosticCodes, nil, requiredEvidence...)
+}
+
+func codeSpecWithRepairs(
+	code Code,
+	family CodeFamily,
+	subject SubjectKind,
+	defaultVerdict Verdict,
+	policy PolicyProfile,
+	diagnosticDefault DiagnosticDefault,
+	render RenderKey,
+	diagnosticCodes []DiagnosticCode,
+	repairDescriptors []RepairDescriptor,
+	requiredEvidence ...EvidenceKind,
+) CodeSpec {
 	return CodeSpec{
 		Code:              code,
 		Family:            family,
@@ -195,6 +241,7 @@ func codeSpec(
 		DiagnosticCodes:   diagnosticCodes,
 		DiagnosticDefault: diagnosticDefault,
 		Render:            render,
+		Repairs:           repairDescriptors,
 	}
 }
 
@@ -260,5 +307,6 @@ func (r Registry) Validate(j Judgment) bool {
 func cloneCodeSpec(spec CodeSpec) CodeSpec {
 	spec.RequiredEvidence = append([]EvidenceKind(nil), spec.RequiredEvidence...)
 	spec.DiagnosticCodes = append([]DiagnosticCode(nil), spec.DiagnosticCodes...)
+	spec.Repairs = append([]RepairDescriptor(nil), spec.Repairs...)
 	return spec
 }

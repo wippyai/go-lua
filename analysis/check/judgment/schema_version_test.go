@@ -19,20 +19,20 @@ const expectedJIRSchemaVersion6Hash = "ef8025767752746b3aacfdac58d2b772cdeb6968c
 const expectedJIRSchemaVersion7Hash = "38feb16136be8affed6fcd892f17f18754979fb3cc275f5f6b657026423fdac5"
 const expectedJIRSchemaVersion8Hash = "df0403785c8831fc6ff0b05adbe3404777b090ab243c099a9d1cf7b992afadc2"
 const expectedJIRSchemaVersion9Hash = "7675b7b249b58ec34d72269503bce87dc0186165c6144079e2285137210a8e76"
-const expectedJIRSchemaVersion10Hash = "b579ac73e856a635b41a141e9cf410e19f4772d130910d40ca72b6d524962c6b"
+const expectedJIRSchemaVersion10Hash = "80f1d4b22de07457b9e5ba4636b634bb6fcbd7a8c0a8d5eec258e62a6d0e191b"
 
 func TestJIRSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(jirSchemaSurface())
 	want := map[int]string{
-		1:  expectedJIRSchemaVersion1Hash,
-		2:  expectedJIRSchemaVersion2Hash,
-		3:  expectedJIRSchemaVersion3Hash,
-		4:  expectedJIRSchemaVersion4Hash,
-		5:  expectedJIRSchemaVersion5Hash,
-		6:  expectedJIRSchemaVersion6Hash,
-		7:  expectedJIRSchemaVersion7Hash,
-		8:  expectedJIRSchemaVersion8Hash,
-		9:  expectedJIRSchemaVersion9Hash,
+		1: expectedJIRSchemaVersion1Hash,
+		2: expectedJIRSchemaVersion2Hash,
+		3: expectedJIRSchemaVersion3Hash,
+		4: expectedJIRSchemaVersion4Hash,
+		5: expectedJIRSchemaVersion5Hash,
+		6: expectedJIRSchemaVersion6Hash,
+		7: expectedJIRSchemaVersion7Hash,
+		8: expectedJIRSchemaVersion8Hash,
+		9: expectedJIRSchemaVersion9Hash,
 		10: expectedJIRSchemaVersion10Hash,
 	}[JIRSchemaVersion]
 	if want == "" {
@@ -59,7 +59,11 @@ func jirSchemaSurface() []string {
 		for i, code := range spec.DiagnosticCodes {
 			diagnosticCodes[i] = string(code)
 		}
-		out = append(out, fmt.Sprintf("code:%s|family:%s|subject:%s|evidence:%s|verdict:%s|policy:%s|diagnostics:%s|diagnostic_default:%s|render:%s",
+		repairs := make([]string, len(spec.Repairs))
+		for i, repair := range spec.Repairs {
+			repairs[i] = string(repair.Kind)
+		}
+		out = append(out, fmt.Sprintf("code:%s|family:%s|subject:%s|evidence:%s|verdict:%s|policy:%s|diagnostics:%s|diagnostic_default:%s|render:%s|repairs:%s",
 			spec.Code,
 			spec.Family,
 			subjectKindString(spec.SubjectKind),
@@ -68,7 +72,8 @@ func jirSchemaSurface() []string {
 			spec.Policy,
 			strings.Join(diagnosticCodes, ","),
 			spec.DiagnosticDefault,
-			spec.Render))
+			spec.Render,
+			strings.Join(repairs, ",")))
 	}
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(Judgment{}),
@@ -81,6 +86,7 @@ func jirSchemaSurface() []string {
 		reflect.TypeOf(EvidenceDetail{}),
 		reflect.TypeOf(EvidenceCause{}),
 		reflect.TypeOf(EvidenceCauseParams{}),
+		reflect.TypeOf(RepairDescriptor{}),
 		reflect.TypeOf(SpanRef{}),
 	} {
 		out = append(out, exportedRecordShape(typ)...)
