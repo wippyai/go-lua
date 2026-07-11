@@ -157,11 +157,32 @@ func (p *WTOPlan[Cell]) matches(cells []Cell) bool {
 // every containing-component iteration. A new backward edge can create an
 // unplanned component and therefore requires FIFO fallback.
 func (p *WTOPlan[Cell]) coversInfluence(from, to Cell) bool {
+	// A transfer reading its own current input is ubiquitous and does not by
+	// itself create a recurrence; emissions are validated separately below.
 	if from == to {
 		return true
 	}
 	if _, ok := p.edges[edge[Cell]{from: from, to: to}]; ok {
 		return true
+	}
+	fromRank, fromOK := p.rank[from]
+	toRank, toOK := p.rank[to]
+	return fromOK && toOK && fromRank < toRank
+}
+
+// coversEmission reports whether the existing WTO can schedule an observed
+// transfer output. Emitted-only destinations have no equation to revisit. For
+// declared cells, a planned edge or a new strict-forward edge is safe; a new
+// self/backward edge can alter component structure and requires a rebuilt plan.
+func (p *WTOPlan[Cell]) coversEmission(from, to Cell) bool {
+	if _, declared := p.index[to]; !declared {
+		return true
+	}
+	if _, ok := p.edges[edge[Cell]{from: from, to: to}]; ok {
+		return true
+	}
+	if from == to {
+		return false
 	}
 	fromRank, fromOK := p.rank[from]
 	toRank, toOK := p.rank[to]
@@ -311,7 +332,12 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 		}
 		return s.curOf(d)
 	}
-	emit := func(d Cell, value State) { s.emitStructured(d, value) }
+	emit := func(d Cell, value State) {
+		if !plan.coversEmission(s.active, d) {
+			uncovered = true
+		}
+		s.emitStructured(d, value)
+	}
 	readVersioned := func(d Cell) (State, uint64) { return read(d), s.versionOf(d) }
 	if recorder != nil {
 		read = func(d Cell) State {
@@ -323,6 +349,9 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 			return value
 		}
 		emit = func(d Cell, value State) {
+			if !plan.coversEmission(s.active, d) {
+				uncovered = true
+			}
 			recorder.emit(d, value)
 			s.emitStructured(d, value)
 		}

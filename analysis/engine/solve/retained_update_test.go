@@ -143,8 +143,10 @@ func TestRetainedUpdateNewForwardEdgeExpandsRegion(t *testing.T) {
 	outputs := map[int]map[int]int{0: {1: 2}}
 	sys := constantSystem([]int{0, 1, 2}, &outputs)
 	retained, plan := buildRetainedInts(t, sys, edges)
-	outputs[0][2] = 6
-	updateAndCompareInts(t, retained, []int{0}, sys.Transfer, sys, plan)
+	// The canonical WTO ranks the disconnected 2 before the 0 -> 1 chain, so
+	// 2 -> 0 is a strict-forward dynamic emission.
+	outputs[2] = map[int]int{0: 6}
+	updateAndCompareInts(t, retained, []int{2}, sys.Transfer, sys, plan)
 }
 
 func TestRetainedUpdateNewBackwardEdgeForcesFullFallback(t *testing.T) {
@@ -192,6 +194,9 @@ func TestRetainedUpdateRemovedDynamicReadRemovesReverseEdge(t *testing.T) {
 			emit(1, read(0))
 		}
 	}}
+	// The transfer emits to its own declared equation, so conservatively plan
+	// that recurrence even though the emitted value only reads cell 0.
+	edges[1] = []int{1}
 	retained, plan := buildRetainedInts(t, sys, edges)
 	reads = false
 	updateAndCompareInts(t, retained, []int{1}, sys.Transfer, sys, plan)

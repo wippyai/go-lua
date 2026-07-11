@@ -78,7 +78,14 @@ func TestSolveWTOAcceptsForwardDynamicRead(t *testing.T) {
 			}
 		},
 	}
-	got, err := SolveWTO(sys, NewWTOPlan(sys.Cells, func(cell int) []int { return edges[cell] }))
+	got, err := SolveWTO(sys, NewWTOPlan(sys.Cells, func(cell int) []int {
+		if cell == 2 {
+			// The dynamic read is forward, while the declared self emission is
+			// conservatively represented so the plan can iterate it.
+			return []int{2}
+		}
+		return edges[cell]
+	}))
 	if err != nil {
 		t.Fatalf("SolveWTO: %v", err)
 	}

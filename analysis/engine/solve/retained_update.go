@@ -607,11 +607,19 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 			return nil
 		}
 		for _, destination := range stagedOrder {
+			e := edge[Cell]{from: cell, to: destination}
+			// Emissions are influences too. Validate them even when the
+			// destination is already selected: a new self or backward edge can
+			// change the component/nesting required to converge the region.
+			if !r.plan.coversEmission(e.from, e.to) {
+				copy := e
+				backward = &copy
+				return nil
+			}
+			_, declared := r.plan.index[destination]
 			if _, covered := region[destination]; covered {
 				continue
 			}
-			e := edge[Cell]{from: cell, to: destination}
-			_, declared := r.plan.index[destination]
 			if declared && r.plan.coversInfluence(e.from, e.to) {
 				if _, seen := expandSet[destination]; !seen {
 					expandSet[destination] = struct{}{}
@@ -626,9 +634,7 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 				}
 				continue
 			}
-			copy := e
-			backward = &copy
-			return nil
+			// The declared uncovered case was rejected above.
 		}
 		if len(expansion) != 0 {
 			return nil
