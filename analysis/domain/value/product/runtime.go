@@ -39,7 +39,11 @@ type axisRuntimeAxis struct {
 }
 
 var registryRuntimeCache = struct {
-	mu    sync.Mutex
+	// Product operations consult this cache on every construction and
+	// comparison. Registries are frozen before they enter it, so the common
+	// lookup path is read-only and may proceed concurrently with other solver
+	// workers.
+	mu    sync.RWMutex
 	byReg map[*axis.Registry]*registryRuntime
 }{
 	byReg: make(map[*axis.Registry]*registryRuntime),
@@ -53,12 +57,12 @@ func runtimeFor(reg *axis.Registry) *registryRuntime {
 		return &registryRuntime{reg: reg, err: fmt.Errorf("product: registry must be frozen before use")}
 	}
 
-	registryRuntimeCache.mu.Lock()
+	registryRuntimeCache.mu.RLock()
 	if rt, ok := registryRuntimeCache.byReg[reg]; ok {
-		registryRuntimeCache.mu.Unlock()
+		registryRuntimeCache.mu.RUnlock()
 		return rt
 	}
-	registryRuntimeCache.mu.Unlock()
+	registryRuntimeCache.mu.RUnlock()
 
 	rt := buildRegistryRuntime(reg)
 	if rt.err != nil {
