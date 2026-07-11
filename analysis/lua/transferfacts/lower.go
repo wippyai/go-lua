@@ -248,6 +248,7 @@ type lowerer struct {
 	wirResultSources        map[uint32]wirResultSource
 	expressionRefinements   map[factflow.ExprRef]factflow.ExpressionRefinement
 	localConditionAliases   map[symbol.ID]factflow.ExpressionCondition
+	presentAssignmentStats  *presentAssignmentTransferStats
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {

@@ -578,6 +578,69 @@ type presentAssignmentKey path.PathKey
 
 type presentAssignmentState map[presentAssignmentKey]conditionalAssignment
 
+// presentAssignmentTransferStats is optional test/benchmark accounting for the
+// small assignment dataflow run. Production lowerers leave it nil.
+type presentAssignmentTransferStats struct {
+	transfers    int
+	stateClones  int
+	reusedStates int
+	mutations    int
+}
+
+// presentAssignmentStateEditor owns copy-on-first-write mutation for one
+// transfer. Its input may be retained by an in-state, an out-state, and sibling
+// CFG edges; ensureMutable is therefore the only legal path to map mutation.
+type presentAssignmentStateEditor struct {
+	state  presentAssignmentState
+	cloned bool
+	stats  *presentAssignmentTransferStats
+}
+
+func (e *presentAssignmentStateEditor) ensureMutable() {
+	if e.cloned {
+		return
+	}
+	e.state = clonePresentAssignmentState(e.state)
+	e.cloned = true
+	if e.stats != nil {
+		e.stats.stateClones++
+	}
+}
+
+func (e *presentAssignmentStateEditor) invalidate(written path.Path) {
+	if len(e.state) == 0 || written.Symbol == 0 {
+		return
+	}
+	hasOverlap := false
+	for _, assignment := range e.state {
+		if assignment.path.Overlaps(written) {
+			hasOverlap = true
+			break
+		}
+	}
+	if !hasOverlap {
+		return
+	}
+	e.ensureMutable()
+	for key, assignment := range e.state {
+		if assignment.path.Overlaps(written) {
+			delete(e.state, key)
+			if e.stats != nil {
+				e.stats.mutations++
+			}
+		}
+	}
+}
+
+func (e *presentAssignmentStateEditor) write(key presentAssignmentKey, assignment conditionalAssignment) {
+	e.ensureMutable()
+	assignment.path = assignment.path.Clone()
+	e.state[key] = assignment
+	if e.stats != nil {
+		e.stats.mutations++
+	}
+}
+
 func (l *lowerer) presentAssignmentsOnBranchEdge(
 	input *factflow.FactsInput,
 	graph cfg.Graph,
@@ -751,55 +814,49 @@ func (l *lowerer) transferPresentAssignmentState(
 	in presentAssignmentState,
 	fromBranch bool,
 ) presentAssignmentState {
-	out := clonePresentAssignmentState(in)
+	stats := l.presentAssignmentStats
+	if stats != nil {
+		stats.transfers++
+	}
+	editor := presentAssignmentStateEditor{state: in, stats: stats}
 	if fact, ok := input.RootAssignments[point]; ok {
-		target := fact.TargetPath()
+		target := fact.TargetPathRef()
 		if target.Symbol != 0 {
-			out = invalidatePresentAssignmentPath(out, target)
+			editor.invalidate(target)
 			if len(target.Segments) == 0 {
-				out = l.writePresentAssignmentState(input, out, target, fact.Source(), fromBranch)
+				l.writePresentAssignmentState(input, &editor, target, fact.Source(), fromBranch)
 			}
 		}
 	}
 	if fact, ok := input.PathAssignments[point]; ok {
-		target := fact.TargetPath()
+		target := fact.TargetPathRef()
 		if target.Symbol != 0 {
-			out = invalidatePresentAssignmentPath(out, target)
-			out = l.writePresentAssignmentState(input, out, target, fact.Source(), fromBranch)
+			editor.invalidate(target)
+			l.writePresentAssignmentState(input, &editor, target, fact.Source(), fromBranch)
 		}
 	}
-	return out
+	if !editor.cloned && stats != nil {
+		stats.reusedStates++
+	}
+	return editor.state
 }
 
 func (l *lowerer) writePresentAssignmentState(
 	input *factflow.FactsInput,
-	out presentAssignmentState,
+	editor *presentAssignmentStateEditor,
 	target path.Path,
 	source factflow.ValueSource,
 	fromBranch bool,
-) presentAssignmentState {
+) {
 	key, ok := presentAssignmentKeyForPath(target)
 	if !ok {
-		return out
+		return
 	}
 	if value, ok := l.rootAssignmentSourceValue(input, source); ok {
-		out[key] = conditionalAssignment{path: target, value: value, hasValue: true, fromBranch: fromBranch}
+		editor.write(key, conditionalAssignment{path: target, value: value, hasValue: true, fromBranch: fromBranch})
 	} else if l.rootAssignmentSourceDefinitelyPresent(input, source) {
-		out[key] = conditionalAssignment{path: target, fromBranch: fromBranch}
+		editor.write(key, conditionalAssignment{path: target, fromBranch: fromBranch})
 	}
-	return out
-}
-
-func invalidatePresentAssignmentPath(in presentAssignmentState, written path.Path) presentAssignmentState {
-	if len(in) == 0 || written.Symbol == 0 {
-		return in
-	}
-	for key, assignment := range in {
-		if assignment.path.Overlaps(written) {
-			delete(in, key)
-		}
-	}
-	return in
 }
 
 func presentAssignmentKeyForPath(p path.Path) (presentAssignmentKey, bool) {
