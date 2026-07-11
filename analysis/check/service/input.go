@@ -290,7 +290,7 @@ func cloneManifests(in map[string]*manifest.Manifest) (map[string]*manifest.Mani
 		if path == "" || item == nil {
 			return nil, errors.New("checker service: external manifest has empty path or nil value")
 		}
-		data, err := manifest.Encode(item)
+		data, err := manifest.EncodeCompact(item)
 		if err != nil {
 			return nil, fmt.Errorf("checker service: encode external manifest %q: %w", path, err)
 		}
