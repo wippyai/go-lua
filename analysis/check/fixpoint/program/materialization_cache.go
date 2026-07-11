@@ -212,7 +212,8 @@ func solveMaterializedPrepared(
 	}
 	if cached, ok := cache.read(prepared, owner, routing, entry, summaries); ok {
 		config := buildConfig(summaries)
-		return body.RebindBoundaryProviders(cached, prepared, config.SolveConfig()), false, nil
+		result, err := body.RebindBoundaryProviders(cached, prepared, config.SolveConfig())
+		return result, false, err
 	}
 	tracked := &trackingSummaryReader{reg: cache.reg, base: summaries}
 	config := buildConfig(tracked)

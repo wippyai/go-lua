@@ -217,9 +217,11 @@ func TestRebindBoundaryProvidersClearsLazyCallOutcomeCache(t *testing.T) {
 	assertProductEqual(t, reg, first.Results[0].Value, firstWant)
 
 	secondWant := markedValue(reg, markKey, markHigh)
-	RebindBoundaryProviders(result, prepared, SolveConfig{
+	if _, err := RebindBoundaryProviders(result, prepared, SolveConfig{
 		CallOutcome: staticCallOutcome(secondWant),
-	})
+	}); err != nil {
+		t.Fatalf("RebindBoundaryProviders: %v", err)
+	}
 	second, ok := result.CallOutcomeAt(point)
 	if !ok || len(second.Results) != 1 {
 		t.Fatalf("second CallOutcomeAt = %#v/%v, want one result", second, ok)

@@ -1,13 +1,19 @@
 package body
 
+import (
+	"errors"
+
+	"github.com/wippyai/go-lua/analysis/engine/solve"
+)
+
 // RebindBoundaryProviders installs the call-boundary providers derived from
 // config onto an already solved result and clears lazy readmodel caches that may
 // have observed the previous providers. Fixed-point materialization uses this
 // when it reuses a solved transfer whose summary dependencies are unchanged but
 // whose live summary reader/provider closures must point at the current pass.
-func RebindBoundaryProviders(result *Result, prepared *Static, config SolveConfig) *Result {
+func RebindBoundaryProviders(result *Result, prepared *Static, config SolveConfig) (*Result, error) {
 	if result == nil || prepared == nil {
-		return result
+		return result, nil
 	}
 	typeValues := prepared.solveTypeValues(config)
 	signatureArgumentType := prepared.signatureArgumentTypeProvider(config, typeValues)
@@ -23,6 +29,8 @@ func RebindBoundaryProviders(result *Result, prepared *Static, config SolveConfi
 	// Rebinding changes closures consulted by boundary projection. The cached
 	// transfer solution is valid only when its tracked summary reads are valid,
 	// but PublishedFacts must still be rebuilt against the current closures.
-	result.sealObservations()
-	return result
+	if err := result.sealObservationsContext(config.Context); err != nil {
+		return nil, errors.Join(solve.ErrCanceled, err)
+	}
+	return result, nil
 }
