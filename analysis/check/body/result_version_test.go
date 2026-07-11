@@ -1,7 +1,10 @@
 package body
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
@@ -16,6 +19,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestCanceledObservationSealReturnsPromptly(t *testing.T) {
+	result, err := CheckChunk(parseChunk(t, "local value = 1"), Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := time.Now()
+	err = result.sealObservationsContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("sealObservationsContext error = %v, want context cancellation", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("canceled observation seal took %s, want prompt return", elapsed)
+	}
+}
 
 func TestResultVersionCanonicalizesManifestOperationalEffectsAndTypestate(t *testing.T) {
 	left := resultVersionForManifest(t, resultVersionManifest(false))

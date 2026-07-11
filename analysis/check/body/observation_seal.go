@@ -1,6 +1,8 @@
 package body
 
 import (
+	"context"
+
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -186,8 +188,18 @@ func (c *observationCapture) finalize(finalVersion func(cfg.Point) uint64) {
 // when the final bounded narrowing iteration changed a candidate after its
 // last transfer evaluation.
 func (r *Result) sealObservations() {
+	_ = r.sealObservationsContext(context.Background())
+}
+
+// sealObservationsContext projects the final fixed point and stops promptly
+// when the solve context expires. Replaying transfers here may traverse the
+// same large fact sets as the solve itself, so it must retain that context.
+func (r *Result) sealObservationsContext(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
+	}
+	if err := observationContextErr(ctx); err != nil {
+		return err
 	}
 	plan := r.observationPlan
 	if len(plan.nodePoints) == 0 && len(plan.edgeReachability) == 0 {
@@ -216,7 +228,7 @@ func (r *Result) sealObservations() {
 	if r.registry == nil || r.cfg == nil || r.cfg.Graph == nil || r.boundaryXfer == nil {
 		r.published = published
 		r.observation = stats
-		return
+		return nil
 	}
 
 	graph := r.cfg.Graph
@@ -229,6 +241,9 @@ func (r *Result) sealObservations() {
 		outputs = make(map[cfg.Point]state.State, len(plan.boundaryPoints))
 	}
 	outputAt := func(point cfg.Point) (state.State, bool) {
+		if observationContextErr(ctx) != nil {
+			return state.State{}, false
+		}
 		if out, ok := outputs[point]; ok {
 			return out, true
 		}
@@ -237,12 +252,16 @@ func (r *Result) sealObservations() {
 			return state.State{}, false
 		}
 		out := r.boundaryXfer(transfer.NodeContext{
+			Context:  ctx,
 			Graph:    graph,
 			Registry: r.registry,
 			Point:    point,
 			Node:     graph.Node(point),
 			Read:     r.stateRead,
 		}, in)
+		if observationContextErr(ctx) != nil {
+			return state.State{}, false
+		}
 		outputs[point] = out
 		stats.RecomputedNodeOutputs++
 		if plan.observesBoundary(point) {
@@ -251,14 +270,24 @@ func (r *Result) sealObservations() {
 		return out, true
 	}
 
-	for _, point := range plan.boundaryPoints {
+	for index, point := range plan.boundaryPoints {
+		if index%64 == 0 {
+			if err := observationContextErr(ctx); err != nil {
+				return err
+			}
+		}
 		if out, ok := outputAt(point); ok {
 			published.nodeOutputs[point] = out
 			stats.ProjectedBoundaryOutputs++
 		}
 	}
 	if r.edgeXfer != nil {
-		for _, edge := range plan.edgeReachability {
+		for index, edge := range plan.edgeReachability {
+			if index%64 == 0 {
+				if err := observationContextErr(ctx); err != nil {
+					return err
+				}
+			}
 			stats.ProjectedEdgeReachability++
 			in, ok := r.solvedStateAt(edge.from)
 			if !ok || domain.Equal(state.NormalizeForDomain(domain, in), domain.Bottom()) {
@@ -273,17 +302,32 @@ func (r *Result) sealObservations() {
 			cond, hasCond := graph.EdgeCond(edge.from, edge.to)
 			hasCond = hasCond && graph.IsBranch(edge.from)
 			out = r.edgeXfer(transfer.EdgeContext{
+				Context:  ctx,
 				Graph:    graph,
 				Registry: r.registry,
 				Edge:     cfg.Edge{From: edge.from, To: edge.to, Cond: cond},
 				HasCond:  hasCond,
 			}, out)
+			if err := observationContextErr(ctx); err != nil {
+				return err
+			}
 			published.edgeNormal[edge] = !domain.Equal(state.NormalizeForDomain(domain, out), domain.Bottom())
 		}
+	}
+	if err := observationContextErr(ctx); err != nil {
+		return err
 	}
 	r.published = published
 	r.capturedNodeOutputs = nil
 	r.observation = stats
+	return nil
+}
+
+func observationContextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
 }
 
 // ObservationStats returns a copy of this body's seal counters.

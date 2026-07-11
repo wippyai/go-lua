@@ -1,6 +1,8 @@
 package body
 
 import (
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -17,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -364,7 +367,9 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	// Seal the immutable query surface after the solver, including narrowing,
 	// has converged. This replaces lazy node/edge transfer replay in diagnostics
 	// and readmodels with compact published facts.
-	result.sealObservations()
+	if err := result.sealObservationsContext(config.Context); err != nil {
+		return nil, errors.Join(solve.ErrCanceled, err)
+	}
 	if config.Stats != nil {
 		addObservationStats(&config.Stats.Observation, result.observation)
 	}
