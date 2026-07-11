@@ -49,6 +49,9 @@ type NodeObservation struct {
 
 // NodeContext is the generic context passed to node transfer hooks.
 type NodeContext struct {
+	// Context is the solve context. Transfer callbacks that perform their own
+	// graph-sized traversal must observe it at their own bounded cadence.
+	Context  context.Context
 	Graph    cfg.Graph
 	Registry *axis.Registry
 	Point    cfg.Point
@@ -58,6 +61,7 @@ type NodeContext struct {
 
 // EdgeContext is the generic context passed to edge transfer hooks.
 type EdgeContext struct {
+	Context  context.Context
 	Graph    cfg.Graph
 	Registry *axis.Registry
 	Edge     cfg.Edge
@@ -231,6 +235,7 @@ func TryRun(config Config) (Result, error) {
 				return
 			}
 			out := normalize(nodeTransfer(NodeContext{
+				Context:  config.Context,
 				Graph:    graph,
 				Registry: registry,
 				Point:    point,
@@ -238,10 +243,14 @@ func TryRun(config Config) (Result, error) {
 				Read:     read,
 			}, in))
 
-			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+			for i, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				if i%solveCancellationCheckInterval == 0 && transferContextCanceled(config.Context) {
+					return
+				}
 				cond, hasCond := graph.EdgeCond(point, succ)
 				hasCond = hasCond && graph.IsBranch(point)
 				edgeOut := normalize(edgeTransfer(EdgeContext{
+					Context:  config.Context,
 					Graph:    graph,
 					Registry: registry,
 					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
@@ -269,6 +278,7 @@ func TryRun(config Config) (Result, error) {
 				// Preserve the ordinary transfer spelling for unplanned points so
 				// observation has no retention or per-read bookkeeping there.
 				out := normalize(nodeTransfer(NodeContext{
+					Context:  config.Context,
 					Graph:    graph,
 					Registry: registry,
 					Point:    point,
@@ -278,10 +288,14 @@ func TryRun(config Config) (Result, error) {
 						return value
 					},
 				}, in))
-				for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				for i, succ := range cfg.SuccessorsReadOnly(graph, point) {
+					if i%solveCancellationCheckInterval == 0 && transferContextCanceled(config.Context) {
+						return
+					}
 					cond, hasCond := graph.EdgeCond(point, succ)
 					hasCond = hasCond && graph.IsBranch(point)
 					edgeOut := normalize(edgeTransfer(EdgeContext{
+						Context:  config.Context,
 						Graph:    graph,
 						Registry: registry,
 						Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
@@ -299,6 +313,7 @@ func TryRun(config Config) (Result, error) {
 				return value
 			}
 			out := normalize(nodeTransfer(NodeContext{
+				Context:  config.Context,
 				Graph:    graph,
 				Registry: registry,
 				Point:    point,
@@ -311,10 +326,14 @@ func TryRun(config Config) (Result, error) {
 				Output:       out,
 				Reads:        reads,
 			})
-			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+			for i, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				if i%solveCancellationCheckInterval == 0 && transferContextCanceled(config.Context) {
+					return
+				}
 				cond, hasCond := graph.EdgeCond(point, succ)
 				hasCond = hasCond && graph.IsBranch(point)
 				edgeOut := normalize(edgeTransfer(EdgeContext{
+					Context:  config.Context,
 					Graph:    graph,
 					Registry: registry,
 					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
@@ -378,6 +397,12 @@ func TryRun(config Config) (Result, error) {
 		config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
 	}
 	return Result(result), nil
+}
+
+const solveCancellationCheckInterval = 256
+
+func transferContextCanceled(ctx context.Context) bool {
+	return ctx != nil && ctx.Err() != nil
 }
 
 func solverStats(stats *Stats) *solve.Stats {

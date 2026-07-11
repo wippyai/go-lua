@@ -103,11 +103,19 @@ func Run(config Config) (summary.Snapshot, error) {
 
 // Run computes the fixed point and returns an exact-key summary snapshot.
 func (d *Driver) Run() (summary.Snapshot, error) {
+	if err := driverContextErr(d.ctx); err != nil {
+		return summary.Snapshot{}, err
+	}
 	var firstErr error
 
 	cells := make([]summary.SummaryKey, len(d.functions))
 	byKey := make(map[summary.SummaryKey]Body, len(d.functions))
 	for i, fn := range d.functions {
+		if i%256 == 0 {
+			if err := driverContextErr(d.ctx); err != nil {
+				return summary.Snapshot{}, err
+			}
+		}
 		cells[i] = fn.Key
 		byKey[fn.Key] = fn.Body
 	}
@@ -162,13 +170,25 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 	}
 
 	entries := make([]summary.EntrySummary, 0, len(d.functions))
-	for _, fn := range d.functions {
+	for i, fn := range d.functions {
+		if i%256 == 0 {
+			if err := driverContextErr(d.ctx); err != nil {
+				return summary.Snapshot{}, err
+			}
+		}
 		entries = append(entries, summary.EntrySummary{
 			Key:     fn.Key,
 			Summary: result[fn.Key],
 		})
 	}
 	return summary.NewSnapshotOwnedNormalized(d.reg, entries...), nil
+}
+
+func driverContextErr(ctx context.Context) error {
+	if ctx == nil || ctx.Err() == nil {
+		return nil
+	}
+	return errors.Join(solve.ErrCanceled, ctx.Err())
 }
 
 func solverStats(stats *Stats) *solve.Stats {

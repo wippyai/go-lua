@@ -204,11 +204,12 @@ func solveSummaryPrepared(
 	if cache != nil {
 		return cache.solve(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats))
 	}
-	result, err := solvePreparedCountedWithTransfers(prepared, build(reader), summaryCounter(stats), summaryPointTransferCounter(stats))
+	config := build(reader)
+	result, err := solvePreparedCountedWithTransfers(prepared, config, summaryCounter(stats), summaryPointTransferCounter(stats))
 	if err != nil {
 		return summary.Summary{}, err
 	}
-	return summaryprojection.FromResult(result), nil
+	return summaryprojection.FromResultContext(config.Context, result)
 }
 
 func contextKeyFunc(keys programKeys, owner summary.SummaryKey) callresult.KeyFunc {

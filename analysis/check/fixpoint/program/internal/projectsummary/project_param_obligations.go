@@ -1,6 +1,7 @@
 package projectsummary
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess"
@@ -98,48 +99,61 @@ type functionIdentityReader interface {
 }
 
 func projectParamObligations(reg *axis.Registry, result ResultReader, cache *paramObligationProjectorCache) []product.Value {
+	projected, _ := projectParamObligationsContext(context.Background(), reg, result, cache)
+	return projected
+}
+
+func projectParamObligationsContext(solveCtx context.Context, reg *axis.Registry, result ResultReader, cache *paramObligationProjectorCache) ([]product.Value, error) {
 	params := parameterValuePaths(result)
 	if reg == nil || len(params) == 0 {
-		return nil
+		return nil, nil
 	}
 	graph := result.Graph()
 	if graph == nil {
-		return nil
+		return nil, nil
 	}
-	ctx := newParamObligationProjector(reg, result, params, graph, cache)
+	projector := newParamObligationProjector(reg, result, params, graph, cache)
 	out := make([]product.Value, len(params))
 	for i := range out {
 		out[i] = product.Top()
 	}
-	for _, point := range graph.RPO() {
-		ctx.point = point
+	for i, point := range graph.RPO() {
+		if i%256 == 0 {
+			if err := projectionContextErr(solveCtx); err != nil {
+				return nil, err
+			}
+		}
+		projector.point = point
 		if site, ok := callSiteViewAt(result, point); ok {
 			site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
-				ctx.addArithmeticObligationsFromSource(out, source)
+				projector.addArithmeticObligationsFromSource(out, source)
 				return true
 			})
-			ctx.addTypedCallObligations(out, site)
-			ctx.addCallOutcomeObligations(out, site)
+			projector.addTypedCallObligations(out, site)
+			projector.addCallOutcomeObligations(out, site)
 		}
 		if sourceReader, ok := result.(returnValueSourceReader); ok {
 			if sources, sourcesOK := sourceReader.ReturnValueSources(point); sourcesOK {
 				for _, source := range sources {
-					ctx.addArithmeticObligationsFromSource(out, source)
+					projector.addArithmeticObligationsFromSource(out, source)
 				}
 			}
 		}
 		if assignment, ok := rootAssignmentAt(result, point); ok {
-			ctx.addArithmeticObligationsFromSource(out, assignment.Source())
+			projector.addArithmeticObligationsFromSource(out, assignment.Source())
 		}
 		if assignment, ok := pathAssignmentAt(result, point); ok {
-			ctx.addArithmeticObligationsFromSource(out, assignment.Source())
+			projector.addArithmeticObligationsFromSource(out, assignment.Source())
 		}
 		if write, ok := dynamicIndexWriteAt(result, point); ok {
-			ctx.addArithmeticObligationsFromSource(out, write.KeySource())
-			ctx.addArithmeticObligationsFromSource(out, write.Source())
+			projector.addArithmeticObligationsFromSource(out, write.KeySource())
+			projector.addArithmeticObligationsFromSource(out, write.Source())
 		}
 	}
-	return out
+	if err := projectionContextErr(solveCtx); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func projectParamMemberCallObligations(reg *axis.Registry, result ResultReader, cache *paramObligationProjectorCache) []summary.ParamMemberCallObligation {

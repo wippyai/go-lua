@@ -839,7 +839,11 @@ func (r sourceValueResolver) valueOfOperationSource(
 			return product.Value{}, false
 		}
 	}
-	return r.ValueOfSource(point, source, in, read)
+	// Keep the operation traversal's active set when falling back to the
+	// general resolver. Calling the public entry point here used to start a new
+	// traversal with a nil active set, so an operation that (directly or through
+	// a refinement) referred to itself repeatedly re-entered the same cycle.
+	return r.valueOfSource(point, source, in, read, active)
 }
 
 func (r sourceValueResolver) valueOfDynamicIndexExpression(

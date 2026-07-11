@@ -1,6 +1,9 @@
 package projectsummary_test
 
 import (
+	"context"
+	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -62,6 +66,21 @@ func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 	}
 	projectAssertValue(t, reg, got.Returns[0], first)
 	projectAssertValue(t, reg, got.Returns[1], typevalue.Nil(reg))
+}
+
+func TestFromResultContextReturnsCanceledForCanceledSolve(t *testing.T) {
+	reg, _ := projectTestRegistry(t)
+	result := projectCheckChunk(t, projectParseChunk(t, "return 1"), body.Config{Registry: reg})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := summaryprojection.FromResultContext(ctx, result)
+	if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("FromResultContext error = %v, want canceled solve error", err)
+	}
+	if !reflect.DeepEqual(got, summary.Summary{}) {
+		t.Fatalf("FromResultContext result = %#v, want no partial summary", got)
+	}
 }
 
 func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {

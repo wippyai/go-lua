@@ -655,6 +655,32 @@ func TestSourceValuesOperationOperandOperationWinsOverCachedStaticValue(t *testi
 	}
 }
 
+func TestSourceValuesSelfReferentialOperationTerminates(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6541)
+	expr := ExprRef(65410)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("or", source, NewNilValueSource(0))
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			expr: op,
+		},
+		ExpressionOp: func(ExpressionOperation, product.Value, product.Value) (product.Value, bool) {
+			t.Fatal("self-referential operation must not reach the evaluator")
+			return product.Value{}, false
+		},
+	})
+
+	if got, ok := resolver.ValueOfSource(point, source, state.State{}, nil); ok {
+		t.Fatalf("self-referential operation resolved to %s, want unresolved", formatValue(reg, got))
+	}
+}
+
 func TestExpressionRefinementsApplyToOperationOperands(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(655)

@@ -99,7 +99,10 @@ func (c *SummarySolveCache) solve(
 	if err != nil {
 		return summary.Summary{}, err
 	}
-	projected := summaryprojection.FromResult(result)
+	projected, err := summaryprojection.FromResultContext(config.Context, result)
+	if err != nil {
+		return summary.Summary{}, err
+	}
 	c.write(key, tracked.deps, projected)
 	return projected, nil
 }

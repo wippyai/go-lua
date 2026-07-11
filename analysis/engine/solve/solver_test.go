@@ -10,8 +10,8 @@ import (
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
 
-func TestSolveContextCancellationReturnsNoPartialResultPromptly(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+func TestSolveContextDeadlineReturnsNoPartialResultPromptly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
@@ -43,12 +43,12 @@ func TestSolveContextCancellationReturnsNoPartialResultPromptly(t *testing.T) {
 		t.Fatal("solve did not enter its worklist")
 	}
 	start := time.Now()
-	cancel()
+	<-ctx.Done()
 	close(release)
 	select {
 	case got := <-done:
-		if !errors.Is(got.err, ErrCanceled) || !errors.Is(got.err, context.Canceled) {
-			t.Fatalf("SolveContext error = %v, want canceled", got.err)
+		if !errors.Is(got.err, ErrCanceled) || !errors.Is(got.err, context.DeadlineExceeded) {
+			t.Fatalf("SolveContext error = %v, want deadline cancellation", got.err)
 		}
 		if got.result != nil {
 			t.Fatalf("SolveContext result = %#v, want nil after cancellation", got.result)

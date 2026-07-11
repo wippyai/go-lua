@@ -733,17 +733,26 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 		// candidate in their emission order. The last set must be applied in
 		// this iteration: applyNarrowedCandidate materializes it in cur, which
 		// would otherwise defer it until a later iteration.
-		for _, c := range s.cells {
+		for i, c := range s.cells {
+			if err := cancel.err(uint64(i)); err != nil {
+				return err
+			}
 			if s.applyNarrowedCandidate(c, candidate) {
 				changed = true
 			}
 		}
-		for _, c := range s.emittedOrder {
+		for i, c := range s.emittedOrder {
+			if err := cancel.err(uint64(i)); err != nil {
+				return err
+			}
 			if s.applyNarrowedCandidate(c, candidate) {
 				changed = true
 			}
 		}
-		for _, c := range candidateOnlyOrder {
+		for i, c := range candidateOnlyOrder {
+			if err := cancel.err(uint64(i)); err != nil {
+				return err
+			}
 			if s.applyNarrowedCandidate(c, candidate) {
 				changed = true
 			}

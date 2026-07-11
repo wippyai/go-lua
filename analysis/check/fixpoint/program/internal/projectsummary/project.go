@@ -1,12 +1,16 @@
 package projectsummary
 
 import (
+	"context"
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -97,21 +101,32 @@ type stableShapeSourceReader interface {
 
 // FromResult projects one completed check result into a fixed-point summary.
 func FromResult(result ResultReader) summary.Summary {
+	projected, _ := FromResultContext(context.Background(), result)
+	return projected
+}
+
+// FromResultContext projects a completed check result into a summary while
+// observing cancellation during graph-sized projection passes. A canceled
+// projection never publishes its partially accumulated summary.
+func FromResultContext(ctx context.Context, result ResultReader) (summary.Summary, error) {
+	if err := projectionContextErr(ctx); err != nil {
+		return summary.Summary{}, err
+	}
 	if result == nil {
-		return summary.Summary{}
+		return summary.Summary{}, nil
 	}
 	reg := result.Registry()
 	graph := result.Graph()
 	exit, ok := result.ExitState()
 	if reg == nil || graph == nil {
-		return summary.Summary{}
+		return summary.Summary{}, nil
 	}
 	if !ok {
 		// A body that never returns normally (e.g. a stub `function f(): T
 		// error("nyi") end`) has an unreachable exit and so no normal-return facts,
 		// but its declared signature is still the contract callers see. Emit the
 		// exit-independent projections and the declared return slots.
-		return noNormalExitSummary(reg, result)
+		return noNormalExitSummaryContext(ctx, reg, result)
 	}
 	heapTables := exit.HeapTableObjectsSnapshot()
 	heapTableObjects := heapTables.Objects
@@ -124,8 +139,12 @@ func FromResult(result ResultReader) summary.Summary {
 	}
 	paramCache := newParamObligationProjectorCache(graph)
 
+	paramObligations, err := projectParamObligationsContext(ctx, reg, result, paramCache)
+	if err != nil {
+		return summary.Summary{}, err
+	}
 	out := summary.Summary{
-		ParamObligations:                projectParamObligations(reg, result, paramCache),
+		ParamObligations:                paramObligations,
 		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result, paramCache),
 		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result, paramCache),
 		ReturnParamPathAliases:          projectReturnParamPathAliases(result),
@@ -152,6 +171,9 @@ func FromResult(result ResultReader) summary.Summary {
 	}
 	arity := len(declared)
 	for _, point := range result.ReturnPoints() {
+		if err := projectionContextErr(ctx); err != nil {
+			return summary.Summary{}, err
+		}
 		pointArity, ok := resultReturnSourceArity(result, point)
 		if ok && pointArity > arity {
 			arity = pointArity
@@ -161,7 +183,10 @@ func FromResult(result ResultReader) summary.Summary {
 		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
 	out.HeapTableObjects = markStableReturnHeapObjects(reg, result, out.HeapTableObjects, out.Returns)
-	return summary.NormalizeOwned(reg, out)
+	if err := projectionContextErr(ctx); err != nil {
+		return summary.Summary{}, err
+	}
+	return summary.NormalizeOwned(reg, out), nil
 }
 
 // noNormalExitSummary builds the summary for a function whose body never returns
@@ -170,9 +195,18 @@ func FromResult(result ResultReader) summary.Summary {
 // exit-independent param obligations and the declared return signature still hold
 // and are the contract callers rely on.
 func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summary {
+	projected, _ := noNormalExitSummaryContext(context.Background(), reg, result)
+	return projected
+}
+
+func noNormalExitSummaryContext(ctx context.Context, reg *axis.Registry, result ResultReader) (summary.Summary, error) {
 	paramCache := newParamObligationProjectorCache(result.Graph())
+	paramObligations, err := projectParamObligationsContext(ctx, reg, result, paramCache)
+	if err != nil {
+		return summary.Summary{}, err
+	}
 	out := summary.Summary{
-		ParamObligations:                projectParamObligations(reg, result, paramCache),
+		ParamObligations:                paramObligations,
 		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result, paramCache),
 		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result, paramCache),
 		CapturedPathObligations:         projectCapturedPathObligations(reg, result, paramCache),
@@ -189,7 +223,17 @@ func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summar
 			out.Returns = append([]product.Value(nil), declared...)
 		}
 	}
-	return summary.NormalizeOwned(reg, out)
+	if err := projectionContextErr(ctx); err != nil {
+		return summary.Summary{}, err
+	}
+	return summary.NormalizeOwned(reg, out), nil
+}
+
+func projectionContextErr(ctx context.Context) error {
+	if ctx == nil || ctx.Err() == nil {
+		return nil
+	}
+	return errors.Join(solve.ErrCanceled, ctx.Err())
 }
 
 func resultReturnSourceArity(result ResultReader, point cfg.Point) (int, bool) {
