@@ -40,7 +40,7 @@ func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (Resu
 		snapshot := s.cachedAnalysis(unit, profile, documentVersion)
 		if snapshot == nil {
 			var err error
-			snapshot, err = solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, s.summaryCache)
+			snapshot, err = solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, s.summaryCache, s.semanticProjection)
 			if err != nil {
 				return ResultTag{}, err
 			}
@@ -128,10 +128,10 @@ func (s *BatchSession) solveInputSnapshot(req SolveRequest) (retainedUnit, strin
 }
 
 func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentVersion int64) (*completedSnapshot, error) {
-	return solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, nil)
+	return solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, nil, true)
 }
 
-func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, cache *program.SummarySolveCache) (*completedSnapshot, error) {
+func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, cache *program.SummarySolveCache, semanticProjection bool) (*completedSnapshot, error) {
 	ctx, _ = cancellation.Attach(ctx)
 	input := unit.input
 	if err := ctx.Err(); err != nil {
@@ -195,7 +195,10 @@ func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile s
 	staticArtifacts := collectStaticArtifacts(unit.digest, profile, debugMaps)
 	snapshot := checked.Snapshot()
 	summaryDigests := digestSummaries(checked.RootResult(), snapshot)
-	semantic := projectSemanticQueries(input, stmts, checked.RootResult(), items, placement)
+	var semantic *semanticQuerySnapshot
+	if semanticProjection {
+		semantic = projectSemanticQueries(input, stmts, checked.RootResult(), items, placement)
+	}
 	// completedSnapshot owns only compact projections. Drop the solved CFG
 	// states, transfer closures, query caches, and nested result tree before
 	// publishing so a retained service result cannot retain one unit's full

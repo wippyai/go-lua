@@ -33,6 +33,11 @@ return { outer = outer, result = result }
 func solveSemanticQueryFixture(t *testing.T, source string) (*BatchSession, ResultTag) {
 	t.Helper()
 	session := NewBatchSession()
+	return solveSemanticQueryFixtureWithSession(t, session, source)
+}
+
+func solveSemanticQueryFixtureWithSession(t *testing.T, session *BatchSession, source string) (*BatchSession, ResultTag) {
+	t.Helper()
 	input := UnitInput{
 		ID:         "semantic-query",
 		ModulePath: "example/semantic-query",
@@ -49,6 +54,56 @@ func solveSemanticQueryFixture(t *testing.T, source string) (*BatchSession, Resu
 		t.Fatalf("EnsureSolved: %v", err)
 	}
 	return session, tag
+}
+
+func TestSemanticProjectionCanBeDisabledWithoutChangingCoreResult(t *testing.T) {
+	fullSession, fullTag := solveSemanticQueryFixtureWithSession(t, NewBatchSession(), semanticQuerySource)
+	coreSession, coreTag := solveSemanticQueryFixtureWithSession(t, NewBatchSession(WithoutSemanticProjection()), semanticQuerySource)
+
+	full, ok := fullSession.LastComplete(context.Background(), ResultRequest{Selector: selectorFor(fullTag)})
+	if !ok {
+		t.Fatal("default session has no completed result")
+	}
+	core, ok := coreSession.LastComplete(context.Background(), ResultRequest{Selector: selectorFor(coreTag)})
+	if !ok {
+		t.Fatal("projection-disabled session has no completed result")
+	}
+	if full.snapshot.semantic == nil || len(full.snapshot.semantic.binders) == 0 {
+		t.Fatal("default session did not publish semantic projection")
+	}
+	if core.snapshot.semantic != nil {
+		t.Fatalf("projection-disabled semantic snapshot = %#v, want nil", core.snapshot.semantic)
+	}
+
+	fullPath, fullDigest, fullManifest := full.ManifestBytes()
+	corePath, coreDigest, coreManifest := core.ManifestBytes()
+	if fullPath != corePath || fullDigest != coreDigest || !reflect.DeepEqual(fullManifest, coreManifest) {
+		t.Fatalf("core manifest changed when semantic projection was disabled: default=%q/%s/%d disabled=%q/%s/%d", fullPath, fullDigest, len(fullManifest), corePath, coreDigest, len(coreManifest))
+	}
+	if !reflect.DeepEqual(full.RenderedDiagnostics(), core.RenderedDiagnostics()) {
+		t.Fatalf("diagnostics changed when semantic projection was disabled\ndefault=%#v\ndisabled=%#v", full.RenderedDiagnostics(), core.RenderedDiagnostics())
+	}
+	if !reflect.DeepEqual(full.Judgments(), core.Judgments()) {
+		t.Fatalf("judgments changed when semantic projection was disabled\ndefault=%#v\ndisabled=%#v", full.Judgments(), core.Judgments())
+	}
+	if !reflect.DeepEqual(full.Tag(), core.Tag()) {
+		t.Fatalf("result tag changed when semantic projection was disabled\ndefault=%#v\ndisabled=%#v", full.Tag(), core.Tag())
+	}
+
+	tokens, err := coreSession.SemanticTokens(context.Background(), SemanticTokensRequest{Selector: selectorFor(coreTag)})
+	if err != nil {
+		t.Fatalf("SemanticTokens: %v", err)
+	}
+	if len(tokens.Tokens) != 0 || tokens.Meta.Tag.SolveSeq != coreTag.SolveSeq {
+		t.Fatalf("projection-disabled semantic tokens = %#v, want empty response with selected result meta", tokens)
+	}
+	lookup, err := coreSession.PositionLookup(context.Background(), PositionLookupRequest{Selector: selectorFor(coreTag)})
+	if err != nil {
+		t.Fatalf("PositionLookup: %v", err)
+	}
+	if lookup.Found || lookup.Meta.Tag.SolveSeq != coreTag.SolveSeq {
+		t.Fatalf("projection-disabled position lookup = %#v, want not-found response with selected result meta", lookup)
+	}
 }
 
 func TestSemanticQueryBinderOccurrencesIncludeCaptures(t *testing.T) {

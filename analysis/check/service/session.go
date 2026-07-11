@@ -47,20 +47,47 @@ type BatchSession struct {
 	// summaryCache is session-scoped so content-identical bodies from separate
 	// units reuse normalized summaries without retaining their body flows.
 	summaryCache       *program.SummarySolveCache
+	semanticProjection bool
 	nextSeq            embedding.SolveSeq
 	nextUnitGeneration uint64
 }
 
 var _ WorkspaceSession = (*BatchSession)(nil)
 
-func NewBatchSession() *BatchSession {
+type batchSessionOptions struct {
+	semanticProjection bool
+}
+
+// BatchSessionOption configures a BatchSession at construction time. Session
+// options are immutable after construction so cached completed results always
+// have one consistent projection shape.
+type BatchSessionOption func(*batchSessionOptions)
+
+// WithoutSemanticProjection omits the semantic-query snapshot used by LSP and
+// readmodel queries. Core completed-result projections such as diagnostics,
+// judgments, manifests, placement, summaries, and debug maps remain available.
+// Semantic query methods return empty responses with their normal query meta.
+func WithoutSemanticProjection() BatchSessionOption {
+	return func(options *batchSessionOptions) {
+		options.semanticProjection = false
+	}
+}
+
+func NewBatchSession(options ...BatchSessionOption) *BatchSession {
+	selected := batchSessionOptions{semanticProjection: true}
+	for _, option := range options {
+		if option != nil {
+			option(&selected)
+		}
+	}
 	return &BatchSession{
-		units:         make(map[UnitID]retainedUnit),
-		results:       make(map[resultKey]*completedSnapshot),
-		latest:        make(map[unitProfileKey]resultKey),
-		bySeq:         make(map[embedding.SolveSeq]resultKey),
-		analysisCache: make(map[analysisCacheKey]*completedSnapshot),
-		summaryCache:  program.NewSummarySolveCache(checkerRegistry),
+		units:              make(map[UnitID]retainedUnit),
+		results:            make(map[resultKey]*completedSnapshot),
+		latest:             make(map[unitProfileKey]resultKey),
+		bySeq:              make(map[embedding.SolveSeq]resultKey),
+		analysisCache:      make(map[analysisCacheKey]*completedSnapshot),
+		summaryCache:       program.NewSummarySolveCache(checkerRegistry),
+		semanticProjection: selected.semanticProjection,
 	}
 }
 
