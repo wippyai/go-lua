@@ -203,212 +203,15 @@ func TryRun(config Config) (Result, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
-	graph := config.Graph
 	registry := config.Registry
 	domain, err := state.TryDomainWithOptionalLanesAndOptions(registry, config.StateLanes, config.StateOptions)
 	if err != nil {
 		return nil, err
 	}
-	normalize := func(st state.State) state.State { return st }
-	if config.StateLanes != nil {
-		normalize = func(st state.State) state.State {
-			return state.NormalizeForDomain(domain, st)
-		}
-	}
-	reachableEmpty := normalize(state.Reachable(state.State{}))
-	tracksReachability := !domain.Equal(reachableEmpty, domain.Bottom())
-	markReachable := func(st state.State) state.State {
-		if !tracksReachability {
-			return normalize(st)
-		}
-		return normalize(state.Reachable(st))
-	}
-	cells := graph.RPO()
-	if len(cells) != 0 {
-		cells = append([]cfg.Point(nil), cells...)
-	}
-
-	entry := graph.Entry()
-	if config.Entry != nil {
-		entry = *config.Entry
-	}
-
-	nodeTransfer := config.NodeTransfer
-	if nodeTransfer == nil {
-		nodeTransfer = func(_ NodeContext, in state.State) state.State {
-			return in
-		}
-	}
-	edgeTransfer := config.EdgeTransfer
-	if edgeTransfer == nil {
-		edgeTransfer = func(_ EdgeContext, out state.State) state.State {
-			return out
-		}
-	}
-	widenAt := config.WidenAt
-	if widenAt == nil {
-		widenAt = defaultWidenAtForRPO(graph, cells)
-	}
-	observing := config.ObserveNode != nil && config.RecordNodeObservation != nil
-
-	sys := solve.EquationSystem[cfg.Point, state.State]{
-		Lattice: domain,
-		Cells:   cells,
-		InitialSparse: func(point cfg.Point) (state.State, bool) {
-			if config.Initial != nil {
-				if initial, ok := config.Initial(point); ok {
-					return markReachable(initial), true
-				}
-			}
-			if point == entry {
-				return markReachable(config.EntryState), true
-			}
-			return state.State{}, false
-		},
-		Transfer: func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
-			if config.Session.Token().Canceled() {
-				return
-			}
-			if config.BeforePoint != nil {
-				config.BeforePoint(point)
-			}
-			defer func() {
-				if config.AfterPoint != nil {
-					config.AfterPoint(point)
-				}
-			}()
-			in := normalize(read(point))
-			if tracksReachability && domain.Equal(in, domain.Bottom()) {
-				return
-			}
-			out := normalize(nodeTransfer(NodeContext{
-				Context:  config.Context,
-				Session:  config.Session,
-				Graph:    graph,
-				Registry: registry,
-				Point:    point,
-				Node:     graph.Node(point),
-				Read:     read,
-			}, in))
-
-			poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
-			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
-				if poll.Poll() {
-					return
-				}
-				cond, hasCond := graph.EdgeCond(point, succ)
-				hasCond = hasCond && graph.IsBranch(point)
-				edgeOut := normalize(edgeTransfer(EdgeContext{
-					Context:  config.Context,
-					Session:  config.Session,
-					Graph:    graph,
-					Registry: registry,
-					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
-					HasCond:  hasCond,
-					Read:     read,
-				}, out))
-				emit(succ, edgeOut)
-			}
-		},
-		TransferVersioned: func(point cfg.Point, read func(cfg.Point) (state.State, uint64), emit func(cfg.Point, state.State)) {
-			if config.Session.Token().Canceled() {
-				return
-			}
-			if config.BeforePoint != nil {
-				config.BeforePoint(point)
-			}
-			defer func() {
-				if config.AfterPoint != nil {
-					config.AfterPoint(point)
-				}
-			}()
-			in, inputVersion := read(point)
-			in = normalize(in)
-			if tracksReachability && domain.Equal(in, domain.Bottom()) {
-				return
-			}
-			if !observing || !config.ObserveNode(point) {
-				// Preserve the ordinary transfer spelling for unplanned points so
-				// observation has no retention or per-read bookkeeping there.
-				out := normalize(nodeTransfer(NodeContext{
-					Context:  config.Context,
-					Session:  config.Session,
-					Graph:    graph,
-					Registry: registry,
-					Point:    point,
-					Node:     graph.Node(point),
-					Read: func(other cfg.Point) state.State {
-						value, _ := read(other)
-						return value
-					},
-				}, in))
-				poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
-				for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
-					if poll.Poll() {
-						return
-					}
-					cond, hasCond := graph.EdgeCond(point, succ)
-					hasCond = hasCond && graph.IsBranch(point)
-					edgeOut := normalize(edgeTransfer(EdgeContext{
-						Context:  config.Context,
-						Session:  config.Session,
-						Graph:    graph,
-						Registry: registry,
-						Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
-						HasCond:  hasCond,
-					}, out))
-					emit(succ, edgeOut)
-				}
-				return
-			}
-
-			reads := make([]StateRead, 0, 2)
-			readForNode := func(other cfg.Point) state.State {
-				value, version := read(other)
-				reads = append(reads, StateRead{Point: other, Version: version})
-				return value
-			}
-			out := normalize(nodeTransfer(NodeContext{
-				Context:  config.Context,
-				Session:  config.Session,
-				Graph:    graph,
-				Registry: registry,
-				Point:    point,
-				Node:     graph.Node(point),
-				Read:     readForNode,
-			}, in))
-			config.RecordNodeObservation(NodeObservation{
-				Point:        point,
-				InputVersion: inputVersion,
-				Output:       out,
-				Reads:        reads,
-			})
-			poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
-			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
-				if poll.Poll() {
-					return
-				}
-				cond, hasCond := graph.EdgeCond(point, succ)
-				hasCond = hasCond && graph.IsBranch(point)
-				edgeOut := normalize(edgeTransfer(EdgeContext{
-					Context:  config.Context,
-					Session:  config.Session,
-					Graph:    graph,
-					Registry: registry,
-					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
-					HasCond:  hasCond,
-				}, out))
-				emit(succ, edgeOut)
-			}
-		},
-		WidenAt:    widenAt,
-		WidenDelay: config.WidenDelay,
-		Stats:      solverStats(config.Stats),
-	}
-	if !observing {
-		sys.TransferVersioned = nil
-	}
-
+	plan := newEquationPlan(config, domain, equationPlanHooks{})
+	sys := plan.system
+	cells := plan.cells
+	observing := plan.observing
 	if config.Resume != nil {
 		if config.Resume.solver == nil {
 			config.Resume.solver = solve.NewSession(sys)
@@ -492,15 +295,14 @@ func TryRun(config Config) (Result, error) {
 
 	if config.Schedule == ScheduleWTO || config.Schedule == ScheduleWTODual {
 		wtoStats := &solve.Stats{}
-		wtoSystem := sys
-		wtoSystem.Stats = wtoStats
+		wtoSystem := plan.withStats(wtoStats)
 		var wto map[cfg.Point]state.State
 		var wtoVersions map[cfg.Point]uint64
 		var wtoErr error
 		if uncancelable {
-			wto, wtoVersions, wtoErr = solve.SolveWTOWithVersions(wtoSystem, config.WTOPlan)
+			wto, wtoVersions, wtoErr = solve.SolveWTOWithVersions(wtoSystem, plan.wto)
 		} else {
-			wto, wtoVersions, wtoErr = solve.SolveWTOContextWithVersions(config.Context, wtoSystem, config.WTOPlan)
+			wto, wtoVersions, wtoErr = solve.SolveWTOContextWithVersions(config.Context, wtoSystem, plan.wto)
 		}
 		fallback := errors.Is(wtoErr, solve.ErrWTOPlanUncovered)
 		if wtoErr != nil && !fallback {
