@@ -65,6 +65,8 @@ func equalityHashCacheFor(t Type) *equalityHashCache {
 		return n.equalityHashCache
 	case *Record:
 		return n.equalityHashCache
+	case *Instantiated:
+		return n.equalityHashCache
 	default:
 		return nil
 	}

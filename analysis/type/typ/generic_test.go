@@ -144,6 +144,26 @@ func TestEqualityHashSelfInstantiatingGenericTerminates(t *testing.T) {
 	}
 }
 
+func TestEqualityHashCachesRecursiveInstantiationAfterGenericCompletion(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	g := NewGeneric("Loop", []*TypeParam{tp}, nil)
+	stale := Instantiate(g, String)
+
+	// The instantiated value is intentionally created before the declaration
+	// body is available, as it is when a resolved alias refers back through a
+	// generic declaration.
+	g.SetBody(newRecord().Field("next", Instantiate(g, tp)).Build())
+	if EqualityHash(stale) == 0 {
+		t.Fatal("recursive instantiation should hash after generic completion")
+	}
+	if stale.equalityHashCache == nil || !stale.equalityHashCache.valid {
+		t.Fatal("completed recursive instantiation should retain its refreshed hash")
+	}
+	if got := EqualityHash(stale); got != EqualityHash(stale) {
+		t.Fatalf("cached recursive instantiation hash must be stable: %d", got)
+	}
+}
+
 func TestGeneric(t *testing.T) {
 	tp := NewTypeParam("T", nil)
 	g := NewGeneric("List", []*TypeParam{tp}, NewArray(tp))

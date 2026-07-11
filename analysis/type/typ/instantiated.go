@@ -16,6 +16,12 @@ type Instantiated struct {
 	Generic  *Generic // The generic being instantiated
 	TypeArgs []Type   // Concrete types for each type parameter
 	hash     uint64
+	// equalityHashCache memoizes the refreshed structural hash used while a
+	// generic declaration is being completed. The construction hash above is
+	// intentionally cheap and can predate Generic.SetBody; EqualityHash uses
+	// this revision-validated cache instead of rebuilding the recursive generic
+	// graph for every interning comparison.
+	equalityHashCache *equalityHashCache
 	typeProperties
 	strCache stringCache
 }
@@ -31,10 +37,11 @@ func Instantiate(g *Generic, args ...Type) *Instantiated {
 	}
 
 	return &Instantiated{
-		Generic:        g,
-		TypeArgs:       args,
-		hash:           h,
-		typeProperties: props,
+		Generic:           g,
+		TypeArgs:          args,
+		hash:              h,
+		equalityHashCache: &equalityHashCache{},
+		typeProperties:    props,
 	}
 }
 
