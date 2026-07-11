@@ -107,10 +107,38 @@ type Config struct {
 	ObserveNode              func(cfg.Point) bool
 	RecordNodeObservation    func(NodeObservation)
 	FinalizeNodeObservations func(finalVersion func(cfg.Point) uint64)
+
+	// BeforePoint and AfterPoint bracket one CFG point transfer.  They are used
+	// by resumable callers to attribute external reads to the active point.
+	// They do not participate in the transfer equation.
+	BeforePoint func(cfg.Point)
+	AfterPoint  func(cfg.Point)
+
+	// Resume, when non-nil, retains the ascending checkpoint for this CFG.
+	// A nil ResumePoints slice establishes the initial checkpoint; a non-nil
+	// slice forces precisely those points and propagates through normal emits.
+	Resume       *Session
+	ResumePoints []cfg.Point
 }
 
 // Result maps each reachable CFG point in Graph.RPO() to its input state.
 type Result map[cfg.Point]state.State
+
+// Session is a run-local pre-narrowing CFG checkpoint.  It is safe to reuse
+// only when all static transfer inputs (graph, domain, initials and widening
+// policy) are identical; dynamic node/edge closures are replaced per resume.
+type Session struct {
+	solver *solve.Session[cfg.Point, state.State]
+}
+
+func NewSession() *Session { return &Session{} }
+
+func (s *Session) Checkpoint() Result {
+	if s == nil || s.solver == nil {
+		return nil
+	}
+	return Result(s.solver.CheckpointCells())
+}
 
 // Run executes a one-off forward transfer run.
 func Run(config Config) Result {
@@ -190,6 +218,14 @@ func TryRun(config Config) (Result, error) {
 			return state.State{}, false
 		},
 		Transfer: func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
+			if config.BeforePoint != nil {
+				config.BeforePoint(point)
+			}
+			defer func() {
+				if config.AfterPoint != nil {
+					config.AfterPoint(point)
+				}
+			}()
 			in := normalize(read(point))
 			if tracksReachability && domain.Equal(in, domain.Bottom()) {
 				return
@@ -216,6 +252,14 @@ func TryRun(config Config) (Result, error) {
 			}
 		},
 		TransferVersioned: func(point cfg.Point, read func(cfg.Point) (state.State, uint64), emit func(cfg.Point, state.State)) {
+			if config.BeforePoint != nil {
+				config.BeforePoint(point)
+			}
+			defer func() {
+				if config.AfterPoint != nil {
+					config.AfterPoint(point)
+				}
+			}()
 			in, inputVersion := read(point)
 			in = normalize(in)
 			if tracksReachability && domain.Equal(in, domain.Bottom()) {
@@ -285,6 +329,28 @@ func TryRun(config Config) (Result, error) {
 	}
 	if !observing {
 		sys.TransferVersioned = nil
+	}
+
+	if config.Resume != nil {
+		if config.Resume.solver == nil {
+			config.Resume.solver = solve.NewSession(sys)
+			if err := config.Resume.solver.Ascend(config.Context); err != nil {
+				return nil, err
+			}
+		} else {
+			config.Resume.solver.ReplaceTransfer(sys.Transfer, sys.TransferVersioned, sys.Stats)
+			if err := config.Resume.solver.Resume(config.Context, config.ResumePoints); err != nil {
+				return nil, err
+			}
+		}
+		result, versions, err := config.Resume.solver.Publish(config.Context)
+		if err != nil {
+			return nil, err
+		}
+		if config.FinalizeNodeObservations != nil {
+			config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
+		}
+		return Result(result), nil
 	}
 
 	if config.Context == nil {

@@ -109,6 +109,41 @@ func mini(a, b int) int {
 	return b
 }
 
+func TestSessionPublishesScratchAndResumesAscendingCheckpoint(t *testing.T) {
+	input := 1
+	sys := EquationSystem[string, int]{
+		Lattice: capLattice{top: 100}.joinOnly(),
+		Cells:   []string{"call", "after"},
+		Transfer: func(cell string, _ func(string) int, emit func(string, int)) {
+			if cell == "call" {
+				emit("after", input)
+			}
+		},
+	}
+	session := NewSession(sys)
+	if err := session.Ascend(nil); err != nil {
+		t.Fatalf("Ascend: %v", err)
+	}
+	before := session.CheckpointCells()
+	if _, _, err := session.Publish(nil); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := session.CheckpointCells(); got["after"] != before["after"] {
+		t.Fatalf("Publish mutated checkpoint: before=%v after=%v", before, got)
+	}
+	input = 2
+	if err := session.Resume(nil, []string{"call"}); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	got, _, err := session.Publish(nil)
+	if err != nil {
+		t.Fatalf("Publish after resume: %v", err)
+	}
+	if got["after"] != 2 {
+		t.Fatalf("resumed after = %d, want 2", got["after"])
+	}
+}
+
 // TestLawSuite_CapLattice drives the standard lattice laws on the cap lattice.
 // Both widening variants are checked so the test domain itself is known sound
 // before it is used to validate the solver.

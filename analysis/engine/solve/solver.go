@@ -230,6 +230,98 @@ func SolveContextWithVersions[Cell comparable, State any](ctx context.Context, s
 	return s.materialize(), s.materializeVersions(), nil
 }
 
+// Session owns an ascending, queue-empty checkpoint for one stable equation
+// system.  It is deliberately local to its caller: it retains mutable solver
+// history (cells, widening counters, revisions, and discovered dependencies),
+// and must never be placed in a value cache.
+//
+// Publish narrows a scratch clone.  Consequently neither publishing nor a
+// canceled publish can mutate the checkpoint used by Resume.
+type Session[Cell comparable, State any] struct {
+	s *solveState[Cell, State]
+}
+
+// NewSession creates a session with the ordinary initial FIFO.  Call Ascend to
+// establish its first checkpoint before calling Publish or Resume.
+func NewSession[Cell comparable, State any](sys EquationSystem[Cell, State]) *Session[Cell, State] {
+	validateEquationSystem(sys)
+	return &Session[Cell, State]{s: newState(sys)}
+}
+
+// ReplaceTransfer swaps the dynamic equation layer for a subsequent outer
+// iteration.  Static shape, initials, lattice, and widening policy belong to
+// the session identity and are intentionally not replaceable here.
+func (r *Session[Cell, State]) ReplaceTransfer(transfer func(Cell, func(Cell) State, func(Cell, State)), versioned func(Cell, func(Cell) (State, uint64), func(Cell, State)), stats *Stats) {
+	if r == nil || r.s == nil {
+		return
+	}
+	r.s.transfer = transfer
+	r.s.transferVersioned = versioned
+	r.s.stats = stats
+}
+
+// Ascend drains the normal worklist and leaves a pre-narrowing checkpoint.
+func (r *Session[Cell, State]) Ascend(ctx context.Context) error {
+	if r == nil || r.s == nil {
+		return nil
+	}
+	cancel := newCancellationGuard(ctx)
+	if err := cancel.err(0); err != nil {
+		return err
+	}
+	return r.s.runWithCancellation(cancel)
+}
+
+// Resume forces the supplied declared cells through the ordinary FIFO, then
+// drains it.  Duplicate and out-of-order callers are normalized to Cells order
+// so the persisted schedule remains deterministic.
+func (r *Session[Cell, State]) Resume(ctx context.Context, cells []Cell) error {
+	if r == nil || r.s == nil {
+		return nil
+	}
+	seen := make(map[Cell]struct{}, len(cells))
+	for _, c := range cells {
+		if _, declared := r.s.order[c]; declared {
+			seen[c] = struct{}{}
+		}
+	}
+	for _, c := range r.s.cells {
+		if _, ok := seen[c]; ok {
+			r.s.enqueue(c)
+		}
+	}
+	return r.Ascend(ctx)
+}
+
+// Publish returns a narrowed materialization of the current checkpoint.  The
+// returned maps are scratch-owned and may be changed by the caller.
+func (r *Session[Cell, State]) Publish(ctx context.Context) (map[Cell]State, map[Cell]uint64, error) {
+	if r == nil || r.s == nil {
+		return nil, nil, nil
+	}
+	cancel := newCancellationGuard(ctx)
+	if err := cancel.err(0); err != nil {
+		return nil, nil, err
+	}
+	scratch := r.s.cloneForPublish()
+	if err := scratch.runNarrowing(cancel); err != nil {
+		return nil, nil, err
+	}
+	if err := cancel.err(0); err != nil {
+		return nil, nil, err
+	}
+	return scratch.materialize(), scratch.materializeVersions(), nil
+}
+
+// CheckpointCells returns a copy of the exact pre-narrowing declared cells.
+// It is primarily useful for differential tests and diagnostics.
+func (r *Session[Cell, State]) CheckpointCells() map[Cell]State {
+	if r == nil || r.s == nil {
+		return nil
+	}
+	return r.s.materializeCopy()
+}
+
 type cancellationGuard struct {
 	ctx context.Context
 }
@@ -630,26 +722,12 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 			return err
 		}
 		changed := false
-		seen := make(map[Cell]struct{}, len(s.cur)+len(candidate))
+		// Only declared cells are observable.  Emitted-only cells have no
+		// transfer and no public result entry, so narrowing them is both useless
+		// and (when Cell has no order) would require Go-map iteration.  Keeping
+		// this loop to Cells order is the determinism hygiene needed by resumed
+		// publication.
 		for _, c := range s.cells {
-			seen[c] = struct{}{}
-			if s.applyNarrowedCandidate(c, candidate) {
-				changed = true
-			}
-		}
-		for c := range s.cur {
-			if _, ok := seen[c]; ok {
-				continue
-			}
-			seen[c] = struct{}{}
-			if s.applyNarrowedCandidate(c, candidate) {
-				changed = true
-			}
-		}
-		for c := range candidate {
-			if _, ok := seen[c]; ok {
-				continue
-			}
 			if s.applyNarrowedCandidate(c, candidate) {
 				changed = true
 			}
@@ -659,6 +737,39 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 		}
 	}
 	return cancel.err(0)
+}
+
+func cloneMap[K comparable, V any](in map[K]V) map[K]V {
+	if in == nil {
+		return nil
+	}
+	out := make(map[K]V, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneForPublish copies all mutable maps, including versions.  State values
+// themselves are conventionally persistent snapshots, so shallow map copies
+// are the required ownership boundary here.
+func (s *solveState[Cell, State]) cloneForPublish() *solveState[Cell, State] {
+	copy := *s
+	copy.cells = append([]Cell(nil), s.cells...)
+	copy.order = cloneMap(s.order)
+	copy.cur = cloneMap(s.cur)
+	copy.versions = cloneMap(s.versions)
+	copy.initial = cloneMap(s.initial)
+	copy.visits = cloneMap(s.visits)
+	copy.widenChanges = cloneMap(s.widenChanges)
+	copy.dependents = make(map[Cell][]Cell, len(s.dependents))
+	for k, v := range s.dependents {
+		copy.dependents[k] = append([]Cell(nil), v...)
+	}
+	copy.dependEdge = cloneMap(s.dependEdge)
+	copy.queue = nil
+	copy.inQueue = make(map[Cell]struct{})
+	return &copy
 }
 
 func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) (map[Cell]State, error) {
@@ -726,6 +837,14 @@ func (s *solveState[Cell, State]) materialize() map[Cell]State {
 		} else {
 			out[c] = s.domain.Bottom()
 		}
+	}
+	return out
+}
+
+func (s *solveState[Cell, State]) materializeCopy() map[Cell]State {
+	out := make(map[Cell]State, len(s.order))
+	for _, c := range s.cells {
+		out[c] = s.curOf(c)
 	}
 	return out
 }

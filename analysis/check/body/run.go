@@ -320,6 +320,10 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		ObserveNode:              observationPlan.observesNode,
 		RecordNodeObservation:    observationCapture.record,
 		FinalizeNodeObservations: observationCapture.finalize,
+		BeforePoint:              config.BeforePoint,
+		AfterPoint:               config.AfterPoint,
+		Resume:                   config.Resume,
+		ResumePoints:             config.ResumePoints,
 	})
 	if err != nil {
 		return nil, err

@@ -67,6 +67,10 @@ var perSolveConfigAxes = func() []configAxisDescriptor {
 		configAxis("SummaryInputDigests"),
 		configAxis("WidenAt"),
 		configAxis("WidenDelay"),
+		configAxis("Resume"),
+		configAxis("ResumePoints"),
+		configAxis("BeforePoint"),
+		configAxis("AfterPoint"),
 		configAxis("Stats"),
 	}
 	validatePerSolveConfigAxes(axes)

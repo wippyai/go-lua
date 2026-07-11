@@ -73,6 +73,14 @@ type Config struct {
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
 
+	// Resume is an optional run-local CFG checkpoint.  External summary users
+	// supply ResumePoints after a monotone dependency change and use the point
+	// hooks to rediscover point-scoped dependencies.
+	Resume       *transfer.Session
+	ResumePoints []cfg.Point
+	BeforePoint  func(cfg.Point)
+	AfterPoint   func(cfg.Point)
+
 	Stats *Stats
 }
 
@@ -166,6 +174,15 @@ func (s *Static) KeySpace() *keyspace.KeySpace {
 	return s.visibility.KeySpace()
 }
 
+// Graph exposes the immutable CFG identity used by a prepared body.  It is
+// provided for run-local resume guards; callers must not mutate it.
+func (s *Static) Graph() cfg.Graph {
+	if s == nil || s.cfg == nil {
+		return nil
+	}
+	return s.cfg.Graph
+}
+
 // SolveConfig holds per-solve inputs for a prepared body. These fields may
 // close over caller summary readers or hold mutable caches, so they are never
 // retained by Static preparation.
@@ -192,8 +209,12 @@ type SolveConfig struct {
 	// solve. It is consulted once at result-publication time.
 	SummaryInputDigests func() []uint64
 
-	WidenAt    func(cfg.Point) bool
-	WidenDelay func(cfg.Point) int
+	WidenAt      func(cfg.Point) bool
+	WidenDelay   func(cfg.Point) int
+	Resume       *transfer.Session
+	ResumePoints []cfg.Point
+	BeforePoint  func(cfg.Point)
+	AfterPoint   func(cfg.Point)
 
 	Stats *Stats
 }
