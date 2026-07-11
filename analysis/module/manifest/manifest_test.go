@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -28,6 +29,28 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestEncodeCompactMatchesCanonicalManifestContent(t *testing.T) {
+	m := New("example/module")
+	m.DefineType("User", typetable.NewRecord().Field("id", typ.Integer).Build())
+	m.SetExport(typ.NewArray(typ.NewRef("", "User")))
+
+	pretty, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	compact, err := EncodeCompact(m)
+	if err != nil {
+		t.Fatalf("EncodeCompact: %v", err)
+	}
+	var want bytes.Buffer
+	if err := json.Compact(&want, pretty); err != nil {
+		t.Fatalf("json.Compact(Encode): %v", err)
+	}
+	if !bytes.Equal(compact, want.Bytes()) {
+		t.Fatalf("EncodeCompact content differs from Encode\nwant: %s\n got: %s", want.Bytes(), compact)
+	}
+}
 
 func TestManifestDefineTypeAndSetExport(t *testing.T) {
 	m := New("example/module")

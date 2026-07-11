@@ -161,7 +161,10 @@ func unitInputDigest(input UnitInput, sourceDigests map[embedding.DocumentID]Dig
 	writeUnitPlan(w, input.Plan)
 	for _, path := range sortedKeys(input.ExternalManifests) {
 		w.string(path)
-		data, err := manifest.Encode(input.ExternalManifests[path])
+		// Unit digests only need canonical content. Avoid paying to indent large
+		// recursive manifest graphs for this internal cache key; Encode remains
+		// the stable presentation format at the module boundary.
+		data, err := manifest.EncodeCompact(input.ExternalManifests[path])
 		if err != nil {
 			return Digest{}, fmt.Errorf("checker service: digest external manifest %q: %w", path, err)
 		}

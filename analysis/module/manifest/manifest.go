@@ -221,9 +221,7 @@ func (m *Manifest) SetExport(t typ.Type) {
 	m.Export = t
 }
 
-// Encode serializes a manifest deterministically for content-addressed tests
-// and module-boundary cache keys.
-func Encode(m *Manifest) ([]byte, error) {
+func encodeWire(m *Manifest) (*manifestWire, error) {
 	if m == nil {
 		return nil, errors.New("manifest: encode nil manifest")
 	}
@@ -316,11 +314,32 @@ func Encode(m *Manifest) ([]byte, error) {
 		}
 	}
 
+	return &wm, nil
+}
+
+// Encode serializes a manifest deterministically for content-addressed tests
+// and module-boundary cache keys.
+func Encode(m *Manifest) ([]byte, error) {
+	wm, err := encodeWire(m)
+	if err != nil {
+		return nil, err
+	}
 	data, err := json.MarshalIndent(wm, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(data, '\n'), nil
+}
+
+// EncodeCompact serializes the same canonical manifest wire value without
+// presentation whitespace. It is for internal content digests only; external
+// manifest bytes continue to use Encode.
+func EncodeCompact(m *Manifest) ([]byte, error) {
+	wm, err := encodeWire(m)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(wm)
 }
 
 // Decode deserializes a module manifest produced by Encode. The wire format is
