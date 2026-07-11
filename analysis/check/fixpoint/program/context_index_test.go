@@ -98,7 +98,8 @@ func TestDomainEqualCallSitesShareOneSemanticVariant(t *testing.T) {
 	if !changed {
 		t.Fatal("first semantic context was not created")
 	}
-	right, changed := keys.upsertCallContext(reg, callContextRef{expr: 11}, base, fn, entry.Snapshot(), nil, nil)
+	rightEntry := state.State{}.WriteValue(reg, statekey.SymbolValue(77), typevalue.FromType(reg, typ.String))
+	right, changed := keys.upsertCallContext(reg, callContextRef{expr: 11}, base, fn, rightEntry, nil, nil)
 	if !changed {
 		t.Fatal("second call-site routing was not recorded")
 	}
