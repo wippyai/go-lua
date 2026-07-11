@@ -1,12 +1,15 @@
 package factapply
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -48,5 +51,32 @@ func TestPathPresenceImplicationActivationMeetsSimultaneousTargetRefinements(t *
 	got := activatePathPresenceImplications(reg, resolver, point, in)
 	if value := got.ReadValue(reg, key.SymbolValue(target)); !product.Equal(reg, value, product.Bottom(reg)) {
 		t.Fatalf("conflicting simultaneous target refinements = %#v, want conservative bottom", value)
+	}
+}
+
+func TestPathPresenceImplicationActivationStopsAtCanceledTransferSession(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(80)
+	trigger := symbol.ID(704)
+	target := symbol.ID(705)
+	builder := visibility.NewBuilder()
+	builder.Define(point, trigger, "trigger")
+	builder.Define(point, target, "target")
+	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
+	triggerKey := ks.FromPath(path.NewPath(trigger, "trigger"))
+	targetKey := ks.FromPath(path.NewPath(target, "target"))
+	falseValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.False), typ.False)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(trigger), falseValue).
+		WriteValue(reg, key.SymbolValue(target), product.Top()).
+		AddPathPresenceImplication(pathevidence.NewPathValuePresenceImplication(triggerKey, falseValue, targetKey, presence.Present()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	_, session := cancellation.Attach(ctx)
+	cancel()
+	got := activatePathPresenceImplicationsWithToken(reg, resolver, point, in, session.Token())
+	if !product.Equal(reg, got.ReadValue(reg, key.SymbolValue(target)), product.Top()) {
+		t.Fatalf("canceled activation refined target: %#v", got.ReadValue(reg, key.SymbolValue(target)))
 	}
 }

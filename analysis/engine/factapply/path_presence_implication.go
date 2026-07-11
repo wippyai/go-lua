@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -145,7 +146,7 @@ func publishCallReturnPresenceImplication(
 		targetK,
 		relation.TargetPresence,
 	))
-	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
+	return activatePathPresenceImplicationsWithToken(ctx.Registry, resolver, ctx.Point, out, tokenOf(ctx.Session))
 }
 
 func applyPathValuePresenceImplication(
@@ -159,7 +160,7 @@ func applyPathValuePresenceImplication(
 		return out
 	}
 	out = out.AddPathPresenceImplication(implication)
-	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
+	return activatePathPresenceImplicationsWithToken(ctx.Registry, resolver, ctx.Point, out, tokenOf(ctx.Session))
 }
 
 func pathValuePresenceImplicationAt(
@@ -245,14 +246,35 @@ func activatePathPresenceImplications(
 	point cfg.Point,
 	out state.State,
 ) state.State {
+	return activatePathPresenceImplicationsWithToken(reg, resolver, point, out, nil)
+}
+
+// activatePathPresenceImplicationsWithToken closes implication consequences to
+// a local fixed point. A consequence can require structural state comparison
+// whose type-witness equality walks recursive types, so cancellation belongs
+// inside this loop rather than only in its enclosing transfer.
+func activatePathPresenceImplicationsWithToken(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	token *cancellation.Token,
+) state.State {
 	stateDomain := state.Domain(reg)
+	poll := cancellation.NewPoller(token, cancellation.EveryExpensive)
 	for {
+		if poll.Poll() {
+			return out
+		}
 		next := out
 		snapshot := next.PathPresenceImplicationsSnapshot(resolver.KeySpace())
 		if snapshot.Bottom || len(snapshot.Implications) == 0 {
 			return next
 		}
 		for _, implication := range snapshot.Implications {
+			if poll.Poll() {
+				return out
+			}
 			if !pathPresenceImplicationTriggered(reg, resolver, point, next, implication) {
 				continue
 			}

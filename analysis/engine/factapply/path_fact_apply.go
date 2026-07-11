@@ -111,7 +111,7 @@ func applyBranchPathEvidence(
 		out = closeCongruenceAcrossEquality(ctx.Registry, ks, out, ks.Format(stateProof.Path), ks.Format(stateProof.Other))
 		out = out.CanonicalizeTypestateResources(ks)
 	}
-	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Edge.From, out)
+	return activatePathPresenceImplicationsWithToken(ctx.Registry, resolver, ctx.Edge.From, out, tokenOf(ctx.Session))
 }
 
 // closeCongruenceAcrossEquality propagates existing path refinements across a

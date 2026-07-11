@@ -313,7 +313,7 @@ func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out
 		}
 		out = out.AddPathPresenceImplication(implication)
 	}
-	return activatePathPresenceImplications(ctx.node.Registry, ctx.resolver, ctx.point, out)
+	return activatePathPresenceImplicationsWithToken(ctx.node.Registry, ctx.resolver, ctx.point, out, tokenOf(ctx.node.Session))
 }
 
 func applyNormalReturnKeyMemberships(ctx normalReturnApplyContext, out state.State) state.State {

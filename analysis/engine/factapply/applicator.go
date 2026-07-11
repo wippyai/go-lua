@@ -170,7 +170,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			if !pathImplicationsPending {
 				return
 			}
-			out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Point, out)
+			out = activatePathPresenceImplicationsWithToken(ctx.Registry, config.Visibility, ctx.Point, out, tokenOf(ctx.Session))
 			pathImplicationsPending = false
 		}
 		poll := cancellation.NewPoller(tokenOf(ctx.Session), cancellation.EveryCheap)
@@ -185,7 +185,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			if presenceImplicationTargetInvalidatesDescendants(implication) {
 				flushPathImplications()
 				out = out.AddPathPresenceImplication(implication)
-				out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Point, out)
+				out = activatePathPresenceImplicationsWithToken(ctx.Registry, config.Visibility, ctx.Point, out, tokenOf(ctx.Session))
 				continue
 			}
 			out = out.AddPathPresenceImplication(implication)
@@ -308,7 +308,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 				return out
 			}
 		}
-		out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Edge.From, out)
+		out = activatePathPresenceImplicationsWithToken(ctx.Registry, config.Visibility, ctx.Edge.From, out, tokenOf(ctx.Session))
 		for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
 			if poll.Poll() {
 				return out
