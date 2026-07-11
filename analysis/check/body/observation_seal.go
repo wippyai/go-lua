@@ -33,14 +33,16 @@ type observationEdge struct {
 	to   cfg.Point
 }
 
-// PublishedFacts is the immutable, consumer-specific output of an
-// ObservationPlan. It is intentionally not a generic point-state index.
-// Node states exist only for planned boundary facts and only while a body
-// result is being projected into summaries, diagnostics, placement, and the
-// service semantic snapshot.
+// PublishedFacts is the immutable output of the post-solve observation seal.
+// It retains a compact reachability boolean for every solved point, while full
+// node states exist only for planned boundary consumers. This keeps ordinary
+// reachability queries O(1) without turning the result into a generic point-
+// state index.
 type PublishedFacts struct {
-	nodeOutputs map[cfg.Point]state.State
-	edgeNormal  map[observationEdge]bool
+	nodeOutputs         map[cfg.Point]state.State
+	pointReachable      map[cfg.Point]bool
+	nodeOutputReachable map[cfg.Point]bool
+	edgeNormal          map[observationEdge]bool
 }
 
 func compileObservationPlan(graph cfg.Graph, facts factflow.Facts, callOutcomeEnabled bool) ObservationPlan {
@@ -227,7 +229,7 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 	if len(plan.edgeReachability) != 0 {
 		published.edgeNormal = make(map[observationEdge]bool, len(plan.edgeReachability))
 	}
-	if r.registry == nil || r.cfg == nil || r.cfg.Graph == nil || r.boundaryXfer == nil {
+	if r.registry == nil || r.cfg == nil || r.cfg.Graph == nil {
 		r.published = published
 		r.observation = stats
 		return nil
@@ -237,6 +239,22 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 	domain, err := state.TryDomainWithOptionalLanes(r.registry, r.stateLanes)
 	if err != nil {
 		domain = state.Domain(r.registry)
+	}
+	published.pointReachable = make(map[cfg.Point]bool, len(r.flow))
+	pointIndex := 0
+	for point, in := range r.flow {
+		if pointIndex%64 == 0 {
+			if err := observationContextErr(ctx); err != nil {
+				return err
+			}
+		}
+		published.pointReachable[point] = !domain.Equal(state.NormalizeForDomain(domain, in), domain.Bottom())
+		pointIndex++
+	}
+	if r.boundaryXfer == nil {
+		r.published = published
+		r.observation = stats
+		return nil
 	}
 	outputs := r.capturedNodeOutputs
 	if outputs == nil {
@@ -281,6 +299,10 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 		}
 		if out, ok := outputAt(point); ok {
 			published.nodeOutputs[point] = out
+			if published.nodeOutputReachable == nil {
+				published.nodeOutputReachable = make(map[cfg.Point]bool, len(plan.boundaryPoints))
+			}
+			published.nodeOutputReachable[point] = !domain.Equal(state.NormalizeForDomain(domain, out), domain.Bottom())
 			stats.ProjectedBoundaryOutputs++
 		}
 	}
@@ -292,8 +314,7 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 				}
 			}
 			stats.ProjectedEdgeReachability++
-			in, ok := r.solvedStateAt(edge.from)
-			if !ok || domain.Equal(state.NormalizeForDomain(domain, in), domain.Bottom()) {
+			if !published.pointReachable[edge.from] {
 				published.edgeNormal[edge] = false
 				continue
 			}
@@ -345,6 +366,22 @@ func (r *Result) publishedNodeOutput(point cfg.Point) (state.State, bool) {
 	}
 	out, ok := r.published.nodeOutputs[point]
 	return out, ok
+}
+
+func (r *Result) publishedPointReachable(point cfg.Point) (bool, bool) {
+	if r == nil || r.published.pointReachable == nil {
+		return false, false
+	}
+	reachable, ok := r.published.pointReachable[point]
+	return reachable, ok
+}
+
+func (r *Result) publishedNodeOutputReachable(point cfg.Point) (bool, bool) {
+	if r == nil || r.published.nodeOutputReachable == nil {
+		return false, false
+	}
+	reachable, ok := r.published.nodeOutputReachable[point]
+	return reachable, ok
 }
 
 func (r *Result) publishedEdgeNormal(from, to cfg.Point) (bool, bool) {

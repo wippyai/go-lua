@@ -96,6 +96,9 @@ func (r *Result) PointReachable(point cfg.Point) bool {
 	if r == nil || r.registry == nil {
 		return false
 	}
+	if reachable, ok := r.publishedPointReachable(point); ok {
+		return reachable
+	}
 	st, ok := r.solvedStateAt(point)
 	if !ok {
 		return false
@@ -158,6 +161,9 @@ func (r *Result) EdgeCanCompleteNormally(from, to cfg.Point) bool {
 		// no-normal-return fact is a planned boundary output; otherwise the
 		// solved input reachability is the complete edge fact.
 		if out, ok := r.publishedNodeOutput(from); ok {
+			if reachable, cached := r.publishedNodeOutputReachable(from); cached {
+				return reachable
+			}
 			domain, err := state.TryDomainWithOptionalLanes(r.registry, r.stateLanes)
 			if err != nil {
 				domain = state.Domain(r.registry)

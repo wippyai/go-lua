@@ -222,6 +222,9 @@ func TestRebindBoundaryProvidersClearsLazyCallOutcomeCache(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RebindBoundaryProviders: %v", err)
 	}
+	if result.published.pointReachable == nil {
+		t.Fatal("RebindBoundaryProviders did not rebuild published point reachability")
+	}
 	second, ok := result.CallOutcomeAt(point)
 	if !ok || len(second.Results) != 1 {
 		t.Fatalf("second CallOutcomeAt = %#v/%v, want one result", second, ok)
