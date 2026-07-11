@@ -3,6 +3,7 @@ package solve
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
@@ -214,24 +215,35 @@ func SolveWTOContextWithVersions[Cell comparable, State any](ctx context.Context
 // are intentionally opaque outside solve: regional replay must preserve the
 // solver's equation ownership, revisions, and WTO history as one unit.
 type RetainedSystem[Cell comparable, State any] struct {
-	values       map[Cell]State
-	versions     map[Cell]uint64
-	initial      map[Cell]State
-	visits       map[Cell]int
-	widenChanges map[Cell]int
-	cells        []Cell
-	emittedOnly  []Cell
-	nextVersion  uint64
-	owners       []retainedOwner[Cell, State]
-	readers      []retainedReverse[Cell]
-	outputOwners []retainedReverse[Cell]
-	usage        RetainedUsage
-	system       EquationSystem[Cell, State]
-	plan         *WTOPlan[Cell]
-	budget       RetainedBudget
-	generation   uint64
-	updateGate   *atomic.Bool
-	released     bool
+	values              map[Cell]State
+	versions            map[Cell]uint64
+	valueBase           map[Cell]State
+	versionBase         map[Cell]uint64
+	initial             map[Cell]State
+	visits              map[Cell]int
+	widenChanges        map[Cell]int
+	cells               []Cell
+	emittedOnly         []Cell
+	nextVersion         uint64
+	owners              []retainedOwner[Cell, State]
+	ownerDelta          map[int]retainedOwner[Cell, State]
+	readers             []retainedReverse[Cell]
+	outputOwners        []retainedReverse[Cell]
+	outputOwnerDelta    map[Cell][]Cell
+	contributions       map[Cell][]retainedContribution[Cell, State]
+	contributionBase    map[Cell][]retainedContribution[Cell, State]
+	contributionRemoved map[Cell]struct{}
+	influences          map[Cell][]Cell
+	influenceBase       map[Cell][]Cell
+	cellsShared         bool
+	usage               RetainedUsage
+	system              EquationSystem[Cell, State]
+	plan                *WTOPlan[Cell]
+	budget              RetainedBudget
+	generation          uint64
+	updateGate          *atomic.Bool
+	mu                  *sync.RWMutex
+	released            bool
 }
 
 func (r *RetainedSystem[Cell, State]) Value(cell Cell) (State, bool) {
@@ -239,43 +251,57 @@ func (r *RetainedSystem[Cell, State]) Value(cell Cell) (State, bool) {
 		var zero State
 		return zero, false
 	}
-	value, ok := r.values[cell]
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	value, ok := r.retainedValue(cell)
 	return value, ok
 }
 func (r *RetainedSystem[Cell, State]) Version(cell Cell) uint64 {
 	if r == nil {
 		return 0
 	}
-	return r.versions[cell]
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.retainedVersion(cell)
 }
 func (r *RetainedSystem[Cell, State]) VisitCount(cell Cell) int {
 	if r == nil {
 		return 0
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.visits[cell]
 }
 func (r *RetainedSystem[Cell, State]) WidenChangeCount(cell Cell) int {
 	if r == nil {
 		return 0
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.widenChanges[cell]
 }
 func (r *RetainedSystem[Cell, State]) NextRevision() uint64 {
 	if r == nil {
 		return 0
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.nextVersion
 }
 func (r *RetainedSystem[Cell, State]) CellCount() int {
 	if r == nil {
 		return 0
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return len(r.cells)
 }
 func (r *RetainedSystem[Cell, State]) Usage() RetainedUsage {
 	if r == nil {
 		return RetainedUsage{}
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.usage
 }
 
@@ -283,16 +309,27 @@ func (r *RetainedSystem[Cell, State]) Release() {
 	if r == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.values = nil
 	r.versions = nil
+	r.valueBase = nil
+	r.versionBase = nil
 	r.initial = nil
 	r.visits = nil
 	r.widenChanges = nil
 	r.cells = nil
 	r.emittedOnly = nil
 	r.owners = nil
+	r.ownerDelta = nil
 	r.readers = nil
 	r.outputOwners = nil
+	r.outputOwnerDelta = nil
+	r.contributions = nil
+	r.contributionBase = nil
+	r.contributionRemoved = nil
+	r.influences = nil
+	r.influenceBase = nil
 	r.usage = RetainedUsage{}
 	r.nextVersion = 0
 	r.system = EquationSystem[Cell, State]{}
@@ -469,8 +506,10 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 			visits: cloneMap(s.visits), widenChanges: cloneMap(s.widenChanges),
 			cells: cells, emittedOnly: append([]Cell(nil), s.emittedOrder...), nextVersion: s.nextVersion,
 			owners: owners, readers: readers, outputOwners: outputOwners, usage: usage,
-			system: sys, plan: plan, budget: recorder.budget, generation: 1, updateGate: &atomic.Bool{},
+			contributions: contributionIndex(owners),
+			system:        sys, plan: plan, budget: recorder.budget, generation: 1, updateGate: &atomic.Bool{}, mu: &sync.RWMutex{},
 		}
+		retained.rebuildInfluences()
 	}
 	if err := s.runNarrowing(cancel); err != nil {
 		if retained != nil {

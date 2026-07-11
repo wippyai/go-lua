@@ -46,6 +46,11 @@ type retainedReverse[Cell comparable] struct {
 	owners []Cell
 }
 
+type retainedContribution[Cell comparable, State any] struct {
+	owner        Cell
+	contribution State
+}
+
 type retainedDraft[Cell comparable, State any] struct {
 	reads       map[Cell]retainedRead[Cell, State]
 	outputs     map[Cell]State

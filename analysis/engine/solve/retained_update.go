@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
@@ -32,6 +33,8 @@ type Update[Cell comparable, State any] struct {
 	changed                []Cell
 	transfer               Transfer[Cell, State]
 	versioned              TransferVersioned[Cell, State]
+	stats                  *Stats
+	statsSet               bool
 	scratch                *RetainedSystem[Cell, State]
 	result                 map[Cell]State
 	resultVersions         map[Cell]uint64
@@ -39,6 +42,16 @@ type Update[Cell comparable, State any] struct {
 	forceFull              bool
 	fallbackEdges          map[edge[Cell]]struct{}
 	regionalExtra          []Cell
+}
+
+// SetStats transactionally replaces the observational counter receiving work
+// performed by this update. Calling SetStats(nil) explicitly disables stats.
+func (u *Update[Cell, State]) SetStats(stats *Stats) error {
+	if u == nil || u.done || u.runOK {
+		return ErrUpdateState
+	}
+	u.stats, u.statsSet = stats, true
+	return nil
 }
 
 // BeginUpdate starts the only active transaction for r. changed names equation
@@ -50,6 +63,8 @@ func (r *RetainedSystem[Cell, State]) BeginUpdate(changed []Cell, transfer Trans
 	if !r.updateGate.CompareAndSwap(false, true) {
 		return nil, ErrUpdateActive
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if r.released || r.plan == nil {
 		r.updateGate.Store(false)
 		return nil, ErrRetainedReleased
@@ -98,11 +113,14 @@ func (u *Update[Cell, State]) Run(ctx context.Context) (err error) {
 			err = fmt.Errorf("%w: %v", ErrTransferPanic, recovered)
 		}
 	}()
-	if u.base.released || u.base.generation != u.baseGeneration {
-		return ErrUpdateStale
-	}
 	if len(u.changed) == 0 && !u.forceFull {
+		u.base.mu.RLock()
+		if u.base.released || u.base.generation != u.baseGeneration {
+			u.base.mu.RUnlock()
+			return ErrUpdateStale
+		}
 		u.scratch = cloneRetained(u.base)
+		u.base.mu.RUnlock()
 		u.installBindings()
 		u.runOK = true
 		return nil
@@ -110,23 +128,25 @@ func (u *Update[Cell, State]) Run(ctx context.Context) (err error) {
 	if u.forceFull {
 		return u.runFull(ctx)
 	}
-	region := u.base.invalidationRegion(u.changed)
-	for attempts := 0; attempts <= len(u.base.cells); attempts++ {
-		scratch, expansion, backward, runErr := u.runRegion(ctx, region)
+	u.base.mu.RLock()
+	if u.base.released || u.base.generation != u.baseGeneration {
+		u.base.mu.RUnlock()
+		return ErrUpdateStale
+	}
+	u.scratch = cloneRetained(u.base)
+	u.base.mu.RUnlock()
+	region := u.scratch.invalidationRegion(u.changed)
+	for attempts := 0; attempts <= len(u.scratch.cells); attempts++ {
+		scratch, expansion, backward, runErr := u.runRegion(ctx, u.scratch, region)
 		if runErr != nil {
 			return runErr
 		}
 		if backward != nil {
 			u.fallbackEdges = map[edge[Cell]]struct{}{*backward: {}}
-			if scratch != nil {
-				scratch.Release()
-			}
+			u.releaseScratch()
 			return u.runFull(ctx)
 		}
 		if len(expansion) != 0 {
-			if scratch != nil {
-				scratch.Release()
-			}
 			for _, cell := range expansion {
 				seen := false
 				for _, prior := range u.regionalExtra {
@@ -139,7 +159,7 @@ func (u *Update[Cell, State]) Run(ctx context.Context) (err error) {
 					u.regionalExtra = append(u.regionalExtra, cell)
 				}
 			}
-			region = u.base.extendRegion(region, expansion)
+			region = u.scratch.extendRegion(region, expansion)
 			continue
 		}
 		u.scratch = scratch
@@ -150,10 +170,18 @@ func (u *Update[Cell, State]) Run(ctx context.Context) (err error) {
 }
 
 func (u *Update[Cell, State]) runFull(ctx context.Context) error {
-	sys := u.base.system
+	u.base.mu.RLock()
+	if u.base.released || u.base.generation != u.baseGeneration {
+		u.base.mu.RUnlock()
+		return ErrUpdateStale
+	}
+	sys, plan, budget := u.base.system, u.base.plan, u.base.budget
+	u.base.mu.RUnlock()
 	sys.Transfer = u.transfer
 	sys.TransferVersioned = u.versioned
-	plan := u.base.plan
+	if u.statsSet {
+		sys.Stats = u.stats
+	}
 	if len(u.fallbackEdges) != 0 {
 		observed, err := discoverInfluences(ctx, sys)
 		if err != nil {
@@ -164,14 +192,14 @@ func (u *Update[Cell, State]) runFull(ctx context.Context) error {
 		}
 		plan = rebuiltPlan(plan, observed)
 	}
-	_, _, scratch, err := BuildRetainedWTO(ctx, sys, plan, u.base.budget)
+	_, _, scratch, err := BuildRetainedWTO(ctx, sys, plan, budget)
 	if errors.Is(err, ErrWTOPlanUncovered) && len(u.fallbackEdges) == 0 {
 		observed, discoverErr := discoverInfluences(ctx, sys)
 		if discoverErr != nil {
 			return discoverErr
 		}
 		plan = rebuiltPlan(plan, observed)
-		_, _, scratch, err = BuildRetainedWTO(ctx, sys, plan, u.base.budget)
+		_, _, scratch, err = BuildRetainedWTO(ctx, sys, plan, budget)
 	}
 	if err != nil {
 		return err
@@ -224,6 +252,11 @@ func (u *Update[Cell, State]) Publish(ctx context.Context) (values map[Cell]Stat
 	if err := cancel.err(0); err != nil {
 		return nil, nil, err
 	}
+	if u.scratch.system.Lattice.Narrow == nil || u.scratch.system.WidenAt == nil {
+		u.result, u.resultVersions = u.scratch.materializeValues(), u.scratch.materializeVersions()
+		u.publishOK = true
+		return u.result, u.resultVersions, nil
+	}
 	s := stateFromRetained(u.scratch)
 	if err := s.runNarrowing(cancel); err != nil {
 		return nil, nil, err
@@ -234,9 +267,9 @@ func (u *Update[Cell, State]) Publish(ctx context.Context) (values map[Cell]Stat
 	// Update publication includes emitted-only cells because their narrowing is
 	// part of the owned equation projection, even though the legacy Solve APIs
 	// retain their historical declared-cells-only result contract.
-	u.result, u.resultVersions = cloneMap(s.cur), cloneMap(s.versions)
+	u.result, u.resultVersions = s.cur, s.versions
 	u.publishOK = true
-	return cloneMap(u.result), cloneMap(u.resultVersions), nil
+	return u.result, u.resultVersions, nil
 }
 
 // Commit atomically replaces the retained pre-narrowing generation. It is
@@ -246,16 +279,30 @@ func (u *Update[Cell, State]) Commit() error {
 		return ErrUpdateState
 	}
 	r := u.base
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.released || r.generation != u.baseGeneration || r.updateGate == nil || !r.updateGate.Load() {
-		u.Abort()
+		u.releaseScratch()
+		if r.updateGate != nil {
+			r.updateGate.Store(false)
+		}
+		u.done = true
+		u.result, u.resultVersions = nil, nil
 		return ErrUpdateStale
 	}
 	next := u.scratch
 	next.generation = r.generation + 1
-	gate := r.updateGate
-	*r = *next
-	r.updateGate = gate
-	gate.Store(false)
+	r.values, r.versions, r.initial = next.values, next.versions, next.initial
+	r.valueBase, r.versionBase = next.valueBase, next.versionBase
+	r.visits, r.widenChanges = next.visits, next.widenChanges
+	r.cells, r.emittedOnly, r.nextVersion = next.cells, next.emittedOnly, next.nextVersion
+	r.owners, r.ownerDelta, r.readers, r.outputOwners, r.outputOwnerDelta = next.owners, next.ownerDelta, next.readers, next.outputOwners, next.outputOwnerDelta
+	r.contributions, r.contributionBase, r.contributionRemoved = next.contributions, next.contributionBase, next.contributionRemoved
+	r.usage = next.usage
+	r.system, r.plan, r.budget = next.system, next.plan, next.budget
+	r.influenceBase, r.cellsShared = next.influenceBase, next.cellsShared
+	r.generation, r.released = next.generation, false
+	r.updateGate.Store(false)
 	u.scratch = nil
 	u.done = true
 	return nil
@@ -268,8 +315,13 @@ func (u *Update[Cell, State]) Abort() {
 		return
 	}
 	u.releaseScratch()
-	if u.base != nil && u.base.generation == u.baseGeneration {
-		u.base.updateGate.Store(false)
+	if u.base != nil {
+		u.base.mu.RLock()
+		current := u.base.generation == u.baseGeneration
+		u.base.mu.RUnlock()
+		if current {
+			u.base.updateGate.Store(false)
+		}
 	}
 	u.done = true
 	u.result, u.resultVersions = nil, nil
@@ -285,18 +337,53 @@ func (u *Update[Cell, State]) releaseScratch() {
 func (u *Update[Cell, State]) installBindings() {
 	u.scratch.system.Transfer = u.transfer
 	u.scratch.system.TransferVersioned = u.versioned
+	if u.statsSet {
+		u.scratch.system.Stats = u.stats
+	}
 }
 
 func cloneRetained[Cell comparable, State any](r *RetainedSystem[Cell, State]) *RetainedSystem[Cell, State] {
 	copy := *r
-	copy.values, copy.versions, copy.initial = cloneMap(r.values), cloneMap(r.versions), cloneMap(r.initial)
+	if r.valueBase == nil {
+		copy.valueBase, copy.versionBase = r.values, r.versions
+		copy.values = make(map[Cell]State)
+		copy.versions = make(map[Cell]uint64)
+	} else {
+		copy.valueBase, copy.versionBase = r.valueBase, r.versionBase
+		copy.values, copy.versions = cloneMap(r.values), cloneMap(r.versions)
+	}
+	// Initial boundary states are generation-immutable; regional replay never
+	// replaces them (callers use full fallback for an initial binding change).
+	copy.initial = r.initial
 	copy.visits, copy.widenChanges = cloneMap(r.visits), cloneMap(r.widenChanges)
-	copy.cells, copy.emittedOnly = append([]Cell(nil), r.cells...), append([]Cell(nil), r.emittedOnly...)
-	copy.owners = cloneOwners(r.owners)
-	copy.readers = cloneReverse(r.readers)
-	copy.outputOwners = cloneReverse(r.outputOwners)
+	copy.cells, copy.emittedOnly, copy.cellsShared = r.cells, r.emittedOnly, true
+	copy.owners = r.owners
+	copy.ownerDelta = cloneMap(r.ownerDelta)
+	copy.readers = append([]retainedReverse[Cell](nil), r.readers...)
+	copy.outputOwners = r.outputOwners
+	copy.outputOwnerDelta = cloneMap(r.outputOwnerDelta)
+	if r.contributionBase == nil {
+		copy.contributionBase = r.contributions
+		copy.contributions = make(map[Cell][]retainedContribution[Cell, State])
+		copy.contributionRemoved = make(map[Cell]struct{})
+	} else {
+		copy.contributionBase = r.contributionBase
+		copy.contributions = cloneContributions(r.contributions)
+		copy.contributionRemoved = cloneMap(r.contributionRemoved)
+	}
+	if r.influenceBase == nil {
+		copy.influenceBase = r.influences
+		copy.influences = make(map[Cell][]Cell)
+	} else {
+		copy.influenceBase = r.influenceBase
+		copy.influences = make(map[Cell][]Cell, len(r.influences))
+		for cell, next := range r.influences {
+			copy.influences[cell] = next
+		}
+	}
 	copy.released = false
 	copy.updateGate = &atomic.Bool{}
+	copy.mu = &sync.RWMutex{}
 	return &copy
 }
 
@@ -315,9 +402,112 @@ func cloneReverse[Cell comparable](in []retainedReverse[Cell]) []retainedReverse
 	return out
 }
 
+func cloneContributions[Cell comparable, State any](in map[Cell][]retainedContribution[Cell, State]) map[Cell][]retainedContribution[Cell, State] {
+	out := make(map[Cell][]retainedContribution[Cell, State], len(in))
+	for cell, items := range in {
+		out[cell] = items
+	}
+	return out
+}
+
+func (r *RetainedSystem[Cell, State]) retainedValue(cell Cell) (State, bool) {
+	if value, ok := r.values[cell]; ok {
+		return value, true
+	}
+	value, ok := r.valueBase[cell]
+	return value, ok
+}
+
+func (r *RetainedSystem[Cell, State]) retainedVersion(cell Cell) uint64 {
+	if version, ok := r.versions[cell]; ok {
+		return version
+	}
+	return r.versionBase[cell]
+}
+
+func (r *RetainedSystem[Cell, State]) materializeValues() map[Cell]State {
+	if r.valueBase == nil {
+		return r.values
+	}
+	out := cloneMap(r.valueBase)
+	for cell, value := range r.values {
+		out[cell] = value
+	}
+	return out
+}
+
+func (r *RetainedSystem[Cell, State]) materializeVersions() map[Cell]uint64 {
+	if r.versionBase == nil {
+		return r.versions
+	}
+	out := cloneMap(r.versionBase)
+	for cell, version := range r.versions {
+		out[cell] = version
+	}
+	return out
+}
+
+func (r *RetainedSystem[Cell, State]) retainedContributions(cell Cell) []retainedContribution[Cell, State] {
+	if _, removed := r.contributionRemoved[cell]; removed {
+		return nil
+	}
+	if items, ok := r.contributions[cell]; ok {
+		return items
+	}
+	return r.contributionBase[cell]
+}
+
+func (r *RetainedSystem[Cell, State]) retainedInfluences(cell Cell) []Cell {
+	if items, ok := r.influences[cell]; ok {
+		return items
+	}
+	return r.influenceBase[cell]
+}
+
+func (r *RetainedSystem[Cell, State]) retainedOwnerAt(index int) retainedOwner[Cell, State] {
+	if owner, ok := r.ownerDelta[index]; ok {
+		return owner
+	}
+	return r.owners[index]
+}
+
+func (r *RetainedSystem[Cell, State]) setRetainedOwner(index int, owner retainedOwner[Cell, State]) {
+	if r.ownerDelta == nil {
+		r.ownerDelta = make(map[int]retainedOwner[Cell, State])
+	}
+	r.ownerDelta[index] = owner
+}
+
+func (r *RetainedSystem[Cell, State]) materializeOwners() []retainedOwner[Cell, State] {
+	out := append([]retainedOwner[Cell, State](nil), r.owners...)
+	for index, owner := range r.ownerDelta {
+		out[index] = owner
+	}
+	return out
+}
+
+func (r *RetainedSystem[Cell, State]) ensureCellsOwned() {
+	if !r.cellsShared {
+		return
+	}
+	r.cells = append([]Cell(nil), r.cells...)
+	r.emittedOnly = append([]Cell(nil), r.emittedOnly...)
+	r.cellsShared = false
+}
+
+func contributionIndex[Cell comparable, State any](owners []retainedOwner[Cell, State]) map[Cell][]retainedContribution[Cell, State] {
+	out := make(map[Cell][]retainedContribution[Cell, State])
+	for _, owner := range owners {
+		for _, output := range owner.outputs {
+			out[output.destination] = append(out[output.destination], retainedContribution[Cell, State]{owner: owner.owner, contribution: output.contribution})
+		}
+	}
+	return out
+}
+
 func stateFromRetained[Cell comparable, State any](r *RetainedSystem[Cell, State]) *solveState[Cell, State] {
 	s := newStructuredState(r.system)
-	s.cur, s.versions, s.initial = cloneMap(r.values), cloneMap(r.versions), cloneMap(r.initial)
+	s.cur, s.versions, s.initial = r.materializeValues(), r.materializeVersions(), cloneMap(r.initial)
 	s.visits, s.widenChanges = cloneMap(r.visits), cloneMap(r.widenChanges)
 	s.nextVersion = r.nextVersion
 	s.emittedOrder = append([]Cell(nil), r.emittedOnly...)
@@ -326,20 +516,33 @@ func stateFromRetained[Cell comparable, State any](r *RetainedSystem[Cell, State
 }
 
 func rebuiltPlan[Cell comparable](p *WTOPlan[Cell], extra map[edge[Cell]]struct{}) *WTOPlan[Cell] {
-	return NewWTOPlan(p.cells, func(from Cell) []Cell {
-		out := make([]Cell, 0)
-		for _, to := range p.cells {
-			e := edge[Cell]{from: from, to: to}
-			if _, ok := p.edges[e]; ok {
-				out = append(out, to)
-				continue
-			}
-			if _, ok := extra[e]; ok {
-				out = append(out, to)
-			}
+	sets := make(map[Cell]map[Cell]struct{})
+	add := func(e edge[Cell]) {
+		if _, ok := p.index[e.from]; !ok {
+			return
 		}
-		return out
-	})
+		if _, ok := p.index[e.to]; !ok {
+			return
+		}
+		if sets[e.from] == nil {
+			sets[e.from] = make(map[Cell]struct{})
+		}
+		sets[e.from][e.to] = struct{}{}
+	}
+	for e := range p.edges {
+		add(e)
+	}
+	for e := range extra {
+		add(e)
+	}
+	adj := make(map[Cell][]Cell, len(sets))
+	for from, set := range sets {
+		for to := range set {
+			adj[from] = append(adj[from], to)
+		}
+		sort.Slice(adj[from], func(i, j int) bool { return p.index[adj[from][i]] < p.index[adj[from][j]] })
+	}
+	return NewWTOPlan(p.cells, func(from Cell) []Cell { return adj[from] })
 }
 
 func (r *RetainedSystem[Cell, State]) influenceGraph() (map[Cell][]Cell, []Cell) {
@@ -371,7 +574,8 @@ func (r *RetainedSystem[Cell, State]) influenceGraph() (map[Cell][]Cell, []Cell)
 			add(rev.cell, owner)
 		}
 	}
-	for _, owner := range r.owners {
+	for i := range r.owners {
+		owner := r.retainedOwnerAt(i)
 		for _, output := range owner.outputs {
 			add(owner.owner, output.destination)
 		}
@@ -391,43 +595,21 @@ func (r *RetainedSystem[Cell, State]) influenceGraph() (map[Cell][]Cell, []Cell)
 }
 
 func (r *RetainedSystem[Cell, State]) invalidationRegion(changed []Cell) map[Cell]struct{} {
-	adj, nodes := r.influenceGraph()
-	component, members := stronglyConnected(nodes, adj)
-	selected := make(map[int]struct{})
-	queue := make([]int, 0, len(changed))
+	region := make(map[Cell]struct{}, len(changed))
+	queue := make([]Cell, 0, len(changed))
 	for _, cell := range changed {
-		id := component[cell]
-		if _, ok := selected[id]; !ok {
-			selected[id] = struct{}{}
-			queue = append(queue, id)
-		}
-	}
-	componentEdges := make(map[int]map[int]struct{})
-	for from, tos := range adj {
-		for _, to := range tos {
-			a, b := component[from], component[to]
-			if a == b {
-				continue
-			}
-			if componentEdges[a] == nil {
-				componentEdges[a] = make(map[int]struct{})
-			}
-			componentEdges[a][b] = struct{}{}
+		if _, ok := region[cell]; !ok {
+			region[cell] = struct{}{}
+			queue = append(queue, cell)
 		}
 	}
 	for head := 0; head < len(queue); head++ {
-		for next := range componentEdges[queue[head]] {
-			if _, ok := selected[next]; ok {
+		for _, next := range r.retainedInfluences(queue[head]) {
+			if _, ok := region[next]; ok {
 				continue
 			}
-			selected[next] = struct{}{}
+			region[next] = struct{}{}
 			queue = append(queue, next)
-		}
-	}
-	region := make(map[Cell]struct{})
-	for id := range selected {
-		for _, cell := range members[id] {
-			region[cell] = struct{}{}
 		}
 	}
 	return region
@@ -503,9 +685,11 @@ func stronglyConnected[Cell comparable](nodes []Cell, adj map[Cell][]Cell) (map[
 	return component, members
 }
 
-func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]struct{}) (*RetainedSystem[Cell, State], []Cell, *edge[Cell], error) {
-	r := cloneRetained(u.base)
+func (u *Update[Cell, State]) runRegion(ctx context.Context, r *RetainedSystem[Cell, State], region map[Cell]struct{}) (*RetainedSystem[Cell, State], []Cell, *edge[Cell], error) {
 	r.system.Transfer, r.system.TransferVersioned = u.transfer, u.versioned
+	if u.statsSet {
+		r.system.Stats = u.stats
+	}
 	for _, cell := range u.regionalExtra {
 		if _, declared := r.plan.index[cell]; declared {
 			continue
@@ -518,6 +702,7 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 			}
 		}
 		if !known {
+			r.ensureCellsOwned()
 			r.cells = append(r.cells, cell)
 			r.emittedOnly = append(r.emittedOnly, cell)
 		}
@@ -529,13 +714,13 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 	}
 	ownerIndex := make(map[Cell]int, len(r.owners))
 	for i := range r.owners {
-		ownerIndex[r.owners[i].owner] = i
+		ownerIndex[r.retainedOwnerAt(i).owner] = i
 	}
 	// Retract every invalidated equation bag before reconstructing region values.
 	for owner := range region {
 		if i, ok := ownerIndex[owner]; ok {
-			r.owners[i].reads = nil
-			r.owners[i].outputs = nil
+			r.replaceOwnerReads(i, nil)
+			r.replaceOwnerOutputs(i, nil)
 		}
 		delete(r.visits, owner)
 		delete(r.widenChanges, owner)
@@ -545,9 +730,9 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 	}
 
 	var active Cell
-	var stagedReads map[Cell]retainedRead[Cell, State]
-	var stagedOutputs map[Cell]State
-	var stagedOrder []Cell
+	stagedReads := make(map[Cell]retainedRead[Cell, State])
+	stagedOutputs := make(map[Cell]State)
+	stagedOrder := make([]Cell, 0, 8)
 	var expansion []Cell
 	expandSet := make(map[Cell]struct{})
 	var backward *edge[Cell]
@@ -557,17 +742,19 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 			copy := e
 			backward = &copy
 		}
-		value, ok := r.values[d]
+		value, ok := r.retainedValue(d)
 		if !ok {
 			value = r.system.Lattice.Bottom()
 			r.values[d] = value
 			r.bumpRetained(d)
 			if _, declared := r.plan.index[d]; !declared {
+				r.ensureCellsOwned()
 				r.cells = append(r.cells, d)
 				r.emittedOnly = append(r.emittedOnly, d)
 			}
+			r.usage.StateRefs++
 		}
-		stagedReads[d] = retainedRead[Cell, State]{dependency: d, value: value, revision: r.versions[d]}
+		stagedReads[d] = retainedRead[Cell, State]{dependency: d, value: value, revision: r.retainedVersion(d)}
 		return value
 	}
 	emit := func(d Cell, value State) {
@@ -578,7 +765,7 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 			stagedOrder = append(stagedOrder, d)
 		}
 	}
-	readVersioned := func(d Cell) (State, uint64) { value := read(d); return value, r.versions[d] }
+	readVersioned := func(d Cell) (State, uint64) { value := read(d); return value, r.retainedVersion(d) }
 	var iteration uint64
 	runCell := func(cell Cell) error {
 		if _, selected := region[cell]; !selected {
@@ -589,9 +776,9 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 		}
 		iteration++
 		active = cell
-		stagedReads = make(map[Cell]retainedRead[Cell, State])
-		stagedOutputs = make(map[Cell]State)
-		stagedOrder = nil
+		clear(stagedReads)
+		clear(stagedOutputs)
+		stagedOrder = stagedOrder[:0]
 		if r.system.Stats != nil {
 			r.system.Stats.TransferCalls++
 		}
@@ -651,12 +838,16 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 		}
 		i, ok := ownerIndex[cell]
 		if !ok {
+			r.owners = r.materializeOwners()
+			r.ownerDelta = nil
 			i = len(r.owners)
 			ownerIndex[cell] = i
 			r.owners = append(r.owners, retainedOwner[Cell, State]{owner: cell})
+			r.usage.Owners++
 		}
-		old := r.owners[i].outputs
-		r.owners[i].reads, r.owners[i].outputs = reads, outputs
+		old := append([]retainedOutput[Cell, State](nil), r.retainedOwnerAt(i).outputs...)
+		r.replaceOwnerReads(i, reads)
+		r.replaceOwnerOutputs(i, outputs)
 		affected := make(map[Cell]struct{}, len(old)+len(outputs))
 		for _, item := range old {
 			affected[item.destination] = struct{}{}
@@ -688,14 +879,14 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 				continue
 			}
 			for {
-				before := r.versions[item.Vertex]
+				before := r.retainedVersion(item.Vertex)
 				if err := runCell(item.Vertex); err != nil {
 					return err
 				}
 				if err := runPartition(item.Body); err != nil {
 					return err
 				}
-				if backward != nil || len(expansion) != 0 || r.versions[item.Vertex] == before {
+				if backward != nil || len(expansion) != 0 || r.retainedVersion(item.Vertex) == before {
 					break
 				}
 			}
@@ -709,7 +900,6 @@ func (u *Update[Cell, State]) runRegion(ctx context.Context, region map[Cell]str
 	if backward != nil || len(expansion) != 0 {
 		return r, expansion, backward, nil
 	}
-	r.rebuildDerived()
 	if err := retainedBudgetError(r.budget, r.usage); err != nil {
 		r.Release()
 		return nil, nil, nil, err
@@ -725,29 +915,222 @@ func (r *RetainedSystem[Cell, State]) initialOf(cell Cell) State {
 }
 func (r *RetainedSystem[Cell, State]) aggregate(cell Cell) State {
 	value := r.initialOf(cell)
-	for _, owner := range r.owners {
-		for _, output := range owner.outputs {
-			if output.destination == cell {
-				value = r.system.Lattice.Join(value, output.contribution)
-			}
-		}
+	for _, item := range r.retainedContributions(cell) {
+		value = r.system.Lattice.Join(value, item.contribution)
 	}
 	if r.system.Abstract != nil {
 		value = r.system.Abstract(cell, value)
 	}
 	return value
 }
+
+func (r *RetainedSystem[Cell, State]) replaceOwnerOutputs(index int, outputs []retainedOutput[Cell, State]) {
+	item := r.retainedOwnerAt(index)
+	owner := item.owner
+	old := item.outputs
+	r.usage.Outputs += len(outputs) - len(old)
+	r.usage.StateRefs += len(outputs) - len(old)
+	affected := make(map[Cell]struct{}, len(old)+len(outputs))
+	for _, output := range old {
+		affected[output.destination] = struct{}{}
+	}
+	for _, output := range outputs {
+		affected[output.destination] = struct{}{}
+	}
+	item.outputs = outputs
+	r.setRetainedOwner(index, item)
+	for destination := range affected {
+		items := r.retainedContributions(destination)
+		kept := make([]retainedContribution[Cell, State], 0, len(items)+1)
+		for _, item := range items {
+			if item.owner != owner {
+				kept = append(kept, item)
+			}
+		}
+		for _, output := range outputs {
+			if output.destination == destination {
+				kept = append(kept, retainedContribution[Cell, State]{owner: owner, contribution: output.contribution})
+				break
+			}
+		}
+		if len(kept) == 0 {
+			delete(r.contributions, destination)
+			if r.contributionRemoved == nil {
+				r.contributionRemoved = make(map[Cell]struct{})
+			}
+			r.contributionRemoved[destination] = struct{}{}
+		} else {
+			r.contributions[destination] = kept
+			delete(r.contributionRemoved, destination)
+		}
+		present := false
+		for _, output := range outputs {
+			if output.destination == destination {
+				present = true
+				break
+			}
+		}
+		r.setOutputReverse(destination, owner, present)
+		r.refreshInfluence(owner, destination)
+	}
+}
+
+func (r *RetainedSystem[Cell, State]) replaceOwnerReads(index int, reads []retainedRead[Cell, State]) {
+	item := r.retainedOwnerAt(index)
+	owner, old := item.owner, item.reads
+	r.usage.Reads += len(reads) - len(old)
+	r.usage.StateRefs += len(reads) - len(old)
+	item.reads = reads
+	r.setRetainedOwner(index, item)
+	affected := make(map[Cell]struct{}, len(old)+len(reads))
+	for _, item := range old {
+		affected[item.dependency] = struct{}{}
+	}
+	for _, item := range reads {
+		affected[item.dependency] = struct{}{}
+	}
+	for dependency := range affected {
+		present := false
+		for _, item := range reads {
+			if item.dependency == dependency {
+				present = true
+				break
+			}
+		}
+		r.setReverse(&r.readers, dependency, owner, present)
+		r.refreshInfluence(dependency, owner)
+	}
+}
+
+func (r *RetainedSystem[Cell, State]) setReverse(reverse *[]retainedReverse[Cell], cell, owner Cell, present bool) {
+	index := -1
+	for i := range *reverse {
+		if (*reverse)[i].cell == cell {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		if present {
+			*reverse = append(*reverse, retainedReverse[Cell]{cell: cell, owners: []Cell{owner}})
+		}
+		return
+	}
+	owners := (*reverse)[index].owners
+	found := -1
+	for i, existing := range owners {
+		if existing == owner {
+			found = i
+			break
+		}
+	}
+	if (found >= 0) == present {
+		return
+	}
+	next := append([]Cell(nil), owners...)
+	if present {
+		next = append(next, owner)
+		sort.Slice(next, func(i, j int) bool { return r.plan.index[next[i]] < r.plan.index[next[j]] })
+	} else {
+		next = append(next[:found], next[found+1:]...)
+	}
+	(*reverse)[index].owners = next
+}
+
+func (r *RetainedSystem[Cell, State]) outputOwnersOf(cell Cell) []Cell {
+	if owners, ok := r.outputOwnerDelta[cell]; ok {
+		return owners
+	}
+	for _, item := range r.outputOwners {
+		if item.cell == cell {
+			return item.owners
+		}
+	}
+	return nil
+}
+
+func (r *RetainedSystem[Cell, State]) setOutputReverse(cell, owner Cell, present bool) {
+	owners := r.outputOwnersOf(cell)
+	found := -1
+	for i, existing := range owners {
+		if existing == owner {
+			found = i
+			break
+		}
+	}
+	if (found >= 0) == present {
+		return
+	}
+	next := append([]Cell(nil), owners...)
+	if present {
+		next = append(next, owner)
+		sort.Slice(next, func(i, j int) bool { return r.plan.index[next[i]] < r.plan.index[next[j]] })
+	} else {
+		next = append(next[:found], next[found+1:]...)
+	}
+	if r.outputOwnerDelta == nil {
+		r.outputOwnerDelta = make(map[Cell][]Cell)
+	}
+	r.outputOwnerDelta[cell] = next
+}
+
+func (r *RetainedSystem[Cell, State]) refreshInfluence(from, to Cell) {
+	_, wanted := r.plan.edges[edge[Cell]{from: from, to: to}]
+	if !wanted {
+		for _, item := range r.readers {
+			if item.cell == from {
+				for _, owner := range item.owners {
+					if owner == to {
+						wanted = true
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+	if !wanted {
+		for _, owner := range r.outputOwnersOf(to) {
+			if owner == from {
+				wanted = true
+				break
+			}
+		}
+	}
+	items := r.retainedInfluences(from)
+	found := -1
+	for i, item := range items {
+		if item == to {
+			found = i
+			break
+		}
+	}
+	if (found >= 0) == wanted {
+		return
+	}
+	next := append([]Cell(nil), items...)
+	if wanted {
+		next = append(next, to)
+		sort.Slice(next, func(i, j int) bool { return r.plan.index[next[i]] < r.plan.index[next[j]] })
+	} else {
+		next = append(next[:found], next[found+1:]...)
+	}
+	r.influences[from] = next
+}
 func (r *RetainedSystem[Cell, State]) resetFromOwners(cell Cell) {
 	next := r.aggregate(cell)
-	prev, ok := r.values[cell]
+	prev, ok := r.retainedValue(cell)
 	if !ok || !r.system.Lattice.Equal(prev, next) {
+		if !ok {
+			r.usage.StateRefs++
+		}
 		r.values[cell] = next
 		r.bumpRetained(cell)
 	}
 }
 func (r *RetainedSystem[Cell, State]) accumulateFromOwners(cell Cell) {
 	aggregate := r.aggregate(cell)
-	prev, ok := r.values[cell]
+	prev, ok := r.retainedValue(cell)
 	if !ok {
 		prev = r.system.Lattice.Bottom()
 	}
@@ -767,6 +1150,9 @@ func (r *RetainedSystem[Cell, State]) accumulateFromOwners(cell Cell) {
 		next = r.system.Abstract(cell, next)
 	}
 	if !ok || !r.system.Lattice.Equal(prev, next) {
+		if !ok {
+			r.usage.StateRefs++
+		}
 		r.values[cell] = next
 		r.bumpRetained(cell)
 	}
@@ -777,6 +1163,8 @@ func (r *RetainedSystem[Cell, State]) bumpRetained(cell Cell) {
 }
 
 func (r *RetainedSystem[Cell, State]) rebuildDerived() {
+	r.owners = r.materializeOwners()
+	r.ownerDelta = nil
 	readers, outputs := make(map[Cell][]Cell), make(map[Cell][]Cell)
 	usage := RetainedUsage{Owners: len(r.owners), StateRefs: len(r.values) + len(r.initial)}
 	for _, owner := range r.owners {
@@ -791,5 +1179,15 @@ func (r *RetainedSystem[Cell, State]) rebuildDerived() {
 		}
 	}
 	r.readers, r.outputOwners = compactRetainedReverse(r.cells, readers), compactRetainedReverse(r.cells, outputs)
+	r.outputOwnerDelta = nil
+	r.contributions = contributionIndex(r.owners)
+	r.contributionBase, r.contributionRemoved = nil, nil
+	r.rebuildInfluences()
 	r.usage = usage
+}
+
+func (r *RetainedSystem[Cell, State]) rebuildInfluences() {
+	adj, _ := r.influenceGraph()
+	r.influences = adj
+	r.influenceBase = nil
 }

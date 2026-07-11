@@ -50,6 +50,34 @@ func TestRetainedUpdateConcurrentBeginHasSingleWinner(t *testing.T) {
 	}
 }
 
+func TestRetainedUpdateReplacesStatsTransactionally(t *testing.T) {
+	oldStats, nextStats := &Stats{}, &Stats{}
+	outputs := map[int]map[int]int{0: {1: 2}}
+	sys := constantSystem([]int{0, 1}, &outputs)
+	sys.Stats = oldStats
+	retained, _ := buildRetainedInts(t, sys, map[int][]int{0: {1}})
+	oldCalls := oldStats.TransferCalls
+	u, err := retained.BeginUpdate([]int{0}, sys.Transfer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.SetStats(nextStats); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := u.Publish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if oldStats.TransferCalls != oldCalls || nextStats.TransferCalls == 0 {
+		t.Fatalf("old=%d/%d replacement=%d", oldCalls, oldStats.TransferCalls, nextStats.TransferCalls)
+	}
+	if err := u.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func buildRetainedInts(t *testing.T, sys EquationSystem[int, int], edges map[int][]int) (*RetainedSystem[int, int], *WTOPlan[int]) {
 	t.Helper()
 	plan := NewWTOPlan(sys.Cells, func(cell int) []int { return edges[cell] })

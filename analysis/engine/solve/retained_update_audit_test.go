@@ -4,7 +4,10 @@ import (
 	"context"
 	"math/rand"
 	"reflect"
+	"sync"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 )
 
 // TestRetainedUpdateAuditRandomDifferential is an audit-only randomized
@@ -73,6 +76,122 @@ func TestRetainedUpdateAuditRandomDifferential(t *testing.T) {
 		u.Abort()
 		retained.Release()
 	}
+}
+
+func TestRetainedUpdateConcurrentReadersObserveWholeGenerations(t *testing.T) {
+	outputs := map[int]map[int]int{0: {1: 4}}
+	sys := constantSystem([]int{0, 1}, &outputs)
+	retained, _ := buildRetainedInts(t, sys, map[int][]int{0: {1}})
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_, _ = retained.Value(1)
+					_ = retained.Version(1)
+					_ = retained.Usage()
+				}
+			}
+		}()
+	}
+	for i := 0; i < 50; i++ {
+		u, err := retained.BeginUpdate([]int{0}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := u.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := u.Publish(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := u.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+}
+
+type retainedBenchState struct{ words [4]uint64 }
+
+func retainedBenchLattice() lattice.Lattice[retainedBenchState] {
+	join := func(a, b retainedBenchState) retainedBenchState {
+		for i := range a.words {
+			a.words[i] |= b.words[i]
+		}
+		return a
+	}
+	return lattice.Lattice[retainedBenchState]{
+		Bottom: func() retainedBenchState { return retainedBenchState{} },
+		Equal:  func(a, b retainedBenchState) bool { return a == b },
+		Join:   join,
+		Widen:  join,
+	}
+}
+
+func BenchmarkRetainedSparse500(b *testing.B) {
+	const n = 500
+	cells := make([]int, n)
+	facts := make([]retainedBenchState, n)
+	for i := range cells {
+		cells[i] = i
+		facts[i].words[(i/64)%len(facts[i].words)] = 1 << uint(i%64)
+	}
+	sys := EquationSystem[int, retainedBenchState]{
+		Lattice: retainedBenchLattice(), Cells: cells,
+		Transfer: func(cell int, _ func(int) retainedBenchState, emit func(int, retainedBenchState)) {
+			if cell+1 < n {
+				emit(cell+1, facts[cell])
+			}
+		},
+	}
+	plan := NewWTOPlan(cells, func(cell int) []int {
+		if cell+1 < n {
+			return []int{cell + 1}
+		}
+		return nil
+	})
+	b.Run("clean", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			facts[n-2].words[0] = uint64(i&1) + 1
+			if _, err := SolveWTO(sys, plan); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("regional", func(b *testing.B) {
+		_, _, retained, err := BuildRetainedWTO(context.Background(), sys, plan, RetainedBudget{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer retained.Release()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			facts[n-2].words[0] = uint64(i&1) + 1
+			u, err := retained.BeginUpdate([]int{n - 2}, nil, nil)
+			if err == nil {
+				err = u.Run(context.Background())
+			}
+			if err == nil {
+				_, _, err = u.Publish(context.Background())
+			}
+			if err == nil {
+				err = u.Commit()
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func TestRetainedUpdateAuditRandomDynamicEdges(t *testing.T) {
