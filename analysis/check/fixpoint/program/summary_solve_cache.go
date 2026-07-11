@@ -60,6 +60,23 @@ func (c *SummarySolveCache) solve(
 	hits *int,
 	misses *int,
 ) (summary.Summary, error) {
+	return c.solveAttributed(prepared, profile, resolution, reader, build, counter, transfers, dependencyChanges, dependencyChangeTransfers, hits, misses, nil)
+}
+
+func (c *SummarySolveCache) solveAttributed(
+	prepared *body.Static,
+	profile string,
+	resolution uint64,
+	reader summary.Reader,
+	build func(summary.Reader) body.Config,
+	counter *int,
+	transfers *int,
+	dependencyChanges *int,
+	dependencyChangeTransfers *int,
+	hits *int,
+	misses *int,
+	attribution *solveAttribution,
+) (summary.Summary, error) {
 	if prepared == nil || build == nil {
 		return summary.Summary{}, nil
 	}
@@ -100,7 +117,12 @@ func (c *SummarySolveCache) solve(
 	if dependencyChanged && dependencyChanges != nil {
 		(*dependencyChanges)++
 	}
-	result, err := solvePreparedCountedWithTransfers(prepared, config, counter, transfers)
+	result, err := solvePreparedCountedWithTransfers(prepared, config, counter, transfers, func() *solveAttribution {
+		if dependencyChanged {
+			return attribution.afterDependencyChange()
+		}
+		return attribution
+	}())
 	if dependencyChanged && dependencyChangeTransfers != nil && config.Stats != nil {
 		*dependencyChangeTransfers += config.Stats.Transfer.Solver.TransferCalls - beforeTransfers
 	}

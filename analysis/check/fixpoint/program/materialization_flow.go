@@ -29,7 +29,7 @@ func materializeChunkWithResultKeys(
 	projections *resultSummaryProjectionCache,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
-	root, _, err := solveMaterializedPrepared(
+	root, _, err := solveMaterializedPreparedAttributed(
 		solveCache,
 		prepared.root,
 		keys.rootKey,
@@ -40,6 +40,7 @@ func materializeChunkWithResultKeys(
 			return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof)
 		},
 		materializeCounter(stats),
+		solveAttributionFor(stats, prepared.root, keys.rootKey, SolvePhaseMaterialize, false),
 	)
 	if err != nil {
 		return materializedProgram{}, err
@@ -69,7 +70,7 @@ func materializeFunctionWithResultKeys(
 	projections *resultSummaryProjectionCache,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
-	root, _, err := solveMaterializedPrepared(
+	root, _, err := solveMaterializedPreparedAttributed(
 		solveCache,
 		prepared.function(fn),
 		keys.rootKey,
@@ -81,6 +82,7 @@ func materializeFunctionWithResultKeys(
 			return functionMaterializeConfig(rootConfig, keys, reader, fn)
 		},
 		materializeCounter(stats),
+		solveAttributionFor(stats, prepared.function(fn), keys.rootKey, SolvePhaseMaterialize, false),
 	)
 	if err != nil {
 		return materializedProgram{}, err
@@ -297,7 +299,7 @@ func materializeFunctionTree(
 			continue
 		}
 		ownerIndex := summaryIndexForOwner(indexBase, keys, origin.key)
-		result, _, err := solveMaterializedPrepared(
+		result, _, err := solveMaterializedPreparedAttributed(
 			solveCache,
 			prepared.function(origin.funcExpr),
 			origin.key,
@@ -309,6 +311,7 @@ func materializeFunctionTree(
 				return keyedFunctionMaterializeConfig(prepared.function(origin.funcExpr), ownerConfig, keys, reader, origin)
 			},
 			materializeCounter(stats),
+			solveAttributionFor(stats, prepared.function(origin.funcExpr), origin.key, SolvePhaseMaterialize, false),
 		)
 		if err != nil {
 			return nil, keys, err
@@ -508,7 +511,7 @@ func materializeDiscoveredContexts(
 		indexBase := summaryIndexBase(*keys)
 		ownerIndex := summaryIndexForOwner(indexBase, *keys, context.key)
 		contextPrepared := prepared.function(context.funcExpr)
-		result, solved, err := solveMaterializedPrepared(
+		result, solved, err := solveMaterializedPreparedAttributed(
 			solveCache,
 			contextPrepared,
 			context.key,
@@ -520,6 +523,7 @@ func materializeDiscoveredContexts(
 				return keyedFunctionMaterializeConfig(contextPrepared, ownerConfig, *keys, reader, context)
 			},
 			materializeCounter(stats),
+			solveAttributionFor(stats, contextPrepared, context.key, SolvePhaseMaterialize, true),
 		)
 		if err != nil {
 			return nil, err

@@ -258,6 +258,38 @@ return f()
 	if stats.Query.BodyInvocations == 0 || stats.Query.Solver.TransferCalls != stats.Query.BodyInvocations {
 		t.Fatalf("query stats = %#v, want body invocations matching solver transfer calls", stats.Query)
 	}
+	attribution := stats.BodySolveAttribution()
+	if len(attribution) == 0 {
+		t.Fatal("BodySolveAttribution is empty")
+	}
+	phaseAttribution := make(map[SolvePhase]int)
+	pointTransfers := 0
+	dependencyChanges := 0
+	dependencyChangeTransfers := 0
+	for _, entry := range attribution {
+		if entry.BodyID == 0 || entry.BodySolves == 0 {
+			t.Fatalf("invalid attribution entry: %#v", entry)
+		}
+		phaseAttribution[entry.Phase] += entry.BodySolves
+		pointTransfers += entry.PointTransfers
+		dependencyChanges += entry.DependencyChangeResolves
+		dependencyChangeTransfers += entry.DependencyChangePointTransfers
+	}
+	for phase, want := range map[SolvePhase]int{
+		SolvePhasePrepass:     stats.PrepassBodySolves,
+		SolvePhaseSummary:     stats.SummaryBodySolves,
+		SolvePhaseMaterialize: stats.MaterializeBodySolves,
+	} {
+		if got := phaseAttribution[phase]; got != want {
+			t.Fatalf("attributed %s solves = %d, want aggregate %d: %#v", phase, got, want, attribution)
+		}
+	}
+	if pointTransfers != stats.Body.Transfer.Solver.TransferCalls {
+		t.Fatalf("attributed point transfers = %d, want body aggregate %d", pointTransfers, stats.Body.Transfer.Solver.TransferCalls)
+	}
+	if dependencyChanges != stats.SummaryBodySolvesAfterDependencyChange || dependencyChangeTransfers != stats.SummaryPointTransfersAfterDependencyChange {
+		t.Fatalf("attributed dependency work = %d/%d, want aggregates %d/%d", dependencyChanges, dependencyChangeTransfers, stats.SummaryBodySolvesAfterDependencyChange, stats.SummaryPointTransfersAfterDependencyChange)
+	}
 }
 
 func TestOverlayMaterializedValueSlotsNoChangePreservesSlice(t *testing.T) {

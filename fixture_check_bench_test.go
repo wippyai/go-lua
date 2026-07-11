@@ -6,14 +6,11 @@ import (
 	"time"
 
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 )
 
 var fixtureCheckBenchmarkSuites = []string{
-	"semantic/nested-channel-select-union-stress",
 	"realworld/transactional-saga-orchestrator-soundness",
-	"regression/deadlock-dataflow-node",
-	"realworld/advanced-type-system-stress",
-	"realworld/plugin-runtime-pipeline-soundness",
 	"realworld/wippy-scheduler-create-integration",
 }
 
@@ -38,11 +35,20 @@ func BenchmarkFixtureChecks(b *testing.B) {
 				b.Fatalf("fixture %s no longer satisfies curated expectations: missing=%v unexpected=%v", name, verdict.missing, verdict.unexpected)
 			}
 
-			b.ResetTimer()
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				fixtureDiagnostics(s)
-			}
+			b.Run("baseline", func(b *testing.B) {
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					fixtureDiagnostics(s)
+				}
+			})
+			b.Run("attribution", func(b *testing.B) {
+				b.ResetTimer()
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					fixtureDiagnosticsWithOptions(s, testutil.WithStats(&program.Stats{}))
+				}
+			})
 		})
 	}
 }

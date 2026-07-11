@@ -129,7 +129,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 	var rootPrepass *body.Result
 	rootNeedsPrepass := prepared.root.HasCallSites() || prepared.root.HasDynamicIndexWrites() || ownerHasCapturedFunctionDefinitions(keys, nil)
 	if rootNeedsPrepass {
-		prepass, err := solvePreparedCounted(prepared.root, cloneCheckConfig(config), prepassCounter(stats))
+		prepass, err := solvePreparedCountedWithTransfers(prepared.root, cloneCheckConfig(config), prepassCounter(stats), nil, solveAttributionFor(stats, prepared.root, keys.rootKey, SolvePhasePrepass, false))
 		if err != nil {
 			return nil, err
 		}
@@ -165,7 +165,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 				functionConfig.EntryState = applyParamSeeds(config.Registry, functionConfig.EntryState, inferred.seedSource(callee), seeds)
 			}
 		}
-		functionPrepass, err := solvePreparedCounted(static, functionConfig, prepassCounter(stats))
+		functionPrepass, err := solvePreparedCountedWithTransfers(static, functionConfig, prepassCounter(stats), nil, solveAttributionFor(stats, static, fn.key, SolvePhasePrepass, false))
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +199,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 				contextConfig.EntryState = applyParamSeeds(config.Registry, contextConfig.EntryState, inferred.seedSource(callee), seeds)
 			}
 		}
-		contextPrepass, err := solvePreparedCounted(static, contextConfig, prepassCounter(stats))
+		contextPrepass, err := solvePreparedCountedWithTransfers(static, contextConfig, prepassCounter(stats), nil, solveAttributionFor(stats, static, context.key, SolvePhasePrepass, true))
 		if err != nil {
 			return nil, err
 		}

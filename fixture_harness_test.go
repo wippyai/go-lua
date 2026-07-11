@@ -411,6 +411,11 @@ func logFixtureStats(t testing.TB, suite, file string, stats *program.Stats) {
 		stats.Body.BodySolves,
 		stats.Body.Transfer.Solver.TransferCalls,
 	)
+	attribution, err := json.Marshal(stats.BodySolveAttribution())
+	if err != nil {
+		t.Fatalf("encode fixture attribution: %v", err)
+	}
+	t.Logf("fixture attribution %s/%s: %s", suite, file, attribution)
 }
 
 func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan placementplan.Plan) {

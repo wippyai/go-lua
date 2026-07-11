@@ -104,24 +104,31 @@ func solvePrepared(prepared *body.Static, config body.Config) (*body.Result, err
 }
 
 func solvePreparedCounted(prepared *body.Static, config body.Config, counter *int) (*body.Result, error) {
-	return solvePreparedCountedWithTransfers(prepared, config, counter, nil)
+	return solvePreparedCountedWithTransfers(prepared, config, counter, nil, nil)
 }
 
 // solvePreparedCountedWithTransfers keeps phase accounting separate from the
 // body package's aggregate stats. A summary equation can be revisited many
 // times, so its point-transfer count is the useful measure of invalidation
 // work rather than just its body-solve count.
-func solvePreparedCountedWithTransfers(prepared *body.Static, config body.Config, counter *int, transfers *int) (*body.Result, error) {
+func solvePreparedCountedWithTransfers(prepared *body.Static, config body.Config, counter *int, transfers *int, attribution *solveAttribution) (*body.Result, error) {
 	if counter != nil {
 		(*counter)++
 	}
 	before := 0
-	if transfers != nil && config.Stats != nil {
+	if (transfers != nil || attribution != nil) && config.Stats != nil {
 		before = config.Stats.Transfer.Solver.TransferCalls
 	}
 	result, err := solvePrepared(prepared, config)
-	if transfers != nil && config.Stats != nil {
-		*transfers += config.Stats.Transfer.Solver.TransferCalls - before
+	pointTransfers := 0
+	if (transfers != nil || attribution != nil) && config.Stats != nil {
+		pointTransfers = config.Stats.Transfer.Solver.TransferCalls - before
+	}
+	if transfers != nil {
+		*transfers += pointTransfers
+	}
+	if attribution != nil {
+		attribution.stats.recordBodySolve(attribution, pointTransfers)
 	}
 	return result, err
 }
@@ -159,7 +166,7 @@ func chunkFunction(
 		Body: func(ctx query.Context) (summary.Summary, error) {
 			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				return checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
-			}, stats)
+			}, stats, solveAttributionFor(stats, prepared, key, SolvePhaseSummary, false))
 		},
 	}
 }
@@ -176,6 +183,7 @@ func boundFunction(
 	keyFor callresult.KeyFunc,
 	index *callresult.SummaryIndex,
 	metatableProof metatableMethodProof,
+	context bool,
 ) query.Function {
 	captured := cloneCheckConfig(config)
 	return query.Function{
@@ -187,7 +195,7 @@ func boundFunction(
 					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
 				}
 				return config
-			}, stats)
+			}, stats, solveAttributionFor(stats, prepared, origin.key, SolvePhaseSummary, context))
 		},
 	}
 }
@@ -200,12 +208,13 @@ func solveSummaryPrepared(
 	reader summary.Reader,
 	build func(summary.Reader) body.Config,
 	stats *Stats,
+	attribution *solveAttribution,
 ) (summary.Summary, error) {
 	if cache != nil {
-		return cache.solve(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats))
+		return cache.solveAttributed(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats), attribution)
 	}
 	config := build(reader)
-	result, err := solvePreparedCountedWithTransfers(prepared, config, summaryCounter(stats), summaryPointTransferCounter(stats))
+	result, err := solvePreparedCountedWithTransfers(prepared, config, summaryCounter(stats), summaryPointTransferCounter(stats), attribution)
 	if err != nil {
 		return summary.Summary{}, err
 	}

@@ -203,11 +203,25 @@ func solveMaterializedPrepared(
 	buildConfig func(summary.Reader) body.Config,
 	counter *int,
 ) (*body.Result, bool, error) {
+	return solveMaterializedPreparedAttributed(cache, prepared, owner, routing, entry, summaries, buildConfig, counter, nil)
+}
+
+func solveMaterializedPreparedAttributed(
+	cache *materializedSolveCache,
+	prepared *body.Static,
+	owner summary.SummaryKey,
+	routing uint64,
+	entry materializedSolveEntryState,
+	summaries summary.Reader,
+	buildConfig func(summary.Reader) body.Config,
+	counter *int,
+	attribution *solveAttribution,
+) (*body.Result, bool, error) {
 	if prepared == nil || buildConfig == nil {
 		return nil, false, nil
 	}
 	if cache == nil {
-		result, err := solvePreparedCounted(prepared, buildConfig(summaries), counter)
+		result, err := solvePreparedCountedWithTransfers(prepared, buildConfig(summaries), counter, nil, attribution)
 		return result, true, err
 	}
 	if cached, ok := cache.read(prepared, owner, routing, entry, summaries); ok {
@@ -220,7 +234,7 @@ func solveMaterializedPrepared(
 	config.SummaryInputDigests = func() []uint64 {
 		return trackedSummaryReadDigests(cache.reg, tracked.deps)
 	}
-	result, err := solvePreparedCounted(prepared, config, counter)
+	result, err := solvePreparedCountedWithTransfers(prepared, config, counter, nil, attribution)
 	if err != nil {
 		return nil, true, err
 	}
