@@ -84,9 +84,11 @@ type materializedSolveCacheKey struct {
 }
 
 type materializedSolveCacheEntry struct {
-	shape uint64
-	entry materializedSolveEntryState
-	deps  map[summary.SummaryKey]trackedSummaryRead
+	// routing identifies the owner-local call-context routing table captured by
+	// this solve. It deliberately excludes unrelated program contexts.
+	routing uint64
+	entry   materializedSolveEntryState
+	deps    map[summary.SummaryKey]trackedSummaryRead
 	// noDepUniverse pins solves with zero tracked summary reads to the summary
 	// universe they observed. A later materialization pass can make a callee
 	// summary nameable even though the first solve had no dependency to track.
@@ -193,7 +195,7 @@ func solveMaterializedPrepared(
 	cache *materializedSolveCache,
 	prepared *body.Static,
 	owner summary.SummaryKey,
-	shape uint64,
+	routing uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
 	buildConfig func(summary.Reader) body.Config,
@@ -206,7 +208,7 @@ func solveMaterializedPrepared(
 		result, err := solvePreparedCounted(prepared, buildConfig(summaries), counter)
 		return result, true, err
 	}
-	if cached, ok := cache.read(prepared, owner, shape, entry, summaries); ok {
+	if cached, ok := cache.read(prepared, owner, routing, entry, summaries); ok {
 		config := buildConfig(summaries)
 		return body.RebindBoundaryProviders(cached, prepared, config.SolveConfig()), false, nil
 	}
@@ -219,7 +221,7 @@ func solveMaterializedPrepared(
 	if err != nil {
 		return nil, true, err
 	}
-	cache.write(prepared, owner, shape, entry, summaries, tracked.deps, result)
+	cache.write(prepared, owner, routing, entry, summaries, tracked.deps, result)
 	return result, true, nil
 }
 
@@ -246,7 +248,7 @@ func trackedSummaryReadDigests(reg *axis.Registry, deps map[summary.SummaryKey]t
 func (c *materializedSolveCache) read(
 	prepared *body.Static,
 	owner summary.SummaryKey,
-	shape uint64,
+	routing uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
 ) (*body.Result, bool) {
@@ -254,7 +256,7 @@ func (c *materializedSolveCache) read(
 		return nil, false
 	}
 	cached, ok := c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}]
-	if !ok || cached.result == nil || cached.shape != shape {
+	if !ok || cached.result == nil || cached.routing != routing {
 		return nil, false
 	}
 	if !materializedSolveEntryStatesEqual(c.reg, cached.entry, entry) {
@@ -301,7 +303,7 @@ func readOwnedNormalizedSummary(reg *axis.Registry, reader summary.Reader, key s
 func (c *materializedSolveCache) write(
 	prepared *body.Static,
 	owner summary.SummaryKey,
-	shape uint64,
+	routing uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
 	deps map[summary.SummaryKey]trackedSummaryRead,
@@ -319,7 +321,7 @@ func (c *materializedSolveCache) write(
 		noDepUniverse, noDepUniverseKnown = materializedSummaryUniverse(summaries)
 	}
 	c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}] = materializedSolveCacheEntry{
-		shape:              shape,
+		routing:            routing,
 		entry:              entry,
 		deps:               cloneTrackedSummaryReads(deps),
 		noDepUniverseKnown: noDepUniverseKnown,

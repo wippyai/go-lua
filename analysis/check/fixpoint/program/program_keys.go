@@ -89,30 +89,22 @@ func (k programKeys) functionSymbolsByKey() map[summary.SummaryKey]symbol.ID {
 	return out
 }
 
-func materializedProgramShapeDigest(keys programKeys) uint64 {
+// materializedOwnerRoutingDigest fences only the call-context routing visible
+// to one body. The old whole-program shape digest changed whenever any body
+// discovered a context, invalidating every materialized body even when its own
+// provider routing and all summary reads were unchanged.
+func materializedOwnerRoutingDigest(keys programKeys, owner summary.SummaryKey) uint64 {
 	h := fnv.New64a()
-	writeSummaryKeyDigest(h, keys.rootKey)
-	writeSymbolSummaryKeySetDigest(h, keys.functionKeys)
-	writeSymbolSummaryKeySetDigest(h, keys.targetKeys)
-	writeIdentitySummaryKeySetDigest(h, keys.functionIDs)
-	writeCalleePathKeySetDigest(h, keys.pathKeys)
-	writeCalleePathMultiKeySetDigest(h, keys.pathMultiKeys)
-	var contextKeys []summary.SummaryKey
-	keys.contexts.ForEach(func(context keyedFunction) {
-		contextKeys = append(contextKeys, context.key)
-	})
-	slices.SortFunc(contextKeys, func(a, b summary.SummaryKey) int {
-		if a.Less(b) {
-			return -1
-		}
-		if b.Less(a) {
-			return 1
-		}
-		return 0
-	})
-	for _, key := range contextKeys {
-		fmt.Fprint(h, "ctx:")
-		writeSummaryKeyDigest(h, key)
+	writeSummaryKeyDigest(h, owner)
+	expressions := keys.contexts.FunctionExpressionKeysForOwner(owner)
+	refs := make([]factflow.ExprRef, 0, len(expressions))
+	for expr := range expressions {
+		refs = append(refs, expr)
+	}
+	slices.Sort(refs)
+	for _, expr := range refs {
+		fmt.Fprintf(h, "expr:%d=", expr)
+		writeSummaryKeyDigest(h, expressions[expr])
 	}
 	return h.Sum64()
 }

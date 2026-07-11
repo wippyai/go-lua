@@ -481,6 +481,8 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	if !firstSolved {
 		t.Fatal("first solveMaterializedPrepared reported cache hit")
 	}
+	// Unrelated materialized call contexts do not change this body's routing;
+	// tracked summary reads and entry state are the complete solve inputs.
 	again, againSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, firstSnapshot, build, &solves)
 	if err != nil {
 		t.Fatalf("second solveMaterializedPrepared: %v", err)
@@ -500,6 +502,31 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	}
 	if secondSnapshot.publicReads != 0 || secondSnapshot.ownedReads == 0 {
 		t.Fatalf("changed summary dependency reads = public:%d owned:%d, want owned-only dependency reads", secondSnapshot.publicReads, secondSnapshot.ownedReads)
+	}
+}
+
+func TestMaterializedOwnerRoutingDigestIgnoresUnrelatedContexts(t *testing.T) {
+	owner := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(901)))
+	other := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(902)))
+	otherFirst := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(903)))
+	otherSecond := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(904)))
+	owned := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(905)))
+	contexts := contextIndex{
+		entries: []keyedFunction{{key: otherFirst}, {key: otherSecond}, {key: owned}},
+		byKey:   map[summary.SummaryKey]int{otherFirst: 0, otherSecond: 1, owned: 2},
+		functionExpressionKeys: map[functionExpressionRef]summary.SummaryKey{
+			{owner: other, expr: factflow.ExprRef(1)}: otherFirst,
+		},
+	}
+	keys := programKeys{contexts: contexts}
+	before := materializedOwnerRoutingDigest(keys, owner)
+	keys.contexts.functionExpressionKeys[functionExpressionRef{owner: other, expr: factflow.ExprRef(2)}] = otherSecond
+	if got := materializedOwnerRoutingDigest(keys, owner); got != before {
+		t.Fatalf("unrelated context changed owner routing digest: before=%x after=%x", before, got)
+	}
+	keys.contexts.functionExpressionKeys[functionExpressionRef{owner: owner, expr: factflow.ExprRef(3)}] = owned
+	if got := materializedOwnerRoutingDigest(keys, owner); got == before {
+		t.Fatal("owner-local context did not change routing digest")
 	}
 }
 

@@ -28,12 +28,11 @@ func materializeChunkWithResultKeys(
 	projections *resultSummaryProjectionCache,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
-	shape := materializedProgramShapeDigest(keys)
 	root, _, err := solveMaterializedPrepared(
 		solveCache,
 		prepared.root,
 		keys.rootKey,
-		shape,
+		materializedOwnerRoutingDigest(keys, keys.rootKey),
 		materializedSolveEntryState{},
 		summaries,
 		func(reader summary.Reader) body.Config {
@@ -69,12 +68,11 @@ func materializeFunctionWithResultKeys(
 	projections *resultSummaryProjectionCache,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
-	shape := materializedProgramShapeDigest(keys)
 	root, _, err := solveMaterializedPrepared(
 		solveCache,
 		prepared.function(fn),
 		keys.rootKey,
-		shape,
+		materializedOwnerRoutingDigest(keys, keys.rootKey),
 		materializedSolveEntryState{},
 		summaries,
 		func(reader summary.Reader) body.Config {
@@ -275,7 +273,6 @@ func materializeFunctionTree(
 	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, nil, nil)
 	baseResults := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
 	indexBase := summaryIndexBase(keys)
-	shape := materializedProgramShapeDigest(keys)
 	for _, origin := range keys.functions {
 		if origin.funcExpr == nil {
 			continue
@@ -289,7 +286,7 @@ func materializeFunctionTree(
 			solveCache,
 			prepared.function(origin.funcExpr),
 			origin.key,
-			shape,
+			materializedOwnerRoutingDigest(keys, origin.key),
 			materializedSolveEntryFor(prepared.function(origin.funcExpr), origin),
 			cache,
 			func(reader summary.Reader) body.Config {
@@ -476,12 +473,11 @@ func materializeDiscoveredContexts(
 		indexBase := summaryIndexBase(*keys)
 		ownerIndex := summaryIndexForOwner(indexBase, *keys, context.key)
 		contextPrepared := prepared.function(context.funcExpr)
-		shape := materializedProgramShapeDigest(*keys)
 		result, solved, err := solveMaterializedPrepared(
 			solveCache,
 			contextPrepared,
 			context.key,
-			shape,
+			materializedOwnerRoutingDigest(*keys, context.key),
 			materializedSolveEntryFor(contextPrepared, context),
 			cache,
 			func(reader summary.Reader) body.Config {
