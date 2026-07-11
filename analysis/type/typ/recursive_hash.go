@@ -1,5 +1,7 @@
 package typ
 
+import "context"
+
 // EqualityHash returns the canonical hash used by structural equality and
 // deduplication. It matches Hash for immutable products, but recomputes
 // wrappers around mutable recursive/generic nodes so SetBody cannot leave
@@ -21,6 +23,38 @@ func EqualityHash(t Type) uint64 {
 		return h
 	}
 	return t.Hash()
+}
+
+// EqualityHashContext is EqualityHash with bounded cancellation checks during
+// recursive traversal. It deliberately does not populate the equality cache:
+// recording dependency revisions requires a separate full graph walk that is
+// not part of this cancelable operation.
+func EqualityHashContext(ctx context.Context, t Type) (uint64, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
+	var ok bool
+	t, ok = unwrapAliasForEquals(t, NewGuard())
+	if !ok || t == nil {
+		return 0, nil
+	}
+	if !equalityHashNeedsRefresh(t) {
+		return t.Hash(), nil
+	}
+	if h, ok := cachedEqualityHash(t); ok {
+		return h, nil
+	}
+	scratch := getRecursiveHashScratch()
+	scratch.ctx = ctx
+	h := hashBodyWithVisitedMemo(t, scratch)
+	err := scratch.err
+	putRecursiveHashScratch(scratch)
+	if err != nil {
+		return 0, err
+	}
+	return h, nil
 }
 
 func equalityHashNeedsRefresh(t Type) bool {

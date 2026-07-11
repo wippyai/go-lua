@@ -304,7 +304,11 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 				return nil, err
 			}
 		}
-		out.NormalReturnTypeRefinements[i].Type = canonicalOperationalEffectDigestType(out.NormalReturnTypeRefinements[i].Type)
+		value, err := canonicalOperationalEffectDigestTypeContext(ctx, out.NormalReturnTypeRefinements[i].Type)
+		if err != nil {
+			return nil, err
+		}
+		out.NormalReturnTypeRefinements[i].Type = value
 	}
 	out.PathPresenceImplications = append([]signature.PathPresenceImplication(nil), e.PathPresenceImplications...)
 	for i := range out.PathPresenceImplications {
@@ -313,7 +317,11 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 				return nil, err
 			}
 		}
-		out.PathPresenceImplications[i].TriggerType = canonicalOperationalEffectDigestType(out.PathPresenceImplications[i].TriggerType)
+		value, err := canonicalOperationalEffectDigestTypeContext(ctx, out.PathPresenceImplications[i].TriggerType)
+		if err != nil {
+			return nil, err
+		}
+		out.PathPresenceImplications[i].TriggerType = value
 	}
 	out.PathStaticMembers = append([]signature.PathStaticMemberFact(nil), e.PathStaticMembers...)
 	for i := range out.PathStaticMembers {
@@ -322,7 +330,11 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 				return nil, err
 			}
 		}
-		out.PathStaticMembers[i].Type = canonicalOperationalEffectDigestType(out.PathStaticMembers[i].Type)
+		value, err := canonicalOperationalEffectDigestTypeContext(ctx, out.PathStaticMembers[i].Type)
+		if err != nil {
+			return nil, err
+		}
+		out.PathStaticMembers[i].Type = value
 	}
 	out.PathStaticMemberDeltas = append([]signature.PathStaticMemberDelta(nil), e.PathStaticMemberDeltas...)
 	for i := range out.PathStaticMemberDeltas {
@@ -331,7 +343,11 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 				return nil, err
 			}
 		}
-		out.PathStaticMemberDeltas[i].Type = canonicalOperationalEffectDigestType(out.PathStaticMemberDeltas[i].Type)
+		value, err := canonicalOperationalEffectDigestTypeContext(ctx, out.PathStaticMemberDeltas[i].Type)
+		if err != nil {
+			return nil, err
+		}
+		out.PathStaticMemberDeltas[i].Type = value
 	}
 	out.DynamicIndexFacts = append([]signature.DynamicIndexFact(nil), e.DynamicIndexFacts...)
 	for i := range out.DynamicIndexFacts {
@@ -340,8 +356,16 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 				return nil, err
 			}
 		}
-		out.DynamicIndexFacts[i].Key.Type = canonicalOperationalEffectDigestType(out.DynamicIndexFacts[i].Key.Type)
-		out.DynamicIndexFacts[i].Value.Type = canonicalOperationalEffectDigestType(out.DynamicIndexFacts[i].Value.Type)
+		keyType, err := canonicalOperationalEffectDigestTypeContext(ctx, out.DynamicIndexFacts[i].Key.Type)
+		if err != nil {
+			return nil, err
+		}
+		valueType, err := canonicalOperationalEffectDigestTypeContext(ctx, out.DynamicIndexFacts[i].Value.Type)
+		if err != nil {
+			return nil, err
+		}
+		out.DynamicIndexFacts[i].Key.Type = keyType
+		out.DynamicIndexFacts[i].Value.Type = valueType
 	}
 	out.ReturnAllocationTemplates = append([]signature.ReturnAllocationTemplate(nil), e.ReturnAllocationTemplates...)
 	for i := range out.ReturnAllocationTemplates {
@@ -358,7 +382,11 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 				}
 			}
 			object := &out.ReturnAllocationTemplates[i].Objects[j]
-			object.Type = canonicalOperationalEffectDigestType(object.Type)
+			value, err := canonicalOperationalEffectDigestTypeContext(ctx, object.Type)
+			if err != nil {
+				return nil, err
+			}
+			object.Type = value
 			object.DynamicEntries = append([]signature.AllocationDynamicEntryTemplate(nil), e.ReturnAllocationTemplates[i].Objects[j].DynamicEntries...)
 			for k := range object.DynamicEntries {
 				if k%64 == 0 {
@@ -366,7 +394,11 @@ func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signa
 						return nil, err
 					}
 				}
-				object.DynamicEntries[k].KeyType = canonicalOperationalEffectDigestType(object.DynamicEntries[k].KeyType)
+				value, err := canonicalOperationalEffectDigestTypeContext(ctx, object.DynamicEntries[k].KeyType)
+				if err != nil {
+					return nil, err
+				}
+				object.DynamicEntries[k].KeyType = value
 			}
 		}
 	}
@@ -515,6 +547,17 @@ func canonicalOperationalEffectDigestType(t typ.Type) typ.Type {
 		return nil
 	}
 	return typ.NewRef("manifest-digest-type", strconv.FormatUint(typ.EqualityHash(t), 10)+":"+t.String())
+}
+
+func canonicalOperationalEffectDigestTypeContext(ctx context.Context, t typ.Type) (typ.Type, error) {
+	if t == nil {
+		return nil, nil
+	}
+	h, err := typ.EqualityHashContext(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	return typ.NewRef("manifest-digest-type", strconv.FormatUint(h, 10)+":"+t.String()), nil
 }
 
 func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalEffects, error) {

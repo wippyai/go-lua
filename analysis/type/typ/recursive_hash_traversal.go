@@ -6,6 +6,9 @@ import (
 )
 
 func hashWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
+	if !scratch.checkpoint() {
+		return 0
+	}
 	if t == nil {
 		return 0
 	}
@@ -42,6 +45,9 @@ func hashWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
 }
 
 func hashBodyWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
+	if !scratch.checkpoint() {
+		return 0
+	}
 	t = NormalizeNil(t)
 	if t == nil {
 		return 0
@@ -71,6 +77,9 @@ func hashBodyWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
 }
 
 func hashBodyNodeWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
+	if !scratch.checkpoint() {
+		return 0
+	}
 	switch tt := t.(type) {
 	case *Optional:
 		return hash.MixHash(uint64(kind.Optional), hashBodyWithVisitedMemo(tt.Inner, scratch))

@@ -1,6 +1,9 @@
 package typ
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 const (
 	recursiveHashSmallVisitedCap = 8
@@ -30,6 +33,9 @@ func putRecursiveHashScratch(s *recursiveHashScratch) {
 // the pool retains no type references, and retaining bounded overflow maps
 // (cleared) for reuse while dropping oversized ones.
 func (s *recursiveHashScratch) reset() {
+	s.ctx = nil
+	s.steps = 0
+	s.err = nil
 	for i := 0; i < s.visitedLen; i++ {
 		s.visited[i] = nil
 	}
@@ -64,6 +70,10 @@ type recursiveHashMemoEntry struct {
 }
 
 type recursiveHashScratch struct {
+	ctx   context.Context
+	steps uint64
+	err   error
+
 	visited    [recursiveHashSmallVisitedCap]*Recursive
 	visitedLen int
 	visitedMap map[*Recursive]bool
@@ -75,6 +85,24 @@ type recursiveHashScratch struct {
 	memo    [recursiveHashSmallMemoCap]recursiveHashMemoEntry
 	memoLen int
 	memoMap map[Type]uint64
+}
+
+// checkpoint bounds cancellation latency while hashing a recursive type. The
+// traversal enters this once per visited node, so deeply nested or wide type
+// graphs cannot keep a canceled caller busy indefinitely.
+func (s *recursiveHashScratch) checkpoint() bool {
+	if s == nil || s.err != nil {
+		return false
+	}
+	s.steps++
+	if s.ctx == nil || s.steps%64 != 0 {
+		return true
+	}
+	if err := s.ctx.Err(); err != nil {
+		s.err = err
+		return false
+	}
+	return true
 }
 
 func (s *recursiveHashScratch) visitedContains(r *Recursive) bool {

@@ -188,7 +188,15 @@ func (w *bodyDigestWriter) writeType(label string, t typ.Type) {
 		w.writeString(label, "<nil>")
 		return
 	}
-	w.writeUint64(label+":hash", typ.EqualityHash(t))
+	if !w.checkpoint() {
+		return
+	}
+	h, err := typ.EqualityHashContext(w.ctx, t)
+	if err != nil {
+		w.errVal = err
+		return
+	}
+	w.writeUint64(label+":hash", h)
 	w.writeString(label+":display", t.String())
 }
 
@@ -643,7 +651,15 @@ func (w *bodyDigestWriter) writeTypeIdentity(label string, t typ.Type) {
 		w.writeString(label, "<nil>")
 		return
 	}
-	w.writeUint64(label, typ.EqualityHash(t))
+	if !w.checkpoint() {
+		return
+	}
+	h, err := typ.EqualityHashContext(w.ctx, t)
+	if err != nil {
+		w.errVal = err
+		return
+	}
+	w.writeUint64(label, h)
 }
 
 func (w *bodyDigestWriter) writeTypeMap(label string, values map[string]typ.Type) {
