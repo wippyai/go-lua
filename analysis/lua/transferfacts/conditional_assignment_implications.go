@@ -94,10 +94,17 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 	}
 }
 
-// assignmentStatesBeforePoints computes the incoming assignment state for an
-// entire acyclic CFG in one RPO pass. Looping graphs keep the per-stop solve:
-// excluding the stop transfer is what prevents a loop iteration from becoming
-// an incoming fact for that same branch.
+// assignmentStatesBeforePoints computes the incoming assignment state at every
+// branch. A branch outside a cycle can use the ordinary whole-graph solution:
+// its own transfer cannot reach any of its predecessors. A branch in a cycle
+// needs the historical "first arrival" meaning, where the branch is removed
+// before solving so a previous loop iteration cannot feed that same branch.
+//
+// The cyclic case is solved only inside the branch's strongly-connected
+// component. Edges entering that component are seeded from the ordinary global
+// solution. This is exact: if an outside predecessor depended on the removed
+// branch and could then enter its component, it would be mutually reachable
+// with the branch and therefore belong to the same component.
 func (l *lowerer) assignmentStatesBeforePoints(
 	input *factflow.FactsInput,
 	graph cfg.Graph,
@@ -109,33 +116,33 @@ func (l *lowerer) assignmentStatesBeforePoints(
 	if len(rpo) == 0 {
 		return nil
 	}
-	order := make(map[cfg.Point]int, len(rpo))
-	for i, point := range rpo {
-		order[point] = i
-	}
-	for i, point := range rpo {
-		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
-			if successorIndex, ok := order[successor]; !ok || successorIndex <= i {
-				return nil
-			}
-		}
-	}
-
-	in := make(map[cfg.Point]presentAssignmentState, len(rpo))
-	out := make(map[cfg.Point]presentAssignmentState, len(rpo))
+	in, out := l.solvePresentAssignmentStates(input, graph, nil, -1, noPresentAssignmentStop, nil)
+	components, componentOf := presentAssignmentStrongComponents(graph, rpo)
+	result := make(map[cfg.Point]presentAssignmentState)
 	for _, point := range rpo {
-		nextIn, ok := incomingPresentAssignmentState(graph, nil, out, point, graph.Entry())
-		if point == graph.Entry() {
-			nextIn, ok = presentAssignmentState{}, true
-		}
-		if !ok {
+		if !graph.IsBranch(point) {
 			continue
 		}
-		in[point] = nextIn
-		out[point] = l.transferPresentAssignmentState(input, point, nextIn, false)
+		componentIndex, ok := componentOf[point]
+		if !ok || !presentAssignmentComponentIsCyclic(graph, components[componentIndex]) {
+			if state, exists := in[point]; exists {
+				result[point] = state
+			}
+			continue
+		}
+		result[point] = l.assignmentStateBeforePointInComponent(
+			input,
+			graph,
+			point,
+			componentOf,
+			componentIndex,
+			out,
+		)
 	}
-	return in
+	return result
 }
+
+const noPresentAssignmentStop = ^cfg.Point(0)
 
 func (l *lowerer) addChannelSelectPayloadImplications(
 	input *factflow.FactsInput,
@@ -722,17 +729,38 @@ func (l *lowerer) assignmentStateBeforePoint(
 	if input == nil || graph == nil || stop == graph.Entry() {
 		return presentAssignmentState{}
 	}
+	_, out := l.solvePresentAssignmentStates(input, graph, nil, -1, stop, nil)
+	nextIn, ok := incomingPresentAssignmentState(graph, nil, out, stop, graph.Entry())
+	if !ok {
+		return presentAssignmentState{}
+	}
+	return nextIn
+}
+
+// solvePresentAssignmentStates runs the assignment must-analysis over either
+// the whole graph (component == nil) or one SCC. stop is omitted entirely. For
+// an SCC solve, outsideOut supplies the already-solved incoming boundary.
+func (l *lowerer) solvePresentAssignmentStates(
+	input *factflow.FactsInput,
+	graph cfg.Graph,
+	componentOf map[cfg.Point]int,
+	componentIndex int,
+	stop cfg.Point,
+	outsideOut map[cfg.Point]presentAssignmentState,
+) (map[cfg.Point]presentAssignmentState, map[cfg.Point]presentAssignmentState) {
 	in := make(map[cfg.Point]presentAssignmentState)
 	out := make(map[cfg.Point]presentAssignmentState)
-	in[graph.Entry()] = presentAssignmentState{}
 	changed := true
 	for changed {
 		changed = false
-		for _, point := range graph.RPO() {
+		for _, point := range cfg.RPOReadOnly(graph) {
+			if componentIndex >= 0 && componentOf[point] != componentIndex {
+				continue
+			}
 			if point == stop {
 				continue
 			}
-			nextIn, ok := incomingPresentAssignmentState(graph, nil, out, point, graph.Entry())
+			nextIn, ok := incomingPresentAssignmentStateWithBoundary(graph, componentOf, componentIndex, out, outsideOut, point)
 			if point == graph.Entry() {
 				nextIn, ok = presentAssignmentState{}, true
 			}
@@ -750,11 +778,129 @@ func (l *lowerer) assignmentStateBeforePoint(
 			}
 		}
 	}
-	nextIn, ok := incomingPresentAssignmentState(graph, nil, out, stop, graph.Entry())
+	return in, out
+}
+
+func (l *lowerer) assignmentStateBeforePointInComponent(
+	input *factflow.FactsInput,
+	graph cfg.Graph,
+	stop cfg.Point,
+	componentOf map[cfg.Point]int,
+	componentIndex int,
+	outsideOut map[cfg.Point]presentAssignmentState,
+) presentAssignmentState {
+	if stop == graph.Entry() {
+		return presentAssignmentState{}
+	}
+	_, out := l.solvePresentAssignmentStates(input, graph, componentOf, componentIndex, stop, outsideOut)
+	nextIn, ok := incomingPresentAssignmentStateWithBoundary(graph, componentOf, componentIndex, out, outsideOut, stop)
 	if !ok {
 		return presentAssignmentState{}
 	}
 	return nextIn
+}
+
+func incomingPresentAssignmentStateWithBoundary(
+	graph cfg.Graph,
+	componentOf map[cfg.Point]int,
+	componentIndex int,
+	localOut map[cfg.Point]presentAssignmentState,
+	outsideOut map[cfg.Point]presentAssignmentState,
+	point cfg.Point,
+) (presentAssignmentState, bool) {
+	var merged presentAssignmentState
+	seen := false
+	for _, pred := range cfg.PredecessorsReadOnly(graph, point) {
+		states := localOut
+		if componentIndex >= 0 && componentOf[pred] != componentIndex {
+			states = outsideOut
+		}
+		state, ok := states[pred]
+		if !ok {
+			continue
+		}
+		if !seen {
+			merged = clonePresentAssignmentState(state)
+			seen = true
+			continue
+		}
+		merged = intersectPresentAssignmentState(merged, state)
+	}
+	return merged, seen
+}
+
+// presentAssignmentStrongComponents returns deterministic Tarjan SCCs for the
+// reachable graph. SCC identity is internal; point order within a component is
+// inherited from Tarjan and never affects transfer order.
+func presentAssignmentStrongComponents(
+	graph cfg.Graph,
+	rpo []cfg.Point,
+) ([][]cfg.Point, map[cfg.Point]int) {
+	index := 0
+	indices := make(map[cfg.Point]int, len(rpo))
+	lowlink := make(map[cfg.Point]int, len(rpo))
+	onStack := make(map[cfg.Point]bool, len(rpo))
+	stack := make([]cfg.Point, 0, len(rpo))
+	components := make([][]cfg.Point, 0)
+	componentOf := make(map[cfg.Point]int, len(rpo))
+
+	var visit func(cfg.Point)
+	visit = func(point cfg.Point) {
+		indices[point] = index
+		lowlink[point] = index
+		index++
+		stack = append(stack, point)
+		onStack[point] = true
+		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
+			if _, seen := indices[successor]; !seen {
+				visit(successor)
+				if lowlink[successor] < lowlink[point] {
+					lowlink[point] = lowlink[successor]
+				}
+			} else if onStack[successor] && indices[successor] < lowlink[point] {
+				lowlink[point] = indices[successor]
+			}
+		}
+		if lowlink[point] != indices[point] {
+			return
+		}
+		componentIndex := len(components)
+		component := make([]cfg.Point, 0, 1)
+		for {
+			last := len(stack) - 1
+			member := stack[last]
+			stack = stack[:last]
+			onStack[member] = false
+			componentOf[member] = componentIndex
+			component = append(component, member)
+			if member == point {
+				break
+			}
+		}
+		components = append(components, component)
+	}
+	for _, point := range rpo {
+		if _, seen := indices[point]; !seen {
+			visit(point)
+		}
+	}
+	return components, componentOf
+}
+
+func presentAssignmentComponentIsCyclic(graph cfg.Graph, component []cfg.Point) bool {
+	if len(component) > 1 {
+		return true
+	}
+	if len(component) == 0 {
+		return false
+	}
+	point := component[0]
+	for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
+		if successor == point {
+			return true
+		}
+	}
+	return false
 }
 
 func branchRegion(graph cfg.Graph, start cfg.Point, join cfg.Point) map[cfg.Point]bool {
