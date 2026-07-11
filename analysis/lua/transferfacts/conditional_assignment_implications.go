@@ -70,14 +70,14 @@ func (l *lowerer) addConditionalAssignmentImplications(input *factflow.FactsInpu
 				continue
 			}
 			present := edgeAssignments[succ]
-			if len(present) == 0 {
+			if present.len() == 0 {
 				continue
 			}
 			for _, trigger := range branchEdgeValueTriggers(l.registry, refinements, cond) {
 				if !branchTriggerContradictedOnEdge(l.registry, refinements, trigger, !cond) {
 					continue
 				}
-				for _, target := range present {
+				for _, target := range present.entries {
 					implication, ok := conditionalAssignmentTargetImplication(
 						conditionalImplicationTrigger{path: trigger.path, value: trigger.value},
 						target,
@@ -183,11 +183,11 @@ func (l *lowerer) branchAssignmentValueImplicationCandidates(
 	selected presentAssignmentState,
 	opposites []presentAssignmentState,
 ) []conditionalAssignmentImplicationCandidate {
-	if len(selected) == 0 || len(opposites) == 0 {
+	if selected.len() == 0 || len(opposites) == 0 {
 		return nil
 	}
 	var out []conditionalAssignmentImplicationCandidate
-	for triggerSym, triggerAssignment := range selected {
+	for triggerSym, triggerAssignment := range selected.entries {
 		if !triggerAssignment.fromBranch || !triggerAssignment.hasValue {
 			continue
 		}
@@ -202,7 +202,7 @@ func (l *lowerer) branchAssignmentValueImplicationCandidates(
 			value:         triggerAssignment.value,
 			requireTruthy: true,
 		}
-		for targetSym, target := range selected {
+		for targetSym, target := range selected.entries {
 			if targetSym == triggerSym {
 				continue
 			}
@@ -460,9 +460,9 @@ func oppositeAssignmentsContradictTrigger(
 		return true
 	}
 	for _, opposite := range opposites {
-		other, ok := opposite[triggerKey]
+		other, ok := opposite.get(triggerKey)
 		if !ok || !other.hasValue {
-			other, ok = incoming[triggerKey]
+			other, ok = incoming.get(triggerKey)
 		}
 		if !ok || !other.hasValue {
 			return false
@@ -482,12 +482,12 @@ func incomingTriggerContradictsWithoutOppositeBranchWrite(
 	incoming presentAssignmentState,
 	opposites []presentAssignmentState,
 ) bool {
-	baseline, ok := incoming[triggerKey]
+	baseline, ok := incoming.get(triggerKey)
 	if !ok || !baseline.hasValue {
 		return false
 	}
 	for _, opposite := range opposites {
-		if other, ok := opposite[triggerKey]; ok && other.fromBranch {
+		if other, ok := opposite.get(triggerKey); ok && other.fromBranch {
 			return false
 		}
 	}
@@ -576,7 +576,30 @@ type conditionalAssignment struct {
 
 type presentAssignmentKey path.PathKey
 
-type presentAssignmentState map[presentAssignmentKey]conditionalAssignment
+// presentAssignmentState is an immutable dataflow value. entries must only be
+// mutated by presentAssignmentStateEditor after copy-on-write. identity names
+// the exact immutable generation, making the common convergence check O(1).
+// Independently constructed but equal states still compare structurally.
+type presentAssignmentState struct {
+	entries  map[presentAssignmentKey]conditionalAssignment
+	identity *presentAssignmentStateIdentity
+}
+
+type presentAssignmentStateIdentity struct{ _ byte }
+
+func newPresentAssignmentState(entries map[presentAssignmentKey]conditionalAssignment) presentAssignmentState {
+	if len(entries) == 0 {
+		return presentAssignmentState{}
+	}
+	return presentAssignmentState{entries: entries, identity: &presentAssignmentStateIdentity{}}
+}
+
+func (s presentAssignmentState) len() int { return len(s.entries) }
+
+func (s presentAssignmentState) get(key presentAssignmentKey) (conditionalAssignment, bool) {
+	assignment, ok := s.entries[key]
+	return assignment, ok
+}
 
 // presentAssignmentTransferStats is optional test/benchmark accounting for the
 // small assignment dataflow run. Production lowerers leave it nil.
@@ -600,7 +623,11 @@ func (e *presentAssignmentStateEditor) ensureMutable() {
 	if e.cloned {
 		return
 	}
-	e.state = clonePresentAssignmentState(e.state)
+	entries := make(map[presentAssignmentKey]conditionalAssignment, e.state.len())
+	for key, assignment := range e.state.entries {
+		entries[key] = assignment
+	}
+	e.state = presentAssignmentState{entries: entries, identity: &presentAssignmentStateIdentity{}}
 	e.cloned = true
 	if e.stats != nil {
 		e.stats.stateClones++
@@ -608,11 +635,11 @@ func (e *presentAssignmentStateEditor) ensureMutable() {
 }
 
 func (e *presentAssignmentStateEditor) invalidate(written path.Path) {
-	if len(e.state) == 0 || written.Symbol == 0 {
+	if e.state.len() == 0 || written.Symbol == 0 {
 		return
 	}
 	hasOverlap := false
-	for _, assignment := range e.state {
+	for _, assignment := range e.state.entries {
 		if assignment.path.Overlaps(written) {
 			hasOverlap = true
 			break
@@ -622,9 +649,9 @@ func (e *presentAssignmentStateEditor) invalidate(written path.Path) {
 		return
 	}
 	e.ensureMutable()
-	for key, assignment := range e.state {
+	for key, assignment := range e.state.entries {
 		if assignment.path.Overlaps(written) {
-			delete(e.state, key)
+			delete(e.state.entries, key)
 			if e.stats != nil {
 				e.stats.mutations++
 			}
@@ -635,7 +662,7 @@ func (e *presentAssignmentStateEditor) invalidate(written path.Path) {
 func (e *presentAssignmentStateEditor) write(key presentAssignmentKey, assignment conditionalAssignment) {
 	e.ensureMutable()
 	assignment.path = assignment.path.Clone()
-	e.state[key] = assignment
+	e.state.entries[key] = assignment
 	if e.stats != nil {
 		e.stats.mutations++
 	}
@@ -650,7 +677,7 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 ) presentAssignmentState {
 	region := branchRegion(graph, start, join)
 	if len(region) == 0 {
-		return nil
+		return presentAssignmentState{}
 	}
 	in := make(map[cfg.Point]presentAssignmentState, len(region))
 	out := make(map[cfg.Point]presentAssignmentState, len(region))
@@ -681,8 +708,8 @@ func (l *lowerer) presentAssignmentsOnBranchEdge(
 		}
 	}
 	joined, ok := presentAssignmentStateAtRegionExit(graph, region, out, join)
-	if !ok || len(joined) == 0 {
-		return nil
+	if !ok || joined.len() == 0 {
+		return presentAssignmentState{}
 	}
 	return clonePresentAssignmentState(joined)
 }
@@ -993,38 +1020,57 @@ func (l *lowerer) callSiteCalleeType(site factflow.CallSiteView) (typ.Type, bool
 }
 
 func clonePresentAssignmentState(in presentAssignmentState) presentAssignmentState {
-	if len(in) == 0 {
-		return presentAssignmentState{}
-	}
-	out := make(presentAssignmentState, len(in))
-	for key, target := range in {
-		target.path = target.path.Clone()
-		out[key] = target
-	}
-	return out
+	// States are immutable after publication. Cloning is therefore ownership
+	// transfer, not data copying; the editor performs copy-on-first-write.
+	return in
 }
 
 func intersectPresentAssignmentState(a, b presentAssignmentState) presentAssignmentState {
-	if len(a) == 0 || len(b) == 0 {
+	if a.len() == 0 || b.len() == 0 {
 		return presentAssignmentState{}
 	}
-	out := make(presentAssignmentState)
-	for key, left := range a {
-		right, ok := b[key]
+	if a.identity != nil && a.identity == b.identity {
+		return a
+	}
+	retained := 0
+	reusesB := true
+	for key, left := range a.entries {
+		right, ok := b.entries[key]
 		if ok && conditionalAssignmentsEqual(left, right) {
-			left.path = left.path.Clone()
-			out[key] = left
+			retained++
+			if !conditionalAssignmentRepresentationEqual(left, right) {
+				reusesB = false
+			}
 		}
 	}
-	return out
+	if retained == 0 {
+		return presentAssignmentState{}
+	}
+	if retained == a.len() {
+		return a
+	}
+	if retained == b.len() && reusesB {
+		return b
+	}
+	entries := make(map[presentAssignmentKey]conditionalAssignment, retained)
+	for key, left := range a.entries {
+		right, ok := b.entries[key]
+		if ok && conditionalAssignmentsEqual(left, right) {
+			entries[key] = left
+		}
+	}
+	return newPresentAssignmentState(entries)
 }
 
 func presentAssignmentStateEqual(a, b presentAssignmentState) bool {
-	if len(a) != len(b) {
+	if a.identity != nil && a.identity == b.identity {
+		return true
+	}
+	if a.len() != b.len() {
 		return false
 	}
-	for key, left := range a {
-		right, ok := b[key]
+	for key, left := range a.entries {
+		right, ok := b.entries[key]
 		if !ok || !conditionalAssignmentsEqual(left, right) {
 			return false
 		}
@@ -1040,4 +1086,8 @@ func conditionalAssignmentsEqual(a, b conditionalAssignment) bool {
 		return true
 	}
 	return a.value == b.value
+}
+
+func conditionalAssignmentRepresentationEqual(a, b conditionalAssignment) bool {
+	return conditionalAssignmentsEqual(a, b) && a.fromBranch == b.fromBranch
 }
