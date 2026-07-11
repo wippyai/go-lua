@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -155,5 +156,117 @@ func TestRetainedSummaryProductionCancellationPublishesNothingAndReleases(t *tes
 	owner.Release()
 	if session.Retained() {
 		t.Fatal("owner Release retained the prior generation")
+	}
+}
+
+func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity(t *testing.T) {
+	reg := standard.Registry()
+	// This shape represents the expensive edge we care about: loop work followed
+	// by a call whose outcome changes during the outer summary fixed point.
+	stmts := parseChunk(t, "local total = 0\nfor i = 1, 60 do total = total + i end\nreturn f(total)")
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
+	prepared, err := body.PrepareBoundChunk(stmts, bindings, body.Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+	dep := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99703)))
+	ownerKey := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99704)))
+	const resolution = uint64(991)
+
+	summaryStats := body.Stats{}
+	buildSummary := retainedProductionConfig(reg, dep, &summaryStats)
+	summaryCache := NewSummarySolveCache(reg)
+	run := newRetainedSummaryApplicationRun(reg, true)
+	defer run.Release()
+	owner := run.newOwner(ownerKey)
+	readers := []summary.Snapshot{
+		retainedSummaryTestSnapshot(reg, typevalue.FromType(reg, typ.String), dep),
+		retainedSummaryTestSnapshot(reg, typevalue.FromType(reg, typ.Number), dep),
+	}
+	for _, reader := range readers {
+		if _, err := summaryCache.solveRetainedAttributed(prepared, "handoff", resolution, reader, buildSummary, owner, nil, nil, nil, nil, nil, nil, nil); err != nil {
+			t.Fatalf("summary solve: %v", err)
+		}
+	}
+	if owner.published == nil || owner.published.result == nil || !owner.published.retained {
+		t.Fatal("summary solve did not publish a retained result")
+	}
+	session, ok := owner.published.resource.(*body.RetainedPreparedSession)
+	if !ok || !session.Retained() {
+		t.Fatal("summary solve did not retain a live generation")
+	}
+
+	materialStats := body.Stats{}
+	buildMaterial := retainedProductionConfig(reg, dep, &materialStats)
+	materialCache := newMaterializedSolveCache(reg, run)
+	materialSolves := 0
+	handoff, solved, err := solveMaterializedPreparedAttributed(
+		materialCache, prepared, ownerKey, 17, resolution, materializedSolveEntryState{}, readers[1],
+		buildMaterial, &materialSolves, nil,
+	)
+	if err != nil {
+		t.Fatalf("materialization handoff: %v", err)
+	}
+	if solved || materialSolves != 0 || materialStats.Transfer.Solver.TransferCalls != 0 {
+		t.Fatalf("handoff materialization = solved:%v bodies:%d transfers:%d, want no body solve", solved, materialSolves, materialStats.Transfer.Solver.TransferCalls)
+	}
+	if session.Retained() {
+		t.Fatal("handoff kept the retained equation graph alive")
+	}
+	if owner.published.result != nil {
+		t.Fatal("handoff owner still owns the transferred result")
+	}
+
+	cleanStats := body.Stats{}
+	cleanBuild := retainedProductionConfig(reg, dep, &cleanStats)
+	tracked := &trackingSummaryReader{reg: reg, base: readers[1]}
+	cleanConfig := cleanBuild(tracked)
+	cleanConfig.SummaryInputDigests = func() []uint64 { return trackedSummaryReadDigests(reg, tracked.deps) }
+	clean, err := body.SolvePrepared(prepared, cleanConfig.SolveConfig())
+	if err != nil {
+		t.Fatalf("clean materialization solve: %v", err)
+	}
+	if cleanStats.Transfer.Solver.TransferCalls == 0 {
+		t.Fatal("clean baseline unexpectedly performed no transfers")
+	}
+	t.Logf("materialization point transfers: handoff=0 clean=%d", cleanStats.Transfer.Solver.TransferCalls)
+	if handoff.ResultVersion() != clean.ResultVersion() {
+		t.Fatalf("ResultVersion handoff=%d clean=%d", handoff.ResultVersion(), clean.ResultVersion())
+	}
+	domain := state.Domain(reg)
+	for _, point := range clean.Graph().RPO() {
+		got, gotOK := handoff.StateAt(point)
+		want, wantOK := clean.StateAt(point)
+		if gotOK != wantOK || (gotOK && !domain.Equal(got, want)) {
+			t.Fatalf("point %d state differs after handoff", point)
+		}
+		gotBoundary, gotBoundaryOK := handoff.StateAtBoundary(point)
+		wantBoundary, wantBoundaryOK := clean.StateAtBoundary(point)
+		if gotBoundaryOK != wantBoundaryOK || (gotBoundaryOK && !domain.Equal(gotBoundary, wantBoundary)) {
+			t.Fatalf("point %d boundary observation differs after handoff", point)
+		}
+	}
+	gotSummary, err := summaryprojection.FromResultContext(context.Background(), handoff)
+	if err != nil {
+		t.Fatalf("handoff projection: %v", err)
+	}
+	wantSummary, err := summaryprojection.FromResultContext(context.Background(), clean)
+	if err != nil {
+		t.Fatalf("clean projection: %v", err)
+	}
+	if !summary.EqualNormalized(reg, gotSummary, wantSummary) {
+		t.Fatal("handoff materialization summary differs from clean solve")
+	}
+	// Rebinding deliberately recomputes the seal rather than claiming captured
+	// observations from the prior provider closure are still validated. The
+	// strategy counters differ, while the planned/projected observation surface
+	// and every boundary state above remain exact.
+	gotObservation, wantObservation := handoff.ObservationStats(), clean.ObservationStats()
+	if gotObservation.PlannedNodeOutputs != wantObservation.PlannedNodeOutputs ||
+		gotObservation.PlannedBoundaryOutputs != wantObservation.PlannedBoundaryOutputs ||
+		gotObservation.PlannedEdgeReachability != wantObservation.PlannedEdgeReachability ||
+		gotObservation.ProjectedBoundaryOutputs != wantObservation.ProjectedBoundaryOutputs ||
+		gotObservation.ProjectedEdgeReachability != wantObservation.ProjectedEdgeReachability {
+		t.Fatalf("observation surface handoff=%+v clean=%+v", gotObservation, wantObservation)
 	}
 }

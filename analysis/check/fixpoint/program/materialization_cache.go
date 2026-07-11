@@ -75,6 +75,7 @@ func (c *resultSummaryProjectionCache) project(result *body.Result) (summary.Sum
 
 type materializedSolveCache struct {
 	reg     *axis.Registry
+	handoff *retainedSummaryApplicationRun
 	entries map[materializedSolveCacheKey]materializedSolveCacheEntry
 }
 
@@ -114,11 +115,15 @@ type trackingSummaryReader struct {
 	deps map[summary.SummaryKey]trackedSummaryRead
 }
 
-func newMaterializedSolveCache(reg *axis.Registry) *materializedSolveCache {
+func newMaterializedSolveCache(reg *axis.Registry, handoff ...*retainedSummaryApplicationRun) *materializedSolveCache {
 	if reg == nil {
 		return nil
 	}
-	return &materializedSolveCache{reg: reg}
+	cache := &materializedSolveCache{reg: reg}
+	if len(handoff) != 0 {
+		cache.handoff = handoff[0]
+	}
+	return cache
 }
 
 func (r *trackingSummaryReader) Read(key summary.SummaryKey) (summary.Summary, bool) {
@@ -203,7 +208,7 @@ func solveMaterializedPrepared(
 	buildConfig func(summary.Reader) body.Config,
 	counter *int,
 ) (*body.Result, bool, error) {
-	return solveMaterializedPreparedAttributed(cache, prepared, owner, routing, entry, summaries, buildConfig, counter, nil)
+	return solveMaterializedPreparedAttributed(cache, prepared, owner, routing, 0, entry, summaries, buildConfig, counter, nil)
 }
 
 func solveMaterializedPreparedAttributed(
@@ -211,6 +216,7 @@ func solveMaterializedPreparedAttributed(
 	prepared *body.Static,
 	owner summary.SummaryKey,
 	routing uint64,
+	resolution uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
 	buildConfig func(summary.Reader) body.Config,
@@ -228,6 +234,23 @@ func solveMaterializedPreparedAttributed(
 		config := buildConfig(summaries)
 		result, err := body.RebindBoundaryProviders(cached, prepared, config.SolveConfig())
 		return result, false, err
+	}
+	if cache.handoff != nil {
+		config := buildConfig(summaries)
+		result, deps, ok, err := cache.handoff.takeMaterializationResult(prepared, owner, resolution, summaries, config.SolveConfig())
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			result, err = body.RebindBoundaryProviders(result, prepared, config.SolveConfig())
+			if err != nil {
+				result.ReleaseTransient()
+				return nil, false, err
+			}
+			cache.write(prepared, owner, routing, entry, summaries, deps, result)
+			cache.handoff.finishMaterializationHandoff(owner)
+			return result, false, nil
+		}
 	}
 	tracked := &trackingSummaryReader{reg: cache.reg, base: summaries}
 	config := buildConfig(tracked)

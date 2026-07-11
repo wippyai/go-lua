@@ -76,18 +76,23 @@ type retainedSummaryApplicationRun struct {
 	reg     *axis.Registry
 	enabled bool
 	owners  []*retainedSummaryApplicationOwner
+	byKey   map[summary.SummaryKey]*retainedSummaryApplicationOwner
 }
 
 func newRetainedSummaryApplicationRun(reg *axis.Registry, enabled bool) *retainedSummaryApplicationRun {
 	return &retainedSummaryApplicationRun{reg: reg, enabled: enabled}
 }
 
-func (r *retainedSummaryApplicationRun) newOwner() *retainedSummaryApplicationOwner {
+func (r *retainedSummaryApplicationRun) newOwner(key summary.SummaryKey) *retainedSummaryApplicationOwner {
 	if r == nil || !r.enabled {
 		return nil
 	}
 	owner := newRetainedSummaryApplicationOwner(r.reg)
 	r.owners = append(r.owners, owner)
+	if r.byKey == nil {
+		r.byKey = make(map[summary.SummaryKey]*retainedSummaryApplicationOwner)
+	}
+	r.byKey[key] = owner
 	return owner
 }
 
@@ -99,7 +104,63 @@ func (r *retainedSummaryApplicationRun) Release() {
 		owner.Release()
 	}
 	r.owners = nil
+	r.byKey = nil
 	r.enabled = false
+}
+
+// takeMaterializationResult transfers one completed body result from the
+// run-local summary generation to materialization. Every semantic input is
+// checked before ownership moves; a miss leaves the generation untouched.
+func (r *retainedSummaryApplicationRun) takeMaterializationResult(
+	prepared *body.Static,
+	ownerKey summary.SummaryKey,
+	resolution uint64,
+	reader summary.Reader,
+	config body.SolveConfig,
+) (*body.Result, map[summary.SummaryKey]trackedSummaryRead, bool, error) {
+	if r == nil || !r.enabled || prepared == nil {
+		return nil, nil, false, nil
+	}
+	owner := r.byKey[ownerKey]
+	if owner == nil || owner.released || owner.published == nil {
+		return nil, nil, false, nil
+	}
+	published := owner.published
+	if !published.retained || published.result == nil || published.key.resolution != resolution {
+		return nil, nil, false, nil
+	}
+	if len(changedRetainedSummaryDependencies(owner.reg, published.deps, reader)) != 0 {
+		return nil, nil, false, nil
+	}
+	session, ok := published.resource.(*body.RetainedPreparedSession)
+	if !ok || session == nil {
+		return nil, nil, false, nil
+	}
+	compatible, err := session.Compatible(prepared, config)
+	if err != nil || !compatible {
+		return nil, nil, false, err
+	}
+	result := published.result
+	published.result = nil
+	return result, cloneTrackedSummaryReads(published.deps), true, nil
+}
+
+// finishMaterializationHandoff drops the equation graph after the transferred
+// result has been rebound and installed in the materialization cache. The
+// graph never crosses that cache boundary.
+func (r *retainedSummaryApplicationRun) finishMaterializationHandoff(ownerKey summary.SummaryKey) {
+	if r == nil {
+		return
+	}
+	owner := r.byKey[ownerKey]
+	if owner == nil || owner.published == nil || owner.published.result != nil {
+		return
+	}
+	if owner.published.resource != nil {
+		owner.published.resource.Release()
+	}
+	owner.published.resource = nil
+	owner.published.retained = false
 }
 
 // retainedSummaryApplicationAttempt separates planning from publication. A

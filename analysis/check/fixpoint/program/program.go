@@ -120,12 +120,12 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
-	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, config.SummaryCache, retained.newOwner(), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
+	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, config.SummaryCache, retained.newOwner(keys.rootKey), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
 	for _, origin := range keys.functions {
-		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
+		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(origin.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
 	keys.contexts.ForEach(func(context keyedFunction) {
-		functions = append(functions, boundFunction(context, prepared.function(context.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(), config.CacheProfile, summaryOwnerResolutionDigest(keys, context.key), contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
+		functions = append(functions, boundFunction(context, prepared.function(context.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(context.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, context.key), contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
 	})
 
 	snapshot, err := query.Run(query.Config{
@@ -137,7 +137,6 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		WidenDelay: config.WidenDelay,
 		Stats:      queryStats(config.Stats),
 	})
-	retained.Release()
 	if err != nil {
 		return Result{}, err
 	}
@@ -153,6 +152,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		contextKeyFunc(keys, keys.rootKey),
 		directKeyFunc(keys),
 		keys,
+		retained,
 	)
 	if err != nil {
 		return Result{}, err
@@ -199,14 +199,14 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
-	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, prepared.function(fn), config.Check, config.Stats, config.SummaryCache, retained.newOwner(), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
+	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, prepared.function(fn), config.Check, config.Stats, config.SummaryCache, retained.newOwner(keys.rootKey), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
 	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
 	for _, origin := range keys.functions {
 		if _, ok := seen[origin.key]; ok {
 			continue
 		}
 		seen[origin.key] = struct{}{}
-		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
+		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(origin.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
 
 	snapshot, err := query.Run(query.Config{
@@ -218,7 +218,6 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		WidenDelay: config.WidenDelay,
 		Stats:      queryStats(config.Stats),
 	})
-	retained.Release()
 	if err != nil {
 		return Result{}, err
 	}
@@ -235,6 +234,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		contextKeyFunc(keys, keys.rootKey),
 		directKeyFunc(keys),
 		keys,
+		retained,
 	)
 	if err != nil {
 		return Result{}, err

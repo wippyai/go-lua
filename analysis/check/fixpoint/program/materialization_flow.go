@@ -34,6 +34,7 @@ func materializeChunkWithResultKeys(
 		prepared.root,
 		keys.rootKey,
 		materializedOwnerRoutingDigest(keys, keys.rootKey),
+		summaryOwnerResolutionDigest(keys, keys.rootKey),
 		materializedSolveEntryState{},
 		summaries,
 		func(reader summary.Reader) body.Config {
@@ -75,6 +76,7 @@ func materializeFunctionWithResultKeys(
 		prepared.function(fn),
 		keys.rootKey,
 		materializedOwnerRoutingDigest(keys, keys.rootKey),
+		summaryOwnerResolutionDigest(keys, keys.rootKey),
 		materializedSolveEntryState{},
 		summaries,
 		func(reader summary.Reader) body.Config {
@@ -107,8 +109,9 @@ func materializeChunkWithReturnPresenceProofs(
 	contextKeyFor callresult.KeyFunc,
 	keyFor callresult.KeyFunc,
 	keys programKeys,
+	handoff *retainedSummaryApplicationRun,
 ) (*body.Result, summary.Snapshot, error) {
-	solveCache := newMaterializedSolveCache(config.Registry)
+	solveCache := newMaterializedSolveCache(config.Registry, handoff)
 	projections := newResultSummaryProjectionCache()
 	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections)
 	if err != nil {
@@ -135,8 +138,9 @@ func materializeFunctionWithReturnPresenceProofs(
 	contextKeyFor callresult.KeyFunc,
 	keyFor callresult.KeyFunc,
 	keys programKeys,
+	handoff *retainedSummaryApplicationRun,
 ) (*body.Result, summary.Snapshot, error) {
-	solveCache := newMaterializedSolveCache(config.Registry)
+	solveCache := newMaterializedSolveCache(config.Registry, handoff)
 	projections := newResultSummaryProjectionCache()
 	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections)
 	if err != nil {
@@ -304,6 +308,7 @@ func materializeFunctionTree(
 			prepared.function(origin.funcExpr),
 			origin.key,
 			materializedOwnerRoutingDigest(keys, origin.key),
+			summaryOwnerResolutionDigest(keys, origin.key),
 			materializedSolveEntryFor(prepared.function(origin.funcExpr), origin),
 			cache,
 			func(reader summary.Reader) body.Config {
@@ -516,6 +521,7 @@ func materializeDiscoveredContexts(
 			contextPrepared,
 			context.key,
 			materializedOwnerRoutingDigest(*keys, context.key),
+			summaryOwnerResolutionDigest(*keys, context.key),
 			materializedSolveEntryFor(contextPrepared, context),
 			cache,
 			func(reader summary.Reader) body.Config {

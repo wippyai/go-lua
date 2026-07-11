@@ -167,6 +167,24 @@ func (r *RetainedPreparedSession) Retained() bool {
 	return r != nil && !r.released && r.transfer != nil
 }
 
+// Compatible reports whether config describes the same immutable equation
+// system and boundary state as the retained generation. Summary payloads are
+// deliberately excluded: the program layer validates their exact normalized
+// dependency snapshot separately before reusing a completed result.
+//
+// Unlike BeginUpdate, Compatible is observational. A mismatch never releases
+// the retained generation and never starts a clean fallback solve.
+func (r *RetainedPreparedSession) Compatible(prepared *Static, config SolveConfig) (bool, error) {
+	if r == nil || r.released || r.transfer == nil || prepared == nil {
+		return false, nil
+	}
+	bodyIdentity, provisionalIdentity, err := retainedIdentities(prepared, config)
+	if err != nil {
+		return false, err
+	}
+	return r.bodyIdentity == bodyIdentity && r.provisionalIdentity == provisionalIdentity, nil
+}
+
 func retainedIdentities(prepared *Static, config SolveConfig) (uint64, uint64, error) {
 	ctx := config.Context
 	if ctx == nil {
