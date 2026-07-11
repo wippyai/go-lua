@@ -39,14 +39,34 @@ type callOutcomeActiveInKey struct {
 	targetPath    pathdom.PathKey
 }
 
+// callOutcomeSite is an exact, immutable call-site entry. CallSiteView is safe
+// to retain because Facts owns immutable call-site storage for the lifetime of
+// the node/edge transfer closure which owns this cache.
+type callOutcomeSite struct {
+	point cfg.Point
+	site  factflow.CallSiteView
+}
+
+// callOutcomeTraversalStats is optional test/benchmark accounting. Production
+// transfer caches leave stats nil, so attribution does not retain per-run data.
+type callOutcomeTraversalStats struct {
+	callSiteBuilds         int
+	callSitePointProbes    int
+	edgeCallEntriesVisited int
+	presenceDirectLookups  int
+}
+
 type callOutcomeTraversalCache struct {
 	graphID          uint64
 	hasGraph         bool
 	rpo              []cfg.Point
+	callSitesBuilt   bool
+	callSites        []callOutcomeSite
 	pointOrder       map[cfg.Point]int
 	predecessors     map[cfg.Point][]cfg.Point
 	assignmentPoints map[callOutcomeAssignmentKey]cfg.Point
 	activeIn         map[callOutcomeActiveInKey]map[cfg.Point]bool
+	stats            *callOutcomeTraversalStats
 }
 
 func (c *callOutcomeTraversalCache) resetForGraph(graph cfg.Graph) {
@@ -57,7 +77,8 @@ func (c *callOutcomeTraversalCache) resetForGraph(graph cfg.Graph) {
 	if c.hasGraph && c.graphID == id {
 		return
 	}
-	*c = callOutcomeTraversalCache{graphID: id, hasGraph: true}
+	stats := c.stats
+	*c = callOutcomeTraversalCache{graphID: id, hasGraph: true, stats: stats}
 }
 
 func (c *callOutcomeTraversalCache) graphRPO(graph cfg.Graph) []cfg.Point {
@@ -69,6 +90,36 @@ func (c *callOutcomeTraversalCache) graphRPO(graph cfg.Graph) []cfg.Point {
 		c.rpo = graph.RPO()
 	}
 	return c.rpo
+}
+
+// exactCallSites returns only the graph points which carry call-site facts, in
+// graph RPO order. The immutable entries are built once per graph and reused
+// across every solve which reuses the prepared transfer closure.
+func (c *callOutcomeTraversalCache) exactCallSites(graph cfg.Graph, facts factflow.Facts) []callOutcomeSite {
+	if graph == nil {
+		return nil
+	}
+	c.resetForGraph(graph)
+	if c.callSitesBuilt {
+		return c.callSites
+	}
+	c.callSitesBuilt = true
+	rpo := c.graphRPO(graph)
+	if c.stats != nil {
+		c.stats.callSiteBuilds++
+		c.stats.callSitePointProbes += len(rpo)
+	}
+	if !facts.HasCallSites() {
+		return nil
+	}
+	c.callSites = make([]callOutcomeSite, 0, facts.CallSiteCount())
+	for _, point := range rpo {
+		site, ok := facts.CallSiteView(point)
+		if ok {
+			c.callSites = append(c.callSites, callOutcomeSite{point: point, site: site})
+		}
+	}
+	return c.callSites
 }
 
 func (c *callOutcomeTraversalCache) graphPointOrder(graph cfg.Graph) map[cfg.Point]int {
@@ -145,11 +196,12 @@ func applyCallOutcomeEdgeFacts(
 	if cache == nil {
 		cache = &callOutcomeTraversalCache{}
 	}
-	for _, callPoint := range cache.graphRPO(ctx.Graph) {
-		siteView, ok := facts.CallSiteView(callPoint)
-		if !ok {
-			continue
-		}
+	callSites := cache.exactCallSites(ctx.Graph, facts)
+	if cache.stats != nil {
+		cache.stats.edgeCallEntriesVisited += len(callSites)
+	}
+	for _, callSite := range callSites {
+		callPoint, siteView := callSite.point, callSite.site
 		if !callOutcomeEdgeMayUseOutcome(ctx, branchRefinements, callPoint, siteView) {
 			continue
 		}

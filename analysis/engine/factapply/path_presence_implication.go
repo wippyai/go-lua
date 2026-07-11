@@ -36,18 +36,26 @@ func applyCallOutcomePresenceRelationPublishes(
 	if cache == nil {
 		cache = &callOutcomeTraversalCache{}
 	}
-	for _, callPoint := range cache.graphRPO(ctx.Graph) {
-		siteView, ok := facts.CallSiteView(callPoint)
-		if !ok {
-			continue
-		}
-		if !callOutcomePresenceRelationCanPublishAt(ctx.Graph, facts, cache, callPoint, siteView, ctx.Point) {
-			continue
-		}
-		outcome := outcomeProvider(callContextAt(ctx, callPoint, read), siteView, out, read)
-		for _, relation := range outcome.ReturnPresenceRelations {
-			out = publishCallReturnPresenceImplication(ctx, facts, cache, resolver, callPoint, siteView, relation, out)
-		}
+	cache.resetForGraph(ctx.Graph)
+	assignment, ok := facts.RootAssignment(ctx.Point)
+	if !ok {
+		return out
+	}
+	source := assignment.Source()
+	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+		return out
+	}
+	callPoint := source.CallPoint
+	if cache.stats != nil {
+		cache.stats.presenceDirectLookups++
+	}
+	siteView, ok := facts.CallSiteView(callPoint)
+	if !ok || !callOutcomePresenceRelationCanPublishAt(ctx.Graph, facts, cache, callPoint, siteView, ctx.Point) {
+		return out
+	}
+	outcome := outcomeProvider(callContextAt(ctx, callPoint, read), siteView, out, read)
+	for _, relation := range outcome.ReturnPresenceRelations {
+		out = publishCallReturnPresenceImplication(ctx, facts, cache, resolver, callPoint, siteView, relation, out)
 	}
 	return out
 }
