@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -58,6 +59,21 @@ func TestResultVersionIncludesScheduleSemantics(t *testing.T) {
 	}
 	if fifo.ResultVersion() == wto.ResultVersion() {
 		t.Fatalf("FIFO and WTO result versions both %d", fifo.ResultVersion())
+	}
+}
+
+func TestCachedResultVersionPrefixStillObservesCancellation(t *testing.T) {
+	prepared, err := PrepareChunk(parseChunk(t, "local value = 1"), Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("PrepareChunk: %v", err)
+	}
+	if _, err := InputDigestContext(prepared, SolveConfig{Context: context.Background()}); err != nil {
+		t.Fatalf("prime InputDigestContext: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := InputDigestContext(prepared, SolveConfig{Context: ctx}); !errors.Is(err, context.Canceled) || !errors.Is(err, solve.ErrCanceled) {
+		t.Fatalf("cached InputDigestContext error = %v, want solve and context cancellation", err)
 	}
 }
 

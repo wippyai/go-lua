@@ -3,6 +3,7 @@ package body
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -20,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -156,6 +158,15 @@ type Static struct {
 	callOutcomeSupplement callpayload.CallOutcomeProvider
 	signatureReturnOps    effectlowering.ReturnTypeOps
 	wtoPlan               *solve.WTOPlan[cfg.Point]
+
+	// resultVersionPrefix is the digest state after immutable prepared-body
+	// inputs. A Static is solved many times across prepass, summary convergence,
+	// contexts, and materialization; re-encoding its WIR and imported manifests
+	// on every solve is pure duplication. Per-solve state is appended to a copy
+	// of this writer by computeResultVersion.
+	resultVersionPrefixMu    sync.Mutex
+	resultVersionPrefix      internalhash.Writer
+	resultVersionPrefixReady bool
 }
 
 // HasCallSites reports whether the prepared body contains any statically

@@ -41,15 +41,16 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 	if s == nil {
 		return 0, nil
 	}
-	w := newBodyDigestWriter(s, config.Context)
-	w.label("body-inputs-v1")
-	w.writeWIR(s.wir, s.cfg.Graph)
-	w.writeSymbolTypes(s.symbolTypes)
-	w.writeGlobals(s.globals, s.globalTypes)
-	w.writeManifestSource("signatures", s.signatures.Manifests)
-	w.writeManifestSource("module-types", s.moduleTypes.Manifests)
-	w.writeManifestSource("module-loads", s.moduleLoads.Manifests)
-	w.writeBool("signatures-stdlib", s.signatures.IncludeStdlib)
+	prefix, err := staticResultVersionPrefix(s, config.Context)
+	if err != nil {
+		return 0, err
+	}
+	w := &bodyDigestWriter{
+		h:       prefix,
+		static:  s,
+		symbols: make(map[symbol.ID]string),
+		ctx:     config.Context,
+	}
 	w.writeClosedDynamicInvariants(config.ClosedDynamicAllValues)
 	w.writeStateLanes(config.StateLanes)
 	w.writeInt("schedule", int(config.Schedule))
@@ -60,6 +61,46 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 		return 0, errors.Join(solve.ErrCanceled, err)
 	}
 	return w.sum64(), nil
+}
+
+func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Writer, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return internalhash.Writer{}, errors.Join(solve.ErrCanceled, err)
+		}
+	}
+	s.resultVersionPrefixMu.Lock()
+	if s.resultVersionPrefixReady {
+		prefix := s.resultVersionPrefix
+		s.resultVersionPrefixMu.Unlock()
+		return prefix, nil
+	}
+	s.resultVersionPrefixMu.Unlock()
+
+	// Do not hold the cache lock while encoding: a canceled solve must remain
+	// independently cancelable even if another solve is computing the prefix.
+	// Concurrent first solves may duplicate this one-time work, then publish the
+	// same deterministic writer state below.
+	w := newBodyDigestWriter(s, ctx)
+	w.label("body-inputs-v1")
+	w.writeWIR(s.wir, s.cfg.Graph)
+	w.writeSymbolTypes(s.symbolTypes)
+	w.writeGlobals(s.globals, s.globalTypes)
+	w.writeManifestSource("signatures", s.signatures.Manifests)
+	w.writeManifestSource("module-types", s.moduleTypes.Manifests)
+	w.writeManifestSource("module-loads", s.moduleLoads.Manifests)
+	w.writeBool("signatures-stdlib", s.signatures.IncludeStdlib)
+	if err := w.err(); err != nil {
+		return internalhash.Writer{}, errors.Join(solve.ErrCanceled, err)
+	}
+	s.resultVersionPrefixMu.Lock()
+	defer s.resultVersionPrefixMu.Unlock()
+	if s.resultVersionPrefixReady {
+		return s.resultVersionPrefix, nil
+	}
+	s.resultVersionPrefix = w.h
+	s.resultVersionPrefixReady = true
+	return s.resultVersionPrefix, nil
 }
 
 type bodyDigestWriter struct {
