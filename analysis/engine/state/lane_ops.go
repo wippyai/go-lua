@@ -34,6 +34,7 @@ type laneOps struct {
 	bottom   func(*State)
 	top      func(*State)
 	equal    func(State, State) bool
+	same     func(State, State) bool
 	lessOrEq func(State, State) bool
 	join     func(*State, State, State, bool)
 	widen    func(*State, State, State, bool)
@@ -54,6 +55,9 @@ func stateLane[T any](
 		},
 		equal: func(a, b State) bool {
 			return domain.Equal(get(a), get(b))
+		},
+		same: func(a, b State) bool {
+			return domain.Same != nil && domain.Same(get(a), get(b))
 		},
 		lessOrEq: func(a, b State) bool {
 			return domain.LessOrEq(get(a), get(b))
@@ -205,6 +209,9 @@ func lanesEqual(lanes []laneOps, a, b State) bool {
 
 func lanesLessOrEq(lanes []laneOps, a, b State) bool {
 	for _, lane := range lanes {
+		if lane.same(a, b) {
+			continue
+		}
 		if !lane.lessOrEq(a, b) {
 			return false
 		}

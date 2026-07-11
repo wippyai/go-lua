@@ -209,6 +209,24 @@ func TestMap_JoinSameFiniteMapDoesNotTouchElements(t *testing.T) {
 	}
 }
 
+func TestMap_LessOrEqSkipsSharedElementRepresentation(t *testing.T) {
+	var lessCalls int
+	elem := signLattice()
+	elem.Same = func(a, b sign) bool { return a == b }
+	elem.LessOrEq = func(a, b sign) bool {
+		lessCalls++
+		return signLessOrEq(a, b)
+	}
+	d := Map[string, sign](elem)
+
+	if !d.LessOrEq(map[string]sign{"x": sNeg}, map[string]sign{"x": sNeg}) {
+		t.Fatal("shared element should compare less-or-equal")
+	}
+	if lessCalls != 0 {
+		t.Fatalf("LessOrEq invoked element comparison %d times for identical values", lessCalls)
+	}
+}
+
 func TestMap_WidenBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
 	d := Map[string, sign](signLattice())
 	canonical := map[string]sign{"x": sNeg, "y": sPos}

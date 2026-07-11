@@ -115,6 +115,7 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 			}
 			return true
 		},
+		Same: sameMapValue,
 		LessOrEq: func(a, b map[K]V) bool {
 			if sameMapValue(a, b) {
 				return true
@@ -126,7 +127,7 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 				// Top ⊑ b only if b is also Top, handled above; here b is finite.
 				return false
 			}
-			return pointwiseLessOrEq(a, b, elem.Bottom(), elem.LessOrEq)
+			return pointwiseLessOrEq(a, b, elem.Bottom(), elem.Same, elem.LessOrEq)
 		},
 		Join: func(a, b map[K]V) map[K]V {
 			if sameMapValue(a, b) {
@@ -142,10 +143,10 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 				return canonicalize(a)
 			}
 			bot := elem.Bottom()
-			if pointwiseLessOrEq(b, a, bot, elem.LessOrEq) {
+			if pointwiseLessOrEq(b, a, bot, elem.Same, elem.LessOrEq) {
 				return canonicalize(a)
 			}
-			if pointwiseLessOrEq(a, b, bot, elem.LessOrEq) {
+			if pointwiseLessOrEq(a, b, bot, elem.Same, elem.LessOrEq) {
 				return canonicalize(b)
 			}
 			return pointwiseMap(a, b, elem.Bottom(), elem.Join, elem.Equal)
@@ -164,7 +165,7 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 				return canonicalize(prev)
 			}
 			bot := elem.Bottom()
-			if pointwiseLessOrEq(next, prev, bot, elem.LessOrEq) {
+			if pointwiseLessOrEq(next, prev, bot, elem.Same, elem.LessOrEq) {
 				return canonicalize(prev)
 			}
 			return pointwiseMap(prev, next, elem.Bottom(), elem.Widen, elem.Equal)
@@ -197,12 +198,16 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 func pointwiseLessOrEq[K comparable, V any](
 	a, b map[K]V,
 	bot V,
+	same func(V, V) bool,
 	lessOrEq func(V, V) bool,
 ) bool {
 	for k, av := range a {
 		bv, ok := b[k]
 		if !ok {
 			bv = bot
+		}
+		if same != nil && same(av, bv) {
+			continue
 		}
 		if !lessOrEq(av, bv) {
 			return false

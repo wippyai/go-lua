@@ -21,6 +21,9 @@ func productDomainForRegistry(reg *axis.Registry) lattice.Lattice[Value] {
 		Equal: func(a, b Value) bool {
 			return equalRuntime(rt, a, b)
 		},
+		Same: func(a, b Value) bool {
+			return sameRuntime(rt, a, b)
+		},
 		LessOrEq: func(a, b Value) bool {
 			return lessOrEqRuntime(rt, a, b)
 		},
@@ -111,6 +114,16 @@ func lessOrEqRuntime(rt *registryRuntime, a, b Value) bool {
 		bi++
 	}
 	return bi == len(bSlots)
+}
+
+// sameRuntime recognizes an already-validated shared product representation.
+// It deliberately checks registry ownership before the pointer fast path so a
+// value from another registry still follows the validating comparison path.
+func sameRuntime(rt *registryRuntime, a, b Value) bool {
+	if a.n != b.n {
+		return false
+	}
+	return a.n == nil || a.n.reg == rt.reg
 }
 
 func Join(reg *axis.Registry, a, b Value) Value {

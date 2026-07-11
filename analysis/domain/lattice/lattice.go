@@ -33,6 +33,9 @@ package lattice
 //   - Bottom: least element. Bottom() ⊑ x for all x.
 //   - Top: greatest element. x ⊑ Top() for all x.
 //   - Equal: reflexive, symmetric, transitive equality on the carrier.
+//   - Same: optional representation-identity predicate. When present, it may
+//     return true only for values that are known Equal, and lets persistent
+//     domains avoid re-comparing a shared immutable representation.
 //   - LessOrEq: a ⊑ b in the partial order — reflexive, transitive,
 //     antisymmetric with Equal.
 //   - Join: least upper bound — commutative, associative, idempotent,
@@ -53,6 +56,7 @@ type Lattice[T any] struct {
 	Bottom   func() T
 	Top      func() T
 	Equal    func(a, b T) bool
+	Same     func(a, b T) bool
 	LessOrEq func(a, b T) bool
 	Join     func(a, b T) T
 	Meet     func(a, b T) T

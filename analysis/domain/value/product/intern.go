@@ -46,11 +46,13 @@ func newInterner() *interner {
 	return &interner{}
 }
 
-func (i *interner) shardFor(reg *axis.Registry) *internerShard {
-	// Registry identity is only used to choose a lock/cache shard. Product
-	// hashes and ordering remain stable and independent of this address.
+func (i *interner) shardFor(reg *axis.Registry, hash uint64) *internerShard {
+	// A lint worker shares one registry with its peers, so registry identity
+	// alone would collapse all of its product construction onto one mutex.
+	// Mix the stable candidate hash into the selection while retaining the
+	// registry-keyed buckets inside each shard.
 	address := uint64(reflect.ValueOf(reg).Pointer())
-	return &i.shards[(address>>3)%internerShards]
+	return &i.shards[((address>>3)^hash)&(internerShards-1)]
 }
 
 func (s *internerShard) evictOldest() {
@@ -126,7 +128,7 @@ func internCanonicalNoBottom(rt *registryRuntime, shape Shape, p presence.Value,
 	}
 
 	h := rt.stableHash(shape, p, slots)
-	shard := globalInterner.shardFor(rt.reg)
+	shard := globalInterner.shardFor(rt.reg, h)
 	shard.mu.Lock()
 
 	bucket := shard.nodes[rt.reg]

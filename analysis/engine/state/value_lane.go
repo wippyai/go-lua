@@ -30,6 +30,12 @@ func valueLaneDomain(reg *axis.Registry) lattice.Lattice[valueLane] {
 			}
 			return domain.Equal(a.symbols, b.symbols) && domain.Equal(a.returns, b.returns)
 		},
+		Same: func(a, b valueLane) bool {
+			if a.top || b.top {
+				return a.top && b.top
+			}
+			return domain.Same(a.symbols, b.symbols) && domain.Same(a.returns, b.returns)
+		},
 		LessOrEq: func(a, b valueLane) bool {
 			if b.top {
 				return true
