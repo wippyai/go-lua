@@ -292,7 +292,11 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 		if static := prepared.function(fn); static != nil {
 			entry = entry.RekeyPathEvidence(entryKeys, static.KeySpace())
 			entryKeys = static.KeySpace()
-			bodyDigest = static.IdentityDigest()
+			var err error
+			bodyDigest, err = static.IdentityDigestContext(config.Context)
+			if err != nil {
+				return changed, err
+			}
 		}
 		if contextKey, ok := keys.upsertCallContext(config.Registry, callRef, baseKey, fn, entry, entryKeys, keys.functionTypes[baseKey], bodyDigest); ok {
 			changed = addChangedContextKey(changed, contextKey)

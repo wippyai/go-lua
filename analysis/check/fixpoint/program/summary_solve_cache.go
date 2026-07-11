@@ -64,9 +64,17 @@ func (c *SummarySolveCache) solve(
 		return summary.Summary{}, nil
 	}
 	config := build(reader)
+	bodyDigest, err := prepared.IdentityDigestContext(config.Context)
+	if err != nil {
+		return summary.Summary{}, err
+	}
+	inputDigest, err := body.InputDigestContext(prepared, config.SolveConfig())
+	if err != nil {
+		return summary.Summary{}, err
+	}
 	key := summarySolveCacheKey{
-		body:       prepared.IdentityDigest(),
-		input:      body.InputDigest(prepared, config.SolveConfig()),
+		body:       bodyDigest,
+		input:      inputDigest,
 		profile:    profile,
 		resolution: resolution,
 	}

@@ -392,20 +392,30 @@ func SolvePrepared(prepared *Static, config SolveConfig) (*Result, error) {
 // This is deliberately the same digest used by ResultVersion, rather than a
 // second, subtly different cache-key serialization.
 func InputDigest(prepared *Static, config SolveConfig) uint64 {
-	if prepared == nil {
-		return 0
-	}
-	digest, _ := computeResultVersion(prepared, config, config.EntryState, config.Initial)
+	digest, _ := InputDigestContext(prepared, config)
 	return digest
+}
+
+// InputDigestContext returns InputDigest while observing the solve context.
+func InputDigestContext(prepared *Static, config SolveConfig) (uint64, error) {
+	if prepared == nil {
+		return 0, nil
+	}
+	return computeResultVersion(prepared, config, config.EntryState, config.Initial)
 }
 
 // IdentityDigest is the stable content identity of the prepared body. It
 // excludes per-application inputs such as the entry state and caller summary
 // environment, which are included in InputDigest and cache dependency checks.
 func (s *Static) IdentityDigest() uint64 {
-	if s == nil {
-		return 0
-	}
-	digest, _ := computeResultVersion(s, SolveConfig{}, state.State{}, nil)
+	digest, _ := s.IdentityDigestContext(context.Background())
 	return digest
+}
+
+// IdentityDigestContext returns IdentityDigest while observing ctx.
+func (s *Static) IdentityDigestContext(ctx context.Context) (uint64, error) {
+	if s == nil {
+		return 0, nil
+	}
+	return computeResultVersion(s, SolveConfig{Context: ctx}, state.State{}, nil)
 }
