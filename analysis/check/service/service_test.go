@@ -361,6 +361,61 @@ return value
 	}
 }
 
+func TestBatchSessionReusesEquivalentAnalysisAndInvalidatesChangedInput(t *testing.T) {
+	ctx := context.Background()
+	session := NewBatchSession()
+	base := UnitInput{
+		ID:         "analysis-cache-a",
+		ModulePath: "example/analysis-cache",
+		EntryFile:  "shared.lua",
+		SourceFiles: map[string][]byte{"shared.lua": []byte(`local value: number = 1
+return value
+`)},
+		Profile: "typed",
+	}
+	if _, err := session.UpsertUnit(ctx, base); err != nil {
+		t.Fatalf("UpsertUnit A: %v", err)
+	}
+	first := mustSolve(t, session, SolveRequest{UnitID: base.ID, Freshness: FreshnessRequireNew})
+
+	// UnitID is intentionally not part of UnitDigest. A second independently
+	// resolved unit with the same materialized source and presentation label may
+	// reuse the immutable body/summary result, but gets its own publication tag.
+	copyInput := base
+	copyInput.ID = "analysis-cache-b"
+	if _, err := session.UpsertUnit(ctx, copyInput); err != nil {
+		t.Fatalf("UpsertUnit B: %v", err)
+	}
+	second := mustSolve(t, session, SolveRequest{UnitID: copyInput.ID, Freshness: FreshnessRequireNew})
+	if second.SolveSeq == first.SolveSeq || second.UnitID != copyInput.ID || second.UnitDigest != first.UnitDigest {
+		t.Fatalf("reused publication tag = %#v, first = %#v", second, first)
+	}
+	session.mu.RLock()
+	cacheEntries := len(session.analysisCache)
+	session.mu.RUnlock()
+	if cacheEntries != 1 {
+		t.Fatalf("analysis cache entries = %d, want one digest-scoped shared result", cacheEntries)
+	}
+
+	changed := copyInput
+	changed.SourceFiles = map[string][]byte{"shared.lua": []byte(`local value: string = "changed"
+return value
+`)}
+	if _, err := session.UpsertUnit(ctx, changed); err != nil {
+		t.Fatalf("UpsertUnit changed: %v", err)
+	}
+	third := mustSolve(t, session, SolveRequest{UnitID: changed.ID, Freshness: FreshnessRequireNew})
+	if third.UnitDigest == second.UnitDigest || third.BodyInputDigests["root"] == second.BodyInputDigests["root"] {
+		t.Fatalf("changed input reused stale analysis: before=%#v after=%#v", second, third)
+	}
+	session.mu.RLock()
+	cacheEntries = len(session.analysisCache)
+	session.mu.RUnlock()
+	if cacheEntries != 2 {
+		t.Fatalf("analysis cache entries after content change = %d, want two digest versions", cacheEntries)
+	}
+}
+
 func TestBatchSessionHighFanoutMaterializedContextsAreDeterministic(t *testing.T) {
 	ctx := context.Background()
 	session := NewBatchSession()

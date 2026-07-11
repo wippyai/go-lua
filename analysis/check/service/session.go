@@ -19,6 +19,18 @@ type unitProfileKey struct {
 	profile string
 }
 
+// analysisCacheKey identifies every input that can affect a completed analysis
+// result. UnitDigest fences source, resolution, manifests, and checker policy;
+// entryLabel is deliberately separate because labels are presentation-only for
+// a UnitInput but are embedded in rendered diagnostics produced by the parser.
+// Keeping it in this key preserves byte-for-byte rendered output when two
+// units share semantic input but use different display labels.
+type analysisCacheKey struct {
+	unitDigest Digest
+	profile    string
+	entryLabel string
+}
+
 // BatchSession is the reference whole-unit implementation of
 // WorkspaceSession. Its mutex protects unit/result maps and immutable result
 // publication. Parsing and solving happen against a retained input snapshot
@@ -30,6 +42,7 @@ type BatchSession struct {
 	results            map[resultKey]*completedSnapshot
 	latest             map[unitProfileKey]resultKey
 	bySeq              map[embedding.SolveSeq]resultKey
+	analysisCache      map[analysisCacheKey]*completedSnapshot
 	nextSeq            embedding.SolveSeq
 	nextUnitGeneration uint64
 }
@@ -38,10 +51,11 @@ var _ WorkspaceSession = (*BatchSession)(nil)
 
 func NewBatchSession() *BatchSession {
 	return &BatchSession{
-		units:   make(map[UnitID]retainedUnit),
-		results: make(map[resultKey]*completedSnapshot),
-		latest:  make(map[unitProfileKey]resultKey),
-		bySeq:   make(map[embedding.SolveSeq]resultKey),
+		units:         make(map[UnitID]retainedUnit),
+		results:       make(map[resultKey]*completedSnapshot),
+		latest:        make(map[unitProfileKey]resultKey),
+		bySeq:         make(map[embedding.SolveSeq]resultKey),
+		analysisCache: make(map[analysisCacheKey]*completedSnapshot),
 	}
 }
 
@@ -91,7 +105,42 @@ func (s *BatchSession) RemoveUnit(ctx context.Context, id UnitID) error {
 			delete(s.latest, key)
 		}
 	}
+	for key, snapshot := range s.analysisCache {
+		if snapshot != nil && snapshot.tag.UnitID == id {
+			delete(s.analysisCache, key)
+		}
+	}
 	return nil
+}
+
+func analysisKey(unit retainedUnit, profile string) analysisCacheKey {
+	return analysisCacheKey{
+		unitDigest: unit.digest,
+		profile:    profile,
+		entryLabel: documentLabel(unit.input, unit.input.EntryDocument),
+	}
+}
+
+// cachedAnalysis returns a new publication wrapper around immutable completed
+// analysis. The wrapper's tag is the only mutable part of publication, so a
+// forced solve can still receive a fresh SolveSeq without rerunning any body
+// or summary solve. The key uses content/version digests exclusively; it can
+// never serve analysis produced for changed source or manifests.
+func (s *BatchSession) cachedAnalysis(unit retainedUnit, profile string, documentVersion int64) *completedSnapshot {
+	s.mu.RLock()
+	cached := s.analysisCache[analysisKey(unit, profile)]
+	s.mu.RUnlock()
+	if cached == nil {
+		return nil
+	}
+	copy := *cached
+	copy.tag = cloneResultTag(cached.tag)
+	copy.tag.UnitID = unit.input.ID
+	copy.tag.UnitDigest = unit.digest
+	copy.tag.Profile = profile
+	copy.tag.DocumentVersion = documentVersion
+	copy.tag.SourceDigests = cloneMap(unit.sourceDigests)
+	return &copy
 }
 
 func (s *BatchSession) LastComplete(ctx context.Context, req ResultRequest) (CompletedResult, bool) {

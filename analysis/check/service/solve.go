@@ -36,9 +36,13 @@ func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (Resu
 			return tag, nil
 		}
 
-		snapshot, err := solveUnit(ctx, unit, profile, documentVersion)
-		if err != nil {
-			return ResultTag{}, err
+		snapshot := s.cachedAnalysis(unit, profile, documentVersion)
+		if snapshot == nil {
+			var err error
+			snapshot, err = solveUnit(ctx, unit, profile, documentVersion)
+			if err != nil {
+				return ResultTag{}, err
+			}
 		}
 		if err := ctx.Err(); err != nil {
 			return ResultTag{}, err
@@ -87,6 +91,7 @@ func (s *BatchSession) publishSolved(unitID UnitID, unit retainedUnit, profile s
 	s.results[key] = snapshot
 	s.latest[unitProfileKey{unitID: unitID, profile: profile}] = key
 	s.bySeq[key.solveSeq] = key
+	s.analysisCache[analysisKey(unit, profile)] = snapshot
 	return cloneResultTag(snapshot.tag), false, nil
 }
 
