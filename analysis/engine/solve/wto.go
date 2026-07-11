@@ -3,6 +3,7 @@ package solve
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 )
@@ -204,6 +205,12 @@ type RetainedSystem[Cell comparable, State any] struct {
 	readers      []retainedReverse[Cell]
 	outputOwners []retainedReverse[Cell]
 	usage        RetainedUsage
+	system       EquationSystem[Cell, State]
+	plan         *WTOPlan[Cell]
+	budget       RetainedBudget
+	generation   uint64
+	updateGate   *atomic.Bool
+	released     bool
 }
 
 func (r *RetainedSystem[Cell, State]) Value(cell Cell) (State, bool) {
@@ -267,6 +274,12 @@ func (r *RetainedSystem[Cell, State]) Release() {
 	r.outputOwners = nil
 	r.usage = RetainedUsage{}
 	r.nextVersion = 0
+	r.system = EquationSystem[Cell, State]{}
+	r.plan = nil
+	r.released = true
+	if r.updateGate != nil {
+		r.updateGate.Store(false)
+	}
 }
 
 // BuildRetainedWTO performs the same canonical clean solve while retaining the
@@ -427,6 +440,7 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 			visits: cloneMap(s.visits), widenChanges: cloneMap(s.widenChanges),
 			cells: cells, emittedOnly: append([]Cell(nil), s.emittedOrder...), nextVersion: s.nextVersion,
 			owners: owners, readers: readers, outputOwners: outputOwners, usage: usage,
+			system: sys, plan: plan, budget: recorder.budget, generation: 1, updateGate: &atomic.Bool{},
 		}
 	}
 	if err := s.runNarrowing(cancel); err != nil {
