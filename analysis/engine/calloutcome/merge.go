@@ -158,11 +158,11 @@ func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutco
 		handler := lane.Value
 		if authoritative && lane.Role.PostReturn {
 			if handler.mergeAuthoritative != nil {
-				handler.mergeAuthoritative(reg, &out, second)
+				out = handler.mergeAuthoritative(reg, out, second)
 			}
 			continue
 		}
-		handler.merge(reg, &out, second)
+		out = handler.merge(reg, out, second)
 	}
 	if !authoritative {
 		out.PostReturnAuthority = second.PostReturnAuthority
@@ -171,53 +171,61 @@ func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutco
 }
 
 type supplementalFactLaneHandler struct {
-	merge              func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
-	mergeAuthoritative func(*axis.Registry, *callpayload.CallOutcome, callpayload.CallOutcome)
+	merge              func(*axis.Registry, callpayload.CallOutcome, callpayload.CallOutcome) callpayload.CallOutcome
+	mergeAuthoritative func(*axis.Registry, callpayload.CallOutcome, callpayload.CallOutcome) callpayload.CallOutcome
 }
 
 func supplementalAppendLane[T any](values func(*callpayload.CallOutcome) *[]T) supplementalFactLaneHandler {
 	return supplementalFactLaneHandler{
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
-			*values(out) = append(*values(out), *values(&second)...)
+		merge: func(_ *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
+			*values(&out) = append(*values(&out), *values(&second)...)
+			return out
 		},
 	}
 }
 
 var supplementalFactLanes = callpayload.BindCallOutcomeSupplementalFactRoles("supplemental fact", map[string]supplementalFactLaneHandler{
 	"SuspensionKnown": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		merge: func(_ *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			out.SuspensionKnown = out.SuspensionKnown || second.SuspensionKnown
+			return out
 		},
 	},
 	"MaySuspend": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		merge: func(_ *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			if second.MaySuspend {
 				out.MaySuspend = true
 				out.SuspensionKnown = true
 			}
+			return out
 		},
 	},
 	"NormalReturnFacts": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		merge: func(_ *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
+			return out
 		},
 	},
 	"ProtectedCallTypestate": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		merge: func(_ *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			out.ProtectedCallTypestate = callboundary.JoinProtectedCallTypestate(out.ProtectedCallTypestate, second.ProtectedCallTypestate)
+			return out
 		},
 	},
 	"HeapTableObjects": {
-		merge: func(reg *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		merge: func(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
+			return out
 		},
-		mergeAuthoritative: func(reg *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		mergeAuthoritative: func(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			out.HeapTableObjects = withAuthoritativeResultHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects, out.Results)
+			return out
 		},
 	},
 	"Placements": {
-		merge: func(_ *axis.Registry, out *callpayload.CallOutcome, second callpayload.CallOutcome) {
+		merge: func(_ *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 			out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
+			return out
 		},
 	},
 	"ParamObligations": supplementalAppendLane(func(o *callpayload.CallOutcome) *[]callpayload.CallParamObligation {
