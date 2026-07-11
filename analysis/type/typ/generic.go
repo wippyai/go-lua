@@ -26,6 +26,7 @@ type Generic struct {
 	TypeParams []*TypeParam // Type parameters to be substituted
 	Body       Type         // Template type with TypeParam references
 	hash       uint64
+	rev        uint64
 	typeProperties
 	strCache stringCache
 }
@@ -73,6 +74,7 @@ func (g *Generic) SetBody(body Type) {
 		return
 	}
 	g.Body = body
+	g.rev++
 
 	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(g.Name))
 	for _, p := range g.TypeParams {

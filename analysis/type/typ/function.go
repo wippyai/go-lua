@@ -18,11 +18,12 @@ type Param struct {
 // Functions support generics via TypeParams, variadic arguments via Variadic,
 // and multiple return values via Returns.
 type Function struct {
-	TypeParams []*TypeParam // Generic type parameters (empty for non-generic)
-	Params     []Param      // Positional parameters
-	Variadic   Type         // Variadic element type (nil if not variadic)
-	Returns    []Type       // Return types (empty for void functions)
-	hash       uint64
+	TypeParams        []*TypeParam // Generic type parameters (empty for non-generic)
+	Params            []Param      // Positional parameters
+	Variadic          Type         // Variadic element type (nil if not variadic)
+	Returns           []Type       // Return types (empty for void functions)
+	hash              uint64
+	equalityHashCache *equalityHashCache
 	typeProperties
 	strCache stringCache
 }
@@ -119,12 +120,13 @@ func CloneFunction(fn *Function) *Function {
 		return nil
 	}
 	return &Function{
-		TypeParams:     append([]*TypeParam(nil), fn.TypeParams...),
-		Params:         append([]Param(nil), fn.Params...),
-		Variadic:       fn.Variadic,
-		Returns:        append([]Type(nil), fn.Returns...),
-		hash:           fn.hash,
-		typeProperties: fn.typeProperties,
+		TypeParams:        append([]*TypeParam(nil), fn.TypeParams...),
+		Params:            append([]Param(nil), fn.Params...),
+		Variadic:          fn.Variadic,
+		Returns:           append([]Type(nil), fn.Returns...),
+		hash:              fn.hash,
+		equalityHashCache: fn.equalityHashCache,
+		typeProperties:    fn.typeProperties,
 	}
 }
 

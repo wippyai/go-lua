@@ -119,15 +119,16 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 	props.includeTypes(metatable, mapKey, mapValue)
 
 	return &Record{
-		Fields:         sorted,
-		StaticMembers:  members,
-		Metatable:      metatable,
-		MapKey:         mapKey,
-		MapValue:       mapValue,
-		Open:           open,
-		sorted:         true,
-		hash:           h,
-		typeProperties: props,
+		Fields:            sorted,
+		StaticMembers:     members,
+		Metatable:         metatable,
+		MapKey:            mapKey,
+		MapValue:          mapValue,
+		Open:              open,
+		sorted:            true,
+		hash:              h,
+		equalityHashCache: &equalityHashCache{},
+		typeProperties:    props,
 	}
 }
 

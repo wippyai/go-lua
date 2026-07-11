@@ -70,12 +70,13 @@ func newCanonicalFunction(
 	props.includeTypes(returnsCopy...)
 
 	return &Function{
-		TypeParams:     typeParamsCopy,
-		Params:         paramsCopy,
-		Variadic:       variadic,
-		Returns:        returnsCopy,
-		hash:           h,
-		typeProperties: props,
+		TypeParams:        typeParamsCopy,
+		Params:            paramsCopy,
+		Variadic:          variadic,
+		Returns:           returnsCopy,
+		hash:              h,
+		equalityHashCache: &equalityHashCache{},
+		typeProperties:    props,
 	}
 }
 

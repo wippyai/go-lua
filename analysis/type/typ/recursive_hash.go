@@ -11,9 +11,13 @@ func EqualityHash(t Type) uint64 {
 		return 0
 	}
 	if equalityHashNeedsRefresh(t) {
+		if h, ok := cachedEqualityHash(t); ok {
+			return h
+		}
 		scratch := getRecursiveHashScratch()
 		h := hashBodyWithVisitedMemo(t, scratch)
 		putRecursiveHashScratch(scratch)
+		cacheEqualityHash(t, h)
 		return h
 	}
 	return t.Hash()

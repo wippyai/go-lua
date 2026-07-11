@@ -21,6 +21,9 @@ func hashEncoderCorpus() []Type {
 	gen := NewGeneric("Box", []*TypeParam{tp}, RebuildRecord(RecordParts{Fields: []Field{
 		{Name: "value", Type: tp},
 	}}))
+	recursiveFunction := Func().Param("node", rec).Returns(rec).Build()
+	recursiveRecord := RebuildRecord(RecordParts{Fields: []Field{{Name: "node", Type: rec}}})
+	genericFunction := Func().Param("box", Instantiate(gen, String)).Returns(Instantiate(gen, Number)).Build()
 
 	iface := NewInterface("Reader", []Method{
 		{Name: "read", Type: Func().Param("n", Integer).Returns(String).Build()},
@@ -58,6 +61,9 @@ func hashEncoderCorpus() []Type {
 		Instantiate(gen, String),
 		rec,
 		MaterializeOptional(rec),
+		recursiveFunction,
+		recursiveRecord,
+		genericFunction,
 	}
 }
 
