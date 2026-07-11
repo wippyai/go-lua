@@ -319,6 +319,17 @@ func (d pointSummaryDependencies) mergeUpdate(update pointSummaryDependencies) p
 	return out
 }
 
+// mergeProjection preserves the completed flow observation and replaces only
+// the post-flow projection dependency set.
+func (d pointSummaryDependencies) mergeProjection(update pointSummaryDependencies) pointSummaryDependencies {
+	out := clonePointSummaryDependencies(d)
+	if update.projectionObserved {
+		out.projection = clonePointSummaryReads(update.projection)
+		out.projectionObserved = true
+	}
+	return out
+}
+
 func clonePointSummaryReadMap(in map[cfg.Point]map[summary.SummaryKey]pointSummaryRead) map[cfg.Point]map[summary.SummaryKey]pointSummaryRead {
 	if len(in) == 0 {
 		return nil

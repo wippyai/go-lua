@@ -3,6 +3,7 @@ package program
 import (
 	"slices"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -55,6 +56,8 @@ type retainedSummaryApplicationPublication struct {
 	points   pointSummaryDependencies
 	retained bool
 	resource retainedSummaryResource
+	sum      summary.Summary
+	result   *body.Result
 }
 
 // retainedSummaryApplicationOwner belongs to one query function invocation.
@@ -65,6 +68,38 @@ type retainedSummaryApplicationOwner struct {
 	published *retainedSummaryApplicationPublication
 	epoch     uint64
 	released  bool
+}
+
+// retainedSummaryApplicationRun owns every per-equation generation created by
+// one query.Run. It is released immediately when that fixed point returns.
+type retainedSummaryApplicationRun struct {
+	reg     *axis.Registry
+	enabled bool
+	owners  []*retainedSummaryApplicationOwner
+}
+
+func newRetainedSummaryApplicationRun(reg *axis.Registry, enabled bool) *retainedSummaryApplicationRun {
+	return &retainedSummaryApplicationRun{reg: reg, enabled: enabled}
+}
+
+func (r *retainedSummaryApplicationRun) newOwner() *retainedSummaryApplicationOwner {
+	if r == nil || !r.enabled {
+		return nil
+	}
+	owner := newRetainedSummaryApplicationOwner(r.reg)
+	r.owners = append(r.owners, owner)
+	return owner
+}
+
+func (r *retainedSummaryApplicationRun) Release() {
+	if r == nil {
+		return
+	}
+	for _, owner := range r.owners {
+		owner.Release()
+	}
+	r.owners = nil
+	r.enabled = false
 }
 
 // retainedSummaryApplicationAttempt separates planning from publication. A
@@ -107,7 +142,12 @@ func (o *retainedSummaryApplicationOwner) begin(
 			default:
 				decision.points, decision.forceFull, decision.reproject = current.points.impact(decision.changed)
 				if len(decision.points) == 0 && !decision.forceFull && decision.reproject {
-					decision.kind = retainedSummaryApplyReproject
+					// Boundary projection can be rebound without replay, but the
+					// initial production integration deliberately treats this as a
+					// full retained update until result rebinding has its own
+					// transactional rollback contract.
+					decision.kind = retainedSummaryApplyRegional
+					decision.forceFull = true
 				} else {
 					decision.kind = retainedSummaryApplyRegional
 				}
@@ -140,6 +180,16 @@ func (a *retainedSummaryApplicationAttempt) Publish(
 	points pointSummaryDependencies,
 	resource retainedSummaryResource,
 ) bool {
+	return a.publishResult(deps, points, resource, summary.Summary{}, nil)
+}
+
+func (a *retainedSummaryApplicationAttempt) publishResult(
+	deps map[summary.SummaryKey]trackedSummaryRead,
+	points pointSummaryDependencies,
+	resource retainedSummaryResource,
+	sum summary.Summary,
+	result *body.Result,
+) bool {
 	if a == nil || a.done || a.owner == nil || a.owner.released || a.owner.epoch != a.epoch {
 		return false
 	}
@@ -161,15 +211,32 @@ func (a *retainedSummaryApplicationAttempt) Publish(
 	retained := a.decision.kind == retainedSummaryApplyBuild ||
 		a.decision.kind == retainedSummaryApplyRegional ||
 		a.decision.kind == retainedSummaryApplyReproject
+	if a.decision.kind == retainedSummaryApplyBuild {
+		complete, ok := mergeRetainedSummaryDependencies(nil, deps, points)
+		if !ok || len(complete) != len(deps) {
+			return false
+		}
+		deps = complete
+	}
 	replaceResource := resource != nil
 	if retained && resource == nil && o.published != nil && o.published.key == a.key {
 		resource = o.published.resource
 	}
 	if a.decision.kind == retainedSummaryApplyRegional && o.published != nil && o.published.key == a.key {
 		points = o.published.points.mergeUpdate(points)
+		var complete bool
+		deps, complete = mergeRetainedSummaryDependencies(o.published.deps, deps, points)
+		if !complete {
+			return false
+		}
 	}
 	if a.decision.kind == retainedSummaryApplyReproject && o.published != nil && o.published.key == a.key {
-		points = o.published.points.mergeUpdate(points)
+		points = o.published.points.mergeProjection(updateProjectionOnly(points))
+		var complete bool
+		deps, complete = mergeRetainedSummaryDependencies(o.published.deps, deps, points)
+		if !complete {
+			return false
+		}
 	}
 
 	// A non-nil resource on an update explicitly replaces the old generation;
@@ -178,14 +245,64 @@ func (a *retainedSummaryApplicationAttempt) Publish(
 	if old := o.published; old != nil && old.resource != nil && replaceResource {
 		old.resource.Release()
 	}
+	if old := o.published; old != nil && old.result != nil && old.result != result {
+		old.result.ReleaseTransient()
+	}
 	o.published = &retainedSummaryApplicationPublication{
 		key:      a.key,
 		deps:     normalizedRetainedSummaryDependencies(o.reg, deps),
 		points:   clonePointSummaryDependencies(points),
 		retained: retained,
 		resource: resource,
+		sum:      sum.Clone(),
+		result:   result,
 	}
 	return true
+}
+
+// mergeRetainedSummaryDependencies reconstructs the complete exact dependency
+// set after an update that observed only a region. Point snapshots decide
+// membership (including tombstones); exact normalized summaries come from the
+// update when observed there and otherwise from the prior publication.
+func mergeRetainedSummaryDependencies(
+	previous, update map[summary.SummaryKey]trackedSummaryRead,
+	points pointSummaryDependencies,
+) (map[summary.SummaryKey]trackedSummaryRead, bool) {
+	referenced := make(map[summary.SummaryKey]struct{})
+	for _, reads := range points.byPoint {
+		for key := range reads {
+			referenced[key] = struct{}{}
+		}
+	}
+	for key := range points.preFlow {
+		referenced[key] = struct{}{}
+	}
+	for key := range points.projection {
+		referenced[key] = struct{}{}
+	}
+	if len(referenced) == 0 {
+		return nil, true
+	}
+	out := make(map[summary.SummaryKey]trackedSummaryRead, len(referenced))
+	for key := range referenced {
+		if dep, ok := update[key]; ok {
+			out[key] = dep
+			continue
+		}
+		if dep, ok := previous[key]; ok {
+			out[key] = dep
+			continue
+		}
+		return nil, false
+	}
+	return out, true
+}
+
+func updateProjectionOnly(points pointSummaryDependencies) pointSummaryDependencies {
+	return pointSummaryDependencies{
+		projection:         points.projection,
+		projectionObserved: points.projectionObserved,
+	}
 }
 
 func (a *retainedSummaryApplicationAttempt) Abort() {
@@ -210,7 +327,29 @@ func (o *retainedSummaryApplicationOwner) dropPublished() {
 	if o.published.resource != nil {
 		o.published.resource.Release()
 	}
+	if o.published.result != nil {
+		o.published.result.ReleaseTransient()
+	}
 	o.published = nil
+}
+
+func (o *retainedSummaryApplicationOwner) adoptCacheHit(
+	key retainedSummaryApplicationKey,
+	deps map[summary.SummaryKey]trackedSummaryRead,
+	sum summary.Summary,
+) {
+	if o == nil || o.released {
+		return
+	}
+	if current := o.published; current != nil && current.key == key &&
+		trackedSummaryReadSetsEqual(o.reg, current.deps, deps) &&
+		summary.EqualNormalized(o.reg, current.sum, sum) {
+		return
+	}
+	o.dropPublished()
+	o.published = &retainedSummaryApplicationPublication{
+		key: key, deps: normalizedRetainedSummaryDependencies(o.reg, deps), sum: sum.Clone(),
+	}
 }
 
 func normalizedRetainedSummaryDependencies(reg *axis.Registry, in map[summary.SummaryKey]trackedSummaryRead) map[summary.SummaryKey]trackedSummaryRead {

@@ -165,8 +165,13 @@ func (c *SummarySolveCache) registry() *axis.Registry {
 }
 
 func (c *SummarySolveCache) read(key summarySolveCacheKey, reader summary.Reader) (summary.Summary, bool) {
+	entry, ok := c.readEntry(key, reader)
+	return entry.sum, ok
+}
+
+func (c *SummarySolveCache) readEntry(key summarySolveCacheKey, reader summary.Reader) (summarySolveCacheEntry, bool) {
 	if c == nil || reader == nil {
-		return summary.Summary{}, false
+		return summarySolveCacheEntry{}, false
 	}
 	c.mu.RLock()
 	entries := append([]summarySolveCacheEntry(nil), c.entries[key]...)
@@ -174,10 +179,10 @@ func (c *SummarySolveCache) read(key summarySolveCacheKey, reader summary.Reader
 	c.mu.RUnlock()
 	for _, entry := range entries {
 		if trackedSummaryReadsMatch(reg, entry.deps, reader) {
-			return entry.sum.Clone(), true
+			return summarySolveCacheEntry{deps: cloneTrackedSummaryReads(entry.deps), sum: entry.sum.Clone()}, true
 		}
 	}
-	return summary.Summary{}, false
+	return summarySolveCacheEntry{}, false
 }
 
 func (c *SummarySolveCache) write(key summarySolveCacheKey, deps map[summary.SummaryKey]trackedSummaryRead, sum summary.Summary) {
@@ -190,8 +195,14 @@ func (c *SummarySolveCache) write(key summarySolveCacheKey, deps map[summary.Sum
 	if c.entries == nil {
 		c.entries = make(map[summarySolveCacheKey][]summarySolveCacheEntry)
 	}
-	for _, existing := range c.entries[key] {
+	for i, existing := range c.entries[key] {
 		if trackedSummaryReadSetsEqual(c.reg, existing.deps, entry.deps) {
+			// Equal dynamic inputs must not leave an older, differing projection
+			// first in the bucket. Replace it deterministically; this is also a
+			// fail-closed guard against a missing structural key component.
+			if !summary.EqualNormalized(c.reg, existing.sum, entry.sum) {
+				c.entries[key][i] = entry
+			}
 			return
 		}
 	}

@@ -128,8 +128,8 @@ func TestRetainedSummaryApplicationProjectionOnlyReprojects(t *testing.T) {
 	}, &retainedSummaryTestResource{})
 
 	got := owner.begin(key, retainedSummaryTestSnapshot(reg, stringValue, dep)).Decision()
-	if got.kind != retainedSummaryApplyReproject || got.forceFull || !got.reproject || len(got.points) != 0 {
-		t.Fatalf("projection-only decision = %+v, want reproject", got)
+	if got.kind != retainedSummaryApplyRegional || !got.forceFull || !got.reproject || len(got.points) != 0 {
+		t.Fatalf("projection-only decision = %+v, want conservative full retained update", got)
 	}
 	owner.Release()
 }
@@ -145,7 +145,9 @@ func TestRetainedSummaryApplicationStructuralMismatchDropsGeneration(t *testing.
 	_ = ordinary.Publish(map[summary.SummaryKey]trackedSummaryRead{dep: retainedSummaryTestRead(value)}, pointSummaryDependencies{}, nil)
 	build := owner.begin(firstKey, summary.NewSnapshot(reg))
 	resource := &retainedSummaryTestResource{}
-	_ = build.Publish(map[summary.SummaryKey]trackedSummaryRead{dep: {present: false}}, pointSummaryDependencies{}, resource)
+	_ = build.Publish(map[summary.SummaryKey]trackedSummaryRead{dep: {present: false}}, pointSummaryDependencies{
+		byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{1: {dep: {present: false}}},
+	}, resource)
 
 	got := owner.begin(retainedSummaryApplicationKey{body: 1, input: 2, profile: "b", resolution: 3}, reader).Decision()
 	if got.kind != retainedSummaryApplyOrdinary || !got.dropped {
@@ -203,5 +205,69 @@ func TestRetainedSummaryApplicationPublishesOwnedNormalizedDependencies(t *testi
 	}
 	if got := owner.begin(key, summary.NewSnapshot(reg)).Decision(); got.kind != retainedSummaryApplyBuild || !slices.Equal(got.changed, []summary.SummaryKey{dep}) {
 		t.Fatalf("present-to-missing decision = %+v, want changed build", got)
+	}
+}
+
+func TestRetainedSummaryApplicationCacheHitDropsDifferentGeneration(t *testing.T) {
+	reg := standard.Registry()
+	dep := dependencyTestKey(207)
+	a := typevalue.FromType(reg, typ.String)
+	b := typevalue.FromType(reg, typ.Number)
+	key := retainedSummaryApplicationKey{body: 7, input: 8}
+	owner := newRetainedSummaryApplicationOwner(reg)
+
+	ordinary := owner.begin(key, retainedSummaryTestSnapshot(reg, a, dep))
+	_ = ordinary.publishResult(map[summary.SummaryKey]trackedSummaryRead{dep: retainedSummaryTestRead(a)}, pointSummaryDependencies{}, nil, summary.Summary{Returns: []product.Value{a}}, nil)
+	build := owner.begin(key, retainedSummaryTestSnapshot(reg, b, dep))
+	resource := &retainedSummaryTestResource{}
+	points := pointSummaryDependencies{byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{1: {dep: {present: true, digest: 1}}}}
+	_ = build.publishResult(map[summary.SummaryKey]trackedSummaryRead{dep: retainedSummaryTestRead(b)}, points, resource, summary.Summary{Returns: []product.Value{b}}, nil)
+
+	owner.adoptCacheHit(key, map[summary.SummaryKey]trackedSummaryRead{dep: retainedSummaryTestRead(a)}, summary.Summary{Returns: []product.Value{a}})
+	if resource.releases != 1 || owner.published == nil || owner.published.retained {
+		t.Fatalf("cache-hit downgrade = releases:%d publication:%+v", resource.releases, owner.published)
+	}
+	if got := owner.begin(key, retainedSummaryTestSnapshot(reg, b, dep)).Decision(); got.kind != retainedSummaryApplyBuild {
+		t.Fatalf("post-hit dependency change = %+v, want fresh retained build", got)
+	}
+}
+
+func TestRetainedSummaryApplicationRejectsIncompletePointDependencies(t *testing.T) {
+	reg := standard.Registry()
+	dep := dependencyTestKey(208)
+	owner := newRetainedSummaryApplicationOwner(reg)
+	key := retainedSummaryApplicationKey{body: 9}
+	ordinary := owner.begin(key, summary.NewSnapshot(reg))
+	_ = ordinary.Publish(map[summary.SummaryKey]trackedSummaryRead{dep: {present: false}}, pointSummaryDependencies{}, nil)
+	build := owner.begin(key, retainedSummaryTestSnapshot(reg, typevalue.FromType(reg, typ.String), dep))
+	if build.Publish(nil, pointSummaryDependencies{
+		byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{1: {dep: {present: true, digest: 1}}},
+	}, &retainedSummaryTestResource{}) {
+		t.Fatal("incomplete exact dependency set was published")
+	}
+}
+
+func TestRetainedSummaryApplicationConditionalReadTombstoneRemovesExactDependency(t *testing.T) {
+	reg := standard.Registry()
+	dep := dependencyTestKey(209)
+	a := typevalue.FromType(reg, typ.String)
+	b := typevalue.FromType(reg, typ.Number)
+	key := retainedSummaryApplicationKey{body: 10}
+	owner := newRetainedSummaryApplicationOwner(reg)
+	defer owner.Release()
+	ordinary := owner.begin(key, retainedSummaryTestSnapshot(reg, a, dep))
+	_ = ordinary.Publish(map[summary.SummaryKey]trackedSummaryRead{dep: retainedSummaryTestRead(a)}, pointSummaryDependencies{}, nil)
+	build := owner.begin(key, retainedSummaryTestSnapshot(reg, b, dep))
+	resource := &retainedSummaryTestResource{}
+	_ = build.Publish(map[summary.SummaryKey]trackedSummaryRead{dep: retainedSummaryTestRead(b)}, pointSummaryDependencies{
+		byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{4: {dep: {present: true, digest: 2}}},
+	}, resource)
+
+	regional := owner.begin(key, retainedSummaryTestSnapshot(reg, a, dep))
+	if !regional.Publish(nil, pointSummaryDependencies{visited: map[cfg.Point]struct{}{4: {}}}, nil) {
+		t.Fatal("regional tombstone publication rejected")
+	}
+	if len(owner.published.deps) != 0 || len(owner.published.points.byPoint) != 0 {
+		t.Fatalf("tombstone retained deps/points: %d/%d", len(owner.published.deps), len(owner.published.points.byPoint))
 	}
 }

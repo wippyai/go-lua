@@ -153,6 +153,7 @@ func chunkFunction(
 	config body.Config,
 	stats *Stats,
 	cache *SummarySolveCache,
+	owner *retainedSummaryApplicationOwner,
 	profile string,
 	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
@@ -164,7 +165,7 @@ func chunkFunction(
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+			return solveSummaryPrepared(cache, owner, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				return checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
 			}, stats, solveAttributionFor(stats, prepared, key, SolvePhaseSummary, false))
 		},
@@ -177,6 +178,7 @@ func boundFunction(
 	config body.Config,
 	stats *Stats,
 	cache *SummarySolveCache,
+	owner *retainedSummaryApplicationOwner,
 	profile string,
 	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
@@ -189,7 +191,7 @@ func boundFunction(
 	return query.Function{
 		Key: origin.key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+			return solveSummaryPrepared(cache, owner, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
 				if origin.hasEntryState {
 					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
@@ -202,6 +204,7 @@ func boundFunction(
 
 func solveSummaryPrepared(
 	cache *SummarySolveCache,
+	owner *retainedSummaryApplicationOwner,
 	profile string,
 	resolution uint64,
 	prepared *body.Static,
@@ -211,6 +214,9 @@ func solveSummaryPrepared(
 	attribution *solveAttribution,
 ) (summary.Summary, error) {
 	if cache != nil {
+		if owner != nil {
+			return cache.solveRetainedAttributed(prepared, profile, resolution, reader, build, owner, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats), attribution)
+		}
 		return cache.solveAttributed(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats), attribution)
 	}
 	config := build(reader)
