@@ -57,7 +57,16 @@ func (c producerContext) judgments(result *body.Result, producers ...pass.Produc
 }
 
 func (c producerContext) judgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []judgment.Judgment {
-	return pass.New(producers...).Run(judgmentContextWithCancellation(result, []*body.Result{parent}, c.sourceFile, c.canceled))
+	// This is the positive owner for the one-parent diagnostic projection. Keep
+	// construction here so diagnostics cannot bypass the read-model boundary.
+	ctx := pass.Context{
+		FunctionKey:     c.sourceFile,
+		SourceFile:      c.sourceFile,
+		BodyInputDigest: bodyInputDigest(result),
+		Reader:          internalreadmodel.NewWithParents(result, parent),
+		Canceled:        c.canceled,
+	}
+	return pass.New(producers...).Run(ctx)
 }
 
 func (c producerContext) judgmentsWithParents(result *body.Result, parents []*body.Result, producers ...pass.Producer) []judgment.Judgment {
