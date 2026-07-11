@@ -279,6 +279,34 @@ func (s *Static) Solve(config SolveConfig) *Result {
 // prepared-body APIs. Keeping Solve preserves the existing convenience method
 // while SolvePrepared can propagate cooperative cancellation to its caller.
 func (s *Static) solve(config SolveConfig) (*Result, error) {
+	return s.solveWithFlow(config, nil)
+}
+
+type bodyFlowTransaction struct {
+	flow      transfer.Result
+	abortFn   func()
+	committed bool
+}
+
+func (t *bodyFlowTransaction) commit() {
+	if t == nil || t.committed {
+		return
+	}
+	t.committed = true
+}
+
+func (t *bodyFlowTransaction) abort() {
+	if t == nil || t.committed {
+		return
+	}
+	if t.abortFn != nil {
+		t.abortFn()
+	}
+}
+
+type bodyFlowRunner func(transfer.Config) (*bodyFlowTransaction, error)
+
+func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Result, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -321,7 +349,7 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	})
 	observationPlan := compileObservationPlan(s.cfg.Graph, s.facts, callOutcome != nil)
 	observationCapture := newObservationCapture(observationPlan)
-	flow, err := transfer.TryRun(transfer.Config{
+	transferConfig := transfer.Config{
 		Context:                  config.Context,
 		Session:                  session,
 		Graph:                    s.cfg.Graph,
@@ -346,7 +374,18 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		AfterPoint:               config.AfterPoint,
 		Resume:                   config.Resume,
 		ResumePoints:             config.ResumePoints,
-	})
+	}
+	var flow transfer.Result
+	var flowTx *bodyFlowTransaction
+	var err error
+	if runFlow == nil {
+		flow, err = transfer.TryRun(transferConfig)
+	} else {
+		flowTx, err = runFlow(transferConfig)
+		if err == nil {
+			flow = flowTx.flow
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +426,9 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	// has converged. This replaces lazy node/edge transfer replay in diagnostics
 	// and readmodels with compact published facts.
 	if err := result.sealObservationsContext(config.Context); err != nil {
+		if flowTx != nil {
+			flowTx.abort()
+		}
 		return nil, errors.Join(solve.ErrCanceled, err)
 	}
 	if config.Stats != nil {
@@ -395,9 +437,15 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	result.finalizeReturnSlotsFromBoundaryValues()
 	resultVersion, err := computeResultVersion(s, config, entryState, initial)
 	if err != nil {
+		if flowTx != nil {
+			flowTx.abort()
+		}
 		return nil, err
 	}
 	result.resultVersion = resultVersion
+	if flowTx != nil {
+		flowTx.commit()
+	}
 	return result, nil
 }
 

@@ -63,7 +63,7 @@ func TestRetainedCleanMatchesOrdinaryWTOStatesAndVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, generation, err := tryRunRetainedClean(config, retainedBudget{MaxOwners: 32, MaxReads: 64, MaxOutputs: 64, MaxStateRefs: 256})
+	got, generation, err := TryRunRetained(config, RetainedBudget{MaxOwners: 32, MaxReads: 64, MaxOutputs: 64, MaxStateRefs: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestRetainedCleanMatchesOrdinaryWTOStatesAndVersions(t *testing.T) {
 
 func TestRetainedCleanBudgetAndCancellationPublishNothing(t *testing.T) {
 	config, _ := retainedFixture(t)
-	result, generation, err := tryRunRetainedClean(config, retainedBudget{MaxOutputs: 1})
+	result, generation, err := TryRunRetained(config, RetainedBudget{MaxOutputs: 1})
 	if !errors.Is(err, solve.ErrRetainedBudget) || result != nil || generation != nil {
 		t.Fatalf("budget result=%v generation=%v err=%v", result != nil, generation != nil, err)
 	}
@@ -96,15 +96,24 @@ func TestRetainedCleanBudgetAndCancellationPublishNothing(t *testing.T) {
 	cancelConfig.Context = ctx
 	baseTransfer := cancelConfig.NodeTransfer
 	cancelConfig.NodeTransfer = func(node NodeContext, in state.State) state.State { cancel(); return baseTransfer(node, in) }
-	result, generation, err = tryRunRetainedClean(cancelConfig, retainedBudget{})
+	result, generation, err = TryRunRetained(cancelConfig, RetainedBudget{})
 	if !errors.Is(err, solve.ErrCanceled) || result != nil || generation != nil {
 		t.Fatalf("cancel result=%v generation=%v err=%v", result != nil, generation != nil, err)
 	}
 }
 
+func TestRetainedCleanRequiresExplicitWTOSchedule(t *testing.T) {
+	config, _ := retainedFixture(t)
+	config.Schedule = ScheduleFIFO
+	result, generation, err := TryRunRetained(config, RetainedBudget{})
+	if !errors.Is(err, ErrRetainedRequiresWTO) || result != nil || generation != nil {
+		t.Fatalf("FIFO retained result=%v generation=%v err=%v", result != nil, generation != nil, err)
+	}
+}
+
 func TestRetainedCleanReleaseDropsOwnedReferences(t *testing.T) {
 	config, _ := retainedFixture(t)
-	_, generation, err := tryRunRetainedClean(config, retainedBudget{})
+	_, generation, err := TryRunRetained(config, RetainedBudget{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +123,73 @@ func TestRetainedCleanReleaseDropsOwnedReferences(t *testing.T) {
 	}
 	// Idempotence is part of ownership: a deferred release may follow an early one.
 	generation.Release()
+}
+
+func TestRetainedUpdateAttributesStatsToCurrentSolve(t *testing.T) {
+	config, _ := retainedFixture(t)
+	firstStats := &Stats{}
+	config.Stats = firstStats
+	_, generation, err := TryRunRetained(config, RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer generation.Release()
+	firstCalls := firstStats.Solver.TransferCalls
+	if firstCalls == 0 {
+		t.Fatal("initial retained solve recorded no transfers")
+	}
+
+	secondStats := &Stats{}
+	config.Stats = secondStats
+	update, err := generation.BeginUpdate(config, []cfg.Point{config.Graph.Entry()}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := update.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := update.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if secondStats.Solver.TransferCalls == 0 {
+		t.Fatal("retained update recorded no transfers in current stats")
+	}
+	if firstStats.Solver.TransferCalls != firstCalls {
+		t.Fatalf("initial stats changed from %d to %d during update", firstCalls, firstStats.Solver.TransferCalls)
+	}
+}
+
+func TestRetainedUpdateFinalizePanicAbortsTransaction(t *testing.T) {
+	config, _ := retainedFixture(t)
+	_, generation, err := TryRunRetained(config, RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer generation.Release()
+	panicking := config
+	panicking.FinalizeNodeObservations = func(func(cfg.Point) uint64) { panic("finalize panic") }
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("finalization panic was not propagated")
+			}
+		}()
+		update, beginErr := generation.BeginUpdate(panicking, []cfg.Point{config.Graph.Entry()}, true)
+		if beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		_, _ = update.Run()
+	}()
+	update, err := generation.BeginUpdate(config, []cfg.Point{config.Graph.Entry()}, true)
+	if err != nil {
+		t.Fatalf("retry after finalization panic: %v", err)
+	}
+	if _, err := update.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := update.Commit(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func BenchmarkRetainedCleanOptIn(b *testing.B) {
@@ -137,7 +213,7 @@ func BenchmarkRetainedCleanOptIn(b *testing.B) {
 	})
 	b.Run("retained", func(b *testing.B) {
 		for range b.N {
-			_, generation, err := tryRunRetainedClean(config, retainedBudget{})
+			_, generation, err := TryRunRetained(config, RetainedBudget{})
 			if err != nil {
 				b.Fatal(err)
 			}
