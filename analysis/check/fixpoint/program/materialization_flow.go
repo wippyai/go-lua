@@ -175,11 +175,12 @@ func refineMaterializedSummaryProofs(
 		if !needsRematerialize {
 			return materialized.root, next, nil
 		}
-		var err error
-		materialized, err = rematerialize(next, materialized.keys)
-		if err != nil {
-			return nil, summary.Snapshot{}, err
+		nextMaterialized, rematerializeErr := rematerialize(next, materialized.keys)
+		if rematerializeErr != nil {
+			return nil, summary.Snapshot{}, rematerializeErr
 		}
+		materialized.projections.releaseDiscarded(materialized, nextMaterialized)
+		materialized = nextMaterialized
 		current = next
 	}
 }

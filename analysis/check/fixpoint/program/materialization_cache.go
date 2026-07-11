@@ -34,6 +34,25 @@ func (c *resultSummaryProjectionCache) invalidate(result *body.Result) {
 	delete(c.entries, result)
 }
 
+// releaseDiscarded drops materialized bodies superseded by a proof-driven
+// rematerialization pass. The solve cache and projection cache are both
+// long-lived for the duration of that pass; without this boundary, replaced
+// flows remain reachable until the entire program finishes materializing.
+func (c *resultSummaryProjectionCache) releaseDiscarded(previous, next materializedProgram) {
+	if len(previous.resultKey) == 0 {
+		return
+	}
+	for result := range previous.resultKey {
+		if _, retained := next.resultKey[result]; retained {
+			continue
+		}
+		if c != nil && len(c.entries) != 0 {
+			delete(c.entries, result)
+		}
+		result.ReleaseTransient()
+	}
+}
+
 func (c *resultSummaryProjectionCache) project(result *body.Result) (summary.Summary, bool) {
 	if result == nil {
 		return summary.Summary{}, false

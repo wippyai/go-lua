@@ -182,6 +182,11 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	snapshot := checked.Snapshot()
 	summaryDigests := digestSummaries(checked.RootResult(), snapshot)
 	semantic := projectSemanticQueries(input, stmts, checked.RootResult(), items, placement)
+	// completedSnapshot owns only compact projections. Drop the solved CFG
+	// states, transfer closures, query caches, and nested result tree before
+	// publishing so a retained service result cannot retain one unit's full
+	// analysis working set.
+	checked.RootResult().ReleaseTransientTree()
 
 	return &completedSnapshot{
 		tag: ResultTag{
