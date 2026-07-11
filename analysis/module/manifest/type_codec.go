@@ -8,14 +8,26 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
+// typeEncoder owns one sealed type projection. Generic declarations can be
+// recursive in memory (a generic body may mention its own declaration), while
+// the manifest wire is a tree. Keep the live edge inside this projection and
+// emit a binder-local reference when it closes a cycle.
+type typeEncoder struct {
+	activeGenerics map[*typ.Generic]bool
+}
+
 func encodeType(t typ.Type) (*typeWire, error) {
+	return (&typeEncoder{activeGenerics: make(map[*typ.Generic]bool)}).encode(t)
+}
+
+func (e *typeEncoder) encode(t typ.Type) (*typeWire, error) {
 	if t == nil {
 		return nil, nil
 	}
 
 	switch tt := t.(type) {
 	case *typ.Annotated:
-		inner, err := encodeType(tt.Inner)
+		inner, err := e.encode(tt.Inner)
 		if err != nil {
 			return nil, err
 		}
@@ -25,75 +37,83 @@ func encodeType(t typ.Type) (*typeWire, error) {
 		}
 		return &typeWire{Kind: "annotated", Element: inner, Annotations: annotations}, nil
 	case *typ.Optional:
-		inner, err := encodeType(tt.Inner)
+		inner, err := e.encode(tt.Inner)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "optional", Element: inner}, nil
 	case *typ.Union:
-		members, err := encodeTypeList(tt.Members)
+		members, err := e.encodeTypeList(tt.Members)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "union", Members: members}, nil
 	case *typ.Intersection:
-		members, err := encodeTypeList(tt.Members)
+		members, err := e.encodeTypeList(tt.Members)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "intersection", Members: members}, nil
 	case *typ.Tuple:
-		elements, err := encodeTypeList(tt.Elements)
+		elements, err := e.encodeTypeList(tt.Elements)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "tuple", Elements: elements}, nil
 	case *typ.Function:
-		return encodeFunction(tt)
+		return e.encodeFunction(tt)
 	case *typ.Array:
-		elem, err := encodeType(tt.Element)
+		elem, err := e.encode(tt.Element)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "array", Element: elem}, nil
 	case *typ.Map:
-		key, err := encodeType(tt.Key)
+		key, err := e.encode(tt.Key)
 		if err != nil {
 			return nil, err
 		}
-		value, err := encodeType(tt.Value)
+		value, err := e.encode(tt.Value)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "map", Key: key, Value: value}, nil
 	case *typ.ReadonlyMap:
-		key, err := encodeType(tt.Key)
+		key, err := e.encode(tt.Key)
 		if err != nil {
 			return nil, err
 		}
-		value, err := encodeType(tt.Value)
+		value, err := e.encode(tt.Value)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "readonlyMap", Key: key, Value: value}, nil
 	case *typ.Record:
-		return encodeRecord(tt)
+		return e.encodeRecord(tt)
 	case *typ.Interface:
-		return encodeInterface(tt)
+		return e.encodeInterface(tt)
 	case *typ.Alias:
-		target, err := encodeType(tt.Target)
+		target, err := e.encode(tt.Target)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "alias", Name: tt.Name, Target: target}, nil
 	case *typ.Generic:
-		return encodeGeneric(tt)
+		if e.activeGenerics[tt] {
+			if tt.Name == "" {
+				return nil, fmt.Errorf("recursive anonymous generic requires a stable name")
+			}
+			return &typeWire{Kind: "genericRef", Name: tt.Name}, nil
+		}
+		e.activeGenerics[tt] = true
+		defer delete(e.activeGenerics, tt)
+		return e.encodeGeneric(tt)
 	case *typ.Instantiated:
-		generic, err := encodeType(tt.Generic)
+		generic, err := e.encode(tt.Generic)
 		if err != nil {
 			return nil, err
 		}
-		args, err := encodeTypeList(tt.TypeArgs)
+		args, err := e.encodeTypeList(tt.TypeArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -103,13 +123,13 @@ func encodeType(t typ.Type) (*typeWire, error) {
 	case *typ.Ref:
 		return &typeWire{Kind: "ref", Module: tt.Module, Name: tt.Name}, nil
 	case *typ.Meta:
-		of, err := encodeType(tt.Of)
+		of, err := e.encode(tt.Of)
 		if err != nil {
 			return nil, err
 		}
 		return &typeWire{Kind: "meta", Of: of}, nil
 	case *typ.TypeParam:
-		return encodeTypeParam(tt)
+		return e.encodeTypeParam(tt)
 	case *typ.Recursive:
 		return nil, fmt.Errorf("recursive type %q requires recursive-family manifest encoding", tt.Name)
 	default:
@@ -118,8 +138,19 @@ func encodeType(t typ.Type) (*typeWire, error) {
 }
 
 type typeDecodeEnv struct {
-	parent *typeDecodeEnv
-	params map[string]*typ.TypeParam
+	parent   *typeDecodeEnv
+	params   map[string]*typ.TypeParam
+	generics map[string]*typ.Generic
+}
+
+func (e *typeDecodeEnv) lookupGeneric(name string) (*typ.Generic, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		generic, ok := cur.generics[name]
+		if ok {
+			return generic, true
+		}
+	}
+	return nil, false
 }
 
 func (e *typeDecodeEnv) lookup(name string) (*typ.TypeParam, bool) {
@@ -147,6 +178,16 @@ func (e *typeDecodeEnv) withParams(params []*typ.TypeParam) *typeDecodeEnv {
 		child.params[param.Name] = param
 	}
 	return child
+}
+
+func (e *typeDecodeEnv) withGeneric(generic *typ.Generic) *typeDecodeEnv {
+	if generic == nil || generic.Name == "" {
+		return e
+	}
+	return &typeDecodeEnv{
+		parent:   e,
+		generics: map[string]*typ.Generic{generic.Name: generic},
+	}
 }
 
 func decodeType(w *typeWire) (typ.Type, error) {
@@ -265,6 +306,12 @@ func decodeTypeInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 		return typ.NewAlias(w.Name, target), nil
 	case "generic":
 		return decodeGenericInEnv(w, env)
+	case "genericRef":
+		generic, ok := env.lookupGeneric(w.Name)
+		if !ok {
+			return nil, fmt.Errorf("generic reference %q is out of scope", w.Name)
+		}
+		return generic, nil
 	case "instantiated":
 		generic, err := decodeTypeInEnv(w.Generic, env)
 		if err != nil {

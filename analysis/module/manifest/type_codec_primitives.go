@@ -94,13 +94,13 @@ func decodeLiteral(w *typeWire) (typ.Type, error) {
 	}
 }
 
-func encodeTypeList(types []typ.Type) ([]*typeWire, error) {
+func (e *typeEncoder) encodeTypeList(types []typ.Type) ([]*typeWire, error) {
 	if len(types) == 0 {
 		return nil, nil
 	}
 	out := make([]*typeWire, 0, len(types))
 	for _, t := range types {
-		encoded, err := encodeType(t)
+		encoded, err := e.encode(t)
 		if err != nil {
 			return nil, err
 		}
@@ -146,13 +146,13 @@ func decodeStaticMemberKind(s string) (typ.StaticMemberKind, error) {
 	}
 }
 
-func encodeRecord(r *typ.Record) (*typeWire, error) {
+func (e *typeEncoder) encodeRecord(r *typ.Record) (*typeWire, error) {
 	out := &typeWire{Kind: "record", Open: r.Open}
 
 	fields := append([]typ.Field(nil), r.Fields...)
 	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
 	for _, f := range fields {
-		encoded, err := encodeType(f.Type)
+		encoded, err := e.encode(f.Type)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +169,7 @@ func encodeRecord(r *typ.Record) (*typeWire, error) {
 		return typ.CompareStaticMembers(members[i], members[j]) < 0
 	})
 	for _, member := range members {
-		encoded, err := encodeType(member.Type)
+		encoded, err := e.encode(member.Type)
 		if err != nil {
 			return nil, err
 		}
@@ -189,15 +189,15 @@ func encodeRecord(r *typ.Record) (*typeWire, error) {
 	}
 
 	var err error
-	out.Metatable, err = encodeType(r.Metatable)
+	out.Metatable, err = e.encode(r.Metatable)
 	if err != nil {
 		return nil, err
 	}
-	out.MapKey, err = encodeType(r.MapKey)
+	out.MapKey, err = e.encode(r.MapKey)
 	if err != nil {
 		return nil, err
 	}
-	out.MapValue, err = encodeType(r.MapValue)
+	out.MapValue, err = e.encode(r.MapValue)
 	if err != nil {
 		return nil, err
 	}

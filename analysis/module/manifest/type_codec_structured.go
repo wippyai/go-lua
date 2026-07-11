@@ -8,28 +8,28 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func encodeFunction(f *typ.Function) (*typeWire, error) {
+func (e *typeEncoder) encodeFunction(f *typ.Function) (*typeWire, error) {
 	out := &typeWire{Kind: "function"}
 	for _, p := range f.TypeParams {
-		encoded, err := encodeTypeParamWire(p)
+		encoded, err := e.encodeTypeParamWire(p)
 		if err != nil {
 			return nil, err
 		}
 		out.TypeParams = append(out.TypeParams, encoded)
 	}
 	for _, p := range f.Params {
-		encoded, err := encodeType(p.Type)
+		encoded, err := e.encode(p.Type)
 		if err != nil {
 			return nil, err
 		}
 		out.Params = append(out.Params, paramWire{Name: p.Name, Type: encoded, Optional: p.Optional})
 	}
 	var err error
-	out.Variadic, err = encodeType(f.Variadic)
+	out.Variadic, err = e.encode(f.Variadic)
 	if err != nil {
 		return nil, err
 	}
-	out.Returns, err = encodeTypeList(f.Returns)
+	out.Returns, err = e.encodeTypeList(f.Returns)
 	if err != nil {
 		return nil, err
 	}
@@ -79,12 +79,12 @@ func decodeFunctionInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	return b.Build(), nil
 }
 
-func encodeInterface(i *typ.Interface) (*typeWire, error) {
+func (e *typeEncoder) encodeInterface(i *typ.Interface) (*typeWire, error) {
 	out := &typeWire{Kind: "interface", Name: i.Name}
 	methods := append([]typ.Method(nil), i.Methods...)
 	sort.Slice(methods, func(i, j int) bool { return methods[i].Name < methods[j].Name })
 	for _, method := range methods {
-		encoded, err := encodeType(method.Type)
+		encoded, err := e.encode(method.Type)
 		if err != nil {
 			return nil, err
 		}
@@ -109,17 +109,17 @@ func decodeInterfaceInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	return typ.NewInterface(w.Name, methods), nil
 }
 
-func encodeGeneric(g *typ.Generic) (*typeWire, error) {
+func (e *typeEncoder) encodeGeneric(g *typ.Generic) (*typeWire, error) {
 	out := &typeWire{Kind: "generic", Name: g.Name}
 	for _, p := range g.TypeParams {
-		encoded, err := encodeTypeParamWire(p)
+		encoded, err := e.encodeTypeParamWire(p)
 		if err != nil {
 			return nil, err
 		}
 		out.TypeParams = append(out.TypeParams, encoded)
 	}
 	var err error
-	out.Body, err = encodeType(g.Body)
+	out.Body, err = e.encode(g.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -135,15 +135,17 @@ func decodeGenericInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 		}
 		params = append(params, decoded)
 	}
-	body, err := decodeTypeInEnv(w.Body, env.withParams(params))
+	generic := typ.NewGeneric(w.Name, params, nil)
+	body, err := decodeTypeInEnv(w.Body, env.withGeneric(generic).withParams(params))
 	if err != nil {
 		return nil, err
 	}
-	return typ.NewGeneric(w.Name, params, body), nil
+	generic.SetBody(body)
+	return generic, nil
 }
 
-func encodeTypeParam(t *typ.TypeParam) (*typeWire, error) {
-	param, err := encodeTypeParamWire(t)
+func (e *typeEncoder) encodeTypeParam(t *typ.TypeParam) (*typeWire, error) {
+	param, err := e.encodeTypeParamWire(t)
 	if err != nil {
 		return nil, err
 	}
@@ -161,11 +163,11 @@ func decodeTypeParamInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 	return decodeTypeParamWireInEnv(param, env)
 }
 
-func encodeTypeParamWire(p *typ.TypeParam) (typeParamWire, error) {
+func (e *typeEncoder) encodeTypeParamWire(p *typ.TypeParam) (typeParamWire, error) {
 	if p == nil {
 		return typeParamWire{}, fmt.Errorf("nil type parameter")
 	}
-	constraint, err := encodeType(p.Constraint)
+	constraint, err := e.encode(p.Constraint)
 	if err != nil {
 		return typeParamWire{}, err
 	}
