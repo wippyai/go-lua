@@ -598,6 +598,55 @@ func TestSolve_EmitToCellOutsideCells(t *testing.T) {
 	}
 }
 
+// TestSolve_NarrowingCoversEmittedAndCandidateOnlyCellsInSameIteration pins
+// the three-set narrowing pass. "emitted" exists in cur before narrowing,
+// while "candidate" is first emitted only while building the first narrowing
+// candidate. The latter must still be applied in that pass, before curOf
+// materializes it into emittedOrder for the next one.
+func TestSolve_NarrowingCoversEmittedAndCandidateOnlyCellsInSameIteration(t *testing.T) {
+	l := capLattice{top: 10}.lattice()
+	l.Narrow = mini
+	abstractCalls := make(map[string]int)
+	s := newState(EquationSystem[string, int]{
+		Lattice: l,
+		Cells:   []string{"declared"},
+		Initial: func(string) int { return 0 },
+		Transfer: func(_ string, _ func(string) int, emit func(string, int)) {
+			emit("emitted", 1)
+			emit("candidate", 1)
+		},
+		WidenAt: func(string) bool { return true },
+		Abstract: func(cell string, value int) int {
+			abstractCalls[cell]++
+			return value
+		},
+	})
+
+	// Materialize an emitted-only cell before narrowing at a widened value.
+	// Reset its setup observation so each expected call below comes from one of
+	// the two narrowing iterations.
+	s.emit("emitted", 10)
+	clear(abstractCalls)
+
+	if err := s.runNarrowing(nil); err != nil {
+		t.Fatalf("runNarrowing: %v", err)
+	}
+	if got := s.cur["emitted"]; got != 1 {
+		t.Fatalf("emitted-only cell = %d, want narrowed value 1", got)
+	}
+	if _, ok := s.cur["candidate"]; !ok {
+		t.Fatal("candidate-only cell was not applied in the first narrowing iteration")
+	}
+	// Each cell is abstracted once while constructing and once while applying
+	// each of the two narrowing candidates. Without first-pass candidate-only
+	// coverage, candidate is applied only in the second pass and has 3 calls.
+	for _, cell := range []string{"emitted", "candidate"} {
+		if got := abstractCalls[cell]; got != 4 {
+			t.Fatalf("%s abstract calls = %d, want 4 (construction and application in both passes)", cell, got)
+		}
+	}
+}
+
 func TestSolve_InitialSparseMaterializesUntouchedDeclaredCellsAsBottom(t *testing.T) {
 	cl := capLattice{top: 100}
 	sys := EquationSystem[string, int]{

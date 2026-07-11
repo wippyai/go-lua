@@ -386,6 +386,9 @@ type solveState[Cell comparable, State any] struct {
 
 	// cur is the working value of every cell touched so far.
 	cur map[Cell]State
+	// emittedOrder records undeclared (emitted-only) cells in first-touch order,
+	// giving narrowing a deterministic iteration over cells outside Cells.
+	emittedOrder []Cell
 	// versions tracks solve-local revisions of cur. A narrowing replacement is
 	// a replacement just like a main-worklist emit and must advance its version.
 	versions    map[Cell]uint64
@@ -512,6 +515,8 @@ func (s *solveState[Cell, State]) curOf(c Cell) State {
 	s.bumpVersion(c)
 	if _, declared := s.order[c]; declared {
 		s.declaredCur++
+	} else {
+		s.emittedOrder = append(s.emittedOrder, c)
 	}
 	return v
 }
@@ -717,17 +722,28 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 		if err := cancel.err(uint64(i * cancellationCheckInterval)); err != nil {
 			return err
 		}
-		candidate, err := s.narrowingCandidate(cancel)
+		candidate, candidateOnlyOrder, err := s.narrowingCandidate(cancel)
 		if err != nil {
 			return err
 		}
 		changed := false
-		// Only declared cells are observable.  Emitted-only cells have no
-		// transfer and no public result entry, so narrowing them is both useless
-		// and (when Cell has no order) would require Go-map iteration.  Keeping
-		// this loop to Cells order is the determinism hygiene needed by resumed
-		// publication.
+		// Preserve the historical three-set narrowing coverage in deterministic
+		// order: declared cells in Cells order, pre-existing emitted-only cells
+		// in first-touch order, and cells created only while building this
+		// candidate in their emission order. The last set must be applied in
+		// this iteration: applyNarrowedCandidate materializes it in cur, which
+		// would otherwise defer it until a later iteration.
 		for _, c := range s.cells {
+			if s.applyNarrowedCandidate(c, candidate) {
+				changed = true
+			}
+		}
+		for _, c := range s.emittedOrder {
+			if s.applyNarrowedCandidate(c, candidate) {
+				changed = true
+			}
+		}
+		for _, c := range candidateOnlyOrder {
 			if s.applyNarrowedCandidate(c, candidate) {
 				changed = true
 			}
@@ -756,6 +772,7 @@ func cloneMap[K comparable, V any](in map[K]V) map[K]V {
 func (s *solveState[Cell, State]) cloneForPublish() *solveState[Cell, State] {
 	copy := *s
 	copy.cells = append([]Cell(nil), s.cells...)
+	copy.emittedOrder = append([]Cell(nil), s.emittedOrder...)
 	copy.order = cloneMap(s.order)
 	copy.cur = cloneMap(s.cur)
 	copy.versions = cloneMap(s.versions)
@@ -772,8 +789,12 @@ func (s *solveState[Cell, State]) cloneForPublish() *solveState[Cell, State] {
 	return &copy
 }
 
-func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) (map[Cell]State, error) {
+func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) (map[Cell]State, []Cell, error) {
 	candidate := make(map[Cell]State, len(s.cur))
+	// candidateOnlyOrder records keys that are first created by an emit during
+	// this candidate pass. They are absent from cur, so they cannot appear in
+	// emittedOrder until applyNarrowedCandidate materializes them below.
+	candidateOnlyOrder := make([]Cell, 0)
 	for c, value := range s.initial {
 		candidate[c] = value
 	}
@@ -789,6 +810,12 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 		return s.curOf(d)
 	}
 	emit := func(d Cell, v State) {
+		_, candidateExists := candidate[d]
+		_, declared := s.order[d]
+		_, present := s.cur[d]
+		if !candidateExists && !declared && !present {
+			candidateOnlyOrder = append(candidateOnlyOrder, d)
+		}
 		prev := candidateOf(d)
 		next := s.domain.Join(prev, v)
 		next = s.abstract(d, next)
@@ -797,7 +824,7 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 	var zero Cell
 	for i, c := range s.cells {
 		if err := cancel.err(uint64(i)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		s.active = c
 		s.activeReadSelf = false
@@ -807,7 +834,7 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 	s.active = zero
 	s.activeReadSelf = false
 	s.activeSelfChanged = false
-	return candidate, nil
+	return candidate, candidateOnlyOrder, nil
 }
 
 func (s *solveState[Cell, State]) applyNarrowedCandidate(c Cell, candidate map[Cell]State) bool {
