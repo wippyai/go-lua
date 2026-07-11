@@ -57,6 +57,7 @@ type semanticProjectionBuilder struct {
 	digest    embedding.Digest
 	file      string // Display only; semantic joins use document and digest.
 	source    []byte
+	lineIndex sourceLineIndex // Built once for this exact source digest.
 	root      *body.Result
 	bodies    []projectionBody
 	byFunc    map[*ast.FunctionExpr]projectionBody
@@ -86,6 +87,7 @@ func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result
 		binders:   make(map[uint64]*BinderInfo),
 		seenExprs: make(map[ast.Expr]map[cfg.Point]struct{}),
 	}
+	b.lineIndex = newSourceLineIndex(b.source)
 	b.collectBodies(root, BodyID("root"), b.locationForSpan(wholeSourceSpan(b.source)))
 	b.collectBinderDefinitionsAndOccurrences(stmts)
 	b.collectExpressions()
@@ -924,7 +926,7 @@ func (b *semanticProjectionBuilder) locationForSpan(span source.Span) SourceLoca
 	if !span.Valid() {
 		return SourceLocation{}
 	}
-	start, end, ok := offsetsForSpan(b.source, span)
+	start, end, ok := offsetsForSpan(b.source, b.lineIndex, span)
 	if !ok {
 		return SourceLocation{}
 	}
@@ -1044,11 +1046,11 @@ func wholeSourceSpan(data []byte) source.Span {
 	return source.Span{StartLine: 1, StartCol: 1, EndLine: line, EndCol: col}
 }
 
-func offsetsForSpan(data []byte, span source.Span) (int, int, bool) {
+func offsetsForSpan(data []byte, index sourceLineIndex, span source.Span) (int, int, bool) {
 	if !span.Valid() {
 		return 0, 0, false
 	}
-	start, ok := offsetAt(data, span.StartLine, span.StartCol)
+	start, ok := index.offsetAt(data, span.StartLine, span.StartCol)
 	if !ok {
 		return 0, 0, false
 	}
@@ -1059,7 +1061,7 @@ func offsetsForSpan(data []byte, span source.Span) (int, int, bool) {
 	if endCol < span.StartCol && endLine == span.StartLine {
 		endCol = span.StartCol
 	}
-	end, ok := offsetAt(data, endLine, endCol)
+	end, ok := index.offsetAt(data, endLine, endCol)
 	if !ok {
 		return 0, 0, false
 	}
@@ -1072,23 +1074,50 @@ func offsetsForSpan(data []byte, span source.Span) (int, int, bool) {
 	return start, end, true
 }
 
-func offsetAt(data []byte, line, column int) (int, bool) {
+// sourceLineIndex maps the parser's 1-indexed byte lines to their first byte.
+// It belongs to one immutable source snapshot, identified by the builder's
+// digest, and makes repeated span endpoint projection constant-time.
+type sourceLineIndex struct {
+	starts []int
+}
+
+func newSourceLineIndex(data []byte) sourceLineIndex {
+	starts := make([]int, 1, 1+len(data)/32)
+	starts[0] = 0
+	for offset, b := range data {
+		if b == '\n' {
+			starts = append(starts, offset+1)
+		}
+	}
+	return sourceLineIndex{starts: starts}
+}
+
+func (index sourceLineIndex) offsetAt(data []byte, line, column int) (int, bool) {
 	if line < 1 || column < 1 {
 		return 0, false
 	}
-	currentLine, currentColumn := 1, 1
-	for offset := 0; offset < len(data); offset++ {
-		if currentLine == line && currentColumn == column {
+	if line > len(index.starts) {
+		return len(data), false
+	}
+
+	offset := index.starts[line-1] + column - 1
+	if line < len(index.starts) {
+		// The newline itself is the final byte-column of a non-final line.
+		if offset < index.starts[line] {
 			return offset, true
 		}
-		if data[offset] == '\n' {
-			currentLine++
-			currentColumn = 1
-			continue
-		}
-		currentColumn++
+		return len(data), false
 	}
-	return len(data), currentLine == line && currentColumn == column
+	if offset <= len(data) {
+		return offset, true
+	}
+	return len(data), false
+}
+
+// offsetAt is retained for the query API's occasional line/column conversion.
+// Projection builds and reuses a sourceLineIndex instead.
+func offsetAt(data []byte, line, column int) (int, bool) {
+	return newSourceLineIndex(data).offsetAt(data, line, column)
 }
 
 func lineColumnAt(data []byte, target int) (int, int) {
