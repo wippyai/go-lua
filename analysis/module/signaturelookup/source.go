@@ -38,14 +38,27 @@ func (s Source) Validate() error {
 
 // Lookup returns a cloned signature for name.
 func (s Source) Lookup(name string) (signature.Function, bool) {
+	sig, ok := s.LookupView(name)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return sig.Clone(), true
+}
+
+// LookupView returns a borrowed immutable signature for analysis hot paths.
+// The returned value and all reachable slices/types remain owned by the source;
+// callers that may mutate them must use Lookup instead. Manifest-local type
+// scoping can construct a new immutable view, but deliberately does not perform
+// the otherwise redundant ownership clone.
+func (s Source) LookupView(name string) (signature.Function, bool) {
 	if name == "" {
 		return signature.Function{}, false
 	}
 	if s.IncludeStdlib && isBareStdlibName(name) {
 		if sig, ok := lookupGlobalManifestSignature(s.Manifests, name); ok {
-			return sig.Clone(), true
+			return sig, true
 		}
-		return stdlib.Lookup(name)
+		return stdlib.LookupView(name)
 	}
 	for i := len(s.Manifests) - 1; i >= 0; i-- {
 		m := s.Manifests[i]
@@ -53,11 +66,11 @@ func (s Source) Lookup(name string) (signature.Function, bool) {
 			continue
 		}
 		if sig, ok := lookupManifestSignature(m, name); ok {
-			return m.ScopeSignature(sig).Clone(), true
+			return m.ScopeSignature(sig), true
 		}
 	}
 	if s.IncludeStdlib {
-		return stdlib.Lookup(name)
+		return stdlib.LookupView(name)
 	}
 	return signature.Function{}, false
 }
@@ -66,7 +79,7 @@ func isBareStdlibName(name string) bool {
 	if name == "" || strings.ContainsAny(name, ".[") {
 		return false
 	}
-	_, ok := stdlib.Lookup(name)
+	_, ok := stdlib.LookupView(name)
 	return ok
 }
 

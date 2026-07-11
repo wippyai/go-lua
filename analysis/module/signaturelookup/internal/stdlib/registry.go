@@ -521,11 +521,19 @@ func init() {
 }
 
 func Lookup(name string) (signature.Function, bool) {
-	sig, ok := registry[name]
+	sig, ok := LookupView(name)
 	if !ok {
 		return signature.Function{}, false
 	}
 	return sig.Clone(), true
+}
+
+// LookupView returns the registry-owned immutable signature for name. It is an
+// internal analysis hot-path view: callers must not mutate any reachable type
+// or effect storage. Lookup remains the ownership-transferring public API.
+func LookupView(name string) (signature.Function, bool) {
+	sig, ok := registry[name]
+	return sig, ok
 }
 
 // bareGlobals names every Lua standard global that is always present in the

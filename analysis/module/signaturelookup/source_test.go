@@ -256,6 +256,22 @@ func TestLookupReturnsClones(t *testing.T) {
 	}
 }
 
+var benchmarkLookupSignature signature.Function
+
+func BenchmarkStdlibLookupOwnership(b *testing.B) {
+	src := Source{IncludeStdlib: true}
+	b.Run("owned-clone", func(b *testing.B) {
+		for b.Loop() {
+			benchmarkLookupSignature, _ = src.Lookup("string.format")
+		}
+	})
+	b.Run("immutable-view", func(b *testing.B) {
+		for b.Loop() {
+			benchmarkLookupSignature, _ = src.LookupView("string.format")
+		}
+	})
+}
+
 func TestSignaturesReturnsClonesAndRespectsPrecedence(t *testing.T) {
 	first := manifest.New("example/first")
 	first.DefineFunctionSignature("shared", testSignature("first", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}))

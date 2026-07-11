@@ -54,6 +54,16 @@ type SignatureLookup interface {
 	Lookup(name string) (signature.Function, bool)
 }
 
+// immutableSignatureLookup is implemented by bounded sources that can lend a
+// read-only signature. SignatureOutcomeProvider never mutates a looked-up
+// signature: receiver binding and generic substitution replace carrier fields
+// with newly constructed values. Borrowing therefore removes deep ownership
+// clones from fixed-point transfers while preserving SignatureLookup.Lookup's
+// ownership contract for all other users.
+type immutableSignatureLookup interface {
+	LookupView(name string) (signature.Function, bool)
+}
+
 // SignatureOutcomeProviderConfig carries the signature/effect lookup plus the generic
 // fact/source read models needed to resolve call argument values.
 type SignatureOutcomeProviderConfig struct {
@@ -85,6 +95,10 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 	returnValue := config.ReturnValue
 	providerKeySpace := config.KeySpace
 	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
+	lookupSignature := signatures.Lookup
+	if views, ok := signatures.(immutableSignatureLookup); ok {
+		lookupSignature = views.LookupView
+	}
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if signatures == nil {
 			return callpayload.CallOutcome{}
@@ -101,7 +115,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 				return callpayload.CallOutcome{}
 			}
 		}
-		sig, ok := signatures.Lookup(name)
+		sig, ok := lookupSignature(name)
 		if !ok {
 			return callpayload.CallOutcome{}
 		}
