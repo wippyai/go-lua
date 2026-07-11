@@ -1,6 +1,8 @@
 package transfer
 
 import (
+	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -10,10 +12,38 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
+
+func TestTryRunCancellationAfterNodeCallbackPublishesNothing(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), point, false)
+	graph.AddEdge(point, graph.Exit(), false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result, err := TryRun(Config{
+		Context:  ctx,
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: func(ctx NodeContext, in state.State) state.State {
+			if ctx.Point == point {
+				cancel()
+			}
+			return in.WriteValue(reg, key.ReturnSlot(0), presentValue(reg))
+		},
+	})
+	if result != nil {
+		t.Fatalf("canceled transfer result = %#v, want nil", result)
+	}
+	if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("TryRun error = %v, want cancellation", err)
+	}
+}
 
 func TestRun_LinearGraphPropagatesEntryStateThroughIdentityTransfers(t *testing.T) {
 	reg := standard.Registry()

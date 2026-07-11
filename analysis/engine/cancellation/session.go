@@ -16,6 +16,7 @@ type Session struct {
 // is terminal and immutable once observed.
 type Token struct {
 	state atomic.Pointer[cancelState]
+	ctx   context.Context
 }
 
 type cancelState struct{ err error }
@@ -32,7 +33,7 @@ func Attach(ctx context.Context) (context.Context, *Session) {
 	if session, ok := ctx.Value(contextKey{}).(*Session); ok && session != nil {
 		return ctx, session
 	}
-	session := &Session{token: &Token{}}
+	session := &Session{token: &Token{ctx: ctx}}
 	if err := ctx.Err(); err != nil {
 		session.token.Cancel(err)
 	} else {
@@ -91,7 +92,7 @@ func (t *Token) Cancel(err error) {
 }
 
 // Canceled reports whether this token has been canceled.
-func (t *Token) Canceled() bool { return t != nil && t.state.Load() != nil }
+func (t *Token) Canceled() bool { return t != nil && t.Err() != nil }
 
 // Err returns the cancellation cause, or nil while the token is live.
 func (t *Token) Err() error {
@@ -100,7 +101,14 @@ func (t *Token) Err() error {
 	}
 	state := t.state.Load()
 	if state == nil {
-		return nil
+		if t.ctx == nil || t.ctx.Err() == nil {
+			return nil
+		}
+		t.Cancel(t.ctx.Err())
+		state = t.state.Load()
+		if state == nil {
+			return t.ctx.Err()
+		}
 	}
 	return state.err
 }
