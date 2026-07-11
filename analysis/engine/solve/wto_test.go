@@ -229,6 +229,102 @@ func TestSolveWTOTerminatesWhenWideningPointDiffersFromWTOHead(t *testing.T) {
 	}
 }
 
+func TestSolveWTORetainedCheckpointOwnsPreNarrowHistory(t *testing.T) {
+	edges := map[int][]int{0: {1}, 1: {0, 2}}
+	sys := EquationSystem[int, int]{
+		Lattice: capLattice{top: 16}.lattice(), Cells: []int{0, 1, 2},
+		InitialSparse: func(cell int) (int, bool) { return 1, cell == 0 },
+		Transfer: func(cell int, read func(int) int, emit func(int, int)) {
+			for _, destination := range edges[cell] {
+				emit(destination, min(16, read(cell)+1))
+			}
+		},
+		WidenAt: func(cell int) bool { return cell == 0 },
+	}
+	result, versions, retained, err := BuildRetainedWTO(context.Background(), sys, NewWTOPlan(sys.Cells, func(cell int) []int { return edges[cell] }), RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained == nil || len(result) != len(sys.Cells) || len(versions) != len(sys.Cells) {
+		t.Fatalf("retained result/checkpoint missing: retained=%#v", retained)
+	}
+	if retained.visits[0] == 0 || retained.nextVersion == 0 || len(retained.values) != len(sys.Cells) || len(retained.versions) != len(sys.Cells) {
+		t.Fatalf("incomplete pre-narrow history: %#v", retained)
+	}
+	if len(retained.owners) != len(sys.Cells) || len(retained.readers) == 0 || len(retained.outputOwners) == 0 {
+		t.Fatalf("incomplete owner provenance: %#v", retained)
+	}
+	retained.Release()
+	if retained.values != nil || retained.visits != nil || retained.nextVersion != 0 || retained.owners != nil {
+		t.Fatalf("checkpoint retained after release: %#v", retained)
+	}
+}
+
+func TestRetainedRecorderAtomicallyReplacesAndJoinsOwnerBag(t *testing.T) {
+	domain := capLattice{top: 32}.lattice()
+	recorder := newRetainedRecorder([]int{0, 1, 2}, domain, RetainedBudget{})
+	recorder.begin(0)
+	recorder.read(0, 3, 7)
+	recorder.emit(1, 2)
+	recorder.emit(1, 4)
+	recorder.emit(2, 8)
+	if err := recorder.commit(); err != nil {
+		t.Fatal(err)
+	}
+	owners, _, reverse := recorder.compact([]int{0, 1, 2})
+	if len(owners) != 1 || len(owners[0].outputs) != 2 || owners[0].outputs[0].contribution != 4 {
+		t.Fatalf("joined owner bag = %#v", owners)
+	}
+	if len(reverse) != 2 {
+		t.Fatalf("reverse outputs = %#v", reverse)
+	}
+
+	// A failed replacement cannot clear the previously committed bag.
+	recorder.budget.MaxOutputs = 1
+	recorder.begin(0)
+	recorder.emit(1, 16)
+	recorder.emit(2, 16)
+	if !errors.Is(recorder.commit(), ErrRetainedBudget) {
+		t.Fatal("replacement unexpectedly fit budget")
+	}
+	recorder.discard()
+	owners, _, reverse = recorder.compact([]int{0, 1, 2})
+	if len(owners) != 1 || len(owners[0].outputs) != 2 || len(reverse) != 2 {
+		t.Fatalf("failed replacement mutated committed bag: owners=%#v reverse=%#v", owners, reverse)
+	}
+
+	// A successful later visit is replacement semantics, not accumulation.
+	recorder.budget.MaxOutputs = 0
+	recorder.begin(0)
+	recorder.emit(1, 1)
+	if err := recorder.commit(); err != nil {
+		t.Fatal(err)
+	}
+	owners, _, reverse = recorder.compact([]int{0, 1, 2})
+	if len(owners[0].outputs) != 1 || owners[0].outputs[0].destination != 1 || len(reverse) != 1 {
+		t.Fatalf("replacement retained removed output: owners=%#v reverse=%#v", owners, reverse)
+	}
+}
+
+func TestBuildRetainedWTOIncludesEmittedOnlyCells(t *testing.T) {
+	sys := EquationSystem[int, int]{
+		Lattice: capLattice{top: 32}.lattice(), Cells: []int{0},
+		Transfer: func(cell int, read func(int) int, emit func(int, int)) { emit(9, 7) },
+	}
+	result, versions, retained, err := BuildRetainedWTO(context.Background(), sys, NewWTOPlan(sys.Cells, nil), RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Release()
+	value, ok := retained.Value(9)
+	if !ok || value != 7 || retained.Version(9) == 0 {
+		t.Fatalf("emitted-only value missing: value=%d ok=%v retainedVersion=%d result=%v versions=%v", value, ok, retained.Version(9), result, versions)
+	}
+	if len(retained.outputOwners) != 1 || retained.outputOwners[0].cell != 9 {
+		t.Fatalf("emitted-only reverse edge missing: %#v", retained.outputOwners)
+	}
+}
+
 func TestSolveWTOForwardDynamicInfluencesMatchFIFO(t *testing.T) {
 	setDomain := lattice.Lattice[uint16]{
 		Bottom: func() uint16 { return 0 }, Equal: func(a, b uint16) bool { return a == b },

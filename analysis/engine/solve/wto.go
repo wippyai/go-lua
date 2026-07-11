@@ -169,30 +169,123 @@ func (p *WTOPlan[Cell]) coversInfluence(from, to Cell) bool {
 
 // SolveWTO computes the canonical structured solution for plan.
 func SolveWTO[Cell comparable, State any](sys EquationSystem[Cell, State], plan *WTOPlan[Cell]) (map[Cell]State, error) {
-	result, _, err := solveWTOSystem(sys, plan, nil, false)
+	result, _, _, err := solveWTOSystem(sys, plan, nil, false, nil)
 	return result, err
 }
 
 // SolveWTOWithVersions is the uncancelable version-reporting structured
 // solver. It avoids cancellation polling on the default batch hot path.
 func SolveWTOWithVersions[Cell comparable, State any](sys EquationSystem[Cell, State], plan *WTOPlan[Cell]) (map[Cell]State, map[Cell]uint64, error) {
-	return solveWTOSystem(sys, plan, nil, true)
+	result, versions, _, err := solveWTOSystem(sys, plan, nil, true, nil)
+	return result, versions, err
 }
 
 // SolveWTOContextWithVersions is the cancelable, version-reporting structured
 // solver. All mutation is scratch-owned; error returns publish no maps.
 func SolveWTOContextWithVersions[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State], plan *WTOPlan[Cell]) (map[Cell]State, map[Cell]uint64, error) {
 	cancel := newCancellationGuard(cancellation.FromContext(ctx))
-	return solveWTOSystem(sys, plan, cancel, true)
+	result, versions, _, err := solveWTOSystem(sys, plan, cancel, true, nil)
+	return result, versions, err
 }
 
-func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State], plan *WTOPlan[Cell], cancel *cancellationGuard, includeVersions bool) (map[Cell]State, map[Cell]uint64, error) {
+// RetainedSystem is an opt-in retained pre-narrowing generation. Its contents
+// are intentionally opaque outside solve: regional replay must preserve the
+// solver's equation ownership, revisions, and WTO history as one unit.
+type RetainedSystem[Cell comparable, State any] struct {
+	values       map[Cell]State
+	versions     map[Cell]uint64
+	initial      map[Cell]State
+	visits       map[Cell]int
+	widenChanges map[Cell]int
+	cells        []Cell
+	emittedOnly  []Cell
+	nextVersion  uint64
+	owners       []retainedOwner[Cell, State]
+	readers      []retainedReverse[Cell]
+	outputOwners []retainedReverse[Cell]
+	usage        RetainedUsage
+}
+
+func (r *RetainedSystem[Cell, State]) Value(cell Cell) (State, bool) {
+	if r == nil {
+		var zero State
+		return zero, false
+	}
+	value, ok := r.values[cell]
+	return value, ok
+}
+func (r *RetainedSystem[Cell, State]) Version(cell Cell) uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.versions[cell]
+}
+func (r *RetainedSystem[Cell, State]) VisitCount(cell Cell) int {
+	if r == nil {
+		return 0
+	}
+	return r.visits[cell]
+}
+func (r *RetainedSystem[Cell, State]) WidenChangeCount(cell Cell) int {
+	if r == nil {
+		return 0
+	}
+	return r.widenChanges[cell]
+}
+func (r *RetainedSystem[Cell, State]) NextRevision() uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.nextVersion
+}
+func (r *RetainedSystem[Cell, State]) CellCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.cells)
+}
+func (r *RetainedSystem[Cell, State]) Usage() RetainedUsage {
+	if r == nil {
+		return RetainedUsage{}
+	}
+	return r.usage
+}
+
+func (r *RetainedSystem[Cell, State]) Release() {
+	if r == nil {
+		return
+	}
+	r.values = nil
+	r.versions = nil
+	r.initial = nil
+	r.visits = nil
+	r.widenChanges = nil
+	r.cells = nil
+	r.emittedOnly = nil
+	r.owners = nil
+	r.readers = nil
+	r.outputOwners = nil
+	r.usage = RetainedUsage{}
+	r.nextVersion = 0
+}
+
+// BuildRetainedWTO performs the same canonical clean solve while retaining the
+// complete ascending generation. It is deliberately separate from the default
+// SolveWTO APIs, so ordinary lint pays no provenance branches or allocations.
+// Cancellation, uncovered plans, and budget failures publish nothing.
+func BuildRetainedWTO[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State], plan *WTOPlan[Cell], budget RetainedBudget) (map[Cell]State, map[Cell]uint64, *RetainedSystem[Cell, State], error) {
+	cancel := newCancellationGuard(cancellation.FromContext(ctx))
+	recorder := newRetainedRecorder(sys.Cells, sys.Lattice, budget)
+	return solveWTOSystem(sys, plan, cancel, true, recorder)
+}
+
+func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State], plan *WTOPlan[Cell], cancel *cancellationGuard, includeVersions bool, recorder *retainedRecorder[Cell, State]) (map[Cell]State, map[Cell]uint64, *RetainedSystem[Cell, State], error) {
 	validateEquationSystem(sys)
 	if plan == nil || !plan.matches(sys.Cells) {
-		return nil, nil, ErrWTOPlanUncovered
+		return nil, nil, nil, ErrWTOPlanUncovered
 	}
 	if err := cancel.err(0); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	s := newStructuredState(sys)
 	// Structured ascent owns scheduling. Avoid FIFO queue/dependency storage on
@@ -207,6 +300,21 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 	}
 	emit := func(d Cell, value State) { s.emitStructured(d, value) }
 	readVersioned := func(d Cell) (State, uint64) { return read(d), s.versionOf(d) }
+	if recorder != nil {
+		read = func(d Cell) State {
+			if !plan.coversInfluence(d, s.active) {
+				uncovered = true
+			}
+			value := s.curOf(d)
+			recorder.read(d, value, s.versionOf(d))
+			return value
+		}
+		emit = func(d Cell, value State) {
+			recorder.emit(d, value)
+			s.emitStructured(d, value)
+		}
+		readVersioned = func(d Cell) (State, uint64) { return read(d), s.versionOf(d) }
+	}
 	var iteration uint64
 	runCell := func(cell Cell) error {
 		if err := cancel.err(iteration); err != nil {
@@ -233,6 +341,40 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 		s.recordVisit(cell)
 		return nil
 	}
+	if recorder != nil {
+		runCell = func(cell Cell) error {
+			if err := cancel.err(iteration); err != nil {
+				return err
+			}
+			iteration++
+			s.active = cell
+			recorder.begin(cell)
+			s.activeReadSelf = false
+			s.activeSelfChanged = false
+			if s.stats != nil {
+				s.stats.TransferCalls++
+			}
+			if s.transferVersioned != nil {
+				s.transferVersioned(cell, readVersioned, emit)
+			} else {
+				s.transfer(cell, read, emit)
+			}
+			if err := cancel.err(0); err != nil {
+				recorder.discard()
+				return err
+			}
+			if uncovered {
+				recorder.discard()
+				return ErrWTOPlanUncovered
+			}
+			if err := recorder.commit(); err != nil {
+				recorder.discard()
+				return err
+			}
+			s.recordVisit(cell)
+			return nil
+		}
+	}
 	var runPartition func([]WTOElement[Cell]) error
 	runPartition = func(items []WTOElement[Cell]) error {
 		for _, item := range items {
@@ -258,19 +400,52 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 		return nil
 	}
 	if err := runPartition(plan.elements); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	var retained *RetainedSystem[Cell, State]
+	if recorder != nil {
+		cells := append([]Cell(nil), s.cells...)
+		cells = append(cells, s.emittedOrder...)
+		values := make(map[Cell]State, len(cells))
+		versions := make(map[Cell]uint64, len(cells))
+		for _, cell := range cells {
+			value, ok := s.cur[cell]
+			if !ok {
+				value = s.domain.Bottom()
+			}
+			values[cell] = value
+			versions[cell] = s.versions[cell]
+		}
+		usage := recorder.usage
+		usage.StateRefs += len(values) + len(s.initial)
+		if err := retainedBudgetError(recorder.budget, usage); err != nil {
+			return nil, nil, nil, err
+		}
+		owners, readers, outputOwners := recorder.compact(cells)
+		retained = &RetainedSystem[Cell, State]{
+			values: values, versions: versions, initial: cloneMap(s.initial),
+			visits: cloneMap(s.visits), widenChanges: cloneMap(s.widenChanges),
+			cells: cells, emittedOnly: append([]Cell(nil), s.emittedOrder...), nextVersion: s.nextVersion,
+			owners: owners, readers: readers, outputOwners: outputOwners, usage: usage,
+		}
 	}
 	if err := s.runNarrowing(cancel); err != nil {
-		return nil, nil, err
+		if retained != nil {
+			retained.Release()
+		}
+		return nil, nil, nil, err
 	}
 	if err := cancel.err(0); err != nil {
-		return nil, nil, err
+		if retained != nil {
+			retained.Release()
+		}
+		return nil, nil, nil, err
 	}
 	result := s.materialize()
 	if !includeVersions {
-		return result, nil, nil
+		return result, nil, retained, nil
 	}
-	return result, s.materializeVersions(), nil
+	return result, s.materializeVersions(), retained, nil
 }
 
 func uniqueCells[Cell comparable](cells []Cell) []Cell {
