@@ -424,31 +424,31 @@ func TestBatchSessionHighFanoutMaterializedContextsAreDeterministic(t *testing.T
 		ModulePath: "example/high-fanout-contexts",
 		EntryFile:  "main.lua",
 		SourceFiles: map[string][]byte{"main.lua": []byte(`
-local function alpha(value: number): number
-	return value + 1
+local function alpha(value)
+	return value .. "!"
 end
 
-local function beta(value: number): number
-	return value * 2
+local function beta(value)
+	return value .. "?"
 end
 
-local function gamma(value: number): number
-	return value - 1
+local function gamma(value)
+	return value .. "."
 end
 
-local function first(): number
-	return alpha(1) + alpha(2) + beta(3) + beta(4) + gamma(5) + gamma(6)
+local function first(): string
+	return alpha("a") .. alpha("b") .. beta("c") .. beta("d") .. gamma("e") .. gamma("f")
 end
 
-local function second(): number
-	return alpha(7) + alpha(8) + beta(9) + beta(10) + gamma(11) + gamma(12)
+local function second(): string
+	return alpha("g") .. alpha("h") .. beta("i") .. beta("j") .. gamma("k") .. gamma("l")
 end
 
-local function third(): number
-	return alpha(13) + alpha(14) + beta(15) + beta(16) + gamma(17) + gamma(18)
+local function third(): string
+	return alpha("m") .. alpha("n") .. beta("o") .. beta("p") .. gamma("q") .. gamma("r")
 end
 
-return first() + second() + third()
+return first() .. second() .. third()
 `)},
 		Profile: "typed",
 	}
