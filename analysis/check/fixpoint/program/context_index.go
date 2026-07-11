@@ -17,13 +17,22 @@ import (
 type contextIndex struct {
 	entries                []keyedFunction
 	byKey                  map[summary.SummaryKey]int
+	variants               map[semanticContextRef][]summary.SummaryKey
 	callKeys               map[callContextRef]summary.SummaryKey
 	functionExpressionKeys map[functionExpressionRef]summary.SummaryKey
 }
 
+// semanticContextRef is the interning identity of a solved callee variant.
+// Call sites are intentionally absent; callKeys retains that provenance.
+type semanticContextRef struct {
+	ref        summary.SummaryKey
+	bodyDigest uint64
+}
+
 func newContextIndex() contextIndex {
 	return contextIndex{
-		byKey: make(map[summary.SummaryKey]int),
+		byKey:    make(map[summary.SummaryKey]int),
+		variants: make(map[semanticContextRef][]summary.SummaryKey),
 	}
 }
 
@@ -39,6 +48,33 @@ func (idx *contextIndex) CallRefCount() int {
 		return 0
 	}
 	return len(idx.callKeys)
+}
+
+// CallSiteHistogram reports how many call sites route to each solved semantic
+// variant. The key is sites-per-variant and the value is variant count.
+func (idx *contextIndex) CallSiteHistogram() map[int]int {
+	if idx == nil || len(idx.callKeys) == 0 {
+		return nil
+	}
+	counts := make(map[summary.SummaryKey]int)
+	for _, key := range idx.callKeys {
+		if idx.hasContextKey(key) {
+			counts[key]++
+		}
+	}
+	histogram := make(map[int]int)
+	for _, count := range counts {
+		histogram[count]++
+	}
+	return histogram
+}
+
+func (idx *contextIndex) SemanticCallContextCount() int {
+	count := 0
+	for _, variants := range idx.CallSiteHistogram() {
+		count += variants
+	}
+	return count
 }
 
 func (idx *contextIndex) Entry(i int) keyedFunction {
@@ -127,16 +163,41 @@ func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *ke
 		context.hasEntryState = true
 		return true
 	}
-	current := context.entryState.RekeyPathEvidence(context.entryKeys, entryKeys)
+	// A variant keeps one canonical callee keyspace. Re-key a refreshed caller
+	// entry into it instead of changing the representation used by its digest.
+	if context.entryKeys == nil {
+		context.entryKeys = entryKeys
+	}
+	entry = entry.RekeyPathEvidence(entryKeys, context.entryKeys)
+	current := context.entryState.RekeyPathEvidence(context.entryKeys, context.entryKeys)
 	joined := state.Domain(reg).Join(current, entry)
 	joined = joined.RefreshValueSlotsFrom(reg, entry)
 	if state.Domain(reg).Equal(current, joined) {
 		return false
 	}
 	context.entryState = joined
-	context.entryKeys = entryKeys
+	// Keep context.entryKeys: it is the variant's canonical representation.
 	context.hasEntryState = true
 	return true
+}
+
+func (idx *contextIndex) semanticContextKey(reg *axis.Registry, baseKey summary.SummaryKey, bodyDigest uint64, fn *ast.FunctionExpr, entry state.State, entryKeys *keyspace.KeySpace) (summary.SummaryKey, bool) {
+	if idx == nil || fn == nil {
+		return summary.SummaryKey{}, false
+	}
+	baseKey.Entry = semanticEntryKey(reg, entry, entryKeys)
+	ref := semanticContextRef{ref: baseKey, bodyDigest: bodyDigest}
+	for _, key := range idx.variants[ref] {
+		context, ok := idx.contextByKey(key)
+		if !ok || context.funcExpr != fn {
+			continue
+		}
+		candidate := entry.RekeyPathEvidence(entryKeys, context.entryKeys)
+		if reg == nil || state.Domain(reg).Equal(context.entryState, candidate) {
+			return key, true
+		}
+	}
+	return summary.SummaryKey{}, false
 }
 
 type contextKeyIdentity struct {
@@ -184,6 +245,34 @@ func (idx *contextIndex) appendContext(fn *ast.FunctionExpr, contextKey summary.
 	idx.byKey[contextKey] = len(idx.entries) - 1
 }
 
+func (idx *contextIndex) appendSemanticContext(reg *axis.Registry, baseKey summary.SummaryKey, bodyDigest uint64, fn *ast.FunctionExpr, entry state.State, entryKeys *keyspace.KeySpace) summary.SummaryKey {
+	entryKey := semanticEntryKey(reg, entry, entryKeys)
+	contextKey := baseKey
+	contextKey.Entry = entryKey
+	// A digest collision must not merge unequal states. Keep the primary
+	// content digest unchanged where possible and add a deterministic collision
+	// discriminator only for the impossible-to-prove-equal case.
+	for collision := uint64(0); idx.hasContextKey(contextKey); collision++ {
+		contextKey.Entry.References = stableSemanticCollisionDigest(baseKey, entryKey, collision)
+	}
+	idx.appendContext(fn, contextKey, entry, entryKeys)
+	ref := semanticContextRef{ref: baseKey, bodyDigest: bodyDigest}
+	ref.ref.Entry = entryKey
+	if idx.variants == nil {
+		idx.variants = make(map[semanticContextRef][]summary.SummaryKey)
+	}
+	idx.variants[ref] = append(idx.variants[ref], contextKey)
+	return contextKey
+}
+
+func stableSemanticCollisionDigest(base summary.SummaryKey, entry summary.EntryKey, collision uint64) summary.Digest {
+	h := fnv.New64a()
+	fmt.Fprint(h, "semantic-context-collision-v1:")
+	writeSummaryKeyDigest(h, base)
+	fmt.Fprintf(h, "entry:%d/%d/%d;collision:%d;", entry.Values, entry.Facts, entry.References, collision)
+	return summary.Digest(h.Sum64())
+}
+
 func (idx *contextIndex) upsertCallContext(
 	reg *axis.Registry,
 	ref callContextRef,
@@ -191,10 +280,15 @@ func (idx *contextIndex) upsertCallContext(
 	fn *ast.FunctionExpr,
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
+	bodyDigest uint64,
 ) (summary.SummaryKey, bool, bool) {
 	if idx == nil || fn == nil {
 		return summary.SummaryKey{}, false, false
 	}
+	// A previously seen source site is a refresh of its existing equation
+	// input, not a new specialization. Keep its routing stable and merge the
+	// refreshed entry exactly as the old monotone context driver did. Semantic
+	// interning applies when a distinct site first discovers its entry.
 	if existing, seen := idx.callKeys[ref]; seen {
 		if idx.mergeContextForKey(reg, existing, fn, entryKeys, entry) {
 			return existing, true, false
@@ -203,8 +297,15 @@ func (idx *contextIndex) upsertCallContext(
 			return summary.SummaryKey{}, false, false
 		}
 	}
-	contextKey := idx.nextContextKey(baseKey, contextKeyIdentity{kind: "call", owner: ref.owner, expr: ref.expr})
-	idx.appendContext(fn, contextKey, entry, entryKeys)
+	if contextKey, ok := idx.semanticContextKey(reg, baseKey, bodyDigest, fn, entry, entryKeys); ok {
+		if idx.callKeys == nil {
+			idx.callKeys = make(map[callContextRef]summary.SummaryKey)
+		}
+		previous, seen := idx.callKeys[ref]
+		idx.callKeys[ref] = contextKey
+		return contextKey, !seen || previous != contextKey, false
+	}
+	contextKey := idx.appendSemanticContext(reg, baseKey, bodyDigest, fn, entry, entryKeys)
 	if idx.callKeys == nil {
 		idx.callKeys = make(map[callContextRef]summary.SummaryKey)
 	}
@@ -219,6 +320,7 @@ func (idx *contextIndex) upsertFunctionExpressionContext(
 	callbackFn *ast.FunctionExpr,
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
+	bodyDigest uint64,
 ) (summary.SummaryKey, bool, bool) {
 	if idx == nil || ref.expr == 0 || callbackFn == nil {
 		return summary.SummaryKey{}, false, false
@@ -231,8 +333,15 @@ func (idx *contextIndex) upsertFunctionExpressionContext(
 			return summary.SummaryKey{}, false, false
 		}
 	}
-	contextKey := idx.nextContextKey(baseKey, contextKeyIdentity{kind: "function-expression", owner: ref.owner, expr: ref.expr})
-	idx.appendContext(callbackFn, contextKey, entry, entryKeys)
+	if contextKey, ok := idx.semanticContextKey(reg, baseKey, bodyDigest, callbackFn, entry, entryKeys); ok {
+		if idx.functionExpressionKeys == nil {
+			idx.functionExpressionKeys = make(map[functionExpressionRef]summary.SummaryKey)
+		}
+		previous, seen := idx.functionExpressionKeys[ref]
+		idx.functionExpressionKeys[ref] = contextKey
+		return contextKey, !seen || previous != contextKey, false
+	}
+	contextKey := idx.appendSemanticContext(reg, baseKey, bodyDigest, callbackFn, entry, entryKeys)
 	if idx.functionExpressionKeys == nil {
 		idx.functionExpressionKeys = make(map[functionExpressionRef]summary.SummaryKey)
 	}
@@ -292,12 +401,17 @@ func (k *programKeys) upsertCallContext(
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
 	fnType *typ.Function,
+	bodyDigest ...uint64,
 ) (summary.SummaryKey, bool) {
 	if k == nil {
 		return summary.SummaryKey{}, false
 	}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, fn, entry, entryKeys)
-	contextKey, changed, created := k.contexts.upsertCallContext(reg, ref, baseKey, fn, entry, entryKeys)
+	var digest uint64
+	if len(bodyDigest) != 0 {
+		digest = bodyDigest[0]
+	}
+	contextKey, changed, created := k.contexts.upsertCallContext(reg, ref, baseKey, fn, entry, entryKeys, digest)
 	if created && fnType != nil {
 		k.functionTypes[contextKey] = fnType
 	}
@@ -313,6 +427,7 @@ func (k *programKeys) upsertFunctionExpressionContext(
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
 	fnType *typ.Function,
+	bodyDigest ...uint64,
 ) (summary.SummaryKey, bool) {
 	if k == nil || expr == 0 || callbackSymbol == 0 || callbackFn == nil {
 		return summary.SummaryKey{}, false
@@ -323,7 +438,11 @@ func (k *programKeys) upsertFunctionExpressionContext(
 	}
 	ref := functionExpressionRef{owner: canonicalContextOwner(owner), expr: expr}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, callbackFn, entry, entryKeys)
-	contextKey, changed, created := k.contexts.upsertFunctionExpressionContext(reg, ref, baseKey, callbackFn, entry, entryKeys)
+	var digest uint64
+	if len(bodyDigest) != 0 {
+		digest = bodyDigest[0]
+	}
+	contextKey, changed, created := k.contexts.upsertFunctionExpressionContext(reg, ref, baseKey, callbackFn, entry, entryKeys, digest)
 	if created {
 		k.functionByKey[contextKey] = callbackFn
 	}

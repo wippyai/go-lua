@@ -51,6 +51,16 @@ func recordProgramShape(stats *Stats, keys programKeys) {
 	recordMaxInt(&stats.MaxFunctionCount, len(keys.functions))
 	recordMaxInt(&stats.MaxContextCount, keys.contexts.Len())
 	recordMaxInt(&stats.MaxCallContextRefCount, keys.contexts.CallRefCount())
+	recordMaxInt(&stats.MaxSemanticCallContextCount, keys.contexts.SemanticCallContextCount())
+	for sites, variants := range keys.contexts.CallSiteHistogram() {
+		recordMaxInt(&stats.MaxSitesPerSemanticEntry, sites)
+		if stats.CallSitesPerSemanticEntry == nil {
+			stats.CallSitesPerSemanticEntry = make(map[int]int)
+		}
+		if variants > stats.CallSitesPerSemanticEntry[sites] {
+			stats.CallSitesPerSemanticEntry[sites] = variants
+		}
+	}
 }
 
 func recordMaxInt(dst *int, value int) {

@@ -277,7 +277,16 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 		if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
 			continue
 		}
-		if contextKey, ok := keys.upsertCallContext(config.Registry, callRef, baseKey, fn, entry, entryKeys, keys.functionTypes[baseKey]); ok {
+		// Store the variant in the callee's keyspace.  That makes independent
+		// callers comparable by semantic path and heap content rather than by
+		// their local keyspace allocation order.
+		var bodyDigest uint64
+		if static := prepared.function(fn); static != nil {
+			entry = entry.RekeyPathEvidence(entryKeys, static.KeySpace())
+			entryKeys = static.KeySpace()
+			bodyDigest = static.IdentityDigest()
+		}
+		if contextKey, ok := keys.upsertCallContext(config.Registry, callRef, baseKey, fn, entry, entryKeys, keys.functionTypes[baseKey], bodyDigest); ok {
 			changed = addChangedContextKey(changed, contextKey)
 		}
 	}

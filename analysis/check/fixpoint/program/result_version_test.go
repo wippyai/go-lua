@@ -159,8 +159,8 @@ return first() + second() + third()
 		}
 		gotKeys := resultSummaryKeys(result)
 		gotBodies := materializedBodyVersions(result.RootResult())
-		if len(gotKeys) < 24 || len(gotBodies) < 24 {
-			t.Fatalf("run %d high-fanout materialization = %d summary keys, %d bodies; want at least 24 each", run, len(gotKeys), len(gotBodies))
+		if len(gotKeys) != 13 || len(gotBodies) != 13 {
+			t.Fatalf("run %d semantic high-fanout materialization = %d summary keys, %d bodies; want 13 each", run, len(gotKeys), len(gotBodies))
 		}
 		if run == 0 {
 			wantKeys, wantBodies = gotKeys, gotBodies

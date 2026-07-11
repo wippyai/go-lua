@@ -3,6 +3,7 @@ package program
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -29,13 +30,13 @@ func TestProgramKeysUpsertCallContextOwnsMergeAndStaleRefRecovery(t *testing.T) 
 	if keys.contexts.Len() != 1 {
 		t.Fatalf("contexts = %d, want 1", keys.contexts.Len())
 	}
-	if got := first.Entry.Facts; got == 0 {
-		t.Fatal("context facts digest is zero; want stable context identity")
+	if got := first.Entry; got != (summary.EntryKey{}) {
+		t.Fatalf("empty semantic entry key = %#v, want zero content digests", got)
 	}
 
-	second, ok := keys.upsertCallContext(nil, ref, base, fn, state.State{}, nil, nil)
-	if !ok || second != first {
-		t.Fatalf("existing context key = (%v, %v), want (%v, true)", second, ok, first)
+	second, changed := keys.upsertCallContext(nil, ref, base, fn, state.State{}, nil, nil)
+	if !changed || second != first {
+		t.Fatalf("existing context key = (%v, changed:%v), want (%v, true)", second, changed, first)
 	}
 	if keys.contexts.Len() != 1 {
 		t.Fatalf("existing upsert appended context; contexts = %d", keys.contexts.Len())
@@ -46,8 +47,8 @@ func TestProgramKeysUpsertCallContextOwnsMergeAndStaleRefRecovery(t *testing.T) 
 	if !ok {
 		t.Fatal("upsertCallContext did not recover stale ref")
 	}
-	if keys.contexts.Len() != 2 {
-		t.Fatalf("stale ref recovery contexts = %d, want 2", keys.contexts.Len())
+	if keys.contexts.Len() != 1 {
+		t.Fatalf("stale ref recovery semantic variants = %d, want 1", keys.contexts.Len())
 	}
 	if key, ok := keys.contexts.CallContextKey(owner, ref.expr); !ok || key != third {
 		t.Fatal("stale ref recovery did not replace index entry")
@@ -85,6 +86,33 @@ func TestContextKeysAreStableAcrossDiscoveryOrder(t *testing.T) {
 	}
 }
 
+func TestDomainEqualCallSitesShareOneSemanticVariant(t *testing.T) {
+	reg := standard.Registry()
+	fn := &ast.FunctionExpr{}
+	base := summary.DefaultSummaryKey(ref.Root())
+	// The slot/value pair is deliberately rebuilt for each site. The states are
+	// Domain-equal despite being distinct Go values.
+	entry := state.State{}.WriteValue(reg, statekey.SymbolValue(77), typevalue.FromType(reg, typ.String))
+	keys := programKeys{contexts: newContextIndex()}
+	left, changed := keys.upsertCallContext(reg, callContextRef{expr: 10}, base, fn, entry, nil, nil)
+	if !changed {
+		t.Fatal("first semantic context was not created")
+	}
+	right, changed := keys.upsertCallContext(reg, callContextRef{expr: 11}, base, fn, entry.Snapshot(), nil, nil)
+	if !changed {
+		t.Fatal("second call-site routing was not recorded")
+	}
+	if left != right {
+		t.Fatalf("Domain-equal call sites got variants %v and %v, want one", left, right)
+	}
+	if got := keys.contexts.Len(); got != 1 {
+		t.Fatalf("semantic variants = %d, want 1", got)
+	}
+	if got := keys.contexts.CallRefCount(); got != 2 {
+		t.Fatalf("site provenance entries = %d, want 2", got)
+	}
+}
+
 func TestProgramKeysUpsertFunctionExpressionContextOwnsIndexMaps(t *testing.T) {
 	fn := &ast.FunctionExpr{}
 	owner := summary.SummaryKey{Entry: summary.EntryKey{Facts: 7}}
@@ -112,9 +140,9 @@ func TestProgramKeysUpsertFunctionExpressionContextOwnsIndexMaps(t *testing.T) {
 		t.Fatal("function expression context did not bind functionByKey")
 	}
 
-	second, ok := keys.upsertFunctionExpressionContext(nil, owner, factflow.ExprRef(9), symbol.ID(3), fn, state.State{}, nil, nil)
-	if !ok || second != first {
-		t.Fatalf("existing function-expression context key = (%v, %v), want (%v, true)", second, ok, first)
+	second, changed := keys.upsertFunctionExpressionContext(nil, owner, factflow.ExprRef(9), symbol.ID(3), fn, state.State{}, nil, nil)
+	if !changed || second != first {
+		t.Fatalf("existing function-expression context key = (%v, changed:%v), want (%v, true)", second, changed, first)
 	}
 	if keys.contexts.Len() != 1 {
 		t.Fatalf("existing upsert appended context; contexts = %d", keys.contexts.Len())

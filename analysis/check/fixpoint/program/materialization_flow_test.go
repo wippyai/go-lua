@@ -67,8 +67,8 @@ end
 			t.Fatalf("run %d collectMaterializedCallContextKeys: %v", run, err)
 		}
 		got := materializedContextKeys(keys.contexts)
-		if len(got) != 18 {
-			t.Fatalf("run %d contexts = %d, want 18", run, len(got))
+		if len(got) != 3 {
+			t.Fatalf("run %d semantic contexts = %d, want 3 (alpha/beta/gamma)", run, len(got))
 		}
 		if run == 0 {
 			want = got

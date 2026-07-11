@@ -49,6 +49,9 @@ type Stats struct {
 	MaxFunctionCount               int
 	MaxContextCount                int
 	MaxCallContextRefCount         int
+	MaxSemanticCallContextCount    int
+	MaxSitesPerSemanticEntry       int
+	CallSitesPerSemanticEntry      map[int]int
 	MaterializedContextSolves      int
 	MaterializedContextNewContexts int
 	SummaryCacheHits               int
