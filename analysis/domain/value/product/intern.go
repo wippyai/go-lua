@@ -1,6 +1,7 @@
 package product
 
 import (
+	"reflect"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -8,11 +9,77 @@ import (
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
-var globalInterner = &interner{nodes: make(map[*axis.Registry]map[uint64][]*node)}
+// The interner is a cache, rather than an owner of every product value ever
+// constructed.  Values and summaries own their immutable nodes directly, and
+// product equality is structural, so evicting a canonical node can only lose a
+// pointer-identity fast path.  In particular, a long-lived checker registry
+// must not turn this cache into process-lifetime ownership of every temporary
+// transfer value from every unit it checks.
+//
+// Keeping the cache sharded also avoids serializing independent solver workers
+// on one process-global mutex.  FIFO eviction is sufficient here: this is a
+// bounded interning hint, not a semantic table.
+const (
+	internerShards       = 64
+	internerShardMaxNode = 256
+)
+
+var globalInterner = newInterner()
 
 type interner struct {
+	shards [internerShards]internerShard
+}
+
+type internerShard struct {
 	mu    sync.Mutex
 	nodes map[*axis.Registry]map[uint64][]*node
+	fifo  []internerEntry
+}
+
+type internerEntry struct {
+	reg  *axis.Registry
+	hash uint64
+	node *node
+}
+
+func newInterner() *interner {
+	return &interner{}
+}
+
+func (i *interner) shardFor(reg *axis.Registry) *internerShard {
+	// Registry identity is only used to choose a lock/cache shard. Product
+	// hashes and ordering remain stable and independent of this address.
+	address := uint64(reflect.ValueOf(reg).Pointer())
+	return &i.shards[(address>>3)%internerShards]
+}
+
+func (s *internerShard) evictOldest() {
+	if len(s.fifo) == 0 {
+		return
+	}
+	evicted := s.fifo[0]
+	copy(s.fifo, s.fifo[1:])
+	s.fifo[len(s.fifo)-1] = internerEntry{}
+	s.fifo = s.fifo[:len(s.fifo)-1]
+	bucket := s.nodes[evicted.reg]
+	entries := bucket[evicted.hash]
+	for index, existing := range entries {
+		if existing != evicted.node {
+			continue
+		}
+		copy(entries[index:], entries[index+1:])
+		entries[len(entries)-1] = nil
+		entries = entries[:len(entries)-1]
+		if len(entries) == 0 {
+			delete(bucket, evicted.hash)
+		} else {
+			bucket[evicted.hash] = entries
+		}
+		break
+	}
+	if len(bucket) == 0 {
+		delete(s.nodes, evicted.reg)
+	}
 }
 
 func intern(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) Value {
@@ -59,17 +126,21 @@ func internCanonicalNoBottom(rt *registryRuntime, shape Shape, p presence.Value,
 	}
 
 	h := rt.stableHash(shape, p, slots)
-	globalInterner.mu.Lock()
+	shard := globalInterner.shardFor(rt.reg)
+	shard.mu.Lock()
 
-	bucket := globalInterner.nodes[rt.reg]
+	bucket := shard.nodes[rt.reg]
 	if bucket == nil {
 		bucket = make(map[uint64][]*node)
-		globalInterner.nodes[rt.reg] = bucket
+		if shard.nodes == nil {
+			shard.nodes = make(map[*axis.Registry]map[uint64][]*node)
+		}
+		shard.nodes[rt.reg] = bucket
 	}
 
 	for _, existing := range bucket[h] {
 		if rt.sameNode(existing, shape, p, slots) {
-			globalInterner.mu.Unlock()
+			shard.mu.Unlock()
 			return Value{n: existing}
 		}
 	}
@@ -78,7 +149,11 @@ func internCanonicalNoBottom(rt *registryRuntime, shape Shape, p presence.Value,
 	copy(stored, slots)
 	n := &node{reg: rt.reg, shape: shape, presence: p, slots: stored, hash: h}
 	bucket[h] = append(bucket[h], n)
-	globalInterner.mu.Unlock()
+	shard.fifo = append(shard.fifo, internerEntry{reg: rt.reg, hash: h, node: n})
+	if len(shard.fifo) > internerShardMaxNode {
+		shard.evictOldest()
+	}
+	shard.mu.Unlock()
 	return Value{n: n}
 }
 
