@@ -184,6 +184,45 @@ end`)
 	}
 }
 
+func TestLowerRepeatedDirectNaryConcatKeepsDistinctFoldSources(t *testing.T) {
+	fn, bindings, built := parseSemanticFunction(t, `
+function f(first: any, second: any): ()
+	local message = ""
+	message = "first: " .. tostring(first) .. " first-tail"
+	message = "second: " .. tostring(second) .. " second-tail"
+end`)
+	body := wirlower.LowerFunction("repeated-nary-concat", fn, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+
+	assertAssignment := func(stmt ast.Stmt, wantPrefix string) {
+		t.Helper()
+		points := built.StmtPoints.PointsFor(stmt)
+		var assignment factflow.RootAssignment
+		for _, point := range points {
+			if got, ok := facts.RootAssignment(point); ok {
+				assignment = got
+				break
+			}
+		}
+		source := assignment.Source()
+		outer, ok := facts.ExpressionOperation(source.ExprRef)
+		if !ok || outer.Kind() != factflow.ExpressionOperationBinary || outer.Op() != ".." {
+			t.Fatalf("%s outer operation = %#v/%v, want concat\nWIR:\n%s", wantPrefix, outer, ok, wir.Print(body, built.Graph))
+		}
+		innerSource := outer.Left()
+		inner, ok := facts.ExpressionOperation(innerSource.ExprRef)
+		if !ok || inner.Kind() != factflow.ExpressionOperationBinary || inner.Op() != ".." {
+			t.Fatalf("%s inner operation = %#v/%v, want concat", wantPrefix, inner, ok)
+		}
+		if got := inner.Left(); got.Kind != factflow.ValueSourceLiteral || got.String != wantPrefix {
+			t.Fatalf("%s inner left = %#v, want matching literal", wantPrefix, got)
+		}
+	}
+
+	assertAssignment(fn.Stmts[1], "first: ")
+	assertAssignment(fn.Stmts[2], "second: ")
+}
+
 func TestLowerWIRAnyClaimLocalAssignmentDoesNotCreateDeclaredContract(t *testing.T) {
 	stmts, bindings, built := parseSemanticChunk(t, `
 local raw = ({ kind = "task", route_id = "start" } :: any)

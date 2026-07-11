@@ -665,8 +665,8 @@ func wirInstructionDefinesTemp(inst wir.Instruction, temp uint32) bool {
 }
 
 type wirConcatFoldExprRefKey struct {
-	temp  uint32
-	index int
+	parent factflow.ExprRef
+	index  int
 }
 
 func (l *lowerer) wirConcatTempExpressionValueSource(
@@ -717,7 +717,7 @@ func (l *lowerer) wirConcatTempExpressionValueSourceWithRef(
 		ref := exprRef
 		if i != len(sources)-1 {
 			var ok bool
-			ref, ok = l.exprRef(wirConcatFoldExprRefKey{temp: temp, index: i})
+			ref, ok = l.exprRef(wirConcatFoldExprRefKey{parent: exprRef, index: i})
 			if !ok {
 				return factflow.ValueSource{}, false
 			}
