@@ -390,7 +390,7 @@ func logFixtureStats(t testing.TB, suite, file string, stats *program.Stats) {
 	if stats == nil {
 		return
 	}
-	t.Logf("fixture stats %s/%s: solves prepass=%d summary=%d materialize=%d max_funcs=%d max_contexts=%d max_context_refs=%d materialized_context_solves=%d materialized_context_new=%d query_bodies=%d query_transfers=%d body_solves=%d body_transfers=%d",
+	t.Logf("fixture stats %s/%s: solves prepass=%d summary=%d materialize=%d max_funcs=%d max_contexts=%d max_context_refs=%d semantic_call_contexts=%d sites_per_semantic=%v materialized_context_solves=%d materialized_context_new=%d query_bodies=%d query_transfers=%d body_solves=%d body_transfers=%d",
 		suite,
 		file,
 		stats.PrepassBodySolves,
@@ -399,6 +399,8 @@ func logFixtureStats(t testing.TB, suite, file string, stats *program.Stats) {
 		stats.MaxFunctionCount,
 		stats.MaxContextCount,
 		stats.MaxCallContextRefCount,
+		stats.MaxSemanticCallContextCount,
+		stats.CallSitesPerSemanticEntry,
 		stats.MaterializedContextSolves,
 		stats.MaterializedContextNewContexts,
 		stats.Query.BodyInvocations,
