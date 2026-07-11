@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -146,6 +147,24 @@ func TestCanonicalOperationalEffectsDigestBytesSupportsRecursiveTypes(t *testing
 	}
 	if len(encoded) == 0 {
 		t.Fatal("CanonicalOperationalEffectsDigestBytes returned empty bytes")
+	}
+}
+
+func TestCanonicalOperationalEffectsDigestIsDeterministicAcrossInputOrder(t *testing.T) {
+	left, err := CanonicalOperationalEffectsDigest(context.Background(), operationalEffectsOrderA())
+	if err != nil {
+		t.Fatalf("CanonicalOperationalEffectsDigest(left): %v", err)
+	}
+	right, err := CanonicalOperationalEffectsDigest(context.Background(), operationalEffectsOrderB())
+	if err != nil {
+		t.Fatalf("CanonicalOperationalEffectsDigest(right): %v", err)
+	}
+	again, err := CanonicalOperationalEffectsDigest(context.Background(), operationalEffectsOrderA())
+	if err != nil {
+		t.Fatalf("CanonicalOperationalEffectsDigest(again): %v", err)
+	}
+	if left != right || left != again {
+		t.Fatalf("canonical operational-effect digests = %d, %d, %d; want one stable value", left, right, again)
 	}
 }
 

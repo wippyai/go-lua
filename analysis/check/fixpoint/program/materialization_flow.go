@@ -1,6 +1,7 @@
 package program
 
 import (
+	"context"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -112,6 +113,7 @@ func materializeChunkWithReturnPresenceProofs(
 		return nil, summary.Snapshot{}, err
 	}
 	return refineMaterializedSummaryProofs(
+		config.Context,
 		config.Registry,
 		initial,
 		materialized,
@@ -139,6 +141,7 @@ func materializeFunctionWithReturnPresenceProofs(
 		return nil, summary.Snapshot{}, err
 	}
 	return refineMaterializedSummaryProofs(
+		config.Context,
 		config.Registry,
 		initial,
 		materialized,
@@ -149,6 +152,7 @@ func materializeFunctionWithReturnPresenceProofs(
 }
 
 func refineMaterializedSummaryProofs(
+	ctx context.Context,
 	reg *axis.Registry,
 	initial summary.Snapshot,
 	materialized materializedProgram,
@@ -159,6 +163,9 @@ func refineMaterializedSummaryProofs(
 	}
 	current := initial
 	for {
+		if err := materializationContextErr(ctx); err != nil {
+			return nil, summary.Snapshot{}, err
+		}
 		next, changed := snapshotWithMaterializedSummaryProofs(reg, current, materialized)
 		if !changed || rematerialize == nil {
 			return materialized.root, next, nil
@@ -263,6 +270,9 @@ func materializeFunctionTree(
 	projections *resultSummaryProjectionCache,
 	solveCache *materializedSolveCache,
 ) (*body.Result, programKeys, error) {
+	if err := materializationContextErr(config.Context); err != nil {
+		return nil, keys, err
+	}
 	if root == nil || bindings == nil {
 		return root, keys, nil
 	}
@@ -273,7 +283,12 @@ func materializeFunctionTree(
 	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, nil, nil)
 	baseResults := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
 	indexBase := summaryIndexBase(keys)
-	for _, origin := range keys.functions {
+	for index, origin := range keys.functions {
+		if index%64 == 0 {
+			if err := materializationContextErr(config.Context); err != nil {
+				return nil, keys, err
+			}
+		}
 		if origin.funcExpr == nil {
 			continue
 		}
@@ -343,14 +358,22 @@ func materializeFunctionTree(
 		}
 	}
 	contextResults := contextResultsByFunction(keys.contexts, contextResultByKey)
-	var attach func(parent *body.Result, owner *ast.FunctionExpr)
-	attach = func(parent *body.Result, owner *ast.FunctionExpr) {
+	var attach func(parent *body.Result, owner *ast.FunctionExpr) error
+	attach = func(parent *body.Result, owner *ast.FunctionExpr) error {
+		if err := materializationContextErr(config.Context); err != nil {
+			return err
+		}
 		if parent == nil {
-			return
+			return nil
 		}
 		nested := bindings.NestedFunctions(owner)
 		children := make([]*body.Result, 0, len(nested))
-		for _, childFn := range nested {
+		for index, childFn := range nested {
+			if index%64 == 0 {
+				if err := materializationContextErr(config.Context); err != nil {
+					return err
+				}
+			}
 			contexts := contextResults[childFn]
 			candidates := make([]*body.Result, 0, 1+len(contexts))
 			if child := baseResults[childFn]; child != nil && (len(contexts) == 0 || functionHasExplicitValidationSurface(childFn, bindings) || functionHasExplicitTopLikeParam(childFn, bindings, config.ModuleTypes)) {
@@ -361,13 +384,18 @@ func materializeFunctionTree(
 				if child == nil {
 					continue
 				}
-				attach(child, childFn)
+				if err := attach(child, childFn); err != nil {
+					return err
+				}
 				children = append(children, child)
 			}
 		}
 		body.WithFunctionResults(parent, children)
+		return nil
 	}
-	attach(root, fn)
+	if err := attach(root, fn); err != nil {
+		return nil, keys, err
+	}
 	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, contextResultByKey)
 	return root, keys, nil
 }
@@ -465,7 +493,14 @@ func materializeDiscoveredContexts(
 	}
 	results := make(map[summary.SummaryKey]*body.Result)
 	queue := newMaterializationContextQueue(keys)
+	iterations := 0
 	for {
+		if iterations%64 == 0 {
+			if err := materializationContextErr(config.Context); err != nil {
+				return nil, err
+			}
+		}
+		iterations++
 		context, ok := queue.Next()
 		if !ok {
 			break
@@ -532,6 +567,9 @@ func contextResultsByFunction(contexts contextIndex, byKey map[summary.SummaryKe
 }
 
 func collectMaterializedCallContextKeys(keys *programKeys, root *body.Result, baseResults map[*ast.FunctionExpr]*body.Result, config body.Config) (bool, error) {
+	if err := materializationContextErr(config.Context); err != nil {
+		return false, err
+	}
 	if keys == nil {
 		return false, nil
 	}
@@ -539,12 +577,24 @@ func collectMaterializedCallContextKeys(keys *programKeys, root *body.Result, ba
 	if _, err := collectCallContextKeysFromResult(keys, keys.rootKey, root, config, nil, nil, preparedBodies{}); err != nil {
 		return false, err
 	}
-	for _, owner := range sortedMaterializedContextOwners(keys, baseResults) {
+	for index, owner := range sortedMaterializedContextOwners(keys, baseResults) {
+		if index%64 == 0 {
+			if err := materializationContextErr(config.Context); err != nil {
+				return false, err
+			}
+		}
 		if _, err := collectCallContextKeysFromResult(keys, owner.key, owner.result, config, nil, nil, preparedBodies{}); err != nil {
 			return false, err
 		}
 	}
 	return keys.contexts.Len() != before, nil
+}
+
+func materializationContextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
 }
 
 type materializedContextOwner struct {

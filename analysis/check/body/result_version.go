@@ -1,6 +1,8 @@
 package body
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
@@ -34,11 +37,11 @@ func (r *Result) ResultVersion() uint64 {
 	return r.resultVersion
 }
 
-func computeResultVersion(s *Static, config SolveConfig, entry state.State, initial transfer.InitialState) uint64 {
+func computeResultVersion(s *Static, config SolveConfig, entry state.State, initial transfer.InitialState) (uint64, error) {
 	if s == nil {
-		return 0
+		return 0, nil
 	}
-	w := newBodyDigestWriter(s)
+	w := newBodyDigestWriter(s, config.Context)
 	w.label("body-inputs-v1")
 	w.writeWIR(s.wir, s.cfg.Graph)
 	w.writeSymbolTypes(s.symbolTypes)
@@ -52,20 +55,31 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 	w.writeState("entry", entry)
 	w.writeInitialStates(initial, s.cfg.Graph)
 	w.writeSummaryInputDigests(config.SummaryInputDigests)
-	return w.sum64()
+	if err := w.err(); err != nil {
+		return 0, errors.Join(solve.ErrCanceled, err)
+	}
+	return w.sum64(), nil
 }
 
 type bodyDigestWriter struct {
 	h       internalhash.Writer
 	static  *Static
 	symbols map[symbol.ID]string
+	ctx     context.Context
+	steps   uint64
+	errVal  error
 }
 
-func newBodyDigestWriter(s *Static) *bodyDigestWriter {
+func newBodyDigestWriter(s *Static, ctx ...context.Context) *bodyDigestWriter {
+	var solveCtx context.Context
+	if len(ctx) != 0 {
+		solveCtx = ctx[0]
+	}
 	return &bodyDigestWriter{
 		h:       internalhash.NewWriter(),
 		static:  s,
 		symbols: make(map[symbol.ID]string),
+		ctx:     solveCtx,
 	}
 }
 
@@ -81,11 +95,45 @@ func (w *bodyDigestWriter) label(label string) {
 }
 
 func (w *bodyDigestWriter) writeRaw(value string) {
+	if !w.checkpoint() {
+		return
+	}
 	_, _ = w.h.WriteString(value)
 }
 
 func (w *bodyDigestWriter) writeByte(value byte) {
+	if !w.checkpoint() {
+		return
+	}
 	_ = w.h.WriteByte(value)
+}
+
+func (w *bodyDigestWriter) checkpoint() bool {
+	if w == nil || w.errVal != nil {
+		return false
+	}
+	w.steps++
+	if w.steps%64 != 0 || w.ctx == nil {
+		return true
+	}
+	if err := w.ctx.Err(); err != nil {
+		w.errVal = err
+		return false
+	}
+	return true
+}
+
+func (w *bodyDigestWriter) err() error {
+	if w == nil {
+		return nil
+	}
+	if w.errVal != nil {
+		return w.errVal
+	}
+	if w.ctx != nil {
+		return w.ctx.Err()
+	}
+	return nil
 }
 
 func (w *bodyDigestWriter) writeRawInt(value int) {
@@ -566,12 +614,19 @@ type typestateProtocolEntry struct {
 }
 
 func (w *bodyDigestWriter) writeCanonicalOperationalEffects(label string, effects *signature.OperationalEffects) {
-	encoded, err := manifest.CanonicalOperationalEffectsDigestBytes(effects)
+	if err := w.err(); err != nil {
+		return
+	}
+	digest, err := manifest.CanonicalOperationalEffectsDigest(w.ctx, effects)
 	if err != nil {
+		if w.ctx != nil && w.ctx.Err() != nil {
+			w.errVal = w.ctx.Err()
+			return
+		}
 		w.writeString(label, "<invalid-operational-effects>")
 		return
 	}
-	w.writeBytes(label, encoded)
+	w.writeUint64(label, digest)
 }
 
 func (w *bodyDigestWriter) writeCanonicalTypestateDefinition(label string, definition typestate.Definition) {

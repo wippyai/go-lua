@@ -1,8 +1,11 @@
 package program
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
@@ -12,6 +15,33 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func TestCanceledMaterializationReturnsPromptly(t *testing.T) {
+	stmts := parseChunk(t, `local value = 1`)
+	reg := standard.Registry()
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	config := body.Config{Registry: reg}
+	keys := collectKeys(bindings, summary.DefaultSummaryKey(ref.Root()), reg, nil, importlookup.Source{}, stmts)
+	prepared, err := prepareBoundChunkBodies(stmts, bindings, config, keys)
+	if err != nil {
+		t.Fatalf("prepareBoundChunkBodies: %v", err)
+	}
+	root, err := solvePrepared(prepared.root, config)
+	if err != nil {
+		t.Fatalf("solvePrepared: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	config.Context = ctx
+	started := time.Now()
+	_, _, err = materializeFunctionTree(root, nil, prepared, bindings, config, nil, nil, nil, nil, keys, nil, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("materializeFunctionTree error = %v, want context cancellation", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("canceled materialization took %s, want prompt return", elapsed)
+	}
+}
 
 func TestCollectMaterializedCallContextKeysStableAcrossBaseResultMapOrder(t *testing.T) {
 	stmts := parseChunk(t, `

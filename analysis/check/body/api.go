@@ -395,7 +395,8 @@ func InputDigest(prepared *Static, config SolveConfig) uint64 {
 	if prepared == nil {
 		return 0
 	}
-	return computeResultVersion(prepared, config, config.EntryState, config.Initial)
+	digest, _ := computeResultVersion(prepared, config, config.EntryState, config.Initial)
+	return digest
 }
 
 // IdentityDigest is the stable content identity of the prepared body. It
@@ -405,5 +406,6 @@ func (s *Static) IdentityDigest() uint64 {
 	if s == nil {
 		return 0
 	}
-	return computeResultVersion(s, SolveConfig{}, state.State{}, nil)
+	digest, _ := computeResultVersion(s, SolveConfig{}, state.State{}, nil)
+	return digest
 }

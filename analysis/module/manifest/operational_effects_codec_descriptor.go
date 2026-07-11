@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,17 +26,22 @@ func wireLane[Fact any, Wire any](
 	encodeElem func(Fact) (Wire, error),
 	decodeElem func(Wire) (Fact, error),
 	compare func(Wire, Wire) int,
-	canonElem func(*Wire),
+	canonElem func(context.Context, *Wire) error,
 ) operationalEffectsWireLane {
 	return operationalEffectsWireLane{
 		fieldName: fieldName,
-		encode: func(e *signature.OperationalEffects, out *operationalEffectsWire) error {
+		encode: func(ctx context.Context, e *signature.OperationalEffects, out *operationalEffectsWire) error {
 			src := *facts(e)
 			if len(src) == 0 {
 				return nil
 			}
 			dst := wires(out)
 			for i := range src {
+				if i%64 == 0 {
+					if err := operationalEffectsContextErr(ctx); err != nil {
+						return err
+					}
+				}
 				encoded, err := encodeElem(src[i])
 				if err != nil {
 					return err
@@ -59,16 +65,33 @@ func wireLane[Fact any, Wire any](
 			}
 			return nil
 		},
-		canonicalize: func(w *operationalEffectsWire) {
+		canonicalize: func(ctx context.Context, w *operationalEffectsWire) error {
 			dst := wires(w)
 			if canonElem != nil {
 				for i := range *dst {
-					canonElem(&(*dst)[i])
+					if i%64 == 0 {
+						if err := operationalEffectsContextErr(ctx); err != nil {
+							return err
+						}
+					}
+					if err := canonElem(ctx, &(*dst)[i]); err != nil {
+						return err
+					}
 				}
 			}
+			var canceled error
+			compares := 0
 			sort.Slice(*dst, func(i, j int) bool {
+				compares++
+				if compares%64 == 0 && canceled == nil {
+					canceled = operationalEffectsContextErr(ctx)
+				}
+				if canceled != nil {
+					return false
+				}
 				return compare((*dst)[i], (*dst)[j]) < 0
 			})
+			return canceled
 		},
 	}
 }
@@ -80,7 +103,7 @@ func boolWireLane(
 ) operationalEffectsWireLane {
 	return operationalEffectsWireLane{
 		fieldName: fieldName,
-		encode: func(e *signature.OperationalEffects, out *operationalEffectsWire) error {
+		encode: func(_ context.Context, e *signature.OperationalEffects, out *operationalEffectsWire) error {
 			if *get(e) {
 				*wire(out) = true
 			}
@@ -90,7 +113,7 @@ func boolWireLane(
 			*get(out) = *wire(w)
 			return nil
 		},
-		canonicalize: func(*operationalEffectsWire) {},
+		canonicalize: func(context.Context, *operationalEffectsWire) error { return nil },
 	}
 }
 

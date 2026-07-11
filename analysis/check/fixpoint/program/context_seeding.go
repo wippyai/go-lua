@@ -216,6 +216,9 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 }
 
 func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKey, prepass *body.Result, config body.Config, inferred *paramInference, symbolByKey map[summary.SummaryKey]symbol.ID, prepared preparedBodies) (map[summary.SummaryKey]struct{}, error) {
+	if err := materializationContextErr(config.Context); err != nil {
+		return nil, err
+	}
 	if prepass == nil {
 		return nil, nil
 	}
@@ -225,7 +228,12 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 	}
 	var changed map[summary.SummaryKey]struct{}
 	phaseTracker := newCallbackPhaseTracker(keys, owner, prepass, config, prepared)
-	for _, point := range graph.RPO() {
+	for index, point := range graph.RPO() {
+		if index%64 == 0 {
+			if err := materializationContextErr(config.Context); err != nil {
+				return nil, err
+			}
+		}
 		site, ok := prepass.CallSiteView(point)
 		if !ok {
 			continue

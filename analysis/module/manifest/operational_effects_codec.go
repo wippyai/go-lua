@@ -1,9 +1,12 @@
 package manifest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -43,9 +47,9 @@ type operationalEffectsWire struct {
 
 type operationalEffectsWireLane struct {
 	fieldName    string
-	encode       func(*signature.OperationalEffects, *operationalEffectsWire) error
+	encode       func(context.Context, *signature.OperationalEffects, *operationalEffectsWire) error
 	decode       func(*operationalEffectsWire, *signature.OperationalEffects) error
-	canonicalize func(*operationalEffectsWire)
+	canonicalize func(context.Context, *operationalEffectsWire) error
 }
 
 type returnPresenceRelationWire struct {
@@ -211,11 +215,30 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 	}
 	out := &operationalEffectsWire{}
 	for _, lane := range operationalEffectsWireLanes {
-		if err := lane.encode(e, out); err != nil {
+		if err := lane.encode(context.Background(), e, out); err != nil {
 			return nil, err
 		}
 	}
 	canonicalizeOperationalEffectsWire(out)
+	return out, nil
+}
+
+func encodeOperationalEffectsContext(ctx context.Context, e *signature.OperationalEffects) (*operationalEffectsWire, error) {
+	if e == nil || e.IsEmpty() {
+		return nil, nil
+	}
+	out := &operationalEffectsWire{}
+	for _, lane := range operationalEffectsWireLanes {
+		if err := operationalEffectsContextErr(ctx); err != nil {
+			return nil, err
+		}
+		if err := lane.encode(ctx, e, out); err != nil {
+			return nil, err
+		}
+	}
+	if err := canonicalizeOperationalEffectsWireContext(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -242,6 +265,218 @@ func CanonicalOperationalEffectsDigestBytes(e *signature.OperationalEffects) ([]
 	canonical := e.Clone()
 	canonicalizeOperationalEffectDigestTypes(&canonical)
 	return CanonicalOperationalEffectsBytes(&canonical)
+}
+
+// CanonicalOperationalEffectsDigest streams the canonical operational-effects
+// wire value into a content hash. Unlike CanonicalOperationalEffectsBytes, it
+// never materializes a JSON representation merely to hash it. The returned
+// value is an internal cache-key component, not a manifest wire format.
+func CanonicalOperationalEffectsDigest(ctx context.Context, e *signature.OperationalEffects) (uint64, error) {
+	canonical, err := canonicalOperationalEffectsDigestCloneContext(ctx, e)
+	if err != nil {
+		return 0, err
+	}
+	w, err := encodeOperationalEffectsContext(ctx, canonical)
+	if err != nil {
+		return 0, err
+	}
+	h := internalhash.NewWriter()
+	writer := operationalEffectsDigestWriter{ctx: ctx, h: &h}
+	if err := writer.write(reflect.ValueOf(w)); err != nil {
+		return 0, err
+	}
+	return h.Sum64(), nil
+}
+
+func canonicalOperationalEffectsDigestCloneContext(ctx context.Context, e *signature.OperationalEffects) (*signature.OperationalEffects, error) {
+	if e == nil {
+		return nil, nil
+	}
+	out := *e
+	cloneTypes := func() error { return operationalEffectsContextErr(ctx) }
+	if err := cloneTypes(); err != nil {
+		return nil, err
+	}
+	out.NormalReturnTypeRefinements = append([]signature.PathTypeRefinement(nil), e.NormalReturnTypeRefinements...)
+	for i := range out.NormalReturnTypeRefinements {
+		if i%64 == 0 {
+			if err := cloneTypes(); err != nil {
+				return nil, err
+			}
+		}
+		out.NormalReturnTypeRefinements[i].Type = canonicalOperationalEffectDigestType(out.NormalReturnTypeRefinements[i].Type)
+	}
+	out.PathPresenceImplications = append([]signature.PathPresenceImplication(nil), e.PathPresenceImplications...)
+	for i := range out.PathPresenceImplications {
+		if i%64 == 0 {
+			if err := cloneTypes(); err != nil {
+				return nil, err
+			}
+		}
+		out.PathPresenceImplications[i].TriggerType = canonicalOperationalEffectDigestType(out.PathPresenceImplications[i].TriggerType)
+	}
+	out.PathStaticMembers = append([]signature.PathStaticMemberFact(nil), e.PathStaticMembers...)
+	for i := range out.PathStaticMembers {
+		if i%64 == 0 {
+			if err := cloneTypes(); err != nil {
+				return nil, err
+			}
+		}
+		out.PathStaticMembers[i].Type = canonicalOperationalEffectDigestType(out.PathStaticMembers[i].Type)
+	}
+	out.PathStaticMemberDeltas = append([]signature.PathStaticMemberDelta(nil), e.PathStaticMemberDeltas...)
+	for i := range out.PathStaticMemberDeltas {
+		if i%64 == 0 {
+			if err := cloneTypes(); err != nil {
+				return nil, err
+			}
+		}
+		out.PathStaticMemberDeltas[i].Type = canonicalOperationalEffectDigestType(out.PathStaticMemberDeltas[i].Type)
+	}
+	out.DynamicIndexFacts = append([]signature.DynamicIndexFact(nil), e.DynamicIndexFacts...)
+	for i := range out.DynamicIndexFacts {
+		if i%64 == 0 {
+			if err := cloneTypes(); err != nil {
+				return nil, err
+			}
+		}
+		out.DynamicIndexFacts[i].Key.Type = canonicalOperationalEffectDigestType(out.DynamicIndexFacts[i].Key.Type)
+		out.DynamicIndexFacts[i].Value.Type = canonicalOperationalEffectDigestType(out.DynamicIndexFacts[i].Value.Type)
+	}
+	out.ReturnAllocationTemplates = append([]signature.ReturnAllocationTemplate(nil), e.ReturnAllocationTemplates...)
+	for i := range out.ReturnAllocationTemplates {
+		if i%64 == 0 {
+			if err := cloneTypes(); err != nil {
+				return nil, err
+			}
+		}
+		out.ReturnAllocationTemplates[i].Objects = append([]signature.AllocationObjectTemplate(nil), e.ReturnAllocationTemplates[i].Objects...)
+		for j := range out.ReturnAllocationTemplates[i].Objects {
+			if j%64 == 0 {
+				if err := cloneTypes(); err != nil {
+					return nil, err
+				}
+			}
+			object := &out.ReturnAllocationTemplates[i].Objects[j]
+			object.Type = canonicalOperationalEffectDigestType(object.Type)
+			object.DynamicEntries = append([]signature.AllocationDynamicEntryTemplate(nil), e.ReturnAllocationTemplates[i].Objects[j].DynamicEntries...)
+			for k := range object.DynamicEntries {
+				if k%64 == 0 {
+					if err := cloneTypes(); err != nil {
+						return nil, err
+					}
+				}
+				object.DynamicEntries[k].KeyType = canonicalOperationalEffectDigestType(object.DynamicEntries[k].KeyType)
+			}
+		}
+	}
+	return &out, nil
+}
+
+func operationalEffectsContextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
+type operationalEffectsDigestWriter struct {
+	ctx   context.Context
+	h     *internalhash.Writer
+	steps uint64
+}
+
+func (w *operationalEffectsDigestWriter) write(v reflect.Value) error {
+	if w == nil || w.h == nil {
+		return nil
+	}
+	w.steps++
+	if w.steps%64 == 0 {
+		if err := operationalEffectsContextErr(w.ctx); err != nil {
+			return err
+		}
+	}
+	if !v.IsValid() {
+		return w.byte('0')
+	}
+	switch v.Kind() {
+	case reflect.Ptr:
+		if v.IsNil() {
+			return w.byte('p')
+		}
+		if err := w.byte('P'); err != nil {
+			return err
+		}
+		return w.write(v.Elem())
+	case reflect.Struct:
+		if err := w.byte('{'); err != nil {
+			return err
+		}
+		for i := 0; i < v.NumField(); i++ {
+			if err := w.write(v.Field(i)); err != nil {
+				return err
+			}
+		}
+		return w.byte('}')
+	case reflect.Slice:
+		if err := w.byte('['); err != nil {
+			return err
+		}
+		if err := w.uint64(uint64(v.Len())); err != nil {
+			return err
+		}
+		for i := 0; i < v.Len(); i++ {
+			if err := w.write(v.Index(i)); err != nil {
+				return err
+			}
+		}
+		return w.byte(']')
+	case reflect.String:
+		if err := w.byte('s'); err != nil {
+			return err
+		}
+		if err := w.uint64(uint64(v.Len())); err != nil {
+			return err
+		}
+		_, _ = w.h.WriteString(v.String())
+		return nil
+	case reflect.Bool:
+		if err := w.byte('b'); err != nil {
+			return err
+		}
+		if v.Bool() {
+			return w.byte(1)
+		}
+		return w.byte(0)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if err := w.byte('i'); err != nil {
+			return err
+		}
+		return w.uint64(uint64(v.Int()))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if err := w.byte('u'); err != nil {
+			return err
+		}
+		return w.uint64(v.Uint())
+	case reflect.Float64:
+		if err := w.byte('f'); err != nil {
+			return err
+		}
+		return w.uint64(math.Float64bits(v.Float()))
+	default:
+		return fmt.Errorf("manifest: unsupported operational-effects digest wire kind %s", v.Kind())
+	}
+}
+
+func (w *operationalEffectsDigestWriter) byte(value byte) error { return w.h.WriteByte(value) }
+
+func (w *operationalEffectsDigestWriter) uint64(value uint64) error {
+	for shift := uint(0); shift < 64; shift += 8 {
+		if err := w.byte(byte(value >> shift)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func canonicalizeOperationalEffectDigestTypes(e *signature.OperationalEffects) {
@@ -300,8 +535,20 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		return
 	}
 	for _, lane := range operationalEffectsWireLanes {
-		lane.canonicalize(w)
+		_ = lane.canonicalize(context.Background(), w)
 	}
+}
+
+func canonicalizeOperationalEffectsWireContext(ctx context.Context, w *operationalEffectsWire) error {
+	if w == nil {
+		return nil
+	}
+	for _, lane := range operationalEffectsWireLanes {
+		if err := lane.canonicalize(ctx, w); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func encodePathPresenceImplication(fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
@@ -994,30 +1241,67 @@ func decodeAllocationObjectTemplate(w allocationObjectWire) (signature.Allocatio
 	return out, nil
 }
 
-func canonicalizeReturnAllocationTemplateWire(w *returnAllocationTemplateWire) {
+func canonicalizeReturnAllocationTemplateWire(ctx context.Context, w *returnAllocationTemplateWire) error {
 	if w == nil {
-		return
+		return nil
 	}
 	for i := range w.Objects {
-		canonicalizeAllocationObjectWire(&w.Objects[i])
+		if i%64 == 0 {
+			if err := operationalEffectsContextErr(ctx); err != nil {
+				return err
+			}
+		}
+		if err := canonicalizeAllocationObjectWire(ctx, &w.Objects[i]); err != nil {
+			return err
+		}
 	}
+	var canceled error
+	compares := 0
 	sort.Slice(w.Objects, func(i, j int) bool {
+		compares++
+		if compares%64 == 0 && canceled == nil {
+			canceled = operationalEffectsContextErr(ctx)
+		}
+		if canceled != nil {
+			return false
+		}
 		return w.Objects[i].ID < w.Objects[j].ID
 	})
+	return canceled
 }
 
-func canonicalizeAllocationObjectWire(w *allocationObjectWire) {
+func canonicalizeAllocationObjectWire(ctx context.Context, w *allocationObjectWire) error {
 	if w == nil {
-		return
+		return nil
 	}
+	var canceled error
+	compares := 0
 	sort.Slice(w.StaticMembers, func(i, j int) bool {
+		compares++
+		if compares%64 == 0 && canceled == nil {
+			canceled = operationalEffectsContextErr(ctx)
+		}
+		if canceled != nil {
+			return false
+		}
 		left, right := w.StaticMembers[i], w.StaticMembers[j]
 		if left.Suffix != right.Suffix {
 			return left.Suffix < right.Suffix
 		}
 		return left.Value < right.Value
 	})
+	if canceled != nil {
+		return canceled
+	}
+	compares = 0
 	sort.Slice(w.DynamicEntries, func(i, j int) bool {
+		compares++
+		if compares%64 == 0 && canceled == nil {
+			canceled = operationalEffectsContextErr(ctx)
+		}
+		if canceled != nil {
+			return false
+		}
 		left, right := w.DynamicEntries[i], w.DynamicEntries[j]
 		if left.Key != right.Key {
 			return left.Key < right.Key
@@ -1027,6 +1311,7 @@ func canonicalizeAllocationObjectWire(w *allocationObjectWire) {
 		}
 		return typeWireKey(left.KeyType) < typeWireKey(right.KeyType)
 	})
+	return canceled
 }
 
 func typeWireKey(w *typeWire) string {

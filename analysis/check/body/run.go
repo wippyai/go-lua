@@ -369,7 +369,11 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		addObservationStats(&config.Stats.Observation, result.observation)
 	}
 	result.finalizeReturnSlotsFromBoundaryValues()
-	result.resultVersion = computeResultVersion(s, config, entryState, initial)
+	resultVersion, err := computeResultVersion(s, config, entryState, initial)
+	if err != nil {
+		return nil, err
+	}
+	result.resultVersion = resultVersion
 	return result, nil
 }
 
