@@ -41,21 +41,32 @@ type Config struct {
 // Stats holds caller-owned observational counters for a program fixed-point
 // analysis run.
 type Stats struct {
-	Body                           body.Stats
-	Query                          query.Stats
-	PrepassBodySolves              int
-	SummaryBodySolves              int
-	MaterializeBodySolves          int
-	MaxFunctionCount               int
-	MaxContextCount                int
-	MaxCallContextRefCount         int
-	MaxSemanticCallContextCount    int
-	MaxSitesPerSemanticEntry       int
-	CallSitesPerSemanticEntry      map[int]int
-	MaterializedContextSolves      int
-	MaterializedContextNewContexts int
-	SummaryCacheHits               int
-	SummaryCacheMisses             int
+	Body              body.Stats
+	Query             query.Stats
+	PrepassBodySolves int
+	SummaryBodySolves int
+	// SummaryPointTransfers counts CFG point-transfer evaluations performed
+	// while applying summary equations. It intentionally excludes prepass and
+	// materialization work so interprocedural invalidation cost is visible.
+	SummaryPointTransfers int
+	// Summary*AfterDependencyChange isolate the currently wasteful path: an
+	// exact cached summary application existed for this body variant, but one
+	// of the summaries it read grew, so the body had to be solved again.
+	// A resumable body solver should drive the transfer count here down to the
+	// affected call-site slice rather than a whole CFG solve.
+	SummaryBodySolvesAfterDependencyChange     int
+	SummaryPointTransfersAfterDependencyChange int
+	MaterializeBodySolves                      int
+	MaxFunctionCount                           int
+	MaxContextCount                            int
+	MaxCallContextRefCount                     int
+	MaxSemanticCallContextCount                int
+	MaxSitesPerSemanticEntry                   int
+	CallSitesPerSemanticEntry                  map[int]int
+	MaterializedContextSolves                  int
+	MaterializedContextNewContexts             int
+	SummaryCacheHits                           int
+	SummaryCacheMisses                         int
 }
 
 // Result is the fixed-point result for one bound program.

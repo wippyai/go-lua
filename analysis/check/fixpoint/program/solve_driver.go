@@ -104,10 +104,26 @@ func solvePrepared(prepared *body.Static, config body.Config) (*body.Result, err
 }
 
 func solvePreparedCounted(prepared *body.Static, config body.Config, counter *int) (*body.Result, error) {
+	return solvePreparedCountedWithTransfers(prepared, config, counter, nil)
+}
+
+// solvePreparedCountedWithTransfers keeps phase accounting separate from the
+// body package's aggregate stats. A summary equation can be revisited many
+// times, so its point-transfer count is the useful measure of invalidation
+// work rather than just its body-solve count.
+func solvePreparedCountedWithTransfers(prepared *body.Static, config body.Config, counter *int, transfers *int) (*body.Result, error) {
 	if counter != nil {
 		(*counter)++
 	}
-	return solvePrepared(prepared, config)
+	before := 0
+	if transfers != nil && config.Stats != nil {
+		before = config.Stats.Transfer.Solver.TransferCalls
+	}
+	result, err := solvePrepared(prepared, config)
+	if transfers != nil && config.Stats != nil {
+		*transfers += config.Stats.Transfer.Solver.TransferCalls - before
+	}
+	return result, err
 }
 
 func summaryIndexBase(keys programKeys) *callresult.SummaryIndexBase {
@@ -186,9 +202,9 @@ func solveSummaryPrepared(
 	stats *Stats,
 ) (summary.Summary, error) {
 	if cache != nil {
-		return cache.solve(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats))
+		return cache.solve(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats))
 	}
-	result, err := solvePreparedCounted(prepared, build(reader), summaryCounter(stats))
+	result, err := solvePreparedCountedWithTransfers(prepared, build(reader), summaryCounter(stats), summaryPointTransferCounter(stats))
 	if err != nil {
 		return summary.Summary{}, err
 	}

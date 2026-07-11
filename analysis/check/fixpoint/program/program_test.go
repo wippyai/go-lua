@@ -252,6 +252,9 @@ return f()
 	if stats.PrepassBodySolves == 0 || stats.SummaryBodySolves == 0 || stats.MaterializeBodySolves == 0 {
 		t.Fatalf("phase stats = prepass:%d summary:%d materialize:%d, want all populated", stats.PrepassBodySolves, stats.SummaryBodySolves, stats.MaterializeBodySolves)
 	}
+	if stats.SummaryPointTransfers == 0 {
+		t.Fatal("SummaryPointTransfers = 0, want summary CFG work recorded separately")
+	}
 	if stats.Query.BodyInvocations == 0 || stats.Query.Solver.TransferCalls != stats.Query.BodyInvocations {
 		t.Fatalf("query stats = %#v, want body invocations matching solver transfer calls", stats.Query)
 	}
@@ -524,9 +527,11 @@ func TestSummarySolveCacheReusesAcrossPreparedBodiesAndInvalidatesDependencyChan
 	changedSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
 		Key: dep, Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.Number)}},
 	})
+	bodyStats := body.Stats{}
 	build := func(reader summary.Reader) body.Config {
 		return body.Config{
 			Registry: reg,
+			Stats:    &bodyStats,
 			CallOutcome: func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State) callpayload.CallOutcome {
 				sum, ok := reader.Read(dep)
 				if !ok || len(sum.Returns) == 0 {
@@ -537,26 +542,30 @@ func TestSummarySolveCacheReusesAcrossPreparedBodiesAndInvalidatesDependencyChan
 		}
 	}
 	cache := NewSummarySolveCache(reg)
-	var solves, hits, misses int
-	first, err := cache.solve(prepare(), "typed", 0, firstSnapshot, build, &solves, &hits, &misses)
+	var solves, transfers, dependencyChanges, dependencyChangeTransfers, hits, misses int
+	first, err := cache.solve(prepare(), "typed", 0, firstSnapshot, build, &solves, &transfers, &dependencyChanges, &dependencyChangeTransfers, &hits, &misses)
 	if err != nil {
 		t.Fatalf("first cached summary solve: %v", err)
 	}
+	firstTransfers := transfers
 	// A fresh parse/preparation models a separate unit. Pointer identity must
 	// not prevent a cache hit when the body and its inputs are identical.
-	again, err := cache.solve(prepare(), "typed", 0, firstSnapshot, build, &solves, &hits, &misses)
+	again, err := cache.solve(prepare(), "typed", 0, firstSnapshot, build, &solves, &transfers, &dependencyChanges, &dependencyChangeTransfers, &hits, &misses)
 	if err != nil {
 		t.Fatalf("reused cached summary solve: %v", err)
 	}
-	if solves != 1 || hits != 1 || misses != 1 || !summary.EqualNormalized(reg, first, again) {
-		t.Fatalf("same-input cache stats/summary = solves:%d hits:%d misses:%d equal:%v, want 1/1/1/true", solves, hits, misses, summary.EqualNormalized(reg, first, again))
+	if solves != 1 || hits != 1 || misses != 1 || transfers != firstTransfers || !summary.EqualNormalized(reg, first, again) {
+		t.Fatalf("same-input cache stats/summary = solves:%d hits:%d misses:%d transfers:%d/%d equal:%v, want 1/1/1/no-new-work/true", solves, hits, misses, transfers, firstTransfers, summary.EqualNormalized(reg, first, again))
 	}
-	changed, err := cache.solve(prepare(), "typed", 0, changedSnapshot, build, &solves, &hits, &misses)
+	changed, err := cache.solve(prepare(), "typed", 0, changedSnapshot, build, &solves, &transfers, &dependencyChanges, &dependencyChangeTransfers, &hits, &misses)
 	if err != nil {
 		t.Fatalf("changed cached summary solve: %v", err)
 	}
 	if solves != 2 || hits != 1 || misses != 2 || summary.EqualNormalized(reg, first, changed) {
 		t.Fatalf("changed-input cache stats/summary = solves:%d hits:%d misses:%d equal:%v, want 2/1/2/false", solves, hits, misses, summary.EqualNormalized(reg, first, changed))
+	}
+	if transfers == 0 || dependencyChanges != 1 || dependencyChangeTransfers == 0 {
+		t.Fatalf("dependency-change work = transfers:%d changes:%d changed_transfers:%d, want positive/1/positive", transfers, dependencyChanges, dependencyChangeTransfers)
 	}
 }
 

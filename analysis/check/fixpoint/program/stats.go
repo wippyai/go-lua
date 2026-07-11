@@ -23,6 +23,27 @@ func summaryCounter(stats *Stats) *int {
 	return &stats.SummaryBodySolves
 }
 
+func summaryPointTransferCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryPointTransfers
+}
+
+func summaryDependencyChangeCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryBodySolvesAfterDependencyChange
+}
+
+func summaryDependencyChangePointTransferCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryPointTransfersAfterDependencyChange
+}
+
 func materializeCounter(stats *Stats) *int {
 	if stats == nil {
 		return nil

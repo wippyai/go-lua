@@ -390,11 +390,14 @@ func logFixtureStats(t testing.TB, suite, file string, stats *program.Stats) {
 	if stats == nil {
 		return
 	}
-	t.Logf("fixture stats %s/%s: solves prepass=%d summary=%d materialize=%d max_funcs=%d max_contexts=%d max_context_refs=%d semantic_call_contexts=%d sites_per_semantic=%v materialized_context_solves=%d materialized_context_new=%d query_bodies=%d query_transfers=%d body_solves=%d body_transfers=%d",
+	t.Logf("fixture stats %s/%s: solves prepass=%d summary=%d summary_point_transfers=%d summary_dependency_change_solves=%d summary_dependency_change_transfers=%d materialize=%d max_funcs=%d max_contexts=%d max_context_refs=%d semantic_call_contexts=%d sites_per_semantic=%v materialized_context_solves=%d materialized_context_new=%d query_bodies=%d query_transfers=%d body_solves=%d body_transfers=%d",
 		suite,
 		file,
 		stats.PrepassBodySolves,
 		stats.SummaryBodySolves,
+		stats.SummaryPointTransfers,
+		stats.SummaryBodySolvesAfterDependencyChange,
+		stats.SummaryPointTransfersAfterDependencyChange,
 		stats.MaterializeBodySolves,
 		stats.MaxFunctionCount,
 		stats.MaxContextCount,

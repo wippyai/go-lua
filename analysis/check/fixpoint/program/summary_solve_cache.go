@@ -54,6 +54,9 @@ func (c *SummarySolveCache) solve(
 	reader summary.Reader,
 	build func(summary.Reader) body.Config,
 	counter *int,
+	transfers *int,
+	dependencyChanges *int,
+	dependencyChangeTransfers *int,
 	hits *int,
 	misses *int,
 ) (summary.Summary, error) {
@@ -76,18 +79,49 @@ func (c *SummarySolveCache) solve(
 	if misses != nil {
 		(*misses)++
 	}
+	dependencyChanged := c.dependencyChanged(key, reader)
 	tracked := &trackingSummaryReader{reg: c.registry(), base: reader}
 	config = build(tracked)
 	config.SummaryInputDigests = func() []uint64 {
 		return trackedSummaryReadDigests(c.registry(), tracked.deps)
 	}
-	result, err := solvePreparedCounted(prepared, config, counter)
+	beforeTransfers := 0
+	if dependencyChanged && config.Stats != nil {
+		beforeTransfers = config.Stats.Transfer.Solver.TransferCalls
+	}
+	if dependencyChanged && dependencyChanges != nil {
+		(*dependencyChanges)++
+	}
+	result, err := solvePreparedCountedWithTransfers(prepared, config, counter, transfers)
+	if dependencyChanged && dependencyChangeTransfers != nil && config.Stats != nil {
+		*dependencyChangeTransfers += config.Stats.Transfer.Solver.TransferCalls - beforeTransfers
+	}
 	if err != nil {
 		return summary.Summary{}, err
 	}
 	projected := summaryprojection.FromResult(result)
 	c.write(key, tracked.deps, projected)
 	return projected, nil
+}
+
+// dependencyChanged reports whether a previous exact application exists for
+// this body variant but cannot be reused under reader. It deliberately does
+// not inspect summary values itself: trackedSummaryReadsMatch owns normalized
+// equality and missing-summary handling.
+func (c *SummarySolveCache) dependencyChanged(key summarySolveCacheKey, reader summary.Reader) bool {
+	if c == nil || reader == nil {
+		return false
+	}
+	c.mu.RLock()
+	entries := append([]summarySolveCacheEntry(nil), c.entries[key]...)
+	reg := c.reg
+	c.mu.RUnlock()
+	for _, entry := range entries {
+		if !trackedSummaryReadsMatch(reg, entry.deps, reader) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *SummarySolveCache) registry() *axis.Registry {
