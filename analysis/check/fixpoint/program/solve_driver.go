@@ -146,7 +146,6 @@ func chunkFunction(
 	config body.Config,
 	stats *Stats,
 	cache *SummarySolveCache,
-	resumes *resumableSummarySolves,
 	profile string,
 	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
@@ -158,7 +157,7 @@ func chunkFunction(
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			return solveSummaryPrepared(resumes, key, cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				return checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
 			}, stats)
 		},
@@ -171,7 +170,6 @@ func boundFunction(
 	config body.Config,
 	stats *Stats,
 	cache *SummarySolveCache,
-	resumes *resumableSummarySolves,
 	profile string,
 	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
@@ -183,7 +181,7 @@ func boundFunction(
 	return query.Function{
 		Key: origin.key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			return solveSummaryPrepared(resumes, origin.key, cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
 				if origin.hasEntryState {
 					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
@@ -195,8 +193,6 @@ func boundFunction(
 }
 
 func solveSummaryPrepared(
-	resumes *resumableSummarySolves,
-	owner summary.SummaryKey,
 	cache *SummarySolveCache,
 	profile string,
 	resolution uint64,
@@ -205,9 +201,6 @@ func solveSummaryPrepared(
 	build func(summary.Reader) body.Config,
 	stats *Stats,
 ) (summary.Summary, error) {
-	if resumes != nil {
-		return resumes.solve(owner, cache, profile, resolution, prepared, reader, build, stats)
-	}
 	if cache != nil {
 		return cache.solve(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats))
 	}

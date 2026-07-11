@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 type materializedProgram struct {
@@ -113,11 +112,6 @@ type trackingSummaryReader struct {
 	reg  *axis.Registry
 	base summary.Reader
 	deps map[summary.SummaryKey]trackedSummaryRead
-	// active and pointDeps are used only by run-local resumable summary solves.
-	// Reads outside a point scope remain in deps but deliberately have no point
-	// owner, making them ineligible for selective resume.
-	active    *cfg.Point
-	pointDeps map[cfg.Point]map[summary.SummaryKey]trackedSummaryRead
 }
 
 func newMaterializedSolveCache(reg *axis.Registry) *materializedSolveCache {
@@ -178,12 +172,10 @@ func (r *trackingSummaryReader) remember(key summary.SummaryKey, got summary.Sum
 	}
 	if !ok {
 		r.deps[key] = trackedSummaryRead{}
-		r.rememberPoint(key, trackedSummaryRead{})
 		return
 	}
 	dep := trackedSummaryRead{present: true, sum: summary.Normalize(r.reg, got)}
 	r.deps[key] = dep
-	r.rememberPoint(key, dep)
 }
 
 func (r *trackingSummaryReader) rememberOwned(key summary.SummaryKey, got summary.Summary, ok bool) {
@@ -195,24 +187,10 @@ func (r *trackingSummaryReader) rememberOwned(key summary.SummaryKey, got summar
 	}
 	if !ok {
 		r.deps[key] = trackedSummaryRead{}
-		r.rememberPoint(key, trackedSummaryRead{})
 		return
 	}
 	dep := trackedSummaryRead{present: true, sum: got}
 	r.deps[key] = dep
-	r.rememberPoint(key, dep)
-}
-
-func (r *trackingSummaryReader) rememberPoint(key summary.SummaryKey, dep trackedSummaryRead) {
-	if r == nil || r.active == nil || r.pointDeps == nil {
-		return
-	}
-	deps := r.pointDeps[*r.active]
-	if deps == nil {
-		deps = make(map[summary.SummaryKey]trackedSummaryRead)
-		r.pointDeps[*r.active] = deps
-	}
-	deps[key] = dep
 }
 
 func solveMaterializedPrepared(

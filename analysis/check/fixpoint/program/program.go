@@ -52,25 +52,19 @@ type Stats struct {
 	// Summary*AfterDependencyChange isolate the currently wasteful path: an
 	// exact cached summary application existed for this body variant, but one
 	// of the summaries it read grew, so the body had to be solved again.
-	// A resumable body solver should drive the transfer count here down to the
-	// affected call-site slice rather than a whole CFG solve.
 	SummaryBodySolvesAfterDependencyChange     int
 	SummaryPointTransfersAfterDependencyChange int
-	// Hybrid resumable-solve accounting.  A fallback is intentionally a normal
-	// fresh solve because an affected CFG widening point can change history.
-	SummaryResumeHits              int
-	SummaryResumeFallbackWidening  int
-	MaterializeBodySolves          int
-	MaxFunctionCount               int
-	MaxContextCount                int
-	MaxCallContextRefCount         int
-	MaxSemanticCallContextCount    int
-	MaxSitesPerSemanticEntry       int
-	CallSitesPerSemanticEntry      map[int]int
-	MaterializedContextSolves      int
-	MaterializedContextNewContexts int
-	SummaryCacheHits               int
-	SummaryCacheMisses             int
+	MaterializeBodySolves                      int
+	MaxFunctionCount                           int
+	MaxContextCount                            int
+	MaxCallContextRefCount                     int
+	MaxSemanticCallContextCount                int
+	MaxSitesPerSemanticEntry                   int
+	CallSitesPerSemanticEntry                  map[int]int
+	MaterializedContextSolves                  int
+	MaterializedContextNewContexts             int
+	SummaryCacheHits                           int
+	SummaryCacheMisses                         int
 }
 
 // Result is the fixed-point result for one bound program.
@@ -121,13 +115,12 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	applyInferredParamEntryStates(&keys, bindings, inferred)
 	functions := make([]query.Function, 0, 1+len(keys.functions)+keys.contexts.Len())
 	indexBase := summaryIndexBase(keys)
-	resumes := newResumableSummarySolves(config.Check.Registry)
-	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, config.SummaryCache, resumes, config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
+	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, config.SummaryCache, config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
 	for _, origin := range keys.functions {
-		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, resumes, config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof))
+		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof))
 	}
 	keys.contexts.ForEach(func(context keyedFunction) {
-		functions = append(functions, boundFunction(context, prepared.function(context.funcExpr), config.Check, config.Stats, config.SummaryCache, resumes, config.CacheProfile, summaryOwnerResolutionDigest(keys, context.key), contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof))
+		functions = append(functions, boundFunction(context, prepared.function(context.funcExpr), config.Check, config.Stats, config.SummaryCache, config.CacheProfile, summaryOwnerResolutionDigest(keys, context.key), contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof))
 	})
 
 	snapshot, err := query.Run(query.Config{
@@ -198,15 +191,14 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	functions := make([]query.Function, 0, 1+len(keys.functions))
 	indexBase := summaryIndexBase(keys)
-	resumes := newResumableSummarySolves(config.Check.Registry)
-	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, prepared.function(fn), config.Check, config.Stats, config.SummaryCache, resumes, config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
+	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, prepared.function(fn), config.Check, config.Stats, config.SummaryCache, config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
 	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
 	for _, origin := range keys.functions {
 		if _, ok := seen[origin.key]; ok {
 			continue
 		}
 		seen[origin.key] = struct{}{}
-		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, resumes, config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof))
+		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof))
 	}
 
 	snapshot, err := query.Run(query.Config{
