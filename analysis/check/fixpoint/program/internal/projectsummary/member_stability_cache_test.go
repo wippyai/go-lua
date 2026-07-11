@@ -18,7 +18,15 @@ type stabilityCacheResult struct {
 	graph        *cfg.CFG
 	callSites    map[cfg.Point]factflow.CallSite
 	callOutcomes map[cfg.Point]callpayload.CallOutcome
+	rootAssigns  map[cfg.Point]factflow.RootAssignment
 	outcomeReads int
+	rootReads    int
+}
+
+func (r *stabilityCacheResult) RootAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
+	r.rootReads++
+	assignment, ok := r.rootAssigns[point]
+	return assignment, ok
 }
 
 func (r *stabilityCacheResult) Registry() *axis.Registry         { return nil }
@@ -80,6 +88,69 @@ func TestMemberCallReceiverStableCacheCanBeSharedAcrossProjectors(t *testing.T) 
 	}
 	if result.outcomeReads != 1 {
 		t.Fatalf("CallOutcomeAt reads = %d, want 1 shared-cache prior-outcome read", result.outcomeReads)
+	}
+}
+
+func TestStableLocalPathSourceUsesExactSharedAssignmentIndex(t *testing.T) {
+	graph := cfg.New()
+	declaration := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), declaration, true)
+	previous := declaration
+	for range 64 {
+		point := graph.AddNode(cfg.NodeAssign)
+		graph.AddEdge(previous, point, true)
+		previous = point
+	}
+	use := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(previous, use, true)
+	graph.AddEdge(use, graph.Exit(), true)
+
+	local := pathdom.NewPath(7, "local")
+	source := factflow.ValueSource{Kind: factflow.ValueSourceNil}
+	result := &stabilityCacheResult{
+		graph: graph,
+		rootAssigns: map[cfg.Point]factflow.RootAssignment{
+			declaration: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, local.Symbol, local, source),
+		},
+	}
+	cache := newParamObligationProjectorCache(graph)
+	projector := newParamObligationProjector(nil, result, nil, graph, cache)
+	projector.point = use
+	indexedReads := result.rootReads
+
+	for range 4 {
+		got, ok := projector.stableLocalPathSource(local)
+		if !ok || got.Kind != factflow.ValueSourceNil {
+			t.Fatalf("stable source = (%v, %v), want nil source", got, ok)
+		}
+	}
+	if result.rootReads != indexedReads {
+		t.Fatalf("root assignment reads after indexing = %d, want %d", result.rootReads, indexedReads)
+	}
+}
+
+func TestStableLocalPathSourceIndexesOrdinaryWriteTargetPathSymbol(t *testing.T) {
+	graph := cfg.New()
+	declaration := graph.AddNode(cfg.NodeAssign)
+	write := graph.AddNode(cfg.NodeAssign)
+	use := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), declaration, true)
+	graph.AddEdge(declaration, write, true)
+	graph.AddEdge(write, use, true)
+	graph.AddEdge(use, graph.Exit(), true)
+
+	local := pathdom.NewPath(7, "local")
+	result := &stabilityCacheResult{
+		graph: graph,
+		rootAssigns: map[cfg.Point]factflow.RootAssignment{
+			declaration: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, local.Symbol, local, factflow.ValueSource{Kind: factflow.ValueSourceNil}),
+			write:       factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, 8, local, factflow.ValueSource{Kind: factflow.ValueSourceNil}),
+		},
+	}
+	projector := newParamObligationProjector(nil, result, nil, graph, newParamObligationProjectorCache(graph))
+	projector.point = use
+	if source, ok := projector.stableLocalPathSource(local); ok {
+		t.Fatalf("stable source = %v, want invalidated", source)
 	}
 }
 

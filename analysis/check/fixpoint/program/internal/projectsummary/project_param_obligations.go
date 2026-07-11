@@ -357,27 +357,34 @@ func delegatedReturnCallSlots(result ResultReader, sources []factflow.ValueSourc
 }
 
 type paramObligationProjector struct {
-	reg       *axis.Registry
-	result    ResultReader
-	params    []pathdom.Path
-	resolver  typeannotation.Resolver
-	reach     *cfg.Reachability
-	dom       *dominance.ImmediateDominators
-	stability map[memberReceiverStabilityKey]bool
-	point     cfg.Point
+	reg                 *axis.Registry
+	result              ResultReader
+	params              []pathdom.Path
+	resolver            typeannotation.Resolver
+	reach               *cfg.Reachability
+	dom                 *dominance.ImmediateDominators
+	stability           map[memberReceiverStabilityKey]bool
+	stableLocal         map[stableLocalSourceKey]stableLocalSourceResult
+	localAssignments    map[symbol.ID][]localAssignmentSource
+	symbolInvalidations map[symbol.ID][]cfg.Point
+	point               cfg.Point
 }
 
 type paramObligationProjectorCache struct {
-	reach     *cfg.Reachability
-	dom       *dominance.ImmediateDominators
-	stability map[memberReceiverStabilityKey]bool
+	reach               *cfg.Reachability
+	dom                 *dominance.ImmediateDominators
+	stability           map[memberReceiverStabilityKey]bool
+	stableLocal         map[stableLocalSourceKey]stableLocalSourceResult
+	localAssignments    map[symbol.ID][]localAssignmentSource
+	symbolInvalidations map[symbol.ID][]cfg.Point
 }
 
 func newParamObligationProjectorCache(graph cfg.Graph) *paramObligationProjectorCache {
 	return &paramObligationProjectorCache{
-		reach:     cfg.NewReachability(graph),
-		dom:       dominance.ComputeImmediateDominatorInfo(graph),
-		stability: make(map[memberReceiverStabilityKey]bool),
+		reach:       cfg.NewReachability(graph),
+		dom:         dominance.ComputeImmediateDominatorInfo(graph),
+		stability:   make(map[memberReceiverStabilityKey]bool),
+		stableLocal: make(map[stableLocalSourceKey]stableLocalSourceResult),
 	}
 }
 
@@ -391,14 +398,71 @@ func newParamObligationProjector(
 	if cache == nil {
 		cache = newParamObligationProjectorCache(graph)
 	}
+	cache.ensureAssignmentIndex(result, graph)
 	return paramObligationProjector{
-		reg:       reg,
-		result:    result,
-		params:    params,
-		resolver:  paramObligationTypeResolver(result),
-		reach:     cache.reach,
-		dom:       cache.dom,
-		stability: cache.stability,
+		reg:                 reg,
+		result:              result,
+		params:              params,
+		resolver:            paramObligationTypeResolver(result),
+		reach:               cache.reach,
+		dom:                 cache.dom,
+		stability:           cache.stability,
+		stableLocal:         cache.stableLocal,
+		localAssignments:    cache.localAssignments,
+		symbolInvalidations: cache.symbolInvalidations,
+	}
+}
+
+type localAssignmentSource struct {
+	point  cfg.Point
+	source factflow.ValueSource
+}
+
+type stableLocalSourceKey struct {
+	point  cfg.Point
+	symbol symbol.ID
+}
+
+type stableLocalSourceResult struct {
+	source factflow.ValueSource
+	ok     bool
+}
+
+// ensureAssignmentIndex prepares the exact, immutable assignment slices used
+// by local-source stability queries. Projection used to scan the complete RPO
+// twice for every query, even though only writes to one symbol can matter.
+func (c *paramObligationProjectorCache) ensureAssignmentIndex(result ResultReader, graph cfg.Graph) {
+	if c == nil || c.localAssignments != nil || graph == nil {
+		return
+	}
+	c.localAssignments = make(map[symbol.ID][]localAssignmentSource)
+	c.symbolInvalidations = make(map[symbol.ID][]cfg.Point)
+	for _, point := range graph.RPO() {
+		if assignment, ok := rootAssignmentAt(result, point); ok {
+			sym := assignment.TargetSymbol()
+			if assignment.Kind() == factflow.RootAssignmentLocalDeclaration && sym != 0 {
+				c.localAssignments[sym] = append(c.localAssignments[sym], localAssignmentSource{point: point, source: assignment.Source()})
+			}
+			if assignment.Kind() == factflow.RootAssignmentOrdinaryRootWrite {
+				if sym != 0 {
+					c.symbolInvalidations[sym] = append(c.symbolInvalidations[sym], point)
+				}
+				targetSym := assignment.TargetPathRef().Symbol
+				if targetSym != 0 && targetSym != sym {
+					c.symbolInvalidations[targetSym] = append(c.symbolInvalidations[targetSym], point)
+				}
+			}
+		}
+		if assignment, ok := pathAssignmentAt(result, point); ok {
+			if sym := assignment.TargetPathRef().Symbol; sym != 0 {
+				c.symbolInvalidations[sym] = append(c.symbolInvalidations[sym], point)
+			}
+		}
+		if invalidation, ok := pathDescendantInvalidationAt(result, point); ok {
+			if sym := invalidation.ContainerPathRef().Symbol; sym != 0 {
+				c.symbolInvalidations[sym] = append(c.symbolInvalidations[sym], point)
+			}
+		}
 	}
 }
 
@@ -1533,36 +1597,60 @@ func (p paramObligationProjector) stableLocalPathSource(local pathdom.Path) (fac
 	if local.IsEmpty() || local.Symbol == 0 || len(local.Segments) != 0 {
 		return factflow.ValueSource{}, false
 	}
+	key := stableLocalSourceKey{point: p.point, symbol: local.Symbol}
+	if cached, ok := p.stableLocal[key]; ok {
+		return cached.source, cached.ok
+	}
+	source, ok := p.computeStableLocalPathSource(local.Symbol)
+	if p.stableLocal != nil {
+		p.stableLocal[key] = stableLocalSourceResult{source: source, ok: ok}
+	}
+	return source, ok
+}
+
+func (p paramObligationProjector) computeStableLocalPathSource(sym symbol.ID) (factflow.ValueSource, bool) {
 	graph := p.result.Graph()
 	if graph == nil {
 		return factflow.ValueSource{}, false
 	}
 	var sourcePoint cfg.Point
 	var source factflow.ValueSource
-	for _, point := range graph.RPO() {
-		assignment, ok := localRootAssignmentAt(p.result, point)
-		if !ok || assignment.TargetSymbol() != local.Symbol {
+	assignments := p.localAssignments[sym]
+	if p.localAssignments == nil {
+		// Keep hand-built projectors and small isolated tests correct.
+		for _, point := range graph.RPO() {
+			assignment, ok := localRootAssignmentAt(p.result, point)
+			if ok && assignment.TargetSymbol() == sym {
+				assignments = append(assignments, localAssignmentSource{point: point, source: assignment.Source()})
+			}
+		}
+	}
+	for _, assignment := range assignments {
+		if !p.dominates(assignment.point, p.point) {
 			continue
 		}
-		if !p.dominates(point, p.point) {
-			continue
-		}
-		sourcePoint = point
-		source = assignment.Source()
+		sourcePoint = assignment.point
+		source = assignment.source
 	}
 	if source.Kind == factflow.ValueSourceUnknown {
 		return factflow.ValueSource{}, false
 	}
-	for _, point := range graph.RPO() {
+	invalidations := p.symbolInvalidations[sym]
+	if p.symbolInvalidations == nil {
+		for _, point := range graph.RPO() {
+			if p.assignmentInvalidatesSymbolRoot(point, sym) {
+				invalidations = append(invalidations, point)
+			}
+		}
+	}
+	for _, point := range invalidations {
 		if point == sourcePoint || point == p.point {
 			continue
 		}
 		if !p.canReach(graph, sourcePoint, point) || !p.canReach(graph, point, p.point) {
 			continue
 		}
-		if p.assignmentInvalidatesSymbolRoot(point, local.Symbol) {
-			return factflow.ValueSource{}, false
-		}
+		return factflow.ValueSource{}, false
 	}
 	return source, true
 }
