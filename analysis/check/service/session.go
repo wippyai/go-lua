@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/embedding"
 )
 
@@ -38,11 +39,14 @@ type analysisCacheKey struct {
 type BatchSession struct {
 	mu sync.RWMutex
 
-	units              map[UnitID]retainedUnit
-	results            map[resultKey]*completedSnapshot
-	latest             map[unitProfileKey]resultKey
-	bySeq              map[embedding.SolveSeq]resultKey
-	analysisCache      map[analysisCacheKey]*completedSnapshot
+	units         map[UnitID]retainedUnit
+	results       map[resultKey]*completedSnapshot
+	latest        map[unitProfileKey]resultKey
+	bySeq         map[embedding.SolveSeq]resultKey
+	analysisCache map[analysisCacheKey]*completedSnapshot
+	// summaryCache is session-scoped so content-identical bodies from separate
+	// units reuse normalized summaries without retaining their body flows.
+	summaryCache       *program.SummarySolveCache
 	nextSeq            embedding.SolveSeq
 	nextUnitGeneration uint64
 }
@@ -56,6 +60,7 @@ func NewBatchSession() *BatchSession {
 		latest:        make(map[unitProfileKey]resultKey),
 		bySeq:         make(map[embedding.SolveSeq]resultKey),
 		analysisCache: make(map[analysisCacheKey]*completedSnapshot),
+		summaryCache:  program.NewSummarySolveCache(checkerRegistry),
 	}
 }
 

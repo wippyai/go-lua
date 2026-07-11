@@ -109,6 +109,23 @@ func materializedOwnerRoutingDigest(keys programKeys, owner summary.SummaryKey) 
 	return h.Sum64()
 }
 
+// summaryOwnerResolutionDigest fences the non-summary input consulted by call
+// outcome providers. Summary payloads are validated separately by the solve
+// cache; this digest covers only which summary key a body can select for a
+// call. It is content-derived, so equal independently parsed units retain
+// sharing while a changed call-resolution graph cannot reuse a stale result.
+func summaryOwnerResolutionDigest(keys programKeys, owner summary.SummaryKey) uint64 {
+	h := fnv.New64a()
+	writeSummaryKeyDigest(h, owner)
+	fmt.Fprintf(h, "owner-routing:%d;", materializedOwnerRoutingDigest(keys, owner))
+	writeSymbolSummaryKeySetDigest(h, keys.functionKeys)
+	writeIdentitySummaryKeySetDigest(h, keys.functionIDs)
+	writeSymbolSummaryKeySetDigest(h, keys.targetKeys)
+	writeCalleePathKeySetDigest(h, keys.pathKeys)
+	writeCalleePathMultiKeySetDigest(h, keys.pathMultiKeys)
+	return h.Sum64()
+}
+
 func writeSymbolSummaryKeySetDigest(h interface{ Write([]byte) (int, error) }, values map[symbol.ID]summary.SummaryKey) {
 	if len(values) == 0 {
 		return

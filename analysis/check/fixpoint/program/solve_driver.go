@@ -129,6 +129,9 @@ func chunkFunction(
 	prepared *body.Static,
 	config body.Config,
 	stats *Stats,
+	cache *SummarySolveCache,
+	profile string,
+	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
 	keyFor callresult.KeyFunc,
 	index *callresult.SummaryIndex,
@@ -138,12 +141,9 @@ func chunkFunction(
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			config := checkConfigWithSummaries(captured, ctx.Summaries, contextKeyFor, keyFor, index, metatableProof)
-			result, err := solvePreparedCounted(prepared, config, summaryCounter(stats))
-			if err != nil {
-				return summary.Summary{}, err
-			}
-			return summaryprojection.FromResult(result), nil
+			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+				return checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
+			}, stats)
 		},
 	}
 }
@@ -153,6 +153,9 @@ func boundFunction(
 	prepared *body.Static,
 	config body.Config,
 	stats *Stats,
+	cache *SummarySolveCache,
+	profile string,
+	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
 	keyFor callresult.KeyFunc,
 	index *callresult.SummaryIndex,
@@ -162,17 +165,34 @@ func boundFunction(
 	return query.Function{
 		Key: origin.key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			config := checkConfigWithSummaries(captured, ctx.Summaries, contextKeyFor, keyFor, index, metatableProof)
-			if origin.hasEntryState {
-				config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
-			}
-			result, err := solvePreparedCounted(prepared, config, summaryCounter(stats))
-			if err != nil {
-				return summary.Summary{}, err
-			}
-			return summaryprojection.FromResult(result), nil
+			return solveSummaryPrepared(cache, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
+				if origin.hasEntryState {
+					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
+				}
+				return config
+			}, stats)
 		},
 	}
+}
+
+func solveSummaryPrepared(
+	cache *SummarySolveCache,
+	profile string,
+	resolution uint64,
+	prepared *body.Static,
+	reader summary.Reader,
+	build func(summary.Reader) body.Config,
+	stats *Stats,
+) (summary.Summary, error) {
+	if cache != nil {
+		return cache.solve(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats))
+	}
+	result, err := solvePreparedCounted(prepared, build(reader), summaryCounter(stats))
+	if err != nil {
+		return summary.Summary{}, err
+	}
+	return summaryprojection.FromResult(result), nil
 }
 
 func contextKeyFunc(keys programKeys, owner summary.SummaryKey) callresult.KeyFunc {

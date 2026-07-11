@@ -30,6 +30,20 @@ func materializeCounter(stats *Stats) *int {
 	return &stats.MaterializeBodySolves
 }
 
+func summaryCacheHitCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryCacheHits
+}
+
+func summaryCacheMissCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryCacheMisses
+}
+
 func recordProgramShape(stats *Stats, keys programKeys) {
 	if stats == nil {
 		return

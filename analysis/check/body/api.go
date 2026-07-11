@@ -362,3 +362,27 @@ func SolvePrepared(prepared *Static, config SolveConfig) (*Result, error) {
 	}
 	return prepared.solve(config)
 }
+
+// InputDigest returns the deterministic digest for a prepared body's static
+// identity and solve inputs. Callers that cache a solve whose summary reads are
+// discovered dynamically must pass a config without SummaryInputDigests here
+// and validate those reads independently before reusing the cached value.
+//
+// This is deliberately the same digest used by ResultVersion, rather than a
+// second, subtly different cache-key serialization.
+func InputDigest(prepared *Static, config SolveConfig) uint64 {
+	if prepared == nil {
+		return 0
+	}
+	return computeResultVersion(prepared, config, config.EntryState, config.Initial)
+}
+
+// IdentityDigest is the stable content identity of the prepared body. It
+// excludes per-application inputs such as the entry state and caller summary
+// environment, which are included in InputDigest and cache dependency checks.
+func (s *Static) IdentityDigest() uint64 {
+	if s == nil {
+		return 0
+	}
+	return computeResultVersion(s, SolveConfig{}, state.State{}, nil)
+}

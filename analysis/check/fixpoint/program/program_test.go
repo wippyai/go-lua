@@ -505,6 +505,61 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	}
 }
 
+func TestSummarySolveCacheReusesAcrossPreparedBodiesAndInvalidatesDependencyChange(t *testing.T) {
+	reg := standard.Registry()
+	source := `return f()`
+	prepare := func() *body.Static {
+		stmts := parseChunk(t, source)
+		bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
+		prepared, err := body.PrepareBoundChunk(stmts, bindings, body.Config{Registry: reg})
+		if err != nil {
+			t.Fatalf("PrepareBoundChunk: %v", err)
+		}
+		return prepared
+	}
+	dep := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99201)))
+	firstSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: dep, Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.String)}},
+	})
+	changedSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: dep, Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.Number)}},
+	})
+	build := func(reader summary.Reader) body.Config {
+		return body.Config{
+			Registry: reg,
+			CallOutcome: func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State) callpayload.CallOutcome {
+				sum, ok := reader.Read(dep)
+				if !ok || len(sum.Returns) == 0 {
+					return callpayload.CallOutcome{}
+				}
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: sum.Returns[0]}}}
+			},
+		}
+	}
+	cache := NewSummarySolveCache(reg)
+	var solves, hits, misses int
+	first, err := cache.solve(prepare(), "typed", 0, firstSnapshot, build, &solves, &hits, &misses)
+	if err != nil {
+		t.Fatalf("first cached summary solve: %v", err)
+	}
+	// A fresh parse/preparation models a separate unit. Pointer identity must
+	// not prevent a cache hit when the body and its inputs are identical.
+	again, err := cache.solve(prepare(), "typed", 0, firstSnapshot, build, &solves, &hits, &misses)
+	if err != nil {
+		t.Fatalf("reused cached summary solve: %v", err)
+	}
+	if solves != 1 || hits != 1 || misses != 1 || !summary.EqualNormalized(reg, first, again) {
+		t.Fatalf("same-input cache stats/summary = solves:%d hits:%d misses:%d equal:%v, want 1/1/1/true", solves, hits, misses, summary.EqualNormalized(reg, first, again))
+	}
+	changed, err := cache.solve(prepare(), "typed", 0, changedSnapshot, build, &solves, &hits, &misses)
+	if err != nil {
+		t.Fatalf("changed cached summary solve: %v", err)
+	}
+	if solves != 2 || hits != 1 || misses != 2 || summary.EqualNormalized(reg, first, changed) {
+		t.Fatalf("changed-input cache stats/summary = solves:%d hits:%d misses:%d equal:%v, want 2/1/2/false", solves, hits, misses, summary.EqualNormalized(reg, first, changed))
+	}
+}
+
 func TestMaterializedOwnerRoutingDigestIgnoresUnrelatedContexts(t *testing.T) {
 	owner := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(901)))
 	other := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(902)))

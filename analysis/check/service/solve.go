@@ -39,7 +39,7 @@ func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (Resu
 		snapshot := s.cachedAnalysis(unit, profile, documentVersion)
 		if snapshot == nil {
 			var err error
-			snapshot, err = solveUnit(ctx, unit, profile, documentVersion)
+			snapshot, err = solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, s.summaryCache)
 			if err != nil {
 				return ResultTag{}, err
 			}
@@ -127,6 +127,10 @@ func (s *BatchSession) solveInputSnapshot(req SolveRequest) (retainedUnit, strin
 }
 
 func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentVersion int64) (*completedSnapshot, error) {
+	return solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, nil)
+}
+
+func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, cache *program.SummarySolveCache) (*completedSnapshot, error) {
 	input := unit.input
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -151,7 +155,7 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 		globals = append(globals, item.Globals...)
 	}
 	globals = normalizedStrings(globals)
-	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, Check: body.Config{
+	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, SummaryCache: cache, CacheProfile: profile, Check: body.Config{
 		Registry:      checkerRegistry,
 		Globals:       globals,
 		GlobalTypes:   globalTypes,
