@@ -30,6 +30,12 @@ func judgmentContextWithParents(result *body.Result, parents []*body.Result, sou
 	}
 }
 
+func judgmentContextWithCancellation(result *body.Result, parents []*body.Result, sourceFile string, canceled func() bool) pass.Context {
+	ctx := judgmentContextWithParents(result, parents, sourceFile)
+	ctx.Canceled = canceled
+	return ctx
+}
+
 func reachableJudgmentContext(result *body.Result, sourceFile string) pass.Context {
 	ctx := judgmentContext(result, sourceFile)
 	if result != nil {
@@ -47,28 +53,26 @@ func reachableCallJudgmentContext(result *body.Result, sourceFile string) pass.C
 }
 
 func (c producerContext) judgments(result *body.Result, producers ...pass.Producer) []judgment.Judgment {
-	return pass.New(producers...).Run(judgmentContext(result, c.sourceFile))
+	return pass.New(producers...).Run(judgmentContextWithCancellation(result, nil, c.sourceFile, c.canceled))
 }
 
 func (c producerContext) judgmentsWithParent(result, parent *body.Result, producers ...pass.Producer) []judgment.Judgment {
-	return pass.New(producers...).Run(pass.Context{
-		FunctionKey:     c.sourceFile,
-		SourceFile:      c.sourceFile,
-		BodyInputDigest: bodyInputDigest(result),
-		Reader:          internalreadmodel.NewWithParents(result, parent),
-	})
+	return pass.New(producers...).Run(judgmentContextWithCancellation(result, []*body.Result{parent}, c.sourceFile, c.canceled))
 }
 
 func (c producerContext) judgmentsWithParents(result *body.Result, parents []*body.Result, producers ...pass.Producer) []judgment.Judgment {
-	return pass.New(producers...).Run(judgmentContextWithParents(result, parents, c.sourceFile))
+	return pass.New(producers...).Run(judgmentContextWithCancellation(result, parents, c.sourceFile, c.canceled))
 }
 
 func (c producerContext) reachableJudgments(result *body.Result, producers ...pass.Producer) []judgment.Judgment {
-	return pass.New(producers...).Run(reachableJudgmentContext(result, c.sourceFile))
+	ctx := reachableJudgmentContext(result, c.sourceFile)
+	ctx.Canceled = c.canceled
+	return pass.New(producers...).Run(ctx)
 }
 
 func (c producerContext) directCallContractJudgments(result *body.Result) []judgment.Judgment {
 	ctx := reachableCallJudgmentContext(result, c.sourceFile)
+	ctx.Canceled = c.canceled
 	return firstDirectCallContractJudgmentPerCall(
 		pass.New(pass.CallCallee{}).Run(ctx),
 		pass.New(pass.CallArity{}).Run(ctx),

@@ -176,7 +176,10 @@ func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile s
 	if err != nil {
 		return nil, fmt.Errorf("checker service: encode manifest %s: %w", input.ID, err)
 	}
-	items := diagnostics.ProduceJudgments(checked.RootResult(), entryLabel)
+	items, err := diagnostics.ProduceJudgmentsContext(ctx, checked.RootResult(), entryLabel)
+	if err != nil {
+		return nil, fmt.Errorf("checker service: diagnostics %s: %w", input.ID, err)
+	}
 	bindJudgmentLocations(items, input)
 	diagnosticConfig := diagnostics.Config{
 		Policy:   cloneDiagnosticPolicy(input.DiagnosticPolicy),

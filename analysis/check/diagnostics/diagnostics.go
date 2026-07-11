@@ -4,6 +4,7 @@
 package diagnostics
 
 import (
+	"context"
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
@@ -55,6 +56,7 @@ type producerContext struct {
 	judgmentPolicy judgment.PolicyConfig
 
 	suppressDirectCallContracts bool
+	canceled                    func() bool
 }
 
 type diagnosticProducer struct {
@@ -272,6 +274,20 @@ func ProduceJudgments(result *body.Result, sourceFile string) []judgment.Judgmen
 	return produceJudgmentsWithParents(result, sourceFile, nil)
 }
 
+// ProduceJudgmentsContext is the cancelable counterpart of ProduceJudgments.
+// Diagnostics are post-solve work, but they remain part of one analysis
+// request and must not outlive its solve deadline.
+func ProduceJudgmentsContext(ctx context.Context, result *body.Result, sourceFile string) ([]judgment.Judgment, error) {
+	if ctx == nil {
+		return ProduceJudgments(result, sourceFile), nil
+	}
+	items := produceJudgmentsWithContext(ctx, result, sourceFile, nil)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func produceJudgmentsWithParents(
 	result *body.Result,
 	sourceFile string,
@@ -298,6 +314,35 @@ func produceJudgmentsWithParents(
 	for _, fn := range result.ReportableFunctionResults() {
 		childParents := append(append([]*body.Result(nil), parentResults...), result)
 		out = append(out, produceJudgmentsWithParents(fn, sourceFile, result, childParents...)...)
+	}
+	return out
+}
+
+func produceJudgmentsWithContext(ctx context.Context, result *body.Result, sourceFile string, parentResult *body.Result, parentResults ...*body.Result) []judgment.Judgment {
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
+	context := producerContext{
+		parent: parentResult, parents: append([]*body.Result(nil), parentResults...), sourceFile: sourceFile,
+		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
+		canceled:                    func() bool { return ctx != nil && ctx.Err() != nil },
+	}
+	var out []judgment.Judgment
+	for _, producer := range diagnosticProducers() {
+		if context.canceled() || producer.judgments == nil {
+			break
+		}
+		out = append(out, producer.judgments(result, context)...)
+	}
+	if result == nil || context.canceled() {
+		return out
+	}
+	for _, fn := range result.ReportableFunctionResults() {
+		childParents := append(append([]*body.Result(nil), parentResults...), result)
+		out = append(out, produceJudgmentsWithContext(ctx, fn, sourceFile, result, childParents...)...)
+		if context.canceled() {
+			break
+		}
 	}
 	return out
 }

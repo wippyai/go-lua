@@ -22,6 +22,9 @@ func (ResultShapes) Produce(ctx Context) []judgment.Judgment {
 	}
 	var out []judgment.Judgment
 	ctx.Reader.ForEachResultShapeExhaustiveness(func(item readmodel.ResultShapeExhaustiveness) bool {
+		if ctx.Canceled != nil && ctx.Canceled() {
+			return false
+		}
 		out = append(out, resultShapeJudgment(ctx, functionKey, item))
 		return true
 	})

@@ -18,6 +18,9 @@ type Context struct {
 	Reader                        readmodel.Reader
 	SuppressCallerOwnedParameters bool
 	PointReachable                func(cfg.Point) bool
+	// Canceled lets post-solve producers stop a potentially large read-model
+	// traversal without owning a concrete context package dependency.
+	Canceled func() bool
 }
 
 // Producer emits one family of semantic judgments from a solved body view.

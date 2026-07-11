@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -21,6 +23,18 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
+
+func TestProduceJudgmentsContextReturnsCanceledPromptly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	items, err := ProduceJudgmentsContext(ctx, nil, "test.lua")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ProduceJudgmentsContext error = %v, want context cancellation", err)
+	}
+	if items != nil {
+		t.Fatalf("ProduceJudgmentsContext items = %#v, want nil", items)
+	}
+}
 
 func TestFormatTypeUsesBoundedDiagnosticFormatter(t *testing.T) {
 	fields := make([]typ.Field, 0, typeformat.DefaultOptions.MaxRecordFields+16)
