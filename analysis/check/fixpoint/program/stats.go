@@ -44,6 +44,20 @@ func summaryDependencyChangePointTransferCounter(stats *Stats) *int {
 	return &stats.SummaryPointTransfersAfterDependencyChange
 }
 
+func summaryResumeHitCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryResumeHits
+}
+
+func summaryResumeFallbackCounter(stats *Stats) *int {
+	if stats == nil {
+		return nil
+	}
+	return &stats.SummaryResumeFallbackWidening
+}
+
 func materializeCounter(stats *Stats) *int {
 	if stats == nil {
 		return nil
