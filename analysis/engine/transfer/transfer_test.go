@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -63,6 +64,117 @@ func TestRun_LinearGraphPropagatesEntryStateThroughIdentityTransfers(t *testing.
 
 	for _, point := range []cfg.Point{graph.Entry(), mid, graph.Exit()} {
 		assertValue(t, reg, got[point], slot, presentValue(reg))
+	}
+}
+
+func TestRun_WTOFallsBackToFreshFIFOOnBackwardDynamicRead(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+	plan := solve.NewWTOPlan(graph.RPO(), func(point cfg.Point) []cfg.Point {
+		return cfg.SuccessorsReadOnly(graph, point)
+	})
+	var comparison WTOComparison
+	resets := 0
+	records := 0
+	result, err := TryRun(Config{
+		Graph:                    graph,
+		Registry:                 reg,
+		Schedule:                 ScheduleWTO,
+		WTOPlan:                  plan,
+		CompareWTO:               func(got WTOComparison) { comparison = got },
+		ObserveNode:              func(cfg.Point) bool { return true },
+		RecordNodeObservation:    func(NodeObservation) { records++ },
+		FinalizeNodeObservations: func(func(cfg.Point) uint64) {},
+		ResetNodeObservations:    func() { resets++; records = 0 },
+		NodeTransfer: func(ctx NodeContext, in state.State) state.State {
+			if ctx.Point == graph.Entry() {
+				_ = ctx.Read(graph.Exit())
+			}
+			return in
+		},
+	})
+	if err != nil {
+		t.Fatalf("TryRun: %v", err)
+	}
+	if result == nil {
+		t.Fatal("fallback returned nil result")
+	}
+	if !comparison.Fallback {
+		t.Fatalf("comparison = %#v, want fallback", comparison)
+	}
+	if resets != 1 {
+		t.Fatalf("observation resets = %d, want 1", resets)
+	}
+	if records == 0 {
+		t.Fatal("fresh FIFO fallback did not rebuild observations")
+	}
+}
+
+func TestRun_NilContextFIFOParity(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+	slot := key.ReturnSlot(32)
+	entry := state.State{}.WriteValue(reg, slot, presentValue(reg))
+	run := func(ctx context.Context) (Result, int) {
+		stats := &Stats{}
+		result := Run(Config{Context: ctx, Graph: graph, Registry: reg, EntryState: entry, Stats: stats})
+		return result, stats.Solver.TransferCalls
+	}
+	fast, fastTransfers := run(nil)
+	cancelable, cancelableTransfers := run(context.Background())
+	if fastTransfers != cancelableTransfers {
+		t.Fatalf("transfer calls nil=%d context=%d", fastTransfers, cancelableTransfers)
+	}
+	domain := state.Domain(reg)
+	for _, point := range graph.RPO() {
+		if !domain.Equal(fast[point], cancelable[point]) {
+			t.Fatalf("point %d differs between nil-context and context FIFO", point)
+		}
+	}
+}
+
+func TestRun_WTODualPublishesFIFOAndIsDeterministic(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+	plan := solve.NewWTOPlan(graph.RPO(), func(point cfg.Point) []cfg.Point {
+		return cfg.SuccessorsReadOnly(graph, point)
+	})
+	slot := key.ReturnSlot(31)
+	entryState := state.State{}.WriteValue(reg, slot, presentValue(reg))
+	run := func() (Result, WTOComparison) {
+		var comparison WTOComparison
+		result := Run(Config{
+			Graph:      graph,
+			Registry:   reg,
+			Schedule:   ScheduleWTODual,
+			WTOPlan:    plan,
+			EntryState: entryState,
+			CompareWTO: func(got WTOComparison) { comparison = got },
+		})
+		return result, comparison
+	}
+	first, firstComparison := run()
+	second, secondComparison := run()
+	if firstComparison.Fallback || firstComparison.StateDifferences != 0 {
+		t.Fatalf("first comparison = %#v", firstComparison)
+	}
+	if !reflect.DeepEqual(firstComparison, secondComparison) {
+		t.Fatalf("comparison changed: first=%#v second=%#v", firstComparison, secondComparison)
+	}
+	domain := state.Domain(reg)
+	for _, point := range graph.RPO() {
+		if !domain.Equal(first[point], second[point]) {
+			t.Fatalf("point %d differs across repeated dual runs", point)
+		}
 	}
 }
 
@@ -130,6 +242,11 @@ func TestTryRun_ReturnsConfigErrors(t *testing.T) {
 			name: "unknown lane",
 			cfg:  Config{Graph: graph, Registry: reg, StateLanes: []state.LaneID{state.LaneID("missing")}},
 			want: `state: unknown lane "missing"`,
+		},
+		{
+			name: "invalid schedule",
+			cfg:  Config{Graph: graph, Registry: reg, Schedule: Schedule(255)},
+			want: "transfer: Config.Schedule is invalid",
 		},
 	}
 

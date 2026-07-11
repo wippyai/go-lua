@@ -29,6 +29,29 @@ type Stats struct {
 	Solver solve.Stats
 }
 
+// Schedule selects the ascending fixed-point schedule. FIFO remains the
+// default. WTODual executes WTO for comparison but publishes FIFO.
+type Schedule uint8
+
+const (
+	ScheduleFIFO Schedule = iota
+	ScheduleWTO
+	ScheduleWTODual
+)
+
+// WTOComparison is an observational report for an opt-in or dual WTO run.
+// LaneDifferences is populated only for differing point states.
+type WTOComparison struct {
+	Fallback         bool
+	FIFOTransfers    int
+	WTOTransfers     int
+	StateDifferences int
+	FIFOBelowWTO     int
+	WTOBelowFIFO     int
+	Incomparable     int
+	LaneDifferences  map[state.LaneID]int
+}
+
 // StateRead is one solve-local dependency observed while evaluating a node
 // transfer. Version changes whenever the solver replaces that point's state,
 // including a replacement made by narrowing.
@@ -83,6 +106,11 @@ type Config struct {
 
 	Graph    cfg.Graph
 	Registry *axis.Registry
+	Schedule Schedule
+	WTOPlan  *solve.WTOPlan[cfg.Point]
+	// CompareWTO receives a deterministic aggregate after a dual run or a WTO
+	// fallback. It is observational and must not mutate solver inputs.
+	CompareWTO func(WTOComparison)
 
 	// StateLanes selects the State product-lattice lanes used by this solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
@@ -117,6 +145,7 @@ type Config struct {
 	ObserveNode              func(cfg.Point) bool
 	RecordNodeObservation    func(NodeObservation)
 	FinalizeNodeObservations func(finalVersion func(cfg.Point) uint64)
+	ResetNodeObservations    func()
 
 	// BeforePoint and AfterPoint bracket one CFG point transfer.  They are used
 	// by resumable callers to attribute external reads to the active point.
@@ -162,6 +191,7 @@ func Run(config Config) Result {
 // TryRun executes a one-off forward transfer run, returning configuration
 // errors instead of panicking.
 func TryRun(config Config) (Result, error) {
+	uncancelable := config.Context == nil && config.Session == nil
 	if config.Session == nil {
 		config.Context, config.Session = cancellation.Attach(config.Context)
 	} else {
@@ -401,30 +431,118 @@ func TryRun(config Config) (Result, error) {
 		return Result(result), nil
 	}
 
-	if config.Context == nil {
-		if !observing {
-			return Result(solve.Solve(sys)), nil
+	runFIFO := func(system solve.EquationSystem[cfg.Point, state.State]) (map[cfg.Point]state.State, map[cfg.Point]uint64, error) {
+		if uncancelable {
+			if !observing {
+				return solve.Solve(system), nil, nil
+			}
+			result, versions := solve.SolveWithVersions(system)
+			return result, versions, nil
 		}
-		result, versions := solve.SolveWithVersions(sys)
+		if !observing {
+			result, err := solve.SolveContext(config.Context, system)
+			return result, nil, err
+		}
+		return solve.SolveContextWithVersions(config.Context, system)
+	}
+	finalize := func(versions map[cfg.Point]uint64) {
 		if config.FinalizeNodeObservations != nil {
 			config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
 		}
-		return Result(result), nil
 	}
-	if !observing {
-		result, err := solve.SolveContext(config.Context, sys)
-		if err != nil {
-			return nil, err
+	reportComparison := func(fifo, wto map[cfg.Point]state.State, fifoTransfers, wtoTransfers int, fallback bool) {
+		if config.CompareWTO == nil {
+			return
 		}
-		return Result(result), nil
+		report := WTOComparison{Fallback: fallback, FIFOTransfers: fifoTransfers, WTOTransfers: wtoTransfers}
+		if !fallback {
+			for _, point := range cells {
+				left, right := fifo[point], wto[point]
+				if domain.Equal(left, right) {
+					continue
+				}
+				report.StateDifferences++
+				leftBelow := domain.LessOrEq(left, right)
+				rightBelow := domain.LessOrEq(right, left)
+				switch {
+				case leftBelow && !rightBelow:
+					report.FIFOBelowWTO++
+				case rightBelow && !leftBelow:
+					report.WTOBelowFIFO++
+				default:
+					report.Incomparable++
+				}
+				lanes := config.StateLanes
+				if lanes == nil {
+					lanes = state.DefaultLanes()
+				}
+				for _, lane := range state.NewLaneSet(lanes...).IDs() {
+					laneDomain := state.DomainWithLanes(registry, []state.LaneID{lane})
+					if !laneDomain.Equal(left, right) {
+						if report.LaneDifferences == nil {
+							report.LaneDifferences = make(map[state.LaneID]int)
+						}
+						report.LaneDifferences[lane]++
+					}
+				}
+			}
+		}
+		config.CompareWTO(report)
 	}
-	result, versions, err := solve.SolveContextWithVersions(config.Context, sys)
+
+	if config.Schedule == ScheduleWTO || config.Schedule == ScheduleWTODual {
+		wtoStats := &solve.Stats{}
+		wtoSystem := sys
+		wtoSystem.Stats = wtoStats
+		var wto map[cfg.Point]state.State
+		var wtoVersions map[cfg.Point]uint64
+		var wtoErr error
+		if uncancelable {
+			wto, wtoVersions, wtoErr = solve.SolveWTOWithVersions(wtoSystem, config.WTOPlan)
+		} else {
+			wto, wtoVersions, wtoErr = solve.SolveWTOContextWithVersions(config.Context, wtoSystem, config.WTOPlan)
+		}
+		fallback := errors.Is(wtoErr, solve.ErrWTOPlanUncovered)
+		if wtoErr != nil && !fallback {
+			return nil, wtoErr
+		}
+		if config.Schedule == ScheduleWTO && !fallback {
+			if sys.Stats != nil {
+				sys.Stats.TransferCalls += wtoStats.TransferCalls
+			}
+			finalize(wtoVersions)
+			if config.CompareWTO != nil {
+				config.CompareWTO(WTOComparison{WTOTransfers: wtoStats.TransferCalls})
+			}
+			return Result(wto), nil
+		}
+		// A failed scratch WTO attempt and dual mode both publish a clean FIFO
+		// observation capture, never records from the discarded schedule.
+		if config.ResetNodeObservations != nil {
+			config.ResetNodeObservations()
+		}
+		beforeFIFO := 0
+		if sys.Stats != nil {
+			beforeFIFO = sys.Stats.TransferCalls
+		}
+		fifo, fifoVersions, fifoErr := runFIFO(sys)
+		if fifoErr != nil {
+			return nil, fifoErr
+		}
+		fifoTransfers := 0
+		if sys.Stats != nil {
+			fifoTransfers = sys.Stats.TransferCalls - beforeFIFO
+		}
+		reportComparison(fifo, wto, fifoTransfers, wtoStats.TransferCalls, fallback)
+		finalize(fifoVersions)
+		return Result(fifo), nil
+	}
+
+	result, versions, err := runFIFO(sys)
 	if err != nil {
 		return nil, err
 	}
-	if config.FinalizeNodeObservations != nil {
-		config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
-	}
+	finalize(versions)
 	return Result(result), nil
 }
 
@@ -441,6 +559,9 @@ func validateConfig(config Config) error {
 	}
 	if config.Registry == nil {
 		return errors.New("transfer: Config.Registry is nil")
+	}
+	if config.Schedule > ScheduleWTODual {
+		return errors.New("transfer: Config.Schedule is invalid")
 	}
 	if config.Entry != nil {
 		for _, point := range config.Graph.RPO() {

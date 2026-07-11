@@ -52,6 +52,7 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 	w.writeBool("signatures-stdlib", s.signatures.IncludeStdlib)
 	w.writeClosedDynamicInvariants(config.ClosedDynamicAllValues)
 	w.writeStateLanes(config.StateLanes)
+	w.writeInt("schedule", int(config.Schedule))
 	w.writeState("entry", entry)
 	w.writeInitialStates(initial, s.cfg.Graph)
 	w.writeSummaryInputDigests(config.SummaryInputDigests)

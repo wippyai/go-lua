@@ -432,6 +432,14 @@ type edge[Cell comparable] struct {
 }
 
 func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solveState[Cell, State] {
+	return newStateWithFIFO(sys, true)
+}
+
+func newStructuredState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solveState[Cell, State] {
+	return newStateWithFIFO(sys, false)
+}
+
+func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State], fifo bool) *solveState[Cell, State] {
 	widenAt := sys.WidenAt
 	if widenAt == nil {
 		widenAt = func(Cell) bool { return false }
@@ -464,10 +472,12 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 		cur:               make(map[Cell]State, n),
 		versions:          make(map[Cell]uint64, n),
 		initial:           make(map[Cell]State, n),
-		dependents:        make(map[Cell][]Cell),
-		dependEdge:        make(map[edge[Cell]]struct{}),
-		queue:             make([]Cell, 0, n),
-		inQueue:           make(map[Cell]struct{}, n),
+	}
+	if fifo {
+		s.dependents = make(map[Cell][]Cell)
+		s.dependEdge = make(map[edge[Cell]]struct{})
+		s.queue = make([]Cell, 0, n)
+		s.inQueue = make(map[Cell]struct{}, n)
 	}
 
 	// Seed initial values and the worklist in Cells order. Deduplicate so a
@@ -496,7 +506,9 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 			s.initial[c] = value
 			s.declaredCur++
 		}
-		s.enqueue(c)
+		if fifo {
+			s.enqueue(c)
+		}
 	}
 	return s
 }
@@ -571,6 +583,16 @@ func (s *solveState[Cell, State]) recordDependency(d Cell) {
 // apply Widen to the previous iterate and the joined candidate. If d changed, d
 // and its readers are re-queued.
 func (s *solveState[Cell, State]) emit(d Cell, v State) {
+	s.emitWithRequeue(d, v, true)
+}
+
+// emitStructured is the WTO ascent update. The nested schedule owns revisits,
+// so it performs the identical lattice/widening update without FIFO work.
+func (s *solveState[Cell, State]) emitStructured(d Cell, v State) {
+	s.emitWithRequeue(d, v, false)
+}
+
+func (s *solveState[Cell, State]) emitWithRequeue(d Cell, v State, requeue bool) {
 	prev := s.curOf(d)
 	next := s.domain.Join(prev, v)
 	delayConsumed := false
@@ -590,7 +612,9 @@ func (s *solveState[Cell, State]) emit(d Cell, v State) {
 	if delayConsumed {
 		s.recordWidenChange(d)
 	}
-	s.requeueChanged(d)
+	if requeue {
+		s.requeueChanged(d)
+	}
 }
 
 func (s *solveState[Cell, State]) visitCount(c Cell) int {

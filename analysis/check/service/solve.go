@@ -162,6 +162,7 @@ func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile s
 		Globals:       globals,
 		GlobalTypes:   globalTypes,
 		StateLanes:    input.StateLanes,
+		Schedule:      input.Schedule,
 		Signatures:    signaturelookup.Source{Manifests: manifests, IncludeStdlib: input.IncludeStdlib},
 		ModuleExports: importlookup.Source{Manifests: manifests},
 		ModuleTypes:   typelookup.Source{Manifests: manifests},

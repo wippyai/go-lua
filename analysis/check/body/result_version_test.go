@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -42,6 +43,21 @@ func TestResultVersionCanonicalizesManifestOperationalEffectsAndTypestate(t *tes
 	right := resultVersionForManifest(t, resultVersionManifest(true))
 	if left != right {
 		t.Fatalf("semantically equivalent manifests produced result versions %d and %d", left, right)
+	}
+}
+
+func TestResultVersionIncludesScheduleSemantics(t *testing.T) {
+	stmts := parseChunk(t, "local value = 1")
+	fifo, err := CheckChunk(stmts, Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatalf("FIFO CheckChunk: %v", err)
+	}
+	wto, err := CheckChunk(stmts, Config{Registry: standard.Registry(), Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatalf("WTO CheckChunk: %v", err)
+	}
+	if fifo.ResultVersion() == wto.ResultVersion() {
+		t.Fatalf("FIFO and WTO result versions both %d", fifo.ResultVersion())
 	}
 }
 

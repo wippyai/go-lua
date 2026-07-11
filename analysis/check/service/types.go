@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -42,6 +43,7 @@ type UnitInput struct {
 	Globals           []string
 	GlobalTypes       map[string]typ.Type
 	StateLanes        []state.LaneID
+	Schedule          transfer.Schedule
 	DiagnosticPolicy  diagnostic.Policy
 	JudgmentPolicy    judgment.PolicyConfig
 	Profile           string

@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -63,6 +64,8 @@ type Config struct {
 	// StateLanes selects the State product-lattice lanes for each solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
 	StateLanes []state.LaneID
+	Schedule   transfer.Schedule
+	CompareWTO func(transfer.WTOComparison)
 
 	EntryState             state.State
 	Initial                transfer.InitialState
@@ -152,6 +155,7 @@ type Static struct {
 
 	callOutcomeSupplement callpayload.CallOutcomeProvider
 	signatureReturnOps    effectlowering.ReturnTypeOps
+	wtoPlan               *solve.WTOPlan[cfg.Point]
 }
 
 // HasCallSites reports whether the prepared body contains any statically
@@ -202,6 +206,8 @@ type SolveConfig struct {
 	// StateLanes selects the State product-lattice lanes for this solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
 	StateLanes []state.LaneID
+	Schedule   transfer.Schedule
+	CompareWTO func(transfer.WTOComparison)
 
 	CallOutcome                  callpayload.CallOutcomeProvider
 	CallOutcomeFactory           CallOutcomeFactory

@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -40,6 +41,8 @@ type config struct {
 	modules          map[string]*ModuleResult
 	diagnosticPolicy diagnostic.Policy
 	stateLanes       []state.LaneID
+	schedule         transfer.Schedule
+	compareWTO       func(transfer.WTOComparison)
 	stats            *program.Stats
 }
 
@@ -48,6 +51,15 @@ type config struct {
 func WithContext(ctx context.Context) Option {
 	return func(c *config) {
 		c.context = ctx
+	}
+}
+
+// WithSchedule selects an opt-in body schedule for fixture/benchmark runs.
+// FIFO remains the default. compare may be nil.
+func WithSchedule(schedule transfer.Schedule, compare func(transfer.WTOComparison)) Option {
+	return func(c *config) {
+		c.schedule = schedule
+		c.compareWTO = compare
 	}
 }
 
@@ -281,6 +293,8 @@ func checkSource(src, filename string, opts ...Option) Result {
 			Globals:       globals,
 			GlobalTypes:   globalTypes,
 			StateLanes:    cfg.stateLanes,
+			Schedule:      cfg.schedule,
+			CompareWTO:    cfg.compareWTO,
 			Signatures:    signatures,
 			ModuleExports: moduleExports,
 			ModuleTypes:   moduleTypes,

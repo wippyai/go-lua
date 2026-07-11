@@ -60,6 +60,8 @@ var perSolveConfigAxes = func() []configAxisDescriptor {
 		clonedConfigAxis("ClosedDynamicAllValues", cloneClosedDynamicAllValuesAxis),
 		configAxis("Context"),
 		clonedConfigAxis("StateLanes", cloneStateLanesAxis),
+		configAxis("Schedule"),
+		configAxis("CompareWTO"),
 		configAxis("CallOutcome"),
 		configAxis("CallOutcomeFactory"),
 		configAxis("SignatureArgumentType"),

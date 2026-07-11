@@ -263,6 +263,7 @@ func (c *checker) prepare(
 		entrySeedsPrepared:    true,
 		callOutcomeSupplement: callOutcomeSupplement,
 		signatureReturnOps:    signatureReturnTypeOps(),
+		wtoPlan:               compileWTOPlan(built.Graph, config.Schedule),
 	}
 }
 
@@ -325,6 +326,9 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		Session:                  session,
 		Graph:                    s.cfg.Graph,
 		Registry:                 s.registry,
+		Schedule:                 config.Schedule,
+		WTOPlan:                  s.wtoPlan,
+		CompareWTO:               config.CompareWTO,
 		StateLanes:               config.StateLanes,
 		StateOptions:             state.DomainOptions{WidenThresholds: widenThresholds},
 		EntryState:               entryState,
@@ -337,6 +341,7 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		ObserveNode:              observationPlan.observesNode,
 		RecordNodeObservation:    observationCapture.record,
 		FinalizeNodeObservations: observationCapture.finalize,
+		ResetNodeObservations:    observationCapture.reset,
 		BeforePoint:              config.BeforePoint,
 		AfterPoint:               config.AfterPoint,
 		Resume:                   config.Resume,

@@ -147,6 +147,18 @@ func (c *observationCapture) record(record transfer.NodeObservation) {
 	c.records[record.Point] = record
 }
 
+func (c *observationCapture) reset() {
+	if c == nil {
+		return
+	}
+	c.records = make(map[cfg.Point]transfer.NodeObservation, len(c.plan.nodePoints))
+	c.valid = nil
+	c.stats.CapturedNodeOutputs = 0
+	c.stats.ValidatedNodeOutputs = 0
+	c.stats.CapturedBoundaryOutputs = 0
+	c.stats.ValidatedBoundaryOutputs = 0
+}
+
 func (c *observationCapture) finalize(finalVersion func(cfg.Point) uint64) {
 	if c == nil || finalVersion == nil {
 		return
