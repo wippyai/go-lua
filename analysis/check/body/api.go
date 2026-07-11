@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -139,6 +140,7 @@ type Static struct {
 	genericFors           map[cfg.Point]GenericForFact
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues
+	readExpressionConfig  *readexpr.Config
 	customExpressionValue bool
 	calleeValue           CalleeValueFunc
 	receiverFn            ReceiverCallableFunc

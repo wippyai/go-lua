@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/embedding"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -131,6 +132,7 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 }
 
 func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, cache *program.SummarySolveCache) (*completedSnapshot, error) {
+	ctx, _ = cancellation.Attach(ctx)
 	input := unit.input
 	if err := ctx.Err(); err != nil {
 		return nil, err

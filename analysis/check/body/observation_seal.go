@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -195,6 +196,7 @@ func (r *Result) sealObservations() {
 // when the solve context expires. Replaying transfers here may traverse the
 // same large fact sets as the solve itself, so it must retain that context.
 func (r *Result) sealObservationsContext(ctx context.Context) error {
+	ctx, session := cancellation.Attach(ctx)
 	if r == nil {
 		return nil
 	}
@@ -253,6 +255,7 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 		}
 		out := r.boundaryXfer(transfer.NodeContext{
 			Context:  ctx,
+			Session:  session,
 			Graph:    graph,
 			Registry: r.registry,
 			Point:    point,
@@ -303,6 +306,7 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 			hasCond = hasCond && graph.IsBranch(edge.from)
 			out = r.edgeXfer(transfer.EdgeContext{
 				Context:  ctx,
+				Session:  session,
 				Graph:    graph,
 				Registry: r.registry,
 				Edge:     cfg.Edge{From: edge.from, To: edge.to, Cond: cond},
@@ -324,10 +328,7 @@ func (r *Result) sealObservationsContext(ctx context.Context) error {
 }
 
 func observationContextErr(ctx context.Context) error {
-	if ctx == nil {
-		return nil
-	}
-	return ctx.Err()
+	return cancellation.FromContext(ctx).Token().Err()
 }
 
 // ObservationStats returns a copy of this body's seal counters.

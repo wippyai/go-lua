@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -52,6 +53,7 @@ type NodeContext struct {
 	// Context is the solve context. Transfer callbacks that perform their own
 	// graph-sized traversal must observe it at their own bounded cadence.
 	Context  context.Context
+	Session  *cancellation.Session
 	Graph    cfg.Graph
 	Registry *axis.Registry
 	Point    cfg.Point
@@ -62,6 +64,7 @@ type NodeContext struct {
 // EdgeContext is the generic context passed to edge transfer hooks.
 type EdgeContext struct {
 	Context  context.Context
+	Session  *cancellation.Session
 	Graph    cfg.Graph
 	Registry *axis.Registry
 	Edge     cfg.Edge
@@ -74,6 +77,9 @@ type Config struct {
 	// Context cooperatively stops the worklist between transfer iterations. A
 	// nil context preserves the legacy uncancelable Run/TryRun behavior.
 	Context context.Context
+	// Session is the solve-scoped cancellation signal. If nil, TryRun recovers
+	// or attaches one to Context.
+	Session *cancellation.Session
 
 	Graph    cfg.Graph
 	Registry *axis.Registry
@@ -156,6 +162,14 @@ func Run(config Config) Result {
 // TryRun executes a one-off forward transfer run, returning configuration
 // errors instead of panicking.
 func TryRun(config Config) (Result, error) {
+	if config.Session == nil {
+		config.Context, config.Session = cancellation.Attach(config.Context)
+	} else {
+		config.Context = cancellation.WithSession(config.Context, config.Session)
+	}
+	if err := config.Session.Token().Err(); err != nil {
+		return nil, errors.Join(solve.ErrCanceled, err)
+	}
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
@@ -222,6 +236,9 @@ func TryRun(config Config) (Result, error) {
 			return state.State{}, false
 		},
 		Transfer: func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
+			if config.Session.Token().Canceled() {
+				return
+			}
 			if config.BeforePoint != nil {
 				config.BeforePoint(point)
 			}
@@ -236,6 +253,7 @@ func TryRun(config Config) (Result, error) {
 			}
 			out := normalize(nodeTransfer(NodeContext{
 				Context:  config.Context,
+				Session:  config.Session,
 				Graph:    graph,
 				Registry: registry,
 				Point:    point,
@@ -243,14 +261,16 @@ func TryRun(config Config) (Result, error) {
 				Read:     read,
 			}, in))
 
-			for i, succ := range cfg.SuccessorsReadOnly(graph, point) {
-				if i%solveCancellationCheckInterval == 0 && transferContextCanceled(config.Context) {
+			poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
+			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				if poll.Poll() {
 					return
 				}
 				cond, hasCond := graph.EdgeCond(point, succ)
 				hasCond = hasCond && graph.IsBranch(point)
 				edgeOut := normalize(edgeTransfer(EdgeContext{
 					Context:  config.Context,
+					Session:  config.Session,
 					Graph:    graph,
 					Registry: registry,
 					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
@@ -261,6 +281,9 @@ func TryRun(config Config) (Result, error) {
 			}
 		},
 		TransferVersioned: func(point cfg.Point, read func(cfg.Point) (state.State, uint64), emit func(cfg.Point, state.State)) {
+			if config.Session.Token().Canceled() {
+				return
+			}
 			if config.BeforePoint != nil {
 				config.BeforePoint(point)
 			}
@@ -279,6 +302,7 @@ func TryRun(config Config) (Result, error) {
 				// observation has no retention or per-read bookkeeping there.
 				out := normalize(nodeTransfer(NodeContext{
 					Context:  config.Context,
+					Session:  config.Session,
 					Graph:    graph,
 					Registry: registry,
 					Point:    point,
@@ -288,14 +312,16 @@ func TryRun(config Config) (Result, error) {
 						return value
 					},
 				}, in))
-				for i, succ := range cfg.SuccessorsReadOnly(graph, point) {
-					if i%solveCancellationCheckInterval == 0 && transferContextCanceled(config.Context) {
+				poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
+				for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+					if poll.Poll() {
 						return
 					}
 					cond, hasCond := graph.EdgeCond(point, succ)
 					hasCond = hasCond && graph.IsBranch(point)
 					edgeOut := normalize(edgeTransfer(EdgeContext{
 						Context:  config.Context,
+						Session:  config.Session,
 						Graph:    graph,
 						Registry: registry,
 						Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
@@ -314,6 +340,7 @@ func TryRun(config Config) (Result, error) {
 			}
 			out := normalize(nodeTransfer(NodeContext{
 				Context:  config.Context,
+				Session:  config.Session,
 				Graph:    graph,
 				Registry: registry,
 				Point:    point,
@@ -326,14 +353,16 @@ func TryRun(config Config) (Result, error) {
 				Output:       out,
 				Reads:        reads,
 			})
-			for i, succ := range cfg.SuccessorsReadOnly(graph, point) {
-				if i%solveCancellationCheckInterval == 0 && transferContextCanceled(config.Context) {
+			poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
+			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				if poll.Poll() {
 					return
 				}
 				cond, hasCond := graph.EdgeCond(point, succ)
 				hasCond = hasCond && graph.IsBranch(point)
 				edgeOut := normalize(edgeTransfer(EdgeContext{
 					Context:  config.Context,
+					Session:  config.Session,
 					Graph:    graph,
 					Registry: registry,
 					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
@@ -397,12 +426,6 @@ func TryRun(config Config) (Result, error) {
 		config.FinalizeNodeObservations(func(point cfg.Point) uint64 { return versions[point] })
 	}
 	return Result(result), nil
-}
-
-const solveCancellationCheckInterval = 256
-
-func transferContextCanceled(ctx context.Context) bool {
-	return ctx != nil && ctx.Err() != nil
 }
 
 func solverStats(stats *Stats) *solve.Stats {

@@ -45,6 +45,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 )
 
 // ErrCanceled reports that a context stopped a fixed-point run before it
@@ -53,11 +54,7 @@ import (
 // context.DeadlineExceeded).
 var ErrCanceled = errors.New("solve: canceled")
 
-// cancellationCheckInterval bounds the amount of work performed after a
-// cancellation request. The hot loop reads context.Err at this cadence; Go's
-// cancelable contexts implement that state read with an atomic load, rather
-// than paying a cancellation check for every transfer operation.
-const cancellationCheckInterval = 256
+const cancellationCheckInterval = cancellation.EveryCheap
 
 // Stats holds caller-owned observational counters for one or more Solve runs.
 // Solve never retains ownership beyond the call and does not synchronize access.
@@ -193,7 +190,7 @@ func SolveWithVersions[Cell comparable, State any](sys EquationSystem[Cell, Stat
 // accidentally treat a partially converged worklist as a solution.
 func SolveContext[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State]) (map[Cell]State, error) {
 	validateEquationSystem(sys)
-	cancel := newCancellationGuard(ctx)
+	cancel := newCancellationGuard(cancellation.FromContext(ctx))
 	if err := cancel.err(0); err != nil {
 		return nil, err
 	}
@@ -213,7 +210,7 @@ func SolveContext[Cell comparable, State any](ctx context.Context, sys EquationS
 // SolveContextWithVersions is the cancelable counterpart of SolveWithVersions.
 func SolveContextWithVersions[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State]) (map[Cell]State, map[Cell]uint64, error) {
 	validateEquationSystem(sys)
-	cancel := newCancellationGuard(ctx)
+	cancel := newCancellationGuard(cancellation.FromContext(ctx))
 	if err := cancel.err(0); err != nil {
 		return nil, nil, err
 	}
@@ -265,7 +262,7 @@ func (r *Session[Cell, State]) Ascend(ctx context.Context) error {
 	if r == nil || r.s == nil {
 		return nil
 	}
-	cancel := newCancellationGuard(ctx)
+	cancel := newCancellationGuard(cancellation.FromContext(ctx))
 	if err := cancel.err(0); err != nil {
 		return err
 	}
@@ -299,7 +296,7 @@ func (r *Session[Cell, State]) Publish(ctx context.Context) (map[Cell]State, map
 	if r == nil || r.s == nil {
 		return nil, nil, nil
 	}
-	cancel := newCancellationGuard(ctx)
+	cancel := newCancellationGuard(cancellation.FromContext(ctx))
 	if err := cancel.err(0); err != nil {
 		return nil, nil, err
 	}
@@ -323,24 +320,24 @@ func (r *Session[Cell, State]) CheckpointCells() map[Cell]State {
 }
 
 type cancellationGuard struct {
-	ctx context.Context
+	token *cancellation.Token
 }
 
-func newCancellationGuard(ctx context.Context) *cancellationGuard {
-	if ctx == nil {
-		ctx = context.Background()
+func newCancellationGuard(session *cancellation.Session) *cancellationGuard {
+	if session == nil {
+		return nil
 	}
-	return &cancellationGuard{ctx: ctx}
+	return &cancellationGuard{token: session.Token()}
 }
 
 func (g *cancellationGuard) err(iteration uint64) error {
-	if g == nil || iteration%cancellationCheckInterval != 0 {
+	if g == nil || g.token == nil || iteration%cancellationCheckInterval != 0 {
 		return nil
 	}
-	if g.ctx.Err() == nil {
+	if g.token.Err() == nil {
 		return nil
 	}
-	if err := g.ctx.Err(); err != nil {
+	if err := g.token.Err(); err != nil {
 		return errors.Join(ErrCanceled, err)
 	}
 	return ErrCanceled
@@ -705,6 +702,11 @@ func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard)
 		} else {
 			s.transfer(c, read, emit)
 		}
+		// Transfer callbacks cannot return errors. Check at their commit boundary
+		// so a callback that noticed cancellation cannot publish its partial work.
+		if err := cancel.err(0); err != nil {
+			return err
+		}
 		s.recordVisit(c)
 	}
 	return cancel.err(iteration)
@@ -804,7 +806,12 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 	// this candidate pass. They are absent from cur, so they cannot appear in
 	// emittedOrder until applyNarrowedCandidate materializes them below.
 	candidateOnlyOrder := make([]Cell, 0)
+	var initialIndex uint64
 	for c, value := range s.initial {
+		if err := cancel.err(initialIndex); err != nil {
+			return nil, nil, err
+		}
+		initialIndex++
 		candidate[c] = value
 	}
 	candidateOf := func(c Cell) State {
@@ -839,6 +846,9 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 		s.activeReadSelf = false
 		s.activeSelfChanged = false
 		s.transfer(c, read, emit)
+		if err := cancel.err(0); err != nil {
+			return nil, nil, err
+		}
 	}
 	s.active = zero
 	s.activeReadSelf = false

@@ -25,6 +25,9 @@ import (
 )
 
 func project(config Config, point cfg.Point, p pathdom.Path, in state.State, overlayRoot bool) (product.Value, bool) {
+	if config.Cancel != nil && config.Cancel.Canceled() {
+		return product.Value{}, false
+	}
 	reg := config.Registry
 	if reg == nil {
 		panic("readexpr: Config.Registry is required")

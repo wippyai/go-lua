@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -114,7 +115,11 @@ func overlayStaticMemberWitness(config Config, point cfg.Point, root pathdom.Pat
 	}
 	selfIndexMember := false
 	builder := staticmemberwitness.NewBuilder()
+	poll := cancellation.NewPoller(config.Cancel, cancellation.EveryExpensive)
 	in.ForEachPathStaticMember(func(memberKey keyspace.Key, memberValue product.Value) bool {
+		if poll.Poll() {
+			return false
+		}
 		memberSuffix, ok := ks.ExactRemainderAfterPrefix(memberKey, rootKey)
 		if !ok || len(memberSuffix) == 0 {
 			return true
@@ -134,6 +139,9 @@ func overlayStaticMemberWitness(config Config, point cfg.Point, root pathdom.Pat
 		builder.Add(memberSuffix, memberType)
 		return true
 	})
+	if config.Cancel != nil && config.Cancel.Canceled() {
+		return value
+	}
 	if selfIndexMember {
 		return value
 	}

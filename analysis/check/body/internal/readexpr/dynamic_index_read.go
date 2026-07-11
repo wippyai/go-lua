@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -261,12 +262,21 @@ func dynamicIndexExpressionProvenMemberValue(config Config, point cfg.Point, dyn
 	joined := domain.Bottom()
 	found := false
 	aborted := false
+	poll := cancellation.NewPoller(config.Cancel, cancellation.EveryExpensive)
 	forEachDynamicIndexPathStateKey(config, point, dyn.TablePathRef(), func(tableStateKey pathaddr.StateKey) bool {
+		if poll.Poll() {
+			aborted = true
+			return false
+		}
 		tableKey, ok := config.Visibility.KeySpace().InternStateKey(tableStateKey)
 		if !ok {
 			return true
 		}
 		if in.ForEachDynamicIndexFact(func(key dynamicindex.Key, fact dynamicindex.Fact) bool {
+			if poll.Poll() {
+				aborted = true
+				return false
+			}
 			if key.Table != tableKey || fact.Admission == dynamicindex.AdmissionRejected {
 				return true
 			}
@@ -340,12 +350,21 @@ func projectFromDynamicIndexFacts(config Config, point cfg.Point, p pathdom.Path
 	joined := product.Bottom(reg)
 	found := false
 	aborted := false
+	poll := cancellation.NewPoller(config.Cancel, cancellation.EveryExpensive)
 	forEachDynamicIndexPathStateKey(config, point, parent, func(tableStateKey pathaddr.StateKey) bool {
+		if poll.Poll() {
+			aborted = true
+			return false
+		}
 		tableKey, ok := config.Visibility.KeySpace().InternStateKey(tableStateKey)
 		if !ok {
 			return true
 		}
 		if in.ForEachDynamicIndexFact(func(key dynamicindex.Key, fact dynamicindex.Fact) bool {
+			if poll.Poll() {
+				aborted = true
+				return false
+			}
 			if key.Table != tableKey || fact.Admission == dynamicindex.AdmissionRejected {
 				return true
 			}

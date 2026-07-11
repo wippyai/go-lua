@@ -10,6 +10,7 @@ import (
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -127,6 +128,9 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 	var refinedSourceRegistry *axis.Registry
 	var refinedSources sourcevalue.SourceValues
 	return func(ctx transfer.NodeContext, in state.State) state.State {
+		if ctx.Session != nil && ctx.Session.Token().Canceled() {
+			return in
+		}
 		facts := config.Facts
 		sources := config.Sources
 		callOutcome := config.CallOutcome
@@ -169,7 +173,11 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Point, out)
 			pathImplicationsPending = false
 		}
+		poll := cancellation.NewPoller(tokenOf(ctx.Session), cancellation.EveryCheap)
 		for _, fact := range facts.PathValuePresenceImplications(ctx.Point) {
+			if poll.Poll() {
+				return in
+			}
 			implication, ok := pathValuePresenceImplicationAt(ctx, config.Visibility, fact)
 			if !ok {
 				continue
@@ -189,12 +197,21 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, !directDynamicWrite)
 		}
 		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
+			if poll.Poll() {
+				return in
+			}
 			out = applyValueRefinementAtCached(config.TypeValues, ctx.Registry, config.Visibility, config.ProjectPath, ctx.Point, out, fact.TargetPathRef(), fact.Value())
 		}
 		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
+			if poll.Poll() {
+				return in
+			}
 			out = applyPostconditionPathRelation(ctx, config.Visibility, config.ProjectPath, out, fact)
 		}
 		for _, fact := range facts.ChannelSelects(ctx.Point) {
+			if poll.Poll() {
+				return in
+			}
 			out = applyChannelSelect(ctx, config.Visibility, out, fact)
 		}
 		if sources == nil {
@@ -237,6 +254,9 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer {
 	callOutcomeCache := &callOutcomeTraversalCache{}
 	return func(ctx transfer.EdgeContext, out state.State) state.State {
+		if ctx.Session != nil && ctx.Session.Token().Canceled() {
+			return out
+		}
 		if !ctx.HasCond {
 			return out
 		}
@@ -248,7 +268,11 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		}
 		branchRefinements := config.Facts.BranchRefinements(ctx.Edge.From)
 		unreachable := false
+		poll := cancellation.NewPoller(tokenOf(ctx.Session), cancellation.EveryCheap)
 		config.Facts.ForEachBranchPathEvidence(ctx.Edge.From, func(proof factflow.BranchPathEvidence) bool {
+			if poll.Poll() {
+				return false
+			}
 			if proof.Kind() == factflow.BranchPathEvidenceTruthy &&
 				proof.ActiveOnEdge(ctx.Edge.Cond) &&
 				branchTruthyEvidenceContradictsCurrentValue(config.TypeValues, ctx.Registry, config.Visibility, config.ProjectPath, ctx.Edge.From, out, proof.PathRef()) {
@@ -270,6 +294,9 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		}
 		activeRefinements := activeBranchRefinementsForEdge(branchRefinements, ctx.Edge.Cond)
 		for _, fact := range activeRefinements {
+			if poll.Poll() {
+				return out
+			}
 			targetPath := fact.targetPath
 			if activeBranchRefinementHasStrictPrefix(activeRefinements, targetPath) {
 				if invalidated, ok := invalidatePathSubtreeAt(out, config.Visibility, ctx.Edge.From, targetPath); ok {
@@ -283,30 +310,45 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		}
 		out = activatePathPresenceImplications(ctx.Registry, config.Visibility, ctx.Edge.From, out)
 		for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
+			if poll.Poll() {
+				return out
+			}
 			if fact.Cond() != ctx.Edge.Cond {
 				continue
 			}
 			out = applyBranchLenRefinement(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range config.Facts.BranchNumFloorRefinements(ctx.Edge.From) {
+			if poll.Poll() {
+				return out
+			}
 			if fact.Cond() != ctx.Edge.Cond {
 				continue
 			}
 			out = applyBranchNumFloorRefinement(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range config.Facts.BranchNumCeilRefinements(ctx.Edge.From) {
+			if poll.Poll() {
+				return out
+			}
 			if fact.Cond() != ctx.Edge.Cond {
 				continue
 			}
 			out = applyBranchNumCeilRefinement(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range config.Facts.BranchDiffConstraints(ctx.Edge.From) {
+			if poll.Poll() {
+				return out
+			}
 			if fact.Cond() != ctx.Edge.Cond {
 				continue
 			}
 			out = applyBranchDiffConstraint(ctx, config.Visibility, out, fact)
 		}
 		for _, relation := range config.Facts.BranchPresenceRelations(ctx.Edge.From) {
+			if poll.Poll() {
+				return out
+			}
 			refinement, ok := branchPresenceRelationRefinement(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, branchRefinements, relation)
 			if !ok {
 				continue
@@ -314,6 +356,9 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			out = applyBranchRefinementCached(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, relation.TargetPathRef(), refinement)
 		}
 		for _, relation := range config.Facts.BranchPathRelations(ctx.Edge.From) {
+			if poll.Poll() {
+				return out
+			}
 			if !relation.ActiveOnEdge(ctx.Edge.Cond) {
 				continue
 			}
@@ -323,6 +368,9 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 		}
 		config.Facts.ForEachBranchPathEvidence(ctx.Edge.From, func(proof factflow.BranchPathEvidence) bool {
+			if poll.Poll() {
+				return false
+			}
 			if proof.Kind() == factflow.BranchPathEvidenceTruthy &&
 				proof.ActiveOnEdge(!ctx.Edge.Cond) &&
 				!proof.ActiveOnEdge(ctx.Edge.Cond) &&
@@ -349,6 +397,13 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, callOutcomeCache, config.CallOutcome, config.Visibility, config.ProjectPath, branchRefinements, out)
 		return out
 	}
+}
+
+func tokenOf(session *cancellation.Session) *cancellation.Token {
+	if session == nil {
+		return nil
+	}
+	return session.Token()
 }
 
 func branchConditionEdgeUnreachable(

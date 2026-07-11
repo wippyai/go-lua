@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -128,7 +129,27 @@ func WithExpressionValue(base SourceValues, provider ExpressionValueProvider) So
 	}
 }
 
+// BindSession returns a shallow solve-local resolver bound to session. Static
+// source tables remain immutable and reusable across concurrent solves.
+func BindSession(base SourceValues, session *cancellation.Session) SourceValues {
+	if base == nil || session == nil {
+		return base
+	}
+	switch b := base.(type) {
+	case sourceValueResolver:
+		b.cancel = session.Token()
+		return b
+	case expressionRefinementSourceValues:
+		b.base = BindSession(b.base, session)
+		b.cancel = session.Token()
+		return b
+	default:
+		return base
+	}
+}
+
 type sourceValueResolver struct {
+	cancel           *cancellation.Token
 	registry         *axis.Registry
 	typeValues       *typevalue.Cache
 	keySpace         *keyspace.KeySpace
@@ -157,6 +178,9 @@ func (r sourceValueResolver) ValueOfSource(
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
+	if r.cancel != nil && r.cancel.Canceled() {
+		return product.Value{}, false
+	}
 	return r.valueOfSource(point, source, in, read, nil)
 }
 
@@ -167,6 +191,9 @@ func (r sourceValueResolver) valueOfSource(
 	read func(cfg.Point) state.State,
 	active map[factflow.ExprRef]bool,
 ) (product.Value, bool) {
+	if r.cancel != nil && r.cancel.Canceled() {
+		return product.Value{}, false
+	}
 	if !source.Valid() {
 		return product.Value{}, false
 	}
@@ -991,6 +1018,7 @@ func copyDynamicIndexExpressions(in map[factflow.ExprRef]factflow.DynamicIndexEx
 }
 
 type expressionRefinementSourceValues struct {
+	cancel      *cancellation.Token
 	registry    *axis.Registry
 	base        SourceValues
 	refinements ExpressionRefinements
@@ -1060,6 +1088,7 @@ func (r ExpressionRefinements) Bind(reg *axis.Registry, base SourceValues) Sourc
 		return b
 	case expressionRefinementSourceValues:
 		return expressionRefinementSourceValues{
+			cancel:      b.cancel,
 			registry:    reg,
 			base:        b.base,
 			refinements: b.refinements.merge(r),
@@ -1082,6 +1111,9 @@ func (r expressionRefinementSourceValues) ValueOfSource(
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
+	if r.cancel != nil && r.cancel.Canceled() {
+		return product.Value{}, false
+	}
 	return r.valueOfSource(point, source, in, read, nil)
 }
 
@@ -1092,6 +1124,9 @@ func (r expressionRefinementSourceValues) valueOfSource(
 	read func(cfg.Point) state.State,
 	active map[factflow.ExprRef]bool,
 ) (product.Value, bool) {
+	if r.cancel != nil && r.cancel.Canceled() {
+		return product.Value{}, false
+	}
 	if !source.HasExpr {
 		return r.base.ValueOfSource(point, source, in, read)
 	}

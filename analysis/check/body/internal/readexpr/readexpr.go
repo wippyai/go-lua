@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -27,6 +28,7 @@ type Config struct {
 	Context         *Context
 	ProofState      func(cfg.Point) (state.State, bool)
 	ProofVisibility *visibility.Resolver
+	Cancel          *cancellation.Token
 
 	active *projectionActive
 	memo   *projectionMemo
@@ -36,6 +38,7 @@ type Config struct {
 // must not share it across states that can answer the same point/path
 // differently.
 type Context struct {
+	Cancel *cancellation.Token
 	active projectionActive
 	memo   projectionMemo
 }
@@ -46,6 +49,9 @@ func (c *Context) bind(config Config) Config {
 	}
 	config.active = &c.active
 	config.memo = &c.memo
+	if config.Cancel == nil {
+		config.Cancel = c.Cancel
+	}
 	return config
 }
 
@@ -323,6 +329,9 @@ func DynamicIndexReadProvenPresent(config Config, point cfg.Point, expr factflow
 
 func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
 	config = config.Context.bind(config)
+	if config.Cancel != nil && config.Cancel.Canceled() {
+		return product.Value{}, false
+	}
 	var scratch *projectionScratch
 	if config.active == nil || config.memo == nil {
 		scratch = getProjectionScratch()
@@ -347,6 +356,9 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 // as a fallback.
 func ProjectWithoutRootStaticMemberOverlay(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
 	config = config.Context.bind(config)
+	if config.Cancel != nil && config.Cancel.Canceled() {
+		return product.Value{}, false
+	}
 	var scratch *projectionScratch
 	if config.active == nil || config.memo == nil {
 		scratch = getProjectionScratch()

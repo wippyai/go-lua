@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -177,14 +178,17 @@ func (c *checker) prepare(
 	}
 	userExpressionValue := config.ExpressionValue
 	expressionValue := userExpressionValue
+	var readExpressionConfig *readexpr.Config
 	if expressionValue == nil {
-		expressionValue = readexpr.Provider(readexpr.Config{
+		defaultConfig := readexpr.Config{
 			Registry:        config.Registry,
 			Facts:           facts,
 			Visibility:      resolver,
 			TypeValues:      config.TypeValues,
 			ProofVisibility: resolver,
-		})
+		}
+		readExpressionConfig = &defaultConfig
+		expressionValue = readexpr.Provider(defaultConfig)
 	}
 	expressionValues := config.ExpressionValues
 	var expressionPaths map[factflow.ExprRef]struct{}
@@ -249,6 +253,7 @@ func (c *checker) prepare(
 		genericFors:           genericFors,
 		visibility:            resolver,
 		sources:               sources,
+		readExpressionConfig:  readExpressionConfig,
 		customExpressionValue: userExpressionValue != nil,
 		calleeValue:           calleeValue,
 		receiverFn:            receiverFn,
@@ -276,6 +281,14 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	if s == nil {
 		return nil, nil
 	}
+	var session *cancellation.Session
+	config.Context, session = cancellation.Attach(config.Context)
+	sources := sourcevalue.BindSession(s.sources, session)
+	if s.readExpressionConfig != nil {
+		readConfig := *s.readExpressionConfig
+		readConfig.Context = &readexpr.Context{Cancel: session.Token()}
+		sources = sourcevalue.WithExpressionValue(sources, readexpr.Provider(readConfig))
+	}
 	if config.Stats != nil {
 		config.Stats.BodySolves++
 	}
@@ -286,7 +299,7 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	widenThresholds := wideningThresholdsFromWIR(s.wir)
 	nodeTransfer := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts:                  s.facts,
-		Sources:                s.sources,
+		Sources:                sources,
 		CallOutcome:            callOutcome,
 		Visibility:             s.visibility,
 		ProjectPath:            luaPathTypeProjector,
@@ -294,12 +307,12 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.genericFors, s.facts, s.sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.genericFors, s.facts, sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, s.bindings)
 	})
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 		Facts:       s.facts,
-		Sources:     s.sources,
+		Sources:     sources,
 		CallOutcome: callOutcome,
 		Visibility:  s.visibility,
 		ProjectPath: luaPathTypeProjector,
@@ -309,6 +322,7 @@ func (s *Static) solve(config SolveConfig) (*Result, error) {
 	observationCapture := newObservationCapture(observationPlan)
 	flow, err := transfer.TryRun(transfer.Config{
 		Context:                  config.Context,
+		Session:                  session,
 		Graph:                    s.cfg.Graph,
 		Registry:                 s.registry,
 		StateLanes:               config.StateLanes,
