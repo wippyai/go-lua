@@ -88,7 +88,7 @@ func projectSemanticQueries(input UnitInput, stmts []ast.Stmt, root *body.Result
 		seenExprs: make(map[ast.Expr]map[cfg.Point]struct{}),
 	}
 	b.lineIndex = newSourceLineIndex(b.source)
-	b.collectBodies(root, BodyID("root"), b.locationForSpan(wholeSourceSpan(b.source)))
+	b.collectBodies(root, BodyID("root"), b.locationForSpan(b.lineIndex.wholeSourceSpan(len(b.source))))
 	b.collectBinderDefinitionsAndOccurrences(stmts)
 	b.collectExpressions()
 
@@ -372,7 +372,7 @@ func (b *semanticProjectionBuilder) scopeForLocation(location SourceLocation) So
 		return SourceLocation{}
 	}
 	start := location.ByteSpan.StartByte
-	best := b.locationForSpan(wholeSourceSpan(b.source))
+	best := b.locationForSpan(b.lineIndex.wholeSourceSpan(len(b.source)))
 	bestWidth := len(b.source) + 1
 	for _, body := range b.bodies {
 		if !body.location.Valid() || !locationContains(body.location, b.document, b.digest, start) {
@@ -1041,11 +1041,6 @@ func locationLess(left, right SourceLocation) bool {
 	}
 	return left.Span.EndCol < right.Span.EndCol
 }
-func wholeSourceSpan(data []byte) source.Span {
-	line, col := lineColumnAt(data, len(data))
-	return source.Span{StartLine: 1, StartCol: 1, EndLine: line, EndCol: col}
-}
-
 func offsetsForSpan(data []byte, index sourceLineIndex, span source.Span) (int, int, bool) {
 	if !span.Valid() {
 		return 0, 0, false
@@ -1114,30 +1109,29 @@ func (index sourceLineIndex) offsetAt(data []byte, line, column int) (int, bool)
 	return len(data), false
 }
 
+// wholeSourceSpan derives the final byte coordinate from the line starts that
+// were already built for this source. Large units used to scan their complete
+// source a second time here during semantic projection.
+func (index sourceLineIndex) wholeSourceSpan(length int) source.Span {
+	line := len(index.starts)
+	if line == 0 { // Be defensive about a zero-value index.
+		line = 1
+		return source.Span{StartLine: 1, StartCol: 1, EndLine: line, EndCol: length + 1}
+	}
+	return source.Span{
+		StartLine: 1,
+		StartCol:  1,
+		EndLine:   line,
+		EndCol:    length - index.starts[line-1] + 1,
+	}
+}
+
 // offsetAt is retained for the query API's occasional line/column conversion.
 // Projection builds and reuses a sourceLineIndex instead.
 func offsetAt(data []byte, line, column int) (int, bool) {
 	return newSourceLineIndex(data).offsetAt(data, line, column)
 }
 
-func lineColumnAt(data []byte, target int) (int, int) {
-	if target < 0 {
-		target = 0
-	}
-	if target > len(data) {
-		target = len(data)
-	}
-	line, column := 1, 1
-	for offset := 0; offset < target; offset++ {
-		if data[offset] == '\n' {
-			line++
-			column = 1
-		} else {
-			column++
-		}
-	}
-	return line, column
-}
 func identifierByte(value byte) bool {
 	return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
