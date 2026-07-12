@@ -391,6 +391,37 @@ func TestSealedFunctionValueTypesUseIdentityWithoutWeakeningStructuralFallback(t
 	}
 }
 
+func TestCanonicalFunctionValueTypesReusesInstalledImmutableProjection(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaFunction(984)
+	installed := SealFunctionValueTypes(FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			id: typ.Func().Returns(typ.String).Build(),
+		},
+	})
+	result := &Result{registry: reg}
+	WithOwnedFunctionValueTypes(result, installed)
+
+	equivalent := SealFunctionValueTypes(FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			id: typ.Func().Returns(typ.String).Build(),
+		},
+	})
+	canonical, ok := result.CanonicalFunctionValueTypes(equivalent)
+	if !ok || canonical.identity != installed.identity {
+		t.Fatal("equivalent projection did not reuse installed immutable identity")
+	}
+
+	changed := SealFunctionValueTypes(FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			id: typ.Func().Returns(typ.Number).Build(),
+		},
+	})
+	if _, ok := result.CanonicalFunctionValueTypes(changed); ok {
+		t.Fatal("changed projection reused installed immutable identity")
+	}
+}
+
 func BenchmarkFunctionValueTypesEqualSharedMaterializationProjection(b *testing.B) {
 	const functionCount = 2048
 	types := FunctionValueTypes{ByIdentity: make(map[identity.ID]*typ.Function, functionCount)}

@@ -92,6 +92,17 @@ func (r *Result) HasFunctionValueTypes(types FunctionValueTypes) bool {
 	return FunctionValueTypesEqual(r.registry, r.funcTypes, types)
 }
 
+// CanonicalFunctionValueTypes returns the immutable projection already owned by
+// r when types is structurally equal to it. Materialization uses one result as
+// the canonical representative so a freshly assembled but unchanged projection
+// is compared structurally once, then shared with every result by identity.
+func (r *Result) CanonicalFunctionValueTypes(types FunctionValueTypes) (FunctionValueTypes, bool) {
+	if r == nil || !FunctionValueTypesEqual(r.registry, r.funcTypes, types) {
+		return FunctionValueTypes{}, false
+	}
+	return r.funcTypes, true
+}
+
 // FunctionValueTypesEqual reports structural equality for the installed
 // function-value projection. Map order is irrelevant; context order remains
 // significant because context slices are generated in deterministic discovery

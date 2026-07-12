@@ -419,6 +419,12 @@ func installMaterializedFunctionValueTypes(
 	contextResults map[summary.SummaryKey]*body.Result,
 ) {
 	if root != nil {
+		if canonical, ok := root.CanonicalFunctionValueTypes(funcTypes); ok {
+			// functionValueTypesFromSummaries builds a fresh immutable map set on
+			// each materialization stage. Canonicalize an equal projection once so
+			// every already-installed body takes the O(1) identity comparison.
+			funcTypes = canonical
+		}
 		installMaterializedFunctionValueType(cache, keys.rootKey, root, funcTypes)
 	}
 	for fn, result := range baseResults {
