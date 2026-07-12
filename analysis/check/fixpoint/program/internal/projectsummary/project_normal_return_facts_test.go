@@ -900,6 +900,72 @@ func TestFromResultProjectsDirectFieldAssignmentAsStructuralPreservingTargetClea
 	assertClearingPathInvalidation(t, got.PathInvalidations, want)
 }
 
+func TestFromResultRebasesReturnedLocalAssignmentInvalidationToReturnSlot(t *testing.T) {
+	reg := standard.Registry()
+	local := symbol.ID(92521)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	returnExpr := factflow.ExprRef(92521)
+	returnSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: returnExpr, HasExpr: true}
+	localPath := pathdom.NewPath(local, "result")
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:          reg,
+			graph:        graph,
+			exit:         state.State{},
+			returnPoints: []cfg.Point{ret},
+			returnSources: map[cfg.Point][]factflow.ValueSource{
+				ret: {returnSource},
+			},
+			exprPaths: map[factflow.ExprRef]pathdom.Path{
+				returnExpr: localPath,
+			},
+		},
+		pathAssignments: map[cfg.Point]factflow.PathAssignment{
+			assign: factflow.NewPathAssignment(localPath.Field("k"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	want := pathdom.Path{Root: "ret[0]"}.Field("k")
+	if len(got.PathInvalidations) != 1 {
+		t.Fatalf("PathInvalidations = %#v, want exactly returned path %s", got.PathInvalidations, want)
+	}
+	assertPathInvalidation(t, got.PathInvalidations, want)
+	assertStructuralPreservingPathInvalidation(t, got.PathInvalidations, want)
+	assertClearingPathInvalidation(t, got.PathInvalidations, want)
+	if callboundary.IsConcreteSymbolPath(got.PathInvalidations[0].Path) {
+		t.Fatalf("PathInvalidations leaked callee-local symbol: %#v", got.PathInvalidations)
+	}
+}
+
+func TestFromResultDropsUnreturnedLocalAssignmentInvalidation(t *testing.T) {
+	reg := standard.Registry()
+	local := symbol.ID(92522)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+		},
+		pathAssignments: map[cfg.Point]factflow.PathAssignment{
+			assign: factflow.NewPathAssignment(pathdom.NewPath(local, "scratch").Field("k"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
+		},
+	}
+
+	if got := FromResult(stub).NormalReturnFacts.PathInvalidations; len(got) != 0 {
+		t.Fatalf("PathInvalidations = %#v, want no callee-local boundary fact", got)
+	}
+}
+
 func TestFromResultProjectsCapturedRootReassignmentInvalidation(t *testing.T) {
 	reg := standard.Registry()
 	captured := symbol.ID(926)

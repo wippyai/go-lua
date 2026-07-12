@@ -372,7 +372,7 @@ func segmentsEqual(a, b []segment.Segment) bool {
 	return true
 }
 
-func projectAssignmentPathInvalidations(result ResultReader, params []path.Path) []callboundary.PathInvalidationFact {
+func projectAssignmentPathInvalidations(result ResultReader, boundary boundaryPathProjector) []callboundary.PathInvalidationFact {
 	rootReader, hasRootAssignments := result.(rootAssignmentReader)
 	_, hasPathAssignments := result.(pathAssignmentReader)
 	_, hasPathInvalidations := result.(pathDescendantInvalidationReader)
@@ -391,6 +391,7 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 	if reader, ok := result.(symbolKindReader); ok {
 		kindReader = reader
 	}
+	boundary = boundary.withSymbolKinds(kindReader)
 	noNormal, _ := result.(noNormalReturnReader)
 	var out []callboundary.PathInvalidationFact
 	for _, point := range graph.RPO() {
@@ -401,7 +402,7 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 		if !ok {
 			continue
 		}
-		projected, ok := normalReturnFactInvalidationPath(target, params)
+		projected, ok := boundary.ProjectLocalPath(target)
 		if !ok {
 			continue
 		}
@@ -826,19 +827,6 @@ func normalReturnLifecycleFactPath(target path.Path, params []path.Path) (path.P
 	}
 	if projected, ok := parameterPlaceholderPath(target, params); ok {
 		return projected, true
-	}
-	if target.Symbol != 0 {
-		return target, true
-	}
-	return path.Path{}, false
-}
-
-func normalReturnFactInvalidationPath(target path.Path, params []path.Path) (path.Path, bool) {
-	if target.IsEmpty() {
-		return path.Path{}, false
-	}
-	if placeholder, ok := parameterPlaceholderPath(target, params); ok {
-		return placeholder, true
 	}
 	if target.Symbol != 0 {
 		return target, true

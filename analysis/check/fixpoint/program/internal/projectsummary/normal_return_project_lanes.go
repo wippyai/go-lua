@@ -67,7 +67,7 @@ func projectNormalReturnPathRefinements(ctx normalReturnProjectContext, out *cal
 }
 
 func projectNormalReturnPathInvalidations(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {
-	out.PathInvalidations = append(out.PathInvalidations, projectAssignmentPathInvalidations(ctx.result, ctx.params)...)
+	out.PathInvalidations = append(out.PathInvalidations, projectAssignmentPathInvalidations(ctx.result, ctx.boundary)...)
 	if snapshot := ctx.exit.DynamicIndexFactsSnapshot(); !snapshot.Top {
 		for stateKey, stateFact := range snapshot.Facts {
 			table, ok := ctx.boundary.KeyspaceStatePath(stateKey.Table)

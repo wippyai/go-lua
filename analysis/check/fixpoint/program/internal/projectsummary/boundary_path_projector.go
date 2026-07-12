@@ -18,6 +18,26 @@ type boundaryPathProjector struct {
 	params   []path.Path
 	returns  []exitFactReturnPath
 	captured map[symbol.ID]struct{}
+	kinds    symbolKindReader
+}
+
+// withSymbolKinds equips the projector to retain concrete global/upvalue
+// sinks in addition to directly captured locals. The returned projector shares
+// only immutable analysis metadata.
+func (p boundaryPathProjector) withSymbolKinds(kinds symbolKindReader) boundaryPathProjector {
+	p.kinds = kinds
+	return p
+}
+
+// ProjectLocalPath maps one function-local path onto the normal-return
+// boundary. Returned values become ret[N], parameters become $N, and persistent
+// captured/global sinks retain their concrete identity. Ordinary callee locals
+// have no caller-visible meaning and are rejected.
+func (p boundaryPathProjector) ProjectLocalPath(localPath path.Path) (path.Path, bool) {
+	if localPath.IsEmpty() || localPath.Symbol == 0 {
+		return path.Path{}, false
+	}
+	return p.localStatePath(localPath)
 }
 
 func newBoundaryPathProjector(
@@ -163,7 +183,7 @@ func (p boundaryPathProjector) localStatePath(localPath path.Path) (path.Path, b
 	if target, ok := placeholderForParameterPath(p.params, localPath); ok {
 		return target, true
 	}
-	if _, ok := p.captured[localPath.Symbol]; ok {
+	if persistentSinkSymbol(p.kinds, p.captured, localPath.Symbol) {
 		return localPath, true
 	}
 	return path.Path{}, false
