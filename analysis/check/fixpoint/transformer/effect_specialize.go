@@ -89,6 +89,12 @@ func (a *relationOutputAuthority) allowsEffectFragment(effects []ResolvedEffect,
 			boundaryKinds = append(boundaryKinds, kind)
 		}
 	}
+	if len(boundaryKinds) == 0 {
+		// Every currently admitted EffectKind represents an observable semantic
+		// transaction. An empty fragment would silently drop it while claiming
+		// exact specialization.
+		return false
+	}
 	for _, effect := range effects {
 		allowedKinds, ok := a.effects[effect.Kind]
 		if !ok {

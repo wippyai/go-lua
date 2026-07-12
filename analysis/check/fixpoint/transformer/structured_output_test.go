@@ -11,9 +11,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func certifySummaryKinds(t testing.TB, caps *OutputCapabilityRegistry, kinds ...callboundary.BoundaryFactKind) {
@@ -155,5 +159,47 @@ func TestStructuredSummaryOutputFailsClosedForUnsupportedField(t *testing.T) {
 	relation, err := b.Build(certificate, []Row{{Guard: a.True(), Output: summary.Summary{MaySuspend: true}}})
 	if err == nil || relation.arena != nil {
 		t.Fatalf("unsupported structured output published: %#v, %v", relation, err)
+	}
+}
+
+func TestJoinAndWidenPreserveDeclaredReturnDescriptor(t *testing.T) {
+	reg := standard.Registry()
+	shape := Shape{}
+	plan := operationplan.New(cfg.New(), factflow.FactsInput{})
+	certificate, err := CertifyPlan(plan, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := typevalue.FromType(reg, typ.String)
+	descriptors, err := NewDescriptorRegistry(returnHandler{declared: []product.Value{declared}}, obligationHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := NewBuilderWithDescriptors(reg, shape, nil, descriptors, plan)
+	actual := typevalue.LiteralInt(reg, 42)
+	relation, err := builder.Build(certificate, []Row{{
+		Guard: builder.Arena().True(),
+		Ops:   []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: builder.Arena().Constant(actual)}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bottom := Relation{shape: shape, arena: builder.Arena()}
+	cursor, _ := NewBindingCursor(shape, nil, nil)
+	want, exact := relation.Specialize(cursor, nil, nil)
+	if !exact || len(want.Returns) != 1 {
+		t.Fatalf("direct declared specialization = %#v/%v", want, exact)
+	}
+	for name, composed := range map[string]Relation{
+		"join":  JoinRelation(bottom, relation),
+		"widen": WidenRelation(bottom, relation, 8),
+	} {
+		got, exact := composed.Specialize(cursor, nil, nil)
+		if !exact || len(got.Returns) != 1 {
+			t.Fatalf("%s specialization = %#v/%v", name, got, exact)
+		}
+		if !product.Equal(reg, got.Returns[0], want.Returns[0]) {
+			t.Fatalf("%s lost declared return contract\n got=%#v\nwant=%#v", name, got.Returns[0], want.Returns[0])
+		}
 	}
 }

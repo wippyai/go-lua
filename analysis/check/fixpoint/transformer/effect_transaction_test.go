@@ -65,8 +65,8 @@ func TestRowEffectsPreserveNonCommutingMutationOrderAndFailClosedWithoutResolver
 		}
 		return summary.Summary{}, true
 	})
-	if !ok || !reflect.DeepEqual(gotOrder, []uint32{1, 2}) {
-		t.Fatalf("resolved mutation order = %v/%v, want [1 2]", gotOrder, ok)
+	if ok || !reflect.DeepEqual(gotOrder, []uint32{1, 2}) {
+		t.Fatalf("empty resolver fragment/order = %v/%v, want [1 2]/false", gotOrder, ok)
 	}
 	builder.effectCatalog = nil
 	if _, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True(), Effects: []EffectTerm{first}}}); err == nil {

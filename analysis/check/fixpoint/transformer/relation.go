@@ -364,18 +364,20 @@ func JoinRelation(a, b Relation) Relation {
 	if a.effects == nil && a.contextual == "" && len(a.rows) == 0 {
 		a.effects = b.effects
 		a.authority = b.authority
+		a.descriptors = b.descriptors
 	}
 	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
 		b.effects = a.effects
 		b.authority = a.authority
+		b.descriptors = a.descriptors
 	}
-	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) {
+	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) {
 		return Relation{shape: a.shape, arena: a.arena, effects: a.effects, contextual: "incompatible or contextual relation"}
 	}
 	rows := append(cloneRows(a.rows), b.rows...)
 	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
 	rows = dedupRows(a.arena, a.effects, rows)
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, authority: a.authority, rows: rows, widened: a.widened || b.widened}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, widened: a.widened || b.widened}
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -396,7 +398,7 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.effects != b.effects || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))
