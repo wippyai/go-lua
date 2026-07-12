@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -236,18 +235,11 @@ func (c *checker) prepare(
 	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
 	wtoPlan := compileWTOPlan(built.Graph, config.Schedule)
 	var concretePlan *concreteflow.Plan
-	var concreteDomain *lattice.Lattice[state.State]
 	if len(genericFors) == 0 && wtoPlan != nil {
 		// Certification is intentionally fail-closed. Irreducible bodies and any
 		// future operation-plan shape the dense executor does not understand keep
 		// the existing generic WTO without making body preparation fail.
 		concretePlan, _ = concreteflow.Compile(built.Graph, lowered.Plan, wtoPlan)
-		if concretePlan != nil {
-			options := state.DomainOptions{WidenThresholds: wideningThresholdsFromWIR(wirBody)}
-			if domain, err := state.TryDomainWithOptionalLanesAndOptions(config.Registry, nil, options); err == nil {
-				concreteDomain = &domain
-			}
-		}
 	}
 	return &Static{
 		registry:              config.Registry,
@@ -283,7 +275,6 @@ func (c *checker) prepare(
 		signatureReturnOps:    signatureReturnTypeOps(),
 		wtoPlan:               wtoPlan,
 		concreteFlow:          concretePlan,
-		concreteDomain:        concreteDomain,
 	}
 }
 
@@ -370,19 +361,22 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 	observationPlan := compileObservationPlan(s.cfg.Graph, s.facts, callOutcome != nil)
 	observationCapture := newObservationCapture(observationPlan)
 	transferConfig := transfer.Config{
-		Context:                       config.Context,
-		Session:                       session,
-		Graph:                         s.cfg.Graph,
-		Registry:                      s.registry,
-		Schedule:                      config.Schedule,
-		WTOPlan:                       s.wtoPlan,
-		ConcreteFlow:                  s.concreteFlow,
-		CanonicalConcreteTransactions: true,
-		FuseConcreteIdentity:          true,
+		Context:  config.Context,
+		Session:  session,
+		Graph:    s.cfg.Graph,
+		Registry: s.registry,
+		Schedule: config.Schedule,
+		WTOPlan:  s.wtoPlan,
+		// The executor remains attached to Static for differential and benchmark
+		// use, but production publication stays on generic WTO until a corpus gate
+		// demonstrates an end-to-end win outside measurement noise.
+		ConcreteFlow:                  nil,
+		CanonicalConcreteTransactions: false,
+		FuseConcreteIdentity:          false,
 		CompareWTO:                    config.CompareWTO,
 		StateLanes:                    config.StateLanes,
 		StateOptions:                  state.DomainOptions{WidenThresholds: widenThresholds},
-		PreparedDomain:                s.concreteDomain,
+		PreparedDomain:                nil,
 		EntryState:                    entryState,
 		Initial:                       initial,
 		NodeTransfer:                  nodeTransfer,
