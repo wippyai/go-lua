@@ -207,6 +207,16 @@ func (s *Static) Graph() cfg.Graph {
 	return s.cfg.Graph
 }
 
+// OperationPlan returns the immutable, preparation-owned semantic plan. It is
+// the handoff for compositional analyzers; callers must not mutate its graph or
+// retained fact payloads.
+func (s *Static) OperationPlan() *operationplan.Plan {
+	if s == nil {
+		return nil
+	}
+	return s.operationPlan
+}
+
 // SolveConfig holds per-solve inputs for a prepared body. These fields may
 // close over caller summary readers or hold mutable caches, so they are never
 // retained by Static preparation.

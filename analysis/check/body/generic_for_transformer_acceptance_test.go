@@ -27,7 +27,7 @@ func TestGenericForTransformerAcceptanceNamesSymbolicCFGBlocker(t *testing.T) {
 	if reason == "" {
 		t.Fatal("generic-for loop unexpectedly admitted without symbolic CFG rows")
 	}
-	if !strings.Contains(reason, "CallSites") && !strings.Contains(reason, "branching CFG") && !strings.Contains(reason, "cyclic CFG") {
+	if !strings.Contains(reason, "CallSites") && !strings.Contains(reason, "branching CFG") && !strings.Contains(reason, "cyclic CFG") && !strings.Contains(reason, "missing-condition-source") {
 		t.Fatalf("generic-for acceptance blocker = %q, want call producer or symbolic CFG rows/SCC", reason)
 	}
 	t.Logf("blocked until signature CallSite consumption and symbolic CFG rows/SCC: %s", reason)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/bits"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -157,6 +158,7 @@ type Plan struct {
 	extensionRows                []extensionRow
 	extensionCells               []ExtensionCell
 	boundaryParams               []symbol.ID
+	boundaryReturns              []product.Value
 	signatureRefs                []uint32
 	signatures                   []SignatureCallOperation
 	signatureAllocationRefs      []uint32

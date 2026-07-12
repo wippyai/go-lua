@@ -37,11 +37,14 @@ func TestSolveAcyclicCFGRowsPreservesDiamondReturnCorrelation(t *testing.T) {
 			}
 			return row, nil
 		},
-		func(point cfg.Point, row SymbolicCFGRow) (Guard, Guard, error) {
+		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 			if point != branchPoint {
 				t.Fatalf("branch callback point = %d, want %d", point, branchPoint)
 			}
-			return arena.Truthy(row.Values[1]), arena.Falsy(row.Values[1]), nil
+			if cond {
+				return row, arena.Truthy(row.Values[1]), nil
+			}
+			return row, arena.Falsy(row.Values[1]), nil
 		},
 		SymbolicCFGOptions{Shape: shape},
 	)
@@ -88,11 +91,14 @@ func TestSolveAcyclicCFGRowsFailsAtomicallyAtRowBudget(t *testing.T) {
 			}
 			return row, nil
 		},
-		func(point cfg.Point, row SymbolicCFGRow) (Guard, Guard, error) {
+		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 			if point != branchPoint {
 				t.Fatalf("branch callback point = %d, want %d", point, branchPoint)
 			}
-			return arena.Truthy(row.Values[1]), arena.Falsy(row.Values[1]), nil
+			if cond {
+				return row, arena.Truthy(row.Values[1]), nil
+			}
+			return row, arena.Falsy(row.Values[1]), nil
 		},
 		SymbolicCFGOptions{Shape: shape, MaxRows: 1},
 	)

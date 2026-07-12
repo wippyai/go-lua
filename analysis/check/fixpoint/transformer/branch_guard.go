@@ -30,3 +30,30 @@ func LowerBranchGuards(arena *Arena, branch factapply.BranchAlgebra, resolve Bra
 	}
 	return arena.Truthy(value), arena.Falsy(value), nil
 }
+
+// LowerBranchConditionGuards lowers the condition polarity when scalar root
+// refinements are represented separately by LowerBranchRefinements. Persistent
+// relation/evidence families remain fail-closed.
+func LowerBranchConditionGuards(arena *Arena, branch factapply.BranchAlgebra, resolve BranchValueTerm) (truthy, falsy Guard, err error) {
+	return lowerBranchConditionGuards(arena, branch, resolve, false)
+}
+
+func lowerBranchConditionGuards(arena *Arena, branch factapply.BranchAlgebra, resolve BranchValueTerm, representedPathEvidence bool) (truthy, falsy Guard, err error) {
+	if arena == nil || resolve == nil {
+		return 0, 0, fmt.Errorf("branch: arena and condition resolver are required")
+	}
+	for _, reason := range branch.GuardOnlyBlockers() {
+		if reason != "branch:refinement" && !(representedPathEvidence && reason == "branch:path-evidence") {
+			return 0, 0, fmt.Errorf("%s", reason)
+		}
+	}
+	source, ok := branch.ConditionSource()
+	if !ok {
+		return 0, 0, fmt.Errorf("branch:missing-condition-source")
+	}
+	value, ok := resolve(source)
+	if !ok || value == 0 {
+		return 0, 0, fmt.Errorf("branch: contextual-condition-source")
+	}
+	return arena.Truthy(value), arena.Falsy(value), nil
+}

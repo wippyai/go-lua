@@ -188,6 +188,7 @@ func (c *checker) prepare(
 	})
 	operationPlan := lowered.Plan.
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
+		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn)).
 		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer))
 	functionSymbol, _ := bindings.FunctionSymbol(fn)
 	operationPlan = operationPlan.

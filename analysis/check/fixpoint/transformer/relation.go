@@ -40,12 +40,13 @@ type Row struct {
 // Relation is immutable. contextual is lattice Top: callers must use the
 // existing per-context solver and no partial transformer result may publish.
 type Relation struct {
-	shape      Shape
-	arena      *Arena
-	effects    *EffectArena
-	rows       []Row
-	contextual string
-	widened    bool
+	shape       Shape
+	arena       *Arena
+	effects     *EffectArena
+	descriptors *DescriptorRegistry
+	rows        []Row
+	contextual  string
+	widened     bool
 }
 
 func (r Relation) Shape() Shape             { return r.shape }
@@ -170,7 +171,7 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 	}
 	sort.Slice(owned, func(i, j int) bool { return rowLess(b.arena, b.effects, owned[i], owned[j]) })
 	owned = dedupRows(b.arena, b.effects, owned)
-	return Relation{shape: b.shape, arena: b.arena, effects: b.effects, rows: owned}, nil
+	return Relation{shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors, rows: owned}, nil
 }
 
 func stateCatalog() state.LaneCatalog { return state.DefaultLaneCatalog() }

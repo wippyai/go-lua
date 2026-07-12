@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
@@ -52,11 +53,16 @@ var defaultDescriptorRegistry = newDefaultDescriptorRegistry()
 
 func DefaultDescriptorRegistry() *DescriptorRegistry { return defaultDescriptorRegistry }
 
-type returnHandler struct{}
+type returnHandler struct {
+	declared []product.Value
+}
 
 func (returnHandler) Kind() DescriptorKind     { return DescriptorReturn }
 func (returnHandler) ConditionalAllowed() bool { return true }
-func (returnHandler) Apply(reg *axis.Registry, out *summary.Summary, slot uint32, value product.Value) error {
+func (h returnHandler) Apply(reg *axis.Registry, out *summary.Summary, slot uint32, value product.Value) error {
+	if int(slot) < len(h.declared) {
+		value = checkprojection.WithDeclaredContractPreservingPresence(reg, value, h.declared[slot])
+	}
 	priorLen := len(out.Returns)
 	for len(out.Returns) <= int(slot) {
 		out.Returns = append(out.Returns, product.Bottom(reg))
@@ -111,7 +117,10 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 		return summary.Summary{}, false
 	}
 	if descriptors == nil {
-		descriptors = DefaultDescriptorRegistry()
+		descriptors = r.descriptors
+		if descriptors == nil {
+			descriptors = DefaultDescriptorRegistry()
+		}
 	}
 	reg := r.arena.reg
 	var accumulated summary.Summary

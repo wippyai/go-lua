@@ -5,18 +5,23 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -86,9 +91,26 @@ func NewPlanCompiler() *PlanCompiler {
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
 	c.facts[operationplan.Return] = returnPlanHandler{}
 	c.facts[operationplan.CallSite] = signatureCallPlanHandler{}
+	// These edge families are consumed together by compileBranchEdge. They are
+	// registered here so the operation-plan exhaustiveness gate recognizes one
+	// semantic owner; their point-local handlers intentionally publish nothing.
+	for _, branchKind := range []operationplan.Kind{
+		operationplan.BranchEdgeReachability,
+		operationplan.BranchConditionSource,
+		operationplan.BranchRefinement,
+		operationplan.BranchPathEvidence,
+	} {
+		c.facts[branchKind] = branchEdgePlanHandler{kind: branchKind}
+	}
 	c.extensions[operationplan.BodyGenericFor] = genericForPlanHandler{}
 	return c
 }
+
+type branchEdgePlanHandler struct{ kind operationplan.Kind }
+
+func (h branchEdgePlanHandler) Kind() operationplan.Kind                              { return h.kind }
+func (branchEdgePlanHandler) Preflight(planCompileContext, cfg.Point) error           { return nil }
+func (branchEdgePlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error { return nil }
 
 type signatureCallPlanHandler struct{}
 
@@ -246,7 +268,17 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		return contextual(fmt.Sprintf("compiler: graph points %d != operation rows %d", graph.Size(), plan.PointCount()))
 	}
 	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
-	builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
+	outputCaps := DefaultOutputCapabilityRegistry()
+	for _, kind := range []callboundary.BoundaryFactKind{"NormalReturnParams", "NormalReturnFacts"} {
+		for _, lane := range state.DefaultLanes() {
+			_ = outputCaps.SetSummary(kind, lane, CapabilitySupported)
+		}
+	}
+	descriptors, descriptorErr := NewDescriptorRegistry(returnHandler{declared: plan.BoundaryReturns()}, obligationHandler{})
+	if descriptorErr != nil {
+		return contextual("compiler: descriptors: " + descriptorErr.Error())
+	}
+	builder := NewBuilderWithDescriptors(reg, shape, outputCaps, descriptors, plan)
 	ctx.builder = builder
 	ctx.locals = make(map[symbol.ID]ValueTerm)
 	ctx.expressions = make(map[factflow.ExprRef][]ValueTerm)
@@ -261,13 +293,6 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if len(unsupported) != 0 {
 		return contextual("compiler: contextual operations: " + strings.Join(unsupported, ", "))
 	}
-	if reason := directRelationTopologyReason(graph); reason != "" {
-		return contextual(reason)
-	}
-	if reason := c.preflight(ctx); reason != "" {
-		return contextual(reason)
-	}
-
 	semantic := DefaultSemanticCapabilityRegistry()
 	for _, fact := range operationplan.Kinds() {
 		if c.facts[fact] == nil || !planHasFact(plan, fact) {
@@ -275,7 +300,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		}
 		for _, lane := range state.DefaultLanes() {
 			capability := CapabilityUnaffected
-			if fact == operationplan.RootAssignment {
+			if fact == operationplan.RootAssignment || isBranchEdgeOwnedKind(fact) {
 				capability = CapabilitySupported
 			}
 			_ = semantic.SetFact(fact, lane, capability)
@@ -295,26 +320,205 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err != nil {
 		return contextual("compiler: certificate: " + err.Error())
 	}
-	var operations []Operation
-	for _, point := range graph.RPO() {
-		cursor := plan.Cursor(point)
-		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-			if err := c.facts[cell.Kind()].Lower(ctx, point, &operations); err != nil {
-				return contextual(fmt.Sprintf("compiler: %s at point %d: %v", cell.Kind(), point, err))
-			}
-		}
-		extensions := plan.ExtensionCursor(point)
-		for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
-			if err := c.extensions[cell.Kind()].Lower(ctx, point, &operations); err != nil {
-				return contextual(fmt.Sprintf("compiler: extension %d at point %d: %v", cell.Kind(), point, err))
-			}
+	initial := SymbolicCFGRow{
+		Guard:           builder.Arena().True(),
+		Values:          ctx.locals,
+		genericBindings: ctx.genericBindings,
+	}
+	if shape.Params != 0 {
+		initial.Output.NormalReturnParams = make([]product.Value, shape.Params)
+		for i := range initial.Output.NormalReturnParams {
+			initial.Output.NormalReturnParams[i] = product.Top()
 		}
 	}
-	relation, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True(), Ops: operations}})
+	rowsByPoint, err := SolveAcyclicCFGRows(graph, builder.Arena(), initial,
+		func(point cfg.Point, row SymbolicCFGRow) (SymbolicCFGRow, error) {
+			rowCtx := ctx
+			rowCtx.locals = row.Values
+			rowCtx.genericBindings = row.genericBindings
+			cursor := plan.Cursor(point)
+			for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
+				handler := c.facts[cell.Kind()]
+				if err := handler.Preflight(rowCtx, point); err != nil {
+					return SymbolicCFGRow{}, fmt.Errorf("%s: %w", cell.Kind(), err)
+				}
+				if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
+					return SymbolicCFGRow{}, fmt.Errorf("%s: %w", cell.Kind(), err)
+				}
+			}
+			extensions := plan.ExtensionCursor(point)
+			for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
+				handler := c.extensions[cell.Kind()]
+				if err := handler.Preflight(rowCtx, point); err != nil {
+					return SymbolicCFGRow{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
+				}
+				if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
+					return SymbolicCFGRow{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
+				}
+			}
+			row.Values = rowCtx.locals
+			row.genericBindings = rowCtx.genericBindings
+			return row, nil
+		},
+		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
+			return compileBranchEdge(ctx, point, row, cond)
+		},
+		SymbolicCFGOptions{Shape: shape},
+	)
+	if err != nil {
+		return contextual("compiler: " + err.Error())
+	}
+	exitRows := rowsByPoint[graph.Exit()]
+	rows := make([]Row, len(exitRows))
+	for i, row := range exitRows {
+		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations}
+	}
+	relation, err := builder.Build(certificate, rows)
 	if err != nil {
 		return contextual("compiler: relation admission: " + err.Error())
 	}
 	return relation
+}
+
+func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
+	arena := base.builder.Arena()
+	if base.facts.BranchEdgeUnreachable(point, cond) {
+		return row, arena.False(), nil
+	}
+	ctx := base
+	ctx.locals = row.Values
+	ctx.genericBindings = row.genericBindings
+	branch := factapply.NewBranchAlgebra(base.facts, point)
+	conditionSource, ok := branch.ConditionSource()
+	if !ok {
+		return SymbolicCFGRow{}, 0, fmt.Errorf("branch:missing-condition-source")
+	}
+	conditionTerm, conditionErr := exactCompilerSourceTerm(ctx, conditionSource)
+	if conditionErr != nil {
+		return SymbolicCFGRow{}, 0, fmt.Errorf("branch: contextual-condition-source")
+	}
+	if err := validateRepresentedBranchEvidence(ctx, branch, conditionTerm); err != nil {
+		return SymbolicCFGRow{}, 0, err
+	}
+	truthy, falsy, err := lowerBranchConditionGuards(arena, branch, func(source factflow.ValueSource) (ValueTerm, bool) {
+		term, resolveErr := exactCompilerSourceTerm(ctx, source)
+		return term, resolveErr == nil
+	}, true)
+	if err != nil {
+		return SymbolicCFGRow{}, 0, err
+	}
+	updates, err := lowerCompilerBranchRefinements(arena, branch, cond, ctx, conditionTerm)
+	if err != nil {
+		return SymbolicCFGRow{}, 0, err
+	}
+	for _, update := range updates {
+		path := update.TargetPathRef()
+		if path.Symbol == 0 || path.Version != 0 || len(path.Segments) != 0 {
+			return SymbolicCFGRow{}, 0, fmt.Errorf("branch: contextual-refinement-path")
+		}
+		row.Values[path.Symbol] = update.Value()
+	}
+	appendRepresentedBranchEvidenceOutput(ctx, branch, cond, &row.Output)
+	if cond {
+		return row, truthy, nil
+	}
+	return row, falsy, nil
+}
+
+func appendRepresentedBranchEvidenceOutput(ctx planCompileContext, branch factapply.BranchAlgebra, cond bool, out *summary.Summary) {
+	if out == nil {
+		return
+	}
+	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
+		if proof.Kind() != factflow.BranchPathEvidencePresence || !proof.ActiveOnEdge(cond) {
+			return true
+		}
+		value, ok := proof.Presence()
+		if !ok {
+			return true
+		}
+		path := proof.PathRef()
+		for index, param := range ctx.plan.BoundaryParams() {
+			if path.Symbol != param || path.Version != 0 || len(path.Segments) != 0 {
+				continue
+			}
+			out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, callboundary.BranchProof{
+				Kind: pathevidence.BranchProofPathPresence, Path: pathdom.NewPlaceholder(index), Presence: value,
+			})
+			break
+		}
+		return true
+	})
+}
+
+func lowerCompilerBranchRefinements(arena *Arena, branch factapply.BranchAlgebra, cond bool, ctx planCompileContext, condition ValueTerm) ([]SymbolicBranchRefinement, error) {
+	var out []SymbolicBranchRefinement
+	for _, active := range branch.ActiveRefinements(cond) {
+		target := active.TargetPathRef()
+		value, ok := latestSymbolicPathValue(out, target)
+		if !ok {
+			value, ok = exactCompilerPathTerm(ctx, target)
+		}
+		if !ok {
+			return nil, fmt.Errorf("branch: contextual-refinement-path")
+		}
+		refinement := active.Refinement()
+		targetBase, _ := exactCompilerPathTerm(ctx, target)
+		if refinement.FalsyAbsent() && targetBase == condition {
+			// The conditional absent optimization is exactly subsumed by the
+			// falsy condition guard. Retaining the original term preserves false
+			// versus nil while row feasibility carries the refinement.
+			continue
+		}
+		baseValue := value
+		value, ok = arena.RefineValue(value, refinement)
+		if !ok {
+			_, hasConstraint := refinement.Constraint()
+			return nil, fmt.Errorf("branch: contextual-refinement-kind negated=%t falsy-absent=%t constraint=%t value=%d condition=%d", refinement.NegatedLiteral(), refinement.FalsyAbsent(), hasConstraint, baseValue, condition)
+		}
+		out = append(out, SymbolicBranchRefinement{target: target, value: value})
+	}
+	return out, nil
+}
+
+func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.BranchAlgebra, condition ValueTerm) error {
+	var validationErr error
+	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
+		term, ok := exactCompilerPathTerm(ctx, proof.PathRef())
+		if !ok || term != condition {
+			validationErr = fmt.Errorf("branch: contextual-path-evidence-path")
+			return false
+		}
+		if !proof.ActiveOnEdge(true) || proof.ActiveOnEdge(false) {
+			validationErr = fmt.Errorf("branch: contextual-path-evidence-polarity")
+			return false
+		}
+		switch proof.Kind() {
+		case factflow.BranchPathEvidenceTruthy:
+			// The truthy row guard is the exact durable representation.
+		case factflow.BranchPathEvidencePresence:
+			value, hasPresence := proof.Presence()
+			if !hasPresence || value != presence.Present() {
+				validationErr = fmt.Errorf("branch: contextual-path-evidence-presence")
+				return false
+			}
+			// Truthiness of this same root implies presence, so the row guard
+			// represents this fact without a parallel mutable evidence lane.
+		default:
+			validationErr = fmt.Errorf("branch: contextual-path-evidence-kind %d", proof.Kind())
+			return false
+		}
+		return true
+	})
+	return validationErr
+}
+
+func exactCompilerPathTerm(ctx planCompileContext, path pathdom.Path) (ValueTerm, bool) {
+	if path.Symbol == 0 || path.Version != 0 || len(path.Segments) != 0 {
+		return 0, false
+	}
+	term, ok := ctx.locals[path.Symbol]
+	return term, ok
 }
 
 func bindBoundaryParamTerms(ctx *planCompileContext, shape Shape) error {

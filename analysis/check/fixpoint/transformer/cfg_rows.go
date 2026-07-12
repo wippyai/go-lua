@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -11,12 +12,19 @@ import (
 // SymbolicCFGRow is one correlated control-flow alternative. Values are
 // compiler-local lexical bindings; Guard retains the path condition.
 type SymbolicCFGRow struct {
-	Guard  Guard
-	Values map[symbol.ID]ValueTerm
+	Guard           Guard
+	Values          map[symbol.ID]ValueTerm
+	Operations      []Operation
+	Output          summary.Summary
+	genericBindings map[symbol.ID]symbolicGenericBinding
 }
 
 type SymbolicCFGTransfer func(cfg.Point, SymbolicCFGRow) (SymbolicCFGRow, error)
-type SymbolicCFGBranch func(cfg.Point, SymbolicCFGRow) (truthy, falsy Guard, err error)
+
+// SymbolicCFGBranch lowers one polarized edge. It may update row-local
+// bindings/evidence, but must preserve the incoming path Guard; the solver
+// conjoins edgeGuard itself so callbacks cannot accidentally drop correlation.
+type SymbolicCFGBranch func(cfg.Point, SymbolicCFGRow, bool) (row SymbolicCFGRow, edgeGuard Guard, err error)
 
 type SymbolicCFGOptions struct {
 	Shape   Shape
@@ -74,23 +82,21 @@ func SolveAcyclicCFGRows(graph cfg.Graph, arena *Arena, initial SymbolicCFGRow, 
 				if branch == nil || len(successors) != 2 {
 					return nil, fmt.Errorf("transformer: symbolic CFG branch %d has no exact branch algebra", point)
 				}
-				truthy, falsy, branchErr := branch(point, out)
-				if branchErr != nil {
-					return nil, fmt.Errorf("transformer: symbolic CFG branch %d: %w", point, branchErr)
-				}
-				if !arena.validGuard(truthy, options.Shape) || !arena.validGuard(falsy, options.Shape) {
-					return nil, fmt.Errorf("transformer: symbolic CFG branch %d produced an invalid guard", point)
-				}
 				for _, successor := range successors {
 					cond, ok := graph.EdgeCond(point, successor)
 					if !ok {
 						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge polarity missing", point)
 					}
-					edgeGuard := falsy
-					if cond {
-						edgeGuard = truthy
+					next, edgeGuard, branchErr := branch(point, cloneCFGRow(out), cond)
+					if branchErr != nil {
+						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge %t: %w", point, cond, branchErr)
 					}
-					next := cloneCFGRow(out)
+					if next.Guard != out.Guard {
+						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge %t replaced the incoming guard", point, cond)
+					}
+					if !validCFGRow(arena, options.Shape, next) || !arena.validGuard(edgeGuard, options.Shape) {
+						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge %t produced an invalid row", point, cond)
+					}
 					next.Guard = arena.And(out.Guard, edgeGuard)
 					if next.Guard != arena.False() {
 						rows[successor] = append(rows[successor], next)
@@ -104,7 +110,7 @@ func SolveAcyclicCFGRows(graph cfg.Graph, arena *Arena, initial SymbolicCFGRow, 
 			}
 		}
 		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
-			rows[successor] = dedupCFGRows(rows[successor])
+			rows[successor] = dedupCFGRows(arena, rows[successor])
 			if len(rows[successor]) > options.MaxRows {
 				return nil, fmt.Errorf("transformer: symbolic CFG row budget at point %d", successor)
 			}
@@ -159,9 +165,18 @@ func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
 }
 
 func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
-	out := SymbolicCFGRow{Guard: row.Guard, Values: make(map[symbol.ID]ValueTerm, len(row.Values))}
+	out := SymbolicCFGRow{
+		Guard:           row.Guard,
+		Values:          make(map[symbol.ID]ValueTerm, len(row.Values)),
+		Operations:      append([]Operation(nil), row.Operations...),
+		Output:          row.Output.Clone(),
+		genericBindings: make(map[symbol.ID]symbolicGenericBinding, len(row.genericBindings)),
+	}
 	for key, value := range row.Values {
 		out.Values[key] = value
+	}
+	for key, value := range row.genericBindings {
+		out.genericBindings[key] = value
 	}
 	return out
 }
@@ -169,7 +184,7 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 // dedupCFGRows compares interned term handles directly. It deliberately avoids
 // canonical strings and sorting: rows from one Arena have structural identity,
 // so exact duplicate elimination is allocation-free.
-func dedupCFGRows(rows []SymbolicCFGRow) []SymbolicCFGRow {
+func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 	if len(rows) < 2 {
 		return rows
 	}
@@ -177,7 +192,7 @@ func dedupCFGRows(rows []SymbolicCFGRow) []SymbolicCFGRow {
 	for _, row := range rows {
 		duplicate := false
 		for _, kept := range out {
-			if equalCFGRow(row, kept) {
+			if equalCFGRow(arena, row, kept) {
 				duplicate = true
 				break
 			}
@@ -189,12 +204,25 @@ func dedupCFGRows(rows []SymbolicCFGRow) []SymbolicCFGRow {
 	return out
 }
 
-func equalCFGRow(left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) {
+func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
+	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.genericBindings) != len(right.genericBindings) {
+		return false
+	}
+	if !summary.Equal(arena.reg, left.Output, right.Output) {
 		return false
 	}
 	for key, value := range left.Values {
 		if right.Values[key] != value {
+			return false
+		}
+	}
+	for i := range left.Operations {
+		if left.Operations[i] != right.Operations[i] {
+			return false
+		}
+	}
+	for key, value := range left.genericBindings {
+		if right.genericBindings[key] != value {
 			return false
 		}
 	}

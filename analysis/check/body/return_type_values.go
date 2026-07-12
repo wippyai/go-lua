@@ -1,7 +1,9 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -15,12 +17,20 @@ func (r *Result) ReturnTypeValues() []product.Value {
 	if r.returnTypesOK {
 		return r.returnTypeValues
 	}
-	returnTypes := declaredReturnTypeExprs(r.Function().ReturnTypes)
-	if len(returnTypes) == 0 {
-		r.returnTypesOK = true
+	resolver := typeresolve.NewWithExternal(r.bindings, r.moduleTypes)
+	r.returnTypeValues = materializeDeclaredReturnTypeValues(r.registry, r.typeValues, resolver, r.Function())
+	r.returnTypesOK = true
+	return r.returnTypeValues
+}
+
+func materializeDeclaredReturnTypeValues(reg *axis.Registry, values *typevalue.Cache, resolver *typeresolve.Resolver, fn *ast.FunctionExpr) []product.Value {
+	if reg == nil || values == nil || resolver == nil || fn == nil {
 		return nil
 	}
-	resolver := typeresolve.NewWithExternal(r.bindings, r.moduleTypes)
+	returnTypes := declaredReturnTypeExprs(fn.ReturnTypes)
+	if len(returnTypes) == 0 {
+		return nil
+	}
 	out := make([]product.Value, 0, len(returnTypes))
 	for _, expr := range returnTypes {
 		t, ok := resolver.Type(expr)
@@ -28,11 +38,9 @@ func (r *Result) ReturnTypeValues() []product.Value {
 			out = append(out, product.Top())
 			continue
 		}
-		out = append(out, r.typeValues.FromTypeWithWitness(r.registry, t))
+		out = append(out, values.FromTypeWithWitness(reg, t))
 	}
-	r.returnTypeValues = out
-	r.returnTypesOK = true
-	return r.returnTypeValues
+	return out
 }
 
 func declaredReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {

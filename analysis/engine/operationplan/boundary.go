@@ -1,6 +1,9 @@
 package operationplan
 
-import "github.com/wippyai/go-lua/analysis/symbol"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/symbol"
+)
 
 // WithBoundaryParams returns a plan owning the ordered lexical parameter
 // symbols used by symbolic boundary roots. Duplicate/zero symbols fail closed
@@ -22,6 +25,25 @@ func (p *Plan) WithBoundaryParams(params []symbol.ID) *Plan {
 	}
 	out.boundaryParams = owned
 	return &out
+}
+
+// WithBoundaryReturns returns a plan owning the ordered declared return
+// contracts used by canonical Summary projection.
+func (p *Plan) WithBoundaryReturns(values []product.Value) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.boundaryReturns = append([]product.Value(nil), values...)
+	return &out
+}
+
+// BoundaryReturns returns an immutable snapshot of declared return contracts.
+func (p *Plan) BoundaryReturns() []product.Value {
+	if p == nil {
+		return nil
+	}
+	return append([]product.Value(nil), p.boundaryReturns...)
 }
 
 func (p *Plan) BoundaryParams() []symbol.ID {

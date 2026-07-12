@@ -68,6 +68,11 @@ func (c *PlanCompiler) EligibilityCensus(reg *axis.Registry, graph cfg.Graph, pl
 		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
 			handler := c.facts[cell.Kind()]
 			entry := PlanEligibilityEntry{Point: point, Family: cell.Kind().String()}
+			if isBranchEdgeOwnedKind(cell.Kind()) {
+				entry.Reason = "exactness is owned by whole symbolic CFG edge compilation"
+				out = append(out, entry)
+				continue
+			}
 			var preflight error
 			if handler != nil {
 				preflight = handler.Preflight(ctx, point)
@@ -110,4 +115,13 @@ func (c *PlanCompiler) EligibilityCensus(reg *axis.Registry, graph cfg.Graph, pl
 		}
 	}
 	return out
+}
+
+func isBranchEdgeOwnedKind(kind operationplan.Kind) bool {
+	switch kind {
+	case operationplan.BranchEdgeReachability, operationplan.BranchConditionSource, operationplan.BranchRefinement, operationplan.BranchPathEvidence:
+		return true
+	default:
+		return false
+	}
 }
