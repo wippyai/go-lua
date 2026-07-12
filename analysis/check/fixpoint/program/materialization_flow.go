@@ -287,7 +287,7 @@ func materializeFunctionTree(
 	cache := newMaterializedSummaryCache(config.Registry, summaries, projections)
 	cache.writeResult(keys.rootKey, root)
 	applyDefinitionCaptureEntryStatesFromResult(&keys, fn, root, config.Registry)
-	funcTypes := functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
+	funcTypes := functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, nil, nil)
 	baseResults := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
 	indexBase := summaryIndexBase(keys)
@@ -331,7 +331,7 @@ func materializeFunctionTree(
 		baseResults[origin.funcExpr] = result
 	}
 	if len(baseResults) != 0 {
-		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
+		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, nil)
 	}
 	refreshedContexts := refreshExistingCallContextEntriesFromMaterializedResults(&keys, root, baseResults, config)
@@ -351,7 +351,7 @@ func materializeFunctionTree(
 	applyClosedDynamicAllValueEntryStates(&keys, prepared, config.Registry, root, closedDynamicResults)
 	recordProgramShape(stats, keys)
 	if refreshedContexts || addedContexts {
-		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
+		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, nil)
 	}
 	contextResultByKey, err := materializeDiscoveredContexts(prepared, config, stats, cache, keyFor, &keys, solveCache)
@@ -359,7 +359,7 @@ func materializeFunctionTree(
 		return nil, keys, err
 	}
 	if len(contextResultByKey) != 0 {
-		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes)
+		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, contextResultByKey)
 		for key, result := range contextResultByKey {
 			if resultKeys != nil {

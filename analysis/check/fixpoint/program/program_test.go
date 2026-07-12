@@ -750,6 +750,78 @@ func TestFunctionTypeFromSummaryUsesOwnedNormalizedRead(t *testing.T) {
 	}
 }
 
+func TestFunctionTypeFromSummaryCachePreservesUnchangedProjectionIdentity(t *testing.T) {
+	reg := standard.Registry()
+	key := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99221)))
+	declared := typ.Func().Returns(typ.Any).Build()
+	value := typevalue.FromType(reg, typ.String)
+	firstSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: key, Summary: summary.Summary{Returns: []product.Value{value}},
+	})
+	independentEqualSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: key, Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.String)}},
+	})
+	cache := newResultSummaryProjectionCache()
+
+	first, ok := functionTypeFromSummaryCached(reg, firstSnapshot, key, declared, cache)
+	if !ok || first == nil {
+		t.Fatal("first cached function projection missing")
+	}
+	again, ok := functionTypeFromSummaryCached(reg, independentEqualSnapshot, key, declared, cache)
+	if !ok || again != first {
+		t.Fatal("equal independently owned summary rebuilt function projection identity")
+	}
+
+	changedSnapshot := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: key, Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.Number)}},
+	})
+	changed, ok := functionTypeFromSummaryCached(reg, changedSnapshot, key, declared, cache)
+	if !ok || changed == nil || changed == first {
+		t.Fatal("changed summary reused stale function projection identity")
+	}
+}
+
+func BenchmarkFunctionTypeProjectionStableRound(b *testing.B) {
+	const functionCount = 256
+	reg := standard.Registry()
+	declared := typ.Func().Returns(typ.Any).Build()
+	entries := make([]summary.EntrySummary, 0, functionCount)
+	keys := make([]summary.SummaryKey, 0, functionCount)
+	for i := 0; i < functionCount; i++ {
+		key := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99300 + i)))
+		keys = append(keys, key)
+		entries = append(entries, summary.EntrySummary{
+			Key: key, Summary: summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.String)}},
+		})
+	}
+	snapshot := summary.NewSnapshot(reg, entries...)
+	b.Run("rebuild", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for _, key := range keys {
+				if _, ok := functionTypeFromSummary(reg, snapshot, key, declared); !ok {
+					b.Fatal("projection missing")
+				}
+			}
+		}
+	})
+	b.Run("persistent", func(b *testing.B) {
+		cache := newResultSummaryProjectionCache()
+		for _, key := range keys {
+			_, _ = functionTypeFromSummaryCached(reg, snapshot, key, declared, cache)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for _, key := range keys {
+				if _, ok := functionTypeFromSummaryCached(reg, snapshot, key, declared, cache); !ok {
+					b.Fatal("projection missing")
+				}
+			}
+		}
+	})
+}
+
 func TestFunctionTypeFromSummaryKeepsOwnedGenericReturnOpen(t *testing.T) {
 	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(43)))

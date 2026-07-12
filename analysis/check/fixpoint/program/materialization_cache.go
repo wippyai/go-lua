@@ -9,7 +9,9 @@ import (
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type materializedProgram struct {
@@ -20,7 +22,19 @@ type materializedProgram struct {
 }
 
 type resultSummaryProjectionCache struct {
-	entries map[*body.Result]summary.Summary
+	entries       map[*body.Result]summary.Summary
+	functionTypes map[functionTypeProjectionCacheKey]functionTypeProjectionCacheEntry
+}
+
+type functionTypeProjectionCacheKey struct {
+	key      summary.SummaryKey
+	declared *typ.Function
+}
+
+type functionTypeProjectionCacheEntry struct {
+	present bool
+	returns []product.Value
+	value   *typ.Function
 }
 
 func newResultSummaryProjectionCache() *resultSummaryProjectionCache {

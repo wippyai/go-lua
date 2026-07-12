@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -15,13 +16,17 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reader, keys programKeys, external typeannotation.Resolver) body.FunctionValueTypes {
+func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reader, keys programKeys, external typeannotation.Resolver, caches ...*resultSummaryProjectionCache) body.FunctionValueTypes {
 	if reg == nil || summaries == nil {
 		return body.FunctionValueTypes{}
 	}
+	var cache *resultSummaryProjectionCache
+	if len(caches) != 0 {
+		cache = caches[0]
+	}
 	out := body.FunctionValueTypes{}
 	for id, key := range keys.functionIDs {
-		fn, ok := functionTypeFromSummary(reg, summaries, key, functionValueDeclaredType(keys, key, external))
+		fn, ok := functionTypeFromSummaryCached(reg, summaries, key, functionValueDeclaredType(keys, key, external), cache)
 		if !ok {
 			continue
 		}
@@ -31,7 +36,7 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 		out.ByIdentity[id] = fn
 	}
 	for pathKey, key := range keys.pathKeys {
-		fn, ok := functionTypeFromSummary(reg, summaries, key, functionValueDeclaredType(keys, key, external))
+		fn, ok := functionTypeFromSummaryCached(reg, summaries, key, functionValueDeclaredType(keys, key, external), cache)
 		if !ok {
 			continue
 		}
@@ -64,9 +69,9 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			return
 		}
 		id := identity.LuaFunction(uint64(sym))
-		fn, ok := functionTypeFromSummary(reg, summaries, context.key, functionValueDeclaredType(keys, context.key, external))
+		fn, ok := functionTypeFromSummaryCached(reg, summaries, context.key, functionValueDeclaredType(keys, context.key, external), cache)
 		if !ok {
-			fn, ok = functionTypeFromSummary(reg, summaries, baseKey, functionValueDeclaredType(keys, baseKey, external))
+			fn, ok = functionTypeFromSummaryCached(reg, summaries, baseKey, functionValueDeclaredType(keys, baseKey, external), cache)
 		}
 		if !ok || fn == nil {
 			return
@@ -179,6 +184,63 @@ func functionTypeFromSummary(reg *axis.Registry, summaries summary.Reader, key s
 		builder.Variadic(declared.Variadic)
 	}
 	return builder.Returns(returns...).Build(), true
+}
+
+func functionTypeFromSummaryCached(
+	reg *axis.Registry,
+	summaries summary.Reader,
+	key summary.SummaryKey,
+	declared *typ.Function,
+	cache *resultSummaryProjectionCache,
+) (*typ.Function, bool) {
+	if reg == nil || summaries == nil || declared == nil {
+		return nil, false
+	}
+	sum, present := readOwnedNormalizedSummary(reg, summaries, key)
+	cacheKey := functionTypeProjectionCacheKey{key: key, declared: declared}
+	if cache != nil && len(cache.functionTypes) != 0 {
+		if cached, ok := cache.functionTypes[cacheKey]; ok && cached.present == present &&
+			(!present || productValueSlicesEqual(reg, cached.returns, sum.Returns)) {
+			return cached.value, true
+		}
+	}
+	value := declared
+	if present {
+		returns, hasReturns := returnTypesFromSummary(reg, sum)
+		if hasReturns {
+			if len(declared.Returns) != 0 {
+				value = functionTypeWithSummaryReturns(declared, returns)
+			} else {
+				builder := typ.Func()
+				for _, tp := range declared.TypeParams {
+					builder.TypeParamRef(tp)
+				}
+				builder.ReserveParams(len(declared.Params))
+				for _, param := range declared.Params {
+					if param.Optional {
+						builder.OptParam(param.Name, param.Type)
+					} else {
+						builder.Param(param.Name, param.Type)
+					}
+				}
+				if declared.Variadic != nil {
+					builder.Variadic(declared.Variadic)
+				}
+				value = builder.Returns(returns...).Build()
+			}
+		}
+	}
+	if cache != nil {
+		if cache.functionTypes == nil {
+			cache.functionTypes = make(map[functionTypeProjectionCacheKey]functionTypeProjectionCacheEntry)
+		}
+		entry := functionTypeProjectionCacheEntry{present: present, value: value}
+		if present {
+			entry.returns = append([]product.Value(nil), sum.Returns...)
+		}
+		cache.functionTypes[cacheKey] = entry
+	}
+	return value, true
 }
 
 func functionTypeWithSummaryReturns(declared *typ.Function, returns []typ.Type) *typ.Function {
