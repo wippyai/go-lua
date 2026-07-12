@@ -154,3 +154,32 @@ return bad(true)
 		t.Fatalf("non-iterator accumulator relation = reason %q widened=%v rows=%d", relation.ContextualReason(), relation.Widened(), relation.Rows())
 	}
 }
+
+func TestPlanCompilerRejectsCapturedNumericAccumulator(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function captured(flag)
+  local total = 0
+  local function read() return total end
+  for i = 1, 8 do
+    if flag then total = total + i end
+  end
+  return read
+end
+return captured(true)
+`, "captured-numeric-accumulator.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := standard.Registry()
+	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO, Signatures: signaturelookup.Source{IncludeStdlib: true}}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	fn := findLocalFunctionByName(t, bindings, "captured")
+	prepared, err := body.PrepareBoundFunction(fn, bindings, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation := transformer.NewPlanCompiler().Compile(reg, prepared.Graph(), prepared.OperationPlan(), transformer.Shape{Params: 1})
+	if !relation.Widened() || relation.Rows() != 0 || !strings.Contains(relation.ContextualReason(), "contextual operations") {
+		t.Fatalf("captured accumulator relation = reason %q widened=%v rows=%d", relation.ContextualReason(), relation.Widened(), relation.Rows())
+	}
+}
