@@ -91,7 +91,7 @@ func assertDifferential(t testing.TB, system graphSystem, domain lattice.Lattice
 	if err != nil {
 		t.Fatalf("legacy SolveWTO: %v", err)
 	}
-	result, err := Run(context.Background(), regionSystem(system, domain))
+	result, err := Run(nil, regionSystem(system, domain))
 	if err != nil {
 		t.Fatalf("region Run: %v", err)
 	}
@@ -107,7 +107,7 @@ func assertDifferential(t testing.TB, system graphSystem, domain lattice.Lattice
 			t.Fatalf("observation %d = %#v", index, observation)
 		}
 	}
-	second, err := Run(context.Background(), regionSystem(system, domain))
+	second, err := Run(nil, regionSystem(system, domain))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,12 +119,24 @@ func assertDifferential(t testing.TB, system graphSystem, domain lattice.Lattice
 
 func regionSystem(system graphSystem, domain lattice.Lattice[int]) System[int, int] {
 	return System[int, int]{
-		Lattice: domain, Cells: system.cells, Successors: system.successor,
+		Lattice: domain, Cells: system.cells,
+		Plan:                solve.NewWTOPlan(system.cells, system.successor),
 		InitialSparse:       func(cell int) (int, bool) { value, ok := system.initial[cell]; return value, ok },
 		Transfer:            system.transfer,
 		WidenAt:             func(cell int) bool { return system.widenAt[cell] },
 		WidenDelay:          func(int) int { return system.widenDelay },
 		CaptureObservations: true,
+	}
+}
+
+func TestRegionRejectsMismatchedPrebuiltPlan(t *testing.T) {
+	system := graphSystem{cells: []int{0, 1}, successors: map[int][]int{0: {1}}}
+	system.transfer = flowTransfer(system.successors, 2, nil)
+	configured := regionSystem(system, finiteIntLattice(2))
+	configured.Plan = solve.NewWTOPlan([]int{0}, func(int) []int { return nil })
+	result, err := Run(nil, configured)
+	if !errors.Is(err, solve.ErrWTOPlanUncovered) || result.Values != nil {
+		t.Fatalf("mismatched plan result/error = %#v/%v", result, err)
 	}
 }
 

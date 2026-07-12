@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
+	"github.com/wippyai/go-lua/analysis/engine/region"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -242,6 +243,14 @@ func TryRun(config Config) (Result, error) {
 	sys := plan.system
 	cells := plan.cells
 	observing := plan.observing
+	runRegionWTO := func(system solve.EquationSystem[cfg.Point, state.State]) (map[cfg.Point]state.State, map[cfg.Point]uint64, error) {
+		var runContext context.Context
+		if !uncancelable {
+			runContext = config.Context
+		}
+		result, err := region.RunPrepared(runContext, system, plan.wto, region.Options{})
+		return result.Values, result.Revisions, err
+	}
 	if config.Resume != nil {
 		if config.Resume.solver == nil {
 			config.Resume.solver = solve.NewSession(sys)
@@ -360,11 +369,7 @@ func TryRun(config Config) (Result, error) {
 						genericSystem := plan.withStats(genericStats)
 						var generic map[cfg.Point]state.State
 						var genericErr error
-						if uncancelable {
-							generic, _, genericErr = solve.SolveWTOWithVersions(genericSystem, plan.wto)
-						} else {
-							generic, _, genericErr = solve.SolveWTOContextWithVersions(config.Context, genericSystem, plan.wto)
-						}
+						generic, _, genericErr = runRegionWTO(genericSystem)
 						denseObservations = denseCaptured
 						if genericErr != nil {
 							return nil, genericErr
@@ -401,11 +406,7 @@ func TryRun(config Config) (Result, error) {
 		}
 		if !usedDense {
 			wtoSystem := plan.withStats(wtoStats)
-			if uncancelable {
-				wto, wtoVersions, wtoErr = solve.SolveWTOWithVersions(wtoSystem, plan.wto)
-			} else {
-				wto, wtoVersions, wtoErr = solve.SolveWTOContextWithVersions(config.Context, wtoSystem, plan.wto)
-			}
+			wto, wtoVersions, wtoErr = runRegionWTO(wtoSystem)
 		}
 		fallback := errors.Is(wtoErr, solve.ErrWTOPlanUncovered)
 		if wtoErr != nil && !fallback {
