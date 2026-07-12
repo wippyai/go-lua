@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -48,6 +49,8 @@ type findRootNodesPOCFixture struct {
 	stats               *Stats
 	compileKey          summary.SummaryKey
 	compileApplications []findRootNodesApplication
+	resolveRelation     transformer.Relation
+	resolveKey          summary.SummaryKey
 }
 
 func TestFindRootNodesStructuredTransformerMatchesRealValidateGraphContexts(t *testing.T) {
@@ -182,6 +185,69 @@ func TestValidateGraphRelationCallCompositionCoverage(t *testing.T) {
 	t.Log("validate_graph relation composition: 2/49 calls exact now; 6/49 lexical routing ceiling; 40 signatures and 3 dynamic calls remain contextual")
 }
 
+func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
+	fixture := newFindRootNodesPOCFixture(t)
+	application := fixture.applications[len(fixture.applications)-1]
+	oracle := application.oracle
+	cell := transformer.CellRef{Function: uint64(fixture.resolveKey.Ref.ID)}
+	points := make(map[cfg.Point]transformer.DirectCallTarget)
+	for point := cfg.Point(0); int(point) < oracle.Graph().Size(); point++ {
+		site, ok := oracle.CallSiteView(point)
+		if ok && site.CalleePathRef().String() == "graph.resolve_reference" {
+			points[point] = transformer.DirectCallTarget{Cell: cell, Shape: fixture.resolveRelation.Shape()}
+		}
+	}
+	catalog, err := transformer.NewDirectCallCatalog(oracle.Graph().Size(), points)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 4 || len(catalog.Cells()) != 1 {
+		t.Fatalf("resolve_reference direct catalog = %d points/%v cells, want 4/1", len(points), catalog.Cells())
+	}
+	before := totalAttributedBodySolves(fixture.stats)
+	for point := range points {
+		site, _ := oracle.CallSiteView(point)
+		shape := transformer.Shape{Params: 2}
+		builder := transformer.NewBuilder(application.config.Registry, shape, transformer.DefaultOutputCapabilityRegistry(), operationplan.New(cfg.New(), factflow.FactsInput{}))
+		self := builder.Arena().Root(transformer.Root{Kind: transformer.RootParam, Index: 0})
+		broadKey := builder.Arena().Root(transformer.Root{Kind: transformer.RootParam, Index: 1})
+		rows, composeErr := transformer.ComposeDirectCallRows(builder, shape, transformer.SymbolicCFGRow{
+			Guard: builder.Arena().True(), Values: map[symbol.ID]transformer.ValueTerm{},
+		}, fixture.resolveRelation, transformer.DirectCallBindings{
+			Values: []transformer.ValueTerm{self, broadKey},
+			Paths: []transformer.PathTerm{
+				builder.Arena().Path(transformer.Root{Kind: transformer.RootParam, Index: 0}),
+				builder.Arena().Path(transformer.Root{Kind: transformer.RootParam, Index: 1}),
+			},
+		}, site, 16)
+		if composeErr != nil {
+			t.Fatalf("line %d direct row composition: %v", site.CallSpan().StartLine, composeErr)
+		}
+		if len(rows) != 3 {
+			t.Fatalf("line %d composed rows=%d, want three correlated alternatives", site.CallSpan().StartLine, len(rows))
+		}
+		broadProofRetained := false
+		for _, row := range rows {
+			if len(row.Proofs) >= 2 {
+				broadProofRetained = true
+			}
+			for targetIndex := 0; targetIndex < site.ResultTargetCount(); targetIndex++ {
+				target, _ := site.ResultTargetAt(targetIndex)
+				if row.Values[target.TargetSymbol()] == 0 {
+					t.Fatalf("line %d row lost result slot %d", site.CallSpan().StartLine, target.ResultIndex())
+				}
+			}
+		}
+		if !broadProofRetained {
+			t.Fatalf("line %d lost resolve_reference's dynamic broad-key proof row", site.CallSpan().StartLine)
+		}
+	}
+	if after := totalAttributedBodySolves(fixture.stats); after != before {
+		t.Fatalf("row composition ran a callee body solve: before=%d after=%d", before, after)
+	}
+	t.Log("resolve_reference Relation rows compose at 4/49 real validate_graph CallSites with the broad symbolic key retained; no CellResult scalarization and zero callee body solves")
+}
+
 func TestValidateGraphPreparedSignatureIdentityCensus(t *testing.T) {
 	fixture := newFindRootNodesPOCFixture(t)
 	application := fixture.applications[len(fixture.applications)-1]
@@ -236,7 +302,7 @@ func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
 		ModuleExports: importlookup.Source{Manifests: []*manifest.Manifest{uuid}},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
-	findFn, validateFn := functionAtLine(tb, bindings, 690), functionAtLine(tb, bindings, 743)
+	resolveFn, findFn, validateFn := functionAtLine(tb, bindings, 289), functionAtLine(tb, bindings, 690), functionAtLine(tb, bindings, 743)
 	var applications []findRootNodesApplication
 	var compileApplications []findRootNodesApplication
 	stats := &Stats{}
@@ -279,6 +345,23 @@ func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
 	if !ok {
 		tb.Fatal("validate_graph Summary key missing")
 	}
+	resolveSymbol, ok := bindings.FunctionSymbol(resolveFn)
+	if !ok {
+		tb.Fatal("resolve_reference function symbol missing")
+	}
+	resolveKey, ok := result.FunctionKey(resolveSymbol)
+	if !ok {
+		tb.Fatal("resolve_reference Summary key missing")
+	}
+	resolvePrepared, err := body.PrepareBoundFunction(resolveFn, bindings, check)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	resolvePlan := resolvePrepared.OperationPlan()
+	resolveRelation := transformer.NewPlanCompiler().Compile(reg, resolvePrepared.Graph(), resolvePlan, transformer.Shape{Params: uint32(len(resolvePlan.BoundaryParams()))})
+	if reason := resolveRelation.ContextualReason(); reason != "" {
+		tb.Fatalf("resolve_reference relation contextual: %s", reason)
+	}
 	compileSymbol, ok := bindings.FunctionSymbol(functionAtLine(tb, bindings, 1304))
 	if !ok {
 		tb.Fatal("compiler.compile function symbol missing")
@@ -294,6 +377,7 @@ func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
 	return findRootNodesPOCFixture{
 		relation: relation, base: base, baseKey: baseKey, validateKey: validateKey, applications: applications,
 		result: result, stats: stats, compileKey: compileKey, compileApplications: compileApplications,
+		resolveRelation: resolveRelation, resolveKey: resolveKey,
 	}
 }
 
