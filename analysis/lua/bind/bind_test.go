@@ -1529,8 +1529,8 @@ func TestLexicalFunctionIndexDeepAndWide(t *testing.T) {
 	if !deepBindings.FunctionDescendsFrom(leaf, nil) {
 		t.Fatal("nil chunk ancestor did not contain known function")
 	}
-	if got := deepBindings.EntryCaptureCount(deep[1]); got != 1 {
-		t.Fatalf("deep child entry captures = %d, want one deduplicated root capture", got)
+	if !deepBindings.HasEntryCaptures(deep[1]) {
+		t.Fatal("deep child entry captures unexpectedly empty")
 	}
 	visited := 0
 	deepBindings.ForEachDescendantFunctionOrigin(deep[96], func(FunctionOrigin) bool {
@@ -1555,8 +1555,8 @@ func TestLexicalFunctionIndexDeepAndWide(t *testing.T) {
 		t.Fatalf("wide descendants = %d, want %d", visited, len(wide)-1)
 	}
 	for _, child := range wide[1:] {
-		if got := wideBindings.EntryCaptureCount(child); got != 1 {
-			t.Fatalf("wide child entry captures = %d, want 1", got)
+		if !wideBindings.HasEntryCaptures(child) {
+			t.Fatal("wide child entry captures unexpectedly empty")
 		}
 	}
 }
@@ -1582,6 +1582,35 @@ func TestEntryCapturesPreserveAncestorRelativeOwnership(t *testing.T) {
 	}
 }
 
+func TestLexicalCaptureIndexRetainsLinearMetadata(t *testing.T) {
+	root, functions := deepCaptureFunctions(1024)
+	r := BindFunction(root, Options{})
+	if got, want := len(r.functionIndex), len(functions); got != want {
+		t.Fatalf("function index entries = %d, want %d", got, want)
+	}
+	if got, want := len(r.functionSubtreeEnd), len(functions); got != want {
+		t.Fatalf("subtree end entries = %d, want %d", got, want)
+	}
+	if got, want := len(r.hasEntryCaptures), len(functions); got != want {
+		t.Fatalf("capture presence entries = %d, want %d", got, want)
+	}
+	direct := 0
+	for _, captures := range r.directCaptures {
+		direct += len(captures)
+	}
+	if direct > len(functions) {
+		t.Fatalf("direct capture records = %d for %d functions, fixture should remain linear", direct, len(functions))
+	}
+	// A leaf query materializes only its own output and cannot populate retained
+	// transitive projections because Result stores no such cache.
+	if got := len(r.EntryCaptures(functions[len(functions)-1])); got != 1 {
+		t.Fatalf("leaf entry captures = %d, want 1", got)
+	}
+	if len(r.hasEntryCaptures) != len(functions) {
+		t.Fatal("entry capture query grew retained metadata")
+	}
+}
+
 func BenchmarkLexicalFunctionIndexes(b *testing.B) {
 	root, functions := deepCaptureFunctions(512)
 	bindings := BindFunction(root, Options{})
@@ -1591,7 +1620,9 @@ func BenchmarkLexicalFunctionIndexes(b *testing.B) {
 		total := 0
 		for _, fn := range functions[1:] {
 			if bindings.FunctionDescendsFrom(fn, root) {
-				total += bindings.EntryCaptureCount(fn)
+				if bindings.HasEntryCaptures(fn) {
+					total++
+				}
 			}
 		}
 		if total != len(functions)-1 {

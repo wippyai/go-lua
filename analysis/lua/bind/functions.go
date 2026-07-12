@@ -222,21 +222,47 @@ func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []Capture {
 }
 
 // EntryCaptures returns the order-preserving closure inputs required by fn and
-// its descendants, excluding declarations owned by fn itself. The binder
-// computes this immutable projection once; repeated solves only clone output.
+// its descendants, excluding declarations owned by fn itself. Lexical subtree
+// intervals localize enumeration; the transitive slice is deliberately
+// ephemeral so deeply nested programs do not retain quadratic capture lists.
 func (r *Result) EntryCaptures(fn *ast.FunctionExpr) []Capture {
 	if r == nil || fn == nil {
 		return nil
 	}
-	return cloneCaptures(r.entryCaptures[fn])
+	start, known := r.functionIndex[fn]
+	if !known || !r.hasEntryCaptures[fn] {
+		return nil
+	}
+	out := cloneCaptures(r.directCaptures[fn])
+	seen := make(map[symbol.ID]struct{}, len(out))
+	for _, capture := range out {
+		if capture.Captured != 0 {
+			seen[capture.Captured] = struct{}{}
+		}
+	}
+	for _, descendant := range r.functions[start+1 : r.functionSubtreeEnd[fn]] {
+		for _, capture := range r.directCaptures[descendant] {
+			if capture.Captured == 0 || capture.DeclaringFunction == fn {
+				continue
+			}
+			if _, exists := seen[capture.Captured]; exists {
+				continue
+			}
+			seen[capture.Captured] = struct{}{}
+			out = append(out, capture)
+		}
+	}
+	return out
 }
 
-// EntryCaptureCount is the allocation-free size counterpart of EntryCaptures.
-func (r *Result) EntryCaptureCount(fn *ast.FunctionExpr) int {
+// HasEntryCaptures reports in constant time whether EntryCaptures is non-empty.
+// This is the solve-loop query; it stores one bit per function rather than all
+// transitive capture projections.
+func (r *Result) HasEntryCaptures(fn *ast.FunctionExpr) bool {
 	if r == nil || fn == nil {
-		return 0
+		return false
 	}
-	return len(r.entryCaptures[fn])
+	return r.hasEntryCaptures[fn]
 }
 
 // DirectGlobalReads returns global symbols directly read by fn in first-use
@@ -314,8 +340,8 @@ func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details function
 }
 
 // finalizeFunctionIndexes seals lexical indexes after the binder has finished.
-// It also materializes effective entry captures in the exact historical order:
-// direct captures first, followed by descendant direct captures in preorder.
+// It also records only whether an effective entry capture exists. Full
+// transitive lists are enumerated ephemerally from the sealed subtree interval.
 func (r *Result) finalizeFunctionIndexes() {
 	if r == nil || len(r.functions) == 0 {
 		return
@@ -323,7 +349,7 @@ func (r *Result) finalizeFunctionIndexes() {
 	for index, fn := range r.functions {
 		r.functionIndex[fn] = index
 		r.functionSubtreeEnd[fn] = index + 1
-		r.entryCaptures[fn] = cloneCaptures(r.directCaptures[fn])
+		r.hasEntryCaptures[fn] = len(r.directCaptures[fn]) != 0
 	}
 	for index := len(r.functions) - 1; index >= 0; index-- {
 		fn := r.functions[index]
@@ -332,27 +358,13 @@ func (r *Result) finalizeFunctionIndexes() {
 			r.functionSubtreeEnd[origin.Parent] = r.functionSubtreeEnd[fn]
 		}
 	}
-	seen := make(map[*ast.FunctionExpr]map[symbol.ID]struct{}, len(r.functions))
-	for _, fn := range r.functions {
-		set := make(map[symbol.ID]struct{}, len(r.entryCaptures[fn]))
-		for _, capture := range r.entryCaptures[fn] {
-			if capture.Captured != 0 {
-				set[capture.Captured] = struct{}{}
-			}
-		}
-		seen[fn] = set
-	}
 	for _, descendant := range r.functions {
 		for _, capture := range r.directCaptures[descendant] {
 			for ancestor := r.functionOrigins[descendant].Parent; ancestor != nil; ancestor = r.functionOrigins[ancestor].Parent {
 				if capture.Captured == 0 || capture.DeclaringFunction == ancestor {
 					continue
 				}
-				if _, exists := seen[ancestor][capture.Captured]; exists {
-					continue
-				}
-				seen[ancestor][capture.Captured] = struct{}{}
-				r.entryCaptures[ancestor] = append(r.entryCaptures[ancestor], capture)
+				r.hasEntryCaptures[ancestor] = true
 			}
 		}
 	}

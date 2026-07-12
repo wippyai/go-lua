@@ -799,11 +799,8 @@ func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Captur
 	return s.bindings.EntryCaptures(fn)
 }
 
-func functionEntryCaptureCount(bindings *bind.Result, fn *ast.FunctionExpr) int {
-	if bindings == nil {
-		return 0
-	}
-	return bindings.EntryCaptureCount(fn)
+func functionHasEntryCaptures(bindings *bind.Result, fn *ast.FunctionExpr) bool {
+	return bindings != nil && bindings.HasEntryCaptures(fn)
 }
 
 func (s *closureCaptureSeeder) functionForCapturedSymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {
