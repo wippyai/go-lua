@@ -40,6 +40,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
 	audits := 0
+	semanticDigests := make(map[summary.Digest]int)
 	config := Config{Check: check}
 	config.semanticProgramAudit = func(prepared *body.Static, oracleConfig body.Config, oracle *body.Result) error {
 		fn := oracle.Function()
@@ -47,6 +48,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 			return nil
 		}
 		audits++
+		semanticDigests[summary.NormalizedPayloadDigest(reg, summaryprojection.FromResult(oracle))]++
 		stats := &body.Stats{}
 		concreteConfig := oracleConfig
 		concreteConfig.Stats = stats
@@ -73,6 +75,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 	if audits != 7 {
 		t.Fatalf("compiler.validate_graph audited solves=%d, want 7", audits)
 	}
+	t.Logf("compiler.validate_graph semantic summary classes=%d multiplicities=%v", len(semanticDigests), semanticDigests)
 }
 
 func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *body.Result, solve int) {
