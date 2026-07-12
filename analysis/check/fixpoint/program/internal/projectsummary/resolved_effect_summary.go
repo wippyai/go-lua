@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -11,7 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -39,6 +43,9 @@ func ResolvedEffectSummaryResolver(reg *axis.Registry) transformer.EffectSummary
 func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffect) (summary.Summary, bool) {
 	if reg == nil || len(effects) == 0 {
 		return summary.Summary{}, false
+	}
+	if effects[0].Kind == transformer.EffectAllocationTemplate {
+		return lowerResolvedAllocations(reg, effects)
 	}
 	mutations := make([]transformer.ResolvedIndexMutation, len(effects))
 	for i, effect := range effects {
@@ -81,6 +88,46 @@ func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffe
 	}
 	out := summary.NormalizeOwned(reg, summary.Summary{NormalReturnFacts: facts})
 	if out.NormalReturnFacts.Empty() {
+		return summary.Summary{}, false
+	}
+	return out, true
+}
+
+func lowerResolvedAllocations(reg *axis.Registry, effects []transformer.ResolvedEffect) (summary.Summary, bool) {
+	objects := make(map[identity.ID]heapidentity.TableObject, len(effects))
+	fresh := make([]summary.FreshHeapAllocation, 0, len(effects))
+	ks := keyspace.New()
+	for _, effect := range effects {
+		if effect.Kind != transformer.EffectAllocationTemplate {
+			return summary.Summary{}, false
+		}
+		allocation := effect.Allocation
+		materialized, exact := effectlowering.MaterializeStaticAllocation(
+			reg, nil, ks, cfg.Point(allocation.Site.Ordinal), allocation.Template.Template(),
+		)
+		if !exact || !product.Equal(reg, materialized.Result, allocation.Result) {
+			return summary.Summary{}, false
+		}
+		id, ok := product.Get(reg, allocation.Result, identity.Key).ID()
+		if !ok || id == (identity.ID{}) {
+			return summary.Summary{}, false
+		}
+		for objectID, object := range materialized.Objects {
+			if _, duplicate := objects[objectID]; duplicate {
+				return summary.Summary{}, false
+			}
+			objects[objectID] = object
+			placementValue, ok := materialized.Placements[objectID]
+			if !ok {
+				return summary.Summary{}, false
+			}
+			fresh = append(fresh, summary.FreshHeapAllocation{ID: objectID, Placement: placementValue})
+		}
+	}
+	out := summary.NormalizeOwned(reg, summary.Summary{
+		HeapTableObjects: objects, FreshHeapAllocations: fresh, HeapKeySpace: ks,
+	})
+	if len(out.HeapTableObjects) != len(effects) || len(out.FreshHeapAllocations) != len(effects) {
 		return summary.Summary{}, false
 	}
 	return out, true

@@ -122,8 +122,9 @@ func validateEffectSources(descriptor EffectDescriptor) error {
 		seen[source] = struct{}{}
 	}
 	want := map[EffectKind][]operationplan.Kind{
-		EffectInvalidatePath: {operationplan.PathDescendantInvalidation},
-		EffectIndexMutation:  {operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite},
+		EffectInvalidatePath:     {operationplan.PathDescendantInvalidation},
+		EffectIndexMutation:      {operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite},
+		EffectAllocationTemplate: {operationplan.CallSite},
 	}[descriptor.kind]
 	if !sameOperationKinds(descriptor.sources, want) {
 		return fmt.Errorf("transformer: effect %d operation sources %v, want atomic %v", descriptor.kind, descriptor.sources, want)
@@ -215,6 +216,10 @@ func defaultEffectDescriptors() []EffectDescriptor {
 	}
 	mutation := cloneLaneUses(invalidates)
 	mutation[state.LanePlacement] = LaneUseReadWrite
+	allocation := baseEffectLaneUses()
+	allocation[state.LaneValues] = LaneUseWrite
+	allocation[state.LaneHeapTableIdentity] = LaneUseWrite
+	allocation[state.LanePlacement] = LaneUseWrite
 	return []EffectDescriptor{
 		NewEffectDescriptor(EffectInvalidatePath,
 			[]operationplan.Kind{operationplan.PathDescendantInvalidation}, invalidates,
@@ -231,6 +236,14 @@ func defaultEffectDescriptors() []EffectDescriptor {
 				callboundary.BoundaryFactKind(callboundary.LaneRelConstraints),
 				callboundary.BoundaryFactKind("HeapTableObjects"),
 				callboundary.BoundaryFactKind("FreshHeapAllocations"),
+			}),
+		NewEffectDescriptor(EffectAllocationTemplate,
+			[]operationplan.Kind{operationplan.CallSite}, allocation,
+			[]callboundary.BoundaryFactKind{
+				callboundary.BoundaryFactKind("Returns"),
+				callboundary.BoundaryFactKind("HeapTableObjects"),
+				callboundary.BoundaryFactKind("FreshHeapAllocations"),
+				callboundary.BoundaryFactKind("HeapKeySpace"),
 			}),
 	}
 }

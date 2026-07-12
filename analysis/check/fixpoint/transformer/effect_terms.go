@@ -21,6 +21,7 @@ const (
 	EffectInvalid EffectKind = iota
 	EffectInvalidatePath
 	EffectIndexMutation
+	EffectAllocationTemplate
 	effectKindCount
 )
 
@@ -82,6 +83,7 @@ type effectNode struct {
 	readback     factflow.DynamicIndexReadbackIntent
 	appendMode   bool
 	site         EffectSite
+	allocation   AllocationTemplateTerm
 }
 
 // EffectArena owns effect nodes while sharing the existing scalar/path arena.
@@ -136,6 +138,15 @@ func (a *EffectArena) IndexMutation(config IndexMutationConfig) (EffectTerm, err
 	}), nil
 }
 
+// AllocationTemplate retains the heap/fresh half of one correlated symbolic
+// allocation. Result ValueTerms reference the same AllocationTemplateTerm.
+func (a *EffectArena) AllocationTemplate(allocation AllocationTemplateTerm) (EffectTerm, error) {
+	if a == nil || a.terms == nil || !a.terms.validAllocation(allocation) {
+		return 0, fmt.Errorf("transformer: allocation effect requires a valid shared allocation term")
+	}
+	return a.intern(effectNode{kind: EffectAllocationTemplate, allocation: allocation}), nil
+}
+
 func validInvalidationConfig(config InvalidatePathConfig) error {
 	if config.Target == 0 {
 		return fmt.Errorf("transformer: invalidation requires target path")
@@ -172,6 +183,9 @@ func (a *EffectArena) Valid(term EffectTerm, shape Shape) bool {
 		return false
 	}
 	n := a.nodes[term]
+	if n.kind == EffectAllocationTemplate {
+		return a.terms.validAllocation(n.allocation)
+	}
 	if !a.terms.validPath(n.invalidation.Target, shape) {
 		return false
 	}
@@ -222,11 +236,15 @@ func (a *EffectArena) canonical(node effectNode) string {
 			strconv.FormatUint(node.site.Owner, 10), strconv.FormatUint(uint64(node.site.Ordinal), 10),
 		)
 	}
+	if node.kind == EffectAllocationTemplate && a.terms.validAllocation(node.allocation) {
+		op := a.terms.allocations[node.allocation].op
+		parts = append(parts, fmt.Sprintf("%d:%s:%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal))
+	}
 	return strings.Join(parts, "|")
 }
 
 func effectNodeEqual(left, right effectNode) bool {
-	if left.kind != right.kind || left.table != right.table || left.key != right.key || left.value != right.value ||
+	if left.kind != right.kind || left.allocation != right.allocation || left.table != right.table || left.key != right.key || left.value != right.value ||
 		left.keyPath != right.keyPath || left.valuePath != right.valuePath || left.admission != right.admission ||
 		left.readback != right.readback || left.appendMode != right.appendMode || left.site != right.site ||
 		left.invalidation.Target != right.invalidation.Target || left.invalidation.Scope != right.invalidation.Scope ||

@@ -31,6 +31,7 @@ const (
 	valueDynamicRead
 	valueDynamicTableRead
 	valueIteratorProjection
+	valueAllocationResult
 )
 
 // CellRef is a stable SCC equation reference. Generation is deliberately not
@@ -49,6 +50,8 @@ type valueNode struct {
 	path          PathTerm
 	iterator      iteration.Iterator
 	variableIndex int
+	allocation    AllocationTemplateTerm
+	resultIndex   int
 }
 
 type pathNode struct {
@@ -77,17 +80,19 @@ type guardNode struct {
 // Arena owns hash-consed immutable term DAGs for one build. Index zero is the
 // invalid term and is never published as a semantic node.
 type Arena struct {
-	reg       *axis.Registry
-	values    []valueNode
-	paths     []pathNode
-	guards    []guardNode
-	valueKeys map[string][]ValueTerm
-	pathKeys  map[string][]PathTerm
-	guardKeys map[string][]Guard
+	reg            *axis.Registry
+	values         []valueNode
+	paths          []pathNode
+	guards         []guardNode
+	valueKeys      map[string][]ValueTerm
+	pathKeys       map[string][]PathTerm
+	guardKeys      map[string][]Guard
+	allocations    []allocationTemplateNode
+	allocationKeys map[string][]AllocationTemplateTerm
 }
 
 func NewArena(reg *axis.Registry) *Arena {
-	a := &Arena{reg: reg, values: []valueNode{{}}, paths: []pathNode{{}}, guards: []guardNode{{}}, valueKeys: make(map[string][]ValueTerm), pathKeys: make(map[string][]PathTerm), guardKeys: make(map[string][]Guard)}
+	a := &Arena{reg: reg, values: []valueNode{{}}, paths: []pathNode{{}}, guards: []guardNode{{}}, allocations: []allocationTemplateNode{{}}, valueKeys: make(map[string][]ValueTerm), pathKeys: make(map[string][]PathTerm), guardKeys: make(map[string][]Guard), allocationKeys: make(map[string][]AllocationTemplateTerm)}
 	a.internGuard(guardNode{op: guardTrue})
 	a.internGuard(guardNode{op: guardFalse})
 	return a
@@ -331,12 +336,14 @@ func (a *Arena) valueKey(n valueNode) string {
 		return fmt.Sprintf("dt:%d:%v", n.path, n.args)
 	case valueIteratorProjection:
 		return fmt.Sprintf("i:%d:%d:%d:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.args)
+	case valueAllocationResult:
+		return fmt.Sprintf("a:%d:%d", n.allocation, n.resultIndex)
 	default:
 		return "invalid"
 	}
 }
 func (a *Arena) valueEqual(x, y valueNode) bool {
-	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || len(x.args) != len(y.args) {
+	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || x.allocation != y.allocation || x.resultIndex != y.resultIndex || len(x.args) != len(y.args) {
 		return false
 	}
 	for i := range x.args {
@@ -485,6 +492,8 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			return product.Value{}, false
 		}
 		return context.IteratorProjection(n.iterator, n.variableIndex, source)
+	case valueAllocationResult:
+		return a.allocationResult(n.allocation, n.resultIndex)
 	default:
 		return product.Value{}, false
 	}
@@ -539,6 +548,9 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 		return "dt(" + strings.Join(parts, ",") + ")"
 	case valueIteratorProjection:
 		return fmt.Sprintf("i%d.%d.%d(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, a.canonicalValue(n.args[0]))
+	case valueAllocationResult:
+		op := a.allocations[n.allocation].op
+		return fmt.Sprintf("a%d.%s.%d:r%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal, n.resultIndex)
 	default:
 		return "_"
 	}
@@ -567,6 +579,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 	}
 	if n.op == valueIteratorProjection && (len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 ||
 		(n.iterator.Kind != iteration.IterateIndexed && n.iterator.Kind != iteration.IterateKeyed)) {
+		return false
+	}
+	if n.op == valueAllocationResult && (len(n.args) != 0 || !a.validAllocation(n.allocation) || n.resultIndex < 0) {
 		return false
 	}
 	if n.op == valueInvalid {

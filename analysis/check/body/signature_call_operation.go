@@ -36,7 +36,6 @@ func signatureAllocationOperations(plan *operationplan.Plan, owner uint64) map[c
 		return nil
 	}
 	out := make(map[cfg.Point]operationplan.SignatureAllocationOperation)
-	ordinals := make(map[string]uint32)
 	for rawPoint := 0; rawPoint < plan.PointCount(); rawPoint++ {
 		point := cfg.Point(rawPoint)
 		call, ok := plan.SignatureCallOperation(point)
@@ -47,10 +46,8 @@ func signatureAllocationOperations(plan *operationplan.Plan, owner uint64) map[c
 		if !exact {
 			continue
 		}
-		templateOwner := string(template.Root)
-		ordinals[templateOwner]++
 		op, ok := operationplan.NewSignatureAllocationOperation(operationplan.SignatureAllocationSite{
-			Owner: owner, Template: template.Root, Ordinal: ordinals[templateOwner],
+			Owner: owner, Template: template.Root, Ordinal: uint32(point),
 		}, template)
 		if ok {
 			out[point] = op

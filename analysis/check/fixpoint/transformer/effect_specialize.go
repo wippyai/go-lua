@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 )
 
 // ResolvedPathInvalidation is a caller-bound invalidation request. It contains
@@ -48,6 +49,16 @@ type ResolvedEffect struct {
 	Kind         EffectKind
 	Invalidation ResolvedPathInvalidation
 	Mutation     ResolvedIndexMutation
+	Allocation   ResolvedAllocationTemplate
+}
+
+// ResolvedAllocationTemplate is the specialization handoff for one shared
+// allocation node. Result and heap/fresh lowering must use this same site and
+// template identity.
+type ResolvedAllocationTemplate struct {
+	Site     operationplan.SignatureAllocationSite
+	Template operationplan.SignatureAllocationOperation
+	Result   product.Value
 }
 
 // EffectSummaryResolver lowers one complete correlated row of resolved effects
@@ -61,6 +72,17 @@ func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context Spe
 		return ResolvedEffect{}, false
 	}
 	node := a.nodes[term]
+	if node.kind == EffectAllocationTemplate {
+		if !a.terms.validAllocation(node.allocation) {
+			return ResolvedEffect{}, false
+		}
+		op := a.terms.allocations[node.allocation].op
+		result, ok := a.terms.allocationResult(node.allocation, op.Template().ReturnIndex)
+		if !ok {
+			return ResolvedEffect{}, false
+		}
+		return ResolvedEffect{Kind: node.kind, Allocation: ResolvedAllocationTemplate{Site: op.Site(), Template: op, Result: result}}, true
+	}
 	invalidation, ok := a.resolveInvalidation(node.invalidation, cursor, context)
 	if !ok {
 		return ResolvedEffect{}, false

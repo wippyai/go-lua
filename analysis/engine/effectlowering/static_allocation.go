@@ -38,6 +38,9 @@ func exactStaticAllocationTemplate(fn *typ.Function, template signature.ReturnAl
 		}
 		seen[object.ID] = struct{}{}
 		rootFound = rootFound || object.ID == template.Root
+		if len(template.Objects) != 1 || object.ID != template.Root || len(object.StaticMembers) != 0 || len(object.DynamicEntries) != 0 {
+			return false
+		}
 		for _, member := range object.StaticMembers {
 			if member.Value == "" {
 				return false

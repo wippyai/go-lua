@@ -40,6 +40,10 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 		}
 		node := callee.nodes[term]
 		layout := emptyEffectRebaseLayout()
+		if node.kind == EffectAllocationTemplate {
+			layouts[i] = layout
+			continue
+		}
 		layout.target = appendEffectPath(&input, node.invalidation.Target)
 		if node.invalidation.Precise != nil {
 			layout.preciseTable = appendEffectPath(&input, node.invalidation.Precise.Table)
@@ -66,6 +70,14 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 	for i, term := range effects {
 		node := callee.nodes[term]
 		layout := layouts[i]
+		if node.kind == EffectAllocationTemplate {
+			allocation := caller.terms.AllocationTemplate(callee.terms.allocations[node.allocation].op)
+			out.Effects[i], err = caller.AllocationTemplate(allocation)
+			if err != nil {
+				return EffectRebaseOutput{}, fmt.Errorf("transformer: allocation effect %d failed to rebase: %w", i, err)
+			}
+			continue
+		}
 		invalidation := InvalidatePathConfig{
 			Target: rebased.Paths[layout.target], Scope: node.invalidation.Scope,
 			PreserveStructuralWitness:       node.invalidation.PreserveStructuralWitness,
@@ -118,6 +130,9 @@ func validEffectNodeForRebase(arena *EffectArena, term EffectTerm, shape Shape) 
 		return false
 	}
 	node := arena.nodes[term]
+	if node.kind == EffectAllocationTemplate {
+		return arena.terms.validAllocation(node.allocation)
+	}
 	if err := validInvalidationConfig(node.invalidation); err != nil {
 		return false
 	}

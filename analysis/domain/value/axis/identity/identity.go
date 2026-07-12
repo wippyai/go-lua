@@ -46,6 +46,16 @@ func LuaTableLiteral(graphID, exprRef uint64) ID {
 	return ID{Kind: "lua.table", Site: "graph-expr", Index: h}
 }
 
+// ManifestAllocation returns the canonical identity for one operational
+// allocation template at a lexical point. Signature lowering and symbolic
+// Relation specialization must both use this constructor.
+func ManifestAllocation(template string, lexicalPoint uint64) ID {
+	if template == "" {
+		return ID{}
+	}
+	return ID{Kind: "manifest.allocation", Site: template, Index: lexicalPoint}
+}
+
 // ReturnedAllocation derives the allocation-site abstraction used when a
 // callee-local allocation crosses a summary boundary. The template identifies
 // the allocation in the callee; callerGraph and callPoint identify the static

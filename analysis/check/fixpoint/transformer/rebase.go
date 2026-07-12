@@ -262,6 +262,10 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		if err := v.value(n.args[0]); err != nil {
 			return err
 		}
+	case valueAllocationResult:
+		if len(n.args) != 0 || !v.callee.validAllocation(n.allocation) || n.resultIndex < 0 {
+			return fmt.Errorf("transformer: malformed allocation result term %d", term)
+		}
 	default:
 		return fmt.Errorf("transformer: invalid source value operation at term %d", term)
 	}
@@ -374,6 +378,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
 			return fmt.Errorf("malformed iterator projection term %d", term)
 		}
+	case valueAllocationResult:
+		if len(n.args) != 0 || !arena.validAllocation(n.allocation) || n.resultIndex < 0 {
+			return fmt.Errorf("malformed allocation result term %d", term)
+		}
 	default:
 		return fmt.Errorf("invalid value operation at term %d", term)
 	}
@@ -440,6 +448,9 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		}
 	case valueIteratorProjection:
 		out = s.caller.IteratorProjectionValue(n.iterator, n.variableIndex, s.value(n.args[0]))
+	case valueAllocationResult:
+		allocation := s.caller.AllocationTemplate(s.callee.allocations[n.allocation].op)
+		out = s.caller.AllocationResultValue(allocation, n.resultIndex)
 	}
 	s.values[term] = out
 	return out

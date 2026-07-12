@@ -735,5 +735,5 @@ func allocationTemplateIdentity(id signature.AllocationTemplateID) identity.ID {
 }
 
 func allocationTemplateIdentityAt(point cfg.Point, id signature.AllocationTemplateID) identity.ID {
-	return identity.ID{Kind: "manifest.allocation", Site: string(id), Index: uint64(point)}
+	return identity.ManifestAllocation(string(id), uint64(point))
 }
