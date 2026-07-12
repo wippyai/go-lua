@@ -18,9 +18,70 @@ type Class uint8
 
 const (
 	Executable Class = iota + 1
+	Composite
 	CompositeSidecar
 	Dependency
 )
+
+// Phase identifies the production transfer which owns a point-local family.
+type Phase uint8
+
+const (
+	Node Phase = iota + 1
+	Edge
+)
+
+// Barrier is a semantic sequencing boundary in the current fact applicators.
+// Values are metadata, not an execution ABI; cursorOrder is the ordering
+// authority rather than Kind or FactsInput declaration order.
+type Barrier uint8
+
+const (
+	N0Materialize Barrier = iota + 1
+	N1NoReturn
+	N2ImplicationClosure
+	N3Postconditions
+	N4Writes
+	N5Return
+	N6CovariantFinalizer
+	E0Reachability
+	E1Refinements
+	E2ImplicationClosure
+	E3Relations
+	E4Evidence
+	E5CallEffects
+)
+
+// BarrierSet records exact non-contiguous stages of a composite operation.
+type BarrierSet uint16
+
+func barriers(values ...Barrier) BarrierSet {
+	var set BarrierSet
+	for _, barrier := range values {
+		set |= 1 << (barrier - 1)
+	}
+	return set
+}
+
+func (s BarrierSet) Has(barrier Barrier) bool {
+	return barrier != 0 && s&(1<<(barrier-1)) != 0
+}
+
+// OwnerSet identifies the composite transactions which consume a sidecar or
+// expression dependency. Kinds remain below 32 by the catalog gate.
+type OwnerSet uint32
+
+func owners(kinds ...Kind) OwnerSet {
+	var set OwnerSet
+	for _, kind := range kinds {
+		set |= 1 << (kind - 1)
+	}
+	return set
+}
+
+func (s OwnerSet) Has(kind Kind) bool {
+	return kind != 0 && s&(1<<(kind-1)) != 0
+}
 
 // Kind identifies one FactsInput field. Values are stable and declared in the
 // same order as FactsInput so plan construction is independent of map order.
@@ -62,12 +123,21 @@ const (
 // Cell describes one non-empty fact family at a CFG point. Payloads remain in
 // the Plan's single immutable Facts snapshot.
 type Cell struct {
-	kind  Kind
-	class Class
+	kind Kind
 }
 
-func (c Cell) Kind() Kind   { return c.kind }
-func (c Cell) Class() Class { return c.class }
+func (c Cell) Kind() Kind       { return c.kind }
+func (c Cell) Class() Class     { return descriptorForKind(c.kind).class }
+func (c Cell) Phase() Phase     { return descriptorForKind(c.kind).phase }
+func (c Cell) Barrier() Barrier { return descriptorForKind(c.kind).barrier }
+func (c Cell) Stages() BarrierSet {
+	d := descriptorForKind(c.kind)
+	if d.stages != 0 {
+		return d.stages
+	}
+	return barriers(d.barrier)
+}
+func (c Cell) Owners() OwnerSet { return descriptorForKind(c.kind).owners }
 
 type row struct {
 	start uint32
@@ -137,8 +207,7 @@ func compileIndex(size int, input factflow.FactsInput) ([]row, []Cell) {
 		rows[point].start = uint32(len(cells))
 		for mask != 0 {
 			index := bits.TrailingZeros32(mask)
-			d := descriptors[index]
-			cells = append(cells, Cell{kind: d.kind, class: d.class})
+			cells = append(cells, Cell{kind: cursorOrder[index]})
 			mask &^= uint32(1) << index
 		}
 		rows[point].end = uint32(len(cells))
@@ -147,7 +216,7 @@ func compileIndex(size int, input factflow.FactsInput) ([]row, []Cell) {
 }
 
 func markMap[V any](masks []uint32, kind Kind, facts map[cfg.Point]V) {
-	bit := uint32(1) << (kind - 1)
+	bit := uint32(1) << cursorBit(kind)
 	for point := range facts {
 		if uint64(point) < uint64(len(masks)) {
 			masks[point] |= bit
@@ -156,7 +225,7 @@ func markMap[V any](masks []uint32, kind Kind, facts map[cfg.Point]V) {
 }
 
 func markNonEmpty[V any](masks []uint32, kind Kind, facts map[cfg.Point][]V) {
-	bit := uint32(1) << (kind - 1)
+	bit := uint32(1) << cursorBit(kind)
 	for point, values := range facts {
 		if len(values) != 0 && uint64(point) < uint64(len(masks)) {
 			masks[point] |= bit
@@ -201,6 +270,29 @@ func Classification(kind Kind) (Class, bool) {
 	return 0, false
 }
 
+// Metadata is the behavior-neutral semantic classification of a fact family.
+// Dependencies have no Phase/Barrier but do carry their consuming Owners.
+type Metadata struct {
+	Class   Class
+	Phase   Phase
+	Barrier Barrier
+	Stages  BarrierSet
+	Owners  OwnerSet
+}
+
+// Describe returns the canonical semantic metadata for kind.
+func Describe(kind Kind) (Metadata, bool) {
+	d := descriptorForKind(kind)
+	if d.kind == 0 {
+		return Metadata{}, false
+	}
+	stages := d.stages
+	if stages == 0 && d.barrier != 0 {
+		stages = barriers(d.barrier)
+	}
+	return Metadata{Class: d.class, Phase: d.phase, Barrier: d.barrier, Stages: stages, Owners: d.owners}, true
+}
+
 // Cursor traverses a point row without allocating or exposing backing storage.
 type Cursor struct {
 	cells []Cell
@@ -218,44 +310,81 @@ func (c *Cursor) Next() (Cell, bool) {
 }
 
 type descriptor struct {
-	field string
-	kind  Kind
-	class Class
+	field   string
+	kind    Kind
+	class   Class
+	phase   Phase
+	barrier Barrier
+	stages  BarrierSet
+	owners  OwnerSet
 }
 
 // descriptors is also the exhaustiveness contract with factflow.FactsInput.
 // Dependencies are expression-keyed and therefore have no dense point cell.
 var descriptors = [...]descriptor{
-	{"RootAssignments", RootAssignment, Executable},
-	{"PathAssignments", PathAssignment, Executable},
-	{"PathStaticMemberWrites", PathStaticMemberWrite, Executable},
-	{"DynamicIndexWrites", DynamicIndexWrite, Executable},
-	{"PathDescendantInvalidations", PathDescendantInvalidation, Executable},
-	{"CovariantExposures", CovariantExposure, Executable},
-	{"NoNormalReturns", NoNormalReturn, Executable},
-	{"BranchEdgeReachability", BranchEdgeReachability, Executable},
-	{"BranchConditionSources", BranchConditionSource, CompositeSidecar},
-	{"BranchRefinements", BranchRefinement, Executable},
-	{"BranchPresenceRelations", BranchPresenceRelation, Executable},
-	{"BranchPathRelations", BranchPathRelation, Executable},
-	{"BranchPathEvidence", BranchPathEvidence, Executable},
-	{"BranchSufficientLiteralCases", BranchSufficientLiteralCase, CompositeSidecar},
-	{"PathValuePresenceImplications", PathValuePresenceImplication, Executable},
-	{"ChannelSelects", ChannelSelect, Executable},
-	{"PostconditionRefinements", PostconditionRefinement, Executable},
-	{"PostconditionPathRelations", PostconditionPathRelation, Executable},
-	{"CallResultValues", CallResultValue, CompositeSidecar},
-	{"ReturnPresenceRelations", ReturnPresenceRelation, CompositeSidecar},
-	{"Returns", Return, Executable},
-	{"CallSites", CallSite, CompositeSidecar},
-	{"ObjectLiterals", ObjectLiteral, Dependency},
-	{"ExpressionValues", ExpressionValue, Dependency},
-	{"ExpressionOperations", ExpressionOperation, Dependency},
-	{"ExpressionFunctions", ExpressionFunction, Dependency},
-	{"ExpressionRefinements", ExpressionRefinement, Dependency},
-	{"ExpressionPaths", ExpressionPath, Dependency},
-	{"DynamicIndexExpressions", DynamicIndexExpression, Dependency},
-	{"ExpressionConditions", ExpressionCondition, Dependency},
+	{"RootAssignments", RootAssignment, Composite, Node, N4Writes, 0, 0},
+	{"PathAssignments", PathAssignment, Composite, Node, N4Writes, 0, 0},
+	{"PathStaticMemberWrites", PathStaticMemberWrite, Composite, Node, N4Writes, 0, 0},
+	{"DynamicIndexWrites", DynamicIndexWrite, Composite, Node, N4Writes, 0, 0},
+	{"PathDescendantInvalidations", PathDescendantInvalidation, Executable, Node, N3Postconditions, 0, 0},
+	{"CovariantExposures", CovariantExposure, Executable, Node, N6CovariantFinalizer, 0, 0},
+	{"NoNormalReturns", NoNormalReturn, Executable, Node, N1NoReturn, 0, 0},
+	{"BranchEdgeReachability", BranchEdgeReachability, Composite, Edge, E0Reachability, 0, 0},
+	{"BranchConditionSources", BranchConditionSource, CompositeSidecar, Edge, E0Reachability, 0, owners(BranchEdgeReachability)},
+	{"BranchRefinements", BranchRefinement, Composite, Edge, E1Refinements, barriers(E1Refinements, E3Relations), 0},
+	{"BranchPresenceRelations", BranchPresenceRelation, Executable, Edge, E3Relations, 0, 0},
+	{"BranchPathRelations", BranchPathRelation, Executable, Edge, E3Relations, 0, 0},
+	{"BranchPathEvidence", BranchPathEvidence, Executable, Edge, E4Evidence, 0, 0},
+	{"BranchSufficientLiteralCases", BranchSufficientLiteralCase, CompositeSidecar, Edge, E1Refinements, 0, owners(BranchRefinement)},
+	{"PathValuePresenceImplications", PathValuePresenceImplication, Executable, Node, N2ImplicationClosure, 0, 0},
+	{"ChannelSelects", ChannelSelect, Composite, Node, N0Materialize, barriers(N0Materialize, N3Postconditions), 0},
+	{"PostconditionRefinements", PostconditionRefinement, Executable, Node, N3Postconditions, 0, 0},
+	{"PostconditionPathRelations", PostconditionPathRelation, Executable, Node, N3Postconditions, 0, 0},
+	{"CallResultValues", CallResultValue, CompositeSidecar, Node, N0Materialize, 0, owners(CallSite)},
+	{"ReturnPresenceRelations", ReturnPresenceRelation, CompositeSidecar, Node, N5Return, 0, owners(Return)},
+	{"Returns", Return, Composite, Node, N5Return, 0, 0},
+	{"CallSites", CallSite, Composite, Node, N0Materialize, barriers(N0Materialize, E5CallEffects), 0},
+	{"ObjectLiterals", ObjectLiteral, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment)},
+	{"ExpressionValues", ExpressionValue, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
+	{"ExpressionOperations", ExpressionOperation, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
+	{"ExpressionFunctions", ExpressionFunction, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
+	{"ExpressionRefinements", ExpressionRefinement, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
+	{"ExpressionPaths", ExpressionPath, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return, BranchEdgeReachability)},
+	{"DynamicIndexExpressions", DynamicIndexExpression, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
+	{"ExpressionConditions", ExpressionCondition, Dependency, 0, 0, 0, owners(BranchRefinement)},
+}
+
+// cursorOrder is the current concrete semantic order. E2 implication closure
+// and E5 call effects are executor barriers with no independently keyed family;
+// BranchRefinement and CallSite advertise those stages in descriptor.stages.
+var cursorOrder = [...]Kind{
+	CallSite, CallResultValue, ChannelSelect,
+	NoNormalReturn,
+	PathValuePresenceImplication,
+	PathDescendantInvalidation, PostconditionRefinement, PostconditionPathRelation,
+	DynamicIndexWrite, RootAssignment, PathAssignment, PathStaticMemberWrite,
+	Return, ReturnPresenceRelation,
+	CovariantExposure,
+	BranchEdgeReachability, BranchConditionSource,
+	BranchRefinement, BranchSufficientLiteralCase,
+	BranchPresenceRelation, BranchPathRelation,
+	BranchPathEvidence,
+}
+
+func descriptorForKind(kind Kind) descriptor {
+	if kind == 0 || int(kind) > len(descriptors) {
+		return descriptor{}
+	}
+	return descriptors[kind-1]
+}
+
+func cursorBit(kind Kind) uint {
+	for bit, candidate := range cursorOrder {
+		if candidate == kind {
+			return uint(bit)
+		}
+	}
+	panic("operationplan: non-point kind in cursor index")
 }
 
 func (k Kind) String() string {

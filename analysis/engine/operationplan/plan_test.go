@@ -34,7 +34,17 @@ func TestFactsInputCatalogIsExhaustive(t *testing.T) {
 			t.Fatalf("FactsInput.%s is no longer a map; classify it explicitly", d.field)
 		}
 		switch d.class {
-		case Executable, CompositeSidecar:
+		case Executable, Composite, CompositeSidecar:
+			if d.phase == 0 || d.barrier == 0 {
+				t.Fatalf("point-local %s has no phase/barrier", d.field)
+			}
+			metadata, ok := Describe(d.kind)
+			if !ok || !metadata.Stages.Has(d.barrier) {
+				t.Fatalf("point-local %s stages omit primary barrier", d.field)
+			}
+			if d.class == CompositeSidecar && d.owners == 0 {
+				t.Fatalf("sidecar %s has no composite owner", d.field)
+			}
 			if d.kind > 32 {
 				t.Fatalf("point-local %s exceeds the packed kind mask capacity", d.field)
 			}
@@ -60,11 +70,27 @@ func TestFactsInputCatalogIsExhaustive(t *testing.T) {
 				t.Fatalf("plan compiler does not observe FactsInput.%s", d.field)
 			}
 		case Dependency:
+			if d.phase != 0 || d.barrier != 0 || d.stages != 0 {
+				t.Fatalf("dependency %s claims point execution metadata", d.field)
+			}
+			if d.owners == 0 {
+				t.Fatalf("dependency %s has no consuming composite owner", d.field)
+			}
 			if field.Type.Key() != exprType {
 				t.Fatalf("dependency %s uses key %v", d.field, field.Type.Key())
 			}
 		default:
 			t.Fatalf("%s has unspecified class %d", d.field, d.class)
+		}
+	}
+	for _, d := range descriptors {
+		for _, owner := range descriptors {
+			if !d.owners.Has(owner.kind) {
+				continue
+			}
+			if owner.class != Composite {
+				t.Fatalf("%s owner %s is class %d, not Composite", d.field, owner.field, owner.class)
+			}
 		}
 	}
 	for i := 0; i < typ.NumField(); i++ {
@@ -108,9 +134,9 @@ func TestPlanDenseRowsAreCanonicalAndSnapshotIsOwned(t *testing.T) {
 		got = append(got, cell)
 	}
 	want := []Cell{
-		{kind: RootAssignment, class: Executable},
-		{kind: NoNormalReturn, class: Executable},
-		{kind: BranchConditionSource, class: CompositeSidecar},
+		{kind: NoNormalReturn},
+		{kind: RootAssignment},
+		{kind: BranchConditionSource},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("cells=%v want %v", got, want)
@@ -122,6 +148,65 @@ func TestPlanDenseRowsAreCanonicalAndSnapshotIsOwned(t *testing.T) {
 	if cur := plan.Cursor(cfg.Point(graph.Size() + 10)); cursorLen(cur) != 0 {
 		t.Fatal("out-of-range cursor is not empty")
 	}
+}
+
+func TestCursorAndOwnersFollowConcreteSemanticBarriers(t *testing.T) {
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeAssign)
+	input := factflow.FactsInput{
+		RootAssignments:               map[cfg.Point]factflow.RootAssignment{point: {}},
+		NoNormalReturns:               map[cfg.Point]struct{}{point: {}},
+		BranchConditionSources:        map[cfg.Point]factflow.ValueSource{point: {}},
+		BranchRefinements:             map[cfg.Point]factflow.BranchRefinementSet{point: {}},
+		PathValuePresenceImplications: map[cfg.Point]factflow.PathValuePresenceImplicationSet{point: {}},
+		CallResultValues:              map[cfg.Point]factflow.CallResultValueSet{point: {}},
+		CallSites:                     map[cfg.Point]factflow.CallSite{point: {}},
+	}
+	plan := New(graph, input)
+	var got []Kind
+	cursor := plan.Cursor(point)
+	last := -1
+	for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
+		got = append(got, cell.Kind())
+		rank := cursorBarrierRank(cell.Barrier())
+		if rank < last {
+			t.Fatalf("cursor moved backward from barrier rank %d to %d at %s", last, rank, cell.Kind())
+		}
+		last = rank
+	}
+	want := []Kind{CallSite, CallResultValue, NoNormalReturn, PathValuePresenceImplication, RootAssignment, BranchConditionSource, BranchRefinement}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cursor kinds=%v want %v", got, want)
+	}
+	call, _ := Describe(CallSite)
+	if call.Class != Composite || !call.Stages.Has(N0Materialize) || !call.Stages.Has(E5CallEffects) || call.Stages.Has(N1NoReturn) {
+		t.Fatalf("call metadata does not describe exact N0/E5 composite: %+v", call)
+	}
+	channel, _ := Describe(ChannelSelect)
+	if !channel.Stages.Has(N0Materialize) || !channel.Stages.Has(N3Postconditions) || channel.Stages.Has(N2ImplicationClosure) {
+		t.Fatalf("channel metadata does not describe exact N0/N3 composite: %+v", channel)
+	}
+	fixedResult, _ := Describe(CallResultValue)
+	if fixedResult.Class != CompositeSidecar || !fixedResult.Owners.Has(CallSite) {
+		t.Fatalf("fixed call result is not owned by call transaction: %+v", fixedResult)
+	}
+	expression, _ := Describe(ExpressionValue)
+	if expression.Class != Dependency || expression.Phase != 0 || expression.Barrier != 0 || !expression.Owners.Has(RootAssignment) {
+		t.Fatalf("expression dependency metadata is incomplete: %+v", expression)
+	}
+}
+
+func cursorBarrierRank(barrier Barrier) int {
+	order := [...]Barrier{
+		N0Materialize, N1NoReturn, N2ImplicationClosure, N3Postconditions, N4Writes, N5Return, N6CovariantFinalizer,
+		E0Reachability, E1Refinements, E2ImplicationClosure, E3Relations, E4Evidence, E5CallEffects,
+	}
+	for i, candidate := range order {
+		if candidate == barrier {
+			return i
+		}
+	}
+	return len(order)
 }
 
 func TestPlanOrderDoesNotDependOnMapInsertion(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 var benchmarkCells []Cell
 var benchmarkRows []row
+var benchmarkCellCount int
 
 // BenchmarkCompileIndexSparseLarge models a large lowered body: most points
 // carry one or two fact families, not one fact from every family.
@@ -27,6 +28,29 @@ func BenchmarkCompileIndexSparseLarge(b *testing.B) {
 			benchmarkRows, benchmarkCells = compileIndexByProbing(points, input)
 		}
 	})
+}
+
+func BenchmarkCursorCanonicalOrder(b *testing.B) {
+	const points = 64
+	plan := New(benchmarkGraph(points), sparseBenchmarkFacts(points))
+	b.ReportAllocs()
+	count := 0
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cursor := plan.Cursor(cfg.Point(i % points))
+		for _, ok := cursor.Next(); ok; _, ok = cursor.Next() {
+			count++
+		}
+	}
+	benchmarkCellCount = count
+}
+
+func benchmarkGraph(points int) cfg.Graph {
+	graph := cfg.New()
+	for graph.Size() < points {
+		graph.AddNode(cfg.NodeNoop)
+	}
+	return graph
 }
 
 func sparseBenchmarkFacts(points int) factflow.FactsInput {
@@ -71,9 +95,9 @@ func compileIndexByProbing(size int, input factflow.FactsInput) ([]row, []Cell) 
 	cells := make([]Cell, 0)
 	for point := 0; point < size; point++ {
 		rows[point].start = uint32(len(cells))
-		for _, d := range descriptors {
-			if pointFactPresent(input, cfg.Point(point), d.kind) {
-				cells = append(cells, Cell{kind: d.kind, class: d.class})
+		for _, kind := range cursorOrder {
+			if pointFactPresent(input, cfg.Point(point), kind) {
+				cells = append(cells, Cell{kind: kind})
 			}
 		}
 		rows[point].end = uint32(len(cells))
