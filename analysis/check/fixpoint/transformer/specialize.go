@@ -140,7 +140,10 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 			continue
 		}
 		candidate := row.Output.Clone()
-		rawReturns := append([]product.Value(nil), row.Output.Returns...)
+		var rawReturns []product.Value
+		if r.inferReturnCorrelations {
+			rawReturns = append(rawReturns, row.Output.Returns...)
+		}
 		for _, operation := range row.Ops {
 			handler := descriptors.handlers[operation.Descriptor]
 			if handler == nil {
@@ -157,14 +160,16 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 				return summary.Summary{}, false
 			}
 			if operation.Descriptor == DescriptorReturn {
-				priorLen := len(rawReturns)
-				for len(rawReturns) <= int(operation.Slot) {
-					rawReturns = append(rawReturns, product.Bottom(reg))
-				}
-				if int(operation.Slot) >= priorLen {
-					rawReturns[operation.Slot] = value
-				} else {
-					rawReturns[operation.Slot] = summary.JoinReturnValue(reg, rawReturns[operation.Slot], value)
+				if r.inferReturnCorrelations {
+					priorLen := len(rawReturns)
+					for len(rawReturns) <= int(operation.Slot) {
+						rawReturns = append(rawReturns, product.Bottom(reg))
+					}
+					if int(operation.Slot) >= priorLen {
+						rawReturns[operation.Slot] = value
+					} else {
+						rawReturns[operation.Slot] = summary.JoinReturnValue(reg, rawReturns[operation.Slot], value)
+					}
 				}
 				if param, exact := r.arena.directParamRoot(operation.Value); exact {
 					if r.authority.allowsSummary("ReturnFlows") && r.authority.allowsSummary("ReturnParamPathAliases") {
@@ -230,8 +235,10 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 		} else {
 			accumulated = summary.Join(reg, accumulated, candidate)
 		}
-		candidates = append(candidates, candidate)
-		rawCandidateReturns = append(rawCandidateReturns, rawReturns)
+		if r.inferReturnCorrelations {
+			candidates = append(candidates, candidate)
+			rawCandidateReturns = append(rawCandidateReturns, rawReturns)
+		}
 	}
 	if !have {
 		return summary.Summary{}, true
