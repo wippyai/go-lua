@@ -1,6 +1,7 @@
 package program
 
 import (
+	"context"
 	"maps"
 	"slices"
 
@@ -20,6 +21,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+type semanticProgramAuditContextKey struct{}
+
+func withSemanticProgramAudit(config body.Config, audit func(*body.Static, body.Config, *body.Result) error) body.Config {
+	if audit == nil {
+		return config
+	}
+	ctx := config.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	config.Context = context.WithValue(ctx, semanticProgramAuditContextKey{}, audit)
+	return config
+}
 
 type keyedFunction struct {
 	funcExpr      *ast.FunctionExpr
@@ -100,7 +115,15 @@ func staticPrepareConfig(config body.Config, keys programKeys) body.Config {
 }
 
 func solvePrepared(prepared *body.Static, config body.Config) (*body.Result, error) {
-	return body.SolvePrepared(prepared, config.SolveConfig())
+	result, err := body.SolvePrepared(prepared, config.SolveConfig())
+	if err != nil || config.Context == nil {
+		return result, err
+	}
+	audit, _ := config.Context.Value(semanticProgramAuditContextKey{}).(func(*body.Static, body.Config, *body.Result) error)
+	if audit != nil {
+		err = audit(prepared, config, result)
+	}
+	return result, err
 }
 
 func solvePreparedCounted(prepared *body.Static, config body.Config, counter *int) (*body.Result, error) {

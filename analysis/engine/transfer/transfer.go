@@ -324,12 +324,16 @@ func TryRun(config Config) (Result, error) {
 	}
 
 	if config.Schedule == ScheduleWTO || config.Schedule == ScheduleWTODual {
+		wtoStats := &solve.Stats{}
+		var wto map[cfg.Point]state.State
+		var wtoVersions map[cfg.Point]uint64
+		var wtoErr error
+		usedDense := false
 		if config.Schedule == ScheduleWTO && config.ConcreteFlow != nil {
 			if config.Stats != nil {
 				config.Stats.DenseAttempts++
 			}
-			denseStats := &solve.Stats{}
-			denseSystem := plan.withStats(denseStats)
+			denseSystem := plan.withStats(wtoStats)
 			fuse := func(point cfg.Point) bool {
 				return config.FuseConcreteIdentity && config.BeforePoint == nil && config.AfterPoint == nil &&
 					(!observing || !config.ObserveNode(point))
@@ -339,44 +343,69 @@ func TryRun(config Config) (Result, error) {
 				Transfer: plan.denseTransfer, TransferVersioned: plan.denseTransferVersioned,
 			}, denseSystem, config.ConcreteFlow)
 			if denseErr == nil {
+				usedDense = true
+				wto, wtoVersions = dense.Points, dense.Versions
 				if config.Stats != nil {
 					config.Stats.DenseCompleted++
 				}
-				if sys.Stats != nil {
-					sys.Stats.TransferCalls += denseStats.TransferCalls
+				if config.Schedule == ScheduleWTO {
+					compared := false
+					if config.CompareWTO != nil {
+						// Comparison mode proves the concrete program against the
+						// canonical generic WTO on the identical equation system. Keep
+						// both observation generations scratch until the state gate passes.
+						denseCaptured := denseObservations
+						denseObservations = nil
+						genericStats := &solve.Stats{}
+						genericSystem := plan.withStats(genericStats)
+						var generic map[cfg.Point]state.State
+						var genericErr error
+						if uncancelable {
+							generic, _, genericErr = solve.SolveWTOWithVersions(genericSystem, plan.wto)
+						} else {
+							generic, _, genericErr = solve.SolveWTOContextWithVersions(config.Context, genericSystem, plan.wto)
+						}
+						denseObservations = denseCaptured
+						if genericErr != nil {
+							return nil, genericErr
+						}
+						reportComparison(generic, dense.Points, genericStats.TransferCalls, wtoStats.TransferCalls, false)
+						compared = true
+					}
+					if sys.Stats != nil {
+						sys.Stats.TransferCalls += wtoStats.TransferCalls
+					}
+					for _, observation := range denseObservations {
+						originalRecordNodeObservation(observation)
+					}
+					finalize(dense.Versions)
+					if config.CompareWTO != nil && !compared {
+						config.CompareWTO(WTOComparison{WTOTransfers: wtoStats.TransferCalls})
+					}
+					return Result(dense.Points), nil
 				}
-				for _, observation := range denseObservations {
-					originalRecordNodeObservation(observation)
-				}
-				finalize(dense.Versions)
-				if config.CompareWTO != nil {
-					config.CompareWTO(WTOComparison{WTOTransfers: denseStats.TransferCalls})
-				}
-				return Result(dense.Points), nil
-			}
-			if !errors.Is(denseErr, solve.ErrWTOPlanUncovered) {
+			} else if !errors.Is(denseErr, solve.ErrWTOPlanUncovered) {
 				return nil, denseErr
-			}
-			if config.Stats != nil {
-				config.Stats.DenseFallbacks++
-			}
-			denseObservationMode = false
-			denseObservations = nil
-			// Scratch observations can refer to revisions that are about to be
-			// discarded. The fallback owns a clean observation generation.
-			if config.ResetNodeObservations != nil && originalRecordNodeObservation == nil {
-				config.ResetNodeObservations()
+			} else {
+				if config.Stats != nil {
+					config.Stats.DenseFallbacks++
+				}
+				denseObservationMode = false
+				denseObservations = nil
+				// Scratch observations can refer to revisions that are about to be
+				// discarded. The fallback owns a clean observation generation.
+				if config.ResetNodeObservations != nil && originalRecordNodeObservation == nil {
+					config.ResetNodeObservations()
+				}
 			}
 		}
-		wtoStats := &solve.Stats{}
-		wtoSystem := plan.withStats(wtoStats)
-		var wto map[cfg.Point]state.State
-		var wtoVersions map[cfg.Point]uint64
-		var wtoErr error
-		if uncancelable {
-			wto, wtoVersions, wtoErr = solve.SolveWTOWithVersions(wtoSystem, plan.wto)
-		} else {
-			wto, wtoVersions, wtoErr = solve.SolveWTOContextWithVersions(config.Context, wtoSystem, plan.wto)
+		if !usedDense {
+			wtoSystem := plan.withStats(wtoStats)
+			if uncancelable {
+				wto, wtoVersions, wtoErr = solve.SolveWTOWithVersions(wtoSystem, plan.wto)
+			} else {
+				wto, wtoVersions, wtoErr = solve.SolveWTOContextWithVersions(config.Context, wtoSystem, plan.wto)
+			}
 		}
 		fallback := errors.Is(wtoErr, solve.ErrWTOPlanUncovered)
 		if wtoErr != nil && !fallback {

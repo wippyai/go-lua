@@ -8,6 +8,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -138,6 +139,9 @@ func TestSemanticProgramCompilerFailsClosedOnValidateGraphGenericFor(t *testing.
 
 func TestSemanticProgramValidateGraphAdmitsConcreteGenericForAndMatchesASTFreeSolve(t *testing.T) {
 	prepared, layers := validateGraphSemanticProgramFixture(t)
+	if _, err := concreteflow.Compile(prepared.cfg.Graph, prepared.operationPlan, prepared.wtoPlan); err != nil {
+		t.Fatalf("concrete semantic program rejected: %v", err)
+	}
 	program, err := semanticprogram.Compile(prepared.cfg.Graph, prepared.operationPlan, layers, map[semanticprogram.Family]bool{
 		semanticprogram.GenericForVariable: true,
 	})
@@ -167,6 +171,9 @@ func TestSemanticProgramValidateGraphAdmitsConcreteGenericForAndMatchesASTFreeSo
 
 func BenchmarkSemanticProgramValidateGraph(b *testing.B) {
 	prepared, layers := validateGraphSemanticProgramFixture(b)
+	if prepared.concreteFlow == nil {
+		b.Fatal("compiler.validate_graph has no concrete semantic program")
+	}
 	b.Run("compile-fail-closed", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
@@ -177,6 +184,21 @@ func BenchmarkSemanticProgramValidateGraph(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
 			if _, err := SolvePrepared(prepared, SolveConfig{Schedule: transfer.ScheduleWTO}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("semantic-program-concrete", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			_, err := prepared.solveWithFlow(SolveConfig{Schedule: transfer.ScheduleWTO}, func(config transfer.Config) (*bodyFlowTransaction, error) {
+				config.ConcreteFlow = prepared.concreteFlow
+				config.CanonicalConcreteTransactions = true
+				config.FuseConcreteIdentity = true
+				flow, err := transfer.TryRun(config)
+				return &bodyFlowTransaction{flow: flow}, err
+			})
+			if err != nil {
 				b.Fatal(err)
 			}
 		}

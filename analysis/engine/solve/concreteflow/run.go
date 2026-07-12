@@ -33,7 +33,7 @@ type loopFrame struct {
 
 // Run executes sys transactionally. Errors publish no state or revisions.
 func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], plan *Plan) (Result, error) {
-	if plan == nil || !plan.wto.Matches(sys.Cells) || len(sys.Cells) != plan.graph.Size() {
+	if plan == nil || !plan.wto.Matches(sys.Cells) {
 		return Result{}, solve.ErrWTOPlanUncovered
 	}
 	token := cancellation.FromContext(config.Context).Token()

@@ -37,6 +37,10 @@ type Config struct {
 	CacheProfile string
 
 	Stats *Stats
+
+	// semanticProgramAudit is an internal acceptance hook. It is intentionally
+	// unavailable outside this package and never installed by production.
+	semanticProgramAudit func(*body.Static, body.Config, *body.Result) error
 }
 
 // Stats holds caller-owned observational counters for a program fixed-point
@@ -91,6 +95,7 @@ func RunChunk(stmts []ast.Stmt, config Config) (Result, error) {
 // lexical bindings. Summary keys and call results are derived from the same
 // binding identity, so function calls cannot drift through an accidental rebind.
 func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Result, error) {
+	config.Check = withSemanticProgramAudit(config.Check, config.semanticProgramAudit)
 	config = configWithStats(config)
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
@@ -177,6 +182,7 @@ func RunFunction(fn *ast.FunctionExpr, config Config) (Result, error) {
 // RunBoundFunction runs fixed-point summary equations over fn using
 // caller-owned lexical bindings.
 func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (Result, error) {
+	config.Check = withSemanticProgramAudit(config.Check, config.semanticProgramAudit)
 	config = configWithStats(config)
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err

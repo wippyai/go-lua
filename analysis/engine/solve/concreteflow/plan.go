@@ -40,9 +40,6 @@ type Plan struct {
 // Compile accepts only a complete, reducible CFG whose point rows follow the
 // canonical operation barriers. Irreducible components fail closed.
 func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan[cfg.Point]) (*Plan, error) {
-	if operations != nil && operations.HasExtensions() {
-		return nil, fmt.Errorf("concreteflow: higher-layer semantic extensions require an extension executor")
-	}
 	if graph == nil || operations == nil || wto == nil {
 		return nil, fmt.Errorf("concreteflow: graph, operation plan, and WTO are required")
 	}
@@ -51,8 +48,8 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 		return nil, fmt.Errorf("concreteflow: operation rows=%d graph points=%d", operations.PointCount(), n)
 	}
 	cells := append([]cfg.Point(nil), graph.RPO()...)
-	if len(cells) != n || !wto.Matches(cells) {
-		return nil, fmt.Errorf("concreteflow: WTO does not cover the dense CFG")
+	if len(cells) == 0 || !wto.Matches(cells) {
+		return nil, fmt.Errorf("concreteflow: WTO does not cover the reachable CFG")
 	}
 	seen := make([]bool, n)
 	identity := make([]bool, n)
@@ -79,6 +76,21 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 			meta, exists := operationplan.Describe(cell.Kind())
 			if !exists || meta.Barrier < last {
 				return nil, fmt.Errorf("concreteflow: non-canonical operation row at %d", p)
+			}
+			hasWork = true
+			if meta.Phase == operationplan.Node {
+				nodeWork[p] = true
+			}
+			if meta.Phase == operationplan.Edge || meta.Stages.Has(operationplan.E5CallEffects) {
+				edgeWork[p] = true
+			}
+			last = meta.Barrier
+		}
+		extensions := operations.ExtensionCursor(p)
+		for extension, ok := extensions.Next(); ok; extension, ok = extensions.Next() {
+			meta := extension.Metadata()
+			if meta.Class == 0 || meta.Phase == 0 || meta.Barrier < last {
+				return nil, fmt.Errorf("concreteflow: unclassified or non-canonical extension row at %d", p)
 			}
 			hasWork = true
 			if meta.Phase == operationplan.Node {
@@ -126,9 +138,9 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 	if err := compilePartition(elements, 1); err != nil {
 		return nil, err
 	}
-	for point, ok := range seen {
-		if !ok {
-			return nil, fmt.Errorf("concreteflow: point %d absent from WTO tape", point)
+	for _, point := range cells {
+		if !seen[point] {
+			return nil, fmt.Errorf("concreteflow: reachable point %d absent from WTO tape", point)
 		}
 	}
 	return plan, nil

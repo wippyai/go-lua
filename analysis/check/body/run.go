@@ -239,7 +239,7 @@ func (c *checker) prepare(
 	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
 	wtoPlan := compileWTOPlan(built.Graph, config.Schedule)
 	var concretePlan *concreteflow.Plan
-	if len(genericFors) == 0 && wtoPlan != nil {
+	if wtoPlan != nil {
 		// Certification is intentionally fail-closed. Irreducible bodies and any
 		// future operation-plan shape the dense executor does not understand keep
 		// the existing generic WTO without making body preparation fail.
@@ -363,6 +363,10 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 	})
 	observationPlan := compileObservationPlan(s.cfg.Graph, s.facts, callOutcome != nil)
 	observationCapture := newObservationCapture(observationPlan)
+	var comparisonConcreteFlow *concreteflow.Plan
+	if config.CompareWTO != nil {
+		comparisonConcreteFlow = s.concreteFlow
+	}
 	transferConfig := transfer.Config{
 		Context:  config.Context,
 		Session:  session,
@@ -373,9 +377,9 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		// The executor remains attached to Static for differential and benchmark
 		// use, but production publication stays on generic WTO until a corpus gate
 		// demonstrates an end-to-end win outside measurement noise.
-		ConcreteFlow:                  nil,
-		CanonicalConcreteTransactions: false,
-		FuseConcreteIdentity:          false,
+		ConcreteFlow:                  comparisonConcreteFlow,
+		CanonicalConcreteTransactions: comparisonConcreteFlow != nil,
+		FuseConcreteIdentity:          comparisonConcreteFlow != nil,
 		CompareWTO:                    config.CompareWTO,
 		StateLanes:                    config.StateLanes,
 		StateOptions:                  state.DomainOptions{WidenThresholds: widenThresholds},
