@@ -24,6 +24,7 @@ const (
 	valueConstant
 	valueJoin
 	valueCellResult
+	valueDynamicRead
 )
 
 // CellRef is a stable SCC equation reference. Generation is deliberately not
@@ -39,6 +40,7 @@ type valueNode struct {
 	value product.Value
 	args  []ValueTerm
 	cell  CellRef
+	path  PathTerm
 }
 
 type pathNode struct {
@@ -118,6 +120,17 @@ func (a *Arena) JoinValue(terms ...ValueTerm) ValueTerm {
 // Specialization fails closed until the caller supplies a CellResultResolver.
 func (a *Arena) CellResultValue(cell CellRef, args ...ValueTerm) ValueTerm {
 	return a.internValue(valueNode{op: valueCellResult, cell: cell, args: append([]ValueTerm(nil), args...)})
+}
+
+// DynamicReadValue retains the functional relation table[key] without
+// encoding a marker into product.Value. tablePath identifies the same table in
+// the caller's visibility/keyspace state. Specialization fails closed unless a
+// canonical DynamicReadResolver and all three bindings are available.
+func (a *Arena) DynamicReadValue(table ValueTerm, tablePath PathTerm, key ValueTerm) ValueTerm {
+	if table == 0 || tablePath == 0 || key == 0 {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueDynamicRead, args: []ValueTerm{table, key}, path: tablePath})
 }
 
 func (a *Arena) Path(root Root, suffix ...segment.Segment) PathTerm {
@@ -246,12 +259,14 @@ func (a *Arena) valueKey(n valueNode) string {
 		return fmt.Sprintf("j:%v", n.args)
 	case valueCellResult:
 		return fmt.Sprintf("x:%d:%d:%v", n.cell.Function, n.cell.Slot, n.args)
+	case valueDynamicRead:
+		return fmt.Sprintf("d:%d:%d:%d", n.args[0], n.path, n.args[1])
 	default:
 		return "invalid"
 	}
 }
 func (a *Arena) valueEqual(x, y valueNode) bool {
-	if x.op != y.op || x.root != y.root || x.cell != y.cell || len(x.args) != len(y.args) {
+	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || len(x.args) != len(y.args) {
 		return false
 	}
 	for i := range x.args {
@@ -292,7 +307,19 @@ func guardNodeEqual(x, y guardNode) bool {
 // composed before specialization by the lexical SCC relation solver.
 type CellResultResolver func(CellRef, []product.Value) (product.Value, bool)
 
-func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, resolve CellResultResolver) (product.Value, bool) {
+// DynamicReadResolver binds a syntax-free table read to the caller's concrete
+// state/visibility context. Implementations must use the engine's canonical
+// path, heap-identity, and dynamic-index read semantics.
+type DynamicReadResolver func(pathdom.Path, product.Value, product.Value) (product.Value, bool)
+
+// SpecializationContext owns optional concrete evaluators. A term requiring a
+// missing evaluator fails the entire specialization transaction.
+type SpecializationContext struct {
+	CellResult  CellResultResolver
+	DynamicRead DynamicReadResolver
+}
+
+func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context SpecializationContext) (product.Value, bool) {
 	if term == 0 || int(term) >= len(a.values) || a.reg == nil {
 		return product.Value{}, false
 	}
@@ -305,7 +332,7 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, resolve CellResu
 	case valueJoin:
 		out := product.Bottom(a.reg)
 		for _, arg := range n.args {
-			v, ok := a.evalValue(arg, cursor, resolve)
+			v, ok := a.evalValue(arg, cursor, context)
 			if !ok {
 				return product.Value{}, false
 			}
@@ -313,18 +340,35 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, resolve CellResu
 		}
 		return out, true
 	case valueCellResult:
-		if resolve == nil {
+		if context.CellResult == nil {
 			return product.Value{}, false
 		}
 		args := make([]product.Value, len(n.args))
 		for i, arg := range n.args {
-			v, ok := a.evalValue(arg, cursor, resolve)
+			v, ok := a.evalValue(arg, cursor, context)
 			if !ok {
 				return product.Value{}, false
 			}
 			args[i] = v
 		}
-		return resolve(n.cell, args)
+		return context.CellResult(n.cell, args)
+	case valueDynamicRead:
+		if context.DynamicRead == nil || len(n.args) != 2 {
+			return product.Value{}, false
+		}
+		table, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		key, ok := a.evalValue(n.args[1], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		tablePath, ok := a.evalPath(n.path, cursor)
+		if !ok {
+			return product.Value{}, false
+		}
+		return context.DynamicRead(tablePath, table, key)
 	default:
 		return product.Value{}, false
 	}
@@ -367,6 +411,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 			parts[i] = a.canonicalValue(x)
 		}
 		return fmt.Sprintf("c%d.%d(%s)", n.cell.Function, n.cell.Slot, strings.Join(parts, ","))
+	case valueDynamicRead:
+		return "d(" + a.canonicalValue(n.args[0]) + "," + a.canonicalPath(n.path) + "," + a.canonicalValue(n.args[1]) + ")"
 	default:
 		return "_"
 	}
@@ -384,6 +430,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 	if n.op == valueRoot && !shape.validate(n.root) {
 		return false
 	}
+	if n.op == valueDynamicRead && (len(n.args) != 2 || !a.validPath(n.path, shape)) {
+		return false
+	}
 	if n.op == valueInvalid {
 		return false
 	}
@@ -393,6 +442,18 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		}
 	}
 	return true
+}
+
+func (a *Arena) canonicalPath(term PathTerm) string {
+	if term == 0 || int(term) >= len(a.paths) {
+		return "_"
+	}
+	n := a.paths[term]
+	return fmt.Sprintf("p%d.%d:%v", n.root.Kind, n.root.Index, n.segments)
+}
+
+func (a *Arena) validPath(term PathTerm, shape Shape) bool {
+	return term != 0 && int(term) < len(a.paths) && shape.validate(a.paths[term].root)
 }
 
 func (a *Arena) validGuard(guard Guard, shape Shape) bool {

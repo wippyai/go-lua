@@ -90,6 +90,12 @@ func (obligationHandler) Apply(reg *axis.Registry, out *summary.Summary, slot ui
 // the existing Summary representation. False means the caller must run the
 // contextual solver; out is guaranteed zero on failure.
 func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegistry, resolve CellResultResolver) (out summary.Summary, ok bool) {
+	return r.SpecializeWithContext(cursor, descriptors, SpecializationContext{CellResult: resolve})
+}
+
+// SpecializeWithContext is the inactive full specialization seam for value
+// terms that require caller-owned concrete read semantics.
+func (r Relation) SpecializeWithContext(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext) (out summary.Summary, ok bool) {
 	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
 		return summary.Summary{}, false
 	}
@@ -100,7 +106,7 @@ func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegist
 	var accumulated summary.Summary
 	have := false
 	for _, row := range r.rows {
-		feasible, valid := r.arena.evalGuard(row.Guard, cursor, resolve)
+		feasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
 		if !valid {
 			return summary.Summary{}, false
 		}
@@ -116,7 +122,7 @@ func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegist
 			if row.Guard != r.arena.True() && !handler.ConditionalAllowed() {
 				return summary.Summary{}, false
 			}
-			value, valid := r.arena.evalValue(operation.Value, cursor, resolve)
+			value, valid := r.arena.evalValue(operation.Value, cursor, context)
 			if !valid {
 				return summary.Summary{}, false
 			}
@@ -137,7 +143,7 @@ func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegist
 	return summary.NormalizeOwned(reg, accumulated), true
 }
 
-func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, resolve CellResultResolver) (bool, bool) {
+func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, context SpecializationContext) (bool, bool) {
 	if guard == 0 || int(guard) >= len(a.guards) || a.reg == nil {
 		return false, false
 	}
@@ -148,7 +154,7 @@ func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, resolve CellResultR
 	case guardFalse:
 		return false, true
 	case guardTruthy, guardFalsy:
-		value, ok := a.evalValue(n.value, cursor, resolve)
+		value, ok := a.evalValue(n.value, cursor, context)
 		if !ok {
 			return false, false
 		}
@@ -158,7 +164,7 @@ func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, resolve CellResultR
 		return valueref.CanBeFalsy(a.reg, value), true
 	case guardAnd:
 		for _, arg := range n.args {
-			holds, ok := a.evalGuard(arg, cursor, resolve)
+			holds, ok := a.evalGuard(arg, cursor, context)
 			if !ok {
 				return false, false
 			}
@@ -169,7 +175,7 @@ func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, resolve CellResultR
 		return true, true
 	case guardOr:
 		for _, arg := range n.args {
-			holds, ok := a.evalGuard(arg, cursor, resolve)
+			holds, ok := a.evalGuard(arg, cursor, context)
 			if !ok {
 				return false, false
 			}
