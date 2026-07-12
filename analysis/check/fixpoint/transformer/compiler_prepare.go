@@ -229,28 +229,32 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 			rowCtx.genericBindings = row.genericBindings
 			rowCtx.rowEffects = &row.Effects
 			rowCtx.rowOutput = &row.Output
-			row.paramPreserved.observeFact(rowCtx, point, cell.Kind())
+			directTarget, isDirect := DirectCallTarget{}, false
+			if cell.Kind() == operationplan.CallSite && direct != nil {
+				directTarget, isDirect = direct.Lookup(point)
+			}
+			if !isDirect {
+				row.paramPreserved.observeFact(rowCtx, point, cell.Kind())
+			}
 			if err := handler.Preflight(rowCtx, point); err != nil {
 				return nil, fmt.Errorf("%s: %w", cell.Kind(), err)
 			}
-			if cell.Kind() == operationplan.CallSite && direct != nil {
-				if target, isDirect := direct.Lookup(point); isDirect {
-					callee, found := view.Lookup(target.Cell)
-					if !found || callee.ContextualReason() != "" || callee.Widened() || callee.Rows() == 0 || callee.Shape() != target.Shape {
-						return nil, fmt.Errorf("direct call: dependency %v is unresolved, widened, contextual, or foreign-shaped", target.Cell)
-					}
-					site, _ := rowCtx.facts.CallSiteView(point)
-					bindings, err := exactDirectCallBindings(rowCtx, target.Shape, site)
-					if err != nil {
-						return nil, fmt.Errorf("direct call: %w", err)
-					}
-					composed, err := ComposeDirectCallRows(p.builder, p.shape, row, callee, bindings, site, 256)
-					if err != nil {
-						return nil, err
-					}
-					next = append(next, composed...)
-					continue
+			if isDirect {
+				callee, found := view.Lookup(directTarget.Cell)
+				if !found || callee.ContextualReason() != "" || callee.Widened() || callee.Rows() == 0 || callee.Shape() != directTarget.Shape {
+					return nil, fmt.Errorf("direct call: dependency %v is unresolved, widened, contextual, or foreign-shaped", directTarget.Cell)
 				}
+				site, _ := rowCtx.facts.CallSiteView(point)
+				bindings, err := exactDirectCallBindings(rowCtx, directTarget.Shape, site)
+				if err != nil {
+					return nil, fmt.Errorf("direct call: %w", err)
+				}
+				composed, err := ComposeDirectCallRows(p.builder, p.shape, row, callee, bindings, site, 256)
+				if err != nil {
+					return nil, err
+				}
+				next = append(next, composed...)
+				continue
 			}
 			if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
 				return nil, fmt.Errorf("%s: %w", cell.Kind(), err)

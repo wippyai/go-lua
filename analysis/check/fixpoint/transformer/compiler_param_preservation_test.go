@@ -14,6 +14,72 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.T) {
+	reg := standard.Registry()
+	calleeShape := Shape{Params: 1}
+	calleePlan := operationplan.New(cfg.New(), factflow.FactsInput{})
+	certificate, err := CertifyPlan(calleePlan, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calleeBuilder := NewBuilder(reg, calleeShape, pathRefinementCapabilities(t), calleePlan)
+	calleeRoot := Root{Kind: RootParam, Index: 0}
+	callee, err := calleeBuilder.Build(certificate, []Row{{
+		Guard:           calleeBuilder.Arena().True(),
+		Ops:             []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: calleeBuilder.Arena().Constant(typevalue.LiteralString(reg, "done"))}},
+		PathRefinements: []PathRefinementTerm{{Path: calleeBuilder.Arena().Path(calleeRoot), Value: calleeBuilder.Arena().Root(calleeRoot)}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	param, result := symbol.ID(8301), symbol.ID(8302)
+	scalar, _ := factflow.NewValueSourceShape(true, false, false, false)
+	argument, _ := factflow.NewPathValueSource(pathdom.NewPath(param, "p").Key(), 0, 0, 0, scalar)
+	returned, _ := factflow.NewPathValueSource(pathdom.NewPath(result, "result").Key(), 0, 0, 0, scalar)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		Point: call, HasPoint: true, Final: true, Expanded: true,
+		ArgumentSources: []factflow.ValueSource{argument},
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result, pathdom.NewPath(result, "result")),
+		},
+	})
+	plan := operationplan.New(graph, factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{call: site},
+		Returns:   map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{returned})},
+	}).WithBoundaryParams([]symbol.ID{param})
+	prepared, err := NewPlanCompiler().Prepare(reg, graph, plan, Shape{Params: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calleeRef := CellRef{Function: 8303}
+	catalog, err := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{call: {Cell: calleeRef, Shape: calleeShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := RelationView{values: map[CellRef]Relation{calleeRef: callee}, allowed: map[CellRef]struct{}{calleeRef: {}}}
+	caller := prepared.EvaluateDirect(view, catalog)
+	if caller.ContextualReason() != "" || caller.Widened() || caller.Rows() != 1 {
+		t.Fatalf("forwarded chain relation = reason %q widened %v rows %d", caller.ContextualReason(), caller.Widened(), caller.Rows())
+	}
+	argumentValue := typevalue.LiteralString(reg, "boundary")
+	cursor, _ := NewBindingCursor(Shape{Params: 1}, []product.Value{argumentValue}, []pathdom.Path{pathdom.NewPlaceholder(0)})
+	got, exact := caller.Specialize(cursor, nil, nil)
+	if !exact || len(got.NormalReturnFacts.PathRefinements) != 1 {
+		t.Fatalf("forwarded chain specialization exact/refinements = %v/%#v", exact, got.NormalReturnFacts.PathRefinements)
+	}
+	refinement := got.NormalReturnFacts.PathRefinements[0]
+	if !refinement.Path.Equal(pathdom.NewPlaceholder(0)) || !product.Equal(reg, refinement.Value, argumentValue) {
+		t.Fatalf("forwarded chain refinement = %#v", refinement)
+	}
+}
+
 func TestPlanCompilerEmitsCertifiedUnchangedParameterRoot(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

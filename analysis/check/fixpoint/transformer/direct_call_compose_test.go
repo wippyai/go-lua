@@ -151,3 +151,93 @@ func TestComposeDirectCallRowsFailsClosedWithoutCallerBoundaryProofPath(t *testi
 		t.Fatalf("non-boundary proof path composed: rows=%#v err=%v", rows, err)
 	}
 }
+
+func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
+	reg := standard.Registry()
+	calleeShape := Shape{Params: 1}
+	calleeArena := NewArena(reg)
+	calleeParamRoot := Root{Kind: RootParam, Index: 0}
+	calleeParam := calleeArena.Root(calleeParamRoot)
+	row := Row{
+		Guard:           calleeArena.True(),
+		Output:          summary.Summary{NormalReturnParams: []product.Value{product.Top()}},
+		Ops:             []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: calleeParam}},
+		PathRefinements: []PathRefinementTerm{{Path: calleeArena.Path(calleeParamRoot), Value: calleeParam}},
+	}
+	newRelation := func(row Row) Relation {
+		return Relation{shape: calleeShape, arena: calleeArena, effects: NewEffectArena(calleeArena), descriptors: DefaultDescriptorRegistry(), rows: []Row{row}}
+	}
+	callerShape := Shape{Params: 2}
+	plan := operationplan.New(cfg.New(), factflow.FactsInput{})
+	caller := NewBuilder(reg, callerShape, DefaultOutputCapabilityRegistry(), plan)
+	callerRoot0 := Root{Kind: RootParam, Index: 0}
+	callerRoot1 := Root{Kind: RootParam, Index: 1}
+	target := symbol.ID(61)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{Final: true, Expanded: true, ResultTargets: []factflow.CallResultTarget{
+		factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, pathdom.NewPath(target, "result")),
+	}}).View()
+	initial := func() SymbolicCFGRow {
+		return SymbolicCFGRow{Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{}, paramPreserved: newParamPreservationLedger(2)}
+	}
+
+	t.Run("forwarded-root", func(t *testing.T) {
+		rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), DirectCallBindings{
+			Values: []ValueTerm{caller.Arena().Root(callerRoot1)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)},
+		}, site, 4)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("forwarded parameter composition = %#v/%v", rows, err)
+		}
+		if !rows[0].paramPreserved.preserves(0) || !rows[0].paramPreserved.preserves(1) {
+			t.Fatalf("forwarded parameter lost preservation ledger: %#v", rows[0].paramPreserved)
+		}
+		// Composition may retain a proof but must never resurrect one that an
+		// earlier caller operation already invalidated.
+		before := initial()
+		before.paramPreserved.invalidate(1)
+		rows, err = ComposeDirectCallRows(caller, callerShape, before, newRelation(row), DirectCallBindings{
+			Values: []ValueTerm{caller.Arena().Root(callerRoot1)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)},
+		}, site, 4)
+		if err != nil || rows[0].paramPreserved.preserves(1) {
+			t.Fatalf("forwarded parameter resurrected invalidation: %#v/%v", rows, err)
+		}
+	})
+
+	t.Run("literal-has-no-caller-boundary", func(t *testing.T) {
+		literal := caller.Arena().Constant(typevalue.LiteralString(reg, "local"))
+		rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), DirectCallBindings{
+			Values: []ValueTerm{literal}, Paths: []PathTerm{0},
+		}, site, 4)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("root-free refinement was not consumed: %#v/%v", rows, err)
+		}
+		if !rows[0].paramPreserved.preserves(0) || !rows[0].paramPreserved.preserves(1) {
+			t.Fatalf("literal argument invalidated unrelated caller parameters: %#v", rows[0].paramPreserved)
+		}
+	})
+
+	t.Run("non-identity-boundary-fails-closed", func(t *testing.T) {
+		tests := []DirectCallBindings{
+			{Values: []ValueTerm{caller.Arena().Root(callerRoot0)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)}},
+			{Values: []ValueTerm{caller.Arena().Root(callerRoot0)}, Paths: []PathTerm{0}},
+		}
+		for _, bindings := range tests {
+			if rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), bindings, site, 4); err == nil || len(rows) != 0 {
+				t.Fatalf("non-identity boundary refinement composed: %#v/%v", rows, err)
+			}
+		}
+	})
+
+	t.Run("uncertified-mutation-invalidates-forwarded-root", func(t *testing.T) {
+		mutated := row
+		mutated.PathRefinements = nil
+		rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(mutated), DirectCallBindings{
+			Values: []ValueTerm{caller.Arena().Root(callerRoot1)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)},
+		}, site, 4)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("uncertified direct call did not compose conservatively: %#v/%v", rows, err)
+		}
+		if !rows[0].paramPreserved.preserves(0) || rows[0].paramPreserved.preserves(1) {
+			t.Fatalf("uncertified callee did not invalidate only its forwarded root: %#v", rows[0].paramPreserved)
+		}
+	})
+}

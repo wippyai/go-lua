@@ -105,8 +105,9 @@ func exactDirectCallTargets(site factflow.CallSiteView) ([]directCallTarget, err
 }
 
 func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, row Row, targets []directCallTarget) (SymbolicCFGRow, error) {
-	if len(row.PathRefinements) != 0 {
-		return SymbolicCFGRow{}, fmt.Errorf("symbolic path refinements require contextual state application")
+	paramPreserved, err := rebaseDirectCallParamRefinements(builder.arena, callee.arena, callerShape, caller.paramPreserved, callee.shape, bindings, row.PathRefinements)
+	if err != nil {
+		return SymbolicCFGRow{}, err
 	}
 	if err := validateDirectCallStructuredOutput(callee.arena.reg, row.Output, callee.shape); err != nil {
 		return SymbolicCFGRow{}, err
@@ -138,6 +139,7 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		return SymbolicCFGRow{}, err
 	}
 	next := cloneCFGRow(caller)
+	next.paramPreserved = paramPreserved
 	next.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[0])
 	returns := make(map[uint32]ValueTerm, len(row.Ops))
 	for i, op := range row.Ops {
@@ -192,6 +194,140 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		next.Output.MaySuspend = true
 	}
 	return next, nil
+}
+
+// rebaseDirectCallParamRefinements transfers the callee's root-identity proof
+// into the caller's row-local preservation ledger. A proof is addressable in
+// the caller only when both bindings name the same root-only caller parameter.
+// Value-only terms with no boundary-root dependency cannot designate caller
+// state, so their callee-local proof is deliberately consumed. Every other
+// mapping is ambiguous and fails closed rather than silently dropping a fact.
+func rebaseDirectCallParamRefinements(arena, calleeArena *Arena, callerShape Shape, caller paramPreservationLedger, calleeShape Shape, bindings TermRootBindings, refinements []PathRefinementTerm) (paramPreservationLedger, error) {
+	if arena == nil || calleeArena == nil || bindings.callee != calleeShape || bindings.caller != callerShape {
+		return paramPreservationLedger{}, fmt.Errorf("symbolic path refinements have foreign root bindings")
+	}
+	for index, refinement := range refinements {
+		if !refinement.validPreservedParamRoot(calleeArena, calleeShape) {
+			// The relation builder already enforces this invariant. Keep the
+			// composition boundary independently fail-closed for forged relations.
+			return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d is not a preserved parameter root", index)
+		}
+		root := calleeArena.paths[refinement.Path].root
+		for prior := 0; prior < index; prior++ {
+			if calleeArena.paths[refinements[prior].Path].root == root {
+				return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d duplicates parameter %d", index, root.Index)
+			}
+		}
+	}
+
+	next := caller.clone()
+	for index := uint32(0); index < calleeShape.Params; index++ {
+		root := Root{Kind: RootParam, Index: index}
+		value := bindings.value(root)
+		path := bindings.path(root)
+		preserved := false
+		for _, refinement := range refinements {
+			if calleeArena.paths[refinement.Path].root.Index == index {
+				preserved = true
+				break
+			}
+		}
+		callerParam, exact := callerParamIdentityBinding(arena, callerShape, value, path)
+		if exact {
+			if !preserved {
+				next.invalidate(callerParam)
+			}
+			continue
+		}
+		addressable, params, valid := callerBoundaryDependencies(arena, callerShape, value, path)
+		if !valid {
+			return paramPreservationLedger{}, fmt.Errorf("symbolic parameter %d has malformed caller bindings", index)
+		}
+		if preserved {
+			if addressable {
+				return paramPreservationLedger{}, fmt.Errorf("symbolic parameter %d does not map to one caller parameter identity", index)
+			}
+			// A constant or other root-free term with no PathTerm has no caller
+			// boundary location to refine. Its callee-local proof is consumed.
+			continue
+		}
+		// Without a callee preservation proof, every caller parameter that
+		// contributes to the argument loses its must-preservation bit. This is
+		// conservative for descendants and computed arguments while still
+		// allowing exact direct composition of their return values.
+		for _, param := range params {
+			next.invalidate(param)
+		}
+	}
+	return next, nil
+}
+
+func callerParamIdentityBinding(arena *Arena, shape Shape, value ValueTerm, path PathTerm) (uint32, bool) {
+	if arena == nil || value == 0 || path == 0 || int(value) >= len(arena.values) || int(path) >= len(arena.paths) {
+		return 0, false
+	}
+	v := arena.values[value]
+	p := arena.paths[path]
+	if v.op != valueRoot || v.root.Kind != RootParam || !shape.validate(v.root) ||
+		p.root != v.root || len(p.segments) != 0 {
+		return 0, false
+	}
+	return v.root.Index, true
+}
+
+func callerBoundaryDependencies(arena *Arena, shape Shape, value ValueTerm, path PathTerm) (bool, []uint32, bool) {
+	var params []uint32
+	if arena == nil || value == 0 || int(value) >= len(arena.values) {
+		return false, nil, false
+	}
+	if path != 0 {
+		if int(path) >= len(arena.paths) || !arena.validPath(path, shape) {
+			return false, nil, false
+		}
+		if root := arena.paths[path].root; root.Kind == RootParam {
+			params = append(params, root.Index)
+		}
+	}
+	addressable := path != 0
+	var visit func(ValueTerm) bool
+	visit = func(term ValueTerm) bool {
+		if term == 0 || int(term) >= len(arena.values) {
+			return false
+		}
+		node := arena.values[term]
+		if node.op == valueRoot {
+			if !shape.validate(node.root) {
+				return false
+			}
+			addressable = true
+			if node.root.Kind == RootParam {
+				seen := false
+				for _, param := range params {
+					if param == node.root.Index {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					params = append(params, node.root.Index)
+				}
+			}
+			return true
+		}
+		for _, arg := range node.args {
+			// Arena construction is append-only: every valid DAG edge points to
+			// an older term. Checking that order makes the walk cycle-safe without
+			// allocating a visited map on every direct call.
+			if arg >= term || !visit(arg) {
+				return false
+			}
+		}
+		return true
+	}
+	if !visit(value) {
+		return false, nil, false
+	}
+	return addressable, params, true
 }
 
 func validateDirectCallStructuredOutput(reg *axis.Registry, out summary.Summary, shape Shape) error {
