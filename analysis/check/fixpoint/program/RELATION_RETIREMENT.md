@@ -160,10 +160,16 @@ identities.
 
 ### 7. Replace materialization with evaluated-root projection
 
-Make guarded observation/evidence terms part of the atomic relation row and
-project diagnostics, read models and summaries directly from the frozen
-evaluated-root snapshot. Delete discovered-context solves, retained handoff and
-final concrete body replay.
+Compile guarded observation/evidence terms into a separate annotation
+semilattice attached to canonical semantic rows. Observation payload is not
+part of semantic row equality, widening, or call-SCC convergence: equivalent
+semantic rows explicitly union their guarded annotations. After semantic SCC
+stabilization, run one deterministic, finite observation closure and project
+diagnostics, read models and summaries from the frozen evaluated-root snapshot.
+Semantic rows and their annotation sidecar publish atomically, but they do not
+share convergence identity. Recursive provenance must be SCC-normalized; an
+unbounded dynamic call-stack hash is forbidden. Delete discovered-context
+solves, retained handoff and final concrete body replay.
 
 In `materialization_cache.go`, delete `materializedSolveCache`,
 `trackingSummaryReader`, dependency-universe comparison, retained-handoff state

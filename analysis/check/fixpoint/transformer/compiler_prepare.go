@@ -316,11 +316,10 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 			if !present {
 				return nil, fmt.Errorf("observation: assignment target %d has no symbolic value", assignment.TargetSymbol())
 			}
-			anchor := factflow.ExprRef(0)
-			if source := assignment.Source(); source.HasExpr {
-				anchor = source.ExprRef
+			anchor, durable := p.plan.AssignmentObservationAnchor(point)
+			if durable {
+				rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationAssignment, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: assignment.TargetSymbol(), Actual: value})
 			}
-			rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{Kind: ObservationAssignment, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: assignment.TargetSymbol(), Actual: value})
 		}
 		if site, ok := p.plan.Facts().CallSiteView(point); ok && !p.cyclic {
 			for targetIndex := 0; targetIndex < site.ResultTargetCount(); targetIndex++ {
@@ -335,8 +334,10 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 					// exact dormant relation; whole-owner admission remains false.
 					continue
 				}
-				anchor, _ := site.Expr()
-				rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{Kind: ObservationCallResult, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: target.TargetSymbol(), Actual: value})
+				anchor, durable := p.plan.CallResultObservationAnchor(point, uint32(targetIndex))
+				if durable {
+					rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationCallResult, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: target.TargetSymbol(), Slot: uint32(targetIndex), Actual: value})
+				}
 			}
 		}
 	}

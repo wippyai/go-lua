@@ -18,6 +18,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | Send safety DTO | `readmodel.SendSafetySchemaVersion` | v1 | Public solved send-safety report including identity and ownership proof fields. | A field or identity/ownership meaning changes. |
 | Placement plan | `placementplan.SchemaVersion` | v1 | Compiler/service placement plan and entry shapes, including allocation identities. | A plan/entry field or identity/placement meaning changes. |
 | Artifact debug map | `service.DebugMapSchemaVersion` | v2 | `BodyDebugMap`, `DebugMapEntry`, phase vocabulary, canonical entry encoding, and `StaticArtifactID` DTO form. | A debug-map/anchor/local field, phase label, canonical encoding, or static-artifact ID component changes. |
+| Observation artifact | `observationartifact.SchemaVersion` | v1 | Stable lexical owner, lowering-owned debug occurrence projected through `SHA-256(StaticArtifactID.String())`, invocation provenance, sealed semantic/axis universe, and canonical value-codec envelope. | An occurrence/record field, identity domain, universe component, canonical encoding, or value-codec contract changes. |
 
 ## Bump Discipline
 
@@ -34,6 +35,15 @@ surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
 
 ## Journal
+
+- D25: Registered the dormant v1 symbolic-observation artifact envelope. The
+  transformer carries only stable lexical ownership plus lowering-owned
+  `wir.DebugPointID`; service projection must supply
+  `SHA-256(StaticArtifactID.String())`, so no second source-map authority is
+  created. Publication remains disabled: service still needs a proven stable
+  lexical-owner-to-static-artifact mapping, and recursive invocation evidence
+  needs a finite SCC-normalized annotation closure outside semantic row
+  equality before whole-owner observation coverage may become true.
 
 - D24: Allocation identities now use stable lexical-body and caller-site
   namespaces rather than process-local CFG counters. Bumped identity-bearing

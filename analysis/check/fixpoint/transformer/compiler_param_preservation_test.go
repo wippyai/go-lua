@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -28,7 +29,7 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 		Guard:           calleeBuilder.Arena().True(),
 		Ops:             []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: calleeBuilder.Arena().Constant(typevalue.LiteralString(reg, "done"))}},
 		PathRefinements: []PathRefinementTerm{{Path: calleeBuilder.Arena().Path(calleeRoot), Value: calleeBuilder.Arena().Root(calleeRoot)}},
-		Observations:    []ObservationTerm{{Kind: ObservationAssignment, Point: 0, Guard: calleeBuilder.Arena().True(), Symbol: 9001, Actual: calleeBuilder.Arena().Root(calleeRoot)}},
+		Observations:    []ObservationTerm{{BodyOwner: testObservationBody(3), Kind: ObservationAssignment, Point: 0, Anchor: testObservationAnchor(ObservationAssignment, 1, 0), Guard: calleeBuilder.Arena().True(), Symbol: 9001, Actual: calleeBuilder.Arena().Root(calleeRoot)}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -52,10 +53,14 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result, pathdom.NewPath(result, "result")),
 		},
 	})
+	lowered := wir.NewBody("caller")
+	start := lowered.Emit(wir.Instruction{Op: wir.OpCall})
+	lowered.SetPointRange(call, start, start+1)
+	lowered.AssignDebugPointOrdinals(graph)
 	plan := operationplan.New(graph, factflow.FactsInput{
 		CallSites: map[cfg.Point]factflow.CallSite{call: site},
 		Returns:   map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{returned})},
-	}).WithBoundaryParams([]symbol.ID{param})
+	}).WithObservationIdentity(testObservationBody(4), lowered).WithBoundaryParams([]symbol.ID{param})
 	prepared, err := NewPlanCompiler().Prepare(reg, graph, plan, Shape{Params: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +87,8 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 	}
 	var assignmentSeen, callResultSeen bool
 	for _, item := range items {
-		assignmentSeen = assignmentSeen || item.Kind == ObservationAssignment && item.Symbol == 9001 && product.Equal(reg, item.Actual, argumentValue)
-		callResultSeen = callResultSeen || item.Kind == ObservationCallResult && item.Point == call && item.Symbol == result && product.Equal(reg, item.Actual, typevalue.LiteralString(reg, "done"))
+		assignmentSeen = assignmentSeen || item.Kind == ObservationAssignment && product.Equal(reg, item.Actual, argumentValue)
+		callResultSeen = callResultSeen || item.Kind == ObservationCallResult && product.Equal(reg, item.Actual, typevalue.LiteralString(reg, "done"))
 	}
 	if !assignmentSeen || !callResultSeen {
 		t.Fatalf("direct observation projection = %#v", items)

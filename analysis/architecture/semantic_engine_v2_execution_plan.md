@@ -27,7 +27,7 @@ check/service         sole host/session/invalidation/publication/query boundary
 artifact/{key,codec,cas} generic typed storage only
 ```
 
-`semantic/program` owns regions, blocks, WTO nodes, widen/narrow policy, transactions, mixed routes, resources, outcomes and observation slots. Neither backend nor `check` defines another region model.
+`semantic/program` owns regions, blocks, WTO nodes, widen/narrow policy, transactions, mixed routes, resources, outcomes and observation slots. Observation terms form a guarded annotation sidecar: they publish atomically with semantic cells but never participate in semantic row equality, widening or SCC convergence. Neither backend nor `check` defines another region model.
 
 ## 3. Exact inventories, universes and runtime ABI
 
@@ -101,7 +101,11 @@ Nested schedule:
 5. after product stabilization, joint narrowing uses stabilized predecessors;
 6. growth during narrowing discards that round and restarts from the widened outer solution.
 
-Checkpoint reuse requires a later equivalence proof. Application/provenance guards flow through stabilized observations and current versioned presentation dedup.
+Checkpoint reuse requires a later equivalence proof. After semantic stabilization,
+a separate finite observation closure unions guarded annotations for equivalent
+semantic rows and performs SCC-normalized recursive provenance. Dynamic
+call-stack hashes must not grow the observer state without bound. Current
+versioned presentation dedup consumes that stabilized observer sidecar.
 
 ## 8. Checker projection seam: products, not engine policy
 

@@ -223,6 +223,7 @@ func (c *checker) prepare(
 	})
 	boundaryCaptures := symbolicBoundaryCaptureSymbols(wirBody, bindings.DirectCaptures(fn))
 	operationPlan := lowered.Plan.
+		WithObservationIdentity(lexicalBodyID, wirBody).
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
 		WithBoundaryParamContracts(materializeDeclaredParamTypeValues(config.Registry, typevalue.NewCache(), typeResolver, fn)).
 		WithBoundaryCaptures(boundaryCaptures).

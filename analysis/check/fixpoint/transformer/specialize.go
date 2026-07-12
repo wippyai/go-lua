@@ -12,6 +12,7 @@ import (
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // DescriptorHandler lowers one executable operation into the existing Summary
@@ -175,7 +176,10 @@ func (r Relation) specializedObservations(cursor BindingCursor, context Speciali
 			if !valid {
 				return ObservationProjection{}, false
 			}
-			item := Observation{Owner: term.Owner, Route: term.Route, Kind: term.Kind, Point: term.Point, Anchor: term.Anchor, Symbol: term.Symbol, Slot: term.Slot, Actual: actual}
+			if term.BodyOwner == (lexicalidentity.StableLexicalBodyID{}) || !term.Anchor.Valid() {
+				return ObservationProjection{}, false
+			}
+			item := Observation{Owner: term.BodyOwner, Invocation: term.Route, Kind: term.Kind, Anchor: term.Anchor, Slot: term.Slot, Actual: actual}
 			if term.Expected != 0 {
 				item.Expected, valid = r.arena.evalValue(term.Expected, cursor, context)
 				if !valid {

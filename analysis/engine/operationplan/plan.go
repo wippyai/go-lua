@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -168,6 +169,8 @@ type Plan struct {
 	signatureAllocationOrdinals  []uint32
 	signatureAllocationOwners    []uint64
 	signatureAllocationTemplates []signature.ReturnAllocationTemplate
+	observationBody              lexicalidentity.StableLexicalBodyID
+	observationPoints            []observationPoint
 }
 
 // New creates the only immutable Facts snapshot for input and indexes all

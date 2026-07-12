@@ -154,14 +154,17 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 	next.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[0])
 	if len(callee.paramContracts) == int(callee.shape.Params) {
 		point, hasPoint := site.Point()
-		anchor, _ := site.Expr()
 		if !hasPoint {
 			return SymbolicCFGRow{}, fmt.Errorf("call observation has no source point")
 		}
 		for slot := uint32(0); slot < callee.shape.Params; slot++ {
+			anchor, durable := builder.plan.CallArgumentObservationAnchor(point, slot)
+			if !durable {
+				continue
+			}
 			actual := bindings.value(Root{Kind: RootParam, Index: slot})
 			expected := builder.arena.Constant(callee.paramContracts[slot])
-			next.Observations = recordObservationTerm(next.Observations, ObservationTerm{Kind: ObservationCallArgument, Point: point, Anchor: anchor, Guard: caller.Guard, Slot: slot, Actual: actual, Expected: expected})
+			next.Observations = recordObservationTerm(next.Observations, ObservationTerm{BodyOwner: builder.plan.ObservationBody(), Kind: ObservationCallArgument, Point: point, Anchor: anchor, Guard: caller.Guard, Slot: slot, Actual: actual, Expected: expected})
 		}
 	}
 	returns := make(map[uint32]ValueTerm, len(row.Ops))
@@ -204,7 +207,18 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 	for i, observation := range row.Observations {
 		rebased := observation
 		point, _ := site.Point()
-		rebased = routeObservationTerm(rebased, point)
+		callAnchor, durable := builder.plan.CallInvocationObservationAnchor(point)
+		if !durable {
+			// Observation authority is independently hard-false. A plan without a
+			// lowering/debug identity may still compose exact semantic rows; it
+			// simply cannot publish the callee's diagnostic annotation.
+			continue
+		}
+		var routed bool
+		rebased, routed = routeObservationTerm(rebased, builder.plan.ObservationBody(), callAnchor)
+		if !routed {
+			return SymbolicCFGRow{}, fmt.Errorf("direct-call observation route is not durable")
+		}
 		rebased.Actual = rebasedTerms.Values[observationValueAt[i]]
 		if observation.Expected != 0 {
 			rebased.Expected = rebasedTerms.Values[observationValueAt[i]+1]
