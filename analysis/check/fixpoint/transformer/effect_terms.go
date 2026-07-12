@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // EffectTerm is a structured symbolic state transaction. It is deliberately
@@ -124,11 +125,11 @@ type effectNode struct {
 type EffectArena struct {
 	terms *Arena
 	nodes []effectNode
-	keys  map[string][]EffectTerm
+	keys  map[uint64][]EffectTerm
 }
 
 func NewEffectArena(terms *Arena) *EffectArena {
-	return &EffectArena{terms: terms, nodes: []effectNode{{}}, keys: make(map[string][]EffectTerm)}
+	return &EffectArena{terms: terms, nodes: []effectNode{{}}, keys: make(map[uint64][]EffectTerm)}
 }
 
 func (a *EffectArena) Terms() *Arena { return a.terms }
@@ -274,7 +275,7 @@ func (a *EffectArena) intern(node effectNode) EffectTerm {
 	if a == nil || a.terms == nil {
 		return 0
 	}
-	key := a.canonical(node)
+	key := a.terms.maskFingerprint(effectFingerprint(node))
 	for _, term := range a.keys[key] {
 		if effectNodeEqual(a.nodes[term], node) {
 			return term
@@ -284,6 +285,47 @@ func (a *EffectArena) intern(node effectNode) EffectTerm {
 	a.nodes = append(a.nodes, node)
 	a.keys[key] = append(a.keys[key], term)
 	return term
+}
+
+func effectFingerprint(node effectNode) uint64 {
+	h := internalhash.MixHash(termFingerprintSeed, 0x656666656374)
+	h = internalhash.MixHash(h, uint64(node.kind))
+	h = hashEffectTarget(h, node.invalidation.Target)
+	h = internalhash.MixHash(h, uint64(node.invalidation.Scope))
+	if node.invalidation.PreserveStructuralWitness {
+		h = internalhash.MixHash(h, 1)
+	}
+	if node.invalidation.PreserveDynamicValueMemberships {
+		h = internalhash.MixHash(h, 2)
+	}
+	if precise := node.invalidation.Precise; precise != nil {
+		h = internalhash.MixHash(h, 3)
+		h = internalhash.MixHash(h, uint64(precise.Table))
+		h = internalhash.MixHash(h, uint64(precise.Key))
+		h = internalhash.MixHash(h, uint64(len(precise.Suffix)))
+		for _, suffix := range precise.Suffix {
+			h = hashSegment(h, suffix)
+		}
+	}
+	h = hashEffectTarget(h, node.table)
+	h = internalhash.MixHash(h, uint64(node.key))
+	h = internalhash.MixHash(h, uint64(node.value))
+	h = internalhash.MixHash(h, uint64(node.keyPath))
+	h = internalhash.MixHash(h, uint64(node.valuePath))
+	h = internalhash.MixHash(h, uint64(node.admission))
+	h = internalhash.MixHash(h, uint64(node.readback))
+	if node.appendMode {
+		h = internalhash.MixHash(h, 4)
+	}
+	h = internalhash.MixHash(h, node.site.Owner)
+	h = internalhash.MixHash(h, uint64(node.site.Ordinal))
+	return internalhash.MixHash(h, uint64(node.allocation))
+}
+
+func hashEffectTarget(h uint64, target EffectTargetTerm) uint64 {
+	h = internalhash.MixHash(h, uint64(target.kind))
+	h = internalhash.MixHash(h, uint64(target.path))
+	return internalhash.MixHash(h, uint64(target.allocation))
 }
 
 func (a *EffectArena) canonical(node effectNode) string {

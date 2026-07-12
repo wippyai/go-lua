@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -93,15 +94,18 @@ type Arena struct {
 	values         []valueNode
 	paths          []pathNode
 	guards         []guardNode
-	valueKeys      map[string][]ValueTerm
-	pathKeys       map[string][]PathTerm
-	guardKeys      map[string][]Guard
+	valueKeys      map[uint64][]ValueTerm
+	pathKeys       map[uint64][]PathTerm
+	guardKeys      map[uint64][]Guard
 	allocations    []allocationTemplateNode
-	allocationKeys map[string][]AllocationTemplateTerm
+	allocationKeys map[uint64][]AllocationTemplateTerm
+	// fingerprintMask is all ones in production. Tests may narrow it to force
+	// collisions and prove structural equality remains the sole authority.
+	fingerprintMask uint64
 }
 
 func NewArena(reg *axis.Registry) *Arena {
-	a := &Arena{reg: reg, values: []valueNode{{}}, paths: []pathNode{{}}, guards: []guardNode{{}}, allocations: []allocationTemplateNode{{}}, valueKeys: make(map[string][]ValueTerm), pathKeys: make(map[string][]PathTerm), guardKeys: make(map[string][]Guard), allocationKeys: make(map[string][]AllocationTemplateTerm)}
+	a := &Arena{reg: reg, values: []valueNode{{}}, paths: []pathNode{{}}, guards: []guardNode{{}}, allocations: []allocationTemplateNode{{}}, valueKeys: make(map[uint64][]ValueTerm), pathKeys: make(map[uint64][]PathTerm), guardKeys: make(map[uint64][]Guard), allocationKeys: make(map[uint64][]AllocationTemplateTerm), fingerprintMask: ^uint64(0)}
 	a.internGuard(guardNode{op: guardTrue})
 	a.internGuard(guardNode{op: guardFalse})
 	return a
@@ -340,7 +344,7 @@ func compactGuards(in []Guard) []Guard {
 }
 
 func (a *Arena) internValue(n valueNode) ValueTerm {
-	key := a.valueKey(n)
+	key := a.maskFingerprint(a.valueFingerprint(n))
 	for _, id := range a.valueKeys[key] {
 		if a.valueEqual(a.values[id], n) {
 			return id
@@ -353,7 +357,7 @@ func (a *Arena) internValue(n valueNode) ValueTerm {
 	return id
 }
 func (a *Arena) internPath(n pathNode) PathTerm {
-	key := fmt.Sprintf("%d:%d:%v", n.root.Kind, n.root.Index, n.segments)
+	key := a.maskFingerprint(pathFingerprint(n))
 	for _, id := range a.pathKeys[key] {
 		if pathNodeEqual(a.paths[id], n) {
 			return id
@@ -366,7 +370,7 @@ func (a *Arena) internPath(n pathNode) PathTerm {
 	return id
 }
 func (a *Arena) internGuard(n guardNode) Guard {
-	key := fmt.Sprintf("%d:%d:%v", n.op, n.value, n.args)
+	key := a.maskFingerprint(guardFingerprint(n))
 	for _, id := range a.guardKeys[key] {
 		if guardNodeEqual(a.guards[id], n) {
 			return id
@@ -379,42 +383,53 @@ func (a *Arena) internGuard(n guardNode) Guard {
 	return id
 }
 
-func (a *Arena) valueKey(n valueNode) string {
-	switch n.op {
-	case valueRoot:
-		return fmt.Sprintf("r:%d:%d", n.root.Kind, n.root.Index)
-	case valueConstant:
-		if a.reg == nil {
-			return "c:nil"
-		}
-		return "c:" + strconv.FormatUint(product.Hash(a.reg, n.value), 16)
-	case valueJoin:
-		return fmt.Sprintf("j:%v", n.args)
-	case valueRefinement:
-		if a.reg == nil {
-			return "m:nil"
-		}
-		return fmt.Sprintf("m:%d:%x", n.args[0], product.Hash(a.reg, n.value))
-	case valueCellResult:
-		return fmt.Sprintf("x:%d:%d:%v", n.cell.Function, n.cell.Slot, n.args)
-	case valueDynamicRead:
-		return fmt.Sprintf("d:%d:%d:%d", n.args[0], n.path, n.args[1])
-	case valueDynamicTableRead:
-		return fmt.Sprintf("dt:%d:%v", n.path, n.args)
-	case valueStringConcat:
-		return fmt.Sprintf("s:%d:%d", n.args[0], n.args[1])
-	case valueIteratorProjection:
-		if !n.hasAsserted {
-			return fmt.Sprintf("i:%d:%d:%d:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.args)
-		}
-		return fmt.Sprintf("i:%d:%d:%d:%x:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.assertedType.Hash(), n.args)
-	case valueStaticIndex:
-		return fmt.Sprintf("si:%d:%d", n.args[0], n.args[1])
-	case valueAllocationResult:
-		return fmt.Sprintf("a:%d:%d", n.allocation, n.resultIndex)
-	default:
-		return "invalid"
+func (a *Arena) maskFingerprint(fingerprint uint64) uint64 {
+	if a == nil {
+		return fingerprint
 	}
+	return fingerprint & a.fingerprintMask
+}
+
+func (a *Arena) valueFingerprint(n valueNode) uint64 {
+	h := internalhash.MixHash(termFingerprintSeed, uint64(n.op))
+	h = hashRoot(h, n.root)
+	h = internalhash.MixHash(h, n.cell.Function)
+	h = internalhash.MixHash(h, uint64(n.cell.Slot))
+	h = internalhash.MixHash(h, uint64(n.path))
+	h = internalhash.MixHash(h, uint64(n.iterator.Kind))
+	h = internalhash.MixHash(h, uint64(n.iterator.Source.Index))
+	h = internalhash.MixHash(h, uint64(int64(n.variableIndex)))
+	if n.hasAsserted {
+		h = internalhash.MixHash(h, 1)
+		h = internalhash.MixHash(h, typ.EqualityHash(n.assertedType))
+	}
+	h = internalhash.MixHash(h, uint64(n.allocation))
+	h = internalhash.MixHash(h, uint64(int64(n.resultIndex)))
+	h = hashValueTerms(h, n.args)
+	if (n.op == valueConstant || n.op == valueRefinement) && a.reg != nil {
+		h = internalhash.MixHash(h, product.Hash(a.reg, n.value))
+	}
+	return h
+}
+
+func pathFingerprint(n pathNode) uint64 {
+	h := hashRoot(internalhash.MixHash(termFingerprintSeed, 0x70617468), n.root)
+	h = internalhash.MixHash(h, uint64(len(n.segments)))
+	for _, suffix := range n.segments {
+		h = hashSegment(h, suffix)
+	}
+	return h
+}
+
+func guardFingerprint(n guardNode) uint64 {
+	h := internalhash.MixHash(termFingerprintSeed, 0x6775617264)
+	h = internalhash.MixHash(h, uint64(n.op))
+	h = internalhash.MixHash(h, uint64(n.value))
+	h = internalhash.MixHash(h, uint64(len(n.args)))
+	for _, arg := range n.args {
+		h = internalhash.MixHash(h, uint64(arg))
+	}
+	return h
 }
 func (a *Arena) valueEqual(x, y valueNode) bool {
 	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || x.hasAsserted != y.hasAsserted || x.allocation != y.allocation || x.resultIndex != y.resultIndex || len(x.args) != len(y.args) {
@@ -638,7 +653,10 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 	case valueRoot:
 		return fmt.Sprintf("r%d.%d", n.root.Kind, n.root.Index)
 	case valueConstant:
-		return a.valueKey(n)
+		if a.reg == nil {
+			return "c:nil"
+		}
+		return "c:" + strconv.FormatUint(product.Hash(a.reg, n.value), 16)
 	case valueJoin:
 		parts := make([]string, len(n.args))
 		for i, x := range n.args {

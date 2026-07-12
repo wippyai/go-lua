@@ -1,8 +1,6 @@
 package transformer
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
@@ -23,7 +21,8 @@ func (a *Arena) AllocationTemplate(op operationplan.SignatureAllocationOperation
 	if a == nil || op.Site().Owner == 0 || op.Site().Ordinal == 0 || op.Site().Template == "" {
 		return 0
 	}
-	key := fmt.Sprintf("%d:%s:%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal)
+	site := op.Site()
+	key := a.maskFingerprint(allocationTemplateFingerprint(site.Owner, string(site.Template), site.Ordinal))
 	for _, term := range a.allocationKeys[key] {
 		if allocationOperationEqual(a.allocations[term].op, op) {
 			return term
