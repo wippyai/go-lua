@@ -16,7 +16,8 @@ func instantiateReturnedAllocations(ctx transfer.NodeContext, caller summary.Sum
 		return got
 	}
 	substitution := make(map[identity.ID]identity.ID, len(got.FreshHeapAllocations))
-	for _, template := range got.FreshHeapAllocations {
+	for _, allocation := range got.FreshHeapAllocations {
+		template := allocation.ID
 		var instantiated identity.ID
 		if !caller.Ref.IsZero() {
 			instantiated = identity.ReturnedAllocationInScope(
@@ -107,9 +108,9 @@ func instantiateReturnedAllocations(ctx transfer.NodeContext, caller summary.Sum
 		}
 		got.HeapTableObjects = objects
 	}
-	for i, template := range got.FreshHeapAllocations {
-		if replacement, ok := substitution[template]; ok {
-			got.FreshHeapAllocations[i] = replacement
+	for i, allocation := range got.FreshHeapAllocations {
+		if replacement, ok := substitution[allocation.ID]; ok {
+			got.FreshHeapAllocations[i].ID = replacement
 		}
 	}
 	return got

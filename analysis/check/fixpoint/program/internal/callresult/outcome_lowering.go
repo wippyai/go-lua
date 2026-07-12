@@ -105,6 +105,7 @@ func outcomeFromSummary(
 	// outcomeFromSummary only receives caller-owned summaries. Passing the heap
 	// map through avoids cloning the snapshot-read copy again.
 	out.HeapTableObjects = got.HeapTableObjects
+	out.Placements = summary.CallerFreshHeapPlacements(got.FreshHeapAllocations)
 	if len(got.ReturnConditionParamRefinements) != 0 {
 		out.ReturnConditionRefinements = make([]callpayload.CallReturnConditionRefinement, len(got.ReturnConditionParamRefinements))
 		for i, refinement := range got.ReturnConditionParamRefinements {

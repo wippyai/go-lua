@@ -3,21 +3,26 @@ package summary
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 )
 
-func normalizeFreshHeapAllocations(in []identity.ID) []identity.ID {
+func normalizeFreshHeapAllocations(in []FreshHeapAllocation) []FreshHeapAllocation {
 	if len(in) == 0 {
 		return nil
 	}
-	out := append([]identity.ID(nil), in...)
-	sort.Slice(out, func(i, j int) bool { return identityIDLess(out[i], out[j]) })
+	out := append([]FreshHeapAllocation(nil), in...)
+	sort.Slice(out, func(i, j int) bool { return identityIDLess(out[i].ID, out[j].ID) })
 	n := 0
-	for _, id := range out {
-		if id == (identity.ID{}) || n != 0 && out[n-1] == id {
+	for _, allocation := range out {
+		if allocation.ID == (identity.ID{}) || allocation.Placement == placement.Bottom {
 			continue
 		}
-		out[n] = id
+		if n != 0 && out[n-1].ID == allocation.ID {
+			out[n-1].Placement = placement.Join(out[n-1].Placement, allocation.Placement)
+			continue
+		}
+		out[n] = allocation
 		n++
 	}
 	if n == 0 {
@@ -36,7 +41,7 @@ func identityIDLess(a, b identity.ID) bool {
 	return a.Index < b.Index
 }
 
-func freshHeapAllocationsEqual(a, b []identity.ID) bool {
+func freshHeapAllocationsEqual(a, b []FreshHeapAllocation) bool {
 	a = normalizeFreshHeapAllocations(a)
 	b = normalizeFreshHeapAllocations(b)
 	if len(a) != len(b) {
@@ -50,17 +55,20 @@ func freshHeapAllocationsEqual(a, b []identity.ID) bool {
 	return true
 }
 
-func freshHeapAllocationsLessOrEq(a, b []identity.ID) bool {
+func freshHeapAllocationsLessOrEq(a, b []FreshHeapAllocation) bool {
 	a = normalizeFreshHeapAllocations(a)
 	b = normalizeFreshHeapAllocations(b)
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
+		if a[i].ID == b[j].ID {
+			if !placement.LessOrEq(a[i].Placement, b[j].Placement) {
+				return false
+			}
 			i++
 			j++
 			continue
 		}
-		if identityIDLess(a[i], b[j]) {
+		if identityIDLess(a[i].ID, b[j].ID) {
 			return false
 		}
 		j++
@@ -68,12 +76,12 @@ func freshHeapAllocationsLessOrEq(a, b []identity.ID) bool {
 	return i == len(a)
 }
 
-func joinFreshHeapAllocations(a, b []identity.ID) []identity.ID {
+func joinFreshHeapAllocations(a, b []FreshHeapAllocation) []FreshHeapAllocation {
 	if len(a) == 0 {
 		return normalizeFreshHeapAllocations(b)
 	}
 	if len(b) == 0 {
 		return normalizeFreshHeapAllocations(a)
 	}
-	return normalizeFreshHeapAllocations(append(append(make([]identity.ID, 0, len(a)+len(b)), a...), b...))
+	return normalizeFreshHeapAllocations(append(append(make([]FreshHeapAllocation, 0, len(a)+len(b)), a...), b...))
 }

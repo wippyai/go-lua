@@ -11,6 +11,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -720,7 +721,7 @@ func TestOutcomeProviderInstantiatesFreshReturnedHeapGraphAtCallerSite(t *testin
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
 			Returns:              []product.Value{rootValue},
-			FreshHeapAllocations: []identity.ID{rootID, childID},
+			FreshHeapAllocations: []summary.FreshHeapAllocation{{ID: rootID, Placement: placement.Stack}, {ID: childID, Placement: placement.SharedHeap}},
 			HeapKeySpace:         ks,
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue, StaticMembers: map[keyspace.Key]product.Value{

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -43,20 +44,30 @@ func TestProjectFreshHeapAllocationsUsesEntryProvenanceAcrossGraph(t *testing.T)
 	parentKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "parent"}})
 	boundKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "bound"}})
 	objects := map[identity.ID]heapidentity.TableObject{
-		rootID:  heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue, StaticMembers: map[keyspace.Key]product.Value{childKey: childValue, boundKey: boundValue}}),
-		childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue, StaticMembers: map[keyspace.Key]product.Value{parentKey: rootValue}}),
+		rootID:  heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue, StaticMembers: map[keyspace.Key]product.Value{childKey: childValue, boundKey: boundValue}, StableShape: true}),
+		childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue, StaticMembers: map[keyspace.Key]product.Value{parentKey: rootValue}, StableShape: true}),
 		boundID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: boundValue}),
 	}
 	entry := state.State{}.WriteHeapTableObject(reg, boundID, objects[boundID])
-	got := projectFreshHeapAllocations(reg, freshHeapProjectionResult{reg: reg, graph: cfg.New(), entry: entry, ks: ks}, objects, []product.Value{rootValue})
+	exit := state.State{}.WritePlacement(rootID, placement.Stack).WritePlacement(childID, placement.OwnedHeap)
+	got := projectFreshHeapAllocations(reg, freshHeapProjectionResult{reg: reg, graph: cfg.New(), entry: entry, ks: ks}, exit, objects, []product.Value{rootValue}, nil)
 	seen := make(map[identity.ID]bool, len(got))
-	for _, id := range got {
-		seen[id] = true
+	placements := make(map[identity.ID]placement.Value, len(got))
+	for _, allocation := range got {
+		seen[allocation.ID] = true
+		placements[allocation.ID] = allocation.Placement
 	}
 	if !seen[rootID] || !seen[childID] || len(seen) != 2 {
 		t.Fatalf("fresh allocations = %#v, want root+child only", got)
 	}
 	if seen[boundID] {
 		t.Fatal("entry-bound parameter/capture/global identity was marked fresh")
+	}
+	if placements[rootID] != placement.Stack || placements[childID] != placement.OwnedHeap {
+		t.Fatalf("fresh placements = %#v, want stack/owned provenance", placements)
+	}
+	sharedExit := exit.WritePlacement(childID, placement.SharedHeap)
+	if rejected := projectFreshHeapAllocations(reg, freshHeapProjectionResult{reg: reg, graph: cfg.New(), entry: entry, ks: ks}, sharedExit, objects, []product.Value{rootValue}, nil); len(rejected) != 0 {
+		t.Fatalf("partially instantiated graph with shared child = %#v, want atomic rejection", rejected)
 	}
 }

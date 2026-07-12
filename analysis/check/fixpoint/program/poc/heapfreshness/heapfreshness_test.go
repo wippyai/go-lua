@@ -122,11 +122,11 @@ func newFixture(t *testing.T, reg *axis.Registry) fixture {
 	if !ok {
 		t.Fatal("member key")
 	}
-	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: root, StaticMembers: map[keyspace.Key]product.Value{memberKey: numberValue}})
+	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: root, StaticMembers: map[keyspace.Key]product.Value{memberKey: numberValue}, StableShape: true})
 	provider := callresult.OutcomeProvider(callresult.ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
 			Returns: []product.Value{root}, HeapKeySpace: ks,
-			HeapTableObjects: map[identity.ID]heapidentity.TableObject{templateID: object}, FreshHeapAllocations: []identity.ID{templateID},
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{templateID: object}, FreshHeapAllocations: []summary.FreshHeapAllocation{{ID: templateID, Placement: placement.Stack}},
 		}}),
 		KeyFor:   callresult.ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		KeySpace: ks,

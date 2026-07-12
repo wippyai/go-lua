@@ -10,6 +10,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -72,6 +73,15 @@ func TestSummaryLaneRegistryCoversEveryPayloadField(t *testing.T) {
 		if _, ok := registered[field]; !ok {
 			t.Fatalf("Summary.%s has no registered summary lane", field)
 		}
+	}
+}
+
+func TestFreshHeapAllocationNormalizationRejectsMissingPlacement(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.ID{Kind: "table", Site: "fresh", Index: 1}
+	got := Normalize(reg, Summary{FreshHeapAllocations: []FreshHeapAllocation{{ID: id, Placement: placement.Bottom}}})
+	if len(got.FreshHeapAllocations) != 0 {
+		t.Fatalf("missing-placement freshness survived normalization: %#v", got.FreshHeapAllocations)
 	}
 }
 

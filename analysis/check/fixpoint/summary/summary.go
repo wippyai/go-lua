@@ -3,6 +3,7 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -28,7 +29,7 @@ type Summary struct {
 	// FreshHeapAllocations identifies callee-created heap objects reachable from
 	// a return. Consumers instantiate these templates at the caller's static call
 	// site. IDs seeded through parameters, captures, or globals are excluded.
-	FreshHeapAllocations            []identity.ID
+	FreshHeapAllocations            []FreshHeapAllocation
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnConditionSlotRefinements  []ReturnConditionSlotRefinement
 	ReturnParamLiteralCases         []ReturnParamLiteralCase
@@ -42,6 +43,41 @@ type Summary struct {
 	// a call site can rebase the heap keys into its own keyspace. It is nil when
 	// the summary carries no heap objects.
 	HeapKeySpace *keyspace.KeySpace
+}
+
+// FreshHeapAllocation carries one callee-local returned allocation template
+// and its proven placement at normal exit. Callers instantiate ID while
+// preserving this placement (with Stack promoted across the call boundary).
+type FreshHeapAllocation struct {
+	ID        identity.ID
+	Placement placement.Value
+}
+
+// CallerPlacement returns the conservative placement after the allocation
+// crosses a normal call boundary.
+func (a FreshHeapAllocation) CallerPlacement() placement.Value {
+	if a.Placement == placement.Bottom || a.Placement == placement.Stack {
+		if a.Placement == placement.Bottom {
+			return placement.Unknown
+		}
+		return placement.OwnedHeap
+	}
+	return a.Placement
+}
+
+// CallerFreshHeapPlacements materializes caller-keyed placement facts without
+// exposing placement-domain construction to the call-result adapter.
+func CallerFreshHeapPlacements(allocations []FreshHeapAllocation) map[identity.ID]placement.Value {
+	if len(allocations) == 0 {
+		return nil
+	}
+	out := make(map[identity.ID]placement.Value, len(allocations))
+	for _, allocation := range allocations {
+		if allocation.ID != (identity.ID{}) {
+			out[allocation.ID] = allocation.CallerPlacement()
+		}
+	}
+	return out
 }
 
 // RekeyHeapTableObjects re-interns the rootless static-member keys of every
