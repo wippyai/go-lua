@@ -1,0 +1,96 @@
+package gen
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/semantic/inventory"
+)
+
+func TestSyntheticStateLaneAddAndRemoveRenderAndCompile(t *testing.T) {
+	base := testInventory(t, []inventory.StateLane{
+		{ID: "lane-alpha", Order: 0}, {ID: "lane-beta", Order: 1},
+	})
+	addedLanes := base.StateLanes()
+	addedLanes = append(addedLanes, inventory.StateLane{ID: "lane-synthetic", Order: 2})
+	added := testInventory(t, addedLanes)
+	removed := testInventory(t, base.StateLanes()[:1])
+
+	for _, test := range []struct {
+		name string
+		in   inventory.Inventory
+	}{
+		{name: "base", in: base},
+		{name: "added", in: added},
+		{name: "removed", in: removed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source, err := RenderState(test.in, testBindings(test.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			compileSyntheticState(t, test.in, source)
+		})
+	}
+}
+
+func testInventory(t *testing.T, lanes []inventory.StateLane) inventory.Inventory {
+	t.Helper()
+	doc := map[string]any{
+		"schema":      inventory.Schema,
+		"state_lanes": lanes,
+		"value_axes": []inventory.ValueAxis{
+			{ID: "valueaxis", Order: 0, Boundary: "portable-identity"},
+		},
+		"reducers": []inventory.Reducer{},
+	}
+	source, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := inventory.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return in
+}
+
+func testBindings(in inventory.Inventory) Bindings {
+	out := Bindings{ValueAxes: []ValueAxisBinding{{ID: "valueaxis", Alias: "valueaxis", ImportPath: "example.invalid/valueaxis", SpecSymbol: "Spec"}}}
+	for i, lane := range in.StateLanes() {
+		out.StateLanes = append(out.StateLanes, StateLaneBinding{ID: lane.ID, IDSymbol: fmt.Sprintf("Lane%d", i), SpecSymbol: fmt.Sprintf("lane%dSpec", i), BitSymbol: fmt.Sprintf("lane%dBit", i)})
+	}
+	return out
+}
+
+func compileSyntheticState(t *testing.T, in inventory.Inventory, generated []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module synthetic.state\n\ngo 1.23\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "zz_generated_lane_inventory.go"), generated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stubs strings.Builder
+	stubs.WriteString("package state\n\ntype LaneID string\ntype laneMask uint64\ntype laneSpec struct{}\ntype LaneCatalog struct{ specs []laneSpec }\n")
+	stubs.WriteString("func newLaneCatalog(specs []laneSpec) LaneCatalog { return LaneCatalog{specs: specs} }\n")
+	stubs.WriteString("func (LaneCatalog) mustLaneBit(LaneID) laneMask { return 1 }\n")
+	for i, lane := range testBindings(in).StateLanes {
+		fmt.Fprintf(&stubs, "const %s LaneID = %q\n", lane.IDSymbol, fmt.Sprintf("lane-%d", i))
+		fmt.Fprintf(&stubs, "var %s laneSpec\n", lane.SpecSymbol)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stubs.go"), []byte(stubs.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "test", ".")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("synthetic generated State did not compile: %v\n%s", err, out)
+	}
+}

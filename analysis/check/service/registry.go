@@ -1,31 +1,4 @@
 package service
 
-import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-)
-
-var checkerRegistry = mustCheckerRegistry()
-
-func mustCheckerRegistry() *axis.Registry {
-	registry, err := product.RegistryWithAxes(
-		variantorigin.Spec().Erase(),
-		identity.Spec().Erase(),
-		runtimekind.Spec().Erase(),
-		typewitness.Spec().Erase(),
-		escape.Spec().Erase(),
-		evidence.Spec().Erase(),
-		assertion.Spec().Erase(),
-	)
-	if err != nil {
-		panic(err)
-	}
-	return registry
-}
+// The checker value-axis registry is generated from the reviewed semantic
+// inventory into zz_generated_value_registry.go.

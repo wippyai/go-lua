@@ -1574,7 +1574,7 @@ func TestStateLaneCatalogHasPositiveOwner(t *testing.T) {
 			},
 		},
 		{
-			path: filepath.Join("..", "engine", "state", "lane_registry.go"),
+			path: filepath.Join("..", "engine", "state", "zz_generated_lane_inventory.go"),
 			contains: []string{
 				"var defaultLaneCatalog = newLaneCatalog([]laneSpec{",
 				"laneValuesBit            = defaultLaneCatalog.mustLaneBit(LaneValues)",

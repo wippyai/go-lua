@@ -1,0 +1,30 @@
+{
+  "state_lanes": [
+    {"id":"values", "id_symbol":"LaneValues", "spec_symbol":"valuesLaneSpec", "bit_symbol":"laneValuesBit"},
+    {"id":"path-evidence", "id_symbol":"LanePathEvidence", "spec_symbol":"pathEvidenceLaneSpec", "bit_symbol":"lanePathEvidenceBit"},
+    {"id":"dynamic-index", "id_symbol":"LaneDynamicIndex", "spec_symbol":"dynamicIndexLaneSpec", "bit_symbol":"laneDynamicIndexBit"},
+    {"id":"heap-table-identity", "id_symbol":"LaneHeapTableIdentity", "spec_symbol":"heapTableIdentityLaneSpec", "bit_symbol":"laneHeapTableIdentityBit"},
+    {"id":"frozen-tables", "id_symbol":"LaneFrozenTables", "spec_symbol":"frozenTablesLaneSpec", "bit_symbol":"laneFrozenTablesBit"},
+    {"id":"effect-deltas", "id_symbol":"LaneEffectDeltas", "spec_symbol":"effectDeltasLaneSpec", "bit_symbol":"laneEffectDeltasBit"},
+    {"id":"escape-events", "id_symbol":"LaneEscapeEvents", "spec_symbol":"escapeEventsLaneSpec", "bit_symbol":"laneEscapeEventsBit"},
+    {"id":"channel-select", "id_symbol":"LaneChannelSelect", "spec_symbol":"channelSelectLaneSpec", "bit_symbol":"laneChannelSelectBit"},
+    {"id":"store-relations", "id_symbol":"LaneStoreRelations", "spec_symbol":"storeRelationsLaneSpec", "bit_symbol":"laneStoreRelationsBit"},
+    {"id":"key-memberships", "id_symbol":"LaneKeyMemberships", "spec_symbol":"keyMembershipsLaneSpec", "bit_symbol":"laneKeyMembershipBit"},
+    {"id":"typestates", "id_symbol":"LaneTypestates", "spec_symbol":"typestatesLaneSpec", "bit_symbol":"laneTypestatesBit"},
+    {"id":"placement", "id_symbol":"LanePlacement", "spec_symbol":"placementLaneSpec", "bit_symbol":"lanePlacementBit"},
+    {"id":"len-floors", "id_symbol":"LaneLenFloors", "spec_symbol":"lenFloorsLaneSpec", "bit_symbol":"laneLenFloorsBit"},
+    {"id":"num-floors", "id_symbol":"LaneNumFloors", "spec_symbol":"numFloorsLaneSpec", "bit_symbol":"laneNumFloorsBit"},
+    {"id":"num-ceils", "id_symbol":"LaneNumCeils", "spec_symbol":"numCeilsLaneSpec", "bit_symbol":"laneNumCeilsBit"},
+    {"id":"diff-relations", "id_symbol":"LaneDiffRelations", "spec_symbol":"diffRelationsLaneSpec", "bit_symbol":"laneDiffRelationsBit"},
+    {"id":"user-lattices", "id_symbol":"LaneUserLattices", "spec_symbol":"userLatticesLaneSpec", "bit_symbol":"laneUserLatticesBit"}
+  ],
+  "value_axes": [
+    {"id":"variantorigin", "alias":"variantorigin", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin", "spec_symbol":"Spec"},
+    {"id":"identity", "alias":"identity", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/identity", "spec_symbol":"Spec"},
+    {"id":"runtimekind", "alias":"runtimekind", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind", "spec_symbol":"Spec"},
+    {"id":"typewitness", "alias":"typewitness", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness", "spec_symbol":"Spec"},
+    {"id":"escape", "alias":"escape", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/escape", "spec_symbol":"Spec"},
+    {"id":"evidence", "alias":"evidence", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence", "spec_symbol":"Spec"},
+    {"id":"assertion", "alias":"assertion", "import_path":"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion", "spec_symbol":"Spec"}
+  ]
+}
