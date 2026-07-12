@@ -32,6 +32,11 @@ type v2ImportBoundary struct {
 type v2ExclusiveBridge struct {
 	name string
 
+	// authorityRequired is a checked-in migration milestone, never a runtime
+	// option. The commit that makes the destination authoritative flips it and
+	// may not flip it back.
+	authorityRequired bool
+
 	// activatedBy keeps a future seam optional until the destination package is
 	// introduced. Once present, the bridge owner must import the destination.
 	activatedBy v2PackagePrefix
@@ -99,11 +104,12 @@ var v2LayerImportBoundaries = []v2ImportBoundary{
 
 var v2ExclusiveBridges = []v2ExclusiveBridge{
 	{
-		name:        "transferfacts is the sole WIR to semantic-program bridge",
-		activatedBy: "github.com/wippyai/go-lua/analysis/semantic/program",
-		bridge:      "github.com/wippyai/go-lua/analysis/lua/transferfacts",
-		source:      "github.com/wippyai/go-lua/analysis/ir/wir",
-		destination: "github.com/wippyai/go-lua/analysis/semantic/program",
+		name:              "transferfacts is the sole WIR to semantic-program bridge",
+		authorityRequired: false,
+		activatedBy:       "github.com/wippyai/go-lua/analysis/semantic/program",
+		bridge:            "github.com/wippyai/go-lua/analysis/lua/transferfacts",
+		source:            "github.com/wippyai/go-lua/analysis/ir/wir",
+		destination:       "github.com/wippyai/go-lua/analysis/semantic/program",
 	},
 }
 

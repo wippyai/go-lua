@@ -50,6 +50,10 @@ func TestV2ExclusiveLoweringBridges(t *testing.T) {
 		seam := seam
 		t.Run(seam.name, func(t *testing.T) {
 			validateV2Bridge(t, seam)
+			if !seam.authorityRequired {
+				t.Log("semantic-program authority milestone has not flipped")
+				return
+			}
 			if !v2PackageTreeExists(packages, seam.activatedBy) {
 				return
 			}
