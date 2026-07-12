@@ -20,6 +20,7 @@ const expectedBoundaryLaneSchemaVersion5Hash = "658ec606f3d883466aa8bf56b59244b4
 const expectedBoundaryLaneSchemaVersion6Hash = "ce07898129fbc4ede1504819fd3f199780d47e543f7c13d4759f6dd7303d72ca"
 const expectedBoundaryLaneSchemaVersion7Hash = "b9f07b72f341b1872bf07a1a7879ab7521d5d840c81ca640c306e499da961d6d"
 const expectedBoundaryLaneSchemaVersion8Hash = "c6efb599a9906655f59c15ca4ad8c5c129bc37c8ecb713eac2db180b84d032cd"
+const expectedBoundaryLaneSchemaVersion9Hash = "86dceebdc87d70800dd1f2f9f12f8f858c1f162bec007de926acb2a4fc167738"
 
 func TestBoundaryLaneSchemaVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(boundaryLaneSchemaSurface())
@@ -32,6 +33,7 @@ func TestBoundaryLaneSchemaVersionPinsCurrentSurface(t *testing.T) {
 		6: expectedBoundaryLaneSchemaVersion6Hash,
 		7: expectedBoundaryLaneSchemaVersion7Hash,
 		8: expectedBoundaryLaneSchemaVersion8Hash,
+		9: expectedBoundaryLaneSchemaVersion9Hash,
 	}[BoundaryLaneSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected boundary lane schema hash for version %d: bump version constant + journal a D-entry", BoundaryLaneSchemaVersion)

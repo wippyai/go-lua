@@ -42,6 +42,29 @@ func TestSingletonReadback(t *testing.T) {
 	}
 }
 
+func TestReturnedAllocationIsDeterministicPerStaticCallerSite(t *testing.T) {
+	template := LuaTableLiteral(31, 7)
+	first := ReturnedAllocation(template, 41, 9)
+	if first == (ID{}) || !IsReturnedAllocation(first) {
+		t.Fatalf("ReturnedAllocation = %#v, want tagged non-zero identity", first)
+	}
+	if again := ReturnedAllocation(template, 41, 9); again != first {
+		t.Fatalf("same static site changed identity: first=%#v again=%#v", first, again)
+	}
+	if other := ReturnedAllocation(template, 41, 10); other == first {
+		t.Fatal("distinct call points aliased")
+	}
+	if other := ReturnedAllocation(template, 42, 9); other == first {
+		t.Fatal("equal call points in distinct caller graphs aliased")
+	}
+	if other := ReturnedAllocation(LuaTableLiteral(31, 8), 41, 9); other == first {
+		t.Fatal("distinct callee templates at one call point aliased")
+	}
+	if got := ReturnedAllocation(ID{}, 41, 9); got != (ID{}) {
+		t.Fatalf("zero template produced %#v", got)
+	}
+}
+
 func TestLuaTableLiteralIdentityDoesNotAliasEqualGraphAndExprPairs(t *testing.T) {
 	first := LuaTableLiteral(31, 31)
 	second := LuaTableLiteral(42, 42)

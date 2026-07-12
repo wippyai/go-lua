@@ -25,10 +25,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// TestCurrentSummaryBoundaryAliasesFreshReturns is a differential regression
-// probe. It records the current (wrong) production result and contrasts it with
-// allocation-site-sensitive inline semantics. The assertions intentionally pass
-// while the defect exists, so the isolated POC remains runnable in CI.
+// TestSummaryBoundaryInstantiatesFreshReturns pins production equivalence with
+// allocation-site-sensitive inline semantics.
 func TestCurrentSummaryBoundaryAliasesFreshReturns(t *testing.T) {
 	reg := standard.Registry()
 	fixture := newFixture(t, reg)
@@ -39,33 +37,29 @@ func TestCurrentSummaryBoundaryAliasesFreshReturns(t *testing.T) {
 	outB := fixture.outcome(callB)
 	currentA := resultID(t, reg, outA)
 	currentB := resultID(t, reg, outB)
-	if currentA != fixture.templateID || currentB != fixture.templateID {
-		t.Fatalf("current outcomes unexpectedly instantiate allocation: A=%v B=%v template=%v", currentA, currentB, fixture.templateID)
-	}
-
-	wantA := inlineAllocationID(fixture.templateID, callA)
-	wantB := inlineAllocationID(fixture.templateID, callB)
+	wantA := identity.ReturnedAllocation(fixture.templateID, fixture.graph.ID(), uint64(callA))
+	wantB := identity.ReturnedAllocation(fixture.templateID, fixture.graph.ID(), uint64(callB))
 	if wantA == wantB {
 		t.Fatal("reference inline allocation identities collided across call sites")
 	}
-	if currentA == wantA || currentB == wantB {
-		t.Fatalf("current boundary unexpectedly matches inline identities: current=(%v,%v) inline=(%v,%v)", currentA, currentB, wantA, wantB)
+	if currentA != wantA || currentB != wantB {
+		t.Fatalf("summary boundary identities=(%v,%v), want (%v,%v)", currentA, currentB, wantA, wantB)
 	}
 
-	// Model `a = make(); a.x = "changed"; b = make()`. Because B carries the
-	// same template identity, its initial object replaces A's mutation.
+	// Model `a = make(); a.x = "changed"; b = make()`. Distinct call-site
+	// identities retain A's mutation when B materializes.
 	current := applyCurrent(reg, state.State{}, outA)
 	current = current.WriteHeapTableObject(reg, currentA, fixture.objectFor(currentA, fixture.stringValue))
 	current = applyCurrent(reg, current, outB)
-	if got := fixture.member(t, current, currentA); !product.Equal(reg, got, fixture.numberValue) {
-		t.Fatalf("current replacement no longer reproduces alias loss: got %v", got)
+	if got := fixture.member(t, current, currentA); !product.Equal(reg, got, fixture.stringValue) {
+		t.Fatalf("A mutation was lost after B materialization: got %v", got)
 	}
 
 	// The inline reference keeps both objects and both placement facts.
 	inline := state.State{}
-	inline = applyFresh(reg, inline, outA, fixture.templateID, wantA, false)
+	inline = applyFresh(reg, inline, outA, wantA, wantA, false)
 	inline = inline.WriteHeapTableObject(reg, wantA, fixture.objectFor(wantA, fixture.stringValue))
-	inline = applyFresh(reg, inline, outB, fixture.templateID, wantB, false)
+	inline = applyFresh(reg, inline, outB, wantB, wantB, false)
 	if got := fixture.member(t, inline, wantA); !product.Equal(reg, got, fixture.stringValue) {
 		t.Fatalf("inline A mutation = %v, want retained string", got)
 	}
@@ -82,32 +76,33 @@ func TestSameCallSiteReferenceWeakJoinsAndStabilizes(t *testing.T) {
 	fixture := newFixture(t, reg)
 	call := cfg.Point(303)
 	out := fixture.outcome(call)
-	id := inlineAllocationID(fixture.templateID, call)
+	id := identity.ReturnedAllocation(fixture.templateID, fixture.graph.ID(), uint64(call))
 
-	first := applyFresh(reg, state.State{}, out, fixture.templateID, id, true)
+	first := applyFresh(reg, state.State{}, out, id, id, true)
 	mutated := first.WriteHeapTableObject(reg, id, fixture.objectFor(id, fixture.stringValue))
-	second := applyFresh(reg, mutated, out, fixture.templateID, id, true)
+	second := applyFresh(reg, mutated, out, id, id, true)
 	member := fixture.member(t, second, id)
 	want := product.Join(reg, fixture.numberValue, fixture.stringValue)
 	if !product.Equal(reg, member, want) {
 		t.Fatalf("weak repeated-site member = %v, want number|string join", member)
 	}
-	third := applyFresh(reg, second, out, fixture.templateID, id, true)
+	third := applyFresh(reg, second, out, id, id, true)
 	if !heapidentity.ObjectDomain(reg).Equal(second.ReadHeapTableObject(reg, id), third.ReadHeapTableObject(reg, id)) {
 		t.Fatal("repeated-site weak materialization did not reach a finite fixed point")
 	}
 
 	currentFirst := applyCurrent(reg, state.State{}, out)
-	currentMutated := currentFirst.WriteHeapTableObject(reg, fixture.templateID, fixture.objectFor(fixture.templateID, fixture.stringValue))
+	currentMutated := currentFirst.WriteHeapTableObject(reg, id, fixture.objectFor(id, fixture.stringValue))
 	current := applyCurrent(reg, currentMutated, out)
-	if got := fixture.member(t, current, fixture.templateID); !product.Equal(reg, got, fixture.numberValue) {
-		t.Fatalf("current replacement behavior changed: got %v, want reset number", got)
+	if got := fixture.member(t, current, id); !product.Equal(reg, got, member) {
+		t.Fatalf("production weak materialization = %v, want %v", got, member)
 	}
 }
 
 type fixture struct {
 	reg         *axis.Registry
 	provider    callpayload.CallOutcomeProvider
+	graph       cfg.Graph
 	templateID  identity.ID
 	memberKey   keyspace.Key
 	numberValue product.Value
@@ -131,16 +126,16 @@ func newFixture(t *testing.T, reg *axis.Registry) fixture {
 	provider := callresult.OutcomeProvider(callresult.ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
 			Returns: []product.Value{root}, HeapKeySpace: ks,
-			HeapTableObjects: map[identity.ID]heapidentity.TableObject{templateID: object},
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{templateID: object}, FreshHeapAllocations: []identity.ID{templateID},
 		}}),
 		KeyFor:   callresult.ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		KeySpace: ks,
 	})
-	return fixture{reg: reg, provider: provider, templateID: templateID, memberKey: memberKey, numberValue: numberValue, stringValue: stringValue}
+	return fixture{reg: reg, provider: provider, graph: cfg.New(), templateID: templateID, memberKey: memberKey, numberValue: numberValue, stringValue: stringValue}
 }
 
 func (f fixture) outcome(point cfg.Point) callpayload.CallOutcome {
-	return f.provider(transfer.NodeContext{Registry: f.reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: symbol.ID(41)}).View(), state.State{}, nil)
+	return f.provider(transfer.NodeContext{Registry: f.reg, Graph: f.graph, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: symbol.ID(41)}).View(), state.State{}, nil)
 }
 
 func (f fixture) objectFor(id identity.ID, member product.Value) heapidentity.TableObject {
@@ -171,6 +166,9 @@ func resultID(t *testing.T, reg *axis.Registry, out callpayload.CallOutcome) ide
 
 func applyCurrent(reg *axis.Registry, in state.State, out callpayload.CallOutcome) state.State {
 	for id, object := range out.HeapTableObjects {
+		if identity.IsReturnedAllocation(id) {
+			object = heapidentity.ObjectDomain(reg).Join(in.ReadHeapTableObject(reg, id), object)
+		}
 		in = in.WriteHeapTableObject(reg, id, object)
 	}
 	for id := range out.HeapTableObjects {
@@ -188,8 +186,4 @@ func applyFresh(reg *axis.Registry, in state.State, out callpayload.CallOutcome,
 	}
 	in = in.WriteHeapTableObject(reg, to, object)
 	return in.WritePlacement(to, placement.Join(in.ReadPlacement(to), placement.OwnedHeap))
-}
-
-func inlineAllocationID(template identity.ID, point cfg.Point) identity.ID {
-	return identity.ID{Kind: template.Kind, Site: "call-site", Index: template.Index ^ uint64(point)*0x9e3779b97f4a7c15}
 }

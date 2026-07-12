@@ -701,6 +701,84 @@ func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T)
 	}
 }
 
+func TestOutcomeProviderInstantiatesFreshReturnedHeapGraphAtCallerSite(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(143)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 144})
+	rootID := identity.ID{Kind: "table", Site: "callee-template", Index: 1}
+	childID := identity.ID{Kind: "table", Site: "callee-template", Index: 2}
+	boundID := identity.ID{Kind: "table", Site: "captured", Index: 3}
+	value := func(id identity.ID) product.Value {
+		return product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	}
+	rootValue, childValue, boundValue := value(rootID), value(childID), value(boundID)
+	ks := keyspace.New()
+	childKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	sharedKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "shared"}})
+	parentKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "parent"}})
+	boundKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "bound"}})
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
+			Returns:              []product.Value{rootValue},
+			FreshHeapAllocations: []identity.ID{rootID, childID},
+			HeapKeySpace:         ks,
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue, StaticMembers: map[keyspace.Key]product.Value{
+					childKey: childValue, sharedKey: childValue, boundKey: boundValue,
+				}}),
+				childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue, StaticMembers: map[keyspace.Key]product.Value{parentKey: rootValue}}),
+				boundID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: boundValue}),
+			},
+			NormalReturnFacts: callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{{
+				Path: path.NewPlaceholder(0).Field("child"), Value: childValue,
+			}}},
+		}}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}), KeySpace: ks,
+	})
+	g := cfg.New()
+	callA, callB := cfg.Point(101), cfg.Point(202)
+	outcome := func(point cfg.Point) callpayload.CallOutcome {
+		return provider(transfer.NodeContext{Registry: reg, Graph: g, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}).View(), state.State{}, nil)
+	}
+	a, again, b := outcome(callA), outcome(callA), outcome(callB)
+	aRoot := identity.ReturnedAllocation(rootID, g.ID(), uint64(callA))
+	aChild := identity.ReturnedAllocation(childID, g.ID(), uint64(callA))
+	bRoot := identity.ReturnedAllocation(rootID, g.ID(), uint64(callB))
+	if aRoot == bRoot {
+		t.Fatal("distinct caller sites produced the same returned allocation")
+	}
+	if got, ok := product.Get(reg, a.Results[0].Value, identity.Key).ID(); !ok || got != aRoot {
+		t.Fatalf("A result identity = %v/%v, want %v", got, ok, aRoot)
+	}
+	if got, ok := product.Get(reg, again.Results[0].Value, identity.Key).ID(); !ok || got != aRoot {
+		t.Fatalf("repeated A result identity = %v/%v, want stable %v", got, ok, aRoot)
+	}
+	if got, ok := product.Get(reg, b.Results[0].Value, identity.Key).ID(); !ok || got != bRoot {
+		t.Fatalf("B result identity = %v/%v, want %v", got, ok, bRoot)
+	}
+	root := a.HeapTableObjects[aRoot]
+	for _, memberKey := range []keyspace.Key{childKey, sharedKey} {
+		member, ok := root.StaticMember(memberKey)
+		got, hasID := product.Get(reg, member, identity.Key).ID()
+		if !ok || !hasID || got != aChild {
+			t.Fatalf("root member %v identity = %v/%v/%v, want shared child %v", memberKey, got, ok, hasID, aChild)
+		}
+	}
+	child := a.HeapTableObjects[aChild]
+	parent, ok := child.StaticMember(parentKey)
+	if got, hasID := product.Get(reg, parent, identity.Key).ID(); !ok || !hasID || got != aRoot {
+		t.Fatalf("cyclic parent identity = %v/%v/%v, want %v", got, ok, hasID, aRoot)
+	}
+	bound, ok := root.StaticMember(boundKey)
+	if got, hasID := product.Get(reg, bound, identity.Key).ID(); !ok || !hasID || got != boundID {
+		t.Fatalf("bound identity = %v/%v/%v, want preserved %v", got, ok, hasID, boundID)
+	}
+	refined := a.NormalReturnFacts.PathRefinements[0].Value
+	if got, ok := product.Get(reg, refined, identity.Key).ID(); !ok || got != aChild {
+		t.Fatalf("identity-bearing return fact = %v/%v, want %v", got, ok, aChild)
+	}
+}
+
 func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(45)

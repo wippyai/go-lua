@@ -9,7 +9,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | Checker embedding | `embedding.EmbeddingSchemaVersion` | v1 | Stable document/source/resolution identity DTOs: `DocumentID`, digest-bound source locations and snapshots, unit plans/imports, resolution snapshots, `SolveSeq`, and `BodyInputDigest`. | An exported embedding DTO field, initial document scheme, or its identity/versioning semantics changes. |
 | Judgment IR | `judgment.JIRSchemaVersion` | v11 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
-| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v8 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
+| Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v9 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
 | Closure capture DTO | `readmodel.ClosureCaptureSchemaVersion` | v2 | Codegen-facing exported `readmodel.ClosureCapture` record shape. | A `ClosureCapture` field is added, removed, renamed, or changes type. |
 | Hoistable load DTO | `readmodel.HoistableLoadSchemaVersion` | v1 | Codegen-facing exported `readmodel.HoistableLoad` record shape. | A `HoistableLoad` field is added, removed, renamed, or changes type. |
 | Allocation site DTO | `readmodel.AllocationSiteSchemaVersion` | v2 | Codegen-facing exported `readmodel.AllocationSite` and `readmodel.AllocationField` record shapes. | An `AllocationSite`/`AllocationField` field is added, removed, renamed, or changes type. |
@@ -31,6 +31,14 @@ surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
 
 ## Journal
+
+- D21: Bumped boundary lane schema to v9. Added the internal-only
+  `FreshHeapAllocations` summary provenance lane. It identifies returned heap
+  templates created after function entry so call-result lowering can
+  instantiate them by caller static call site without rebinding parameter,
+  capture, or global identities. There is no manifest wire change; older
+  in-memory summary consumers must fail closed rather than treating unproven
+  heap identities as fresh.
 
 - D20: Post-union repin: Judgment IR v11 is the single consumer contract for
   the declared typestate-requirement codes, `BodyInputDigest` and digest-bound

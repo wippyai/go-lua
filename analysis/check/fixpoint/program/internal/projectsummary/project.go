@@ -183,6 +183,7 @@ func FromResultContext(ctx context.Context, result ResultReader) (summary.Summar
 		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
 	out.HeapTableObjects = markStableReturnHeapObjects(reg, result, out.HeapTableObjects, out.Returns)
+	out.FreshHeapAllocations = projectFreshHeapAllocations(reg, result, out.HeapTableObjects, out.Returns)
 	if err := projectionContextErr(ctx); err != nil {
 		return summary.Summary{}, err
 	}

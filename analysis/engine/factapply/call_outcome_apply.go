@@ -2,8 +2,10 @@ package factapply
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -12,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -45,6 +48,10 @@ func applyResolvedCallOutcomeFacts(
 	}
 	lengthFloors := resolveCallParamLengthFloors(resolver, ctx.Point, out, paramBindings, outcome.ParamLengthFloors)
 	for id, object := range outcome.HeapTableObjects {
+		if identity.IsReturnedAllocation(id) {
+			object = heapidentity.ObjectDomain(ctx.Registry).Join(out.ReadHeapTableObject(ctx.Registry, id), object)
+			out = writeJoinedPlacement(out, id, placement.OwnedHeap)
+		}
 		out = out.WriteHeapTableObject(ctx.Registry, id, object)
 	}
 	for id, value := range outcome.Placements {

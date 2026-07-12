@@ -11,20 +11,24 @@ import (
 
 // Summary is the fixed-point analysis summary payload for one function entry.
 type Summary struct {
-	Returns                         []product.Value
-	ParamObligations                []product.Value
-	ParamMemberCallObligations      []ParamMemberCallObligation
-	ParamMemberReturnSlots          []ParamMemberReturnSlot
-	ReturnParamPathAliases          []ReturnParamPathAlias
-	ReturnFlows                     []ReturnFlow
-	ParamSinkExposures              []ParamSinkExposure
-	CapturedPathObligations         []CapturedPathObligation
-	NormalReturnParams              []product.Value
-	NormalReturnParamConditions     []ParamCondition
-	NormalReturnParamEqualities     []ParamEquality
-	NormalReturnFacts               callboundary.NormalReturnFacts
-	ProtectedCallTypestate          callboundary.ProtectedCallTypestate
-	HeapTableObjects                map[identity.ID]heapidentity.TableObject
+	Returns                     []product.Value
+	ParamObligations            []product.Value
+	ParamMemberCallObligations  []ParamMemberCallObligation
+	ParamMemberReturnSlots      []ParamMemberReturnSlot
+	ReturnParamPathAliases      []ReturnParamPathAlias
+	ReturnFlows                 []ReturnFlow
+	ParamSinkExposures          []ParamSinkExposure
+	CapturedPathObligations     []CapturedPathObligation
+	NormalReturnParams          []product.Value
+	NormalReturnParamConditions []ParamCondition
+	NormalReturnParamEqualities []ParamEquality
+	NormalReturnFacts           callboundary.NormalReturnFacts
+	ProtectedCallTypestate      callboundary.ProtectedCallTypestate
+	HeapTableObjects            map[identity.ID]heapidentity.TableObject
+	// FreshHeapAllocations identifies callee-created heap objects reachable from
+	// a return. Consumers instantiate these templates at the caller's static call
+	// site. IDs seeded through parameters, captures, or globals are excluded.
+	FreshHeapAllocations            []identity.ID
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnConditionSlotRefinements  []ReturnConditionSlotRefinement
 	ReturnParamLiteralCases         []ReturnParamLiteralCase

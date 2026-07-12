@@ -2,6 +2,7 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
@@ -302,6 +303,27 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			},
 			assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
 				out.HeapTableObjects, out.HeapKeySpace = widenSummaryHeapTableObjects(reg, prev, next)
+			},
+		}),
+		summarySlotDescriptor("FreshHeapAllocations", nil, SummarySlotOps{
+			empty: func(s Summary) bool { return len(s.FreshHeapAllocations) == 0 },
+			assignClone: func(src Summary, dst *Summary) {
+				dst.FreshHeapAllocations = append([]identity.ID(nil), src.FreshHeapAllocations...)
+			},
+			normalizeOwned: func(_ *axis.Registry, s *Summary) {
+				s.FreshHeapAllocations = normalizeFreshHeapAllocations(s.FreshHeapAllocations)
+			},
+			equal: func(_ *axis.Registry, a, b Summary, _ bool) bool {
+				return freshHeapAllocationsEqual(a.FreshHeapAllocations, b.FreshHeapAllocations)
+			},
+			lessOrEq: func(_ *axis.Registry, a, b Summary) bool {
+				return freshHeapAllocationsLessOrEq(a.FreshHeapAllocations, b.FreshHeapAllocations)
+			},
+			assignJoin: func(_ *axis.Registry, a, b Summary, out *Summary) {
+				out.FreshHeapAllocations = joinFreshHeapAllocations(a.FreshHeapAllocations, b.FreshHeapAllocations)
+			},
+			assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
+				out.FreshHeapAllocations = joinFreshHeapAllocations(prev.FreshHeapAllocations, next.FreshHeapAllocations)
 			},
 		}),
 		summarySlotDescriptor("ReturnConditionParamRefinements", nil, SummarySlotOps{

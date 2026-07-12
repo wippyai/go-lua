@@ -164,9 +164,13 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 			}
 			got = materializeReturnParamPathAliases(ctx, callerKeySpace, site, got, sources, in, read, typeValues)
 		}
-		if summaryOwned && len(got.HeapTableObjects) != 0 {
+		if summaryOwned && len(got.FreshHeapAllocations) != 0 {
+			got = got.Clone()
+			summaryOwned = false
+		} else if summaryOwned && len(got.HeapTableObjects) != 0 {
 			got.HeapTableObjects = heapidentity.CloneMap(got.HeapTableObjects)
 		}
+		got = instantiateReturnedAllocations(ctx, got)
 		summaryParamOffset := summaryParamObligationOffset(ctx, site, fn, in, read, calleeValue)
 		out := outcomeFromSummary(ctx.Registry, got, summaryParamOffset, func(index int) bool {
 			if index < 0 || index >= len(got.ParamObligations) {

@@ -25,6 +25,7 @@ import (
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/engine/state/userlattice"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -2992,6 +2993,85 @@ func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 	}
 	if member, ok := object.StaticMember(memberKey); !ok || !product.Equal(reg, member, value) {
 		t.Fatalf("heap object member = %#v/%v, want %#v", member, ok, value)
+	}
+}
+
+func TestFactsNodeTransferWeaklyMaterializesReturnedAllocationPerCallSite(t *testing.T) {
+	reg := standard.Registry()
+	g := cfg.New()
+	point := cfg.Point(621)
+	template := identity.ID{Kind: "table", Site: "callee-template", Index: 1}
+	id := identity.ReturnedAllocation(template, g.ID(), uint64(point))
+	other := identity.ReturnedAllocation(template, g.ID(), uint64(point+1))
+	ks := keyspace.New()
+	memberKey := fieldStaticKey(t, ks, "field")
+	numberValue := typevalue.FromType(reg, typ.Number)
+	stringValue := typevalue.FromType(reg, typ.String)
+	object := func(rootID identity.ID, member product.Value) heapidentity.TableObject {
+		root := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+		return heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: root, StaticMembers: map[keyspace.Key]product.Value{memberKey: member}})
+	}
+	provider := func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{HeapTableObjects: map[identity.ID]heapidentity.TableObject{id: object(id, numberValue)}}
+	}
+	transferFn := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+		}}),
+		CallOutcome: provider,
+	})
+	input := state.State{}.
+		WriteHeapTableObject(reg, id, object(id, stringValue)).
+		WriteHeapTableObject(reg, other, object(other, stringValue)).
+		WritePlacement(id, placement.OwnedHeap)
+	ctx := transfer.NodeContext{Registry: reg, Graph: g, Point: point}
+	first := transferFn(ctx, input)
+	want := product.Join(reg, numberValue, stringValue)
+	if got, ok := first.ReadHeapTableObject(reg, id).StaticMember(memberKey); !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("same-site materialization member = %#v/%v, want number|string", got, ok)
+	}
+	if got, ok := first.ReadHeapTableObject(reg, other).StaticMember(memberKey); !ok || !product.Equal(reg, got, stringValue) {
+		t.Fatalf("other-site object changed = %#v/%v, want string", got, ok)
+	}
+	if got := first.ReadPlacement(id); got != placement.OwnedHeap {
+		t.Fatalf("materialized placement = %s, want owned-heap", got)
+	}
+	second := transferFn(ctx, first)
+	if !heapidentity.ObjectDomain(reg).Equal(first.ReadHeapTableObject(reg, id), second.ReadHeapTableObject(reg, id)) {
+		t.Fatal("repeated same-site materialization did not stabilize")
+	}
+}
+
+func TestReturnedAllocationMaterializationPreservesAllSeventeenStateLanes(t *testing.T) {
+	const userAxis userlattice.AxisID = "test.returned-allocation"
+	reg := concreteRootTransactionRegistry(t, userAxis)
+	seeds := concreteRootTransactionLaneSeeds(t, reg, keyspace.New(), userAxis)
+	if got := len(state.DefaultLanes()); got != 17 {
+		t.Fatalf("default state lane count = %d, want 17", got)
+	}
+	g := cfg.New()
+	point := cfg.Point(622)
+	id := identity.ReturnedAllocation(identity.ID{Kind: "table", Site: "template", Index: 1}, g.ID(), uint64(point))
+	value := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(id))
+	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: value})
+	transferFn := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+		}}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{HeapTableObjects: map[identity.ID]heapidentity.TableObject{id: object}}
+		},
+	})
+	for _, lane := range state.DefaultLanes() {
+		input := state.Domain(reg).Join(state.Reachable(state.State{}), seeds[lane])
+		got := transferFn(transfer.NodeContext{Registry: reg, Graph: g, Point: point}, input)
+		if lane == state.LaneHeapTableIdentity || lane == state.LanePlacement {
+			continue
+		}
+		laneDomain := state.DomainWithLanes(reg, []state.LaneID{lane})
+		if !laneDomain.Equal(input, got) {
+			t.Fatalf("returned allocation materialization changed unrelated state lane %q", lane)
+		}
 	}
 }
 

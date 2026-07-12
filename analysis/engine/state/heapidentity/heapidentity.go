@@ -67,6 +67,56 @@ func NewOwnedStaticTableObject(root product.Value, staticMembers map[keyspace.Ke
 // Root returns the object's root product value.
 func (o TableObject) Root() product.Value { return o.root }
 
+// MapValues rewrites every product value stored by the object while preserving
+// its structural and lattice metadata. The returned object never aliases a
+// mutable member map with o when any value changes.
+func (o TableObject) MapValues(reg *axis.Registry, mapValue func(product.Value) product.Value) TableObject {
+	if o.bottom || reg == nil || mapValue == nil {
+		return o
+	}
+	changed := false
+	staticCloned := false
+	dynamicCloned := false
+	root := mapValue(o.root)
+	changed = changed || !product.Equal(reg, root, o.root)
+	staticMembers := o.staticMembers
+	for key, value := range o.staticMembers {
+		next := mapValue(value)
+		if product.Equal(reg, next, value) {
+			continue
+		}
+		if !staticCloned {
+			staticMembers = clonePathMap(o.staticMembers)
+			staticCloned = true
+		}
+		staticMembers[key] = next
+		changed = true
+	}
+	dynamicFacts := o.dynamicIndexFacts
+	for key, fact := range o.dynamicIndexFacts {
+		next := fact
+		next.KeyValue = mapValue(fact.KeyValue)
+		next.Value = mapValue(fact.Value)
+		if product.Equal(reg, next.KeyValue, fact.KeyValue) && product.Equal(reg, next.Value, fact.Value) {
+			continue
+		}
+		if !dynamicCloned {
+			dynamicFacts = dynamicindex.CloneMap(o.dynamicIndexFacts)
+			dynamicCloned = true
+		}
+		dynamicFacts[key] = next
+		changed = true
+	}
+	if !changed {
+		return o
+	}
+	out := o
+	out.root = root
+	out.staticMembers = staticMembers
+	out.dynamicIndexFacts = dynamicFacts
+	return out
+}
+
 // IsBottom reports whether this object is the unreachable heap-object value.
 func (o TableObject) IsBottom() bool { return o.bottom }
 

@@ -46,6 +46,28 @@ func LuaTableLiteral(graphID, exprRef uint64) ID {
 	return ID{Kind: "lua.table", Site: "graph-expr", Index: h}
 }
 
+// ReturnedAllocation derives the allocation-site abstraction used when a
+// callee-local allocation crosses a summary boundary. The template identifies
+// the allocation in the callee; callerGraph and callPoint identify the static
+// allocation site in the caller. Repeated executions of one call therefore
+// share an identity while distinct static calls cannot alias.
+func ReturnedAllocation(template ID, callerGraph uint64, callPoint uint64) ID {
+	if template == (ID{}) || callerGraph == 0 {
+		return ID{}
+	}
+	h := internal.FnvString("identity.returned.allocation")
+	h = internal.MixHash(h, template.hash())
+	h = internal.MixHash(h, callerGraph)
+	h = internal.MixHash(h, callPoint)
+	return ID{Kind: template.Kind, Site: "returned-allocation", Index: h}
+}
+
+// IsReturnedAllocation reports whether id is a caller-site-instantiated
+// returned allocation rather than an allocation template.
+func IsReturnedAllocation(id ID) bool {
+	return id != (ID{}) && id.Site == "returned-allocation"
+}
+
 func (id ID) String() string {
 	return id.Kind + ":" + id.Site + "#" + strconv.FormatUint(id.Index, 10)
 }
