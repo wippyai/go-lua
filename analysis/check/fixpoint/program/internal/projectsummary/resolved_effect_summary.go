@@ -34,8 +34,8 @@ func ResolvedEffectSummaryResolver(reg *axis.Registry) transformer.EffectSummary
 // outside the slice rejects the whole row:
 //   - standalone/precise/subtree invalidation;
 //   - append candidates or overlapping mutation tables;
-//   - key/value paths, concrete identities, boundary-lossy products, maybe-absent
-//     products, literals, or non-scalar products.
+//   - non-boundary key/value paths, concrete identities, boundary-lossy
+//     products, maybe-absent products, literals, or non-scalar products.
 //
 // The restrictions are intentionally stronger than soundness alone. They make
 // the existing PathInvalidations + DynamicIndexFacts call-boundary lanes exact
@@ -69,20 +69,36 @@ func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffe
 		// Append through the storage descriptor rather than assembling parallel
 		// lane state. Summary.Normalize below supplies the canonical per-lane
 		// lattice normalization/deduplication.
+		dynamicFact := callboundary.DynamicIndexFact{
+			Table: mutation.Table,
+			Site:  dynamicindex.SiteForPoint(int(mutation.Site.Ordinal)),
+			Value: dynamicindex.Fact{
+				KeyPresence: product.PresenceOf(mutation.Key),
+				KeyValue:    portableBoundaryValue(reg, mutation.Key),
+				Value:       portableBoundaryValue(reg, mutation.Value),
+				Admission:   mutation.Admission,
+			},
+		}
+		if !mutation.KeyPath.IsEmpty() {
+			dynamicFact.KeyPath = mutation.KeyPath
+		}
+		if !mutation.ValuePath.IsEmpty() {
+			dynamicFact.ValuePath = mutation.ValuePath
+		}
 		fragment := callboundary.NormalReturnFacts{
 			PathInvalidations: []callboundary.PathInvalidationFact{{
-				Path: mutation.Table, PreserveStructuralWitness: true,
+				// Concrete completed-result projection also sees the exit
+				// DynamicIndexFact and normalizes the paired invalidation to this
+				// false storage flag. The apply lane recognizes the matching table
+				// in DynamicIndexFacts and still preserves structural witnesses.
+				Path: mutation.Table, PreserveStructuralWitness: false,
 			}},
-			DynamicIndexFacts: []callboundary.DynamicIndexFact{{
-				Table: mutation.Table,
-				Site:  dynamicindex.SiteForPoint(int(mutation.Site.Ordinal)),
-				Value: dynamicindex.Fact{
-					KeyPresence: product.PresenceOf(mutation.Key),
-					KeyValue:    portableBoundaryValue(reg, mutation.Key),
-					Value:       portableBoundaryValue(reg, mutation.Value),
-					Admission:   mutation.Admission,
-				},
-			}},
+			DynamicIndexFacts: []callboundary.DynamicIndexFact{dynamicFact},
+		}
+		if !mutation.KeyPath.IsEmpty() {
+			fragment.KeyMemberships = []callboundary.KeyMembershipFact{{
+				Key: mutation.KeyPath, Table: mutation.Table,
+			}}
 		}
 		facts = facts.Append(fragment)
 	}
@@ -143,7 +159,8 @@ func safeResolvedBoundaryMutation(reg *axis.Registry, mutation transformer.Resol
 		mutation.Invalidation.Precise != nil ||
 		mutation.Table.IsEmpty() || !mutation.Invalidation.Target.Equal(mutation.Table) ||
 		!boundaryEffectPath(mutation.Table) ||
-		!mutation.KeyPath.IsEmpty() || !mutation.ValuePath.IsEmpty() {
+		(!mutation.KeyPath.IsEmpty() && !boundaryEffectPath(mutation.KeyPath)) ||
+		(!mutation.ValuePath.IsEmpty() && !boundaryEffectPath(mutation.ValuePath)) {
 		return false
 	}
 	return exactPortablePresentScalar(reg, mutation.Key) && exactPortablePresentScalar(reg, mutation.Value)

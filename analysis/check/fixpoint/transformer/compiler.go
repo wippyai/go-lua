@@ -91,9 +91,16 @@ func NewPlanCompiler() *PlanCompiler {
 	// executable lowering of its own; its registration makes lane certificate
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
+	c.facts[operationplan.ExpressionPath] = dynamicIndexDependencyPlanHandler{kind: operationplan.ExpressionPath}
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
 	c.facts[operationplan.Return] = returnPlanHandler{}
 	c.facts[operationplan.CallSite] = signatureCallPlanHandler{}
+	for _, dynamicKind := range []operationplan.Kind{
+		operationplan.PathDescendantInvalidation,
+		operationplan.DynamicIndexWrite,
+	} {
+		c.facts[dynamicKind] = dynamicIndexPlanHandler{kind: dynamicKind}
+	}
 	// These edge families are consumed together by compileBranchEdge. They are
 	// registered here so the operation-plan exhaustiveness gate recognizes one
 	// semantic owner; their point-local handlers intentionally publish nothing.
@@ -358,7 +365,9 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		}
 		for _, lane := range state.DefaultLanes() {
 			capability := CapabilityUnaffected
-			if fact == operationplan.RootAssignment || isBranchEdgeOwnedKind(fact) {
+			if dynamicCapability, handled := dynamicIndexEffectCapability(fact, lane); handled {
+				capability = dynamicCapability
+			} else if fact == operationplan.RootAssignment || isBranchEdgeOwnedKind(fact) {
 				capability = CapabilitySupported
 			}
 			_ = semantic.SetFact(fact, lane, capability)

@@ -1,0 +1,122 @@
+package transformer
+
+import (
+	"testing"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+func TestDynamicIndexPlanHandlerPublishesOneOrderedAtomicBoundaryEffect(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), point, false)
+	graph.AddEdge(point, graph.Exit(), false)
+	table, keyParam, valueParam := symbol.ID(9301), symbol.ID(9302), symbol.ID(9303)
+	tablePath := pathdom.NewPath(table, "table")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9302, HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9303, HasExpr: true}
+	input := factflow.FactsInput{
+		PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+			point: factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(tablePath, keySource, nil),
+		},
+		DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+			point: factflow.NewDynamicIndexWrite(tablePath, keySource, valueSource,
+				dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			keySource.ExprRef:   pathdom.NewPath(keyParam, "key"),
+			valueSource.ExprRef: pathdom.NewPath(valueParam, "value"),
+		},
+	}
+	plan := operationplan.New(graph, input).WithBoundaryParams([]symbol.ID{table, keyParam, valueParam})
+	builder := NewBuilder(reg, Shape{Params: 3}, DefaultOutputCapabilityRegistry(), plan)
+	ctx := planCompileContext{
+		registry: reg, graph: graph, plan: plan, facts: plan.Facts(), builder: builder,
+		locals: make(map[symbol.ID]ValueTerm), expressions: make(map[factflow.ExprRef][]ValueTerm),
+	}
+	if err := bindBoundaryParamTerms(&ctx, Shape{Params: 3}); err != nil {
+		t.Fatal(err)
+	}
+	var effects []EffectTerm
+	ctx.rowEffects = &effects
+	n3 := dynamicIndexPlanHandler{kind: operationplan.PathDescendantInvalidation}
+	n4 := dynamicIndexPlanHandler{kind: operationplan.DynamicIndexWrite}
+	if err := n3.Preflight(ctx, point); err != nil {
+		t.Fatal(err)
+	}
+	if err := n4.Preflight(ctx, point); err != nil {
+		t.Fatal(err)
+	}
+	if err := n3.Lower(ctx, point, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 0 {
+		t.Fatal("N3 published before the atomic N4 boundary")
+	}
+	if err := n4.Lower(ctx, point, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || builder.EffectArena().Kind(effects[0]) != EffectIndexMutation {
+		t.Fatalf("ordered effects = %#v, want one index mutation", effects)
+	}
+	node := builder.EffectArena().nodes[effects[0]]
+	if node.site.Owner != uint64(table) || node.site.Ordinal != uint32(point) ||
+		node.keyPath == 0 || node.valuePath == 0 || !node.invalidation.PreserveStructuralWitness ||
+		!node.invalidation.PreserveDynamicValueMemberships {
+		t.Fatalf("index mutation lost boundary provenance: %#v", node)
+	}
+	keyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	valueValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	cursor, err := NewBindingCursor(Shape{Params: 3},
+		[]product.Value{product.Top(), keyValue, valueValue},
+		[]pathdom.Path{pathdom.NewPlaceholder(0), pathdom.NewPlaceholder(1), pathdom.NewPlaceholder(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok := builder.EffectArena().resolve(effects[0], cursor, SpecializationContext{})
+	if !ok || resolved.Kind != EffectIndexMutation ||
+		!resolved.Mutation.Table.Equal(pathdom.NewPlaceholder(0)) ||
+		!resolved.Mutation.KeyPath.Equal(pathdom.NewPlaceholder(1)) ||
+		!resolved.Mutation.ValuePath.Equal(pathdom.NewPlaceholder(2)) {
+		t.Fatalf("resolved boundary mutation = %#v/%v", resolved, ok)
+	}
+}
+
+func TestDynamicIndexPlanHandlerFailsClosedOutsideBoundaryPair(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeAssign)
+	table := symbol.ID(9401)
+	tablePath := pathdom.NewPath(table, "table")
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9402, HasExpr: true}
+	input := factflow.FactsInput{DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+		point: factflow.NewDynamicIndexWrite(tablePath, source, source,
+			dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue),
+	}}
+	plan := operationplan.New(graph, input).WithBoundaryParams([]symbol.ID{table})
+	builder := NewBuilder(reg, Shape{Params: 1}, DefaultOutputCapabilityRegistry(), plan)
+	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts(), builder: builder, locals: make(map[symbol.ID]ValueTerm)}
+	if err := bindBoundaryParamTerms(&ctx, Shape{Params: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildBoundaryDynamicIndexEffect(ctx, point); err == nil {
+		t.Fatal("unpaired dynamic write was admitted")
+	}
+	for _, lane := range state.DefaultLaneCatalog().LaneSet().IDs() {
+		capability, handled := dynamicIndexEffectCapability(operationplan.DynamicIndexWrite, lane)
+		if !handled || capability == CapabilityUnsupported {
+			t.Fatalf("dynamic index lane %q has no catalog-derived compiler verdict", lane)
+		}
+	}
+}

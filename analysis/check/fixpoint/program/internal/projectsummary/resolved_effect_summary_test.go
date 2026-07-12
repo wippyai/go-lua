@@ -122,11 +122,20 @@ func TestResolvedEffectSummaryMatchesConcreteProjectionOutcomeAndAllStateLanes(t
 	write := factflow.NewDynamicIndexWrite(paramPath, keySource, valueSource,
 		dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue)
 	invalidation := factflow.NewPathDescendantInvalidation(paramPath)
+	concreteKS := keyspace.New()
+	concreteFact := dynamicindex.Fact{
+		KeyPresence: product.PresenceOf(keyValue), KeyValue: keyValue,
+		Value: valueValue, Admission: dynamicindex.AdmissionAdmitted,
+	}
+	concreteExit := state.State{}.WriteDynamicIndexFact(reg, dynamicindex.Key{
+		Table: mustStateKey(t, concreteKS, normalReturnFactProjectTestKey(param, "")),
+		Site:  dynamicindex.SiteForPoint(int(writePoint)),
+	}, concreteFact)
 	bodyReads := 0
 	concreteSummary := FromResult(resolvedEffectProjectionStub{
 		normalReturnFactProjectAssignmentStub: normalReturnFactProjectAssignmentStub{
 			normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
-				reg: reg, graph: concreteGraph, exit: state.State{}, keys: keyspace.New(),
+				reg: reg, graph: concreteGraph, exit: concreteExit, keys: concreteKS,
 				slots: []statekey.Value{statekey.SymbolValue(param)},
 			},
 			pathInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{writePoint: invalidation},

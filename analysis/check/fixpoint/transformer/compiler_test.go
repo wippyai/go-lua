@@ -155,7 +155,7 @@ func TestPlanCompilerUnsupportedFamiliesFailAsOneContextualRelation(t *testing.T
 
 	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
 	reason := relation.ContextualReason()
-	const wantReason = "compiler: contextual operations: DynamicIndexWrites, PathAssignments"
+	const wantReason = "compiler: contextual operations: PathAssignments"
 	if reason != wantReason {
 		t.Fatalf("contextual reason = %q, want deterministic aggregate %q", reason, wantReason)
 	}
