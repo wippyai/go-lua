@@ -65,6 +65,26 @@ func SolveExactWTOCFGExpandedRows(ctx context.Context, graph cfg.Graph, arena *A
 	if err != nil {
 		return nil, err
 	}
+	return solveExactWTOCFGExpandedRowsWithTape(ctx, graph, tape, arena, initial, transfer, branch, options)
+}
+
+// solveExactWTOCFGExpandedRowsWithTape executes against an immutable topology
+// compiled by the function owner. Prepared compilers use this entry so
+// repeated equation reads allocate only row scratch, never WTO structure.
+func solveExactWTOCFGExpandedRowsWithTape(ctx context.Context, graph cfg.Graph, tape *symbolicWTOTape, arena *Arena, initial SymbolicCFGRow, transfer SymbolicCFGExpandTransfer, branch SymbolicCFGBranch, options SymbolicExactWTOOptions) (map[cfg.Point][]SymbolicCFGRow, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("transformer: exact WTO requires a context")
+	}
+	if graph == nil || tape == nil || arena == nil {
+		return nil, fmt.Errorf("transformer: exact WTO requires graph, tape, and arena")
+	}
+	options = options.normalized()
+	if !validCFGRow(arena, options.Shape, initial) {
+		return nil, fmt.Errorf("transformer: exact WTO initial row is invalid for boundary shape")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("transformer: exact WTO canceled: %w", err)
+	}
 	if err := certifyExactWTOComponentHeads(graph, tape); err != nil {
 		return nil, err
 	}

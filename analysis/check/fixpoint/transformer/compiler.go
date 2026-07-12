@@ -803,12 +803,18 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 	if !ok {
 		return fmt.Errorf("missing root-assignment payload")
 	}
-	if _, exists := ctx.locals[fact.TargetSymbol()]; exists {
-		return fmt.Errorf("symbol %d has multiple writes", fact.TargetSymbol())
-	}
 	term, err := exactCompilerSourceTerm(ctx, fact.Source())
 	if err != nil {
 		return err
+	}
+	if prior, exists := ctx.locals[fact.TargetSymbol()]; exists {
+		// A lexical declaration is revisited by cyclic row closure. Replaying
+		// the identical interned binding is an idempotent transfer, while a
+		// different binding remains an unsupported multi-write.
+		if prior == term {
+			return nil
+		}
+		return fmt.Errorf("symbol %d has multiple writes", fact.TargetSymbol())
 	}
 	ctx.locals[fact.TargetSymbol()] = term
 	return nil

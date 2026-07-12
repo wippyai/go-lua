@@ -149,7 +149,13 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		if !exists {
 			return SymbolicCFGRow{}, fmt.Errorf("result target slot %d has no callee row value", target.slot)
 		}
-		if _, exists := next.Values[target.symbol]; exists {
+		if prior, exists := next.Values[target.symbol]; exists {
+			// Cyclic exact closure revisits the same lexical call point. An
+			// identical interned result binding is the fixed point; a changed
+			// value is still a contextual multi-write.
+			if prior == value {
+				continue
+			}
 			return SymbolicCFGRow{}, fmt.Errorf("result symbol %d already has a row binding", target.symbol)
 		}
 		next.Values[target.symbol] = value

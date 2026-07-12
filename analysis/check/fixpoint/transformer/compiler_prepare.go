@@ -27,6 +27,8 @@ type PreparedPlanCompiler struct {
 	builder     *Builder
 	base        planCompileContext
 	certificate SemanticCertificate
+	wtoTape     *symbolicWTOTape
+	cyclic      bool
 }
 
 // EffectFree reports whether this prepared compiler can emit any structured
@@ -138,9 +140,14 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err != nil {
 		return nil, fmt.Errorf("compiler: certificate: %w", err)
 	}
+	tape, err := compileSymbolicWTOTape(graph)
+	if err != nil {
+		return nil, fmt.Errorf("compiler: WTO topology: %w", err)
+	}
 	return &PreparedPlanCompiler{
 		compiler: c, registry: reg, graph: graph, plan: plan, shape: shape,
-		builder: builder, base: ctx, certificate: certificate,
+		builder: builder, base: ctx, certificate: certificate, wtoTape: tape,
+		cyclic: len(tape.components) != 0,
 	}, nil
 }
 
@@ -148,7 +155,7 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 // contextual Relation on CFG/topology transfer failure and never publishes
 // partial rows.
 func (p *PreparedPlanCompiler) Evaluate() Relation {
-	return p.evaluate(RelationView{}, nil)
+	return p.evaluate(context.Background(), RelationView{}, nil)
 }
 
 // EvaluateDirect composes a frozen acyclic lexical dependency catalog. Empty,
@@ -158,10 +165,10 @@ func (p *PreparedPlanCompiler) EvaluateDirect(view RelationView, catalog DirectC
 	if p == nil || catalog.PointCount() != p.plan.PointCount() {
 		return Relation{contextual: "compiler: direct-call catalog width differs from plan", widened: true}
 	}
-	return p.evaluate(view, &catalog)
+	return p.evaluate(context.Background(), view, &catalog)
 }
 
-func (p *PreparedPlanCompiler) evaluate(view RelationView, direct *DirectCallCatalog) Relation {
+func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationView, direct *DirectCallCatalog) Relation {
 	if p == nil || p.compiler == nil || p.builder == nil {
 		return Relation{contextual: "compiler: nil prepared plan", widened: true}
 	}
@@ -179,15 +186,28 @@ func (p *PreparedPlanCompiler) evaluate(view RelationView, direct *DirectCallCat
 			initial.Output.NormalReturnParams[i] = product.Top()
 		}
 	}
-	rowsByPoint, err := SolveAcyclicCFGExpandedRows(p.graph, p.builder.Arena(), initial,
-		func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
-			return p.lowerPreparedPoint(ctx, view, direct, point, row)
-		},
-		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
-			return compileBranchEdge(ctx, point, row, cond)
-		},
-		SymbolicCFGOptions{Shape: p.shape},
-	)
+	transfer := func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+		return p.lowerPreparedPoint(ctx, view, direct, point, row)
+	}
+	branch := func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
+		return compileBranchEdge(ctx, point, row, cond)
+	}
+	var rowsByPoint map[cfg.Point][]SymbolicCFGRow
+	var err error
+	if p.cyclic {
+		rowsByPoint, err = solveExactWTOCFGExpandedRowsWithTape(evalCtx, p.graph, p.wtoTape, p.builder.Arena(), initial,
+			transfer, branch, SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{Shape: p.shape}})
+	} else {
+		rowsByPoint, err = SolveAcyclicCFGExpandedRows(p.graph, p.builder.Arena(), initial,
+			func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+				return transfer(point, row)
+			},
+			func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
+				return branch(point, row, cond)
+			},
+			SymbolicCFGOptions{Shape: p.shape},
+		)
+	}
 	if err != nil {
 		return contextual("compiler: " + err.Error())
 	}
@@ -388,7 +408,7 @@ func (p *PreparedPlanCompiler) Equation(ref CellRef) (*PreparedEquation, error) 
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err
 		}
-		return p.Evaluate(), nil
+		return p.evaluate(ctx, RelationView{}, nil), nil
 	})
 }
 
@@ -409,7 +429,7 @@ func (p *PreparedPlanCompiler) DirectEquation(ref CellRef, catalog DirectCallCat
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err
 		}
-		return p.EvaluateDirect(view, catalog), nil
+		return p.evaluate(ctx, view, &catalog), nil
 	})
 }
 
