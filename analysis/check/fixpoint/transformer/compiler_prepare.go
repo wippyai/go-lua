@@ -81,7 +81,9 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	}
 	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
 	outputCaps := DefaultOutputCapabilityRegistry()
-	summaryKinds := []callboundary.BoundaryFactKind{"NormalReturnParams", "NormalReturnFacts"}
+	summaryKinds := []callboundary.BoundaryFactKind{
+		"NormalReturnParams", "NormalReturnFacts", "ReturnFlows", "ReturnParamPathAliases",
+	}
 	if planReturnArity(plan) > 1 {
 		summaryKinds = append(summaryKinds, "ReturnConditionSlotRefinements", "ReturnPresenceRelations")
 	}

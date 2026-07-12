@@ -112,6 +112,17 @@ func NewArena(reg *axis.Registry) *Arena {
 }
 
 func (a *Arena) Root(root Root) ValueTerm { return a.internValue(valueNode{op: valueRoot, root: root}) }
+
+func (a *Arena) directParamRoot(term ValueTerm) (int, bool) {
+	if a == nil || term == 0 || int(term) >= len(a.values) {
+		return 0, false
+	}
+	node := a.values[term]
+	if node.op != valueRoot || node.root.Kind != RootParam {
+		return 0, false
+	}
+	return int(node.root.Index), true
+}
 func (a *Arena) Constant(value product.Value) ValueTerm {
 	return a.internValue(valueNode{op: valueConstant, value: value})
 }

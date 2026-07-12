@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
@@ -163,6 +165,20 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 					rawReturns[operation.Slot] = value
 				} else {
 					rawReturns[operation.Slot] = summary.JoinReturnValue(reg, rawReturns[operation.Slot], value)
+				}
+				if param, exact := r.arena.directParamRoot(operation.Value); exact {
+					if r.authority.allowsSummary("ReturnFlows") && r.authority.allowsSummary("ReturnParamPathAliases") {
+						placeholder, placeholderOK := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(param))
+						if !placeholderOK {
+							return summary.Summary{}, false
+						}
+						candidate.ReturnFlows = append(candidate.ReturnFlows, summary.ReturnFlow{
+							ReturnIndex: int(operation.Slot), Kind: summary.ReturnFlowParam, Param: param,
+						})
+						candidate.ReturnParamPathAliases = append(candidate.ReturnParamPathAliases, summary.ReturnParamPathAlias{
+							ReturnIndex: int(operation.Slot), Source: placeholder,
+						})
+					}
 				}
 			}
 		}

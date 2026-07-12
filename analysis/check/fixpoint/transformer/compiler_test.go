@@ -324,6 +324,12 @@ func TestPlanCompilerReturnCorrelationUsesRawTriggerBeforeDeclaredContract(t *te
 	if !ok {
 		t.Fatal("annotated multi-return relation did not specialize")
 	}
+	if len(got.ReturnFlows) != 1 || got.ReturnFlows[0].ReturnIndex != 0 || got.ReturnFlows[0].Kind != summary.ReturnFlowParam || got.ReturnFlows[0].Param != 0 {
+		t.Fatalf("direct parameter return flow = %#v, want return 0 <- param 0", got.ReturnFlows)
+	}
+	if len(got.ReturnParamPathAliases) != 1 || got.ReturnParamPathAliases[0].ReturnIndex != 0 || got.ReturnParamPathAliases[0].Member != "" || got.ReturnParamPathAliases[0].Source != "$0" {
+		t.Fatalf("direct parameter return alias = %#v, want return 0 aliases $0", got.ReturnParamPathAliases)
+	}
 	for _, refinement := range got.ReturnConditionSlotRefinements {
 		if refinement.ReturnIndex == 0 {
 			t.Fatalf("declared truthy contract invented raw-trigger condition: %#v", refinement)

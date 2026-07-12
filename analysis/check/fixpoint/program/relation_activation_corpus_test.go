@@ -74,6 +74,12 @@ local total = 0
 for i = 1, 8 do total = total + leaf() end
 return total
 `},
+		{name: "parameterized-leaf", exact: true, source: `
+local function identity(value: string): string return value end
+return identity(relation_input)
+`, check: func(reg *axis.Registry) body.Config {
+			return body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Globals: []string{"relation_input"}, GlobalTypes: map[string]typ.Type{"relation_input": typ.String}, Schedule: transfer.ScheduleWTO, Signatures: signaturelookup.Source{IncludeStdlib: true}}
+		}},
 		{name: "recursive-fallback", exact: true, source: `
 local function count(n: number): number
   if n <= 0 then return 0 end

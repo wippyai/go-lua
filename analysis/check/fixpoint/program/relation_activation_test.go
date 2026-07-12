@@ -138,6 +138,24 @@ end
 	)
 }
 
+func TestRelationActivationRunBoundFunctionParameterizedLeafDifferential(t *testing.T) {
+	stmts := parseChunk(t, `
+return function(input: string): string
+	local function identity(value: string): string
+		return value
+	end
+	return identity(input)
+end
+`)
+	ret := stmts[0].(*ast.ReturnStmt)
+	fn := ret.Exprs[0].(*ast.FunctionExpr)
+	bindings := bind.BindFunction(fn, bind.Options{})
+	assertRelationActivationDifferential(t,
+		func(config Config) (Result, error) { return RunBoundFunction(fn, bindings, config) },
+		true,
+	)
+}
+
 func assertRelationActivationDifferential(t *testing.T, run func(Config) (Result, error), expectReduction bool) {
 	t.Helper()
 	reg := standard.Registry()

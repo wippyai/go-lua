@@ -81,8 +81,8 @@ return got
 		cursor, bound := relationBindings(body.CallOutcomeContext{Facts: owner.Prepared.OperationPlan().Facts(), Sources: sources})(ctx, identitySite, state.State{}, nil, transformer.Shape{Params: 1})
 		t.Fatalf("identity outcome = %#v, handled=%v; point=%d/%v callee=%d path=%#v args=%d flags=%v/%v member=%v method=%q receiver=%#v/%v receiverSource=%v methodPath=%#v/%v source=%#v valid=%v canonical=%#v exact=%v bound=%v cursor=%#v", out, handled, point, hasPoint, identitySite.CalleeSymbol(), identitySite.CalleePathRef(), identitySite.ArgumentSourceCount(), identitySite.Expanded(), identitySite.OpenTail(), identitySite.CalleeMemberAccess(), identitySite.MethodName(), receiver, hasReceiver, hasReceiverSource, methodPath, hasMethodPath, source, source.Valid(), canonicalSourcePath(owner.Prepared.OperationPlan().Facts(), source), exactScalarCallSite(identitySite, 1), bound, cursor)
 	}
-	if sources.calls != 1 {
-		t.Fatalf("ValueOfSource calls = %d, want one", sources.calls)
+	if sources.calls != 2 {
+		t.Fatalf("ValueOfSource calls = %d, want binding plus return-alias materialization", sources.calls)
 	}
 	if !state.Domain(reg).Equal(in, before) {
 		t.Fatal("relation resolution mutated one of the caller's state lanes")
