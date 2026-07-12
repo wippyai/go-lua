@@ -57,9 +57,9 @@ func NewConcreteNodePointExecutor(config FactsNodeTransferConfig) *ConcreteNodeP
 //
 // Input remains the source/provider snapshot throughout; Output evolves between
 // barriers. The lazy call reader and its recursive materialization cache are
-// created per Apply, exactly as before this extraction. Existing cooperative
-// cancellation points roll the whole node back to Input; callback-boundary
-// hardening is intentionally a separately tested semantic change.
+// created per Apply, exactly as before this extraction. Cancellation observed
+// by an existing poll or after any provider-bearing operation rolls the whole
+// node back to Input, so a canceled solve cannot publish a partial point.
 func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.State) ConcreteNodePointResult {
 	if e == nil {
 		return ConcreteNodePointResult{Output: in}
@@ -95,6 +95,7 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 		}
 		return callResults
 	}
+	checkCanceled := func() bool { return token != nil && token.Canceled() }
 	out := in
 	if sources != nil {
 		if e.refinedSources == nil || e.refinedSourceRegistry != ctx.Registry {
@@ -108,6 +109,9 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 	// return slots. The materializer owns one cache for this Apply only.
 	if nodeHasCallMaterializationFacts(facts, ctx.Point) {
 		out = ensureCallResults().Materialize(ctx.Point, in)
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 
 	// N1 terminates the normal path only after N0 provider effects have run.
@@ -150,6 +154,9 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 	if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
 		_, directDynamicWrite := facts.DynamicIndexWrite(ctx.Point)
 		out = applyPathDescendantInvalidation(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, !directDynamicWrite)
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 	for _, fact := range facts.PostconditionRefinements(ctx.Point) {
 		if poll.Poll() {
@@ -168,6 +175,9 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 			return canceled()
 		}
 		out = applyChannelSelect(ctx, config.Visibility, out, fact)
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 
 	// Preserve the established nil-source boundary: write/return/finalizer
@@ -181,6 +191,9 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 	// onto evolving Output in this precise order.
 	if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
 		out = applyDynamicIndexWrite(ctx, config.Visibility, facts, sources, read, in, out, fact)
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 	if _, ok := facts.RootAssignment(ctx.Point); ok {
 		result := e.rootAssignments.Apply(ConcreteRootAssignmentPointRequest{
@@ -198,6 +211,9 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 			ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 		})
 		out = result.Output
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 	if fact, ok := facts.PathAssignment(ctx.Point); ok {
 		var applied bool
@@ -206,18 +222,33 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 			Sources: sources, Read: read, Input: in, Output: out,
 			Assignment: fact,
 		})
+		if checkCanceled() {
+			return canceled()
+		}
 		if applied {
 			out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, fact.TargetPathRef(), fact.Source(), config.TypeValues)
+			if checkCanceled() {
+				return canceled()
+			}
 			out = applyCallOutcomePresenceRelationPublishes(ctx, facts, &e.callOutcomeCache, callOutcome, config.Visibility, read, out)
+			if checkCanceled() {
+				return canceled()
+			}
 		}
 	}
 	if fact, ok := facts.PathStaticMemberWrite(ctx.Point); ok {
 		out = applyPathStaticMemberWrite(ctx, config.Visibility, facts, sources, read, in, out, fact)
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 
 	// N5: returns see the same immutable source snapshot and all prior writes.
 	if fact, ok := facts.Return(ctx.Point); ok {
 		out = applyReturn(ctx, facts, sources, read, in, out, fact, config.Visibility, config.ProjectPath, config.TypeValues)
+		if checkCanceled() {
+			return canceled()
+		}
 	}
 
 	// N6 observes the completed node and is itself covered by node rollback.
@@ -225,5 +256,8 @@ func (e *ConcreteNodePointExecutor) Apply(ctx transfer.NodeContext, in state.Sta
 		Context: ctx, Resolver: config.Visibility, Facts: facts,
 		CovariantWiden: config.CovariantWiden, Output: out,
 	})
+	if checkCanceled() {
+		return canceled()
+	}
 	return done(out)
 }
