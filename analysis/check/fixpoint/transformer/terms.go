@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
 type ValueTerm uint32
@@ -23,6 +25,7 @@ const (
 	valueRoot
 	valueConstant
 	valueJoin
+	valueRefinement
 	valueCellResult
 	valueDynamicRead
 	valueDynamicTableRead
@@ -89,6 +92,26 @@ func NewArena(reg *axis.Registry) *Arena {
 func (a *Arena) Root(root Root) ValueTerm { return a.internValue(valueNode{op: valueRoot, root: root}) }
 func (a *Arena) Constant(value product.Value) ValueTerm {
 	return a.internValue(valueNode{op: valueConstant, value: value})
+}
+
+// RefineValue retains a positive canonical factflow constraint in the term
+// DAG. Specialization calls the same scalar kernel as concrete factapply.
+// Context-sensitive negation and falsy-absence refinements fail closed.
+func (a *Arena) RefineValue(value ValueTerm, refinement factflow.ValueRefinement) (ValueTerm, bool) {
+	if value == 0 || refinement.NegatedLiteral() || refinement.FalsyAbsent() {
+		return 0, false
+	}
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		return value, true
+	}
+	return a.refineConstraintValue(value, constraint), true
+}
+
+// refineConstraintValue is the infallible internal constructor used after a
+// transaction has already validated positive-refinement shape.
+func (a *Arena) refineConstraintValue(value ValueTerm, constraint product.Value) ValueTerm {
+	return a.internValue(valueNode{op: valueRefinement, value: constraint, args: []ValueTerm{value}})
 }
 
 // JoinValue constructs a flattened, commutative and idempotent value join.
@@ -280,6 +303,11 @@ func (a *Arena) valueKey(n valueNode) string {
 		return "c:" + strconv.FormatUint(product.Hash(a.reg, n.value), 16)
 	case valueJoin:
 		return fmt.Sprintf("j:%v", n.args)
+	case valueRefinement:
+		if a.reg == nil {
+			return "m:nil"
+		}
+		return fmt.Sprintf("m:%d:%x", n.args[0], product.Hash(a.reg, n.value))
 	case valueCellResult:
 		return fmt.Sprintf("x:%d:%d:%v", n.cell.Function, n.cell.Slot, n.args)
 	case valueDynamicRead:
@@ -299,7 +327,7 @@ func (a *Arena) valueEqual(x, y valueNode) bool {
 			return false
 		}
 	}
-	if x.op == valueConstant {
+	if x.op == valueConstant || x.op == valueRefinement {
 		return a.reg != nil && product.Equal(a.reg, x.value, y.value)
 	}
 	return true
@@ -366,6 +394,15 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			out = product.Join(a.reg, out, v)
 		}
 		return out, true
+	case valueRefinement:
+		if len(n.args) != 1 {
+			return product.Value{}, false
+		}
+		value, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		return factapply.RefineProductValueConstraint(a.reg, value, n.value), true
 	case valueCellResult:
 		if context.CellResult == nil {
 			return product.Value{}, false
@@ -455,6 +492,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 		}
 		sort.Strings(parts)
 		return "j(" + strings.Join(parts, ",") + ")"
+	case valueRefinement:
+		return "m(" + a.canonicalValue(n.args[0]) + "," + strconv.FormatUint(product.Hash(a.reg, n.value), 16) + ")"
 	case valueCellResult:
 		parts := make([]string, len(n.args))
 		for i, x := range n.args {
@@ -487,6 +526,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueDynamicRead && (len(n.args) != 2 || !a.validPath(n.path, shape)) {
+		return false
+	}
+	if n.op == valueRefinement && len(n.args) != 1 {
 		return false
 	}
 	if n.op == valueDynamicTableRead && ((len(n.args) != 2 && len(n.args) != 3) || !a.validPath(n.path, shape)) {

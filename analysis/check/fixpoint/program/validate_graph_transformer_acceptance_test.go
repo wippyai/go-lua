@@ -133,6 +133,55 @@ func TestValidateGraphBranchGuardOnlyEligibilityCensus(t *testing.T) {
 	t.Logf("validate_graph guard-only eligibility: %d/%d condition branches exact (%d structural branch points); blockers=%v", exact, conditions, total, blocked)
 }
 
+func TestValidateGraphBranchRefinementKernelEligibilityCensus(t *testing.T) {
+	fixture := newFindRootNodesPOCFixture(t)
+	oracle := fixture.applications[len(fixture.applications)-1].oracle
+	blocked, kernelExact, wholeBranchExact := 0, 0, 0
+	kernelBlockers := make(map[string]int)
+	for point := cfg.Point(0); int(point) < oracle.Graph().Size(); point++ {
+		algebra := oracle.BranchAlgebra(point)
+		if len(algebra.Refinements()) == 0 {
+			continue
+		}
+		blocked++
+		if !transformer.BranchRefinementKernelExact(algebra) {
+			seen := make(map[string]bool)
+			for _, cond := range []bool{false, true} {
+				for _, active := range algebra.ActiveRefinements(cond) {
+					refinement := active.Refinement()
+					if refinement.NegatedLiteral() {
+						seen["negated-literal"] = true
+					}
+					if refinement.FalsyAbsent() {
+						seen["falsy-absent"] = true
+					}
+					if _, ok := refinement.Constraint(); !ok {
+						seen["no-scalar-constraint"] = true
+					}
+				}
+			}
+			for reason := range seen {
+				kernelBlockers[reason]++
+			}
+			continue
+		}
+		kernelExact++
+		otherBlocker := false
+		for _, reason := range algebra.GuardOnlyBlockers() {
+			if reason != "branch:refinement" {
+				otherBlocker = true
+			}
+		}
+		if !otherBlocker {
+			wholeBranchExact++
+		}
+	}
+	if blocked == 0 {
+		t.Fatal("validate_graph refinement census is empty")
+	}
+	t.Logf("validate_graph positive-refinement kernel: %d/%d refinement blockers representable; kernel blockers=%v; %d whole branches exact after evidence/relation fail-closed gate", kernelExact, blocked, kernelBlockers, wholeBranchExact)
+}
+
 func newValidateGraphTransformerAcceptance(tb testing.TB) validateGraphTransformerAcceptance {
 	tb.Helper()
 	base := newFindRootNodesPOCFixture(tb)

@@ -442,6 +442,15 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement fact
 	if !ok {
 		return value
 	}
+	return RefineProductValueConstraint(reg, value, constraint)
+}
+
+// RefineProductValueConstraint is the shared scalar kernel for a positive
+// product constraint. Concrete path refinement and symbolic ValueTerm
+// specialization both use this function so evidence promotion and lattice
+// meet semantics cannot drift. Negated-literal and conditional falsy-absent
+// refinements are intentionally outside this kernel.
+func RefineProductValueConstraint(reg *axis.Registry, value, constraint product.Value) product.Value {
 	refined := valuerefine.MeetConstraint(reg, value, constraint)
 	if constraintProvesRuntimeCheckedValue(reg, constraint) {
 		refined = product.Set(reg, refined, evidence.Key, evidence.Top())

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
 // TermRootBindings maps every callee boundary namespace into one caller arena.
@@ -109,12 +110,21 @@ func RebaseTermDAGs(caller, callee *Arena, bindings TermRootBindings, input Term
 	}
 	for i, term := range input.Values {
 		out.Values[i] = state.value(term)
+		if state.err != nil {
+			return TermRebaseOutput{}, state.err
+		}
 	}
 	for i, term := range input.Paths {
 		out.Paths[i] = state.path(term)
+		if state.err != nil {
+			return TermRebaseOutput{}, state.err
+		}
 	}
 	for i, guard := range input.Guards {
 		out.Guards[i] = state.guard(guard)
+		if state.err != nil {
+			return TermRebaseOutput{}, state.err
+		}
 	}
 	return out, nil
 }
@@ -211,6 +221,13 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 			if err := v.value(arg); err != nil {
 				return err
 			}
+		}
+	case valueRefinement:
+		if len(n.args) != 1 {
+			return fmt.Errorf("transformer: malformed refinement term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
 		}
 	case valueCellResult:
 		return fmt.Errorf("transformer: scalar CellResult term %d requires relational composition", term)
@@ -324,6 +341,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) < 2 {
 			return fmt.Errorf("malformed join term %d", term)
 		}
+	case valueRefinement:
+		if len(n.args) != 1 {
+			return fmt.Errorf("malformed refinement term %d", term)
+		}
 	case valueCellResult:
 		if !allowCell {
 			return fmt.Errorf("unsupported value operation at term %d", term)
@@ -371,6 +392,7 @@ type rebaseState struct {
 	values   map[ValueTerm]ValueTerm
 	paths    map[PathTerm]PathTerm
 	guards   map[Guard]Guard
+	err      error
 }
 
 func (s *rebaseState) value(term ValueTerm) ValueTerm {
@@ -390,6 +412,13 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 			args[i] = s.value(arg)
 		}
 		out = s.caller.JoinValue(args...)
+	case valueRefinement:
+		var ok bool
+		out, ok = s.caller.RefineValue(s.value(n.args[0]), factflow.NewValueConstraint(n.value))
+		if !ok {
+			s.err = fmt.Errorf("transformer: validated refinement term %d failed to rebase", term)
+			return 0
+		}
 	case valueDynamicRead:
 		out = s.caller.DynamicReadValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
 	case valueDynamicTableRead:
