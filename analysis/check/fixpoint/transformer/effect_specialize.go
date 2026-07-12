@@ -5,6 +5,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -66,6 +67,41 @@ type ResolvedAllocationTemplate struct {
 // Returning false rejects the entire relation specialization. The callback is
 // deliberately unable to mutate caller State.
 type EffectSummaryResolver func([]ResolvedEffect) (summary.Summary, bool)
+
+func (a *relationOutputAuthority) allowsEffectFragment(effects []ResolvedEffect, fragment summary.Summary) bool {
+	if a == nil || len(effects) == 0 {
+		return false
+	}
+	// NormalReturnFacts has its own descriptor-driven nested lane catalog.
+	// Preserve effect origin by requiring every effect in the ordered sequence
+	// to authorize every emitted boundary kind; a union would let one effect
+	// smuggle lanes through another effect's descriptor. OutputCapabilityRegistry
+	// separately certifies the row-owned Summary at Build time; effect fragments
+	// are certified by EffectDescriptor.BoundaryKinds.
+	boundaryKinds := make([]callboundary.BoundaryFactKind, 0)
+	for _, lane := range callboundary.NormalReturnFactLanes() {
+		if lane.Len(fragment.NormalReturnFacts) != 0 {
+			boundaryKinds = append(boundaryKinds, callboundary.BoundaryFactKind(lane.ID()))
+		}
+	}
+	for _, kind := range summary.PresentFactKinds(fragment) {
+		if kind != callboundary.BoundaryFactKind("NormalReturnFacts") {
+			boundaryKinds = append(boundaryKinds, kind)
+		}
+	}
+	for _, effect := range effects {
+		allowedKinds, ok := a.effects[effect.Kind]
+		if !ok {
+			return false
+		}
+		for _, kind := range boundaryKinds {
+			if _, allowed := allowedKinds[kind]; !allowed {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context SpecializationContext) (ResolvedEffect, bool) {
 	if a == nil || a.terms == nil || term == 0 || int(term) >= len(a.nodes) {

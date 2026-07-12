@@ -151,19 +151,19 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 			}
 		}
 		if len(row.Effects) != 0 {
-			if resolve == nil || r.effects == nil {
+			if resolve == nil || r.effects == nil || r.authority == nil {
 				return summary.Summary{}, false
 			}
 			resolved := make([]ResolvedEffect, len(row.Effects))
 			for i, effect := range row.Effects {
 				var valid bool
 				resolved[i], valid = r.effects.resolve(effect, cursor, context)
-				if !valid {
+				if !valid || resolved[i].Kind != r.effects.Kind(effect) {
 					return summary.Summary{}, false
 				}
 			}
 			fragment, valid := resolve(resolved)
-			if !valid {
+			if !valid || !r.authority.allowsEffectFragment(resolved, fragment) {
 				return summary.Summary{}, false
 			}
 			candidate = summary.Join(reg, candidate, fragment)

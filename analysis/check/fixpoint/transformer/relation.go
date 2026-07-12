@@ -44,9 +44,60 @@ type Relation struct {
 	arena       *Arena
 	effects     *EffectArena
 	descriptors *DescriptorRegistry
+	authority   *relationOutputAuthority
 	rows        []Row
 	contextual  string
 	widened     bool
+}
+
+// relationOutputAuthority is the immutable capability snapshot carried by a
+// built relation. Resolver callbacks are deliberately outside the builder, so
+// specialization must re-check their fragments against each originating
+// effect descriptor. Row-owned outputs use OutputCapabilityRegistry instead.
+type relationOutputAuthority struct {
+	effects map[EffectKind]map[callboundary.BoundaryFactKind]struct{}
+}
+
+func snapshotRelationOutputAuthority(catalog *EffectCatalog) *relationOutputAuthority {
+	if catalog == nil {
+		return nil
+	}
+	out := &relationOutputAuthority{
+		effects: make(map[EffectKind]map[callboundary.BoundaryFactKind]struct{}),
+	}
+	for kind := EffectInvalidatePath; kind < effectKindCount; kind++ {
+		descriptor, ok := catalog.Descriptor(kind)
+		if !ok {
+			continue
+		}
+		allowed := make(map[callboundary.BoundaryFactKind]struct{})
+		for _, boundaryKind := range descriptor.BoundaryKinds() {
+			allowed[boundaryKind] = struct{}{}
+		}
+		out.effects[kind] = allowed
+	}
+	return out
+}
+
+func equalRelationOutputAuthority(a, b *relationOutputAuthority) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if len(a.effects) != len(b.effects) {
+		return false
+	}
+	for effectKind, allowed := range a.effects {
+		other, ok := b.effects[effectKind]
+		if !ok || len(allowed) != len(other) {
+			return false
+		}
+		for kind := range allowed {
+			if _, ok := other[kind]; !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (r Relation) Shape() Shape             { return r.shape }
@@ -171,7 +222,10 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 	}
 	sort.Slice(owned, func(i, j int) bool { return rowLess(b.arena, b.effects, owned[i], owned[j]) })
 	owned = dedupRows(b.arena, b.effects, owned)
-	return Relation{shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors, rows: owned}, nil
+	return Relation{
+		shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors,
+		authority: snapshotRelationOutputAuthority(b.effectCatalog), rows: owned,
+	}, nil
 }
 
 func stateCatalog() state.LaneCatalog { return state.DefaultLaneCatalog() }
@@ -309,17 +363,19 @@ func JoinRelation(a, b Relation) Relation {
 	// cross-arena composition.
 	if a.effects == nil && a.contextual == "" && len(a.rows) == 0 {
 		a.effects = b.effects
+		a.authority = b.authority
 	}
 	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
 		b.effects = a.effects
+		b.authority = a.authority
 	}
-	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.shape != b.shape {
+	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) {
 		return Relation{shape: a.shape, arena: a.arena, effects: a.effects, contextual: "incompatible or contextual relation"}
 	}
 	rows := append(cloneRows(a.rows), b.rows...)
 	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
 	rows = dedupRows(a.arena, a.effects, rows)
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, rows: rows, widened: a.widened || b.widened}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, authority: a.authority, rows: rows, widened: a.widened || b.widened}
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -340,7 +396,7 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.effects != b.effects || a.shape != b.shape || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))

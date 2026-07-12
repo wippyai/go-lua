@@ -6,8 +6,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -69,6 +71,55 @@ func TestRowEffectsPreserveNonCommutingMutationOrderAndFailClosedWithoutResolver
 	builder.effectCatalog = nil
 	if _, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True(), Effects: []EffectTerm{first}}}); err == nil {
 		t.Fatal("effectful row admitted without an effect catalog verdict")
+	}
+}
+
+func TestEffectResolverFragmentCannotExceedOriginatingDescriptor(t *testing.T) {
+	reg := standard.Registry()
+	shape := Shape{Params: 1}
+	builder, certificate := emptyBuilder(t, reg, shape, nil)
+	table := builder.Arena().Path(Root{Kind: RootParam, Index: 0})
+	scalar := builder.Arena().Constant(typevalue.LiteralString(reg, "value"))
+	effect, err := builder.EffectArena().IndexMutation(IndexMutationConfig{
+		Invalidation: InvalidatePathConfig{Target: table, Scope: InvalidationScopeDescendants},
+		Table:        table, Key: scalar, Value: scalar,
+		Admission: dynamicindex.AdmissionAdmitted, Readback: factflow.DynamicIndexReadbackKeyAndValue,
+		Site: EffectSite{Owner: 17, Ordinal: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True(), Effects: []EffectTerm{effect}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := NewBindingCursor(shape, []product.Value{product.Top()}, []pathdom.Path{pathdom.NewPlaceholder(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adversarial := []summary.Summary{
+		{MaySuspend: true},
+		{Returns: []product.Value{product.Top()}},
+		{ProtectedCallTypestate: callboundary.ProtectedCallTypestate{Normal: typestate.Empty(), HasNormal: true}},
+	}
+	for i, injected := range adversarial {
+		got, ok := relation.SpecializeWithEffects(cursor, nil, SpecializationContext{}, func([]ResolvedEffect) (summary.Summary, bool) {
+			return injected, true
+		})
+		if ok || !reflect.DeepEqual(got, summary.Summary{}) {
+			t.Fatalf("adversarial resolver fragment %d escaped descriptor: ok=%v got=%#v", i, ok, got)
+		}
+	}
+
+	allowed := summary.Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{{Path: pathdom.NewPlaceholder(0)}},
+	}}
+	got, ok := relation.SpecializeWithEffects(cursor, nil, SpecializationContext{}, func([]ResolvedEffect) (summary.Summary, bool) {
+		return allowed, true
+	})
+	if !ok || !summary.Equal(reg, got, summary.Normalize(reg, allowed)) {
+		t.Fatalf("canonical descriptor fragment rejected: ok=%v got=%#v", ok, got)
 	}
 }
 
