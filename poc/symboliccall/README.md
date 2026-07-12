@@ -18,9 +18,21 @@ weaken guards or collapse many rows to one unguarded slotwise join. It never
 silently weakens a requirement.
 
 Recursive transformer equations use `analysis/engine/solve`'s WTO directly.
-The POC does not implement another SCC engine. Heap, capture, allocation,
-typestate, channel, escape, placement, and operational-effect composition stay
-unsupported and therefore contextual.
+The POC does not implement another SCC engine.
+
+The boundary layer adds namespace-distinct parameter, lexical-capture, and
+vararg roots. A closure environment is bound explicitly when the transformer
+is instantiated. Vararg rows carry an exact or ranged pack length alongside
+positional expressions, which preserves the distinction between an absent
+position and an explicitly supplied nil. Entry requirements remain a separate
+contravariant lane and are checked after binding. Canonical row/expression
+ordering is structural; a product-hash collision fails closed rather than
+silently deciding order by allocation identity.
+
+Heap-mutated captures, allocation identity, globals, typestate, channel,
+escape, placement, actor state, and operational-effect composition stay
+unsupported and therefore contextual. Supporting immutable lexical captures
+does not imply that mutable closure cells are safe to summarize.
 
 Run:
 

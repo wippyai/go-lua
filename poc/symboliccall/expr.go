@@ -5,6 +5,9 @@ package symboliccall
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -18,6 +21,8 @@ const (
 	opConst
 	opJoin
 	opCall
+	opCapture
+	opVararg
 )
 
 // FunctionID is a stable lexical function identity in the experiment.
@@ -33,6 +38,25 @@ type exprNode struct {
 	args   []Expr
 	callee FunctionID
 	slot   int
+}
+
+// Capture reads one namespace-distinct lexical closure cell. It is never
+// interchangeable with Param(index), even when the numeric index is equal.
+func Capture(index int) Expr {
+	if index < 0 {
+		panic("symboliccall: negative capture")
+	}
+	return Expr{n: &exprNode{op: opCapture, param: index}}
+}
+
+// Vararg reads one element of the incoming Lua vararg pack. At concrete
+// instantiation an index beyond the exact pack length evaluates to Absent;
+// an explicitly supplied nil remains a present nil value.
+func Vararg(index int) Expr {
+	if index < 0 {
+		panic("symboliccall: negative vararg index")
+	}
+	return Expr{n: &exprNode{op: opVararg, param: index}}
 }
 
 // Param reads one callee parameter at instantiation.
@@ -103,7 +127,7 @@ func exprEqual(a, b Expr) bool {
 	switch a.n.op {
 	case opBottom:
 		return true
-	case opParam:
+	case opParam, opCapture, opVararg:
 		return a.n.param == b.n.param
 	case opConst:
 		// Registry ownership is checked when the expression is evaluated. The
@@ -135,6 +159,40 @@ func exprEqual(a, b Expr) bool {
 	}
 }
 
+// exprCanonicalKey is a stable representation for deterministic row order.
+// Product constants use their registry-stable canonical hash. Constructors
+// reject unequal constants with the same hash before relying on this key.
+func exprCanonicalKey(reg *axis.Registry, expr Expr) string {
+	if expr.n == nil {
+		return "0"
+	}
+	var b strings.Builder
+	b.WriteString(strconv.Itoa(int(expr.n.op)))
+	b.WriteByte(':')
+	switch expr.n.op {
+	case opParam, opCapture, opVararg:
+		b.WriteString(strconv.Itoa(expr.n.param))
+	case opConst:
+		b.WriteString(strconv.FormatUint(product.Hash(reg, expr.n.value), 16))
+	case opJoin:
+		keys := make([]string, len(expr.n.args))
+		for i, arg := range expr.n.args {
+			keys[i] = exprCanonicalKey(reg, arg)
+		}
+		sort.Strings(keys)
+		b.WriteString(strings.Join(keys, ","))
+	case opCall:
+		b.WriteString(string(expr.n.callee))
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(expr.n.slot))
+		for _, arg := range expr.n.args {
+			b.WriteByte(':')
+			b.WriteString(exprCanonicalKey(reg, arg))
+		}
+	}
+	return b.String()
+}
+
 func exprSliceEqual(a, b []Expr) bool {
 	if len(a) != len(b) {
 		return false
@@ -148,6 +206,10 @@ func exprSliceEqual(a, b []Expr) bool {
 }
 
 func eval(reg *axis.Registry, expr Expr, params []product.Value) (product.Value, error) {
+	return evalBoundary(reg, expr, params, nil, nil)
+}
+
+func evalBoundary(reg *axis.Registry, expr Expr, params, captures, varargs []product.Value) (product.Value, error) {
 	if expr.n == nil || expr.n.op == opBottom {
 		return product.Bottom(reg), nil
 	}
@@ -157,6 +219,16 @@ func eval(reg *axis.Registry, expr Expr, params []product.Value) (product.Value,
 			return product.Value{}, fmt.Errorf("symboliccall: parameter %d out of range", expr.n.param)
 		}
 		return params[expr.n.param], nil
+	case opCapture:
+		if expr.n.param >= len(captures) {
+			return product.Value{}, fmt.Errorf("symboliccall: capture %d out of range", expr.n.param)
+		}
+		return captures[expr.n.param], nil
+	case opVararg:
+		if expr.n.param >= len(varargs) {
+			return product.Absent(reg), nil
+		}
+		return varargs[expr.n.param], nil
 	case opConst:
 		// This validates that the constant belongs to reg.
 		_ = product.Equal(reg, expr.n.value, expr.n.value)
@@ -164,7 +236,7 @@ func eval(reg *axis.Registry, expr Expr, params []product.Value) (product.Value,
 	case opJoin:
 		out := product.Bottom(reg)
 		for _, arg := range expr.n.args {
-			value, err := eval(reg, arg, params)
+			value, err := evalBoundary(reg, arg, params, captures, varargs)
 			if err != nil {
 				return product.Value{}, err
 			}
@@ -183,7 +255,7 @@ func substitute(expr Expr, params []Expr) (Expr, bool) {
 		return Expr{}, true
 	}
 	switch expr.n.op {
-	case opBottom, opConst:
+	case opBottom, opConst, opCapture, opVararg:
 		return expr, true
 	case opParam:
 		if expr.n.param >= len(params) {
