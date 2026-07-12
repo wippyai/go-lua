@@ -12,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type signatureIdentityResolver struct {
@@ -21,10 +23,11 @@ type signatureIdentityResolver struct {
 	graph               cfg.Graph
 	imports             moduleidentity.Projection
 	implicitStdlibNames map[string]struct{}
+	shadowedGlobalNames map[string]struct{}
 	rootWriteQuery      factquery.DominatingOrdinaryRootWriteQuery
 }
 
-func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *wir.Body, modules moduleidentity.Projection, signatures signaturelookup.Source) *signatureIdentityResolver {
+func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *wir.Body, modules moduleidentity.Projection, signatures signaturelookup.Source, globalTypes map[string]typ.Type, moduleExports importlookup.Source) *signatureIdentityResolver {
 	rootWrites := signatureRootWritesFromWIR(bindings, body)
 	rootWriteQuery := factquery.NewDominatingOrdinaryRootWriteQuery(graph, func(point cfg.Point, target symbol.ID) bool {
 		roots := rootWrites[point]
@@ -39,8 +42,24 @@ func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *
 		graph:               graph,
 		imports:             modules,
 		implicitStdlibNames: implicitStdlibSignatureNames(signatures),
+		shadowedGlobalNames: shadowedGlobalSignatureNames(globalTypes, moduleExports),
 		rootWriteQuery:      rootWriteQuery,
 	}
+}
+
+func shadowedGlobalSignatureNames(globalTypes map[string]typ.Type, moduleExports importlookup.Source) map[string]struct{} {
+	var out map[string]struct{}
+	for name, globalType := range globalTypes {
+		moduleType, ok := moduleExports.LookupExport(name)
+		if name == "" || globalType == nil || !ok || moduleType == nil || typ.TypeEquals(globalType, moduleType) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]struct{})
+		}
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func implicitStdlibSignatureNames(signatures signaturelookup.Source) map[string]struct{} {
@@ -158,6 +177,9 @@ func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePat
 	}
 	name := r.bindings.Name(root)
 	if name == "" {
+		return "", false
+	}
+	if _, shadowed := r.shadowedGlobalNames[name]; shadowed {
 		return "", false
 	}
 	var fullName string

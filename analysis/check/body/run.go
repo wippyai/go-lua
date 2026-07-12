@@ -168,7 +168,7 @@ func (c *checker) prepare(
 	tableLiteralSite := identity.TableLiteralSiteForBody(lexicalBodyID)
 	globals := configGlobals(config)
 	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
-	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures)
+	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures, config.GlobalTypes, config.ModuleExports)
 	signatureNameForCall := signatureID.nameForCall
 	noNormalReturnCall := effectlowering.SignatureNoNormalReturnPredicate(effectlowering.SignatureNoNormalReturnConfig{
 		Graph:      built.Graph,
