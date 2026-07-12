@@ -135,7 +135,7 @@ func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 	}
 	allowed := make(map[transformer.CellRef]struct{})
 	for _, entry := range c.entries {
-		if len(entry.direct.Cells()) != 0 || relationPreparedHasCalls(entry.identity.Prepared) {
+		if len(entry.direct.Cells()) != 0 || relationPreparedHasCalls(entry.identity.Prepared) || len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 {
 			continue
 		}
 		allowed[entry.identity.Cell] = struct{}{}
