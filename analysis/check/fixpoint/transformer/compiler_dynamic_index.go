@@ -94,11 +94,11 @@ func buildBoundaryDynamicIndexEffect(ctx planCompileContext, point cfg.Point) (E
 	}
 	return ctx.builder.EffectArena().IndexMutation(IndexMutationConfig{
 		Invalidation: InvalidatePathConfig{
-			Target: tableTerm, Scope: InvalidationScopeDescendants,
+			Target: PathEffectTarget(tableTerm), Scope: InvalidationScopeDescendants,
 			PreserveStructuralWitness:       true,
 			PreserveDynamicValueMemberships: true,
 		},
-		Table: tableTerm, Key: keyTerm, Value: valueTerm,
+		Table: PathEffectTarget(tableTerm), Key: keyTerm, Value: valueTerm,
 		KeyPath: keyPath, ValuePath: valuePath,
 		Admission: write.Admission(), Readback: write.ReadbackIntent(),
 		Site: EffectSite{Owner: uint64(tablePath.Symbol), Ordinal: uint32(point)},

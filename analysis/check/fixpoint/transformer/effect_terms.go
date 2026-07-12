@@ -41,6 +41,38 @@ type EffectSite struct {
 	Ordinal uint32
 }
 
+// EffectTargetTerm identifies the object an effect mutates. It is a closed,
+// tagged union: a target is backed by exactly one boundary path or one shared
+// allocation template. Keeping allocation identity symbolic lets allocation
+// and mutation effects compose before either is materialized for a caller.
+type EffectTargetTerm struct {
+	kind       effectTargetKind
+	path       PathTerm
+	allocation AllocationTemplateTerm
+}
+
+type effectTargetKind uint8
+
+const (
+	effectTargetInvalid effectTargetKind = iota
+	effectTargetPath
+	effectTargetAllocation
+)
+
+func PathEffectTarget(path PathTerm) EffectTargetTerm {
+	if path == 0 {
+		return EffectTargetTerm{}
+	}
+	return EffectTargetTerm{kind: effectTargetPath, path: path}
+}
+
+func AllocationEffectTarget(allocation AllocationTemplateTerm) EffectTargetTerm {
+	if allocation == 0 {
+		return EffectTargetTerm{}
+	}
+	return EffectTargetTerm{kind: effectTargetAllocation, allocation: allocation}
+}
+
 type PreciseDynamicTarget struct {
 	Table  PathTerm
 	Key    ValueTerm
@@ -48,7 +80,7 @@ type PreciseDynamicTarget struct {
 }
 
 type InvalidatePathConfig struct {
-	Target                          PathTerm
+	Target                          EffectTargetTerm
 	Scope                           InvalidationScope
 	PreserveStructuralWitness       bool
 	PreserveDynamicValueMemberships bool
@@ -60,7 +92,7 @@ type InvalidatePathConfig struct {
 // barrier is impossible through this API.
 type IndexMutationConfig struct {
 	Invalidation InvalidatePathConfig
-	Table        PathTerm
+	Table        EffectTargetTerm
 	Key          ValueTerm
 	Value        ValueTerm
 	KeyPath      PathTerm
@@ -74,7 +106,7 @@ type IndexMutationConfig struct {
 type effectNode struct {
 	kind         EffectKind
 	invalidation InvalidatePathConfig
-	table        PathTerm
+	table        EffectTargetTerm
 	key          ValueTerm
 	value        ValueTerm
 	keyPath      PathTerm
@@ -108,6 +140,9 @@ func (a *EffectArena) InvalidatePath(config InvalidatePathConfig) (EffectTerm, e
 	if err := validInvalidationConfig(config); err != nil {
 		return 0, err
 	}
+	if !a.ownsTarget(config.Target) {
+		return 0, fmt.Errorf("transformer: invalidation target does not belong to effect arena")
+	}
 	return a.intern(effectNode{kind: EffectInvalidatePath, invalidation: cloneInvalidationConfig(config)}), nil
 }
 
@@ -118,8 +153,11 @@ func (a *EffectArena) IndexMutation(config IndexMutationConfig) (EffectTerm, err
 	if err := validInvalidationConfig(config.Invalidation); err != nil {
 		return 0, fmt.Errorf("transformer: index mutation invalidation: %w", err)
 	}
-	if config.Table == 0 || config.Key == 0 || config.Value == 0 {
+	if !a.ownsTarget(config.Invalidation.Target) || !a.ownsTarget(config.Table) || config.Key == 0 || config.Value == 0 {
 		return 0, fmt.Errorf("transformer: index mutation requires table, key, and value terms")
+	}
+	if config.Invalidation.Target != config.Table {
+		return 0, fmt.Errorf("transformer: index mutation invalidation and table must target the same object")
 	}
 	if config.Site.Owner == 0 {
 		return 0, fmt.Errorf("transformer: index mutation requires lexical owner provenance")
@@ -148,8 +186,8 @@ func (a *EffectArena) AllocationTemplate(allocation AllocationTemplateTerm) (Eff
 }
 
 func validInvalidationConfig(config InvalidatePathConfig) error {
-	if config.Target == 0 {
-		return fmt.Errorf("transformer: invalidation requires target path")
+	if !wellFormedEffectTarget(config.Target) {
+		return fmt.Errorf("transformer: invalidation requires target")
 	}
 	if config.Scope != InvalidationScopeSubtree && config.Scope != InvalidationScopeDescendants {
 		return fmt.Errorf("transformer: invalidation requires subtree or descendants scope")
@@ -158,6 +196,35 @@ func validInvalidationConfig(config InvalidatePathConfig) error {
 		return fmt.Errorf("transformer: precise dynamic invalidation requires table and key terms")
 	}
 	return nil
+}
+
+func wellFormedEffectTarget(target EffectTargetTerm) bool {
+	return (target.kind == effectTargetPath && target.path != 0 && target.allocation == 0) ||
+		(target.kind == effectTargetAllocation && target.path == 0 && target.allocation != 0)
+}
+
+func (a *EffectArena) ownsTarget(target EffectTargetTerm) bool {
+	if a == nil || a.terms == nil || !wellFormedEffectTarget(target) {
+		return false
+	}
+	if target.kind == effectTargetPath {
+		return int(target.path) < len(a.terms.paths)
+	}
+	return a.terms.validAllocation(target.allocation)
+}
+
+func (a *EffectArena) validTarget(target EffectTargetTerm, shape Shape) bool {
+	if a == nil || a.terms == nil {
+		return false
+	}
+	switch target.kind {
+	case effectTargetPath:
+		return target.path != 0 && target.allocation == 0 && a.terms.validPath(target.path, shape)
+	case effectTargetAllocation:
+		return target.path == 0 && target.allocation != 0 && a.terms.validAllocation(target.allocation)
+	default:
+		return false
+	}
 }
 
 func cloneInvalidationConfig(config InvalidatePathConfig) InvalidatePathConfig {
@@ -186,7 +253,7 @@ func (a *EffectArena) Valid(term EffectTerm, shape Shape) bool {
 	if n.kind == EffectAllocationTemplate {
 		return a.terms.validAllocation(n.allocation)
 	}
-	if !a.terms.validPath(n.invalidation.Target, shape) {
+	if !a.validTarget(n.invalidation.Target, shape) {
 		return false
 	}
 	if p := n.invalidation.Precise; p != nil && (!a.terms.validPath(p.Table, shape) || !a.terms.validValue(p.Key, shape, make(map[ValueTerm]bool))) {
@@ -196,7 +263,7 @@ func (a *EffectArena) Valid(term EffectTerm, shape Shape) bool {
 		return true
 	}
 	return n.kind == EffectIndexMutation &&
-		a.terms.validPath(n.table, shape) &&
+		a.validTarget(n.table, shape) &&
 		a.terms.validValue(n.key, shape, make(map[ValueTerm]bool)) &&
 		a.terms.validValue(n.value, shape, make(map[ValueTerm]bool)) &&
 		(n.keyPath == 0 || a.terms.validPath(n.keyPath, shape)) &&
@@ -222,7 +289,7 @@ func (a *EffectArena) intern(node effectNode) EffectTerm {
 func (a *EffectArena) canonical(node effectNode) string {
 	inv := node.invalidation
 	parts := []string{
-		strconv.Itoa(int(node.kind)), a.terms.canonicalPath(inv.Target), strconv.Itoa(int(inv.Scope)),
+		strconv.Itoa(int(node.kind)), a.canonicalTarget(inv.Target), strconv.Itoa(int(inv.Scope)),
 		strconv.FormatBool(inv.PreserveStructuralWitness), strconv.FormatBool(inv.PreserveDynamicValueMemberships),
 	}
 	if inv.Precise != nil {
@@ -230,7 +297,7 @@ func (a *EffectArena) canonical(node effectNode) string {
 	}
 	if node.kind == EffectIndexMutation {
 		parts = append(parts,
-			a.terms.canonicalPath(node.table), a.terms.canonicalValue(node.key), a.terms.canonicalValue(node.value),
+			a.canonicalTarget(node.table), a.terms.canonicalValue(node.key), a.terms.canonicalValue(node.value),
 			a.terms.canonicalPath(node.keyPath), a.terms.canonicalPath(node.valuePath),
 			strconv.Itoa(int(node.admission)), strconv.Itoa(int(node.readback)), strconv.FormatBool(node.appendMode),
 			strconv.FormatUint(node.site.Owner, 10), strconv.FormatUint(uint64(node.site.Ordinal), 10),
@@ -241,6 +308,20 @@ func (a *EffectArena) canonical(node effectNode) string {
 		parts = append(parts, fmt.Sprintf("%d:%s:%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal))
 	}
 	return strings.Join(parts, "|")
+}
+
+func (a *EffectArena) canonicalTarget(target EffectTargetTerm) string {
+	switch target.kind {
+	case effectTargetPath:
+		// Preserve the historical canonical spelling for boundary-path effects.
+		return a.terms.canonicalPath(target.path)
+	case effectTargetAllocation:
+		if a.terms.validAllocation(target.allocation) {
+			op := a.terms.allocations[target.allocation].op
+			return fmt.Sprintf("alloc:%d:%s:%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal)
+		}
+	}
+	return "invalid"
 }
 
 func effectNodeEqual(left, right effectNode) bool {

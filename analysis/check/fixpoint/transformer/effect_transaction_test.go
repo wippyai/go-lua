@@ -26,8 +26,8 @@ func TestRowEffectsPreserveNonCommutingMutationOrderAndFailClosedWithoutResolver
 	makeMutation := func(value ValueTerm, ordinal uint32) EffectTerm {
 		t.Helper()
 		term, err := builder.EffectArena().IndexMutation(IndexMutationConfig{
-			Invalidation: InvalidatePathConfig{Target: path, Scope: InvalidationScopeDescendants},
-			Table:        path, Key: key, Value: value,
+			Invalidation: InvalidatePathConfig{Target: PathEffectTarget(path), Scope: InvalidationScopeDescendants},
+			Table:        PathEffectTarget(path), Key: key, Value: value,
 			Admission: dynamicindex.AdmissionAdmitted,
 			Readback:  factflow.DynamicIndexReadbackKeyAndValue,
 			Site:      EffectSite{Owner: 7, Ordinal: ordinal},
@@ -81,8 +81,8 @@ func TestEffectResolverFragmentCannotExceedOriginatingDescriptor(t *testing.T) {
 	table := builder.Arena().Path(Root{Kind: RootParam, Index: 0})
 	scalar := builder.Arena().Constant(typevalue.LiteralString(reg, "value"))
 	effect, err := builder.EffectArena().IndexMutation(IndexMutationConfig{
-		Invalidation: InvalidatePathConfig{Target: table, Scope: InvalidationScopeDescendants},
-		Table:        table, Key: scalar, Value: scalar,
+		Invalidation: InvalidatePathConfig{Target: PathEffectTarget(table), Scope: InvalidationScopeDescendants},
+		Table:        PathEffectTarget(table), Key: scalar, Value: scalar,
 		Admission: dynamicindex.AdmissionAdmitted, Readback: factflow.DynamicIndexReadbackKeyAndValue,
 		Site: EffectSite{Owner: 17, Ordinal: 1},
 	})
@@ -134,8 +134,8 @@ func TestRebaseEffectDAGsIsAtomicAndPreservesSequence(t *testing.T) {
 	value := calleeTerms.Constant(typevalue.LiteralString(reg, "value"))
 	makeMutation := func(ordinal uint32) EffectTerm {
 		term, err := callee.IndexMutation(IndexMutationConfig{
-			Invalidation: InvalidatePathConfig{Target: calleePath, Scope: InvalidationScopeDescendants},
-			Table:        calleePath, Key: key, Value: value,
+			Invalidation: InvalidatePathConfig{Target: PathEffectTarget(calleePath), Scope: InvalidationScopeDescendants},
+			Table:        PathEffectTarget(calleePath), Key: key, Value: value,
 			Admission: dynamicindex.AdmissionAdmitted, Readback: factflow.DynamicIndexReadbackKeyAndValue,
 			Site: EffectSite{Owner: 9, Ordinal: ordinal},
 		})

@@ -16,6 +16,7 @@ import (
 // adapter's responsibility.
 type ResolvedPathInvalidation struct {
 	Target                          pathdom.Path
+	TargetRef                       ResolvedEffectTarget
 	Scope                           InvalidationScope
 	PreserveStructuralWitness       bool
 	PreserveDynamicValueMemberships bool
@@ -34,6 +35,7 @@ type ResolvedPreciseDynamicTarget struct {
 type ResolvedIndexMutation struct {
 	Invalidation    ResolvedPathInvalidation
 	Table           pathdom.Path
+	TableTarget     ResolvedEffectTarget
 	Key             product.Value
 	Value           product.Value
 	KeyPath         pathdom.Path
@@ -42,6 +44,22 @@ type ResolvedIndexMutation struct {
 	Readback        factflow.DynamicIndexReadbackIntent
 	AppendCandidate bool
 	Site            EffectSite
+}
+
+// ResolvedEffectTarget is the caller-bound form of EffectTargetTerm. Path and
+// Allocation expose mutually exclusive payloads.
+type ResolvedEffectTarget struct {
+	kind       effectTargetKind
+	path       pathdom.Path
+	allocation ResolvedAllocationTemplate
+}
+
+func (t ResolvedEffectTarget) Path() (pathdom.Path, bool) {
+	return t.path, t.kind == effectTargetPath
+}
+
+func (t ResolvedEffectTarget) Allocation() (ResolvedAllocationTemplate, bool) {
+	return t.allocation, t.kind == effectTargetAllocation
 }
 
 // ResolvedEffect is one tagged transaction. Exactly the payload matching Kind
@@ -135,10 +153,11 @@ func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context Spe
 	if node.kind != EffectIndexMutation {
 		return ResolvedEffect{}, false
 	}
-	table, ok := a.terms.evalPath(node.table, cursor)
+	tableTarget, ok := a.resolveTarget(node.table, cursor)
 	if !ok {
 		return ResolvedEffect{}, false
 	}
+	table, _ := tableTarget.Path()
 	key, ok := a.terms.evalValue(node.key, cursor, context)
 	if !ok {
 		return ResolvedEffect{}, false
@@ -161,19 +180,20 @@ func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context Spe
 		}
 	}
 	return ResolvedEffect{Kind: node.kind, Mutation: ResolvedIndexMutation{
-		Invalidation: invalidation, Table: table, Key: key, Value: value,
+		Invalidation: invalidation, Table: table, TableTarget: tableTarget, Key: key, Value: value,
 		KeyPath: keyPath, ValuePath: valuePath, Admission: node.admission,
 		Readback: node.readback, AppendCandidate: node.appendMode, Site: node.site,
 	}}, true
 }
 
 func (a *EffectArena) resolveInvalidation(config InvalidatePathConfig, cursor BindingCursor, context SpecializationContext) (ResolvedPathInvalidation, bool) {
-	target, ok := a.terms.evalPath(config.Target, cursor)
+	targetRef, ok := a.resolveTarget(config.Target, cursor)
 	if !ok {
 		return ResolvedPathInvalidation{}, false
 	}
+	target, _ := targetRef.Path()
 	out := ResolvedPathInvalidation{
-		Target: target, Scope: config.Scope,
+		Target: target, TargetRef: targetRef, Scope: config.Scope,
 		PreserveStructuralWitness:       config.PreserveStructuralWitness,
 		PreserveDynamicValueMemberships: config.PreserveDynamicValueMemberships,
 	}
@@ -189,4 +209,21 @@ func (a *EffectArena) resolveInvalidation(config InvalidatePathConfig, cursor Bi
 		}
 	}
 	return out, true
+}
+
+func (a *EffectArena) resolveTarget(target EffectTargetTerm, cursor BindingCursor) (ResolvedEffectTarget, bool) {
+	if !a.ownsTarget(target) {
+		return ResolvedEffectTarget{}, false
+	}
+	if target.kind == effectTargetPath {
+		path, ok := a.terms.evalPath(target.path, cursor)
+		return ResolvedEffectTarget{kind: effectTargetPath, path: path}, ok
+	}
+	op := a.terms.allocations[target.allocation].op
+	result, ok := a.terms.allocationResult(target.allocation, op.Template().ReturnIndex)
+	if !ok {
+		return ResolvedEffectTarget{}, false
+	}
+	allocation := ResolvedAllocationTemplate{Site: op.Site(), Template: op, Result: result}
+	return ResolvedEffectTarget{kind: effectTargetAllocation, allocation: allocation}, true
 }

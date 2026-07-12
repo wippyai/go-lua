@@ -26,11 +26,11 @@ func TestEffectArenaKeepsEffectsStructuredAndHashConsed(t *testing.T) {
 	suffix := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
 	precise := &PreciseDynamicTarget{Table: tablePath, Key: key, Suffix: suffix}
 	invalidation := InvalidatePathConfig{
-		Target: tablePath, Scope: InvalidationScopeDescendants,
+		Target: PathEffectTarget(tablePath), Scope: InvalidationScopeDescendants,
 		PreserveStructuralWitness: true, PreserveDynamicValueMemberships: true, Precise: precise,
 	}
 	config := IndexMutationConfig{
-		Invalidation: invalidation, Table: tablePath, Key: key, Value: value,
+		Invalidation: invalidation, Table: PathEffectTarget(tablePath), Key: key, Value: value,
 		Admission: dynamicindex.AdmissionAdmitted, Readback: factflow.DynamicIndexReadbackKeyAndValue,
 		Site: EffectSite{Owner: 41, Ordinal: 9},
 	}
@@ -62,13 +62,13 @@ func TestEffectArenaIndexMutationRequiresAtomicInvalidation(t *testing.T) {
 	path := terms.Path(root)
 	value := terms.Root(root)
 	_, err := effects.IndexMutation(IndexMutationConfig{
-		Table: path, Key: value, Value: value,
+		Table: PathEffectTarget(path), Key: value, Value: value,
 		Admission: dynamicindex.AdmissionAdmitted, Site: EffectSite{Owner: 1},
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalidation") {
 		t.Fatalf("unpaired index mutation error = %v", err)
 	}
-	if _, err := effects.InvalidatePath(InvalidatePathConfig{Target: path}); err == nil {
+	if _, err := effects.InvalidatePath(InvalidatePathConfig{Target: PathEffectTarget(path)}); err == nil {
 		t.Fatal("invalidation without explicit scope was admitted")
 	}
 }

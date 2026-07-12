@@ -14,13 +14,21 @@ type EffectRebaseOutput struct {
 }
 
 type effectRebaseLayout struct {
-	target, preciseTable, table, keyPath, valuePath int
-	preciseKey, key, value                          int
+	target, table                    effectTargetRebaseLayout
+	preciseTable, keyPath, valuePath int
+	preciseKey, key, value           int
+}
+
+type effectTargetRebaseLayout struct {
+	kind       effectTargetKind
+	path       int
+	allocation AllocationTemplateTerm
 }
 
 func emptyEffectRebaseLayout() effectRebaseLayout {
 	return effectRebaseLayout{
-		target: -1, preciseTable: -1, table: -1, keyPath: -1, valuePath: -1,
+		target: effectTargetRebaseLayout{path: -1}, table: effectTargetRebaseLayout{path: -1},
+		preciseTable: -1, keyPath: -1, valuePath: -1,
 		preciseKey: -1, key: -1, value: -1,
 	}
 }
@@ -44,13 +52,13 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 			layouts[i] = layout
 			continue
 		}
-		layout.target = appendEffectPath(&input, node.invalidation.Target)
+		layout.target = appendEffectTarget(&input, node.invalidation.Target)
 		if node.invalidation.Precise != nil {
 			layout.preciseTable = appendEffectPath(&input, node.invalidation.Precise.Table)
 			layout.preciseKey = appendEffectValue(&input, node.invalidation.Precise.Key)
 		}
 		if node.kind == EffectIndexMutation {
-			layout.table = appendEffectPath(&input, node.table)
+			layout.table = appendEffectTarget(&input, node.table)
 			layout.key = appendEffectValue(&input, node.key)
 			layout.value = appendEffectValue(&input, node.value)
 			if node.keyPath != 0 {
@@ -79,7 +87,7 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 			continue
 		}
 		invalidation := InvalidatePathConfig{
-			Target: rebased.Paths[layout.target], Scope: node.invalidation.Scope,
+			Target: rebaseEffectTarget(caller.terms, callee.terms, rebased, layout.target), Scope: node.invalidation.Scope,
 			PreserveStructuralWitness:       node.invalidation.PreserveStructuralWitness,
 			PreserveDynamicValueMemberships: node.invalidation.PreserveDynamicValueMemberships,
 		}
@@ -93,7 +101,7 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 			out.Effects[i], err = caller.InvalidatePath(invalidation)
 		} else {
 			config := IndexMutationConfig{
-				Invalidation: invalidation, Table: rebased.Paths[layout.table],
+				Invalidation: invalidation, Table: rebaseEffectTarget(caller.terms, callee.terms, rebased, layout.table),
 				Key: rebased.Values[layout.key], Value: rebased.Values[layout.value],
 				Admission: node.admission, Readback: node.readback,
 				Append: node.appendMode, Site: node.site,
@@ -111,6 +119,24 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 		}
 	}
 	return out, nil
+}
+
+func appendEffectTarget(input *TermRebaseInput, target EffectTargetTerm) effectTargetRebaseLayout {
+	layout := effectTargetRebaseLayout{kind: target.kind, path: -1, allocation: target.allocation}
+	if target.kind == effectTargetPath {
+		layout.path = appendEffectPath(input, target.path)
+	}
+	return layout
+}
+
+func rebaseEffectTarget(caller, callee *Arena, rebased TermRebaseOutput, layout effectTargetRebaseLayout) EffectTargetTerm {
+	if layout.kind == effectTargetPath {
+		return PathEffectTarget(rebased.Paths[layout.path])
+	}
+	if layout.kind == effectTargetAllocation && callee.validAllocation(layout.allocation) {
+		return AllocationEffectTarget(caller.AllocationTemplate(callee.allocations[layout.allocation].op))
+	}
+	return EffectTargetTerm{}
 }
 
 func appendEffectPath(input *TermRebaseInput, term PathTerm) int {

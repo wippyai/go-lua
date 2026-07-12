@@ -82,10 +82,10 @@ func TestResolvedEffectSummaryMatchesConcreteProjectionOutcomeAndAllStateLanes(t
 	concreteGraph.AddEdge(writePoint, concreteGraph.Exit(), false)
 	effect, err := builder.EffectArena().IndexMutation(transformer.IndexMutationConfig{
 		Invalidation: transformer.InvalidatePathConfig{
-			Target: tableTerm, Scope: transformer.InvalidationScopeDescendants,
+			Target: transformer.PathEffectTarget(tableTerm), Scope: transformer.InvalidationScopeDescendants,
 			PreserveStructuralWitness: true, PreserveDynamicValueMemberships: true,
 		},
-		Table: tableTerm, Key: keyTerm, Value: valueTerm,
+		Table: transformer.PathEffectTarget(tableTerm), Key: keyTerm, Value: valueTerm,
 		Admission: dynamicindex.AdmissionAdmitted,
 		Readback:  factflow.DynamicIndexReadbackKeyAndValue,
 		Site:      transformer.EffectSite{Owner: 81, Ordinal: uint32(writePoint)},
