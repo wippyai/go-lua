@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -139,6 +140,7 @@ type Static struct {
 	modules               moduleidentity.Projection
 	signatureID           *signatureIdentityResolver
 	facts                 factflow.Facts
+	operationPlan         *operationplan.Plan
 	symbolTypes           map[symbol.ID]typ.Type
 	assignments           assignmentFactSet
 	declarations          declarationFactSet

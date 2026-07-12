@@ -70,6 +70,12 @@ func TestPreparedStaticOwnsEntrySeedPlan(t *testing.T) {
 	if !prepared.entrySeedsPrepared {
 		t.Fatal("prepared body did not record entry seed ownership")
 	}
+	if prepared.operationPlan == nil {
+		t.Fatal("prepared body did not retain immutable operation-plan metadata")
+	}
+	if got, want := prepared.operationPlan.PointCount(), prepared.cfg.Graph.Size(); got != want {
+		t.Fatalf("operation-plan rows=%d want %d", got, want)
+	}
 	if len(prepared.entrySeeds) != 1 {
 		t.Fatalf("entry seed count = %d, want 1", len(prepared.entrySeeds))
 	}

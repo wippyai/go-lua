@@ -247,6 +247,7 @@ func (c *checker) prepare(
 		modules:               modules,
 		signatureID:           signatureID,
 		facts:                 facts,
+		operationPlan:         lowered.Plan,
 		symbolTypes:           lowered.SymbolTypes,
 		assignments:           assignments,
 		declarations:          declarations,

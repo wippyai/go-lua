@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -34,6 +35,7 @@ type Config struct {
 
 type Lowered struct {
 	Facts       factflow.Facts
+	Plan        *operationplan.Plan
 	SymbolTypes map[symbol.ID]typ.Type
 }
 
@@ -45,7 +47,8 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 		panic("transferfacts: Config.WIR is required")
 	}
 	if graph == nil {
-		return Lowered{Facts: factflow.NewFacts(factflow.FactsInput{})}
+		plan := operationplan.New(nil, factflow.FactsInput{})
+		return Lowered{Facts: plan.Facts(), Plan: plan}
 	}
 	typeResolver := config.TypeResolver
 	symbolTypes := lowerSymbolTypesFromWIR(config.WIR, config.ModuleExports)
@@ -141,8 +144,10 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	input.ExpressionPaths = l.expressionPaths
 	input.DynamicIndexExpressions = l.dynamicIndexExpressions
 	input.ExpressionConditions = l.expressionConditions
+	plan := operationplan.New(graph, input)
 	return Lowered{
-		Facts:       factflow.NewFacts(input),
+		Facts:       plan.Facts(),
+		Plan:        plan,
 		SymbolTypes: copySymbolTypes(symbolTypes),
 	}
 }
