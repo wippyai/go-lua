@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) {
@@ -24,7 +26,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		if strings.HasPrefix(entry.Reason, "source path symbol ") {
 			count.unboundPath++
 		}
-		if entry.Reason == "generic-for: iterator call requires effect and cardinality proof" {
+		if entry.Extension && strings.HasPrefix(entry.Reason, "generic-for:") {
 			count.iteratorCall++
 		}
 		byFamily[entry.Family] = count
@@ -45,6 +47,28 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		if got := byFamily[family]; got != expected {
 			t.Fatalf("%s census = %+v, want %+v", family, got, expected)
 		}
+	}
+	indexed, keyed := 0, 0
+	for point := cfg.Point(0); int(point) < prepared.operationPlan.PointCount(); point++ {
+		op, ok := prepared.operationPlan.GenericForOperation(point)
+		if !ok {
+			continue
+		}
+		iterator, ok := op.Iterator()
+		if !ok {
+			t.Fatalf("generic-for point %d lost canonical signature iterator", point)
+		}
+		switch iterator.Kind {
+		case iteration.IterateIndexed:
+			indexed++
+		case iteration.IterateKeyed:
+			keyed++
+		default:
+			t.Fatalf("generic-for point %d iterator=%v", point, iterator)
+		}
+	}
+	if indexed != 28 || keyed != 10 {
+		t.Fatalf("signature iterator bindings indexed/keyed = %d/%d, want 28/10", indexed, keyed)
 	}
 	t.Log("validate_graph exact now: RootAssignment 4/56, Return 2/5; 14 root-path copies await exact producer cells")
 }

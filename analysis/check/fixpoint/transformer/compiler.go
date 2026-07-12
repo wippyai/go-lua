@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -93,7 +94,30 @@ func (genericForPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) 
 		if !source.HasCallPoint {
 			return fmt.Errorf("generic-for: iterator call point missing")
 		}
-		return fmt.Errorf("generic-for: iterator call requires effect and cardinality proof")
+		iterator, ok := op.Iterator()
+		if !ok {
+			return fmt.Errorf("generic-for: canonical signature iterator missing")
+		}
+		site, ok := ctx.facts.CallSiteView(source.CallPoint)
+		if !ok {
+			return fmt.Errorf("generic-for: iterator call-site payload missing")
+		}
+		sourceIndex, ok := effect.ResolveParamIndex(iterator.Source, site.ArgumentSourceCount())
+		if !ok {
+			return fmt.Errorf("generic-for: iterator source parameter unresolved")
+		}
+		container, ok := site.ArgumentSourceAt(sourceIndex)
+		if !ok {
+			return fmt.Errorf("generic-for: iterator source argument missing")
+		}
+		term, err := exactCompilerSourceTerm(ctx, container)
+		if err != nil {
+			return fmt.Errorf("generic-for: iterator source: %w", err)
+		}
+		if ctx.builder.Arena().IteratorProjectionValue(iterator, op.VariableIndex(), term) == 0 {
+			return fmt.Errorf("generic-for: iterator projection unsupported")
+		}
+		return fmt.Errorf("generic-for: key-membership transaction not represented")
 	case operationplan.GenericForSourceExpression:
 		if !source.HasRootPath || source.RootPath.Symbol == 0 || len(source.RootPath.Segments) != 0 {
 			return fmt.Errorf("generic-for: iterator expression is not an exact root binding")

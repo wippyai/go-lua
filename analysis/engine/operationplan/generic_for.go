@@ -1,6 +1,7 @@
 package operationplan
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -36,6 +37,8 @@ type GenericForOperation struct {
 	firstTarget     symbol.ID
 	source          GenericForSource
 	sourceContracts []typ.Type
+	iterator        iteration.Iterator
+	hasIterator     bool
 }
 
 func NewGenericForOperation(variableIndex int, target, firstTarget symbol.ID, source GenericForSource, sourceContracts []typ.Type) (GenericForOperation, bool) {
@@ -63,7 +66,15 @@ func (o GenericForOperation) SourceContract(index int) (typ.Type, bool) {
 	}
 	return o.sourceContracts[index], true
 }
-func (o GenericForOperation) valid() bool { return o.variableIndex >= 0 && o.target != 0 }
+func (o GenericForOperation) WithIterator(iterator iteration.Iterator) GenericForOperation {
+	if iterator.Kind != iteration.IterateIndexed && iterator.Kind != iteration.IterateKeyed {
+		return o
+	}
+	o.iterator, o.hasIterator = iterator, true
+	return o
+}
+func (o GenericForOperation) Iterator() (iteration.Iterator, bool) { return o.iterator, o.hasIterator }
+func (o GenericForOperation) valid() bool                          { return o.variableIndex >= 0 && o.target != 0 }
 func (o GenericForOperation) clone() GenericForOperation {
 	out := o
 	out.source = o.Source()
@@ -75,6 +86,9 @@ func (o GenericForOperation) equal(other GenericForOperation) bool {
 	if o.variableIndex != other.variableIndex || o.target != other.target || o.firstTarget != other.firstTarget ||
 		o.source.Kind != other.source.Kind || o.source.CallPoint != other.source.CallPoint || o.source.HasCallPoint != other.source.HasCallPoint ||
 		o.source.HasRootPath != other.source.HasRootPath || !o.source.RootPath.Equal(other.source.RootPath) || len(o.sourceContracts) != len(other.sourceContracts) {
+		return false
+	}
+	if o.iterator != other.iterator || o.hasIterator != other.hasIterator {
 		return false
 	}
 	for i := range o.sourceContracts {

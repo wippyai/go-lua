@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -173,8 +174,17 @@ func (c *checker) prepare(
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)
 	declarations := declarationFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
+	signatureProducer := effectlowering.PrepareSignatureProducer(effectlowering.SignatureOutcomeProviderConfig{
+		Signatures: config.Signatures, NameForSite: signatureID.nameForCallSiteView,
+	})
 	genericForOperations := compileGenericForOperations(genericFors, typeResolver, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, bindings)
+	}, func(point cfg.Point) (iteration.Iterator, bool) {
+		site, ok := facts.CallSiteView(point)
+		if !ok || signatureProducer == nil {
+			return iteration.Iterator{}, false
+		}
+		return signatureProducer.IteratorForSite(transfer.NodeContext{Point: point}, site)
 	})
 	operationPlan := lowered.Plan.WithExtensions(genericForOperationExtensions(genericForOperations))
 	resolver := config.Visibility

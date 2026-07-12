@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -17,6 +18,7 @@ func compileGenericForOperations(
 	facts map[cfg.Point]GenericForFact,
 	types *typeresolve.Resolver,
 	resolvePath func(ast.Expr) (pathdom.Path, bool),
+	resolveIterator func(cfg.Point) (iteration.Iterator, bool),
 ) map[cfg.Point]operationplan.GenericForOperation {
 	if len(facts) == 0 {
 		return nil
@@ -46,6 +48,11 @@ func compileGenericForOperations(
 		first := fact.Symbols[0]
 		op, ok := operationplan.NewGenericForOperation(fact.VariableIndex, fact.Symbols[fact.VariableIndex], first, source, contracts)
 		if ok {
+			if resolveIterator != nil && source.Kind == operationplan.GenericForSourceCall && source.HasCallPoint {
+				if iterator, resolved := resolveIterator(source.CallPoint); resolved {
+					op = op.WithIterator(iterator)
+				}
+			}
 			out[point] = op
 		}
 	}

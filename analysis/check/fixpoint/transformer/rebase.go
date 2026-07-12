@@ -255,6 +255,13 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 				return err
 			}
 		}
+	case valueIteratorProjection:
+		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
+			return fmt.Errorf("transformer: malformed iterator projection term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("transformer: invalid source value operation at term %d", term)
 	}
@@ -363,6 +370,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if err := validatePathTerm(arena, n.path, shape); err != nil {
 			return err
 		}
+	case valueIteratorProjection:
+		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
+			return fmt.Errorf("malformed iterator projection term %d", term)
+		}
 	default:
 		return fmt.Errorf("invalid value operation at term %d", term)
 	}
@@ -427,6 +438,8 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		} else {
 			out = s.caller.DynamicReadTableValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
 		}
+	case valueIteratorProjection:
+		out = s.caller.IteratorProjectionValue(n.iterator, n.variableIndex, s.value(n.args[0]))
 	}
 	s.values[term] = out
 	return out

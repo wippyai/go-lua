@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -29,6 +30,7 @@ const (
 	valueCellResult
 	valueDynamicRead
 	valueDynamicTableRead
+	valueIteratorProjection
 )
 
 // CellRef is a stable SCC equation reference. Generation is deliberately not
@@ -39,12 +41,14 @@ type CellRef struct {
 }
 
 type valueNode struct {
-	op    valueOp
-	root  Root
-	value product.Value
-	args  []ValueTerm
-	cell  CellRef
-	path  PathTerm
+	op            valueOp
+	root          Root
+	value         product.Value
+	args          []ValueTerm
+	cell          CellRef
+	path          PathTerm
+	iterator      iteration.Iterator
+	variableIndex int
 }
 
 type pathNode struct {
@@ -144,6 +148,17 @@ func (a *Arena) JoinValue(terms ...ValueTerm) ValueTerm {
 // Specialization fails closed until the caller supplies a CellResultResolver.
 func (a *Arena) CellResultValue(cell CellRef, args ...ValueTerm) ValueTerm {
 	return a.internValue(valueNode{op: valueCellResult, cell: cell, args: append([]ValueTerm(nil), args...)})
+}
+
+// IteratorProjectionValue retains one key/value projection from a canonical
+// signature iterator effect. The source container remains symbolic; loop
+// cardinality and SCC convergence stay owned by the CFG solver.
+func (a *Arena) IteratorProjectionValue(iterator iteration.Iterator, variableIndex int, source ValueTerm) ValueTerm {
+	if source == 0 || variableIndex < 0 || variableIndex > 1 ||
+		(iterator.Kind != iteration.IterateIndexed && iterator.Kind != iteration.IterateKeyed) {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueIteratorProjection, iterator: iterator, variableIndex: variableIndex, args: []ValueTerm{source}})
 }
 
 // DynamicReadValue retains the functional relation tablePath[key] without
@@ -314,12 +329,14 @@ func (a *Arena) valueKey(n valueNode) string {
 		return fmt.Sprintf("d:%d:%d:%d", n.args[0], n.path, n.args[1])
 	case valueDynamicTableRead:
 		return fmt.Sprintf("dt:%d:%v", n.path, n.args)
+	case valueIteratorProjection:
+		return fmt.Sprintf("i:%d:%d:%d:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.args)
 	default:
 		return "invalid"
 	}
 }
 func (a *Arena) valueEqual(x, y valueNode) bool {
-	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || len(x.args) != len(y.args) {
+	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || len(x.args) != len(y.args) {
 		return false
 	}
 	for i := range x.args {
@@ -366,12 +383,15 @@ type CellResultResolver func(CellRef, []product.Value) (product.Value, bool)
 // path using the engine's canonical path, heap, and dynamic-index semantics.
 type DynamicReadResolver func(pathdom.Path, product.Value, product.Value) (product.Value, bool)
 
+type IteratorProjectionResolver func(iteration.Iterator, int, product.Value) (product.Value, bool)
+
 // SpecializationContext owns optional concrete evaluators. A term requiring a
 // missing evaluator fails the entire specialization transaction.
 type SpecializationContext struct {
-	CellResult       CellResultResolver
-	DynamicRead      DynamicReadResolver
-	DynamicTableRead DynamicReadResolver
+	CellResult         CellResultResolver
+	DynamicRead        DynamicReadResolver
+	DynamicTableRead   DynamicReadResolver
+	IteratorProjection IteratorProjectionResolver
 }
 
 func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context SpecializationContext) (product.Value, bool) {
@@ -456,6 +476,15 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			return a.evalValue(n.args[2], cursor, context)
 		}
 		return product.Value{}, false
+	case valueIteratorProjection:
+		if context.IteratorProjection == nil || len(n.args) != 1 {
+			return product.Value{}, false
+		}
+		source, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		return context.IteratorProjection(n.iterator, n.variableIndex, source)
 	default:
 		return product.Value{}, false
 	}
@@ -508,6 +537,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 			parts = append(parts, a.canonicalValue(n.args[2]))
 		}
 		return "dt(" + strings.Join(parts, ",") + ")"
+	case valueIteratorProjection:
+		return fmt.Sprintf("i%d.%d.%d(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, a.canonicalValue(n.args[0]))
 	default:
 		return "_"
 	}
@@ -532,6 +563,10 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueDynamicTableRead && ((len(n.args) != 2 && len(n.args) != 3) || !a.validPath(n.path, shape)) {
+		return false
+	}
+	if n.op == valueIteratorProjection && (len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 ||
+		(n.iterator.Kind != iteration.IterateIndexed && n.iterator.Kind != iteration.IterateKeyed)) {
 		return false
 	}
 	if n.op == valueInvalid {

@@ -3,6 +3,8 @@ package operationplan
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -20,6 +22,8 @@ func TestPlanOwnsImmutableTypedGenericForPayload(t *testing.T) {
 	if !ok {
 		t.Fatal("valid generic-for operation rejected")
 	}
+	iterator := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
+	op = op.WithIterator(iterator)
 	plan := New(graph, factflow.FactsInput{}).WithExtensions([]ExtensionInput{{Point: point, Kind: BodyGenericFor, GenericFor: op}})
 	path.Segments[0].Name = "mutated"
 	contracts[0] = typ.Number
@@ -36,6 +40,9 @@ func TestPlanOwnsImmutableTypedGenericForPayload(t *testing.T) {
 	}
 	if contract, ok := got.SourceContract(0); !ok || !typ.TypeEquals(contract, typ.String) {
 		t.Fatalf("contract = %v/%v", contract, ok)
+	}
+	if gotIterator, ok := got.Iterator(); !ok || gotIterator != iterator {
+		t.Fatalf("iterator = %#v/%v", gotIterator, ok)
 	}
 
 	returned := got.Source()
