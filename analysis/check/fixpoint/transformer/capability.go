@@ -68,7 +68,7 @@ func NewOutputCapabilityRegistry(catalog state.LaneCatalog) *OutputCapabilityReg
 // obligation values. Effect and scalar cell results remain unsupported on all
 // 17 lanes: a call may mutate any lane, and requires an explicit relational
 // composition certificate rather than a value-only callback.
-func DefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
+func newDefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
 	r := NewOutputCapabilityRegistry(state.DefaultLaneCatalog())
 	for _, output := range []OutputKind{OutputReturn, OutputObligation} {
 		for _, lane := range r.lanes {
@@ -86,6 +86,21 @@ func DefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
 		_ = r.SetSummary(kind, state.LaneValues, CapabilitySupported)
 	}
 	return r
+}
+
+var defaultOutputCapabilityRegistry = newDefaultOutputCapabilityRegistry()
+
+// DefaultOutputCapabilityRegistry returns an independently mutable capability
+// matrix over the immutable default lane and Summary schemas. The schema
+// slices and indexes are shared; only the two matrices are copied per caller.
+func DefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
+	r := defaultOutputCapabilityRegistry
+	return &OutputCapabilityRegistry{
+		lanes: r.lanes, index: r.index,
+		table:        append([]Capability(nil), r.table...),
+		summaryKinds: r.summaryKinds, summaryIndex: r.summaryIndex,
+		summary: append([]Capability(nil), r.summary...),
+	}
 }
 
 func (r *OutputCapabilityRegistry) Set(output OutputKind, lane state.LaneID, capability Capability) error {
@@ -250,8 +265,21 @@ func NewSemanticCapabilityRegistry(catalog state.LaneCatalog) *SemanticCapabilit
 	}
 	return &SemanticCapabilityRegistry{lanes: lanes, index: index, factKinds: factKinds, factIndex: factIndex, extensionKinds: extensionKinds, extensionIndex: extensionIndex, facts: make([]Capability, len(factKinds)*len(lanes)), extensions: make([]Capability, len(extensionKinds)*len(lanes))}
 }
+
+var defaultSemanticCapabilityRegistry = NewSemanticCapabilityRegistry(state.DefaultLaneCatalog())
+
+// DefaultSemanticCapabilityRegistry returns an independently mutable matrix
+// over the immutable default lane and operation schemas. Reusing those schemas
+// avoids rebuilding four maps and three catalogs for every prepared function.
 func DefaultSemanticCapabilityRegistry() *SemanticCapabilityRegistry {
-	return NewSemanticCapabilityRegistry(state.DefaultLaneCatalog())
+	r := defaultSemanticCapabilityRegistry
+	return &SemanticCapabilityRegistry{
+		lanes: r.lanes, index: r.index,
+		factKinds: r.factKinds, factIndex: r.factIndex,
+		extensionKinds: r.extensionKinds, extensionIndex: r.extensionIndex,
+		facts:      make([]Capability, len(r.facts)),
+		extensions: make([]Capability, len(r.extensions)),
+	}
 }
 func (r *SemanticCapabilityRegistry) SetFact(kind operationplan.Kind, lane state.LaneID, capability Capability) error {
 	if r == nil {

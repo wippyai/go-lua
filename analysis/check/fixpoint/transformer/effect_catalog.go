@@ -62,13 +62,20 @@ func NewEffectCatalog(catalog state.LaneCatalog, descriptors []EffectDescriptor)
 	return bindEffectCatalog(catalog.LaneSet().IDs(), descriptors)
 }
 
-func DefaultEffectCatalog() *EffectCatalog {
+func newDefaultEffectCatalog() *EffectCatalog {
 	catalog, err := NewEffectCatalog(state.DefaultLaneCatalog(), defaultEffectDescriptors())
 	if err != nil {
 		panic(err)
 	}
 	return catalog
 }
+
+var defaultEffectCatalog = newDefaultEffectCatalog()
+
+// DefaultEffectCatalog returns the immutable process-wide default catalog.
+// Public observations copy all slice and map-backed descriptor data, so callers
+// cannot mutate this shared registry.
+func DefaultEffectCatalog() *EffectCatalog { return defaultEffectCatalog }
 
 func bindEffectCatalog(lanes []state.LaneID, descriptors []EffectDescriptor) (*EffectCatalog, error) {
 	out := &EffectCatalog{lanes: append([]state.LaneID(nil), lanes...), descriptors: make(map[EffectKind]EffectDescriptor, int(effectKindCount)-1)}

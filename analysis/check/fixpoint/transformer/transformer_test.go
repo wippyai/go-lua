@@ -77,6 +77,25 @@ func TestCapabilityMatrixCoversEveryDefaultStateLane(t *testing.T) {
 	}
 }
 
+func TestDefaultCapabilityRegistriesKeepMutableMatricesIndependent(t *testing.T) {
+	outputA, outputB := DefaultOutputCapabilityRegistry(), DefaultOutputCapabilityRegistry()
+	if err := outputA.Set(OutputEffect, state.LaneValues, CapabilitySupported); err != nil {
+		t.Fatal(err)
+	}
+	if got := outputB.Capability(OutputEffect, state.LaneValues); got != CapabilityUnsupported {
+		t.Fatalf("output default mutation leaked: got capability %d", got)
+	}
+
+	semanticA, semanticB := DefaultSemanticCapabilityRegistry(), DefaultSemanticCapabilityRegistry()
+	kind := operationplan.Kinds()[0]
+	if err := semanticA.SetFact(kind, state.LaneValues, CapabilitySupported); err != nil {
+		t.Fatal(err)
+	}
+	if got := semanticB.Fact(kind, state.LaneValues); got != CapabilityUnsupported {
+		t.Fatalf("semantic default mutation leaked: got capability %d", got)
+	}
+}
+
 func TestOutputCapabilityMatrixCoversEverySummaryFieldAndStateLane(t *testing.T) {
 	r := DefaultOutputCapabilityRegistry()
 	if err := r.Complete(state.DefaultLaneCatalog()); err != nil {
