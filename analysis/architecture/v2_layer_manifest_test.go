@@ -105,7 +105,7 @@ var v2LayerImportBoundaries = []v2ImportBoundary{
 var v2ExclusiveBridges = []v2ExclusiveBridge{
 	{
 		name:              "transferfacts is the sole WIR to semantic-program bridge",
-		authorityRequired: false,
+		authorityRequired: true,
 		activatedBy:       "github.com/wippyai/go-lua/analysis/semantic/program",
 		bridge:            "github.com/wippyai/go-lua/analysis/lua/transferfacts",
 		source:            "github.com/wippyai/go-lua/analysis/ir/wir",

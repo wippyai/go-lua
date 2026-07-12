@@ -3463,3 +3463,13 @@ analysis/engine/workplan,workplan.go,Rows,type,analysis/engine/workplan,,unclass
 analysis/lua/transferfacts,lower.go,Config,type,analysis/lua/transferfacts,,unclassified,,,
 analysis/lua/transferfacts,lower.go,LowerDetailed,func,analysis/lua/transferfacts,,unclassified,,,
 analysis/lua/transferfacts,lower.go,Lowered,type,analysis/lua/transferfacts,,unclassified,,,
+analysis/lua/transferfacts,semantic_program.go,AssembleSemanticProgram,func,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,ErrSemanticProgramTopology,var,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,PointBlock,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,PointObservationSpec,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,PointRouteSpec,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,PointTransactionRef,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,ProgramInput,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,ProgramMember,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,ProgramTopology,type,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
+analysis/lua/transferfacts,semantic_program.go,ProgramTopology.Points,method,analysis/lua/transferfacts,analysis/lua/transferfacts,retained-lexical,lexical:semantic-program-topology,go-lua.semantic.program/v1,fixture:semantic-program-topology
