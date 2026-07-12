@@ -6,8 +6,8 @@ package concreteflow
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
+	"github.com/wippyai/go-lua/analysis/engine/workplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -39,7 +39,7 @@ type Plan struct {
 
 // Compile accepts only a complete, reducible CFG whose point rows follow the
 // canonical operation barriers. Irreducible components fail closed.
-func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan[cfg.Point]) (*Plan, error) {
+func Compile(graph cfg.Graph, operations workplan.Rows, wto *solve.WTOPlan[cfg.Point]) (*Plan, error) {
 	if graph == nil || operations == nil || wto == nil {
 		return nil, fmt.Errorf("concreteflow: graph, operation plan, and WTO are required")
 	}
@@ -65,42 +65,13 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 		}
 	}
 	for p := cfg.Point(0); int(p) < n; p++ {
-		cursor := operations.Cursor(p)
-		hasWork := false
-		var last operationplan.Barrier
-		for {
-			cell, ok := cursor.Next()
-			if !ok {
-				break
-			}
-			meta, exists := operationplan.Describe(cell.Kind())
-			if !exists || meta.Barrier < last {
-				return nil, fmt.Errorf("concreteflow: non-canonical operation row at %d", p)
-			}
-			hasWork = true
-			if meta.Phase == operationplan.Node {
-				nodeWork[p] = true
-			}
-			if meta.Phase == operationplan.Edge || meta.Stages.Has(operationplan.E5CallEffects) {
-				edgeWork[p] = true
-			}
-			last = meta.Barrier
+		work, workErr := operations.PointWork(p)
+		if workErr != nil {
+			return nil, fmt.Errorf("concreteflow: certify point %d: %w", p, workErr)
 		}
-		extensions := operations.ExtensionCursor(p)
-		for extension, ok := extensions.Next(); ok; extension, ok = extensions.Next() {
-			meta := extension.Metadata()
-			if meta.Class == 0 || meta.Phase == 0 || meta.Barrier < last {
-				return nil, fmt.Errorf("concreteflow: unclassified or non-canonical extension row at %d", p)
-			}
-			hasWork = true
-			if meta.Phase == operationplan.Node {
-				nodeWork[p] = true
-			}
-			if meta.Phase == operationplan.Edge || meta.Stages.Has(operationplan.E5CallEffects) {
-				edgeWork[p] = true
-			}
-			last = meta.Barrier
-		}
+		nodeWork[p] = work.Has(workplan.Node)
+		edgeWork[p] = work.Has(workplan.Edge)
+		hasWork := work != 0
 		succ := cfg.SuccessorsReadOnly(graph, p)
 		identity[p] = !hasWork && !graph.IsBranch(p) && len(succ) == 1 && indegree[succ[0]] == 1
 	}
