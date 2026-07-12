@@ -41,6 +41,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
 	audits := 0
 	semanticDigests := make(map[summary.Digest]int)
+	semanticFields := make(map[string]int)
 	config := Config{Check: check}
 	config.semanticProgramAudit = func(prepared *body.Static, oracleConfig body.Config, oracle *body.Result) error {
 		fn := oracle.Function()
@@ -48,7 +49,15 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 			return nil
 		}
 		audits++
-		semanticDigests[summary.NormalizedPayloadDigest(reg, summaryprojection.FromResult(oracle))]++
+		projected := summaryprojection.FromResult(oracle)
+		semanticDigests[summary.NormalizedPayloadDigest(reg, projected)]++
+		value := reflect.ValueOf(projected)
+		typeOf := value.Type()
+		for field := 0; field < value.NumField(); field++ {
+			if !value.Field(field).IsZero() {
+				semanticFields[typeOf.Field(field).Name]++
+			}
+		}
 		stats := &body.Stats{}
 		concreteConfig := oracleConfig
 		concreteConfig.Stats = stats
@@ -76,6 +85,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 		t.Fatalf("compiler.validate_graph audited solves=%d, want 7", audits)
 	}
 	t.Logf("compiler.validate_graph semantic summary classes=%d multiplicities=%v", len(semanticDigests), semanticDigests)
+	t.Logf("compiler.validate_graph non-empty Summary fields=%v", semanticFields)
 }
 
 func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *body.Result, solve int) {
