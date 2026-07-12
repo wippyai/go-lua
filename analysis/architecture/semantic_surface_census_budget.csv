@@ -1,7 +1,7 @@
 family,max_unclassified
 lua/transferfacts,3
 engine/factflow,537
-engine/operationplan,130
+engine/operationplan,132
 engine/factquery,14
 engine/visibility,47
 engine/sourcevalue,37
@@ -17,7 +17,7 @@ engine/transfer,31
 engine/solve,61
 engine/workplan,5
 check/body,563
-check/fixpoint,541
+check/fixpoint,551
 check/readmodel,214
 check/internal/readmodel,121
 check/obligation,98

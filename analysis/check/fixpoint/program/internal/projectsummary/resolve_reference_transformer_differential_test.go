@@ -139,7 +139,14 @@ func assertResolveReferenceProductionComposition(t *testing.T, prepared *body.St
 	if err != nil {
 		t.Fatal(err)
 	}
-	callerEntry := base
+	// Dense heap member keys belong to the producing body keyspace. This oracle
+	// deliberately carries a prebuilt heap across a lexical boundary, so rekey
+	// it exactly as production parameter transport does before comparing the two
+	// summary application paths.
+	callerEntry := base.RekeyPathEvidence(prepared.KeySpace(), callerPrepared.KeySpace())
+	for id, object := range base.HeapTableObjectsSnapshot().Objects {
+		callerEntry = callerEntry.WriteHeapTableObject(reg, id, object.Rekey(prepared.KeySpace(), callerPrepared.KeySpace()))
+	}
 	for i, param := range callerPrepared.OperationPlan().BoundaryParams() {
 		callerEntry = callerEntry.WriteValue(reg, statekey.SymbolValue(param), values[i])
 	}

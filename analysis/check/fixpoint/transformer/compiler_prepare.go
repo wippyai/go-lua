@@ -330,7 +330,10 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 				}
 				value, present := rows[index].Values[target.TargetSymbol()]
 				if !present {
-					return nil, fmt.Errorf("observation: call result target %d has no symbolic value", target.TargetSymbol())
+					// Evidence coverage is a separate, fail-closed authority. A
+					// missing symbolic observation must not invalidate an otherwise
+					// exact dormant relation; whole-owner admission remains false.
+					continue
 				}
 				anchor, _ := site.Expr()
 				rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{Kind: ObservationCallResult, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: target.TargetSymbol(), Actual: value})
