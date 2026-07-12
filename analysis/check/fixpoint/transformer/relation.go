@@ -31,9 +31,10 @@ type Operation struct {
 // Row is a may-alternative. Its outputs remain correlated under Guard and are
 // never independently widened.
 type Row struct {
-	Guard  Guard
-	Output summary.Summary
-	Ops    []Operation
+	Guard   Guard
+	Output  summary.Summary
+	Ops     []Operation
+	Effects []EffectTerm
 }
 
 // Relation is immutable. contextual is lattice Top: callers must use the
@@ -41,6 +42,7 @@ type Row struct {
 type Relation struct {
 	shape      Shape
 	arena      *Arena
+	effects    *EffectArena
 	rows       []Row
 	contextual string
 	widened    bool
@@ -53,11 +55,13 @@ func (r Relation) Rows() int                { return len(r.rows) }
 
 // Builder performs atomic validation before publishing an immutable relation.
 type Builder struct {
-	shape       Shape
-	arena       *Arena
-	caps        *OutputCapabilityRegistry
-	descriptors *DescriptorRegistry
-	plan        *operationplan.Plan
+	shape         Shape
+	arena         *Arena
+	effects       *EffectArena
+	effectCatalog *EffectCatalog
+	caps          *OutputCapabilityRegistry
+	descriptors   *DescriptorRegistry
+	plan          *operationplan.Plan
 }
 
 func NewBuilder(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry, plan *operationplan.Plan) *Builder {
@@ -74,9 +78,14 @@ func NewBuilderWithDescriptors(reg *axis.Registry, shape Shape, caps *OutputCapa
 	if descriptors == nil {
 		descriptors = DefaultDescriptorRegistry()
 	}
-	return &Builder{shape: shape, arena: NewArena(reg), caps: caps, descriptors: descriptors, plan: plan}
+	arena := NewArena(reg)
+	return &Builder{
+		shape: shape, arena: arena, effects: NewEffectArena(arena),
+		effectCatalog: DefaultEffectCatalog(), caps: caps, descriptors: descriptors, plan: plan,
+	}
 }
-func (b *Builder) Arena() *Arena { return b.arena }
+func (b *Builder) Arena() *Arena             { return b.arena }
+func (b *Builder) EffectArena() *EffectArena { return b.effects }
 
 func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, error) {
 	if b == nil || b.arena == nil || b.arena.reg == nil {
@@ -97,9 +106,10 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			return Relation{}, fmt.Errorf("transformer: row %d has invalid guard", i)
 		}
 		owned[i] = Row{
-			Guard:  row.Guard,
-			Output: summary.Normalize(b.arena.reg, row.Output),
-			Ops:    append([]Operation(nil), row.Ops...),
+			Guard:   row.Guard,
+			Output:  summary.Normalize(b.arena.reg, row.Output),
+			Ops:     append([]Operation(nil), row.Ops...),
+			Effects: append([]EffectTerm(nil), row.Effects...),
 		}
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
@@ -141,11 +151,26 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 				return Relation{}, fmt.Errorf("transformer: conditional Summary output %q requires contextual solver", summaryKind)
 			}
 		}
+		for j, effect := range owned[i].Effects {
+			if b.effects == nil || !b.effects.Valid(effect, b.shape) {
+				return Relation{}, fmt.Errorf("transformer: row %d effect %d is invalid", i, j)
+			}
+			kind := b.effects.Kind(effect)
+			descriptor, admitted := b.effectCatalog.Descriptor(kind)
+			if !admitted {
+				return Relation{}, fmt.Errorf("transformer: row %d effect %d kind %d is not catalog-admitted", i, j, kind)
+			}
+			for _, lane := range b.effectCatalog.Lanes() {
+				if descriptor.LaneUse(lane) == LaneUseUnsupported {
+					return Relation{}, fmt.Errorf("transformer: row %d effect %d kind %d unsupported on lane %q", i, j, kind, lane)
+				}
+			}
+		}
 		sort.Slice(owned[i].Ops, func(x, y int) bool { return operationLess(b.arena, owned[i].Ops[x], owned[i].Ops[y]) })
 	}
-	sort.Slice(owned, func(i, j int) bool { return rowLess(b.arena, owned[i], owned[j]) })
-	owned = dedupRows(b.arena, owned)
-	return Relation{shape: b.shape, arena: b.arena, rows: owned}, nil
+	sort.Slice(owned, func(i, j int) bool { return rowLess(b.arena, b.effects, owned[i], owned[j]) })
+	owned = dedupRows(b.arena, b.effects, owned)
+	return Relation{shape: b.shape, arena: b.arena, effects: b.effects, rows: owned}, nil
 }
 
 func stateCatalog() state.LaneCatalog { return state.DefaultLaneCatalog() }
@@ -169,15 +194,23 @@ func operationLess(a *Arena, left, right Operation) bool {
 	}
 	return left.Value < right.Value
 }
-func rowKey(a *Arena, row Row) string {
+func rowKey(a *Arena, effects *EffectArena, row Row) string {
 	parts := make([]string, len(row.Ops))
 	for i, op := range row.Ops {
 		parts[i] = operationKey(a, op)
 	}
-	return fmt.Sprintf("%s|%016x|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"))
+	effectKeys := make([]string, len(row.Effects))
+	for i, term := range row.Effects {
+		if effects == nil || term == 0 || int(term) >= len(effects.nodes) {
+			effectKeys[i] = "?"
+		} else {
+			effectKeys[i] = effects.canonical(effects.nodes[term])
+		}
+	}
+	return fmt.Sprintf("%s|%016x|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"))
 }
-func rowLess(a *Arena, left, right Row) bool {
-	lk, rk := rowKey(a, left), rowKey(a, right)
+func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
+	lk, rk := rowKey(a, effects, left), rowKey(a, effects, right)
 	if lk != rk {
 		return lk < rk
 	}
@@ -194,7 +227,7 @@ func rowLess(a *Arena, left, right Row) bool {
 }
 func operationEqual(a, b Operation) bool { return a == b }
 func rowEqual(arena *Arena, a, b Row) bool {
-	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
+	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
 		return false
 	}
 	for i := range a.Ops {
@@ -202,17 +235,22 @@ func rowEqual(arena *Arena, a, b Row) bool {
 			return false
 		}
 	}
+	for i := range a.Effects {
+		if a.Effects[i] != b.Effects[i] {
+			return false
+		}
+	}
 	return true
 }
-func dedupRows(a *Arena, rows []Row) []Row {
+func dedupRows(a *Arena, effects *EffectArena, rows []Row) []Row {
 	if len(rows) == 0 {
 		return nil
 	}
 	out := rows[:0]
 	for _, row := range rows {
 		duplicate := false
-		key := rowKey(a, row)
-		for i := len(out) - 1; i >= 0 && rowKey(a, out[i]) == key; i-- {
+		key := rowKey(a, effects, row)
+		for i := len(out) - 1; i >= 0 && rowKey(a, effects, out[i]) == key; i-- {
 			if rowEqual(a, out[i], row) {
 				duplicate = true
 				break
@@ -264,13 +302,23 @@ func JoinRelation(a, b Relation) Relation {
 	if b.arena == nil {
 		return a
 	}
-	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.shape != b.shape {
-		return Relation{shape: a.shape, arena: a.arena, contextual: "incompatible or contextual relation"}
+	// Relation SCC cells start at the empty relation with arena/shape ownership
+	// but no row-owned effect arena yet. The first non-empty equation result
+	// establishes that immutable effect identity; this is Bottom adoption, not
+	// cross-arena composition.
+	if a.effects == nil && a.contextual == "" && len(a.rows) == 0 {
+		a.effects = b.effects
+	}
+	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
+		b.effects = a.effects
+	}
+	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.shape != b.shape {
+		return Relation{shape: a.shape, arena: a.arena, effects: a.effects, contextual: "incompatible or contextual relation"}
 	}
 	rows := append(cloneRows(a.rows), b.rows...)
-	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, rows[i], rows[j]) })
-	rows = dedupRows(a.arena, rows)
-	return Relation{shape: a.shape, arena: a.arena, rows: rows, widened: a.widened || b.widened}
+	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
+	rows = dedupRows(a.arena, a.effects, rows)
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, rows: rows, widened: a.widened || b.widened}
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -291,7 +339,7 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.shape != b.shape || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.shape != b.shape || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))
@@ -322,7 +370,7 @@ func LessOrEqRelation(a, b Relation) bool {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, row := range rows {
-		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...)}
+		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...)}
 	}
 	return out
 }

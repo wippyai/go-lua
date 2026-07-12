@@ -96,6 +96,17 @@ func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegist
 // SpecializeWithContext is the inactive full specialization seam for value
 // terms that require caller-owned concrete read semantics.
 func (r Relation) SpecializeWithContext(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext) (out summary.Summary, ok bool) {
+	return r.specializeWithEffects(cursor, descriptors, context, nil)
+}
+
+// SpecializeWithEffects is the inactive effect-aware specialization seam.
+// Effects can only become fragments of the existing Summary; caller State
+// application remains outside Relation and is owned by the call adapter.
+func (r Relation) SpecializeWithEffects(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext, resolve EffectSummaryResolver) (out summary.Summary, ok bool) {
+	return r.specializeWithEffects(cursor, descriptors, context, resolve)
+}
+
+func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext, resolve EffectSummaryResolver) (out summary.Summary, ok bool) {
 	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
 		return summary.Summary{}, false
 	}
@@ -129,6 +140,24 @@ func (r Relation) SpecializeWithContext(cursor BindingCursor, descriptors *Descr
 			if err := handler.Apply(reg, &candidate, operation.Slot, value); err != nil {
 				return summary.Summary{}, false
 			}
+		}
+		if len(row.Effects) != 0 {
+			if resolve == nil || r.effects == nil {
+				return summary.Summary{}, false
+			}
+			resolved := make([]ResolvedEffect, len(row.Effects))
+			for i, effect := range row.Effects {
+				var valid bool
+				resolved[i], valid = r.effects.resolve(effect, cursor, context)
+				if !valid {
+					return summary.Summary{}, false
+				}
+			}
+			fragment, valid := resolve(resolved)
+			if !valid {
+				return summary.Summary{}, false
+			}
+			candidate = summary.Join(reg, candidate, fragment)
 		}
 		if !have {
 			accumulated = candidate
