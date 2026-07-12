@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -144,6 +146,76 @@ func TestSolveExactWTOCFGExpandedRowsNestedReentryAndSiblingTransition(t *testin
 		exactWTOIdentityExpand, exactWTOAllEdges(arena), SymbolicExactWTOOptions{}); err != nil || len(rows[sibling.Exit()]) != 1 {
 		t.Fatalf("sibling closure = %d rows, %v", len(rows[sibling.Exit()]), err)
 	}
+}
+
+func BenchmarkSolveExactWTOCFGExpandedRowsOwnedCopies(b *testing.B) {
+	graph, _, _ := exactWTOSimpleLoop()
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	values := make(map[symbol.ID]ValueTerm, 16)
+	for i := 0; i < 16; i++ {
+		values[symbol.ID(i+1)] = arena.Constant(typevalue.LiteralInt(reg, int64(i)))
+	}
+	initial := SymbolicCFGRow{
+		Guard:      arena.True(),
+		Values:     values,
+		Operations: make([]Operation, 8),
+		Output:     summaryForCloneBenchmark(8),
+	}
+	branch := exactWTOAllEdges(arena)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := SolveExactWTOCFGExpandedRows(context.Background(), graph, arena, initial, exactWTOIdentityExpand, branch, SymbolicExactWTOOptions{})
+		if err != nil || len(rows[graph.Exit()]) != 1 {
+			b.Fatalf("rows/error = %d/%v", len(rows[graph.Exit()]), err)
+		}
+	}
+}
+
+func TestSolveExactWTOCFGExpandedRowsPreservesCallerOwnedInitialRow(t *testing.T) {
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	local := symbol.ID(91)
+	initial := SymbolicCFGRow{
+		Guard:      arena.True(),
+		Values:     map[symbol.ID]ValueTerm{local: arena.Constant(typevalue.LiteralInt(reg, 1))},
+		Operations: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn}},
+		Output:     summaryForCloneBenchmark(1),
+	}
+	want := cloneCFGRow(initial)
+	mutate := func(_ cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+		row.Values[local] = arena.Constant(typevalue.LiteralInt(reg, 2))
+		row.Operations[0].Slot = 1
+		row.Output.Returns[0] = product.Bottom(reg)
+		return []SymbolicCFGRow{row}, nil
+	}
+	graphs := map[string]cfg.Graph{}
+	linear := cfg.New()
+	point := linear.AddNode(cfg.NodeAssign)
+	linear.AddEdge(linear.Entry(), point, false)
+	linear.AddEdge(point, linear.Exit(), false)
+	graphs["transient DAG"] = linear
+	loop, _, _ := exactWTOSimpleLoop()
+	graphs["retained cycle"] = loop
+	for name, graph := range graphs {
+		t.Run(name, func(t *testing.T) {
+			if _, err := SolveExactWTOCFGExpandedRows(context.Background(), graph, arena, initial, mutate, exactWTOAllEdges(arena), SymbolicExactWTOOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if !equalCFGRow(arena, initial, want) {
+				t.Fatal("solver mutated caller-owned initial row")
+			}
+		})
+	}
+}
+
+func summaryForCloneBenchmark(width int) summary.Summary {
+	values := make([]product.Value, width)
+	for i := range values {
+		values[i] = product.Top()
+	}
+	return summary.Summary{Returns: values, NormalReturnParams: append([]product.Value(nil), values...)}
 }
 
 func TestSolveExactWTOCFGExpandedRowsRejectsUncertifiedComponentHead(t *testing.T) {

@@ -132,7 +132,14 @@ func solveExactWTOCFGExpandedWithTape(ctx context.Context, graph cfg.Graph, tape
 	if entry < 0 {
 		return nil, fmt.Errorf("transformer: exact WTO entry is unreachable")
 	}
-	seed := exactWTORow{row: cloneCFGRow(initial), phases: make([]uint8, len(tape.components))}
+	// Retained execution gets the bucket's owned copy from insert. A transient
+	// DAG transfers its seed directly, so it still needs one copy to preserve
+	// the caller-owned initial row.
+	seedRow := initial
+	if solver.transientDAG {
+		seedRow = cloneCFGRow(initial)
+	}
+	seed := exactWTORow{row: seedRow, phases: make([]uint8, len(tape.components))}
 	if _, err := solver.insert(uint32(entry), seed); err != nil {
 		return nil, err
 	}
@@ -239,14 +246,14 @@ func (s *exactWTOSolver) processDelta(dense uint32) error {
 			return err
 		}
 		candidate := bucket.rows[bucket.cursor]
-		if !s.transientDAG {
-			candidate = cloneExactWTORow(candidate)
-		}
+		// Bucket rows are immutable after insertion. Transfer receives its own
+		// mutable row below; phases are copied only when an outgoing state is
+		// formed, so borrowing the candidate cannot expose bucket storage.
 		bucket.cursor++
 		point := s.tape.points[dense].point
 		input := candidate.row
 		if !s.transientDAG {
-			input = cloneCFGRow(input)
+			input = cloneCFGRow(candidate.row)
 		}
 		produced := []SymbolicCFGRow{input}
 		var err error
@@ -287,8 +294,11 @@ func (s *exactWTOSolver) emitSuccessors(dense uint32, out exactWTORow) error {
 			if !ok {
 				return fmt.Errorf("transformer: exact WTO branch %d edge polarity missing", point)
 			}
-			next := cloneExactWTORow(out)
-			row, edgeGuard, err := s.branch(point, cloneCFGRow(next.row), cond)
+			// Each branch callback gets one independent mutable row. insert owns
+			// the returned state, so cloning next.row before the callback as well
+			// would be a redundant second deep copy.
+			next := exactWTORow{phases: append([]uint8(nil), out.phases...)}
+			row, edgeGuard, err := s.branch(point, cloneCFGRow(out.row), cond)
 			if err != nil {
 				return fmt.Errorf("transformer: exact WTO branch %d edge %t: %w", point, cond, err)
 			}
@@ -309,10 +319,9 @@ func (s *exactWTOSolver) emitSuccessors(dense uint32, out exactWTORow) error {
 	if len(edges) != 1 {
 		return fmt.Errorf("transformer: exact WTO non-branch point %d has %d successors", point, len(edges))
 	}
-	if s.transientDAG {
-		return s.emitEdge(edges[0], out)
-	}
-	return s.emitEdge(edges[0], cloneExactWTORow(out))
+	// There is only one consumer. emitEdge/insert establishes bucket ownership
+	// for retained cyclic execution; the transient DAG transfers ownership.
+	return s.emitEdge(edges[0], out)
 }
 
 func (s *exactWTOSolver) emitEdge(edge symbolicWTOTapeEdge, row exactWTORow) error {
