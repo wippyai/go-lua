@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -40,6 +41,7 @@ type planCompileContext struct {
 	facts           factflow.Facts
 	builder         *Builder
 	locals          map[symbol.ID]ValueTerm
+	expressions     map[factflow.ExprRef][]ValueTerm
 	genericBindings map[symbol.ID]symbolicGenericBinding
 }
 
@@ -97,6 +99,12 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 		return fmt.Errorf("signature call: resolved producer missing")
 	}
 	sig := op.Signature()
+	if _, ok := effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, sig); ok {
+		if _, exists := ctx.facts.CallSiteView(point); !exists {
+			return fmt.Errorf("signature call: call-site payload missing")
+		}
+		return nil
+	}
 	iterator, ok := iteration.ActiveIterator(sig.Effect.Labels)
 	if !ok || sig.Effect.Tail != nil || len(sig.Effect.Labels) != 1 || sig.OperationalEffects != nil {
 		return fmt.Errorf("signature call: non-iterator effects require contextual composition")
@@ -115,6 +123,44 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 	return fmt.Errorf("signature call: iterator result is not owned by generic-for")
 }
 func (signatureCallPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error { return nil }
+
+// bindStaticSignatureTerms materializes context-independent call results once
+// into the symbolic expression table. It consumes only the Plan's resolved,
+// immutable signature sidecar; no runtime provider or callee-name dispatch is
+// consulted during relation compilation.
+func bindStaticSignatureTerms(ctx *planCompileContext) error {
+	for rawPoint := 0; rawPoint < ctx.plan.PointCount(); rawPoint++ {
+		point := cfg.Point(rawPoint)
+		op, ok := ctx.plan.SignatureCallOperation(point)
+		if !ok {
+			continue
+		}
+		values, ok := effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, op.Signature())
+		if !ok {
+			continue
+		}
+		site, ok := ctx.facts.CallSiteView(point)
+		if !ok {
+			return fmt.Errorf("signature call at point %d has no call-site payload", point)
+		}
+		ref, hasExpr := site.Expr()
+		if !hasExpr {
+			if site.ResultTargetCount() != 0 {
+				return fmt.Errorf("signature call at point %d has result targets but no expression identity", point)
+			}
+			continue
+		}
+		if _, exists := ctx.expressions[ref]; exists {
+			return fmt.Errorf("signature call expression %d has multiple producers", ref)
+		}
+		terms := make([]ValueTerm, len(values))
+		for i, value := range values {
+			terms[i] = ctx.builder.Arena().Constant(value)
+		}
+		ctx.expressions[ref] = terms
+	}
+	return nil
+}
 
 type genericForPlanHandler struct{}
 
@@ -203,9 +249,13 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
 	ctx.builder = builder
 	ctx.locals = make(map[symbol.ID]ValueTerm)
+	ctx.expressions = make(map[factflow.ExprRef][]ValueTerm)
 	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
 	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
 		return contextual("compiler: boundary: " + err.Error())
+	}
+	if err := bindStaticSignatureTerms(&ctx); err != nil {
+		return contextual("compiler: signature calls: " + err.Error())
 	}
 	unsupported := c.unsupportedActive(plan)
 	if len(unsupported) != 0 {
@@ -406,7 +456,7 @@ func (returnPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) erro
 			}
 			continue
 		}
-		if _, err := exactReturnSourceValue(ctx.registry, ctx.facts, source); err != nil {
+		if _, err := exactReturnSourceTerm(ctx, source); err != nil {
 			return err
 		}
 	}
@@ -436,6 +486,9 @@ func (returnPlanHandler) Lower(ctx planCompileContext, point cfg.Point, operatio
 }
 
 func exactReturnSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
+	if term, ok := exactSignatureExpressionTerm(ctx, source); ok {
+		return term, nil
+	}
 	if source.Kind == factflow.ValueSourcePath {
 		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
 		if !ok || version != 0 || suffix != "" || sym == 0 {
@@ -501,7 +554,7 @@ func (rootAssignmentPlanHandler) Preflight(ctx planCompileContext, point cfg.Poi
 		}
 		return nil
 	}
-	if _, err := exactReturnSourceValue(ctx.registry, ctx.facts, fact.Source()); err != nil {
+	if _, err := exactCompilerSourceTerm(ctx, fact.Source()); err != nil {
 		return fmt.Errorf("assignment source is not a context-independent scalar")
 	}
 	return nil
@@ -523,6 +576,9 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 }
 
 func exactCompilerSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
+	if term, ok := exactSignatureExpressionTerm(ctx, source); ok {
+		return term, nil
+	}
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
 		if p, ok := ctx.facts.ExpressionPathRef(source.ExprRef); ok {
 			if p.Symbol == 0 || p.Version != 0 || len(p.Segments) != 0 {
@@ -551,6 +607,24 @@ func exactCompilerSourceTerm(ctx planCompileContext, source factflow.ValueSource
 		return 0, fmt.Errorf("assignment source is not a context-independent scalar")
 	}
 	return ctx.builder.Arena().Constant(value), nil
+}
+
+func exactSignatureExpressionTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, bool) {
+	if (source.Kind != factflow.ValueSourceExpression && source.Kind != factflow.ValueSourceCall) || !source.HasExpr {
+		return 0, false
+	}
+	terms, ok := ctx.expressions[source.ExprRef]
+	if !ok {
+		return 0, false
+	}
+	index := source.ResultIndex
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(terms) {
+		return 0, false
+	}
+	return terms[index], true
 }
 
 func expressionHasContextualSidecar(facts factflow.Facts, ref factflow.ExprRef) bool {

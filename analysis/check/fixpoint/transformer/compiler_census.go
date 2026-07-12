@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -31,10 +32,13 @@ func (c *PlanCompiler) EligibilityCensus(reg *axis.Registry, graph cfg.Graph, pl
 	ctx := planCompileContext{
 		registry: reg, graph: graph, plan: plan, facts: plan.Facts(),
 		builder: NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan),
-		locals:  make(map[symbol.ID]ValueTerm), genericBindings: make(map[symbol.ID]symbolicGenericBinding),
+		locals:  make(map[symbol.ID]ValueTerm), expressions: make(map[factflow.ExprRef][]ValueTerm), genericBindings: make(map[symbol.ID]symbolicGenericBinding),
 	}
 	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
 		return []PlanEligibilityEntry{{Family: "compiler", Reason: "boundary: " + err.Error()}}
+	}
+	if err := bindStaticSignatureTerms(&ctx); err != nil {
+		return []PlanEligibilityEntry{{Family: "compiler", Reason: "signature calls: " + err.Error()}}
 	}
 	var out []PlanEligibilityEntry
 	dependencies := plan.DependencyCursor()

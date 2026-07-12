@@ -37,7 +37,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		"PathDescendantInvalidations":   {total: 9},
 		"PathValuePresenceImplications": {total: 3},
 		"DynamicIndexWrites":            {total: 9},
-		"CallSites":                     {total: 49, exact: 19},
+		"CallSites":                     {total: 49, exact: 25},
 		"BranchConditionSources":        {total: 36},
 		"BranchRefinements":             {total: 57},
 		"BranchPathEvidence":            {total: 43},
@@ -70,5 +70,5 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 	if indexed != 28 || keyed != 10 {
 		t.Fatalf("signature iterator bindings indexed/keyed = %d/%d, want 28/10", indexed, keyed)
 	}
-	t.Log("validate_graph exact now: RootAssignment 4/56, Return 2/5; 14 root-path copies await exact producer cells")
+	t.Log("validate_graph exact now: CallSite 25/49 (19 iterator-owned + 6 pure scalar), RootAssignment 4/56, Return 2/5")
 }
