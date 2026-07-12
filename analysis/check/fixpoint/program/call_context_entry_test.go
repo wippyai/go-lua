@@ -3,6 +3,7 @@ package program
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -86,6 +88,86 @@ func TestApplyParamSeedsPreservesExistingValuesAndSeededHeapObjects(t *testing.T
 	}
 	if object := got.ReadHeapTableObject(reg, rootID); !product.Equal(reg, object.Root(), root) {
 		t.Fatalf("seeded heap object = %#v, want copied root object", object)
+	}
+}
+
+func TestParamInferenceRekeysReachableHeapIntoCalleeKeySpace(t *testing.T) {
+	reg := standard.Registry()
+	callerAKeys, callerCKeys, calleeBKeys := keyspace.New(), keyspace.New(), keyspace.New()
+	// Shift the callee's dense suffix ids. Equal raw ids across two keyspaces
+	// would hide the provenance defect this regression is intended to catch.
+	if _, ok := calleeBKeys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "padding"}}); !ok {
+		t.Fatal("failed to seed callee keyspace")
+	}
+	callerAMember, ok := callerAKeys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "member"}})
+	if !ok {
+		t.Fatal("failed to build caller A member key")
+	}
+	callerCPadding, ok := callerCKeys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "not-member"}})
+	if !ok {
+		t.Fatal("failed to build caller C conflicting padding key")
+	}
+	callerCMember, ok := callerCKeys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "member"}})
+	if !ok {
+		t.Fatal("failed to build caller C member key")
+	}
+	if callerAMember.Segs != callerCPadding.Segs || callerAMember.Segs == callerCMember.Segs {
+		t.Fatal("test setup did not create conflicting dense ids/spellings")
+	}
+	tableID := identity.ID{Kind: "test.table", Site: "inferred-param", Index: 1}
+	tableValue := testIdentityValue(reg, tableID)
+	memberValue := typevalue.LiteralString(reg, "value")
+	callerA := state.State{}.WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: tableValue, StaticMembers: map[keyspace.Key]product.Value{callerAMember: memberValue},
+	}))
+	callerC := state.State{}.WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: tableValue, StaticMembers: map[keyspace.Key]product.Value{callerCMember: memberValue},
+	}))
+	callee := symbol.ID(91)
+	inferred := newParamInference(reg, map[symbol.ID]struct{}{callee: {}})
+	inferred.observe(callee, []product.Value{tableValue}, []bool{true}, callerA, callerAKeys)
+	inferred.observe(callee, []product.Value{tableValue}, []bool{true}, callerC, callerCKeys)
+
+	got := inferred.seedSource(callee, calleeBKeys)
+	object := got.ReadHeapTableObject(reg, tableID)
+	members := object.StaticMembers()
+	if len(members) != 1 {
+		t.Fatalf("inferred members = %#v, want common semantic member retained", members)
+	}
+	for key, value := range members {
+		formatted := string(calleeBKeys.FormatReadOnly(key))
+		if formatted != ".member" {
+			t.Fatalf("inferred member key = %q (%#v), want callee-owned .member", formatted, key)
+		}
+		if !product.Equal(reg, value, memberValue) {
+			t.Fatalf("inferred member %s value = %#v, want %#v", formatted, value, memberValue)
+		}
+	}
+	// The production failure surfaced when dependency tracking digested the
+	// projected summary. Pin that final ownership contract as well as the copy.
+	_ = summary.NormalizedPayloadDigest(reg, summary.Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{tableID: object},
+		HeapKeySpace:     calleeBKeys,
+	})
+}
+
+func TestParamInferenceNeverCopiesHeapWithoutKeySpaceProvenance(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	member, ok := keys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "member"}})
+	if !ok {
+		t.Fatal("failed to build member key")
+	}
+	tableID := identity.ID{Kind: "test.table", Site: "unowned-inferred-param", Index: 1}
+	value := testIdentityValue(reg, tableID)
+	caller := state.State{}.WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: value, StaticMembers: map[keyspace.Key]product.Value{member: value},
+	}))
+	callee := symbol.ID(92)
+	inferred := newParamInference(reg, map[symbol.ID]struct{}{callee: {}})
+	inferred.observe(callee, []product.Value{value}, []bool{true}, caller, nil)
+	if got := inferred.seedSource(callee, keyspace.New()).HeapTableObjectsSnapshot(); len(got.Objects) != 0 || got.Top {
+		t.Fatalf("heap without source provenance escaped inference: %#v", got)
 	}
 }
 

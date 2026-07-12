@@ -60,7 +60,7 @@ func observeCallArguments(
 		present[i] = true
 		return true
 	})
-	inferred.observe(callee, args, present, caller)
+	inferred.observe(callee, args, present, caller, prepass.KeySpace())
 }
 
 // applyInferredParamEntryStates attaches the joined call-site parameter seed to
@@ -97,7 +97,10 @@ func applyInferredParamEntryState(keys *programKeys, bindings *bind.Result, infe
 	if len(seeds) == 0 {
 		return function
 	}
-	source := inferred.seedSource(callee)
+	if function.entryKeys == nil {
+		function.entryKeys = inferred.seedKeySpace(callee)
+	}
+	source := inferred.seedSource(callee, function.entryKeys)
 	function.entryState = applyParamSeeds(inferred.reg, function.entryState, source, seeds)
 	function.hasEntryState = true
 	if keys.inferredParamSeeds == nil {
@@ -163,7 +166,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		}
 		if callee, ok := keys.functionSymbol(fn.funcExpr); ok && callee != 0 {
 			if seeds := inferred.paramSeeds(bindings, fn.funcExpr, callee); len(seeds) != 0 {
-				functionConfig.EntryState = applyParamSeeds(config.Registry, functionConfig.EntryState, inferred.seedSource(callee), seeds)
+				functionConfig.EntryState = applyParamSeeds(config.Registry, functionConfig.EntryState, inferred.seedSource(callee, static.KeySpace()), seeds)
 			}
 		}
 		functionPrepass, err := solvePreparedCountedWithTransfers(static, functionConfig, prepassCounter(stats), nil, solveAttributionFor(stats, static, fn.key, SolvePhasePrepass, false))
@@ -198,7 +201,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		}
 		if callee, ok := keys.functionSymbol(context.funcExpr); ok && callee != 0 {
 			if seeds := inferred.paramSeeds(bindings, context.funcExpr, callee); len(seeds) != 0 {
-				contextConfig.EntryState = applyParamSeeds(config.Registry, contextConfig.EntryState, inferred.seedSource(callee), seeds)
+				contextConfig.EntryState = applyParamSeeds(config.Registry, contextConfig.EntryState, inferred.seedSource(callee, static.KeySpace()), seeds)
 			}
 		}
 		contextPrepass, err := solvePreparedCountedWithTransfers(static, contextConfig, prepassCounter(stats), nil, solveAttributionFor(stats, static, context.key, SolvePhasePrepass, true))

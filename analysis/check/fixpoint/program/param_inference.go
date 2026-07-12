@@ -1,6 +1,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -36,6 +37,7 @@ type calleeArgs struct {
 	joins    []product.Value
 	presence []int
 	heap     state.State
+	heapKeys *keyspace.KeySpace
 }
 
 func newParamInference(reg *axis.Registry, enclosed map[symbol.ID]struct{}) *paramInference {
@@ -75,7 +77,7 @@ func (p *paramInference) candidate(callee symbol.ID) bool {
 // join for the callee function symbol. Arguments beyond the recorded length grow
 // the slice; missing arguments at a recorded index are absent for this call and
 // therefore join nil-presence Top, keeping the parameter at least as wide.
-func (p *paramInference) observe(callee symbol.ID, args []product.Value, present []bool, caller state.State) {
+func (p *paramInference) observe(callee symbol.ID, args []product.Value, present []bool, caller state.State, callerKeys *keyspace.KeySpace) {
 	if p == nil || callee == 0 {
 		return
 	}
@@ -84,8 +86,19 @@ func (p *paramInference) observe(callee symbol.ID, args []product.Value, present
 	}
 	acc := p.params[callee]
 	if acc == nil {
-		acc = &calleeArgs{}
+		acc = &calleeArgs{heapKeys: callerKeys}
 		p.params[callee] = acc
+	}
+	// Heap table member keys are dense ids owned by one analysis KeySpace.
+	// Parameter inference aggregates callers from independently prepared bodies,
+	// so importing the caller state into the accumulator's canonical keyspace is
+	// mandatory before any object-domain join. Copying the map directly can pair
+	// a foreign rootless suffix id with the eventual callee HeapKeySpace.
+	if acc.heapKeys == nil {
+		acc.heapKeys = callerKeys
+	}
+	if callerKeys != nil && acc.heapKeys != nil && callerKeys != acc.heapKeys {
+		caller = caller.RekeyPathEvidence(callerKeys, acc.heapKeys)
 	}
 	acc.sites++
 	for i := range args {
@@ -98,19 +111,35 @@ func (p *paramInference) observe(callee symbol.ID, args []product.Value, present
 		}
 		acc.joins[i] = product.Join(p.reg, acc.joins[i], args[i])
 		acc.presence[i]++
-		acc.heap = seedReachableHeapFromValue(p.reg, acc.heap, caller, args[i], map[identity.ID]struct{}{})
+		// Without both sides of the provenance pair there is no legal way to
+		// interpret a dense heap member key. Keep value inference, but do not copy
+		// a raw heap object under guessed ownership.
+		if callerKeys != nil && acc.heapKeys != nil {
+			acc.heap = seedReachableHeapFromValue(p.reg, acc.heap, caller, args[i], map[identity.ID]struct{}{})
+		}
 	}
 }
 
-func (p *paramInference) seedSource(callee symbol.ID) state.State {
+func (p *paramInference) seedSource(callee symbol.ID, targetKeys *keyspace.KeySpace) state.State {
 	if p == nil {
 		return state.State{}
 	}
 	acc := p.params[callee]
-	if acc == nil {
+	if acc == nil || acc.heapKeys == nil || targetKeys == nil {
 		return state.State{}
 	}
-	return acc.heap.Snapshot()
+	out := acc.heap.Snapshot()
+	if acc.heapKeys != nil && targetKeys != nil && acc.heapKeys != targetKeys {
+		out = out.RekeyPathEvidence(acc.heapKeys, targetKeys)
+	}
+	return out
+}
+
+func (p *paramInference) seedKeySpace(callee symbol.ID) *keyspace.KeySpace {
+	if p == nil || p.params[callee] == nil {
+		return nil
+	}
+	return p.params[callee].heapKeys
 }
 
 // paramSeed binds one inferred parameter value to its symbol value slot.
