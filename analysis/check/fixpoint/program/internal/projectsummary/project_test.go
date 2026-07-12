@@ -1442,7 +1442,8 @@ func projectTestRegistry(t *testing.T) (*axis.Registry, axis.Key[projectMark]) {
 			}
 			return projectMarkTop
 		},
-		Hash: func(v projectMark) uint64 { return uint64(v) },
+		Hash:     func(v projectMark) uint64 { return uint64(v) },
+		Boundary: axis.PortableIdentity,
 	}.Erase())
 	if err != nil {
 		t.Fatalf("RegistryWithAxes: %v", err)

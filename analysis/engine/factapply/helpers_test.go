@@ -211,6 +211,7 @@ func wideningRegistry() *axis.Registry {
 		Hash: func(v widening) uint64 {
 			return uint64(v) + 1
 		},
+		Boundary: axis.PortableIdentity,
 	})
 	return reg.Freeze()
 }

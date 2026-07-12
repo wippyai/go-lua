@@ -6,6 +6,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 )
 
+// BoundaryPolicy declares how one sparse value axis crosses a function-summary
+// boundary. Every registered axis must choose a policy explicitly: boundary
+// projection is a semantic operation, so silently treating a new axis as
+// portable would be unsound.
+type BoundaryPolicy uint8
+
+const (
+	BoundaryUnspecified BoundaryPolicy = iota
+	// LocalOnly removes the axis constraint at a function boundary by projecting
+	// it to the axis top.
+	LocalOnly
+	// PortableIdentity preserves the axis value exactly.
+	PortableIdentity
+	// Projected applies BoundaryProject to produce the portable axis value.
+	Projected
+)
+
 // Spec describes one axis lattice and its stable hashing function.
 type Spec[T any] struct {
 	Key      Key[T]
@@ -17,7 +34,12 @@ type Spec[T any] struct {
 	Meet     func(a, b T) T
 	Widen    func(prev, next T) T
 	Hash     func(T) uint64
-	Reducer  Reducer
+	// Boundary is mandatory for registered product axes. Projected additionally
+	// requires BoundaryProject; the other policies reject a projector so stale
+	// configuration cannot be ignored accidentally.
+	Boundary        BoundaryPolicy
+	BoundaryProject func(T) T
+	Reducer         Reducer
 	// ReducerReads lists the axis ids the Reducer depends on. Product reduction
 	// uses it as a cheap gate: when a value's slots do not carry every listed
 	// axis, the reducer cannot fire, so the whole reduce pass is skipped without
@@ -94,6 +116,18 @@ func validate[T any](s Spec[T]) error {
 	if s.Hash == nil {
 		return fmt.Errorf("axis %q: Hash is nil", s.Key.ID())
 	}
+	switch s.Boundary {
+	case LocalOnly, PortableIdentity:
+		if s.BoundaryProject != nil {
+			return fmt.Errorf("axis %q: boundary projector requires Projected policy", s.Key.ID())
+		}
+	case Projected:
+		if s.BoundaryProject == nil {
+			return fmt.Errorf("axis %q: Projected boundary policy requires a projector", s.Key.ID())
+		}
+	default:
+		return fmt.Errorf("axis %q: boundary policy is unspecified", s.Key.ID())
+	}
 	return nil
 }
 
@@ -110,6 +144,8 @@ type ErasedSpec interface {
 	MeetAny(a, b any) any
 	WidenAny(prev, next any) any
 	HashAny(any) uint64
+	BoundaryPolicy() BoundaryPolicy
+	ProjectBoundaryAny(any) any
 	ReducerHook() Reducer
 	ReducerReadsHook() []string
 }
@@ -163,6 +199,24 @@ func (e erasedSpec[T]) WidenAny(prev, next any) any {
 
 func (e erasedSpec[T]) HashAny(v any) uint64 {
 	return e.spec.Hash(e.cast(v))
+}
+
+func (e erasedSpec[T]) BoundaryPolicy() BoundaryPolicy {
+	return e.spec.Boundary
+}
+
+func (e erasedSpec[T]) ProjectBoundaryAny(v any) any {
+	typed := e.cast(v)
+	switch e.spec.Boundary {
+	case LocalOnly:
+		return e.spec.Top()
+	case PortableIdentity:
+		return typed
+	case Projected:
+		return e.spec.BoundaryProject(typed)
+	default:
+		panic(fmt.Sprintf("axis %q: boundary policy is unspecified", e.ID()))
+	}
 }
 
 func (e erasedSpec[T]) ReducerHook() Reducer {

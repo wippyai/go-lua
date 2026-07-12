@@ -21,6 +21,10 @@ func Spec() axis.Spec[Value] {
 		Meet:     Meet,
 		Widen:    Widen,
 		Hash:     Value.Hash,
+		Boundary: axis.Projected,
+		BoundaryProject: func(Value) Value {
+			return Top()
+		},
 	}
 }
 

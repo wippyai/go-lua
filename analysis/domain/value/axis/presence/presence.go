@@ -18,6 +18,7 @@ func Spec() axis.Spec[Value] {
 		Meet:     Meet,
 		Widen:    Widen,
 		Hash:     Value.Hash,
+		Boundary: axis.PortableIdentity,
 	}
 }
 

@@ -135,6 +135,36 @@ func TestRegistryFreezeRejectsRegistration(t *testing.T) {
 	axis.Register(reg, escape.Spec())
 }
 
+func TestAxisSpecRequiresExplicitValidBoundaryPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*axis.Spec[int])
+	}{
+		{"unspecified", func(spec *axis.Spec[int]) { spec.Boundary = axis.BoundaryUnspecified }},
+		{"projected-without-projector", func(spec *axis.Spec[int]) { spec.Boundary = axis.Projected }},
+		{"portable-with-projector", func(spec *axis.Spec[int]) {
+			spec.Boundary = axis.PortableIdentity
+			spec.BoundaryProject = func(v int) int { return v }
+		}},
+		{"local-with-projector", func(spec *axis.Spec[int]) {
+			spec.Boundary = axis.LocalOnly
+			spec.BoundaryProject = func(v int) int { return v }
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := registryTestSpec("test.boundary-policy."+test.name, nil)
+			test.edit(&spec)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("invalid boundary policy did not fail closed")
+				}
+			}()
+			_ = spec.Erase()
+		})
+	}
+}
+
 func TestRegistryRejectsDuplicateErasedIDAcrossSpecTypes(t *testing.T) {
 	reg := axis.NewRegistry()
 	first := registryTestSpec("test.registry.duplicate", nil).Erase()
@@ -274,7 +304,8 @@ func registryTestSpec(id string, reducer axis.Reducer) axis.Spec[int] {
 		Hash: func(v int) uint64 {
 			return uint64(v) + 1
 		},
-		Reducer: reducer,
+		Boundary: axis.PortableIdentity,
+		Reducer:  reducer,
 	}
 }
 
@@ -305,5 +336,6 @@ func registryStringSpec(id string) axis.Spec[string] {
 		Hash: func(v string) uint64 {
 			return uint64(len(v)) + 1
 		},
+		Boundary: axis.PortableIdentity,
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -1053,7 +1052,7 @@ func addFrozenTablePlaceholderPath(paths map[identity.ID][]path.Path, id identit
 }
 
 func portableBoundaryValue(reg *axis.Registry, value product.Value) product.Value {
-	return product.Set(reg, value, evidence.Key, evidence.Top())
+	return product.ProjectBoundary(reg, value)
 }
 
 func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (path.Path, bool) {

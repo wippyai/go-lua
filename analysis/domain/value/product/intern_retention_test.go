@@ -32,7 +32,8 @@ func TestInternerEvictionKeepsDurableValuesValid(t *testing.T) {
 			}
 			return -2
 		},
-		Hash: func(v int) uint64 { return uint64(v + 2) },
+		Hash:     func(v int) uint64 { return uint64(v + 2) },
+		Boundary: axis.PortableIdentity,
 	}.Erase())
 
 	durable := Set(reg, Top(), key, 0)

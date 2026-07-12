@@ -27,6 +27,7 @@ func Spec() axis.Spec[Value] {
 		Meet:         Meet,
 		Widen:        Widen,
 		Hash:         Value.Hash,
+		Boundary:     axis.PortableIdentity,
 		Reducer:      reduceByRuntimeKind,
 		ReducerReads: []string{Key.ID(), runtimekind.Key.ID()},
 	}

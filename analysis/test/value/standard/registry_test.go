@@ -39,6 +39,82 @@ func TestRegistryBundleFrozenAndStable(t *testing.T) {
 	}
 }
 
+func TestRegistryBoundaryPolicySchemaIsComplete(t *testing.T) {
+	want := map[string]axis.BoundaryPolicy{
+		"variantorigin": axis.PortableIdentity,
+		"identity":      axis.PortableIdentity,
+		"runtimekind":   axis.PortableIdentity,
+		"typewitness":   axis.PortableIdentity,
+		"escape":        axis.PortableIdentity,
+		"evidence":      axis.Projected,
+		"assertion":     axis.PortableIdentity,
+	}
+	view := Registry().SpecsView()
+	if view.Len() != len(want) {
+		t.Fatalf("boundary policy schema has %d axes, want %d", view.Len(), len(want))
+	}
+	for i := 0; i < view.Len(); i++ {
+		spec := view.At(i)
+		policy, ok := want[spec.ID()]
+		if !ok {
+			t.Fatalf("axis %q has no pinned boundary policy", spec.ID())
+		}
+		if got := spec.BoundaryPolicy(); got != policy {
+			t.Fatalf("axis %q boundary policy = %d, want %d", spec.ID(), got, policy)
+		}
+	}
+}
+
+func TestStandardBoundaryProjectionIsAnIdempotentUpperClosure(t *testing.T) {
+	reg := Registry()
+	domain := product.Domain(reg)
+	for i, value := range standardProductSample(reg, domain.Bottom(), domain.Top()) {
+		projected := product.ProjectBoundary(reg, value)
+		if !domain.LessOrEq(value, projected) {
+			t.Fatalf("sample %d boundary projection is not an upper bound", i)
+		}
+		second := product.ProjectBoundary(reg, projected)
+		if !domain.Equal(projected, second) {
+			t.Fatalf("sample %d boundary projection is not idempotent", i)
+		}
+	}
+}
+
+var boundaryBenchmarkSink product.Value
+
+func BenchmarkStandardBoundaryProjection(b *testing.B) {
+	reg := Registry()
+	withoutEvidence := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	withEvidence := product.Set(reg, withoutEvidence, evidence.Key, evidence.ExplicitTop())
+	bench := func(b *testing.B, value product.Value, project func(product.Value) product.Value) {
+		b.Helper()
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			boundaryBenchmarkSink = project(value)
+		}
+	}
+	b.Run("registry/without-evidence", func(b *testing.B) {
+		bench(b, withoutEvidence, func(value product.Value) product.Value {
+			return product.ProjectBoundary(reg, value)
+		})
+	})
+	b.Run("legacy/without-evidence", func(b *testing.B) {
+		bench(b, withoutEvidence, func(value product.Value) product.Value {
+			return product.Set(reg, value, evidence.Key, evidence.Top())
+		})
+	})
+	b.Run("registry/with-evidence", func(b *testing.B) {
+		bench(b, withEvidence, func(value product.Value) product.Value {
+			return product.ProjectBoundary(reg, value)
+		})
+	})
+	b.Run("legacy/with-evidence", func(b *testing.B) {
+		bench(b, withEvidence, func(value product.Value) product.Value {
+			return product.Set(reg, value, evidence.Key, evidence.Top())
+		})
+	})
+}
+
 func TestRegistryWithAxesReturnsFreshFrozenRegistry(t *testing.T) {
 	fresh, err := RegistryWithAxes()
 	if err != nil {
@@ -217,6 +293,7 @@ func syntheticSpec() axis.Spec[synthetic] {
 			}
 			return next
 		},
-		Hash: func(v synthetic) uint64 { return uint64(v) + 1 },
+		Hash:     func(v synthetic) uint64 { return uint64(v) + 1 },
+		Boundary: axis.PortableIdentity,
 	}
 }
