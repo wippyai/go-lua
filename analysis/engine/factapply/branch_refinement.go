@@ -45,10 +45,22 @@ func applyBranchRefinementCached(
 	targetPath pathdom.Path,
 	refinement factflow.ValueRefinement,
 ) state.State {
-	if branchRefinementContradictsCurrentValue(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, targetPath, refinement) {
-		return unreachableState(ctx.Registry)
+	var reachable bool
+	out, reachable = ApplyConcreteGuardRefinement(ConcreteGuardRefinementRequest{
+		Registry:    ctx.Registry,
+		TypeValues:  typeValues,
+		Resolver:    resolver,
+		ProjectPath: projectPath,
+		Point:       ctx.Edge.From,
+		Input:       out,
+		Output:      out,
+		TargetPath:  targetPath,
+		Refinement:  refinement,
+	})
+	if !reachable {
+		return out
 	}
-	return applyValueRefinementAtCached(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, targetPath, refinement)
+	return activatePathPresenceImplicationsForPath(ctx.Registry, resolver, ctx.Edge.From, out, targetPath)
 }
 
 func branchRefinementContradictsCurrentValue(
@@ -261,7 +273,17 @@ func applyValueRefinementAtCached(
 	targetPath pathdom.Path,
 	refinement factflow.ValueRefinement,
 ) state.State {
-	out = applyValueRefinementAtWithoutImplicationsCached(typeValues, reg, resolver, projectPath, point, out, targetPath, refinement)
+	out = ApplyConcreteValueRefinement(ConcreteValueRefinementRequest{
+		Registry:    reg,
+		TypeValues:  typeValues,
+		Resolver:    resolver,
+		ProjectPath: projectPath,
+		Point:       point,
+		Input:       out,
+		Output:      out,
+		TargetPath:  targetPath,
+		Refinement:  refinement,
+	})
 	return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
 }
 
