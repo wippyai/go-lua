@@ -171,10 +171,8 @@ func overlayMaterializedSummaryProofsForResult(
 		next.NormalReturnParams = params
 		changed = true
 	}
-	if len(projected.ParamObligations) != 0 &&
-		paramObligationsOverlayAllowed(reg, projected.ParamObligations) &&
-		!paramObligationsEqual(reg, projected.ParamObligations, current.ParamObligations) {
-		next.ParamObligations = append([]product.Value(nil), projected.ParamObligations...)
+	if obligations, ok := overlayMaterializedParamObligations(reg, current.ParamObligations, projected.ParamObligations); ok {
+		next.ParamObligations = obligations
 		changed = true
 	}
 	if paramMemberCallObligationsSubset(projected.ParamMemberCallObligations, current.ParamMemberCallObligations) &&
@@ -549,6 +547,51 @@ func paramObligationsOverlayAllowed(reg *axis.Registry, projected []product.Valu
 		}
 	}
 	return true
+}
+
+func overlayMaterializedParamObligations(reg *axis.Registry, current, projected []product.Value) ([]product.Value, bool) {
+	if len(projected) == 0 || !paramObligationsOverlayAllowed(reg, projected) {
+		return current, false
+	}
+	// ParamObligations are ordered contravariantly in Summary: its lattice Join
+	// is product Meet per slot. Materialization is an ascending summary
+	// refinement, so replacing this lane with the latest projection can
+	// oscillate forever when successive solves produce incomparable evidence.
+	n := max(len(current), len(projected))
+	top := product.Top()
+	var out []product.Value
+	for i := range n {
+		existing := top
+		if i < len(current) {
+			existing = current[i]
+		}
+		candidate := top
+		if i < len(projected) {
+			candidate = projected[i]
+		}
+		next := product.Meet(reg, existing, candidate)
+		if product.Equal(reg, existing, next) {
+			continue
+		}
+		if out == nil {
+			out = make([]product.Value, n)
+			copy(out, current)
+			for j := len(current); j < n; j++ {
+				out[j] = top
+			}
+		}
+		out[i] = next
+	}
+	if out == nil {
+		return current, false
+	}
+	// A contradictory obligation is not caller-actionable. Keep the same
+	// rejection policy for contradictions introduced by combining two otherwise
+	// valid projections, not only for Bottom arriving directly from projection.
+	if !paramObligationsOverlayAllowed(reg, out) {
+		return current, false
+	}
+	return out, true
 }
 
 func paramObligationsEqual(reg *axis.Registry, a, b []product.Value) bool {
