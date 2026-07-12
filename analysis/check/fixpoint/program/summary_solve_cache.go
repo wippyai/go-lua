@@ -95,7 +95,6 @@ func (c *SummarySolveCache) solveAttributed(
 		profile:    profile,
 		resolution: resolution,
 	}
-	attribution = attribution.withCanonicalObservation(config, inputDigest, resolution)
 	if cached, ok := c.read(key, reader); ok {
 		if hits != nil {
 			(*hits)++

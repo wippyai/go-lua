@@ -68,7 +68,6 @@ type Stats struct {
 	SummaryCacheMisses                         int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
-	canonicalCells       map[canonicalCellKey]*canonicalCellAccumulator
 }
 
 // Result is the fixed-point result for one bound program.
