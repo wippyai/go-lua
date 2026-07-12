@@ -1,11 +1,19 @@
 package summary
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
+
+func requireHeapKeySpace(s Summary, operation string) {
+	if len(s.HeapTableObjects) != 0 && s.HeapKeySpace == nil {
+		panic(fmt.Sprintf("summary %s: non-empty HeapTableObjects has no producing HeapKeySpace", operation))
+	}
+}
 
 func normalizeHeapTableObjects(reg *axis.Registry, in map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
 	if len(in) == 0 {
@@ -54,6 +62,8 @@ func heapTableObjectsLessOrEq(reg *axis.Registry, a, b map[identity.ID]heapident
 }
 
 func summaryHeapTableObjectsEqual(reg *axis.Registry, a, b Summary) bool {
+	requireHeapKeySpace(a, "equal left operand")
+	requireHeapKeySpace(b, "equal right operand")
 	ks := heapKeySpaceForPair(a, b)
 	return heapTableObjectsEqual(
 		reg,
@@ -63,6 +73,8 @@ func summaryHeapTableObjectsEqual(reg *axis.Registry, a, b Summary) bool {
 }
 
 func summaryHeapTableObjectsLessOrEq(reg *axis.Registry, a, b Summary) bool {
+	requireHeapKeySpace(a, "less-or-equal left operand")
+	requireHeapKeySpace(b, "less-or-equal right operand")
 	ks := heapKeySpaceForPair(a, b)
 	return heapTableObjectsLessOrEq(
 		reg,
@@ -103,6 +115,8 @@ func heapTableObjectsInKeySpace(s Summary, target *keyspace.KeySpace) map[identi
 }
 
 func joinSummaryHeapTableObjects(reg *axis.Registry, a, b Summary) (map[identity.ID]heapidentity.TableObject, *keyspace.KeySpace) {
+	requireHeapKeySpace(a, "join left operand")
+	requireHeapKeySpace(b, "join right operand")
 	ks := heapKeySpaceForPair(a, b)
 	return joinHeapTableObjects(
 		reg,
@@ -112,6 +126,8 @@ func joinSummaryHeapTableObjects(reg *axis.Registry, a, b Summary) (map[identity
 }
 
 func widenSummaryHeapTableObjects(reg *axis.Registry, prev, next Summary) (map[identity.ID]heapidentity.TableObject, *keyspace.KeySpace) {
+	requireHeapKeySpace(prev, "widen previous operand")
+	requireHeapKeySpace(next, "widen next operand")
 	ks := heapKeySpaceForPair(prev, next)
 	return widenHeapTableObjects(
 		reg,

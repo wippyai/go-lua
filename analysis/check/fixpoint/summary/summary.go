@@ -83,10 +83,16 @@ func CallerFreshHeapPlacements(allocations []FreshHeapAllocation) map[identity.I
 // RekeyHeapTableObjects re-interns the rootless static-member keys of every
 // heap table object from this summary's producing keyspace into to, so a
 // consumer reading the summary at a call site can operate on the objects in its
-// own keyspace. It is a no-op when the summary carries no heap objects, has no
-// producing keyspace, or to equals the producing keyspace.
+// own keyspace. It is a no-op when the summary carries no heap objects or to
+// equals the producing keyspace. A non-empty heap without provenance is an
+// invalid summary and fails closed.
 func (s Summary) RekeyHeapTableObjects(to *keyspace.KeySpace) Summary {
-	if len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil || to == nil || s.HeapKeySpace == to {
+	if len(s.HeapTableObjects) == 0 {
+		s.HeapKeySpace = nil
+		return s
+	}
+	requireHeapKeySpace(s, "rekey")
+	if to == nil || s.HeapKeySpace == to {
 		return s
 	}
 	rekeyed := make(map[identity.ID]heapidentity.TableObject, len(s.HeapTableObjects))

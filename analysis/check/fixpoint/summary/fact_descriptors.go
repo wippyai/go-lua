@@ -290,6 +290,7 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			assignClone: func(src Summary, dst *Summary) { dst.HeapTableObjects = cloneHeapTableObjects(src.HeapTableObjects) },
 			normalizeOwned: func(reg *axis.Registry, s *Summary) {
 				s.HeapTableObjects = normalizeOwnedHeapTableObjects(reg, s.HeapTableObjects)
+				requireHeapKeySpace(*s, "normalize")
 			},
 			equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
 				return summaryHeapTableObjectsEqual(reg, a, b)

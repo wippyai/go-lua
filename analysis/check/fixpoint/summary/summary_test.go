@@ -517,12 +517,15 @@ func TestSnapshotClonesOnWriteAndRead(t *testing.T) {
 func TestSummaryHeapTableObjectsNormalizeAndJoinByIdentity(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "summary-join", Index: 1}
+	heapKS := keyspace.New()
 	left := Summary{
+		HeapKeySpace: heapKS,
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
 		},
 	}
 	right := Summary{
+		HeapKeySpace: heapKS,
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
 		},
@@ -620,6 +623,7 @@ func TestNormalizeDefensivelyCopiesHeapTableObjects(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "summary-normalize-copy", Index: 1}
 	input := Summary{
+		HeapKeySpace: keyspace.New(),
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
 		},
@@ -650,6 +654,68 @@ func TestNormalizeOwnedConsumesHeapTableObjectMap(t *testing.T) {
 	if len(input.HeapTableObjects) != 0 {
 		t.Fatalf("NormalizeOwned did not consume caller-owned heap map: %#v", input.HeapTableObjects)
 	}
+}
+
+func TestNormalizeClearsHeapKeySpaceWhenHeapObjectsNormalizeEmpty(t *testing.T) {
+	reg := mustRegistry(t)
+	ks := keyspace.New()
+	id := identity.ID{Kind: "table", Site: "summary-normalize-empty-keyspace", Index: 1}
+	got := NormalizeOwned(reg, Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{id: heapidentity.BottomObject(reg)},
+		HeapKeySpace:     ks,
+	})
+	if got.HeapKeySpace != nil {
+		t.Fatalf("normalized empty heap retained keyspace %p", got.HeapKeySpace)
+	}
+}
+
+func TestNormalizeClearsStaleHeapKeySpaceFromNonBottomSummary(t *testing.T) {
+	reg := mustRegistry(t)
+	got := NormalizeOwned(reg, Summary{
+		Returns:      []product.Value{product.Top()},
+		HeapKeySpace: keyspace.New(),
+	})
+	if got.HeapKeySpace != nil {
+		t.Fatalf("normalized summary without heap objects retained keyspace %p", got.HeapKeySpace)
+	}
+}
+
+func TestNormalizeRejectsHeapObjectsWithoutProducingKeySpace(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "missing-producing-keyspace", Index: 1}
+	assertPanics(t, func() {
+		_ = Normalize(reg, Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+		}})
+	})
+}
+
+func TestJoinAndWidenRejectHeapObjectsWithoutProducingKeySpace(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "missing-join-keyspace", Index: 1}
+	malformed := Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+	}}
+	valid := Summary{
+		HeapKeySpace: keyspace.New(),
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+		},
+	}
+	assertPanics(t, func() { _ = Join(reg, valid, malformed) })
+	assertPanics(t, func() { _ = Join(reg, malformed, valid) })
+	assertPanics(t, func() { _ = Widen(reg, valid, malformed) })
+	assertPanics(t, func() { _ = Widen(reg, malformed, valid) })
+}
+
+func assertPanics(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("operation accepted malformed summary")
+		}
+	}()
+	fn()
 }
 
 func mustRootlessSuffix(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {

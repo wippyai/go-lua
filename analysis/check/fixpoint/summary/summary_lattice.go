@@ -24,6 +24,12 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 	for _, lane := range summaryLanes {
 		lane.normalizeOwned(reg, &out)
 	}
+	// HeapKeySpace is provenance metadata for HeapTableObjects, not an
+	// independent fact. Retaining it after the object lane normalizes empty can
+	// make a later join select an unrelated keyspace as its canonical target.
+	if len(out.HeapTableObjects) == 0 {
+		out.HeapKeySpace = nil
+	}
 	if summaryBottom(out) {
 		return Summary{}
 	}

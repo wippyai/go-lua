@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
@@ -66,13 +67,14 @@ func TestNormalizedPayloadDigestSeparatesUnequalSemanticContent(t *testing.T) {
 	}
 
 	id := testTableIdentity(1, 1)
-	plain := Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+	heapKS := keyspace.New()
+	plain := Summary{HeapKeySpace: heapKS, HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: typed}),
 	}}
-	prefix := Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+	prefix := Summary{HeapKeySpace: heapKS, HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: typed, PrefixStableShape: true}),
 	}}
-	stable := Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+	stable := Summary{HeapKeySpace: heapKS, HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: typed, StableShape: true}),
 	}}
 	assertUnequalNormalizedSummariesHaveDifferentDigests(t, reg, plain, prefix)
