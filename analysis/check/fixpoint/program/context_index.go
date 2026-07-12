@@ -444,12 +444,11 @@ func (k *programKeys) upsertCallContext(
 		digest = bodyDigest[0]
 	}
 	contextKey, changed, created := k.contexts.upsertCallContext(reg, ref, baseKey, fn, entry, entryKeys, digest)
+	if changed && k.certifyRelationContexts {
+		k.contexts.nextEntryDiscoveryGeneration()
+	}
 	if created && fnType != nil {
 		k.functionTypes[contextKey] = fnType
-	}
-	if context, ok := k.contexts.contextByKey(contextKey); ok {
-		generation := k.contexts.nextEntryDiscoveryGeneration()
-		context.relationContextEntry = certifyRelationContextEntry(reg, k.bindings, fn, contextKey, baseKey, digest, generation, context.entryState, context.entryKeys)
 	}
 	return contextKey, changed
 }
@@ -479,6 +478,9 @@ func (k *programKeys) upsertFunctionExpressionContext(
 		digest = bodyDigest[0]
 	}
 	contextKey, changed, created := k.contexts.upsertFunctionExpressionContext(reg, ref, baseKey, callbackFn, entry, entryKeys, digest)
+	if changed && k.certifyRelationContexts {
+		k.contexts.nextEntryDiscoveryGeneration()
+	}
 	if created {
 		k.functionByKey[contextKey] = callbackFn
 	}
@@ -487,10 +489,6 @@ func (k *programKeys) upsertFunctionExpressionContext(
 			k.functionTypes[contextKey] = fnType
 			changed = true
 		}
-	}
-	if context, ok := k.contexts.contextByKey(contextKey); ok {
-		generation := k.contexts.nextEntryDiscoveryGeneration()
-		context.relationContextEntry = certifyRelationContextEntry(reg, k.bindings, callbackFn, contextKey, baseKey, digest, generation, context.entryState, context.entryKeys)
 	}
 	return contextKey, changed
 }

@@ -38,14 +38,18 @@ func TestRelationContextEntryCertificateIdentityPrimitive(t *testing.T) {
 		WriteValue(reg, statekey.SymbolValue(slot.Symbol), value).
 		WriteLocalPathKey(reg, root, value)
 	base := summary.DefaultSummaryKey(ref.FromSymbol(101))
-	keys := programKeys{bindings: bindings, contexts: newContextIndex()}
+	keys := programKeys{bindings: bindings, contexts: newContextIndex(), certifyRelationContexts: true}
 
 	contextKey, changed := keys.upsertCallContext(reg, callContextRef{expr: factflow.ExprRef(1)}, base, fn, entry, ks, nil, 0xabc)
 	if !changed {
 		t.Fatal("identity context was not created")
 	}
 	context, ok := keys.contexts.contextByKey(contextKey)
-	if !ok || context.relationContextEntry == nil {
+	if !ok {
+		t.Fatal("identity context missing")
+	}
+	context.relationContextEntry = certifyRelationContextEntry(reg, bindings, fn, contextKey, base, 0xabc, keys.contexts.nextEntryDiscoveryGeneration(), context.entryState, context.entryKeys)
+	if context.relationContextEntry == nil {
 		t.Fatal("exact identity primitive entry did not produce a certificate")
 	}
 	certificate := context.relationContextEntry
@@ -58,10 +62,26 @@ func TestRelationContextEntryCertificateIdentityPrimitive(t *testing.T) {
 	}
 }
 
+func TestRelationContextEntryCertificateLegacyPathDoesNoProofWork(t *testing.T) {
+	reg, bindings, fn, entry, ks, base := relationCertificateFixture(t)
+	keys := programKeys{bindings: bindings, contexts: newContextIndex()}
+	contextKey, changed := keys.upsertCallContext(reg, callContextRef{expr: 99}, base, fn, entry, ks, nil, 0xabc)
+	if !changed {
+		t.Fatal("legacy context was not created")
+	}
+	context, ok := keys.contexts.contextByKey(contextKey)
+	if !ok {
+		t.Fatal("legacy context missing")
+	}
+	if context.relationContextEntry != nil || keys.contexts.discoveryGeneration != 0 {
+		t.Fatalf("legacy path produced relation proof work: certificate=%v generation=%d", context.relationContextEntry, keys.contexts.discoveryGeneration)
+	}
+}
+
 func TestRelationContextEntryCertificateRejectsHiddenLane(t *testing.T) {
 	reg, bindings, fn, entry, ks, base := relationCertificateFixture(t)
 	hidden := entry.WritePlacement(identity.ID{Kind: "test", Site: "hidden", Index: 1}, placement.OwnedHeap)
-	keys := programKeys{bindings: bindings, contexts: newContextIndex()}
+	keys := programKeys{bindings: bindings, contexts: newContextIndex(), certifyRelationContexts: true}
 
 	contextKey, changed := keys.upsertCallContext(reg, callContextRef{expr: 2}, base, fn, hidden, ks, nil, 0xdef)
 	if !changed {
@@ -71,14 +91,41 @@ func TestRelationContextEntryCertificateRejectsHiddenLane(t *testing.T) {
 	if !ok {
 		t.Fatal("context missing")
 	}
+	context.relationContextEntry = certifyRelationContextEntry(reg, bindings, fn, contextKey, base, 0xdef, keys.contexts.nextEntryDiscoveryGeneration(), context.entryState, context.entryKeys)
 	if context.relationContextEntry != nil {
 		t.Fatal("placement-lane fact was hidden by the certificate projection")
 	}
 }
 
+func TestRelationContextEntryCertificateRejectsTopDescendantPathAndCapture(t *testing.T) {
+	reg, bindings, fn, entry, ks, base := relationCertificateFixture(t)
+	slot := bindings.ParamSlots(fn)[0]
+	context := base
+	context.Entry.Values = 1
+	if got := certifyRelationContextEntry(reg, bindings, fn, context, base, 1, 1,
+		state.State{}.WriteValue(reg, statekey.SymbolValue(slot.Symbol), product.Top()), ks); got != nil {
+		t.Fatal("top-valued parameter was certified")
+	}
+	value := entry.ReadValue(reg, statekey.SymbolValue(slot.Symbol))
+	descendant := ks.FromPath(path.NewPath(slot.Symbol, "value").Field("member"))
+	withDescendant := entry.WriteLocalPathKey(reg, descendant, value)
+	if got := certifyRelationContextEntry(reg, bindings, fn, context, base, 1, 1, withDescendant, ks); got != nil {
+		t.Fatal("descendant parameter path was certified")
+	}
+
+	stmts := parseChunk(t, `local suffix = "!"; local function captured(value) return value .. suffix end`)
+	captureBindings := bind.BindChunk(stmts, bind.Options{})
+	captured := captureBindings.NestedFunctions(nil)[0]
+	capturedSlot := captureBindings.ParamSlots(captured)[0]
+	capturedEntry := state.State{}.WriteValue(reg, statekey.SymbolValue(capturedSlot.Symbol), value)
+	if got := certifyRelationContextEntry(reg, captureBindings, captured, context, base, 1, 1, capturedEntry, keyspace.New()); got != nil {
+		t.Fatal("captured function entry was certified")
+	}
+}
+
 func TestRelationContextEntryCertificateRefreshCannotStayStale(t *testing.T) {
 	reg, bindings, fn, entry, ks, base := relationCertificateFixture(t)
-	keys := programKeys{bindings: bindings, contexts: newContextIndex()}
+	keys := programKeys{bindings: bindings, contexts: newContextIndex(), certifyRelationContexts: true}
 	call := callContextRef{expr: 3}
 
 	contextKey, changed := keys.upsertCallContext(reg, call, base, fn, entry, ks, nil, 0x123)
@@ -86,6 +133,7 @@ func TestRelationContextEntryCertificateRefreshCannotStayStale(t *testing.T) {
 		t.Fatal("context was not created")
 	}
 	context, _ := keys.contexts.contextByKey(contextKey)
+	context.relationContextEntry = certifyRelationContextEntry(reg, bindings, fn, contextKey, base, 0x123, keys.contexts.nextEntryDiscoveryGeneration(), context.entryState, context.entryKeys)
 	if context.relationContextEntry == nil {
 		t.Fatal("initial exact entry was not certified")
 	}

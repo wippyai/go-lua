@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -34,6 +35,7 @@ type relationCellIdentity struct {
 
 type relationCatalogEntry struct {
 	identity relationCellIdentity
+	function *ast.FunctionExpr
 	compiler *transformer.PreparedPlanCompiler
 	direct   transformer.DirectCallCatalog
 }
@@ -53,7 +55,20 @@ type relationConsumerIdentity struct {
 type relationConsumerEntry struct {
 	identity relationConsumerIdentity
 	direct   transformer.DirectCallCatalog
-	active   bool
+	// dependencyKeys is a dense, generation-frozen override table. A non-zero
+	// key means this point consumes a certified contextual summary identity even
+	// though the executable relation belongs to its lexical base function.
+	dependencyKeys []summary.SummaryKey
+	active         bool
+}
+
+type relationContextCandidate struct {
+	context             summary.SummaryKey
+	base                relationCellIdentity
+	prepared            *body.Static
+	discoveryGeneration uint64
+	params              []product.Value
+	certificate         *relationContextEntryCertificate
 }
 
 // relationConsumerPolicy is a separate immutable index over every lexical
@@ -90,6 +105,15 @@ func (p relationConsumerPolicy) DirectCalls(owner relationConsumerIdentity) (tra
 	return entry.direct, true
 }
 
+func (p relationConsumerPolicy) DependencyKey(owner relationConsumerIdentity, point cfg.Point) (summary.SummaryKey, bool) {
+	entry, ok := p.lookup(owner)
+	if !ok || int(point) < 0 || int(point) >= len(entry.dependencyKeys) {
+		return summary.SummaryKey{}, false
+	}
+	key := entry.dependencyKeys[point]
+	return key, !key.Ref.IsZero()
+}
+
 func (p relationConsumerPolicy) lookup(owner relationConsumerIdentity) (relationConsumerEntry, bool) {
 	index, ok := p.byKey[owner.Summary]
 	if !ok || index < 0 || index >= len(p.entries) || p.entries[index].identity != owner {
@@ -102,10 +126,13 @@ func (p relationConsumerPolicy) lookup(owner relationConsumerIdentity) (relation
 // consulted by production solving yet. Order is canonical SummaryKey order;
 // maps are private lookup indexes over immutable entries.
 type relationRunCatalog struct {
-	entries    []relationCatalogEntry
-	byKey      map[summary.SummaryKey]int
-	consumers  relationConsumerPolicy
-	generation *relationCatalogGeneration
+	entries           []relationCatalogEntry
+	byKey             map[summary.SummaryKey]int
+	consumers         relationConsumerPolicy
+	contexts          []relationContextCandidate
+	contextGeneration uint64
+	registry          *axis.Registry
+	generation        *relationCatalogGeneration
 }
 
 func (c relationRunCatalog) Entries() []relationCellIdentity {
@@ -164,6 +191,139 @@ func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 		out.consumers.entries = append(out.consumers.entries, consumer)
 	}
 	return out
+}
+
+// certifiedContextActivationSlice extends the zero-parameter leaf slice with
+// only call-free/effect-free parameterized leaves whose contextual entry was
+// reconstructed exactly across the complete registered State domain. The
+// context index is consumed once at its immutable post-discovery generation;
+// no independently refreshed routing map survives into execution.
+func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, contexts contextIndex) relationRunCatalog {
+	out := c.exactLeafActivationSlice()
+	if reg == nil || c.generation == nil || contexts.discoveryGeneration == 0 {
+		return out
+	}
+	out.contextGeneration = contexts.discoveryGeneration
+	out.registry = reg
+
+	baseByKey := make(map[summary.SummaryKey]relationCatalogEntry, len(c.entries))
+	allowed := make(map[transformer.CellRef]struct{}, len(out.entries))
+	for _, entry := range out.entries {
+		allowed[entry.identity.Cell] = struct{}{}
+	}
+	for _, entry := range c.entries {
+		if len(entry.direct.Cells()) != 0 || relationPreparedHasCalls(entry.identity.Prepared) || entry.compiler == nil || !entry.compiler.EffectFree() {
+			continue
+		}
+		baseByKey[entry.identity.Summary] = entry
+	}
+
+	for _, contextual := range contexts.entries {
+		certificate := contextual.relationContextEntry
+		if certificate == nil || certificate.context != contextual.key || certificate.discoveryGeneration == 0 || certificate.discoveryGeneration != contexts.discoveryGeneration {
+			continue
+		}
+		base, ok := baseByKey[certificate.base]
+		if !ok || contextual.funcExpr == nil || contextual.funcExpr != base.function ||
+			certificate.preparedBodyDigest != base.identity.BodyDigest || certificate.preparedBodyDigest != base.identity.Prepared.IdentityDigest() ||
+			contextual.key.Ref != certificate.base.Ref || len(certificate.params) != len(base.identity.Prepared.OperationPlan().BoundaryParams()) {
+			continue
+		}
+		params := make([]product.Value, len(certificate.params))
+		valid := true
+		for i, param := range certificate.params {
+			if param.symbol == 0 || param.slot == 0 || product.ShapeOf(param.value).IsBottom() || product.PresenceOf(param.value).IsBottom() {
+				valid = false
+				break
+			}
+			params[i] = param.value
+		}
+		if !valid {
+			continue
+		}
+		if _, exists := out.byKey[base.identity.Summary]; !exists {
+			out.byKey[base.identity.Summary] = len(out.entries)
+			out.entries = append(out.entries, base)
+			allowed[base.identity.Cell] = struct{}{}
+		}
+		out.contexts = append(out.contexts, relationContextCandidate{
+			context: contextual.key, base: base.identity, prepared: base.identity.Prepared,
+			discoveryGeneration: certificate.discoveryGeneration, params: params, certificate: certificate,
+		})
+	}
+	if len(out.contexts) == 0 {
+		return out
+	}
+	slices.SortFunc(out.contexts, func(a, b relationContextCandidate) int {
+		if a.context.Less(b.context) {
+			return -1
+		}
+		if b.context.Less(a.context) {
+			return 1
+		}
+		return 0
+	})
+
+	// Rebuild consumer routing from the authoritative context index. The route
+	// carries the contextual SummaryKey while the relation cell remains lexical.
+	out.consumers.entries = out.consumers.entries[:0]
+	clear(out.consumers.byKey)
+	for _, consumer := range c.consumers.entries {
+		routes := make(map[cfg.Point]transformer.DirectCallTarget)
+		dependencyKeys := make([]summary.SummaryKey, consumer.direct.PointCount())
+		for raw := 0; raw < consumer.direct.PointCount(); raw++ {
+			point := cfg.Point(raw)
+			if target, ok := consumer.direct.Lookup(point); ok {
+				if _, admitted := allowed[target.Cell]; admitted {
+					routes[point] = target
+				}
+			}
+			site, ok := consumer.identity.Prepared.OperationPlan().Facts().CallSiteView(point)
+			if !ok {
+				continue
+			}
+			expr, ok := site.Expr()
+			if !ok || expr == 0 {
+				continue
+			}
+			contextKey, ok := contexts.CallContextKey(consumer.identity.Summary, expr)
+			if !ok {
+				continue
+			}
+			candidate, ok := relationContextCandidateByKey(out.contexts, contextKey)
+			if !ok {
+				continue
+			}
+			routes[point] = transformer.DirectCallTarget{Cell: candidate.base.Cell, Shape: transformer.Shape{Params: uint32(len(candidate.params))}}
+			dependencyKeys[raw] = contextKey
+		}
+		direct, err := transformer.NewDirectCallCatalog(consumer.direct.PointCount(), routes)
+		if err != nil {
+			continue
+		}
+		consumer.direct = direct
+		consumer.dependencyKeys = dependencyKeys
+		consumer.active = len(routes) != 0
+		out.consumers.byKey[consumer.identity.Summary] = len(out.consumers.entries)
+		out.consumers.entries = append(out.consumers.entries, consumer)
+	}
+	return out
+}
+
+func relationContextCandidateByKey(entries []relationContextCandidate, key summary.SummaryKey) (relationContextCandidate, bool) {
+	i, ok := slices.BinarySearchFunc(entries, key, func(entry relationContextCandidate, target summary.SummaryKey) int {
+		if entry.context.Less(target) {
+			return -1
+		}
+		if target.Less(entry.context) {
+			return 1
+		}
+		return 0
+	})
+	if !ok {
+		return relationContextCandidate{}, false
+	}
+	return entries[i], true
 }
 
 func relationPreparedHasCalls(prepared *body.Static) bool {
@@ -271,7 +431,30 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 			}
 		}
 	}
-	return relationRunSnapshot{generation: c.generation, relations: relations, identities: identities, consumers: c.consumers}, nil
+	contextSummaries := make([]relationContextSummary, 0, len(c.contexts))
+	for _, candidate := range c.contexts {
+		if candidate.certificate == nil || candidate.discoveryGeneration == 0 || candidate.discoveryGeneration != c.contextGeneration || candidate.base.Generation != c.generation || candidate.prepared != candidate.base.Prepared {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context certificate identity drift")}
+		}
+		relation, ok := relations.Lookup(candidate.base.Cell)
+		if !ok || relation.Shape().Params != uint32(len(candidate.params)) || !paramsOnlyShape(relation.Shape()) {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context relation shape drift")}
+		}
+		cursor, cursorErr := transformer.NewBindingCursor(relation.Shape(), candidate.params, nil)
+		if cursorErr != nil {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeEquation, Identity: candidate.base, Err: cursorErr}
+		}
+		specialized, exact := relation.Specialize(cursor, nil, nil)
+		if !exact {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeContextual, Identity: candidate.base, Err: fmt.Errorf("context specialization rejected")}
+		}
+		contextSummaries = append(contextSummaries, relationContextSummary{
+			context: candidate.context, base: candidate.base,
+			discoveryGeneration: candidate.discoveryGeneration, certificate: candidate.certificate,
+			summary: summary.Normalize(c.registry, specialized),
+		})
+	}
+	return relationRunSnapshot{generation: c.generation, relations: relations, identities: identities, consumers: c.consumers, contexts: contextSummaries}, nil
 }
 
 type relationCatalogCandidate struct {
@@ -387,7 +570,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		if err != nil {
 			continue
 		}
-		entry := relationCatalogEntry{identity: identities[key], compiler: candidate.compiler, direct: direct}
+		entry := relationCatalogEntry{identity: identities[key], function: candidate.fn, compiler: candidate.compiler, direct: direct}
 		out.byKey[key] = len(out.entries)
 		out.entries = append(out.entries, entry)
 	}

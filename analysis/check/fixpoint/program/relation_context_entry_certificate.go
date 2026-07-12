@@ -98,3 +98,29 @@ func certifyRelationContextEntry(
 		params:              params,
 	}
 }
+
+// certifyFinalRelationContextEntries publishes certificates only after every
+// context-entry transform has completed. Opportunistic discovery proofs are
+// replaced because TransformEntries cannot prove their preservation.
+func (k *programKeys) certifyFinalRelationContextEntries(reg *axis.Registry, prepared preparedBodies) {
+	if k == nil || !k.certifyRelationContexts || reg == nil || k.bindings == nil {
+		return
+	}
+	generation := k.contexts.nextEntryDiscoveryGeneration()
+	for i := range k.contexts.entries {
+		context := &k.contexts.entries[i]
+		context.relationContextEntry = nil
+		if context.funcExpr == nil || !context.hasEntryState {
+			continue
+		}
+		base, ok := k.summaryKeyForFunction(context.funcExpr)
+		static := prepared.function(context.funcExpr)
+		if !ok || static == nil {
+			continue
+		}
+		context.relationContextEntry = certifyRelationContextEntry(
+			reg, k.bindings, context.funcExpr, context.key, base,
+			static.IdentityDigest(), generation, context.entryState, context.entryKeys,
+		)
+	}
+}

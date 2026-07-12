@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -136,6 +137,67 @@ end
 		func(config Config) (Result, error) { return RunBoundFunction(fn, bindings, config) },
 		true,
 	)
+}
+
+func TestRelationActivationCertifiedContextIdentityDifferential(t *testing.T) {
+	stmts := parseChunk(t, `
+local function identity(value: string): string
+	return value
+end
+return identity("caller-value")
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
+	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
+	legacyStats := &Stats{}
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeStats := &Stats{}
+	active, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareRelationCorpusResult(t, reg, legacy, active)
+	if activeStats.RelationCallsHandled == 0 {
+		t.Fatalf("certified contextual identity call was not handled: producers=%d owners=%d fallbacks=%d contexts=%d",
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationActivationFallbacks, activeStats.MaxContextCount)
+	}
+	if activeStats.SummaryBodySolves >= legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers >= legacyStats.SummaryPointTransfers {
+		t.Fatalf("certified context did not reduce summary work: legacy=%d/%d active=%d/%d",
+			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers,
+			activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
+	}
+	t.Logf("certified context legacy=%d/%d active=%d/%d handled=%d", legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers, activeStats.RelationCallsHandled)
+}
+
+func TestRelationActivationCertifiedContextUnsafeFamiliesStayLegacy(t *testing.T) {
+	cases := []struct{ name, source string }{
+		{"capture", `local suffix = "!"; local function f(v: string): string return v .. suffix end; return f("x")`},
+		{"heap-mutation", `local function f(v: {x: string}): string v.x = "changed"; return v.x end; return f({x="x"})`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stmts := parseChunk(t, tc.source)
+			bindings := bind.BindChunk(stmts, bind.Options{})
+			reg := standard.Registry()
+			check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
+			legacyStats, activeStats := &Stats{}, &Stats{}
+			legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if activeStats.RelationCallsHandled != 0 || activeStats.SummaryBodySolves != legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers != legacyStats.SummaryPointTransfers {
+				t.Fatalf("unsafe family left legacy path: handled=%d legacy=%d/%d active=%d/%d", activeStats.RelationCallsHandled, legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
+			}
+			compareRelationObservableTrees(t, legacy.RootResult(), active.RootResult(), "root")
+		})
+	}
 }
 
 func assertRelationActivationDifferential(t *testing.T, run func(Config) (Result, error), expectReduction bool) {

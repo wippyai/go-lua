@@ -219,6 +219,9 @@ func boundFunction(
 	return query.Function{
 		Key: origin.key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
+			if runtime.contextSummary != nil {
+				return *runtime.contextSummary, nil
+			}
 			return solveSummaryPrepared(runtime.cache, runtime.retained, profile, runtime.resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				reader, observe := relationTrackedSummaryReader(captured.Registry, reader, runtime.active, stats)
 				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe)

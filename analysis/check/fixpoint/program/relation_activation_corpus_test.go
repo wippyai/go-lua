@@ -74,6 +74,10 @@ local total = 0
 for i = 1, 8 do total = total + leaf() end
 return total
 `},
+		{name: "certified-context-identity", exact: true, source: `
+local function identity(value: string): string return value end
+return identity("caller-value")
+`},
 		{name: "recursive-fallback", exact: true, source: `
 local function count(n: number): number
   if n <= 0 then return 0 end

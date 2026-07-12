@@ -36,11 +36,32 @@ type relationRunActivation struct {
 }
 
 type relationOwnerRuntime struct {
-	active     bool
-	resolver   relationResolverFactory
-	cache      *SummarySolveCache
-	retained   *retainedSummaryApplicationOwner
-	resolution uint64
+	active         bool
+	resolver       relationResolverFactory
+	cache          *SummarySolveCache
+	retained       *retainedSummaryApplicationOwner
+	resolution     uint64
+	contextSummary *summary.Summary
+}
+
+func (a *relationRunActivation) contextOwnerRuntime(
+	origin keyedFunction,
+	prepared *body.Static,
+	legacyCache *SummarySolveCache,
+	retained *retainedSummaryApplicationRun,
+	legacyResolution uint64,
+) relationOwnerRuntime {
+	if a == nil || prepared == nil || origin.relationContextEntry == nil {
+		return a.ownerRuntime(origin.key, prepared, legacyCache, retained, legacyResolution)
+	}
+	sum, ok := a.snapshot.ContextSummary(origin.key, origin.relationContextEntry, prepared.IdentityDigest())
+	if !ok {
+		return a.ownerRuntime(origin.key, prepared, legacyCache, retained, legacyResolution)
+	}
+	// A certified context equation is itself fulfilled by the frozen relation.
+	// It owns no legacy cache/retained publication even when its body has no
+	// relation calls of its own.
+	return relationOwnerRuntime{active: true, resolution: legacyResolution, contextSummary: &sum}
 }
 
 type relationMaterializedRuntime struct {

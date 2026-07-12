@@ -52,7 +52,20 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 		if !found || relation.Shape() != target.Shape || !paramsOnlyShape(relation.Shape()) || relation.ContextualReason() != "" || relation.Widened() {
 			return nil, false
 		}
-		routes = append(routes, relationcall.Route{Point: point, Target: relationcall.Target{Cell: identity.Cell, SummaryKey: identity.Summary}})
+		dependencyKey := identity.Summary
+		var specialized summary.Summary
+		hasSpecialized := false
+		if contextual, ok := s.DependencyKey(owner, point); ok {
+			dependencyKey = contextual
+			specialized, hasSpecialized = s.contextSummaryByKey(contextual)
+			if !hasSpecialized {
+				return nil, false
+			}
+		}
+		routes = append(routes, relationcall.Route{Point: point, Target: relationcall.Target{
+			Cell: identity.Cell, SummaryKey: dependencyKey, LexicalSummaryKey: identity.Summary,
+			Specialized: specialized, HasSpecialized: hasSpecialized,
+		}})
 	}
 	catalog, err := relationcall.NewCatalog(plan.PointCount(), routes)
 	if err != nil {
@@ -85,6 +98,12 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 			// slice. Any effect term therefore rejects the complete application.
 			EffectResolver: nil,
 			Adapter:        adapter,
+			ReadSummary: func(key summary.SummaryKey) (summary.Summary, bool) {
+				if adapter.Summaries == nil {
+					return summary.Summary{}, false
+				}
+				return adapter.Summaries.Read(key)
+			},
 			ObserveSummary: func(key summary.SummaryKey, sum summary.Summary) {
 				if len(supplied) != 0 && supplied[0].observe != nil {
 					supplied[0].observe(key, sum)

@@ -24,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestOutcomeProviderSuppliesCanonicalDynamicReadSpecialization(t *testing.T) {
@@ -115,5 +116,36 @@ func TestOutcomeProviderSuppliesCanonicalDynamicReadSpecialization(t *testing.T)
 	}
 	if !state.Domain(reg).Equal(in, before) {
 		t.Fatal("production relation specialization mutated one of the 17 caller State lanes")
+	}
+}
+
+func TestResolverUsesCertifiedContextSummaryAndObservesBothLegacyDependencies(t *testing.T) {
+	reg := standard.Registry()
+	base := summary.DefaultSummaryKey(ref.FromSymbol(9001))
+	contextKey := base
+	contextKey.Entry.Values = 1
+	baseSummary := summary.Summary{Returns: []product.Value{typevalue.FromType(reg, typ.String)}}
+	contextSummary := summary.Summary{Returns: []product.Value{typevalue.LiteralString(reg, "context")}}
+	observed := make(map[summary.SummaryKey]summary.Summary)
+	resolver := NewResolver(Config{
+		TargetFor: func(transfer.NodeContext, factflow.CallSiteView) (Target, bool) {
+			return Target{Cell: transformer.CellRef{Function: 1}, SummaryKey: contextKey, LexicalSummaryKey: base, Specialized: contextSummary, HasSpecialized: true}, true
+		},
+		Bindings: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State, transformer.Shape) (transformer.BindingCursor, bool) {
+			t.Fatal("certified contextual target was rebound from caller state")
+			return transformer.BindingCursor{}, false
+		},
+		ReadSummary: func(key summary.SummaryKey) (summary.Summary, bool) {
+			return baseSummary, key == base
+		},
+		ObserveSummary: func(key summary.SummaryKey, sum summary.Summary) { observed[key] = sum },
+		Adapter:        callresult.ProviderConfig{TypeValues: typevalue.NewCache()},
+	})
+	out, handled := resolver(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if !handled || len(out.Results) != 1 || !product.Equal(reg, out.Results[0].Value, contextSummary.Returns[0]) {
+		t.Fatalf("certified context outcome = %#v handled=%v", out, handled)
+	}
+	if len(observed) != 2 || !summary.Equal(reg, observed[base], baseSummary) || !summary.Equal(reg, observed[contextKey], contextSummary) {
+		t.Fatalf("observed dependencies = %#v", observed)
 	}
 }

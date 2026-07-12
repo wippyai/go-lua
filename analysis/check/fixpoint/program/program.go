@@ -116,6 +116,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		return Result{}, err
 	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
+	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
@@ -153,9 +154,10 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	config.Check.ClosedDynamicAllValues = append([]factapply.ClosedDynamicAllValueInvariant(nil), keys.closedDynamicAllValues...)
 	applyMetatableMethodReceiverEntryStates(&keys, bindings, config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
 	applyInferredParamEntryStates(&keys, bindings, inferred)
+	keys.certifyFinalRelationContextEntries(config.Check.Registry, prepared)
 	var relationActivation *relationRunActivation
 	if config.enableRelationActivation {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil).exactLeafActivationSlice()
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil).certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
 		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
 			return Result{}, err
@@ -174,7 +176,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	}
 	keys.contexts.ForEach(func(context keyedFunction) {
 		static := prepared.function(context.funcExpr)
-		runtime := relationActivation.ownerRuntime(context.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, context.key))
+		runtime := relationActivation.contextOwnerRuntime(context, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, context.key))
 		functions = append(functions, boundFunction(context, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
 	})
 	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
@@ -236,6 +238,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
+	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	if fnType, ok := lowerFunctionExprType(fn, bindings, config.Check.ModuleTypes); ok {
@@ -267,7 +270,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	var relationActivation *relationRunActivation
 	if config.enableRelationActivation {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn).exactLeafActivationSlice()
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn).certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
 		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
 			return Result{}, err

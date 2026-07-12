@@ -2,8 +2,11 @@ package program
 
 import (
 	"fmt"
+	"slices"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 type relationFreezeCategory string
@@ -39,6 +42,54 @@ type relationRunSnapshot struct {
 	relations  transformer.RelationSnapshot
 	identities map[transformer.CellRef]relationCellIdentity
 	consumers  relationConsumerPolicy
+	contexts   []relationContextSummary
+}
+
+type relationContextSummary struct {
+	context             summary.SummaryKey
+	base                relationCellIdentity
+	discoveryGeneration uint64
+	certificate         *relationContextEntryCertificate
+	summary             summary.Summary
+}
+
+func (s relationRunSnapshot) ContextSummary(context summary.SummaryKey, certificate *relationContextEntryCertificate, preparedDigest uint64) (summary.Summary, bool) {
+	if certificate == nil || certificate.context != context || certificate.preparedBodyDigest != preparedDigest || certificate.discoveryGeneration == 0 {
+		return summary.Summary{}, false
+	}
+	i, ok := slices.BinarySearchFunc(s.contexts, context, func(entry relationContextSummary, target summary.SummaryKey) int {
+		if entry.context.Less(target) {
+			return -1
+		}
+		if target.Less(entry.context) {
+			return 1
+		}
+		return 0
+	})
+	if !ok {
+		return summary.Summary{}, false
+	}
+	entry := s.contexts[i]
+	if entry.certificate != certificate || entry.context != certificate.context || entry.base.Summary != certificate.base || entry.base.BodyDigest != certificate.preparedBodyDigest || entry.discoveryGeneration != certificate.discoveryGeneration {
+		return summary.Summary{}, false
+	}
+	return entry.summary, true
+}
+
+func (s relationRunSnapshot) contextSummaryByKey(context summary.SummaryKey) (summary.Summary, bool) {
+	i, ok := slices.BinarySearchFunc(s.contexts, context, func(entry relationContextSummary, target summary.SummaryKey) int {
+		if entry.context.Less(target) {
+			return -1
+		}
+		if target.Less(entry.context) {
+			return 1
+		}
+		return 0
+	})
+	if !ok {
+		return summary.Summary{}, false
+	}
+	return s.contexts[i].summary, true
 }
 
 func (s relationRunSnapshot) Entries() []relationCellIdentity {
@@ -76,4 +127,11 @@ func (s relationRunSnapshot) DirectCalls(owner relationConsumerIdentity) (transf
 		return transformer.DirectCallCatalog{}, false
 	}
 	return s.consumers.DirectCalls(owner)
+}
+
+func (s relationRunSnapshot) DependencyKey(owner relationConsumerIdentity, point cfg.Point) (summary.SummaryKey, bool) {
+	if s.generation == nil || owner.Generation != s.generation || s.consumers.generation != s.generation {
+		return summary.SummaryKey{}, false
+	}
+	return s.consumers.DependencyKey(owner, point)
 }

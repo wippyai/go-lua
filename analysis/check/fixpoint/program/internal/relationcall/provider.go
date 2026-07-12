@@ -18,8 +18,14 @@ import (
 // Keeping both identities in one routing proof prevents a relation from being
 // accidentally adapted under another function's SummaryKey.
 type Target struct {
-	Cell       transformer.CellRef
-	SummaryKey summary.SummaryKey
+	Cell              transformer.CellRef
+	SummaryKey        summary.SummaryKey
+	LexicalSummaryKey summary.SummaryKey
+	// Specialized is a generation-frozen contextual summary. It is authoritative
+	// when HasSpecialized is true; the resolver must not bind the lexical cell a
+	// second time from a potentially differently spelled caller value.
+	Specialized    summary.Summary
+	HasSpecialized bool
 }
 
 // TargetFor proves that one call site resolves to one exact lexical target.
@@ -57,6 +63,7 @@ type Config struct {
 	EffectResolver transformer.EffectSummaryResolver
 	Adapter        callresult.ProviderConfig
 	ObserveSummary func(summary.SummaryKey, summary.Summary)
+	ReadSummary    func(summary.SummaryKey) (summary.Summary, bool)
 }
 
 // TryOutcomeProvider distinguishes an exact handled application from a
@@ -106,33 +113,48 @@ func OutcomeProvider(config Config) callpayload.CallOutcomeProvider {
 func NewResolver(config Config) Resolver {
 	transaction := callresult.NewPreparedSummaryTransaction(config.Adapter)
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (callpayload.CallOutcome, bool) {
-		if config.Bindings == nil {
-			return callpayload.CallOutcome{}, false
-		}
 		target, ok := resolveTarget(config, ctx, site)
 		if !ok {
 			return callpayload.CallOutcome{}, false
 		}
-		relation, ok := config.Relations.Lookup(target.Cell)
-		if !ok || relation.ContextualReason() != "" || relation.Widened() {
-			return callpayload.CallOutcome{}, false
-		}
-		cursor, ok := config.Bindings(ctx, site, in, read, relation.Shape())
-		if !ok {
-			return callpayload.CallOutcome{}, false
-		}
-		var specialization transformer.SpecializationContext
-		if config.Specialization != nil {
-			specialization, ok = config.Specialization(ctx, site, in, read)
+		var sum summary.Summary
+		if target.HasSpecialized {
+			sum = target.Specialized
+		} else {
+			if config.Bindings == nil {
+				return callpayload.CallOutcome{}, false
+			}
+			relation, found := config.Relations.Lookup(target.Cell)
+			if !found || relation.ContextualReason() != "" || relation.Widened() {
+				return callpayload.CallOutcome{}, false
+			}
+			cursor, bound := config.Bindings(ctx, site, in, read, relation.Shape())
+			if !bound {
+				return callpayload.CallOutcome{}, false
+			}
+			var specialization transformer.SpecializationContext
+			if config.Specialization != nil {
+				specialization, ok = config.Specialization(ctx, site, in, read)
+				if !ok {
+					return callpayload.CallOutcome{}, false
+				}
+			}
+			sum, ok = relation.SpecializeWithEffects(cursor, nil, specialization, config.EffectResolver)
 			if !ok {
 				return callpayload.CallOutcome{}, false
 			}
 		}
-		sum, ok := relation.SpecializeWithEffects(cursor, nil, specialization, config.EffectResolver)
-		if !ok {
-			return callpayload.CallOutcome{}, false
-		}
 		if config.ObserveSummary != nil {
+			if target.HasSpecialized && !target.LexicalSummaryKey.Ref.IsZero() && target.LexicalSummaryKey != target.SummaryKey {
+				if config.ReadSummary == nil {
+					return callpayload.CallOutcome{}, false
+				}
+				lexical, present := config.ReadSummary(target.LexicalSummaryKey)
+				if !present {
+					return callpayload.CallOutcome{}, false
+				}
+				config.ObserveSummary(target.LexicalSummaryKey, lexical)
+			}
 			config.ObserveSummary(target.SummaryKey, sum)
 		}
 		return transaction.Apply(ctx, site, in, read, sum, transaction.FunctionType(target.SummaryKey), false), true

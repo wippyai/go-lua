@@ -62,6 +62,10 @@ type programKeys struct {
 	// context-discovery prepass Result is already live. Edges point from caller
 	// to runtime-resolved lexical callees; no body graph is retained.
 	queryDependencies map[summary.SummaryKey]map[summary.SummaryKey]struct{}
+
+	// certifyRelationContexts keeps the expensive full-domain entry proof off
+	// the legacy hot path. It is enabled only by relation activation/audits.
+	certifyRelationContexts bool
 }
 
 // functionSymbol returns the function symbol owning fn.
