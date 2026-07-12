@@ -48,10 +48,9 @@ var normalReturnProjectLanes = callboundary.BindNormalReturnFactLanes("normal-re
 })
 
 func projectNormalReturnPathRefinements(ctx normalReturnProjectContext, out *callboundary.NormalReturnFacts) {
-	bottom := product.Bottom(ctx.reg)
-	top := product.Top()
 	ctx.exit.ForEachPathRefinement(func(pathKey keyspace.Key, value product.Value) bool {
-		if product.Equal(ctx.reg, value, bottom) || product.Equal(ctx.reg, value, top) {
+		value, useful := callboundary.ProjectPathRefinementValue(ctx.reg, value)
+		if !useful {
 			return true
 		}
 		target, ok := ctx.boundary.KeyspacePlaceholderPath(pathKey)
@@ -60,7 +59,7 @@ func projectNormalReturnPathRefinements(ctx normalReturnProjectContext, out *cal
 		}
 		out.PathRefinements = append(out.PathRefinements, callboundary.PathValueFact{
 			Path:  target,
-			Value: portableBoundaryValue(ctx.reg, value),
+			Value: value,
 		})
 		return true
 	})

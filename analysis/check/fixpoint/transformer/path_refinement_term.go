@@ -4,14 +4,16 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 )
 
-// PathRefinementTerm is a symbolic normal-return refinement for one unchanged
-// parameter root. The first admitted slice is intentionally root-only and
-// identity-preserving: Path must be $N and Value must be the same RootParam N.
-// Descendants and computed values require explicit write/alias proofs and fail
-// closed until that proof vocabulary exists.
+// PathRefinementTerm is symbolic must-preservation metadata for one unchanged
+// parameter root. It is not itself an ordinary generic Summary fact: a
+// concrete certified boundary decides whether the corresponding entry root
+// refinement existed and may be republished. The first admitted slice is
+// intentionally root-only and identity-preserving: Path must be $N and Value
+// must be the same RootParam N. Descendants and computed values require
+// explicit write/alias proofs and fail closed until that proof vocabulary
+// exists.
 type PathRefinementTerm struct {
 	Path  PathTerm
 	Value ValueTerm
@@ -30,15 +32,23 @@ func (p PathRefinementTerm) validPreservedParamRoot(arena *Arena, shape Shape) b
 	return valueNode.op == valueRoot && valueNode.root == pathNode.root
 }
 
-func (p PathRefinementTerm) placeholderPath(arena *Arena) (pathdom.Path, bool) {
-	if arena == nil || p.Path == 0 || int(p.Path) >= len(arena.paths) {
-		return pathdom.Path{}, false
+// preservedParam reports the boundary parameter whose identity this metadata
+// certifies. PathRefinementTerm is deliberately not an ordinary Summary fact:
+// a concrete boundary decides whether the corresponding root refinement was
+// present on entry and therefore whether it may be projected on return.
+func (p PathRefinementTerm) preservedParam(arena *Arena) (uint32, bool) {
+	if arena == nil || p.Path == 0 || int(p.Path) >= len(arena.paths) || p.Value == 0 || int(p.Value) >= len(arena.values) {
+		return 0, false
 	}
 	node := arena.paths[p.Path]
 	if node.root.Kind != RootParam || len(node.segments) != 0 {
-		return pathdom.Path{}, false
+		return 0, false
 	}
-	return pathdom.NewPlaceholder(int(node.root.Index)), true
+	value := arena.values[p.Value]
+	if value.op != valueRoot || value.root != node.root {
+		return 0, false
+	}
+	return node.root.Index, true
 }
 
 func (p PathRefinementTerm) canonical(arena *Arena) string {

@@ -8,7 +8,25 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestProjectPathRefinementValueUsesCanonicalBoundaryRule(t *testing.T) {
+	reg := standard.Registry()
+	for _, value := range []product.Value{product.Bottom(reg), product.Top()} {
+		if _, ok := ProjectPathRefinementValue(reg, value); ok {
+			t.Fatalf("non-useful refinement value %#v projected", value)
+		}
+	}
+	value := typevalue.FromType(reg, typ.String)
+	got, ok := ProjectPathRefinementValue(reg, value)
+	if !ok || !product.Equal(reg, got, product.ProjectBoundary(reg, value)) {
+		t.Fatalf("boundary refinement projection = %#v/%v", got, ok)
+	}
+}
 
 func TestNormalReturnFactLaneRegistryCoversEveryStorageField(t *testing.T) {
 	typ := reflect.TypeOf(NormalReturnFacts{})

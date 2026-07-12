@@ -70,13 +70,9 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 	}
 	argumentValue := typevalue.LiteralString(reg, "boundary")
 	cursor, _ := NewBindingCursor(Shape{Params: 1}, []product.Value{argumentValue}, []pathdom.Path{pathdom.NewPlaceholder(0)})
-	got, exact := caller.Specialize(cursor, nil, nil)
-	if !exact || len(got.NormalReturnFacts.PathRefinements) != 1 {
-		t.Fatalf("forwarded chain specialization exact/refinements = %v/%#v", exact, got.NormalReturnFacts.PathRefinements)
-	}
-	refinement := got.NormalReturnFacts.PathRefinements[0]
-	if !refinement.Path.Equal(pathdom.NewPlaceholder(0)) || !product.Equal(reg, refinement.Value, argumentValue) {
-		t.Fatalf("forwarded chain refinement = %#v", refinement)
+	detailed, exact := caller.SpecializeDetailed(cursor, nil, SpecializationContext{})
+	if !exact || len(detailed.Summary.NormalReturnFacts.PathRefinements) != 0 || len(detailed.PreservedParams) != 1 || detailed.PreservedParams[0] != 0 {
+		t.Fatalf("forwarded chain specialization = %#v/%v, want canonical Summary plus preserved param 0", detailed, exact)
 	}
 }
 
@@ -101,16 +97,12 @@ func TestPlanCompilerEmitsCertifiedUnchangedParameterRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, exact := relation.Specialize(cursor, nil, nil)
-	if !exact || len(got.NormalReturnFacts.PathRefinements) != 1 {
-		t.Fatalf("identity specialization exact/refinements = %v/%#v", exact, got.NormalReturnFacts.PathRefinements)
+	detailed, exact := relation.SpecializeDetailed(cursor, nil, SpecializationContext{})
+	if !exact || len(detailed.Summary.NormalReturnFacts.PathRefinements) != 0 || len(detailed.PreservedParams) != 1 || detailed.PreservedParams[0] != 0 {
+		t.Fatalf("identity specialization = %#v/%v, want canonical Summary plus preserved param 0", detailed, exact)
 	}
-	refinement := got.NormalReturnFacts.PathRefinements[0]
-	if !refinement.Path.Equal(pathdom.NewPlaceholder(0)) || !product.Equal(reg, refinement.Value, argument) {
-		t.Fatalf("identity refinement = %#v, want $0 = argument", refinement)
-	}
-	if len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], argument) {
-		t.Fatalf("identity return = %#v, want argument", got.Returns)
+	if len(detailed.Summary.Returns) != 1 || !product.Equal(reg, detailed.Summary.Returns[0], argument) {
+		t.Fatalf("identity return = %#v, want argument", detailed.Summary.Returns)
 	}
 }
 

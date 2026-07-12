@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -90,7 +91,14 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 	switch kind {
 	case operationplan.ExpressionValue,
 		operationplan.ExpressionOperation,
-		operationplan.ExpressionPath:
+		operationplan.ExpressionPath,
+		operationplan.BranchEdgeReachability,
+		operationplan.BranchConditionSource,
+		operationplan.BranchRefinement,
+		operationplan.BranchPathEvidence:
+		// Branch facts constrain feasibility and read evidence but do not assign,
+		// alias, expose, or mutate the boundary root. Their value narrowing is
+		// deliberately separate from this identity-preservation proof.
 		return
 	case operationplan.RootAssignment:
 		assignment, ok := ctx.facts.RootAssignment(point)
@@ -100,6 +108,13 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 		}
 		if index, boundary := ctx.plan.BoundaryParamIndex(assignment.TargetSymbol()); boundary {
 			l.invalidate(uint32(index))
+		}
+		// The root-assignment handler admits this ordinary write only after
+		// proving one bounded numeric-for accumulator update whose operands are
+		// the accumulator and certified iterator. Neither can alias a boundary
+		// parameter, and the target was handled above if it is itself a param.
+		if assignment.Kind() == factflow.RootAssignmentOrdinaryRootWrite && singleCertifiedAccumulatorWrite(ctx, point, assignment) {
+			return
 		}
 		term, err := exactCompilerSourceTerm(ctx, assignment.Source())
 		if err != nil {
@@ -116,11 +131,7 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 	case operationplan.CallSite,
 		operationplan.DynamicIndexExpression,
 		operationplan.DynamicIndexWrite,
-		operationplan.PathDescendantInvalidation,
-		operationplan.BranchEdgeReachability,
-		operationplan.BranchConditionSource,
-		operationplan.BranchRefinement,
-		operationplan.BranchPathEvidence:
+		operationplan.PathDescendantInvalidation:
 		l.invalidateAll()
 		return
 	default:
@@ -129,11 +140,14 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 }
 
 func (l *paramPreservationLedger) observeExtension(kind operationplan.ExtensionKind) {
-	// BodyGenericFor includes iterator call/effect exposure. Future extension
-	// families also arrive here and reject by default.
+	// BodyGenericFor binds iterator outputs to loop locals but never reassigns
+	// the iterator source root. Any modeled mutation, escape, or call effect is
+	// independently rejected by the closed row output/effect audit before a
+	// preservation term can publish. Future extension families reject by
+	// default.
 	switch kind {
 	case operationplan.BodyGenericFor:
-		l.invalidateAll()
+		return
 	default:
 		l.invalidateAll()
 	}

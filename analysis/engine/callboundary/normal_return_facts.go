@@ -5,6 +5,7 @@ package callboundary
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -83,6 +84,17 @@ func appendNormalReturnSlice[T any](left, right []T) []T {
 type PathValueFact struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// ProjectPathRefinementValue is the single canonical value rule for a
+// pointwise path refinement crossing a function boundary. Bottom and Top carry
+// no useful refinement and are omitted; every admitted value loses
+// solve-local axes through the product boundary projection.
+func ProjectPathRefinementValue(reg *axis.Registry, value product.Value) (product.Value, bool) {
+	if reg == nil || product.Equal(reg, value, product.Bottom(reg)) || product.Equal(reg, value, product.Top()) {
+		return product.Value{}, false
+	}
+	return product.ProjectBoundary(reg, value), true
 }
 
 // PathStaticMemberFact records a must static-member fact for a placeholder path.

@@ -217,7 +217,7 @@ return result
 		activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled)
 }
 
-func TestRelationActivationGuardPostStateStaysLegacy(t *testing.T) {
+func TestRelationActivationGuardPostStateExact(t *testing.T) {
 	stmts := parseChunk(t, `
 local function choose(value: boolean)
 	if value then return "yes" end
@@ -240,11 +240,11 @@ return truthy, falsy
 		t.Fatal(err)
 	}
 	compareRelationCorpusResult(t, reg, legacy, active)
-	if activeStats.RelationProducersEligible != 0 || activeStats.RelationOwnersActive != 0 || activeStats.RelationCallsHandled != 0 ||
-		activeStats.SummaryBodySolves != legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers != legacyStats.SummaryPointTransfers {
-		t.Fatalf("branch post-state left legacy fence: legacy=%d/%d active=%d/%d producers=%d owners=%d handled=%d fallbacks=%d",
+	if activeStats.RelationProducersEligible != 1 || activeStats.RelationOwnersActive != 1 || activeStats.RelationContextsSpecialized != 1 || activeStats.RelationCallsHandled == 0 ||
+		activeStats.SummaryBodySolves >= legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers >= legacyStats.SummaryPointTransfers {
+		t.Fatalf("branch post-state activation = legacy:%d/%d active:%d/%d producers:%d owners:%d contexts:%d handled:%d fallbacks:%d",
 			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
-			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled, activeStats.RelationActivationFallbacks)
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationContextsSpecialized, activeStats.RelationCallsHandled, activeStats.RelationActivationFallbacks)
 	}
 }
 

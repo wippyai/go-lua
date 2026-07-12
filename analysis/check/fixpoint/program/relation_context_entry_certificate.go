@@ -27,6 +27,11 @@ type relationContextEntryCertificate struct {
 	preparedBodyDigest  uint64
 	discoveryGeneration uint64
 	params              []relationContextEntryParam
+	// rootRefinements records which parameter roots were physically present
+	// as same-value path refinements in the certified concrete entry. A
+	// symbolic preservation proof may project a return fact only for these
+	// roots; parameter values alone do not authorize inventing one.
+	rootRefinements []bool
 }
 
 // relationContextEntryParam binds one lexical parameter slot to the immutable
@@ -61,8 +66,10 @@ func certifyRelationContextEntry(
 	}
 	params := make([]relationContextEntryParam, 0, len(slots))
 	paramBySymbol := make(map[symbol.ID]product.Value, len(slots))
+	paramIndexBySymbol := make(map[symbol.ID]int, len(slots))
+	rootRefinements := make([]bool, len(slots))
 	exact := state.State{}
-	for _, param := range slots {
+	for index, param := range slots {
 		if param.Symbol == 0 || param.Vararg || param.ImplicitSelf {
 			return nil
 		}
@@ -73,6 +80,7 @@ func certifyRelationContextEntry(
 		}
 		params = append(params, relationContextEntryParam{slot: slot, symbol: param.Symbol, value: value})
 		paramBySymbol[param.Symbol] = value
+		paramIndexBySymbol[param.Symbol] = index
 		exact = exact.WriteValue(reg, slot, value)
 	}
 
@@ -83,6 +91,7 @@ func certifyRelationContextEntry(
 			validPaths = false
 			return false
 		}
+		rootRefinements[paramIndexBySymbol[pathKey.Sym]] = true
 		exact = exact.WriteLocalPathKey(reg, pathKey, value)
 		return true
 	})
@@ -96,6 +105,7 @@ func certifyRelationContextEntry(
 		preparedBodyDigest:  bodyDigest,
 		discoveryGeneration: generation,
 		params:              params,
+		rootRefinements:     rootRefinements,
 	}
 }
 

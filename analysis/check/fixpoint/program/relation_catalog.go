@@ -584,9 +584,13 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 		if cursorErr != nil {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeEquation, Identity: candidate.base, Err: cursorErr}
 		}
-		specialized, exact := relation.Specialize(cursor, nil, nil)
+		detailed, exact := relation.SpecializeDetailed(cursor, nil, transformer.SpecializationContext{})
 		if !exact {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeContextual, Identity: candidate.base, Err: fmt.Errorf("context specialization rejected")}
+		}
+		specialized, exact := projectCertifiedContextSummary(c.registry, detailed, candidate.certificate)
+		if !exact {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeContextual, Identity: candidate.base, Err: fmt.Errorf("context preservation projection rejected")}
 		}
 		contextSummaries = append(contextSummaries, relationContextSummary{
 			context: candidate.context, base: candidate.base,
@@ -652,7 +656,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		}
 		shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams()))}
 		compiler, err := transformer.NewPlanCompiler().Prepare(reg, static.Graph(), plan, shape)
-		if err != nil || !compiler.EffectFree() || !compiler.ExactActivationEligible() {
+		if err != nil || !compiler.EffectFree() {
 			continue
 		}
 		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape}

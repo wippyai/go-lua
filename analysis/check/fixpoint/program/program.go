@@ -83,6 +83,7 @@ type Stats struct {
 	SummaryCacheMisses                         int
 	RelationProducersEligible                  int
 	RelationOwnersActive                       int
+	RelationContextsSpecialized                int
 	RelationCallsHandled                       int
 	RelationActivationFallbacks                int
 

@@ -2,6 +2,7 @@ package program
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -76,17 +77,18 @@ local total = 0
 	if relation.ContextualReason() != "" || relation.Widened() || relation.Rows() == 0 {
 		t.Fatalf("bounded accumulator relation = reason %q widened=%v rows=%d", relation.ContextualReason(), relation.Widened(), relation.Rows())
 	}
-	if compiler.ExactActivationEligible() {
-		t.Fatal("guarded accumulator unexpectedly crossed the branch post-state activation fence")
-	}
 	literal := typ.LiteralString("value-0")
 	cursor, err := transformer.NewBindingCursor(relation.Shape(), []product.Value{typevalue.WithWitness(reg, typevalue.FromType(reg, literal), literal)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotSummary, exact := relation.Specialize(cursor, nil, nil)
+	detailed, exact := relation.SpecializeDetailed(cursor, nil, transformer.SpecializationContext{})
 	if !exact {
 		t.Fatal("bounded accumulator relation specialization was contextual")
+	}
+	gotSummary := detailed.Summary
+	if !slices.Equal(detailed.PreservedParams, []uint32{0}) {
+		t.Fatalf("bounded accumulator preserved params = %v, want [0]", detailed.PreservedParams)
 	}
 	matched := 0
 	for _, entry := range legacy.Snapshot().Entries() {
@@ -106,21 +108,21 @@ local total = 0
 	if matched != 48 {
 		t.Fatalf("legacy contextual worker entries compared = %d, want 48", matched)
 	}
-	// The accumulator relation is now exact and finite. Activation deliberately
-	// remains legacy because the concrete summary still carries the parameter
-	// post-state refinement isolated above, while the transformer does not. The
-	// branch post-state vocabulary fence is therefore the sole next blocker.
-	activeStats := &Stats{}
-	active, err := RunChunk(stmts, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	compareRelationCorpusResult(t, reg, legacy, active)
-	if activeStats.RelationProducersEligible != 0 || activeStats.RelationOwnersActive != 0 || activeStats.RelationCallsHandled != 0 ||
-		activeStats.SummaryBodySolves != stats.SummaryBodySolves || activeStats.SummaryPointTransfers != stats.SummaryPointTransfers {
-		t.Fatalf("branch-poststate-blocked activation changed work: legacy=%d/%d active=%d/%d producers=%d owners=%d handled=%d",
-			stats.SummaryBodySolves, stats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
-			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled)
+	// Certified context projection adds the preserved root only when the exact
+	// entry carried it, closing the old branch post-state vocabulary mismatch.
+	for iteration := 0; iteration < 5; iteration++ {
+		activeStats := &Stats{}
+		active, err := RunChunk(stmts, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		compareRelationCorpusResult(t, reg, legacy, active)
+		if activeStats.RelationProducersEligible != 1 || activeStats.RelationOwnersActive != 1 || activeStats.RelationContextsSpecialized != 48 || activeStats.RelationCallsHandled == 0 ||
+			activeStats.SummaryBodySolves != 2 || activeStats.SummaryPointTransfers != 118 {
+			t.Fatalf("branch context activation run %d = legacy:%d/%d active:%d/%d producers:%d owners:%d contexts:%d handled:%d",
+				iteration, stats.SummaryBodySolves, stats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
+				activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationContextsSpecialized, activeStats.RelationCallsHandled)
+		}
 	}
 }
 

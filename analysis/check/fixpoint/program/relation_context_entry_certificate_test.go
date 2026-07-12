@@ -60,6 +60,22 @@ func TestRelationContextEntryCertificateIdentityPrimitive(t *testing.T) {
 		!product.Equal(reg, certificate.params[0].value, value) {
 		t.Fatalf("certificate params = %#v", certificate.params)
 	}
+	if len(certificate.rootRefinements) != 1 || !certificate.rootRefinements[0] {
+		t.Fatalf("certificate root refinements = %v, want [true]", certificate.rootRefinements)
+	}
+}
+
+func TestRelationContextEntryCertificateDoesNotInventRootRefinement(t *testing.T) {
+	reg, bindings, fn, entry, ks, base := relationCertificateFixture(t)
+	context := base
+	context.Entry.Values = 1
+	certificate := certifyRelationContextEntry(reg, bindings, fn, context, base, 1, 1, entry, ks)
+	if certificate == nil {
+		t.Fatal("value-only exact entry was not certified")
+	}
+	if len(certificate.rootRefinements) != 1 || certificate.rootRefinements[0] {
+		t.Fatalf("value-only certificate root refinements = %v, want [false]", certificate.rootRefinements)
+	}
 }
 
 func TestRelationContextEntryCertificateLegacyPathDoesNoProofWork(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func pathRefinementCapabilities(t testing.TB) *OutputCapabilityRegistry {
@@ -26,7 +27,7 @@ func pathRefinementCapabilities(t testing.TB) *OutputCapabilityRegistry {
 	return caps
 }
 
-func TestPreservedParamRootRefinementSpecializesIdenticallyToLegacyIdentity(t *testing.T) {
+func TestPreservedParamRootRefinementRemainsSpecializationMetadata(t *testing.T) {
 	reg := standard.Registry()
 	shape := Shape{Params: 1}
 	builder, certificate := emptyBuilder(t, reg, shape, pathRefinementCapabilities(t))
@@ -50,15 +51,43 @@ func TestPreservedParamRootRefinementSpecializesIdenticallyToLegacyIdentity(t *t
 	if !ok {
 		t.Fatal("preserved identity refinement fell back")
 	}
-	placeholder := pathdom.NewPlaceholder(0)
 	want := summary.Normalize(reg, summary.Summary{
 		Returns: []product.Value{argument},
-		NormalReturnFacts: callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{{
-			Path: placeholder, Value: argument,
-		}}},
 	})
 	if !summary.Equal(reg, got, want) {
-		t.Fatalf("specialized identity = %#v, want legacy summary %#v", got, want)
+		t.Fatalf("generic specialized identity = %#v, want canonical base summary %#v", got, want)
+	}
+	detailed, ok := relation.SpecializeDetailed(cursor, nil, SpecializationContext{})
+	if !ok || !summary.Equal(reg, detailed.Summary, want) || len(detailed.PreservedParams) != 1 || detailed.PreservedParams[0] != 0 {
+		t.Fatalf("detailed identity = %#v/%v, want canonical Summary plus preserved param 0", detailed, ok)
+	}
+}
+
+func TestPreservedParamRootsIntersectAcrossFeasibleRows(t *testing.T) {
+	reg := standard.Registry()
+	shape := Shape{Params: 1}
+	builder, certificate := emptyBuilder(t, reg, shape, pathRefinementCapabilities(t))
+	arena := builder.Arena()
+	root := Root{Kind: RootParam, Index: 0}
+	value := arena.Root(root)
+	refinement := PathRefinementTerm{Path: arena.Path(root), Value: value}
+	relation, err := builder.Build(certificate, []Row{
+		{Guard: arena.Truthy(value), PathRefinements: []PathRefinementTerm{refinement}},
+		{Guard: arena.Falsy(value)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := typevalue.FromType(reg, typ.Boolean)
+	cursor, _ := NewBindingCursor(shape, []product.Value{unknown}, nil)
+	detailed, ok := relation.SpecializeDetailed(cursor, nil, SpecializationContext{})
+	if !ok || len(detailed.PreservedParams) != 0 {
+		t.Fatalf("multi-row preservation = %#v/%v, want empty must-intersection", detailed.PreservedParams, ok)
+	}
+	truthy, _ := NewBindingCursor(shape, []product.Value{typevalue.LiteralBool(reg, true)}, nil)
+	detailed, ok = relation.SpecializeDetailed(truthy, nil, SpecializationContext{})
+	if !ok || len(detailed.PreservedParams) != 1 || detailed.PreservedParams[0] != 0 {
+		t.Fatalf("single feasible row preservation = %#v/%v, want [0]", detailed.PreservedParams, ok)
 	}
 }
 

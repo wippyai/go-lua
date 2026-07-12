@@ -186,28 +186,6 @@ func (p *PreparedPlanCompiler) DirectCompositionEligible() bool {
 	return !ok || len(handler.declared) == 0
 }
 
-// ExactActivationEligible reports whether specializing this relation preserves
-// the canonical concrete summary vocabulary. Branch row feasibility is exact,
-// but canonical concrete projection currently omits the transformer's generic
-// unchanged-root postcondition. Until those vocabularies are reconciled, a
-// branch relation remains an audit product and cannot replace a legacy solve.
-func (p *PreparedPlanCompiler) ExactActivationEligible() bool {
-	if p == nil || p.plan == nil {
-		return false
-	}
-	for _, kind := range []operationplan.Kind{
-		operationplan.BranchEdgeReachability,
-		operationplan.BranchConditionSource,
-		operationplan.BranchRefinement,
-		operationplan.BranchPathEvidence,
-	} {
-		if planHasFact(p.plan, kind) {
-			return false
-		}
-	}
-	return true
-}
-
 func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationView, direct *DirectCallCatalog) Relation {
 	if p == nil || p.compiler == nil || p.builder == nil {
 		return Relation{contextual: "compiler: nil prepared plan", widened: true}

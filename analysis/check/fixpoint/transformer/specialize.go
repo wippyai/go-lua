@@ -116,6 +116,80 @@ func (r Relation) SpecializeWithEffects(cursor BindingCursor, descriptors *Descr
 	return r.specializeWithEffects(cursor, descriptors, context, resolve)
 }
 
+// SpecializationResult separates the canonical Summary payload from symbolic
+// must-preservation metadata. PreservedParams contains sorted boundary
+// parameter indexes preserved by every feasible row. The metadata is not an
+// ordinary generic Summary fact: only a concrete certified entry may project
+// it as a normal-return path refinement.
+type SpecializationResult struct {
+	Summary         summary.Summary
+	PreservedParams []uint32
+}
+
+// SpecializeDetailed evaluates the same transaction as Specialize while
+// retaining row-local parameter preservation. It deliberately walks guards a
+// second time and is intended for freeze-time certified context publication,
+// not the hot per-call path. Effectful relations fail closed because this
+// migration API supplies no effect resolver. The returned slice is owned by
+// the result. False guarantees a zero result.
+func (r Relation) SpecializeDetailed(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext) (SpecializationResult, bool) {
+	sum, ok := r.specializeWithEffects(cursor, descriptors, context, nil)
+	if !ok {
+		return SpecializationResult{}, false
+	}
+	preserved, ok := r.specializedPreservedParams(cursor, context)
+	if !ok {
+		return SpecializationResult{}, false
+	}
+	return SpecializationResult{Summary: sum, PreservedParams: preserved}, true
+}
+
+// specializedPreservedParams intersects the must-preservation sets of every
+// feasible correlated row. One non-preserving alternative removes the root;
+// an infeasible alternative has no effect.
+func (r Relation) specializedPreservedParams(cursor BindingCursor, context SpecializationContext) ([]uint32, bool) {
+	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
+		return nil, false
+	}
+	var preserved []bool
+	have := false
+	for _, row := range r.rows {
+		feasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
+		if !valid {
+			return nil, false
+		}
+		if !feasible {
+			continue
+		}
+		rowPreserved := make([]bool, r.shape.Params)
+		for _, refinement := range row.PathRefinements {
+			index, valid := refinement.preservedParam(r.arena)
+			if !valid || index >= r.shape.Params {
+				return nil, false
+			}
+			rowPreserved[index] = true
+		}
+		if !have {
+			preserved = rowPreserved
+			have = true
+			continue
+		}
+		for index := range preserved {
+			preserved[index] = preserved[index] && rowPreserved[index]
+		}
+	}
+	if !have {
+		return nil, true
+	}
+	out := make([]uint32, 0, len(preserved))
+	for index, present := range preserved {
+		if present {
+			out = append(out, uint32(index))
+		}
+	}
+	return out, true
+}
+
 func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext, resolve EffectSummaryResolver) (out summary.Summary, ok bool) {
 	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
 		return summary.Summary{}, false
@@ -189,19 +263,6 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 		}
 		if (len(row.Proofs) != 0 || len(row.PathRefinements) != 0) && !r.authority.allowsSummary("NormalReturnFacts") {
 			return summary.Summary{}, false
-		}
-		for _, refinement := range row.PathRefinements {
-			refinementPath, valid := refinement.placeholderPath(r.arena)
-			if !valid {
-				return summary.Summary{}, false
-			}
-			value, valid := r.arena.evalValue(refinement.Value, cursor, context)
-			if !valid {
-				return summary.Summary{}, false
-			}
-			candidate.NormalReturnFacts.PathRefinements = append(candidate.NormalReturnFacts.PathRefinements, callboundary.PathValueFact{
-				Path: refinementPath, Value: value,
-			})
 		}
 		for _, proof := range row.Proofs {
 			tablePath, valid := proof.placeholderPath(r.arena)

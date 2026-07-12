@@ -86,6 +86,7 @@ func recordRelationActivationCensus(stats *Stats, catalog relationRunCatalog) {
 		return
 	}
 	stats.RelationProducersEligible += len(catalog.entries)
+	stats.RelationContextsSpecialized += len(catalog.contexts)
 	for _, owner := range catalog.consumers.entries {
 		if owner.active {
 			stats.RelationOwnersActive++
