@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 func TestCompletedResultExportsDeterministicDebugMapsAndStaticArtifacts(t *testing.T) {
@@ -19,7 +21,7 @@ return run(1)
 		t.Fatal("completed result has no debug maps")
 	}
 	for _, debugMap := range maps {
-		if debugMap.SchemaVersion != DebugMapSchemaVersion || debugMap.BodyDigest == 0 || debugMap.Digest.IsZero() {
+		if debugMap.SchemaVersion != DebugMapSchemaVersion || debugMap.LexicalBodyID == (lexicalidentity.StableLexicalBodyID{}) || debugMap.BodyDigest == 0 || debugMap.Digest.IsZero() {
 			t.Fatalf("debug map metadata = %#v", debugMap)
 		}
 		if got := digestBytes(debugMap.CanonicalBytes()); got != debugMap.Digest {
@@ -52,7 +54,7 @@ return run(1)
 		if !ok {
 			t.Fatalf("artifact body %s has no debug map", artifact.BodyID)
 		}
-		if !artifact.ID.Valid() || artifact.ID.UnitDigest != tag.UnitDigest || artifact.ID.BodyDigest != debugMap.BodyDigest || artifact.ID.Profile != tag.Profile || artifact.ID.EngineBuildTag != EngineBuildTag || artifact.ID.DebugMapDigest != debugMap.Digest {
+		if !artifact.ID.Valid() || artifact.ID.UnitDigest != tag.UnitDigest || artifact.ID.LexicalBodyID != debugMap.LexicalBodyID || artifact.ID.BodyDigest != debugMap.BodyDigest || artifact.ID.Profile != tag.Profile || artifact.ID.EngineBuildTag != EngineBuildTag || artifact.ID.DebugMapDigest != debugMap.Digest {
 			t.Fatalf("artifact %s = %#v, debug map = %#v, tag = %#v", artifact.BodyID, artifact.ID, debugMap, tag)
 		}
 		if got := artifact.ID.String(); got == "" || got != artifact.ID.String() {
@@ -70,16 +72,34 @@ return run(1)
 func TestStaticArtifactIDCanonicalString(t *testing.T) {
 	unit := digestBytes([]byte("unit"))
 	debugMap := digestBytes([]byte("debug-map"))
+	lexicalBody := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("logical-unit")))
 	id := StaticArtifactID{
 		UnitDigest:     unit,
+		LexicalBodyID:  lexicalBody,
 		BodyDigest:     0x2a,
 		Profile:        "debug",
 		EngineBuildTag: "engine-test",
 		DebugMapDigest: debugMap,
 	}
-	want := "static-artifact-v1|unit=64:" + unit.String() + "|body=16:000000000000002a|profile=5:debug|engine=11:engine-test|debug-map=64:" + debugMap.String()
+	want := "static-artifact-v2|unit=64:" + unit.String() + "|lexical-body=64:" + lexicalBody.String() + "|body=16:000000000000002a|profile=5:debug|engine=11:engine-test|debug-map=64:" + debugMap.String()
 	if got := id.String(); got != want {
 		t.Fatalf("StaticArtifactID.String() = %q, want %q", got, want)
+	}
+}
+
+func TestStaticArtifactsPreserveContextualVariantsForOneLexicalOwner(t *testing.T) {
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("logical-unit")))
+	unit := digestBytes([]byte("unit"))
+	maps := []BodyDebugMap{
+		{BodyID: "root/0", LexicalBodyID: owner, BodyDigest: 1, Digest: digestBytes([]byte("map-a"))},
+		{BodyID: "root/1", LexicalBodyID: owner, BodyDigest: 2, Digest: digestBytes([]byte("map-b"))},
+	}
+	artifacts := collectStaticArtifacts(unit, "typed", maps)
+	if len(artifacts) != 2 {
+		t.Fatalf("contextual artifacts = %d, want 2", len(artifacts))
+	}
+	if artifacts[0].ID.LexicalBodyID != owner || artifacts[1].ID.LexicalBodyID != owner || artifacts[0].ID == artifacts[1].ID {
+		t.Fatalf("contextual variants were collapsed or re-owned: %#v", artifacts)
 	}
 }
 
@@ -128,6 +148,12 @@ return leaf() + unrelated()
 `)
 	left := debugMapContainingVisibleName(t, before.DebugMaps(), "fixed")
 	right := debugMapContainingVisibleName(t, after.DebugMaps(), "fixed")
+	// This assertion is about the lowered map payload and contextual body
+	// revision. Lexical ownership is allocated from the unit's binder symbols;
+	// inserting an earlier binder may deliberately re-key a later owner even
+	// when that later body's artifact bytes are unchanged.
+	left.LexicalBodyID = lexicalidentity.StableLexicalBodyID{}
+	right.LexicalBodyID = lexicalidentity.StableLexicalBodyID{}
 	if !reflect.DeepEqual(left, right) {
 		t.Fatalf("unrelated body debug map changed\nbefore: %#v\nafter:  %#v", left, right)
 	}

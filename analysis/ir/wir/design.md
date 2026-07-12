@@ -239,6 +239,7 @@ Every body artifact has the DTO:
 ```text
 StaticArtifactID{
     unit digest,
+    stable lexical body ID,
     body digest,
     profile,
     engine build tag,
@@ -247,7 +248,7 @@ StaticArtifactID{
 ```
 
 Its canonical string form is length-delimited and begins
-`static-artifact-v1|unit=...|body=...|profile=...|engine=...|debug-map=...`.
+`static-artifact-v2|unit=...|lexical-body=...|body=...|profile=...|engine=...|debug-map=...`.
 `service.EngineBuildTag` is the sole build-version component. Release builds
 bump that constant when emitted artifact/debug semantics change; this forces a
 new identity even when the source inputs are unchanged.

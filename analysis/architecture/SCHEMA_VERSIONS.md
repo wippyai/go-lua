@@ -17,7 +17,7 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | Allocation site fact | `body.AllocationSiteFactSchemaVersion` | v4 | Internal solved `body.AllocationSiteFact` record shape plus its `StableShapeField`/`SourceSpan` payload types and identity semantics. | An `AllocationSiteFact` field, payload type, or identity meaning changes. |
 | Send safety DTO | `readmodel.SendSafetySchemaVersion` | v1 | Public solved send-safety report including identity and ownership proof fields. | A field or identity/ownership meaning changes. |
 | Placement plan | `placementplan.SchemaVersion` | v1 | Compiler/service placement plan and entry shapes, including allocation identities. | A plan/entry field or identity/placement meaning changes. |
-| Artifact debug map | `service.DebugMapSchemaVersion` | v2 | `BodyDebugMap`, `DebugMapEntry`, phase vocabulary, canonical entry encoding, and `StaticArtifactID` DTO form. | A debug-map/anchor/local field, phase label, canonical encoding, or static-artifact ID component changes. |
+| Artifact debug map | `service.DebugMapSchemaVersion` | v3 | `BodyDebugMap`, stable lexical body ownership, `DebugMapEntry`, phase vocabulary, canonical entry encoding, and the `static-artifact-v2` DTO form. | A debug-map/anchor/local field, lexical ownership rule, phase label, canonical encoding, or static-artifact ID component changes. |
 | Observation artifact | `observationartifact.SchemaVersion` | v1 | Stable lexical owner, lowering-owned debug occurrence projected through `SHA-256(StaticArtifactID.String())`, invocation provenance, sealed semantic/axis universe, and canonical value-codec envelope. | An occurrence/record field, identity domain, universe component, canonical encoding, or value-codec contract changes. |
 
 ## Bump Discipline
@@ -35,6 +35,15 @@ surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
 
 ## Journal
+
+- D26: Bumped artifact debug maps to v3 and static artifact IDs to v2. Every
+  body debug map and artifact now carries its full-width `StableLexicalBodyID`,
+  while `BodyID` remains a completed-result traversal handle and body digest
+  remains the contextual artifact revision. Completed-analysis reuse is fenced
+  by the exact logical `UnitNamespace`, so content-identical logical units
+  cannot inherit one another's lexical owners. One lexical owner may still
+  have multiple contextual body/artifact variants; this is not a bijection and
+  does not activate symbolic observation publication.
 
 - D25: Registered the dormant v1 symbolic-observation artifact envelope. The
   transformer carries only stable lexical ownership plus lowering-owned

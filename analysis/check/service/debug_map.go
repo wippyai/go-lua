@@ -9,17 +9,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // DebugMapSchemaVersion pins the exported artifact debug-map DTO and canonical
 // byte encoding. Bump it with its hash guard and SCHEMA_VERSIONS.md entry when
 // either changes.
-const DebugMapSchemaVersion = 2
+const DebugMapSchemaVersion = 3
 
 // EngineBuildTag is the single engine-version component stamped into static
 // artifact IDs. A release changes this constant exactly once when the emitted
 // artifact/debug semantics change; development builds use the checked-in tag.
-const EngineBuildTag = "go-lua-engine-debug-map-v2"
+const EngineBuildTag = "go-lua-engine-debug-map-v3"
 
 // DebugPointID and DebugPhase are the lowering-owned, body-local execution
 // identity vocabulary re-exported at the completed-result boundary.
@@ -42,9 +43,12 @@ type DebugMapEntry = body.DebugMapEntry
 
 // BodyDebugMap is the deterministic artifact debug map for one solved body.
 // Entries are an ordered map encoding of DebugPointID -> source/debug payload;
-// callers must preserve this order when serializing an admitted artifact.
+// callers must preserve this order when serializing an admitted artifact. A
+// lexical owner may have multiple contextual BodyID/BodyDigest variants; this
+// record does not assert a bijection between owner and artifact.
 type BodyDebugMap struct {
 	BodyID        BodyID
+	LexicalBodyID lexicalidentity.StableLexicalBodyID
 	BodyDigest    embedding.BodyInputDigest
 	SchemaVersion int
 	Digest        Digest
@@ -62,6 +66,7 @@ func (m BodyDebugMap) CanonicalBytes() []byte {
 // runtime. It is not a deployment/runtime-instance identifier.
 type StaticArtifactID struct {
 	UnitDigest     Digest
+	LexicalBodyID  lexicalidentity.StableLexicalBodyID
 	BodyDigest     embedding.BodyInputDigest
 	Profile        string
 	EngineBuildTag string
@@ -71,13 +76,14 @@ type StaticArtifactID struct {
 // Valid reports whether every required static-artifact identity component is
 // present. A zero digest cannot identify a compiled artifact.
 func (id StaticArtifactID) Valid() bool {
-	return !id.UnitDigest.IsZero() && id.BodyDigest != 0 && id.EngineBuildTag != "" && !id.DebugMapDigest.IsZero()
+	return !id.UnitDigest.IsZero() && id.LexicalBodyID != (lexicalidentity.StableLexicalBodyID{}) && id.BodyDigest != 0 && id.EngineBuildTag != "" && !id.DebugMapDigest.IsZero()
 }
 
 // String is the canonical, length-delimited static artifact ID form.
 func (id StaticArtifactID) String() string {
-	return "static-artifact-v1|" +
+	return "static-artifact-v2|" +
 		canonicalArtifactField("unit", id.UnitDigest.String()) + "|" +
+		canonicalArtifactField("lexical-body", id.LexicalBodyID.String()) + "|" +
 		canonicalArtifactField("body", fmt.Sprintf("%016x", id.BodyDigest)) + "|" +
 		canonicalArtifactField("profile", id.Profile) + "|" +
 		canonicalArtifactField("engine", id.EngineBuildTag) + "|" +

@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/embedding"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 type resultKey struct {
@@ -21,15 +22,16 @@ type unitProfileKey struct {
 }
 
 // analysisCacheKey identifies every input that can affect a completed analysis
-// result. UnitDigest fences source, resolution, manifests, and checker policy;
-// entryLabel is deliberately separate because labels are presentation-only for
-// a UnitInput but are embedded in rendered diagnostics produced by the parser.
-// Keeping it in this key preserves byte-for-byte rendered output when two
-// units share semantic input but use different display labels.
+// result. UnitNamespace fences stable lexical ownership to the exact logical
+// (unit ID, module path, entry document) triple. UnitDigest fences source,
+// resolution, manifests, and checker policy; entryLabel is deliberately
+// separate because labels are presentation-only for a UnitInput but are
+// embedded in rendered diagnostics produced by the parser.
 type analysisCacheKey struct {
-	unitDigest Digest
-	profile    string
-	entryLabel string
+	unitNamespace lexicalidentity.UnitNamespace
+	unitDigest    Digest
+	profile       string
+	entryLabel    string
 }
 
 // BatchSession is the reference whole-unit implementation of
@@ -147,17 +149,20 @@ func (s *BatchSession) RemoveUnit(ctx context.Context, id UnitID) error {
 
 func analysisKey(unit retainedUnit, profile string) analysisCacheKey {
 	return analysisCacheKey{
-		unitDigest: unit.digest,
-		profile:    profile,
-		entryLabel: documentLabel(unit.input, unit.input.EntryDocument),
+		unitNamespace: unitLexicalNamespace(unit.input),
+		unitDigest:    unit.digest,
+		profile:       profile,
+		entryLabel:    documentLabel(unit.input, unit.input.EntryDocument),
 	}
 }
 
 // cachedAnalysis returns a new publication wrapper around immutable completed
 // analysis. The wrapper's tag is the only mutable part of publication, so a
 // forced solve can still receive a fresh SolveSeq without rerunning any body
-// or summary solve. The key uses content/version digests exclusively; it can
-// never serve analysis produced for changed source or manifests.
+// or summary solve. The key includes the exact logical lexical namespace as
+// well as content/version digests: content-identical logical units may have
+// different stable body ownership and therefore must never share completed
+// artifacts.
 func (s *BatchSession) cachedAnalysis(unit retainedUnit, profile string, documentVersion int64) *completedSnapshot {
 	s.mu.RLock()
 	cached := s.analysisCache[analysisKey(unit, profile)]

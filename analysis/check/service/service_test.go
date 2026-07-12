@@ -374,7 +374,7 @@ return value
 	}
 }
 
-func TestBatchSessionReusesEquivalentAnalysisAndInvalidatesChangedInput(t *testing.T) {
+func TestBatchSessionFencesEquivalentAnalysisByLogicalUnitAndInvalidatesChangedInput(t *testing.T) {
 	ctx := context.Background()
 	session := NewBatchSession()
 	base := UnitInput{
@@ -390,10 +390,20 @@ return value
 		t.Fatalf("UpsertUnit A: %v", err)
 	}
 	first := mustSolve(t, session, SolveRequest{UnitID: base.ID, Freshness: FreshnessRequireNew})
+	firstAgain := mustSolve(t, session, SolveRequest{UnitID: base.ID, Freshness: FreshnessRequireNew})
+	if firstAgain.SolveSeq == first.SolveSeq || firstAgain.UnitDigest != first.UnitDigest {
+		t.Fatalf("same logical unit forced publication = %#v, first = %#v", firstAgain, first)
+	}
+	session.mu.RLock()
+	cacheEntries := len(session.analysisCache)
+	session.mu.RUnlock()
+	if cacheEntries != 1 {
+		t.Fatalf("same logical unit forced solve created %d cache entries, want 1", cacheEntries)
+	}
 
-	// UnitID is intentionally not part of UnitDigest. A second independently
-	// resolved unit with the same materialized source and presentation label may
-	// reuse the immutable body/summary result, but gets its own publication tag.
+	// UnitID is intentionally not part of UnitDigest, but it is part of the
+	// stable logical lexical namespace. A content-identical second unit must not
+	// reuse completed artifacts carrying the first unit's lexical owners.
 	copyInput := base
 	copyInput.ID = "analysis-cache-b"
 	if _, err := session.UpsertUnit(ctx, copyInput); err != nil {
@@ -401,13 +411,24 @@ return value
 	}
 	second := mustSolve(t, session, SolveRequest{UnitID: copyInput.ID, Freshness: FreshnessRequireNew})
 	if second.SolveSeq == first.SolveSeq || second.UnitID != copyInput.ID || second.UnitDigest != first.UnitDigest {
-		t.Fatalf("reused publication tag = %#v, first = %#v", second, first)
+		t.Fatalf("second publication tag = %#v, first = %#v", second, first)
+	}
+	firstResult, ok := session.LastComplete(ctx, ResultRequest{Selector: selectorFor(first)})
+	if !ok {
+		t.Fatal("first completed result missing")
+	}
+	secondResult, ok := session.LastComplete(ctx, ResultRequest{Selector: selectorFor(second)})
+	if !ok {
+		t.Fatal("second completed result missing")
+	}
+	if firstResult.DebugMaps()[0].LexicalBodyID == secondResult.DebugMaps()[0].LexicalBodyID {
+		t.Fatal("content-identical logical units shared a stable lexical body owner")
 	}
 	session.mu.RLock()
-	cacheEntries := len(session.analysisCache)
+	cacheEntries = len(session.analysisCache)
 	session.mu.RUnlock()
-	if cacheEntries != 1 {
-		t.Fatalf("analysis cache entries = %d, want one digest-scoped shared result", cacheEntries)
+	if cacheEntries != 2 {
+		t.Fatalf("analysis cache entries = %d, want two logical-unit-fenced results", cacheEntries)
 	}
 
 	changed := copyInput
@@ -424,8 +445,8 @@ return value
 	session.mu.RLock()
 	cacheEntries = len(session.analysisCache)
 	session.mu.RUnlock()
-	if cacheEntries != 2 {
-		t.Fatalf("analysis cache entries after content change = %d, want two digest versions", cacheEntries)
+	if cacheEntries != 3 {
+		t.Fatalf("analysis cache entries after content change = %d, want three logical-unit/version results", cacheEntries)
 	}
 }
 

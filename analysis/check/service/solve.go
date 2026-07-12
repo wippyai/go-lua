@@ -292,6 +292,7 @@ func collectBodyDebugMaps(root *body.Result) []BodyDebugMap {
 		entries := result.DebugMap()
 		item := BodyDebugMap{
 			BodyID:        id,
+			LexicalBodyID: result.StableLexicalBodyID(),
 			BodyDigest:    embedding.BodyInputDigest(result.ResultVersion()),
 			SchemaVersion: DebugMapSchemaVersion,
 			Entries:       entries,
@@ -316,6 +317,7 @@ func collectStaticArtifacts(unitDigest Digest, profile string, maps []BodyDebugM
 			BodyID: debugMap.BodyID,
 			ID: StaticArtifactID{
 				UnitDigest:     unitDigest,
+				LexicalBodyID:  debugMap.LexicalBodyID,
 				BodyDigest:     debugMap.BodyDigest,
 				Profile:        profile,
 				EngineBuildTag: EngineBuildTag,

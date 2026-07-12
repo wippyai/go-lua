@@ -15,6 +15,7 @@ import (
 
 const expectedDebugMapSchemaVersion1Hash = "64069d7a1c02b93619ad3dc4d6195e79a08fa133fcae48193403217f23c90375"
 const expectedDebugMapSchemaVersion2Hash = "53ecf1350f0bcebc3e8aeea90ba26113c6a590d52310aceda1275e1ad27d1d6f"
+const expectedDebugMapSchemaVersion3Hash = "689c1f875435e20a22c1a9c294a9890b6670bc030f4f37f779d12a6d83b5e003"
 
 func TestDebugMapSchemaVersionPinsCurrentSurface(t *testing.T) {
 	surface := debugMapSchemaSurface()
@@ -22,6 +23,7 @@ func TestDebugMapSchemaVersionPinsCurrentSurface(t *testing.T) {
 	want := map[int]string{
 		1: expectedDebugMapSchemaVersion1Hash,
 		2: expectedDebugMapSchemaVersion2Hash,
+		3: expectedDebugMapSchemaVersion3Hash,
 	}[DebugMapSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected debug-map schema hash for version %d: bump version constant + journal a D-entry\nhash: %s\nsurface:\n%s", DebugMapSchemaVersion, got, strings.Join(surface, "\n"))
@@ -58,7 +60,7 @@ func debugMapSchemaSurface() []string {
 		"encoding:uint64:big-endian",
 		"encoding:string:uint64-byte-length+utf8",
 		"encoding:entry:ordinal,phase,source-span,anchor,may-suspend,visible",
-		"artifact-id:static-artifact-v1|unit|body|profile|engine|debug-map",
+		"artifact-id:static-artifact-v2|unit|lexical-body|body|profile|engine|debug-map",
 	)
 	sort.Strings(out)
 	return out
