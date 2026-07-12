@@ -1,6 +1,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -25,7 +26,16 @@ type paramInference struct {
 	reg      *axis.Registry
 	enclosed map[symbol.ID]struct{}
 	params   map[symbol.ID]*calleeArgs
-	observed map[factflow.ExprRef]struct{}
+	observed map[paramInferenceCallSite]struct{}
+}
+
+// paramInferenceCallSite names a call expression in its lexical body. ExprRef
+// values are allocated independently by each prepared body and therefore are
+// not unit-global identities. Context entries for the same lexical owner share
+// one call site and are deliberately canonicalized by the caller.
+type paramInferenceCallSite struct {
+	owner summary.SummaryKey
+	expr  factflow.ExprRef
 }
 
 // calleeArgs accumulates the per-parameter join across observed call sites along
@@ -45,21 +55,22 @@ func newParamInference(reg *axis.Registry, enclosed map[symbol.ID]struct{}) *par
 		reg:      reg,
 		enclosed: enclosed,
 		params:   make(map[symbol.ID]*calleeArgs),
-		observed: make(map[factflow.ExprRef]struct{}),
+		observed: make(map[paramInferenceCallSite]struct{}),
 	}
 }
 
 // markObserved reports whether a call expression has already contributed its
 // arguments. Overlapping prepasses re-walk shared function bodies, so each call
 // site must be counted exactly once.
-func (p *paramInference) markObserved(expr factflow.ExprRef) bool {
+func (p *paramInference) markObserved(owner summary.SummaryKey, expr factflow.ExprRef) bool {
 	if p == nil || expr == 0 {
 		return false
 	}
-	if _, ok := p.observed[expr]; ok {
+	ref := paramInferenceCallSite{owner: canonicalContextOwner(owner), expr: expr}
+	if _, ok := p.observed[ref]; ok {
 		return false
 	}
-	p.observed[expr] = struct{}{}
+	p.observed[ref] = struct{}{}
 	return true
 }
 

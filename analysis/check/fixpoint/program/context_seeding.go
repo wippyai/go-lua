@@ -32,6 +32,7 @@ func observeCallArguments(
 	inferred *paramInference,
 	caller state.State,
 	prepass *body.Result,
+	owner summary.SummaryKey,
 	point cfg.Point,
 	site factflow.CallSiteView,
 	baseKey summary.SummaryKey,
@@ -45,7 +46,7 @@ func observeCallArguments(
 		return
 	}
 	expr, ok := site.Expr()
-	if !ok || !inferred.markObserved(expr) {
+	if !ok || !inferred.markObserved(owner, expr) {
 		return
 	}
 	argCount := site.ArgumentSourceCount()
@@ -273,7 +274,7 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 		if !ok {
 			continue
 		}
-		observeCallArguments(inferred, in, prepass, point, site, baseKey, symbolByKey)
+		observeCallArguments(inferred, in, prepass, owner, point, site, baseKey, symbolByKey)
 		callRef := callContextRef{owner: canonicalContextOwner(owner), expr: expr}
 		entryKeys := prepass.KeySpace()
 		entry, hasPathEntry := callerPathEntryState(config.Registry, entryKeys, in)
