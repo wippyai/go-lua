@@ -175,24 +175,15 @@ func (s State) clearDynamicIndexFactsForPathKey(ks *keyspace.KeySpace, pathKey p
 	if !ok {
 		return s
 	}
-	values := make(map[dynamicindex.Key]dynamicindex.Fact, len(s.dynamicIndex.values))
-	var changed bool
-	for key, fact := range s.dynamicIndex.values {
+	values, changed := mapedit.DeleteMatching(s.dynamicIndex.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool {
 		matches := stateKeyHasPrefix(ks, key.Table, prefix)
 		if strict {
 			matches = stateKeyHasStrictPrefix(ks, key.Table, prefix)
 		}
-		if matches {
-			changed = true
-			continue
-		}
-		values[key] = fact
-	}
+		return matches
+	})
 	if !changed {
 		return s
-	}
-	if len(values) == 0 {
-		values = nil
 	}
 	out := s.reachable()
 	out.dynamicIndex.values = values
