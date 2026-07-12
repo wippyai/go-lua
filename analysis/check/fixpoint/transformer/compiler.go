@@ -828,6 +828,31 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 	if term, ok := exactSignatureExpressionTerm(ctx, source); ok {
 		return term, nil
 	}
+	if source.Kind == factflow.ValueSourceCall && source.HasCallPoint && !source.OpenTail && !source.Adjusted {
+		if site, ok := ctx.facts.CallSiteView(source.CallPoint); ok {
+			for index := 0; index < site.ResultTargetCount(); index++ {
+				target, found := site.ResultTargetAt(index)
+				if !found || target.ResultIndex() != source.ResultIndex || target.Kind() != factflow.CallResultTargetLocalAssignment ||
+					target.TargetSymbol() == 0 || target.TargetPathEmpty() || target.TargetPathSegmentCount() != 0 || target.TargetPath().Symbol != target.TargetSymbol() {
+					continue
+				}
+				if term, bound := ctx.locals[target.TargetSymbol()]; bound {
+					return term, nil
+				}
+			}
+		}
+	}
+	// Direct-call composition binds each exact result target into row-local
+	// symbols before the following declaration fact is replayed. Call sources
+	// therefore resolve through the same canonical expression path as ordinary
+	// path-backed expressions; no concrete call value is consulted.
+	if (source.Kind == factflow.ValueSourceExpression || source.Kind == factflow.ValueSourceCall) && source.HasExpr {
+		if p, ok := ctx.facts.ExpressionPathRef(source.ExprRef); ok && p.Symbol != 0 && p.Version == 0 && len(p.Segments) == 0 {
+			if term, bound := ctx.locals[p.Symbol]; bound {
+				return term, nil
+			}
+		}
+	}
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
 		if active[source.ExprRef] {
 			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)

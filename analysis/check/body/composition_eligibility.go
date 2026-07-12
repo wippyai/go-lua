@@ -124,7 +124,11 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 			add("shape:loop")
 		case wir.OpMakeTable, wir.OpClosure:
 			add("boundary:allocation")
-		case wir.OpAssign, wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
+		case wir.OpAssign:
+			if !exactCallResultLocalDeclaration(s.wir, inst, callTemps) {
+				add("boundary:mutation")
+			}
+		case wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
 			add("boundary:mutation")
 		case wir.OpDynamicIndexRead:
 			add("boundary:heap-read")
@@ -139,6 +143,25 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 	}
 	ordered := compositionReasons(reasons)
 	return CompositionEligibility{Reason: ordered[0], reasons: ordered}
+}
+
+// exactCallResultLocalDeclaration is an SSA-like edge adapter, not mutable
+// state: one direct-call result temp is named once by a fresh local root. The
+// symbolic call composer already owns the result value and the ordinary
+// assignment fact copies it exactly. Every other assignment remains rejected.
+func exactCallResultLocalDeclaration(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}) bool {
+	if inst.Assign != wir.AssignLocalDeclaration || inst.Dst.Kind != wir.OperandPath || inst.A.Kind != wir.OperandTemp {
+		return false
+	}
+	if _, ok := callTemps[inst.A.Ref]; !ok {
+		return false
+	}
+	path := body.Path(wir.PathRef(inst.Dst.Ref))
+	if path.Symbol == 0 || len(path.Segments) != 0 {
+		return false
+	}
+	kind, ok := body.SymbolKind(wir.SymbolID(path.Symbol))
+	return ok && kind == wir.SymbolLocal && !body.SymbolHasWrite(wir.SymbolID(path.Symbol))
 }
 
 var compositionReasonPriority = []string{

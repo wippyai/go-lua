@@ -173,6 +173,19 @@ func (p *PreparedPlanCompiler) EvaluateDirect(view RelationView, catalog DirectC
 	return p.evaluate(context.Background(), view, &catalog)
 }
 
+// DirectCompositionEligible reports whether this producer's row outputs can
+// be substituted into a caller without a second semantic projection step.
+// Declared return contracts are currently applied during specialization, so a
+// caller-side symbolic projection is required before those producers can join
+// the exact direct-composition slice.
+func (p *PreparedPlanCompiler) DirectCompositionEligible() bool {
+	if p == nil || p.builder == nil || p.builder.descriptors == nil {
+		return false
+	}
+	handler, ok := p.builder.descriptors.handlers[DescriptorReturn].(returnHandler)
+	return !ok || len(handler.declared) == 0
+}
+
 func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationView, direct *DirectCallCatalog) Relation {
 	if p == nil || p.compiler == nil || p.builder == nil {
 		return Relation{contextual: "compiler: nil prepared plan", widened: true}

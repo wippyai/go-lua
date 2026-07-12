@@ -18,6 +18,7 @@ func TestCompositionEligibilityWhitelistsOnlyStraightValueWrappers(t *testing.T)
 		{name: "parameter", source: `function f(x) return x end`},
 		{name: "constant", source: `function f() return "ok" end`},
 		{name: "stable direct call", source: `function f(x) return (g(x)) end`, globals: []string{"g"}},
+		{name: "named direct call result", source: `function f(x) local y = g(x) return y end`, globals: []string{"g"}},
 		{name: "dynamic call", source: `function f(g, x) return g(x) end`, want: "call:dynamic"},
 		{name: "mutation including local assignment", source: `function f(x) local y = x return y end`, want: "boundary:mutation"},
 		{name: "heap read", source: `function f(x) return x.value end`, want: "boundary:heap-read"},

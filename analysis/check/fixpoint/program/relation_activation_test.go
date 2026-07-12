@@ -110,9 +110,11 @@ local function leaf(): string
 	return "ok"
 end
 local function wrapper(): string
-	return leaf()
+	local value = leaf()
+	return value
 end
-return wrapper()
+local result = wrapper()
+return result
 `)
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	assertRelationActivationDifferential(t,
@@ -123,11 +125,16 @@ return wrapper()
 
 func TestRelationActivationRunBoundFunctionExactDifferential(t *testing.T) {
 	stmts := parseChunk(t, `
-return function(): string
-	local function leaf(): string
+return function()
+	local function leaf()
 		return "ok"
 	end
-	return leaf()
+	local function wrapper()
+		local value = leaf()
+		return value
+	end
+	local result = wrapper()
+	return result
 end
 `)
 	ret := stmts[0].(*ast.ReturnStmt)
@@ -170,6 +177,44 @@ return identity("caller-value")
 			activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
 	}
 	t.Logf("certified context legacy=%d/%d active=%d/%d handled=%d", legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers, activeStats.RelationCallsHandled)
+}
+
+func TestRelationActivationCertifiedContextDirectChainDifferential(t *testing.T) {
+	stmts := parseChunk(t, `
+local function identity(value: string)
+	return value
+end
+local function wrapper(value: string)
+	local forwarded = identity(value)
+	return forwarded
+end
+local result = wrapper("caller-value")
+return result
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
+	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
+	legacyStats, activeStats := &Stats{}, &Stats{}
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareRelationCorpusResult(t, reg, legacy, active)
+	if activeStats.RelationProducersEligible != 2 || activeStats.RelationOwnersActive != 1 || activeStats.RelationCallsHandled == 0 {
+		t.Fatalf("context direct chain was not admitted: producers=%d owners=%d handled=%d fallbacks=%d",
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled, activeStats.RelationActivationFallbacks)
+	}
+	if activeStats.SummaryBodySolves >= legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers >= legacyStats.SummaryPointTransfers {
+		t.Fatalf("context direct chain did not reduce work: legacy=%d/%d active=%d/%d",
+			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
+	}
+	t.Logf("context chain legacy=%d/%d active=%d/%d producers=%d owners=%d handled=%d",
+		legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
+		activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled)
 }
 
 func TestRelationActivationCertifiedContextUnsafeFamiliesStayLegacy(t *testing.T) {
@@ -226,13 +271,18 @@ func assertRelationActivationDifferential(t *testing.T, run func(Config) (Result
 	}
 	compareResultTrees(t, reg, legacy.RootResult(), active.RootResult(), "root")
 	if activeStats.RelationCallsHandled == 0 {
-		t.Fatal("relation activation was a no-op")
+		t.Fatalf("relation activation was a no-op: producers=%d owners=%d fallbacks=%d legacy=%d/%d active=%d/%d",
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationActivationFallbacks,
+			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers,
+			activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
 	}
 	if activeStats.SummaryBodySolves > legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers > legacyStats.SummaryPointTransfers {
 		t.Fatalf("activation regressed summary work: legacy=%d/%d active=%d/%d", legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
 	}
 	if expectReduction && (activeStats.SummaryBodySolves >= legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers >= legacyStats.SummaryPointTransfers) {
-		t.Fatalf("activation did not reduce both summary solves and transfers: legacy=%d/%d active=%d/%d", legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers)
+		t.Fatalf("activation did not reduce both summary solves and transfers: legacy=%d/%d active=%d/%d handled=%d producers=%d owners=%d fallbacks=%d",
+			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
+			activeStats.RelationCallsHandled, activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationActivationFallbacks)
 	}
 	t.Logf("legacy summary solves/transfers=%d/%d materialize=%d active=%d/%d materialize=%d handled=%d", legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, legacyStats.MaterializeBodySolves, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers, activeStats.MaterializeBodySolves, activeStats.RelationCallsHandled)
 }

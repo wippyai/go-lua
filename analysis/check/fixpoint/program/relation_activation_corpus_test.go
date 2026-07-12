@@ -53,20 +53,25 @@ type relationCorpusTotals struct {
 // the counters describe whether activation avoided real solver work.
 func TestRelationActivationRepresentativeCorpusDifferential(t *testing.T) {
 	cases := []struct {
-		name   string
-		source string
-		file   string
-		check  func(*axis.Registry) body.Config
-		exact  bool
+		name             string
+		source           string
+		file             string
+		check            func(*axis.Registry) body.Config
+		exact            bool
+		requireReduction bool
+		minProducers     int
 		// requireNoProducers pins the current validate_graph activation blocker:
 		// its useful lexical leaves all require parameter/direct-call support.
 		requireNoProducers bool
 	}{
-		{name: "wrapper-chain", exact: true, source: `
-local function leaf(): string return "ok" end
-local function left(): string return leaf() end
-local function right(): string return leaf() end
-return left() .. right()
+		{name: "wrapper-chain", exact: true, requireReduction: true, minProducers: 2, source: `
+local function identity(value: string) return value end
+local function wrapper(value: string)
+  local forwarded = identity(value)
+  return forwarded
+end
+local result = wrapper("caller-value")
+return result
 `},
 		{name: "loop-caller", exact: true, source: `
 local function leaf(): number return 1 end
@@ -126,6 +131,14 @@ return make().value
 				active.stats.RelationProducersEligible, active.stats.RelationOwnersActive, active.stats.RelationCallsHandled)
 			if tc.exact {
 				compareRelationCorpusResult(t, reg, legacy.result, active.result)
+				if tc.minProducers != 0 && active.stats.RelationProducersEligible < tc.minProducers {
+					t.Fatalf("relation producers = %d, want at least %d", active.stats.RelationProducersEligible, tc.minProducers)
+				}
+				if tc.requireReduction && (active.stats.SummaryBodySolves >= legacy.stats.SummaryBodySolves || active.stats.SummaryPointTransfers >= legacy.stats.SummaryPointTransfers) {
+					t.Fatalf("activation did not reduce solve work: legacy=%d/%d active=%d/%d",
+						legacy.stats.SummaryBodySolves, legacy.stats.SummaryPointTransfers,
+						active.stats.SummaryBodySolves, active.stats.SummaryPointTransfers)
+				}
 			} else {
 				if tc.requireNoProducers && active.stats.RelationProducersEligible != 0 {
 					t.Fatalf("validate_graph exact-leaf producer census = %d, want 0 until parameterized/direct-call admission lands", active.stats.RelationProducersEligible)

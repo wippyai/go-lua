@@ -11,8 +11,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -145,12 +147,11 @@ func (c relationRunCatalog) Entries() []relationCellIdentity {
 
 func (c relationRunCatalog) ConsumerPolicy() relationConsumerPolicy { return c.consumers }
 
-// exactLeafActivationSlice is the deliberately narrow first production-shaped
-// gate. A producer that itself contains a direct relation call may only reveal
-// contextuality while its composed equation is built. Until that composition
-// class has a whole-function differential gate, publish exact leaf producers
-// only; every owner may still consume those leaves. The original inactive
-// catalog remains unchanged for preparation audits.
+// exactLeafActivationSlice admits the exact zero-parameter lexical closure.
+// A composed producer enters only after every call point is represented by a
+// direct relation route and every target is already admitted in this same
+// generation. This is deliberately a bottom-up proof, not optimistic graph
+// reachability: unsupported calls leave the producer on the legacy path.
 func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 	out := relationRunCatalog{
 		generation: c.generation,
@@ -161,13 +162,24 @@ func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 		},
 	}
 	allowed := make(map[transformer.CellRef]struct{})
-	for _, entry := range c.entries {
-		if len(entry.direct.Cells()) != 0 || relationPreparedHasCalls(entry.identity.Prepared) || len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 {
-			continue
+	for changed := true; changed; {
+		changed = false
+		for _, original := range c.entries {
+			entry := original
+			if _, exists := allowed[entry.identity.Cell]; exists || entry.compiler == nil ||
+				len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 {
+				continue
+			}
+			direct, exact := relationCertifiedDirectCatalog(entry, contextIndex{}, nil, allowed)
+			if !exact || (len(direct.Cells()) != 0 && !entry.compiler.DirectCompositionEligible()) {
+				continue
+			}
+			entry.direct = direct
+			allowed[entry.identity.Cell] = struct{}{}
+			out.byKey[entry.identity.Summary] = len(out.entries)
+			out.entries = append(out.entries, entry)
+			changed = true
 		}
-		allowed[entry.identity.Cell] = struct{}{}
-		out.byKey[entry.identity.Summary] = len(out.entries)
-		out.entries = append(out.entries, entry)
 	}
 	for _, consumer := range c.consumers.entries {
 		routes := make(map[cfg.Point]transformer.DirectCallTarget)
@@ -212,12 +224,13 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 		allowed[entry.identity.Cell] = struct{}{}
 	}
 	for _, entry := range c.entries {
-		if len(entry.direct.Cells()) != 0 || relationPreparedHasCalls(entry.identity.Prepared) || entry.compiler == nil || !entry.compiler.EffectFree() {
+		if entry.compiler == nil || !entry.compiler.EffectFree() {
 			continue
 		}
 		baseByKey[entry.identity.Summary] = entry
 	}
 
+	allContexts := make([]relationContextCandidate, 0, len(contexts.entries))
 	for _, contextual := range contexts.entries {
 		certificate := contextual.relationContextEntry
 		if certificate == nil || certificate.context != contextual.key || certificate.discoveryGeneration == 0 || certificate.discoveryGeneration != contexts.discoveryGeneration {
@@ -241,20 +254,15 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 		if !valid {
 			continue
 		}
-		if _, exists := out.byKey[base.identity.Summary]; !exists {
-			out.byKey[base.identity.Summary] = len(out.entries)
-			out.entries = append(out.entries, base)
-			allowed[base.identity.Cell] = struct{}{}
-		}
-		out.contexts = append(out.contexts, relationContextCandidate{
+		allContexts = append(allContexts, relationContextCandidate{
 			context: contextual.key, base: base.identity, prepared: base.identity.Prepared,
 			discoveryGeneration: certificate.discoveryGeneration, params: params, certificate: certificate,
 		})
 	}
-	if len(out.contexts) == 0 {
+	if len(allContexts) == 0 {
 		return out
 	}
-	slices.SortFunc(out.contexts, func(a, b relationContextCandidate) int {
+	slices.SortFunc(allContexts, func(a, b relationContextCandidate) int {
 		if a.context.Less(b.context) {
 			return -1
 		}
@@ -263,6 +271,36 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 		}
 		return 0
 	})
+
+	// Parameterized producers are admitted bottom-up. Calls with a contextual
+	// legacy key are rebound to the certified lexical relation belonging to that
+	// exact key; every such dependency must already be admitted in this same
+	// generation. This is the composed analogue of the leaf context proof.
+	for changed := true; changed; {
+		changed = false
+		for _, original := range c.entries {
+			if _, exists := allowed[original.identity.Cell]; exists || original.compiler == nil || !original.compiler.EffectFree() {
+				continue
+			}
+			direct, exact := relationCertifiedDirectCatalog(original, contexts, allContexts, allowed)
+			if !exact || (len(direct.Cells()) != 0 && !original.compiler.DirectCompositionEligible()) {
+				continue
+			}
+			original.direct = direct
+			allowed[original.identity.Cell] = struct{}{}
+			out.byKey[original.identity.Summary] = len(out.entries)
+			out.entries = append(out.entries, original)
+			changed = true
+		}
+	}
+	for _, candidate := range allContexts {
+		if _, admitted := allowed[candidate.base.Cell]; admitted {
+			out.contexts = append(out.contexts, candidate)
+		}
+	}
+	if len(out.contexts) == 0 {
+		return out
+	}
 
 	// Rebuild consumer routing from the authoritative context index. The route
 	// carries the contextual SummaryKey while the relation cell remains lexical.
@@ -274,7 +312,11 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 		for raw := 0; raw < consumer.direct.PointCount(); raw++ {
 			point := cfg.Point(raw)
 			if target, ok := consumer.direct.Lookup(point); ok {
-				if _, admitted := allowed[target.Cell]; admitted {
+				// A lexical zero-parameter relation has one context-independent
+				// application. Parameterized cells are internal composition
+				// authorities only until this exact call point carries a certified
+				// contextual dependency key below.
+				if _, admitted := allowed[target.Cell]; admitted && target.Shape.Params == 0 {
 					routes[point] = target
 				}
 			}
@@ -310,6 +352,80 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 	return out
 }
 
+func relationCertifiedDirectCatalog(entry relationCatalogEntry, contexts contextIndex, candidates []relationContextCandidate, allowed map[transformer.CellRef]struct{}) (transformer.DirectCallCatalog, bool) {
+	if entry.identity.Prepared == nil || entry.identity.Prepared.OperationPlan() == nil {
+		return transformer.DirectCallCatalog{}, false
+	}
+	plan := entry.identity.Prepared.OperationPlan()
+	routes := make(map[cfg.Point]transformer.DirectCallTarget)
+	facts := plan.Facts()
+	for raw := 0; raw < plan.PointCount(); raw++ {
+		point := cfg.Point(raw)
+		site, call := facts.CallSiteView(point)
+		if !call {
+			if _, extra := entry.direct.Lookup(point); extra {
+				return transformer.DirectCallCatalog{}, false
+			}
+			continue
+		}
+		if !relationDirectSiteExact(site) {
+			return transformer.DirectCallCatalog{}, false
+		}
+		target, found := entry.direct.Lookup(point)
+		if expr, ok := site.Expr(); ok && expr != 0 {
+			if contextualTarget, contextual := relationCertifiedCallTarget(entry.identity, expr, contexts, candidates); contextual {
+				target, found = contextualTarget, true
+			}
+		}
+		if !found {
+			return transformer.DirectCallCatalog{}, false
+		}
+		if _, admitted := allowed[target.Cell]; !admitted {
+			return transformer.DirectCallCatalog{}, false
+		}
+		routes[point] = target
+	}
+	direct, err := transformer.NewDirectCallCatalog(plan.PointCount(), routes)
+	return direct, err == nil
+}
+
+// relationCertifiedCallTarget projects call-context discovery back onto one
+// lexical relation edge. A parameterized producer's calls are discovered under
+// its contextual SummaryKeys, not necessarily its base key. Every certified
+// instance must name the same lexical target and shape before the edge can be
+// composed once symbolically.
+func relationCertifiedCallTarget(owner relationCellIdentity, expr factflow.ExprRef, contexts contextIndex, candidates []relationContextCandidate) (transformer.DirectCallTarget, bool) {
+	var (
+		out  transformer.DirectCallTarget
+		have bool
+	)
+	accept := func(key summary.SummaryKey) bool {
+		candidate, ok := relationContextCandidateByKey(candidates, key)
+		if !ok {
+			return false
+		}
+		next := transformer.DirectCallTarget{Cell: candidate.base.Cell, Shape: transformer.Shape{Params: uint32(len(candidate.params))}}
+		if have && next != out {
+			return false
+		}
+		out, have = next, true
+		return true
+	}
+	if key, ok := contexts.CallContextKey(owner.Summary, expr); ok && !accept(key) {
+		return transformer.DirectCallTarget{}, false
+	}
+	for _, ownerContext := range candidates {
+		if ownerContext.base != owner {
+			continue
+		}
+		key, ok := contexts.CallContextKey(ownerContext.context, expr)
+		if !ok || !accept(key) {
+			return transformer.DirectCallTarget{}, false
+		}
+	}
+	return out, have
+}
+
 func relationContextCandidateByKey(entries []relationContextCandidate, key summary.SummaryKey) (relationContextCandidate, bool) {
 	i, ok := slices.BinarySearchFunc(entries, key, func(entry relationContextCandidate, target summary.SummaryKey) int {
 		if entry.context.Less(target) {
@@ -338,6 +454,30 @@ func relationPreparedHasCalls(prepared *body.Static) bool {
 		}
 	}
 	return false
+}
+
+func relationDirectSiteExact(site factflow.CallSiteView) bool {
+	if site.OpenTail() || !site.Final() || !site.Expanded() || site.Adjusted() || site.ResultTargetCount() == 0 {
+		return false
+	}
+	seenSymbols := make(map[symbol.ID]struct{}, site.ResultTargetCount())
+	seenSlots := make(map[int]struct{}, site.ResultTargetCount())
+	for index := 0; index < site.ResultTargetCount(); index++ {
+		target, ok := site.ResultTargetAt(index)
+		if !ok || target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 ||
+			target.TargetPathEmpty() || target.TargetPathSegmentCount() != 0 || target.TargetPath().Symbol != target.TargetSymbol() || target.ResultIndex() < 0 {
+			return false
+		}
+		if _, duplicate := seenSymbols[target.TargetSymbol()]; duplicate {
+			return false
+		}
+		if _, duplicate := seenSlots[target.ResultIndex()]; duplicate {
+			return false
+		}
+		seenSymbols[target.TargetSymbol()] = struct{}{}
+		seenSlots[target.ResultIndex()] = struct{}{}
+	}
+	return true
 }
 
 // DirectCalls requires the complete cell identity, not a free-standing key or
