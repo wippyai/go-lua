@@ -5,13 +5,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
-// RekeyValueLanes re-interns the refinement and static-member value-lane keys
-// from one keyspace into another, formatting each key via from and re-interning
-// the spelling via to. It lets a path-evidence lane built in one analysis's
+// RekeyValueLanes re-interns every structural key carried by path evidence from
+// one keyspace into another. It lets a path-evidence lane built in one analysis's
 // keyspace be consumed in another (cross-summary entry-state transfer) without
-// the per-keyspace intern ids diverging. Proof and presence-implication sublanes
-// carry path-key strings and need no rekeying. A nil keyspace, or from == to,
-// returns the lane unchanged.
+// the per-keyspace intern ids diverging. A nil keyspace, or from == to, returns
+// the lane unchanged. The historical name is retained for API compatibility;
+// proofs and implications now carry structural keys too and are rekeyed here.
 func (l Lane) RekeyValueLanes(from, to *keyspace.KeySpace) Lane {
 	if from == nil || to == nil || from == to {
 		return l
@@ -19,6 +18,12 @@ func (l Lane) RekeyValueLanes(from, to *keyspace.KeySpace) Lane {
 	out := l
 	out.refinements = rekeyValueMap(from, to, l.refinements)
 	out.staticMembers = rekeyValueMap(from, to, l.staticMembers)
+	out.proofs = rekeyBranchProofs(from, to, l.proofs)
+	out.equalityRootMask = equalityRootMask{}
+	for proof := range out.proofs {
+		out.equalityRootMask.merge(equalityProofRootMask(proof))
+	}
+	out.pathPresenceImplications = rekeyPathPresenceImplications(from, to, l.pathPresenceImplications)
 	return out
 }
 
@@ -28,7 +33,7 @@ func rekeyValueMap(from, to *keyspace.KeySpace, in map[keyspace.Key]product.Valu
 	}
 	out := make(map[keyspace.Key]product.Value, len(in))
 	for key, value := range in {
-		rekeyed, ok := rekeyValueLaneKey(from, to, key)
+		rekeyed, ok := to.ImportKey(from, key)
 		if !ok {
 			continue
 		}
@@ -37,18 +42,60 @@ func rekeyValueMap(from, to *keyspace.KeySpace, in map[keyspace.Key]product.Valu
 	return out
 }
 
-func rekeyValueLaneKey(from, to *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {
-	if from == nil || to == nil {
-		return keyspace.Key{}, false
+func rekeyBranchProofs(from, to *keyspace.KeySpace, in map[BranchProof]struct{}) map[BranchProof]struct{} {
+	if len(in) == 0 {
+		return nil
 	}
-	switch key.Kind {
-	case keyspace.KindStableSym:
-		segments, ok := from.SegmentsView(key)
+	out := make(map[BranchProof]struct{}, len(in))
+	for proof := range in {
+		path, ok := importRequiredKey(from, to, proof.Path)
 		if !ok {
-			return keyspace.Key{}, false
+			continue
 		}
-		return to.FromStableSymbol(key.Sym, segments)
-	default:
-		return to.FromPathKey(from.Format(key))
+		other, ok := importOptionalKey(from, to, proof.Other)
+		if !ok {
+			continue
+		}
+		proof.Path = path
+		proof.Other = other
+		out[proof] = struct{}{}
 	}
+	return out
+}
+
+func rekeyPathPresenceImplications(from, to *keyspace.KeySpace, in map[PathPresenceImplication]struct{}) map[PathPresenceImplication]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[PathPresenceImplication]struct{}, len(in))
+	for implication := range in {
+		trigger, ok := importRequiredKey(from, to, implication.Trigger)
+		if !ok {
+			continue
+		}
+		triggerOther, ok := importOptionalKey(from, to, implication.TriggerOther)
+		if !ok {
+			continue
+		}
+		target, ok := importRequiredKey(from, to, implication.Target)
+		if !ok {
+			continue
+		}
+		implication.Trigger = trigger
+		implication.TriggerOther = triggerOther
+		implication.Target = target
+		out[implication] = struct{}{}
+	}
+	return out
+}
+
+func importRequiredKey(from, to *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {
+	return to.ImportKey(from, key)
+}
+
+func importOptionalKey(from, to *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {
+	if key.Kind == keyspace.KindInvalid {
+		return keyspace.Key{}, true
+	}
+	return to.ImportKey(from, key)
 }

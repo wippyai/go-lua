@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -26,6 +27,7 @@ import (
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
@@ -45,10 +47,15 @@ var (
 )
 
 type Config struct {
-	Registry    *axis.Registry
-	Globals     []string
-	GlobalTypes map[string]typ.Type
-	TypeValues  *typevalue.Cache
+	Registry *axis.Registry
+	// UnitNamespace is the stable logical-unit namespace used for lexical
+	// identities. Artifact revisions and policy inputs are fenced separately by
+	// cache digests. Zero selects deterministic standalone derivation from the
+	// canonical semantic body.
+	UnitNamespace lexicalidentity.UnitNamespace
+	Globals       []string
+	GlobalTypes   map[string]typ.Type
+	TypeValues    *typevalue.Cache
 
 	ExpressionValues             map[factflow.ExprRef]product.Value
 	ExpressionValue              sourcevalue.ExpressionValueProvider
@@ -127,6 +134,8 @@ type ObservationStats struct {
 // Static is the reusable, entry-independent analysis artifact for one bound
 // chunk or function body.
 type Static struct {
+	lexicalBodyID         lexicalidentity.StableLexicalBodyID
+	tableLiteralSite      identity.TableLiteralSite
 	registry              *axis.Registry
 	bindings              *bind.Result
 	cfg                   *cfgbuild.Result
@@ -207,6 +216,15 @@ func (s *Static) Graph() cfg.Graph {
 	return s.cfg.Graph
 }
 
+// StableLexicalBodyID returns the deterministic semantic identity of this
+// prepared lexical body.
+func (s *Static) StableLexicalBodyID() lexicalidentity.StableLexicalBodyID {
+	if s == nil {
+		return lexicalidentity.StableLexicalBodyID{}
+	}
+	return s.lexicalBodyID
+}
+
 // OperationPlan returns the immutable, preparation-owned semantic plan. It is
 // the handoff for compositional analyzers; callers must not mutate its graph or
 // retained fact payloads.
@@ -256,6 +274,8 @@ type SolveConfig struct {
 }
 
 type Result struct {
+	lexicalBodyID         lexicalidentity.StableLexicalBodyID
+	tableLiteralSite      identity.TableLiteralSite
 	registry              *axis.Registry
 	bindings              *bind.Result
 	cfg                   *cfgbuild.Result
@@ -309,6 +329,7 @@ type Result struct {
 }
 
 type CallOutcomeContext struct {
+	LexicalBodyID               lexicalidentity.StableLexicalBodyID
 	Facts                       factflow.Facts
 	Sources                     sourcevalue.SourceValues
 	PathValue                   PathValueFunc

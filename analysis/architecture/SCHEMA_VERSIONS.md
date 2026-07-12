@@ -10,10 +10,13 @@ closed or negotiate before emitting a surface newer than the consumer supports.
 | Judgment IR | `judgment.JIRSchemaVersion` | v11 | Judgment code registry and exported judgment record shape. | A judgment code, code metadata, or exported judgment/evidence/subject field shape changes. |
 | Signature escape vocabulary | `signature.EscapeVocabVersion` | v1 | Signature `EscapeKind` labels and audited ownership capability labels synced with arena CallArgEscape/Ownership. | An escape/ownership label is added, removed, renamed, or changes boundary meaning. Requires joint cross-repo signoff per fence #1425. |
 | Boundary lane schema | `summary.BoundaryLaneSchemaVersion` | v10 | Summary descriptors, `NormalReturnFacts` descriptors, `CallOutcome` descriptors, and manifest wire-lane links. | A lane kind, slot/post-return classification, storage owner, or wire reference changes. |
-| Closure capture DTO | `readmodel.ClosureCaptureSchemaVersion` | v2 | Codegen-facing exported `readmodel.ClosureCapture` record shape. | A `ClosureCapture` field is added, removed, renamed, or changes type. |
-| Hoistable load DTO | `readmodel.HoistableLoadSchemaVersion` | v1 | Codegen-facing exported `readmodel.HoistableLoad` record shape. | A `HoistableLoad` field is added, removed, renamed, or changes type. |
-| Allocation site DTO | `readmodel.AllocationSiteSchemaVersion` | v2 | Codegen-facing exported `readmodel.AllocationSite` and `readmodel.AllocationField` record shapes. | An `AllocationSite`/`AllocationField` field is added, removed, renamed, or changes type. |
-| Allocation site fact | `body.AllocationSiteFactSchemaVersion` | v3 | Internal solved `body.AllocationSiteFact` record shape plus its `StableShapeField`/`SourceSpan` payload types. | An `AllocationSiteFact` field, or a payload type it embeds, is added, removed, renamed, or changes type. |
+| Closure capture DTO | `readmodel.ClosureCaptureSchemaVersion` | v3 | Codegen-facing exported `readmodel.ClosureCapture` record shape and identity semantics. | A `ClosureCapture` field is added, removed, renamed, changes type, or changes identity meaning. |
+| Closure capture fact | `body.ClosureCaptureFactSchemaVersion` | v3 | Internal compiler projection of capture facts and identity semantics. | A capture fact field or identity meaning changes. |
+| Hoistable load DTO | `readmodel.HoistableLoadSchemaVersion` | v2 | Codegen-facing exported `readmodel.HoistableLoad` record shape. | A `HoistableLoad` field is added, removed, renamed, or changes type. |
+| Allocation site DTO | `readmodel.AllocationSiteSchemaVersion` | v3 | Codegen-facing exported `readmodel.AllocationSite` and `readmodel.AllocationField` record shapes and identity semantics. | An `AllocationSite`/`AllocationField` field is added, removed, renamed, changes type, or changes identity meaning. |
+| Allocation site fact | `body.AllocationSiteFactSchemaVersion` | v4 | Internal solved `body.AllocationSiteFact` record shape plus its `StableShapeField`/`SourceSpan` payload types and identity semantics. | An `AllocationSiteFact` field, payload type, or identity meaning changes. |
+| Send safety DTO | `readmodel.SendSafetySchemaVersion` | v1 | Public solved send-safety report including identity and ownership proof fields. | A field or identity/ownership meaning changes. |
+| Placement plan | `placementplan.SchemaVersion` | v1 | Compiler/service placement plan and entry shapes, including allocation identities. | A plan/entry field or identity/placement meaning changes. |
 | Artifact debug map | `service.DebugMapSchemaVersion` | v2 | `BodyDebugMap`, `DebugMapEntry`, phase vocabulary, canonical entry encoding, and `StaticArtifactID` DTO form. | A debug-map/anchor/local field, phase label, canonical encoding, or static-artifact ID component changes. |
 
 ## Bump Discipline
@@ -31,6 +34,19 @@ surface change without a version bump fails with: `surface changed: bump version
 constant + journal a D-entry`.
 
 ## Journal
+
+- D24: Allocation identities now use stable lexical-body and caller-site
+  namespaces rather than process-local CFG counters. Bumped identity-bearing
+  closure-capture facts/DTOs and allocation-site facts/DTOs, introduced pinned
+  send-safety and placement-plan schemas, and made unknown placement schemas
+  fail closed during merge. Record shapes may be unchanged where the semantic
+  meaning of `identity.ID` changed.
+
+- D23: Bumped the hoistable-load DTO to v2. `BodyID` is now a full-width
+  `StableLexicalBodyID` derived from the stable logical unit namespace, its
+  artifact revision fence, and the lexical owner, replacing the process-local
+  CFG counter. Compiler consumers must compare the opaque body ID as a whole;
+  numeric ordering or arithmetic is no longer valid.
 
 - D22: Bumped boundary lane schema to v10. `FreshHeapAllocations` now carries
   exact exit placement provenance with each template. Instantiation is atomic

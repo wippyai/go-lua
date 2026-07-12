@@ -43,6 +43,21 @@ func TestTargetVocabularyValuesAreStable(t *testing.T) {
 	}
 }
 
+func TestMergeRejectsUnknownPlanSchema(t *testing.T) {
+	id := testID(999)
+	got := Merge(Plan{SchemaVersion: SchemaVersion + 1, Entries: []Entry{{ID: id, Target: TargetStack, Placement: placement.Stack}}})
+	if !got.SchemaValid() || !got.Incomplete || len(got.Entries) != 0 {
+		t.Fatalf("unknown-schema plan was consumed: %#v", got)
+	}
+	found := false
+	for _, blocker := range got.Blockers {
+		found = found || blocker == BlockerSchemaMismatch
+	}
+	if !found {
+		t.Fatalf("unknown-schema plan lacks %q blocker: %#v", BlockerSchemaMismatch, got.Blockers)
+	}
+}
+
 func TestFromStateDistinguishesPlacementTargetsAndObligations(t *testing.T) {
 	reg := standard.Registry()
 	stackID := testID(1)
@@ -135,14 +150,14 @@ func TestPlanMaxTargetDepthUsesHeapObjectIdentityEdges(t *testing.T) {
 func TestMergePreservesPlacementChildEdges(t *testing.T) {
 	parent := testID(41)
 	child := testID(42)
-	left := Plan{Entries: []Entry{{
+	left := Plan{SchemaVersion: SchemaVersion, Entries: []Entry{{
 		ID:        parent,
 		Target:    TargetSharedHeap,
 		Placement: placement.SharedHeap,
 		HasObject: true,
 		Children:  []identity.ID{child},
 	}}}
-	right := Plan{Entries: []Entry{{
+	right := Plan{SchemaVersion: SchemaVersion, Entries: []Entry{{
 		ID:        child,
 		Target:    TargetSharedHeap,
 		Placement: placement.SharedHeap,
@@ -161,7 +176,7 @@ func TestMergePreservesPlacementChildEdges(t *testing.T) {
 
 func TestMergePreservesAllocationSiteLicense(t *testing.T) {
 	id := testID(45)
-	left := Plan{Entries: []Entry{{
+	left := Plan{SchemaVersion: SchemaVersion, Entries: []Entry{{
 		ID:                 id,
 		Target:             TargetStack,
 		Placement:          placement.Stack,
@@ -170,7 +185,7 @@ func TestMergePreservesAllocationSiteLicense(t *testing.T) {
 		Decomposable:       true,
 		FrameLocalUseProof: true,
 	}}}
-	right := Plan{Entries: []Entry{{
+	right := Plan{SchemaVersion: SchemaVersion, Entries: []Entry{{
 		ID:                 id,
 		Target:             TargetStack,
 		Placement:          placement.Stack,
@@ -233,7 +248,7 @@ func TestMergeUsesTriStateAllocationSiteLicenseJoin(t *testing.T) {
 
 func TestMergePreservesFrameLocalLicense(t *testing.T) {
 	id := testID(46)
-	left := Plan{Entries: []Entry{{
+	left := Plan{SchemaVersion: SchemaVersion, Entries: []Entry{{
 		ID:                      id,
 		Target:                  TargetFrameLocal,
 		Placement:               placement.Stack,
@@ -244,7 +259,7 @@ func TestMergePreservesFrameLocalLicense(t *testing.T) {
 		DiesBeforeSuspension:    true,
 		HasDiesBeforeSuspension: true,
 	}}}
-	right := Plan{Entries: []Entry{{
+	right := Plan{SchemaVersion: SchemaVersion, Entries: []Entry{{
 		ID:                      id,
 		Target:                  TargetFrameLocal,
 		Placement:               placement.Stack,
@@ -482,7 +497,7 @@ return total
 	if got := load.ReadPath.String(); got != "clean.limit" {
 		t.Fatalf("read path = %q, want clean.limit", got)
 	}
-	if load.BodyID != result.Graph().ID() || load.Point == 0 || load.LoopHead == 0 || !load.LoopSpan.Valid() {
+	if load.BodyID != result.StableLexicalBodyID() || load.BodyID == ([32]byte{}) || load.Point == 0 || load.LoopHead == 0 || !load.LoopSpan.Valid() {
 		t.Fatalf("hoistable load lacks machine site or loop witness: %#v", load)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -217,9 +218,9 @@ type ShapeConditionalField struct {
 	Span  SourceSpan
 }
 
-const ClosureCaptureSchemaVersion = 2
+const ClosureCaptureSchemaVersion = 3
 
-const HoistableLoadSchemaVersion = 1
+const HoistableLoadSchemaVersion = 2
 
 // HoistableLoad is the codegen-facing license for one member/index read whose
 // loaded value is invariant across iterations of the identified loop. LoopSpan
@@ -227,7 +228,7 @@ const HoistableLoadSchemaVersion = 1
 // record is the sound default.
 type HoistableLoad struct {
 	SchemaVersion int
-	BodyID        uint64
+	BodyID        lexicalidentity.StableLexicalBodyID
 	Point         cfg.Point
 	ReadPath      path.Path
 	LoopHead      cfg.Point
@@ -265,7 +266,7 @@ type ClosureCapture struct {
 	HasIdentity  bool
 }
 
-const AllocationSiteSchemaVersion = 2
+const AllocationSiteSchemaVersion = 3
 
 // AllocationSite is the codegen-facing solved export for one table allocation
 // site. Decomposable is a scalar-replacement license; false is the sound
@@ -1257,10 +1258,13 @@ func (v SendSafetyVerdict) String() string {
 	}
 }
 
+const SendSafetySchemaVersion = 1
+
 // SendSafety is the solved read model for a send/spawn payload admission check.
 // Unknown is a successful checker outcome: the runtime copies/promotes instead
 // of taking the zero-copy path.
 type SendSafety struct {
+	SchemaVersion       int
 	Point               cfg.Point
 	Argument            CallArgument
 	Target              path.Path
@@ -1278,6 +1282,10 @@ type SendSafety struct {
 	GraphHasChildID     bool
 	GraphUnknown        bool
 }
+
+// SchemaValid reports whether this report can be consumed under the current
+// identity and ownership contract. Unknown versions fail closed.
+func (s SendSafety) SchemaValid() bool { return s.SchemaVersion == SendSafetySchemaVersion }
 
 // CallArityReportKind classifies a solved call-arity mismatch.
 type CallArityReportKind uint8

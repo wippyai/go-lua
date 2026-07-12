@@ -621,7 +621,7 @@ func TestProjectUsesHeapIdentityMemberForAliasedRoot(t *testing.T) {
 	resolver := testResolver(point, sym, "alias")
 	rootPath := path.NewPath(sym, "alias")
 	readPath := rootPath.Field("id")
-	id := identity.LuaTableLiteral(7002, 211)
+	id := testTableIdentity(7002, 211)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	memberValue := product.Set(
 		reg,
@@ -652,7 +652,7 @@ func TestProjectUsesHeapIdentityRootWitnessWhenStaticMemberLaneIsEmpty(t *testin
 	resolver := testResolver(point, sym, "alias")
 	rootPath := path.NewPath(sym, "alias")
 	readPath := rootPath.Field("id")
-	id := identity.LuaTableLiteral(7002, 215)
+	id := testTableIdentity(7002, 215)
 	symbolValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	rootValue := typevalue.WithWitness(reg, symbolValue, typetable.NewRecord().Field("id", typ.String).Build())
 	in := state.State{}.
@@ -675,7 +675,7 @@ func TestProjectHeapIdentitySuffixDistinguishesFieldAndStringIndex(t *testing.T)
 	sym := symbol.ID(22)
 	resolver := testResolver(point, sym, "obj")
 	rootPath := path.NewPath(sym, "obj")
-	id := identity.LuaTableLiteral(7002, 212)
+	id := testTableIdentity(7002, 212)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	fieldValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	indexValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
@@ -1392,7 +1392,7 @@ func TestProjectExactParentMissingFieldReturnsNilForExclusivePlacement(t *testin
 			catType := typetable.NewRecord().
 				Field("name", typ.String).
 				Build()
-			catID := identity.LuaTableLiteral(120, 1)
+			catID := testTableIdentity(120, 1)
 			rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.NewArray(dogType)), typ.NewArray(dogType))
 			parentValue := typevalue.WithWitness(reg, typevalue.FromType(reg, catType), catType)
 			parentValue = product.Set(reg, parentValue, identity.Key, identity.Singleton(catID))

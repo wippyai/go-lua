@@ -21,6 +21,9 @@ func (SendSafety) Produce(ctx Context) []judgment.Judgment {
 	var out []judgment.Judgment
 	ctx.Reader.ForEachCall(func(call readmodel.CallSite) bool {
 		for _, report := range call.SendSafety {
+			if !report.SchemaValid() {
+				continue
+			}
 			out = append(out, sendSafetyJudgment(ctx, functionKey, report))
 		}
 		return true

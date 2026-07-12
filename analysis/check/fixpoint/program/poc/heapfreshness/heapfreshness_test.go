@@ -37,8 +37,8 @@ func TestCurrentSummaryBoundaryAliasesFreshReturns(t *testing.T) {
 	outB := fixture.outcome(callB)
 	currentA := resultID(t, reg, outA)
 	currentB := resultID(t, reg, outB)
-	wantA := identity.ReturnedAllocation(fixture.templateID, fixture.graph.ID(), uint64(callA))
-	wantB := identity.ReturnedAllocation(fixture.templateID, fixture.graph.ID(), uint64(callB))
+	wantA := identity.ReturnedAllocationInBody(fixture.templateID, testBodyIdentity(fixture.graph.ID()), 0, 0, 0, uint64(callA))
+	wantB := identity.ReturnedAllocationInBody(fixture.templateID, testBodyIdentity(fixture.graph.ID()), 0, 0, 0, uint64(callB))
 	if wantA == wantB {
 		t.Fatal("reference inline allocation identities collided across call sites")
 	}
@@ -76,7 +76,7 @@ func TestSameCallSiteReferenceWeakJoinsAndStabilizes(t *testing.T) {
 	fixture := newFixture(t, reg)
 	call := cfg.Point(303)
 	out := fixture.outcome(call)
-	id := identity.ReturnedAllocation(fixture.templateID, fixture.graph.ID(), uint64(call))
+	id := identity.ReturnedAllocationInBody(fixture.templateID, testBodyIdentity(fixture.graph.ID()), 0, 0, 0, uint64(call))
 
 	first := applyFresh(reg, state.State{}, out, id, id, true)
 	mutated := first.WriteHeapTableObject(reg, id, fixture.objectFor(id, fixture.stringValue))
@@ -113,7 +113,7 @@ func newFixture(t *testing.T, reg *axis.Registry) fixture {
 	t.Helper()
 	callee := symbol.ID(41)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 42})
-	templateID := identity.LuaTableLiteral(7001, 17)
+	templateID := testTableIdentity(7001, 17)
 	root := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(templateID))
 	numberValue := typevalue.FromType(reg, typ.Number)
 	stringValue := typevalue.FromType(reg, typ.String)
@@ -123,7 +123,9 @@ func newFixture(t *testing.T, reg *axis.Registry) fixture {
 		t.Fatal("member key")
 	}
 	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: root, StaticMembers: map[keyspace.Key]product.Value{memberKey: numberValue}, StableShape: true})
+	graph := cfg.New()
 	provider := callresult.OutcomeProvider(callresult.ProviderConfig{
+		CallerBodyID: testBodyIdentity(graph.ID()),
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
 			Returns: []product.Value{root}, HeapKeySpace: ks,
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{templateID: object}, FreshHeapAllocations: []summary.FreshHeapAllocation{{ID: templateID, Placement: placement.Stack}},
@@ -131,7 +133,7 @@ func newFixture(t *testing.T, reg *axis.Registry) fixture {
 		KeyFor:   callresult.ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		KeySpace: ks,
 	})
-	return fixture{reg: reg, provider: provider, graph: cfg.New(), templateID: templateID, memberKey: memberKey, numberValue: numberValue, stringValue: stringValue}
+	return fixture{reg: reg, provider: provider, graph: graph, templateID: templateID, memberKey: memberKey, numberValue: numberValue, stringValue: stringValue}
 }
 
 func (f fixture) outcome(point cfg.Point) callpayload.CallOutcome {

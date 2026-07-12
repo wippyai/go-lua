@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -19,17 +20,20 @@ import (
 func NormalizedPayloadDigest(reg *axis.Registry, s Summary) Digest {
 	s = Normalize(reg, s)
 	// HeapKeySpace only re-interns heap facts for consumers. It is metadata and
-	// is intentionally excluded by summary equality.
+	// is intentionally excluded by summary equality. Retain it on the writer so
+	// solve-local dense keys can be encoded by structural spelling.
+	heapKeySpace := s.HeapKeySpace
 	s.HeapKeySpace = nil
-	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg}
+	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg, heapKeySpace: heapKeySpace}
 	w.writeString("summary-payload-v1")
 	w.writeReflect(reflect.ValueOf(s))
 	return Digest(w.h.Sum64())
 }
 
 type summaryDigestWriter struct {
-	h   internalhash.Writer
-	reg *axis.Registry
+	h            internalhash.Writer
+	reg          *axis.Registry
+	heapKeySpace *keyspace.KeySpace
 }
 
 func (w *summaryDigestWriter) writeRaw(value string) {
@@ -98,6 +102,10 @@ func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
 		}
 		if value, ok := v.Interface().(pathdom.Path); ok {
 			w.writeString("path:" + string(value.Key()))
+			return
+		}
+		if value, ok := v.Interface().(keyspace.Key); ok {
+			w.writeKeySpaceKey(value)
 			return
 		}
 		if value, ok := v.Interface().(heapidentity.TableObject); ok {
@@ -172,7 +180,7 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 	keys := v.MapKeys()
 	entries := make([]entry, 0, len(keys))
 	for _, key := range keys {
-		keyWriter := summaryDigestWriter{h: internalhash.NewWriter(), reg: w.reg}
+		keyWriter := summaryDigestWriter{h: internalhash.NewWriter(), reg: w.reg, heapKeySpace: w.heapKeySpace}
 		keyWriter.writeReflect(key)
 		entries = append(entries, entry{digest: keyWriter.h.Sum64(), key: key, value: v.MapIndex(key)})
 	}
@@ -189,6 +197,37 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 		w.writeReflect(entry.key)
 		w.writeReflect(entry.value)
 	}
+}
+
+func (w *summaryDigestWriter) writeKeySpaceKey(key keyspace.Key) {
+	w.writeString("keyspace.Key")
+	if key.Kind == keyspace.KindInvalid {
+		w.writeString("invalid")
+		return
+	}
+	if w.heapKeySpace == nil {
+		panic("summary digest: non-empty keyspace.Key has no producing HeapKeySpace")
+	}
+	spelling := w.heapKeySpace.FormatReadOnly(key)
+	if spelling == "" {
+		panic("summary digest: keyspace.Key is foreign to producing HeapKeySpace")
+	}
+	// Kind and the non-dense root dimensions preserve key namespaces whose
+	// presentation spelling can overlap. Root and Segs themselves are omitted:
+	// both are solve-local intern ids already represented by spelling.
+	w.writeRaw("kind:")
+	w.writeRawUint(uint64(key.Kind))
+	w.writeByte(';')
+	w.writeRaw("sym:")
+	w.writeRawUint(uint64(key.Sym))
+	w.writeByte(';')
+	w.writeRaw("ver:")
+	w.writeRawUint(uint64(key.Ver))
+	w.writeByte(';')
+	w.writeRaw("canon:")
+	w.h.WriteBool(key.Canon)
+	w.writeByte(';')
+	w.writeString("spelling:" + string(spelling))
 }
 
 func compareDigestMapKeys(a, b reflect.Value) int {

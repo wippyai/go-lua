@@ -1,10 +1,30 @@
 package identity
 
 import (
+	"strconv"
 	"testing"
+	"unsafe"
 
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
+
+func TestIDHotMapKeySizeRemainsCompact(t *testing.T) {
+	if got := unsafe.Sizeof(ID{}); got != 40 {
+		t.Fatalf("identity.ID size = %d, want 40 bytes", got)
+	}
+}
+
+func testTableIdentity(scope, site uint64) ID {
+	if scope == 0 || site == 0 {
+		return ID{}
+	}
+	return ID{Kind: "lua.table", Site: "test-table:" + strconv.FormatUint(scope, 10), Index: site}
+}
+
+func testBodyIdentity(scope uint64) lexicalidentity.StableLexicalBodyID {
+	return lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte(strconv.FormatUint(scope, 10))))
+}
 
 var (
 	allocA  = ID{Kind: "alloc", Site: "chunk.lua:12:4", Index: 1}
@@ -43,31 +63,31 @@ func TestSingletonReadback(t *testing.T) {
 }
 
 func TestReturnedAllocationIsDeterministicPerStaticCallerSite(t *testing.T) {
-	template := LuaTableLiteral(31, 7)
-	first := ReturnedAllocation(template, 41, 9)
+	template := testTableIdentity(31, 7)
+	first := ReturnedAllocationInBody(template, testBodyIdentity(41), 0, 0, 0, 9)
 	if first == (ID{}) || !IsReturnedAllocation(first) {
 		t.Fatalf("ReturnedAllocation = %#v, want tagged non-zero identity", first)
 	}
-	if again := ReturnedAllocation(template, 41, 9); again != first {
+	if again := ReturnedAllocationInBody(template, testBodyIdentity(41), 0, 0, 0, 9); again != first {
 		t.Fatalf("same static site changed identity: first=%#v again=%#v", first, again)
 	}
-	if other := ReturnedAllocation(template, 41, 10); other == first {
+	if other := ReturnedAllocationInBody(template, testBodyIdentity(41), 0, 0, 0, 10); other == first {
 		t.Fatal("distinct call points aliased")
 	}
-	if other := ReturnedAllocation(template, 42, 9); other == first {
+	if other := ReturnedAllocationInBody(template, testBodyIdentity(42), 0, 0, 0, 9); other == first {
 		t.Fatal("equal call points in distinct caller graphs aliased")
 	}
-	if other := ReturnedAllocation(LuaTableLiteral(31, 8), 41, 9); other == first {
+	if other := ReturnedAllocationInBody(testTableIdentity(31, 8), testBodyIdentity(41), 0, 0, 0, 9); other == first {
 		t.Fatal("distinct callee templates at one call point aliased")
 	}
-	if got := ReturnedAllocation(ID{}, 41, 9); got != (ID{}) {
+	if got := ReturnedAllocationInBody(ID{}, testBodyIdentity(41), 0, 0, 0, 9); got != (ID{}) {
 		t.Fatalf("zero template produced %#v", got)
 	}
 }
 
 func TestLuaTableLiteralIdentityDoesNotAliasEqualGraphAndExprPairs(t *testing.T) {
-	first := LuaTableLiteral(31, 31)
-	second := LuaTableLiteral(42, 42)
+	first := testTableIdentity(31, 31)
+	second := testTableIdentity(42, 42)
 	if first == (ID{}) || second == (ID{}) {
 		t.Fatalf("LuaTableLiteral returned empty identities: %#v %#v", first, second)
 	}
@@ -78,12 +98,12 @@ func TestLuaTableLiteralIdentityDoesNotAliasEqualGraphAndExprPairs(t *testing.T)
 		t.Fatalf("LuaTableLiteral produced zero index: %#v %#v", first, second)
 	}
 
-	ordered := LuaTableLiteral(31, 42)
-	swapped := LuaTableLiteral(42, 31)
+	ordered := testTableIdentity(31, 42)
+	swapped := testTableIdentity(42, 31)
 	if ordered == swapped {
 		t.Fatalf("LuaTableLiteral lost field order: %#v", ordered)
 	}
-	if got := LuaTableLiteral(31, 31); got != first {
+	if got := testTableIdentity(31, 31); got != first {
 		t.Fatalf("LuaTableLiteral is not stable: %#v then %#v", first, got)
 	}
 }
@@ -99,10 +119,33 @@ func TestLuaTableLiteralRejectsEmptyInputs(t *testing.T) {
 		{name: "zero both", graphID: 0, exprRef: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := LuaTableLiteral(tc.graphID, tc.exprRef); got != (ID{}) {
-				t.Fatalf("LuaTableLiteral(%d, %d) = %#v, want empty ID", tc.graphID, tc.exprRef, got)
+			if got := testTableIdentity(tc.graphID, tc.exprRef); got != (ID{}) {
+				t.Fatalf("testTableIdentity(%d, %d) = %#v, want empty ID", tc.graphID, tc.exprRef, got)
 			}
 		})
+	}
+}
+
+func TestTableLiteralAtPrecomputedSiteAllocatesNothing(t *testing.T) {
+	site := TableLiteralSiteForBody(testBodyIdentity(91))
+	if allocations := testing.AllocsPerRun(1000, func() {
+		if LuaTableLiteralAtSite(site, 7) == (ID{}) {
+			t.Fatal("empty identity")
+		}
+	}); allocations != 0 {
+		t.Fatalf("allocations = %v, want 0", allocations)
+	}
+}
+
+func TestReturnedAllocationUsesOneSiteAllocation(t *testing.T) {
+	template := testTableIdentity(31, 7)
+	body := testBodyIdentity(92)
+	if allocations := testing.AllocsPerRun(1000, func() {
+		if ReturnedAllocationInBody(template, body, 1, 2, 3, 4) == (ID{}) {
+			t.Fatal("empty identity")
+		}
+	}); allocations > 1 {
+		t.Fatalf("allocations = %v, want at most 1", allocations)
 	}
 }
 

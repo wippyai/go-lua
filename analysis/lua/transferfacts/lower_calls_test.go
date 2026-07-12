@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
@@ -505,7 +507,7 @@ end
 		t.Fatalf("stmt = %T, want call", fn.Stmts[0])
 	}
 	body := wirlower.LowerFunction("call-arg-object-literal-no-semantics", fn, bindings, built)
-	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body, LexicalBodyID: testLexicalBodyID(t.Name())}).Facts
 
 	var site factflow.CallSiteView
 	var callPoint cfg.Point
@@ -1877,7 +1879,7 @@ end
 	body := wirlower.LowerFunction("f", fn, bindings, built)
 	l := lowerer{
 		graph:                   built.Graph,
-		graphID:                 built.Graph.ID(),
+		tableLiteralSite:        identity.TableLiteralSiteForBody(lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("lower-call-chain")))),
 		typeResolver:            typeresolve.New(bindings),
 		typeValues:              typevalue.NewCache(),
 		wir:                     body,

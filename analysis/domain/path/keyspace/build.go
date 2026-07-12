@@ -30,6 +30,54 @@ func (ks *KeySpace) FromPath(p pathdom.Path) Key {
 	return ks.namedRootKey(p.Root, segs)
 }
 
+// ImportKey re-interns k from another KeySpace while preserving its complete
+// structural identity. Dense root and segment ids are deliberately not copied:
+// they have meaning only in from. The returned key belongs to ks.
+func (ks *KeySpace) ImportKey(from *KeySpace, k Key) (Key, bool) {
+	if ks == nil || from == nil || k.Kind == KindInvalid || !from.validKey(k) {
+		return Key{}, false
+	}
+	segments, ok := from.SegmentsView(k)
+	if !ok {
+		return Key{}, false
+	}
+	segs := ks.internSegments(segments)
+	out := Key{
+		Kind:  k.Kind,
+		Sym:   k.Sym,
+		Ver:   k.Ver,
+		Root:  k.Root,
+		Segs:  segs,
+		Canon: k.Canon,
+	}
+	switch k.Kind {
+	case KindResolverSym:
+		if k.Sym == 0 || k.Ver == 0 {
+			return Key{}, false
+		}
+	case KindUnversionedSym, KindStableSym:
+		if k.Sym == 0 || k.Ver != 0 {
+			return Key{}, false
+		}
+	case KindPlaceholder, KindRetSlot:
+		// Root is the stable lexical slot, not an intern id.
+	case KindNamed:
+		name := from.rootName(rootID(k.Root))
+		if name == "" {
+			return Key{}, false
+		}
+		out.Root = uint32(ks.internRoot(name))
+	case KindRootlessSuffix:
+		if len(segments) == 0 {
+			return Key{}, false
+		}
+		out.Root = 0
+	default:
+		return Key{}, false
+	}
+	return out, true
+}
+
 // namedRootKey classifies a verbatim root spelling into a flavor and interns it
 // when it is an arbitrary name. Placeholder ($N) and return slot (ret[N]) roots
 // carry their index in Root; arbitrary names carry an interned root id.

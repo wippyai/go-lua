@@ -16,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-const ClosureCaptureFactSchemaVersion = 2
+const ClosureCaptureFactSchemaVersion = 3
 
 type ClosureCapturePolicy uint8
 

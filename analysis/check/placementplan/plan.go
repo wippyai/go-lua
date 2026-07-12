@@ -1,6 +1,7 @@
 package placementplan
 
 import (
+	"bytes"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -14,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 type Target uint8
@@ -71,6 +73,7 @@ const (
 	BlockerPlacementsTop        Blocker = "placements-top"
 	BlockerMissingPlacementFact Blocker = "missing-placement-fact"
 	BlockerUnknownPlacement     Blocker = "unknown-placement"
+	BlockerSchemaMismatch       Blocker = "schema-mismatch"
 )
 
 type Entry struct {
@@ -91,7 +94,10 @@ type Entry struct {
 	HasDiesBeforeSuspension bool
 }
 
+const SchemaVersion = 1
+
 type Plan struct {
+	SchemaVersion  int
 	Top            bool
 	Incomplete     bool
 	Blockers       []Blocker
@@ -100,6 +106,10 @@ type Plan struct {
 
 	licenses map[identity.ID]placement.AllocationSiteLicenses
 }
+
+// SchemaValid reports whether this plan can be consumed under the current
+// placement and identity contract. Unknown versions fail closed.
+func (p Plan) SchemaValid() bool { return p.SchemaVersion == SchemaVersion }
 
 func FromProgramResult(result checkprogram.Result) Plan {
 	return FromBodyResult(result.RootResult())
@@ -124,6 +134,11 @@ func FromResult(result *body.Result) Plan {
 func Merge(plans ...Plan) Plan {
 	aggregate := newAggregate()
 	for _, plan := range plans {
+		if !plan.SchemaValid() {
+			aggregate.incomplete = true
+			aggregate.blockers[BlockerSchemaMismatch] = struct{}{}
+			continue
+		}
 		if plan.Top {
 			aggregate.top = true
 		}
@@ -300,7 +315,7 @@ type aggregate struct {
 }
 
 type hoistableLoadKey struct {
-	bodyID   uint64
+	bodyID   lexicalidentity.StableLexicalBodyID
 	point    uint32
 	loopHead uint32
 	readPath pathdom.PathKey
@@ -401,6 +416,7 @@ func (a *aggregate) plan() Plan {
 	}
 	ordered := orderedIDs(ids)
 	out := Plan{
+		SchemaVersion:  SchemaVersion,
 		Top:            a.top,
 		Incomplete:     a.incomplete,
 		Blockers:       orderedBlockers(a.blockers),
@@ -455,7 +471,7 @@ func (a *aggregate) addLicenses(id identity.ID, licenses placement.AllocationSit
 
 func (a *aggregate) addHoistableLoad(load readapi.HoistableLoad) {
 	if load.SchemaVersion != readapi.HoistableLoadSchemaVersion ||
-		load.BodyID == 0 || load.Point == 0 || load.LoopHead == 0 || load.ReadPath.IsEmpty() {
+		load.BodyID == (lexicalidentity.StableLexicalBodyID{}) || load.Point == 0 || load.LoopHead == 0 || load.ReadPath.IsEmpty() {
 		return
 	}
 	key := hoistableLoadKey{
@@ -475,7 +491,7 @@ func orderedHoistableLoads(loads map[hoistableLoadKey]readapi.HoistableLoad) []r
 	sort.Slice(out, func(i, j int) bool {
 		left, right := out[i], out[j]
 		if left.BodyID != right.BodyID {
-			return left.BodyID < right.BodyID
+			return bytes.Compare(left.BodyID[:], right.BodyID[:]) < 0
 		}
 		if left.LoopHead != right.LoopHead {
 			return left.LoopHead < right.LoopHead

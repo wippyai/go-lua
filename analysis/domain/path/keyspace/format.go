@@ -28,6 +28,19 @@ func (ks *KeySpace) Format(k Key) pathdom.PathKey {
 	return pathdom.PathKey(out)
 }
 
+// FormatReadOnly reproduces Format without populating the formatting cache.
+// It is intended for immutable artifact/digest readers that may run in
+// parallel. The caller must still ensure no goroutine is mutating ks.
+func (ks *KeySpace) FormatReadOnly(k Key) pathdom.PathKey {
+	if ks == nil || k.Kind == KindInvalid || !ks.validKey(k) {
+		return ""
+	}
+	var b strings.Builder
+	ks.writeRoot(&b, k)
+	b.WriteString(ks.suffix(k.Segs))
+	return pathdom.PathKey(b.String())
+}
+
 func (ks *KeySpace) writeRoot(b *strings.Builder, k Key) {
 	switch k.Kind {
 	case KindResolverSym:

@@ -27,8 +27,8 @@ import (
 func TestFunctionContextEntryHoldsAllowsExtraCurrentHeapFacts(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
-	requiredID := identity.LuaTableLiteral(7100, 1)
-	extraID := identity.LuaTableLiteral(7100, 2)
+	requiredID := testTableIdentity(7100, 1)
+	extraID := testTableIdentity(7100, 2)
 	requiredRoot := heapTableValue(reg, requiredID)
 	extraRoot := heapTableValue(reg, extraID)
 	memberValue := product.Set(
@@ -55,7 +55,7 @@ func TestFunctionContextEntryHoldsAllowsExtraCurrentHeapFacts(t *testing.T) {
 func TestFunctionContextEntryHoldsRejectsMissingRequiredHeapFacts(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
-	requiredID := identity.LuaTableLiteral(7100, 3)
+	requiredID := testTableIdentity(7100, 3)
 	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: heapTableValue(reg, requiredID),
 	}))
@@ -119,7 +119,7 @@ func TestFunctionContextEntryHoldsRejectsTopIdentityForSpecificPathRefinement(t 
 	reg := standard.Registry()
 	ks := keyspace.New()
 	pathKey := path.PathKey("sym73@1.service")
-	requiredID := identity.LuaTableLiteral(7300, 1)
+	requiredID := testTableIdentity(7300, 1)
 	entry := state.State{}.WritePathKey(reg, ks, pathKey, heapTableValue(reg, requiredID))
 	current := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Present(), runtimekind.Table))
 
@@ -160,7 +160,7 @@ func TestFunctionContextEntryHoldsAllowsMorePreciseCurrentPathRefinement(t *test
 func TestFunctionContextEntryHoldsRejectsMissingRequiredHeapStaticMember(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
-	requiredID := identity.LuaTableLiteral(7100, 4)
+	requiredID := testTableIdentity(7100, 4)
 	requiredRoot := heapTableValue(reg, requiredID)
 	memberValue := runtimeValue(reg, presence.Present(), runtimekind.String)
 	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
@@ -181,7 +181,7 @@ func TestFunctionContextEntryHoldsRejectsMissingRequiredHeapStaticMember(t *test
 func TestFunctionContextEntryHoldsRejectsWidenedHeapStaticMember(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
-	requiredID := identity.LuaTableLiteral(7100, 5)
+	requiredID := testTableIdentity(7100, 5)
 	requiredRoot := heapTableValue(reg, requiredID)
 	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: requiredRoot,
@@ -204,7 +204,7 @@ func TestFunctionContextEntryHoldsRejectsWidenedHeapStaticMember(t *testing.T) {
 func TestFunctionContextEntryHoldsRejectsTopCurrentHeapWhenHeapFactsRequired(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
-	requiredID := identity.LuaTableLiteral(7100, 6)
+	requiredID := testTableIdentity(7100, 6)
 	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: heapTableValue(reg, requiredID),
 	}))

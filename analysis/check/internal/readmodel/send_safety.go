@@ -25,6 +25,7 @@ func (r Reader) sendSafetyReports(point cfg.Point, args []CallArgument) []SendSa
 			arg.TypeWithPresence, _ = r.ValueTypeWithPresence(occ.ArgumentValue)
 		}
 		out = append(out, SendSafety{
+			SchemaVersion:       SendSafetySchemaVersion,
 			Point:               occ.Point,
 			Argument:            arg,
 			Target:              occ.Target.Clone(),

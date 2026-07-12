@@ -81,6 +81,7 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 	relations := s.relations
 	return func(callCtx body.CallOutcomeContext, supplied ...relationResolverInput) relationcall.Resolver {
 		adapter := callresult.ProviderConfig{
+			CallerBodyID:            callCtx.LexicalBodyID,
 			ProtectedCall:           callCtx.ProtectedCall,
 			CalleeValue:             callresult.CalleeValueFunc(callCtx.CalleeValue),
 			ReceiverCallable:        callresult.ReceiverCallableFunc(callCtx.ReceiverCallable),

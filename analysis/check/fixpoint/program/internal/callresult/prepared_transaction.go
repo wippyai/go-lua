@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -20,6 +21,8 @@ import (
 // OutcomeProvider; relation composition calls this directly after exact
 // specialization, avoiding a per-call Snapshot and provider closure.
 type PreparedSummaryTransaction struct {
+	callerBodyID            lexicalidentity.StableLexicalBodyID
+	returnedAllocations     *returnedAllocationIdentityCache
 	index                   *SummaryIndex
 	facts                   factflow.Facts
 	sources                 sourcevalue.SourceValues
@@ -32,7 +35,9 @@ type PreparedSummaryTransaction struct {
 
 func newPreparedSummaryTransaction(config ProviderConfig, index *SummaryIndex) PreparedSummaryTransaction {
 	return PreparedSummaryTransaction{
-		index: index, facts: config.Facts, sources: config.Sources,
+		callerBodyID:        config.CallerBodyID,
+		returnedAllocations: &returnedAllocationIdentityCache{},
+		index:               index, facts: config.Facts, sources: config.Sources,
 		calleeValue: config.CalleeValue, receiverCallable: config.ReceiverCallable,
 		returnPresenceRelations: config.ReturnPresenceRelations,
 		callerKeySpace:          config.KeySpace, typeValues: config.TypeValues,
@@ -68,7 +73,7 @@ func (t PreparedSummaryTransaction) Apply(ctx transfer.NodeContext, site factflo
 		got.HeapTableObjects = heapidentity.CloneMap(got.HeapTableObjects)
 	}
 	if t.index != nil {
-		got = instantiateReturnedAllocations(ctx, t.index.owner, got)
+		got = instantiateReturnedAllocations(ctx, t.callerBodyID, t.index.owner, got, t.returnedAllocations)
 	}
 	summaryParamOffset := summaryParamObligationOffset(ctx, site, fn, in, read, t.calleeValue)
 	out := outcomeFromSummary(ctx.Registry, got, summaryParamOffset, func(index int) bool {

@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-const AllocationSiteFactSchemaVersion = 3
+const AllocationSiteFactSchemaVersion = 4
 
 // AllocationSiteFact is the solved allocation-site export for one table
 // constructor. Decomposable permits scalar replacement when the checker proves
@@ -122,8 +122,8 @@ func (r *Result) allocationSiteFact(inst wir.Instruction, uses decomposableUseAn
 	}
 	id, ok := identityvalue.ExactID(r.registry, value)
 	if !ok {
-		if graph := r.Graph(); graph != nil {
-			id = identity.LuaTableLiteral(graph.ID(), uint64(exprRef))
+		if r.tableLiteralSite != "" {
+			id = identity.LuaTableLiteralAtSite(r.tableLiteralSite, uint64(exprRef))
 			ok = id != (identity.ID{})
 		}
 	}

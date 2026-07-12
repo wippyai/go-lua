@@ -2,9 +2,12 @@ package body
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"sort"
+	"strconv"
 	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -20,6 +23,9 @@ import (
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -105,6 +111,7 @@ func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Wri
 
 type bodyDigestWriter struct {
 	h       internalhash.Writer
+	wide    hash.Hash
 	static  *Static
 	symbols map[symbol.ID]string
 	ctx     context.Context
@@ -141,6 +148,9 @@ func (w *bodyDigestWriter) writeRaw(value string) {
 		return
 	}
 	_, _ = w.h.WriteString(value)
+	if w.wide != nil {
+		_, _ = w.wide.Write([]byte(value))
+	}
 }
 
 func (w *bodyDigestWriter) writeByte(value byte) {
@@ -148,6 +158,11 @@ func (w *bodyDigestWriter) writeByte(value byte) {
 		return
 	}
 	_ = w.h.WriteByte(value)
+	if w.wide != nil {
+		var raw [1]byte
+		raw[0] = value
+		_, _ = w.wide.Write(raw[:])
+	}
 }
 
 func (w *bodyDigestWriter) checkpoint() bool {
@@ -180,10 +195,18 @@ func (w *bodyDigestWriter) err() error {
 
 func (w *bodyDigestWriter) writeRawInt(value int) {
 	w.h.WriteIntDecimal(int64(value))
+	if w.wide != nil {
+		var raw [32]byte
+		_, _ = w.wide.Write(strconv.AppendInt(raw[:0], int64(value), 10))
+	}
 }
 
 func (w *bodyDigestWriter) writeRawUint64(value uint64) {
 	w.h.WriteUintDecimal(value)
+	if w.wide != nil {
+		var raw [32]byte
+		_, _ = w.wide.Write(strconv.AppendUint(raw[:0], value, 10))
+	}
 }
 
 func (w *bodyDigestWriter) writeString(label, value string) {
@@ -201,6 +224,9 @@ func (w *bodyDigestWriter) writeBytes(label string, value []byte) {
 	w.writeRawInt(len(value))
 	w.writeByte(':')
 	_, _ = w.h.Write(value)
+	if w.wide != nil {
+		_, _ = w.wide.Write(value)
+	}
 	w.writeByte(';')
 }
 
@@ -208,7 +234,52 @@ func (w *bodyDigestWriter) writeBool(label string, value bool) {
 	w.writeRaw(label)
 	w.writeRaw(":b:")
 	w.h.WriteBool(value)
+	if w.wide != nil {
+		if value {
+			_, _ = w.wide.Write([]byte("true"))
+		} else {
+			_, _ = w.wide.Write([]byte("false"))
+		}
+	}
 	w.writeByte(';')
+}
+
+// standaloneLexicalUnitNamespace reuses the exact semantic WIR/CFG encoding
+// used by ResultVersion, mirrored into SHA-256. The traversal descends into
+// every lexical child body, so a standalone body's namespace covers its whole
+// semantic subtree. The encoding deliberately excludes process-local
+// expression identities and presentation-only spans.
+func standaloneLexicalUnitNamespace(bindings *bind.Result, built *cfgbuild.Result, body *wir.Body) lexicalidentity.UnitNamespace {
+	if built == nil || built.Graph == nil || body == nil {
+		return lexicalidentity.UnitNamespace{}
+	}
+	partial := &Static{bindings: bindings, cfg: built, wir: body}
+	w := newBodyDigestWriter(partial)
+	w.wide = sha256.New()
+	w.writeString("#", "standalone-lexical-wir-v1")
+	w.writeWIRTree(body, built.Graph)
+	if w.err() != nil {
+		return lexicalidentity.UnitNamespace{}
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], w.wide.Sum(nil))
+	return lexicalidentity.UnitNamespaceFromDigest(digest)
+}
+
+// writeWIRTree is the recursive form of the canonical per-body encoder. It is
+// used only to derive a standalone compilation-unit namespace; ResultVersion
+// deliberately remains scoped to one prepared body and calls writeWIR directly.
+func (w *bodyDigestWriter) writeWIRTree(body *wir.Body, graph cfg.Graph) {
+	w.writeWIR(body, graph)
+	if body == nil {
+		return
+	}
+	protos := body.Protos()
+	w.writeInt("child-body-count", len(protos))
+	for index, proto := range protos {
+		w.writeInt("child-body-index", index)
+		w.writeWIRTree(proto.Body, proto.Graph)
+	}
 }
 
 func (w *bodyDigestWriter) writeInt(label string, value int) {

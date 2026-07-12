@@ -1896,6 +1896,12 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 		modulePath+"/analysis/type/typ",
 		modulePath+"/analysis/type/unwrap",
 	)
+	// identity is the sole value-axis leaf that carries the neutral, full-width
+	// lexical allocation scope. The producer is lower than both the domain and
+	// language layers and has no semantic dependencies of its own.
+	identityAllowed := copyAllowSet(baseAllowed,
+		modulePath+"/analysis/lexicalidentity",
+	)
 
 	for _, pkg := range productionPackages(t, modulePath+"/analysis/domain/value/axis/...") {
 		if pkg.ImportPath == modulePath+"/analysis/domain/value/axis" {
@@ -1903,6 +1909,8 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 		}
 		allowed := baseAllowed
 		switch pkg.ImportPath {
+		case modulePath + "/analysis/domain/value/axis/identity":
+			allowed = identityAllowed
 		case modulePath + "/analysis/domain/value/axis/typewitness":
 			allowed = typeWitnessAllowed
 		case modulePath + "/analysis/domain/value/axis/runtimekindof":

@@ -35,6 +35,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -718,7 +719,9 @@ func TestOutcomeProviderInstantiatesFreshReturnedHeapGraphAtCallerSite(t *testin
 	sharedKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "shared"}})
 	parentKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "parent"}})
 	boundKey, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "bound"}})
+	callerBody := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("returned-heap-graph-caller")))
 	provider := OutcomeProvider(ProviderConfig{
+		CallerBodyID: callerBody,
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{
 			Returns:              []product.Value{rootValue},
 			FreshHeapAllocations: []summary.FreshHeapAllocation{{ID: rootID, Placement: placement.Stack}, {ID: childID, Placement: placement.SharedHeap}},
@@ -742,9 +745,9 @@ func TestOutcomeProviderInstantiatesFreshReturnedHeapGraphAtCallerSite(t *testin
 		return provider(transfer.NodeContext{Registry: reg, Graph: g, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}).View(), state.State{}, nil)
 	}
 	a, again, b := outcome(callA), outcome(callA), outcome(callB)
-	aRoot := identity.ReturnedAllocation(rootID, g.ID(), uint64(callA))
-	aChild := identity.ReturnedAllocation(childID, g.ID(), uint64(callA))
-	bRoot := identity.ReturnedAllocation(rootID, g.ID(), uint64(callB))
+	aRoot := identity.ReturnedAllocationInBody(rootID, callerBody, 0, 0, 0, uint64(callA))
+	aChild := identity.ReturnedAllocationInBody(childID, callerBody, 0, 0, 0, uint64(callA))
+	bRoot := identity.ReturnedAllocationInBody(rootID, callerBody, 0, 0, 0, uint64(callB))
 	if aRoot == bRoot {
 		t.Fatal("distinct caller sites produced the same returned allocation")
 	}
@@ -777,6 +780,25 @@ func TestOutcomeProviderInstantiatesFreshReturnedHeapGraphAtCallerSite(t *testin
 	refined := a.NormalReturnFacts.PathRefinements[0].Value
 	if got, ok := product.Get(reg, refined, identity.Key).ID(); !ok || got != aChild {
 		t.Fatalf("identity-bearing return fact = %v/%v, want %v", got, ok, aChild)
+	}
+}
+
+func TestReturnedAllocationIdentityCacheWarmLookupAllocatesNothing(t *testing.T) {
+	cache := &returnedAllocationIdentityCache{}
+	key := returnedAllocationIdentityKey{
+		template:  identity.ID{Kind: "lua.table", Site: "template", Index: 1},
+		caller:    lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("warm-cache"))),
+		callPoint: 9,
+	}
+	if cache.identity(key) == (identity.ID{}) {
+		t.Fatal("failed to seed cache")
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		if cache.identity(key) == (identity.ID{}) {
+			t.Fatal("empty cached identity")
+		}
+	}); allocations != 0 {
+		t.Fatalf("warm allocations = %v, want 0", allocations)
 	}
 }
 
@@ -2169,6 +2191,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/state":                                 true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":                              true,
 		"github.com/wippyai/go-lua/analysis/internal/mapedit":                             true,
+		"github.com/wippyai/go-lua/analysis/lexicalidentity":                              true,
 		"github.com/wippyai/go-lua/analysis/ir/dominance":                                 true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                                       true,
 		"github.com/wippyai/go-lua/analysis/type/typecall":                                true,

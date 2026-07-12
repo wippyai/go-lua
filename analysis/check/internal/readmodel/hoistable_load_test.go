@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -57,7 +58,7 @@ return clean_total + changed_total
 	if got := load.ReadPath.String(); got != "clean.limit" {
 		t.Fatalf("read path = %q, want clean.limit", got)
 	}
-	if load.BodyID == 0 || load.Point == 0 || load.LoopHead == 0 {
+	if load.BodyID == (lexicalidentity.StableLexicalBodyID{}) || load.Point == 0 || load.LoopHead == 0 {
 		t.Fatalf("machine site/scope identifiers are incomplete: %#v", load)
 	}
 	if load.Point == load.LoopHead {

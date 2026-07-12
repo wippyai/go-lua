@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -23,6 +24,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+// StableLexicalBodyID returns the deterministic semantic identity of this
+// lexical body.
+func (r *Result) StableLexicalBodyID() lexicalidentity.StableLexicalBodyID {
+	if r == nil {
+		return lexicalidentity.StableLexicalBodyID{}
+	}
+	return r.lexicalBodyID
+}
 
 func (r *Result) Registry() *axis.Registry {
 	if r == nil {

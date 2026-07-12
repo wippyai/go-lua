@@ -1,11 +1,41 @@
 package identity
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
+
+// TableLiteralSite is the precomputed, full-width lexical scope shared by
+// every table literal lowered in one body.
+type TableLiteralSite string
+
+// TableLiteralSiteForBody computes the body-scoped Site string once.
+func TableLiteralSiteForBody(body lexicalidentity.StableLexicalBodyID) TableLiteralSite {
+	if body == (lexicalidentity.StableLexicalBodyID{}) {
+		return ""
+	}
+	const prefix = "lexical-body-expr-v2:"
+	var encoded [len(prefix) + sha256.Size*2]byte
+	copy(encoded[:], prefix)
+	hex.Encode(encoded[len(prefix):], body[:])
+	return TableLiteralSite(string(encoded[:]))
+}
+
+// LuaTableLiteralAtSite constructs an identity without allocating. site should
+// be computed once per prepared body with TableLiteralSiteForBody.
+func LuaTableLiteralAtSite(site TableLiteralSite, exprRef uint64) ID {
+	if site == "" || exprRef == 0 {
+		return ID{}
+	}
+	return ID{Kind: "lua.table", Site: string(site), Index: exprRef}
+}
 
 type state uint8
 
@@ -32,18 +62,10 @@ func LuaFunction(symbol uint64) ID {
 	return ID{Kind: "lua.function", Site: "symbol", Index: symbol}
 }
 
-// LuaTableLiteral returns the stable identity token for a Lua table literal
-// expression reference lowered inside one CFG. The graph id is part of the
-// allocation-site key so summaries cannot alias unrelated functions whose
-// local expression refs happen to have the same ordinal.
-func LuaTableLiteral(graphID, exprRef uint64) ID {
-	if graphID == 0 || exprRef == 0 {
-		return ID{}
-	}
-	h := internal.FnvString("identity.lua.table.literal")
-	h = internal.MixHash(h, graphID)
-	h = internal.MixHash(h, exprRef)
-	return ID{Kind: "lua.table", Site: "graph-expr", Index: h}
+// LuaTableLiteralInBody returns the deterministic identity for a table literal
+// in one stable lexical body. It never consumes a process-local CFG instance.
+func LuaTableLiteralInBody(body lexicalidentity.StableLexicalBodyID, exprRef uint64) ID {
+	return LuaTableLiteralAtSite(TableLiteralSiteForBody(body), exprRef)
 }
 
 // ManifestAllocation returns the canonical identity for one operational
@@ -56,37 +78,37 @@ func ManifestAllocation(template string, lexicalPoint uint64) ID {
 	return ID{Kind: "manifest.allocation", Site: template, Index: lexicalPoint}
 }
 
-// ReturnedAllocation derives the allocation-site abstraction used when a
-// callee-local allocation crosses a summary boundary. The template identifies
-// the allocation in the callee; callerGraph and callPoint identify the static
-// allocation site in the caller. Repeated executions of one call therefore
-// share an identity while distinct static calls cannot alias.
-func ReturnedAllocation(template ID, callerGraph uint64, callPoint uint64) ID {
-	return ReturnedAllocationInScope(template, 0, callerGraph, 0, 0, 0, callPoint)
-}
-
-// ReturnedAllocationInScope derives a returned allocation under a stable
-// caller function/context scope. scopeKind and scopeID name the lexical owner;
-// values, facts, and references are its abstract-entry dimensions.
-func ReturnedAllocationInScope(template ID, scopeKind uint8, scopeID, values, facts, references, callPoint uint64) ID {
-	if template == (ID{}) || scopeID == 0 {
+// ReturnedAllocationInBody derives a caller-site allocation identity from the
+// exact callee template, stable caller body, entry context, and static call
+// point. The full SHA-256 scope avoids reducing semantic equality to a
+// process-local or 64-bit graph token.
+func ReturnedAllocationInBody(template ID, caller lexicalidentity.StableLexicalBodyID, values, facts, references, callPoint uint64) ID {
+	if template == (ID{}) || caller == (lexicalidentity.StableLexicalBodyID{}) || callPoint == 0 {
 		return ID{}
 	}
-	h := internal.FnvString("identity.returned.allocation")
-	h = internal.MixHash(h, template.hash())
-	h = internal.MixHash(h, uint64(scopeKind))
-	h = internal.MixHash(h, scopeID)
-	h = internal.MixHash(h, values)
-	h = internal.MixHash(h, facts)
-	h = internal.MixHash(h, references)
-	h = internal.MixHash(h, callPoint)
-	return ID{Kind: template.Kind, Site: "returned-allocation", Index: h}
+	var storage [1024]byte
+	encoded := storage[:0]
+	encoded = appendIdentityHashField(encoded, "wippy.returned-allocation.v2")
+	encoded = appendIdentityHashField(encoded, template.Kind)
+	encoded = appendIdentityHashField(encoded, template.Site)
+	encoded = appendIdentityHashUint(encoded, template.Index)
+	encoded = append(encoded, caller[:]...)
+	encoded = appendIdentityHashUint(encoded, values)
+	encoded = appendIdentityHashUint(encoded, facts)
+	encoded = appendIdentityHashUint(encoded, references)
+	encoded = appendIdentityHashUint(encoded, callPoint)
+	scope := sha256.Sum256(encoded)
+	const prefix = "returned-allocation-v2:"
+	var site [len(prefix) + sha256.Size*2]byte
+	copy(site[:], prefix)
+	hex.Encode(site[len(prefix):], scope[:])
+	return ID{Kind: template.Kind, Site: string(site[:]), Index: callPoint}
 }
 
 // IsReturnedAllocation reports whether id is a caller-site-instantiated
 // returned allocation rather than an allocation template.
 func IsReturnedAllocation(id ID) bool {
-	return id != (ID{}) && id.Site == "returned-allocation"
+	return id != (ID{}) && strings.HasPrefix(id.Site, "returned-allocation-v2:")
 }
 
 func (id ID) String() string {
@@ -98,6 +120,17 @@ func (id ID) hash() uint64 {
 	h = internal.MixHash(h, internal.FnvString(id.Kind))
 	h = internal.MixHash(h, internal.FnvString(id.Site))
 	return internal.MixHash(h, id.Index)
+}
+
+func appendIdentityHashField(out []byte, value string) []byte {
+	out = appendIdentityHashUint(out, uint64(len(value)))
+	return append(out, value...)
+}
+
+func appendIdentityHashUint(out []byte, value uint64) []byte {
+	var raw [8]byte
+	binary.BigEndian.PutUint64(raw[:], value)
+	return append(out, raw[:]...)
 }
 
 // Value is the runtime identity axis. Its lattice is flat:

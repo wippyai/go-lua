@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -36,6 +37,7 @@ type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []
 
 // ProviderConfig configures summary-backed call outcomes.
 type ProviderConfig struct {
+	CallerBodyID            lexicalidentity.StableLexicalBodyID
 	Summaries               summary.Reader
 	ProtectedCall           func(transfer.NodeContext, factflow.CallSiteView) bool
 	ContextKeyFor           KeyFunc

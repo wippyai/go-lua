@@ -228,6 +228,9 @@ func writeCalleePathMultiKeySetDigest(h interface{ Write([]byte) (int, error) },
 }
 
 func writeSummaryKeyDigest(h interface{ Write([]byte) (int, error) }, key summary.SummaryKey) {
+	if key.Ref.Kind == ref.KindCFG {
+		panic("program: process-local CFG function reference cannot cross a digest/artifact boundary")
+	}
 	fmt.Fprintf(
 		h,
 		"%d/%d/%d/%d/%d;",

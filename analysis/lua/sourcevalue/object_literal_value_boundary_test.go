@@ -17,7 +17,7 @@ import (
 func TestObjectLiteralViewEvaluatorMarksConstructedValueFresh(t *testing.T) {
 	reg := standard.Registry()
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1001), HasExpr: true}
-	litID := identity.LuaTableLiteral(7001, 1001)
+	litID := testTableIdentity(7001, 1001)
 	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
 		factflow.NewObjectEntryWithMetadata(path.NewPlaceholder(0).Field("id"), source, factflow.SourceSpan{}, ""),
 	}).WithIdentity(litID)
@@ -38,7 +38,7 @@ func TestObjectLiteralViewEvaluatorMarksConstructedValueFresh(t *testing.T) {
 
 func TestObjectLiteralViewEvaluatorMarksEmptyConstructedValueFresh(t *testing.T) {
 	reg := standard.Registry()
-	litID := identity.LuaTableLiteral(7001, 1002)
+	litID := testTableIdentity(7001, 1002)
 	lit := factflow.NewObjectLiteral(nil).WithIdentity(litID)
 
 	got, ok := ObjectLiteralValueFromViewCached(reg, nil, lit.View(), factflow.ValueSourceResolverFunc(func(factflow.ValueSource) (product.Value, bool) {
@@ -58,7 +58,7 @@ func TestObjectLiteralViewEvaluatorMarksEmptyConstructedValueFresh(t *testing.T)
 func TestObjectLiteralViewEvaluatorUsesExpectedTypeForEmptyConstructor(t *testing.T) {
 	reg := standard.Registry()
 	want := typetable.NewMap(typ.String, typ.String)
-	litID := identity.LuaTableLiteral(7001, 1003)
+	litID := testTableIdentity(7001, 1003)
 	lit := factflow.NewObjectLiteral(nil).
 		WithIdentity(litID).
 		WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, want), want))

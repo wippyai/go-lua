@@ -27,6 +27,7 @@ type ResultShapeExhaustiveness = readapi.ResultShapeExhaustiveness
 
 const (
 	CallArgumentMismatchMayBeNil = readapi.CallArgumentMismatchMayBeNil
+	SendSafetySchemaVersion      = readapi.SendSafetySchemaVersion
 	SendSafetyUnknown            = readapi.SendSafetyUnknown
 	SendSafetyProvenIsolated     = readapi.SendSafetyProvenIsolated
 	SendSafetyProvenImmutable    = readapi.SendSafetyProvenImmutable

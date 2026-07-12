@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -187,6 +188,92 @@ func TestRekeyValueLanesKeepsStableSymbolStaticMembers(t *testing.T) {
 	}
 	if got, ok := out.ReadPathStaticMember(toStable); !ok || got != present {
 		t.Fatalf("rekeyed stable member = %#v ok=%v, want present", got, ok)
+	}
+}
+
+func TestRekeyValueLanesImportsEveryKeyKindAcrossOppositeInternOrder(t *testing.T) {
+	reg := standard.Registry()
+	from, to := keyspace.New(), keyspace.New()
+	field := []segment.Segment{{Kind: segment.SegmentField, Name: "leaf"}}
+
+	resolver, ok := from.FromResolverKey(11, 3, field)
+	if !ok {
+		t.Fatal("resolver key failed")
+	}
+	unversioned, ok := from.FromResolverKey(12, 0, field)
+	if !ok {
+		t.Fatal("unversioned key failed")
+	}
+	stable, ok := from.FromStableSymbol(13, field)
+	if !ok {
+		t.Fatal("stable key failed")
+	}
+	placeholder := from.FromPath(pathdom.NewPlaceholder(2).Field("leaf"))
+	retSlot := from.FromPath(pathdom.Path{Root: "ret[4]", Segments: field})
+	named := from.FromPath(pathdom.Path{Root: "global", Segments: field})
+	namedCanonical := from.FromPath(pathdom.Path{Root: "sym99", Segments: field})
+	namedCanonical.Canon = true
+	rootless, ok := from.FromRootlessSuffix(field)
+	if !ok {
+		t.Fatal("rootless key failed")
+	}
+	keys := []keyspace.Key{resolver, unversioned, stable, placeholder, retSlot, named, namedCanonical, rootless}
+
+	// Populate the target in the opposite structural order with unrelated roots
+	// and suffixes. Import must never copy either dense intern id.
+	for i := len(keys) - 1; i >= 0; i-- {
+		padding := []segment.Segment{{Kind: segment.SegmentField, Name: "padding"}, {Kind: segment.SegmentIndexInt, Index: i + 1}}
+		if _, ok := to.FromRootlessSuffix(padding); !ok {
+			t.Fatalf("target padding %d failed", i)
+		}
+		_ = to.FromPath(pathdom.Path{Root: "padding-root", Segments: padding})
+	}
+
+	present := product.Top()
+	lane := Lane{}
+	for index, key := range keys {
+		lane, _ = lane.WritePathKey(reg, key, present)
+		lane, _ = lane.WritePathStaticMember(key, present)
+		lane, _ = lane.AddBranchProof(BranchProof{Kind: BranchProofPathPresence, Path: key, Presence: presence.Present()})
+		target := keys[(index+1)%len(keys)]
+		lane, _ = lane.AddPathPresenceImplication(NewPathPresenceImplication(key, presence.Present(), target, presence.Present()))
+	}
+	lane, _ = lane.AddBranchProof(BranchProof{Kind: BranchProofPathEqual, Path: named, Other: unversioned})
+	rekeyed := lane.RekeyValueLanes(from, to)
+	if len(rekeyed.refinements) != len(keys) || len(rekeyed.staticMembers) != len(keys) {
+		t.Fatalf("rekey dropped key kinds: refinements=%d static=%d want=%d", len(rekeyed.refinements), len(rekeyed.staticMembers), len(keys))
+	}
+	if len(rekeyed.proofs) != len(keys)+1 || len(rekeyed.pathPresenceImplications) != len(keys) {
+		t.Fatalf("rekey dropped proof keys: proofs=%d implications=%d want=%d/%d", len(rekeyed.proofs), len(rekeyed.pathPresenceImplications), len(keys)+1, len(keys))
+	}
+
+	want := make(map[string]keyspace.Key, len(keys))
+	for _, key := range keys {
+		want[string(from.FormatReadOnly(key))] = key
+	}
+	for key := range rekeyed.refinements {
+		spelling := string(to.FormatReadOnly(key))
+		source, ok := want[spelling]
+		if !ok {
+			t.Fatalf("rekey produced unexpected key %s (%+v)", spelling, key)
+		}
+		if key.Kind != source.Kind || key.Sym != source.Sym || key.Ver != source.Ver || key.Canon != source.Canon {
+			t.Fatalf("rekey changed structural namespace for %s: source=%+v target=%+v", spelling, source, key)
+		}
+		if got, ok := rekeyed.ReadPathStaticMember(key); !ok || got != present {
+			t.Fatalf("static member missing for rekeyed %s: value=%#v ok=%v", spelling, got, ok)
+		}
+	}
+	for proof := range rekeyed.proofs {
+		if to.FormatReadOnly(proof.Path) == "" || (proof.Other.Kind != keyspace.KindInvalid && to.FormatReadOnly(proof.Other) == "") {
+			t.Fatalf("proof retained foreign key after rekey: %+v", proof)
+		}
+	}
+	for implication := range rekeyed.pathPresenceImplications {
+		if to.FormatReadOnly(implication.Trigger) == "" || to.FormatReadOnly(implication.Target) == "" ||
+			(implication.TriggerOther.Kind != keyspace.KindInvalid && to.FormatReadOnly(implication.TriggerOther) == "") {
+			t.Fatalf("implication retained foreign key after rekey: %+v", implication)
+		}
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -30,6 +31,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
@@ -154,6 +156,16 @@ func (c *checker) prepare(
 	sourceStmts []ast.Stmt,
 ) *Static {
 	config := c.config
+	unitNamespace := config.UnitNamespace
+	if unitNamespace == (lexicalidentity.UnitNamespace{}) {
+		unitNamespace = standaloneLexicalUnitNamespace(bindings, built, wirBody)
+	}
+	functionSymbol, hasFunctionSymbol := bindings.FunctionSymbol(fn)
+	lexicalBodyID := lexicalidentity.RootBody(unitNamespace)
+	if fn != nil && hasFunctionSymbol {
+		lexicalBodyID = lexicalidentity.FunctionBody(unitNamespace, uint64(functionSymbol))
+	}
+	tableLiteralSite := identity.TableLiteralSiteForBody(lexicalBodyID)
 	globals := configGlobals(config)
 	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures)
@@ -166,6 +178,8 @@ func (c *checker) prepare(
 	})
 	lowered := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{
 		Registry:           config.Registry,
+		LexicalBodyID:      lexicalBodyID,
+		TableLiteralSite:   tableLiteralSite,
 		TypeResolver:       typeResolver,
 		TypeValues:         config.TypeValues,
 		ModuleExports:      config.ModuleExports,
@@ -213,7 +227,6 @@ func (c *checker) prepare(
 		WithBoundaryCaptures(boundaryCaptures).
 		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn)).
 		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer))
-	functionSymbol, _ := bindings.FunctionSymbol(fn)
 	operationPlan = operationPlan.
 		WithSignatureAllocations(signatureAllocationOperations(operationPlan, uint64(functionSymbol))).
 		WithExtensions(genericForOperationExtensions(genericForOperations))
@@ -283,6 +296,8 @@ func (c *checker) prepare(
 		concretePlan, _ = concreteflow.Compile(built.Graph, operationPlan, wtoPlan)
 	}
 	return &Static{
+		lexicalBodyID:         lexicalBodyID,
+		tableLiteralSite:      tableLiteralSite,
 		registry:              config.Registry,
 		bindings:              bindings,
 		cfg:                   built,
@@ -483,6 +498,8 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		return nil, err
 	}
 	result := &Result{
+		lexicalBodyID:         s.lexicalBodyID,
+		tableLiteralSite:      s.tableLiteralSite,
 		registry:              s.registry,
 		bindings:              s.bindings,
 		cfg:                   s.cfg,
@@ -748,8 +765,9 @@ func (s *Static) callOutcomeContext(typeValues *typevalue.Cache) CallOutcomeCont
 		typeValues = s.typeValues
 	}
 	return CallOutcomeContext{
-		Facts:   s.facts,
-		Sources: s.sources,
+		LexicalBodyID: s.lexicalBodyID,
+		Facts:         s.facts,
+		Sources:       s.sources,
 		PathValue: func(ctx transfer.NodeContext, path pathdom.Path, in state.State) (product.Value, bool) {
 			return readexpr.Project(readexpr.Config{
 				Registry: s.registry, Facts: s.facts, Visibility: s.visibility, TypeValues: typeValues,

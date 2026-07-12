@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -131,6 +132,10 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	return solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, nil, true)
 }
 
+func unitLexicalNamespace(input UnitInput) lexicalidentity.UnitNamespace {
+	return lexicalidentity.UnitNamespaceFromLogicalUnit(string(input.ID), input.ModulePath, input.EntryDocument.String())
+}
+
 func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, cache *program.SummarySolveCache, semanticProjection bool) (*completedSnapshot, error) {
 	ctx, _ = cancellation.Attach(ctx)
 	input := unit.input
@@ -159,6 +164,7 @@ func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile s
 	globals = normalizedStrings(globals)
 	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, SummaryCache: cache, CacheProfile: profile, Check: body.Config{
 		Registry:      checkerRegistry,
+		UnitNamespace: unitLexicalNamespace(input),
 		Globals:       globals,
 		GlobalTypes:   globalTypes,
 		StateLanes:    input.StateLanes,

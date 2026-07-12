@@ -20,10 +20,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestUnitLexicalNamespaceIgnoresScheduleAndDiagnosticPolicy(t *testing.T) {
+	input := UnitInput{ID: "unit", ModulePath: "module", EntryDocument: embedding.MemDocument("entry")}
+	want := unitLexicalNamespace(input)
+	input.Schedule = transfer.ScheduleWTO
+	input.DiagnosticPolicy = diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		diagnostic.Code("test.policy"): diagnostic.Disable(),
+	}}
+	if got := unitLexicalNamespace(input); got != want {
+		t.Fatalf("policy/schedule changed lexical namespace: %s -> %s", want, got)
+	}
+}
 
 func TestBatchSessionPublishesCompleteQueryableResult(t *testing.T) {
 	ctx := context.Background()
@@ -794,7 +807,7 @@ func assertCompletedResultIsDefensivelyImmutable(t *testing.T, completed Complet
 	}
 	originalLoad := plan.HoistableLoads[0]
 	originalLoad.ReadPath = originalLoad.ReadPath.Clone()
-	plan.HoistableLoads[0].BodyID++
+	plan.HoistableLoads[0].BodyID[0]++
 	plan.HoistableLoads[0].ReadPath.Segments[0].Name = "mutated"
 	againPlan := completed.PlacementPlan()
 	if !reflect.DeepEqual(againPlan.HoistableLoads[0], originalLoad) {

@@ -6,12 +6,42 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
+
+type returnedAllocationIdentityKey struct {
+	template            identity.ID
+	caller              lexicalidentity.StableLexicalBodyID
+	values, facts, refs uint64
+	callPoint           uint64
+}
+
+type returnedAllocationIdentityCache struct {
+	values map[returnedAllocationIdentityKey]identity.ID
+}
+
+func (c *returnedAllocationIdentityCache) identity(key returnedAllocationIdentityKey) identity.ID {
+	if c == nil {
+		return identity.ReturnedAllocationInBody(key.template, key.caller, key.values, key.facts, key.refs, key.callPoint)
+	}
+	if got, ok := c.values[key]; ok {
+		return got
+	}
+	got := identity.ReturnedAllocationInBody(key.template, key.caller, key.values, key.facts, key.refs, key.callPoint)
+	if got == (identity.ID{}) {
+		return got
+	}
+	if c.values == nil {
+		c.values = make(map[returnedAllocationIdentityKey]identity.ID)
+	}
+	c.values[key] = got
+	return got
+}
 
 // instantiateReturnedAllocations atomically substitutes callee allocation
 // templates with caller-static-site identities before outcome lowering. The
 // substitution is built once and then applied to every identity-bearing lane.
-func instantiateReturnedAllocations(ctx transfer.NodeContext, caller summary.SummaryKey, got summary.Summary) summary.Summary {
+func instantiateReturnedAllocations(ctx transfer.NodeContext, callerBody lexicalidentity.StableLexicalBodyID, caller summary.SummaryKey, got summary.Summary, cache *returnedAllocationIdentityCache) summary.Summary {
 	if ctx.Registry == nil || len(got.FreshHeapAllocations) == 0 {
 		return got
 	}
@@ -19,16 +49,12 @@ func instantiateReturnedAllocations(ctx transfer.NodeContext, caller summary.Sum
 	for _, allocation := range got.FreshHeapAllocations {
 		template := allocation.ID
 		var instantiated identity.ID
-		if !caller.Ref.IsZero() {
-			instantiated = identity.ReturnedAllocationInScope(
-				template, uint8(caller.Ref.Kind), caller.Ref.ID,
-				uint64(caller.Entry.Values), uint64(caller.Entry.Facts), uint64(caller.Entry.References),
-				uint64(ctx.Point),
-			)
-		} else if ctx.Graph != nil {
-			// Standalone provider users have no program owner. Graph identity is a
-			// process-local fallback only; production providers always carry owner.
-			instantiated = identity.ReturnedAllocation(template, ctx.Graph.ID(), uint64(ctx.Point))
+		if callerBody != (lexicalidentity.StableLexicalBodyID{}) {
+			instantiated = cache.identity(returnedAllocationIdentityKey{
+				template: template, caller: callerBody,
+				values: uint64(caller.Entry.Values), facts: uint64(caller.Entry.Facts), refs: uint64(caller.Entry.References),
+				callPoint: uint64(ctx.Point),
+			})
 		}
 		if instantiated != (identity.ID{}) {
 			substitution[template] = instantiated

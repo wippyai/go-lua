@@ -11,12 +11,14 @@ import (
 )
 
 const expectedAllocationSiteFactSchemaVersion3Hash = "3af9fd4f070b681abd277ef255bcedcd6a1b5470f6d2a879f9fb10c84f035893"
+const expectedAllocationSiteFactSchemaVersion4Hash = expectedAllocationSiteFactSchemaVersion3Hash
 
 func TestAllocationSiteFactSchemaVersionPinsCurrentSurface(t *testing.T) {
 	surface := allocationSiteFactSchemaSurface()
 	got := hashAllocationSiteFactSchemaSurface(surface)
 	want := map[int]string{
 		3: expectedAllocationSiteFactSchemaVersion3Hash,
+		4: expectedAllocationSiteFactSchemaVersion4Hash,
 	}[AllocationSiteFactSchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected allocation site fact schema hash for version %d: bump version constant + journal a D-entry", AllocationSiteFactSchemaVersion)

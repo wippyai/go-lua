@@ -1060,7 +1060,7 @@ func (l *lowerer) tableExpressionValueSourceWithShape(
 ) (factflow.ValueSource, bool) {
 	value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
 	value = product.Set(l.registry, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	value = product.Set(l.registry, value, identity.Key, identity.Singleton(identity.LuaTableLiteral(l.graphID, uint64(exprRef))))
+	value = product.Set(l.registry, value, identity.Key, identity.Singleton(identity.LuaTableLiteralAtSite(l.tableLiteralSite, uint64(exprRef))))
 	if l.expressionValues == nil {
 		l.expressionValues = make(map[factflow.ExprRef]product.Value)
 	}

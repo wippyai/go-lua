@@ -65,7 +65,7 @@ func TestNormalizedPayloadDigestSeparatesUnequalSemanticContent(t *testing.T) {
 		)
 	}
 
-	id := identity.LuaTableLiteral(1, 1)
+	id := testTableIdentity(1, 1)
 	plain := Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: typed}),
 	}}

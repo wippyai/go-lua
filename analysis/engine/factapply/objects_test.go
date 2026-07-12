@@ -30,7 +30,7 @@ import (
 const testObjectLiteralGraphID uint64 = 9001
 
 func testTableLiteralID(expr factflow.ExprRef) identity.ID {
-	return identity.LuaTableLiteral(testObjectLiteralGraphID, uint64(expr))
+	return testTableIdentity(testObjectLiteralGraphID, uint64(expr))
 }
 
 func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *testing.T) {

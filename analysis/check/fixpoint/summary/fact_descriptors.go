@@ -292,10 +292,10 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 				s.HeapTableObjects = normalizeOwnedHeapTableObjects(reg, s.HeapTableObjects)
 			},
 			equal: func(reg *axis.Registry, a, b Summary, _ bool) bool {
-				return heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects)
+				return summaryHeapTableObjectsEqual(reg, a, b)
 			},
 			lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
-				return heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects)
+				return summaryHeapTableObjectsLessOrEq(reg, a, b)
 			},
 			assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
 				out.HeapTableObjects, out.HeapKeySpace = joinSummaryHeapTableObjects(reg, a, b)

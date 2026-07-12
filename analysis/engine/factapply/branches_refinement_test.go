@@ -612,7 +612,7 @@ func TestFactsEdgeTransferAppliesFrozenTableEvidenceOnlyOnSelectedEdge(t *testin
 	graph.AddEdge(elsePoint, graph.Exit(), false)
 
 	target := symbol.ID(318)
-	tableID := identity.LuaTableLiteral(9, 9)
+	tableID := testTableIdentity(9, 9)
 	rootPath := pathdom.NewPath(target, "t")
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID)))
 
@@ -708,7 +708,7 @@ func TestFactsEdgeTransferRuntimeKindRootRefinementNarrowsUnionWitness(t *testin
 	typeValues := typevalue.NewCache()
 	valueType := typeexpr.Union(typ.String, mapType)
 	initialValue := typeValues.FromTypeWithWitness(reg, valueType)
-	initialValue = product.Set(reg, initialValue, identity.Key, identity.Singleton(identity.LuaTableLiteral(1, 1)))
+	initialValue = product.Set(reg, initialValue, identity.Key, identity.Singleton(testTableIdentity(1, 1)))
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), initialValue)
 
 	got := transfer.Run(transfer.Config{

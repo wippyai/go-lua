@@ -406,11 +406,7 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 	if len(o.staticMembers) != 0 {
 		rekeyed := make(map[keyspace.Key]product.Value, len(o.staticMembers))
 		for key, value := range o.staticMembers {
-			segments, ok := from.SuffixSegmentsView(key)
-			if !ok {
-				continue
-			}
-			next, ok := to.FromRootlessSuffix(segments)
+			next, ok := to.ImportKey(from, key)
 			if !ok {
 				continue
 			}
@@ -420,6 +416,20 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 			rekeyed = nil
 		}
 		out.staticMembers = rekeyed
+	}
+	if len(o.dynamicIndexFacts) != 0 {
+		rekeyed := make(map[dynamicindex.Key]dynamicindex.Fact, len(o.dynamicIndexFacts))
+		for key, fact := range o.dynamicIndexFacts {
+			nextTable, ok := to.ImportKey(from, key.Table)
+			if !ok {
+				continue
+			}
+			rekeyed[dynamicindex.Key{Table: nextTable, Site: key.Site}] = fact
+		}
+		if len(rekeyed) == 0 {
+			rekeyed = nil
+		}
+		out.dynamicIndexFacts = rekeyed
 	}
 	return out
 }

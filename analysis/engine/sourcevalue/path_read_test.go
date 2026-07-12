@@ -195,7 +195,7 @@ func TestReadPathValueIgnoresStaleEquivalentRootVersion(t *testing.T) {
 
 func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testing.T) {
 	reg := standard.Registry()
-	id := identity.LuaTableLiteral(7002, 211)
+	id := testTableIdentity(7002, 211)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	ks := keyspace.New()
@@ -214,7 +214,7 @@ func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testin
 
 func TestHeapMemberFromValueReadsStringIndexThroughFieldCanonicalAlias(t *testing.T) {
 	reg := standard.Registry()
-	id := identity.LuaTableLiteral(7002, 214)
+	id := testTableIdentity(7002, 214)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	ks := keyspace.New()
@@ -235,7 +235,7 @@ func TestHeapMemberFromValueReadsStringIndexThroughFieldCanonicalAlias(t *testin
 
 func TestHeapMemberFromValueAuthorizesByIdentityWhenRootValueIsRicher(t *testing.T) {
 	reg := standard.Registry()
-	id := identity.LuaTableLiteral(7002, 212)
+	id := testTableIdentity(7002, 212)
 	objectRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	readRoot := product.Set(reg, objectRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
@@ -255,7 +255,7 @@ func TestHeapMemberFromValueAuthorizesByIdentityWhenRootValueIsRicher(t *testing
 
 func TestHeapMemberFromValueRejectsSameIdentityWithIncompatibleRootValue(t *testing.T) {
 	reg := standard.Registry()
-	id := identity.LuaTableLiteral(7002, 213)
+	id := testTableIdentity(7002, 213)
 	objectRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	objectRoot = product.Set(reg, objectRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	readRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))

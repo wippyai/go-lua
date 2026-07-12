@@ -53,6 +53,24 @@ func heapTableObjectsLessOrEq(reg *axis.Registry, a, b map[identity.ID]heapident
 	return heapidentity.MapDomain(reg).LessOrEq(normalizeHeapTableObjects(reg, a), normalizeHeapTableObjects(reg, b))
 }
 
+func summaryHeapTableObjectsEqual(reg *axis.Registry, a, b Summary) bool {
+	ks := heapKeySpaceForPair(a, b)
+	return heapTableObjectsEqual(
+		reg,
+		heapTableObjectsInKeySpace(a, ks),
+		heapTableObjectsInKeySpace(b, ks),
+	)
+}
+
+func summaryHeapTableObjectsLessOrEq(reg *axis.Registry, a, b Summary) bool {
+	ks := heapKeySpaceForPair(a, b)
+	return heapTableObjectsLessOrEq(
+		reg,
+		heapTableObjectsInKeySpace(a, ks),
+		heapTableObjectsInKeySpace(b, ks),
+	)
+}
+
 func joinHeapTableObjects(reg *axis.Registry, a, b map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
 	return normalizeHeapTableObjects(reg, heapidentity.MapDomain(reg).Join(
 		normalizeHeapTableObjects(reg, a),

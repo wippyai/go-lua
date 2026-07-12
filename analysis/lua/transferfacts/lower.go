@@ -4,12 +4,14 @@ package transferfacts
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -20,11 +22,13 @@ import (
 // the engine. Higher semantic layers add interproc and diagnostic facts
 // separately.
 type Config struct {
-	Registry      *axis.Registry
-	TypeResolver  *typeresolve.Resolver
-	TypeValues    *typevalue.Cache
-	ModuleExports importlookup.Source
-	WIR           *wir.Body
+	Registry         *axis.Registry
+	LexicalBodyID    lexicalidentity.StableLexicalBodyID
+	TableLiteralSite identity.TableLiteralSite
+	TypeResolver     *typeresolve.Resolver
+	TypeValues       *typevalue.Cache
+	ModuleExports    importlookup.Source
+	WIR              *wir.Body
 
 	// NoNormalReturnCall reports whether a lowered call site cannot complete
 	// normally. The predicate is supplied by higher layers that own declared
@@ -55,10 +59,14 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	returnLocalTypes := lowerReturnLocalTypesFromWIR(graph, config.WIR)
 	symbolTypes = mergeSymbolTypes(symbolTypes, returnLocalTypes)
 	expressionRefinements := make(map[factflow.ExprRef]factflow.ExpressionRefinement)
+	tableLiteralSite := config.TableLiteralSite
+	if tableLiteralSite == "" {
+		tableLiteralSite = identity.TableLiteralSiteForBody(config.LexicalBodyID)
+	}
 	l := lowerer{
 		registry:                config.Registry,
 		graph:                   graph,
-		graphID:                 graph.ID(),
+		tableLiteralSite:        tableLiteralSite,
 		typeResolver:            typeResolver,
 		typeValues:              config.TypeValues,
 		wir:                     config.WIR,
@@ -232,7 +240,7 @@ func copySymbolTypes(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 type lowerer struct {
 	registry                *axis.Registry
 	graph                   cfg.Graph
-	graphID                 uint64
+	tableLiteralSite        identity.TableLiteralSite
 	typeResolver            *typeresolve.Resolver
 	typeValues              *typevalue.Cache
 	wir                     *wir.Body

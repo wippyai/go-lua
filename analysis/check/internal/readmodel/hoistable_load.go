@@ -3,6 +3,7 @@ package readmodel
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // ForEachHoistableLoad visits codegen licenses projected from the same
@@ -25,9 +26,9 @@ func (r Reader) ForEachHoistableLoad(visit func(HoistableLoad) bool) bool {
 }
 
 func hoistableLoadFromBody(r Reader, occ body.InvariantLoopReadOccurrence) HoistableLoad {
-	var bodyID uint64
-	if r.result != nil && r.result.Graph() != nil {
-		bodyID = r.result.Graph().ID()
+	var bodyID lexicalidentity.StableLexicalBodyID
+	if r.result != nil {
+		bodyID = r.result.StableLexicalBodyID()
 	}
 	return HoistableLoad{
 		SchemaVersion: readapi.HoistableLoadSchemaVersion,

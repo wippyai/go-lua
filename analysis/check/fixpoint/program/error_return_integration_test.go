@@ -268,7 +268,7 @@ func TestTableFreezeAndIsFrozenBranchCarryFrozenProof(t *testing.T) {
 	if !ok {
 		t.Fatal("missing global symbol for t")
 	}
-	entryID := identity.LuaTableLiteral(31, 31)
+	entryID := testTableIdentity(31, 31)
 	entryState := state.State{}.WriteValue(reg, key.SymbolValue(tValue), product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(entryID)))
 	result, err := body.CheckBoundChunk(stmts, bindings, body.Config{
 		Registry:   reg,

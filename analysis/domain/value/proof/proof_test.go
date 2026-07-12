@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -440,7 +439,7 @@ func TestValueTypeProjectsExplicitTopBoundaryAsAny(t *testing.T) {
 func TestValueHasExactIdentityOwnsPureIdentityProof(t *testing.T) {
 	reg := registry()
 	proofs := New(reg, typevalue.NewCache())
-	value := identityvalue.WithExact(reg, product.Top(), identity.LuaTableLiteral(2, 7))
+	value := identityvalue.WithExact(reg, product.Top(), testTableIdentity(2, 7))
 
 	if !proofs.ValueHasExactIdentity(value) {
 		t.Fatalf("ValueHasExactIdentity(exact identity) = false, want true")

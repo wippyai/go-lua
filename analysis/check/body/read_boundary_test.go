@@ -6,7 +6,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -258,8 +257,8 @@ func TestDistinctPathsShareExactIdentityAtBoundary(t *testing.T) {
 	leftPath := pathdom.NewPath(leftSym, "left")
 	rightPath := pathdom.NewPath(rightSym, "right")
 	otherPath := pathdom.NewPath(otherSym, "other")
-	sharedID := identity.LuaTableLiteral(19, 1)
-	otherID := identity.LuaTableLiteral(19, 2)
+	sharedID := testTableIdentity(19, 1)
+	otherID := testTableIdentity(19, 2)
 	st := state.State{}.
 		WriteValue(reg, statekey.SymbolValue(leftSym), identityvalue.Present(reg, sharedID)).
 		WriteValue(reg, statekey.SymbolValue(rightSym), identityvalue.Present(reg, sharedID)).
@@ -295,7 +294,7 @@ func TestPathsAliasWithSameSuffixAtBoundaryUsesRootIdentity(t *testing.T) {
 	leftPath := pathdom.NewPath(leftSym, "left").Field("kind")
 	rightPath := pathdom.NewPath(rightSym, "right").Field("kind")
 	otherSuffixPath := pathdom.NewPath(rightSym, "right").Field("value")
-	sharedID := identity.LuaTableLiteral(20, 1)
+	sharedID := testTableIdentity(20, 1)
 	st := state.State{}.
 		WriteValue(reg, statekey.SymbolValue(leftSym), identityvalue.Present(reg, sharedID)).
 		WriteValue(reg, statekey.SymbolValue(rightSym), identityvalue.Present(reg, sharedID))

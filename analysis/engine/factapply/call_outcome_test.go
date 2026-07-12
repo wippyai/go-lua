@@ -3001,8 +3001,8 @@ func TestFactsNodeTransferWeaklyMaterializesReturnedAllocationPerCallSite(t *tes
 	g := cfg.New()
 	point := cfg.Point(621)
 	template := identity.ID{Kind: "table", Site: "callee-template", Index: 1}
-	id := identity.ReturnedAllocation(template, g.ID(), uint64(point))
-	other := identity.ReturnedAllocation(template, g.ID(), uint64(point+1))
+	id := identity.ReturnedAllocationInBody(template, testBodyIdentity(g.ID()), 0, 0, 0, uint64(point))
+	other := identity.ReturnedAllocationInBody(template, testBodyIdentity(g.ID()), 0, 0, 0, uint64(point+1))
 	ks := keyspace.New()
 	memberKey := fieldStaticKey(t, ks, "field")
 	numberValue := typevalue.FromType(reg, typ.Number)
@@ -3051,7 +3051,7 @@ func TestReturnedAllocationMaterializationPreservesAllSeventeenStateLanes(t *tes
 	}
 	g := cfg.New()
 	point := cfg.Point(622)
-	id := identity.ReturnedAllocation(identity.ID{Kind: "table", Site: "template", Index: 1}, g.ID(), uint64(point))
+	id := identity.ReturnedAllocationInBody(identity.ID{Kind: "table", Site: "template", Index: 1}, testBodyIdentity(g.ID()), 0, 0, 0, uint64(point))
 	value := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(id))
 	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: value})
 	transferFn := NewFactsNodeTransfer(FactsNodeTransferConfig{
