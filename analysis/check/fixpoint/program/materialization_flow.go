@@ -173,8 +173,8 @@ func refineMaterializedSummaryProofs(
 		if err := materializationContextErr(ctx); err != nil {
 			return nil, summary.Snapshot{}, err
 		}
-		next, changed := snapshotWithMaterializedSummaryProofs(reg, current, materialized, acceptEquivalentValueSpelling)
-		if !changed || rematerialize == nil {
+		next, changes := snapshotWithMaterializedSummaryProofChanges(reg, current, materialized, acceptEquivalentValueSpelling)
+		if !changes.any() || rematerialize == nil {
 			return materialized.root, next, nil
 		}
 		needsRematerialize := materializedCoreProofChangesAffectMaterialization(reg, current, next)
