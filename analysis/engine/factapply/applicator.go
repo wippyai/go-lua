@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -166,14 +167,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if facts.NoNormalReturn(ctx.Point) {
 			return state.State{}
 		}
-		pathImplicationsPending := false
-		flushPathImplications := func() {
-			if !pathImplicationsPending {
-				return
-			}
-			out = activatePathPresenceImplicationsWithToken(ctx.Registry, config.Visibility, ctx.Point, out, tokenOf(ctx.Session))
-			pathImplicationsPending = false
-		}
+		var pathImplicationPublications []pathevidence.PathPresenceImplication
 		poll := cancellation.NewPoller(tokenOf(ctx.Session), cancellation.EveryCheap)
 		for _, fact := range facts.PathValuePresenceImplications(ctx.Point) {
 			if poll.Poll() {
@@ -183,16 +177,25 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			if !ok {
 				continue
 			}
-			if presenceImplicationTargetInvalidatesDescendants(implication) {
-				flushPathImplications()
-				out = out.AddPathPresenceImplication(implication)
-				out = activatePathPresenceImplicationsWithToken(ctx.Registry, config.Visibility, ctx.Point, out, tokenOf(ctx.Session))
-				continue
-			}
-			out = out.AddPathPresenceImplication(implication)
-			pathImplicationsPending = true
+			pathImplicationPublications = append(pathImplicationPublications, implication)
 		}
-		flushPathImplications()
+		if len(pathImplicationPublications) != 0 {
+			result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
+				Registry:     ctx.Registry,
+				Resolver:     config.Visibility,
+				Point:        ctx.Point,
+				Input:        in,
+				Output:       out,
+				Publications: pathImplicationPublications,
+				Token:        tokenOf(ctx.Session),
+				Cancellation: ConcretePresenceImplicationRollbackNode,
+				Barriers:     ConcretePresenceImplicationDescendantInvalidationBarriers,
+			})
+			if result.Canceled {
+				return result.Output
+			}
+			out = result.Output
+		}
 		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
 			_, directDynamicWrite := facts.DynamicIndexWrite(ctx.Point)
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, !directDynamicWrite)
@@ -333,7 +336,17 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 				return out
 			}
 		}
-		out = activatePathPresenceImplicationsWithToken(ctx.Registry, config.Visibility, ctx.Edge.From, out, tokenOf(ctx.Session))
+		implicationResult := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
+			Registry: ctx.Registry,
+			Resolver: config.Visibility,
+			Point:    ctx.Edge.From,
+			Output:   out,
+			Token:    tokenOf(ctx.Session),
+		})
+		if implicationResult.Canceled {
+			return implicationResult.Output
+		}
+		out = implicationResult.Output
 		for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
 			if poll.Poll() {
 				return out

@@ -148,13 +148,21 @@ func publishCallReturnPresenceImplication(
 	if !ok {
 		return out
 	}
-	out = out.AddPathPresenceImplication(pathevidence.NewPathPresenceImplication(
+	implication := pathevidence.NewPathPresenceImplication(
 		trigger,
 		relation.TriggerPresence,
 		targetK,
 		relation.TargetPresence,
-	))
-	return activatePathPresenceImplicationsWithToken(ctx.Registry, resolver, ctx.Point, out, tokenOf(ctx.Session))
+	)
+	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
+		Registry:     ctx.Registry,
+		Resolver:     resolver,
+		Point:        ctx.Point,
+		Output:       out,
+		Publications: []pathevidence.PathPresenceImplication{implication},
+		Token:        tokenOf(ctx.Session),
+	})
+	return result.Output
 }
 
 func applyPathValuePresenceImplication(
@@ -167,8 +175,15 @@ func applyPathValuePresenceImplication(
 	if !ok {
 		return out
 	}
-	out = out.AddPathPresenceImplication(implication)
-	return activatePathPresenceImplicationsWithToken(ctx.Registry, resolver, ctx.Point, out, tokenOf(ctx.Session))
+	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
+		Registry:     ctx.Registry,
+		Resolver:     resolver,
+		Point:        ctx.Point,
+		Output:       out,
+		Publications: []pathevidence.PathPresenceImplication{implication},
+		Token:        tokenOf(ctx.Session),
+	})
+	return result.Output
 }
 
 func pathValuePresenceImplicationAt(
@@ -268,31 +283,14 @@ func activatePathPresenceImplicationsWithToken(
 	out state.State,
 	token *cancellation.Token,
 ) state.State {
-	stateDomain := state.Domain(reg)
-	poll := cancellation.NewPoller(token, cancellation.EveryExpensive)
-	for {
-		if poll.Poll() {
-			return out
-		}
-		next := out
-		snapshot := next.PathPresenceImplicationsSnapshot(resolver.KeySpace())
-		if snapshot.Bottom || len(snapshot.Implications) == 0 {
-			return next
-		}
-		for _, implication := range snapshot.Implications {
-			if poll.Poll() {
-				return out
-			}
-			if !pathPresenceImplicationTriggered(reg, resolver, point, next, implication) {
-				continue
-			}
-			next = applyPathPresenceImplicationTarget(reg, resolver, point, next, implication)
-		}
-		if stateDomain.Equal(next, out) {
-			return out
-		}
-		out = next
-	}
+	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
+		Registry: reg,
+		Resolver: resolver,
+		Point:    point,
+		Output:   out,
+		Token:    token,
+	})
+	return result.Output
 }
 
 func pathPresenceImplicationTriggered(

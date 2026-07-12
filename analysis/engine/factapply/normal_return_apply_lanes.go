@@ -286,6 +286,7 @@ func normalReturnStaticMemberDeltaValue(reg *axis.Registry, value product.Value,
 }
 
 func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out state.State) state.State {
+	publications := make([]pathevidence.PathPresenceImplication, 0, len(ctx.normalFacts.PathPresenceImplications))
 	for _, fact := range ctx.normalFacts.PathPresenceImplications {
 		trigger, ok := ctx.keyspaceKey(fact.Trigger)
 		if !ok {
@@ -311,9 +312,17 @@ func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out
 		} else {
 			implication = pathevidence.NewPathPresenceImplication(trigger, fact.TriggerPresence, target, fact.TargetPresence)
 		}
-		out = out.AddPathPresenceImplication(implication)
+		publications = append(publications, implication)
 	}
-	return activatePathPresenceImplicationsWithToken(ctx.node.Registry, ctx.resolver, ctx.point, out, tokenOf(ctx.node.Session))
+	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
+		Registry:     ctx.node.Registry,
+		Resolver:     ctx.resolver,
+		Point:        ctx.point,
+		Output:       out,
+		Publications: publications,
+		Token:        tokenOf(ctx.node.Session),
+	})
+	return result.Output
 }
 
 func applyNormalReturnKeyMemberships(ctx normalReturnApplyContext, out state.State) state.State {
