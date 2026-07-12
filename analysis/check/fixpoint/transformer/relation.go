@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
@@ -54,23 +55,24 @@ type Builder struct {
 	arena       *Arena
 	caps        *OutputCapabilityRegistry
 	descriptors *DescriptorRegistry
+	plan        *operationplan.Plan
 }
 
-func NewBuilder(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry) *Builder {
-	return NewBuilderWithDescriptors(reg, shape, caps, DefaultDescriptorRegistry())
+func NewBuilder(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry, plan *operationplan.Plan) *Builder {
+	return NewBuilderWithDescriptors(reg, shape, caps, DefaultDescriptorRegistry(), plan)
 }
 
 // NewBuilderWithDescriptors binds admission to the same descriptor handlers
 // that will specialize the relation. This prevents a capability-only promise
 // from publishing an output for which no Summary transaction exists.
-func NewBuilderWithDescriptors(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry, descriptors *DescriptorRegistry) *Builder {
+func NewBuilderWithDescriptors(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry, descriptors *DescriptorRegistry, plan *operationplan.Plan) *Builder {
 	if caps == nil {
 		caps = DefaultOutputCapabilityRegistry()
 	}
 	if descriptors == nil {
 		descriptors = DefaultDescriptorRegistry()
 	}
-	return &Builder{shape: shape, arena: NewArena(reg), caps: caps, descriptors: descriptors}
+	return &Builder{shape: shape, arena: NewArena(reg), caps: caps, descriptors: descriptors, plan: plan}
 }
 func (b *Builder) Arena() *Arena { return b.arena }
 
@@ -78,8 +80,11 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 	if b == nil || b.arena == nil || b.arena.reg == nil {
 		return Relation{}, fmt.Errorf("transformer: nil builder registry")
 	}
-	if certificate.plan == nil {
-		return Relation{}, fmt.Errorf("transformer: missing semantic capability certificate")
+	if b.plan == nil {
+		return Relation{}, fmt.Errorf("transformer: builder has no operation plan provenance")
+	}
+	if certificate.plan != b.plan {
+		return Relation{}, fmt.Errorf("transformer: semantic capability certificate does not match builder operation plan")
 	}
 	if err := b.caps.Complete(stateCatalog()); err != nil {
 		return Relation{}, err

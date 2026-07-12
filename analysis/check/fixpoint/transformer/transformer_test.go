@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -17,13 +18,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
-func emptyCertificate(t testing.TB) SemanticCertificate {
+func emptyBuilder(t testing.TB, reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry) (*Builder, SemanticCertificate) {
 	t.Helper()
-	certificate, err := CertifyPlan(operationplan.New(cfg.New(), factflow.FactsInput{}), DefaultSemanticCapabilityRegistry())
+	plan := operationplan.New(cfg.New(), factflow.FactsInput{})
+	certificate, err := CertifyPlan(plan, DefaultSemanticCapabilityRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return certificate
+	return NewBuilder(reg, shape, caps, plan), certificate
 }
 
 func TestArenaHashConsesValuePathAndGuardDAGs(t *testing.T) {
@@ -114,16 +116,18 @@ func TestSemanticCapabilityMatrixCoversOperationPlanAndFailsClosed(t *testing.T)
 	if err := r.Complete(state.DefaultLaneCatalog()); err != nil {
 		t.Fatal(err)
 	}
-	for kind := operationplan.RootAssignment; kind <= operationplan.ExpressionCondition; kind++ {
+	for _, kind := range operationplan.Kinds() {
 		for _, lane := range state.DefaultLaneCatalog().LaneSet().IDs() {
 			if got := r.Fact(kind, lane); got != CapabilityUnsupported {
 				t.Fatalf("fact %d lane %q unexpectedly enabled", kind, lane)
 			}
 		}
 	}
-	for _, lane := range state.DefaultLaneCatalog().LaneSet().IDs() {
-		if got := r.Extension(operationplan.BodyGenericFor, lane); got != CapabilityUnsupported {
-			t.Fatalf("extension lane %q unexpectedly enabled", lane)
+	for _, extension := range operationplan.ExtensionKinds() {
+		for _, lane := range state.DefaultLaneCatalog().LaneSet().IDs() {
+			if got := r.Extension(extension, lane); got != CapabilityUnsupported {
+				t.Fatalf("extension %d lane %q unexpectedly enabled", extension, lane)
+			}
 		}
 	}
 	if got := r.Fact(operationplan.ExpressionCondition+1, state.LaneValues); got != CapabilityUnsupported {
@@ -136,23 +140,21 @@ func TestSemanticCapabilityMatrixCoversOperationPlanAndFailsClosed(t *testing.T)
 
 func TestCellResultRequiresExplicitAllLaneCertificate(t *testing.T) {
 	reg := standard.Registry()
-	b := NewBuilder(reg, Shape{Params: 1}, nil)
+	b, certificate := emptyBuilder(t, reg, Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam})
 	call := a.CellResultValue(CellRef{Function: 1}, p)
-	if relation, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCellResult, Descriptor: DescriptorReturn, Value: call}}}}); err == nil || relation.arena != nil {
+	if relation, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCellResult, Descriptor: DescriptorReturn, Value: call}}}}); err == nil || relation.arena != nil {
 		t.Fatalf("uncertified scalar cell result published: %#v, %v", relation, err)
 	}
 }
 
 func TestCellResultCannotBypassCapabilityThroughReturnOrGuard(t *testing.T) {
 	reg := standard.Registry()
-	b := NewBuilder(reg, Shape{Params: 1}, nil)
+	b, certificate := emptyBuilder(t, reg, Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam})
 	call := a.CellResultValue(CellRef{Function: 1}, p)
-	certificate := emptyCertificate(t)
-
 	if relation, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: call}}}}); err == nil || relation.arena != nil {
 		t.Fatalf("cell result escaped through return capability: %#v, %v", relation, err)
 	}
@@ -182,9 +184,45 @@ func TestCertificateCoversPresentCellsAndDependencies(t *testing.T) {
 	if _, err := CertifyPlan(plan, registry); err != nil {
 		t.Fatalf("fully certified plan rejected: %v", err)
 	}
-	b := NewBuilder(standard.Registry(), Shape{}, nil)
+	b := NewBuilder(standard.Registry(), Shape{}, nil, plan)
 	if relation, err := b.Build(SemanticCertificate{}, nil); err == nil || relation.arena != nil {
 		t.Fatalf("missing certificate published relation: %#v, %v", relation, err)
+	}
+}
+
+func TestBuilderRejectsCertificateFromDifferentOperationPlan(t *testing.T) {
+	planA := operationplan.New(cfg.New(), factflow.FactsInput{})
+	planB := operationplan.New(cfg.New(), factflow.FactsInput{})
+	certificateA, err := CertifyPlan(planA, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificateB, err := CertifyPlan(planB, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewBuilder(standard.Registry(), Shape{}, nil, planB)
+	a := b.Arena()
+	rows := []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: a.Constant(product.Top())}}}}
+	if relation, err := b.Build(certificateA, rows); err == nil || relation.arena != nil {
+		t.Fatalf("foreign operation-plan certificate published relation: %#v, %v", relation, err)
+	}
+	if relation, err := b.Build(certificateB, rows); err != nil || relation.arena == nil {
+		t.Fatalf("matching operation-plan certificate rejected: %#v, %v", relation, err)
+	}
+}
+
+func TestBuilderWithoutOperationPlanProvenanceFailsClosed(t *testing.T) {
+	plan := operationplan.New(cfg.New(), factflow.FactsInput{})
+	certificate, err := CertifyPlan(plan, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NewBuilder(standard.Registry(), Shape{}, nil, nil)
+	a := b.Arena()
+	rows := []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: a.Constant(product.Top())}}}}
+	if relation, err := b.Build(certificate, rows); err == nil || relation.arena != nil {
+		t.Fatalf("provenance-free builder published relation: %#v, %v", relation, err)
 	}
 }
 
@@ -207,20 +245,20 @@ func TestCertificateCoversPresentHigherLayerExtensions(t *testing.T) {
 }
 
 func TestBuildFailsAtomicallyForConditionalObligation(t *testing.T) {
-	b := NewBuilder(standard.Registry(), Shape{Params: 1}, nil)
+	b, certificate := emptyBuilder(t, standard.Registry(), Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
-	got, err := b.Build(emptyCertificate(t), []Row{{Guard: a.Truthy(p), Ops: []Operation{{Kind: OutputObligation, Descriptor: DescriptorObligation, Value: p}}}})
+	got, err := b.Build(certificate, []Row{{Guard: a.Truthy(p), Ops: []Operation{{Kind: OutputObligation, Descriptor: DescriptorObligation, Value: p}}}})
 	if err == nil || got.arena != nil {
 		t.Fatalf("conditional obligation partially published: %#v, %v", got, err)
 	}
 }
 
 func TestBuildFailsClosedForUnsupportedOperationLane(t *testing.T) {
-	b := NewBuilder(standard.Registry(), Shape{Params: 1}, nil)
+	b, certificate := emptyBuilder(t, standard.Registry(), Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
-	if got, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputEffect, Descriptor: "effect", Value: p}}}}); err == nil || got.arena != nil {
+	if got, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputEffect, Descriptor: "effect", Value: p}}}}); err == nil || got.arena != nil {
 		t.Fatalf("unsupported effect partially published: %#v, %v", got, err)
 	}
 }
@@ -232,10 +270,10 @@ func TestBuildFailsAtomicallyForUnknownSummaryOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	b := NewBuilder(standard.Registry(), Shape{Params: 1}, caps)
+	b, certificate := emptyBuilder(t, standard.Registry(), Shape{Params: 1}, caps)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
-	got, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputEffect, Descriptor: "future-summary-field", Value: p}}}})
+	got, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputEffect, Descriptor: "future-summary-field", Value: p}}}})
 	if err == nil || got.arena != nil {
 		t.Fatalf("unknown Summary output partially published: %#v, %v", got, err)
 	}
@@ -249,10 +287,10 @@ func TestBuildFailsAtomicallyWhenCertifiedSummaryOutputHasNoHandler(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	b := NewBuilder(standard.Registry(), Shape{Params: 1}, caps)
+	b, certificate := emptyBuilder(t, standard.Registry(), Shape{Params: 1}, caps)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
-	got, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorKind(kind), Value: p}}}})
+	got, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorKind(kind), Value: p}}}})
 	if err == nil || got.arena != nil {
 		t.Fatalf("handlerless Summary output partially published: %#v, %v", got, err)
 	}
@@ -260,14 +298,14 @@ func TestBuildFailsAtomicallyWhenCertifiedSummaryOutputHasNoHandler(t *testing.T
 
 func TestSpecializePreservesCorrelatedRowsAndExistingSummary(t *testing.T) {
 	reg := standard.Registry()
-	b := NewBuilder(reg, Shape{Params: 1, Results: 2}, nil)
+	b, certificate := emptyBuilder(t, reg, Shape{Params: 1, Results: 2}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
 	yesValue := typevalue.LiteralString(reg, "yes")
 	noValue := typevalue.LiteralString(reg, "no")
 	yes := a.Constant(yesValue)
 	no := a.Constant(noValue)
-	relation, err := b.Build(emptyCertificate(t), []Row{
+	relation, err := b.Build(certificate, []Row{
 		{Guard: a.Truthy(p), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: yes}, {Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 1, Value: p}}},
 		{Guard: a.Falsy(p), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: no}, {Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 1, Value: p}}},
 	})
@@ -303,12 +341,12 @@ func TestScalarCellResultReferenceUsesResolver(t *testing.T) {
 	if err := caps.Set(OutputCellResult, state.LaneValues, CapabilitySupported); err != nil {
 		t.Fatal(err)
 	}
-	b := NewBuilder(reg, Shape{Params: 1}, caps)
+	b, certificate := emptyBuilder(t, reg, Shape{Params: 1}, caps)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
 	cell := CellRef{Function: 9, Slot: 2}
 	call := a.CellResultValue(cell, p)
-	relation, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCellResult, Descriptor: DescriptorReturn, Value: call}}}})
+	relation, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCellResult, Descriptor: DescriptorReturn, Value: call}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,13 +364,13 @@ func TestScalarCellResultReferenceUsesResolver(t *testing.T) {
 
 func TestRelationJoinAndWidenLaws(t *testing.T) {
 	reg := standard.Registry()
-	b := NewBuilder(reg, Shape{Params: 1}, nil)
+	b, certificate := emptyBuilder(t, reg, Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
 	c1 := a.Constant(typevalue.LiteralString(reg, "a"))
 	c2 := a.Constant(typevalue.LiteralString(reg, "b"))
 	makeRelation := func(v ValueTerm) Relation {
-		r, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: v}}}})
+		r, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: v}}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -359,11 +397,10 @@ func TestRelationJoinAndWidenLaws(t *testing.T) {
 
 func TestDeterministicRowNormalization(t *testing.T) {
 	reg := standard.Registry()
-	b := NewBuilder(reg, Shape{Params: 1}, nil)
+	b, certificate := emptyBuilder(t, reg, Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
 	x := a.Constant(typevalue.LiteralString(reg, "x"))
-	certificate := emptyCertificate(t)
 	left, _ := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 1, Value: p}, {Kind: OutputReturn, Descriptor: DescriptorReturn, Value: x}}}})
 	right, _ := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: x}, {Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 1, Value: p}}}})
 	if !EqualRelation(left, right) {
@@ -402,10 +439,10 @@ func BenchmarkBindingCursorValue(b *testing.B) {
 
 func BenchmarkSpecializeSimple(b *testing.B) {
 	reg := standard.Registry()
-	builder := NewBuilder(reg, Shape{Params: 1}, nil)
+	builder, certificate := emptyBuilder(b, reg, Shape{Params: 1}, nil)
 	arena := builder.Arena()
 	p := arena.Root(Root{Kind: RootParam})
-	relation, err := builder.Build(emptyCertificate(b), []Row{{Guard: arena.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: p}}}})
+	relation, err := builder.Build(certificate, []Row{{Guard: arena.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: p}}}})
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -79,6 +79,24 @@ func TestFactsInputCatalogIsExhaustive(t *testing.T) {
 			if field.Type.Key() != exprType {
 				t.Fatalf("dependency %s uses key %v", d.field, field.Type.Key())
 			}
+			inputValue := reflect.New(typ).Elem()
+			fieldValue := inputValue.FieldByIndex(field.Index)
+			factMap := reflect.MakeMap(field.Type)
+			factValue := reflect.Zero(field.Type.Elem())
+			if field.Type.Elem().Kind() == reflect.Slice {
+				factValue = reflect.MakeSlice(field.Type.Elem(), 1, 1)
+			}
+			factMap.SetMapIndex(reflect.ValueOf(factflow.ExprRef(1)), factValue)
+			fieldValue.Set(factMap)
+			plan := New(nil, inputValue.Interface().(factflow.FactsInput))
+			observed := false
+			cur := plan.DependencyCursor()
+			for kind, ok := cur.Next(); ok; kind, ok = cur.Next() {
+				observed = observed || kind == d.kind
+			}
+			if !observed {
+				t.Fatalf("dependency compiler does not observe FactsInput.%s", d.field)
+			}
 		default:
 			t.Fatalf("%s has unspecified class %d", d.field, d.class)
 		}
