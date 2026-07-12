@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -118,6 +119,23 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 // contextual Relation on CFG/topology transfer failure and never publishes
 // partial rows.
 func (p *PreparedPlanCompiler) Evaluate() Relation {
+	return p.evaluate(RelationView{}, nil)
+}
+
+// EvaluateDirect composes a frozen acyclic lexical dependency catalog. Empty,
+// contextual, widened, foreign-shape, and undeclared dependency relations fail
+// the complete caller relation closed.
+func (p *PreparedPlanCompiler) EvaluateDirect(view RelationView, catalog DirectCallCatalog) Relation {
+	if p == nil || catalog.PointCount() != p.plan.PointCount() {
+		return Relation{contextual: "compiler: direct-call catalog width differs from plan", widened: true}
+	}
+	for _, lane := range state.DefaultLanes() {
+		_ = p.builder.caps.SetSummary("MaySuspend", lane, CapabilitySupported)
+	}
+	return p.evaluate(view, &catalog)
+}
+
+func (p *PreparedPlanCompiler) evaluate(view RelationView, direct *DirectCallCatalog) Relation {
 	if p == nil || p.compiler == nil || p.builder == nil {
 		return Relation{contextual: "compiler: nil prepared plan", widened: true}
 	}
@@ -125,6 +143,7 @@ func (p *PreparedPlanCompiler) Evaluate() Relation {
 		return Relation{shape: p.shape, arena: p.builder.Arena(), contextual: reason, widened: true}
 	}
 	ctx := p.base
+	ctx.directCalls = direct
 	initial := SymbolicCFGRow{
 		Guard: p.builder.Arena().True(), Values: ctx.locals, genericBindings: ctx.genericBindings,
 	}
@@ -134,36 +153,9 @@ func (p *PreparedPlanCompiler) Evaluate() Relation {
 			initial.Output.NormalReturnParams[i] = product.Top()
 		}
 	}
-	rowsByPoint, err := SolveAcyclicCFGRows(p.graph, p.builder.Arena(), initial,
-		func(point cfg.Point, row SymbolicCFGRow) (SymbolicCFGRow, error) {
-			rowCtx := ctx
-			rowCtx.locals = row.Values
-			rowCtx.genericBindings = row.genericBindings
-			rowCtx.rowEffects = &row.Effects
-			rowCtx.rowOutput = &row.Output
-			cursor := p.plan.Cursor(point)
-			for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-				handler := p.compiler.facts[cell.Kind()]
-				if err := handler.Preflight(rowCtx, point); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("%s: %w", cell.Kind(), err)
-				}
-				if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("%s: %w", cell.Kind(), err)
-				}
-			}
-			extensions := p.plan.ExtensionCursor(point)
-			for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
-				handler := p.compiler.extensions[cell.Kind()]
-				if err := handler.Preflight(rowCtx, point); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
-				}
-				if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
-				}
-			}
-			row.Values = rowCtx.locals
-			row.genericBindings = rowCtx.genericBindings
-			return row, nil
+	rowsByPoint, err := SolveAcyclicCFGExpandedRows(p.graph, p.builder.Arena(), initial,
+		func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+			return p.lowerPreparedPoint(ctx, view, direct, point, row)
 		},
 		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 			return compileBranchEdge(ctx, point, row, cond)
@@ -185,6 +177,136 @@ func (p *PreparedPlanCompiler) Evaluate() Relation {
 	return relation
 }
 
+func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view RelationView, direct *DirectCallCatalog, point cfg.Point, initial SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+	rows := []SymbolicCFGRow{initial}
+	cursor := p.plan.Cursor(point)
+	for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
+		handler := p.compiler.facts[cell.Kind()]
+		next := make([]SymbolicCFGRow, 0, len(rows))
+		for _, row := range rows {
+			rowCtx := base
+			rowCtx.locals = row.Values
+			rowCtx.genericBindings = row.genericBindings
+			rowCtx.rowEffects = &row.Effects
+			rowCtx.rowOutput = &row.Output
+			if err := handler.Preflight(rowCtx, point); err != nil {
+				return nil, fmt.Errorf("%s: %w", cell.Kind(), err)
+			}
+			if cell.Kind() == operationplan.CallSite && direct != nil {
+				if target, isDirect := direct.Lookup(point); isDirect {
+					callee, found := view.Lookup(target.Cell)
+					if !found || callee.ContextualReason() != "" || callee.Widened() || callee.Rows() == 0 || callee.Shape() != target.Shape {
+						return nil, fmt.Errorf("direct call: dependency %v is unresolved, widened, contextual, or foreign-shaped", target.Cell)
+					}
+					site, _ := rowCtx.facts.CallSiteView(point)
+					bindings, err := exactDirectCallBindings(rowCtx, target.Shape, site)
+					if err != nil {
+						return nil, fmt.Errorf("direct call: %w", err)
+					}
+					composed, err := ComposeDirectCallRows(p.builder, p.shape, row, callee, bindings, site, 256)
+					if err != nil {
+						return nil, err
+					}
+					next = append(next, composed...)
+					continue
+				}
+			}
+			if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
+				return nil, fmt.Errorf("%s: %w", cell.Kind(), err)
+			}
+			row.Values = rowCtx.locals
+			row.genericBindings = rowCtx.genericBindings
+			next = append(next, row)
+		}
+		rows = next
+	}
+	// Extension cursors must be replayed independently for every alternative.
+	for index := range rows {
+		rowCtx := base
+		rowCtx.locals = rows[index].Values
+		rowCtx.genericBindings = rows[index].genericBindings
+		rowCtx.rowEffects = &rows[index].Effects
+		rowCtx.rowOutput = &rows[index].Output
+		extensions := p.plan.ExtensionCursor(point)
+		for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
+			handler := p.compiler.extensions[cell.Kind()]
+			if err := handler.Preflight(rowCtx, point); err != nil {
+				return nil, fmt.Errorf("extension %d: %w", cell.Kind(), err)
+			}
+			if err := handler.Lower(rowCtx, point, &rows[index].Operations); err != nil {
+				return nil, fmt.Errorf("extension %d: %w", cell.Kind(), err)
+			}
+		}
+		rows[index].Values = rowCtx.locals
+		rows[index].genericBindings = rowCtx.genericBindings
+	}
+	return rows, nil
+}
+
+func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.CallSiteView) (DirectCallBindings, error) {
+	if shape.Captures != 0 || shape.Globals != 0 || shape.Results != 0 || shape.HeapTemplates != 0 {
+		return DirectCallBindings{}, fmt.Errorf("non-parameter callee boundary")
+	}
+	sources := make([]factflow.ValueSource, 0, 1+site.ArgumentSourceCount())
+	if receiver, ok := site.ReceiverSource(); ok {
+		sources = append(sources, receiver)
+	} else if _, ok := site.ReceiverPath(); ok {
+		return DirectCallBindings{}, fmt.Errorf("receiver path has no immutable value source")
+	}
+	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		sources = append(sources, source)
+		return true
+	})
+	if len(sources) != int(shape.Params) {
+		return DirectCallBindings{}, fmt.Errorf("argument width %d differs from callee params %d", len(sources), shape.Params)
+	}
+	out := DirectCallBindings{Values: make([]ValueTerm, len(sources)), Paths: make([]PathTerm, len(sources))}
+	for i, source := range sources {
+		if source.OpenTail || source.Expanded {
+			return DirectCallBindings{}, fmt.Errorf("argument %d has open or expanded shape", i)
+		}
+		scalar := source
+		scalar.Adjusted = false
+		value, err := exactCompilerSourceTerm(ctx, scalar)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("argument %d value: %w", i, err)
+		}
+		path, err := exactDirectCallSourcePath(ctx, source)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("argument %d path: %w", i, err)
+		}
+		out.Values[i], out.Paths[i] = value, path
+	}
+	return out, nil
+}
+
+func exactDirectCallSourcePath(ctx planCompileContext, source factflow.ValueSource) (PathTerm, error) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		p, ok := ctx.facts.ExpressionPathRef(source.ExprRef)
+		if !ok {
+			return 0, fmt.Errorf("expression has no canonical path")
+		}
+		binding, err := exactBoundaryPathBinding(ctx, p)
+		if err != nil {
+			return 0, err
+		}
+		_, term, err := ctx.builder.Arena().LowerBoundaryPathValue(p, binding)
+		return term, err
+	}
+	if source.Kind == factflow.ValueSourcePath {
+		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
+		if !ok || sym == 0 || version != 0 || suffix != "" {
+			return 0, fmt.Errorf("path source is not a canonical root")
+		}
+		index, ok := ctx.plan.BoundaryParamIndex(sym)
+		if !ok {
+			return 0, fmt.Errorf("path root %d is not caller boundary", sym)
+		}
+		return ctx.builder.Arena().Path(Root{Kind: RootParam, Index: uint32(index)}), nil
+	}
+	return 0, fmt.Errorf("source kind %d has no caller path", source.Kind)
+}
+
 // Equation publishes this prepared compiler through the persistent lexical
 // RelationCell lifecycle. The base tranche has no direct dependencies.
 func (p *PreparedPlanCompiler) Equation(ref CellRef) (*PreparedEquation, error) {
@@ -196,6 +318,27 @@ func (p *PreparedPlanCompiler) Equation(ref CellRef) (*PreparedEquation, error) 
 			return Relation{}, err
 		}
 		return p.Evaluate(), nil
+	})
+}
+
+// DirectEquation publishes an acyclic direct-call equation. A self edge is
+// rejected at preparation; longer cycles encounter unresolved Bottom
+// dependencies during synchronous SCC evaluation and become contextual Top.
+func (p *PreparedPlanCompiler) DirectEquation(ref CellRef, catalog DirectCallCatalog) (*PreparedEquation, error) {
+	if p == nil || catalog.PointCount() != p.plan.PointCount() {
+		return nil, fmt.Errorf("compiler: direct-call catalog width differs from plan")
+	}
+	dependencies := catalog.Cells()
+	for _, dependency := range dependencies {
+		if dependency == ref {
+			return nil, fmt.Errorf("compiler: recursive direct relation cell %v requires contextual solver", ref)
+		}
+	}
+	return NewPreparedEquation(ref, p.builder, dependencies, func(ctx context.Context, view RelationView, _ *Builder) (Relation, error) {
+		if err := ctx.Err(); err != nil {
+			return Relation{}, err
+		}
+		return p.EvaluateDirect(view, catalog), nil
 	})
 }
 

@@ -63,6 +63,116 @@ func TestPreparedPlanCompilerReusesArenaAndMatchesLegacy(t *testing.T) {
 	}
 }
 
+func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *testing.T) {
+	reg := standard.Registry()
+	calleeShape := Shape{Params: 2}
+	calleePlan := operationplan.New(cfg.New(), factflow.FactsInput{})
+	calleeCertificate, err := CertifyPlan(calleePlan, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calleeBuilder := NewBuilder(reg, calleeShape, DefaultOutputCapabilityRegistry(), calleePlan)
+	calleeParam := calleeBuilder.Arena().Root(Root{Kind: RootParam, Index: 1})
+	left := calleeBuilder.Arena().Constant(typevalue.LiteralString(reg, "left"))
+	right := calleeBuilder.Arena().Constant(typevalue.LiteralString(reg, "right"))
+	nilValue := calleeBuilder.Arena().Constant(typevalue.Nil(reg))
+	callee, err := calleeBuilder.Build(calleeCertificate, []Row{
+		{Guard: calleeBuilder.Arena().Truthy(calleeParam), Ops: []Operation{
+			{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: left},
+			{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 1, Value: nilValue},
+		}},
+		{Guard: calleeBuilder.Arena().Falsy(calleeParam), Ops: []Operation{
+			{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: nilValue},
+			{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 1, Value: right},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	graph := cfg.New()
+	callPoint := graph.AddNode(cfg.NodeCall)
+	returnPoint := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), callPoint, false)
+	graph.AddEdge(callPoint, returnPoint, false)
+	graph.AddEdge(returnPoint, graph.Exit(), false)
+	callerParam0, callerParam1 := symbol.ID(201), symbol.ID(202)
+	result0, result1 := symbol.ID(203), symbol.ID(204)
+	scalarShape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	arg0, _ := factflow.NewPathValueSource(pathdom.NewPath(callerParam0, "a").Key(), 0, 0, 0, scalarShape)
+	arg1, _ := factflow.NewPathValueSource(pathdom.NewPath(callerParam1, "b").Key(), 1, 1, 0, scalarShape)
+	resultSource0, _ := factflow.NewPathValueSource(pathdom.NewPath(result0, "value").Key(), 0, 0, 0, scalarShape)
+	resultSource1, _ := factflow.NewPathValueSource(pathdom.NewPath(result1, "err").Key(), 1, 1, 0, scalarShape)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		Point: callPoint, HasPoint: true, Final: true, Expanded: true,
+		ArgumentSources: []factflow.ValueSource{arg0, arg1},
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result0, pathdom.NewPath(result0, "value")),
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, result1, pathdom.NewPath(result1, "err")),
+		},
+	})
+	callerPlan := operationplan.New(graph, factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{callPoint: site},
+		Returns:   map[cfg.Point]factflow.Return{returnPoint: factflow.NewReturn([]factflow.ValueSource{resultSource0, resultSource1})},
+	}).WithBoundaryParams([]symbol.ID{callerParam0, callerParam1})
+	prepared, err := NewPlanCompiler().Prepare(reg, graph, callerPlan, Shape{Params: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calleeRef, callerRef := CellRef{Function: 301}, CellRef{Function: 302}
+	catalog, err := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{callPoint: {Cell: calleeRef, Shape: calleeShape}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerEquation, err := prepared.DirectEquation(callerRef, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerCell, _ := callerEquation.Cell()
+	calleeCell := RelationCell{Ref: calleeRef, Arena: callee.arena, Shape: callee.shape, Equation: func(context.Context, RelationView) (Relation, error) { return callee, nil }}
+	snapshot, err := SolveRelationCells(context.Background(), []RelationCell{callerCell, calleeCell}, RelationSolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, ok := snapshot.Lookup(callerRef)
+	if !ok || caller.ContextualReason() != "" || caller.Widened() || caller.Rows() != 2 {
+		t.Fatalf("direct caller relation = %#v/%v", caller, ok)
+	}
+	for _, test := range []struct {
+		key  product.Value
+		want summary.Summary
+	}{
+		{key: typevalue.LiteralBool(reg, true), want: summary.Summary{Returns: []product.Value{typevalue.LiteralString(reg, "left"), typevalue.Nil(reg)}}},
+		{key: typevalue.LiteralBool(reg, false), want: summary.Summary{Returns: []product.Value{typevalue.Nil(reg), typevalue.LiteralString(reg, "right")}}},
+	} {
+		cursor, _ := NewBindingCursor(Shape{Params: 2}, []product.Value{product.Top(), test.key}, nil)
+		got, exact := caller.Specialize(cursor, nil, nil)
+		if !exact || len(got.Returns) != 2 || !product.Equal(reg, got.Returns[0], test.want.Returns[0]) || !product.Equal(reg, got.Returns[1], test.want.Returns[1]) || len(got.ReturnConditionSlotRefinements) == 0 || len(got.ReturnPresenceRelations) == 0 {
+			t.Fatalf("direct caller specialization exact=%v\n got=%#v\nwant=%#v", exact, got, test.want)
+		}
+	}
+	selfCatalog, _ := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{callPoint: {Cell: callerRef, Shape: calleeShape}})
+	if _, err := prepared.DirectEquation(callerRef, selfCatalog); err == nil {
+		t.Fatal("recursive direct equation was not rejected")
+	}
+	leftRef, rightRef := CellRef{Function: 401}, CellRef{Function: 402}
+	leftCatalog, _ := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{callPoint: {Cell: rightRef, Shape: calleeShape}})
+	rightCatalog, _ := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{callPoint: {Cell: leftRef, Shape: calleeShape}})
+	leftEquation, _ := prepared.DirectEquation(leftRef, leftCatalog)
+	rightEquation, _ := prepared.DirectEquation(rightRef, rightCatalog)
+	leftCell, _ := leftEquation.Cell()
+	rightCell, _ := rightEquation.Cell()
+	cycle, err := SolveRelationCells(context.Background(), []RelationCell{leftCell, rightCell}, RelationSolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftRelation, _ := cycle.Lookup(leftRef)
+	rightRelation, _ := cycle.Lookup(rightRef)
+	if leftRelation.ContextualReason() == "" || rightRelation.ContextualReason() == "" {
+		t.Fatal("mutually recursive direct equations converged to under-approximate Bottom")
+	}
+}
+
 func TestPlanCompilerDirectScalarReturnSpecializesExactly(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

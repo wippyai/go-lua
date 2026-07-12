@@ -49,6 +49,7 @@ type planCompileContext struct {
 	rowEffects        *[]EffectTerm
 	rowOutput         *summary.Summary
 	genericBindings   map[symbol.ID]symbolicGenericBinding
+	directCalls       *DirectCallCatalog
 }
 
 type symbolicGenericBinding struct {
@@ -126,6 +127,14 @@ type signatureCallPlanHandler struct{}
 
 func (signatureCallPlanHandler) Kind() operationplan.Kind { return operationplan.CallSite }
 func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) error {
+	if ctx.directCalls != nil {
+		if _, direct := ctx.directCalls.Lookup(point); direct {
+			if _, ok := ctx.facts.CallSiteView(point); !ok {
+				return fmt.Errorf("direct call: call-site payload missing")
+			}
+			return nil
+		}
+	}
 	op, ok := ctx.plan.SignatureCallOperation(point)
 	if !ok {
 		return fmt.Errorf("signature call: resolved producer missing")
@@ -161,6 +170,11 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 	return fmt.Errorf("signature call: iterator result is not owned by generic-for")
 }
 func (signatureCallPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _ *[]Operation) error {
+	if ctx.directCalls != nil {
+		if _, direct := ctx.directCalls.Lookup(point); direct {
+			return nil
+		}
+	}
 	if op, ok := ctx.plan.SignatureCallOperation(point); ok {
 		if _, iterator := iteration.ActiveIterator(op.Signature().Effect.Labels); iterator {
 			operational := op.Signature().OperationalEffects
