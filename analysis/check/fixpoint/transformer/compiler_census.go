@@ -3,6 +3,7 @@ package transformer
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -35,7 +36,9 @@ func (c *PlanCompiler) EligibilityCensus(reg *axis.Registry, graph cfg.Graph, pl
 		locals:  make(map[symbol.ID]ValueTerm), expressions: make(map[factflow.ExprRef][]ValueTerm), allocationEffects: make(map[cfg.Point]EffectTerm), genericBindings: make(map[symbol.ID]symbolicGenericBinding),
 	}
 	var rowEffects []EffectTerm
+	var rowOutput summary.Summary
 	ctx.rowEffects = &rowEffects
+	ctx.rowOutput = &rowOutput
 	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
 		return []PlanEligibilityEntry{{Family: "compiler", Reason: "boundary: " + err.Error()}}
 	}

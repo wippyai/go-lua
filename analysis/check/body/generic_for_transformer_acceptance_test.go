@@ -1,7 +1,6 @@
 package body
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
@@ -9,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
-func TestGenericForTransformerAcceptanceNamesSymbolicCFGBlocker(t *testing.T) {
+func TestGenericForTransformerAdmitsCanonicalIPairsZeroVsOnePlusRows(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `function f(xs: {string}): string?
 		for _, value in ipairs(xs) do return value end
@@ -23,12 +22,10 @@ func TestGenericForTransformerAcceptanceNamesSymbolicCFGBlocker(t *testing.T) {
 		t.Fatalf("boundary params = %v, want one", got)
 	}
 	relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{Params: 1})
-	reason := relation.ContextualReason()
-	if reason == "" {
-		t.Fatal("generic-for loop unexpectedly admitted without symbolic CFG rows")
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatalf("generic-for relation compiled contextually: %s", reason)
 	}
-	if !strings.Contains(reason, "CallSites") && !strings.Contains(reason, "branching CFG") && !strings.Contains(reason, "cyclic CFG") && !strings.Contains(reason, "missing-condition-source") {
-		t.Fatalf("generic-for acceptance blocker = %q, want call producer or symbolic CFG rows/SCC", reason)
+	if relation.Rows() != 2 {
+		t.Fatalf("generic-for relation rows = %d, want zero and 1+ alternatives", relation.Rows())
 	}
-	t.Logf("blocked until signature CallSite consumption and symbolic CFG rows/SCC: %s", reason)
 }

@@ -49,6 +49,7 @@ type planCompileContext struct {
 	expressions       map[factflow.ExprRef][]ValueTerm
 	allocationEffects map[cfg.Point]EffectTerm
 	rowEffects        *[]EffectTerm
+	rowOutput         *summary.Summary
 	genericBindings   map[symbol.ID]symbolicGenericBinding
 }
 
@@ -153,6 +154,17 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 	return fmt.Errorf("signature call: iterator result is not owned by generic-for")
 }
 func (signatureCallPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _ *[]Operation) error {
+	if op, ok := ctx.plan.SignatureCallOperation(point); ok {
+		if _, iterator := iteration.ActiveIterator(op.Signature().Effect.Labels); iterator {
+			operational := op.Signature().OperationalEffects
+			if operational == nil || !operational.SuspensionKnown || operational.MaySuspend {
+				if ctx.rowOutput == nil {
+					return fmt.Errorf("signature call: iterator row output sink missing")
+				}
+				ctx.rowOutput.MaySuspend = true
+			}
+		}
+	}
 	if effect := ctx.allocationEffects[point]; effect != 0 {
 		if ctx.rowEffects == nil {
 			return fmt.Errorf("signature call: allocation row sink missing")
@@ -310,7 +322,11 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	}
 	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
 	outputCaps := DefaultOutputCapabilityRegistry()
-	for _, kind := range []callboundary.BoundaryFactKind{"NormalReturnParams", "NormalReturnFacts"} {
+	summaryKinds := []callboundary.BoundaryFactKind{"NormalReturnParams", "NormalReturnFacts"}
+	if planHasIteratorCall(plan) {
+		summaryKinds = append(summaryKinds, "MaySuspend")
+	}
+	for _, kind := range summaryKinds {
 		for _, lane := range state.DefaultLanes() {
 			_ = outputCaps.SetSummary(kind, lane, CapabilitySupported)
 		}
@@ -379,6 +395,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 			rowCtx.locals = row.Values
 			rowCtx.genericBindings = row.genericBindings
 			rowCtx.rowEffects = &row.Effects
+			rowCtx.rowOutput = &row.Output
 			cursor := plan.Cursor(point)
 			for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
 				handler := c.facts[cell.Kind()]
@@ -423,10 +440,27 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	return relation
 }
 
+func planHasIteratorCall(plan *operationplan.Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for rawPoint := 0; rawPoint < plan.PointCount(); rawPoint++ {
+		if op, ok := plan.SignatureCallOperation(cfg.Point(rawPoint)); ok {
+			if _, iterator := iteration.ActiveIterator(op.Signature().Effect.Labels); iterator {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 	arena := base.builder.Arena()
 	if base.facts.BranchEdgeUnreachable(point, cond) {
 		return row, arena.False(), nil
+	}
+	if genericForBranchHead(base.graph, base.plan, point) {
+		return row, arena.True(), nil
 	}
 	ctx := base
 	ctx.locals = row.Values
@@ -466,6 +500,26 @@ func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFG
 		return row, truthy, nil
 	}
 	return row, falsy, nil
+}
+
+func genericForBranchHead(graph cfg.Graph, plan *operationplan.Plan, point cfg.Point) bool {
+	if graph == nil || plan == nil || !graph.IsBranch(point) {
+		return false
+	}
+	trueGeneric, falseGeneric := false, false
+	for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
+		cond, ok := graph.EdgeCond(point, successor)
+		if !ok {
+			return false
+		}
+		_, generic := plan.GenericForOperation(successor)
+		if cond {
+			trueGeneric = generic
+		} else {
+			falseGeneric = generic
+		}
+	}
+	return trueGeneric && !falseGeneric
 }
 
 func appendRepresentedBranchEvidenceOutput(ctx planCompileContext, branch factapply.BranchAlgebra, cond bool, out *summary.Summary) {

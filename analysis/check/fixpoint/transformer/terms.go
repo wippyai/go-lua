@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 )
 
 type ValueTerm uint32
@@ -484,14 +485,22 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 		}
 		return product.Value{}, false
 	case valueIteratorProjection:
-		if context.IteratorProjection == nil || len(n.args) != 1 {
+		if len(n.args) != 1 {
 			return product.Value{}, false
 		}
 		source, ok := a.evalValue(n.args[0], cursor, context)
 		if !ok {
 			return product.Value{}, false
 		}
-		return context.IteratorProjection(n.iterator, n.variableIndex, source)
+		if context.IteratorProjection != nil {
+			if value, resolved := context.IteratorProjection(n.iterator, n.variableIndex, source); resolved {
+				return value, true
+			}
+		}
+		// The canonical Lua iterator projection is pure for type/value-shaped
+		// containers and requires no caller state. Context resolvers remain the
+		// precision extension for heap/member-backed containers.
+		return luasourcevalue.IteratorVariableValue(a.reg, nil, n.iterator, n.variableIndex, source, nil, false)
 	case valueAllocationResult:
 		return a.allocationResult(n.allocation, n.resultIndex)
 	default:

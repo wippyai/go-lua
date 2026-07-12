@@ -42,8 +42,9 @@ func TestIteratorProjectionTermUsesCanonicalIteratorLowering(t *testing.T) {
 	if elementType, _ := typevalue.TypeOf(reg, element); !typ.TypeEquals(elementType, typ.String) {
 		t.Fatalf("element type = %v", elementType)
 	}
-	if _, ok := arena.evalValue(elementTerm, cursor, SpecializationContext{}); ok {
-		t.Fatal("missing canonical iterator resolver did not fail closed")
+	pureElement, ok := arena.evalValue(elementTerm, cursor, SpecializationContext{})
+	if !ok || !product.Equal(reg, pureElement, element) {
+		t.Fatal("pure canonical iterator projection differed without a context resolver")
 	}
 }
 
