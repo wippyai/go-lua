@@ -202,11 +202,11 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 					return summary.Summary{}, false
 				}
 			}
-			fragment, valid := resolve(resolved)
-			if !valid || !r.authority.allowsEffectFragment(resolved, fragment) {
+			resolution, valid := resolve(resolved)
+			if !valid || !r.authority.allowsEffectResolution(resolved, resolution) {
 				return summary.Summary{}, false
 			}
-			candidate = summary.Join(reg, candidate, fragment)
+			candidate = summary.Join(reg, candidate, resolution.Summary)
 		}
 		if !have {
 			accumulated = candidate

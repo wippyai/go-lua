@@ -24,7 +24,7 @@ import (
 // for a frozen relation. It emits only the existing Summary.NormalReturnFacts
 // schema; caller State application remains owned by the call adapter.
 func ResolvedEffectSummaryResolver(reg *axis.Registry) transformer.EffectSummaryResolver {
-	return func(effects []transformer.ResolvedEffect) (summary.Summary, bool) {
+	return func(effects []transformer.ResolvedEffect) (transformer.EffectResolution, bool) {
 		return LowerResolvedEffects(reg, effects)
 	}
 }
@@ -40,9 +40,9 @@ func ResolvedEffectSummaryResolver(reg *axis.Registry) transformer.EffectSummary
 // The restrictions are intentionally stronger than soundness alone. They make
 // the existing PathInvalidations + DynamicIndexFacts call-boundary lanes exact
 // with the concrete N3/N4 transaction without adding another effect schema.
-func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffect) (summary.Summary, bool) {
+func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffect) (transformer.EffectResolution, bool) {
 	if reg == nil || len(effects) == 0 {
-		return summary.Summary{}, false
+		return transformer.EffectResolution{}, false
 	}
 	if effects[0].Kind == transformer.EffectAllocationTemplate {
 		return lowerResolvedAllocations(reg, effects)
@@ -50,21 +50,22 @@ func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffe
 	mutations := make([]transformer.ResolvedIndexMutation, len(effects))
 	for i, effect := range effects {
 		if effect.Kind != transformer.EffectIndexMutation {
-			return summary.Summary{}, false
+			return transformer.EffectResolution{}, false
 		}
 		mutation := effect.Mutation
 		if !safeResolvedBoundaryMutation(reg, mutation) {
-			return summary.Summary{}, false
+			return transformer.EffectResolution{}, false
 		}
 		for j := 0; j < i; j++ {
 			if mutation.Table.Overlaps(mutations[j].Table) {
-				return summary.Summary{}, false
+				return transformer.EffectResolution{}, false
 			}
 		}
 		mutations[i] = mutation
 	}
 
 	var facts callboundary.NormalReturnFacts
+	contributions := make([]transformer.EffectContribution, 0, len(mutations))
 	for _, mutation := range mutations {
 		// Append through the storage descriptor rather than assembling parallel
 		// lane state. Summary.Normalize below supplies the canonical per-lane
@@ -101,52 +102,70 @@ func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffe
 			}}
 		}
 		facts = facts.Append(fragment)
+		kinds := []callboundary.BoundaryFactKind{
+			callboundary.BoundaryFactKind(callboundary.LanePathInvalidations),
+			callboundary.BoundaryFactKind(callboundary.LaneDynamicIndexFacts),
+		}
+		if !mutation.KeyPath.IsEmpty() {
+			kinds = append(kinds, callboundary.BoundaryFactKind(callboundary.LaneKeyMemberships))
+		}
+		contributions = append(contributions, transformer.EffectContribution{
+			Kind: transformer.EffectIndexMutation, BoundaryKinds: kinds,
+		})
 	}
 	out := summary.NormalizeOwned(reg, summary.Summary{NormalReturnFacts: facts})
 	if out.NormalReturnFacts.Empty() {
-		return summary.Summary{}, false
+		return transformer.EffectResolution{}, false
 	}
-	return out, true
+	return transformer.EffectResolution{Summary: out, Contributions: contributions}, true
 }
 
-func lowerResolvedAllocations(reg *axis.Registry, effects []transformer.ResolvedEffect) (summary.Summary, bool) {
+func lowerResolvedAllocations(reg *axis.Registry, effects []transformer.ResolvedEffect) (transformer.EffectResolution, bool) {
 	objects := make(map[identity.ID]heapidentity.TableObject, len(effects))
 	fresh := make([]summary.FreshHeapAllocation, 0, len(effects))
+	contributions := make([]transformer.EffectContribution, 0, len(effects))
 	ks := keyspace.New()
 	for _, effect := range effects {
 		if effect.Kind != transformer.EffectAllocationTemplate {
-			return summary.Summary{}, false
+			return transformer.EffectResolution{}, false
 		}
 		allocation := effect.Allocation
 		materialized, exact := effectlowering.MaterializeStaticAllocation(
 			reg, nil, ks, cfg.Point(allocation.Site.Ordinal), allocation.Template.Template(),
 		)
 		if !exact || !product.Equal(reg, materialized.Result, allocation.Result) {
-			return summary.Summary{}, false
+			return transformer.EffectResolution{}, false
 		}
 		id, ok := product.Get(reg, allocation.Result, identity.Key).ID()
 		if !ok || id == (identity.ID{}) {
-			return summary.Summary{}, false
+			return transformer.EffectResolution{}, false
 		}
 		for objectID, object := range materialized.Objects {
 			if _, duplicate := objects[objectID]; duplicate {
-				return summary.Summary{}, false
+				return transformer.EffectResolution{}, false
 			}
 			objects[objectID] = object
 			placementValue, ok := materialized.Placements[objectID]
 			if !ok {
-				return summary.Summary{}, false
+				return transformer.EffectResolution{}, false
 			}
 			fresh = append(fresh, summary.FreshHeapAllocation{ID: objectID, Placement: placementValue})
 		}
+		contributions = append(contributions, transformer.EffectContribution{
+			Kind: transformer.EffectAllocationTemplate,
+			BoundaryKinds: []callboundary.BoundaryFactKind{
+				callboundary.BoundaryFactKind("HeapTableObjects"),
+				callboundary.BoundaryFactKind("FreshHeapAllocations"),
+			},
+		})
 	}
 	out := summary.NormalizeOwned(reg, summary.Summary{
 		HeapTableObjects: objects, FreshHeapAllocations: fresh, HeapKeySpace: ks,
 	})
 	if len(out.HeapTableObjects) != len(effects) || len(out.FreshHeapAllocations) != len(effects) {
-		return summary.Summary{}, false
+		return transformer.EffectResolution{}, false
 	}
-	return out, true
+	return transformer.EffectResolution{Summary: out, Contributions: contributions}, true
 }
 
 func safeResolvedBoundaryMutation(reg *axis.Registry, mutation transformer.ResolvedIndexMutation) bool {

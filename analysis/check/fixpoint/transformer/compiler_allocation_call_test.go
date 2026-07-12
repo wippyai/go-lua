@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -48,21 +49,26 @@ func TestPlanCompilerAllocationCallSharesReturnAndHeapTransaction(t *testing.T) 
 		t.Fatalf("allocation relation contextual: %s", reason)
 	}
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
-	got, exact := relation.SpecializeWithEffects(cursor, nil, SpecializationContext{}, func(effects []ResolvedEffect) (summary.Summary, bool) {
+	got, exact := relation.SpecializeWithEffects(cursor, nil, SpecializationContext{}, func(effects []ResolvedEffect) (EffectResolution, bool) {
 		if len(effects) != 1 || effects[0].Kind != EffectAllocationTemplate {
-			return summary.Summary{}, false
+			return EffectResolution{}, false
 		}
 		allocation := effects[0].Allocation
 		ks := keyspace.New()
 		materialized, ok := effectlowering.MaterializeStaticAllocation(reg, nil, ks, cfg.Point(allocation.Site.Ordinal), allocation.Template.Template())
 		if !ok {
-			return summary.Summary{}, false
+			return EffectResolution{}, false
 		}
 		fresh := make([]summary.FreshHeapAllocation, 0, len(materialized.Placements))
 		for id, placement := range materialized.Placements {
 			fresh = append(fresh, summary.FreshHeapAllocation{ID: id, Placement: placement})
 		}
-		return summary.Summary{HeapTableObjects: materialized.Objects, FreshHeapAllocations: fresh, HeapKeySpace: ks}, true
+		return EffectResolution{
+			Summary: summary.Summary{HeapTableObjects: materialized.Objects, FreshHeapAllocations: fresh, HeapKeySpace: ks},
+			Contributions: []EffectContribution{{Kind: EffectAllocationTemplate, BoundaryKinds: []callboundary.BoundaryFactKind{
+				"HeapTableObjects", "FreshHeapAllocations",
+			}}},
+		}, true
 	})
 	if !exact || len(got.Returns) != 1 || len(got.HeapTableObjects) != 1 || len(got.FreshHeapAllocations) != 1 {
 		t.Fatalf("allocation specialization exact=%v summary=%#v", exact, got)

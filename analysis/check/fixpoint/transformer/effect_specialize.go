@@ -80,51 +80,91 @@ type ResolvedAllocationTemplate struct {
 	Result   product.Value
 }
 
+// EffectContribution certifies the boundary lanes emitted by one resolved
+// effect. Contributions are positional: entry i must describe resolved effect
+// i, preserving the semantic order of non-commuting transactions.
+type EffectContribution struct {
+	Kind          EffectKind
+	BoundaryKinds []callboundary.BoundaryFactKind
+}
+
+// EffectResolution is the atomic result of lowering one complete correlated
+// effect sequence. Summary is published only when Contributions proves one
+// non-empty, descriptor-authorized record per input effect and their union is
+// exactly the set of populated boundary lanes in Summary.
+type EffectResolution struct {
+	Summary       summary.Summary
+	Contributions []EffectContribution
+}
+
 // EffectSummaryResolver lowers one complete correlated row of resolved effects
 // into a transaction-local fragment of the existing Summary representation.
 // Returning false rejects the entire relation specialization. The callback is
 // deliberately unable to mutate caller State.
-type EffectSummaryResolver func([]ResolvedEffect) (summary.Summary, bool)
+type EffectSummaryResolver func([]ResolvedEffect) (EffectResolution, bool)
 
-func (a *relationOutputAuthority) allowsEffectFragment(effects []ResolvedEffect, fragment summary.Summary) bool {
+func (a *relationOutputAuthority) allowsEffectResolution(effects []ResolvedEffect, resolution EffectResolution) bool {
 	if a == nil || len(effects) == 0 {
 		return false
 	}
-	// NormalReturnFacts has its own descriptor-driven nested lane catalog.
-	// Preserve effect origin by requiring every effect in the ordered sequence
-	// to authorize every emitted boundary kind; a union would let one effect
-	// smuggle lanes through another effect's descriptor. OutputCapabilityRegistry
-	// separately certifies the row-owned Summary at Build time; effect fragments
-	// are certified by EffectDescriptor.BoundaryKinds.
-	boundaryKinds := make([]callboundary.BoundaryFactKind, 0)
+	if len(resolution.Contributions) != len(effects) {
+		return false
+	}
+	actual := presentEffectBoundaryKinds(resolution.Summary)
+	if len(actual) == 0 {
+		return false
+	}
+	emitted := make(map[callboundary.BoundaryFactKind]struct{}, len(actual))
+	for i, contribution := range resolution.Contributions {
+		if contribution.Kind != effects[i].Kind || len(contribution.BoundaryKinds) == 0 {
+			return false
+		}
+		allowedKinds, ok := a.effects[contribution.Kind]
+		if !ok {
+			return false
+		}
+		local := make(map[callboundary.BoundaryFactKind]struct{}, len(contribution.BoundaryKinds))
+		for _, kind := range contribution.BoundaryKinds {
+			if kind == "" {
+				return false
+			}
+			if _, duplicate := local[kind]; duplicate {
+				return false
+			}
+			local[kind] = struct{}{}
+			if _, allowed := allowedKinds[kind]; !allowed {
+				return false
+			}
+			emitted[kind] = struct{}{}
+		}
+	}
+	if len(emitted) != len(actual) {
+		return false
+	}
+	for kind := range actual {
+		if _, ok := emitted[kind]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// presentEffectBoundaryKinds flattens the nested NormalReturnFacts family to
+// its stable storage-lane IDs and keeps all other Summary descriptor kinds.
+// This is the canonical vocabulary used by EffectDescriptor.BoundaryKinds.
+func presentEffectBoundaryKinds(fragment summary.Summary) map[callboundary.BoundaryFactKind]struct{} {
+	boundaryKinds := make(map[callboundary.BoundaryFactKind]struct{})
 	for _, lane := range callboundary.NormalReturnFactLanes() {
 		if lane.Len(fragment.NormalReturnFacts) != 0 {
-			boundaryKinds = append(boundaryKinds, callboundary.BoundaryFactKind(lane.ID()))
+			boundaryKinds[callboundary.BoundaryFactKind(lane.ID())] = struct{}{}
 		}
 	}
 	for _, kind := range summary.PresentFactKinds(fragment) {
 		if kind != callboundary.BoundaryFactKind("NormalReturnFacts") {
-			boundaryKinds = append(boundaryKinds, kind)
+			boundaryKinds[kind] = struct{}{}
 		}
 	}
-	if len(boundaryKinds) == 0 {
-		// Every currently admitted EffectKind represents an observable semantic
-		// transaction. An empty fragment would silently drop it while claiming
-		// exact specialization.
-		return false
-	}
-	for _, effect := range effects {
-		allowedKinds, ok := a.effects[effect.Kind]
-		if !ok {
-			return false
-		}
-		for _, kind := range boundaryKinds {
-			if _, allowed := allowedKinds[kind]; !allowed {
-				return false
-			}
-		}
-	}
-	return true
+	return boundaryKinds
 }
 
 func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context SpecializationContext) (ResolvedEffect, bool) {

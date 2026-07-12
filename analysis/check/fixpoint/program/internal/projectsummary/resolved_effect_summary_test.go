@@ -103,7 +103,7 @@ func TestResolvedEffectSummaryMatchesConcreteProjectionOutcomeAndAllStateLanes(t
 	}
 	lowerings := 0
 	canonicalResolver := ResolvedEffectSummaryResolver(reg)
-	resolverFn := func(effects []transformer.ResolvedEffect) (summary.Summary, bool) {
+	resolverFn := func(effects []transformer.ResolvedEffect) (transformer.EffectResolution, bool) {
 		lowerings++
 		return canonicalResolver(effects)
 	}
@@ -256,11 +256,11 @@ func TestResolvedEffectSummarySafeSliceRejectsWholeUnsafeSequence(t *testing.T) 
 		{Kind: transformer.EffectIndexMutation, Mutation: membershipAmbiguity},
 	}
 	for i, effect := range unsafe {
-		if got, ok := LowerResolvedEffects(reg, []transformer.ResolvedEffect{safe, effect}); ok || !reflect.DeepEqual(got, summary.Summary{}) {
+		if got, ok := LowerResolvedEffects(reg, []transformer.ResolvedEffect{safe, effect}); ok || !reflect.DeepEqual(got, transformer.EffectResolution{}) {
 			t.Fatalf("unsafe case %d partially published: %#v", i, got)
 		}
 	}
-	if got, ok := LowerResolvedEffects(reg, []transformer.ResolvedEffect{safe, {Kind: transformer.EffectIndexMutation, Mutation: overlap}}); ok || !reflect.DeepEqual(got, summary.Summary{}) {
+	if got, ok := LowerResolvedEffects(reg, []transformer.ResolvedEffect{safe, {Kind: transformer.EffectIndexMutation, Mutation: overlap}}); ok || !reflect.DeepEqual(got, transformer.EffectResolution{}) {
 		t.Fatalf("overlapping transaction sequence partially published: %#v", got)
 	}
 }

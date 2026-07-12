@@ -23,10 +23,11 @@ func TestLowerResolvedAllocationPreservesOneSharedIdentity(t *testing.T) {
 	id := identity.ManifestAllocation("stdlib.table.create:return:0", 7)
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, template.Objects[0].Type), template.Objects[0].Type)
 	value = product.Set(reg, value, identity.Key, identity.Singleton(id))
-	got, ok := LowerResolvedEffects(reg, []transformer.ResolvedEffect{{
+	resolution, ok := LowerResolvedEffects(reg, []transformer.ResolvedEffect{{
 		Kind:       transformer.EffectAllocationTemplate,
 		Allocation: transformer.ResolvedAllocationTemplate{Site: op.Site(), Template: op, Result: value},
 	}})
+	got := resolution.Summary
 	if !ok || len(got.HeapTableObjects) != 1 || len(got.FreshHeapAllocations) != 1 || got.HeapKeySpace == nil {
 		t.Fatalf("allocation Summary = %#v/%v", got, ok)
 	}
