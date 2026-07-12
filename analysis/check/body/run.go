@@ -266,7 +266,6 @@ func (c *checker) prepare(
 		assignments:           assignments,
 		declarations:          declarations,
 		genericFors:           genericFors,
-		genericForOperations:  genericForOperations,
 		visibility:            resolver,
 		sources:               sources,
 		readExpressionConfig:  readExpressionConfig,
@@ -353,7 +352,7 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.genericForOperations, s.facts, sources, s.symbolTypes, s.signatures, s.signatureID, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.operationPlan, s.facts, sources, s.symbolTypes, s.signatures, s.signatureID, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 		Facts:       s.facts,
 		Sources:     sources,

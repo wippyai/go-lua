@@ -2,7 +2,6 @@ package body
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -18,34 +17,34 @@ func compileGenericForOperations(
 	facts map[cfg.Point]GenericForFact,
 	types *typeresolve.Resolver,
 	resolvePath func(ast.Expr) (pathdom.Path, bool),
-) map[cfg.Point]factapply.GenericForOperation {
+) map[cfg.Point]operationplan.GenericForOperation {
 	if len(facts) == 0 {
 		return nil
 	}
-	out := make(map[cfg.Point]factapply.GenericForOperation, len(facts))
+	out := make(map[cfg.Point]operationplan.GenericForOperation, len(facts))
 	for point, fact := range facts {
 		if fact.Role != GenericForRoleVariable || !fact.HasSymbols ||
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			continue
 		}
-		source := factapply.GenericForSource{}
+		source := operationplan.GenericForSource{}
 		if len(fact.Sources) != 0 {
 			projected := fact.Sources[0]
 			switch projected.Kind {
 			case sourceprovenance.SourceExpression:
-				source.Kind = factapply.GenericForSourceExpression
+				source.Kind = operationplan.GenericForSourceExpression
 				if resolvePath != nil && projected.Expr != nil {
 					source.RootPath, source.HasRootPath = resolvePath(projected.Expr)
 				}
 			case sourceprovenance.SourceCall:
-				source.Kind = factapply.GenericForSourceCall
+				source.Kind = operationplan.GenericForSourceCall
 				source.CallPoint = projected.CallPoint
 				source.HasCallPoint = projected.HasCallPoint
 			}
 		}
 		contracts := genericForSourceContracts(fact, types)
 		first := fact.Symbols[0]
-		op, ok := factapply.NewGenericForOperation(fact.VariableIndex, fact.Symbols[fact.VariableIndex], first, source, contracts)
+		op, ok := operationplan.NewGenericForOperation(fact.VariableIndex, fact.Symbols[fact.VariableIndex], first, source, contracts)
 		if ok {
 			out[point] = op
 		}
@@ -53,13 +52,13 @@ func compileGenericForOperations(
 	return out
 }
 
-func genericForOperationExtensions(operations map[cfg.Point]factapply.GenericForOperation) []operationplan.ExtensionInput {
+func genericForOperationExtensions(operations map[cfg.Point]operationplan.GenericForOperation) []operationplan.ExtensionInput {
 	if len(operations) == 0 {
 		return nil
 	}
 	out := make([]operationplan.ExtensionInput, 0, len(operations))
-	for point := range operations {
-		out = append(out, operationplan.ExtensionInput{Point: point, Kind: operationplan.BodyGenericFor})
+	for point, operation := range operations {
+		out = append(out, operationplan.ExtensionInput{Point: point, Kind: operationplan.BodyGenericFor, GenericFor: operation})
 	}
 	return out
 }

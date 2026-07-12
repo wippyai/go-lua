@@ -18,12 +18,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -34,7 +34,7 @@ import (
 
 func genericForNodeTransfer(
 	base transfer.NodeTransfer,
-	operations map[cfg.Point]factapply.GenericForOperation,
+	operations *operationplan.Plan,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	symbolTypes map[symbol.ID]typ.Type,
@@ -59,7 +59,7 @@ func genericForNodeTransfer(
 		if sources == nil || signatureID == nil {
 			return out
 		}
-		op, ok := operations[ctx.Point]
+		op, ok := operations.GenericForOperation(ctx.Point)
 		if !ok {
 			return out
 		}

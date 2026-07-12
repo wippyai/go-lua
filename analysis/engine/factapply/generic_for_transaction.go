@@ -2,81 +2,38 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // GenericForSourceKind identifies the syntax-free producer of a generic-for
 // iterator. The source expression itself is deliberately not retained.
-type GenericForSourceKind uint8
+type GenericForSourceKind = operationplan.GenericForSourceKind
 
 const (
-	GenericForSourceUnknown GenericForSourceKind = iota
-	GenericForSourceExpression
-	GenericForSourceCall
+	GenericForSourceUnknown    = operationplan.GenericForSourceUnknown
+	GenericForSourceExpression = operationplan.GenericForSourceExpression
+	GenericForSourceCall       = operationplan.GenericForSourceCall
 )
 
 // GenericForSource is the immutable engine projection of the first iterator
 // source. RootPath is populated only for a directly nameable expression;
 // CallPoint is populated only for a lowered call source.
-type GenericForSource struct {
-	Kind         GenericForSourceKind
-	CallPoint    cfg.Point
-	HasCallPoint bool
-	RootPath     pathdom.Path
-	HasRootPath  bool
-}
+type GenericForSource = operationplan.GenericForSource
 
 // GenericForOperation is the complete syntax-free payload for one loop
 // variable binding. SourceContracts are indexed by iterator-call parameter.
 // NewGenericForOperation copies all caller-owned slices and paths.
-type GenericForOperation struct {
-	variableIndex   int
-	target          symbol.ID
-	firstTarget     symbol.ID
-	source          GenericForSource
-	sourceContracts []typ.Type
-}
+type GenericForOperation = operationplan.GenericForOperation
 
 func NewGenericForOperation(variableIndex int, target, firstTarget symbol.ID, source GenericForSource, sourceContracts []typ.Type) (GenericForOperation, bool) {
-	if variableIndex < 0 || target == 0 {
-		return GenericForOperation{}, false
-	}
-	source.RootPath.Segments = append([]segment.Segment(nil), source.RootPath.Segments...)
-	if source.HasCallPoint != (source.CallPoint != 0) || source.HasRootPath != !source.RootPath.IsEmpty() {
-		return GenericForOperation{}, false
-	}
-	return GenericForOperation{
-		variableIndex:   variableIndex,
-		target:          target,
-		firstTarget:     firstTarget,
-		source:          source,
-		sourceContracts: append([]typ.Type(nil), sourceContracts...),
-	}, true
-}
-
-func (o GenericForOperation) VariableIndex() int     { return o.variableIndex }
-func (o GenericForOperation) Target() symbol.ID      { return o.target }
-func (o GenericForOperation) FirstTarget() symbol.ID { return o.firstTarget }
-
-func (o GenericForOperation) Source() GenericForSource {
-	source := o.source
-	source.RootPath.Segments = append([]segment.Segment(nil), source.RootPath.Segments...)
-	return source
-}
-
-func (o GenericForOperation) SourceContract(index int) (typ.Type, bool) {
-	if index < 0 || index >= len(o.sourceContracts) || o.sourceContracts[index] == nil {
-		return nil, false
-	}
-	return o.sourceContracts[index], true
+	return operationplan.NewGenericForOperation(variableIndex, target, firstTarget, source, sourceContracts)
 }
 
 // ConcreteGenericForRequest preserves the established generic-for transaction:
@@ -104,6 +61,27 @@ type ConcreteGenericForResult struct {
 	Canceled bool
 }
 
+// GenericForTransaction is the shared syntax-free binding transaction shape.
+// Concrete and symbolic executors consume this same plan; iterator resolution
+// and membership remain owner-supplied algebras.
+type GenericForTransaction struct {
+	Target          symbol.ID
+	VariableIndex   int
+	ClearMembership bool
+	ResolveValue    bool
+	ApplyMembership bool
+}
+
+func PlanGenericForTransaction(op GenericForOperation) (GenericForTransaction, bool) {
+	if op.Target() == 0 || op.VariableIndex() < 0 {
+		return GenericForTransaction{}, false
+	}
+	return GenericForTransaction{
+		Target: op.Target(), VariableIndex: op.VariableIndex(),
+		ClearMembership: true, ResolveValue: true, ApplyMembership: true,
+	}, true
+}
+
 // ApplyConcreteGenericFor executes one loop-variable binding atomically.
 // Cancellation before or after a provider callback publishes no prefix.
 func ApplyConcreteGenericFor(req ConcreteGenericForRequest) ConcreteGenericForResult {
@@ -112,17 +90,18 @@ func ApplyConcreteGenericFor(req ConcreteGenericForRequest) ConcreteGenericForRe
 		return ConcreteGenericForResult{Output: req.Input, Canceled: true}
 	}
 	op := req.Operation
-	if op.Target() == 0 {
+	transaction, valid := PlanGenericForTransaction(op)
+	if !valid {
 		return ConcreteGenericForResult{Output: req.Output}
 	}
 	out := req.Output
-	targetPath := pathdom.Path{Symbol: op.Target()}
-	if req.Resolver != nil {
+	targetPath := pathdom.Path{Symbol: transaction.Target}
+	if transaction.ClearMembership && req.Resolver != nil {
 		if targetKey, ok := visibility.AddressAt(req.Resolver, req.Context.Point, targetPath).VisibleStateKey(); ok {
 			out = out.ClearKeyMembershipsForPath(targetKey)
 		}
 	}
-	if req.Semantics != nil {
+	if transaction.ResolveValue && req.Semantics != nil {
 		if value, ok := req.Semantics.ResolveGenericFor(req.Context, op, req.Input); ok {
 			out = out.WriteValue(req.Context.Registry, key.SymbolValue(op.Target()), value)
 		}
@@ -130,7 +109,7 @@ func ApplyConcreteGenericFor(req ConcreteGenericForRequest) ConcreteGenericForRe
 	if token != nil && token.Canceled() {
 		return ConcreteGenericForResult{Output: req.Input, Canceled: true}
 	}
-	if req.Semantics != nil {
+	if transaction.ApplyMembership && req.Semantics != nil {
 		out = req.Semantics.ApplyGenericForMembership(req.Context, op, out, targetPath)
 	}
 	if token != nil && token.Canceled() {

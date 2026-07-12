@@ -146,7 +146,6 @@ type Static struct {
 	assignments           assignmentFactSet
 	declarations          declarationFactSet
 	genericFors           map[cfg.Point]GenericForFact
-	genericForOperations  map[cfg.Point]factapply.GenericForOperation
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues
 	readExpressionConfig  *readexpr.Config

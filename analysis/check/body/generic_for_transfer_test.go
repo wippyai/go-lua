@@ -86,8 +86,14 @@ end`)
 	if err != nil {
 		t.Fatalf("PrepareChunk: %v", err)
 	}
-	if len(prepared.genericForOperations) != 2 || !prepared.operationPlan.HasExtensions() {
-		t.Fatalf("generic-for operations/extensions = %d/%v", len(prepared.genericForOperations), prepared.operationPlan.HasExtensions())
+	owned := 0
+	for point := cfg.Point(0); int(point) < prepared.operationPlan.PointCount(); point++ {
+		if _, ok := prepared.operationPlan.GenericForOperation(point); ok {
+			owned++
+		}
+	}
+	if owned != 2 || !prepared.operationPlan.HasExtensions() {
+		t.Fatalf("generic-for operations/extensions = %d/%v", owned, prepared.operationPlan.HasExtensions())
 	}
 	want, err := SolvePrepared(prepared, SolveConfig{})
 	if err != nil {

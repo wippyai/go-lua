@@ -13,7 +13,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 	if len(entries) != 320 {
 		t.Fatalf("eligibility entries = %d, want 320 active plan instances/family markers", len(entries))
 	}
-	type counts struct{ total, exact, unboundPath int }
+	type counts struct{ total, exact, unboundPath, iteratorCall int }
 	byFamily := map[string]counts{}
 	for _, entry := range entries {
 		count := byFamily[entry.Family]
@@ -23,6 +23,9 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		}
 		if strings.HasPrefix(entry.Reason, "source path symbol ") {
 			count.unboundPath++
+		}
+		if entry.Reason == "generic-for: iterator call requires effect and cardinality proof" {
+			count.iteratorCall++
 		}
 		byFamily[entry.Family] = count
 	}
@@ -36,7 +39,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		"BranchConditionSources":        {total: 36},
 		"BranchRefinements":             {total: 57},
 		"BranchPathEvidence":            {total: 43},
-		"extension:1":                   {total: 38},
+		"extension:1":                   {total: 38, iteratorCall: 38},
 	}
 	for family, expected := range want {
 		if got := byFamily[family]; got != expected {

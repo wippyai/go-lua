@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -71,7 +72,42 @@ func NewPlanCompiler() *PlanCompiler {
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
 	c.facts[operationplan.Return] = returnPlanHandler{}
+	c.extensions[operationplan.BodyGenericFor] = genericForPlanHandler{}
 	return c
+}
+
+type genericForPlanHandler struct{}
+
+func (genericForPlanHandler) Kind() operationplan.ExtensionKind { return operationplan.BodyGenericFor }
+func (genericForPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) error {
+	op, ok := ctx.plan.GenericForOperation(point)
+	if !ok {
+		return fmt.Errorf("generic-for: typed operation payload missing")
+	}
+	if _, ok := factapply.PlanGenericForTransaction(op); !ok {
+		return fmt.Errorf("generic-for: invalid binding transaction")
+	}
+	source := op.Source()
+	switch source.Kind {
+	case operationplan.GenericForSourceCall:
+		if !source.HasCallPoint {
+			return fmt.Errorf("generic-for: iterator call point missing")
+		}
+		return fmt.Errorf("generic-for: iterator call requires effect and cardinality proof")
+	case operationplan.GenericForSourceExpression:
+		if !source.HasRootPath || source.RootPath.Symbol == 0 || len(source.RootPath.Segments) != 0 {
+			return fmt.Errorf("generic-for: iterator expression is not an exact root binding")
+		}
+		if _, ok := ctx.locals[source.RootPath.Symbol]; !ok {
+			return fmt.Errorf("generic-for: iterator source symbol %d has no exact binding", source.RootPath.Symbol)
+		}
+		return fmt.Errorf("generic-for: iterator expression requires cardinality proof")
+	default:
+		return fmt.Errorf("generic-for: iterator source unknown")
+	}
+}
+func (genericForPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error {
+	return fmt.Errorf("generic-for: contextual transaction cannot be lowered")
 }
 
 // Compile atomically returns either a complete relation or one contextual
