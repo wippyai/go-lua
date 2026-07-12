@@ -11,6 +11,20 @@ const (
 	BodyGenericFor ExtensionKind = iota + 1
 )
 
+var extensionKinds = [...]ExtensionKind{BodyGenericFor}
+
+// ExtensionKinds returns the immutable higher-layer operation catalog.
+func ExtensionKinds() []ExtensionKind { return append([]ExtensionKind(nil), extensionKinds[:]...) }
+
+func knownExtensionKind(kind ExtensionKind) bool {
+	for _, candidate := range extensionKinds {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtensionInput registers one higher-layer semantic transaction.
 type ExtensionInput struct {
 	Point cfg.Point
@@ -44,14 +58,14 @@ func (p *Plan) WithExtensions(input []ExtensionInput) *Plan {
 	out.extensionRows = make([]extensionRow, len(p.rows))
 	masks := make([]uint64, len(p.rows))
 	for _, item := range input {
-		if item.Kind == 0 || item.Kind > BodyGenericFor || uint64(item.Point) >= uint64(len(masks)) {
+		if !knownExtensionKind(item.Kind) || uint64(item.Point) >= uint64(len(masks)) {
 			continue
 		}
 		masks[item.Point] |= uint64(1) << (item.Kind - 1)
 	}
 	for point, mask := range masks {
 		out.extensionRows[point].start = uint32(len(out.extensionCells))
-		for kind := ExtensionKind(1); kind <= BodyGenericFor; kind++ {
+		for _, kind := range extensionKinds {
 			if mask&(uint64(1)<<(kind-1)) != 0 {
 				out.extensionCells = append(out.extensionCells, ExtensionCell{kind: kind})
 			}

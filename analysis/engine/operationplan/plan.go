@@ -151,6 +151,7 @@ type Plan struct {
 	facts          factflow.Facts
 	rows           []row
 	cells          []Cell
+	dependencies   []Kind
 	extensionRows  []extensionRow
 	extensionCells []ExtensionCell
 }
@@ -164,9 +165,60 @@ func New(graph cfg.Graph, input factflow.FactsInput) *Plan {
 	if graph != nil {
 		size = graph.Size()
 	}
-	p := &Plan{facts: factflow.NewFacts(input)}
+	p := &Plan{facts: factflow.NewFacts(input), dependencies: compileDependencies(input)}
 	p.rows, p.cells = compileIndex(size, input)
 	return p
+}
+
+func compileDependencies(input factflow.FactsInput) []Kind {
+	out := make([]Kind, 0, 8)
+	if len(input.ObjectLiterals) != 0 {
+		out = append(out, ObjectLiteral)
+	}
+	if len(input.ExpressionValues) != 0 {
+		out = append(out, ExpressionValue)
+	}
+	if len(input.ExpressionOperations) != 0 {
+		out = append(out, ExpressionOperation)
+	}
+	if len(input.ExpressionFunctions) != 0 {
+		out = append(out, ExpressionFunction)
+	}
+	if len(input.ExpressionRefinements) != 0 {
+		out = append(out, ExpressionRefinement)
+	}
+	if len(input.ExpressionPaths) != 0 {
+		out = append(out, ExpressionPath)
+	}
+	if len(input.DynamicIndexExpressions) != 0 {
+		out = append(out, DynamicIndexExpression)
+	}
+	if len(input.ExpressionConditions) != 0 {
+		out = append(out, ExpressionCondition)
+	}
+	return out
+}
+
+// DependencyCursor traverses present expression-keyed fact families without
+// allocating. Dependencies are not point cells but remain semantic inputs.
+type DependencyCursor struct {
+	kinds []Kind
+	next  uint8
+}
+
+func (p *Plan) DependencyCursor() DependencyCursor {
+	if p == nil {
+		return DependencyCursor{}
+	}
+	return DependencyCursor{kinds: p.dependencies}
+}
+func (c *DependencyCursor) Next() (Kind, bool) {
+	if c == nil || int(c.next) >= len(c.kinds) {
+		return 0, false
+	}
+	kind := c.kinds[c.next]
+	c.next++
+	return kind, true
 }
 
 func compileIndex(size int, input factflow.FactsInput) ([]row, []Cell) {
@@ -271,6 +323,17 @@ func Classification(kind Kind) (Class, bool) {
 		}
 	}
 	return 0, false
+}
+
+// Kinds returns the immutable fact-family catalog in canonical order. Callers
+// building exhaustive cross-product registries must derive from this list
+// rather than assuming the current last numeric constant remains last.
+func Kinds() []Kind {
+	out := make([]Kind, len(descriptors))
+	for i, descriptor := range descriptors {
+		out[i] = descriptor.kind
+	}
+	return out
 }
 
 // Metadata is the behavior-neutral semantic classification of a fact family.
