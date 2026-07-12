@@ -108,8 +108,7 @@ type materializedSolveCacheEntry struct {
 	// noDepUniverse pins solves with zero tracked summary reads to the summary
 	// universe they observed. A later materialization pass can make a callee
 	// summary nameable even though the first solve had no dependency to track.
-	noDepUniverseKnown bool
-	noDepUniverse      []summary.EntrySummary
+	noDepUniverse materializedSummaryUniverseState
 
 	result *body.Result
 }
@@ -319,11 +318,11 @@ func (c *materializedSolveCache) read(
 		return nil, false
 	}
 	if len(cached.deps) == 0 {
-		if !cached.noDepUniverseKnown {
+		if !cached.noDepUniverse.known() {
 			return nil, false
 		}
-		current, ok := materializedSummaryUniverse(summaries)
-		if !ok || !summaryEntryUniversesEqual(c.reg, cached.noDepUniverse, current) {
+		current := materializedSummaryUniverse(summaries)
+		if !materializedSummaryUniversesEqual(c.reg, cached.noDepUniverse, current) {
 			return nil, false
 		}
 	}
@@ -372,32 +371,56 @@ func (c *materializedSolveCache) write(
 	if c.entries == nil {
 		c.entries = make(map[materializedSolveCacheKey]materializedSolveCacheEntry)
 	}
-	var noDepUniverse []summary.EntrySummary
-	noDepUniverseKnown := false
+	var noDepUniverse materializedSummaryUniverseState
 	if len(deps) == 0 {
-		noDepUniverse, noDepUniverseKnown = materializedSummaryUniverse(summaries)
+		noDepUniverse = materializedSummaryUniverse(summaries)
 	}
 	c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}] = materializedSolveCacheEntry{
-		routing:            routing,
-		resolution:         resolution,
-		entry:              entry,
-		deps:               cloneTrackedSummaryReads(deps),
-		noDepUniverseKnown: noDepUniverseKnown,
-		noDepUniverse:      noDepUniverse,
-		result:             result,
+		routing:       routing,
+		resolution:    resolution,
+		entry:         entry,
+		deps:          cloneTrackedSummaryReads(deps),
+		noDepUniverse: noDepUniverse,
+		result:        result,
 	}
 }
 
-func materializedSummaryUniverse(reader summary.Reader) ([]summary.EntrySummary, bool) {
+type materializedSummaryUniverseState struct {
+	identity      summary.UniverseIdentity
+	identityKnown bool
+	entries       []summary.EntrySummary
+	entriesKnown  bool
+}
+
+func (s materializedSummaryUniverseState) known() bool {
+	return s.identityKnown || s.entriesKnown
+}
+
+func materializedSummaryUniverse(reader summary.Reader) materializedSummaryUniverseState {
+	if identified, ok := reader.(summary.UniverseIdentityReader); ok {
+		if identity, known := identified.SummaryUniverseIdentity(); known {
+			return materializedSummaryUniverseState{
+				identity:      identity,
+				identityKnown: true,
+			}
+		}
+	}
 	entriesReader, ok := reader.(interface{ EntriesOwnedNormalized() []summary.EntrySummary })
 	if !ok {
-		return nil, false
+		return materializedSummaryUniverseState{}
 	}
 	entries := entriesReader.EntriesOwnedNormalized()
-	if len(entries) == 0 {
-		return nil, true
+	return materializedSummaryUniverseState{
+		entries:      slices.Clone(entries),
+		entriesKnown: true,
 	}
-	return slices.Clone(entries), true
+}
+
+func materializedSummaryUniversesEqual(reg *axis.Registry, left, right materializedSummaryUniverseState) bool {
+	if left.identityKnown || right.identityKnown {
+		return left.identityKnown && right.identityKnown && left.identity == right.identity
+	}
+	return left.entriesKnown && right.entriesKnown && summaryEntryUniversesEqual(reg, left.entries, right.entries)
 }
 
 func summaryEntryUniversesEqual(reg *axis.Registry, left, right []summary.EntrySummary) bool {
@@ -454,10 +477,25 @@ type materializedSummaryCache struct {
 	base        summary.Reader
 	projections *resultSummaryProjectionCache
 	entries     map[summary.SummaryKey]summary.Summary
+	universe    summary.UniverseIdentity
+	identified  bool
 }
 
 func newMaterializedSummaryCache(reg *axis.Registry, base summary.Reader, projections *resultSummaryProjectionCache) *materializedSummaryCache {
-	return &materializedSummaryCache{reg: reg, base: base, projections: projections}
+	cache := &materializedSummaryCache{reg: reg, base: base, projections: projections}
+	if base == nil {
+		cache.identified = true
+	} else if identified, ok := base.(summary.UniverseIdentityReader); ok {
+		cache.universe, cache.identified = identified.SummaryUniverseIdentity()
+	}
+	return cache
+}
+
+func (c *materializedSummaryCache) SummaryUniverseIdentity() (summary.UniverseIdentity, bool) {
+	if c == nil || !c.identified {
+		return summary.UniverseIdentity{}, false
+	}
+	return c.universe, true
 }
 
 func (c *materializedSummaryCache) Read(key summary.SummaryKey) (summary.Summary, bool) {
@@ -556,6 +594,9 @@ func (c *materializedSummaryCache) write(key summary.SummaryKey, sum summary.Sum
 		c.entries = make(map[summary.SummaryKey]summary.Summary)
 	}
 	c.entries[key] = next
+	if c.identified {
+		c.universe = summary.NewUniverseIdentity()
+	}
 }
 
 func (c *materializedSummaryCache) writeResult(key summary.SummaryKey, result *body.Result) {

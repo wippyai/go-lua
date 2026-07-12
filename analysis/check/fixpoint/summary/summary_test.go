@@ -307,6 +307,28 @@ func TestSnapshotOwnedNormalizedReadsShareStoredSummary(t *testing.T) {
 	}
 }
 
+func TestSnapshotUniverseIdentityFollowsImmutableOwnership(t *testing.T) {
+	reg := mustRegistry(t)
+	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 99121})
+	entry := EntrySummary{Key: key, Summary: Summary{Returns: []product.Value{product.Top()}}}
+	first := NewSnapshotOwnedNormalized(reg, entry)
+	copyOfFirst := first
+	second := NewSnapshotOwnedNormalized(reg, entry)
+
+	firstID, firstKnown := first.SummaryUniverseIdentity()
+	copyID, copyKnown := copyOfFirst.SummaryUniverseIdentity()
+	secondID, secondKnown := second.SummaryUniverseIdentity()
+	if !firstKnown || !copyKnown || !secondKnown {
+		t.Fatal("snapshot universe identity was not available")
+	}
+	if firstID != copyID {
+		t.Fatal("snapshot copy did not retain immutable universe identity")
+	}
+	if firstID == secondID {
+		t.Fatal("independently owned snapshots shared a universe identity")
+	}
+}
+
 func TestSnapshotNormalizesWithCustomRegistry(t *testing.T) {
 	reg, err := product.RegistryWithAxes(summaryTestSpec().Erase())
 	if err != nil {

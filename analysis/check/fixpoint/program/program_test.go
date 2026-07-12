@@ -384,6 +384,69 @@ func TestMaterializedSummaryCacheReadClonesOwnedBase(t *testing.T) {
 	}
 }
 
+func TestMaterializedSummaryCacheUniverseIdentityAdvancesOnlyOnEffectiveWrite(t *testing.T) {
+	reg := standard.Registry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 99112})
+	want := typevalue.FromType(reg, typ.String)
+	base := summary.NewSnapshotOwnedNormalized(reg, summary.EntrySummary{
+		Key:     key,
+		Summary: summary.Normalize(reg, summary.Summary{Returns: []product.Value{want}}),
+	})
+	cache := newMaterializedSummaryCache(reg, base, newResultSummaryProjectionCache())
+	baseID, baseKnown := base.SummaryUniverseIdentity()
+	initialID, initialKnown := cache.SummaryUniverseIdentity()
+	if !baseKnown || !initialKnown || initialID != baseID {
+		t.Fatal("empty overlay did not retain base universe identity")
+	}
+
+	cache.write(key, summary.Summary{Returns: []product.Value{want}})
+	equalID, equalKnown := cache.SummaryUniverseIdentity()
+	if !equalKnown || equalID != initialID {
+		t.Fatal("equivalent write advanced universe identity")
+	}
+
+	cache.write(key, summary.Summary{Returns: []product.Value{product.Top()}})
+	changedID, changedKnown := cache.SummaryUniverseIdentity()
+	if !changedKnown || changedID == equalID {
+		t.Fatal("effective write did not advance universe identity")
+	}
+}
+
+type entriesOnlySummaryReader struct {
+	entries []summary.EntrySummary
+}
+
+func (r entriesOnlySummaryReader) Read(key summary.SummaryKey) (summary.Summary, bool) {
+	for _, entry := range r.entries {
+		if entry.Key == key {
+			return entry.Summary.Clone(), true
+		}
+	}
+	return summary.Summary{}, false
+}
+
+func (r entriesOnlySummaryReader) EntriesOwnedNormalized() []summary.EntrySummary {
+	return r.entries
+}
+
+func TestMaterializedSummaryUniverseFallsBackForUnidentifiedReader(t *testing.T) {
+	reg := standard.Registry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 99113})
+	reader := entriesOnlySummaryReader{entries: []summary.EntrySummary{{
+		Key:     key,
+		Summary: summary.Normalize(reg, summary.Summary{Returns: []product.Value{product.Top()}}),
+	}}}
+	first := materializedSummaryUniverse(reader)
+	second := materializedSummaryUniverse(reader)
+	if first.identityKnown || !first.entriesKnown || !materializedSummaryUniversesEqual(reg, first, second) {
+		t.Fatal("unidentified reader did not use the structural universe fallback")
+	}
+	reader.entries[0].Key = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 99114})
+	if first.entries[0].Key == reader.entries[0].Key {
+		t.Fatal("structural universe fallback did not own its entry slice")
+	}
+}
+
 func TestResultSummaryProjectionReadsCurrentResultAndClonesSummary(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `return "ok"`)
@@ -706,6 +769,33 @@ func TestMaterializedSolveCacheInvalidatesZeroDepSolveWhenSummaryUniverseChanges
 	}
 	if changed == first || !changedSolved || solves != 2 {
 		t.Fatalf("changed-universe cache miss = same:%v solved:%v solves:%d, want new result, solve, two solves total", changed == first, changedSolved, solves)
+	}
+}
+
+func BenchmarkMaterializedSolveZeroDepUniverseValidation(b *testing.B) {
+	reg := standard.Registry()
+	entries := make([]summary.EntrySummary, 4096)
+	for i := range entries {
+		entries[i] = summary.EntrySummary{
+			Key: summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(i + 1))),
+			Summary: summary.Summary{
+				Returns: []product.Value{typevalue.FromType(reg, typ.String)},
+			},
+		}
+	}
+	reader := newMaterializedSummaryCache(
+		reg,
+		summary.NewSnapshotOwnedNormalized(reg, entries...),
+		newResultSummaryProjectionCache(),
+	)
+	want := materializedSummaryUniverse(reader)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got := materializedSummaryUniverse(reader)
+		if !materializedSummaryUniversesEqual(reg, want, got) {
+			b.Fatal("stable universe compared unequal")
+		}
 	}
 }
 
