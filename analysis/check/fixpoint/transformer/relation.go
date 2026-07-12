@@ -31,11 +31,12 @@ type Operation struct {
 // Row is a may-alternative. Its outputs remain correlated under Guard and are
 // never independently widened.
 type Row struct {
-	Guard   Guard
-	Output  summary.Summary
-	Ops     []Operation
-	Effects []EffectTerm
-	Proofs  []BranchProofTerm
+	Guard           Guard
+	Output          summary.Summary
+	Ops             []Operation
+	Effects         []EffectTerm
+	Proofs          []BranchProofTerm
+	PathRefinements []PathRefinementTerm
 }
 
 // Relation is immutable. contextual is lattice Top: callers must use the
@@ -181,11 +182,12 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			return Relation{}, fmt.Errorf("transformer: row %d has invalid guard", i)
 		}
 		owned[i] = Row{
-			Guard:   row.Guard,
-			Output:  summary.Normalize(b.arena.reg, row.Output),
-			Ops:     append([]Operation(nil), row.Ops...),
-			Effects: append([]EffectTerm(nil), row.Effects...),
-			Proofs:  append([]BranchProofTerm(nil), row.Proofs...),
+			Guard:           row.Guard,
+			Output:          summary.Normalize(b.arena.reg, row.Output),
+			Ops:             append([]Operation(nil), row.Ops...),
+			Effects:         append([]EffectTerm(nil), row.Effects...),
+			Proofs:          append([]BranchProofTerm(nil), row.Proofs...),
+			PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...),
 		}
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
@@ -247,7 +249,23 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 				return Relation{}, fmt.Errorf("transformer: row %d branch proof %d is invalid", i, j)
 			}
 		}
+		if len(owned[i].PathRefinements) != 0 {
+			if unsupported := b.caps.UnsupportedSummary("NormalReturnFacts"); len(unsupported) != 0 {
+				return Relation{}, fmt.Errorf("transformer: symbolic path refinements unsupported on lanes %v", unsupported)
+			}
+			if !rowPreservesRefinementRoots(b.effects, owned[i]) {
+				return Relation{}, fmt.Errorf("transformer: symbolic path refinement lacks exact mutation/escape non-interference proof")
+			}
+		}
+		for j, refinement := range owned[i].PathRefinements {
+			if !refinement.validPreservedParamRoot(b.arena, b.shape) {
+				return Relation{}, fmt.Errorf("transformer: row %d path refinement %d is not an unchanged parameter root", i, j)
+			}
+		}
 		sort.Slice(owned[i].Ops, func(x, y int) bool { return operationLess(b.arena, owned[i].Ops[x], owned[i].Ops[y]) })
+		sort.Slice(owned[i].PathRefinements, func(x, y int) bool {
+			return owned[i].PathRefinements[x].canonical(b.arena) < owned[i].PathRefinements[y].canonical(b.arena)
+		})
 	}
 	sort.Slice(owned, func(i, j int) bool { return rowLess(b.arena, b.effects, owned[i], owned[j]) })
 	owned = dedupRows(b.arena, b.effects, owned)
@@ -296,7 +314,11 @@ func rowKey(a *Arena, effects *EffectArena, row Row) string {
 	for i, proof := range row.Proofs {
 		proofKeys[i] = proof.canonical(a)
 	}
-	return fmt.Sprintf("%s|%016x|%s|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"), strings.Join(proofKeys, ";"))
+	refinementKeys := make([]string, len(row.PathRefinements))
+	for i, refinement := range row.PathRefinements {
+		refinementKeys[i] = refinement.canonical(a)
+	}
+	return fmt.Sprintf("%s|%016x|%s|%s|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"), strings.Join(proofKeys, ";"), strings.Join(refinementKeys, ";"))
 }
 func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
 	lk, rk := rowKey(a, effects, left), rowKey(a, effects, right)
@@ -316,7 +338,7 @@ func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
 }
 func operationEqual(a, b Operation) bool { return a == b }
 func rowEqual(arena *Arena, a, b Row) bool {
-	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || len(a.Proofs) != len(b.Proofs) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
+	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || len(a.Proofs) != len(b.Proofs) || len(a.PathRefinements) != len(b.PathRefinements) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
 		return false
 	}
 	for i := range a.Ops {
@@ -331,6 +353,11 @@ func rowEqual(arena *Arena, a, b Row) bool {
 	}
 	for i := range a.Proofs {
 		if a.Proofs[i] != b.Proofs[i] {
+			return false
+		}
+	}
+	for i := range a.PathRefinements {
+		if a.PathRefinements[i] != b.PathRefinements[i] {
 			return false
 		}
 	}
@@ -470,7 +497,7 @@ func LessOrEqRelation(a, b Relation) bool {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, row := range rows {
-		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...)}
+		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...), PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...)}
 	}
 	return out
 }

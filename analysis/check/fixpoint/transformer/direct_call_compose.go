@@ -105,6 +105,9 @@ func exactDirectCallTargets(site factflow.CallSiteView) ([]directCallTarget, err
 }
 
 func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, row Row, targets []directCallTarget) (SymbolicCFGRow, error) {
+	if len(row.PathRefinements) != 0 {
+		return SymbolicCFGRow{}, fmt.Errorf("symbolic path refinements require contextual state application")
+	}
 	if err := validateDirectCallStructuredOutput(callee.arena.reg, row.Output, callee.shape); err != nil {
 		return SymbolicCFGRow{}, err
 	}

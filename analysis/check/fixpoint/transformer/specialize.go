@@ -187,8 +187,21 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 				}
 			}
 		}
-		if len(row.Proofs) != 0 && !r.authority.allowsSummary("NormalReturnFacts") {
+		if (len(row.Proofs) != 0 || len(row.PathRefinements) != 0) && !r.authority.allowsSummary("NormalReturnFacts") {
 			return summary.Summary{}, false
+		}
+		for _, refinement := range row.PathRefinements {
+			refinementPath, valid := refinement.placeholderPath(r.arena)
+			if !valid {
+				return summary.Summary{}, false
+			}
+			value, valid := r.arena.evalValue(refinement.Value, cursor, context)
+			if !valid {
+				return summary.Summary{}, false
+			}
+			candidate.NormalReturnFacts.PathRefinements = append(candidate.NormalReturnFacts.PathRefinements, callboundary.PathValueFact{
+				Path: refinementPath, Value: value,
+			})
 		}
 		for _, proof := range row.Proofs {
 			tablePath, valid := proof.placeholderPath(r.arena)
