@@ -29,10 +29,33 @@ contravariant lane and are checked after binding. Canonical row/expression
 ordering is structural; a product-hash collision fails closed rather than
 silently deciding order by allocation identity.
 
-Heap-mutated captures, allocation identity, globals, typestate, channel,
-escape, placement, actor state, and operational-effect composition stay
-unsupported and therefore contextual. Supporting immutable lexical captures
-does not imply that mutable closure cells are safe to summarize.
+The boundary transformer itself is value-only: heap mutation, allocation,
+typestate, channels, escape, placement, and actor state require an explicit
+effect capability rather than being smuggled through a value expression.
+
+The effects layer then tests the next boundary without enabling it in the
+checker. Module globals have structural `(module,name)` roots and are supplied
+explicitly at instantiation; mutable ambient globals are never read implicitly.
+Fresh allocation sites are rebased by call-instance identity, so two callers
+cannot accidentally share an abstract object. Writes to a fresh, non-escaped
+site are strong; writes to captures, module roots, or pre-existing heap cells
+weak-join. Escaping heap, cross-actor heap, mailboxes, and actor state fall back
+as one transformer. Return values, returned references, allocations, and writes
+remain correlated in the same effect row.
+
+Composition capabilities are not hardcoded as a switch over today's 17 State
+lanes. A registry is derived from `state.DefaultLanes`, and each lane adapter
+implements summarize, substitute, and effect-join. The values adapter delegates
+the complete registered `product.Value`, so product-axis additions retain the
+product domain's modularity. Missing or newly registered State lanes default to
+contextual fallback; adding support is one adapter, not a call-engine rewrite.
+
+The syntax census is therefore an optimistic ceiling, not a count of functions
+that could be switched to composition today. The POC implements the values
+lane and the new root/allocation/heap boundary components; the other 16 default
+State lanes still intentionally report contextual. Production eligibility must
+intersect syntactic capability with this per-lane registry before any default
+can change.
 
 Run:
 

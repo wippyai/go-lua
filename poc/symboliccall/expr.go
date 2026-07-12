@@ -23,6 +23,7 @@ const (
 	opCall
 	opCapture
 	opVararg
+	opGlobal
 )
 
 // FunctionID is a stable lexical function identity in the experiment.
@@ -38,6 +39,17 @@ type exprNode struct {
 	args   []Expr
 	callee FunctionID
 	slot   int
+	global GlobalRoot
+}
+
+// Global reads one stable module root supplied at instantiation. The module
+// and exported name are structural identity, not a process-global string.
+func Global(module, name string) Expr {
+	root := GlobalRoot{Module: module, Name: name}
+	if !root.valid() {
+		panic("symboliccall: invalid stable global root")
+	}
+	return Expr{n: &exprNode{op: opGlobal, global: root}}
 }
 
 // Capture reads one namespace-distinct lexical closure cell. It is never
@@ -129,6 +141,8 @@ func exprEqual(a, b Expr) bool {
 		return true
 	case opParam, opCapture, opVararg:
 		return a.n.param == b.n.param
+	case opGlobal:
+		return a.n.global == b.n.global
 	case opConst:
 		// Registry ownership is checked when the expression is evaluated. The
 		// production interner gives equal values shared representation, while
@@ -172,6 +186,8 @@ func exprCanonicalKey(reg *axis.Registry, expr Expr) string {
 	switch expr.n.op {
 	case opParam, opCapture, opVararg:
 		b.WriteString(strconv.Itoa(expr.n.param))
+	case opGlobal:
+		b.WriteString(expr.n.global.key())
 	case opConst:
 		b.WriteString(strconv.FormatUint(product.Hash(reg, expr.n.value), 16))
 	case opJoin:
@@ -210,6 +226,10 @@ func eval(reg *axis.Registry, expr Expr, params []product.Value) (product.Value,
 }
 
 func evalBoundary(reg *axis.Registry, expr Expr, params, captures, varargs []product.Value) (product.Value, error) {
+	return evalEnvironment(reg, expr, params, captures, varargs, nil)
+}
+
+func evalEnvironment(reg *axis.Registry, expr Expr, params, captures, varargs []product.Value, globals map[GlobalRoot]product.Value) (product.Value, error) {
 	if expr.n == nil || expr.n.op == opBottom {
 		return product.Bottom(reg), nil
 	}
@@ -229,6 +249,12 @@ func evalBoundary(reg *axis.Registry, expr Expr, params, captures, varargs []pro
 			return product.Absent(reg), nil
 		}
 		return varargs[expr.n.param], nil
+	case opGlobal:
+		value, ok := globals[expr.n.global]
+		if !ok {
+			return product.Value{}, fmt.Errorf("symboliccall: stable global %s is unbound", expr.n.global.key())
+		}
+		return value, nil
 	case opConst:
 		// This validates that the constant belongs to reg.
 		_ = product.Equal(reg, expr.n.value, expr.n.value)
@@ -236,7 +262,7 @@ func evalBoundary(reg *axis.Registry, expr Expr, params, captures, varargs []pro
 	case opJoin:
 		out := product.Bottom(reg)
 		for _, arg := range expr.n.args {
-			value, err := evalBoundary(reg, arg, params, captures, varargs)
+			value, err := evalEnvironment(reg, arg, params, captures, varargs, globals)
 			if err != nil {
 				return product.Value{}, err
 			}
@@ -255,7 +281,7 @@ func substitute(expr Expr, params []Expr) (Expr, bool) {
 		return Expr{}, true
 	}
 	switch expr.n.op {
-	case opBottom, opConst, opCapture, opVararg:
+	case opBottom, opConst, opCapture, opVararg, opGlobal:
 		return expr, true
 	case opParam:
 		if expr.n.param >= len(params) {
