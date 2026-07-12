@@ -40,6 +40,38 @@ func (p boundaryPathProjector) ProjectLocalPath(localPath path.Path) (path.Path,
 	return p.localStatePath(localPath)
 }
 
+// ProjectLocalPaths returns every caller-visible alias of localPath. Mutation
+// facts need the plural form: a returned parameter is simultaneously visible
+// as $N and ret[M], so publishing only the return slot would leave the caller's
+// original argument shape incorrectly stable.
+func (p boundaryPathProjector) ProjectLocalPaths(localPath path.Path) []path.Path {
+	if localPath.IsEmpty() || localPath.Symbol == 0 {
+		return nil
+	}
+	var out []path.Path
+	appendUnique := func(candidate path.Path, ok bool) {
+		if !ok {
+			return
+		}
+		for _, existing := range out {
+			if existing.Equal(candidate) {
+				return
+			}
+		}
+		out = append(out, candidate)
+	}
+	for _, candidate := range p.returns {
+		projected, ok := boundaryPathForOneReturnPath(candidate, localPath)
+		appendUnique(projected, ok)
+	}
+	projected, ok := placeholderForParameterPath(p.params, localPath)
+	appendUnique(projected, ok)
+	if persistentSinkSymbol(p.kinds, p.captured, localPath.Symbol) {
+		appendUnique(localPath, true)
+	}
+	return out
+}
+
 func newBoundaryPathProjector(
 	ks *keyspace.KeySpace,
 	params []path.Path,

@@ -943,6 +943,42 @@ func TestFromResultRebasesReturnedLocalAssignmentInvalidationToReturnSlot(t *tes
 	}
 }
 
+func TestFromResultProjectsReturnedParameterMutationToArgumentAndReturnAliases(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(92523)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	returnExpr := factflow.ExprRef(92523)
+	paramPath := pathdom.NewPath(param, "value")
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:          reg,
+			graph:        graph,
+			exit:         state.State{},
+			slots:        []key.Value{key.SymbolValue(param)},
+			returnPoints: []cfg.Point{ret},
+			returnSources: map[cfg.Point][]factflow.ValueSource{
+				ret: {{Kind: factflow.ValueSourceExpression, ExprRef: returnExpr, HasExpr: true}},
+			},
+			exprPaths: map[factflow.ExprRef]pathdom.Path{returnExpr: paramPath},
+		},
+		pathAssignments: map[cfg.Point]factflow.PathAssignment{
+			assign: factflow.NewPathAssignment(paramPath.Field("late"), factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)),
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts.PathInvalidations
+	if len(got) != 2 {
+		t.Fatalf("PathInvalidations = %#v, want argument and return aliases", got)
+	}
+	assertPathInvalidation(t, got, pathdom.NewPlaceholder(0).Field("late"))
+	assertPathInvalidation(t, got, (pathdom.Path{Root: "ret[0]"}).Field("late"))
+}
+
 func TestFromResultDropsUnreturnedLocalAssignmentInvalidation(t *testing.T) {
 	reg := standard.Registry()
 	local := symbol.ID(92522)

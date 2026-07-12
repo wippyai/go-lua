@@ -402,15 +402,13 @@ func projectAssignmentPathInvalidations(result ResultReader, boundary boundaryPa
 		if !ok {
 			continue
 		}
-		projected, ok := boundary.ProjectLocalPath(target)
-		if !ok {
-			continue
+		for _, projected := range boundary.ProjectLocalPaths(target) {
+			out = append(out, callboundary.PathInvalidationFact{
+				Path:                      projected,
+				PreserveStructuralWitness: preserveStructuralWitness,
+				ClearTarget:               clearTarget,
+			})
 		}
-		out = append(out, callboundary.PathInvalidationFact{
-			Path:                      projected,
-			PreserveStructuralWitness: preserveStructuralWitness,
-			ClearTarget:               clearTarget,
-		})
 	}
 	return out
 }
@@ -1063,22 +1061,24 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 
 func boundaryPathForReturnPath(returns []exitFactReturnPath, localPath path.Path) (path.Path, bool) {
 	for _, candidate := range returns {
-		if !localPath.HasPrefix(candidate.source) {
-			continue
+		if projected, ok := boundaryPathForOneReturnPath(candidate, localPath); ok {
+			return projected, true
 		}
-		return candidate.target.AppendSegments(localPath.Segments[len(candidate.source.Segments):]), true
-	}
-	for _, candidate := range returns {
-		if localPath.Symbol == 0 ||
-			candidate.source.Symbol == 0 ||
-			localPath.Symbol != candidate.source.Symbol ||
-			len(candidate.source.Segments) > len(localPath.Segments) ||
-			!segmentsEqual(localPath.Segments[:len(candidate.source.Segments)], candidate.source.Segments) {
-			continue
-		}
-		return candidate.target.AppendSegments(localPath.Segments[len(candidate.source.Segments):]), true
 	}
 	return path.Path{}, false
+}
+
+func boundaryPathForOneReturnPath(candidate exitFactReturnPath, localPath path.Path) (path.Path, bool) {
+	if localPath.HasPrefix(candidate.source) {
+		return candidate.target.AppendSegments(localPath.Segments[len(candidate.source.Segments):]), true
+	}
+	if localPath.Symbol == 0 || candidate.source.Symbol == 0 ||
+		localPath.Symbol != candidate.source.Symbol ||
+		len(candidate.source.Segments) > len(localPath.Segments) ||
+		!segmentsEqual(localPath.Segments[:len(candidate.source.Segments)], candidate.source.Segments) {
+		return path.Path{}, false
+	}
+	return candidate.target.AppendSegments(localPath.Segments[len(candidate.source.Segments):]), true
 }
 
 func placeholderForParameterPath(params []path.Path, localPath path.Path) (path.Path, bool) {
