@@ -58,6 +58,13 @@ func (t PreparedSummaryTransaction) FunctionType(key summary.SummaryKey) *typ.Fu
 // Apply consumes an exact matched Summary. summaryOwned means the caller lends
 // immutable backing storage which must be cloned before mutation.
 func (t PreparedSummaryTransaction) Apply(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State, got summary.Summary, fn *typ.Function, summaryOwned bool) callpayload.CallOutcome {
+	// Every transaction publishes heap objects into the caller's State, whose
+	// dense path keys are owned by callerKeySpace. The ordinary summary-reader
+	// path prepares summaries in that keyspace before reaching Apply, but
+	// transformer/relation callers supply freshly specialized summaries directly.
+	// Keep the ownership conversion at this shared publication boundary so no
+	// adapter can label producer-local heap keys as caller-owned.
+	got = got.RekeyHeapTableObjects(t.callerKeySpace)
 	got = materializeReturnRootTypesFromFacts(ctx.Registry, t.typeValues, got)
 	if len(got.ReturnParamPathAliases) != 0 {
 		if summaryOwned {
