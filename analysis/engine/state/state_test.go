@@ -761,6 +761,45 @@ func TestStateLatticeLaws(t *testing.T) {
 	suite.Run(t)
 }
 
+func TestStateLawSamplesCoverDefaultLaneCatalog(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	samples := stateLawLaneSamples(reg, ks)
+	defaults := DefaultLanes()
+	catalog := DefaultLaneCatalog().LaneSet().IDs()
+	if !reflect.DeepEqual(defaults, catalog) {
+		t.Fatalf("DefaultLanes() = %v, DefaultLaneCatalog() = %v", defaults, catalog)
+	}
+
+	seen := make(map[LaneID]struct{}, len(samples))
+	for _, sample := range samples {
+		if _, duplicate := seen[sample.lane]; duplicate {
+			t.Errorf("duplicate state law sample for lane %q", sample.lane)
+			continue
+		}
+		seen[sample.lane] = struct{}{}
+		if !DefaultLaneSet().Has(sample.lane) {
+			t.Errorf("orphan state law sample for non-default lane %q", sample.lane)
+			continue
+		}
+
+		laneDomain := DomainWithLaneSet(reg, NewLaneSet(sample.lane))
+		reachableEmpty := NormalizeForDomain(laneDomain, Reachable(State{}))
+		representative := NormalizeForDomain(laneDomain, sample.state)
+		if laneDomain.Equal(representative, reachableEmpty) {
+			t.Errorf("state law sample for lane %q does not exercise the lane", sample.lane)
+		}
+	}
+	for _, lane := range defaults {
+		if _, ok := seen[lane]; !ok {
+			t.Errorf("missing state law sample for default lane %q", lane)
+		}
+	}
+	if len(samples) != len(defaults) {
+		t.Errorf("state law sample count = %d, want exactly %d default lanes", len(samples), len(defaults))
+	}
+}
+
 func TestStateOrderConsistencyAndJoinMonotonicity(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
@@ -2630,11 +2669,13 @@ func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixtu
 	}
 }
 
-func stateLawSample(reg *axis.Registry, ks *keyspace.KeySpace) []State {
-	fx := stateLawFixtureFor(reg, ks)
-	bottom := Domain(reg).Bottom()
-	top := Domain(reg).Top()
+type stateLawLaneSample struct {
+	lane  LaneID
+	state State
+}
 
+func stateLawLaneSamples(reg *axis.Registry, ks *keyspace.KeySpace) []stateLawLaneSample {
+	fx := stateLawFixtureFor(reg, ks)
 	valueState := State{}.
 		WriteValue(reg, fx.valueSlot, fx.present).
 		WriteReturnSlot(reg, fx.returnSlot, fx.absent)
@@ -2650,29 +2691,63 @@ func stateLawSample(reg *axis.Registry, ks *keyspace.KeySpace) []State {
 		},
 	}))
 	effectState := State{}.
-		WriteEffectDelta(fx.effectKey, fx.effectDelta).
-		AddEscapeEvent(fx.escapeEvent).
-		WritePlacement(fx.escapeID, placement.Stack)
+		WriteEffectDelta(fx.effectKey, fx.effectDelta)
+	escapeState := State{}.AddEscapeEvent(fx.escapeEvent)
+	placementState := State{}.WritePlacement(fx.escapeID, placement.Stack)
 	channelState := State{}.AddChannelSelectFact(fx.channelFact)
 	frozenState := State{}.FreezeTable(fx.freezeID)
-	fullState := valueState.
-		WritePathKey(reg, ks, fx.pathKey, fx.present).
-		WritePathStaticMember(ks, fx.staticKey, fx.present).
-		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
-		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-			Root: fx.present,
-			StaticMembers: map[keyspace.Key]product.Value{
-				fx.staticHeapKey: fx.present,
-			},
-		})).
-		WriteEffectDelta(fx.effectKey, fx.effectDelta).
-		AddEscapeEvent(fx.escapeEvent).
-		WritePlacement(fx.escapeID, placement.Stack).
-		FreezeTable(fx.freezeID).
-		AddChannelSelectFact(fx.channelFact).
-		AddBranchProof(fx.proof)
+	source := mustTestStateKey(pathdom.PathKey("state-law-source"))
+	target := mustTestStateKey(pathdom.PathKey("state-law-target"))
+	storeState := State{}.AddStoreRelation(StoreRelation{Source: source, Into: target})
+	membershipState := State{}.AddPathKeyMembership(source, target)
+	typestateState := State{}.AcquireTypestate(
+		TypestateResourceFromCanonicalKey(source, typestate.Protocol("state-law")),
+		typestate.State("open"),
+		typestate.Obligation{Final: typestate.State("closed")},
+	)
+	lenFloorState := State{}.WriteLenFloor(ks, source, 2)
+	numFloorState := State{}.WriteNumFloor(ks, source, 3)
+	numCeilState := State{}.WriteNumCeil(ks, source, 7)
+	diffState := State{}.WriteDiffConstraint(RelValueOperand(source), RelValueOperand(target), -1)
+	// The standard value registry intentionally has no user-defined state axes.
+	// A reachable lane-top is still a genuine non-bottom user-lattice sample and
+	// exercises its product operations without coupling the default law suite to
+	// a test-only registry bundle.
+	userState := Reachable(State{})
+	userState.userLattices = userLatticeLane{top: true}
 
-	return []State{bottom, top, valueState, pathState, dynamicState, heapState, effectState, channelState, frozenState, fullState}
+	return []stateLawLaneSample{
+		{lane: LaneValues, state: valueState},
+		{lane: LanePathEvidence, state: pathState},
+		{lane: LaneDynamicIndex, state: dynamicState},
+		{lane: LaneHeapTableIdentity, state: heapState},
+		{lane: LaneFrozenTables, state: frozenState},
+		{lane: LaneEffectDeltas, state: effectState},
+		{lane: LaneEscapeEvents, state: escapeState},
+		{lane: LaneChannelSelect, state: channelState},
+		{lane: LaneStoreRelations, state: storeState},
+		{lane: LaneKeyMemberships, state: membershipState},
+		{lane: LaneTypestates, state: typestateState},
+		{lane: LanePlacement, state: placementState},
+		{lane: LaneLenFloors, state: lenFloorState},
+		{lane: LaneNumFloors, state: numFloorState},
+		{lane: LaneNumCeils, state: numCeilState},
+		{lane: LaneDiffRelations, state: diffState},
+		{lane: LaneUserLattices, state: userState},
+	}
+}
+
+func stateLawSample(reg *axis.Registry, ks *keyspace.KeySpace) []State {
+	laneSamples := stateLawLaneSamples(reg, ks)
+	sample := make([]State, 0, len(laneSamples)+3)
+	sample = append(sample, Domain(reg).Bottom(), Domain(reg).Top())
+	fullState := Reachable(State{})
+	for _, laneSample := range laneSamples {
+		sample = append(sample, laneSample.state)
+		fullState = Domain(reg).Join(fullState, laneSample.state)
+	}
+	sample = append(sample, fullState)
+	return sample
 }
 
 func stateLawFormat(reg *axis.Registry, ks *keyspace.KeySpace) func(State) string {
