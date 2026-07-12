@@ -122,7 +122,6 @@ func LowerResolvedEffects(reg *axis.Registry, effects []transformer.ResolvedEffe
 
 func lowerResolvedAllocations(reg *axis.Registry, effects []transformer.ResolvedEffect) (transformer.EffectResolution, bool) {
 	objects := make(map[identity.ID]heapidentity.TableObject, len(effects))
-	fresh := make([]summary.FreshHeapAllocation, 0, len(effects))
 	contributions := make([]transformer.EffectContribution, 0, len(effects))
 	ks := keyspace.New()
 	for _, effect := range effects {
@@ -145,24 +144,21 @@ func lowerResolvedAllocations(reg *axis.Registry, effects []transformer.Resolved
 				return transformer.EffectResolution{}, false
 			}
 			objects[objectID] = object
-			placementValue, ok := materialized.Placements[objectID]
-			if !ok {
+			if _, ok := materialized.Placements[objectID]; !ok {
 				return transformer.EffectResolution{}, false
 			}
-			fresh = append(fresh, summary.FreshHeapAllocation{ID: objectID, Placement: placementValue})
 		}
 		contributions = append(contributions, transformer.EffectContribution{
 			Kind: transformer.EffectAllocationTemplate,
 			BoundaryKinds: []callboundary.BoundaryFactKind{
 				callboundary.BoundaryFactKind("HeapTableObjects"),
-				callboundary.BoundaryFactKind("FreshHeapAllocations"),
 			},
 		})
 	}
 	out := summary.NormalizeOwned(reg, summary.Summary{
-		HeapTableObjects: objects, FreshHeapAllocations: fresh, HeapKeySpace: ks,
+		HeapTableObjects: objects, HeapKeySpace: ks,
 	})
-	if len(out.HeapTableObjects) != len(effects) || len(out.FreshHeapAllocations) != len(effects) {
+	if len(out.HeapTableObjects) != len(effects) || len(out.FreshHeapAllocations) != 0 {
 		return transformer.EffectResolution{}, false
 	}
 	return transformer.EffectResolution{Summary: out, Contributions: contributions}, true

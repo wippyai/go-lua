@@ -28,11 +28,8 @@ func TestLowerResolvedAllocationPreservesOneSharedIdentity(t *testing.T) {
 		Allocation: transformer.ResolvedAllocationTemplate{Site: op.Site(), Template: op, Result: value},
 	}})
 	got := resolution.Summary
-	if !ok || len(got.HeapTableObjects) != 1 || len(got.FreshHeapAllocations) != 1 || got.HeapKeySpace == nil {
+	if !ok || len(got.HeapTableObjects) != 1 || len(got.FreshHeapAllocations) != 0 || got.HeapKeySpace == nil {
 		t.Fatalf("allocation Summary = %#v/%v", got, ok)
-	}
-	if got.FreshHeapAllocations[0].ID != id {
-		t.Fatalf("fresh identity = %v, want %v", got.FreshHeapAllocations[0].ID, id)
 	}
 	object, exists := got.HeapTableObjects[id]
 	if !exists || !product.Equal(reg, object.Root(), value) {
