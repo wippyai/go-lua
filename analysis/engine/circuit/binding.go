@@ -278,7 +278,7 @@ func (d *Domain) CertifyExactMerge(claim MergeClaim) (ExactMergeCertificate, err
 // Rank returns the mechanically bounded ascent rank for a cell in this exact
 // finite policy universe.
 func (d *Domain) Rank(cell Cell) (Rank, error) {
-	if d == nil || cell.policy != d.precision.version || !d.validCellDisjuncts(cell.disjuncts) {
+	if !d.validCell(cell) {
 		return Rank{}, ErrInvalidCell
 	}
 	rank := cell.rank(d.precision.maxDisjuncts)
@@ -286,6 +286,48 @@ func (d *Domain) Rank(cell Cell) (Rank, error) {
 		return Rank{}, fmt.Errorf("%w: guard rank exceeds vocabulary", ErrInvalidCell)
 	}
 	return rank, nil
+}
+
+// Equal is the canonical guarded-cell equality owned by the binding domain.
+func (d *Domain) Equal(left, right Cell) bool {
+	return d.validCell(left) && d.validCell(right) && bytes.Equal(left.CanonicalBytes(), right.CanonicalBytes())
+}
+
+// LessOrEq is the guarded-cell order. Exact right-hand cells require literal
+// disjunct inclusion. A precision-loss RHS additionally requires guard
+// inclusion and a fresh call to the configured binding upper-bound verifier;
+// the widened spelling is never treated as Top by name alone.
+func (d *Domain) LessOrEq(left, right Cell) bool {
+	if !d.validCell(left) || !d.validCell(right) || left.key != right.key {
+		return false
+	}
+	if d.Equal(left, right) {
+		return true
+	}
+	if !right.loss {
+		if left.loss {
+			return false
+		}
+		for _, candidate := range left.disjuncts {
+			if findDisjunct(right.disjuncts, candidate) < 0 {
+				return false
+			}
+		}
+		return true
+	}
+	widened := right.disjuncts[0]
+	bindings := make([]BindingID, 0, len(left.disjuncts))
+	for _, candidate := range left.disjuncts {
+		if !guardSetSubset(candidate.application, widened.application) ||
+			!guardSetSubset(candidate.provenance, widened.provenance) ||
+			!guardSetSubset(candidate.alias, widened.alias) {
+			return false
+		}
+		bindings = append(bindings, candidate.binding)
+	}
+	sort.Slice(bindings, func(i, j int) bool { return bindings[i] < bindings[j] })
+	bindings = dedupBindings(bindings)
+	return d.verifyWiden != nil && d.verifyWiden(widened.binding, append([]BindingID(nil), bindings...))
 }
 
 func (d *Domain) Singleton(key CellKey, disjunct Disjunct) (Cell, error) {
@@ -315,8 +357,7 @@ func (d *Domain) Widen(left, right Cell, certificates ...ExactMergeCertificate) 
 
 func (d *Domain) combine(left, right Cell, allowWiden bool, certificates []ExactMergeCertificate) (Cell, OperationStats, error) {
 	stats := OperationStats{InputDisjuncts: len(left.disjuncts) + len(right.disjuncts)}
-	if d == nil || left.key != right.key || left.policy != d.precision.version || right.policy != d.precision.version ||
-		!d.validCellDisjuncts(left.disjuncts) || !d.validCellDisjuncts(right.disjuncts) {
+	if d == nil || left.key != right.key || !d.validCell(left) || !d.validCell(right) {
 		return Cell{}, stats, ErrInvalidCell
 	}
 	all := append(cloneDisjuncts(left.disjuncts), right.disjuncts...)
@@ -555,6 +596,44 @@ func (d *Domain) validCellDisjuncts(disjuncts []Disjunct) bool {
 	}
 	for _, disjunct := range disjuncts {
 		if !d.validDisjunct(disjunct) {
+			return false
+		}
+	}
+	return true
+}
+func (d *Domain) validCell(cell Cell) bool {
+	if d == nil || cell.policy != d.precision.version {
+		return false
+	}
+	if _, err := d.partition.Partition(cell.key); err != nil {
+		return false
+	}
+	if !d.validCellDisjuncts(cell.disjuncts) {
+		return false
+	}
+	if !slicesEqualDisjuncts(cell.disjuncts, normalizeDisjuncts(cell.disjuncts)) {
+		return false
+	}
+	if cell.loss {
+		return len(cell.disjuncts) == 1 && cell.disjuncts[0].binding == d.precision.widenedBinding
+	}
+	return true
+}
+func guardSetSubset(left, right GuardSet) bool {
+	for _, id := range left.ids {
+		i := sort.Search(len(right.ids), func(i int) bool { return right.ids[i] >= id })
+		if i == len(right.ids) || right.ids[i] != id {
+			return false
+		}
+	}
+	return true
+}
+func slicesEqualDisjuncts(left, right []Disjunct) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !disjunctEqual(left[i], right[i]) {
 			return false
 		}
 	}

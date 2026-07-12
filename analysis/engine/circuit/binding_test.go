@@ -151,6 +151,29 @@ func TestOutOfVocabularyGuardIsRejectedAtCellIngress(t *testing.T) {
 	}
 }
 
+func TestBindingOrderUsesVerifiedWidenedUpperBound(t *testing.T) {
+	domain, key := testDomain(t, 1, nil)
+	left := disjunct(t, []string{"a"}, []string{"p1"}, []string{"x"}, "one")
+	right := disjunct(t, []string{"b"}, []string{"p2"}, []string{"y"}, "two")
+	unrelated := disjunct(t, []string{"c"}, []string{"p3"}, []string{"z"}, "three")
+	leftCell, _ := domain.Singleton(key, left)
+	rightCell, _ := domain.Singleton(key, right)
+	unrelatedCell, _ := domain.Singleton(key, unrelated)
+	widened, _, err := domain.Widen(leftCell, rightCell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domain.LessOrEq(leftCell, widened) || !domain.LessOrEq(rightCell, widened) || !domain.LessOrEq(widened, widened) {
+		t.Fatal("verified widened RHS did not cover its members/reflexive self")
+	}
+	if domain.LessOrEq(unrelatedCell, widened) {
+		t.Fatal("widened RHS covered unrelated guards")
+	}
+	if domain.LessOrEq(circuit.Cell{}, widened) || domain.LessOrEq(leftCell, circuit.Cell{}) {
+		t.Fatal("zero/forged cell participated in order")
+	}
+}
+
 func testDomain(t testing.TB, max uint16, authority *circuit.ExactMergeAuthority) (*circuit.Domain, circuit.CellKey) {
 	t.Helper()
 	policy, err := circuit.NewBindingPartitionPolicy(3, []circuit.ClassID{"apply"}, []circuit.ClassID{"target"}, []circuit.ClassID{"prov"}, []circuit.ClassID{"alias"})
