@@ -42,6 +42,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 	audits := 0
 	semanticDigests := make(map[summary.Digest]int)
 	semanticFields := make(map[string]int)
+	normalReturnFields := make(map[string]int)
 	config := Config{Check: check}
 	config.semanticProgramAudit = func(prepared *body.Static, oracleConfig body.Config, oracle *body.Result) error {
 		fn := oracle.Function()
@@ -56,6 +57,13 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 		for field := 0; field < value.NumField(); field++ {
 			if !value.Field(field).IsZero() {
 				semanticFields[typeOf.Field(field).Name]++
+			}
+		}
+		normalReturn := reflect.ValueOf(projected.NormalReturnFacts)
+		normalReturnType := normalReturn.Type()
+		for field := 0; field < normalReturn.NumField(); field++ {
+			if !normalReturn.Field(field).IsZero() {
+				normalReturnFields[normalReturnType.Field(field).Name]++
 			}
 		}
 		stats := &body.Stats{}
@@ -86,6 +94,7 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 	}
 	t.Logf("compiler.validate_graph semantic summary classes=%d multiplicities=%v", len(semanticDigests), semanticDigests)
 	t.Logf("compiler.validate_graph non-empty Summary fields=%v", semanticFields)
+	t.Logf("compiler.validate_graph non-empty NormalReturnFacts fields=%v", normalReturnFields)
 }
 
 func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *body.Result, solve int) {
