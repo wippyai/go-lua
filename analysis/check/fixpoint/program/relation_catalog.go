@@ -1,7 +1,10 @@
 package program
 
 import (
+	"context"
+	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -12,6 +15,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
+// relationCatalogGeneration is a run-local authority token. Pointer identity,
+// rather than a content digest, prevents routes or cells prepared by one run
+// from being paired with an independently prepared snapshot.
+type relationCatalogGeneration struct{ freeze sync.Mutex }
+
 // relationCellIdentity is deliberately indivisible: a cell is authority for
 // exactly one summary equation compiled from exactly one prepared body.
 // Prepared pointer equality prevents two independently prepared bodies with a
@@ -21,6 +29,7 @@ type relationCellIdentity struct {
 	Summary    summary.SummaryKey
 	BodyDigest uint64
 	Prepared   *body.Static
+	Generation *relationCatalogGeneration
 }
 
 type relationCatalogEntry struct {
@@ -38,6 +47,7 @@ type relationConsumerIdentity struct {
 	Summary    summary.SummaryKey
 	BodyDigest uint64
 	Prepared   *body.Static
+	Generation *relationCatalogGeneration
 }
 
 type relationConsumerEntry struct {
@@ -51,8 +61,9 @@ type relationConsumerEntry struct {
 // producer catalog. Ineligible callers may therefore consume exact relations,
 // while leaf producers and unrelated owners remain inactive/cacheable.
 type relationConsumerPolicy struct {
-	entries []relationConsumerEntry
-	byKey   map[summary.SummaryKey]int
+	entries    []relationConsumerEntry
+	byKey      map[summary.SummaryKey]int
+	generation *relationCatalogGeneration
 }
 
 func (p relationConsumerPolicy) Owners() []relationConsumerIdentity {
@@ -91,9 +102,10 @@ func (p relationConsumerPolicy) lookup(owner relationConsumerIdentity) (relation
 // consulted by production solving yet. Order is canonical SummaryKey order;
 // maps are private lookup indexes over immutable entries.
 type relationRunCatalog struct {
-	entries   []relationCatalogEntry
-	byKey     map[summary.SummaryKey]int
-	consumers relationConsumerPolicy
+	entries    []relationCatalogEntry
+	byKey      map[summary.SummaryKey]int
+	consumers  relationConsumerPolicy
+	generation *relationCatalogGeneration
 }
 
 func (c relationRunCatalog) Entries() []relationCellIdentity {
@@ -114,6 +126,90 @@ func (c relationRunCatalog) DirectCalls(identity relationCellIdentity) (transfor
 		return transformer.DirectCallCatalog{}, false
 	}
 	return c.entries[index].direct, true
+}
+
+// Freeze solves every admitted producer as one transaction. No relation is
+// observable until every equation is prepared, solved, and certified exact.
+func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return relationRunSnapshot{}, err
+	}
+	if c.generation == nil || c.consumers.generation != c.generation {
+		return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Err: fmt.Errorf("catalog has no coherent generation")}
+	}
+	c.generation.freeze.Lock()
+	defer c.generation.freeze.Unlock()
+	if err := ctx.Err(); err != nil {
+		return relationRunSnapshot{}, err
+	}
+	cells := make([]transformer.RelationCell, 0, len(c.entries))
+	for _, entry := range c.entries {
+		if entry.identity.Generation != c.generation || entry.compiler == nil {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: entry.identity, Err: fmt.Errorf("producer identity drift")}
+		}
+		var (
+			equation *transformer.PreparedEquation
+			err      error
+		)
+		if len(entry.direct.Cells()) != 0 {
+			equation, err = entry.compiler.DirectEquation(entry.identity.Cell, entry.direct)
+		} else {
+			equation, err = entry.compiler.Equation(entry.identity.Cell)
+		}
+		if err != nil {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeEquation, Identity: entry.identity, Err: err}
+		}
+		cell, err := equation.Cell()
+		if err != nil {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeEquation, Identity: entry.identity, Err: err}
+		}
+		cells = append(cells, cell)
+	}
+	relations, err := transformer.SolveRelationCells(ctx, cells, transformer.RelationSolveOptions{})
+	if err != nil {
+		return relationRunSnapshot{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return relationRunSnapshot{}, err
+	}
+	identities := make(map[transformer.CellRef]relationCellIdentity, len(c.entries))
+	for _, entry := range c.entries {
+		relation, ok := relations.Lookup(entry.identity.Cell)
+		if !ok {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: entry.identity, Err: fmt.Errorf("solved cell missing")}
+		}
+		category := relationFreezeCategory("")
+		switch {
+		case relation.ContextualReason() != "":
+			category = relationFreezeContextual
+		case relation.Widened():
+			category = relationFreezeWidened
+		case relation.Rows() == 0:
+			category = relationFreezeEmpty
+		}
+		if category != "" {
+			return relationRunSnapshot{}, relationFreezeError{Category: category, Identity: entry.identity, Err: fmt.Errorf("relation rejected: %s", relation.ContextualReason())}
+		}
+		identities[entry.identity.Cell] = entry.identity
+	}
+	for _, consumer := range c.consumers.entries {
+		if consumer.identity.Generation != c.generation {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Err: fmt.Errorf("consumer identity drift")}
+		}
+		for point := 0; point < consumer.direct.PointCount(); point++ {
+			target, ok := consumer.direct.Lookup(cfg.Point(point))
+			if !ok {
+				continue
+			}
+			if _, frozen := identities[target.Cell]; !frozen {
+				return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Err: fmt.Errorf("consumer route targets unfrozen cell %v", target.Cell)}
+			}
+		}
+	}
+	return relationRunSnapshot{generation: c.generation, relations: relations, identities: identities, consumers: c.consumers}, nil
 }
 
 type relationCatalogCandidate struct {
@@ -207,10 +303,12 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 			byKey:   make(map[summary.SummaryKey]int, len(owners)),
 		},
 	}
+	out.generation = &relationCatalogGeneration{}
+	out.consumers.generation = out.generation
 	identities := make(map[summary.SummaryKey]relationCellIdentity, len(ordered))
 	for i, key := range ordered {
 		candidate := candidates[key]
-		identities[key] = relationCellIdentity{Cell: transformer.CellRef{Function: uint64(i + 1)}, Summary: key, BodyDigest: candidate.prepared.IdentityDigest(), Prepared: candidate.prepared}
+		identities[key] = relationCellIdentity{Cell: transformer.CellRef{Function: uint64(i + 1)}, Summary: key, BodyDigest: candidate.prepared.IdentityDigest(), Prepared: candidate.prepared, Generation: out.generation}
 	}
 	for _, key := range ordered {
 		candidate := candidates[key]
@@ -252,7 +350,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		if err != nil {
 			continue
 		}
-		identity := relationConsumerIdentity{Summary: owner.key, BodyDigest: owner.prepared.IdentityDigest(), Prepared: owner.prepared}
+		identity := relationConsumerIdentity{Summary: owner.key, BodyDigest: owner.prepared.IdentityDigest(), Prepared: owner.prepared, Generation: out.generation}
 		entry := relationConsumerEntry{identity: identity, direct: direct, active: len(routes) != 0}
 		out.consumers.byKey[owner.key] = len(out.consumers.entries)
 		out.consumers.entries = append(out.consumers.entries, entry)

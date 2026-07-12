@@ -45,6 +45,9 @@ type Config struct {
 	// seam in package tests. Production never installs it, so catalog preparation
 	// cannot add work or alter call routing before activation is explicitly gated.
 	relationCatalogAudit func(relationRunCatalog) error
+	// relationSnapshotAudit observes the fully frozen inactive relation system.
+	// It is test-only and never changes production call routing.
+	relationSnapshotAudit func(relationRunSnapshot) error
 }
 
 // Stats holds caller-owned observational counters for a program fixed-point
@@ -111,10 +114,21 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	if config.relationCatalogAudit != nil {
+	if config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil {
 		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
-		if err := config.relationCatalogAudit(catalog); err != nil {
-			return Result{}, err
+		if config.relationCatalogAudit != nil {
+			if err := config.relationCatalogAudit(catalog); err != nil {
+				return Result{}, err
+			}
+		}
+		if config.relationSnapshotAudit != nil {
+			snapshot, err := catalog.Freeze(config.Context)
+			if err != nil {
+				return Result{}, err
+			}
+			if err := config.relationSnapshotAudit(snapshot); err != nil {
+				return Result{}, err
+			}
 		}
 	}
 	if err := contextErr(config.Context); err != nil {
@@ -209,10 +223,21 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	if err != nil {
 		return Result{}, err
 	}
-	if config.relationCatalogAudit != nil {
+	if config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil {
 		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
-		if err := config.relationCatalogAudit(catalog); err != nil {
-			return Result{}, err
+		if config.relationCatalogAudit != nil {
+			if err := config.relationCatalogAudit(catalog); err != nil {
+				return Result{}, err
+			}
+		}
+		if config.relationSnapshotAudit != nil {
+			snapshot, err := catalog.Freeze(config.Context)
+			if err != nil {
+				return Result{}, err
+			}
+			if err := config.relationSnapshotAudit(snapshot); err != nil {
+				return Result{}, err
+			}
 		}
 	}
 	if err := contextErr(config.Context); err != nil {
