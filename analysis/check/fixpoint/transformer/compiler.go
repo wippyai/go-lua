@@ -332,6 +332,9 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
 	outputCaps := DefaultOutputCapabilityRegistry()
 	summaryKinds := []callboundary.BoundaryFactKind{"NormalReturnParams", "NormalReturnFacts"}
+	if planReturnArity(plan) > 1 {
+		summaryKinds = append(summaryKinds, "ReturnConditionSlotRefinements", "ReturnPresenceRelations")
+	}
 	if planHasIteratorCall(plan) {
 		summaryKinds = append(summaryKinds, "MaySuspend")
 	}
@@ -345,6 +348,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		return contextual("compiler: descriptors: " + descriptorErr.Error())
 	}
 	builder := NewBuilderWithDescriptors(reg, shape, outputCaps, descriptors, plan)
+	builder.inferReturnCorrelations = planReturnArity(plan) > 1
 	ctx.builder = builder
 	ctx.locals = make(map[symbol.ID]ValueTerm)
 	ctx.expressions = make(map[factflow.ExprRef][]ValueTerm)
@@ -438,13 +442,6 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	)
 	if err != nil {
 		return contextual("compiler: " + err.Error())
-	}
-	// The canonical concrete projection derives cross-slot presence and
-	// truthiness correlations from multi-result return points. Until those
-	// correlations are compiled from the same feasible rows, publishing only
-	// the joined return products would silently discard call-boundary facts.
-	if planReturnArity(plan) > 1 {
-		return contextual("compiler: correlated return projection is not represented")
 	}
 	exitRows := rowsByPoint[graph.Exit()]
 	rows := make([]Row, len(exitRows))

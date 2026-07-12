@@ -2,7 +2,6 @@ package body
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
@@ -37,7 +36,7 @@ func resolveReferenceTransformerFixture(t testing.TB) *Static {
 	return nil
 }
 
-func TestResolveReferenceFalsyBranchesReachCorrelatedReturnGate(t *testing.T) {
+func TestResolveReferenceFalsyBranchesAreWholeFunctionExact(t *testing.T) {
 	prepared := resolveReferenceTransformerFixture(t)
 	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
 	dynamicExact, dynamicTotal := 0, 0
@@ -63,8 +62,8 @@ func TestResolveReferenceFalsyBranchesReachCorrelatedReturnGate(t *testing.T) {
 		t.Fatalf("resolve_reference root assignment exact = %d/%d, want dynamic-read local admitted", rootExact, rootTotal)
 	}
 	relation := transformer.NewPlanCompiler().Compile(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
-	if reason := relation.ContextualReason(); !strings.Contains(reason, "correlated return projection is not represented") {
-		t.Fatalf("resolve_reference contextual reason = %q, want sound correlated-return gate after both falsy branches", reason)
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatalf("resolve_reference relation is contextual: %s", reason)
 	}
-	t.Logf("resolve_reference concat, dynamic read, and both normalized falsy branches reach the correlated-return gate; root assignments=%d/%d", rootExact, rootTotal)
+	t.Logf("resolve_reference concat, dynamic read, both normalized falsy branches, and correlated returns are exact; root assignments=%d/%d", rootExact, rootTotal)
 }

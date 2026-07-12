@@ -40,14 +40,15 @@ type Row struct {
 // Relation is immutable. contextual is lattice Top: callers must use the
 // existing per-context solver and no partial transformer result may publish.
 type Relation struct {
-	shape       Shape
-	arena       *Arena
-	effects     *EffectArena
-	descriptors *DescriptorRegistry
-	authority   *relationOutputAuthority
-	rows        []Row
-	contextual  string
-	widened     bool
+	shape                   Shape
+	arena                   *Arena
+	effects                 *EffectArena
+	descriptors             *DescriptorRegistry
+	authority               *relationOutputAuthority
+	rows                    []Row
+	inferReturnCorrelations bool
+	contextual              string
+	widened                 bool
 }
 
 // relationOutputAuthority is the immutable capability snapshot carried by a
@@ -56,14 +57,21 @@ type Relation struct {
 // effect descriptor. Row-owned outputs use OutputCapabilityRegistry instead.
 type relationOutputAuthority struct {
 	effects map[EffectKind]map[callboundary.BoundaryFactKind]struct{}
+	summary map[callboundary.BoundaryFactKind]struct{}
 }
 
-func snapshotRelationOutputAuthority(catalog *EffectCatalog) *relationOutputAuthority {
-	if catalog == nil {
+func snapshotRelationOutputAuthority(catalog *EffectCatalog, caps *OutputCapabilityRegistry) *relationOutputAuthority {
+	if catalog == nil || caps == nil {
 		return nil
 	}
 	out := &relationOutputAuthority{
 		effects: make(map[EffectKind]map[callboundary.BoundaryFactKind]struct{}),
+		summary: make(map[callboundary.BoundaryFactKind]struct{}),
+	}
+	for _, kind := range caps.SummaryKinds() {
+		if len(caps.UnsupportedSummary(kind)) == 0 {
+			out.summary[kind] = struct{}{}
+		}
 	}
 	for kind := EffectInvalidatePath; kind < effectKindCount; kind++ {
 		descriptor, ok := catalog.Descriptor(kind)
@@ -83,8 +91,13 @@ func equalRelationOutputAuthority(a, b *relationOutputAuthority) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if len(a.effects) != len(b.effects) {
+	if len(a.effects) != len(b.effects) || len(a.summary) != len(b.summary) {
 		return false
+	}
+	for kind := range a.summary {
+		if _, ok := b.summary[kind]; !ok {
+			return false
+		}
 	}
 	for effectKind, allowed := range a.effects {
 		other, ok := b.effects[effectKind]
@@ -100,6 +113,14 @@ func equalRelationOutputAuthority(a, b *relationOutputAuthority) bool {
 	return true
 }
 
+func (a *relationOutputAuthority) allowsSummary(kind callboundary.BoundaryFactKind) bool {
+	if a == nil {
+		return false
+	}
+	_, ok := a.summary[kind]
+	return ok
+}
+
 func (r Relation) Shape() Shape             { return r.shape }
 func (r Relation) ContextualReason() string { return r.contextual }
 func (r Relation) Widened() bool            { return r.widened }
@@ -107,13 +128,14 @@ func (r Relation) Rows() int                { return len(r.rows) }
 
 // Builder performs atomic validation before publishing an immutable relation.
 type Builder struct {
-	shape         Shape
-	arena         *Arena
-	effects       *EffectArena
-	effectCatalog *EffectCatalog
-	caps          *OutputCapabilityRegistry
-	descriptors   *DescriptorRegistry
-	plan          *operationplan.Plan
+	shape                   Shape
+	arena                   *Arena
+	effects                 *EffectArena
+	effectCatalog           *EffectCatalog
+	caps                    *OutputCapabilityRegistry
+	descriptors             *DescriptorRegistry
+	plan                    *operationplan.Plan
+	inferReturnCorrelations bool
 }
 
 func NewBuilder(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry, plan *operationplan.Plan) *Builder {
@@ -224,7 +246,8 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 	owned = dedupRows(b.arena, b.effects, owned)
 	return Relation{
 		shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors,
-		authority: snapshotRelationOutputAuthority(b.effectCatalog), rows: owned,
+		authority: snapshotRelationOutputAuthority(b.effectCatalog, b.caps), rows: owned,
+		inferReturnCorrelations: b.inferReturnCorrelations,
 	}, nil
 }
 
@@ -365,19 +388,21 @@ func JoinRelation(a, b Relation) Relation {
 		a.effects = b.effects
 		a.authority = b.authority
 		a.descriptors = b.descriptors
+		a.inferReturnCorrelations = b.inferReturnCorrelations
 	}
 	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
 		b.effects = a.effects
 		b.authority = a.authority
 		b.descriptors = a.descriptors
+		b.inferReturnCorrelations = a.inferReturnCorrelations
 	}
-	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) {
+	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalRelationOutputAuthority(a.authority, b.authority) {
 		return Relation{shape: a.shape, arena: a.arena, effects: a.effects, contextual: "incompatible or contextual relation"}
 	}
 	rows := append(cloneRows(a.rows), b.rows...)
 	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
 	rows = dedupRows(a.arena, a.effects, rows)
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, widened: a.widened || b.widened}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened}
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -398,7 +423,7 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))

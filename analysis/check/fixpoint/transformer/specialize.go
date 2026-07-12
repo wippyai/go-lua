@@ -124,6 +124,7 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 	}
 	reg := r.arena.reg
 	var accumulated summary.Summary
+	var candidates []summary.Summary
 	have := false
 	for _, row := range r.rows {
 		feasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
@@ -174,9 +175,28 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 		} else {
 			accumulated = summary.Join(reg, accumulated, candidate)
 		}
+		candidates = append(candidates, candidate)
 	}
 	if !have {
 		return summary.Summary{}, true
+	}
+	if r.inferReturnCorrelations {
+		var declared []product.Value
+		if handler, ok := descriptors.handlers[DescriptorReturn].(returnHandler); ok {
+			declared = handler.declared
+		}
+		conditions, relations, exact := inferReturnRowCorrelations(reg, candidates, declared)
+		if !exact {
+			return summary.Summary{}, false
+		}
+		if len(conditions) != 0 && !r.authority.allowsSummary("ReturnConditionSlotRefinements") {
+			return summary.Summary{}, false
+		}
+		if len(relations) != 0 && !r.authority.allowsSummary("ReturnPresenceRelations") {
+			return summary.Summary{}, false
+		}
+		accumulated.ReturnConditionSlotRefinements = append(accumulated.ReturnConditionSlotRefinements, conditions...)
+		accumulated.ReturnPresenceRelations = append(accumulated.ReturnPresenceRelations, relations...)
 	}
 	return summary.NormalizeOwned(reg, accumulated), true
 }

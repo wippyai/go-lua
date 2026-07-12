@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -57,9 +58,18 @@ func TestPlanCompilerDirectScalarReturnSpecializesExactly(t *testing.T) {
 	if !exact {
 		t.Fatal("direct relation did not specialize")
 	}
-	want := summary.Normalize(reg, summary.Summary{Returns: []product.Value{
-		typevalue.LiteralInt(reg, 42), wantString,
-	}})
+	wantInt := typevalue.LiteralInt(reg, 42)
+	want := summary.Normalize(reg, summary.Summary{
+		Returns: []product.Value{wantInt, wantString},
+		ReturnConditionSlotRefinements: []summary.ReturnConditionSlotRefinement{
+			{ReturnIndex: 0, ReturnValue: true, TargetIndex: 1, Value: wantString},
+			{ReturnIndex: 1, ReturnValue: true, TargetIndex: 0, Value: wantInt},
+		},
+		ReturnPresenceRelations: []summary.ReturnPresenceRelation{
+			{TriggerIndex: 0, TriggerPresence: presence.Present(), TargetIndex: 1, TargetPresence: presence.Present()},
+			{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Present()},
+		},
+	})
 	if !summary.Equal(reg, got, want) {
 		t.Fatalf("specialized Summary differs\n got=%#v\nwant=%#v", got, want)
 	}
