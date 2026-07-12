@@ -14,6 +14,7 @@ func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
 		kind:       FunctionOriginLiteral,
 		localIndex: -1,
 	})
+	r.finalizeFunctionIndexes()
 	return r
 }
 
@@ -24,6 +25,7 @@ func BindChunk(stmts []ast.Stmt, opts Options) *Result {
 	b.pushScope()
 	b.bindStmts(stmts)
 	b.popScope()
+	r.finalizeFunctionIndexes()
 	return r
 }
 

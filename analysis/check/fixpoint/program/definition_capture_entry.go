@@ -36,11 +36,14 @@ func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.F
 	entryKeys := result.KeySpace()
 	for i := range keys.functions {
 		fn := keys.functions[i].funcExpr
-		if fn == nil || functionEntryCaptureCount(keys.bindings, fn) == 0 {
+		if fn == nil {
 			continue
 		}
 		origin, ok := keys.bindings.FunctionOrigin(fn)
 		if !ok || origin.Parent != owner {
+			continue
+		}
+		if functionEntryCaptureCount(keys.bindings, fn) == 0 {
 			continue
 		}
 		point, ok := definitionEntryPoint(result, origin)
@@ -92,11 +95,14 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 		}
 		for i := range keys.functions {
 			fn := keys.functions[i].funcExpr
-			if fn == nil || functionEntryCaptureCount(keys.bindings, fn) == 0 {
+			if fn == nil {
 				continue
 			}
 			origin, ok := keys.bindings.FunctionOrigin(fn)
 			if !ok || origin.Parent != owner {
+				continue
+			}
+			if functionEntryCaptureCount(keys.bindings, fn) == 0 {
 				continue
 			}
 			if !functionEscapesAtReturnPoint(result, origin, point, dom) {

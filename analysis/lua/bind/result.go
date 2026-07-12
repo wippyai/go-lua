@@ -33,9 +33,12 @@ type Result struct {
 	functions          []*ast.FunctionExpr
 	nestedFunctions    map[*ast.FunctionExpr][]*ast.FunctionExpr
 	functionOrigins    map[*ast.FunctionExpr]FunctionOrigin
+	functionIndex      map[*ast.FunctionExpr]int
+	functionSubtreeEnd map[*ast.FunctionExpr]int
 	declaringFunctions map[symbol.ID]*ast.FunctionExpr
 	directCaptures     map[*ast.FunctionExpr][]Capture
 	directCaptureSeen  map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	entryCaptures      map[*ast.FunctionExpr][]Capture
 	directGlobalReads  map[*ast.FunctionExpr][]symbol.ID
 	directGlobalSeen   map[*ast.FunctionExpr]map[symbol.ID]struct{}
 
@@ -73,9 +76,12 @@ func newResult(opts Options) *Result {
 		functionsBySymbol:     make(map[symbol.ID]*ast.FunctionExpr),
 		nestedFunctions:       make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
 		functionOrigins:       make(map[*ast.FunctionExpr]FunctionOrigin),
+		functionIndex:         make(map[*ast.FunctionExpr]int),
+		functionSubtreeEnd:    make(map[*ast.FunctionExpr]int),
 		declaringFunctions:    make(map[symbol.ID]*ast.FunctionExpr),
 		directCaptures:        make(map[*ast.FunctionExpr][]Capture),
 		directCaptureSeen:     make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
+		entryCaptures:         make(map[*ast.FunctionExpr][]Capture),
 		directGlobalReads:     make(map[*ast.FunctionExpr][]symbol.ID),
 		directGlobalSeen:      make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
 		paramSymbols:          make(map[*ast.FunctionExpr][]symbol.ID),

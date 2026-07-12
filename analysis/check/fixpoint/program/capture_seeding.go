@@ -796,54 +796,14 @@ func (s *closureCaptureSeeder) entryCaptures(fn *ast.FunctionExpr) []bind.Captur
 	if s == nil || s.bindings == nil || fn == nil {
 		return nil
 	}
-	out := append([]bind.Capture(nil), s.bindings.DirectCaptures(fn)...)
-	seen := make(map[symbol.ID]struct{}, len(out))
-	for _, capture := range out {
-		if capture.Captured != 0 {
-			seen[capture.Captured] = struct{}{}
-		}
-	}
-	s.bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
-		if origin.Func == nil || origin.Func == fn || !functionOriginDescendsFrom(s.bindings, origin.Func, fn) {
-			return true
-		}
-		for _, capture := range s.bindings.DirectCaptures(origin.Func) {
-			if capture.Captured == 0 {
-				continue
-			}
-			if owner, ok := s.bindings.DeclaringFunction(capture.Captured); ok && owner == fn {
-				continue
-			}
-			if _, ok := seen[capture.Captured]; ok {
-				continue
-			}
-			seen[capture.Captured] = struct{}{}
-			out = append(out, capture)
-		}
-		return true
-	})
-	return out
+	return s.bindings.EntryCaptures(fn)
 }
 
 func functionEntryCaptureCount(bindings *bind.Result, fn *ast.FunctionExpr) int {
-	seeder := &closureCaptureSeeder{bindings: bindings}
-	return len(seeder.entryCaptures(fn))
-}
-
-func functionOriginDescendsFrom(bindings *bind.Result, fn, ancestor *ast.FunctionExpr) bool {
-	if bindings == nil || fn == nil {
-		return false
+	if bindings == nil {
+		return 0
 	}
-	for {
-		parent, ok := bindings.ParentFunction(fn)
-		if !ok || parent == nil {
-			return ancestor == nil
-		}
-		if parent == ancestor {
-			return true
-		}
-		fn = parent
-	}
+	return bindings.EntryCaptureCount(fn)
 }
 
 func (s *closureCaptureSeeder) functionForCapturedSymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {

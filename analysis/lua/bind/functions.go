@@ -161,6 +161,49 @@ func (r *Result) ParentFunction(fn *ast.FunctionExpr) (*ast.FunctionExpr, bool) 
 	return origin.Parent, true
 }
 
+// FunctionDescendsFrom reports whether fn is a strict lexical descendant of
+// ancestor. Binding records functions in lexical preorder and seals subtree
+// intervals once, making this query constant-time regardless of nesting depth.
+// A nil ancestor denotes the containing chunk and includes every known function.
+func (r *Result) FunctionDescendsFrom(fn, ancestor *ast.FunctionExpr) bool {
+	if r == nil || fn == nil || fn == ancestor {
+		return false
+	}
+	index, known := r.functionIndex[fn]
+	if !known {
+		return false
+	}
+	if ancestor == nil {
+		return true
+	}
+	start, known := r.functionIndex[ancestor]
+	if !known {
+		return false
+	}
+	return index > start && index < r.functionSubtreeEnd[ancestor]
+}
+
+// ForEachDescendantFunctionOrigin visits a lexical subtree in parent-before-
+// child order. Work is proportional only to the returned subtree.
+func (r *Result) ForEachDescendantFunctionOrigin(ancestor *ast.FunctionExpr, visit func(FunctionOrigin) bool) {
+	if r == nil || visit == nil {
+		return
+	}
+	start, end := 0, len(r.functions)
+	if ancestor != nil {
+		index, ok := r.functionIndex[ancestor]
+		if !ok {
+			return
+		}
+		start, end = index+1, r.functionSubtreeEnd[ancestor]
+	}
+	for _, fn := range r.functions[start:end] {
+		if origin, ok := r.functionOrigins[fn]; ok && !visit(origin) {
+			return
+		}
+	}
+}
+
 // DeclaringFunction returns the function that owns a declaration symbol.
 func (r *Result) DeclaringFunction(sym symbol.ID) (*ast.FunctionExpr, bool) {
 	if r == nil || sym == 0 {
@@ -176,6 +219,24 @@ func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []Capture {
 		return nil
 	}
 	return cloneCaptures(r.directCaptures[fn])
+}
+
+// EntryCaptures returns the order-preserving closure inputs required by fn and
+// its descendants, excluding declarations owned by fn itself. The binder
+// computes this immutable projection once; repeated solves only clone output.
+func (r *Result) EntryCaptures(fn *ast.FunctionExpr) []Capture {
+	if r == nil || fn == nil {
+		return nil
+	}
+	return cloneCaptures(r.entryCaptures[fn])
+}
+
+// EntryCaptureCount is the allocation-free size counterpart of EntryCaptures.
+func (r *Result) EntryCaptureCount(fn *ast.FunctionExpr) int {
+	if r == nil || fn == nil {
+		return 0
+	}
+	return len(r.entryCaptures[fn])
 }
 
 // DirectGlobalReads returns global symbols directly read by fn in first-use
@@ -250,6 +311,51 @@ func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details function
 		HasTargetSymbol: details.hasTargetSymbol,
 	}
 	return id
+}
+
+// finalizeFunctionIndexes seals lexical indexes after the binder has finished.
+// It also materializes effective entry captures in the exact historical order:
+// direct captures first, followed by descendant direct captures in preorder.
+func (r *Result) finalizeFunctionIndexes() {
+	if r == nil || len(r.functions) == 0 {
+		return
+	}
+	for index, fn := range r.functions {
+		r.functionIndex[fn] = index
+		r.functionSubtreeEnd[fn] = index + 1
+		r.entryCaptures[fn] = cloneCaptures(r.directCaptures[fn])
+	}
+	for index := len(r.functions) - 1; index >= 0; index-- {
+		fn := r.functions[index]
+		origin := r.functionOrigins[fn]
+		if origin.Parent != nil && r.functionSubtreeEnd[origin.Parent] < r.functionSubtreeEnd[fn] {
+			r.functionSubtreeEnd[origin.Parent] = r.functionSubtreeEnd[fn]
+		}
+	}
+	seen := make(map[*ast.FunctionExpr]map[symbol.ID]struct{}, len(r.functions))
+	for _, fn := range r.functions {
+		set := make(map[symbol.ID]struct{}, len(r.entryCaptures[fn]))
+		for _, capture := range r.entryCaptures[fn] {
+			if capture.Captured != 0 {
+				set[capture.Captured] = struct{}{}
+			}
+		}
+		seen[fn] = set
+	}
+	for _, descendant := range r.functions {
+		for _, capture := range r.directCaptures[descendant] {
+			for ancestor := r.functionOrigins[descendant].Parent; ancestor != nil; ancestor = r.functionOrigins[ancestor].Parent {
+				if capture.Captured == 0 || capture.DeclaringFunction == ancestor {
+					continue
+				}
+				if _, exists := seen[ancestor][capture.Captured]; exists {
+					continue
+				}
+				seen[ancestor][capture.Captured] = struct{}{}
+				r.entryCaptures[ancestor] = append(r.entryCaptures[ancestor], capture)
+			}
+		}
+	}
 }
 
 func (b *binder) currentFunction() *ast.FunctionExpr {

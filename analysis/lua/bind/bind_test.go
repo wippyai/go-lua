@@ -1515,3 +1515,116 @@ func TestTypeOfInFunctionSignatureDoesNotCreateRuntimeCapture(t *testing.T) {
 		t.Fatalf("DirectCaptures(inner) = %#v, want no runtime capture from type query", captures)
 	}
 }
+
+func TestLexicalFunctionIndexDeepAndWide(t *testing.T) {
+	deepRoot, deep := deepCaptureFunctions(192)
+	deepBindings := BindFunction(deepRoot, Options{})
+	leaf := deep[len(deep)-1]
+	if !deepBindings.FunctionDescendsFrom(leaf, deepRoot) {
+		t.Fatal("deep leaf was not indexed under root")
+	}
+	if deepBindings.FunctionDescendsFrom(deepRoot, leaf) || deepBindings.FunctionDescendsFrom(deepRoot, deepRoot) {
+		t.Fatal("lexical descendant relation is not strict")
+	}
+	if !deepBindings.FunctionDescendsFrom(leaf, nil) {
+		t.Fatal("nil chunk ancestor did not contain known function")
+	}
+	if got := deepBindings.EntryCaptureCount(deep[1]); got != 1 {
+		t.Fatalf("deep child entry captures = %d, want one deduplicated root capture", got)
+	}
+	visited := 0
+	deepBindings.ForEachDescendantFunctionOrigin(deep[96], func(FunctionOrigin) bool {
+		visited++
+		return true
+	})
+	if want := len(deep) - 97; visited != want {
+		t.Fatalf("deep descendants = %d, want %d", visited, want)
+	}
+
+	wideRoot, wide := wideCaptureFunctions(768)
+	wideBindings := BindFunction(wideRoot, Options{})
+	visited = 0
+	wideBindings.ForEachDescendantFunctionOrigin(wideRoot, func(origin FunctionOrigin) bool {
+		visited++
+		if !wideBindings.FunctionDescendsFrom(origin.Func, wideRoot) {
+			t.Fatalf("wide child %p missing descendant interval", origin.Func)
+		}
+		return true
+	})
+	if visited != len(wide)-1 {
+		t.Fatalf("wide descendants = %d, want %d", visited, len(wide)-1)
+	}
+	for _, child := range wide[1:] {
+		if got := wideBindings.EntryCaptureCount(child); got != 1 {
+			t.Fatalf("wide child entry captures = %d, want 1", got)
+		}
+	}
+}
+
+func TestEntryCapturesPreserveAncestorRelativeOwnership(t *testing.T) {
+	grandReadX, grandReadY := ident("x"), ident("y")
+	grand := function(nil, ret(grandReadX, grandReadY))
+	yDecl := localAssign([]string{"y"}, number("2"))
+	child := function(nil, yDecl, localAssign([]string{"grand"}, grand))
+	xDecl := localAssign([]string{"x"}, number("1"))
+	root := function(nil, xDecl, localAssign([]string{"child"}, child))
+	r := BindFunction(root, Options{})
+	x := mustLocalAt(t, r, xDecl, 0)
+	y := mustLocalAt(t, r, yDecl, 0)
+	if got := captureIDs(r.EntryCaptures(root)); !reflect.DeepEqual(got, []symbol.ID{y}) {
+		t.Fatalf("EntryCaptures(root) = %v, want descendant-owned y only", got)
+	}
+	if got := captureIDs(r.EntryCaptures(child)); !reflect.DeepEqual(got, []symbol.ID{x}) {
+		t.Fatalf("EntryCaptures(child) = %v, want ancestor-owned x only", got)
+	}
+	if got := captureIDs(r.EntryCaptures(grand)); !reflect.DeepEqual(got, []symbol.ID{x, y}) {
+		t.Fatalf("EntryCaptures(grand) = %v, want direct x,y order", got)
+	}
+}
+
+func BenchmarkLexicalFunctionIndexes(b *testing.B) {
+	root, functions := deepCaptureFunctions(512)
+	bindings := BindFunction(root, Options{})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		total := 0
+		for _, fn := range functions[1:] {
+			if bindings.FunctionDescendsFrom(fn, root) {
+				total += bindings.EntryCaptureCount(fn)
+			}
+		}
+		if total != len(functions)-1 {
+			b.Fatalf("total captures = %d", total)
+		}
+	}
+}
+
+func deepCaptureFunctions(depth int) (*ast.FunctionExpr, []*ast.FunctionExpr) {
+	if depth < 1 {
+		depth = 1
+	}
+	functions := make([]*ast.FunctionExpr, depth)
+	for i := range functions {
+		functions[i] = function(nil)
+	}
+	functions[0].Stmts = append(functions[0].Stmts, localAssign([]string{"x"}, number("1")))
+	for i, fn := range functions {
+		fn.Stmts = append(fn.Stmts, ret(ident("x")))
+		if i+1 < len(functions) {
+			fn.Stmts = append(fn.Stmts, localAssign([]string{"child"}, functions[i+1]))
+		}
+	}
+	return functions[0], functions
+}
+
+func wideCaptureFunctions(width int) (*ast.FunctionExpr, []*ast.FunctionExpr) {
+	root := function(nil, localAssign([]string{"x"}, number("1")))
+	functions := []*ast.FunctionExpr{root}
+	for range width {
+		child := function(nil, ret(ident("x")))
+		functions = append(functions, child)
+		root.Stmts = append(root.Stmts, localAssign([]string{"child"}, child))
+	}
+	return root, functions
+}
