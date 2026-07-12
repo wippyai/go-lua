@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
+	"github.com/wippyai/go-lua/analysis/engine/region"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -68,7 +69,7 @@ func TryRunRetained(config Config, budget RetainedBudget) (Result, *RetainedSess
 		return nil, nil, err
 	}
 	plan := newEquationPlan(config, domain, equationPlanHooks{})
-	result, versions, retained, err := solve.BuildRetainedWTO(config.Context, plan.system, plan.wto, budget)
+	result, versions, retained, err := region.BuildRetainedPrepared(config.Context, plan.system, plan.wto, budget)
 	if err != nil {
 		return nil, nil, err
 	}
