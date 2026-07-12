@@ -186,7 +186,10 @@ func (c *checker) prepare(
 		}
 		return signatureProducer.IteratorForSite(transfer.NodeContext{Point: point}, site)
 	})
-	operationPlan := lowered.Plan.WithExtensions(genericForOperationExtensions(genericForOperations))
+	operationPlan := lowered.Plan.
+		WithBoundaryParams(bindings.ParamSymbols(fn)).
+		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer)).
+		WithExtensions(genericForOperationExtensions(genericForOperations))
 	resolver := config.Visibility
 	if resolver == nil {
 		resolver = defaultVisibilityResolver(bindings, built, wirBody, genericFors)

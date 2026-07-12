@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -33,12 +34,21 @@ type PlanCompiler struct {
 }
 
 type planCompileContext struct {
-	registry *axis.Registry
-	graph    cfg.Graph
-	plan     *operationplan.Plan
-	facts    factflow.Facts
-	builder  *Builder
-	locals   map[symbol.ID]ValueTerm
+	registry        *axis.Registry
+	graph           cfg.Graph
+	plan            *operationplan.Plan
+	facts           factflow.Facts
+	builder         *Builder
+	locals          map[symbol.ID]ValueTerm
+	genericBindings map[symbol.ID]symbolicGenericBinding
+}
+
+type symbolicGenericBinding struct {
+	Transaction factapply.GenericForTransaction
+	Iterator    iteration.Iterator
+	Container   ValueTerm
+	Projection  ValueTerm
+	FirstTarget symbol.ID
 }
 
 type planKindHandler interface {
@@ -81,57 +91,70 @@ type genericForPlanHandler struct{}
 
 func (genericForPlanHandler) Kind() operationplan.ExtensionKind { return operationplan.BodyGenericFor }
 func (genericForPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) error {
+	_, err := lowerGenericForBinding(ctx, point, false)
+	return err
+}
+func (genericForPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _ *[]Operation) error {
+	_, err := lowerGenericForBinding(ctx, point, true)
+	return err
+}
+
+func lowerGenericForBinding(ctx planCompileContext, point cfg.Point, publish bool) (symbolicGenericBinding, error) {
 	op, ok := ctx.plan.GenericForOperation(point)
 	if !ok {
-		return fmt.Errorf("generic-for: typed operation payload missing")
+		return symbolicGenericBinding{}, fmt.Errorf("generic-for: typed operation payload missing")
 	}
-	if _, ok := factapply.PlanGenericForTransaction(op); !ok {
-		return fmt.Errorf("generic-for: invalid binding transaction")
+	transaction, ok := factapply.PlanGenericForTransaction(op)
+	if !ok {
+		return symbolicGenericBinding{}, fmt.Errorf("generic-for: invalid binding transaction")
 	}
 	source := op.Source()
 	switch source.Kind {
 	case operationplan.GenericForSourceCall:
 		if !source.HasCallPoint {
-			return fmt.Errorf("generic-for: iterator call point missing")
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator call point missing")
 		}
 		iterator, ok := op.Iterator()
 		if !ok {
-			return fmt.Errorf("generic-for: canonical signature iterator missing")
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: canonical signature iterator missing")
 		}
 		site, ok := ctx.facts.CallSiteView(source.CallPoint)
 		if !ok {
-			return fmt.Errorf("generic-for: iterator call-site payload missing")
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator call-site payload missing")
 		}
 		sourceIndex, ok := effect.ResolveParamIndex(iterator.Source, site.ArgumentSourceCount())
 		if !ok {
-			return fmt.Errorf("generic-for: iterator source parameter unresolved")
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source parameter unresolved")
 		}
 		container, ok := site.ArgumentSourceAt(sourceIndex)
 		if !ok {
-			return fmt.Errorf("generic-for: iterator source argument missing")
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source argument missing")
 		}
 		term, err := exactCompilerSourceTerm(ctx, container)
 		if err != nil {
-			return fmt.Errorf("generic-for: iterator source: %w", err)
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source: %w", err)
 		}
-		if ctx.builder.Arena().IteratorProjectionValue(iterator, op.VariableIndex(), term) == 0 {
-			return fmt.Errorf("generic-for: iterator projection unsupported")
+		projection := ctx.builder.Arena().IteratorProjectionValue(iterator, op.VariableIndex(), term)
+		if projection == 0 {
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator projection unsupported")
 		}
-		return fmt.Errorf("generic-for: key-membership transaction not represented")
+		binding := symbolicGenericBinding{Transaction: transaction, Iterator: iterator, Container: term, Projection: projection, FirstTarget: op.FirstTarget()}
+		if publish {
+			ctx.locals[op.Target()] = projection
+			ctx.genericBindings[op.Target()] = binding
+		}
+		return binding, nil
 	case operationplan.GenericForSourceExpression:
 		if !source.HasRootPath || source.RootPath.Symbol == 0 || len(source.RootPath.Segments) != 0 {
-			return fmt.Errorf("generic-for: iterator expression is not an exact root binding")
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator expression is not an exact root binding")
 		}
 		if _, ok := ctx.locals[source.RootPath.Symbol]; !ok {
-			return fmt.Errorf("generic-for: iterator source symbol %d has no exact binding", source.RootPath.Symbol)
+			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source symbol %d has no exact binding", source.RootPath.Symbol)
 		}
-		return fmt.Errorf("generic-for: iterator expression requires cardinality proof")
+		return symbolicGenericBinding{}, fmt.Errorf("generic-for: custom iterator expression requires signature effect proof")
 	default:
-		return fmt.Errorf("generic-for: iterator source unknown")
+		return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source unknown")
 	}
-}
-func (genericForPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error {
-	return fmt.Errorf("generic-for: contextual transaction cannot be lowered")
 }
 
 // Compile atomically returns either a complete relation or one contextual
@@ -148,6 +171,13 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		return contextual(fmt.Sprintf("compiler: graph points %d != operation rows %d", graph.Size(), plan.PointCount()))
 	}
 	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
+	builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
+	ctx.builder = builder
+	ctx.locals = make(map[symbol.ID]ValueTerm)
+	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
+	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
+		return contextual("compiler: boundary: " + err.Error())
+	}
 	unsupported := c.unsupportedActive(plan)
 	if len(unsupported) != 0 {
 		return contextual("compiler: contextual operations: " + strings.Join(unsupported, ", "))
@@ -186,9 +216,6 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err != nil {
 		return contextual("compiler: certificate: " + err.Error())
 	}
-	builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
-	ctx.builder = builder
-	ctx.locals = make(map[symbol.ID]ValueTerm)
 	var operations []Operation
 	for _, point := range graph.RPO() {
 		cursor := plan.Cursor(point)
@@ -209,6 +236,20 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		return contextual("compiler: relation admission: " + err.Error())
 	}
 	return relation
+}
+
+func bindBoundaryParamTerms(ctx *planCompileContext, shape Shape) error {
+	params := ctx.plan.BoundaryParams()
+	if len(params) != int(shape.Params) {
+		return fmt.Errorf("parameter symbols %d != shape params %d", len(params), shape.Params)
+	}
+	for index, param := range params {
+		if _, exists := ctx.locals[param]; exists {
+			return fmt.Errorf("duplicate parameter symbol %d", param)
+		}
+		ctx.locals[param] = ctx.builder.Arena().Root(Root{Kind: RootParam, Index: uint32(index)})
+	}
+	return nil
 }
 
 func (c *PlanCompiler) unsupportedActive(plan *operationplan.Plan) []string {
@@ -453,6 +494,18 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 }
 
 func exactCompilerSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		if p, ok := ctx.facts.ExpressionPathRef(source.ExprRef); ok {
+			if p.Symbol == 0 || p.Version != 0 || len(p.Segments) != 0 {
+				return 0, fmt.Errorf("source expression path is not a canonical root symbol")
+			}
+			term, ok := ctx.locals[p.Symbol]
+			if !ok {
+				return 0, fmt.Errorf("source expression symbol %d has no exact binding", p.Symbol)
+			}
+			return term, nil
+		}
+	}
 	if source.Kind == factflow.ValueSourcePath {
 		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
 		if !ok || sym == 0 || version != 0 || suffix != "" {

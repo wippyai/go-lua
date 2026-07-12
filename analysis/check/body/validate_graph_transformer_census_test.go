@@ -11,7 +11,7 @@ import (
 
 func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) {
 	prepared, _ := validateGraphSemanticProgramFixture(t)
-	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{})
+	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))})
 	if len(entries) != 320 {
 		t.Fatalf("eligibility entries = %d, want 320 active plan instances/family markers", len(entries))
 	}
