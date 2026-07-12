@@ -52,12 +52,23 @@ func LuaTableLiteral(graphID, exprRef uint64) ID {
 // allocation site in the caller. Repeated executions of one call therefore
 // share an identity while distinct static calls cannot alias.
 func ReturnedAllocation(template ID, callerGraph uint64, callPoint uint64) ID {
-	if template == (ID{}) || callerGraph == 0 {
+	return ReturnedAllocationInScope(template, 0, callerGraph, 0, 0, 0, callPoint)
+}
+
+// ReturnedAllocationInScope derives a returned allocation under a stable
+// caller function/context scope. scopeKind and scopeID name the lexical owner;
+// values, facts, and references are its abstract-entry dimensions.
+func ReturnedAllocationInScope(template ID, scopeKind uint8, scopeID, values, facts, references, callPoint uint64) ID {
+	if template == (ID{}) || scopeID == 0 {
 		return ID{}
 	}
 	h := internal.FnvString("identity.returned.allocation")
 	h = internal.MixHash(h, template.hash())
-	h = internal.MixHash(h, callerGraph)
+	h = internal.MixHash(h, uint64(scopeKind))
+	h = internal.MixHash(h, scopeID)
+	h = internal.MixHash(h, values)
+	h = internal.MixHash(h, facts)
+	h = internal.MixHash(h, references)
 	h = internal.MixHash(h, callPoint)
 	return ID{Kind: template.Kind, Site: "returned-allocation", Index: h}
 }

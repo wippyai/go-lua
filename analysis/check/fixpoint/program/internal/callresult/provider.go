@@ -170,7 +170,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		} else if summaryOwned && len(got.HeapTableObjects) != 0 {
 			got.HeapTableObjects = heapidentity.CloneMap(got.HeapTableObjects)
 		}
-		got = instantiateReturnedAllocations(ctx, got)
+		got = instantiateReturnedAllocations(ctx, index.owner, got)
 		summaryParamOffset := summaryParamObligationOffset(ctx, site, fn, in, read, calleeValue)
 		out := outcomeFromSummary(ctx.Registry, got, summaryParamOffset, func(index int) bool {
 			if index < 0 || index >= len(got.ParamObligations) {

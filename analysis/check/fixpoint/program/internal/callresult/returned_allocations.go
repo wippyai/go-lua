@@ -11,13 +11,24 @@ import (
 // instantiateReturnedAllocations atomically substitutes callee allocation
 // templates with caller-static-site identities before outcome lowering. The
 // substitution is built once and then applied to every identity-bearing lane.
-func instantiateReturnedAllocations(ctx transfer.NodeContext, got summary.Summary) summary.Summary {
-	if ctx.Registry == nil || ctx.Graph == nil || len(got.FreshHeapAllocations) == 0 {
+func instantiateReturnedAllocations(ctx transfer.NodeContext, caller summary.SummaryKey, got summary.Summary) summary.Summary {
+	if ctx.Registry == nil || len(got.FreshHeapAllocations) == 0 {
 		return got
 	}
 	substitution := make(map[identity.ID]identity.ID, len(got.FreshHeapAllocations))
 	for _, template := range got.FreshHeapAllocations {
-		instantiated := identity.ReturnedAllocation(template, ctx.Graph.ID(), uint64(ctx.Point))
+		var instantiated identity.ID
+		if !caller.Ref.IsZero() {
+			instantiated = identity.ReturnedAllocationInScope(
+				template, uint8(caller.Ref.Kind), caller.Ref.ID,
+				uint64(caller.Entry.Values), uint64(caller.Entry.Facts), uint64(caller.Entry.References),
+				uint64(ctx.Point),
+			)
+		} else if ctx.Graph != nil {
+			// Standalone provider users have no program owner. Graph identity is a
+			// process-local fallback only; production providers always carry owner.
+			instantiated = identity.ReturnedAllocation(template, ctx.Graph.ID(), uint64(ctx.Point))
+		}
 		if instantiated != (identity.ID{}) {
 			substitution[template] = instantiated
 		}

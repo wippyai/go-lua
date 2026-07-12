@@ -2,7 +2,6 @@ package factapply
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -50,7 +49,6 @@ func applyResolvedCallOutcomeFacts(
 	for id, object := range outcome.HeapTableObjects {
 		if identity.IsReturnedAllocation(id) {
 			object = heapidentity.ObjectDomain(ctx.Registry).Join(out.ReadHeapTableObject(ctx.Registry, id), object)
-			out = writeJoinedPlacement(out, id, placement.OwnedHeap)
 		}
 		out = out.WriteHeapTableObject(ctx.Registry, id, object)
 	}

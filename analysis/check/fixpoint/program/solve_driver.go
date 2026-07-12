@@ -144,7 +144,7 @@ func summaryIndexBase(keys programKeys) *callresult.SummaryIndexBase {
 }
 
 func summaryIndexForOwner(base *callresult.SummaryIndexBase, keys programKeys, owner summary.SummaryKey) *callresult.SummaryIndex {
-	return base.WithFunctionExpressionKeys(keys.contexts.FunctionExpressionKeysForOwner(owner))
+	return base.WithOwnerFunctionExpressionKeys(owner, keys.contexts.FunctionExpressionKeysForOwner(owner))
 }
 
 func chunkFunction(

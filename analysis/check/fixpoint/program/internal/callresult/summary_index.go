@@ -26,6 +26,7 @@ type SummaryIndexBase struct {
 type SummaryIndex struct {
 	*SummaryIndexBase
 	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey
+	owner                  summary.SummaryKey
 }
 
 // SummaryIndexConfig describes the raw maps that should be copied into a
@@ -83,6 +84,14 @@ func (base *SummaryIndexBase) WithFunctionExpressionKeys(keys map[factflow.ExprR
 		SummaryIndexBase:       base,
 		functionExpressionKeys: mapedit.Clone(keys),
 	}
+}
+
+// WithOwnerFunctionExpressionKeys returns an owner-scoped index. The owner is
+// also the stable caller scope for returned-allocation instantiation.
+func (base *SummaryIndexBase) WithOwnerFunctionExpressionKeys(owner summary.SummaryKey, keys map[factflow.ExprRef]summary.SummaryKey) *SummaryIndex {
+	out := base.WithFunctionExpressionKeys(keys)
+	out.owner = owner
+	return out
 }
 
 func summaryIndexFromProviderConfig(config ProviderConfig) *SummaryIndex {
