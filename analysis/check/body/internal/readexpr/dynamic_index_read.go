@@ -22,18 +22,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func dynamicIndexExpressionPath(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) (pathdom.Path, bool) {
-	keyValue, ok := dynamicIndexExpressionKeyValue(config, point, dyn.KeySource(), in)
-	if !ok {
-		return pathdom.Path{}, false
-	}
-	seg, ok := staticScalarKeySegment(config.Registry, config.TypeValues, keyValue)
-	if !ok {
-		return pathdom.Path{}, false
-	}
-	return dyn.TablePathRef().Append(seg), true
-}
-
 func staticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (segment.Segment, bool) {
 	t, ok := typeValues.TypeOf(reg, value)
 	if !ok {
@@ -212,14 +200,24 @@ func dynamicIndexExpressionValueActive(
 	if tableValueOK {
 		keyValue, keyValueOK := dynamicIndexExpressionKeyValueActive(config, point, dyn.KeySource(), in, active)
 		if keyValueOK {
-			if config.Visibility != nil {
-				if seg, ok := staticScalarKeySegment(reg, config.TypeValues, keyValue); ok {
-					if value, ok := sourcevalue.HeapMemberFromValue(reg, config.Visibility.KeySpace(), in, tableValue, []segment.Segment{seg}); ok {
-						return value, true
-					}
-				}
+			var value product.Value
+			var ok bool
+			if config.Visibility != nil && !dyn.TablePathRef().IsEmpty() {
+				value, ok = sourcevalue.ReadBoundDynamicTableValue(
+					reg,
+					config.TypeValues,
+					config.Visibility.KeySpace(),
+					config.Visibility,
+					point,
+					dyn.TablePathRef(),
+					tableValue,
+					keyValue,
+					in,
+				)
+			} else {
+				value, ok = config.TypeValues.RuntimeIndex(reg, tableValue, keyValue)
 			}
-			if value, ok := config.TypeValues.RuntimeIndex(reg, tableValue, keyValue); ok {
+			if ok {
 				value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
 				if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
 					dynamicIndexInBoundsProvesRead(config, point, dyn, in) {

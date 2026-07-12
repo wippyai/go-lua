@@ -65,12 +65,8 @@ func TestResolveReferenceRelationMatchesCanonicalProductionPaths(t *testing.T) {
 		key  product.Value
 	}{
 		{name: "nil name", base: state.State{}, self: product.Top(), key: typevalue.Nil(reg)},
-		// A present false member exercises the second normalized-falsy edge. A
-		// truly absent key is intentionally not aliased to this case: the concrete
-		// read/projector currently emits Bottom for return slot 0 where the
-		// canonical symbolic read emits explicit nil. That engine discrepancy has
-		// its own red-first follow-up.
 		{name: "falsy reference", base: heapState, self: selfValue, key: typevalue.LiteralString(reg, "falsy")},
+		{name: "absent reference", base: heapState, self: selfValue, key: typevalue.LiteralString(reg, "absent")},
 		{name: "present reference", base: heapState, self: selfValue, key: typevalue.LiteralString(reg, "present")},
 	}
 	for _, tc := range tests {

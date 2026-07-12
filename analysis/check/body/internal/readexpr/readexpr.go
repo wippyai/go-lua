@@ -293,17 +293,9 @@ func Provider(config Config) sourcevalue.ExpressionValueProvider {
 		if !ok {
 			return product.Value{}, false
 		}
-		p, ok = dynamicIndexExpressionPath(config, point, dyn, in)
-		if ok {
-			value, ok := Project(config, point, p, in)
-			if ok {
-				if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
-					dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
-					value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
-				}
-				return value, true
-			}
-		}
+		// Dynamic reads must pass through the shared concrete/symbolic kernel.
+		// Recasting an exact scalar key as a static Project path loses the
+		// stable-heap proof that a missing member evaluates to explicit nil.
 		return dynamicIndexExpressionValue(config, point, dyn, in)
 	}
 }

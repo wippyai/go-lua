@@ -853,6 +853,58 @@ func TestDynamicIndexConstantLengthFloorDropsNil(t *testing.T) {
 	assertRuntimeKind(t, reg, outOfFloor, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestDynamicIndexStableTableAbsentLiteralKeyReturnsNil(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(1141)
+	tableSym := symbol.ID(1251)
+	tablePath := path.NewPath(tableSym, "references")
+	resolver := testResolver(point, tableSym, "references")
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("invalid source shape")
+	}
+	keySource, ok := factflow.NewStringLiteralValueSource("absent-node", 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("invalid string key source")
+	}
+	dyn, ok := factflow.NewDynamicIndexExpression(tablePath, keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+	id := identity.ID{Kind: "table", Site: "stable-absent", Index: 1}
+	tableValue := product.Set(
+		reg,
+		typeValues.FromTypeWithWitness(reg, typetable.NewMap(typ.String, typ.String)),
+		identity.Key,
+		identity.Singleton(id),
+	)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(tableSym), tableValue).
+		WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:        tableValue,
+			StableShape: true,
+		}))
+
+	readExpr := factflow.ExprRef(114101)
+	config := Config{
+		Registry: reg,
+		Facts: factflow.NewFacts(factflow.FactsInput{DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+			readExpr: dyn,
+		}}),
+		Visibility: resolver,
+		TypeValues: typeValues,
+	}
+	got, ok := Provider(config)(point, readExpr, factflow.ValueSource{}, in)
+	if !ok {
+		t.Fatal("dynamic-index Provider returned false")
+	}
+	if !typevalue.HasOnlyNilType(reg, got) {
+		gotType, _ := typevalue.TypeOf(reg, got)
+		t.Fatalf("absent stable-table read = %#v presence=%s type=%v, want explicit nil", got, product.PresenceOf(got), gotType)
+	}
+}
+
 func TestDynamicIndexTableSourceAppliesRuntimeValidationBeforePathProjection(t *testing.T) {
 	reg := standard.Registry()
 	typeValues := typevalue.NewCache()
