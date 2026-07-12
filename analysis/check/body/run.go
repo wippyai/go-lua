@@ -173,6 +173,10 @@ func (c *checker) prepare(
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)
 	declarations := declarationFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
+	genericForOperations := compileGenericForOperations(genericFors, typeResolver, func(expr ast.Expr) (pathdom.Path, bool) {
+		return pathexpr.Resolve(expr, bindings)
+	})
+	operationPlan := lowered.Plan.WithExtensions(genericForOperationExtensions(genericForOperations))
 	resolver := config.Visibility
 	if resolver == nil {
 		resolver = defaultVisibilityResolver(bindings, built, wirBody, genericFors)
@@ -239,7 +243,7 @@ func (c *checker) prepare(
 		// Certification is intentionally fail-closed. Irreducible bodies and any
 		// future operation-plan shape the dense executor does not understand keep
 		// the existing generic WTO without making body preparation fail.
-		concretePlan, _ = concreteflow.Compile(built.Graph, lowered.Plan, wtoPlan)
+		concretePlan, _ = concreteflow.Compile(built.Graph, operationPlan, wtoPlan)
 	}
 	return &Static{
 		registry:              config.Registry,
@@ -256,11 +260,12 @@ func (c *checker) prepare(
 		modules:               modules,
 		signatureID:           signatureID,
 		facts:                 facts,
-		operationPlan:         lowered.Plan,
+		operationPlan:         operationPlan,
 		symbolTypes:           lowered.SymbolTypes,
 		assignments:           assignments,
 		declarations:          declarations,
 		genericFors:           genericFors,
+		genericForOperations:  genericForOperations,
 		visibility:            resolver,
 		sources:               sources,
 		readExpressionConfig:  readExpressionConfig,
@@ -347,9 +352,7 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		TypeValues:             typeValues,
 		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.genericFors, s.facts, sources, s.symbolTypes, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility, func(expr ast.Expr) (pathdom.Path, bool) {
-		return pathexpr.Resolve(expr, s.bindings)
-	})
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.genericForOperations, s.facts, sources, s.symbolTypes, s.signatures, s.signatureID, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
 	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 		Facts:       s.facts,
 		Sources:     sources,

@@ -8,6 +8,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
@@ -135,17 +136,46 @@ func TestSemanticProgramCompilerFailsClosedOnValidateGraphGenericFor(t *testing.
 	}
 }
 
+func TestSemanticProgramValidateGraphAdmitsConcreteGenericForAndMatchesASTFreeSolve(t *testing.T) {
+	prepared, layers := validateGraphSemanticProgramFixture(t)
+	program, err := semanticprogram.Compile(prepared.cfg.Graph, prepared.operationPlan, layers, map[semanticprogram.Family]bool{
+		semanticprogram.GenericForVariable: true,
+	})
+	if err != nil || len(program.Missing) != 0 {
+		t.Fatalf("Compile with concrete generic-for: program missing=%v err=%v", program.Missing, err)
+	}
+	want, err := SolvePrepared(prepared, SolveConfig{Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatalf("baseline SolvePrepared: %v", err)
+	}
+	// The semantic program references the immutable operation store. Prove the
+	// concrete solve no longer consults its source-facing GenericForFact AST.
+	prepared.genericFors = nil
+	got, err := SolvePrepared(prepared, SolveConfig{Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatalf("AST-free SolvePrepared: %v", err)
+	}
+	domain := state.Domain(prepared.registry)
+	for _, point := range prepared.cfg.Graph.RPO() {
+		wantState, wantOK := want.StateAt(point)
+		gotState, gotOK := got.StateAt(point)
+		if wantOK != gotOK || (wantOK && !domain.Equal(wantState, gotState)) {
+			t.Fatalf("compiler.validate_graph state differs at point %d", point)
+		}
+	}
+}
+
 func BenchmarkSemanticProgramValidateGraph(b *testing.B) {
 	prepared, layers := validateGraphSemanticProgramFixture(b)
 	b.Run("compile-fail-closed", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for range b.N {
 			_, _ = semanticprogram.Compile(prepared.cfg.Graph, prepared.operationPlan, layers, nil)
 		}
 	})
 	b.Run("current-body-solve", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for range b.N {
 			if _, err := SolvePrepared(prepared, SolveConfig{Schedule: transfer.ScheduleWTO}); err != nil {
 				b.Fatal(err)
 			}

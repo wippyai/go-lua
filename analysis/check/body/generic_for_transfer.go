@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -23,35 +24,33 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func genericForNodeTransfer(
 	base transfer.NodeTransfer,
-	genericFors map[cfg.Point]GenericForFact,
+	operations map[cfg.Point]factapply.GenericForOperation,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	symbolTypes map[symbol.ID]typ.Type,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
-	typeResolver *typeresolve.Resolver,
 	typeValues *typevalue.Cache,
 	callOutcome callpayload.CallOutcomeProvider,
 	ks *keyspace.KeySpace,
 	resolver *visibility.Resolver,
-	sourcePath func(ast.Expr) (pathdom.Path, bool),
 ) transfer.NodeTransfer {
-	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
-	var refinedSourceRegistry *axis.Registry
-	var refinedSources sourcevalue.SourceValues
+	semantics := &genericForConcreteSemantics{
+		facts: facts, sources: sources, symbolTypes: symbolTypes, signatures: signatures,
+		signatureID: signatureID, typeValues: typeValues, callOutcome: callOutcome,
+		keySpace: ks, resolver: resolver,
+		expressionRefinements: sourcevalue.NewExpressionRefinementsFromReader(facts),
+	}
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		out := in
 		if base != nil {
@@ -60,55 +59,64 @@ func genericForNodeTransfer(
 		if sources == nil || signatureID == nil {
 			return out
 		}
-		fact, ok := genericFors[ctx.Point]
-		if !ok || fact.Role != GenericForRoleVariable || !fact.HasSymbols ||
-			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
+		op, ok := operations[ctx.Point]
+		if !ok {
 			return out
 		}
-		target := fact.Symbols[fact.VariableIndex]
-		if target == 0 {
-			return out
-		}
-		targetPath := pathdom.Path{Symbol: target}
-		if resolver != nil {
-			if targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).VisibleStateKey(); ok {
-				out = out.ClearKeyMembershipsForPath(targetKey)
-			}
-		}
-		if refinedSources == nil || refinedSourceRegistry != ctx.Registry {
-			refinedSources = expressionRefinements.Bind(ctx.Registry, sources)
-			refinedSourceRegistry = ctx.Registry
-		}
-		boundSources := refinedSources
-		if value, ok := genericForVariableValue(ctx, typeValues, fact, facts, boundSources, symbolTypes, signatures, signatureID, typeResolver, callOutcome, ks, resolver, sourcePath, in); ok {
-			out = out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
-		}
-		return genericForKeyMembershipTransfer(ctx, typeValues, fact, facts, signatures, signatureID, resolver, out, targetPath)
+		result := factapply.ApplyConcreteGenericFor(factapply.ConcreteGenericForRequest{
+			Context: ctx, Resolver: resolver, Input: in, Output: out, Operation: op, Semantics: semantics,
+		})
+		return result.Output
 	}
+}
+
+type genericForConcreteSemantics struct {
+	facts                 factflow.Facts
+	sources               sourcevalue.SourceValues
+	symbolTypes           map[symbol.ID]typ.Type
+	signatures            signaturelookup.Source
+	signatureID           *signatureIdentityResolver
+	typeValues            *typevalue.Cache
+	callOutcome           callpayload.CallOutcomeProvider
+	keySpace              *keyspace.KeySpace
+	resolver              *visibility.Resolver
+	expressionRefinements sourcevalue.ExpressionRefinements
+	refinedSourceRegistry *axis.Registry
+	refinedSources        sourcevalue.SourceValues
+}
+
+func (s *genericForConcreteSemantics) ResolveGenericFor(ctx transfer.NodeContext, op factapply.GenericForOperation, in state.State) (product.Value, bool) {
+	if s.refinedSources == nil || s.refinedSourceRegistry != ctx.Registry {
+		s.refinedSources = s.expressionRefinements.Bind(ctx.Registry, s.sources)
+		s.refinedSourceRegistry = ctx.Registry
+	}
+	return genericForVariableValue(ctx, s.typeValues, op, s.facts, s.refinedSources, s.symbolTypes, s.signatures, s.signatureID, s.callOutcome, s.keySpace, s.resolver, in)
+}
+
+func (s *genericForConcreteSemantics) ApplyGenericForMembership(ctx transfer.NodeContext, op factapply.GenericForOperation, out state.State, targetPath pathdom.Path) state.State {
+	return genericForKeyMembershipTransfer(ctx, s.typeValues, op, s.facts, s.signatures, s.signatureID, s.resolver, out, targetPath)
 }
 
 func genericForVariableValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic GenericForFact,
+	generic factapply.GenericForOperation,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	symbolTypes map[symbol.ID]typ.Type,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
-	typeResolver *typeresolve.Resolver,
 	callOutcome callpayload.CallOutcomeProvider,
 	ks *keyspace.KeySpace,
 	resolver *visibility.Resolver,
-	sourcePath func(ast.Expr) (pathdom.Path, bool),
 	in state.State,
 ) (product.Value, bool) {
-	if len(generic.Sources) == 0 {
+	source := generic.Source()
+	if source.Kind == factapply.GenericForSourceUnknown {
 		return product.Value{}, false
 	}
-	source := generic.Sources[0]
-	if source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
-		if value, ok := genericForSourceIteratorFunctionVariableValue(ctx, typeValues, generic, source, sourcePath, in); ok {
+	if source.Kind != factapply.GenericForSourceCall || !source.HasCallPoint {
+		if value, ok := genericForSourceIteratorFunctionVariableValue(ctx, typeValues, generic, source, in); ok {
 			return value, true
 		}
 		return product.Value{}, false
@@ -133,11 +141,11 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	assertedSourceType, hasAssertedSourceType := genericForAssertedIteratorSourceType(generic, sourceIndex, typeResolver)
+	assertedSourceType, hasAssertedSourceType := generic.SourceContract(sourceIndex)
 	preferIteratorSourceContract := hasAssertedSourceType
 	if !hasAssertedSourceType {
 		if recovered, ok := genericForDeclaredPathIteratorSourceType(argSource, facts, resolver, symbolTypes); ok {
-			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex, recovered) {
+			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex(), recovered) {
 				assertedSourceType = recovered
 				hasAssertedSourceType = true
 				preferIteratorSourceContract = true
@@ -146,7 +154,7 @@ func genericForVariableValue(
 	}
 	if !hasAssertedSourceType {
 		if recovered, ok := genericForSolvedPathIteratorSourceType(ctx, typeValues, argSource, facts, resolver, in); ok {
-			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex, recovered) {
+			if genericForIteratorSourceTypeProjects(iter, generic.VariableIndex(), recovered) {
 				assertedSourceType = recovered
 				hasAssertedSourceType = true
 			}
@@ -163,32 +171,32 @@ func genericForVariableValue(
 		return product.Value{}, false
 	}
 	if preferIteratorSourceContract {
-		if value, ok := luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, true); ok {
+		if value, ok := luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex(), sourceValue, assertedSourceType, true); ok {
 			return value, true
 		}
 	}
 	if ok {
-		if value, ok := genericForLiteralContainerVariableValue(ctx, typeValues, iter, generic.VariableIndex, facts, sources, sourceValue, argSource, ks, in); ok {
+		if value, ok := genericForLiteralContainerVariableValue(ctx, typeValues, iter, generic.VariableIndex(), facts, sources, sourceValue, argSource, ks, in); ok {
 			return value, true
 		}
 	} else {
 		sourceValue = product.Top()
 	}
-	if value, ok := luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType); ok {
+	if value, ok := luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex(), sourceValue, assertedSourceType, hasAssertedSourceType); ok {
 		if genericForValueIsTopLike(ctx.Registry, typeValues, value) {
-			if precise, ok := genericForPathStaticMemberContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex, facts, argSource, in); ok {
+			if precise, ok := genericForPathStaticMemberContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex(), facts, argSource, in); ok {
 				return precise, true
 			}
-			if precise, ok := genericForDynamicIndexContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex, facts, argSource, in); ok {
+			if precise, ok := genericForDynamicIndexContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex(), facts, argSource, in); ok {
 				return precise, true
 			}
 		}
 		return value, true
 	}
-	if value, ok := genericForPathStaticMemberContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex, facts, argSource, in); ok {
+	if value, ok := genericForPathStaticMemberContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex(), facts, argSource, in); ok {
 		return value, true
 	}
-	if value, ok := genericForDynamicIndexContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex, facts, argSource, in); ok {
+	if value, ok := genericForDynamicIndexContainerVariableValue(ctx, resolver, typeValues, iter, generic.VariableIndex(), facts, argSource, in); ok {
 		return value, true
 	}
 	return product.Value{}, false
@@ -197,23 +205,22 @@ func genericForVariableValue(
 func genericForSourceIteratorFunctionVariableValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic GenericForFact,
-	source sourceprovenance.ASTSource,
-	sourcePath func(ast.Expr) (pathdom.Path, bool),
+	generic factapply.GenericForOperation,
+	source factapply.GenericForSource,
 	in state.State,
 ) (product.Value, bool) {
-	if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil || sourcePath == nil {
+	if source.Kind != factapply.GenericForSourceExpression || !source.HasRootPath {
 		return product.Value{}, false
 	}
-	p, ok := sourcePath(source.Expr)
-	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+	p := source.RootPath
+	if p.Symbol == 0 || len(p.Segments) != 0 {
 		return product.Value{}, false
 	}
 	sourceValue := in.ReadValue(ctx.Registry, key.SymbolValue(p.Symbol))
 	if product.Equal(ctx.Registry, sourceValue, product.Bottom(ctx.Registry)) {
 		return product.Value{}, false
 	}
-	return genericForIteratorFunctionResultValue(ctx, typeValues, generic.VariableIndex, sourceValue)
+	return genericForIteratorFunctionResultValue(ctx, typeValues, generic.VariableIndex(), sourceValue)
 }
 
 func genericForPathStaticMemberContainerVariableValue(
@@ -332,7 +339,7 @@ func genericForIteratorSourceTypeProjects(iter iteration.Iterator, variableIndex
 func genericForKeyMembershipTransfer(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic GenericForFact,
+	generic factapply.GenericForOperation,
 	facts factflow.Facts,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
@@ -340,11 +347,11 @@ func genericForKeyMembershipTransfer(
 	out state.State,
 	targetPath pathdom.Path,
 ) state.State {
-	if resolver == nil || signatureID == nil || len(generic.Sources) == 0 || targetPath.Symbol == 0 {
+	if resolver == nil || signatureID == nil || targetPath.Symbol == 0 {
 		return out
 	}
-	source := generic.Sources[0]
-	if source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
+	source := generic.Source()
+	if source.Kind != factapply.GenericForSourceCall || !source.HasCallPoint {
 		return out
 	}
 	site, ok := facts.CallSiteView(source.CallPoint)
@@ -377,23 +384,23 @@ func genericForKeyMembershipTransfer(
 		if !ok {
 			return out
 		}
-		if generic.VariableIndex == 0 {
+		if generic.VariableIndex() == 0 {
 			return out.AddPathKeyMembership(targetKey, tableKey)
 		}
-		if generic.VariableIndex != 1 || len(generic.Symbols) == 0 || generic.Symbols[0] == 0 {
+		if generic.VariableIndex() != 1 || generic.FirstTarget() == 0 {
 			return out
 		}
 		containerKey, ok := valueSourcePathKeyspaceKey(resolver, ctx.Point, sourcePath)
 		if !ok {
 			return out
 		}
-		keyStateKey, ok := visibility.AddressAt(resolver, ctx.Point, pathdom.Path{Symbol: generic.Symbols[0]}).VisibleStateKey()
+		keyStateKey, ok := visibility.AddressAt(resolver, ctx.Point, pathdom.Path{Symbol: generic.FirstTarget()}).VisibleStateKey()
 		if !ok {
 			return out
 		}
 		return out.AddDynamicIndexReadOrigin(targetKey, containerKey, keyStateKey)
 	case iteration.IterateIndexed:
-		if generic.VariableIndex != 1 {
+		if generic.VariableIndex() != 1 {
 			return out
 		}
 		containerKey, ok := valueSourcePathKeyspaceKey(resolver, ctx.Point, sourcePath)
@@ -600,8 +607,8 @@ func indexedContainerCommonKeyMembershipTables(
 func genericForFunctionIteratorVariableValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	generic GenericForFact,
-	source sourceprovenance.ASTSource,
+	generic factapply.GenericForOperation,
+	source factapply.GenericForSource,
 	site factflow.CallSiteView,
 	callOutcome callpayload.CallOutcomeProvider,
 	in state.State,
@@ -631,7 +638,7 @@ func genericForFunctionIteratorVariableValue(
 	if !found {
 		return product.Value{}, false
 	}
-	return genericForIteratorFunctionResultValue(ctx, typeValues, generic.VariableIndex, callResult)
+	return genericForIteratorFunctionResultValue(ctx, typeValues, generic.VariableIndex(), callResult)
 }
 
 func genericForIteratorFunctionResultValue(
@@ -923,28 +930,6 @@ func genericForDirectContainerSegment(iter iteration.Iterator, seg segment.Segme
 	}
 }
 
-func genericForAssertedIteratorSourceType(generic GenericForFact, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {
-	if sourceIndex < 0 || resolver == nil {
-		return nil, false
-	}
-	arg := genericForCallArgument(generic, sourceIndex)
-	if arg == nil {
-		return nil, false
-	}
-	return assertedIteratorSourceType(arg, resolver)
-}
-
-func genericForCallArgument(generic GenericForFact, sourceIndex int) ast.Expr {
-	for _, expr := range generic.Exprs {
-		call, ok := expr.(*ast.FuncCallExpr)
-		if !ok || call == nil || sourceIndex >= len(call.Args) {
-			continue
-		}
-		return call.Args[sourceIndex]
-	}
-	return nil
-}
-
 func genericForDominatingPathIteratorSourceType(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
@@ -1018,19 +1003,4 @@ func genericForSolvedPathIteratorSourceType(
 		return rootType, true
 	}
 	return luatypeprojection.ApplySegments(rootType, p.Segments)
-}
-
-func assertedIteratorSourceType(expr ast.Expr, resolver *typeresolve.Resolver) (typ.Type, bool) {
-	switch expr := expr.(type) {
-	case *ast.CastExpr:
-		t, ok := resolver.Type(expr.Type)
-		if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
-			return nil, false
-		}
-		return t, true
-	case *ast.NonNilAssertExpr:
-		return assertedIteratorSourceType(expr.Expr, resolver)
-	default:
-		return nil, false
-	}
 }

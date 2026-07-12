@@ -40,6 +40,9 @@ type Plan struct {
 // Compile accepts only a complete, reducible CFG whose point rows follow the
 // canonical operation barriers. Irreducible components fail closed.
 func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan[cfg.Point]) (*Plan, error) {
+	if operations != nil && operations.HasExtensions() {
+		return nil, fmt.Errorf("concreteflow: higher-layer semantic extensions require an extension executor")
+	}
 	if graph == nil || operations == nil || wto == nil {
 		return nil, fmt.Errorf("concreteflow: graph, operation plan, and WTO are required")
 	}

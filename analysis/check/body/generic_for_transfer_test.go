@@ -73,6 +73,43 @@ end
 	}
 }
 
+func TestPreparedGenericForSolveUsesSyntaxFreeOperations(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local values = {{id = 1}, {id = 2}}
+local total = 0
+for _, value in ipairs(values) do
+	total = total + value.id
+end`)
+	config := Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}
+	prepared, err := PrepareChunk(stmts, config)
+	if err != nil {
+		t.Fatalf("PrepareChunk: %v", err)
+	}
+	if len(prepared.genericForOperations) != 2 || !prepared.operationPlan.HasExtensions() {
+		t.Fatalf("generic-for operations/extensions = %d/%v", len(prepared.genericForOperations), prepared.operationPlan.HasExtensions())
+	}
+	want, err := SolvePrepared(prepared, SolveConfig{})
+	if err != nil {
+		t.Fatalf("first SolvePrepared: %v", err)
+	}
+	// Syntax projections remain available to Result, but no solve-time semantic
+	// path may consult them after preparation.
+	prepared.genericFors = nil
+	got, err := SolvePrepared(prepared, SolveConfig{})
+	if err != nil {
+		t.Fatalf("second SolvePrepared: %v", err)
+	}
+	domain := state.Domain(reg)
+	for _, point := range prepared.cfg.Graph.RPO() {
+		wantState, wantOK := want.StateAt(point)
+		gotState, gotOK := got.StateAt(point)
+		if wantOK != gotOK || (wantOK && !domain.Equal(wantState, gotState)) {
+			t.Fatalf("state at point %d differs after dropping AST projection", point)
+		}
+	}
+}
+
 func TestGenericForIPairsElementCarriesObjectLiteralAnyField(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

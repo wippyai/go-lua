@@ -50,6 +50,7 @@ const (
 	E3Relations
 	E4Evidence
 	E5CallEffects
+	N7BodySemantics
 )
 
 // BarrierSet records exact non-contiguous stages of a composite operation.
@@ -147,9 +148,11 @@ type row struct {
 // Plan owns the immutable Facts snapshot and a packed index over point-local
 // fact families. Its fields are never exposed as mutable slices.
 type Plan struct {
-	facts factflow.Facts
-	rows  []row
-	cells []Cell
+	facts          factflow.Facts
+	rows           []row
+	cells          []Cell
+	extensionRows  []extensionRow
+	extensionCells []ExtensionCell
 }
 
 // New creates the only immutable Facts snapshot for input and indexes all

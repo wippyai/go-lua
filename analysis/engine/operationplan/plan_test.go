@@ -196,6 +196,46 @@ func TestCursorAndOwnersFollowConcreteSemanticBarriers(t *testing.T) {
 	}
 }
 
+func TestHigherLayerExtensionIsPackedWithoutEnteringFactCursor(t *testing.T) {
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeAssign)
+	plan := New(graph, factflow.FactsInput{}).WithExtensions([]ExtensionInput{
+		{Point: point, Kind: BodyGenericFor},
+		{Point: point, Kind: BodyGenericFor},
+	})
+	if !plan.HasExtensions() {
+		t.Fatal("generic-for extension not registered")
+	}
+	factCursor := plan.Cursor(point)
+	if _, ok := factCursor.Next(); ok {
+		t.Fatal("higher-layer extension leaked into generic fact cursor")
+	}
+	cursor := plan.ExtensionCursor(point)
+	cell, ok := cursor.Next()
+	if !ok || cell.Kind() != BodyGenericFor {
+		t.Fatalf("extension = %#v/%v, want BodyGenericFor", cell, ok)
+	}
+	if _, ok := cursor.Next(); ok {
+		t.Fatal("duplicate extension was not canonicalized")
+	}
+	meta := cell.Metadata()
+	if meta.Class != Composite || meta.Phase != Node || meta.Barrier != N7BodySemantics {
+		t.Fatalf("metadata = %#v", meta)
+	}
+}
+
+func TestExtensionCatalogIsExhaustiveAndFailClosed(t *testing.T) {
+	for kind := ExtensionKind(1); kind <= BodyGenericFor; kind++ {
+		meta := (ExtensionCell{kind: kind}).Metadata()
+		if meta.Class == 0 || meta.Phase == 0 || meta.Barrier == 0 || meta.Stages == 0 {
+			t.Fatalf("extension kind %d is not fully classified: %#v", kind, meta)
+		}
+	}
+	if meta := (ExtensionCell{kind: BodyGenericFor + 1}).Metadata(); meta != (Metadata{}) {
+		t.Fatalf("unknown extension classified as %#v", meta)
+	}
+}
+
 func cursorBarrierRank(barrier Barrier) int {
 	order := [...]Barrier{
 		N0Materialize, N1NoReturn, N2ImplicationClosure, N3Postconditions, N4Writes, N5Return, N6CovariantFinalizer,
