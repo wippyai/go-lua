@@ -232,6 +232,20 @@ func TryRun(config Config) (Result, error) {
 			return nil, err
 		}
 	}
+	// Dense observation capture is transactional: a canceled or dynamically
+	// uncovered scratch run must not publish artifacts from discarded revisions.
+	var denseObservations []NodeObservation
+	denseObservationMode := config.Schedule == ScheduleWTO && config.ConcreteFlow != nil && config.RecordNodeObservation != nil
+	originalRecordNodeObservation := config.RecordNodeObservation
+	if denseObservationMode {
+		config.RecordNodeObservation = func(observation NodeObservation) {
+			if denseObservationMode {
+				denseObservations = append(denseObservations, observation)
+				return
+			}
+			originalRecordNodeObservation(observation)
+		}
+	}
 	plan := newEquationPlan(config, domain, equationPlanHooks{})
 	sys := plan.system
 	cells := plan.cells
@@ -333,6 +347,9 @@ func TryRun(config Config) (Result, error) {
 				if sys.Stats != nil {
 					sys.Stats.TransferCalls += denseStats.TransferCalls
 				}
+				for _, observation := range denseObservations {
+					originalRecordNodeObservation(observation)
+				}
 				finalize(dense.Versions)
 				if config.CompareWTO != nil {
 					config.CompareWTO(WTOComparison{WTOTransfers: denseStats.TransferCalls})
@@ -342,9 +359,11 @@ func TryRun(config Config) (Result, error) {
 			if !errors.Is(denseErr, solve.ErrWTOPlanUncovered) {
 				return nil, denseErr
 			}
+			denseObservationMode = false
+			denseObservations = nil
 			// Scratch observations can refer to revisions that are about to be
 			// discarded. The fallback owns a clean observation generation.
-			if config.ResetNodeObservations != nil {
+			if config.ResetNodeObservations != nil && originalRecordNodeObservation == nil {
 				config.ResetNodeObservations()
 			}
 		}

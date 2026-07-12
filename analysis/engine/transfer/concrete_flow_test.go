@@ -91,7 +91,10 @@ func TestConcreteFlowCancellationDiscardsScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	records := 0
 	result, err := TryRun(Config{Context: ctx, Graph: graph, Registry: reg, Schedule: ScheduleWTO, WTOPlan: wto, ConcreteFlow: plan,
+		ObserveNode: func(cfg.Point) bool { return true }, RecordNodeObservation: func(NodeObservation) { records++ },
+		FinalizeNodeObservations: func(func(cfg.Point) uint64) {},
 		NodeTransfer: func(ctx NodeContext, in state.State) state.State {
 			if ctx.Point == point {
 				cancel()
@@ -101,7 +104,42 @@ func TestConcreteFlowCancellationDiscardsScratch(t *testing.T) {
 	if result != nil {
 		t.Fatal("canceled dense solve published a result")
 	}
+	if records != 0 {
+		t.Fatalf("canceled dense solve published %d observations", records)
+	}
 	if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v, want cancellation", err)
+	}
+}
+
+func TestConcreteFlowUncoveredReadDiscardsBufferedObservations(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+	wto := solve.NewWTOPlan(graph.RPO(), func(p cfg.Point) []cfg.Point { return cfg.SuccessorsReadOnly(graph, p) })
+	plan, err := concreteflow.Compile(graph, operationplan.New(graph, factflow.FactsInput{}), wto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, resets := 0, 0
+	result, err := TryRun(Config{Graph: graph, Registry: reg, Schedule: ScheduleWTO, WTOPlan: wto, ConcreteFlow: plan,
+		ObserveNode: func(cfg.Point) bool { return true }, RecordNodeObservation: func(NodeObservation) { records++ },
+		FinalizeNodeObservations: func(func(cfg.Point) uint64) {}, ResetNodeObservations: func() { resets++; records = 0 },
+		NodeTransfer: func(ctx NodeContext, in state.State) state.State {
+			if ctx.Point == graph.Entry() {
+				_ = ctx.Read(graph.Exit())
+			}
+			return in
+		}})
+	if err != nil || result == nil {
+		t.Fatalf("fallback result/error = %v/%v", result, err)
+	}
+	if resets != 1 {
+		t.Fatalf("fallback resets=%d, want one generic-WTO reset", resets)
+	}
+	if records == 0 {
+		t.Fatal("fallback did not publish fresh FIFO observations")
 	}
 }
