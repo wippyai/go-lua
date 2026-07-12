@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -149,6 +150,29 @@ func TestResolverFrozenCatalogIsRaceSafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestExclusiveResolverOwnsHandledEmptyAndFallsBackExactlyOnce(t *testing.T) {
+	ctx := transfer.NodeContext{}
+	site := factflow.NewCallSite(factflow.CallSiteConfig{}).View()
+	legacyCalls := 0
+	legacy := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		legacyCalls++
+		return callpayload.CallOutcome{MaySuspend: true}
+	}
+	handled := Exclusive(func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (callpayload.CallOutcome, bool) {
+		return callpayload.CallOutcome{}, true
+	}, legacy)
+	if out := handled(ctx, site, state.State{}, nil); !out.Empty() || legacyCalls != 0 {
+		t.Fatalf("handled empty outcome = %#v, legacy calls=%d", out, legacyCalls)
+	}
+
+	miss := Exclusive(func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (callpayload.CallOutcome, bool) {
+		return callpayload.CallOutcome{}, false
+	}, legacy)
+	if out := miss(ctx, site, state.State{}, nil); !out.MaySuspend || legacyCalls != 1 {
+		t.Fatalf("miss outcome = %#v, legacy calls=%d; want one", out, legacyCalls)
+	}
 }
 
 func resolverTestTarget(id symbol.ID) Target {

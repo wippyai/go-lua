@@ -71,6 +71,23 @@ type TryOutcomeProvider func(
 // Resolver is the handled-aware relation call seam.
 type Resolver = TryOutcomeProvider
 
+// Exclusive gives one handled-aware resolver first and exclusive ownership of
+// a call. A miss invokes fallback exactly once. In particular, a handled empty
+// outcome is authoritative and never falls through to the legacy provider.
+func Exclusive(resolver Resolver, fallback callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+		if resolver != nil {
+			if out, handled := resolver(ctx, site, in, read); handled {
+				return out
+			}
+		}
+		if fallback != nil {
+			return fallback(ctx, site, in, read)
+		}
+		return callpayload.CallOutcome{}
+	}
+}
+
 // OutcomeProvider is inactive infrastructure. Application performs no body
 // solve: Relation.Specialize emits the existing Summary representation, which
 // the production adapter consumes. Correlated rows are joined only by
