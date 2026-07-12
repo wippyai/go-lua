@@ -391,3 +391,31 @@ The work is complete only when all of the following hold simultaneously:
 - cold and warm Kickside targets are measured from the real corpus; and
 - legacy machinery is physically deleted only after mechanical closure proves
   it has no semantic or consumer ownership left.
+
+## 19. PromptMap architecture decision (2026-07-12)
+
+A wide PromptMap audit of the program, query, summary, transformer, body,
+region, circuit, operation-plan and semantic-program surfaces confirmed that
+the product decomposition is not the performance defect. The multiplicative
+path is orchestration: prepass, whole-body summary equations, concrete
+parameter-feedback re-solves and final materialization all invoke the body
+solver.
+
+Parameter substitution therefore belongs at the symbolic Apply edge. One
+immutable relation is compiled per lexical function using distinct parameter,
+capture, global, result and heap-template roots. Known calls compose those
+relations with `ComposeDirectCallRows`; call/resource SCCs converge relations;
+summaries and guarded diagnostic evidence are projected once from stabilized
+evaluated roots. Dense path keys remain structural until evaluated-root
+specialization.
+
+The regional parameter-feedback prototype is retained only as a correctness
+oracle: on the representative scanner family it removed 15 false positives but
+added about 18 percent wall time because three concrete summary rounds were
+still required. It is not production authority. The immediate production
+slice is whole-function admission for acyclic, fixed-arity direct lexical
+functions with exact parameter roots, supported guards/path reads and exact
+allocations. Unsupported functions remain wholly on the old authority during
+migration; admitted functions may not fall back internally. The old prepass,
+feedback, query-body-solve and rematerialization authorities are deleted after
+the symbolic census reaches zero.
