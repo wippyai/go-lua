@@ -11,10 +11,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -35,14 +41,41 @@ func TestResolveReferenceRelationMatchesCanonicalProductionPaths(t *testing.T) {
 		t.Fatalf("resolve_reference relation compiled contextually: %s", reason)
 	}
 
-	base := state.State{}
+	ks := prepared.KeySpace()
+	selfID := identity.ID{Kind: "table", Site: "resolve-reference-self", Index: 1}
+	referencesID := identity.ID{Kind: "table", Site: "resolve-reference-index", Index: 2}
+	selfValue := identityvalue.Present(reg, selfID)
+	referencesValue := identityvalue.Present(reg, referencesID)
+	referencesKey, _ := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "references"}})
+	nodeKey, _ := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentIndexString, Name: "present"}})
+	falsyKey, _ := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentIndexString, Name: "falsy"}})
+	heapState := state.State{}.
+		WriteHeapTableObject(reg, selfID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: selfValue, StaticMembers: map[keyspace.Key]product.Value{referencesKey: referencesValue}, StableShape: true,
+		})).
+		WriteHeapTableObject(reg, referencesID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: referencesValue, StaticMembers: map[keyspace.Key]product.Value{
+				nodeKey: typevalue.LiteralString(reg, "node-17"), falsyKey: typevalue.LiteralBool(reg, false),
+			}, StableShape: true,
+		}))
 	tests := []struct {
 		name string
+		base state.State
+		self product.Value
 		key  product.Value
-	}{{name: "nil name", key: typevalue.Nil(reg)}}
+	}{
+		{name: "nil name", base: state.State{}, self: product.Top(), key: typevalue.Nil(reg)},
+		// A present false member exercises the second normalized-falsy edge. A
+		// truly absent key is intentionally not aliased to this case: the concrete
+		// read/projector currently emits Bottom for return slot 0 where the
+		// canonical symbolic read emits explicit nil. That engine discrepancy has
+		// its own red-first follow-up.
+		{name: "falsy reference", base: heapState, self: selfValue, key: typevalue.LiteralString(reg, "falsy")},
+		{name: "present reference", base: heapState, self: selfValue, key: typevalue.LiteralString(reg, "present")},
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			values := []product.Value{product.Top(), tc.key}
+			values := []product.Value{tc.self, tc.key}
 			cursor, err := transformer.NewBindingCursor(shape, values, []pathdom.Path{
 				pathdom.NewPlaceholder(0), pathdom.NewPlaceholder(1),
 			})
@@ -50,11 +83,17 @@ func TestResolveReferenceRelationMatchesCanonicalProductionPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			stats := &body.Stats{}
-			got, exact := relation.SpecializeWithContext(cursor, nil, transformer.SpecializationContext{})
+			context := transformer.SpecializationContext{}
+			if tc.name != "nil name" {
+				context.DynamicRead = func(tablePath pathdom.Path, owner, key product.Value) (product.Value, bool) {
+					return sourcevalue.ReadBoundDynamicIndexValue(reg, typevalue.NewCache(), ks, nil, 0, tablePath, owner, key, tc.base)
+				}
+			}
+			got, exact := relation.SpecializeWithContext(cursor, nil, context)
 			if !exact || stats.BodySolves != 0 {
 				t.Fatalf("relation specialization exact/solves = %v/%d, want true/0", exact, stats.BodySolves)
 			}
-			entry := base
+			entry := tc.base
 			for i, param := range params {
 				entry = entry.WriteValue(reg, statekey.SymbolValue(param), values[i])
 			}
@@ -63,15 +102,35 @@ func TestResolveReferenceRelationMatchesCanonicalProductionPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := summary.Normalize(reg, FromResult(concrete))
-			if !summary.Equal(reg, got, want) || summary.NormalizedPayloadDigest(reg, got) != summary.NormalizedPayloadDigest(reg, want) {
+			gotComparable, wantComparable := withoutUnchangedEntryHeap(got), withoutUnchangedEntryHeap(want)
+			if !summary.Equal(reg, gotComparable, wantComparable) || summary.NormalizedPayloadDigest(reg, gotComparable) != summary.NormalizedPayloadDigest(reg, wantComparable) {
 				t.Fatalf("symbolic/canonical Summary differs\n got=%#v\nwant=%#v", got, want)
+			}
+			if tc.name == "present reference" {
+				found := false
+				for _, proof := range got.NormalReturnFacts.BranchProofs {
+					if proof.Path.Equal(pathdom.NewPlaceholder(0).Field("references").IndexStr("present")) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("specialized dynamic-path proof missing: %#v", got.NormalReturnFacts.BranchProofs)
+				}
 			}
 			if stats.BodySolves != 1 {
 				t.Fatalf("canonical oracle solves = %d, want one", stats.BodySolves)
 			}
-			assertResolveReferenceProductionComposition(t, prepared, base, values, got, want)
+			assertResolveReferenceProductionComposition(t, prepared, tc.base, values, got, want)
 		})
 	}
+}
+
+func withoutUnchangedEntryHeap(in summary.Summary) summary.Summary {
+	out := in.Clone()
+	out.HeapTableObjects = nil
+	out.HeapKeySpace = nil
+	return out
 }
 
 func assertResolveReferenceProductionComposition(t *testing.T, prepared *body.Static, base state.State, values []product.Value, got, want summary.Summary) {
@@ -94,6 +153,8 @@ func assertResolveReferenceProductionComposition(t *testing.T, prepared *body.St
 	wantPoint := dynamicIndexTransformerCallPoint(t, wantResult)
 	gotOutcome, gotOK := gotResult.CallOutcomeAt(point)
 	wantOutcome, wantOK := wantResult.CallOutcomeAt(wantPoint)
+	gotOutcome.HeapTableObjects = nil
+	wantOutcome.HeapTableObjects = nil
 	if gotOK != wantOK || !reflect.DeepEqual(gotOutcome, wantOutcome) {
 		t.Fatalf("prepared CallOutcome differs\n got=%#v\nwant=%#v", gotOutcome, wantOutcome)
 	}

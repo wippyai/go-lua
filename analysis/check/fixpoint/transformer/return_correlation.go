@@ -14,14 +14,17 @@ import (
 // canonical concrete Summary projector, but from already-specialized feasible
 // relation rows. Rows are retained until this transaction completes precisely
 // so correlations are not lost by the final component-wise Summary join.
-func inferReturnRowCorrelations(reg *axis.Registry, rows []summary.Summary, declared []product.Value) ([]summary.ReturnConditionSlotRefinement, []summary.ReturnPresenceRelation, bool) {
-	if reg == nil {
+func inferReturnRowCorrelations(reg *axis.Registry, rows []summary.Summary, rawReturns [][]product.Value, declared []product.Value) ([]summary.ReturnConditionSlotRefinement, []summary.ReturnPresenceRelation, bool) {
+	if reg == nil || len(rows) != len(rawReturns) {
 		return nil, nil, false
 	}
 	arity := len(declared)
-	for _, row := range rows {
+	for rowIndex, row := range rows {
 		if len(row.Returns) > arity {
 			arity = len(row.Returns)
+		}
+		if len(rawReturns[rowIndex]) > arity {
+			arity = len(rawReturns[rowIndex])
 		}
 	}
 	if arity < 2 || len(rows) == 0 {
@@ -35,19 +38,25 @@ func inferReturnRowCorrelations(reg *axis.Registry, rows []summary.Summary, decl
 		projected[rowIndex] = make([]product.Value, arity)
 		points[rowIndex] = returnpresence.Point{Presence: make([]presence.Value, arity), Known: make([]bool, arity)}
 		for slot := 0; slot < arity; slot++ {
-			value := product.Absent(reg)
-			if slot < len(row.Returns) {
-				value = row.Returns[slot]
-				if product.Equal(reg, value, product.Bottom(reg)) {
+			rawValue := product.Absent(reg)
+			if slot < len(rawReturns[rowIndex]) {
+				rawValue = rawReturns[rowIndex][slot]
+				if product.Equal(reg, rawValue, product.Bottom(reg)) {
 					return nil, nil, false
 				}
 			}
-			raw[rowIndex][slot] = value
-			projected[rowIndex][slot] = value
-			if slot < len(declared) {
-				projected[rowIndex][slot] = checkprojection.WithDeclaredContractPreservingPresence(reg, value, declared[slot])
+			raw[rowIndex][slot] = rawValue
+			projectedValue := product.Absent(reg)
+			if slot < len(row.Returns) {
+				projectedValue = row.Returns[slot]
+				if product.Equal(reg, projectedValue, product.Bottom(reg)) {
+					return nil, nil, false
+				}
+			} else if slot < len(declared) {
+				projectedValue = checkprojection.WithDeclaredContractPreservingPresence(reg, projectedValue, declared[slot])
 			}
-			got, known := returnpresence.KnownPresence(product.PresenceOf(value))
+			projected[rowIndex][slot] = projectedValue
+			got, known := returnpresence.KnownPresence(product.PresenceOf(rawValue))
 			points[rowIndex].Presence[slot] = got
 			points[rowIndex].Known[slot] = known
 		}

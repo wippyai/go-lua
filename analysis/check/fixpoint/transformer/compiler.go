@@ -446,7 +446,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	exitRows := rowsByPoint[graph.Exit()]
 	rows := make([]Row, len(exitRows))
 	for i, row := range exitRows {
-		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects}
+		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs}
 	}
 	relation, err := builder.Build(certificate, rows)
 	if err != nil {
@@ -526,10 +526,34 @@ func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFG
 		row.Values[path.Symbol] = update.Value()
 	}
 	appendRepresentedBranchEvidenceOutput(ctx, branch, cond, &row.Output)
+	if err := appendDynamicConditionBranchProof(arena, branch, cond, conditionTerm, &row.Proofs); err != nil {
+		return SymbolicCFGRow{}, 0, err
+	}
 	if cond {
 		return row, truthy, nil
 	}
 	return row, falsy, nil
+}
+
+func appendDynamicConditionBranchProof(arena *Arena, branch factapply.BranchAlgebra, edge bool, condition ValueTerm, out *[]BranchProofTerm) error {
+	if arena == nil || out == nil || condition == 0 || int(condition) >= len(arena.values) {
+		return fmt.Errorf("branch: invalid dynamic condition proof sink")
+	}
+	descriptor, ok := branch.Condition()
+	if !ok || !descriptor.TruthyOnEdge(edge) {
+		return nil
+	}
+	node := arena.values[condition]
+	if node.op != valueDynamicRead {
+		return nil
+	}
+	if node.path == 0 || len(node.args) != 2 || node.args[1] == 0 {
+		return fmt.Errorf("branch: contextual-dynamic-condition-evidence")
+	}
+	*out = append(*out, BranchProofTerm{
+		Kind: pathevidence.BranchProofPathPresence, Table: node.path, Key: node.args[1], Presence: presence.Present(),
+	})
+	return nil
 }
 
 func genericForBranchHead(graph cfg.Graph, plan *operationplan.Plan, point cfg.Point) bool {

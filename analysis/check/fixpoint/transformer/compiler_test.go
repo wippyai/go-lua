@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestPlanCompilerDirectScalarReturnSpecializesExactly(t *testing.T) {
@@ -72,6 +73,37 @@ func TestPlanCompilerDirectScalarReturnSpecializesExactly(t *testing.T) {
 	})
 	if !summary.Equal(reg, got, want) {
 		t.Fatalf("specialized Summary differs\n got=%#v\nwant=%#v", got, want)
+	}
+}
+
+func TestPlanCompilerReturnCorrelationUsesRawTriggerBeforeDeclaredContract(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), point, false)
+	graph.AddEdge(point, graph.Exit(), false)
+	shape, _ := factflow.NewValueSourceShape(false, false, false, false)
+	param := symbol.ID(7)
+	paramPath := pathdom.NewPath(param, "value")
+	rawTop, _ := factflow.NewPathValueSource(paramPath.Key(), 0, 0, 0, shape)
+	second, _ := factflow.NewStringLiteralValueSource("ok", 1, 1, 0, shape)
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	plan := operationplan.New(graph, factflow.FactsInput{
+		Returns: map[cfg.Point]factflow.Return{point: factflow.NewReturn([]factflow.ValueSource{rawTop, second})},
+	}).WithBoundaryParams([]symbol.ID{param}).WithBoundaryReturns([]product.Value{declared, declared})
+	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{Params: 1})
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatal(reason)
+	}
+	cursor, _ := NewBindingCursor(Shape{Params: 1}, []product.Value{product.Top()}, []pathdom.Path{pathdom.NewPlaceholder(0)})
+	got, ok := relation.Specialize(cursor, nil, nil)
+	if !ok {
+		t.Fatal("annotated multi-return relation did not specialize")
+	}
+	for _, refinement := range got.ReturnConditionSlotRefinements {
+		if refinement.ReturnIndex == 0 {
+			t.Fatalf("declared truthy contract invented raw-trigger condition: %#v", refinement)
+		}
 	}
 }
 

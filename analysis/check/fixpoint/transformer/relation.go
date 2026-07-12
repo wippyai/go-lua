@@ -35,6 +35,7 @@ type Row struct {
 	Output  summary.Summary
 	Ops     []Operation
 	Effects []EffectTerm
+	Proofs  []BranchProofTerm
 }
 
 // Relation is immutable. contextual is lattice Top: callers must use the
@@ -184,6 +185,7 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			Output:  summary.Normalize(b.arena.reg, row.Output),
 			Ops:     append([]Operation(nil), row.Ops...),
 			Effects: append([]EffectTerm(nil), row.Effects...),
+			Proofs:  append([]BranchProofTerm(nil), row.Proofs...),
 		}
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
@@ -240,6 +242,11 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 				}
 			}
 		}
+		for j, proof := range owned[i].Proofs {
+			if !proof.valid(b.arena, b.shape) {
+				return Relation{}, fmt.Errorf("transformer: row %d branch proof %d is invalid", i, j)
+			}
+		}
 		sort.Slice(owned[i].Ops, func(x, y int) bool { return operationLess(b.arena, owned[i].Ops[x], owned[i].Ops[y]) })
 	}
 	sort.Slice(owned, func(i, j int) bool { return rowLess(b.arena, b.effects, owned[i], owned[j]) })
@@ -285,7 +292,11 @@ func rowKey(a *Arena, effects *EffectArena, row Row) string {
 			effectKeys[i] = effects.canonical(effects.nodes[term])
 		}
 	}
-	return fmt.Sprintf("%s|%016x|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"))
+	proofKeys := make([]string, len(row.Proofs))
+	for i, proof := range row.Proofs {
+		proofKeys[i] = proof.canonical(a)
+	}
+	return fmt.Sprintf("%s|%016x|%s|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"), strings.Join(proofKeys, ";"))
 }
 func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
 	lk, rk := rowKey(a, effects, left), rowKey(a, effects, right)
@@ -305,7 +316,7 @@ func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
 }
 func operationEqual(a, b Operation) bool { return a == b }
 func rowEqual(arena *Arena, a, b Row) bool {
-	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
+	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || len(a.Proofs) != len(b.Proofs) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
 		return false
 	}
 	for i := range a.Ops {
@@ -315,6 +326,11 @@ func rowEqual(arena *Arena, a, b Row) bool {
 	}
 	for i := range a.Effects {
 		if a.Effects[i] != b.Effects[i] {
+			return false
+		}
+	}
+	for i := range a.Proofs {
+		if a.Proofs[i] != b.Proofs[i] {
 			return false
 		}
 	}
@@ -454,7 +470,7 @@ func LessOrEqRelation(a, b Relation) bool {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, row := range rows {
-		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...)}
+		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...)}
 	}
 	return out
 }
