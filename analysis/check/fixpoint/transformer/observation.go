@@ -7,9 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	engineobservation "github.com/wippyai/go-lua/analysis/engine/observation"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
-	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // ObservationKind names the first immutable diagnostic-evidence tranche.
@@ -28,23 +26,20 @@ const (
 // lexical binding becomes visible. Guard is local to the observation; using an
 // exit-row guard would incorrectly condition earlier evidence on later paths.
 type ObservationTerm struct {
-	Owner     CellRef
 	BodyOwner lexicalidentity.StableLexicalBodyID
 	Route     engineobservation.InvocationID
 	Kind      ObservationKind
-	Point     cfg.Point
 	Anchor    engineobservation.Occurrence
 	Guard     Guard
-	Symbol    symbol.ID
 	Slot      uint32
 	Actual    ValueTerm
 	Expected  ValueTerm
 }
 
 func (o ObservationTerm) valid(arena *Arena, shape Shape) bool {
-	return o.Kind > ObservationInvalid && o.Kind <= ObservationCallResult && o.Point >= 0 &&
+	return o.Kind > ObservationInvalid && o.Kind <= ObservationCallResult &&
 		o.BodyOwner != (lexicalidentity.StableLexicalBodyID{}) && o.Anchor.Valid() && o.Anchor.Kind == o.Kind && o.Anchor.Slot == o.Slot &&
-		(o.Symbol != 0 || o.Kind == ObservationCallArgument) && arena.validGuard(o.Guard, shape) && arena.validValue(o.Actual, shape, make(map[ValueTerm]bool)) &&
+		arena.validGuard(o.Guard, shape) && arena.validValue(o.Actual, shape, make(map[ValueTerm]bool)) &&
 		(o.Expected == 0 || arena.validValue(o.Expected, shape, make(map[ValueTerm]bool)))
 }
 
@@ -53,7 +48,7 @@ func (o ObservationTerm) canonical(arena *Arena) string {
 	if o.Expected != 0 {
 		expected = arena.canonicalValue(o.Expected)
 	}
-	return fmt.Sprintf("%d.%d:%x:%x:%d:%d:%v:%s:%d:%d:%s:%s", o.Owner.Function, o.Owner.Slot, o.BodyOwner, o.Route, o.Kind, o.Point, o.Anchor, arena.canonicalGuard(o.Guard), o.Symbol, o.Slot, arena.canonicalValue(o.Actual), expected)
+	return fmt.Sprintf("%x:%x:%d:%v:%s:%d:%s:%s", o.BodyOwner, o.Route, o.Kind, o.Anchor, arena.canonicalGuard(o.Guard), o.Slot, arena.canonicalValue(o.Actual), expected)
 }
 
 // Observation is one specialized immutable evidence cell.
@@ -126,6 +121,30 @@ func recordObservationTerm(in []ObservationTerm, next ObservationTerm) []Observa
 		}
 	}
 	return append(in, next)
+}
+
+// unionObservationTerms joins row annotations without changing the row's
+// semantic witness. ObservationTerm keeps Actual and Expected in one record,
+// so canonicalization can never destroy their correlation by independently
+// joining the two values.
+func unionObservationTerms(arena *Arena, sets ...[]ObservationTerm) []ObservationTerm {
+	count := 0
+	for _, set := range sets {
+		count += len(set)
+	}
+	if count == 0 {
+		return nil
+	}
+	out := make([]ObservationTerm, 0, count)
+	for _, set := range sets {
+		for _, term := range set {
+			out = recordObservationTerm(out, term)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].canonical(arena) < out[j].canonical(arena)
+	})
+	return out
 }
 
 func routeObservationTerm(term ObservationTerm, caller lexicalidentity.StableLexicalBodyID, call engineobservation.Occurrence) (ObservationTerm, bool) {

@@ -154,8 +154,9 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 	out := rows[:0]
 	for _, row := range rows {
 		duplicate := false
-		for _, kept := range out {
-			if equalCFGRow(arena, row, kept) {
+		for i := range out {
+			if equalCFGRow(arena, row, out[i]) {
+				out[i].Observations = unionObservationTerms(arena, out[i].Observations, row.Observations)
 				duplicate = true
 				break
 			}
@@ -168,7 +169,7 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 }
 
 func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.Observations) != len(right.Observations) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
+	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
 		return false
 	}
 	if !summary.Equal(arena.reg, left.Output, right.Output) {
@@ -191,11 +192,6 @@ func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
 	}
 	for i := range left.Proofs {
 		if left.Proofs[i] != right.Proofs[i] {
-			return false
-		}
-	}
-	for i := range left.Observations {
-		if left.Observations[i] != right.Observations[i] {
 			return false
 		}
 	}

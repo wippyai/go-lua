@@ -29,7 +29,7 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 		Guard:           calleeBuilder.Arena().True(),
 		Ops:             []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: calleeBuilder.Arena().Constant(typevalue.LiteralString(reg, "done"))}},
 		PathRefinements: []PathRefinementTerm{{Path: calleeBuilder.Arena().Path(calleeRoot), Value: calleeBuilder.Arena().Root(calleeRoot)}},
-		Observations:    []ObservationTerm{{BodyOwner: testObservationBody(3), Kind: ObservationAssignment, Point: 0, Anchor: testObservationAnchor(ObservationAssignment, 1, 0), Guard: calleeBuilder.Arena().True(), Symbol: 9001, Actual: calleeBuilder.Arena().Root(calleeRoot)}},
+		Observations:    []ObservationTerm{{BodyOwner: testObservationBody(3), Kind: ObservationAssignment, Anchor: testObservationAnchor(ObservationAssignment, 1, 0), Guard: calleeBuilder.Arena().True(), Actual: calleeBuilder.Arena().Root(calleeRoot)}},
 	}})
 	if err != nil {
 		t.Fatal(err)

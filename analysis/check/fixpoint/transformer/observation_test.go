@@ -28,8 +28,8 @@ func TestGuardedObservationArtifactPreservesExpectedActualCorrelation(t *testing
 	actualA, actualB := arena.Constant(actualAValue), arena.Constant(actualBValue)
 	wantA, wantB := arena.Constant(wantAValue), arena.Constant(wantBValue)
 	relation, err := builder.Build(certificate, []Row{
-		{Guard: arena.True(), Observations: []ObservationTerm{{BodyOwner: testObservationBody(1), Kind: ObservationCallResult, Point: 7, Anchor: testObservationAnchor(ObservationCallResult, 7, 0), Guard: arena.True(), Symbol: 11, Actual: actualA, Expected: wantA}}},
-		{Guard: arena.True(), Observations: []ObservationTerm{{BodyOwner: testObservationBody(1), Kind: ObservationCallResult, Point: 7, Anchor: testObservationAnchor(ObservationCallResult, 7, 0), Guard: arena.True(), Symbol: 11, Actual: actualB, Expected: wantB}}},
+		{Guard: arena.True(), Observations: []ObservationTerm{{BodyOwner: testObservationBody(1), Kind: ObservationCallResult, Anchor: testObservationAnchor(ObservationCallResult, 7, 0), Guard: arena.True(), Actual: actualA, Expected: wantA}}},
+		{Guard: arena.True(), Observations: []ObservationTerm{{BodyOwner: testObservationBody(1), Kind: ObservationCallResult, Anchor: testObservationAnchor(ObservationCallResult, 7, 0), Guard: arena.True(), Actual: actualB, Expected: wantB}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,12 +57,10 @@ func TestDirectCompositionRetainsSameCalleeObservationAtTwoCallSites(t *testing.
 	calleeBuilder := NewBuilder(reg, Shape{Params: 1}, DefaultOutputCapabilityRegistry(), calleePlan)
 	certificate, _ := CertifyPlan(calleePlan, DefaultSemanticCapabilityRegistry())
 	param := calleeBuilder.Arena().Root(Root{Kind: RootParam})
-	callee, err := calleeBuilder.Build(certificate, []Row{{Guard: calleeBuilder.Arena().True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: param}}, Observations: []ObservationTerm{{BodyOwner: testObservationBody(77), Kind: ObservationAssignment, Point: 1, Anchor: testObservationAnchor(ObservationAssignment, 1, 0), Symbol: 9, Guard: calleeBuilder.Arena().True(), Actual: param}}}})
+	callee, err := calleeBuilder.Build(certificate, []Row{{Guard: calleeBuilder.Arena().True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: param}}, Observations: []ObservationTerm{{BodyOwner: testObservationBody(77), Kind: ObservationAssignment, Anchor: testObservationAnchor(ObservationAssignment, 1, 0), Guard: calleeBuilder.Arena().True(), Actual: param}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	callee = callee.withObservationOwner(CellRef{Function: 77})
-
 	callerGraph := cfg.New()
 	for callerGraph.Size() < 4 {
 		callerGraph.AddNode(cfg.NodeCall)
@@ -122,7 +120,7 @@ func TestObservationAdmissionFailsClosedOnUnknownKind(t *testing.T) {
 	builder := NewBuilder(reg, Shape{}, DefaultOutputCapabilityRegistry(), plan)
 	certificate, _ := CertifyPlan(plan, DefaultSemanticCapabilityRegistry())
 	actual := builder.Arena().Constant(typevalue.LiteralString(reg, "actual"))
-	if relation, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True(), Observations: []ObservationTerm{{Kind: ObservationKind(99), Point: 1, Symbol: 1, Actual: actual}}}}); err == nil || relation.Rows() != 0 {
+	if relation, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True(), Observations: []ObservationTerm{{Kind: ObservationKind(99), Actual: actual}}}}); err == nil || relation.Rows() != 0 {
 		t.Fatalf("unknown observation kind published: relation=%#v error=%v", relation, err)
 	}
 }

@@ -318,7 +318,10 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 			}
 			anchor, durable := p.plan.AssignmentObservationAnchor(point)
 			if durable {
-				rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationAssignment, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: assignment.TargetSymbol(), Actual: value})
+				// Facts exposes at most one RootAssignment per CFG point, and the
+				// durable occurrence identifies that point, so no run-local symbol
+				// is needed to distinguish assignment annotations.
+				rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationAssignment, Anchor: anchor, Guard: rows[index].Guard, Actual: value})
 			}
 		}
 		if site, ok := p.plan.Facts().CallSiteView(point); ok && !p.cyclic {
@@ -336,7 +339,7 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 				}
 				anchor, durable := p.plan.CallResultObservationAnchor(point, uint32(targetIndex))
 				if durable {
-					rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationCallResult, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: target.TargetSymbol(), Slot: uint32(targetIndex), Actual: value})
+					rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationCallResult, Anchor: anchor, Guard: rows[index].Guard, Slot: uint32(targetIndex), Actual: value})
 				}
 			}
 		}
@@ -490,7 +493,7 @@ func (p *PreparedPlanCompiler) Equation(ref CellRef) (*PreparedEquation, error) 
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err
 		}
-		return p.evaluate(ctx, RelationView{}, nil).withObservationOwner(ref), nil
+		return p.evaluate(ctx, RelationView{}, nil), nil
 	})
 }
 
@@ -511,7 +514,7 @@ func (p *PreparedPlanCompiler) DirectEquation(ref CellRef, catalog DirectCallCat
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err
 		}
-		return p.evaluate(ctx, view, &catalog).withObservationOwner(ref), nil
+		return p.evaluate(ctx, view, &catalog), nil
 	})
 }
 

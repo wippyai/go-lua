@@ -263,6 +263,7 @@ func (s *exactWTOSolver) processDelta(dense uint32) error {
 				return fmt.Errorf("transformer: exact WTO point %d: %w", point, err)
 			}
 		}
+		produced = dedupCFGRows(s.arena, produced)
 		if len(produced) > s.options.MaxRows {
 			return fmt.Errorf("transformer: exact WTO row budget at point %d", point)
 		}
@@ -368,6 +369,7 @@ func (s *exactWTOSolver) insert(point uint32, row exactWTORow) (bool, error) {
 	hash := s.hashRow(row.row) ^ exactWTOPhaseHash(row.phases)
 	for i, candidateHash := range bucket.hashes {
 		if candidateHash == hash && equalExactWTORow(s.arena, bucket.rows[i], row) {
+			bucket.rows[i].row.Observations = unionObservationTerms(s.arena, bucket.rows[i].row.Observations, row.row.Observations)
 			return false, nil
 		}
 	}
@@ -416,8 +418,9 @@ func (s *exactWTOSolver) publishBucket(dense uint32) ([]SymbolicCFGRow, error) {
 	rows := make([]SymbolicCFGRow, 0, len(s.buckets[dense].rows))
 	for _, candidate := range s.buckets[dense].rows {
 		duplicate := false
-		for _, kept := range rows {
-			if equalCFGRow(s.arena, kept, candidate.row) {
+		for i := range rows {
+			if equalCFGRow(s.arena, rows[i], candidate.row) {
+				rows[i].Observations = unionObservationTerms(s.arena, rows[i].Observations, candidate.row.Observations)
 				duplicate = true
 				break
 			}

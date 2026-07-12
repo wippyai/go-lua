@@ -164,7 +164,7 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 			}
 			actual := bindings.value(Root{Kind: RootParam, Index: slot})
 			expected := builder.arena.Constant(callee.paramContracts[slot])
-			next.Observations = recordObservationTerm(next.Observations, ObservationTerm{BodyOwner: builder.plan.ObservationBody(), Kind: ObservationCallArgument, Point: point, Anchor: anchor, Guard: caller.Guard, Slot: slot, Actual: actual, Expected: expected})
+			next.Observations = recordObservationTerm(next.Observations, ObservationTerm{BodyOwner: builder.plan.ObservationBody(), Kind: ObservationCallArgument, Anchor: anchor, Guard: caller.Guard, Slot: slot, Actual: actual, Expected: expected})
 		}
 	}
 	returns := make(map[uint32]ValueTerm, len(row.Ops))
