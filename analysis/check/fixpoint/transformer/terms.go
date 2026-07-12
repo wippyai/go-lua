@@ -160,6 +160,33 @@ func (a *Arena) CellResultValue(cell CellRef, args ...ValueTerm) ValueTerm {
 	return a.internValue(valueNode{op: valueCellResult, cell: cell, args: append([]ValueTerm(nil), args...)})
 }
 
+// ValueDependsOn reports whether term's immutable DAG contains dependency.
+// It is a read-only structural query for composition gates and tests; callers
+// cannot inspect or mutate arena nodes through it.
+func (a *Arena) ValueDependsOn(term, dependency ValueTerm) bool {
+	if a == nil || term == 0 || dependency == 0 || int(term) >= len(a.values) || int(dependency) >= len(a.values) {
+		return false
+	}
+	visited := make(map[ValueTerm]bool)
+	var visit func(ValueTerm) bool
+	visit = func(current ValueTerm) bool {
+		if current == dependency {
+			return true
+		}
+		if current == 0 || int(current) >= len(a.values) || visited[current] {
+			return false
+		}
+		visited[current] = true
+		for _, arg := range a.values[current].args {
+			if visit(arg) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(term)
+}
+
 // IteratorProjectionValue retains one key/value projection from a canonical
 // signature iterator effect. The source container remains symbolic; loop
 // cardinality and SCC convergence stay owned by the CFG solver.

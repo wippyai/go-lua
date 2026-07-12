@@ -13,12 +13,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -189,7 +191,10 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 	fixture := newFindRootNodesPOCFixture(t)
 	application := fixture.applications[len(fixture.applications)-1]
 	oracle := application.oracle
-	cell := transformer.CellRef{Function: uint64(fixture.resolveKey.Ref.ID)}
+	cell := transformer.CellRef{Function: 0x7265736f6c7665}
+	if fixture.resolveRelation.Widened() || fixture.resolveRelation.ContextualReason() != "" {
+		t.Fatalf("resolve_reference relation is not an exact acyclic target: widened=%v contextual=%q", fixture.resolveRelation.Widened(), fixture.resolveRelation.ContextualReason())
+	}
 	points := make(map[cfg.Point]transformer.DirectCallTarget)
 	for point := cfg.Point(0); int(point) < oracle.Graph().Size(); point++ {
 		site, ok := oracle.CallSiteView(point)
@@ -206,6 +211,10 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 	}
 	before := totalAttributedBodySolves(fixture.stats)
 	for point := range points {
+		target, found := catalog.Lookup(point)
+		if !found || target.Cell != cell || target.Shape != fixture.resolveRelation.Shape() {
+			t.Fatalf("direct catalog point %d target = %#v/%v", point, target, found)
+		}
 		site, _ := oracle.CallSiteView(point)
 		shape := transformer.Shape{Params: 2}
 		builder := transformer.NewBuilder(application.config.Registry, shape, transformer.DefaultOutputCapabilityRegistry(), operationplan.New(cfg.New(), factflow.FactsInput{}))
@@ -228,8 +237,10 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 		}
 		broadProofRetained := false
 		for _, row := range rows {
-			if len(row.Proofs) >= 2 {
-				broadProofRetained = true
+			for _, proof := range row.Proofs {
+				if proof.Key != 0 && builder.Arena().ValueDependsOn(proof.Key, broadKey) && proof.Table != 0 && proof.Kind == pathevidence.BranchProofPathPresence && presence.Equal(proof.Presence, presence.Present()) {
+					broadProofRetained = true
+				}
 			}
 			for targetIndex := 0; targetIndex < site.ResultTargetCount(); targetIndex++ {
 				target, _ := site.ResultTargetAt(targetIndex)
@@ -239,7 +250,7 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 			}
 		}
 		if !broadProofRetained {
-			t.Fatalf("line %d lost resolve_reference's dynamic broad-key proof row", site.CallSpan().StartLine)
+			t.Fatalf("line %d lost resolve_reference's refined broad-key proof row", site.CallSpan().StartLine)
 		}
 	}
 	if after := totalAttributedBodySolves(fixture.stats); after != before {
