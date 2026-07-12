@@ -28,7 +28,10 @@ type EdgeTransfer func(ctx EdgeContext, out state.State) state.State
 
 // Stats holds caller-owned observational counters for transfer runs.
 type Stats struct {
-	Solver solve.Stats
+	Solver         solve.Stats
+	DenseAttempts  int
+	DenseCompleted int
+	DenseFallbacks int
 }
 
 // Schedule selects the ascending fixed-point schedule. FIFO remains the
@@ -333,6 +336,9 @@ func TryRun(config Config) (Result, error) {
 
 	if config.Schedule == ScheduleWTO || config.Schedule == ScheduleWTODual {
 		if config.Schedule == ScheduleWTO && config.ConcreteFlow != nil {
+			if config.Stats != nil {
+				config.Stats.DenseAttempts++
+			}
 			denseStats := &solve.Stats{}
 			denseSystem := plan.withStats(denseStats)
 			fuse := func(point cfg.Point) bool {
@@ -344,6 +350,9 @@ func TryRun(config Config) (Result, error) {
 				Transfer: plan.denseTransfer, TransferVersioned: plan.denseTransferVersioned,
 			}, denseSystem, config.ConcreteFlow)
 			if denseErr == nil {
+				if config.Stats != nil {
+					config.Stats.DenseCompleted++
+				}
 				if sys.Stats != nil {
 					sys.Stats.TransferCalls += denseStats.TransferCalls
 				}
@@ -358,6 +367,9 @@ func TryRun(config Config) (Result, error) {
 			}
 			if !errors.Is(denseErr, solve.ErrWTOPlanUncovered) {
 				return nil, denseErr
+			}
+			if config.Stats != nil {
+				config.Stats.DenseFallbacks++
 			}
 			denseObservationMode = false
 			denseObservations = nil
