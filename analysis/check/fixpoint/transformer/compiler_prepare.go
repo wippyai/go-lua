@@ -290,7 +290,10 @@ func exactDirectCallSourceBinding(ctx planCompileContext, source factflow.ValueS
 	}
 	path, err := exactDirectCallSourcePath(ctx, source)
 	if err != nil {
-		return 0, 0, fmt.Errorf("path: %w", err)
+		// Path bindings are optional. Value-only callee terms can compose without
+		// importing caller path identity; RebaseTermDAGs fails closed if the
+		// callee actually references a missing PathTerm.
+		path = 0
 	}
 	return value, path, nil
 }

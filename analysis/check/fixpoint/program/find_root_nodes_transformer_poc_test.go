@@ -216,6 +216,22 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 			t.Fatalf("direct catalog point %d target = %#v/%v", point, target, found)
 		}
 		site, _ := oracle.CallSiteView(point)
+		facts := application.prepared.OperationPlan().Facts()
+		keySources := 0
+		site.ForEachArgumentSource(func(index int, source factflow.ValueSource) bool {
+			if index != 0 {
+				return false
+			}
+			keySources++
+			path, hasPath := facts.ExpressionPathRef(source.ExprRef)
+			if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || !source.Adjusted || !hasPath || path.String() != "route_entry.target_name" {
+				t.Fatalf("line %d resolve key source lost canonical scalar projection: source=%#v path=%v/%s", site.CallSpan().StartLine, source, hasPath, path.String())
+			}
+			return false
+		})
+		if keySources != 1 {
+			t.Fatalf("line %d resolve key sources=%d, want one", site.CallSpan().StartLine, keySources)
+		}
 		shape := transformer.Shape{Params: 2}
 		builder := transformer.NewBuilder(application.config.Registry, shape, transformer.DefaultOutputCapabilityRegistry(), operationplan.New(cfg.New(), factflow.FactsInput{}))
 		self := builder.Arena().Root(transformer.Root{Kind: transformer.RootParam, Index: 0})

@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -196,6 +197,40 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *te
 	}).View()
 	if _, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, adjustedSite); err == nil {
 		t.Fatal("adjusted direct argument was silently treated as unadjusted")
+	}
+}
+
+func TestExactDirectCallBindingAllowsUnusedMissingPathAndRejectsPathUse(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	ref := factflow.ExprRef(91)
+	value := typevalue.LiteralString(reg, "value-only")
+	plan := operationplan.New(graph, factflow.FactsInput{
+		ExpressionValues: map[factflow.ExprRef]product.Value{ref: value},
+	})
+	prepared, err := NewPlanCompiler().Prepare(reg, graph, plan, Shape{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	source, _ := factflow.NewExpressionValueSource(ref, 0, 0, 0, shape)
+	bound, path, err := exactDirectCallSourceBinding(prepared.base, source)
+	if err != nil || bound == 0 || path != 0 {
+		t.Fatalf("value-only binding = %d/%d/%v, want value and optional zero path", bound, path, err)
+	}
+
+	callee, caller := NewArena(reg), prepared.builder.Arena()
+	calleeShape := Shape{Params: 1}
+	bindings, err := NewTermRootBindings(calleeShape, Shape{}, []ValueTerm{bound}, []PathTerm{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := Root{Kind: RootParam, Index: 0}
+	if _, err := RebaseTermDAGs(caller, callee, bindings, TermRebaseInput{Values: []ValueTerm{callee.Root(root)}}); err != nil {
+		t.Fatalf("unused missing path rejected value-only DAG: %v", err)
+	}
+	if got, err := RebaseTermDAGs(caller, callee, bindings, TermRebaseInput{Paths: []PathTerm{callee.Path(root)}}); err == nil || !reflect.DeepEqual(got, TermRebaseOutput{}) {
+		t.Fatalf("used missing path did not fail atomically: %#v/%v", got, err)
 	}
 }
 
