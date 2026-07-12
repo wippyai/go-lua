@@ -17,7 +17,7 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 )
 
-func applyCallOutcomeFacts(
+func applyResolvedCallOutcomeFacts(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	resolver *visibility.Resolver,

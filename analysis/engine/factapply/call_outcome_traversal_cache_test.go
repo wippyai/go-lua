@@ -152,13 +152,13 @@ func TestCallOutcomeEdgeTraversalVisitsOnlyExactCallEntries(t *testing.T) {
 		return callpayload.CallOutcome{}
 	}
 	stats := &callOutcomeTraversalStats{}
-	cache := &callOutcomeTraversalCache{stats: stats}
+	executor := &ResolvedCallOutcomeEdgeExecutor{cache: callOutcomeTraversalCache{stats: stats}}
 	ctx := transfer.EdgeContext{
 		Graph: graph, Registry: reg, Edge: cfg.Edge{From: branch, To: thenPoint, Cond: true}, HasCond: true,
 	}
 
-	applyCallOutcomeEdgeFacts(ctx, facts, cache, provider, nil, nil, nil, state.State{})
-	applyCallOutcomeEdgeFacts(ctx, facts, cache, provider, nil, nil, nil, state.State{})
+	applyCallOutcomeEdgeFacts(ctx, facts, executor, provider, nil, nil, nil, state.State{})
+	applyCallOutcomeEdgeFacts(ctx, facts, executor, provider, nil, nil, nil, state.State{})
 
 	if providerCalls != 2 {
 		t.Fatalf("provider calls = %d, want one condition call per edge transfer", providerCalls)

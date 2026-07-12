@@ -858,21 +858,16 @@ func TestApplyCallOutcomeRebasedReturnSlotRootInvalidationPreservesReceiverShape
 		t.Fatal("missing call site")
 	}
 
-	got := applyCallOutcomeFacts(
-		transfer.NodeContext{Registry: reg, Point: point},
-		facts,
-		resolver,
-		testLuaPathTypeProjector,
-		nil,
-		typevalue.NewCache(),
-		in,
-		site,
-		callpayload.CallOutcome{
+	got := ApplyResolvedCallOutcomeOrdinaryEffects(ResolvedCallOutcomeOrdinaryEffectsRequest{
+		Context: transfer.NodeContext{Registry: reg, Point: point},
+		Facts:   facts, Resolver: resolver, ProjectPath: testLuaPathTypeProjector,
+		TypeValues: typevalue.NewCache(), Output: in, Site: site,
+		Outcome: callpayload.CallOutcome{
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				PathInvalidations: []callboundary.PathInvalidationFact{{Path: returnSlot}},
 			},
 		},
-	)
+	}).Output
 
 	if metadata := got.ReadPathKey(reg, resolver.KeySpace(), metadataKey); !product.Equal(reg, metadata, product.Bottom(reg)) {
 		t.Fatalf("rebased return-slot root invalidation left stale metadata = %s, want bottom", formatValue(reg, metadata))

@@ -208,7 +208,19 @@ func materializeCallOutcome(
 		out = applyCallProducerReturnSlots(ctx, siteView, out, outcome, hasOutcome)
 	}
 	if hasOutcome {
-		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, widen, typeValues, out, siteView, outcome)
+		applied := ApplyResolvedCallOutcomeOrdinaryEffects(ResolvedCallOutcomeOrdinaryEffectsRequest{
+			Context: ctx, Facts: facts, Resolver: resolver, ProjectPath: projectPath,
+			Widen: widen, TypeValues: typeValues, Output: out, Site: siteView,
+			Outcome: outcome,
+		})
+		if applied.Applied {
+			out = applied.Output
+		} else {
+			// Legacy providers do not yet carry auditable caller-keyspace
+			// provenance. Preserve their established heap behavior internally;
+			// the exported seam remains fail-closed until provenance exists.
+			out = applyResolvedCallOutcomeFacts(ctx, facts, resolver, projectPath, widen, typeValues, out, siteView, outcome)
+		}
 	}
 	out = applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	edit := out.EditValues(ctx.Registry)

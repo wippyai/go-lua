@@ -183,7 +183,7 @@ func callOutcomeRelatableTarget(target factflow.CallResultTargetView) bool {
 func applyCallOutcomeEdgeFacts(
 	ctx transfer.EdgeContext,
 	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
+	executor *ResolvedCallOutcomeEdgeExecutor,
 	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -193,9 +193,10 @@ func applyCallOutcomeEdgeFacts(
 	if outcomeProvider == nil || ctx.Graph == nil || !ctx.HasCond {
 		return out
 	}
-	if cache == nil {
-		cache = &callOutcomeTraversalCache{}
+	if executor == nil {
+		executor = &ResolvedCallOutcomeEdgeExecutor{}
 	}
+	cache := &executor.cache
 	callSites := cache.exactCallSites(ctx.Graph, facts)
 	if cache.stats != nil {
 		cache.stats.edgeCallEntriesVisited += len(callSites)
@@ -212,15 +213,11 @@ func applyCallOutcomeEdgeFacts(
 			Node:     ctx.Graph.Node(callPoint),
 			Read:     emptyStateRead,
 		}, siteView, out, emptyStateRead)
-		if len(outcome.ReturnConditionRefinements) != 0 {
-			out = applyCallReturnConditionRefinements(ctx, facts, resolver, projectPath, callPoint, siteView, outcome, out)
-		}
-		if len(outcome.ReturnConditionSlots) != 0 {
-			out = applyCallReturnConditionSlotRefinements(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, siteView, outcome, out)
-		}
-		if len(outcome.ReturnPresenceRelations) != 0 {
-			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, siteView, outcome, out)
-		}
+		out = executor.Apply(ResolvedCallOutcomeEdgeRequest{
+			Context: ctx, Facts: facts, Resolver: resolver, ProjectPath: projectPath,
+			BranchRefinements: branchRefinements, Output: out, CallPoint: callPoint,
+			Site: siteView, Outcome: outcome,
+		})
 	}
 	return out
 }

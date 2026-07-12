@@ -41,9 +41,11 @@ func applyCallOutcomeReturnSlotFactsAfterRootAssignment(
 	if normalFacts.Empty() {
 		return out
 	}
-	return applyCallOutcomeFacts(ctx, facts, resolver, projectPath, widen, typeValues, out, site, callpayload.CallOutcome{
-		NormalReturnFacts: normalFacts,
-	})
+	return ApplyResolvedCallOutcomeOrdinaryEffects(ResolvedCallOutcomeOrdinaryEffectsRequest{
+		Context: ctx, Facts: facts, Resolver: resolver, ProjectPath: projectPath,
+		Widen: widen, TypeValues: typeValues, Output: out, Site: site,
+		Outcome: callpayload.CallOutcome{NormalReturnFacts: normalFacts},
+	}).Output
 }
 
 func callResultSiteForAssignment(

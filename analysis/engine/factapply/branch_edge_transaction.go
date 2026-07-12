@@ -37,7 +37,7 @@ type ConcreteBranchEdgePointResult struct {
 // ConcreteBranchEdgePointExecutor retains traversal scratch which is safe to
 // reuse across sequential edge applications by one prepared transfer.
 type ConcreteBranchEdgePointExecutor struct {
-	callOutcomeCache callOutcomeTraversalCache
+	callOutcomeExecutor ResolvedCallOutcomeEdgeExecutor
 }
 
 // ApplyConcreteBranchEdgePoint executes one edge with fresh traversal scratch.
@@ -211,6 +211,6 @@ func (e *ConcreteBranchEdgePointExecutor) Apply(req ConcreteBranchEdgePointReque
 	if stateIsBottom(ctx.Registry, out) {
 		return done()
 	}
-	out = applyCallOutcomeEdgeFacts(ctx, req.Facts, &e.callOutcomeCache, req.CallOutcome, req.Resolver, req.ProjectPath, branchRefinements, out)
+	out = applyCallOutcomeEdgeFacts(ctx, req.Facts, &e.callOutcomeExecutor, req.CallOutcome, req.Resolver, req.ProjectPath, branchRefinements, out)
 	return done()
 }
