@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -8,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -73,6 +75,40 @@ func TestCapabilityMatrixCoversEveryDefaultStateLane(t *testing.T) {
 	}
 }
 
+func TestOutputCapabilityMatrixCoversEverySummaryFieldAndStateLane(t *testing.T) {
+	r := DefaultOutputCapabilityRegistry()
+	if err := r.Complete(state.DefaultLaneCatalog()); err != nil {
+		t.Fatal(err)
+	}
+	descriptors := summary.SummaryFactDescriptors()
+	wantKinds := make([]callboundary.BoundaryFactKind, len(descriptors))
+	for i, descriptor := range descriptors {
+		wantKinds[i] = descriptor.Kind
+	}
+	if got := r.SummaryKinds(); !reflect.DeepEqual(got, wantKinds) {
+		t.Fatalf("Summary output catalog = %v, want %v", got, wantKinds)
+	}
+	lanes := state.DefaultLaneCatalog().LaneSet().IDs()
+	if len(lanes) != 17 {
+		t.Fatalf("test assumption: got %d State lanes", len(lanes))
+	}
+	for _, kind := range wantKinds {
+		for _, lane := range lanes {
+			got := r.SummaryCapability(kind, lane)
+			switch kind {
+			case callboundary.BoundaryFactKind(DescriptorReturn), callboundary.BoundaryFactKind(DescriptorObligation):
+				if got == CapabilityUnsupported {
+					t.Fatalf("enabled Summary output %q lane %q has no verdict", kind, lane)
+				}
+			default:
+				if got != CapabilityUnsupported {
+					t.Fatalf("unimplemented Summary output %q lane %q unexpectedly enabled", kind, lane)
+				}
+			}
+		}
+	}
+}
+
 func TestSemanticCapabilityMatrixCoversOperationPlanAndFailsClosed(t *testing.T) {
 	r := DefaultSemanticCapabilityRegistry()
 	if err := r.Complete(state.DefaultLaneCatalog()); err != nil {
@@ -98,14 +134,30 @@ func TestSemanticCapabilityMatrixCoversOperationPlanAndFailsClosed(t *testing.T)
 	}
 }
 
-func TestComposeRequiresExplicitAllLaneCertificate(t *testing.T) {
+func TestCellResultRequiresExplicitAllLaneCertificate(t *testing.T) {
 	reg := standard.Registry()
 	b := NewBuilder(reg, Shape{Params: 1}, nil)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam})
-	call := a.ComposeValue(CellRef{Function: 1}, p)
-	if relation, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCompose, Descriptor: DescriptorReturn, Value: call}}}}); err == nil || relation.arena != nil {
-		t.Fatalf("uncertified compose published: %#v, %v", relation, err)
+	call := a.CellResultValue(CellRef{Function: 1}, p)
+	if relation, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCellResult, Descriptor: DescriptorReturn, Value: call}}}}); err == nil || relation.arena != nil {
+		t.Fatalf("uncertified scalar cell result published: %#v, %v", relation, err)
+	}
+}
+
+func TestCellResultCannotBypassCapabilityThroughReturnOrGuard(t *testing.T) {
+	reg := standard.Registry()
+	b := NewBuilder(reg, Shape{Params: 1}, nil)
+	a := b.Arena()
+	p := a.Root(Root{Kind: RootParam})
+	call := a.CellResultValue(CellRef{Function: 1}, p)
+	certificate := emptyCertificate(t)
+
+	if relation, err := b.Build(certificate, []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: call}}}}); err == nil || relation.arena != nil {
+		t.Fatalf("cell result escaped through return capability: %#v, %v", relation, err)
+	}
+	if relation, err := b.Build(certificate, []Row{{Guard: a.Truthy(call), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: p}}}}); err == nil || relation.arena != nil {
+		t.Fatalf("cell result escaped through guard capability: %#v, %v", relation, err)
 	}
 }
 
@@ -173,6 +225,39 @@ func TestBuildFailsClosedForUnsupportedOperationLane(t *testing.T) {
 	}
 }
 
+func TestBuildFailsAtomicallyForUnknownSummaryOutput(t *testing.T) {
+	caps := DefaultOutputCapabilityRegistry()
+	for _, lane := range caps.Lanes() {
+		if err := caps.Set(OutputEffect, lane, CapabilityUnaffected); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := NewBuilder(standard.Registry(), Shape{Params: 1}, caps)
+	a := b.Arena()
+	p := a.Root(Root{Kind: RootParam, Index: 0})
+	got, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputEffect, Descriptor: "future-summary-field", Value: p}}}})
+	if err == nil || got.arena != nil {
+		t.Fatalf("unknown Summary output partially published: %#v, %v", got, err)
+	}
+}
+
+func TestBuildFailsAtomicallyWhenCertifiedSummaryOutputHasNoHandler(t *testing.T) {
+	caps := DefaultOutputCapabilityRegistry()
+	kind := callboundary.BoundaryFactKind("MaySuspend")
+	for _, lane := range caps.Lanes() {
+		if err := caps.SetSummary(kind, lane, CapabilityUnaffected); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := NewBuilder(standard.Registry(), Shape{Params: 1}, caps)
+	a := b.Arena()
+	p := a.Root(Root{Kind: RootParam, Index: 0})
+	got, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorKind(kind), Value: p}}}})
+	if err == nil || got.arena != nil {
+		t.Fatalf("handlerless Summary output partially published: %#v, %v", got, err)
+	}
+}
+
 func TestSpecializePreservesCorrelatedRowsAndExistingSummary(t *testing.T) {
 	reg := standard.Registry()
 	b := NewBuilder(reg, Shape{Params: 1, Results: 2}, nil)
@@ -207,23 +292,23 @@ func TestSpecializePreservesCorrelatedRowsAndExistingSummary(t *testing.T) {
 	}
 }
 
-func TestComposeCellReferenceUsesResolver(t *testing.T) {
+func TestScalarCellResultReferenceUsesResolver(t *testing.T) {
 	reg := standard.Registry()
 	caps := DefaultOutputCapabilityRegistry()
 	for _, lane := range caps.Lanes() {
-		if err := caps.Set(OutputCompose, lane, CapabilityUnaffected); err != nil {
+		if err := caps.Set(OutputCellResult, lane, CapabilityUnaffected); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := caps.Set(OutputCompose, state.LaneValues, CapabilitySupported); err != nil {
+	if err := caps.Set(OutputCellResult, state.LaneValues, CapabilitySupported); err != nil {
 		t.Fatal(err)
 	}
 	b := NewBuilder(reg, Shape{Params: 1}, caps)
 	a := b.Arena()
 	p := a.Root(Root{Kind: RootParam, Index: 0})
 	cell := CellRef{Function: 9, Slot: 2}
-	call := a.ComposeValue(cell, p)
-	relation, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCompose, Descriptor: DescriptorReturn, Value: call}}}})
+	call := a.CellResultValue(cell, p)
+	relation, err := b.Build(emptyCertificate(t), []Row{{Guard: a.True(), Ops: []Operation{{Kind: OutputCellResult, Descriptor: DescriptorReturn, Value: call}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +320,7 @@ func TestComposeCellReferenceUsesResolver(t *testing.T) {
 		return args[0], seen
 	})
 	if !ok || !seen || len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], input) {
-		t.Fatalf("compose failed: ok=%v seen=%v summary=%#v", ok, seen, got)
+		t.Fatalf("scalar cell result failed: ok=%v seen=%v summary=%#v", ok, seen, got)
 	}
 }
 

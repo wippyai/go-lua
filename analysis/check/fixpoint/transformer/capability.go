@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
@@ -17,7 +19,7 @@ const (
 	OutputReturn OutputKind = iota
 	OutputObligation
 	OutputEffect
-	OutputCompose
+	OutputCellResult
 	outputKindCount
 )
 
@@ -31,9 +33,12 @@ const (
 
 // OutputCapabilityRegistry is a dense output x State-lane certificate.
 type OutputCapabilityRegistry struct {
-	lanes []state.LaneID
-	index map[state.LaneID]int
-	table []Capability
+	lanes        []state.LaneID
+	index        map[state.LaneID]int
+	table        []Capability
+	summaryKinds []callboundary.BoundaryFactKind
+	summaryIndex map[callboundary.BoundaryFactKind]int
+	summary      []Capability
 }
 
 func NewOutputCapabilityRegistry(catalog state.LaneCatalog) *OutputCapabilityRegistry {
@@ -42,12 +47,27 @@ func NewOutputCapabilityRegistry(catalog state.LaneCatalog) *OutputCapabilityReg
 	for i, lane := range lanes {
 		index[lane] = i
 	}
-	return &OutputCapabilityRegistry{lanes: lanes, index: index, table: make([]Capability, int(outputKindCount)*len(lanes))}
+	descriptors := summary.SummaryFactDescriptors()
+	summaryKinds := make([]callboundary.BoundaryFactKind, len(descriptors))
+	summaryIndex := make(map[callboundary.BoundaryFactKind]int, len(descriptors))
+	for i, descriptor := range descriptors {
+		summaryKinds[i] = descriptor.Kind
+		summaryIndex[descriptor.Kind] = i
+	}
+	return &OutputCapabilityRegistry{
+		lanes:        lanes,
+		index:        index,
+		table:        make([]Capability, int(outputKindCount)*len(lanes)),
+		summaryKinds: summaryKinds,
+		summaryIndex: summaryIndex,
+		summary:      make([]Capability, len(summaryKinds)*len(lanes)),
+	}
 }
 
 // DefaultOutputCapabilityRegistry enables only pure return and entry
-// obligation values. Effect and Compose remain unsupported on all 17 lanes: a
-// call may mutate any lane, and requires an explicit effect certificate.
+// obligation values. Effect and scalar cell results remain unsupported on all
+// 17 lanes: a call may mutate any lane, and requires an explicit relational
+// composition certificate rather than a value-only callback.
 func DefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
 	r := NewOutputCapabilityRegistry(state.DefaultLaneCatalog())
 	for _, output := range []OutputKind{OutputReturn, OutputObligation} {
@@ -55,6 +75,15 @@ func DefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
 			_ = r.Set(output, lane, CapabilityUnaffected)
 		}
 		_ = r.Set(output, state.LaneValues, CapabilitySupported)
+	}
+	for _, kind := range []callboundary.BoundaryFactKind{
+		callboundary.BoundaryFactKind(DescriptorReturn),
+		callboundary.BoundaryFactKind(DescriptorObligation),
+	} {
+		for _, lane := range r.lanes {
+			_ = r.SetSummary(kind, lane, CapabilityUnaffected)
+		}
+		_ = r.SetSummary(kind, state.LaneValues, CapabilitySupported)
 	}
 	return r
 }
@@ -82,6 +111,65 @@ func (r *OutputCapabilityRegistry) Capability(output OutputKind, lane state.Lane
 		return CapabilityUnsupported
 	}
 	return r.table[int(output)*len(r.lanes)+i]
+}
+
+// SetSummary records the specialization capability for one canonical Summary
+// field and State lane. Unknown fields fail closed rather than creating a
+// parallel output vocabulary.
+func (r *OutputCapabilityRegistry) SetSummary(kind callboundary.BoundaryFactKind, lane state.LaneID, capability Capability) error {
+	if r == nil {
+		return fmt.Errorf("transformer: nil output capability registry")
+	}
+	ordinal, known := r.summaryIndex[kind]
+	i, ok := r.index[lane]
+	if !known {
+		return fmt.Errorf("transformer: unknown Summary output %q", kind)
+	}
+	if !ok {
+		return fmt.Errorf("transformer: unknown state lane %q", lane)
+	}
+	if capability > CapabilitySupported {
+		return fmt.Errorf("transformer: invalid capability %d", capability)
+	}
+	r.summary[ordinal*len(r.lanes)+i] = capability
+	return nil
+}
+
+// SummaryCapability returns the explicit verdict for a canonical Summary
+// field and State lane. Unknown fields and lanes are unsupported.
+func (r *OutputCapabilityRegistry) SummaryCapability(kind callboundary.BoundaryFactKind, lane state.LaneID) Capability {
+	if r == nil {
+		return CapabilityUnsupported
+	}
+	ordinal, known := r.summaryIndex[kind]
+	i, ok := r.index[lane]
+	if !known || !ok {
+		return CapabilityUnsupported
+	}
+	return r.summary[ordinal*len(r.lanes)+i]
+}
+
+func (r *OutputCapabilityRegistry) UnsupportedSummary(kind callboundary.BoundaryFactKind) []state.LaneID {
+	if r == nil {
+		return state.DefaultLaneCatalog().LaneSet().IDs()
+	}
+	var out []state.LaneID
+	for _, lane := range r.lanes {
+		if r.SummaryCapability(kind, lane) == CapabilityUnsupported {
+			out = append(out, lane)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// SummaryKinds returns the canonical Summary output schema covered by the
+// matrix. The returned slice is independent of the registry.
+func (r *OutputCapabilityRegistry) SummaryKinds() []callboundary.BoundaryFactKind {
+	if r == nil {
+		return nil
+	}
+	return append([]callboundary.BoundaryFactKind(nil), r.summaryKinds...)
 }
 func (r *OutputCapabilityRegistry) Lanes() []state.LaneID {
 	if r == nil {
@@ -117,6 +205,15 @@ func (r *OutputCapabilityRegistry) Complete(catalog state.LaneCatalog) error {
 	}
 	if len(r.table) != int(outputKindCount)*len(r.lanes) {
 		return fmt.Errorf("transformer: incomplete output capability matrix")
+	}
+	descriptors := summary.SummaryFactDescriptors()
+	if len(descriptors) != len(r.summaryKinds) || len(r.summary) != len(descriptors)*len(r.lanes) {
+		return fmt.Errorf("transformer: incomplete Summary output capability matrix")
+	}
+	for i, descriptor := range descriptors {
+		if r.summaryKinds[i] != descriptor.Kind {
+			return fmt.Errorf("transformer: stale Summary output kind catalog")
+		}
 	}
 	return nil
 }

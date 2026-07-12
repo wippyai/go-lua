@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
@@ -13,8 +14,8 @@ import (
 type DescriptorKind string
 
 const (
-	DescriptorReturn     DescriptorKind = "return"
-	DescriptorObligation DescriptorKind = "param-obligation"
+	DescriptorReturn     DescriptorKind = "Returns"
+	DescriptorObligation DescriptorKind = "ParamObligations"
 )
 
 // Operation is one correlated row output.
@@ -49,16 +50,27 @@ func (r Relation) Rows() int                { return len(r.rows) }
 
 // Builder performs atomic validation before publishing an immutable relation.
 type Builder struct {
-	shape Shape
-	arena *Arena
-	caps  *OutputCapabilityRegistry
+	shape       Shape
+	arena       *Arena
+	caps        *OutputCapabilityRegistry
+	descriptors *DescriptorRegistry
 }
 
 func NewBuilder(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry) *Builder {
+	return NewBuilderWithDescriptors(reg, shape, caps, DefaultDescriptorRegistry())
+}
+
+// NewBuilderWithDescriptors binds admission to the same descriptor handlers
+// that will specialize the relation. This prevents a capability-only promise
+// from publishing an output for which no Summary transaction exists.
+func NewBuilderWithDescriptors(reg *axis.Registry, shape Shape, caps *OutputCapabilityRegistry, descriptors *DescriptorRegistry) *Builder {
 	if caps == nil {
 		caps = DefaultOutputCapabilityRegistry()
 	}
-	return &Builder{shape: shape, arena: NewArena(reg), caps: caps}
+	if descriptors == nil {
+		descriptors = DefaultDescriptorRegistry()
+	}
+	return &Builder{shape: shape, arena: NewArena(reg), caps: caps, descriptors: descriptors}
 }
 func (b *Builder) Arena() *Arena { return b.arena }
 
@@ -81,6 +93,9 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
 		}
+		if b.arena.guardContainsCellResult(row.Guard, make(map[Guard]bool)) {
+			return Relation{}, fmt.Errorf("transformer: row %d uses a scalar cell result as a guard; relational composition required", i)
+		}
 		for j, op := range owned[i].Ops {
 			if op.Kind >= outputKindCount || op.Value == 0 || int(op.Value) >= len(b.arena.values) {
 				return Relation{}, fmt.Errorf("transformer: row %d operation %d is invalid", i, j)
@@ -88,11 +103,23 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			if !b.arena.validValue(op.Value, b.shape, make(map[ValueTerm]bool)) {
 				return Relation{}, fmt.Errorf("transformer: row %d operation %d references an invalid boundary root", i, j)
 			}
+			hasCellResult := b.arena.containsCellResult(op.Value, make(map[ValueTerm]bool))
+			if hasCellResult != (op.Kind == OutputCellResult) {
+				return Relation{}, fmt.Errorf("transformer: row %d operation %d scalar cell result/output kind mismatch", i, j)
+			}
 			if unsupported := b.caps.Unsupported(op.Kind); len(unsupported) != 0 {
 				return Relation{}, fmt.Errorf("transformer: %v unsupported on lanes %v", op.Kind, unsupported)
 			}
-			if op.Kind == OutputObligation && row.Guard != b.arena.True() {
-				return Relation{}, fmt.Errorf("transformer: conditional obligation requires contextual solver")
+			summaryKind := callboundary.BoundaryFactKind(op.Descriptor)
+			if unsupported := b.caps.UnsupportedSummary(summaryKind); len(unsupported) != 0 {
+				return Relation{}, fmt.Errorf("transformer: Summary output %q unsupported on lanes %v", summaryKind, unsupported)
+			}
+			handler := b.descriptors.handlers[op.Descriptor]
+			if handler == nil {
+				return Relation{}, fmt.Errorf("transformer: Summary output %q has no transaction handler", summaryKind)
+			}
+			if row.Guard != b.arena.True() && !handler.ConditionalAllowed() {
+				return Relation{}, fmt.Errorf("transformer: conditional Summary output %q requires contextual solver", summaryKind)
 			}
 		}
 		sort.Slice(owned[i].Ops, func(x, y int) bool { return operationLess(b.arena, owned[i].Ops[x], owned[i].Ops[y]) })
