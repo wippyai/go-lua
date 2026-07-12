@@ -484,6 +484,20 @@ func SummaryFactDescriptors() callboundary.BoundaryFactTable[SummarySlotOps] {
 	return out
 }
 
+// PresentFactKinds returns the canonical descriptor kinds whose Summary lanes
+// are non-empty in s. It is the schema-owned way for generic boundary engines
+// to certify a structured Summary payload without reflecting over Summary or
+// duplicating its field list.
+func PresentFactKinds(s Summary) []callboundary.BoundaryFactKind {
+	out := make([]callboundary.BoundaryFactKind, 0, len(summaryFactDescriptors))
+	for _, descriptor := range summaryFactDescriptors {
+		if !descriptor.Ops.empty(s) {
+			out = append(out, descriptor.Kind)
+		}
+	}
+	return out
+}
+
 // derivedSummaryLanes is the lane slice used by summaryLanes.
 func derivedSummaryLanes() []summaryLane {
 	return callboundary.DeriveBoundaryLanes(summaryFactDescriptors, deriveSummaryLane)

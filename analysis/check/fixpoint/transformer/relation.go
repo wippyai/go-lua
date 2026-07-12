@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -30,8 +31,9 @@ type Operation struct {
 // Row is a may-alternative. Its outputs remain correlated under Guard and are
 // never independently widened.
 type Row struct {
-	Guard Guard
-	Ops   []Operation
+	Guard  Guard
+	Output summary.Summary
+	Ops    []Operation
 }
 
 // Relation is immutable. contextual is lattice Top: callers must use the
@@ -94,12 +96,24 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 		if row.Guard == 0 || int(row.Guard) >= len(b.arena.guards) {
 			return Relation{}, fmt.Errorf("transformer: row %d has invalid guard", i)
 		}
-		owned[i] = Row{Guard: row.Guard, Ops: append([]Operation(nil), row.Ops...)}
+		owned[i] = Row{
+			Guard:  row.Guard,
+			Output: summary.Normalize(b.arena.reg, row.Output),
+			Ops:    append([]Operation(nil), row.Ops...),
+		}
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
 		}
 		if b.arena.guardContainsCellResult(row.Guard, make(map[Guard]bool)) {
 			return Relation{}, fmt.Errorf("transformer: row %d uses a scalar cell result as a guard; relational composition required", i)
+		}
+		for _, kind := range summary.PresentFactKinds(owned[i].Output) {
+			if unsupported := b.caps.UnsupportedSummary(kind); len(unsupported) != 0 {
+				return Relation{}, fmt.Errorf("transformer: structured Summary output %q unsupported on lanes %v", kind, unsupported)
+			}
+		}
+		if row.Guard != b.arena.True() && len(owned[i].Output.ParamObligations) != 0 {
+			return Relation{}, fmt.Errorf("transformer: conditional Summary output %q requires contextual solver", DescriptorObligation)
 		}
 		for j, op := range owned[i].Ops {
 			if op.Kind >= outputKindCount || op.Value == 0 || int(op.Value) >= len(b.arena.values) {
@@ -160,7 +174,7 @@ func rowKey(a *Arena, row Row) string {
 	for i, op := range row.Ops {
 		parts[i] = operationKey(a, op)
 	}
-	return fmt.Sprintf("%s|%s", a.canonicalGuard(row.Guard), strings.Join(parts, ";"))
+	return fmt.Sprintf("%s|%016x|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"))
 }
 func rowLess(a *Arena, left, right Row) bool {
 	lk, rk := rowKey(a, left), rowKey(a, right)
@@ -179,8 +193,8 @@ func rowLess(a *Arena, left, right Row) bool {
 	return len(left.Ops) < len(right.Ops)
 }
 func operationEqual(a, b Operation) bool { return a == b }
-func rowEqual(a, b Row) bool {
-	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) {
+func rowEqual(arena *Arena, a, b Row) bool {
+	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
 		return false
 	}
 	for i := range a.Ops {
@@ -199,7 +213,7 @@ func dedupRows(a *Arena, rows []Row) []Row {
 		duplicate := false
 		key := rowKey(a, row)
 		for i := len(out) - 1; i >= 0 && rowKey(a, out[i]) == key; i-- {
-			if rowEqual(out[i], row) {
+			if rowEqual(a, out[i], row) {
 				duplicate = true
 				break
 			}
@@ -284,7 +298,7 @@ func EqualRelation(a, b Relation) bool {
 	for _, left := range a.rows {
 		found := false
 		for j, right := range b.rows {
-			if !used[j] && rowEqual(left, right) {
+			if !used[j] && rowEqual(a.arena, left, right) {
 				used[j] = true
 				found = true
 				break
@@ -308,7 +322,7 @@ func LessOrEqRelation(a, b Relation) bool {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, row := range rows {
-		out[i] = Row{Guard: row.Guard, Ops: append([]Operation(nil), row.Ops...)}
+		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...)}
 	}
 	return out
 }

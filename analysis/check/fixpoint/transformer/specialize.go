@@ -107,7 +107,7 @@ func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegist
 		if !feasible {
 			continue
 		}
-		candidate := summary.Summary{}
+		candidate := row.Output.Clone()
 		for _, operation := range row.Ops {
 			handler := descriptors.handlers[operation.Descriptor]
 			if handler == nil {

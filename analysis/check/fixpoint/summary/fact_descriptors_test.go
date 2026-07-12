@@ -69,6 +69,16 @@ func TestSummaryFactDescriptorsDeriveCanonicalLanes(t *testing.T) {
 	}
 }
 
+func TestPresentFactKindsIsDescriptorExhaustive(t *testing.T) {
+	descriptors := SummaryFactDescriptors()
+	for _, descriptor := range descriptors {
+		got := PresentFactKinds(summaryWithOneLane(t, string(descriptor.Kind)))
+		if len(got) != 1 || got[0] != descriptor.Kind {
+			t.Fatalf("Summary.%s presence = %v, want only %q", descriptor.Kind, got, descriptor.Kind)
+		}
+	}
+}
+
 // TestSummaryFactDescriptorsBehaviorParity compares descriptor and canonical
 // lane operations across populated and zero-value summary facts.
 func TestSummaryFactDescriptorsBehaviorParity(t *testing.T) {
