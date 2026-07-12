@@ -6,17 +6,20 @@ import (
 )
 
 func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	if in.Empty() {
+		return callboundary.NormalReturnFacts{}
+	}
 	return normalizeNormalReturnFactsWith(reg, in, false)
 }
 
 func normalizeOwnedNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	if in.Empty() {
+		return callboundary.NormalReturnFacts{}
+	}
 	return normalizeNormalReturnFactsWith(reg, in, true)
 }
 
 func normalizeNormalReturnFactsWith(reg *axis.Registry, in callboundary.NormalReturnFacts, owned bool) callboundary.NormalReturnFacts {
-	if in.Empty() {
-		return callboundary.NormalReturnFacts{}
-	}
 	var out callboundary.NormalReturnFacts
 	for _, lane := range normalReturnSummaryLanes {
 		handler := lane.Value
