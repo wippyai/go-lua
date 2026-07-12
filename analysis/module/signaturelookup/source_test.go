@@ -261,12 +261,12 @@ var benchmarkLookupSignature signature.Function
 func BenchmarkStdlibLookupOwnership(b *testing.B) {
 	src := Source{IncludeStdlib: true}
 	b.Run("owned-clone", func(b *testing.B) {
-		for b.Loop() {
+		for range b.N {
 			benchmarkLookupSignature, _ = src.Lookup("string.format")
 		}
 	})
 	b.Run("immutable-view", func(b *testing.B) {
-		for b.Loop() {
+		for range b.N {
 			benchmarkLookupSignature, _ = src.LookupView("string.format")
 		}
 	})
