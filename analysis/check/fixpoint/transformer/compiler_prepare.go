@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -52,9 +51,10 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if planReturnArity(plan) > 1 {
 		summaryKinds = append(summaryKinds, "ReturnConditionSlotRefinements", "ReturnPresenceRelations")
 	}
-	if planHasIteratorCall(plan) {
-		summaryKinds = append(summaryKinds, "MaySuspend")
-	}
+	// MaySuspend is transitive through both signature and direct Relation calls.
+	// Configure its authority once so repeated equation evaluation never mutates
+	// the persistent Builder capability snapshot.
+	summaryKinds = append(summaryKinds, "MaySuspend")
 	for _, kind := range summaryKinds {
 		for _, lane := range state.DefaultLanes() {
 			_ = outputCaps.SetSummary(kind, lane, CapabilitySupported)
@@ -128,9 +128,6 @@ func (p *PreparedPlanCompiler) Evaluate() Relation {
 func (p *PreparedPlanCompiler) EvaluateDirect(view RelationView, catalog DirectCallCatalog) Relation {
 	if p == nil || catalog.PointCount() != p.plan.PointCount() {
 		return Relation{contextual: "compiler: direct-call catalog width differs from plan", widened: true}
-	}
-	for _, lane := range state.DefaultLanes() {
-		_ = p.builder.caps.SetSummary("MaySuspend", lane, CapabilitySupported)
 	}
 	return p.evaluate(view, &catalog)
 }
@@ -247,37 +244,55 @@ func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.
 	if shape.Captures != 0 || shape.Globals != 0 || shape.Results != 0 || shape.HeapTemplates != 0 {
 		return DirectCallBindings{}, fmt.Errorf("non-parameter callee boundary")
 	}
-	sources := make([]factflow.ValueSource, 0, 1+site.ArgumentSourceCount())
+	out := DirectCallBindings{Values: make([]ValueTerm, 0, shape.Params), Paths: make([]PathTerm, 0, shape.Params)}
 	if receiver, ok := site.ReceiverSource(); ok {
-		sources = append(sources, receiver)
-	} else if _, ok := site.ReceiverPath(); ok {
-		return DirectCallBindings{}, fmt.Errorf("receiver path has no immutable value source")
+		value, path, err := exactDirectCallSourceBinding(ctx, receiver)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("receiver: %w", err)
+		}
+		out.Values, out.Paths = append(out.Values, value), append(out.Paths, path)
+	} else if receiverPath, ok := site.ReceiverPath(); ok {
+		binding, err := exactBoundaryPathBinding(ctx, receiverPath)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("receiver path: %w", err)
+		}
+		value, path, err := ctx.builder.Arena().LowerBoundaryPathValue(receiverPath, binding)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("receiver path: %w", err)
+		}
+		out.Values, out.Paths = append(out.Values, value), append(out.Paths, path)
 	}
+	sources := make([]factflow.ValueSource, 0, site.ArgumentSourceCount())
 	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
 		sources = append(sources, source)
 		return true
 	})
-	if len(sources) != int(shape.Params) {
-		return DirectCallBindings{}, fmt.Errorf("argument width %d differs from callee params %d", len(sources), shape.Params)
+	if len(out.Values)+len(sources) != int(shape.Params) {
+		return DirectCallBindings{}, fmt.Errorf("argument width %d differs from callee params %d", len(out.Values)+len(sources), shape.Params)
 	}
-	out := DirectCallBindings{Values: make([]ValueTerm, len(sources)), Paths: make([]PathTerm, len(sources))}
 	for i, source := range sources {
-		if source.OpenTail || source.Expanded {
-			return DirectCallBindings{}, fmt.Errorf("argument %d has open or expanded shape", i)
-		}
-		scalar := source
-		scalar.Adjusted = false
-		value, err := exactCompilerSourceTerm(ctx, scalar)
+		value, path, err := exactDirectCallSourceBinding(ctx, source)
 		if err != nil {
-			return DirectCallBindings{}, fmt.Errorf("argument %d value: %w", i, err)
+			return DirectCallBindings{}, fmt.Errorf("argument %d: %w", i, err)
 		}
-		path, err := exactDirectCallSourcePath(ctx, source)
-		if err != nil {
-			return DirectCallBindings{}, fmt.Errorf("argument %d path: %w", i, err)
-		}
-		out.Values[i], out.Paths[i] = value, path
+		out.Values, out.Paths = append(out.Values, value), append(out.Paths, path)
 	}
 	return out, nil
+}
+
+func exactDirectCallSourceBinding(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, PathTerm, error) {
+	if source.OpenTail || source.Expanded || source.Adjusted {
+		return 0, 0, fmt.Errorf("source has adjusted, open, or expanded shape")
+	}
+	value, err := exactCompilerSourceTerm(ctx, source)
+	if err != nil {
+		return 0, 0, fmt.Errorf("value: %w", err)
+	}
+	path, err := exactDirectCallSourcePath(ctx, source)
+	if err != nil {
+		return 0, 0, fmt.Errorf("path: %w", err)
+	}
+	return value, path, nil
 }
 
 func exactDirectCallSourcePath(ctx planCompileContext, source factflow.ValueSource) (PathTerm, error) {
@@ -286,25 +301,17 @@ func exactDirectCallSourcePath(ctx planCompileContext, source factflow.ValueSour
 		if !ok {
 			return 0, fmt.Errorf("expression has no canonical path")
 		}
-		binding, err := exactBoundaryPathBinding(ctx, p)
-		if err != nil {
-			return 0, err
+		if len(p.Segments) != 0 {
+			binding, err := exactBoundaryPathBinding(ctx, p)
+			if err != nil {
+				return 0, err
+			}
+			_, term, err := ctx.builder.Arena().LowerBoundaryPathValue(p, binding)
+			return term, err
 		}
-		_, term, err := ctx.builder.Arena().LowerBoundaryPathValue(p, binding)
-		return term, err
 	}
-	if source.Kind == factflow.ValueSourcePath {
-		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
-		if !ok || sym == 0 || version != 0 || suffix != "" {
-			return 0, fmt.Errorf("path source is not a canonical root")
-		}
-		index, ok := ctx.plan.BoundaryParamIndex(sym)
-		if !ok {
-			return 0, fmt.Errorf("path root %d is not caller boundary", sym)
-		}
-		return ctx.builder.Arena().Path(Root{Kind: RootParam, Index: uint32(index)}), nil
-	}
-	return 0, fmt.Errorf("source kind %d has no caller path", source.Kind)
+	_, _, path, err := boundaryParamSourceTerms(ctx, source)
+	return path, err
 }
 
 // Equation publishes this prepared compiler through the persistent lexical

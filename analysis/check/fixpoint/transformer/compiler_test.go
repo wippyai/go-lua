@@ -124,6 +124,11 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	view := RelationView{values: map[CellRef]Relation{calleeRef: callee}, allowed: map[CellRef]struct{}{calleeRef: {}}}
+	firstDirect, secondDirect := prepared.EvaluateDirect(view, catalog), prepared.EvaluateDirect(view, catalog)
+	if !EqualRelation(firstDirect, secondDirect) || firstDirect.authority == nil || !equalRelationOutputAuthority(firstDirect.authority, secondDirect.authority) {
+		t.Fatal("repeated direct evaluation changed relation identity or output authority")
+	}
 	callerEquation, err := prepared.DirectEquation(callerRef, catalog)
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +175,27 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *te
 	rightRelation, _ := cycle.Lookup(rightRef)
 	if leftRelation.ContextualReason() == "" || rightRelation.ContextualReason() == "" {
 		t.Fatal("mutually recursive direct equations converged to under-approximate Bottom")
+	}
+	receiverOnly := factflow.NewCallSite(factflow.CallSiteConfig{
+		ReceiverPath: pathdom.NewPath(callerParam0, "a"), HasReceiverPath: true,
+		Final: true, Expanded: true,
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result0, pathdom.NewPath(result0, "value")),
+		},
+	}).View()
+	if binding, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, receiverOnly); err != nil || len(binding.Values) != 1 || len(binding.Paths) != 1 {
+		t.Fatalf("canonical boundary receiver path binding = %#v/%v", binding, err)
+	}
+	adjustedArg := arg0
+	adjustedArg.Adjusted = true
+	adjustedSite := factflow.NewCallSite(factflow.CallSiteConfig{
+		Final: true, Expanded: true, ArgumentSources: []factflow.ValueSource{adjustedArg},
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result0, pathdom.NewPath(result0, "value")),
+		},
+	}).View()
+	if _, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, adjustedSite); err == nil {
+		t.Fatal("adjusted direct argument was silently treated as unadjusted")
 	}
 }
 
