@@ -906,11 +906,7 @@ func prepassCallSummaryKey(
 			return key, true
 		}
 	}
-	calleePath := site.CalleePathRef()
-	if calleePath.IsEmpty() {
-		return summary.SummaryKey{}, false
-	}
-	value, ok := result.PathValueAtBoundary(point, calleePath)
+	value, ok := result.CallCalleeValueAtBoundary(point, site)
 	if !ok {
 		return summary.SummaryKey{}, false
 	}

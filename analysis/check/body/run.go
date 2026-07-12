@@ -438,6 +438,7 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		sources:               s.sources,
 		customExpressionValue: s.customExpressionValue,
 		callOutcome:           callOutcome,
+		calleeValue:           s.calleeValue,
 		signatureArg:          signatureArgumentType,
 		typeValues:            typeValues,
 		stateLanes:            append([]state.LaneID(nil), config.StateLanes...),

@@ -275,6 +275,7 @@ type Result struct {
 	sources               sourcevalue.SourceValues
 	customExpressionValue bool
 	callOutcome           callpayload.CallOutcomeProvider
+	calleeValue           CalleeValueFunc
 	signatureArg          SignatureArgumentTypeFunc
 	typeValues            *typevalue.Cache
 	stateLanes            []state.LaneID

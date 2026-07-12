@@ -90,6 +90,25 @@ func (r *Result) StateAt(point cfg.Point) (state.State, bool) {
 	return st.Snapshot(), true
 }
 
+// CallCalleeValueAtBoundary resolves the current runtime callee using the same
+// provider and solved input state used by CallOutcomeAt. It intentionally does
+// not use diagnostic static-member overlays as proof of runtime identity.
+func (r *Result) CallCalleeValueAtBoundary(point cfg.Point, site factflow.CallSiteView) (product.Value, bool) {
+	if r == nil || r.registry == nil || r.calleeValue == nil {
+		return product.Value{}, false
+	}
+	in, ok := r.StateAt(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	graph := r.Graph()
+	ctx := transfer.NodeContext{Graph: graph, Point: point, Registry: r.registry, Read: r.boundaryRead}
+	if graph != nil {
+		ctx.Node = graph.Node(point)
+	}
+	return r.calleeValue(ctx, site, in, r.boundaryRead)
+}
+
 // PointReachable reports whether point has a solved non-bottom input state in
 // this body's active state domain.
 func (r *Result) PointReachable(point cfg.Point) bool {
