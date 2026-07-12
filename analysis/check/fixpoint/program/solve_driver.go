@@ -220,6 +220,7 @@ func solveSummaryPrepared(
 		return cache.solveAttributed(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats), attribution)
 	}
 	config := build(reader)
+	attribution = attribution.withCanonicalObservation(config, 0, resolution)
 	result, err := solvePreparedCountedWithTransfers(prepared, config, summaryCounter(stats), summaryPointTransferCounter(stats), attribution)
 	if err != nil {
 		return summary.Summary{}, err

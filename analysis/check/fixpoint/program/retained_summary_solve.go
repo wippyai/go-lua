@@ -49,6 +49,7 @@ func (c *SummarySolveCache) solveRetainedAttributed(
 	applicationKey := retainedSummaryApplicationKey{
 		body: bodyDigest, input: inputDigest, profile: profile, resolution: resolution,
 	}
+	attribution = attribution.withCanonicalObservation(baseConfig, inputDigest, resolution)
 	if cached, ok := c.readEntry(cacheKey, reader); ok {
 		if hits != nil {
 			(*hits)++

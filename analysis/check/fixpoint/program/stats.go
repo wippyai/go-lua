@@ -58,6 +58,7 @@ type solveAttribution struct {
 	key              bodySolveAttributionKey
 	dependencyChange bool
 	composition      body.CompositionEligibility
+	canonical        canonicalSolveObservation
 }
 
 func newSolveAttribution(stats *Stats, bodyID uint64, function summary.SummaryKey, phase SolvePhase, context bool) *solveAttribution {
@@ -109,6 +110,7 @@ func (s *Stats) recordBodySolve(a *solveAttribution, pointTransfers int) {
 		entry.DependencyChangePointTransfers += pointTransfers
 	}
 	s.bodySolveAttribution[a.key] = entry
+	s.recordCanonicalSolve(a)
 }
 
 // CompositionCostCensus returns a stable eligible-versus-rejection aggregation
