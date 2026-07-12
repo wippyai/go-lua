@@ -1,0 +1,251 @@
+package transformer
+
+import (
+	"fmt"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/symbol"
+)
+
+// DirectCallBindings is one exact fixed-arity lexical application. Values and
+// Paths use the callee Shape's packed namespace order. The first tranche admits
+// only parameter roots; captures, globals, result roots, and heap templates
+// remain contextual until their ownership rules are explicit.
+type DirectCallBindings struct {
+	Values []ValueTerm
+	Paths  []PathTerm
+}
+
+// ComposeDirectCallRows performs relational rather than scalar cell
+// substitution. Every feasible caller/callee alternative remains a distinct
+// row, so return correlation, guards, and ordered effects cannot be torn apart.
+// No row is returned on any unsupported output or malformed binding.
+func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int) ([]SymbolicCFGRow, error) {
+	if builder == nil || builder.arena == nil || builder.effects == nil || callee.arena == nil {
+		return nil, fmt.Errorf("transformer: direct-call composition requires caller and callee arenas")
+	}
+	if callee.contextual != "" || callee.widened {
+		return nil, fmt.Errorf("transformer: direct-call callee is contextual")
+	}
+	if callee.arena.reg != builder.arena.reg {
+		return nil, fmt.Errorf("transformer: direct-call registry ownership differs")
+	}
+	if callee.shape.Captures != 0 || callee.shape.Globals != 0 || callee.shape.Results != 0 || callee.shape.HeapTemplates != 0 {
+		return nil, fmt.Errorf("transformer: direct-call non-parameter boundary requires contextual composition")
+	}
+	if site.OpenTail() || !site.Final() || !site.Expanded() || site.Adjusted() {
+		return nil, fmt.Errorf("transformer: direct-call result list is not exact fixed arity")
+	}
+	if handler, ok := callee.descriptors.handlers[DescriptorReturn].(returnHandler); ok && len(handler.declared) != 0 {
+		return nil, fmt.Errorf("transformer: direct-call declared result contracts require symbolic projection")
+	}
+	rootBindings, err := NewTermRootBindings(callee.shape, callerShape, bindings.Values, bindings.Paths)
+	if err != nil {
+		return nil, err
+	}
+	targets, err := exactDirectCallTargets(site)
+	if err != nil {
+		return nil, err
+	}
+	if maxRows <= 0 {
+		maxRows = 256
+	}
+	if len(callee.rows) > maxRows {
+		return nil, fmt.Errorf("transformer: direct-call row budget %d exceeds %d", len(callee.rows), maxRows)
+	}
+	out := make([]SymbolicCFGRow, 0, len(callee.rows))
+	for rowIndex, calleeRow := range callee.rows {
+		rebased, err := rebaseDirectCallRow(builder, callerShape, caller, callee, rootBindings, calleeRow, targets)
+		if err != nil {
+			return nil, fmt.Errorf("transformer: direct-call callee row %d: %w", rowIndex, err)
+		}
+		if rebased.Guard != builder.arena.False() {
+			out = append(out, rebased)
+		}
+	}
+	return dedupCFGRows(builder.arena, out), nil
+}
+
+type directCallTarget struct {
+	symbol symbol.ID
+	slot   int
+}
+
+func exactDirectCallTargets(site factflow.CallSiteView) ([]directCallTarget, error) {
+	if site.ResultTargetCount() == 0 {
+		return nil, fmt.Errorf("transformer: direct-call has no explicit result targets")
+	}
+	out := make([]directCallTarget, 0, site.ResultTargetCount())
+	seenSymbols := make(map[symbol.ID]struct{}, site.ResultTargetCount())
+	seenSlots := make(map[int]struct{}, site.ResultTargetCount())
+	for index := 0; index < site.ResultTargetCount(); index++ {
+		target, _ := site.ResultTargetAt(index)
+		if target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 ||
+			target.TargetPathEmpty() || target.TargetPathSegmentCount() != 0 || target.TargetPath().Symbol != target.TargetSymbol() || target.ResultIndex() < 0 {
+			return nil, fmt.Errorf("transformer: direct-call result target %d is not an exact local root", index)
+		}
+		if _, duplicate := seenSymbols[target.TargetSymbol()]; duplicate {
+			return nil, fmt.Errorf("transformer: direct-call duplicate result symbol %d", target.TargetSymbol())
+		}
+		if _, duplicate := seenSlots[target.ResultIndex()]; duplicate {
+			return nil, fmt.Errorf("transformer: direct-call duplicate result slot %d", target.ResultIndex())
+		}
+		seenSymbols[target.TargetSymbol()] = struct{}{}
+		seenSlots[target.ResultIndex()] = struct{}{}
+		out = append(out, directCallTarget{symbol: target.TargetSymbol(), slot: target.ResultIndex()})
+	}
+	return out, nil
+}
+
+func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, row Row, targets []directCallTarget) (SymbolicCFGRow, error) {
+	if err := validateDirectCallStructuredOutput(callee.arena.reg, row.Output, callee.shape); err != nil {
+		return SymbolicCFGRow{}, err
+	}
+	values := make([]ValueTerm, 0, len(row.Ops)+len(row.Proofs))
+	guards := []Guard{row.Guard}
+	opValueAt := make([]int, len(row.Ops))
+	for i, op := range row.Ops {
+		if op.Kind != OutputReturn || op.Descriptor != DescriptorReturn {
+			return SymbolicCFGRow{}, fmt.Errorf("non-return operation %q requires contextual composition", op.Descriptor)
+		}
+		opValueAt[i] = len(values)
+		values = append(values, op.Value)
+	}
+	proofPathAt := make([]int, len(row.Proofs))
+	proofKeyAt := make([]int, len(row.Proofs))
+	paths := make([]PathTerm, 0, len(row.Proofs))
+	for i, proof := range row.Proofs {
+		proofPathAt[i] = len(paths)
+		paths = append(paths, proof.Table)
+		proofKeyAt[i] = -1
+		if proof.Key != 0 {
+			proofKeyAt[i] = len(values)
+			values = append(values, proof.Key)
+		}
+	}
+	rebasedTerms, err := RebaseTermDAGs(builder.arena, callee.arena, bindings, TermRebaseInput{Values: values, Paths: paths, Guards: guards})
+	if err != nil {
+		return SymbolicCFGRow{}, err
+	}
+	next := cloneCFGRow(caller)
+	next.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[0])
+	returns := make(map[uint32]ValueTerm, len(row.Ops))
+	for i, op := range row.Ops {
+		value := rebasedTerms.Values[opValueAt[i]]
+		if prior, exists := returns[op.Slot]; exists && prior != value {
+			return SymbolicCFGRow{}, fmt.Errorf("return slot %d has multiple row values", op.Slot)
+		}
+		returns[op.Slot] = value
+	}
+	for _, target := range targets {
+		value, exists := returns[uint32(target.slot)]
+		if !exists {
+			return SymbolicCFGRow{}, fmt.Errorf("result target slot %d has no callee row value", target.slot)
+		}
+		if _, exists := next.Values[target.symbol]; exists {
+			return SymbolicCFGRow{}, fmt.Errorf("result symbol %d already has a row binding", target.symbol)
+		}
+		next.Values[target.symbol] = value
+	}
+	for i, proof := range row.Proofs {
+		rebased := proof
+		rebased.Table = rebasedTerms.Paths[proofPathAt[i]]
+		if proofKeyAt[i] >= 0 {
+			rebased.Key = rebasedTerms.Values[proofKeyAt[i]]
+		}
+		next.Proofs = append(next.Proofs, rebased)
+	}
+	structuredProofs, err := rebaseDirectCallOutputProofs(builder.arena, bindings, row.Output.NormalReturnFacts.BranchProofs)
+	if err != nil {
+		return SymbolicCFGRow{}, err
+	}
+	next.Proofs = append(next.Proofs, structuredProofs...)
+	if len(row.Effects) != 0 {
+		if callee.effects == nil {
+			return SymbolicCFGRow{}, fmt.Errorf("callee row effects have no arena")
+		}
+		rebasedEffects, err := RebaseEffectDAGs(builder.effects, callee.effects, bindings, row.Effects)
+		if err != nil {
+			return SymbolicCFGRow{}, err
+		}
+		next.Effects = append(next.Effects, rebasedEffects.Effects...)
+	}
+	// Callee correlation metadata is consumed by the row cross-product above.
+	// It must never become correlation among the caller function's own returns.
+	if row.Output.MaySuspend {
+		next.Output.MaySuspend = true
+	}
+	return next, nil
+}
+
+func validateDirectCallStructuredOutput(reg *axis.Registry, out summary.Summary, shape Shape) error {
+	if len(out.NormalReturnParams) != 0 && len(out.NormalReturnParams) != int(shape.Params) {
+		return fmt.Errorf("normal-return parameter width %d differs from callee shape %d", len(out.NormalReturnParams), shape.Params)
+	}
+	for index, value := range out.NormalReturnParams {
+		if !product.Equal(reg, value, product.Top()) {
+			return fmt.Errorf("normal-return parameter %d refinement requires symbolic state application", index)
+		}
+	}
+	facts := out.NormalReturnFacts
+	facts.BranchProofs = nil
+	if !facts.Empty() {
+		return fmt.Errorf("normal-return fact family outside exact branch-proof slice")
+	}
+	residual := out.Clone()
+	residual.NormalReturnParams = nil
+	residual.NormalReturnFacts = callboundary.NormalReturnFacts{}
+	// These two fields are the joined encoding of callee row correlation. The
+	// cross-product consumes them; copying them would retarget callee result
+	// slots to the caller function's result namespace.
+	residual.ReturnConditionSlotRefinements = nil
+	residual.ReturnPresenceRelations = nil
+	residual.MaySuspend = false
+	if kinds := summary.PresentFactKinds(residual); len(kinds) != 0 {
+		return fmt.Errorf("structured output facts %v require contextual composition", kinds)
+	}
+	if residual.HeapKeySpace != nil {
+		return fmt.Errorf("structured output keyspace without admitted heap output")
+	}
+	return nil
+}
+
+func rebaseDirectCallOutputProofs(caller *Arena, bindings TermRootBindings, proofs []callboundary.BranchProof) ([]BranchProofTerm, error) {
+	out := make([]BranchProofTerm, 0, len(proofs))
+	for index, proof := range proofs {
+		if proof.Kind != pathevidence.BranchProofPathPresence || !proof.Other.IsEmpty() {
+			return nil, fmt.Errorf("structured branch proof %d kind requires contextual composition", index)
+		}
+		param := proof.Path.PlaceholderIndex()
+		if param < 0 || uint32(param) >= bindings.callee.Params {
+			return nil, fmt.Errorf("structured branch proof %d has non-parameter path", index)
+		}
+		base := bindings.path(Root{Kind: RootParam, Index: uint32(param)})
+		path, ok := appendCallerPath(caller, base, proof.Path.Segments)
+		if !ok {
+			return nil, fmt.Errorf("structured branch proof %d has no caller boundary path", index)
+		}
+		out = append(out, BranchProofTerm{Kind: proof.Kind, Table: path, Presence: proof.Presence})
+	}
+	return out, nil
+}
+
+func appendCallerPath(arena *Arena, base PathTerm, suffix []segment.Segment) (PathTerm, bool) {
+	if arena == nil || base == 0 || int(base) >= len(arena.paths) {
+		return 0, false
+	}
+	node := arena.paths[base]
+	if node.root.Kind != RootParam {
+		return 0, false
+	}
+	segments := make([]segment.Segment, 0, len(node.segments)+len(suffix))
+	segments = append(segments, node.segments...)
+	segments = append(segments, suffix...)
+	return arena.internPath(pathNode{root: node.root, segments: segments}), true
+}

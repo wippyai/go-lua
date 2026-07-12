@@ -174,16 +174,18 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 			if !valid {
 				return summary.Summary{}, false
 			}
-			key, valid := r.arena.evalValue(proof.Key, cursor, context)
-			if !valid {
-				return summary.Summary{}, false
-			}
-			keySegment, valid := typevalue.ExactScalarKeySegment(reg, nil, key)
-			if !valid {
-				return summary.Summary{}, false
-			}
 			proofPath := tablePath.Clone()
-			proofPath.Segments = append(proofPath.Segments, keySegment)
+			if proof.Key != 0 {
+				key, valid := r.arena.evalValue(proof.Key, cursor, context)
+				if !valid {
+					return summary.Summary{}, false
+				}
+				keySegment, valid := typevalue.ExactScalarKeySegment(reg, nil, key)
+				if !valid {
+					return summary.Summary{}, false
+				}
+				proofPath.Segments = append(proofPath.Segments, keySegment)
+			}
 			candidate.NormalReturnFacts.BranchProofs = append(candidate.NormalReturnFacts.BranchProofs, callboundary.BranchProof{
 				Kind: proof.Kind, Path: proofPath, Presence: proof.Presence,
 			})

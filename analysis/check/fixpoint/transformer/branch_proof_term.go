@@ -8,9 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
-// BranchProofTerm is a row-owned symbolic proof for a path whose final segment
-// is a specialized scalar key. It emits only the existing call-boundary proof
-// vocabulary; unsupported kinds and non-present evidence fail closed.
+// BranchProofTerm is a row-owned symbolic presence proof. When Key is zero,
+// Table is the complete path. A nonzero Key appends one specialized scalar
+// segment to Table. This dual form lets direct relation composition rebase
+// ordinary placeholder proofs without baking a caller path into Summary.
 type BranchProofTerm struct {
 	Kind     pathevidence.BranchProofKind
 	Table    PathTerm
@@ -32,11 +33,16 @@ func (p BranchProofTerm) placeholderPath(arena *Arena) (pathdom.Path, bool) {
 }
 
 func (p BranchProofTerm) valid(arena *Arena, shape Shape) bool {
-	return arena != nil && p.Kind == pathevidence.BranchProofPathPresence &&
-		presence.Equal(p.Presence, presence.Present()) &&
-		arena.validPath(p.Table, shape) && arena.validValue(p.Key, shape, make(map[ValueTerm]bool))
+	if arena == nil || p.Kind != pathevidence.BranchProofPathPresence ||
+		!presence.Equal(p.Presence, presence.Present()) || !arena.validPath(p.Table, shape) {
+		return false
+	}
+	return p.Key == 0 || arena.validValue(p.Key, shape, make(map[ValueTerm]bool))
 }
 
 func (p BranchProofTerm) canonical(arena *Arena) string {
+	if p.Key == 0 {
+		return fmt.Sprintf("%d:%s:static:%d", p.Kind, arena.canonicalPath(p.Table), p.Presence)
+	}
 	return fmt.Sprintf("%d:%s:%s:%d", p.Kind, arena.canonicalPath(p.Table), arena.canonicalValue(p.Key), p.Presence)
 }
