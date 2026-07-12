@@ -80,7 +80,7 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			Type:      fn,
 		})
 	})
-	return out
+	return body.SealFunctionValueTypes(out)
 }
 
 func functionValueDeclaredType(keys programKeys, key summary.SummaryKey, external typeannotation.Resolver) *typ.Function {

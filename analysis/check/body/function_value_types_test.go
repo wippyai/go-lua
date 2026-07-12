@@ -359,6 +359,76 @@ func TestResultHasFunctionValueTypesUsesStructuralEquality(t *testing.T) {
 	}
 }
 
+func TestSealedFunctionValueTypesUseIdentityWithoutWeakeningStructuralFallback(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaFunction(983)
+	stringFn := typ.Func().Returns(typ.String).Build()
+	numberFn := typ.Func().Returns(typ.Number).Build()
+
+	shared := SealFunctionValueTypes(FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{id: stringFn},
+	})
+	if !FunctionValueTypesEqual(reg, shared, shared) {
+		t.Fatal("copies of one sealed immutable projection are not equal")
+	}
+
+	// A distinct seal must retain the structural fallback: sealing is not a
+	// content hash and cannot make different projections compare equal.
+	different := SealFunctionValueTypes(FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{id: numberFn},
+	})
+	if FunctionValueTypesEqual(reg, shared, different) {
+		t.Fatal("distinct sealed projections bypassed structural comparison")
+	}
+
+	equivalent := SealFunctionValueTypes(FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			id: typ.Func().Returns(typ.String).Build(),
+		},
+	})
+	if !FunctionValueTypesEqual(reg, shared, equivalent) {
+		t.Fatal("distinct structurally equal sealed projections were rejected")
+	}
+}
+
+func BenchmarkFunctionValueTypesEqualSharedMaterializationProjection(b *testing.B) {
+	const functionCount = 2048
+	types := FunctionValueTypes{ByIdentity: make(map[identity.ID]*typ.Function, functionCount)}
+	fn := typ.Func().Param("value", typ.String).Returns(typ.Number).Build()
+	for i := 0; i < functionCount; i++ {
+		types.ByIdentity[identity.LuaFunction(uint64(i+1))] = fn
+	}
+	types = SealFunctionValueTypes(types)
+	reg := standard.Registry()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !FunctionValueTypesEqual(reg, types, types) {
+			b.Fatal("shared projection changed")
+		}
+	}
+}
+
+func BenchmarkFunctionValueTypesEqualIndependentProjection(b *testing.B) {
+	const functionCount = 2048
+	types := FunctionValueTypes{ByIdentity: make(map[identity.ID]*typ.Function, functionCount)}
+	fn := typ.Func().Param("value", typ.String).Returns(typ.Number).Build()
+	for i := 0; i < functionCount; i++ {
+		types.ByIdentity[identity.LuaFunction(uint64(i+1))] = fn
+	}
+	left := SealFunctionValueTypes(types)
+	right := types
+	right.identity = &functionValueTypesIdentity{}
+	reg := standard.Registry()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !FunctionValueTypesEqual(reg, left, right) {
+			b.Fatal("equivalent independent projection changed")
+		}
+	}
+}
+
 func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentPathValue(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(810)

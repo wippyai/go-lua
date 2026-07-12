@@ -31,7 +31,14 @@ type FunctionValueTypes struct {
 	ParamSpansByPath   map[factflow.CalleePathKey][]factflow.SourceSpan
 	ReturnSpansByPath  map[factflow.CalleePathKey][]factflow.SourceSpan
 	ContextsByIdentity map[identity.ID][]FunctionValueContext
+
+	// identity is shared only by copies of the same sealed immutable projection.
+	// It makes the common materialization check O(1); independently assembled
+	// projections still use the structural comparison below.
+	identity *functionValueTypesIdentity
 }
+
+type functionValueTypesIdentity struct{ marker byte }
 
 type FunctionValueContext struct {
 	Entry state.State
@@ -49,7 +56,7 @@ func WithFunctionValueTypes(result *Result, types FunctionValueTypes) *Result {
 	if result == nil {
 		return nil
 	}
-	result.funcTypes = cloneFunctionValueTypes(types)
+	result.funcTypes = SealFunctionValueTypes(cloneFunctionValueTypes(types))
 	return result
 }
 
@@ -60,8 +67,19 @@ func WithOwnedFunctionValueTypes(result *Result, types FunctionValueTypes) *Resu
 	if result == nil {
 		return nil
 	}
-	result.funcTypes = types
+	result.funcTypes = SealFunctionValueTypes(types)
 	return result
+}
+
+// SealFunctionValueTypes marks an owned projection immutable and returns it.
+// Copies of the returned value may then be compared by identity. Callers must
+// not mutate any map or slice reachable from types after sealing it. Sealing an
+// already sealed projection preserves its identity.
+func SealFunctionValueTypes(types FunctionValueTypes) FunctionValueTypes {
+	if types.identity == nil {
+		types.identity = &functionValueTypesIdentity{}
+	}
+	return types
 }
 
 // HasFunctionValueTypes reports whether result already carries types. It lets
@@ -79,6 +97,9 @@ func (r *Result) HasFunctionValueTypes(types FunctionValueTypes) bool {
 // significant because context slices are generated in deterministic discovery
 // order and later entries can be shadowed by earlier matching entries.
 func FunctionValueTypesEqual(reg *axis.Registry, a, b FunctionValueTypes) bool {
+	if a.identity != nil && a.identity == b.identity {
+		return true
+	}
 	byIdentity := functionTypeMapsEqual(a.ByIdentity, b.ByIdentity)
 	byPath := functionTypeMapsEqual(a.ByPath, b.ByPath)
 	paramSpans := sourceSpanMapsEqual(a.ParamSpansByPath, b.ParamSpansByPath)
@@ -580,6 +601,7 @@ func sourceIdentityValue(reg *axis.Registry, id identity.ID) product.Value {
 
 func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 	out := in
+	out.identity = nil
 	out.ByIdentity = nil
 	out.ByPath = nil
 	out.ParamSpansByPath = nil
