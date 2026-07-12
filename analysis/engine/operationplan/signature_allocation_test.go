@@ -14,8 +14,8 @@ func TestPlanInternsAllocationTemplateAndKeepsLexicalOrdinals(t *testing.T) {
 	second := graph.AddNode(cfg.NodeCall)
 	sig, _ := (signaturelookup.Source{IncludeStdlib: true}).Lookup("table.create")
 	template := sig.OperationalEffects.ReturnAllocationTemplates[0]
-	one, _ := NewSignatureAllocationOperation(SignatureAllocationSite{Template: template.Root, Ordinal: 1}, template)
-	two, _ := NewSignatureAllocationOperation(SignatureAllocationSite{Template: template.Root, Ordinal: 2}, template)
+	one, _ := NewSignatureAllocationOperation(SignatureAllocationSite{Owner: 41, Template: template.Root, Ordinal: 1}, template)
+	two, _ := NewSignatureAllocationOperation(SignatureAllocationSite{Owner: 41, Template: template.Root, Ordinal: 2}, template)
 	plan := New(graph, factflow.FactsInput{}).WithSignatureAllocations(map[cfg.Point]SignatureAllocationOperation{first: one, second: two})
 	if len(plan.signatureAllocationTemplates) != 1 {
 		t.Fatalf("template pool = %d, want 1", len(plan.signatureAllocationTemplates))

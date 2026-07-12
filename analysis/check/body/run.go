@@ -189,8 +189,9 @@ func (c *checker) prepare(
 	operationPlan := lowered.Plan.
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
 		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer))
+	functionSymbol, _ := bindings.FunctionSymbol(fn)
 	operationPlan = operationPlan.
-		WithSignatureAllocations(signatureAllocationOperations(operationPlan)).
+		WithSignatureAllocations(signatureAllocationOperations(operationPlan, uint64(functionSymbol))).
 		WithExtensions(genericForOperationExtensions(genericForOperations))
 	resolver := config.Visibility
 	if resolver == nil {

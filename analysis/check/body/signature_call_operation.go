@@ -31,8 +31,8 @@ func signatureCallOperations(graph cfg.Graph, facts factflow.Facts, producer *ef
 	return out
 }
 
-func signatureAllocationOperations(plan *operationplan.Plan) map[cfg.Point]operationplan.SignatureAllocationOperation {
-	if plan == nil {
+func signatureAllocationOperations(plan *operationplan.Plan, owner uint64) map[cfg.Point]operationplan.SignatureAllocationOperation {
+	if plan == nil || owner == 0 {
 		return nil
 	}
 	out := make(map[cfg.Point]operationplan.SignatureAllocationOperation)
@@ -47,10 +47,10 @@ func signatureAllocationOperations(plan *operationplan.Plan) map[cfg.Point]opera
 		if !exact {
 			continue
 		}
-		owner := string(template.Root)
-		ordinals[owner]++
+		templateOwner := string(template.Root)
+		ordinals[templateOwner]++
 		op, ok := operationplan.NewSignatureAllocationOperation(operationplan.SignatureAllocationSite{
-			Template: template.Root, Ordinal: ordinals[owner],
+			Owner: owner, Template: template.Root, Ordinal: ordinals[templateOwner],
 		}, template)
 		if ok {
 			out[point] = op

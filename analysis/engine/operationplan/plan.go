@@ -161,6 +161,7 @@ type Plan struct {
 	signatures                   []SignatureCallOperation
 	signatureAllocationRefs      []uint32
 	signatureAllocationOrdinals  []uint32
+	signatureAllocationOwners    []uint64
 	signatureAllocationTemplates []signature.ReturnAllocationTemplate
 }
 
