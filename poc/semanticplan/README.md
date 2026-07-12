@@ -1,4 +1,4 @@
-# Stage 1 semantic operation-plan slice
+# Stage 2 semantic operation-plan slice
 
 This isolated POC compiles the existing syntax-free `factflow.PathAssignment`
 DTO into an immutable typed operation plan. Production behavior is unchanged.
@@ -45,7 +45,7 @@ This proves the plan plumbing is behavior-neutral for the isolated operation.
 It does not yet prove that operation dispatch can replace production
 `factapply`, because both paths deliberately share the concrete oracle.
 
-## Symbolic result and hard limitation
+## Symbolic result and executable slice
 
 The symbolic registry is derived from `state.DefaultLaneCatalog`. Every current
 lane has an explicit role: seven term-producing adapters and ten explicitly
@@ -66,17 +66,26 @@ Structural root substitution is cheap and preserves the source-value guard.
 Same-point static-member/covariant companions atomically fall back because
 their symbolic handlers are not implemented.
 
-Crucially, these are **structural terms only**. They do not execute the exact
-unexported heap/path invalidation and alias-closure semantics against concrete
-State or build a production Summary. `SymbolicTransformer.Contextual()` remains
-true even when all term roles are complete, and no analysis result can be
-published from it. This POC therefore does not claim State/summary semantic
-parity.
+`SymbolicTransformer.Execute` is now an independent concrete interpreter for a
+strict slice. It uses exported State semantics for subtree invalidation,
+equivalent-alias writes, field/index canonicalization, equality proof creation,
+typestate canonicalization, and user-lattice propagation. A deterministic
+randomized differential compares it to `NewFactsNodeTransfer` in every one of
+the 17 single-lane domains.
 
-The next stage gate is one concrete-executable symbolic handler, factored from
-the existing production operation rather than copied, whose instantiated State
-matches `NewFactsNodeTransfer` on the randomized differential corpus. Until
-that exists, phase/context collapse remains an architectural hypothesis.
+The slice is intentionally narrow. Root-origin invalidation, heap member
+invalidation, and source static-member copying are implemented by unexported
+production helpers. Rather than imitate those helpers, the POC rejects any
+State with finite/top root values, finite/top heap objects, or source/target
+static-member evidence. Rejection returns the input State unchanged. Companion
+operations also still reject atomically. This proves that an operation plan can
+execute exactly through existing public State boundaries; it does **not** yet
+prove full PathAssignment parity or Summary construction.
+
+The next semantic gate is to factor the three rejected operations into shared
+engine primitives, then rerun the same differential over populated origins,
+heap identities, and static descendants. Production must remain on the current
+applicator until that gate is green.
 
 ## Cost
 

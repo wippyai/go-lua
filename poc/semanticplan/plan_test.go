@@ -8,6 +8,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -15,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -237,7 +239,7 @@ func TestSymbolicPathAssignmentGuardCorrelationRebasingAndOrder(t *testing.T) {
 	}
 	op, _ := plan.Operation(fixture.point)
 	transformer := DefaultPathAssignmentRegistry().Lift(op)
-	if !transformer.Contextual() || !transformer.TermComplete() {
+	if transformer.Contextual() || !transformer.TermComplete() {
 		t.Fatalf("term coverage/execution verdict = contextual %v complete %v fallback %v", transformer.Contextual(), transformer.TermComplete(), transformer.FallbackLanes())
 	}
 	reg := standard.Registry()
@@ -269,6 +271,89 @@ func TestSymbolicPathAssignmentGuardCorrelationRebasingAndOrder(t *testing.T) {
 	}})
 	if !ok || len(rows) != 0 {
 		t.Fatalf("missing guarded source produced effects: %v/%v", rows, ok)
+	}
+}
+
+func TestExecutableSymbolicPathAssignmentMatchesOracleAcrossAllLanesRandomized(t *testing.T) {
+	fixture := newPathFixture()
+	plan, err := CompilePathAssignments(fixture.input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, _ := plan.Operation(fixture.point)
+	transformer := DefaultPathAssignmentRegistry().Lift(op)
+	reg := standard.Registry()
+	rng := rand.New(rand.NewSource(163))
+	values := []product.Value{
+		product.Top(), product.Absent(reg), typevalue.LiteralString(reg, "assigned"), typevalue.LiteralInt(reg, 41),
+	}
+	ctx := transfer.NodeContext{Graph: fixture.graph, Registry: reg, Point: fixture.point, Node: fixture.graph.Node(fixture.point)}
+
+	for _, lane := range state.DefaultLanes() {
+		lane := lane
+		t.Run(string(lane), func(t *testing.T) {
+			domain := state.DomainWithLanes(reg, []state.LaneID{lane})
+			for i := 0; i < 128; i++ {
+				// Top exercises non-path lanes with arbitrary reachable lane state.
+				// Values and heap top are deliberately outside the executable slice.
+				base := domain.Bottom()
+				// Produce reachable finite-empty spellings for the two may lanes
+				// whose Top state is (correctly) outside this executable slice.
+				if lane == state.LaneValues {
+					temporary := key.SymbolValue(909)
+					base = base.WriteValue(reg, temporary, typevalue.LiteralString(reg, "temporary"))
+					base = base.WriteValue(reg, temporary, product.Bottom(reg))
+				}
+				if lane == state.LaneHeapTableIdentity {
+					temporary := identity.ID{Kind: "table", Site: "semanticplan", Index: 1}
+					base = base.WriteHeapTableObject(reg, temporary, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}))
+					base = base.WriteHeapTableObject(reg, temporary, heapidentity.BottomObject(reg))
+				}
+				if rng.Intn(2) == 0 && lane != state.LaneValues && lane != state.LaneHeapTableIdentity {
+					base = domain.Top()
+				}
+				assigned := values[rng.Intn(len(values))]
+				config := factapply.FactsNodeTransferConfig{
+					Facts: factflow.NewFacts(fixture.input), Sources: fixedSources{value: assigned, ok: true}, Visibility: fixture.resolver,
+				}
+				want := factapply.NewFactsNodeTransfer(config)(ctx, base)
+				got, ok := transformer.Execute(ctx, fixture.resolver, config, base)
+				if !ok {
+					t.Fatalf("case %d unexpectedly rejected", i)
+				}
+				if !domain.Equal(want, got) {
+					t.Fatalf("case %d differs", i)
+				}
+			}
+		})
+	}
+}
+
+func TestExecutableSymbolicPathAssignmentFailsClosedOnUnexportedSemantics(t *testing.T) {
+	fixture := newPathFixture()
+	plan, err := CompilePathAssignments(fixture.input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, _ := plan.Operation(fixture.point)
+	transformer := DefaultPathAssignmentRegistry().Lift(op)
+	reg := standard.Registry()
+	ctx := transfer.NodeContext{Graph: fixture.graph, Registry: reg, Point: fixture.point, Node: fixture.graph.Node(fixture.point)}
+	config := factapply.FactsNodeTransferConfig{Sources: fixedSources{value: product.Top(), ok: true}, Visibility: fixture.resolver}
+
+	withRootOriginCandidate := state.Domain(reg).Bottom().WriteValue(
+		reg, key.SymbolValue(fixture.target.Symbol), typevalue.LiteralString(reg, "root"),
+	)
+	if got, ok := transformer.Execute(ctx, fixture.resolver, config, withRootOriginCandidate); ok || !state.Domain(reg).Equal(got, withRootOriginCandidate) {
+		t.Fatal("root-origin-dependent state did not fail closed atomically")
+	}
+
+	targetKey := fixture.resolver.KeyAt(fixture.point, fixture.target.Field("member"))
+	withStaticDescendant := state.Domain(reg).Bottom().WritePathStaticMember(
+		fixture.resolver.KeySpace(), targetKey, typevalue.LiteralString(reg, "member"),
+	)
+	if got, ok := transformer.Execute(ctx, fixture.resolver, config, withStaticDescendant); ok || !state.Domain(reg).Equal(got, withStaticDescendant) {
+		t.Fatal("static-member-dependent state did not fail closed atomically")
 	}
 }
 
