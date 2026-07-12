@@ -3,7 +3,9 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // CompositionEligibility is the static, behavior-neutral Stage-0 verdict for
@@ -76,8 +78,21 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 		add("shape:vararg")
 	}
 	directCallees := make(map[symbol.ID]struct{})
+	capturedLocals := compositionCapturedLocals(s.bindings, s.function)
+	numericForLocals := make(map[symbol.ID]struct{})
 	for i := 0; i < s.wir.Len(); i++ {
 		inst := s.wir.Instr(i)
+		if inst.Op == wir.OpIterate && inst.Iter == wir.IterNumeric {
+			for _, result := range s.wir.Operands(inst.Results) {
+				if result.Kind != wir.OperandPath {
+					continue
+				}
+				p := s.wir.Path(wir.PathRef(result.Ref))
+				if p.Symbol != 0 && len(p.Segments) == 0 {
+					numericForLocals[p.Symbol] = struct{}{}
+				}
+			}
+		}
 		if inst.Op != wir.OpCall || inst.Call.Receiver.Kind != wir.OperandNone || inst.Call.Method != 0 || inst.Call.Callee.Kind != wir.OperandPath {
 			continue
 		}
@@ -120,8 +135,12 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 		case wir.OpMakeTable, wir.OpClosure:
 			add("boundary:allocation")
 		case wir.OpAssign:
-			if !exactSymbolicLocalDeclaration(s.wir, inst, callTemps) {
+			if !exactSymbolicLocalDeclaration(s.wir, inst, callTemps, numericForLocals, capturedLocals) {
 				add("boundary:mutation")
+			}
+		case wir.OpBinOp:
+			if !exactSymbolicAccumulatorWrite(s.wir, inst, numericForLocals, capturedLocals) {
+				add("shape:unsupported-op")
 			}
 		case wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
 			add("boundary:mutation")
@@ -144,16 +163,26 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 // declaration slice. Constants, unknown iterator seeds, boundary-root aliases,
 // and exact direct-call result temps are names introduced once, not mutations.
 // Ordinary root writes remain contextual, including loop-carried accumulators.
-func exactSymbolicLocalDeclaration(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}) bool {
-	if inst.Assign != wir.AssignLocalDeclaration || inst.Dst.Kind != wir.OperandPath {
+func exactSymbolicLocalDeclaration(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}, numericForLocals, captured map[symbol.ID]struct{}) bool {
+	if inst.Dst.Kind != wir.OperandPath {
 		return false
 	}
 	path := body.Path(wir.PathRef(inst.Dst.Ref))
+	if inst.Assign == wir.AssignNone && inst.A.Kind == wir.OperandNone {
+		_, numeric := numericForLocals[path.Symbol]
+		return numeric && path.Symbol != 0 && len(path.Segments) == 0
+	}
+	if inst.Assign != wir.AssignLocalDeclaration {
+		return false
+	}
 	if path.Symbol == 0 || len(path.Segments) != 0 {
 		return false
 	}
 	kind, ok := body.SymbolKind(wir.SymbolID(path.Symbol))
-	if !ok || kind != wir.SymbolLocal || body.SymbolHasWrite(wir.SymbolID(path.Symbol)) {
+	if !ok || kind != wir.SymbolLocal {
+		return false
+	}
+	if _, escapes := captured[path.Symbol]; escapes {
 		return false
 	}
 	switch inst.A.Kind {
@@ -172,6 +201,54 @@ func exactSymbolicLocalDeclaration(body *wir.Body, inst wir.Instruction, callTem
 	default:
 		return false
 	}
+}
+
+// exactSymbolicAccumulatorWrite recognizes the deliberately bounded mutable
+// scalar slice: one local accumulator updated by adding the current numeric-for
+// binder. The compiler independently proves that the operands resolve to
+// context-independent constant product values and that this is the target's
+// only ordinary write point. This syntax gate therefore grants no symbolic
+// recurrence, alias, capture, or heap authority.
+func exactSymbolicAccumulatorWrite(body *wir.Body, inst wir.Instruction, numericForLocals, captured map[symbol.ID]struct{}) bool {
+	if body == nil || inst.Op != wir.OpBinOp || inst.Assign != wir.AssignOrdinaryRootWrite || inst.Operator != wir.BinAdd ||
+		inst.Dst.Kind != wir.OperandPath || inst.A.Kind != wir.OperandPath || inst.B.Kind != wir.OperandPath {
+		return false
+	}
+	target := body.Path(wir.PathRef(inst.Dst.Ref))
+	left := body.Path(wir.PathRef(inst.A.Ref))
+	right := body.Path(wir.PathRef(inst.B.Ref))
+	if target.Symbol == 0 || len(target.Segments) != 0 || !target.Equal(left) || right.Symbol == 0 || len(right.Segments) != 0 {
+		return false
+	}
+	kind, ok := body.SymbolKind(wir.SymbolID(target.Symbol))
+	if !ok || kind != wir.SymbolLocal {
+		return false
+	}
+	if _, escapes := captured[target.Symbol]; escapes {
+		return false
+	}
+	_, numeric := numericForLocals[right.Symbol]
+	return numeric
+}
+
+func compositionCapturedLocals(bindings *bind.Result, owner *ast.FunctionExpr) map[symbol.ID]struct{} {
+	out := make(map[symbol.ID]struct{})
+	if bindings == nil || owner == nil {
+		return out
+	}
+	var visit func(*ast.FunctionExpr)
+	visit = func(parent *ast.FunctionExpr) {
+		for _, child := range bindings.NestedFunctions(parent) {
+			for _, capture := range bindings.DirectCaptures(child) {
+				if capture.Captured != 0 && capture.DeclaringFunction == owner {
+					out[capture.Captured] = struct{}{}
+				}
+			}
+			visit(child)
+		}
+	}
+	visit(owner)
+	return out
 }
 
 var compositionReasonPriority = []string{

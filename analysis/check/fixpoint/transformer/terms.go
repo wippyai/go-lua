@@ -144,6 +144,12 @@ func (a *Arena) RefineValue(value ValueTerm, refinement factflow.ValueRefinement
 // refineConstraintValue is the infallible internal constructor used after a
 // transaction has already validated positive-refinement shape.
 func (a *Arena) refineConstraintValue(value ValueTerm, constraint product.Value) ValueTerm {
+	if a != nil && value != 0 && int(value) < len(a.values) {
+		prior := a.values[value]
+		if prior.op == valueRefinement && product.Equal(a.reg, prior.value, constraint) {
+			return value
+		}
+	}
 	return a.internValue(valueNode{op: valueRefinement, value: constraint, args: []ValueTerm{value}})
 }
 

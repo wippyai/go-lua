@@ -21,8 +21,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // PlanCompiler lowers the certified, immutable operation plan into a symbolic
@@ -50,6 +52,7 @@ type planCompileContext struct {
 	rowOutput         *summary.Summary
 	genericBindings   map[symbol.ID]symbolicGenericBinding
 	directCalls       *DirectCallCatalog
+	allowConstantAdd  bool
 }
 
 type symbolicGenericBinding struct {
@@ -347,7 +350,7 @@ func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFG
 	if base.facts.BranchEdgeUnreachable(point, cond) {
 		return row, arena.False(), nil
 	}
-	if genericForBranchHead(base.graph, base.plan, point) {
+	if genericForBranchHead(base.graph, base.plan, point) || numericForBranchHead(base, point) {
 		return row, arena.True(), nil
 	}
 	ctx := base
@@ -391,6 +394,15 @@ func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFG
 		return row, truthy, nil
 	}
 	return row, falsy, nil
+}
+
+func numericForBranchHead(ctx planCompileContext, point cfg.Point) bool {
+	fact, ok := ctx.facts.RootAssignment(point)
+	if !ok {
+		return false
+	}
+	_, exact := exactNumericForIteratorBinding(ctx, point, fact)
+	return exact
 }
 
 func appendDynamicConditionBranchProof(arena *Arena, branch factapply.BranchAlgebra, edge bool, condition ValueTerm, out *[]BranchProofTerm) error {
@@ -451,13 +463,26 @@ func appendRepresentedBranchEvidenceOutput(ctx planCompileContext, branch factap
 			if path.Symbol != param || path.Version != 0 || len(path.Segments) != 0 {
 				continue
 			}
-			out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, callboundary.BranchProof{
+			candidate := callboundary.BranchProof{
 				Kind: pathevidence.BranchProofPathPresence, Path: pathdom.NewPlaceholder(index), Presence: value,
-			})
+			}
+			if !containsCompilerBranchProof(out.NormalReturnFacts.BranchProofs, candidate) {
+				out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, candidate)
+			}
 			break
 		}
 		return true
 	})
+}
+
+func containsCompilerBranchProof(proofs []callboundary.BranchProof, candidate callboundary.BranchProof) bool {
+	for _, proof := range proofs {
+		if proof.Kind == candidate.Kind && proof.Path.Equal(candidate.Path) && proof.Other.Equal(candidate.Other) &&
+			presence.Equal(proof.Presence, candidate.Presence) {
+			return true
+		}
+	}
+	return false
 }
 
 func lowerCompilerBranchRefinements(arena *Arena, branch factapply.BranchAlgebra, cond bool, ctx planCompileContext, condition ValueTerm) ([]SymbolicBranchRefinement, error) {
@@ -774,38 +799,77 @@ func (rootAssignmentPlanHandler) Preflight(ctx planCompileContext, point cfg.Poi
 	if !ok {
 		return fmt.Errorf("missing root-assignment payload")
 	}
-	if fact.Kind() != factflow.RootAssignmentLocalDeclaration || fact.TargetSymbol() == 0 {
-		return fmt.Errorf("only local declarations have exact symbolic binding semantics")
+	if fact.TargetSymbol() == 0 {
+		return fmt.Errorf("assignment target has no symbol")
 	}
 	target := fact.TargetPathRef()
 	if target.Symbol != fact.TargetSymbol() || target.Version != 0 || len(target.Segments) != 0 {
 		return fmt.Errorf("assignment target is not its canonical root symbol")
 	}
-	if _, ok := fact.DeclaredValue(); ok || fact.DeclaredValueContracts() || fact.DeclaredValueOverlays() {
-		return fmt.Errorf("declared contracts and overlays require contextual root semantics")
-	}
-	if _, ok := fact.DeclaredAnnotationValue(); ok {
-		return fmt.Errorf("annotated roots require contextual declaration semantics")
-	}
-	if fact.Source().Kind == factflow.ValueSourcePath {
-		if _, version, suffix, ok := pathaddr.ParseResolverPath(fact.Source().PathKey); !ok || version != 0 || suffix != "" {
-			return fmt.Errorf("assignment source path is not a canonical root symbol")
+	switch fact.Kind() {
+	case factflow.RootAssignmentLocalDeclaration:
+		if _, exact := exactNumericForIteratorBinding(ctx, point, fact); exact {
+			return nil
+		}
+		if _, ok := fact.DeclaredValue(); ok || fact.DeclaredValueContracts() || fact.DeclaredValueOverlays() {
+			return fmt.Errorf("declared contracts and overlays require contextual root semantics")
+		}
+		if _, ok := fact.DeclaredAnnotationValue(); ok {
+			return fmt.Errorf("annotated roots require contextual declaration semantics")
+		}
+		if fact.Source().Kind == factflow.ValueSourcePath {
+			if _, version, suffix, ok := pathaddr.ParseResolverPath(fact.Source().PathKey); !ok || version != 0 || suffix != "" {
+				return fmt.Errorf("assignment source path is not a canonical root symbol")
+			}
+			return nil
+		}
+		if _, err := exactCompilerSourceTerm(ctx, fact.Source()); err != nil {
+			return fmt.Errorf("assignment source is not a context-independent scalar")
 		}
 		return nil
+	case factflow.RootAssignmentOrdinaryRootWrite:
+		if _, ok := fact.DeclaredValue(); ok || fact.DeclaredValueContracts() || fact.DeclaredValueOverlays() {
+			return fmt.Errorf("ordinary root write carries a declared contract or overlay")
+		}
+		if _, ok := fact.DeclaredAnnotationValue(); ok {
+			return fmt.Errorf("ordinary root write carries annotation evidence")
+		}
+		if !singleCertifiedAccumulatorWrite(ctx, point, fact) {
+			return fmt.Errorf("ordinary root write is not the single certified numeric-for accumulator update")
+		}
+		ctx.allowConstantAdd = true
+		term, err := exactCompilerSourceTerm(ctx, fact.Source())
+		if err != nil || !compilerConstantValue(ctx.builder.Arena(), term) {
+			return fmt.Errorf("ordinary root write source is not a context-independent constant scalar")
+		}
+		return nil
+	default:
+		return fmt.Errorf("root assignment kind %d has no exact symbolic semantics", fact.Kind())
 	}
-	if _, err := exactCompilerSourceTerm(ctx, fact.Source()); err != nil {
-		return fmt.Errorf("assignment source is not a context-independent scalar")
-	}
-	return nil
 }
 func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _ *[]Operation) error {
 	fact, ok := ctx.facts.RootAssignment(point)
 	if !ok {
 		return fmt.Errorf("missing root-assignment payload")
 	}
-	term, err := exactCompilerSourceTerm(ctx, fact.Source())
-	if err != nil {
-		return err
+	term, numericIterator := exactNumericForIteratorBinding(ctx, point, fact)
+	if !numericIterator {
+		var err error
+		ctx.allowConstantAdd = fact.Kind() == factflow.RootAssignmentOrdinaryRootWrite
+		term, err = exactCompilerSourceTerm(ctx, fact.Source())
+		if err != nil {
+			return err
+		}
+	}
+	if fact.Kind() == factflow.RootAssignmentOrdinaryRootWrite {
+		if _, exists := ctx.locals[fact.TargetSymbol()]; !exists {
+			return fmt.Errorf("symbol %d ordinary write precedes its declaration", fact.TargetSymbol())
+		}
+		if !compilerConstantValue(ctx.builder.Arena(), term) {
+			return fmt.Errorf("symbol %d ordinary write did not lower to a constant scalar", fact.TargetSymbol())
+		}
+		ctx.locals[fact.TargetSymbol()] = term
+		return nil
 	}
 	if prior, exists := ctx.locals[fact.TargetSymbol()]; exists {
 		// A lexical declaration is revisited by cyclic row closure. Replaying
@@ -818,6 +882,116 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 	}
 	ctx.locals[fact.TargetSymbol()] = term
 	return nil
+}
+
+func compilerConstantValue(arena *Arena, term ValueTerm) bool {
+	return arena != nil && term != 0 && int(term) < len(arena.values) && arena.values[term].op == valueConstant
+}
+
+func exactNumericForIteratorBinding(ctx planCompileContext, point cfg.Point, fact factflow.RootAssignment) (ValueTerm, bool) {
+	if fact.Kind() != factflow.RootAssignmentLocalDeclaration || fact.Source().Kind != factflow.ValueSourceUnknown ||
+		!fact.DeclaredValueContracts() || fact.DeclaredValueOverlays() {
+		return 0, false
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		return 0, false
+	}
+	annotation, hasAnnotation := fact.DeclaredAnnotationValue()
+	want := typevalue.WithWitness(ctx.registry, typevalue.FromType(ctx.registry, typ.Integer), typ.Integer)
+	if !product.Equal(ctx.registry, declared, want) || !hasAnnotation || !product.Equal(ctx.registry, annotation, declared) ||
+		!numericForBindingPoint(ctx, point, fact.TargetPathRef()) {
+		return 0, false
+	}
+	return ctx.builder.Arena().Constant(declared), true
+}
+
+func numericForBindingPoint(ctx planCompileContext, point cfg.Point, target pathdom.Path) bool {
+	if numericForHeaderBinding(ctx, point, target) {
+		return true
+	}
+	successors := cfg.SuccessorsReadOnly(ctx.graph, point)
+	return len(successors) == 1 && numericForHeaderBinding(ctx, successors[0], target)
+}
+
+func numericForHeaderBinding(ctx planCompileContext, point cfg.Point, target pathdom.Path) bool {
+	if !ctx.graph.IsBranch(point) {
+		return false
+	}
+	header, ok := ctx.facts.RootAssignment(point)
+	if !ok || header.Kind() != factflow.RootAssignmentLocalDeclaration || header.TargetSymbol() != target.Symbol ||
+		!header.TargetPathRef().Equal(target) || header.Source().Kind != factflow.ValueSourceUnknown {
+		return false
+	}
+	for _, floor := range ctx.facts.BranchNumFloorRefinements(point) {
+		if floor.Cond() && floor.TargetPathRef().Equal(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func singleCertifiedAccumulatorWrite(ctx planCompileContext, point cfg.Point, fact factflow.RootAssignment) bool {
+	source := fact.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return false
+	}
+	op, ok := ctx.facts.ExpressionOperation(source.ExprRef)
+	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "+" {
+		return false
+	}
+	left := op.Left()
+	leftSymbol, ok := compilerRootSourceSymbol(ctx, left)
+	if !ok || leftSymbol != fact.TargetSymbol() {
+		return false
+	}
+	right := op.Right()
+	rightSymbol, ok := compilerRootSourceSymbol(ctx, right)
+	if !ok || !certifiedNumericForIteratorSymbol(ctx, rightSymbol) {
+		return false
+	}
+	writes := 0
+	for raw := 0; raw < ctx.plan.PointCount(); raw++ {
+		candidate, exists := ctx.facts.RootAssignment(cfg.Point(raw))
+		if !exists || candidate.Kind() != factflow.RootAssignmentOrdinaryRootWrite || candidate.TargetSymbol() != fact.TargetSymbol() {
+			continue
+		}
+		writes++
+		if cfg.Point(raw) != point {
+			return false
+		}
+	}
+	return writes == 1
+}
+
+func compilerRootSourceSymbol(ctx planCompileContext, source factflow.ValueSource) (symbol.ID, bool) {
+	switch source.Kind {
+	case factflow.ValueSourcePath:
+		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
+		return sym, ok && sym != 0 && version == 0 && suffix == ""
+	case factflow.ValueSourceExpression:
+		if !source.HasExpr {
+			return 0, false
+		}
+		path, ok := ctx.facts.ExpressionPathRef(source.ExprRef)
+		return path.Symbol, ok && path.Symbol != 0 && path.Version == 0 && len(path.Segments) == 0
+	default:
+		return 0, false
+	}
+}
+
+func certifiedNumericForIteratorSymbol(ctx planCompileContext, target symbol.ID) bool {
+	for raw := 0; raw < ctx.plan.PointCount(); raw++ {
+		point := cfg.Point(raw)
+		fact, ok := ctx.facts.RootAssignment(point)
+		if !ok || fact.TargetSymbol() != target {
+			continue
+		}
+		if _, exact := exactNumericForIteratorBinding(ctx, point, fact); exact {
+			return true
+		}
+	}
+	return false
 }
 
 func exactCompilerSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
@@ -858,6 +1032,23 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)
 		}
 		if operation, ok := ctx.facts.ExpressionOperation(source.ExprRef); ok {
+			if ctx.allowConstantAdd && operation.Kind() == factflow.ExpressionOperationBinary && operation.Op() == "+" {
+				if active == nil {
+					active = make(map[factflow.ExprRef]bool, 1)
+				}
+				active[source.ExprRef] = true
+				left, leftErr := exactCompilerSourceTermActive(ctx, operation.Left(), active)
+				right, rightErr := exactCompilerSourceTermActive(ctx, operation.Right(), active)
+				delete(active, source.ExprRef)
+				if leftErr != nil || rightErr != nil || !compilerConstantValue(ctx.builder.Arena(), left) || !compilerConstantValue(ctx.builder.Arena(), right) {
+					return 0, fmt.Errorf("expression addition %d operands are not context-independent constants", source.ExprRef)
+				}
+				value, exact := luasourcevalue.BinaryOperationValue(ctx.registry, nil, "+", ctx.builder.Arena().values[left].value, ctx.builder.Arena().values[right].value)
+				if !exact || !scalarValue(ctx.registry, value) {
+					return 0, fmt.Errorf("expression addition %d has no exact scalar product result", source.ExprRef)
+				}
+				return ctx.builder.Arena().Constant(value), nil
+			}
 			if operation.Kind() != factflow.ExpressionOperationBinary || operation.Op() != ".." {
 				return 0, fmt.Errorf("expression operation %d is not exact string concatenation", source.ExprRef)
 			}

@@ -26,7 +26,7 @@ func TestCompositionEligibilityWhitelistsOnlyStraightValueWrappers(t *testing.T)
 		{name: "allocation", source: `function f(x) return { x } end`, want: "boundary:allocation"},
 		{name: "guard", source: `function f(x) if x then return x end end`},
 		{name: "loop mutation", source: `function f(x) while x do x = x end return x end`, want: "boundary:mutation"},
-		{name: "fanout loop", source: `function f(value) local total = 0 for i = 1, 8 do if value then total = total + i end end return total end`, want: "boundary:mutation"},
+		{name: "fanout loop", source: `function f(value) local total = 0 for i = 1, 8 do if value then total = total + i end end return total end`},
 		{name: "vararg", source: `function f(...) return ... end`, want: "shape:vararg"},
 		{name: "generic", source: `function f<T>(x: T): T return x end`, want: "shape:generic-function"},
 		{name: "protected", source: `function f(x) return pcall(x) end`, globals: []string{"pcall"}, want: "call:protected"},
