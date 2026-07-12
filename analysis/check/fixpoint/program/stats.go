@@ -34,6 +34,7 @@ type BodySolveAttribution struct {
 	// path; unknown shapes fail closed with a stable reason.
 	CompositionEligible bool
 	CompositionReason   string
+	CompositionReasons  []string
 }
 
 // CompositionCost aggregates existing solve work by the Stage-0 symbolic-call
@@ -99,6 +100,7 @@ func (s *Stats) recordBodySolve(a *solveAttribution, pointTransfers int) {
 		entry.Context = a.key.context
 		entry.CompositionEligible = a.composition.Eligible()
 		entry.CompositionReason = a.composition.Reason
+		entry.CompositionReasons = a.composition.RejectionReasons()
 	}
 	entry.BodySolves++
 	entry.PointTransfers += pointTransfers
@@ -112,14 +114,35 @@ func (s *Stats) recordBodySolve(a *solveAttribution, pointTransfers int) {
 // CompositionCostCensus returns a stable eligible-versus-rejection aggregation
 // of the body solves and point transfers already recorded by Stats.
 func (s *Stats) CompositionCostCensus() []CompositionCost {
+	return s.CompositionCostCensusAllowing()
+}
+
+// CompositionCostCensusAllowing simulates cumulative capability without
+// changing analysis. Allowed blockers are removed from each body's complete
+// canonical reason set; cost moves to the next blocker or becomes eligible.
+func (s *Stats) CompositionCostCensusAllowing(allowed ...string) []CompositionCost {
 	if s == nil || len(s.bodySolveAttribution) == 0 {
 		return nil
 	}
+	accepted := make(map[string]struct{}, len(allowed))
+	for _, reason := range allowed {
+		accepted[reason] = struct{}{}
+	}
 	byReason := make(map[string]CompositionCost)
 	for _, entry := range s.bodySolveAttribution {
-		reason := entry.CompositionReason
+		reasons := entry.CompositionReasons
+		if len(reasons) == 0 && entry.CompositionReason != "" {
+			reasons = []string{entry.CompositionReason}
+		}
+		reason := ""
+		for _, candidate := range reasons {
+			if _, ok := accepted[candidate]; !ok {
+				reason = candidate
+				break
+			}
+		}
 		cost := byReason[reason]
-		cost.Eligible = entry.CompositionEligible
+		cost.Eligible = reason == ""
 		cost.Reason = reason
 		cost.BodySolves += entry.BodySolves
 		cost.PointTransfers += entry.PointTransfers
@@ -145,6 +168,7 @@ func (s *Stats) BodySolveAttribution() []BodySolveAttribution {
 	}
 	out := make([]BodySolveAttribution, 0, len(s.bodySolveAttribution))
 	for _, entry := range s.bodySolveAttribution {
+		entry.CompositionReasons = append([]string(nil), entry.CompositionReasons...)
 		out = append(out, entry)
 	}
 	sort.Slice(out, func(i, j int) bool {

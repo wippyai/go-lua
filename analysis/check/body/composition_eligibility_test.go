@@ -67,6 +67,7 @@ func TestCompositionEligibilityReasonIsStableAcrossRepeatedPreparation(t *testin
 	fn := parseFunction(t, `function f(x) while x do x = nil end return {x} end`)
 	bindings := bind.BindFunction(fn, bind.Options{})
 	var want string
+	var wantReasons []string
 	for i := 0; i < 20; i++ {
 		prepared, err := PrepareBoundFunction(fn, bindings, Config{Registry: reg})
 		if err != nil {
@@ -75,10 +76,23 @@ func TestCompositionEligibilityReasonIsStableAcrossRepeatedPreparation(t *testin
 		got := prepared.CompositionEligibility().Reason
 		if i == 0 {
 			want = got
+			wantReasons = prepared.CompositionEligibility().RejectionReasons()
 		}
 		if got != want {
 			t.Fatalf("iteration %d reason = %q, want stable %q", i, got, want)
 		}
+		gotReasons := prepared.CompositionEligibility().RejectionReasons()
+		if len(gotReasons) != len(wantReasons) {
+			t.Fatalf("iteration %d reasons = %v, want %v", i, gotReasons, wantReasons)
+		}
+		for j := range gotReasons {
+			if gotReasons[j] != wantReasons[j] {
+				t.Fatalf("iteration %d reasons = %v, want %v", i, gotReasons, wantReasons)
+			}
+		}
+	}
+	if len(wantReasons) < 3 || wantReasons[0] != "shape:loop" {
+		t.Fatalf("full canonical reasons = %v, want loop plus hidden blockers", wantReasons)
 	}
 }
 

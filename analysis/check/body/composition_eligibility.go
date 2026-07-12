@@ -10,9 +10,23 @@ import (
 // CompositionEligibility is the static, behavior-neutral Stage-0 verdict for
 // the value-only symbolic-call POC. An empty Reason is eligible. The classifier
 // is deliberately fail-closed: unknown syntax or metadata is contextual.
-type CompositionEligibility struct{ Reason string }
+type CompositionEligibility struct {
+	Reason  string
+	reasons []string
+}
 
 func (e CompositionEligibility) Eligible() bool { return e.Reason == "" }
+
+// RejectionReasons returns every observed blocker in canonical priority order.
+func (e CompositionEligibility) RejectionReasons() []string {
+	if len(e.reasons) != 0 {
+		return append([]string(nil), e.reasons...)
+	}
+	if e.Reason != "" {
+		return []string{e.Reason}
+	}
+	return nil
+}
 
 // CompositionStateCapability describes whether the POC can represent one
 // registered State lane. The census is derived from the State catalog, so a
@@ -123,7 +137,8 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 	if len(reasons) == 0 {
 		return CompositionEligibility{}
 	}
-	return CompositionEligibility{Reason: firstCompositionReason(reasons)}
+	ordered := compositionReasons(reasons)
+	return CompositionEligibility{Reason: ordered[0], reasons: ordered}
 }
 
 var compositionReasonPriority = []string{
@@ -148,15 +163,18 @@ var compositionReasonPriority = []string{
 	"shape:unsupported-value",
 }
 
-func firstCompositionReason(reasons map[string]struct{}) string {
+func compositionReasons(reasons map[string]struct{}) []string {
+	out := make([]string, 0, len(reasons))
 	for _, reason := range compositionReasonPriority {
 		if _, ok := reasons[reason]; ok {
-			return reason
+			out = append(out, reason)
+			delete(reasons, reason)
 		}
 	}
-	// Every classifier reason must be registered above. Fail closed if a new
-	// reason is added without extending the stable public ordering.
-	return "shape:unknown-feature"
+	if len(reasons) != 0 {
+		out = append(out, "shape:unknown-feature")
+	}
+	return out
 }
 
 func classifyDirectCall(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}, add func(string)) {

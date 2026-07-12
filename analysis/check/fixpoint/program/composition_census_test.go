@@ -27,6 +27,9 @@ func TestCompositionCostCensusAggregatesExistingAttribution(t *testing.T) {
 	stats.recordBodySolve(eligible, 11)
 	stats.recordBodySolve(eligible, 13)
 	stats.recordBodySolve(rejected, 17)
+	rejectedEntry := stats.bodySolveAttribution[rejected.key]
+	rejectedEntry.CompositionReasons = []string{"shape:loop", "boundary:mutation"}
+	stats.bodySolveAttribution[rejected.key] = rejectedEntry
 	want := []CompositionCost{
 		{Eligible: true, BodySolves: 2, PointTransfers: 24},
 		{Reason: "shape:loop", BodySolves: 1, PointTransfers: 17},
@@ -34,9 +37,28 @@ func TestCompositionCostCensusAggregatesExistingAttribution(t *testing.T) {
 	if got := stats.CompositionCostCensus(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("census = %#v, want %#v", got, want)
 	}
+	allowLoop := []CompositionCost{
+		{Eligible: true, BodySolves: 2, PointTransfers: 24},
+		{Reason: "boundary:mutation", BodySolves: 1, PointTransfers: 17},
+	}
+	if got := stats.CompositionCostCensusAllowing("shape:loop"); !reflect.DeepEqual(got, allowLoop) {
+		t.Fatalf("allow-loop census = %#v, want %#v", got, allowLoop)
+	}
+	allAllowed := []CompositionCost{{Eligible: true, BodySolves: 3, PointTransfers: 41}}
+	if got := stats.CompositionCostCensusAllowing("shape:loop", "boundary:mutation"); !reflect.DeepEqual(got, allAllowed) {
+		t.Fatalf("all-allowed census = %#v, want %#v", got, allAllowed)
+	}
 	attribution := stats.BodySolveAttribution()
 	if len(attribution) != 2 || !attribution[0].CompositionEligible && !attribution[1].CompositionEligible {
 		t.Fatalf("body attribution lost composition verdicts: %#v", attribution)
+	}
+	for i := range attribution {
+		if len(attribution[i].CompositionReasons) != 0 {
+			attribution[i].CompositionReasons[0] = "mutated"
+		}
+	}
+	if got := stats.CompositionCostCensusAllowing("shape:loop"); !reflect.DeepEqual(got, allowLoop) {
+		t.Fatalf("attribution snapshot mutated census: %#v", got)
 	}
 }
 
