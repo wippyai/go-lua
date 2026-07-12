@@ -37,7 +37,7 @@ func resolveReferenceTransformerFixture(t testing.TB) *Static {
 	return nil
 }
 
-func TestResolveReferenceDynamicReadIsExactButWholeFunctionReportsRemainingOperation(t *testing.T) {
+func TestResolveReferenceConcatIsExactAndReportsNextBranchBlocker(t *testing.T) {
 	prepared := resolveReferenceTransformerFixture(t)
 	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
 	dynamicExact, dynamicTotal := 0, 0
@@ -65,10 +65,10 @@ func TestResolveReferenceDynamicReadIsExactButWholeFunctionReportsRemainingOpera
 	relation := transformer.NewPlanCompiler().Compile(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
 	reason := relation.ContextualReason()
 	if reason == "" {
-		t.Fatal("resolve_reference unexpectedly became whole-function exact without a canonical concat operation term")
+		t.Fatal("resolve_reference unexpectedly became whole-function exact before its missing branch source is represented")
 	}
-	if !strings.Contains(reason, "ExpressionOperations") {
-		t.Fatalf("resolve_reference contextual reason = %q, want only honest remaining expression-operation blocker", reason)
+	if strings.Contains(reason, "ExpressionOperations") || !strings.Contains(reason, "branch:missing-condition-source") {
+		t.Fatalf("resolve_reference contextual reason = %q, want concat closed and honest next branch blocker", reason)
 	}
-	t.Logf("resolve_reference dynamic read exact=1/1 root assignments=%d/%d; whole relation remains contextual: %s", rootExact, rootTotal, reason)
+	t.Logf("resolve_reference concat and dynamic read exact; root assignments=%d/%d; next blocker: %s", rootExact, rootTotal, reason)
 }

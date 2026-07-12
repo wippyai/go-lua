@@ -255,6 +255,15 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 				return err
 			}
 		}
+	case valueStringConcat:
+		if len(n.args) != 2 {
+			return fmt.Errorf("transformer: malformed string concat term %d", term)
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
 	case valueIteratorProjection:
 		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
 			return fmt.Errorf("transformer: malformed iterator projection term %d", term)
@@ -374,6 +383,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if err := validatePathTerm(arena, n.path, shape); err != nil {
 			return err
 		}
+	case valueStringConcat:
+		if len(n.args) != 2 {
+			return fmt.Errorf("malformed string concat term %d", term)
+		}
 	case valueIteratorProjection:
 		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
 			return fmt.Errorf("malformed iterator projection term %d", term)
@@ -446,6 +459,8 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		} else {
 			out = s.caller.DynamicReadTableValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
 		}
+	case valueStringConcat:
+		out = s.caller.StringConcatValue(s.value(n.args[0]), s.value(n.args[1]))
 	case valueIteratorProjection:
 		out = s.caller.IteratorProjectionValue(n.iterator, n.variableIndex, s.value(n.args[0]))
 	case valueAllocationResult:

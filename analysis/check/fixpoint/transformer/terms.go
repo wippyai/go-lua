@@ -11,9 +11,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type ValueTerm uint32
@@ -31,6 +34,7 @@ const (
 	valueCellResult
 	valueDynamicRead
 	valueDynamicTableRead
+	valueStringConcat
 	valueIteratorProjection
 	valueAllocationResult
 )
@@ -200,6 +204,17 @@ func (a *Arena) DynamicReadTableValueOr(table ValueTerm, tablePath PathTerm, key
 	return a.internValue(valueNode{op: valueDynamicTableRead, args: []ValueTerm{table, key, fallback}, path: tablePath})
 }
 
+// StringConcatValue retains the pure Lua string concatenation of two symbolic
+// operands. The narrow constructor deliberately does not model Lua's numeric
+// coercion: specialization accepts only operands proven to contain strings and
+// otherwise fails the entire relation transaction.
+func (a *Arena) StringConcatValue(left, right ValueTerm) ValueTerm {
+	if left == 0 || right == 0 {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueStringConcat, args: []ValueTerm{left, right}})
+}
+
 func (a *Arena) Path(root Root, suffix ...segment.Segment) PathTerm {
 	return a.internPath(pathNode{root: root, segments: append([]segment.Segment(nil), suffix...)})
 }
@@ -335,6 +350,8 @@ func (a *Arena) valueKey(n valueNode) string {
 		return fmt.Sprintf("d:%d:%d:%d", n.args[0], n.path, n.args[1])
 	case valueDynamicTableRead:
 		return fmt.Sprintf("dt:%d:%v", n.path, n.args)
+	case valueStringConcat:
+		return fmt.Sprintf("s:%d:%d", n.args[0], n.args[1])
 	case valueIteratorProjection:
 		return fmt.Sprintf("i:%d:%d:%d:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.args)
 	case valueAllocationResult:
@@ -484,6 +501,19 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			return a.evalValue(n.args[2], cursor, context)
 		}
 		return product.Value{}, false
+	case valueStringConcat:
+		if len(n.args) != 2 {
+			return product.Value{}, false
+		}
+		left, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok || !exactStringOperand(a.reg, left) {
+			return product.Value{}, false
+		}
+		right, ok := a.evalValue(n.args[1], cursor, context)
+		if !ok || !exactStringOperand(a.reg, right) {
+			return product.Value{}, false
+		}
+		return luasourcevalue.BinaryOperationValue(a.reg, nil, "..", left, right)
 	case valueIteratorProjection:
 		if len(n.args) != 1 {
 			return product.Value{}, false
@@ -506,6 +536,11 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 	default:
 		return product.Value{}, false
 	}
+}
+
+func exactStringOperand(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	return ok && t != nil && subtype.IsSubtype(t, typ.String)
 }
 
 func (a *Arena) evalPath(term PathTerm, cursor BindingCursor) (pathdom.Path, bool) {
@@ -555,6 +590,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 			parts = append(parts, a.canonicalValue(n.args[2]))
 		}
 		return "dt(" + strings.Join(parts, ",") + ")"
+	case valueStringConcat:
+		return "s(" + a.canonicalValue(n.args[0]) + "," + a.canonicalValue(n.args[1]) + ")"
 	case valueIteratorProjection:
 		return fmt.Sprintf("i%d.%d.%d(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, a.canonicalValue(n.args[0]))
 	case valueAllocationResult:
@@ -584,6 +621,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueDynamicTableRead && ((len(n.args) != 2 && len(n.args) != 3) || !a.validPath(n.path, shape)) {
+		return false
+	}
+	if n.op == valueStringConcat && len(n.args) != 2 {
 		return false
 	}
 	if n.op == valueIteratorProjection && (len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 ||

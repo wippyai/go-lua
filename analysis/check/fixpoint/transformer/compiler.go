@@ -91,6 +91,7 @@ func NewPlanCompiler() *PlanCompiler {
 	// executable lowering of its own; its registration makes lane certificate
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
+	c.facts[operationplan.ExpressionOperation] = expressionOperationPlanHandler{}
 	c.facts[operationplan.ExpressionPath] = dynamicIndexDependencyPlanHandler{kind: operationplan.ExpressionPath}
 	c.facts[operationplan.DynamicIndexExpression] = dynamicIndexDependencyPlanHandler{kind: operationplan.DynamicIndexExpression}
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
@@ -753,6 +754,16 @@ func (expressionValuePlanHandler) Lower(planCompileContext, cfg.Point, *[]Operat
 	return nil
 }
 
+type expressionOperationPlanHandler struct{}
+
+func (expressionOperationPlanHandler) Kind() operationplan.Kind {
+	return operationplan.ExpressionOperation
+}
+func (expressionOperationPlanHandler) Preflight(planCompileContext, cfg.Point) error { return nil }
+func (expressionOperationPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error {
+	return nil
+}
+
 func (returnPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) error {
 	if _, ok := ctx.facts.Return(point); !ok {
 		// ExpressionValue is registered to this handler as a dependency and has
@@ -805,6 +816,9 @@ func exactReturnSourceTerm(ctx planCompileContext, source factflow.ValueSource) 
 			return exactCompilerSourceTerm(ctx, source)
 		}
 		if _, dynamic := ctx.facts.DynamicIndexExpression(source.ExprRef); dynamic {
+			return exactCompilerSourceTerm(ctx, source)
+		}
+		if _, operation := ctx.facts.ExpressionOperation(source.ExprRef); operation {
 			return exactCompilerSourceTerm(ctx, source)
 		}
 	}
@@ -906,6 +920,29 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 		if active[source.ExprRef] {
 			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)
 		}
+		if operation, ok := ctx.facts.ExpressionOperation(source.ExprRef); ok {
+			if operation.Kind() != factflow.ExpressionOperationBinary || operation.Op() != ".." {
+				return 0, fmt.Errorf("expression operation %d is not exact string concatenation", source.ExprRef)
+			}
+			if active == nil {
+				active = make(map[factflow.ExprRef]bool, 1)
+			}
+			active[source.ExprRef] = true
+			left, leftErr := exactStringConcatSourceTerm(ctx, operation.Left(), active)
+			right, rightErr := exactStringConcatSourceTerm(ctx, operation.Right(), active)
+			delete(active, source.ExprRef)
+			if leftErr != nil {
+				return 0, fmt.Errorf("expression concat %d left operand: %w", source.ExprRef, leftErr)
+			}
+			if rightErr != nil {
+				return 0, fmt.Errorf("expression concat %d right operand: %w", source.ExprRef, rightErr)
+			}
+			term := ctx.builder.Arena().StringConcatValue(left, right)
+			if term == 0 {
+				return 0, fmt.Errorf("expression concat %d failed symbolic construction", source.ExprRef)
+			}
+			return term, nil
+		}
 		if dynamic, ok := ctx.facts.DynamicIndexExpression(source.ExprRef); ok {
 			if active == nil {
 				active = make(map[factflow.ExprRef]bool, 1)
@@ -953,6 +990,17 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 		return 0, fmt.Errorf("assignment source is not a context-independent scalar")
 	}
 	return ctx.builder.Arena().Constant(value), nil
+}
+
+func exactStringConcatSourceTerm(ctx planCompileContext, source factflow.ValueSource, active map[factflow.ExprRef]bool) (ValueTerm, error) {
+	if !source.Valid() || source.Expanded || source.Adjusted || source.OpenTail {
+		return 0, fmt.Errorf("non-scalar or malformed operand")
+	}
+	term, err := exactCompilerSourceTermActive(ctx, source, active)
+	if err != nil {
+		return 0, err
+	}
+	return term, nil
 }
 
 func exactSignatureExpressionTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, bool) {

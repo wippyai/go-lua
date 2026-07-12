@@ -14,7 +14,34 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+type expressionOperation interface {
+	Kind() factflow.ExpressionOperationKind
+	Op() string
+}
+
+type binaryOperation string
+
+func (op binaryOperation) Kind() factflow.ExpressionOperationKind {
+	return factflow.ExpressionOperationBinary
+}
+func (op binaryOperation) Op() string { return string(op) }
+
 func ExpressionOperationValue(reg *axis.Registry, typeValues *typevalue.Cache, op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+	return expressionOperationValue(reg, typeValues, op, left, right)
+}
+
+// BinaryOperationValue evaluates a source-independent pure binary operation
+// through the same kernel used by ExpressionOperationValue. It exists for
+// durable symbolic terms, which retain the operator and operand relations but
+// intentionally do not manufacture syntax-shaped ValueSource payloads.
+func BinaryOperationValue(reg *axis.Registry, typeValues *typevalue.Cache, operator string, left, right product.Value) (product.Value, bool) {
+	if operator == "" {
+		return product.Value{}, false
+	}
+	return expressionOperationValue(reg, typeValues, binaryOperation(operator), left, right)
+}
+
+func expressionOperationValue(reg *axis.Registry, typeValues *typevalue.Cache, op expressionOperation, left product.Value, right product.Value) (product.Value, bool) {
 	if value, ok := exactLiteralComparisonValue(reg, op, left, right); ok {
 		return value, true
 	}
@@ -27,16 +54,16 @@ func ExpressionOperationValue(reg *axis.Registry, typeValues *typevalue.Cache, o
 		if !ok {
 			return product.Value{}, false
 		}
-		return RefineLogicalOperationValue(reg, op, value, left, right), true
+		return refineLogicalOperationValue(reg, op, value, left, right), true
 	}
 	value := typeValues.FromTypeWithWitness(reg, t)
 	if typ.IsAny(t) || typ.IsUnknown(t) {
 		value = inheritOperationTopOrigin(reg, value, left, right)
 	}
-	return RefineLogicalOperationValue(reg, op, value, left, right), true
+	return refineLogicalOperationValue(reg, op, value, left, right), true
 }
 
-func exactLiteralComparisonValue(reg *axis.Registry, op factflow.ExpressionOperation, left, right product.Value) (product.Value, bool) {
+func exactLiteralComparisonValue(reg *axis.Registry, op expressionOperation, left, right product.Value) (product.Value, bool) {
 	if reg == nil || op.Kind() != factflow.ExpressionOperationBinary {
 		return product.Value{}, false
 	}
@@ -67,7 +94,7 @@ func exactLiteralComparisonValue(reg *axis.Registry, op factflow.ExpressionOpera
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, lit), lit), true
 }
 
-func presentUnknownConcatValue(reg *axis.Registry, op factflow.ExpressionOperation, left, right product.Value) (product.Value, bool) {
+func presentUnknownConcatValue(reg *axis.Registry, op expressionOperation, left, right product.Value) (product.Value, bool) {
 	if reg == nil || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." {
 		return product.Value{}, false
 	}
@@ -82,6 +109,10 @@ func presentUnknownConcatValue(reg *axis.Registry, op factflow.ExpressionOperati
 // RefineLogicalOperationValue applies Lua short-circuit truthiness facts that are
 // expressible on the product value but must not rewrite the static type witness.
 func RefineLogicalOperationValue(reg *axis.Registry, op factflow.ExpressionOperation, value, left, right product.Value) product.Value {
+	return refineLogicalOperationValue(reg, op, value, left, right)
+}
+
+func refineLogicalOperationValue(reg *axis.Registry, op expressionOperation, value, left, right product.Value) product.Value {
 	if reg == nil || op.Kind() != factflow.ExpressionOperationBinary {
 		return value
 	}
@@ -100,7 +131,7 @@ func provePresentNonNil(reg *axis.Registry, value product.Value) product.Value {
 	return value
 }
 
-func expressionOperationType(reg *axis.Registry, typeValues *typevalue.Cache, op factflow.ExpressionOperation, left product.Value, right product.Value) (typ.Type, bool) {
+func expressionOperationType(reg *axis.Registry, typeValues *typevalue.Cache, op expressionOperation, left product.Value, right product.Value) (typ.Type, bool) {
 	if op.Kind() == factflow.ExpressionOperationBinary && (op.Op() == "==" || op.Op() == "~=") {
 		return typ.Boolean, true
 	}
@@ -188,7 +219,7 @@ func runtimeKindValueType(reg *axis.Registry, value product.Value) (typ.Type, bo
 	return t, true
 }
 
-func topOriginOperationValue(reg *axis.Registry, op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+func topOriginOperationValue(reg *axis.Registry, op expressionOperation, left product.Value, right product.Value) (product.Value, bool) {
 	if op.Op() != "and" && op.Op() != "or" {
 		return product.Value{}, false
 	}
