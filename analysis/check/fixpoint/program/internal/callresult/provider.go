@@ -8,12 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -82,7 +80,6 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 	pathMultiKeys := index.pathMultiKeys
 	functionTypes := index.functionTypes
 	sources := config.Sources
-	returnPresenceRelations := config.ReturnPresenceRelations
 	callerKeySpace := config.KeySpace
 	typeValues := config.TypeValues
 	preparedSummaries := providerPreparedSummaryCache{
@@ -90,6 +87,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		functionTypes:  functionTypes,
 		callerKeySpace: callerKeySpace,
 	}
+	transaction := newPreparedSummaryTransaction(config, index)
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if summaries == nil {
 			return refineOutcomeResultsFromCurrentCallable(ctx, site, sources, in, read, calleeValue, receiverCallable, typeValues, callpayload.CallOutcome{})
@@ -110,7 +108,6 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 			if summaryNeedsGenericInstantiation(ctx, fn, sources) {
 				got = specializeGenericSummary(ctx, site, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read, typeValues)
 			}
-			got = materializeReturnRootTypesFromFacts(ctx.Registry, typeValues, got)
 			return true
 		}
 		if contextKeyFor != nil {
@@ -157,63 +154,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		if matchedContext {
 			got = inheritSameIdentityContextBaseSummary(ctx.Registry, typeValues, &preparedSummaries, currentIdentityKey, hasCurrentIdentityKey, matchedContextKey, got)
 		}
-		if len(got.ReturnParamPathAliases) != 0 {
-			if summaryOwned {
-				got = got.Clone()
-				summaryOwned = false
-			}
-			got = materializeReturnParamPathAliases(ctx, callerKeySpace, site, got, sources, in, read, typeValues)
-		}
-		if summaryOwned && len(got.FreshHeapAllocations) != 0 {
-			got = got.Clone()
-			summaryOwned = false
-		} else if summaryOwned && len(got.HeapTableObjects) != 0 {
-			got.HeapTableObjects = heapidentity.CloneMap(got.HeapTableObjects)
-		}
-		got = instantiateReturnedAllocations(ctx, index.owner, got)
-		summaryParamOffset := summaryParamObligationOffset(ctx, site, fn, in, read, calleeValue)
-		out := outcomeFromSummary(ctx.Registry, got, summaryParamOffset, func(index int) bool {
-			if index < 0 || index >= len(got.ParamObligations) {
-				return false
-			}
-			return summary.UsefulParamObligation(ctx.Registry, got.ParamObligations[index])
-		}, func(index int) bool {
-			if index < 0 || index >= len(got.NormalReturnParams) {
-				return false
-			}
-			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
-		})
-		out = refineOutcomeResultsFromCurrentCallable(ctx, site, sources, in, read, calleeValue, receiverCallable, typeValues, out)
-		if returnPresenceRelations != nil && len(got.ParamMemberReturnSlots) != 0 {
-			out.ReturnPresenceRelations = append(
-				out.ReturnPresenceRelations,
-				paramMemberReturnPresenceRelations(ctx, callerKeySpace, site, got, facts, returnPresenceRelations)...,
-			)
-		}
-		if fn != nil && len(got.ReturnParamPathAliases) != 0 {
-			out.ParamExposures = append(out.ParamExposures, paramReturnExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got, fn)...)
-		}
-		if fn != nil && len(got.NormalReturnFacts.StoreRelations) != 0 {
-			out.ParamExposures = append(out.ParamExposures, paramStoreRelationExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got, fn)...)
-		}
-		if fn != nil && len(got.NormalReturnFacts.PathInvalidations) != 0 {
-			out.ParamExposures = append(out.ParamExposures, paramDirectMutationExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got, fn)...)
-		}
-		if len(got.ParamSinkExposures) != 0 {
-			out.ParamExposures = append(out.ParamExposures, paramSinkExposures(ctx.Registry, typeValues, site.ArgumentSourceCount(), got)...)
-		}
-		if fn != nil {
-			out.Results = padMissingResultsToNil(ctx.Registry, site, out.Results, len(fn.Returns))
-		}
-		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
-		if fn != nil && len(fn.Params) != 0 {
-			out.ParamObligations = append(out.ParamObligations, functionTypeParamObligationsForSite(ctx, typeValues, site, fn, sources, in, read)...)
-		}
-		if len(got.ParamMemberCallObligations) != 0 {
-			out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, fn, sources, in, read, typeValues)...)
-			out.ParamObligations = append(out.ParamObligations, memberCallParamObligationOriginsFromSummary(ctx.Registry, got, fn)...)
-		}
-		return out
+		return transaction.Apply(ctx, site, in, read, got, fn, summaryOwned)
 	}
 }
 

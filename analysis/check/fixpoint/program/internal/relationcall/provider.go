@@ -49,11 +49,8 @@ type Config struct {
 // the production adapter consumes. Correlated rows are joined only by
 // Relation.Specialize. Missing identity/bindings and contextual relations fail
 // closed with an empty outcome.
-//
-// This first proof implementation constructs an immutable one-entry Summary
-// snapshot and adapter closure per application. Production activation must
-// replace that allocation boundary with a prepared adapter transaction.
 func OutcomeProvider(config Config) callpayload.CallOutcomeProvider {
+	transaction := callresult.NewPreparedSummaryTransaction(config.Adapter)
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if config.TargetFor == nil || config.Bindings == nil {
 			return callpayload.CallOutcome{}
@@ -74,12 +71,6 @@ func OutcomeProvider(config Config) callpayload.CallOutcomeProvider {
 		if !ok {
 			return callpayload.CallOutcome{}
 		}
-		adapter := config.Adapter
-		adapter.Summaries = summary.NewSnapshotOwnedNormalized(ctx.Registry, summary.EntrySummary{Key: target.SummaryKey, Summary: sum})
-		adapter.ContextKeyFor = nil
-		adapter.KeyFor = func(transfer.NodeContext, factflow.CallSiteView) (summary.SummaryKey, bool) {
-			return target.SummaryKey, true
-		}
-		return callresult.OutcomeProvider(adapter)(ctx, site, in, read)
+		return transaction.Apply(ctx, site, in, read, sum, transaction.FunctionType(target.SummaryKey), false)
 	}
 }
