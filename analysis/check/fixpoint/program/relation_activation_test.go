@@ -217,6 +217,37 @@ return result
 		activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled)
 }
 
+func TestRelationActivationGuardPostStateStaysLegacy(t *testing.T) {
+	stmts := parseChunk(t, `
+local function choose(value: boolean)
+	if value then return "yes" end
+	return "no"
+end
+local truthy = choose(true)
+local falsy = choose(false)
+return truthy, falsy
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
+	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
+	legacyStats, activeStats := &Stats{}, &Stats{}
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareRelationCorpusResult(t, reg, legacy, active)
+	if activeStats.RelationProducersEligible != 0 || activeStats.RelationOwnersActive != 0 || activeStats.RelationCallsHandled != 0 ||
+		activeStats.SummaryBodySolves != legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers != legacyStats.SummaryPointTransfers {
+		t.Fatalf("branch post-state left legacy fence: legacy=%d/%d active=%d/%d producers=%d owners=%d handled=%d fallbacks=%d",
+			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled, activeStats.RelationActivationFallbacks)
+	}
+}
+
 func TestRelationActivationCertifiedContextUnsafeFamiliesStayLegacy(t *testing.T) {
 	cases := []struct{ name, source string }{
 		{"capture", `local suffix = "!"; local function f(v: string): string return v .. suffix end; return f("x")`},

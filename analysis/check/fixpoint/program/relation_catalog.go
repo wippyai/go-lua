@@ -652,7 +652,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		}
 		shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams()))}
 		compiler, err := transformer.NewPlanCompiler().Prepare(reg, static.Graph(), plan, shape)
-		if err != nil || !compiler.EffectFree() {
+		if err != nil || !compiler.EffectFree() || !compiler.ExactActivationEligible() {
 			continue
 		}
 		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape}

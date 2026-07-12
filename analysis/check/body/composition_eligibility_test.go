@@ -20,11 +20,13 @@ func TestCompositionEligibilityWhitelistsOnlyStraightValueWrappers(t *testing.T)
 		{name: "stable direct call", source: `function f(x) return (g(x)) end`, globals: []string{"g"}},
 		{name: "named direct call result", source: `function f(x) local y = g(x) return y end`, globals: []string{"g"}},
 		{name: "dynamic call", source: `function f(g, x) return g(x) end`, want: "call:dynamic"},
-		{name: "mutation including local assignment", source: `function f(x) local y = x return y end`, want: "boundary:mutation"},
+		{name: "local declaration", source: `function f(x) local y = x return y end`},
+		{name: "ordinary root write", source: `function f(x) local y = x y = nil return y end`, want: "boundary:mutation"},
 		{name: "heap read", source: `function f(x) return x.value end`, want: "boundary:heap-read"},
 		{name: "allocation", source: `function f(x) return { x } end`, want: "boundary:allocation"},
-		{name: "guard", source: `function f(x) if x then return x end end`, want: "shape:guard"},
-		{name: "loop", source: `function f(x) while x do x = x end return x end`, want: "shape:loop"},
+		{name: "guard", source: `function f(x) if x then return x end end`},
+		{name: "loop mutation", source: `function f(x) while x do x = x end return x end`, want: "boundary:mutation"},
+		{name: "fanout loop", source: `function f(value) local total = 0 for i = 1, 8 do if value then total = total + i end end return total end`, want: "boundary:mutation"},
 		{name: "vararg", source: `function f(...) return ... end`, want: "shape:vararg"},
 		{name: "generic", source: `function f<T>(x: T): T return x end`, want: "shape:generic-function"},
 		{name: "protected", source: `function f(x) return pcall(x) end`, globals: []string{"pcall"}, want: "call:protected"},
@@ -92,8 +94,8 @@ func TestCompositionEligibilityReasonIsStableAcrossRepeatedPreparation(t *testin
 			}
 		}
 	}
-	if len(wantReasons) < 3 || wantReasons[0] != "shape:loop" {
-		t.Fatalf("full canonical reasons = %v, want loop plus hidden blockers", wantReasons)
+	if len(wantReasons) < 2 || wantReasons[0] != "boundary:allocation" {
+		t.Fatalf("full canonical reasons = %v, want allocation plus mutation", wantReasons)
 	}
 }
 

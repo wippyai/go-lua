@@ -2,7 +2,6 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -76,10 +75,6 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 	if s.function.ParList != nil && s.function.ParList.HasVargs {
 		add("shape:vararg")
 	}
-	if graphHasCycle(s.cfg.Graph) {
-		add("shape:loop")
-	}
-
 	directCallees := make(map[symbol.ID]struct{})
 	for i := 0; i < s.wir.Len(); i++ {
 		inst := s.wir.Instr(i)
@@ -118,14 +113,14 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 					callTemps[result.Ref] = struct{}{}
 				}
 			}
-		case wir.OpBranch:
-			add("shape:guard")
-		case wir.OpIterate:
-			add("shape:loop")
+		case wir.OpBranch, wir.OpIterate:
+			// Exact branch lowering and the prepared WTO evaluator are the
+			// semantic authorities. Unsupported guards/loops fail closed while
+			// building or freezing the relation; syntax alone is not a blocker.
 		case wir.OpMakeTable, wir.OpClosure:
 			add("boundary:allocation")
 		case wir.OpAssign:
-			if !exactCallResultLocalDeclaration(s.wir, inst, callTemps) {
+			if !exactSymbolicLocalDeclaration(s.wir, inst, callTemps) {
 				add("boundary:mutation")
 			}
 		case wir.OpStaticMemberWrite, wir.OpDynamicIndexWrite:
@@ -145,15 +140,12 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 	return CompositionEligibility{Reason: ordered[0], reasons: ordered}
 }
 
-// exactCallResultLocalDeclaration is an SSA-like edge adapter, not mutable
-// state: one direct-call result temp is named once by a fresh local root. The
-// symbolic call composer already owns the result value and the ordinary
-// assignment fact copies it exactly. Every other assignment remains rejected.
-func exactCallResultLocalDeclaration(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}) bool {
-	if inst.Assign != wir.AssignLocalDeclaration || inst.Dst.Kind != wir.OperandPath || inst.A.Kind != wir.OperandTemp {
-		return false
-	}
-	if _, ok := callTemps[inst.A.Ref]; !ok {
+// exactSymbolicLocalDeclaration matches the RootAssignment compiler's immutable
+// declaration slice. Constants, unknown iterator seeds, boundary-root aliases,
+// and exact direct-call result temps are names introduced once, not mutations.
+// Ordinary root writes remain contextual, including loop-carried accumulators.
+func exactSymbolicLocalDeclaration(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}) bool {
+	if inst.Assign != wir.AssignLocalDeclaration || inst.Dst.Kind != wir.OperandPath {
 		return false
 	}
 	path := body.Path(wir.PathRef(inst.Dst.Ref))
@@ -161,7 +153,25 @@ func exactCallResultLocalDeclaration(body *wir.Body, inst wir.Instruction, callT
 		return false
 	}
 	kind, ok := body.SymbolKind(wir.SymbolID(path.Symbol))
-	return ok && kind == wir.SymbolLocal && !body.SymbolHasWrite(wir.SymbolID(path.Symbol))
+	if !ok || kind != wir.SymbolLocal || body.SymbolHasWrite(wir.SymbolID(path.Symbol)) {
+		return false
+	}
+	switch inst.A.Kind {
+	case wir.OperandNone, wir.OperandConst:
+		return true
+	case wir.OperandTemp:
+		_, exactCallResult := callTemps[inst.A.Ref]
+		return exactCallResult
+	case wir.OperandPath:
+		source := body.Path(wir.PathRef(inst.A.Ref))
+		if source.Symbol == 0 || len(source.Segments) != 0 {
+			return false
+		}
+		sourceKind, known := body.SymbolKind(wir.SymbolID(source.Symbol))
+		return known && (sourceKind == wir.SymbolParam || sourceKind == wir.SymbolLocal)
+	default:
+		return false
+	}
 }
 
 var compositionReasonPriority = []string{
@@ -265,33 +275,4 @@ func classifyBoundaryOperand(body *wir.Body, operand wir.Operand, callTemps map[
 	default:
 		add("shape:unsupported-value")
 	}
-}
-
-func graphHasCycle(graph cfg.Graph) bool {
-	visiting := make(map[cfg.Point]bool)
-	done := make(map[cfg.Point]bool)
-	var visit func(cfg.Point) bool
-	visit = func(point cfg.Point) bool {
-		if visiting[point] {
-			return true
-		}
-		if done[point] {
-			return false
-		}
-		visiting[point] = true
-		for _, next := range cfg.SuccessorsReadOnly(graph, point) {
-			if visit(next) {
-				return true
-			}
-		}
-		visiting[point] = false
-		done[point] = true
-		return false
-	}
-	for _, point := range graph.RPO() {
-		if visit(point) {
-			return true
-		}
-	}
-	return false
 }

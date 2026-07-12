@@ -114,7 +114,7 @@ func TestPlanCompilerEmitsCertifiedUnchangedParameterRoot(t *testing.T) {
 	}
 }
 
-func TestParamPreservationLedgerRejectsAliasMutationEscapeBranchAndCall(t *testing.T) {
+func TestParamPreservationLedgerRejectsAliasMutationEscapeAndCall(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	point := graph.AddNode(cfg.NodeAssign)
@@ -141,7 +141,6 @@ func TestParamPreservationLedgerRejectsAliasMutationEscapeBranchAndCall(t *testi
 		{name: "escape", act: func(l *paramPreservationLedger) {
 			l.invalidateValueDependencies(builder.Arena(), builder.Arena().Root(Root{Kind: RootParam}))
 		}},
-		{name: "branch", act: func(l *paramPreservationLedger) { l.observeFact(ctx, point, operationplan.BranchConditionSource) }},
 		{name: "call", act: func(l *paramPreservationLedger) { l.observeFact(ctx, point, operationplan.CallSite) }},
 	}
 	for _, test := range tests {

@@ -39,11 +39,13 @@ local total = 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats := &Stats{}
-	_, err = RunChunk(stmts, Config{Check: body.Config{
-		Registry: standard.Registry(), TypeValues: typevalue.NewCache(),
+	reg := standard.Registry()
+	check := body.Config{
+		Registry: reg, TypeValues: typevalue.NewCache(),
 		Schedule: transfer.ScheduleWTO, Signatures: signaturelookup.Source{IncludeStdlib: true},
-	}, Stats: stats})
+	}
+	stats := &Stats{}
+	legacy, err := RunChunk(stmts, Config{Check: check, Stats: stats})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +54,22 @@ local total = 0
 			stats.MaxContextCount, stats.SummaryBodySolves, stats.SummaryPointTransfers)
 	}
 	census := stats.CompositionCostCensus()
-	if len(census) != 2 || census[0].Reason != "shape:chunk" || census[1].Reason != "shape:loop" || census[1].BodySolves != 98 || census[1].PointTransfers != 1666 {
+	if len(census) != 2 || census[0].Reason != "boundary:mutation" || census[0].BodySolves != 98 || census[0].PointTransfers != 1666 || census[1].Reason != "shape:chunk" {
 		t.Fatalf("context fanout composition census = %#v", census)
+	}
+	// Branch and WTO topology are no longer rejected syntactically. The genuine
+	// next blocker is the loop-carried accumulator rewrite; until it has exact
+	// symbolic update semantics the activation must stay wholly legacy.
+	activeStats := &Stats{}
+	active, err := RunChunk(stmts, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareRelationCorpusResult(t, reg, legacy, active)
+	if activeStats.RelationProducersEligible != 0 || activeStats.RelationOwnersActive != 0 || activeStats.RelationCallsHandled != 0 ||
+		activeStats.SummaryBodySolves != stats.SummaryBodySolves || activeStats.SummaryPointTransfers != stats.SummaryPointTransfers {
+		t.Fatalf("mutation-blocked activation changed work: legacy=%d/%d active=%d/%d producers=%d owners=%d handled=%d",
+			stats.SummaryBodySolves, stats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationCallsHandled)
 	}
 }
