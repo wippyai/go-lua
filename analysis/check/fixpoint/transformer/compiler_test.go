@@ -149,12 +149,13 @@ func TestPlanCompilerUnsupportedFamiliesFailAsOneContextualRelation(t *testing.T
 	graph.AddEdge(point, graph.Exit(), false)
 	plan := operationplan.New(graph, factflow.FactsInput{
 		DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{point: {}},
+		PathAssignments:    map[cfg.Point]factflow.PathAssignment{point: {}},
 		CallSites:          map[cfg.Point]factflow.CallSite{point: {}},
 	})
 
 	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
 	reason := relation.ContextualReason()
-	const wantReason = "compiler: contextual operations: CallSites, DynamicIndexWrites"
+	const wantReason = "compiler: contextual operations: DynamicIndexWrites, PathAssignments"
 	if reason != wantReason {
 		t.Fatalf("contextual reason = %q, want deterministic aggregate %q", reason, wantReason)
 	}

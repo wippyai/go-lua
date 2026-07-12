@@ -37,7 +37,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		"PathDescendantInvalidations":   {total: 9},
 		"PathValuePresenceImplications": {total: 3},
 		"DynamicIndexWrites":            {total: 9},
-		"CallSites":                     {total: 49},
+		"CallSites":                     {total: 49, exact: 19},
 		"BranchConditionSources":        {total: 36},
 		"BranchRefinements":             {total: 57},
 		"BranchPathEvidence":            {total: 43},

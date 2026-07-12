@@ -83,9 +83,38 @@ func NewPlanCompiler() *PlanCompiler {
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
 	c.facts[operationplan.Return] = returnPlanHandler{}
+	c.facts[operationplan.CallSite] = signatureCallPlanHandler{}
 	c.extensions[operationplan.BodyGenericFor] = genericForPlanHandler{}
 	return c
 }
+
+type signatureCallPlanHandler struct{}
+
+func (signatureCallPlanHandler) Kind() operationplan.Kind { return operationplan.CallSite }
+func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) error {
+	op, ok := ctx.plan.SignatureCallOperation(point)
+	if !ok {
+		return fmt.Errorf("signature call: resolved producer missing")
+	}
+	sig := op.Signature()
+	iterator, ok := iteration.ActiveIterator(sig.Effect.Labels)
+	if !ok || sig.Effect.Tail != nil || len(sig.Effect.Labels) != 1 || sig.OperationalEffects != nil {
+		return fmt.Errorf("signature call: non-iterator effects require contextual composition")
+	}
+	for p := 0; p < ctx.plan.PointCount(); p++ {
+		generic, exists := ctx.plan.GenericForOperation(cfg.Point(p))
+		if !exists {
+			continue
+		}
+		source := generic.Source()
+		got, hasIterator := generic.Iterator()
+		if source.Kind == operationplan.GenericForSourceCall && source.HasCallPoint && source.CallPoint == point && hasIterator && got == iterator {
+			return nil
+		}
+	}
+	return fmt.Errorf("signature call: iterator result is not owned by generic-for")
+}
+func (signatureCallPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error { return nil }
 
 type genericForPlanHandler struct{}
 
