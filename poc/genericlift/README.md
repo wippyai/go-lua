@@ -125,6 +125,17 @@ transfers. Its useful assets are the semantic laws: distinct parameter/capture/
 vararg roots, guarded correlated rows, contravariant requirements, allocation
 rebasing, effect-row widening, and atomic fallback.
 
+The earlier `analysis/check/fixpoint/symbolic` package was removed rather than
+kept as a second production summary model. It hand-modeled values, guards,
+requirements, heap deltas, and calls without consuming the engine's prepared
+semantics, so extending it would have created another analyzer. The reusable
+invariants remain requirements of this operation-plan design: boundary roots
+stay namespace-distinct until binding; caller values and concrete heap state
+never enter transformer identity; expression ownership cannot cross a plan;
+and every complexity limit fails closed or widens observably instead of
+silently truncating behavior. The isolated `poc/symboliccall` package retains
+the corresponding algebraic proofs.
+
 ## Measured phase and context cost model
 
 A behavior-neutral rerun of the same 112-unit `kickside.automation` slice
