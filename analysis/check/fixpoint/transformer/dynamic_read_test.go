@@ -48,6 +48,49 @@ func TestDynamicReadValueIsCanonicalAndRebasesAcrossArenas(t *testing.T) {
 	}
 }
 
+func TestDynamicReadTableValueIsDistinctRebasesAndUsesStaticFallback(t *testing.T) {
+	reg := standard.Registry()
+	callee, caller := NewArena(reg), NewArena(reg)
+	shape := Shape{Params: 2}
+	table := callee.Root(Root{Kind: RootParam, Index: 0})
+	key := callee.Root(Root{Kind: RootParam, Index: 1})
+	path := callee.Path(Root{Kind: RootParam, Index: 0})
+	fallback := callee.Constant(typevalue.FromType(reg, typ.MaterializeOptional(typ.String)))
+	direct := callee.DynamicReadTableValueOr(table, path, key, fallback)
+	if direct == 0 || direct != callee.DynamicReadTableValueOr(table, path, key, fallback) {
+		t.Fatal("direct DynamicRead was not hash-consed")
+	}
+	if direct == callee.DynamicReadValue(table, path, key) {
+		t.Fatal("direct-table and owner-path DynamicRead terms collapsed")
+	}
+	callerTable := caller.Root(Root{Kind: RootParam, Index: 0})
+	callerKey := caller.Root(Root{Kind: RootParam, Index: 1})
+	callerPath := caller.Path(Root{Kind: RootParam, Index: 0})
+	bindings, err := NewTermRootBindings(shape, shape, []ValueTerm{callerTable, callerKey}, []PathTerm{callerPath, caller.Path(Root{Kind: RootParam, Index: 1})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebased, err := RebaseTermDAGs(caller, callee, bindings, TermRebaseInput{Values: []ValueTerm{direct}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := caller.DynamicReadTableValueOr(callerTable, callerPath, callerKey, caller.Constant(typevalue.FromType(reg, typ.MaterializeOptional(typ.String))))
+	if len(rebased.Values) != 1 || rebased.Values[0] != want {
+		t.Fatalf("rebased direct DynamicRead = %#v, want %d", rebased.Values, want)
+	}
+	cursor, _ := NewBindingCursor(shape,
+		[]product.Value{product.Top(), typevalue.LiteralString(reg, "node")},
+		[]pathdom.Path{{Root: "graph.references"}, {Root: "name"}})
+	value, ok := caller.evalValue(want, cursor, SpecializationContext{
+		DynamicTableRead: func(pathdom.Path, product.Value, product.Value) (product.Value, bool) {
+			return product.Value{}, false
+		},
+	})
+	if !ok || !product.Equal(reg, value, typevalue.FromType(reg, typ.MaterializeOptional(typ.String))) {
+		t.Fatalf("direct DynamicRead fallback = %#v/%v", value, ok)
+	}
+}
+
 func TestDynamicReadResolveReferenceDifferential(t *testing.T) {
 	reg := standard.Registry()
 	shape := Shape{Params: 2, Results: 1}

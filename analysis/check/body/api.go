@@ -301,6 +301,7 @@ type Result struct {
 type CallOutcomeContext struct {
 	Facts                       factflow.Facts
 	Sources                     sourcevalue.SourceValues
+	PathValue                   PathValueFunc
 	ProtectedCall               func(transfer.NodeContext, factflow.CallSiteView) bool
 	CalleeValue                 CalleeValueFunc
 	ReceiverCallable            ReceiverCallableFunc
@@ -308,6 +309,11 @@ type CallOutcomeContext struct {
 	KeySpace                    *keyspace.KeySpace
 	TypeValues                  *typevalue.Cache
 }
+
+// PathValueFunc resolves one syntax-facing path through the body's canonical
+// visibility and source-value semantics. Call providers use this read-only
+// seam for resolvable receivers, which intentionally have no ReceiverSource.
+type PathValueFunc func(transfer.NodeContext, pathdom.Path, state.State) (product.Value, bool)
 
 type CallOutcomeFactory func(CallOutcomeContext) callpayload.CallOutcomeProvider
 

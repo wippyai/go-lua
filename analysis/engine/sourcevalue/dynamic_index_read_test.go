@@ -150,6 +150,27 @@ func TestReadBoundDynamicIndexValueFallsBackToCanonicalTypedIndexWithoutIdentity
 	}
 }
 
+func TestReadBoundDynamicTableValueDoesNotReprojectRealTablePath(t *testing.T) {
+	reg := standard.Registry()
+	cache := typevalue.NewCache()
+	ks := keyspace.New()
+	tableValue := cache.FromTypeWithWitness(reg, typetable.NewMap(typ.String, typ.String))
+	keyValue := typevalue.LiteralString(reg, "node")
+	path := pathdom.NewPath(symbol.ID(9), "graph").Field("references")
+	want, ok := cache.RuntimeIndex(reg, tableValue, keyValue)
+	if !ok {
+		t.Fatal("test setup RuntimeIndex failed")
+	}
+	want = InheritTopOriginEvidence(reg, want, tableValue)
+	got, ok := ReadBoundDynamicTableValue(reg, cache, ks, nil, 0, path, tableValue, keyValue, state.State{})
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("direct table read = %#v/%v, want %#v", got, ok, want)
+	}
+	if _, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, path, tableValue, keyValue, state.State{}); ok {
+		t.Fatal("owner-path form accepted an already-derived table value")
+	}
+}
+
 func TestReadBoundDynamicIndexValueProjectsTypedOwnerPathBeforeFallbackIndex(t *testing.T) {
 	reg := standard.Registry()
 	cache := typevalue.NewCache()

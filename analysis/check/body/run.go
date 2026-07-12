@@ -678,8 +678,13 @@ func (s *Static) callOutcomeContext(typeValues *typevalue.Cache) CallOutcomeCont
 		typeValues = s.typeValues
 	}
 	return CallOutcomeContext{
-		Facts:                       s.facts,
-		Sources:                     s.sources,
+		Facts:   s.facts,
+		Sources: s.sources,
+		PathValue: func(ctx transfer.NodeContext, path pathdom.Path, in state.State) (product.Value, bool) {
+			return readexpr.Project(readexpr.Config{
+				Registry: s.registry, Facts: s.facts, Visibility: s.visibility, TypeValues: typeValues,
+			}, ctx.Point, path, in)
+		},
 		ProtectedCall:               s.isProtectedCallSite,
 		CalleeValue:                 s.calleeValue,
 		ReceiverCallable:            s.receiverFn,

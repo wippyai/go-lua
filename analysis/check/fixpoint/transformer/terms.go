@@ -25,6 +25,7 @@ const (
 	valueJoin
 	valueCellResult
 	valueDynamicRead
+	valueDynamicTableRead
 )
 
 // CellRef is a stable SCC equation reference. Generation is deliberately not
@@ -132,6 +133,27 @@ func (a *Arena) DynamicReadValue(owner ValueTerm, tablePath PathTerm, key ValueT
 		return 0
 	}
 	return a.internValue(valueNode{op: valueDynamicRead, args: []ValueTerm{owner, key}, path: tablePath})
+}
+
+// DynamicReadTableValue retains a direct table value together with its real
+// caller path. Unlike DynamicReadValue, the resolver must not project the path
+// from an owner again; the path exists for exact flow-sensitive read evidence.
+func (a *Arena) DynamicReadTableValue(table ValueTerm, tablePath PathTerm, key ValueTerm) ValueTerm {
+	if table == 0 || tablePath == 0 || key == 0 {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueDynamicTableRead, args: []ValueTerm{table, key}, path: tablePath})
+}
+
+// DynamicReadTableValueOr retains a compile-time proven static fallback for a
+// direct table read. The fallback is used only when concrete path/heap/type
+// projection cannot answer; it is part of the term identity and rebases with
+// the rest of the DAG.
+func (a *Arena) DynamicReadTableValueOr(table ValueTerm, tablePath PathTerm, key, fallback ValueTerm) ValueTerm {
+	if table == 0 || tablePath == 0 || key == 0 || fallback == 0 {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueDynamicTableRead, args: []ValueTerm{table, key, fallback}, path: tablePath})
 }
 
 func (a *Arena) Path(root Root, suffix ...segment.Segment) PathTerm {
@@ -262,6 +284,8 @@ func (a *Arena) valueKey(n valueNode) string {
 		return fmt.Sprintf("x:%d:%d:%v", n.cell.Function, n.cell.Slot, n.args)
 	case valueDynamicRead:
 		return fmt.Sprintf("d:%d:%d:%d", n.args[0], n.path, n.args[1])
+	case valueDynamicTableRead:
+		return fmt.Sprintf("dt:%d:%v", n.path, n.args)
 	default:
 		return "invalid"
 	}
@@ -317,8 +341,9 @@ type DynamicReadResolver func(pathdom.Path, product.Value, product.Value) (produ
 // SpecializationContext owns optional concrete evaluators. A term requiring a
 // missing evaluator fails the entire specialization transaction.
 type SpecializationContext struct {
-	CellResult  CellResultResolver
-	DynamicRead DynamicReadResolver
+	CellResult       CellResultResolver
+	DynamicRead      DynamicReadResolver
+	DynamicTableRead DynamicReadResolver
 }
 
 func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context SpecializationContext) (product.Value, bool) {
@@ -371,6 +396,29 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			return product.Value{}, false
 		}
 		return context.DynamicRead(tablePath, table, key)
+	case valueDynamicTableRead:
+		if context.DynamicTableRead == nil || (len(n.args) != 2 && len(n.args) != 3) {
+			return product.Value{}, false
+		}
+		table, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		key, ok := a.evalValue(n.args[1], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		tablePath, ok := a.evalPath(n.path, cursor)
+		if !ok {
+			return product.Value{}, false
+		}
+		if value, ok := context.DynamicTableRead(tablePath, table, key); ok {
+			return value, true
+		}
+		if len(n.args) == 3 {
+			return a.evalValue(n.args[2], cursor, context)
+		}
+		return product.Value{}, false
 	default:
 		return product.Value{}, false
 	}
@@ -415,6 +463,12 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 		return fmt.Sprintf("c%d.%d(%s)", n.cell.Function, n.cell.Slot, strings.Join(parts, ","))
 	case valueDynamicRead:
 		return "d(" + a.canonicalValue(n.args[0]) + "," + a.canonicalPath(n.path) + "," + a.canonicalValue(n.args[1]) + ")"
+	case valueDynamicTableRead:
+		parts := []string{a.canonicalValue(n.args[0]), a.canonicalPath(n.path), a.canonicalValue(n.args[1])}
+		if len(n.args) == 3 {
+			parts = append(parts, a.canonicalValue(n.args[2]))
+		}
+		return "dt(" + strings.Join(parts, ",") + ")"
 	default:
 		return "_"
 	}
@@ -433,6 +487,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueDynamicRead && (len(n.args) != 2 || !a.validPath(n.path, shape)) {
+		return false
+	}
+	if n.op == valueDynamicTableRead && ((len(n.args) != 2 && len(n.args) != 3) || !a.validPath(n.path, shape)) {
 		return false
 	}
 	if n.op == valueInvalid {

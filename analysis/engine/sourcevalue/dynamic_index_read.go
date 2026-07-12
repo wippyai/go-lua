@@ -37,10 +37,42 @@ func ReadBoundDynamicIndexValue(
 	keyValue product.Value,
 	in state.State,
 ) (product.Value, bool) {
+	return readBoundDynamicIndexValue(reg, typeValues, ks, resolver, point, tablePath, tableValue, keyValue, in, true)
+}
+
+// ReadBoundDynamicTableValue performs a dynamic read when tableValue is
+// already the value at tablePath. The path remains authoritative for exact
+// flow evidence, but is never projected from tableValue a second time.
+func ReadBoundDynamicTableValue(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	ks *keyspace.KeySpace,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	tablePath pathdom.Path,
+	tableValue product.Value,
+	keyValue product.Value,
+	in state.State,
+) (product.Value, bool) {
+	return readBoundDynamicIndexValue(reg, typeValues, ks, resolver, point, tablePath, tableValue, keyValue, in, false)
+}
+
+func readBoundDynamicIndexValue(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	ks *keyspace.KeySpace,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	tablePath pathdom.Path,
+	tableValue product.Value,
+	keyValue product.Value,
+	in state.State,
+	projectPath bool,
+) (product.Value, bool) {
 	if reg == nil || ks == nil || tablePath.IsEmpty() {
 		return product.Value{}, false
 	}
-	if len(tablePath.Segments) != 0 {
+	if projectPath && len(tablePath.Segments) != 0 {
 		ownerPath := tablePath
 		ownerPath = tablePath.ParentView()
 		if resolver != nil {
@@ -62,7 +94,7 @@ func ReadBoundDynamicIndexValue(
 		} else {
 			return product.Value{}, false
 		}
-	} else if resolver != nil {
+	} else if projectPath && resolver != nil {
 		projectedTable, ok := ReadPathValue(reg, resolver, point, tablePath, in)
 		if !ok || product.Equal(reg, product.Meet(reg, projectedTable, tableValue), product.Bottom(reg)) {
 			return product.Value{}, false

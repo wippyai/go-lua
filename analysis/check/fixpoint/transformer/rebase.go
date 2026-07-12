@@ -226,6 +226,18 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 				return err
 			}
 		}
+	case valueDynamicTableRead:
+		if (len(n.args) != 2 && len(n.args) != 3) || n.path == 0 {
+			return fmt.Errorf("transformer: malformed direct DynamicRead term %d", term)
+		}
+		if err := v.path(n.path); err != nil {
+			return err
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
 	default:
 		return fmt.Errorf("transformer: invalid source value operation at term %d", term)
 	}
@@ -323,6 +335,13 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if err := validatePathTerm(arena, n.path, shape); err != nil {
 			return err
 		}
+	case valueDynamicTableRead:
+		if len(n.args) != 2 && len(n.args) != 3 {
+			return fmt.Errorf("malformed direct DynamicRead term %d", term)
+		}
+		if err := validatePathTerm(arena, n.path, shape); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("invalid value operation at term %d", term)
 	}
@@ -373,6 +392,12 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		out = s.caller.JoinValue(args...)
 	case valueDynamicRead:
 		out = s.caller.DynamicReadValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
+	case valueDynamicTableRead:
+		if len(n.args) == 3 {
+			out = s.caller.DynamicReadTableValueOr(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]), s.value(n.args[2]))
+		} else {
+			out = s.caller.DynamicReadTableValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
+		}
 	}
 	s.values[term] = out
 	return out
