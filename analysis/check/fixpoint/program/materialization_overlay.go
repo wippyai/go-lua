@@ -16,25 +16,63 @@ func snapshotWithMaterializedSummaryProofs(
 	materialized materializedProgram,
 	acceptEquivalentValueSpelling bool,
 ) (summary.Snapshot, bool) {
+	next, changes := snapshotWithMaterializedSummaryProofChanges(reg, base, materialized, acceptEquivalentValueSpelling)
+	return next, changes.any()
+}
+
+// materializedSummaryChanges is the exact proof-round root set. Presentation
+// includes every key whose stored normalized spelling changed; Semantic is the
+// subset whose lattice meaning changed. Regional rematerialization must start
+// from Presentation because type spelling can affect emitted diagnostics, while
+// semantic dependency propagation may use Semantic when its consumer contract
+// explicitly ignores presentation.
+type materializedSummaryChanges struct {
+	Presentation map[summary.SummaryKey]struct{}
+	Semantic     map[summary.SummaryKey]struct{}
+}
+
+func (c materializedSummaryChanges) any() bool { return len(c.Presentation) != 0 }
+
+func snapshotWithMaterializedSummaryProofChanges(
+	reg *axis.Registry,
+	base summary.Snapshot,
+	materialized materializedProgram,
+	acceptEquivalentValueSpelling bool,
+) (summary.Snapshot, materializedSummaryChanges) {
 	entries := base.EntriesOwnedNormalized()
 	byKey := make(map[summary.SummaryKey]summary.Summary, len(entries)+1)
 	for _, entry := range entries {
 		byKey[entry.Key] = entry.Summary
 	}
-	changed := false
+	changes := materializedSummaryChanges{}
 	for result, key := range materialized.resultKey {
+		before, beforeOK := byKey[key]
 		if overlayMaterializedSummaryProofsForResult(reg, byKey, key, result, materialized.projections, acceptEquivalentValueSpelling) {
-			changed = true
+			if changes.Presentation == nil {
+				changes.Presentation = make(map[summary.SummaryKey]struct{})
+			}
+			changes.Presentation[key] = struct{}{}
+			after := byKey[key]
+			if !beforeOK || !materializedSummariesLatticeEquivalent(reg, before, after) {
+				if changes.Semantic == nil {
+					changes.Semantic = make(map[summary.SummaryKey]struct{})
+				}
+				changes.Semantic[key] = struct{}{}
+			}
 		}
 	}
-	if !changed {
-		return base, false
+	if !changes.any() {
+		return base, materializedSummaryChanges{}
 	}
 	nextEntries := make([]summary.EntrySummary, 0, len(byKey))
 	for key, sum := range byKey {
 		nextEntries = append(nextEntries, summary.EntrySummary{Key: key, Summary: sum})
 	}
-	return summary.NewSnapshotOwnedNormalized(reg, nextEntries...), true
+	return summary.NewSnapshotOwnedNormalized(reg, nextEntries...), changes
+}
+
+func materializedSummariesLatticeEquivalent(reg *axis.Registry, left, right summary.Summary) bool {
+	return summary.LessOrEq(reg, left, right) && summary.LessOrEq(reg, right, left)
 }
 
 func materializedCoreProofChangesAffectMaterialization(reg *axis.Registry, before, after summary.Snapshot) bool {

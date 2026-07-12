@@ -3,12 +3,65 @@ package program
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestMaterializedProofChangesReportExactPresentationAndSemanticKeys(t *testing.T) {
+	reg := standard.Registry()
+	buildRecursive := func() typ.Type {
+		return typ.NewRecursive("ProofDelta", func(self typ.Type) typ.Type {
+			return typetable.NewRecord().OptField("next", self).Build()
+		})
+	}
+	currentSpelling := typevalue.NewCache().FromTypeWithWitness(reg, buildRecursive())
+	projectedSpelling := typevalue.NewCache().FromTypeWithWitness(reg, buildRecursive())
+	if product.Equal(reg, currentSpelling, projectedSpelling) ||
+		!product.LessOrEq(reg, currentSpelling, projectedSpelling) ||
+		!product.LessOrEq(reg, projectedSpelling, currentSpelling) {
+		t.Fatal("test requires distinct lattice-equivalent recursive spellings")
+	}
+
+	presentationKey := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(6101)))
+	semanticKey := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(6102)))
+	presentationResult := &body.Result{}
+	semanticResult := &body.Result{}
+	base := summary.NewSnapshot(reg,
+		summary.EntrySummary{Key: presentationKey, Summary: summary.Summary{Returns: []product.Value{currentSpelling}}},
+		summary.EntrySummary{Key: semanticKey, Summary: summary.Summary{Returns: []product.Value{product.Top()}}},
+	)
+	materialized := materializedProgram{
+		resultKey: map[*body.Result]summary.SummaryKey{
+			presentationResult: presentationKey,
+			semanticResult:     semanticKey,
+		},
+		projections: &resultSummaryProjectionCache{entries: map[*body.Result]summary.Summary{
+			presentationResult: {Returns: []product.Value{projectedSpelling}},
+			semanticResult:     {Returns: []product.Value{typevalue.FromType(reg, typ.String)}},
+		}},
+	}
+
+	_, changes := snapshotWithMaterializedSummaryProofChanges(reg, base, materialized, true)
+	if _, ok := changes.Presentation[presentationKey]; !ok {
+		t.Fatal("equivalent spelling rewrite missing from presentation changes")
+	}
+	if _, ok := changes.Semantic[presentationKey]; ok {
+		t.Fatal("equivalent spelling rewrite incorrectly reported as semantic change")
+	}
+	if _, ok := changes.Presentation[semanticKey]; !ok {
+		t.Fatal("semantic refinement missing from presentation changes")
+	}
+	if _, ok := changes.Semantic[semanticKey]; !ok {
+		t.Fatal("semantic refinement missing from semantic changes")
+	}
+}
 
 func TestMaterializedParamObligationsJoinAlternatingProjections(t *testing.T) {
 	reg := standard.Registry()
