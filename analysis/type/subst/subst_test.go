@@ -159,6 +159,24 @@ func TestSubstitute(t *testing.T) {
 	})
 }
 
+func TestSubstitutePreservesFunctionPresentationAndSemanticView(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	fn := typ.RebuildFunction(typ.FunctionParts{
+		Params: []typ.Param{{Name: "ctx", Type: param, Receiver: true}},
+	})
+	got, ok := Substitute(fn, map[string]typ.Type{"T": typ.String}).(*typ.Function)
+	if !ok {
+		t.Fatalf("substituted function = %T", got)
+	}
+	if label, _ := got.Presentation().ParamName(0); label != "ctx" {
+		t.Fatalf("substituted presentation label = %q", label)
+	}
+	semantic := got.SemanticType().Params[0]
+	if !semantic.Receiver || semantic.Type != typ.String || semantic.Name != "self" {
+		t.Fatalf("substituted semantic param = %#v", semantic)
+	}
+}
+
 func TestParams(t *testing.T) {
 	t.Run("mismatched lengths", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)

@@ -73,7 +73,7 @@ func newCanonicalFunction(
 	props.include(variadic)
 	props.includeTypes(returnsCopy...)
 
-	return &Function{
+	fn := &Function{
 		TypeParams:        typeParamsCopy,
 		Params:            paramsCopy,
 		Variadic:          variadic,
@@ -81,7 +81,65 @@ func newCanonicalFunction(
 		hash:              h,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    props,
+		presentation:      functionPresentation(paramsCopy),
 	}
+	if functionSemanticNamesCanonical(paramsCopy) {
+		fn.semantic = fn
+	}
+	return fn
+}
+
+func functionSemanticNamesCanonical(params []Param) bool {
+	for i := range params {
+		semanticName := ""
+		if params[i].Receiver {
+			semanticName = "self"
+		}
+		if params[i].Name != semanticName {
+			return false
+		}
+	}
+	return true
+}
+
+func newSemanticFunction(source *Function) *Function {
+	if source == nil {
+		return nil
+	}
+	semanticParams := append([]Param(nil), source.Params...)
+	for i := range semanticParams {
+		semanticParams[i].Name = ""
+		if semanticParams[i].Receiver {
+			semanticParams[i].Name = "self"
+		}
+	}
+	semantic := &Function{
+		TypeParams:        source.TypeParams,
+		Params:            semanticParams,
+		Variadic:          source.Variadic,
+		Returns:           source.Returns,
+		hash:              source.hash,
+		equalityHashCache: &equalityHashCache{},
+		typeProperties:    source.typeProperties,
+		presentation:      functionPresentation(semanticParams),
+	}
+	semantic.semantic = semantic
+	return semantic
+}
+
+func functionPresentation(params []Param) FunctionPresentation {
+	presentation := FunctionPresentation{paramCount: len(params)}
+	if len(params) <= len(presentation.paramNamesSmall) {
+		for i := range params {
+			presentation.paramNamesSmall[i] = params[i].Name
+		}
+		return presentation
+	}
+	presentation.paramNamesLarge = make([]string, len(params))
+	for i := range params {
+		presentation.paramNamesLarge[i] = params[i].Name
+	}
+	return presentation
 }
 
 func normalizeFunctionReturns(returns []Type) []Type {

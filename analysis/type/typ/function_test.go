@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -292,6 +293,91 @@ func TestFunctionReceiverMetadataDerivesAndSurvivesConstructionBoundaries(t *tes
 	}
 }
 
+func TestFunctionPresentationAndSemanticViewsAreImmutableAndSeparated(t *testing.T) {
+	fn := Func().Param("self", Self).OptParam("payload", String).Returns(Boolean).Build()
+	presentation := fn.Presentation()
+	if got := presentation.ParamNames(); len(got) != 2 || got[0] != "self" || got[1] != "payload" {
+		t.Fatalf("presentation labels = %v", got)
+	}
+	labels := presentation.ParamNames()
+	labels[1] = "mutated"
+	if got, _ := presentation.ParamName(1); got != "payload" {
+		t.Fatalf("presentation exposed mutable labels: %q", got)
+	}
+
+	semantic := fn.SemanticType()
+	if semantic == nil || semantic != fn.SemanticType() || len(semantic.Params) != 2 || len(semantic.Returns) != 1 {
+		t.Fatal("semantic view is not stable/O(1)")
+	}
+	self := semantic.Params[0]
+	if !self.Receiver || self.Type != Self || self.Optional || self.Name != "self" {
+		t.Fatalf("semantic self = %#v", self)
+	}
+	payload := semantic.Params[1]
+	if payload.Receiver || payload.Type != String || !payload.Optional || payload.Name != "" {
+		t.Fatalf("semantic payload = %#v", payload)
+	}
+	if ret := semantic.Returns[0]; ret != Boolean {
+		t.Fatalf("semantic return = %v", ret)
+	}
+}
+
+func TestFunctionSemanticViewSharesRecursiveGenericChildren(t *testing.T) {
+	param := NewTypeParam("T", String)
+	recursive := NewRecursive("Node", func(self Type) Type { return NewArray(self) })
+	fn := RebuildFunction(FunctionParts{
+		TypeParams: []*TypeParam{param},
+		Params:     []Param{{Name: "node", Type: recursive}},
+		Variadic:   param,
+		Returns:    []Type{recursive},
+	})
+	semantic := fn.SemanticType()
+	if semantic.Params[0].Type != recursive || semantic.Variadic != param || semantic.TypeParams[0] != param || semantic.Returns[0] != recursive {
+		t.Fatal("semantic view copied recursive/generic child nodes")
+	}
+	clone := CloneFunction(fn)
+	if clone.SemanticType() == semantic || !TypeEquals(clone.SemanticType(), semantic) || clone.SemanticType().Hash() != semantic.Hash() {
+		t.Fatal("clone semantic view ownership/identity is invalid")
+	}
+	if label, _ := clone.Presentation().ParamName(0); label != "node" {
+		t.Fatalf("clone presentation label = %q", label)
+	}
+}
+
+func TestFunctionSemanticTypeDocumentsCompositeChildBoundary(t *testing.T) {
+	nested := Func().Param("payload", String).Build()
+	record := RebuildRecord(RecordParts{Fields: []Field{{Name: "run", Type: nested}}})
+	outer := Func().Param("wrapper", record).Build()
+	semanticRecord, ok := outer.SemanticType().Params[0].Type.(*Record)
+	if !ok || semanticRecord != record {
+		t.Fatal("PR2a must share the composite child without a graph walk")
+	}
+	field := semanticRecord.GetField("run")
+	if field == nil || field.Type != nested || field.Type == nested.SemanticType() {
+		t.Fatal("test no longer demonstrates the bounded composite-child limitation")
+	}
+}
+
+func TestFunctionSemanticTypeConcurrentPublicationIsStable(t *testing.T) {
+	fn := Func().Param("payload", String).Returns(Any).Build()
+	const workers = 32
+	got := make([]*Function, workers)
+	var group sync.WaitGroup
+	for i := range got {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			got[index] = fn.SemanticType()
+		}(i)
+	}
+	group.Wait()
+	for i := 1; i < len(got); i++ {
+		if got[i] != got[0] {
+			t.Fatalf("semantic publication differs at %d", i)
+		}
+	}
+}
+
 func TestFunctionReceiverConventionParticipatesInIdentity(t *testing.T) {
 	receiver := RebuildFunction(FunctionParts{Params: []Param{{Name: "ctx", Type: Any, Receiver: true}}})
 	ordinary := RebuildFunction(FunctionParts{Params: []Param{{Name: "ctx", Type: Any}}})
@@ -330,5 +416,25 @@ func BenchmarkFunctionReceiverConstruction(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = RebuildFunction(parts)
+	}
+}
+
+func BenchmarkFunctionSemanticViewSteadyState(b *testing.B) {
+	fn := Func().Param("self", Self).Param("payload", String).Returns(Any).Build()
+	want := fn.SemanticType()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		semantic := fn.SemanticType()
+		if semantic != want || semantic.Params[1].Type != String || semantic.Hash() == 0 {
+			b.Fatal("invalid semantic view")
+		}
+	}
+}
+
+func BenchmarkFunctionSemanticTypeFirstMaterialization(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		fn := Func().Param("payload", String).Returns(Any).Build()
+		_ = fn.SemanticType()
 	}
 }

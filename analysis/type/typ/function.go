@@ -2,6 +2,7 @@ package typ
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -28,7 +29,72 @@ type Function struct {
 	hash              uint64
 	equalityHashCache *equalityHashCache
 	typeProperties
-	strCache stringCache
+	strCache     stringCache
+	presentation FunctionPresentation
+	semantic     *Function
+	semanticOnce sync.Once
+}
+
+// FunctionPresentation is immutable source-facing metadata for a function.
+// It deliberately has no setters; callers may read labels without consulting
+// semantic parameter identity.
+type FunctionPresentation struct {
+	paramNamesSmall [2]string
+	paramNamesLarge []string
+	paramCount      int
+}
+
+// ParamName returns the source label for one positional parameter.
+func (p *FunctionPresentation) ParamName(index int) (string, bool) {
+	if p == nil || index < 0 || index >= p.paramCount {
+		return "", false
+	}
+	if p.paramNamesLarge != nil {
+		return p.paramNamesLarge[index], true
+	}
+	return p.paramNamesSmall[index], true
+}
+
+// ParamNames returns an ownership-isolated label list.
+func (p *FunctionPresentation) ParamNames() []string {
+	if p == nil || p.paramCount == 0 {
+		return nil
+	}
+	out := make([]string, p.paramCount)
+	if p.paramNamesLarge != nil {
+		copy(out, p.paramNamesLarge)
+	} else {
+		copy(out, p.paramNamesSmall[:p.paramCount])
+	}
+	return out
+}
+
+func (f *Function) Presentation() *FunctionPresentation {
+	if f == nil {
+		return nil
+	}
+	return &f.presentation
+}
+
+// SemanticType returns the concrete, label-free function node constructed with
+// f. It is suitable for semantic interning: ordinary parameter names are empty,
+// explicit receiver positions retain the canonical "self" marker, and all
+// parameter/result/type-parameter child nodes are shared with f.
+//
+// This PR2a view canonicalizes this function boundary only. Composite child
+// types can still contain presentation-bearing function nodes; a future paired
+// semantic graph at every immutable composite constructor is required before
+// arbitrary types can enter typewitness without a graph walk.
+func (f *Function) SemanticType() *Function {
+	if f == nil {
+		return nil
+	}
+	f.semanticOnce.Do(func() {
+		if f.semantic == nil {
+			f.semantic = newSemanticFunction(f)
+		}
+	})
+	return f.semantic
 }
 
 // FunctionBuilder provides a fluent API for constructing function types.
@@ -122,7 +188,7 @@ func CloneFunction(fn *Function) *Function {
 	if fn == nil {
 		return nil
 	}
-	return &Function{
+	clone := &Function{
 		TypeParams:        append([]*TypeParam(nil), fn.TypeParams...),
 		Params:            append([]Param(nil), fn.Params...),
 		Variadic:          fn.Variadic,
@@ -130,7 +196,12 @@ func CloneFunction(fn *Function) *Function {
 		hash:              fn.hash,
 		equalityHashCache: fn.equalityHashCache,
 		typeProperties:    fn.typeProperties,
+		presentation:      fn.presentation,
 	}
+	if functionSemanticNamesCanonical(clone.Params) {
+		clone.semantic = clone
+	}
+	return clone
 }
 
 func (f *Function) Kind() kind.Kind { return kind.Function }

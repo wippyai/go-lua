@@ -1084,3 +1084,23 @@ func TestRewrite_DepthLimit(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 }
+
+func TestRewritePreservesFunctionPresentationAndSemanticView(t *testing.T) {
+	fn := typ.RebuildFunction(typ.FunctionParts{Params: []typ.Param{{Name: "ctx", Type: typ.String, Receiver: true}}})
+	got, ok := Rewrite(fn, func(t typ.Type) (typ.Type, bool) {
+		if t == typ.String {
+			return typ.Number, true
+		}
+		return nil, false
+	}).(*typ.Function)
+	if !ok {
+		t.Fatalf("rewritten function = %T", got)
+	}
+	if label, _ := got.Presentation().ParamName(0); label != "ctx" {
+		t.Fatalf("rewritten presentation label = %q", label)
+	}
+	param := got.SemanticType().Params[0]
+	if !param.Receiver || param.Type != typ.Number || param.Name != "self" {
+		t.Fatalf("rewritten semantic param = %#v", param)
+	}
+}
