@@ -19,7 +19,7 @@ GOCACHE="$tmp/go-build" go test -c -o "$binary" .
 for fixture in "${fixtures[@]}"; do
   IFS=/ read -r group suite <<<"$fixture"
   printf '\n== fresh-process attribution: %s ==\n' "$fixture"
-  env FIXTURE_STATS=1 FIXTURE_SEQUENTIAL=1 \
+  env FIXTURE_STATS=1 FIXTURE_SEQUENTIAL=1 FIXTURE_WTO=1 \
     /usr/bin/time -f 'elapsed=%e maxrss_kb=%M exit=%x' \
     "$binary" -test.run "^TestFixtures$/^${group}$/^${suite}$/^check$" -test.count=1 -test.v
 done

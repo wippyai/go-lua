@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -289,6 +290,9 @@ func runCheckPhaseContext(t *testing.T, s namedSuite, ctx context.Context) {
 	var baseOpts []testutil.Option
 	if ctx != nil {
 		baseOpts = append(baseOpts, testutil.WithContext(ctx))
+	}
+	if os.Getenv("FIXTURE_WTO") != "" {
+		baseOpts = append(baseOpts, testutil.WithSchedule(transfer.ScheduleWTO, nil))
 	}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
