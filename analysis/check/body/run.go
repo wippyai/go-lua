@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -174,6 +175,10 @@ func (c *checker) prepare(
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)
 	declarations := declarationFactsFromSource(bindings, built, sourceStmts)
 	genericFors := genericForFactsFromSource(bindings, built, sourceStmts)
+	resolver := config.Visibility
+	if resolver == nil {
+		resolver = defaultVisibilityResolver(bindings, built, wirBody, genericFors)
+	}
 	signatureProducer := effectlowering.PrepareSignatureProducer(effectlowering.SignatureOutcomeProviderConfig{
 		Signatures: config.Signatures, NameForSite: signatureID.nameForCallSiteView,
 	})
@@ -185,6 +190,21 @@ func (c *checker) prepare(
 			return iteration.Iterator{}, false
 		}
 		return signatureProducer.IteratorForSite(transfer.NodeContext{Point: point}, site)
+	}, func(point cfg.Point, ref effect.ParamRef) (int, typ.Type, bool) {
+		site, ok := facts.CallSiteView(point)
+		if !ok {
+			return 0, nil, false
+		}
+		index, ok := effect.ResolveParamIndex(ref, site.ArgumentSourceCount())
+		if !ok {
+			return 0, nil, false
+		}
+		source, ok := site.ArgumentSourceAt(index)
+		if !ok {
+			return 0, nil, false
+		}
+		declared, ok := genericForDeclaredPathIteratorSourceType(source, facts, resolver, lowered.SymbolTypes)
+		return index, declared, ok
 	})
 	operationPlan := lowered.Plan.
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
@@ -194,10 +214,6 @@ func (c *checker) prepare(
 	operationPlan = operationPlan.
 		WithSignatureAllocations(signatureAllocationOperations(operationPlan, uint64(functionSymbol))).
 		WithExtensions(genericForOperationExtensions(genericForOperations))
-	resolver := config.Visibility
-	if resolver == nil {
-		resolver = defaultVisibilityResolver(bindings, built, wirBody, genericFors)
-	}
 	userExpressionValue := config.ExpressionValue
 	expressionValue := userExpressionValue
 	var readExpressionConfig *readexpr.Config

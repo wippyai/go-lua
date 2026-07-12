@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -19,6 +20,7 @@ func compileGenericForOperations(
 	types *typeresolve.Resolver,
 	resolvePath func(ast.Expr) (pathdom.Path, bool),
 	resolveIterator func(cfg.Point) (iteration.Iterator, bool),
+	resolveDeclaredSource func(cfg.Point, effect.ParamRef) (int, typ.Type, bool),
 ) map[cfg.Point]operationplan.GenericForOperation {
 	if len(facts) == 0 {
 		return nil
@@ -45,18 +47,52 @@ func compileGenericForOperations(
 			}
 		}
 		contracts := genericForSourceContracts(fact, types)
+		var iterator iteration.Iterator
+		hasIterator := false
+		if resolveIterator != nil && source.Kind == operationplan.GenericForSourceCall && source.HasCallPoint {
+			iterator, hasIterator = resolveIterator(source.CallPoint)
+		}
+		contracts = genericForDeclaredSourceContracts(fact, source, iterator, hasIterator, contracts, resolveDeclaredSource)
 		first := fact.Symbols[0]
 		op, ok := operationplan.NewGenericForOperation(fact.VariableIndex, fact.Symbols[fact.VariableIndex], first, source, contracts)
 		if ok {
-			if resolveIterator != nil && source.Kind == operationplan.GenericForSourceCall && source.HasCallPoint {
-				if iterator, resolved := resolveIterator(source.CallPoint); resolved {
-					op = op.WithIterator(iterator)
-				}
+			if hasIterator {
+				op = op.WithIterator(iterator)
 			}
 			out[point] = op
 		}
 	}
 	return out
+}
+
+// genericForDeclaredSourceContracts freezes the state-independent portion of
+// genericForDeclaredPathIteratorSourceType into the immutable operation plan.
+// Solved and dominating-path recovery deliberately remain concrete fallbacks:
+// they depend on a particular fixpoint state and cannot authorize a reusable
+// symbolic equation.
+func genericForDeclaredSourceContracts(
+	fact GenericForFact,
+	source operationplan.GenericForSource,
+	iterator iteration.Iterator,
+	hasIterator bool,
+	contracts []typ.Type,
+	resolveDeclaredSource func(cfg.Point, effect.ParamRef) (int, typ.Type, bool),
+) []typ.Type {
+	if !hasIterator || source.Kind != operationplan.GenericForSourceCall || !source.HasCallPoint || resolveDeclaredSource == nil {
+		return contracts
+	}
+	index, declared, ok := resolveDeclaredSource(source.CallPoint, iterator.Source)
+	if !ok || index < 0 || (index < len(contracts) && contracts[index] != nil) {
+		return contracts
+	}
+	if !genericForIteratorSourceTypeProjects(iterator, fact.VariableIndex, declared) {
+		return contracts
+	}
+	if len(contracts) <= index {
+		contracts = append(contracts, make([]typ.Type, index+1-len(contracts))...)
+	}
+	contracts[index] = declared
+	return contracts
 }
 
 func genericForOperationExtensions(operations map[cfg.Point]operationplan.GenericForOperation) []operationplan.ExtensionInput {

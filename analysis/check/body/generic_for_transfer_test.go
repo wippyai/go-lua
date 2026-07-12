@@ -76,24 +76,31 @@ end
 func TestPreparedGenericForSolveUsesSyntaxFreeOperations(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
-local values = {{id = 1}, {id = 2}}
-local total = 0
-for _, value in ipairs(values) do
-	total = total + value.id
-end`)
+	local values: {string} = {"a", "b"}
+	local last = ""
+	for _, value in ipairs(values) do
+		last = value
+	end`)
 	config := Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}
 	prepared, err := PrepareChunk(stmts, config)
 	if err != nil {
 		t.Fatalf("PrepareChunk: %v", err)
 	}
 	owned := 0
+	declaredContracts := 0
 	for point := cfg.Point(0); int(point) < prepared.operationPlan.PointCount(); point++ {
-		if _, ok := prepared.operationPlan.GenericForOperation(point); ok {
+		if op, ok := prepared.operationPlan.GenericForOperation(point); ok {
 			owned++
+			if _, ok := op.SourceContract(0); ok {
+				declaredContracts++
+			}
 		}
 	}
 	if owned != 2 || !prepared.operationPlan.HasExtensions() {
 		t.Fatalf("generic-for operations/extensions = %d/%v", owned, prepared.operationPlan.HasExtensions())
+	}
+	if declaredContracts != 2 {
+		t.Fatalf("prepared declared iterator contracts = %d, want both loop-variable operations", declaredContracts)
 	}
 	want, err := SolvePrepared(prepared, SolveConfig{})
 	if err != nil {
