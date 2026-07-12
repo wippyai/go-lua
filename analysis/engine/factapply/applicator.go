@@ -221,12 +221,23 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out = applyDynamicIndexWrite(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
 		}
 		if fact, ok := facts.RootAssignment(ctx.Point); ok {
-			var applied bool
-			out, applied = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, config.ClosedDynamicAllValues, config.TypeValues)
-			if applied {
-				out = applyCallOutcomeReturnSlotFactsAfterRootAssignment(ctx, facts, callOutcome, config.Visibility, config.ProjectPath, config.CovariantWiden, config.TypeValues, ensureCallResults().ReadLazy(), in, out, fact.TargetPathRef(), fact.Source())
-				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcomeCache, callOutcome, config.Visibility, ensureCallResults().ReadLazy(), out)
-			}
+			result := ApplyConcreteRootAssignmentPoint(ConcreteRootAssignmentPointRequest{
+				Context:                ctx,
+				Resolver:               config.Visibility,
+				Facts:                  facts,
+				Sources:                sources,
+				Read:                   ensureCallResults().ReadLazy(),
+				Input:                  in,
+				Output:                 out,
+				Assignment:             fact,
+				CallOutcome:            callOutcome,
+				ProjectPath:            config.ProjectPath,
+				CovariantWiden:         config.CovariantWiden,
+				TypeValues:             config.TypeValues,
+				ClosedDynamicAllValues: config.ClosedDynamicAllValues,
+				presenceCache:          callOutcomeCache,
+			})
+			out = result.Output
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {
 			var applied bool
@@ -251,7 +262,13 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if fact, ok := facts.Return(ctx.Point); ok {
 			out = applyReturn(ctx, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, config.Visibility, config.ProjectPath, config.TypeValues)
 		}
-		out = applyCovariantExposures(ctx, config.Visibility, config.CovariantWiden, facts, out)
+		out = FinalizeConcretePoint(ConcretePointFinalizerRequest{
+			Context:        ctx,
+			Resolver:       config.Visibility,
+			Facts:          facts,
+			CovariantWiden: config.CovariantWiden,
+			Output:         out,
+		})
 		return out
 	}
 }
