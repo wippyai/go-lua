@@ -1,12 +1,14 @@
 package program
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/callresult"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/relationcall"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
@@ -111,6 +113,72 @@ func TestFindRootNodesStructuredTransformerMatchesRealValidateGraphContexts(t *t
 	// Summary provider only. It has no program/body solver reference, so a
 	// callee body solve after build is structurally impossible.
 	t.Logf("find_root_nodes relation built once; exact at both validate_graph call sites without a callee-solver path (heap objects=%d fresh allocations=%d MaySuspend=%v)", len(fixture.base.HeapTableObjects), len(fixture.base.FreshHeapAllocations), fixture.base.MaySuspend)
+}
+
+func TestFindRootNodesFrozenRelationComposesAtRealValidateGraphCalls(t *testing.T) {
+	fixture := newFindRootNodesPOCFixture(t)
+	application := fixture.applications[len(fixture.applications)-1]
+	cell := transformer.CellRef{Function: uint64(fixture.baseKey.Ref.ID)}
+	snapshot, err := transformer.FreezeAcyclicRelation(context.Background(), cell, fixture.relation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := totalAttributedBodySolves(fixture.stats)
+	adapted, err := solveValidateGraphWithFindRootNodesRelation(application, fixture.validateKey, fixture.baseKey, cell, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after := totalAttributedBodySolves(fixture.stats); after != before {
+		t.Fatalf("relation application ran callee body solves: before=%d after=%d", before, after)
+	}
+	points := findRootNodesCallPoints(t, application.oracle)
+	if len(points) != 2 {
+		t.Fatalf("find_root_nodes call points=%v", points)
+	}
+	for _, point := range points {
+		wantOutcome, wantOK := application.oracle.CallOutcomeAt(point)
+		gotOutcome, gotOK := adapted.CallOutcomeAt(point)
+		if wantOK != gotOK || !reflect.DeepEqual(wantOutcome, gotOutcome) {
+			t.Fatalf("line %d frozen relation CallOutcome differs", callLine(application.oracle, point))
+		}
+		want, wantOK := application.oracle.StateAtBoundary(point)
+		got, gotOK := adapted.StateAtBoundary(point)
+		if wantOK != gotOK {
+			t.Fatalf("line %d boundary state presence differs", callLine(application.oracle, point))
+		}
+		if wantOK {
+			for _, lane := range state.DefaultLanes() {
+				if !state.DomainWithLanes(application.config.Registry, []state.LaneID{lane}).Equal(want, got) {
+					t.Fatalf("line %d boundary lane %s differs", callLine(application.oracle, point), lane)
+				}
+			}
+		}
+	}
+}
+
+func TestValidateGraphRelationCallCompositionCoverage(t *testing.T) {
+	fixture := newFindRootNodesPOCFixture(t)
+	oracle := fixture.applications[len(fixture.applications)-1].oracle
+	total, covered := 0, 0
+	for point := cfg.Point(0); int(point) < oracle.Graph().Size(); point++ {
+		site, ok := oracle.CallSiteView(point)
+		if !ok {
+			continue
+		}
+		total++
+		line := site.CallSpan().StartLine
+		if (line == 773 || line == 843) && site.CalleePathRef().String() == "compiler.find_root_nodes" {
+			covered++
+		}
+	}
+	if total != 49 || covered != 2 {
+		t.Fatalf("validate_graph relation call coverage=%d/%d, want 2/49", covered, total)
+	}
+	// The routing census independently pins the full class split at 40
+	// signatures, 6 lexical calls, and 3 dynamic calls. The provider seam can
+	// consume all six lexical identities once their relation compiler gates are
+	// exact; today find_root_nodes supplies the frozen relation for two sites.
+	t.Log("validate_graph relation composition: 2/49 calls exact now; 6/49 lexical routing ceiling; 40 signatures and 3 dynamic calls remain contextual")
 }
 
 func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
@@ -249,6 +317,47 @@ func solveValidateGraphWithFindRootNodesSummary(application findRootNodesApplica
 			line := site.CallSpan().StartLine
 			if (line == 773 || line == 843) && site.CalleePathRef().String() == "compiler.find_root_nodes" {
 				return adapted(node, site, in, read)
+			}
+			if original != nil {
+				return original(node, site, in, read)
+			}
+			return callpayload.CallOutcome{}
+		}
+	}
+	return body.SolvePrepared(application.prepared, solveConfig)
+}
+
+func solveValidateGraphWithFindRootNodesRelation(application findRootNodesApplication, owner, key summary.SummaryKey, cell transformer.CellRef, relations transformer.RelationSnapshot) (*body.Result, error) {
+	baseFactory := application.config.CallOutcomeFactory
+	solveConfig := application.config.SolveConfig()
+	solveConfig.CallOutcomeFactory = func(ctx body.CallOutcomeContext) callpayload.CallOutcomeProvider {
+		var original callpayload.CallOutcomeProvider
+		if baseFactory != nil {
+			original = baseFactory(ctx)
+		}
+		index := callresult.NewSummaryIndexBase(callresult.SummaryIndexBaseConfig{}).WithOwnerFunctionExpressionKeys(owner, nil)
+		relational := relationcall.OutcomeProvider(relationcall.Config{
+			Relations: relations,
+			TargetFor: func(_ transfer.NodeContext, site factflow.CallSiteView) (relationcall.Target, bool) {
+				line := site.CallSpan().StartLine
+				return relationcall.Target{Cell: cell, SummaryKey: key}, (line == 773 || line == 843) && site.CalleePathRef().String() == "compiler.find_root_nodes"
+			},
+			Bindings: func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State, shape transformer.Shape) (transformer.BindingCursor, bool) {
+				cursor, err := transformer.NewBindingCursor(shape, nil, nil)
+				return cursor, err == nil
+			},
+			Adapter: callresult.ProviderConfig{
+				ProtectedCall: ctx.ProtectedCall,
+				CalleeValue:   callresult.CalleeValueFunc(ctx.CalleeValue), ReceiverCallable: callresult.ReceiverCallableFunc(ctx.ReceiverCallable),
+				Facts: ctx.Facts, Index: index, Sources: ctx.Sources,
+				ReturnPresenceRelations: callresult.ReturnPresenceRelationsForPathFunc(ctx.ReturnPresenceRelationsPath),
+				KeySpace:                ctx.KeySpace, TypeValues: ctx.TypeValues,
+			},
+		})
+		return func(node transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			line := site.CallSpan().StartLine
+			if (line == 773 || line == 843) && site.CalleePathRef().String() == "compiler.find_root_nodes" {
+				return relational(node, site, in, read)
 			}
 			if original != nil {
 				return original(node, site, in, read)
