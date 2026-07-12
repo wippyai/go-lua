@@ -14,6 +14,7 @@ func snapshotWithMaterializedSummaryProofs(
 	reg *axis.Registry,
 	base summary.Snapshot,
 	materialized materializedProgram,
+	acceptEquivalentValueSpelling bool,
 ) (summary.Snapshot, bool) {
 	entries := base.EntriesOwnedNormalized()
 	byKey := make(map[summary.SummaryKey]summary.Summary, len(entries)+1)
@@ -22,7 +23,7 @@ func snapshotWithMaterializedSummaryProofs(
 	}
 	changed := false
 	for result, key := range materialized.resultKey {
-		if overlayMaterializedSummaryProofsForResult(reg, byKey, key, result, materialized.projections) {
+		if overlayMaterializedSummaryProofsForResult(reg, byKey, key, result, materialized.projections, acceptEquivalentValueSpelling) {
 			changed = true
 		}
 	}
@@ -152,6 +153,7 @@ func overlayMaterializedSummaryProofsForResult(
 	key summary.SummaryKey,
 	result *body.Result,
 	projections *resultSummaryProjectionCache,
+	acceptEquivalentValueSpelling bool,
 ) bool {
 	if reg == nil || entries == nil || result == nil {
 		return false
@@ -163,11 +165,11 @@ func overlayMaterializedSummaryProofsForResult(
 	current := entries[key]
 	next := current.Clone()
 	var changed bool
-	if returns, ok := overlayMaterializedValueSlots(reg, next.Returns, projected.Returns, false); ok {
+	if returns, ok := overlayMaterializedValueSlots(reg, next.Returns, projected.Returns, false, acceptEquivalentValueSpelling); ok {
 		next.Returns = returns
 		changed = true
 	}
-	if params, ok := overlayMaterializedValueSlots(reg, next.NormalReturnParams, projected.NormalReturnParams, true); ok {
+	if params, ok := overlayMaterializedValueSlots(reg, next.NormalReturnParams, projected.NormalReturnParams, true, acceptEquivalentValueSpelling); ok {
 		next.NormalReturnParams = params
 		changed = true
 	}
@@ -416,7 +418,7 @@ func materializedPathStaticMembersRefineCurrent(
 	return true
 }
 
-func overlayMaterializedValueSlots(reg *axis.Registry, current, projected []product.Value, requireUseful bool) ([]product.Value, bool) {
+func overlayMaterializedValueSlots(reg *axis.Registry, current, projected []product.Value, requireUseful, acceptEquivalentSpelling bool) ([]product.Value, bool) {
 	if reg == nil || len(projected) == 0 {
 		return current, false
 	}
@@ -438,6 +440,14 @@ func overlayMaterializedValueSlots(reg *axis.Registry, current, projected []prod
 			continue
 		}
 		if product.Equal(reg, existing, value) {
+			continue
+		}
+		// Product values may retain distinct recursive/type spellings that are
+		// equivalent in the refinement preorder. Replacing one spelling with
+		// another cannot add proof, but it does make the materialization driver
+		// observe a change and can rematerialize the whole function tree forever.
+		// Keep the established spelling unless the projection is strictly lower.
+		if !acceptEquivalentSpelling && product.LessOrEq(reg, existing, value) {
 			continue
 		}
 		if i >= len(out) {

@@ -546,7 +546,7 @@ func (c *materializedSummaryCache) writeResult(key summary.SummaryKey, result *b
 	}
 	if current, ok := c.readOwned(key); ok {
 		entries := map[summary.SummaryKey]summary.Summary{key: current}
-		if overlayMaterializedSummaryProofsForResult(c.reg, entries, key, result, c.projections) {
+		if overlayMaterializedSummaryProofsForResult(c.reg, entries, key, result, c.projections, true) {
 			c.write(key, entries[key])
 		}
 		return

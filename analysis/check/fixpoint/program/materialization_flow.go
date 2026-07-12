@@ -168,11 +168,12 @@ func refineMaterializedSummaryProofs(
 		return materialized.root, initial, nil
 	}
 	current := initial
+	acceptEquivalentValueSpelling := true
 	for {
 		if err := materializationContextErr(ctx); err != nil {
 			return nil, summary.Snapshot{}, err
 		}
-		next, changed := snapshotWithMaterializedSummaryProofs(reg, current, materialized)
+		next, changed := snapshotWithMaterializedSummaryProofs(reg, current, materialized, acceptEquivalentValueSpelling)
 		if !changed || rematerialize == nil {
 			return materialized.root, next, nil
 		}
@@ -193,6 +194,7 @@ func refineMaterializedSummaryProofs(
 		materialized.projections.releaseDiscarded(materialized, nextMaterialized)
 		materialized = nextMaterialized
 		current = next
+		acceptEquivalentValueSpelling = false
 	}
 }
 

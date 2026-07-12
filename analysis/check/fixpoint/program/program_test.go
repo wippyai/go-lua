@@ -297,13 +297,43 @@ func TestOverlayMaterializedValueSlotsNoChangePreservesSlice(t *testing.T) {
 	value := typevalue.FromType(reg, typ.String)
 	current := []product.Value{value}
 
-	got, changed := overlayMaterializedValueSlots(reg, current, []product.Value{value}, false)
+	got, changed := overlayMaterializedValueSlots(reg, current, []product.Value{value}, false, false)
 
 	if changed {
 		t.Fatal("overlayMaterializedValueSlots reported change for equal slot")
 	}
 	if len(got) != len(current) || &got[0] != &current[0] {
 		t.Fatalf("overlayMaterializedValueSlots copied unchanged slots")
+	}
+}
+
+func TestOverlayMaterializedValueSlotsKeepsLatticeEquivalentSpelling(t *testing.T) {
+	reg := standard.Registry()
+	build := func() typ.Type {
+		return typ.NewRecursive("Materialized", func(self typ.Type) typ.Type {
+			return typetable.NewRecord().OptField("next", self).Build()
+		})
+	}
+	current := typevalue.NewCache().FromTypeWithWitness(reg, build())
+	projected := typevalue.NewCache().FromTypeWithWitness(reg, build())
+	if product.Equal(reg, current, projected) ||
+		!product.LessOrEq(reg, current, projected) ||
+		!product.LessOrEq(reg, projected, current) {
+		t.Fatalf("test requires distinct product spellings with equivalent lattice meaning: equal=%v current<=projected=%v projected<=current=%v", product.Equal(reg, current, projected), product.LessOrEq(reg, current, projected), product.LessOrEq(reg, projected, current))
+	}
+
+	first, changed := overlayMaterializedValueSlots(reg, []product.Value{current}, []product.Value{projected}, false, true)
+	if !changed || len(first) != 1 || !product.Equal(reg, first[0], projected) {
+		t.Fatal("first materialization did not adopt the projected recursive spelling")
+	}
+
+	got, changed := overlayMaterializedValueSlots(reg, first, []product.Value{current}, false, false)
+
+	if changed {
+		t.Fatal("overlay replaced a slot with a lattice-equivalent spelling")
+	}
+	if len(got) != 1 || !product.Equal(reg, got[0], projected) {
+		t.Fatal("overlay did not retain the stable current spelling")
 	}
 }
 
