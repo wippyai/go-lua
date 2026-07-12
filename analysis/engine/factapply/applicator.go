@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -124,154 +123,9 @@ func branchRefinementSegmentsHavePrefix(target []segment.Segment, prefix []segme
 // assignment, descendant path invalidation, call return-slot production, and
 // return-slot facts; branch-edge refinements are handled by NewFactsEdgeTransfer.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
-	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(config.Facts)
-	callOutcomeCache := &callOutcomeTraversalCache{}
-	rootAssignmentExecutor := &ConcreteRootAssignmentPointExecutor{presenceCache: callOutcomeCache}
-	var refinedSourceRegistry *axis.Registry
-	var refinedSources sourcevalue.SourceValues
+	executor := NewConcreteNodePointExecutor(config)
 	return func(ctx transfer.NodeContext, in state.State) state.State {
-		if ctx.Session != nil && ctx.Session.Token().Canceled() {
-			return in
-		}
-		facts := config.Facts
-		sources := config.Sources
-		callOutcome := config.CallOutcome
-		var callResults *lazyCallResultReader
-		ensureCallResults := func() *lazyCallResultReader {
-			if callResults == nil {
-				callResults = &lazyCallResultReader{
-					ctx:             ctx,
-					facts:           facts,
-					sources:         sources,
-					outcomeProvider: callOutcome,
-					resolver:        config.Visibility,
-					projectPath:     config.ProjectPath,
-					widen:           config.CovariantWiden,
-					typeValues:      config.TypeValues,
-				}
-			}
-			return callResults
-		}
-
-		out := in
-		if sources != nil {
-			if refinedSources == nil || refinedSourceRegistry != ctx.Registry {
-				refinedSources = expressionRefinements.Bind(ctx.Registry, sources)
-				refinedSourceRegistry = ctx.Registry
-			}
-			sources = refinedSources
-		}
-		if nodeHasCallMaterializationFacts(facts, ctx.Point) {
-			out = ensureCallResults().Materialize(ctx.Point, in)
-		}
-		if facts.NoNormalReturn(ctx.Point) {
-			return state.State{}
-		}
-		var pathImplicationPublications []pathevidence.PathPresenceImplication
-		poll := cancellation.NewPoller(tokenOf(ctx.Session), cancellation.EveryCheap)
-		for _, fact := range facts.PathValuePresenceImplications(ctx.Point) {
-			if poll.Poll() {
-				return in
-			}
-			implication, ok := pathValuePresenceImplicationAt(ctx, config.Visibility, fact)
-			if !ok {
-				continue
-			}
-			pathImplicationPublications = append(pathImplicationPublications, implication)
-		}
-		if len(pathImplicationPublications) != 0 {
-			result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
-				Registry:     ctx.Registry,
-				Resolver:     config.Visibility,
-				Point:        ctx.Point,
-				Input:        in,
-				Output:       out,
-				Publications: pathImplicationPublications,
-				Token:        tokenOf(ctx.Session),
-				Cancellation: ConcretePresenceImplicationRollbackNode,
-				Barriers:     ConcretePresenceImplicationDescendantInvalidationBarriers,
-			})
-			if result.Canceled {
-				return result.Output
-			}
-			out = result.Output
-		}
-		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
-			_, directDynamicWrite := facts.DynamicIndexWrite(ctx.Point)
-			out = applyPathDescendantInvalidation(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, !directDynamicWrite)
-		}
-		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
-			if poll.Poll() {
-				return in
-			}
-			out = applyValueRefinementAtCached(config.TypeValues, ctx.Registry, config.Visibility, config.ProjectPath, ctx.Point, out, fact.TargetPathRef(), fact.Value())
-		}
-		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
-			if poll.Poll() {
-				return in
-			}
-			out = applyPostconditionPathRelation(ctx, config.Visibility, config.ProjectPath, out, fact)
-		}
-		for _, fact := range facts.ChannelSelects(ctx.Point) {
-			if poll.Poll() {
-				return in
-			}
-			out = applyChannelSelect(ctx, config.Visibility, out, fact)
-		}
-		if sources == nil {
-			return out
-		}
-		if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
-			out = applyDynamicIndexWrite(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
-		}
-		if _, ok := facts.RootAssignment(ctx.Point); ok {
-			result := rootAssignmentExecutor.Apply(ConcreteRootAssignmentPointRequest{
-				Context:                ctx,
-				Resolver:               config.Visibility,
-				Facts:                  facts,
-				Sources:                sources,
-				Read:                   ensureCallResults().ReadLazy(),
-				Input:                  in,
-				Output:                 out,
-				CallOutcome:            callOutcome,
-				ProjectPath:            config.ProjectPath,
-				CovariantWiden:         config.CovariantWiden,
-				TypeValues:             config.TypeValues,
-				ClosedDynamicAllValues: config.ClosedDynamicAllValues,
-			})
-			out = result.Output
-		}
-		if fact, ok := facts.PathAssignment(ctx.Point); ok {
-			var applied bool
-			out, applied = ApplyConcretePathAssignment(ConcretePathAssignmentRequest{
-				Context:    ctx,
-				Resolver:   config.Visibility,
-				Facts:      facts,
-				Sources:    sources,
-				Read:       ensureCallResults().ReadLazy(),
-				Input:      in,
-				Output:     out,
-				Assignment: fact,
-			})
-			if applied {
-				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact.TargetPathRef(), fact.Source(), config.TypeValues)
-				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcomeCache, callOutcome, config.Visibility, ensureCallResults().ReadLazy(), out)
-			}
-		}
-		if fact, ok := facts.PathStaticMemberWrite(ctx.Point); ok {
-			out = applyPathStaticMemberWrite(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
-		}
-		if fact, ok := facts.Return(ctx.Point); ok {
-			out = applyReturn(ctx, facts, sources, ensureCallResults().ReadLazy(), in, out, fact, config.Visibility, config.ProjectPath, config.TypeValues)
-		}
-		out = FinalizeConcretePoint(ConcretePointFinalizerRequest{
-			Context:        ctx,
-			Resolver:       config.Visibility,
-			Facts:          facts,
-			CovariantWiden: config.CovariantWiden,
-			Output:         out,
-		})
-		return out
+		return executor.Apply(ctx, in).Output
 	}
 }
 
