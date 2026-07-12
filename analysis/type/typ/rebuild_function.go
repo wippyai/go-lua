@@ -45,8 +45,12 @@ func newCanonicalFunction(
 	paramsCopy := make([]Param, len(params))
 	for i, p := range params {
 		p.Type = requiredFunctionSlotType("params", p.Type)
+		p.Receiver = p.Receiver || p.Name == "self"
 		paramsCopy[i] = p
 		h = hash.MixHash(h, p.Type.Hash())
+		if p.Receiver {
+			h = hash.MixHash(h, 2)
+		}
 		if p.Optional {
 			h = hash.MixHash(h, 1)
 		}

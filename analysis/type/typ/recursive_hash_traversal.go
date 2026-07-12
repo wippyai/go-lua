@@ -203,6 +203,9 @@ func hashFunctionWithVisitedMemo(fn *Function, scratch *recursiveHashScratch) ui
 	}
 	for _, p := range fn.Params {
 		h = hash.MixHash(h, hashBodyWithVisitedMemo(p.Type, scratch))
+		if p.Receiver {
+			h = hash.MixHash(h, 2)
+		}
 		if p.Optional {
 			h = hash.MixHash(h, 1)
 		}

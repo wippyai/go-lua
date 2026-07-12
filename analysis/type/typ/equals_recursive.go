@@ -177,7 +177,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 		}
 		for i, p := range va.Params {
 			pb := vb.Params[i]
-			if p.Optional != pb.Optional {
+			if p.Optional != pb.Optional || p.Receiver != pb.Receiver {
 				return false
 			}
 			if !typeEqualsGuard(p.Type, pb.Type, next, seen) {

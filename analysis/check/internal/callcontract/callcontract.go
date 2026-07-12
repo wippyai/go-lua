@@ -121,8 +121,8 @@ func TypeCallableIgnoringNil(t typ.Type) bool {
 }
 
 // ParamConsumesReceiver applies the receiver-consumption rule for one formal.
-func ParamConsumesReceiver(name string, param typ.Type, receiver typ.Type) bool {
-	return typecall.ParamConsumesReceiver(name, param, receiver)
+func ParamConsumesReceiver(receiverParam bool, param typ.Type, receiver typ.Type) bool {
+	return typecall.ParamConsumesReceiver(receiverParam, param, receiver)
 }
 
 // ReceiverTypeUsable reports whether a receiver type is precise enough to drive
@@ -156,7 +156,7 @@ func BindReceiver(callContract contract.Contract, receiver typ.Type, supplied bo
 		return callContract
 	}
 	first := params[0]
-	if !first.ImplicitSelf && (!ReceiverTypeUsable(receiver) || !ParamConsumesReceiver(first.Name, first.Type, receiver)) {
+	if !first.ImplicitSelf && (!ReceiverTypeUsable(receiver) || !ParamConsumesReceiver(first.ImplicitSelf, first.Type, receiver)) {
 		return callContract
 	}
 	if bound, ok := callContract.BindFirstParameter(); ok {

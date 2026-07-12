@@ -424,14 +424,14 @@ func callableConsumesMethodReceiver(
 		return false
 	}
 	first := fn.Params[0]
-	if first.Name == "self" {
+	if first.Receiver {
 		return true
 	}
 	receiverType := fallback
 	if receiverType == nil {
 		receiverType, _ = methodReceiverType(ctx, site, sources, in, read)
 	}
-	return typecall.ParamConsumesReceiver(first.Name, first.Type, receiverType)
+	return typecall.ParamConsumesReceiver(first.Receiver, first.Type, receiverType)
 }
 
 func functionWitnessHasUsableReturns(reg *axis.Registry, value product.Value) bool {

@@ -348,7 +348,7 @@ func signatureConsumesReceiver(fn *typ.Function, receiverType typ.Type) bool {
 		return false
 	}
 	first := fn.Params[0]
-	if first.Name == "self" {
+	if first.Receiver {
 		return true
 	}
 	if first.Type == nil || receiverType == nil || typ.IsAny(first.Type) || typ.IsUnknown(first.Type) {

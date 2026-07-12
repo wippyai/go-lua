@@ -19,7 +19,7 @@ func expandFunction(v *typ.Function, orig typ.Type, guard recursion.Guard, memo 
 				copy(params, v.Params)
 			}
 			changed = true
-			params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
+			params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional, Receiver: p.Receiver}
 		} else if params != nil {
 			params[i] = p
 		}

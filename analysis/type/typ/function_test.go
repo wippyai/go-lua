@@ -273,3 +273,62 @@ func TestFunctionBuild_ValidReturns(t *testing.T) {
 		t.Errorf("expected String at index 1, got %v", f.Returns[1])
 	}
 }
+
+func TestFunctionReceiverMetadataDerivesAndSurvivesConstructionBoundaries(t *testing.T) {
+	built := Func().Param("self", Self).Param("value", String).Build()
+	if !built.Params[0].Receiver || built.Params[1].Receiver {
+		t.Fatalf("built receiver flags = %v/%v", built.Params[0].Receiver, built.Params[1].Receiver)
+	}
+	rebuilt := RebuildFunction(FunctionParts{
+		Params:  []Param{{Name: "ctx", Type: Any, Receiver: true}, {Name: "value", Type: String}},
+		Returns: []Type{built},
+	})
+	if !rebuilt.Params[0].Receiver || rebuilt.Params[0].Name != "ctx" || rebuilt.String() != "fun(ctx: any, value: string) -> fun(self: self, value: string)" {
+		t.Fatalf("rebuilt receiver metadata/display = %#v / %s", rebuilt.Params[0], rebuilt)
+	}
+	cloned := CloneFunction(rebuilt)
+	if !cloned.Params[0].Receiver || cloned.Params[0].Name != "ctx" || !TypeEquals(cloned, rebuilt) || cloned.Hash() != rebuilt.Hash() {
+		t.Fatalf("clone lost receiver metadata: %#v", cloned.Params[0])
+	}
+}
+
+func TestFunctionReceiverConventionParticipatesInIdentity(t *testing.T) {
+	receiver := RebuildFunction(FunctionParts{Params: []Param{{Name: "ctx", Type: Any, Receiver: true}}})
+	ordinary := RebuildFunction(FunctionParts{Params: []Param{{Name: "ctx", Type: Any}}})
+	if TypeEquals(receiver, ordinary) || receiver.Hash() == ordinary.Hash() {
+		t.Fatal("receiver convention collapsed in function identity")
+	}
+	labelVariant := RebuildFunction(FunctionParts{Params: []Param{{Name: "actor", Type: Any, Receiver: true}}})
+	if !TypeEquals(receiver, labelVariant) || receiver.Hash() != labelVariant.Hash() {
+		t.Fatal("presentation-only receiver label changed function identity")
+	}
+}
+
+func TestRecursiveGenericFunctionReceiverIdentityIsStable(t *testing.T) {
+	build := func(receiver bool) Type {
+		param := NewTypeParam("T", String)
+		return NewRecursive("Node", func(self Type) Type {
+			method := RebuildFunction(FunctionParts{
+				TypeParams: []*TypeParam{param},
+				Params:     []Param{{Name: "ctx", Type: self, Receiver: receiver}, {Name: "value", Type: param}},
+				Returns:    []Type{self},
+			})
+			return NewArray(method)
+		})
+	}
+	left, right := build(true), build(true)
+	if !TypeEquals(left, right) || EqualityHash(left) != EqualityHash(right) {
+		t.Fatal("equal recursive generic receiver functions are unstable")
+	}
+	if plain := build(false); TypeEquals(left, plain) || EqualityHash(left) == EqualityHash(plain) {
+		t.Fatal("recursive receiver convention was ignored")
+	}
+}
+
+func BenchmarkFunctionReceiverConstruction(b *testing.B) {
+	parts := FunctionParts{Params: []Param{{Name: "self", Type: Self}, {Name: "value", Type: String}}, Returns: []Type{Any}}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = RebuildFunction(parts)
+	}
+}

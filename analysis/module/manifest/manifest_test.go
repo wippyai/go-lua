@@ -124,6 +124,33 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManifestRoundTripPreservesDerivedReceiverWithoutChangingWireShape(t *testing.T) {
+	m := New("receiver/roundtrip")
+	m.SetExport(typ.Func().Param("self", typ.Self).Param("value", typ.String).Returns(typ.Boolean).Build())
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if strings.Contains(string(data), `"receiver":`) {
+		t.Fatalf("receiver metadata leaked into existing manifest wire: %s", data)
+	}
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	fn, ok := decoded.Export.(*typ.Function)
+	if !ok || len(fn.Params) != 2 || !fn.Params[0].Receiver || fn.Params[1].Receiver || fn.Params[0].Name != "self" {
+		t.Fatalf("decoded receiver params = %#v", decoded.Export)
+	}
+	reencoded, err := Encode(decoded)
+	if err != nil {
+		t.Fatalf("re-Encode: %v", err)
+	}
+	if string(data) != string(reencoded) {
+		t.Fatalf("manifest bytes changed across receiver round-trip:\n%s\n%s", data, reencoded)
+	}
+}
+
 func TestManifestRoundTripCallbackPhaseProtocol(t *testing.T) {
 	m := New("example/callbacks")
 	m.DefineCallbackPhaseRegistration("before_each", 0, "setup")

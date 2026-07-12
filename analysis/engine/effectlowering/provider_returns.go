@@ -557,7 +557,7 @@ func contextualFunctionExpressionSignatureType(actual typ.Type, formal typ.Type)
 		if contextualFunctionParamNeedsFormal(paramType) && i < len(formalFn.Params) {
 			paramType = formalFn.Params[i].Type
 		}
-		params[i] = typ.Param{Name: param.Name, Type: paramType, Optional: param.Optional}
+		params[i] = typ.Param{Name: param.Name, Type: paramType, Optional: param.Optional, Receiver: param.Receiver}
 	}
 	var variadic typ.Type
 	if actualFn.Variadic != nil {

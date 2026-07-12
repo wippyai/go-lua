@@ -58,7 +58,7 @@ func FromFunctionType(fn *typ.Function) Contract {
 			Type:         param.Type,
 			Optional:     param.Optional || typevalue.TypeIncludesNil(param.Type) || !typeExplicit(param.Type),
 			Explicit:     typeExplicit(param.Type),
-			ImplicitSelf: param.Name == "self",
+			ImplicitSelf: param.Receiver,
 		})
 	}
 	for _, ret := range fn.Returns {

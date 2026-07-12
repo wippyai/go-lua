@@ -71,14 +71,14 @@ func CallableConsumesReceiver(fn *typ.Function, receiver typ.Type) bool {
 	if fn == nil || len(fn.Params) == 0 {
 		return false
 	}
-	return ParamConsumesReceiver(fn.Params[0].Name, fn.Params[0].Type, receiver)
+	return ParamConsumesReceiver(fn.Params[0].Receiver, fn.Params[0].Type, receiver)
 }
 
 // ParamConsumesReceiver applies the receiver-consumption rule for a single
-// formal parameter. A named `self` formal is authoritative; otherwise a concrete
+// formal parameter. An explicit receiver formal is authoritative; otherwise a concrete
 // receiver subtype relation can prove that formal 0 is the receiver slot.
-func ParamConsumesReceiver(name string, param typ.Type, receiver typ.Type) bool {
-	if name == "self" {
+func ParamConsumesReceiver(receiverParam bool, param typ.Type, receiver typ.Type) bool {
+	if receiverParam {
 		return true
 	}
 	param = unwrap.Annotated(param)

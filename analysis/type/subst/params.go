@@ -94,7 +94,7 @@ func substituteFunctionParams(fn *typ.Function, subs []paramSubstitution) typ.Ty
 		if pt != p.Type {
 			paramsChanged = true
 		}
-		params[i] = typ.Param{Name: p.Name, Type: pt, Optional: p.Optional}
+		params[i] = typ.Param{Name: p.Name, Type: pt, Optional: p.Optional, Receiver: p.Receiver}
 	}
 
 	variadic := fn.Variadic

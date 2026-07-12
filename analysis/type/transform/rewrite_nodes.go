@@ -20,7 +20,7 @@ func rewriteFunction(v *typ.Function, orig typ.Type, fn func(typ.Type) (typ.Type
 				copy(params, v.Params)
 			}
 			changed = true
-			params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
+			params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional, Receiver: p.Receiver}
 		} else if params != nil {
 			params[i] = p
 		}

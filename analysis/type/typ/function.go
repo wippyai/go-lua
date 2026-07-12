@@ -11,6 +11,9 @@ type Param struct {
 	Name     string
 	Type     Type
 	Optional bool // True if parameter has a default value
+	// Receiver records the calling-convention meaning historically inferred
+	// from Name == "self". Name remains unchanged for presentation/encoding.
+	Receiver bool
 }
 
 // Function represents a function type with parameters and returns.

@@ -49,7 +49,7 @@ func TestMemberCallableAndReceiverConsumptionHideTypecallStatus(t *testing.T) {
 	if !ok || status != MemberCallOK || fn == nil {
 		t.Fatalf("MemberCallable = %v, %v, %v; want callable ok", fn, status, ok)
 	}
-	if !ParamConsumesReceiver("self", typ.Self, receiver) {
+	if !ParamConsumesReceiver(true, typ.Self, receiver) {
 		t.Fatal("ParamConsumesReceiver(self) = false, want true")
 	}
 	if !ReceiverTypeUsable(receiver) {
