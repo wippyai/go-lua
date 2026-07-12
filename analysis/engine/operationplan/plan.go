@@ -9,6 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // Class distinguishes directly executable transfer operations from facts
@@ -154,6 +155,9 @@ type Plan struct {
 	dependencies   []Kind
 	extensionRows  []extensionRow
 	extensionCells []ExtensionCell
+	boundaryParams []symbol.ID
+	signatureRefs  []uint32
+	signatures     []SignatureCallOperation
 }
 
 // New creates the only immutable Facts snapshot for input and indexes all
