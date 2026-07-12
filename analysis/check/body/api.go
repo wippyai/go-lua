@@ -312,6 +312,8 @@ type CallOutcomeContext struct {
 	Facts                       factflow.Facts
 	Sources                     sourcevalue.SourceValues
 	PathValue                   PathValueFunc
+	DynamicRead                 DynamicReadFunc
+	DynamicTableRead            DynamicReadFunc
 	ProtectedCall               func(transfer.NodeContext, factflow.CallSiteView) bool
 	CalleeValue                 CalleeValueFunc
 	ReceiverCallable            ReceiverCallableFunc
@@ -324,6 +326,12 @@ type CallOutcomeContext struct {
 // visibility and source-value semantics. Call providers use this read-only
 // seam for resolvable receivers, which intentionally have no ReceiverSource.
 type PathValueFunc func(transfer.NodeContext, pathdom.Path, state.State) (product.Value, bool)
+
+// DynamicReadFunc resolves one syntax-free dynamic table read through the
+// body's canonical visibility, heap, and type-index semantics. tableValue is
+// either the owner at tablePath's root (DynamicRead) or the already-projected
+// table itself (DynamicTableRead).
+type DynamicReadFunc func(transfer.NodeContext, pathdom.Path, product.Value, product.Value, state.State) (product.Value, bool)
 
 type CallOutcomeFactory func(CallOutcomeContext) callpayload.CallOutcomeProvider
 

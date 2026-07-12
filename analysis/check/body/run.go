@@ -703,6 +703,12 @@ func (s *Static) callOutcomeContext(typeValues *typevalue.Cache) CallOutcomeCont
 				Registry: s.registry, Facts: s.facts, Visibility: s.visibility, TypeValues: typeValues,
 			}, ctx.Point, path, in)
 		},
+		DynamicRead: func(ctx transfer.NodeContext, tablePath pathdom.Path, owner, key product.Value, in state.State) (product.Value, bool) {
+			return sourcevalue.ReadBoundDynamicIndexValue(s.registry, typeValues, s.visibility.KeySpace(), s.visibility, ctx.Point, tablePath, owner, key, in)
+		},
+		DynamicTableRead: func(ctx transfer.NodeContext, tablePath pathdom.Path, table, key product.Value, in state.State) (product.Value, bool) {
+			return sourcevalue.ReadBoundDynamicTableValue(s.registry, typeValues, s.visibility.KeySpace(), s.visibility, ctx.Point, tablePath, table, key, in)
+		},
 		ProtectedCall:               s.isProtectedCallSite,
 		CalleeValue:                 s.calleeValue,
 		ReceiverCallable:            s.receiverFn,
