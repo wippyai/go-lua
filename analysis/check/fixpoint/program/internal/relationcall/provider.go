@@ -56,6 +56,7 @@ type Config struct {
 	Specialization Specialization
 	EffectResolver transformer.EffectSummaryResolver
 	Adapter        callresult.ProviderConfig
+	ObserveSummary func(summary.SummaryKey, summary.Summary)
 }
 
 // TryOutcomeProvider distinguishes an exact handled application from a
@@ -130,6 +131,9 @@ func NewResolver(config Config) Resolver {
 		sum, ok := relation.SpecializeWithEffects(cursor, nil, specialization, config.EffectResolver)
 		if !ok {
 			return callpayload.CallOutcome{}, false
+		}
+		if config.ObserveSummary != nil {
+			config.ObserveSummary(target.SummaryKey, sum)
 		}
 		return transaction.Apply(ctx, site, in, read, sum, transaction.FunctionType(target.SummaryKey), false), true
 	}

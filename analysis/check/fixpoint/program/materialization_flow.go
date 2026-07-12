@@ -27,18 +27,20 @@ func materializeChunkWithResultKeys(
 	keys programKeys,
 	solveCache *materializedSolveCache,
 	projections *resultSummaryProjectionCache,
+	activation *relationRunActivation,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
+	rootRuntime := activation.materializedOwnerRuntime(keys.rootKey, prepared.root, solveCache, summaryOwnerResolutionDigest(keys, keys.rootKey))
 	root, _, err := solveMaterializedPreparedAttributed(
-		solveCache,
+		rootRuntime.cache,
 		prepared.root,
 		keys.rootKey,
 		materializedOwnerRoutingDigest(keys, keys.rootKey),
-		summaryOwnerResolutionDigest(keys, keys.rootKey),
+		rootRuntime.resolution,
 		materializedSolveEntryState{},
 		summaries,
 		func(reader summary.Reader) body.Config {
-			return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof)
+			return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats))
 		},
 		materializeCounter(stats),
 		solveAttributionFor(stats, prepared.root, keys.rootKey, SolvePhaseMaterialize, false),
@@ -50,7 +52,7 @@ func materializeChunkWithResultKeys(
 	if projections == nil {
 		projections = newResultSummaryProjectionCache()
 	}
-	root, keys, err = materializeFunctionTree(root, nil, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, resultKeys, projections, solveCache)
+	root, keys, err = materializeFunctionTree(root, nil, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, resultKeys, projections, solveCache, activation)
 	if err != nil {
 		return materializedProgram{}, err
 	}
@@ -69,22 +71,25 @@ func materializeFunctionWithResultKeys(
 	keys programKeys,
 	solveCache *materializedSolveCache,
 	projections *resultSummaryProjectionCache,
+	activation *relationRunActivation,
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
+	rootPrepared := prepared.function(fn)
+	rootRuntime := activation.materializedOwnerRuntime(keys.rootKey, rootPrepared, solveCache, summaryOwnerResolutionDigest(keys, keys.rootKey))
 	root, _, err := solveMaterializedPreparedAttributed(
-		solveCache,
-		prepared.function(fn),
+		rootRuntime.cache,
+		rootPrepared,
 		keys.rootKey,
 		materializedOwnerRoutingDigest(keys, keys.rootKey),
-		summaryOwnerResolutionDigest(keys, keys.rootKey),
+		rootRuntime.resolution,
 		materializedSolveEntryState{},
 		summaries,
 		func(reader summary.Reader) body.Config {
-			rootConfig := checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof)
+			rootConfig := checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats))
 			return functionMaterializeConfig(rootConfig, keys, reader, fn)
 		},
 		materializeCounter(stats),
-		solveAttributionFor(stats, prepared.function(fn), keys.rootKey, SolvePhaseMaterialize, false),
+		solveAttributionFor(stats, rootPrepared, keys.rootKey, SolvePhaseMaterialize, false),
 	)
 	if err != nil {
 		return materializedProgram{}, err
@@ -93,7 +98,7 @@ func materializeFunctionWithResultKeys(
 	if projections == nil {
 		projections = newResultSummaryProjectionCache()
 	}
-	root, keys, err = materializeFunctionTree(root, fn, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, resultKeys, projections, solveCache)
+	root, keys, err = materializeFunctionTree(root, fn, prepared, bindings, config, stats, summaries, contextKeyFor, keyFor, keys, resultKeys, projections, solveCache, activation)
 	if err != nil {
 		return materializedProgram{}, err
 	}
@@ -110,10 +115,11 @@ func materializeChunkWithReturnPresenceProofs(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 	handoff *retainedSummaryApplicationRun,
+	activation *relationRunActivation,
 ) (*body.Result, summary.Snapshot, error) {
 	solveCache := newMaterializedSolveCache(config.Registry, handoff)
 	projections := newResultSummaryProjectionCache()
-	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections)
+	materialized, err := materializeChunkWithResultKeys(prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections, activation)
 	if err != nil {
 		return nil, summary.Snapshot{}, err
 	}
@@ -123,7 +129,7 @@ func materializeChunkWithReturnPresenceProofs(
 		initial,
 		materialized,
 		func(next summary.Snapshot, materializedKeys programKeys) (materializedProgram, error) {
-			return materializeChunkWithResultKeys(prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache, projections)
+			return materializeChunkWithResultKeys(prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache, projections, activation)
 		},
 	)
 }
@@ -139,10 +145,11 @@ func materializeFunctionWithReturnPresenceProofs(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 	handoff *retainedSummaryApplicationRun,
+	activation *relationRunActivation,
 ) (*body.Result, summary.Snapshot, error) {
 	solveCache := newMaterializedSolveCache(config.Registry, handoff)
 	projections := newResultSummaryProjectionCache()
-	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections)
+	materialized, err := materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, initial, contextKeyFor, keyFor, keys, solveCache, projections, activation)
 	if err != nil {
 		return nil, summary.Snapshot{}, err
 	}
@@ -152,7 +159,7 @@ func materializeFunctionWithReturnPresenceProofs(
 		initial,
 		materialized,
 		func(next summary.Snapshot, materializedKeys programKeys) (materializedProgram, error) {
-			return materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache, projections)
+			return materializeFunctionWithResultKeys(fn, prepared, bindings, config, stats, next, contextKeyFor, keyFor, materializedKeys, solveCache, projections, activation)
 		},
 	)
 }
@@ -277,7 +284,12 @@ func materializeFunctionTree(
 	resultKeys map[*body.Result]summary.SummaryKey,
 	projections *resultSummaryProjectionCache,
 	solveCache *materializedSolveCache,
+	activations ...*relationRunActivation,
 ) (*body.Result, programKeys, error) {
+	var activation *relationRunActivation
+	if len(activations) != 0 {
+		activation = activations[0]
+	}
 	if err := materializationContextErr(config.Context); err != nil {
 		return nil, keys, err
 	}
@@ -305,20 +317,22 @@ func materializeFunctionTree(
 			continue
 		}
 		ownerIndex := summaryIndexForOwner(indexBase, keys, origin.key)
+		originPrepared := prepared.function(origin.funcExpr)
+		ownerRuntime := activation.materializedOwnerRuntime(origin.key, originPrepared, solveCache, summaryOwnerResolutionDigest(keys, origin.key))
 		result, _, err := solveMaterializedPreparedAttributed(
-			solveCache,
-			prepared.function(origin.funcExpr),
+			ownerRuntime.cache,
+			originPrepared,
 			origin.key,
 			materializedOwnerRoutingDigest(keys, origin.key),
-			summaryOwnerResolutionDigest(keys, origin.key),
-			materializedSolveEntryFor(prepared.function(origin.funcExpr), origin),
+			ownerRuntime.resolution,
+			materializedSolveEntryFor(originPrepared, origin),
 			cache,
 			func(reader summary.Reader) body.Config {
-				ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof)
-				return keyedFunctionMaterializeConfig(prepared.function(origin.funcExpr), ownerConfig, keys, reader, origin)
+				ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats))
+				return keyedFunctionMaterializeConfig(originPrepared, ownerConfig, keys, reader, origin)
 			},
 			materializeCounter(stats),
-			solveAttributionFor(stats, prepared.function(origin.funcExpr), origin.key, SolvePhaseMaterialize, false),
+			solveAttributionFor(stats, originPrepared, origin.key, SolvePhaseMaterialize, false),
 		)
 		if err != nil {
 			return nil, keys, err
@@ -354,7 +368,7 @@ func materializeFunctionTree(
 		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, nil)
 	}
-	contextResultByKey, err := materializeDiscoveredContexts(prepared, config, stats, cache, keyFor, &keys, solveCache)
+	contextResultByKey, err := materializeDiscoveredContexts(prepared, config, stats, cache, keyFor, &keys, solveCache, activation)
 	if err != nil {
 		return nil, keys, err
 	}
@@ -503,6 +517,7 @@ func materializeDiscoveredContexts(
 	keyFor callresult.KeyFunc,
 	keys *programKeys,
 	solveCache *materializedSolveCache,
+	activation *relationRunActivation,
 ) (map[summary.SummaryKey]*body.Result, error) {
 	if keys == nil || keys.contexts.Len() == 0 {
 		return nil, nil
@@ -524,16 +539,17 @@ func materializeDiscoveredContexts(
 		indexBase := summaryIndexBase(*keys)
 		ownerIndex := summaryIndexForOwner(indexBase, *keys, context.key)
 		contextPrepared := prepared.function(context.funcExpr)
+		ownerRuntime := activation.materializedOwnerRuntime(context.key, contextPrepared, solveCache, summaryOwnerResolutionDigest(*keys, context.key))
 		result, solved, err := solveMaterializedPreparedAttributed(
-			solveCache,
+			ownerRuntime.cache,
 			contextPrepared,
 			context.key,
 			materializedOwnerRoutingDigest(*keys, context.key),
-			summaryOwnerResolutionDigest(*keys, context.key),
+			ownerRuntime.resolution,
 			materializedSolveEntryFor(contextPrepared, context),
 			cache,
 			func(reader summary.Reader) body.Config {
-				ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof)
+				ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats))
 				return keyedFunctionMaterializeConfig(contextPrepared, ownerConfig, *keys, reader, context)
 			},
 			materializeCounter(stats),
@@ -560,6 +576,22 @@ func materializeDiscoveredContexts(
 		recordProgramShape(stats, *keys)
 	}
 	return results, nil
+}
+
+func materializedRelationObserver(reader summary.Reader, active bool, stats *Stats) func(summary.SummaryKey, summary.Summary) {
+	if !active {
+		return nil
+	}
+	tracked, ok := reader.(*trackingSummaryReader)
+	if !ok {
+		return nil
+	}
+	return func(key summary.SummaryKey, sum summary.Summary) {
+		tracked.rememberOwned(key, summary.Normalize(tracked.reg, sum), true)
+		if stats != nil {
+			stats.RelationCallsHandled++
+		}
+	}
 }
 
 func collectMaterializedCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config) (map[summary.SummaryKey]struct{}, error) {

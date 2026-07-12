@@ -48,6 +48,10 @@ type Config struct {
 	// relationSnapshotAudit observes the fully frozen inactive relation system.
 	// It is test-only and never changes production call routing.
 	relationSnapshotAudit func(relationRunSnapshot) error
+	// enableRelationActivation is an internal differential-test gate. Production
+	// remains legacy until whole-program equivalence and corpus performance gates
+	// promote the relation path.
+	enableRelationActivation bool
 }
 
 // Stats holds caller-owned observational counters for a program fixed-point
@@ -77,6 +81,7 @@ type Stats struct {
 	MaterializedContextNewContexts             int
 	SummaryCacheHits                           int
 	SummaryCacheMisses                         int
+	RelationCallsHandled                       int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }
@@ -145,16 +150,30 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	config.Check.ClosedDynamicAllValues = append([]factapply.ClosedDynamicAllValueInvariant(nil), keys.closedDynamicAllValues...)
 	applyMetatableMethodReceiverEntryStates(&keys, bindings, config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
 	applyInferredParamEntryStates(&keys, bindings, inferred)
+	var relationActivation *relationRunActivation
+	if config.enableRelationActivation {
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil).exactLeafActivationSlice()
+		frozen, err := catalog.Freeze(config.Context)
+		if err != nil {
+			return Result{}, err
+		}
+		relationActivation = newRelationRunActivation(frozen)
+	}
 	functions := make([]query.Function, 0, 1+len(keys.functions)+keys.contexts.Len())
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
-	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, config.SummaryCache, retained.newOwner(keys.rootKey), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
+	rootRuntime := relationActivation.ownerRuntime(keys.rootKey, prepared.root, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, keys.rootKey))
+	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
 	for _, origin := range keys.functions {
-		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(origin.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
+		static := prepared.function(origin.funcExpr)
+		runtime := relationActivation.ownerRuntime(origin.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, origin.key))
+		functions = append(functions, boundFunction(origin, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
 	keys.contexts.ForEach(func(context keyedFunction) {
-		functions = append(functions, boundFunction(context, prepared.function(context.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(context.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, context.key), contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
+		static := prepared.function(context.funcExpr)
+		runtime := relationActivation.ownerRuntime(context.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, context.key))
+		functions = append(functions, boundFunction(context, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
 	})
 	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
 
@@ -183,6 +202,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		directKeyFunc(keys),
 		keys,
 		retained,
+		relationActivation,
 	)
 	if err != nil {
 		return Result{}, err
@@ -243,18 +263,31 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
+	var relationActivation *relationRunActivation
+	if config.enableRelationActivation {
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn).exactLeafActivationSlice()
+		frozen, err := catalog.Freeze(config.Context)
+		if err != nil {
+			return Result{}, err
+		}
+		relationActivation = newRelationRunActivation(frozen)
+	}
 	functions := make([]query.Function, 0, 1+len(keys.functions))
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
-	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, prepared.function(fn), config.Check, config.Stats, config.SummaryCache, retained.newOwner(keys.rootKey), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
+	rootPrepared := prepared.function(fn)
+	rootRuntime := relationActivation.ownerRuntime(keys.rootKey, rootPrepared, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, keys.rootKey))
+	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, rootPrepared, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
 	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
 	for _, origin := range keys.functions {
 		if _, ok := seen[origin.key]; ok {
 			continue
 		}
 		seen[origin.key] = struct{}{}
-		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(origin.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
+		static := prepared.function(origin.funcExpr)
+		runtime := relationActivation.ownerRuntime(origin.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, origin.key))
+		functions = append(functions, boundFunction(origin, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
 	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
 
@@ -284,6 +317,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		directKeyFunc(keys),
 		keys,
 		retained,
+		relationActivation,
 	)
 	if err != nil {
 		return Result{}, err

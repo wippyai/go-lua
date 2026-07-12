@@ -133,11 +133,21 @@ func newMaterializedSolveCache(reg *axis.Registry, handoff ...*retainedSummaryAp
 	if reg == nil {
 		return nil
 	}
-	cache := &materializedSolveCache{reg: reg}
+	cache := &materializedSolveCache{reg: reg, entries: make(map[materializedSolveCacheKey]materializedSolveCacheEntry)}
 	if len(handoff) != 0 {
 		cache.handoff = handoff[0]
 	}
 	return cache
+}
+
+// withoutRetainedHandoff keeps run-local materialization dependency tracking
+// and exact rematerialization reuse while preventing an active relation owner
+// from adopting a legacy retained summary equation graph.
+func (c *materializedSolveCache) withoutRetainedHandoff() *materializedSolveCache {
+	if c == nil || c.handoff == nil {
+		return c
+	}
+	return &materializedSolveCache{reg: c.reg, entries: c.entries}
 }
 
 func (r *trackingSummaryReader) Read(key summary.SummaryKey) (summary.Summary, bool) {

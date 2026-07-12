@@ -118,6 +118,68 @@ func (c relationRunCatalog) Entries() []relationCellIdentity {
 
 func (c relationRunCatalog) ConsumerPolicy() relationConsumerPolicy { return c.consumers }
 
+// exactLeafActivationSlice is the deliberately narrow first production-shaped
+// gate. A producer that itself contains a direct relation call may only reveal
+// contextuality while its composed equation is built. Until that composition
+// class has a whole-function differential gate, publish exact leaf producers
+// only; every owner may still consume those leaves. The original inactive
+// catalog remains unchanged for preparation audits.
+func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
+	out := relationRunCatalog{
+		generation: c.generation,
+		byKey:      make(map[summary.SummaryKey]int),
+		consumers: relationConsumerPolicy{
+			generation: c.generation,
+			byKey:      make(map[summary.SummaryKey]int),
+		},
+	}
+	allowed := make(map[transformer.CellRef]struct{})
+	for _, entry := range c.entries {
+		if len(entry.direct.Cells()) != 0 || relationPreparedHasCalls(entry.identity.Prepared) || len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 {
+			continue
+		}
+		allowed[entry.identity.Cell] = struct{}{}
+		out.byKey[entry.identity.Summary] = len(out.entries)
+		out.entries = append(out.entries, entry)
+	}
+	for _, consumer := range c.consumers.entries {
+		routes := make(map[cfg.Point]transformer.DirectCallTarget)
+		for raw := 0; raw < consumer.direct.PointCount(); raw++ {
+			point := cfg.Point(raw)
+			target, ok := consumer.direct.Lookup(point)
+			if !ok {
+				continue
+			}
+			if _, ok := allowed[target.Cell]; ok {
+				routes[point] = target
+			}
+		}
+		direct, err := transformer.NewDirectCallCatalog(consumer.direct.PointCount(), routes)
+		if err != nil {
+			continue
+		}
+		consumer.direct = direct
+		consumer.active = len(routes) != 0
+		out.consumers.byKey[consumer.identity.Summary] = len(out.consumers.entries)
+		out.consumers.entries = append(out.consumers.entries, consumer)
+	}
+	return out
+}
+
+func relationPreparedHasCalls(prepared *body.Static) bool {
+	if prepared == nil || prepared.OperationPlan() == nil {
+		return true
+	}
+	plan := prepared.OperationPlan()
+	facts := plan.Facts()
+	for raw := 0; raw < plan.PointCount(); raw++ {
+		if _, ok := facts.CallSiteView(cfg.Point(raw)); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // DirectCalls requires the complete cell identity, not a free-standing key or
 // digest. Identity drift therefore fails closed before point routing is read.
 func (c relationRunCatalog) DirectCalls(identity relationCellIdentity) (transformer.DirectCallCatalog, bool) {
@@ -271,7 +333,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 			continue
 		}
 		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape}
-		candidate.direct = exactRelationDirectTargets(bindings, keys, static)
+		candidate.direct = exactRelationDirectTargets(bindings, keys, owner.key, static)
 		candidates[owner.key] = candidate
 	}
 
@@ -338,7 +400,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 			continue
 		}
 		routes := make(map[cfg.Point]transformer.DirectCallTarget)
-		for point, targetKey := range exactRelationDirectTargets(bindings, keys, owner.prepared) {
+		for point, targetKey := range exactRelationDirectTargets(bindings, keys, owner.key, owner.prepared) {
 			targetIdentity, ok := identities[targetKey]
 			target := candidates[targetKey]
 			if !ok || target == nil {
@@ -387,7 +449,7 @@ func relationCatalogOwners(keys programKeys, prepared preparedBodies, rootFn *as
 	return owners
 }
 
-func exactRelationDirectTargets(bindings *bind.Result, keys programKeys, static *body.Static) map[cfg.Point]summary.SummaryKey {
+func exactRelationDirectTargets(bindings *bind.Result, keys programKeys, owner summary.SummaryKey, static *body.Static) map[cfg.Point]summary.SummaryKey {
 	plan := static.OperationPlan()
 	if plan == nil {
 		return nil
@@ -399,6 +461,14 @@ func exactRelationDirectTargets(bindings *bind.Result, keys programKeys, static 
 		site, ok := facts.CallSiteView(point)
 		if !ok || site.CalleeSymbol() == 0 || site.CalleeMemberAccess() || site.MethodName() != "" || site.TypeArgCount() != 0 {
 			continue
+		}
+		// A context-specialized summary is the canonical legacy meaning for this
+		// site. A base lexical relation must never preempt it merely because both
+		// happen to project equal results in the current run.
+		if expr, ok := site.Expr(); ok && expr != 0 {
+			if _, contextual := keys.contexts.CallContextKey(owner, expr); contextual {
+				continue
+			}
 		}
 		if _, ok := site.ReceiverPath(); ok {
 			continue

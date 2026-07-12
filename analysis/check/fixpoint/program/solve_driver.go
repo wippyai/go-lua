@@ -8,9 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/callresult"
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/relationcall"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -175,10 +177,8 @@ func chunkFunction(
 	prepared *body.Static,
 	config body.Config,
 	stats *Stats,
-	cache *SummarySolveCache,
-	owner *retainedSummaryApplicationOwner,
+	runtime relationOwnerRuntime,
 	profile string,
-	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
 	keyFor callresult.KeyFunc,
 	index *callresult.SummaryIndex,
@@ -188,8 +188,11 @@ func chunkFunction(
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			return solveSummaryPrepared(cache, owner, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
-				return checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
+			return solveSummaryPrepared(runtime.cache, runtime.retained, profile, runtime.resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+				reader, observe := relationTrackedSummaryReader(captured.Registry, reader, runtime.active, stats)
+				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe)
+				installRelationInputDigests(&config, reader, runtime.active)
+				return config
 			}, stats, solveAttributionFor(stats, prepared, key, SolvePhaseSummary, false))
 		},
 	}
@@ -200,10 +203,8 @@ func boundFunction(
 	prepared *body.Static,
 	config body.Config,
 	stats *Stats,
-	cache *SummarySolveCache,
-	owner *retainedSummaryApplicationOwner,
+	runtime relationOwnerRuntime,
 	profile string,
-	resolution uint64,
 	contextKeyFor callresult.KeyFunc,
 	keyFor callresult.KeyFunc,
 	index *callresult.SummaryIndex,
@@ -214,8 +215,10 @@ func boundFunction(
 	return query.Function{
 		Key: origin.key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			return solveSummaryPrepared(cache, owner, profile, resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
-				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof)
+			return solveSummaryPrepared(runtime.cache, runtime.retained, profile, runtime.resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
+				reader, observe := relationTrackedSummaryReader(captured.Registry, reader, runtime.active, stats)
+				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe)
+				installRelationInputDigests(&config, reader, runtime.active)
 				if origin.hasEntryState {
 					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
 				}
@@ -281,6 +284,8 @@ func checkConfigWithSummaries(
 	keyFor callresult.KeyFunc,
 	index *callresult.SummaryIndex,
 	metatableProof metatableMethodProof,
+	relationFactory relationResolverFactory,
+	relationObserve func(summary.SummaryKey, summary.Summary),
 ) body.Config {
 	out := cloneCheckConfig(config)
 	baseFactory := out.CallOutcomeFactory
@@ -316,10 +321,14 @@ func checkConfigWithSummaries(
 			TypeValues:              providerConfig.TypeValues,
 		})
 		protected := callresult.ProtectedCallTypestateOutcomeProvider(providerConfig)
-		if baseFactory == nil {
-			return calloutcome.ComposeSupplemental(primary, protected)
+		legacy := calloutcome.ComposeSupplemental(primary, protected)
+		if baseFactory != nil {
+			legacy = calloutcome.ComposeSupplemental(primary, protected, baseFactory(ctx))
 		}
-		return calloutcome.ComposeSupplemental(primary, protected, baseFactory(ctx))
+		if relationFactory == nil {
+			return legacy
+		}
+		return relationcall.Exclusive(relationFactory(ctx, relationResolverInput{adapter: providerConfig, observe: relationObserve}), legacy)
 	}
 	out.SignatureArgumentTypeFactory = func(ctx body.CallOutcomeContext) body.SignatureArgumentTypeFunc {
 		provider := body.SignatureArgumentTypeFunc(callresult.SummaryArgumentTypeProvider(callresult.ProviderConfig{
@@ -352,6 +361,32 @@ func checkConfigWithSummaries(
 		}
 	}
 	return out
+}
+
+func relationTrackedSummaryReader(reg *axis.Registry, reader summary.Reader, active bool, stats *Stats) (summary.Reader, func(summary.SummaryKey, summary.Summary)) {
+	if !active {
+		return reader, nil
+	}
+	tracked := &trackingSummaryReader{reg: reg, base: reader}
+	return tracked, func(key summary.SummaryKey, sum summary.Summary) {
+		tracked.rememberOwned(key, summary.Normalize(reg, sum), true)
+		if stats != nil {
+			stats.RelationCallsHandled++
+		}
+	}
+}
+
+func installRelationInputDigests(config *body.Config, reader summary.Reader, active bool) {
+	if !active || config == nil {
+		return
+	}
+	tracked, ok := reader.(*trackingSummaryReader)
+	if !ok {
+		return
+	}
+	config.SummaryInputDigests = func() []uint64 {
+		return trackedSummaryReadDigests(tracked.reg, tracked.deps)
+	}
 }
 
 func cloneCheckConfig(config body.Config) body.Config {

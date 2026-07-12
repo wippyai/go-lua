@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/callresult"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/relationcall"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
@@ -17,7 +18,12 @@ import (
 // relationResolverFactory is inactive run-local infrastructure. It owns a
 // generation-fenced route catalog, but does not change the production call
 // provider or cache policy until the whole-function differential gate passes.
-type relationResolverFactory func(body.CallOutcomeContext) relationcall.Resolver
+type relationResolverInput struct {
+	adapter callresult.ProviderConfig
+	observe func(summary.SummaryKey, summary.Summary)
+}
+
+type relationResolverFactory func(body.CallOutcomeContext, ...relationResolverInput) relationcall.Resolver
 
 // inactiveRelationResolverFactory binds one exact query owner to the frozen
 // relations minted by the same run. Independently prepared bodies, generation
@@ -56,7 +62,7 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 	// Catalog and RelationSnapshot are immutable publication products. Capture
 	// them by value so the factory contains no mutable run-catalog dependency.
 	relations := s.relations
-	return func(callCtx body.CallOutcomeContext) relationcall.Resolver {
+	return func(callCtx body.CallOutcomeContext, supplied ...relationResolverInput) relationcall.Resolver {
 		adapter := callresult.ProviderConfig{
 			ProtectedCall:           callCtx.ProtectedCall,
 			CalleeValue:             callresult.CalleeValueFunc(callCtx.CalleeValue),
@@ -67,6 +73,9 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 			KeySpace:                callCtx.KeySpace,
 			TypeValues:              callCtx.TypeValues,
 		}
+		if len(supplied) != 0 {
+			adapter = supplied[0].adapter
+		}
 		return relationcall.NewResolver(relationcall.Config{
 			Relations:      relations,
 			Catalog:        &catalog,
@@ -76,6 +85,11 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 			// slice. Any effect term therefore rejects the complete application.
 			EffectResolver: nil,
 			Adapter:        adapter,
+			ObserveSummary: func(key summary.SummaryKey, sum summary.Summary) {
+				if len(supplied) != 0 && supplied[0].observe != nil {
+					supplied[0].observe(key, sum)
+				}
+			},
 		})
 	}, true
 }
