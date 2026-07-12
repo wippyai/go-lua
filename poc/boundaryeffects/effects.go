@@ -162,44 +162,149 @@ type Config struct {
 
 type Result map[cfg.Point]state.State
 
-// Execute applies the composed effects. No CFG walk, worklist, source-value
-// closure, Facts map, or concrete factapply kernel is used.
-func (b Bound) Execute(config Config) (Result, error) {
-	if config.Registry == nil || config.Resolver == nil {
-		return nil, fmt.Errorf("boundaryeffects: incomplete config")
+// Observation identifies a point-input snapshot without retaining CFG maps.
+type Observation uint8
+
+const (
+	ObserveEntry Observation = iota
+	ObserveBranch
+	ObserveThen
+	ObserveElse
+	ObserveJoin
+	ObserveFinal
+	ObserveExit
+	observationCount
+)
+
+// ObservationPlan is a packed selection of snapshots required by a consumer.
+// Summary construction normally requests only Exit; materialization can select
+// exactly the diagnostic points it needs.
+type ObservationPlan uint8
+
+func Observe(points ...Observation) ObservationPlan {
+	var plan ObservationPlan
+	for _, point := range points {
+		if point < observationCount {
+			plan |= 1 << point
+		}
 	}
-	if err := b.admit(config); err != nil {
+	return plan
+}
+
+func ObserveAll() ObservationPlan { return (1 << observationCount) - 1 }
+
+// Observations is caller-owned fixed storage. ExecuteObserved overwrites it and
+// performs no observation-map allocation.
+type Observations struct {
+	states [observationCount]state.State
+	mask   ObservationPlan
+}
+
+func (o Observations) Get(point Observation) (state.State, bool) {
+	if point >= observationCount || o.mask&(1<<point) == 0 {
+		return state.State{}, false
+	}
+	return o.states[point], true
+}
+
+func (o *Observations) record(plan ObservationPlan, point Observation, value state.State) {
+	if o != nil && plan&(1<<point) != 0 {
+		o.states[point], o.mask = value, o.mask|(1<<point)
+	}
+}
+
+// Execute applies the composed effects and materializes the compatibility map.
+// Summary consumers should use ExecuteExit; sparse diagnostic consumers should
+// use ExecuteObserved.
+func (b Bound) Execute(config Config) (Result, error) {
+	var observed Observations
+	_, err := b.ExecuteObserved(config, ObserveAll(), &observed)
+	if err != nil {
 		return nil, err
 	}
-	domain := state.DomainWithLanes(config.Registry, config.StateLanes)
-	if config.StateLanes == nil {
-		domain = state.Domain(config.Registry)
+	result := make(Result, observationCount)
+	points := [...]cfg.Point{b.plan.points.Entry, b.plan.points.Branch, b.plan.points.Then, b.plan.points.Else, b.plan.points.Join, b.plan.points.Final, b.plan.points.Exit}
+	for i, point := range points {
+		result[point] = observed.states[i]
 	}
-	result := make(Result, 7)
-	result[b.plan.points.Entry] = config.Entry
-	result[b.plan.points.Branch] = config.Entry
+	return result, nil
+}
+
+// ExecuteExit computes only the summary boundary and avoids all point-result
+// storage. The semantic operations remain exact and identical.
+func (b Bound) ExecuteExit(config Config) (state.State, error) {
+	return b.ExecuteObserved(config, 0, nil)
+}
+
+// ExecuteObserved computes the boundary and stores only selected point inputs.
+func (b Bound) ExecuteObserved(config Config, plan ObservationPlan, observed *Observations) (state.State, error) {
+	if config.Registry == nil || config.Resolver == nil {
+		return state.State{}, fmt.Errorf("boundaryeffects: incomplete config")
+	}
+	domain := state.Domain(config.Registry)
+	if config.StateLanes != nil {
+		domain = state.DomainWithLanes(config.Registry, config.StateLanes)
+	}
+	entry := config.Entry
+	if config.StateLanes != nil {
+		entry = state.NormalizeForDomain(domain, entry)
+	}
+	reachableEmpty := state.Reachable(state.State{})
+	if config.StateLanes != nil {
+		reachableEmpty = state.NormalizeForDomain(domain, reachableEmpty)
+	}
+	if !domain.Equal(reachableEmpty, domain.Bottom()) {
+		entry = state.Reachable(entry)
+		if config.StateLanes != nil {
+			entry = state.NormalizeForDomain(domain, entry)
+		}
+	}
+	config.Entry = entry
+	if err := b.admit(config); err != nil {
+		return state.State{}, err
+	}
+	if observed != nil {
+		*observed = Observations{}
+	}
+	if domain.Equal(entry, domain.Bottom()) {
+		for point := Observation(0); point < observationCount; point++ {
+			observed.record(plan, point, domain.Bottom())
+		}
+		return domain.Bottom(), nil
+	}
+	normalize := func(value state.State) state.State {
+		if config.StateLanes != nil {
+			return state.NormalizeForDomain(domain, value)
+		}
+		return value
+	}
+	observed.record(plan, ObserveEntry, entry)
+	observed.record(plan, ObserveBranch, entry)
 
 	// Equality outcome: the guard is one meet, then chosen and final are pure
 	// copies. Point observations are retained without replaying CFG kernels.
-	eq, reachable := b.equalGuard(config.Registry, config.Resolver.KeySpace(), config.Entry)
+	eq, reachable := b.equalGuard(config.Registry, config.Resolver.KeySpace(), entry)
 	if !reachable {
 		eq = domain.Bottom()
+	} else {
+		eq = normalize(eq)
 	}
-	result[b.plan.points.Then] = eq
+	observed.record(plan, ObserveThen, eq)
 	thenOut := eq
 	if reachable {
-		thenOut = b.copy(config, eq, b.paths[2], b.paths[0])
+		thenOut = normalize(b.copy(config, eq, b.paths[2], b.paths[0]))
 	}
 
 	// Inequality has no concrete effect for the admitted non-origin values.
-	result[b.plan.points.Else] = config.Entry
-	elseOut := b.copy(config, config.Entry, b.paths[2], b.paths[1])
+	observed.record(plan, ObserveElse, entry)
+	elseOut := normalize(b.copy(config, entry, b.paths[2], b.paths[1]))
 
 	joined := domain.Join(thenOut, elseOut)
-	result[b.plan.points.Join] = joined
-	result[b.plan.points.Final] = joined
-	result[b.plan.points.Exit] = b.copy(config, joined, b.paths[3], b.paths[2])
-	return result, nil
+	observed.record(plan, ObserveJoin, joined)
+	observed.record(plan, ObserveFinal, joined)
+	exit := normalize(b.copy(config, joined, b.paths[3], b.paths[2]))
+	observed.record(plan, ObserveExit, exit)
+	return exit, nil
 }
 
 func (b Bound) equalGuard(reg *axis.Registry, ks *keyspace.KeySpace, in state.State) (state.State, bool) {
@@ -232,8 +337,8 @@ func (b Bound) copy(config Config, in state.State, target, source boundPath) sta
 	}
 	out = edit.Done()
 	out = out.AddBranchProof(pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: target.local, Other: source.local})
-	out = out.PropagateUserAssignmentFrom(config.Registry, ks, target.state, in, source.state)
-	return out.CanonicalizeTypestateResources(ks)
+	out = out.CanonicalizeTypestateResources(ks)
+	return out.PropagateUserAssignmentFrom(config.Registry, ks, target.state, in, source.state)
 }
 
 // admit rejects the concrete features whose effects depend on hidden heap or

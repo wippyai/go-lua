@@ -17,10 +17,41 @@ The admission boundary is intentionally narrow and exact:
   approximated.
 
 The randomized differential checks every CFG point and exit against the current
-solver over 128 caller bindings, 4096 value pairs, and each of the 17 State
-lanes independently. This validates the admitted slice, not general function
-summarization. In particular, heap and correlated variant semantics require
-lane-specific symbolic adapters before this mechanism can cover real bodies.
+solver over 128 caller bindings and 4096 value pairs. A second differential
+runs both the production solver and this POC separately under each of the 17
+single-lane domains, including the production entry reachability and
+`NormalizeForDomain` rules. This validates the admitted slice, not general
+function summarization. In particular, heap and correlated variant semantics
+require lane-specific symbolic adapters before this mechanism can cover real
+bodies.
+
+There are three result surfaces:
+
+- `Execute` builds the legacy all-point result map;
+- `ExecuteExit` computes only the function boundary used by summary solving;
+- `ExecuteObserved` writes only requested point snapshots to caller-owned,
+  fixed-size storage. The observation plan and storage add no allocations.
+
+The path refinement plus canonical-key writes within each assignment already
+use one `PathEvidenceEdit` transaction. Equality-proof publication,
+typestate canonicalization, and user-lattice propagation deliberately remain in
+production order and cannot be folded into that edit through the current public
+State transaction without changing semantics.
+
+Representative Ryzen 9 7950X3D results:
+
+| path | ns/op | B/op | allocs/op | speedup |
+|---|---:|---:|---:|---:|
+| current body solve | 58,400 | 46,024 | 472 | 1.0x |
+| all-point compatibility map | 11,400 | 6,216 | 33 | 5.1x |
+| boundary-only exit | 10,620 | 3,112 | 24 | 5.5x |
+| sparse join + exit | 10,680 | 3,112 | 24 | 5.5x |
+| packed root binding | 32 | 0 | 0 | — |
+
+The first implementation eagerly inserted evolving States into a result map;
+that forced persistent representations to escape and measured only 2.8x.
+Fixed observation storage removes that artifact. The admitted summary path does
+clear 4x; semantic State edits, rather than observation selection, now dominate.
 
 Run:
 

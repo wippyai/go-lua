@@ -12,6 +12,8 @@ import (
 var benchmarkEffects Result
 var benchmarkOracle transfer.Result
 var benchmarkBindings PackedBindings
+var benchmarkExit state.State
+var benchmarkObserved Observations
 
 func BenchmarkGuardedBoundaryEffects(b *testing.B) {
 	f := makeFixture()
@@ -27,11 +29,32 @@ func BenchmarkGuardedBoundaryEffects(b *testing.B) {
 			benchmarkOracle = oracle(f, bound, reg, entry, nil)
 		}
 	})
-	b.Run("precomputed-boundary-effects", func(b *testing.B) {
+	b.Run("all-point-compatibility-map", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			var err error
 			benchmarkEffects, err = bound.bound.Execute(config)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("boundary-only-exit", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			var err error
+			benchmarkExit, err = bound.bound.ExecuteExit(config)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("sparse-observations-join-exit", func(b *testing.B) {
+		plan := Observe(ObserveJoin, ObserveExit)
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			var err error
+			benchmarkExit, err = bound.bound.ExecuteObserved(config, plan, &benchmarkObserved)
 			if err != nil {
 				b.Fatal(err)
 			}

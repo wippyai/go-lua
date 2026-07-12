@@ -190,18 +190,19 @@ func TestDifferentialCoversEveryStateLane(t *testing.T) {
 	f := makeFixture()
 	reg := standard.Registry()
 	b := bindCase(t, f, 1)
-	domain := state.Domain(reg)
-	entry := entryState(reg, b, domain.Bottom(), typevalue.LiteralString(reg, "same"), typevalue.LiteralString(reg, "same"))
-	want := oracle(f, b, reg, entry, nil)
-	got, err := b.bound.Execute(Config{Registry: reg, Resolver: b.resolver, Entry: entry})
-	if err != nil {
-		t.Fatal(err)
-	}
+	full := state.Domain(reg)
+	entry := entryState(reg, b, full.Bottom(), typevalue.LiteralString(reg, "same"), typevalue.LiteralString(reg, "same"))
 	if len(state.DefaultLanes()) != 17 {
 		t.Fatalf("default lane count=%d, want 17", len(state.DefaultLanes()))
 	}
 	for _, lane := range state.DefaultLanes() {
-		laneDomain := state.DomainWithLanes(reg, []state.LaneID{lane})
+		lanes := []state.LaneID{lane}
+		laneDomain := state.DomainWithLanes(reg, lanes)
+		want := oracle(f, b, reg, entry, lanes)
+		got, err := b.bound.Execute(Config{Registry: reg, Resolver: b.resolver, Entry: entry, StateLanes: lanes})
+		if err != nil {
+			t.Fatalf("lane %s: %v", lane, err)
+		}
 		for _, point := range f.graph.RPO() {
 			if !laneDomain.Equal(want[point], got[point]) {
 				t.Fatalf("lane %s point %d differs", lane, point)
@@ -219,5 +220,47 @@ func TestStateDependentHeapAndProofInputsFailClosed(t *testing.T) {
 	entry = entry.AddBranchProof(pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: b.bound.paths[0].local, Other: b.bound.paths[1].local})
 	if _, err := b.bound.Execute(Config{Registry: reg, Resolver: b.resolver, Entry: entry}); !errors.Is(err, ErrStateDependent) {
 		t.Fatalf("Execute error=%v, want ErrStateDependent", err)
+	}
+}
+
+func TestBoundaryOnlyAndSparseObservationsMatchFullResult(t *testing.T) {
+	f := makeFixture()
+	reg := standard.Registry()
+	b := bindCase(t, f, 7)
+	domain := state.Domain(reg)
+	entry := entryState(reg, b, domain.Bottom(), typevalue.LiteralString(reg, "same"), typevalue.LiteralString(reg, "other"))
+	config := Config{Registry: reg, Resolver: b.resolver, Entry: entry}
+	full, err := b.bound.Execute(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit, err := b.bound.ExecuteExit(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domain.Equal(exit, full[f.points.Exit]) {
+		t.Fatal("boundary-only exit differs from full result")
+	}
+	var sparse Observations
+	plan := Observe(ObserveThen, ObserveJoin, ObserveExit)
+	gotExit, err := b.bound.ExecuteObserved(config, plan, &sparse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domain.Equal(gotExit, exit) {
+		t.Fatal("sparse execution changed exit")
+	}
+	checks := []struct {
+		observation Observation
+		point       cfg.Point
+	}{{ObserveThen, f.points.Then}, {ObserveJoin, f.points.Join}, {ObserveExit, f.points.Exit}}
+	for _, check := range checks {
+		got, ok := sparse.Get(check.observation)
+		if !ok || !domain.Equal(got, full[check.point]) {
+			t.Fatalf("observation %d differs", check.observation)
+		}
+	}
+	if _, ok := sparse.Get(ObserveBranch); ok {
+		t.Fatal("unrequested branch observation was retained")
 	}
 }
