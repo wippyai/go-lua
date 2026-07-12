@@ -893,13 +893,14 @@ func descendantFactDependsOnInvalidatedRoot(reg *axis.Registry, value product.Va
 }
 
 func (f narrowedRootDescendantFacts) Restore(out state.State) state.State {
+	edit := out.EditPathEvidence(f.reg)
 	for _, fact := range f.pathFacts {
-		out = out.WriteLocalPathKey(f.reg, fact.key, fact.value)
+		edit.WriteLocalPathKey(fact.key, fact.value)
 	}
 	for _, fact := range f.staticMembers {
-		out = out.WriteLocalPathStaticMember(fact.key, fact.value)
+		edit.WriteLocalPathStaticMember(fact.key, fact.value)
 	}
-	return out
+	return edit.Done()
 }
 
 func valueHasUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {
