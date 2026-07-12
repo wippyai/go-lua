@@ -11,6 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/relationcall"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -210,6 +212,7 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 		t.Fatalf("resolve_reference direct catalog = %d points/%v cells, want 4/1", len(points), catalog.Cells())
 	}
 	before := totalAttributedBodySolves(fixture.stats)
+	preparedProjectionEvidence := 0
 	for point := range points {
 		target, found := catalog.Lookup(point)
 		if !found || target.Cell != cell || target.Shape != fixture.resolveRelation.Shape() {
@@ -224,13 +227,19 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 			}
 			keySources++
 			path, hasPath := facts.ExpressionPathRef(source.ExprRef)
-			if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || !source.Adjusted || !hasPath || path.String() != "route_entry.target_name" {
+			if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || !source.Adjusted || source.ResultIndex != 0 || !hasPath || path.String() != "route_entry.target_name" {
 				t.Fatalf("line %d resolve key source lost canonical scalar projection: source=%#v path=%v/%s", site.CallSpan().StartLine, source, hasPath, path.String())
 			}
 			return false
 		})
 		if keySources != 1 {
 			t.Fatalf("line %d resolve key sources=%d, want one", site.CallSpan().StartLine, keySources)
+		}
+		source, _ := site.ArgumentSourceAt(0)
+		path, _ := facts.ExpressionPathRef(source.ExprRef)
+		_, hasExpressionValue := facts.ExpressionValue(source.ExprRef)
+		if hasExpressionValue || hasGenericAliasSourceContract(application, point, path) {
+			preparedProjectionEvidence++
 		}
 		shape := transformer.Shape{Params: 2}
 		builder := transformer.NewBuilder(application.config.Registry, shape, transformer.DefaultOutputCapabilityRegistry(), operationplan.New(cfg.New(), factflow.FactsInput{}))
@@ -269,10 +278,46 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 			t.Fatalf("line %d lost resolve_reference's refined broad-key proof row", site.CallSpan().StartLine)
 		}
 	}
+	if preparedProjectionEvidence != 0 {
+		t.Fatalf("resolve_reference prepared static projection evidence=%d/4, want 0/4 before declared-path iterator recovery is materialized", preparedProjectionEvidence)
+	}
 	if after := totalAttributedBodySolves(fixture.stats); after != before {
 		t.Fatalf("row composition ran a callee body solve: before=%d after=%d", before, after)
 	}
 	t.Log("resolve_reference Relation rows compose at 4/49 real validate_graph CallSites with the broad symbolic key retained; no CellResult scalarization and zero callee body solves")
+}
+
+func hasGenericAliasSourceContract(application findRootNodesApplication, point cfg.Point, path pathdom.Path) bool {
+	declaration, ok := application.oracle.DominatingPathRootDeclarationSource(point, path.RootOnly())
+	if !ok {
+		return false
+	}
+	sourcePath, ok := application.oracle.ValueSourcePath(declaration.Source)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return false
+	}
+	plan := application.prepared.OperationPlan()
+	for raw := 0; raw < plan.PointCount(); raw++ {
+		op, ok := plan.GenericForOperation(cfg.Point(raw))
+		if !ok || op.Target() != sourcePath.Symbol {
+			continue
+		}
+		iterator, ok := op.Iterator()
+		if !ok || !op.Source().HasCallPoint {
+			return false
+		}
+		site, ok := plan.Facts().CallSiteView(op.Source().CallPoint)
+		if !ok {
+			return false
+		}
+		index, ok := effect.ResolveParamIndex(iterator.Source, site.ArgumentSourceCount())
+		if !ok {
+			return false
+		}
+		_, hasContract := op.SourceContract(index)
+		return hasContract
+	}
+	return false
 }
 
 func TestValidateGraphPreparedSignatureIdentityCensus(t *testing.T) {

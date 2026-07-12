@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
@@ -265,11 +266,20 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 			}
 		}
 	case valueIteratorProjection:
-		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
+		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
 			return fmt.Errorf("transformer: malformed iterator projection term %d", term)
 		}
 		if err := v.value(n.args[0]); err != nil {
 			return err
+		}
+	case valueStaticIndex:
+		if len(n.args) != 2 || !v.callee.validStaticIndexKey(n.args[1]) {
+			return fmt.Errorf("transformer: malformed static index term %d", term)
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
 		}
 	case valueAllocationResult:
 		if len(n.args) != 0 || !v.callee.validAllocation(n.allocation) || n.resultIndex < 0 {
@@ -388,8 +398,12 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 			return fmt.Errorf("malformed string concat term %d", term)
 		}
 	case valueIteratorProjection:
-		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 {
+		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
 			return fmt.Errorf("malformed iterator projection term %d", term)
+		}
+	case valueStaticIndex:
+		if len(n.args) != 2 || !arena.validStaticIndexKey(n.args[1]) {
+			return fmt.Errorf("malformed static index term %d", term)
 		}
 	case valueAllocationResult:
 		if len(n.args) != 0 || !arena.validAllocation(n.allocation) || n.resultIndex < 0 {
@@ -462,7 +476,20 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 	case valueStringConcat:
 		out = s.caller.StringConcatValue(s.value(n.args[0]), s.value(n.args[1]))
 	case valueIteratorProjection:
-		out = s.caller.IteratorProjectionValue(n.iterator, n.variableIndex, s.value(n.args[0]))
+		out = s.caller.IteratorProjectionValueWithContract(n.iterator, n.variableIndex, s.value(n.args[0]), n.assertedType, n.hasAsserted)
+	case valueStaticIndex:
+		owner := s.value(n.args[0])
+		keyNode := s.callee.values[n.args[1]]
+		if keyNode.op != valueConstant {
+			s.err = fmt.Errorf("transformer: static index key %d is not canonical constant", n.args[1])
+			return 0
+		}
+		member, ok := typevalue.ExactScalarKeySegment(s.callee.reg, nil, keyNode.value)
+		if !ok {
+			s.err = fmt.Errorf("transformer: static index key %d is not exact", n.args[1])
+			return 0
+		}
+		out = s.caller.StaticIndexValue(owner, member)
 	case valueAllocationResult:
 		allocation := s.caller.AllocationTemplate(s.callee.allocations[n.allocation].op)
 		out = s.caller.AllocationResultValue(allocation, n.resultIndex)

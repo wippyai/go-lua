@@ -303,7 +303,8 @@ func lowerGenericForBinding(ctx planCompileContext, point cfg.Point, publish boo
 		if err != nil {
 			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source: %w", err)
 		}
-		projection := ctx.builder.Arena().IteratorProjectionValue(iterator, op.VariableIndex(), term)
+		asserted, hasAsserted := op.SourceContract(sourceIndex)
+		projection := ctx.builder.Arena().IteratorProjectionValueWithContract(iterator, op.VariableIndex(), term, asserted, hasAsserted)
 		if projection == 0 {
 			return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator projection unsupported")
 		}
@@ -870,6 +871,15 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 					return 0, fmt.Errorf("source expression symbol %d has no exact binding", p.Symbol)
 				}
 				return term, nil
+			}
+			if owner, ok := ctx.locals[p.Symbol]; ok && iteratorProjectionDerived(ctx.builder.Arena(), owner) {
+				for _, member := range p.Segments {
+					owner = ctx.builder.Arena().StaticIndexValue(owner, member)
+					if owner == 0 {
+						return 0, fmt.Errorf("source expression iterator member is not a static scalar key")
+					}
+				}
+				return owner, nil
 			}
 			binding, err := exactBoundaryPathBinding(ctx, p)
 			if err != nil {

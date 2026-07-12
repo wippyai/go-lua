@@ -281,8 +281,11 @@ func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.
 }
 
 func exactDirectCallSourceBinding(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, PathTerm, error) {
-	if source.OpenTail || source.Expanded || source.Adjusted {
-		return 0, 0, fmt.Errorf("source has adjusted, open, or expanded shape")
+	if source.OpenTail || source.Expanded {
+		return 0, 0, fmt.Errorf("source has open or expanded shape")
+	}
+	if source.Adjusted && !exactAdjustedStaticMemberSource(ctx, source) {
+		return 0, 0, fmt.Errorf("adjusted source is not a proven scalar member projection")
 	}
 	value, err := exactCompilerSourceTerm(ctx, source)
 	if err != nil {
@@ -296,6 +299,35 @@ func exactDirectCallSourceBinding(ctx planCompileContext, source factflow.ValueS
 		path = 0
 	}
 	return value, path, nil
+}
+
+func exactAdjustedStaticMemberSource(ctx planCompileContext, source factflow.ValueSource) bool {
+	if !source.Valid() || source.Kind != factflow.ValueSourceExpression || !source.HasExpr || source.OpenTail || source.Expanded || source.ResultIndex != 0 {
+		return false
+	}
+	p, ok := ctx.facts.ExpressionPathRef(source.ExprRef)
+	if !ok || p.Symbol == 0 || p.Version != 0 || len(p.Segments) == 0 {
+		return false
+	}
+	owner, ok := ctx.locals[p.Symbol]
+	if !ok || !iteratorProjectionDerived(ctx.builder.Arena(), owner) {
+		return false
+	}
+	for _, member := range p.Segments {
+		next := ctx.builder.Arena().StaticIndexValue(owner, member)
+		if next == 0 {
+			return false
+		}
+		owner = next
+	}
+	return true
+}
+
+func iteratorProjectionDerived(arena *Arena, term ValueTerm) bool {
+	if arena == nil || term == 0 || int(term) >= len(arena.values) {
+		return false
+	}
+	return arena.values[term].op == valueIteratorProjection
 }
 
 func exactDirectCallSourcePath(ctx planCompileContext, source factflow.ValueSource) (PathTerm, error) {

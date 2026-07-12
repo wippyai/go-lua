@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -36,6 +37,7 @@ const (
 	valueDynamicTableRead
 	valueStringConcat
 	valueIteratorProjection
+	valueStaticIndex
 	valueAllocationResult
 )
 
@@ -55,6 +57,8 @@ type valueNode struct {
 	path          PathTerm
 	iterator      iteration.Iterator
 	variableIndex int
+	assertedType  typ.Type
+	hasAsserted   bool
 	allocation    AllocationTemplateTerm
 	resultIndex   int
 }
@@ -191,11 +195,31 @@ func (a *Arena) ValueDependsOn(term, dependency ValueTerm) bool {
 // signature iterator effect. The source container remains symbolic; loop
 // cardinality and SCC convergence stay owned by the CFG solver.
 func (a *Arena) IteratorProjectionValue(iterator iteration.Iterator, variableIndex int, source ValueTerm) ValueTerm {
+	return a.IteratorProjectionValueWithContract(iterator, variableIndex, source, nil, false)
+}
+
+// IteratorProjectionValueWithContract retains the immutable iterator source
+// contract used by the concrete generic-for transfer.
+func (a *Arena) IteratorProjectionValueWithContract(iterator iteration.Iterator, variableIndex int, source ValueTerm, asserted typ.Type, hasAsserted bool) ValueTerm {
 	if source == 0 || variableIndex < 0 || variableIndex > 1 ||
-		(iterator.Kind != iteration.IterateIndexed && iterator.Kind != iteration.IterateKeyed) {
+		(iterator.Kind != iteration.IterateIndexed && iterator.Kind != iteration.IterateKeyed) || hasAsserted != (asserted != nil) {
 		return 0
 	}
-	return a.internValue(valueNode{op: valueIteratorProjection, iterator: iterator, variableIndex: variableIndex, args: []ValueTerm{source}})
+	return a.internValue(valueNode{op: valueIteratorProjection, iterator: iterator, variableIndex: variableIndex, assertedType: asserted, hasAsserted: hasAsserted, args: []ValueTerm{source}})
+}
+
+// StaticIndexValue retains one pure, statically named index projection. It is
+// intentionally value-only: identity-backed heap reads require caller state
+// and remain on DynamicRead rather than leaking through this term.
+func (a *Arena) StaticIndexValue(owner ValueTerm, member segment.Segment) ValueTerm {
+	if owner == 0 {
+		return 0
+	}
+	key, ok := enginesourcevalue.StaticPathSegmentValue(a.reg, member)
+	if !ok {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueStaticIndex, args: []ValueTerm{owner, a.Constant(key)}})
 }
 
 // DynamicReadValue retains the functional relation tablePath[key] without
@@ -380,7 +404,12 @@ func (a *Arena) valueKey(n valueNode) string {
 	case valueStringConcat:
 		return fmt.Sprintf("s:%d:%d", n.args[0], n.args[1])
 	case valueIteratorProjection:
-		return fmt.Sprintf("i:%d:%d:%d:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.args)
+		if !n.hasAsserted {
+			return fmt.Sprintf("i:%d:%d:%d:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.args)
+		}
+		return fmt.Sprintf("i:%d:%d:%d:%x:%v", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.assertedType.Hash(), n.args)
+	case valueStaticIndex:
+		return fmt.Sprintf("si:%d:%d", n.args[0], n.args[1])
 	case valueAllocationResult:
 		return fmt.Sprintf("a:%d:%d", n.allocation, n.resultIndex)
 	default:
@@ -388,7 +417,10 @@ func (a *Arena) valueKey(n valueNode) string {
 	}
 }
 func (a *Arena) valueEqual(x, y valueNode) bool {
-	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || x.allocation != y.allocation || x.resultIndex != y.resultIndex || len(x.args) != len(y.args) {
+	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || x.hasAsserted != y.hasAsserted || x.allocation != y.allocation || x.resultIndex != y.resultIndex || len(x.args) != len(y.args) {
+		return false
+	}
+	if x.hasAsserted && !typ.TypeEquals(x.assertedType, y.assertedType) {
 		return false
 	}
 	for i := range x.args {
@@ -557,7 +589,20 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 		// The canonical Lua iterator projection is pure for type/value-shaped
 		// containers and requires no caller state. Context resolvers remain the
 		// precision extension for heap/member-backed containers.
-		return luasourcevalue.IteratorVariableValue(a.reg, nil, n.iterator, n.variableIndex, source, nil, false)
+		return luasourcevalue.IteratorVariableValue(a.reg, nil, n.iterator, n.variableIndex, source, n.assertedType, n.hasAsserted)
+	case valueStaticIndex:
+		if len(n.args) != 2 {
+			return product.Value{}, false
+		}
+		owner, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		key, ok := a.evalValue(n.args[1], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		return enginesourcevalue.StaticIndexValue(a.reg, nil, owner, key)
 	case valueAllocationResult:
 		return a.allocationResult(n.allocation, n.resultIndex)
 	default:
@@ -620,7 +665,12 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 	case valueStringConcat:
 		return "s(" + a.canonicalValue(n.args[0]) + "," + a.canonicalValue(n.args[1]) + ")"
 	case valueIteratorProjection:
-		return fmt.Sprintf("i%d.%d.%d(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, a.canonicalValue(n.args[0]))
+		if !n.hasAsserted {
+			return fmt.Sprintf("i%d.%d.%d(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, a.canonicalValue(n.args[0]))
+		}
+		return fmt.Sprintf("i%d.%d.%d.%x(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, n.assertedType.Hash(), a.canonicalValue(n.args[0]))
+	case valueStaticIndex:
+		return "si(" + a.canonicalValue(n.args[0]) + "," + a.canonicalValue(n.args[1]) + ")"
 	case valueAllocationResult:
 		op := a.allocations[n.allocation].op
 		return fmt.Sprintf("a%d.%s.%d:r%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal, n.resultIndex)
@@ -654,7 +704,10 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueIteratorProjection && (len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 ||
-		(n.iterator.Kind != iteration.IterateIndexed && n.iterator.Kind != iteration.IterateKeyed)) {
+		(n.iterator.Kind != iteration.IterateIndexed && n.iterator.Kind != iteration.IterateKeyed) || n.hasAsserted != (n.assertedType != nil)) {
+		return false
+	}
+	if n.op == valueStaticIndex && (len(n.args) != 2 || !a.validStaticIndexKey(n.args[1])) {
 		return false
 	}
 	if n.op == valueAllocationResult && (len(n.args) != 0 || !a.validAllocation(n.allocation) || n.resultIndex < 0) {
@@ -669,6 +722,18 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		}
 	}
 	return true
+}
+
+func (a *Arena) validStaticIndexKey(term ValueTerm) bool {
+	if a == nil || term == 0 || int(term) >= len(a.values) {
+		return false
+	}
+	node := a.values[term]
+	if node.op != valueConstant || len(node.args) != 0 {
+		return false
+	}
+	_, ok := typevalue.ExactScalarKeySegment(a.reg, nil, node.value)
+	return ok
 }
 
 func (a *Arena) canonicalPath(term PathTerm) string {

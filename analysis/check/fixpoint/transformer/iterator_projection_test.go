@@ -5,10 +5,12 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -45,6 +47,33 @@ func TestIteratorProjectionTermUsesCanonicalIteratorLowering(t *testing.T) {
 	pureElement, ok := arena.evalValue(elementTerm, cursor, SpecializationContext{})
 	if !ok || !product.Equal(reg, pureElement, element) {
 		t.Fatal("pure canonical iterator projection differed without a context resolver")
+	}
+}
+
+func TestIteratorProjectionTermRetainsConcreteSourceContract(t *testing.T) {
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed}
+	record := typetable.NewRecord().Field("target_name", typ.String).Build()
+	contract := typ.NewArray(record)
+	source := product.Top()
+	term := arena.IteratorProjectionValueWithContract(iter, 1, arena.Constant(source), contract, true)
+	if term == 0 || term == arena.IteratorProjectionValue(iter, 1, arena.Constant(source)) {
+		t.Fatal("asserted iterator contract was not retained in term identity")
+	}
+	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
+	got, ok := arena.evalValue(term, cursor, SpecializationContext{})
+	want, wantOK := luasourcevalue.IteratorVariableValue(reg, nil, iter, 1, source, contract, true)
+	if !ok || !wantOK || !product.Equal(reg, got, want) {
+		t.Fatalf("contract projection = %#v/%v, concrete %#v/%v", got, ok, want, wantOK)
+	}
+	member := arena.StaticIndexValue(term, segment.Segment{Kind: segment.SegmentField, Name: "target_name"})
+	projected, projectedOK := arena.evalValue(member, cursor, SpecializationContext{})
+	if !projectedOK {
+		t.Fatal("contract-derived static member did not project")
+	}
+	if projectedType, typeOK := typevalue.TypeOf(reg, projected); !typeOK || !typ.TypeEquals(projectedType, typ.String) {
+		t.Fatalf("contract-derived member type = %v/%v", projectedType, typeOK)
 	}
 }
 
