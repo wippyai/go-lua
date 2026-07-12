@@ -24,6 +24,44 @@ type WTOElement[Cell comparable] struct {
 
 func (e WTOElement[Cell]) IsComponent() bool { return e.Body != nil }
 
+// Elements returns a deep copy of the plan's structured schedule. It is
+// intended for immutable, shape-specific executors which compile the generic
+// WTO into a denser instruction representation. Mutating the returned slices
+// cannot alter the plan.
+func (p *WTOPlan[Cell]) Elements() []WTOElement[Cell] {
+	if p == nil {
+		return nil
+	}
+	var clone func([]WTOElement[Cell]) []WTOElement[Cell]
+	clone = func(in []WTOElement[Cell]) []WTOElement[Cell] {
+		out := make([]WTOElement[Cell], len(in))
+		for i, element := range in {
+			out[i].Vertex = element.Vertex
+			if element.Body != nil {
+				out[i].Body = clone(element.Body)
+			}
+		}
+		return out
+	}
+	return clone(p.elements)
+}
+
+// CoversInfluence reports whether a dependency read is scheduled by the
+// immutable WTO. Dense executors use this as a fail-closed dynamic-read gate.
+func (p *WTOPlan[Cell]) CoversInfluence(from, to Cell) bool {
+	return p != nil && p.coversInfluence(from, to)
+}
+
+// CoversEmission reports whether a contribution is scheduled by the immutable
+// WTO. Dense executors use this as a fail-closed dynamic-emission gate.
+func (p *WTOPlan[Cell]) CoversEmission(from, to Cell) bool {
+	return p != nil && p.coversEmission(from, to)
+}
+
+// Matches reports whether cells are exactly the canonical cell set of this
+// immutable plan.
+func (p *WTOPlan[Cell]) Matches(cells []Cell) bool { return p != nil && p.matches(cells) }
+
 // WTOPlan is an immutable structured schedule for one equation-system shape.
 // It is generic over Cell and has no dependency on State or any State lane.
 // The maps are construction-time indexes; execution order itself is held in

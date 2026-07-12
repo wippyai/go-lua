@@ -18,6 +18,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
+	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -160,6 +161,7 @@ type Static struct {
 	callOutcomeSupplement callpayload.CallOutcomeProvider
 	signatureReturnOps    effectlowering.ReturnTypeOps
 	wtoPlan               *solve.WTOPlan[cfg.Point]
+	concreteFlow          *concreteflow.Plan
 
 	// resultVersionPrefix is the digest state after immutable prepared-body
 	// inputs. A Static is solved many times across prepass, summary convergence,

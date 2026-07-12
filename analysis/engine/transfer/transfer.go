@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
+	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -108,6 +109,14 @@ type Config struct {
 	Registry *axis.Registry
 	Schedule Schedule
 	WTOPlan  *solve.WTOPlan[cfg.Point]
+	// ConcreteFlow is an optional immutable dense executor compiled with the
+	// prepared body's WTO and operation plan. It is used only by ordinary WTO
+	// solves; every unsupported or dynamically uncovered run falls back to the
+	// canonical generic WTO/FIFO path.
+	ConcreteFlow *concreteflow.Plan
+	// FuseConcreteIdentity permits certified empty, unique-predecessor rows to
+	// bypass the otherwise-identity canonical point transaction.
+	FuseConcreteIdentity bool
 	// CompareWTO receives a deterministic aggregate after a dual run or a WTO
 	// fallback. It is observational and must not mutate solver inputs.
 	CompareWTO func(WTOComparison)
@@ -294,6 +303,33 @@ func TryRun(config Config) (Result, error) {
 	}
 
 	if config.Schedule == ScheduleWTO || config.Schedule == ScheduleWTODual {
+		if config.Schedule == ScheduleWTO && config.ConcreteFlow != nil {
+			denseStats := &solve.Stats{}
+			denseSystem := plan.withStats(denseStats)
+			fuse := func(point cfg.Point) bool {
+				return config.FuseConcreteIdentity && config.BeforePoint == nil && config.AfterPoint == nil &&
+					(!observing || !config.ObserveNode(point))
+			}
+			dense, denseErr := concreteflow.Run(concreteflow.RunConfig{Context: config.Context, FuseIdentity: fuse}, denseSystem, config.ConcreteFlow)
+			if denseErr == nil {
+				if sys.Stats != nil {
+					sys.Stats.TransferCalls += denseStats.TransferCalls
+				}
+				finalize(dense.Versions)
+				if config.CompareWTO != nil {
+					config.CompareWTO(WTOComparison{WTOTransfers: denseStats.TransferCalls})
+				}
+				return Result(dense.Points), nil
+			}
+			if !errors.Is(denseErr, solve.ErrWTOPlanUncovered) {
+				return nil, denseErr
+			}
+			// Scratch observations can refer to revisions that are about to be
+			// discarded. The fallback owns a clean observation generation.
+			if config.ResetNodeObservations != nil {
+				config.ResetNodeObservations()
+			}
+		}
 		wtoStats := &solve.Stats{}
 		wtoSystem := plan.withStats(wtoStats)
 		var wto map[cfg.Point]state.State

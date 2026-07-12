@@ -21,6 +21,7 @@ import (
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
+	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -232,6 +233,14 @@ func (c *checker) prepare(
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, refinedSources, config.TypeValues, calleeValue)
 	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
+	wtoPlan := compileWTOPlan(built.Graph, config.Schedule)
+	var concretePlan *concreteflow.Plan
+	if len(genericFors) == 0 && wtoPlan != nil {
+		// Certification is intentionally fail-closed. Irreducible bodies and any
+		// future operation-plan shape the dense executor does not understand keep
+		// the existing generic WTO without making body preparation fail.
+		concretePlan, _ = concreteflow.Compile(built.Graph, lowered.Plan, wtoPlan)
+	}
 	return &Static{
 		registry:              config.Registry,
 		bindings:              bindings,
@@ -264,7 +273,8 @@ func (c *checker) prepare(
 		entrySeedsPrepared:    true,
 		callOutcomeSupplement: callOutcomeSupplement,
 		signatureReturnOps:    signatureReturnTypeOps(),
-		wtoPlan:               compileWTOPlan(built.Graph, config.Schedule),
+		wtoPlan:               wtoPlan,
+		concreteFlow:          concretePlan,
 	}
 }
 
@@ -351,12 +361,19 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 	observationPlan := compileObservationPlan(s.cfg.Graph, s.facts, callOutcome != nil)
 	observationCapture := newObservationCapture(observationPlan)
 	transferConfig := transfer.Config{
-		Context:                  config.Context,
-		Session:                  session,
-		Graph:                    s.cfg.Graph,
-		Registry:                 s.registry,
-		Schedule:                 config.Schedule,
-		WTOPlan:                  s.wtoPlan,
+		Context:  config.Context,
+		Session:  session,
+		Graph:    s.cfg.Graph,
+		Registry: s.registry,
+		Schedule: config.Schedule,
+		WTOPlan:  s.wtoPlan,
+		// Production publication remains on the canonical WTO until the dense
+		// executor passes the complete diagnostic differential, not just state
+		// and microbenchmark gates.
+		ConcreteFlow: nil,
+		// Keep fusion disabled until its body-level proof also accounts for
+		// language-side transfer decorators.
+		FuseConcreteIdentity:     false,
 		CompareWTO:               config.CompareWTO,
 		StateLanes:               config.StateLanes,
 		StateOptions:             state.DomainOptions{WidenThresholds: widenThresholds},
