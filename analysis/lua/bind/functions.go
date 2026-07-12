@@ -48,6 +48,92 @@ type FunctionOrigin struct {
 	HasTargetSymbol bool
 }
 
+// LocalFunctionUseClosure is binder-owned evidence about every runtime use of
+// one locally bound function value. DirectCalls are parser identities and are
+// intentionally projected to operation sites by the solved-body exporter.
+// The zero value is not a proof.
+type LocalFunctionUseClosure struct {
+	FunctionSymbol         symbol.ID
+	TargetSymbol           symbol.ID
+	DirectCalls            []*ast.FuncCallExpr
+	RuntimeUseScanComplete bool
+	BindingStable          bool
+	ValueDoesNotEscape     bool
+	CallSetComplete        bool
+}
+
+// LocalFunctionUseClosures reports conservative, whole-unit use evidence in
+// lexical function order. A read counts as closed only when the binder saw it
+// as the callee identifier of a direct call in the same lexical body. Captures,
+// aliases, returns, stores, arguments, and all unclassified reads fail closed.
+func (r *Result) LocalFunctionUseClosures() []LocalFunctionUseClosure {
+	if r == nil {
+		return nil
+	}
+	out := make([]LocalFunctionUseClosure, 0, len(r.functions))
+	targetCounts := make(map[symbol.ID]int, len(r.functions))
+	seenTargets := make(map[symbol.ID]struct{}, len(targetCounts))
+	for _, fn := range r.functions {
+		origin, ok := r.functionOrigins[fn]
+		if ok && origin.HasTargetSymbol && origin.TargetSymbol != 0 {
+			targetCounts[origin.TargetSymbol]++
+		}
+	}
+	for _, fn := range r.functions {
+		origin, ok := r.functionOrigins[fn]
+		if !ok || origin.Symbol == 0 || !origin.HasTargetSymbol || origin.TargetSymbol == 0 {
+			continue
+		}
+		if _, seen := seenTargets[origin.TargetSymbol]; seen {
+			continue
+		}
+		seenTargets[origin.TargetSymbol] = struct{}{}
+		calls := append([]*ast.FuncCallExpr(nil), r.directCalls[origin.TargetSymbol]...)
+		directReads := make(map[*ast.IdentExpr]struct{}, len(calls))
+		for _, call := range calls {
+			if call == nil {
+				continue
+			}
+			if ident, ok := call.Func.(*ast.IdentExpr); ok && ident != nil {
+				directReads[ident] = struct{}{}
+			}
+		}
+		allReadsDirect := len(directReads) == len(r.readIdents[origin.TargetSymbol])
+		if allReadsDirect {
+			for _, read := range r.readIdents[origin.TargetSymbol] {
+				if _, direct := directReads[read]; !direct {
+					allReadsDirect = false
+					break
+				}
+			}
+		}
+		stable := r.runtimeUseScanComplete && targetCounts[origin.TargetSymbol] == 1 && len(r.writeIdents[origin.TargetSymbol]) == 0 && allReadsDirect
+		closed := r.runtimeUseScanComplete && allReadsDirect
+		if closed {
+			for _, candidate := range r.functions {
+				captured := false
+				for _, capture := range r.directCaptures[candidate] {
+					if capture.Captured == origin.TargetSymbol {
+						captured = true
+						break
+					}
+				}
+				if captured {
+					closed = false
+					break
+				}
+			}
+		}
+		stable = stable && closed
+		out = append(out, LocalFunctionUseClosure{
+			FunctionSymbol: origin.Symbol, TargetSymbol: origin.TargetSymbol,
+			DirectCalls: calls, RuntimeUseScanComplete: r.runtimeUseScanComplete, BindingStable: stable,
+			ValueDoesNotEscape: closed, CallSetComplete: stable && closed,
+		})
+	}
+	return out
+}
+
 // FunctionSymbol returns the function identity symbol for fn.
 func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
 	if r == nil || fn == nil {

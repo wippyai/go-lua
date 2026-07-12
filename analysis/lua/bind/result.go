@@ -21,6 +21,9 @@ type Result struct {
 	implicitGlobalSymbols map[symbol.ID]struct{}
 	typeValueRefs         map[*ast.IdentExpr]TypeDecl
 
+	directCalls            map[symbol.ID][]*ast.FuncCallExpr
+	runtimeUseScanComplete bool
+
 	nextSymbolID symbol.ID
 
 	names map[symbol.ID]string
@@ -98,6 +101,7 @@ func newResult(opts Options) *Result {
 		functionTypeParams:    make(map[*ast.FunctionExpr][]TypeDecl),
 		methodReceiverTypes:   make(map[*ast.FunctionExpr]TypeDecl),
 	}
+	r.runtimeUseScanComplete = true
 	for _, name := range normalizeNames(opts.Globals) {
 		r.global(name, true)
 	}

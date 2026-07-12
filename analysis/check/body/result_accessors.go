@@ -1007,6 +1007,15 @@ func (r *Result) IsFunctionDefinitionTarget(id symbol.ID) bool {
 	return found
 }
 
+// LocalFunctionUseClosures returns binder-owned whole-unit use evidence. The
+// returned records and call slices never alias binder-owned storage.
+func (r *Result) LocalFunctionUseClosures() []bind.LocalFunctionUseClosure {
+	if r == nil || r.bindings == nil {
+		return nil
+	}
+	return r.bindings.LocalFunctionUseClosures()
+}
+
 func (r *Result) TypeRef(ref *ast.TypeRefExpr) (bind.TypeDecl, bool) {
 	if r == nil || r.bindings == nil {
 		return bind.TypeDecl{}, false

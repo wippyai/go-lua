@@ -76,6 +76,8 @@ func (b *binder) bindStmt(stmt ast.Stmt) {
 		b.bindTypeDef(stmt)
 	case *ast.InterfaceDefStmt:
 		b.bindInterfaceDef(stmt)
+	default:
+		b.invalidateRuntimeUseScan()
 	}
 }
 
@@ -258,6 +260,16 @@ func (b *binder) bindExprMode(expr ast.Expr, mode exprBindMode) {
 		}
 	case *ast.FuncCallExpr:
 		b.bindExprMode(expr.Func, mode)
+		if mode == exprBindRuntime && expr.Method == "" && expr.Receiver == nil {
+			if ident, ok := expr.Func.(*ast.IdentExpr); ok {
+				if id, ok := b.result.SymbolOf(ident); ok && id != 0 {
+					if b.result.directCalls == nil {
+						b.result.directCalls = make(map[symbol.ID][]*ast.FuncCallExpr)
+					}
+					b.result.directCalls[id] = append(b.result.directCalls[id], expr)
+				}
+			}
+		}
 		b.bindExprMode(expr.Receiver, mode)
 		for _, arg := range expr.Args {
 			b.bindExprMode(arg, mode)
@@ -297,5 +309,15 @@ func (b *binder) bindExprMode(expr ast.Expr, mode exprBindMode) {
 		b.bindTypeExpr(expr.Type)
 	case *ast.NonNilAssertExpr:
 		b.bindExprMode(expr.Expr, mode)
+	default:
+		if mode == exprBindRuntime {
+			b.invalidateRuntimeUseScan()
+		}
+	}
+}
+
+func (b *binder) invalidateRuntimeUseScan() {
+	if b != nil && b.result != nil {
+		b.result.runtimeUseScanComplete = false
 	}
 }
