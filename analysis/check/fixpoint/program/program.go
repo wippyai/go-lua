@@ -41,6 +41,10 @@ type Config struct {
 	// semanticProgramAudit is an internal acceptance hook. It is intentionally
 	// unavailable outside this package and never installed by production.
 	semanticProgramAudit func(*body.Static, body.Config, *body.Result) error
+	// relationCatalogAudit exercises the inactive lexical-relation preparation
+	// seam in package tests. Production never installs it, so catalog preparation
+	// cannot add work or alter call routing before activation is explicitly gated.
+	relationCatalogAudit func(relationRunCatalog) error
 }
 
 // Stats holds caller-owned observational counters for a program fixed-point
@@ -106,6 +110,12 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
 	if err != nil {
 		return Result{}, err
+	}
+	if config.relationCatalogAudit != nil {
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
+		if err := config.relationCatalogAudit(catalog); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
@@ -198,6 +208,12 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	prepared, err := prepareBoundFunctionBodies(fn, bindings, config.Check, keys)
 	if err != nil {
 		return Result{}, err
+	}
+	if config.relationCatalogAudit != nil {
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
+		if err := config.relationCatalogAudit(catalog); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err

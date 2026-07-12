@@ -29,6 +29,35 @@ type PreparedPlanCompiler struct {
 	certificate SemanticCertificate
 }
 
+// EffectFree reports whether this prepared compiler can emit any structured
+// EffectTerm. It inspects the same preparation-owned allocation terms and
+// point effect catalog used by lowering; compiler admission alone is not an
+// effect-free proof because exact signature allocations and writes are valid
+// relation programs.
+func (p *PreparedPlanCompiler) EffectFree() bool {
+	if p == nil || p.plan == nil {
+		return false
+	}
+	for _, effect := range p.base.allocationEffects {
+		if effect != 0 {
+			return false
+		}
+	}
+	catalog := DefaultEffectCatalog()
+	for raw := 0; raw < p.plan.PointCount(); raw++ {
+		cursor := p.plan.Cursor(cfg.Point(raw))
+		active := make([]operationplan.Kind, 0, 2)
+		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
+			active = append(active, cell.Kind())
+		}
+		_, admitted, err := catalog.AdmitPoint(active)
+		if err != nil || admitted {
+			return false
+		}
+	}
+	return true
+}
+
 // Compile preserves the historical fail-closed API over the prepared
 // lifecycle.
 func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape) Relation {

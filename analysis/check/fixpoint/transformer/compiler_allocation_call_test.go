@@ -44,6 +44,13 @@ func TestPlanCompilerAllocationCallSharesReturnAndHeapTransaction(t *testing.T) 
 		Returns:   map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{source})},
 	}).WithSignatureCalls(map[cfg.Point]operationplan.SignatureCallOperation{callPoint: callOp}).
 		WithSignatureAllocations(map[cfg.Point]operationplan.SignatureAllocationOperation{callPoint: allocationOp})
+	prepared, err := NewPlanCompiler().Prepare(reg, graph, plan, Shape{})
+	if err != nil {
+		t.Fatalf("Prepare allocation relation: %v", err)
+	}
+	if prepared.EffectFree() {
+		t.Fatal("exact allocation relation reported effect-free")
+	}
 	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
 	if reason := relation.ContextualReason(); reason != "" {
 		t.Fatalf("allocation relation contextual: %s", reason)
