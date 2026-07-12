@@ -15,6 +15,7 @@ type SymbolicCFGRow struct {
 	Guard           Guard
 	Values          map[symbol.ID]ValueTerm
 	Operations      []Operation
+	Effects         []EffectTerm
 	Output          summary.Summary
 	genericBindings map[symbol.ID]symbolicGenericBinding
 }
@@ -161,6 +162,11 @@ func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
 			return false
 		}
 	}
+	for _, effect := range row.Effects {
+		if effect == 0 {
+			return false
+		}
+	}
 	return true
 }
 
@@ -169,6 +175,7 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 		Guard:           row.Guard,
 		Values:          make(map[symbol.ID]ValueTerm, len(row.Values)),
 		Operations:      append([]Operation(nil), row.Operations...),
+		Effects:         append([]EffectTerm(nil), row.Effects...),
 		Output:          row.Output.Clone(),
 		genericBindings: make(map[symbol.ID]symbolicGenericBinding, len(row.genericBindings)),
 	}
@@ -205,7 +212,7 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 }
 
 func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.genericBindings) != len(right.genericBindings) {
+	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.genericBindings) != len(right.genericBindings) {
 		return false
 	}
 	if !summary.Equal(arena.reg, left.Output, right.Output) {
@@ -218,6 +225,11 @@ func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
 	}
 	for i := range left.Operations {
 		if left.Operations[i] != right.Operations[i] {
+			return false
+		}
+	}
+	for i := range left.Effects {
+		if left.Effects[i] != right.Effects[i] {
 			return false
 		}
 	}

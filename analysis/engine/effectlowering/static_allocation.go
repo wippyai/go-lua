@@ -24,7 +24,7 @@ func StaticSignatureAllocationTemplate(sig signature.Function) (signature.Return
 }
 
 func exactStaticAllocationTemplate(fn *typ.Function, template signature.ReturnAllocationTemplate) bool {
-	if template.ReturnIndex < 0 || template.ReturnIndex >= len(fn.Returns) || template.Root == "" || len(template.Objects) == 0 {
+	if len(fn.Returns) != 1 || template.ReturnIndex != 0 || template.Root == "" || len(template.Objects) == 0 {
 		return false
 	}
 	seen := make(map[signature.AllocationTemplateID]struct{}, len(template.Objects))

@@ -3,6 +3,8 @@ package body
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -72,5 +74,49 @@ func TestValidateGraphOwnsEightDurableAllocationSites(t *testing.T) {
 	}
 	if count != 8 {
 		t.Fatalf("durable allocation sites = %d, want 8 table.create calls", count)
+	}
+}
+
+func TestValidateGraphAllocationRelationsMatchCanonicalOutcomesWithoutSolves(t *testing.T) {
+	prepared, _ := validateGraphSemanticProgramFixture(t)
+	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
+	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
+	exactCalls := make(map[cfg.Point]bool)
+	for _, entry := range entries {
+		if entry.Family == "CallSites" && entry.Exact {
+			exactCalls[entry.Point] = true
+		}
+	}
+	matched := 0
+	for rawPoint := 0; rawPoint < prepared.operationPlan.PointCount(); rawPoint++ {
+		point := cfg.Point(rawPoint)
+		allocation, ok := prepared.operationPlan.SignatureAllocationOperation(point)
+		if !ok {
+			continue
+		}
+		if !exactCalls[point] {
+			t.Fatalf("allocation call point %d is not compiler-exact", point)
+		}
+		call, _ := prepared.operationPlan.SignatureCallOperation(point)
+		site, _ := prepared.facts.CallSiteView(point)
+		ks := keyspace.New()
+		materialized, exact := effectlowering.MaterializeStaticAllocation(prepared.registry, prepared.typeValues, ks, point, allocation.Template())
+		if !exact {
+			t.Fatalf("allocation point %d failed canonical materialization", point)
+		}
+		oracleProvider := effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
+			Signatures:  acceptanceSignatureLookup{sig: call.Signature()},
+			NameForSite: func(transfer.NodeContext, factflow.CallSiteView) (string, bool) { return "resolved", true },
+			Facts:       prepared.facts, TypeValues: prepared.typeValues, KeySpace: ks,
+		})
+		oracle := oracleProvider(transfer.NodeContext{Registry: prepared.registry, Point: point}, site, state.State{}, func(cfg.Point) state.State { return state.State{} })
+		if len(oracle.Results) != 1 || !product.Equal(prepared.registry, oracle.Results[0].Value, materialized.Result) ||
+			len(oracle.HeapTableObjects) != len(materialized.Objects) || len(oracle.Placements) != len(materialized.Placements) {
+			t.Fatalf("allocation point %d differs from canonical provider", point)
+		}
+		matched++
+	}
+	if matched != 8 {
+		t.Fatalf("exact allocation relations = %d, want 8 table.create calls", matched)
 	}
 }

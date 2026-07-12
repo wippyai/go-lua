@@ -40,14 +40,16 @@ type PlanCompiler struct {
 }
 
 type planCompileContext struct {
-	registry        *axis.Registry
-	graph           cfg.Graph
-	plan            *operationplan.Plan
-	facts           factflow.Facts
-	builder         *Builder
-	locals          map[symbol.ID]ValueTerm
-	expressions     map[factflow.ExprRef][]ValueTerm
-	genericBindings map[symbol.ID]symbolicGenericBinding
+	registry          *axis.Registry
+	graph             cfg.Graph
+	plan              *operationplan.Plan
+	facts             factflow.Facts
+	builder           *Builder
+	locals            map[symbol.ID]ValueTerm
+	expressions       map[factflow.ExprRef][]ValueTerm
+	allocationEffects map[cfg.Point]EffectTerm
+	rowEffects        *[]EffectTerm
+	genericBindings   map[symbol.ID]symbolicGenericBinding
 }
 
 type symbolicGenericBinding struct {
@@ -121,6 +123,12 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 		return fmt.Errorf("signature call: resolved producer missing")
 	}
 	sig := op.Signature()
+	if _, exact := ctx.plan.SignatureAllocationOperation(point); exact {
+		if ctx.allocationEffects[point] == 0 {
+			return fmt.Errorf("signature call: allocation term missing")
+		}
+		return nil
+	}
 	if _, ok := effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, sig); ok {
 		if _, exists := ctx.facts.CallSiteView(point); !exists {
 			return fmt.Errorf("signature call: call-site payload missing")
@@ -144,7 +152,15 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 	}
 	return fmt.Errorf("signature call: iterator result is not owned by generic-for")
 }
-func (signatureCallPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error { return nil }
+func (signatureCallPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _ *[]Operation) error {
+	if effect := ctx.allocationEffects[point]; effect != 0 {
+		if ctx.rowEffects == nil {
+			return fmt.Errorf("signature call: allocation row sink missing")
+		}
+		*ctx.rowEffects = append(*ctx.rowEffects, effect)
+	}
+	return nil
+}
 
 // bindStaticSignatureTerms materializes context-independent call results once
 // into the symbolic expression table. It consumes only the Plan's resolved,
@@ -153,6 +169,31 @@ func (signatureCallPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operatio
 func bindStaticSignatureTerms(ctx *planCompileContext) error {
 	for rawPoint := 0; rawPoint < ctx.plan.PointCount(); rawPoint++ {
 		point := cfg.Point(rawPoint)
+		if allocationOp, exact := ctx.plan.SignatureAllocationOperation(point); exact {
+			site, ok := ctx.facts.CallSiteView(point)
+			if !ok {
+				return fmt.Errorf("allocation signature call at point %d has no call-site payload", point)
+			}
+			ref, hasExpr := site.Expr()
+			if !hasExpr {
+				return fmt.Errorf("allocation signature call at point %d has no expression identity", point)
+			}
+			allocation := ctx.builder.Arena().AllocationTemplate(allocationOp)
+			resultIndex := allocationOp.Template().ReturnIndex
+			result := ctx.builder.Arena().AllocationResultValue(allocation, resultIndex)
+			effect, err := ctx.builder.EffectArena().AllocationTemplate(allocation)
+			if allocation == 0 || result == 0 || err != nil {
+				return fmt.Errorf("allocation signature call at point %d failed symbolic construction", point)
+			}
+			if _, exists := ctx.expressions[ref]; exists {
+				return fmt.Errorf("signature call expression %d has multiple producers", ref)
+			}
+			terms := make([]ValueTerm, resultIndex+1)
+			terms[resultIndex] = result
+			ctx.expressions[ref] = terms
+			ctx.allocationEffects[point] = effect
+			continue
+		}
 		op, ok := ctx.plan.SignatureCallOperation(point)
 		if !ok {
 			continue
@@ -282,6 +323,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	ctx.builder = builder
 	ctx.locals = make(map[symbol.ID]ValueTerm)
 	ctx.expressions = make(map[factflow.ExprRef][]ValueTerm)
+	ctx.allocationEffects = make(map[cfg.Point]EffectTerm)
 	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
 	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
 		return contextual("compiler: boundary: " + err.Error())
@@ -336,6 +378,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 			rowCtx := ctx
 			rowCtx.locals = row.Values
 			rowCtx.genericBindings = row.genericBindings
+			rowCtx.rowEffects = &row.Effects
 			cursor := plan.Cursor(point)
 			for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
 				handler := c.facts[cell.Kind()]
@@ -371,7 +414,7 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	exitRows := rowsByPoint[graph.Exit()]
 	rows := make([]Row, len(exitRows))
 	for i, row := range exitRows {
-		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations}
+		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects}
 	}
 	relation, err := builder.Build(certificate, rows)
 	if err != nil {
