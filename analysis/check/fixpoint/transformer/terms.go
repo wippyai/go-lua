@@ -122,15 +122,16 @@ func (a *Arena) CellResultValue(cell CellRef, args ...ValueTerm) ValueTerm {
 	return a.internValue(valueNode{op: valueCellResult, cell: cell, args: append([]ValueTerm(nil), args...)})
 }
 
-// DynamicReadValue retains the functional relation table[key] without
-// encoding a marker into product.Value. tablePath identifies the same table in
-// the caller's visibility/keyspace state. Specialization fails closed unless a
-// canonical DynamicReadResolver and all three bindings are available.
-func (a *Arena) DynamicReadValue(table ValueTerm, tablePath PathTerm, key ValueTerm) ValueTerm {
-	if table == 0 || tablePath == 0 || key == 0 {
+// DynamicReadValue retains the functional relation tablePath[key] without
+// encoding a marker into product.Value. owner is the value at tablePath's root
+// when tablePath has a suffix; for a root-only path it is the table value
+// itself. The resolver projects the path before indexing. Specialization fails
+// closed unless a canonical DynamicReadResolver and all bindings are present.
+func (a *Arena) DynamicReadValue(owner ValueTerm, tablePath PathTerm, key ValueTerm) ValueTerm {
+	if owner == 0 || tablePath == 0 || key == 0 {
 		return 0
 	}
-	return a.internValue(valueNode{op: valueDynamicRead, args: []ValueTerm{table, key}, path: tablePath})
+	return a.internValue(valueNode{op: valueDynamicRead, args: []ValueTerm{owner, key}, path: tablePath})
 }
 
 func (a *Arena) Path(root Root, suffix ...segment.Segment) PathTerm {
@@ -308,8 +309,9 @@ func guardNodeEqual(x, y guardNode) bool {
 type CellResultResolver func(CellRef, []product.Value) (product.Value, bool)
 
 // DynamicReadResolver binds a syntax-free table read to the caller's concrete
-// state/visibility context. Implementations must use the engine's canonical
-// path, heap-identity, and dynamic-index read semantics.
+// state/visibility context. Its first product value is the tablePath root owner
+// (or the table itself for a root-only path). Implementations must project the
+// path using the engine's canonical path, heap, and dynamic-index semantics.
 type DynamicReadResolver func(pathdom.Path, product.Value, product.Value) (product.Value, bool)
 
 // SpecializationContext owns optional concrete evaluators. A term requiring a

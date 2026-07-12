@@ -17,10 +17,15 @@ import (
 )
 
 // ReadBoundDynamicIndexValue performs the flow-sensitive part of a dynamic
-// table read after its table and key operands have already been resolved.
+// table read after its path-root owner and key operands have been resolved.
 // It is a syntax-free read kernel available to concrete and symbolic call
-// boundaries. Missing path/heap evidence fails closed; this function never
-// fabricates a type-only answer for a mutable table.
+// boundaries. Missing concrete evidence uses the same sound type-index
+// projection as the concrete reader and never claims membership/presence.
+//
+// tableValue is the owner at tablePath's root when tablePath has suffixes. For
+// a root-only tablePath it is the table itself. Suffix projection uses exact
+// path/heap evidence first and the concrete reader's sound RuntimeIndex type
+// fallback second.
 func ReadBoundDynamicIndexValue(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
@@ -35,17 +40,31 @@ func ReadBoundDynamicIndexValue(
 	if reg == nil || ks == nil || tablePath.IsEmpty() {
 		return product.Value{}, false
 	}
-	if resolver != nil {
+	if len(tablePath.Segments) != 0 {
 		ownerPath := tablePath
-		if len(tablePath.Segments) != 0 {
-			ownerPath = tablePath.ParentView()
+		ownerPath = tablePath.ParentView()
+		if resolver != nil {
+			if owner, ok := ReadPathValue(reg, resolver, point, ownerPath, in); ok &&
+				product.Equal(reg, product.Meet(reg, owner, tableValue), product.Bottom(reg)) {
+				return product.Value{}, false
+			}
 		}
-		owner, ok := ReadPathValue(reg, resolver, point, ownerPath, in)
-		if !ok || product.Equal(reg, product.Meet(reg, owner, tableValue), product.Bottom(reg)) {
+		if resolver != nil {
+			if projectedTable, ok := ReadPathValue(reg, resolver, point, tablePath, in); ok {
+				tableValue = projectedTable
+			} else if projectedTable, ok := projectBoundTablePath(reg, typeValues, ks, in, tableValue, tablePath.Segments); ok {
+				tableValue = projectedTable
+			} else {
+				return product.Value{}, false
+			}
+		} else if projectedTable, ok := projectBoundTablePath(reg, typeValues, ks, in, tableValue, tablePath.Segments); ok {
+			tableValue = projectedTable
+		} else {
 			return product.Value{}, false
 		}
+	} else if resolver != nil {
 		projectedTable, ok := ReadPathValue(reg, resolver, point, tablePath, in)
-		if !ok {
+		if !ok || product.Equal(reg, product.Meet(reg, projectedTable, tableValue), product.Bottom(reg)) {
 			return product.Value{}, false
 		}
 		tableValue = projectedTable
@@ -67,11 +86,11 @@ func ReadBoundDynamicIndexValue(
 
 	id, ok := product.Get(reg, tableValue, identity.Key).ID()
 	if !ok {
-		return product.Value{}, false
+		return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
 	}
 	object := in.ReadHeapTableObject(reg, id)
 	if object.IsBottom() || object.DynamicIndexFactsTop() {
-		return product.Value{}, false
+		return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
 	}
 	rootID, rootOK := product.Get(reg, object.Root(), identity.Key).ID()
 	if !rootOK || rootID != id || product.Equal(reg, product.Meet(reg, object.Root(), tableValue), product.Bottom(reg)) {
@@ -85,7 +104,7 @@ func ReadBoundDynamicIndexValue(
 		// A broad key may name any finite static member. Enumerate in canonical
 		// keyspace order and retain nil because it may also name no member.
 		if !object.StableShape() {
-			return product.Value{}, false
+			return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
 		}
 		members := object.StaticMembers()
 		memberKeys := make([]keyspace.Key, 0, len(members))
@@ -154,7 +173,33 @@ func ReadBoundDynamicIndexValue(
 	if hasExactSegment && object.StableShape() {
 		return typevalue.Nil(reg), true
 	}
-	return product.Value{}, false
+	return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
+}
+
+func projectBoundTablePath(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, in state.State, root product.Value, suffix []segment.Segment) (product.Value, bool) {
+	if projected, ok := HeapMemberFromValue(reg, ks, in, root, suffix); ok {
+		return projected, true
+	}
+	value := root
+	for _, seg := range suffix {
+		keyValue, ok := scalarSegmentValue(reg, seg)
+		if !ok {
+			return product.Value{}, false
+		}
+		value, ok = runtimeDynamicIndexValue(reg, typeValues, value, keyValue)
+		if !ok {
+			return product.Value{}, false
+		}
+	}
+	return value, true
+}
+
+func runtimeDynamicIndexValue(reg *axis.Registry, typeValues *typevalue.Cache, tableValue, keyValue product.Value) (product.Value, bool) {
+	value, ok := typeValues.RuntimeIndex(reg, tableValue, keyValue)
+	if !ok {
+		return product.Value{}, false
+	}
+	return InheritTopOriginEvidence(reg, value, tableValue), true
 }
 
 func scalarSegmentValue(reg *axis.Registry, seg segment.Segment) (product.Value, bool) {

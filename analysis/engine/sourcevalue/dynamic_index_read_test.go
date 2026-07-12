@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -58,7 +59,7 @@ func TestReadBoundDynamicIndexValueJoinsEveryMayMatchingFiniteFactDeterministica
 			StaticMembers: map[keyspace.Key]product.Value{staticKey: staticValue},
 		})
 		in := state.State{}.WriteHeapTableObject(reg, id, object)
-		got, ok := ReadBoundDynamicIndexValue(reg, typevalue.NewCache(), ks, nil, 0, pathdom.NewPath(symbol.ID(1), "self").Field("references"), table, abstractName, in)
+		got, ok := ReadBoundDynamicIndexValue(reg, typevalue.NewCache(), ks, nil, 0, pathdom.Path{Root: "references"}, table, abstractName, in)
 		if !ok {
 			t.Fatal("abstract-string dynamic read failed")
 		}
@@ -77,7 +78,7 @@ func TestReadBoundDynamicIndexValueDistinguishesFalseFromAbsentAndFailsClosed(t 
 	table := identityvalue.Present(reg, id)
 	falseValue := typevalue.LiteralBool(reg, false)
 	memberKey, _ := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentIndexString, Name: "false-node"}})
-	basePath := pathdom.NewPath(symbol.ID(1), "self").Field("references")
+	basePath := pathdom.Path{Root: "references"}
 	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: table, StaticMembers: map[keyspace.Key]product.Value{memberKey: falseValue}, StableShape: true})
 	in := state.State{}.WriteHeapTableObject(reg, id, object)
 
@@ -125,5 +126,53 @@ func TestReadBoundDynamicIndexValueProjectsReferencesIdentityFromSelfPath(t *tes
 	}
 	if _, ok := ReadBoundDynamicIndexValue(reg, nil, ks, resolver, point, referencesPath, referencesValue, typevalue.LiteralString(reg, "node"), in); ok {
 		t.Fatal("receiver operand incompatible with tablePath owner did not fail closed")
+	}
+}
+
+func TestReadBoundDynamicIndexValueFallsBackToCanonicalTypedIndexWithoutIdentity(t *testing.T) {
+	reg := standard.Registry()
+	cache := typevalue.NewCache()
+	ks := keyspace.New()
+	tableType := typetable.NewMap(typ.String, typ.String)
+	tableValue := cache.FromTypeWithWitness(reg, tableType)
+	keyValue := typevalue.LiteralString(reg, "node")
+	want, ok := cache.RuntimeIndex(reg, tableValue, keyValue)
+	if !ok {
+		t.Fatal("test setup RuntimeIndex failed")
+	}
+	want = InheritTopOriginEvidence(reg, want, tableValue)
+	got, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, pathdom.Path{Root: "references"}, tableValue, keyValue, state.State{})
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("typed identity-free dynamic read = %#v/%v, want canonical RuntimeIndex %#v", got, ok, want)
+	}
+	if presence.Equal(product.PresenceOf(got), presence.Present()) {
+		t.Fatalf("typed map lookup incorrectly proved membership/presence: %#v", got)
+	}
+}
+
+func TestReadBoundDynamicIndexValueProjectsTypedOwnerPathBeforeFallbackIndex(t *testing.T) {
+	reg := standard.Registry()
+	cache := typevalue.NewCache()
+	ks := keyspace.New()
+	referencesType := typetable.NewMap(typ.String, typ.String)
+	ownerType := typetable.NewRecord().Field("references", referencesType).Build()
+	ownerValue := cache.FromTypeWithWitness(reg, ownerType)
+	keyValue := typevalue.LiteralString(reg, "node")
+	references, ok := cache.RuntimeIndex(reg, ownerValue, typevalue.LiteralString(reg, "references"))
+	if !ok {
+		t.Fatal("test setup owner.references RuntimeIndex failed")
+	}
+	want, ok := cache.RuntimeIndex(reg, references, keyValue)
+	if !ok {
+		t.Fatal("test setup references[node] RuntimeIndex failed")
+	}
+	want = InheritTopOriginEvidence(reg, want, references)
+	path := pathdom.NewPath(symbol.ID(9), "self").Field("references")
+	got, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, path, ownerValue, keyValue, state.State{})
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("typed owner-path dynamic read = %#v/%v, want %#v", got, ok, want)
+	}
+	if presence.Equal(product.PresenceOf(got), presence.Present()) {
+		t.Fatalf("typed owner-path lookup incorrectly proved membership/presence: %#v", got)
 	}
 }
