@@ -567,6 +567,17 @@ func (p *Projection) addCapturedAliasNames(fn *ast.FunctionExpr) {
 		}
 		p.addRootAlias(capture.Captured, name, exprAt(origin.Stmt.Exprs, origin.Index), 0, true)
 	}
+	// Type-only qualified references are not runtime captures. Bind records
+	// their lexical roots explicitly so `mod.Type` can inherit require identity
+	// without inventing an executable closure dependency.
+	for name, id := range p.bindings.QualifiedTypeRoots(fn) {
+		if id == 0 {
+			continue
+		}
+		if modulePath, ok := LocalRequireModulePath(p.bindings, id); ok {
+			p.addAliasName(name, modulePath)
+		}
+	}
 }
 
 func (p *Projection) addCapturedObjectAliases(fn *ast.FunctionExpr) {

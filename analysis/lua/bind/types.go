@@ -1,6 +1,7 @@
 package bind
 
 import (
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -321,7 +322,18 @@ func (b *binder) bindTypeExpr(expr ast.TypeExpr) {
 }
 
 func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
-	if ref == nil || len(ref.Path) != 1 {
+	if ref == nil || len(ref.Path) == 0 {
+		return
+	}
+	if len(ref.Path) > 1 {
+		// A qualified annotation can name a runtime import alias without ever
+		// reading that value at runtime. Preserve the lexical symbol separately;
+		// recording a runtime capture would change closure semantics.
+		if fn := b.currentFunction(); fn != nil {
+			if id, _, ok := b.lookup(ref.Path[0]); ok && id != 0 {
+				b.result.recordQualifiedTypeRoot(fn, ref.Path[0], id)
+			}
+		}
 		return
 	}
 	decl, ok := b.lookupType(ref.Path[0])
@@ -329,6 +341,37 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 		return
 	}
 	b.result.typeRefs[ref] = decl
+}
+
+func (r *Result) recordQualifiedTypeRoot(fn *ast.FunctionExpr, name string, id symbol.ID) {
+	if r == nil || fn == nil || name == "" || id == 0 {
+		return
+	}
+	roots := r.qualifiedTypeRoots[fn]
+	if roots == nil {
+		roots = make(map[string]symbol.ID)
+		r.qualifiedTypeRoots[fn] = roots
+	}
+	if previous, exists := roots[name]; exists && previous != id {
+		// A body-wide alias projection cannot safely represent two lexical
+		// declarations with the same spelling.
+		roots[name] = 0
+		return
+	}
+	roots[name] = id
+}
+
+// QualifiedTypeRoots returns exact value symbols used as roots of qualified
+// annotations in fn. A zero symbol marks a scope-ambiguous spelling.
+func (r *Result) QualifiedTypeRoots(fn *ast.FunctionExpr) map[string]symbol.ID {
+	if r == nil || fn == nil || len(r.qualifiedTypeRoots[fn]) == 0 {
+		return nil
+	}
+	out := make(map[string]symbol.ID, len(r.qualifiedTypeRoots[fn]))
+	for name, id := range r.qualifiedTypeRoots[fn] {
+		out[name] = id
+	}
+	return out
 }
 
 func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {

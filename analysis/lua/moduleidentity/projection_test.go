@@ -254,6 +254,31 @@ func TestRequireAliasesProjectionTracksCapturedRequireNamesBeforeSemantics(t *te
 	}
 }
 
+func TestRequireAliasesProjectionTracksTypeOnlyOuterRequireRoot(t *testing.T) {
+	stmts := parseChunk(t, `
+		local protocol = require("protocol")
+		local function userID(user: protocol.User): string
+			return user.id
+		end
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	assign, ok := stmts[1].(*ast.LocalAssignStmt)
+	if !ok || len(assign.Exprs) != 1 {
+		t.Fatalf("stmt 1 = %T, want local function assignment", stmts[1])
+	}
+	fn, ok := assign.Exprs[0].(*ast.FunctionExpr)
+	if !ok || fn == nil {
+		t.Fatalf("local function expression = %T, want function", assign.Exprs[0])
+	}
+	if captures := bindings.DirectCaptures(fn); len(captures) != 0 {
+		t.Fatalf("type-only module root became runtime captures: %#v", captures)
+	}
+	projection := moduleidentity.NewRequireAliases(bindings, fn.Stmts, fn)
+	if modulePath, ok := projection.ModulePathForAlias("protocol"); !ok || modulePath != "protocol" {
+		t.Fatalf("type-only protocol alias = %q/%v, want protocol/true", modulePath, ok)
+	}
+}
+
 func TestProjectionDoesNotResolveImplicitGlobalSignatureAlias(t *testing.T) {
 	projection, graph, facts := buildProjection(t, `
 		local store = ownership.store

@@ -60,6 +60,10 @@ type Result struct {
 	typeDefParams       map[*ast.TypeDefStmt][]TypeDecl
 	functionTypeParams  map[*ast.FunctionExpr][]TypeDecl
 	methodReceiverTypes map[*ast.FunctionExpr]TypeDecl
+	// qualifiedTypeRoots records value-namespace roots used only by qualified
+	// type references in a function (for example protocol.User where protocol
+	// is an outer local initialized by require("protocol")).
+	qualifiedTypeRoots map[*ast.FunctionExpr]map[string]symbol.ID
 }
 
 func newResult(opts Options) *Result {
@@ -100,6 +104,7 @@ func newResult(opts Options) *Result {
 		typeDefParams:         make(map[*ast.TypeDefStmt][]TypeDecl),
 		functionTypeParams:    make(map[*ast.FunctionExpr][]TypeDecl),
 		methodReceiverTypes:   make(map[*ast.FunctionExpr]TypeDecl),
+		qualifiedTypeRoots:    make(map[*ast.FunctionExpr]map[string]symbol.ID),
 	}
 	r.runtimeUseScanComplete = true
 	for _, name := range normalizeNames(opts.Globals) {

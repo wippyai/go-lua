@@ -1458,6 +1458,27 @@ func TestCheckAndExportedTypeAliasResolvesInImporterWithoutValueField(t *testing
 	}
 }
 
+func TestImportedTypeAliasResolvesInNestedFunctionWithoutRuntimeCapture(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type User = { id: string }
+		return {}
+	`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+
+	result := Check(`
+		local protocol = require("protocol")
+		local function user_id(user: protocol.User): string
+			return user.id
+		end
+		local id: string = user_id({ id = "u1" })
+	`, WithStdlib(), WithModule("protocol", protocolMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("nested imported alias diagnostics = %#v, want none", result.Diagnostics)
+	}
+}
+
 func TestCheckAndExportPublishesDirectAssignedRHSObjectShape(t *testing.T) {
 	mod := CheckAndExport(`
 		local Widget = {}
