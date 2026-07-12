@@ -176,14 +176,12 @@ func (signatureCallPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _
 		}
 	}
 	if op, ok := ctx.plan.SignatureCallOperation(point); ok {
-		if _, iterator := iteration.ActiveIterator(op.Signature().Effect.Labels); iterator {
-			operational := op.Signature().OperationalEffects
-			if operational == nil || !operational.SuspensionKnown || operational.MaySuspend {
-				if ctx.rowOutput == nil {
-					return fmt.Errorf("signature call: iterator row output sink missing")
-				}
-				ctx.rowOutput.MaySuspend = true
+		operational := op.Signature().OperationalEffects
+		if operational == nil || !operational.SuspensionKnown || operational.MaySuspend {
+			if ctx.rowOutput == nil {
+				return fmt.Errorf("signature call: suspension row output sink missing")
 			}
+			ctx.rowOutput.MaySuspend = true
 		}
 	}
 	if effect := ctx.allocationEffects[point]; effect != 0 {
@@ -341,20 +339,6 @@ func planReturnArity(plan *operationplan.Plan) int {
 		}
 	}
 	return arity
-}
-
-func planHasIteratorCall(plan *operationplan.Plan) bool {
-	if plan == nil {
-		return false
-	}
-	for rawPoint := 0; rawPoint < plan.PointCount(); rawPoint++ {
-		if op, ok := plan.SignatureCallOperation(cfg.Point(rawPoint)); ok {
-			if _, iterator := iteration.ActiveIterator(op.Signature().Effect.Labels); iterator {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func compileBranchEdge(base planCompileContext, point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {

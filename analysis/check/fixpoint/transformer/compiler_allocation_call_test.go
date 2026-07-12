@@ -70,7 +70,7 @@ func TestPlanCompilerAllocationCallSharesReturnAndHeapTransaction(t *testing.T) 
 			}}},
 		}, true
 	})
-	if !exact || len(got.Returns) != 1 || len(got.HeapTableObjects) != 1 || len(got.FreshHeapAllocations) != 1 {
+	if !exact || !got.MaySuspend || len(got.Returns) != 1 || len(got.HeapTableObjects) != 1 || len(got.FreshHeapAllocations) != 1 {
 		t.Fatalf("allocation specialization exact=%v summary=%#v", exact, got)
 	}
 	returnID, _ := product.Get(reg, got.Returns[0], identity.Key).ID()

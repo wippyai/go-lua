@@ -55,7 +55,7 @@ func TestPlanCompilerPureSignatureCallFeedsReturnExactly(t *testing.T) {
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
 	got, exact := relation.Specialize(cursor, nil, nil)
 	returns, accepted := effectlowering.StaticScalarSignatureReturns(reg, nil, sig)
-	want := summary.Normalize(reg, summary.Summary{Returns: returns})
+	want := summary.Normalize(reg, summary.Summary{Returns: returns, MaySuspend: true})
 	if !accepted || !exact || !summary.Equal(reg, got, want) {
 		t.Fatalf("pure signature relation accepted/exact=%v/%v\n got=%#v\nwant=%#v", accepted, exact, got, want)
 	}
