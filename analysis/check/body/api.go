@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -162,6 +163,7 @@ type Static struct {
 	signatureReturnOps    effectlowering.ReturnTypeOps
 	wtoPlan               *solve.WTOPlan[cfg.Point]
 	concreteFlow          *concreteflow.Plan
+	concreteDomain        *lattice.Lattice[state.State]
 
 	// resultVersionPrefix is the digest state after immutable prepared-body
 	// inputs. A Static is solved many times across prepass, summary convergence,

@@ -32,6 +32,8 @@ type Plan struct {
 	wto        *solve.WTOPlan[cfg.Point]
 	tape       []instruction
 	identity   []bool
+	nodeWork   []bool
+	edgeWork   []bool
 	maxNesting int
 }
 
@@ -51,6 +53,8 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 	}
 	seen := make([]bool, n)
 	identity := make([]bool, n)
+	nodeWork := make([]bool, n)
+	edgeWork := make([]bool, n)
 	indegree := make([]uint32, n)
 	for p := cfg.Point(0); int(p) < n; p++ {
 		for _, succ := range cfg.SuccessorsReadOnly(graph, p) {
@@ -74,6 +78,12 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 				return nil, fmt.Errorf("concreteflow: non-canonical operation row at %d", p)
 			}
 			hasWork = true
+			if meta.Phase == operationplan.Node {
+				nodeWork[p] = true
+			}
+			if meta.Phase == operationplan.Edge || meta.Stages.Has(operationplan.E5CallEffects) {
+				edgeWork[p] = true
+			}
 			last = meta.Barrier
 		}
 		succ := cfg.SuccessorsReadOnly(graph, p)
@@ -84,7 +94,7 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 	if !certifyReducible(graph, elements) {
 		return nil, fmt.Errorf("concreteflow: irreducible WTO component")
 	}
-	plan := &Plan{graph: graph, wto: wto, identity: identity}
+	plan := &Plan{graph: graph, wto: wto, identity: identity, nodeWork: nodeWork, edgeWork: edgeWork}
 	var compilePartition func([]solve.WTOElement[cfg.Point], int) error
 	compilePartition = func(items []solve.WTOElement[cfg.Point], depth int) error {
 		if depth > plan.maxNesting {
@@ -119,6 +129,16 @@ func Compile(graph cfg.Graph, operations *operationplan.Plan, wto *solve.WTOPlan
 		}
 	}
 	return plan, nil
+}
+
+// HasNodeWork and HasEdgeWork expose the certified phase ownership without
+// exposing mutable plan storage.
+func (p *Plan) HasNodeWork(point cfg.Point) bool {
+	return p != nil && uint64(point) < uint64(len(p.nodeWork)) && p.nodeWork[point]
+}
+
+func (p *Plan) HasEdgeWork(point cfg.Point) bool {
+	return p != nil && uint64(point) < uint64(len(p.edgeWork)) && p.edgeWork[point]
 }
 
 func certifyReducible(graph cfg.Graph, elements []solve.WTOElement[cfg.Point]) bool {

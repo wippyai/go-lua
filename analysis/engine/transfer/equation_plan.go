@@ -15,12 +15,14 @@ import (
 // future transactional executor from silently solving different equations.
 // It is deliberately package-private: body continues to publish only Results.
 type equationPlan struct {
-	system       solve.EquationSystem[cfg.Point, state.State]
-	cells        []cfg.Point
-	wto          *solve.WTOPlan[cfg.Point]
-	observing    bool
-	identity     equationPlanIdentity
-	solverPolicy equationSolverPolicy
+	system                 solve.EquationSystem[cfg.Point, state.State]
+	cells                  []cfg.Point
+	wto                    *solve.WTOPlan[cfg.Point]
+	observing              bool
+	identity               equationPlanIdentity
+	solverPolicy           equationSolverPolicy
+	denseTransfer          func(cfg.Point, func(cfg.Point) state.State, func(cfg.Point, state.State))
+	denseTransferVersioned func(cfg.Point, func(cfg.Point) (state.State, uint64), func(cfg.Point, state.State))
 }
 
 type equationPlanIdentity struct{ generation uint64 }
@@ -59,7 +61,8 @@ func newEquationPlan(config Config, domain lattice.Lattice[state.State], hooks e
 		normalize = func(st state.State) state.State { return state.NormalizeForDomain(domain, st) }
 	}
 	reachableEmpty := normalize(state.Reachable(state.State{}))
-	tracksReachability := !domain.Equal(reachableEmpty, domain.Bottom())
+	bottom := domain.Bottom()
+	tracksReachability := !domain.Equal(reachableEmpty, bottom)
 	markReachable := func(st state.State) state.State {
 		if !tracksReachability {
 			return normalize(st)
@@ -183,6 +186,99 @@ func newEquationPlan(config Config, domain lattice.Lattice[state.State], hooks e
 			emit(succ, edgeOut)
 		}
 	}
+	// The certified dense executor shares the same semantic transactions but
+	// can avoid invoking an identity phase entirely. This is the material
+	// difference from merely placing the generic equation closure over arrays.
+	var denseTransfer func(cfg.Point, func(cfg.Point) state.State, func(cfg.Point, state.State))
+	var denseTransferVersioned func(cfg.Point, func(cfg.Point) (state.State, uint64), func(cfg.Point, state.State))
+	if config.ConcreteFlow != nil && config.CanonicalConcreteTransactions {
+		denseTransfer = func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
+			if config.Session.Token().Canceled() {
+				return
+			}
+			if config.BeforePoint != nil {
+				config.BeforePoint(point)
+			}
+			defer func() {
+				if config.AfterPoint != nil {
+					config.AfterPoint(point)
+				}
+			}()
+			in := normalize(read(point))
+			if tracksReachability && domain.Equal(in, bottom) {
+				return
+			}
+			out := in
+			if config.ConcreteFlow.HasNodeWork(point) {
+				out = normalize(nodeTransfer(NodeContext{Context: config.Context, Session: config.Session, Graph: graph, Registry: registry, Point: point, Node: graph.Node(point), Read: read}, in))
+			}
+			poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
+			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				if poll.Poll() {
+					return
+				}
+				edgeOut := out
+				if config.ConcreteFlow.HasEdgeWork(point) {
+					cond, hasCond := graph.EdgeCond(point, succ)
+					hasCond = hasCond && graph.IsBranch(point)
+					edgeOut = normalize(edgeTransfer(EdgeContext{Context: config.Context, Session: config.Session, Graph: graph, Registry: registry, Edge: cfg.Edge{From: point, To: succ, Cond: cond}, HasCond: hasCond, Read: read}, out))
+				}
+				emit(succ, edgeOut)
+			}
+		}
+		denseTransferVersioned = func(point cfg.Point, read func(cfg.Point) (state.State, uint64), emit func(cfg.Point, state.State)) {
+			readState := func(other cfg.Point) state.State {
+				value, _ := read(other)
+				return value
+			}
+			if config.Session.Token().Canceled() {
+				return
+			}
+			if config.BeforePoint != nil {
+				config.BeforePoint(point)
+			}
+			defer func() {
+				if config.AfterPoint != nil {
+					config.AfterPoint(point)
+				}
+			}()
+			in, inputVersion := read(point)
+			in = normalize(in)
+			if tracksReachability && domain.Equal(in, bottom) {
+				return
+			}
+			out := in
+			observePoint := observing && config.ObserveNode(point)
+			if config.ConcreteFlow.HasNodeWork(point) && !observePoint {
+				out = normalize(nodeTransfer(NodeContext{Context: config.Context, Session: config.Session, Graph: graph, Registry: registry, Point: point, Node: graph.Node(point), Read: readState}, in))
+			}
+			if observePoint {
+				reads := make([]StateRead, 0, 2)
+				if config.ConcreteFlow.HasNodeWork(point) {
+					readForNode := func(other cfg.Point) state.State {
+						value, version := read(other)
+						reads = append(reads, StateRead{Point: other, Version: version})
+						return value
+					}
+					out = normalize(nodeTransfer(NodeContext{Context: config.Context, Session: config.Session, Graph: graph, Registry: registry, Point: point, Node: graph.Node(point), Read: readForNode}, in))
+				}
+				config.RecordNodeObservation(NodeObservation{Point: point, InputVersion: inputVersion, Output: out, Reads: reads})
+			}
+			poll := cancellation.NewPoller(config.Session.Token(), cancellation.EveryCheap)
+			for _, succ := range cfg.SuccessorsReadOnly(graph, point) {
+				if poll.Poll() {
+					return
+				}
+				edgeOut := out
+				if config.ConcreteFlow.HasEdgeWork(point) {
+					cond, hasCond := graph.EdgeCond(point, succ)
+					hasCond = hasCond && graph.IsBranch(point)
+					edgeOut = normalize(edgeTransfer(EdgeContext{Context: config.Context, Session: config.Session, Graph: graph, Registry: registry, Edge: cfg.Edge{From: point, To: succ, Cond: cond}, HasCond: hasCond, Read: readState}, out))
+				}
+				emit(succ, edgeOut)
+			}
+		}
+	}
 	// Instrumented plans wrap the already-canonical equation. The production
 	// clean plan takes the nil-hook branch once here and retains the exact base
 	// closures: no per-transfer hook checks, wrappers, or allocations.
@@ -231,8 +327,9 @@ func newEquationPlan(config Config, domain lattice.Lattice[state.State], hooks e
 	}
 	return equationPlan{
 		system: system, cells: cells, wto: config.WTOPlan, observing: observing,
-		identity:     equationPlanIdentity{generation: nextEquationPlanGeneration.Add(1)},
-		solverPolicy: equationSolverPolicy{version: currentEquationSolverPolicyVersion},
+		identity:      equationPlanIdentity{generation: nextEquationPlanGeneration.Add(1)},
+		solverPolicy:  equationSolverPolicy{version: currentEquationSolverPolicyVersion},
+		denseTransfer: denseTransfer, denseTransferVersioned: denseTransferVersioned,
 	}
 }
 

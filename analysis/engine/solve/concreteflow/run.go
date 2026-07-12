@@ -12,7 +12,10 @@ import (
 
 // RunConfig holds solve-local policy which cannot be retained by Plan.
 type RunConfig struct {
-	Context context.Context
+	Context           context.Context
+	IncludeVersions   bool
+	Transfer          func(cfg.Point, func(cfg.Point) state.State, func(cfg.Point, state.State))
+	TransferVersioned func(cfg.Point, func(cfg.Point) (state.State, uint64), func(cfg.Point, state.State))
 	// FuseIdentity certifies that the canonical equation at point is an
 	// unobserved identity node+edge transaction. Nil disables fusion.
 	FuseIdentity func(cfg.Point) bool
@@ -42,8 +45,9 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 	bottom := domain.Bottom()
 	cur := make([]state.State, n)
 	versions := make([]uint64, n)
-	initial := make([]state.State, n)
 	hasInitial := make([]bool, n)
+	initialPoints := make([]cfg.Point, 0, 4)
+	initialValues := make([]state.State, 0, 4)
 	visits := make([]uint32, n)
 	widenChanges := make([]uint32, n)
 	for i := range cur {
@@ -69,7 +73,9 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 	for _, point := range sys.Cells {
 		if sys.InitialSparse != nil {
 			if value, ok := sys.InitialSparse(point); ok {
-				cur[point], initial[point], hasInitial[point] = value, value, true
+				cur[point], hasInitial[point] = value, true
+				initialPoints = append(initialPoints, point)
+				initialValues = append(initialValues, value)
 				bump(point)
 			}
 			continue
@@ -78,7 +84,9 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 		if sys.Initial != nil {
 			value = sys.Initial(point)
 		}
-		cur[point], initial[point], hasInitial[point] = value, value, true
+		cur[point], hasInitial[point] = value, true
+		initialPoints = append(initialPoints, point)
+		initialValues = append(initialValues, value)
 		bump(point)
 	}
 	materialize := func(point cfg.Point) state.State {
@@ -133,6 +141,20 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 		}
 	}
 	var iterations uint64
+	var narrowCandidate []state.State
+	var narrowCandidateSet []bool
+	candidateEmit := func(dst cfg.Point, value state.State) {
+		if uint64(dst) >= uint64(n) || !plan.wto.CoversEmission(active, dst) {
+			uncovered = true
+			return
+		}
+		prev := bottom
+		if narrowCandidateSet[dst] {
+			prev = narrowCandidate[dst]
+		}
+		narrowCandidate[dst] = abstract(dst, domain.Join(prev, value))
+		narrowCandidateSet[dst] = true
+	}
 	runPoint := func(point cfg.Point, narrowing bool, candidate []state.State, candidateSet []bool) error {
 		if iterations%uint64(cancellation.EveryCheap) == 0 {
 			if err := token.Err(); err != nil {
@@ -146,28 +168,43 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 		}
 		if !narrowing && config.FuseIdentity != nil && plan.identity[point] && config.FuseIdentity(point) {
 			in := read(point)
-			succ := cfg.SuccessorsReadOnly(plan.graph, point)
-			emit(succ[0], in)
-		} else if narrowing {
-			candidateEmit := func(dst cfg.Point, value state.State) {
-				if uint64(dst) >= uint64(n) || !plan.wto.CoversEmission(active, dst) {
-					uncovered = true
-					return
+			succ := cfg.SuccessorsReadOnly(plan.graph, point)[0]
+			if !hasInitial[succ] {
+				// The destination has one predecessor and no independent seed: its
+				// equation is exactly the predecessor snapshot, not a general join.
+				// Preserve materialization/version boundaries while reusing the
+				// immutable operand directly.
+				prev := materialize(succ)
+				if !domain.Equal(in, prev) {
+					cur[succ] = in
+					bump(succ)
 				}
-				prev := bottom
-				if candidateSet[dst] {
-					prev = candidate[dst]
-				}
-				candidate[dst] = abstract(dst, domain.Join(prev, value))
-				candidateSet[dst] = true
-			}
-			if config.FuseIdentity != nil && plan.identity[point] && config.FuseIdentity(point) {
-				candidateEmit(cfg.SuccessorsReadOnly(plan.graph, point)[0], read(point))
 			} else {
-				sys.Transfer(point, read, candidateEmit)
+				emit(succ, in)
 			}
+		} else if narrowing {
+			narrowCandidate, narrowCandidateSet = candidate, candidateSet
+			if config.FuseIdentity != nil && plan.identity[point] && config.FuseIdentity(point) {
+				succ := cfg.SuccessorsReadOnly(plan.graph, point)[0]
+				if !hasInitial[succ] {
+					candidate[succ] = read(point)
+					candidateSet[succ] = true
+				} else {
+					candidateEmit(succ, read(point))
+				}
+			} else {
+				transfer := sys.Transfer
+				if config.Transfer != nil {
+					transfer = config.Transfer
+				}
+				transfer(point, read, candidateEmit)
+			}
+		} else if config.TransferVersioned != nil {
+			config.TransferVersioned(point, readVersioned, emit)
 		} else if sys.TransferVersioned != nil {
 			sys.TransferVersioned(point, readVersioned, emit)
+		} else if config.Transfer != nil {
+			config.Transfer(point, read, emit)
 		} else {
 			sys.Transfer(point, read, emit)
 		}
@@ -220,15 +257,16 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 		}
 	}
 	if domain.Narrow != nil && hasWiden {
+		candidate := make([]state.State, n)
+		candidateSet := make([]bool, n)
 		for pass := 0; pass < 2; pass++ {
-			candidate := make([]state.State, n)
-			candidateSet := make([]bool, n)
 			for point := 0; point < n; point++ {
 				candidate[point] = bottom
-				if hasInitial[point] {
-					candidate[point] = initial[point]
-					candidateSet[point] = true
-				}
+				candidateSet[point] = false
+			}
+			for i, point := range initialPoints {
+				candidate[point] = initialValues[i]
+				candidateSet[point] = true
 			}
 			for _, point := range sys.Cells {
 				if err := runPoint(point, true, candidate, candidateSet); err != nil {
@@ -258,10 +296,15 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 		return Result{}, errors.Join(solve.ErrCanceled, err)
 	}
 	points := make(map[cfg.Point]state.State, n)
-	versionMap := make(map[cfg.Point]uint64, n)
+	var versionMap map[cfg.Point]uint64
+	if config.IncludeVersions {
+		versionMap = make(map[cfg.Point]uint64, n)
+	}
 	for _, point := range sys.Cells {
 		points[point] = materialize(point)
-		versionMap[point] = versions[point]
+		if versionMap != nil {
+			versionMap[point] = versions[point]
+		}
 	}
 	return Result{Points: points, Versions: versionMap}, nil
 }

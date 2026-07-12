@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
@@ -114,6 +115,10 @@ type Config struct {
 	// solves; every unsupported or dynamically uncovered run falls back to the
 	// canonical generic WTO/FIFO path.
 	ConcreteFlow *concreteflow.Plan
+	// CanonicalConcreteTransactions certifies that NodeTransfer and EdgeTransfer
+	// are the complete factapply point transactions described by ConcreteFlow's
+	// operation plan. Custom transfer callers must leave it false.
+	CanonicalConcreteTransactions bool
 	// FuseConcreteIdentity permits certified empty, unique-predecessor rows to
 	// bypass the otherwise-identity canonical point transaction.
 	FuseConcreteIdentity bool
@@ -126,6 +131,10 @@ type Config struct {
 	StateLanes []state.LaneID
 	// StateOptions are per-solve lattice options such as widening thresholds.
 	StateOptions state.DomainOptions
+	// PreparedDomain is an immutable domain compiled with exactly StateOptions
+	// for the default lane set. Prepared bodies use it to avoid rebuilding the
+	// 17-lane product on every solve. It is ignored for explicit StateLanes.
+	PreparedDomain *lattice.Lattice[state.State]
 
 	// Entry is the point seeded with EntryState. Nil uses Graph.Entry().
 	Entry      *cfg.Point
@@ -213,9 +222,15 @@ func TryRun(config Config) (Result, error) {
 		return nil, err
 	}
 	registry := config.Registry
-	domain, err := state.TryDomainWithOptionalLanesAndOptions(registry, config.StateLanes, config.StateOptions)
-	if err != nil {
-		return nil, err
+	var domain lattice.Lattice[state.State]
+	if config.PreparedDomain != nil && config.StateLanes == nil {
+		domain = *config.PreparedDomain
+	} else {
+		var err error
+		domain, err = state.TryDomainWithOptionalLanesAndOptions(registry, config.StateLanes, config.StateOptions)
+		if err != nil {
+			return nil, err
+		}
 	}
 	plan := newEquationPlan(config, domain, equationPlanHooks{})
 	sys := plan.system
@@ -310,7 +325,10 @@ func TryRun(config Config) (Result, error) {
 				return config.FuseConcreteIdentity && config.BeforePoint == nil && config.AfterPoint == nil &&
 					(!observing || !config.ObserveNode(point))
 			}
-			dense, denseErr := concreteflow.Run(concreteflow.RunConfig{Context: config.Context, FuseIdentity: fuse}, denseSystem, config.ConcreteFlow)
+			dense, denseErr := concreteflow.Run(concreteflow.RunConfig{
+				Context: config.Context, FuseIdentity: fuse, IncludeVersions: config.FinalizeNodeObservations != nil,
+				Transfer: plan.denseTransfer, TransferVersioned: plan.denseTransferVersioned,
+			}, denseSystem, config.ConcreteFlow)
 			if denseErr == nil {
 				if sys.Stats != nil {
 					sys.Stats.TransferCalls += denseStats.TransferCalls
