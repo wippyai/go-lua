@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -21,11 +20,6 @@ func BenchmarkRepresentativeBody(b *testing.B) {
 	production := ordinary
 	production.ConcreteFlow = productionPlan
 	production.CanonicalConcreteTransactions = true
-	domain, err := state.TryDomainWithOptionalLanesAndOptions(reg, nil, production.StateOptions)
-	if err != nil {
-		b.Fatal(err)
-	}
-	production.PreparedDomain = &domain
 	production.FuseConcreteIdentity = true
 	b.Run("current-transfer-wto", func(b *testing.B) {
 		b.ReportAllocs()

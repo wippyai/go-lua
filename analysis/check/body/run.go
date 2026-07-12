@@ -376,7 +376,6 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		CompareWTO:                    config.CompareWTO,
 		StateLanes:                    config.StateLanes,
 		StateOptions:                  state.DomainOptions{WidenThresholds: widenThresholds},
-		PreparedDomain:                nil,
 		EntryState:                    entryState,
 		Initial:                       initial,
 		NodeTransfer:                  nodeTransfer,

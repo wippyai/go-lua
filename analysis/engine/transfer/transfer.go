@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
@@ -134,10 +133,6 @@ type Config struct {
 	StateLanes []state.LaneID
 	// StateOptions are per-solve lattice options such as widening thresholds.
 	StateOptions state.DomainOptions
-	// PreparedDomain is an immutable domain compiled with exactly StateOptions
-	// for the default lane set. Prepared bodies use it to avoid rebuilding the
-	// 17-lane product on every solve. It is ignored for explicit StateLanes.
-	PreparedDomain *lattice.Lattice[state.State]
 
 	// Entry is the point seeded with EntryState. Nil uses Graph.Entry().
 	Entry      *cfg.Point
@@ -225,15 +220,9 @@ func TryRun(config Config) (Result, error) {
 		return nil, err
 	}
 	registry := config.Registry
-	var domain lattice.Lattice[state.State]
-	if config.PreparedDomain != nil && config.StateLanes == nil {
-		domain = *config.PreparedDomain
-	} else {
-		var err error
-		domain, err = state.TryDomainWithOptionalLanesAndOptions(registry, config.StateLanes, config.StateOptions)
-		if err != nil {
-			return nil, err
-		}
+	domain, err := state.TryDomainWithOptionalLanesAndOptions(registry, config.StateLanes, config.StateOptions)
+	if err != nil {
+		return nil, err
 	}
 	// Dense observation capture is transactional: a canceled or dynamically
 	// uncovered scratch run must not publish artifacts from discarded revisions.
