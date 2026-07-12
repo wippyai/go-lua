@@ -81,10 +81,9 @@ func newCanonicalFunction(
 		hash:              h,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    props,
-		presentation:      functionPresentation(paramsCopy),
 	}
 	if functionSemanticNamesCanonical(paramsCopy) {
-		fn.semantic = fn
+		fn.semantic.Store(fn)
 	}
 	return fn
 }
@@ -121,25 +120,9 @@ func newSemanticFunction(source *Function) *Function {
 		hash:              source.hash,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    source.typeProperties,
-		presentation:      functionPresentation(semanticParams),
 	}
-	semantic.semantic = semantic
+	semantic.semantic.Store(semantic)
 	return semantic
-}
-
-func functionPresentation(params []Param) FunctionPresentation {
-	presentation := FunctionPresentation{paramCount: len(params)}
-	if len(params) <= len(presentation.paramNamesSmall) {
-		for i := range params {
-			presentation.paramNamesSmall[i] = params[i].Name
-		}
-		return presentation
-	}
-	presentation.paramNamesLarge = make([]string, len(params))
-	for i := range params {
-		presentation.paramNamesLarge[i] = params[i].Name
-	}
-	return presentation
 }
 
 func normalizeFunctionReturns(returns []Type) []Type {

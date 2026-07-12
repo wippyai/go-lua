@@ -3,6 +3,7 @@ package typ
 import (
 	"sync"
 	"testing"
+	"unsafe"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -416,6 +417,32 @@ func BenchmarkFunctionReceiverConstruction(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = RebuildFunction(parts)
+	}
+}
+
+func BenchmarkFunctionCommonConstruction(b *testing.B) {
+	cases := []struct {
+		name   string
+		params []Param
+	}{
+		{name: "0-param"},
+		{name: "1-param", params: []Param{{Name: "value", Type: String}}},
+		{name: "2-param", params: []Param{{Name: "self", Type: Self}, {Name: "value", Type: String}}},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			parts := FunctionParts{Params: tc.params, Returns: []Type{Any}}
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_ = RebuildFunction(parts)
+			}
+		})
+	}
+}
+
+func BenchmarkFunctionRepresentationSize(b *testing.B) {
+	b.ReportMetric(float64(unsafe.Sizeof(Function{})), "bytes/function")
+	for i := 0; i < b.N; i++ {
 	}
 }
 

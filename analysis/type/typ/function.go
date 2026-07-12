@@ -2,7 +2,7 @@ package typ
 
 import (
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -29,51 +29,39 @@ type Function struct {
 	hash              uint64
 	equalityHashCache *equalityHashCache
 	typeProperties
-	strCache     stringCache
-	presentation FunctionPresentation
-	semantic     *Function
-	semanticOnce sync.Once
+	strCache stringCache
+	semantic atomic.Pointer[Function]
 }
 
 // FunctionPresentation is immutable source-facing metadata for a function.
 // It deliberately has no setters; callers may read labels without consulting
 // semantic parameter identity.
 type FunctionPresentation struct {
-	paramNamesSmall [2]string
-	paramNamesLarge []string
-	paramCount      int
+	owner *Function
 }
 
 // ParamName returns the source label for one positional parameter.
-func (p *FunctionPresentation) ParamName(index int) (string, bool) {
-	if p == nil || index < 0 || index >= p.paramCount {
+func (p FunctionPresentation) ParamName(index int) (string, bool) {
+	if p.owner == nil || index < 0 || index >= len(p.owner.Params) {
 		return "", false
 	}
-	if p.paramNamesLarge != nil {
-		return p.paramNamesLarge[index], true
-	}
-	return p.paramNamesSmall[index], true
+	return p.owner.Params[index].Name, true
 }
 
 // ParamNames returns an ownership-isolated label list.
-func (p *FunctionPresentation) ParamNames() []string {
-	if p == nil || p.paramCount == 0 {
+func (p FunctionPresentation) ParamNames() []string {
+	if p.owner == nil || len(p.owner.Params) == 0 {
 		return nil
 	}
-	out := make([]string, p.paramCount)
-	if p.paramNamesLarge != nil {
-		copy(out, p.paramNamesLarge)
-	} else {
-		copy(out, p.paramNamesSmall[:p.paramCount])
+	out := make([]string, len(p.owner.Params))
+	for i := range p.owner.Params {
+		out[i] = p.owner.Params[i].Name
 	}
 	return out
 }
 
-func (f *Function) Presentation() *FunctionPresentation {
-	if f == nil {
-		return nil
-	}
-	return &f.presentation
+func (f *Function) Presentation() FunctionPresentation {
+	return FunctionPresentation{owner: f}
 }
 
 // SemanticType returns the concrete, label-free function node constructed with
@@ -89,12 +77,14 @@ func (f *Function) SemanticType() *Function {
 	if f == nil {
 		return nil
 	}
-	f.semanticOnce.Do(func() {
-		if f.semantic == nil {
-			f.semantic = newSemanticFunction(f)
-		}
-	})
-	return f.semantic
+	if semantic := f.semantic.Load(); semantic != nil {
+		return semantic
+	}
+	candidate := newSemanticFunction(f)
+	if f.semantic.CompareAndSwap(nil, candidate) {
+		return candidate
+	}
+	return f.semantic.Load()
 }
 
 // FunctionBuilder provides a fluent API for constructing function types.
@@ -196,10 +186,9 @@ func CloneFunction(fn *Function) *Function {
 		hash:              fn.hash,
 		equalityHashCache: fn.equalityHashCache,
 		typeProperties:    fn.typeProperties,
-		presentation:      fn.presentation,
 	}
 	if functionSemanticNamesCanonical(clone.Params) {
-		clone.semantic = clone
+		clone.semantic.Store(clone)
 	}
 	return clone
 }
