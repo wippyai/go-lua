@@ -29,6 +29,7 @@ type typeWire struct {
 
 	Module string    `json:"module,omitempty"`
 	Name   string    `json:"name,omitempty"`
+	Binder uint64    `json:"binder,omitempty"`
 	Target *typeWire `json:"target,omitempty"`
 	Of     *typeWire `json:"of,omitempty"`
 

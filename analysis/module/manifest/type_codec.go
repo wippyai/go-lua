@@ -8,16 +8,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
-// typeEncoder owns one sealed type projection. Generic declarations can be
-// recursive in memory (a generic body may mention its own declaration), while
-// the manifest wire is a tree. Keep the live edge inside this projection and
-// emit a binder-local reference when it closes a cycle.
+// typeEncoder owns one sealed type projection. Generic and recursive
+// declarations can form cycles or shared DAGs in memory while the manifest
+// wire remains a tree. Binder-local references preserve those graph edges
+// without leaking process-local type IDs into deterministic manifest bytes.
 type typeEncoder struct {
-	activeGenerics map[*typ.Generic]bool
+	activeGenerics   map[*typ.Generic]bool
+	recursiveBinders map[*typ.Recursive]uint64
+	nextBinder       uint64
 }
 
 func encodeType(t typ.Type) (*typeWire, error) {
-	return (&typeEncoder{activeGenerics: make(map[*typ.Generic]bool)}).encode(t)
+	return (&typeEncoder{
+		activeGenerics:   make(map[*typ.Generic]bool),
+		recursiveBinders: make(map[*typ.Recursive]uint64),
+	}).encode(t)
 }
 
 func (e *typeEncoder) encode(t typ.Type) (*typeWire, error) {
@@ -131,16 +136,46 @@ func (e *typeEncoder) encode(t typ.Type) (*typeWire, error) {
 	case *typ.TypeParam:
 		return e.encodeTypeParam(tt)
 	case *typ.Recursive:
-		return nil, fmt.Errorf("recursive type %q requires recursive-family manifest encoding", tt.Name)
+		if binder, ok := e.recursiveBinders[tt]; ok {
+			return &typeWire{Kind: "recursiveRef", Binder: binder}, nil
+		}
+		e.nextBinder++
+		binder := e.nextBinder
+		e.recursiveBinders[tt] = binder
+		body, err := e.encode(tt.Body)
+		if err != nil {
+			return nil, err
+		}
+		return &typeWire{Kind: "recursive", Binder: binder, Name: tt.Name, Body: body}, nil
 	default:
 		return encodePrimitive(t)
 	}
 }
 
 type typeDecodeEnv struct {
-	parent   *typeDecodeEnv
-	params   map[string]*typ.TypeParam
-	generics map[string]*typ.Generic
+	parent     *typeDecodeEnv
+	params     map[string]*typ.TypeParam
+	generics   map[string]*typ.Generic
+	recursives map[uint64]*typ.Recursive
+}
+
+func (e *typeDecodeEnv) lookupRecursive(binder uint64) (*typ.Recursive, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		recursive, ok := cur.recursives[binder]
+		if ok {
+			return recursive, true
+		}
+	}
+	return nil, false
+}
+
+func (e *typeDecodeEnv) recursiveRegistry() map[uint64]*typ.Recursive {
+	for cur := e; cur != nil; cur = cur.parent {
+		if cur.recursives != nil {
+			return cur.recursives
+		}
+	}
+	return nil
 }
 
 func (e *typeDecodeEnv) lookupGeneric(name string) (*typ.Generic, bool) {
@@ -191,7 +226,7 @@ func (e *typeDecodeEnv) withGeneric(generic *typ.Generic) *typeDecodeEnv {
 }
 
 func decodeType(w *typeWire) (typ.Type, error) {
-	return decodeTypeInEnv(w, nil)
+	return decodeTypeInEnv(w, &typeDecodeEnv{recursives: make(map[uint64]*typ.Recursive)})
 }
 
 func decodeTypeInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
@@ -336,6 +371,39 @@ func decodeTypeInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {
 		return typ.NewMeta(of), nil
 	case "typeparam":
 		return decodeTypeParamInEnv(w, env)
+	case "recursive":
+		if w.Binder == 0 {
+			return nil, fmt.Errorf("recursive type %q is missing a binder", w.Name)
+		}
+		registry := env.recursiveRegistry()
+		if registry == nil {
+			return nil, fmt.Errorf("recursive type %q has no decode registry", w.Name)
+		}
+		if _, exists := registry[w.Binder]; exists {
+			return nil, fmt.Errorf("recursive binder %d is already in scope", w.Binder)
+		}
+		recursive := typ.NewRecursivePlaceholder(w.Name)
+		registry[w.Binder] = recursive
+		body, err := decodeTypeInEnv(w.Body, env)
+		if err != nil {
+			delete(registry, w.Binder)
+			return nil, err
+		}
+		if body == nil {
+			delete(registry, w.Binder)
+			return nil, fmt.Errorf("recursive type %q is missing a body", w.Name)
+		}
+		recursive.SetBody(body)
+		return recursive, nil
+	case "recursiveRef":
+		if w.Binder == 0 {
+			return nil, fmt.Errorf("recursive reference is missing a binder")
+		}
+		recursive, ok := env.lookupRecursive(w.Binder)
+		if !ok {
+			return nil, fmt.Errorf("recursive reference %d is out of scope", w.Binder)
+		}
+		return recursive, nil
 	default:
 		return nil, fmt.Errorf("unknown type kind %q", w.Kind)
 	}
