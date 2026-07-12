@@ -89,7 +89,7 @@ func (obligationHandler) Apply(reg *axis.Registry, out *summary.Summary, slot ui
 // Specialize transactionally evaluates every feasible correlated row and emits
 // the existing Summary representation. False means the caller must run the
 // contextual solver; out is guaranteed zero on failure.
-func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegistry, resolve CellResolver) (out summary.Summary, ok bool) {
+func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegistry, resolve CellResultResolver) (out summary.Summary, ok bool) {
 	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
 		return summary.Summary{}, false
 	}
@@ -137,7 +137,7 @@ func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegist
 	return summary.NormalizeOwned(reg, accumulated), true
 }
 
-func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, resolve CellResolver) (bool, bool) {
+func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, resolve CellResultResolver) (bool, bool) {
 	if guard == 0 || int(guard) >= len(a.guards) || a.reg == nil {
 		return false, false
 	}

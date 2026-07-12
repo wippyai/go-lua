@@ -23,7 +23,7 @@ const (
 	valueRoot
 	valueConstant
 	valueJoin
-	valueCompose
+	valueCellResult
 )
 
 // CellRef is a stable SCC equation reference. Generation is deliberately not
@@ -112,10 +112,12 @@ func (a *Arena) JoinValue(terms ...ValueTerm) ValueTerm {
 	return a.internValue(valueNode{op: valueJoin, args: flat})
 }
 
-// ComposeValue is an executable placeholder for a callee cell reference.
-// Specialization fails closed until the caller supplies a CellResolver.
-func (a *Arena) ComposeValue(cell CellRef, args ...ValueTerm) ValueTerm {
-	return a.internValue(valueNode{op: valueCompose, cell: cell, args: append([]ValueTerm(nil), args...)})
+// CellResultValue is a scalar reference to one result slot of an SCC cell.
+// It is deliberately not named Compose: resolving a product.Value does not
+// compose the callee relation, its correlated rows, or any of its effects.
+// Specialization fails closed until the caller supplies a CellResultResolver.
+func (a *Arena) CellResultValue(cell CellRef, args ...ValueTerm) ValueTerm {
+	return a.internValue(valueNode{op: valueCellResult, cell: cell, args: append([]ValueTerm(nil), args...)})
 }
 
 func (a *Arena) Path(root Root, suffix ...segment.Segment) PathTerm {
@@ -242,7 +244,7 @@ func (a *Arena) valueKey(n valueNode) string {
 		return "c:" + strconv.FormatUint(product.Hash(a.reg, n.value), 16)
 	case valueJoin:
 		return fmt.Sprintf("j:%v", n.args)
-	case valueCompose:
+	case valueCellResult:
 		return fmt.Sprintf("x:%d:%d:%v", n.cell.Function, n.cell.Slot, n.args)
 	default:
 		return "invalid"
@@ -285,10 +287,12 @@ func guardNodeEqual(x, y guardNode) bool {
 	return true
 }
 
-// CellResolver resolves an SCC composition reference transactionally.
-type CellResolver func(CellRef, []product.Value) (product.Value, bool)
+// CellResultResolver resolves one scalar result of an SCC cell. It cannot
+// represent relational call composition or callee effects; those must be
+// composed before specialization by the lexical SCC relation solver.
+type CellResultResolver func(CellRef, []product.Value) (product.Value, bool)
 
-func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, resolve CellResolver) (product.Value, bool) {
+func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, resolve CellResultResolver) (product.Value, bool) {
 	if term == 0 || int(term) >= len(a.values) || a.reg == nil {
 		return product.Value{}, false
 	}
@@ -308,7 +312,7 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, resolve CellReso
 			out = product.Join(a.reg, out, v)
 		}
 		return out, true
-	case valueCompose:
+	case valueCellResult:
 		if resolve == nil {
 			return product.Value{}, false
 		}
@@ -357,7 +361,7 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 		}
 		sort.Strings(parts)
 		return "j(" + strings.Join(parts, ",") + ")"
-	case valueCompose:
+	case valueCellResult:
 		parts := make([]string, len(n.args))
 		for i, x := range n.args {
 			parts[i] = a.canonicalValue(x)
@@ -408,4 +412,38 @@ func (a *Arena) validGuard(guard Guard, shape Shape) bool {
 		}
 	}
 	return true
+}
+
+func (a *Arena) containsCellResult(term ValueTerm, seen map[ValueTerm]bool) bool {
+	if term == 0 || int(term) >= len(a.values) || seen[term] {
+		return false
+	}
+	seen[term] = true
+	n := a.values[term]
+	if n.op == valueCellResult {
+		return true
+	}
+	for _, arg := range n.args {
+		if a.containsCellResult(arg, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Arena) guardContainsCellResult(guard Guard, seen map[Guard]bool) bool {
+	if guard == 0 || int(guard) >= len(a.guards) || seen[guard] {
+		return false
+	}
+	seen[guard] = true
+	n := a.guards[guard]
+	if n.value != 0 && a.containsCellResult(n.value, make(map[ValueTerm]bool)) {
+		return true
+	}
+	for _, arg := range n.args {
+		if a.guardContainsCellResult(arg, seen) {
+			return true
+		}
+	}
+	return false
 }
