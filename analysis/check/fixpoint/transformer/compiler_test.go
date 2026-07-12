@@ -1,14 +1,18 @@
 package transformer
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -61,6 +65,82 @@ func TestPlanCompilerDirectScalarReturnSpecializesExactly(t *testing.T) {
 	}
 }
 
+func TestPlanCompilerScalarLocalAssignmentFeedsReturnExactly(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	literal, ok := factflow.NewIntegerLiteralValueSource(42, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("literal source rejected")
+	}
+	sym := symbol.ID(7)
+	localPath := pathdom.Path{Root: "answer", Symbol: sym}
+	read, ok := factflow.NewPathValueSource(localPath.Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("path source rejected")
+	}
+	plan := operationplan.New(graph, factflow.FactsInput{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assign: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, sym, localPath, literal),
+		},
+		Returns: map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{read})},
+	})
+
+	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatalf("assignment relation contextual: %s", reason)
+	}
+	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
+	got, exact := relation.Specialize(cursor, nil, nil)
+	want := summary.Normalize(reg, summary.Summary{Returns: []product.Value{typevalue.LiteralInt(reg, 42)}})
+	if !exact || !summary.Equal(reg, got, want) {
+		t.Fatalf("assignment relation exact=%v\n got=%#v\nwant=%#v", exact, got, want)
+	}
+}
+
+func TestPlanCompilerRootAssignmentNarrowAdmissionFailsClosed(t *testing.T) {
+	reg := standard.Registry()
+	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	literal, _ := factflow.NewIntegerLiteralValueSource(42, 0, 0, 0, shape)
+	sym := symbol.ID(7)
+	root := pathdom.Path{Root: "answer", Symbol: sym}
+	cases := []struct {
+		name string
+		fact factflow.RootAssignment
+		want string
+	}{
+		{
+			name: "descendant target",
+			fact: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, sym,
+				pathdom.Path{Root: "answer", Symbol: sym, Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "x"}}}, literal),
+			want: "canonical root symbol",
+		},
+		{
+			name: "declared overlay",
+			fact: factflow.NewRootAssignmentWithDeclaredOverlayValue(factflow.RootAssignmentLocalDeclaration, sym, root, literal, typevalue.LiteralInt(reg, 42)),
+			want: "contracts and overlays",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			graph := cfg.New()
+			assign := graph.AddNode(cfg.NodeAssign)
+			graph.AddEdge(graph.Entry(), assign, false)
+			graph.AddEdge(assign, graph.Exit(), false)
+			plan := operationplan.New(graph, factflow.FactsInput{RootAssignments: map[cfg.Point]factflow.RootAssignment{assign: tc.fact}})
+			relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
+			if reason := relation.ContextualReason(); !strings.Contains(reason, tc.want) || relation.Rows() != 0 {
+				t.Fatalf("contextual relation reason/rows = %q/%d", reason, relation.Rows())
+			}
+		})
+	}
+}
+
 func TestPlanCompilerUnsupportedFamiliesFailAsOneContextualRelation(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
@@ -68,13 +148,13 @@ func TestPlanCompilerUnsupportedFamiliesFailAsOneContextualRelation(t *testing.T
 	graph.AddEdge(graph.Entry(), point, false)
 	graph.AddEdge(point, graph.Exit(), false)
 	plan := operationplan.New(graph, factflow.FactsInput{
-		RootAssignments: map[cfg.Point]factflow.RootAssignment{point: {}},
-		CallSites:       map[cfg.Point]factflow.CallSite{point: {}},
+		DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{point: {}},
+		CallSites:          map[cfg.Point]factflow.CallSite{point: {}},
 	})
 
 	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
 	reason := relation.ContextualReason()
-	const wantReason = "compiler: contextual operations: CallSites, RootAssignments"
+	const wantReason = "compiler: contextual operations: CallSites, DynamicIndexWrites"
 	if reason != wantReason {
 		t.Fatalf("contextual reason = %q, want deterministic aggregate %q", reason, wantReason)
 	}

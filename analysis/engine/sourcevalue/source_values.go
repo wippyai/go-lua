@@ -197,6 +197,9 @@ func (r sourceValueResolver) valueOfSource(
 	if !source.Valid() {
 		return product.Value{}, false
 	}
+	if value, ok := StaticScalarValue(r.registry, source); ok {
+		return value, true
+	}
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
 		if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read, active); ok {
 			if refinement, refineOK := r.expressionRefinements.Lookup(source.ExprRef); refineOK {
@@ -227,10 +230,8 @@ func (r sourceValueResolver) valueOfSource(
 	}
 	switch source.Kind {
 	case factflow.ValueSourceNil:
-		// A nil source (uninitialized local, over-arity fill) carries the typ.Nil
-		// witness so it joins identically to an explicit `= nil`. Without the
-		// witness the value reads as nil in isolation but is absorbed as join
-		// identity at a merge, dropping nil from the not-taken path.
+		// Invalid/non-scalar nil shapes are rejected by ValueSource.Valid above;
+		// valid nil normally resolves through StaticScalarValue.
 		return typevalue.Nil(r.registry), true
 	case factflow.ValueSourceExpression:
 		return r.valueOfExpression(point, source, in, read, active)
@@ -244,7 +245,24 @@ func (r sourceValueResolver) valueOfSource(
 	case factflow.ValueSourcePath:
 		return r.valueOfPathSource(point, source, in)
 	case factflow.ValueSourceLiteral:
+		// Adjusted list shapes remain concrete semantics but are deliberately
+		// outside the context-independent symbolic scalar subset.
 		return r.valueOfLiteralSource(source)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func (r sourceValueResolver) valueOfLiteralSource(source factflow.ValueSource) (product.Value, bool) {
+	switch source.LiteralKind {
+	case factflow.ValueSourceLiteralBool:
+		return typevalue.LiteralBool(r.registry, source.Bool), true
+	case factflow.ValueSourceLiteralInteger:
+		return typevalue.LiteralInt(r.registry, source.Int), true
+	case factflow.ValueSourceLiteralNumber:
+		return typevalue.LiteralNumber(r.registry, source.Float), true
+	case factflow.ValueSourceLiteralString:
+		return typevalue.LiteralString(r.registry, source.String), true
 	default:
 		return product.Value{}, false
 	}
@@ -336,21 +354,6 @@ func (r sourceValueResolver) pathSourcePath(sourceKey pathdom.PathKey) (pathdom.
 		return pathdom.Path{}, false
 	}
 	return pathdom.Path{Symbol: key.Sym, Segments: r.keySpace.Segments(key)}, true
-}
-
-func (r sourceValueResolver) valueOfLiteralSource(source factflow.ValueSource) (product.Value, bool) {
-	switch source.LiteralKind {
-	case factflow.ValueSourceLiteralBool:
-		return typevalue.LiteralBool(r.registry, source.Bool), true
-	case factflow.ValueSourceLiteralInteger:
-		return typevalue.LiteralInt(r.registry, source.Int), true
-	case factflow.ValueSourceLiteralNumber:
-		return typevalue.LiteralNumber(r.registry, source.Float), true
-	case factflow.ValueSourceLiteralString:
-		return typevalue.LiteralString(r.registry, source.String), true
-	default:
-		return product.Value{}, false
-	}
 }
 
 func (r sourceValueResolver) valueOfExpression(

@@ -5,13 +5,16 @@ import (
 	"sort"
 	"strings"
 
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -33,6 +36,7 @@ type planCompileContext struct {
 	plan     *operationplan.Plan
 	facts    factflow.Facts
 	builder  *Builder
+	locals   map[symbol.ID]ValueTerm
 }
 
 type planKindHandler interface {
@@ -65,6 +69,7 @@ func NewPlanCompiler() *PlanCompiler {
 	// executable lowering of its own; its registration makes lane certificate
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
+	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
 	c.facts[operationplan.Return] = returnPlanHandler{}
 	return c
 }
@@ -100,7 +105,11 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 			continue
 		}
 		for _, lane := range state.DefaultLanes() {
-			_ = semantic.SetFact(fact, lane, CapabilityUnaffected)
+			capability := CapabilityUnaffected
+			if fact == operationplan.RootAssignment {
+				capability = CapabilitySupported
+			}
+			_ = semantic.SetFact(fact, lane, capability)
 		}
 		_ = semantic.SetFact(fact, state.LaneValues, CapabilitySupported)
 	}
@@ -119,17 +128,18 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	}
 	builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
 	ctx.builder = builder
+	ctx.locals = make(map[symbol.ID]ValueTerm)
 	var operations []Operation
-	for point := 0; point < plan.PointCount(); point++ {
-		cursor := plan.Cursor(cfg.Point(point))
+	for _, point := range graph.RPO() {
+		cursor := plan.Cursor(point)
 		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-			if err := c.facts[cell.Kind()].Lower(ctx, cfg.Point(point), &operations); err != nil {
+			if err := c.facts[cell.Kind()].Lower(ctx, point, &operations); err != nil {
 				return contextual(fmt.Sprintf("compiler: %s at point %d: %v", cell.Kind(), point, err))
 			}
 		}
-		extensions := plan.ExtensionCursor(cfg.Point(point))
+		extensions := plan.ExtensionCursor(point)
 		for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
-			if err := c.extensions[cell.Kind()].Lower(ctx, cfg.Point(point), &operations); err != nil {
+			if err := c.extensions[cell.Kind()].Lower(ctx, point, &operations); err != nil {
 				return contextual(fmt.Sprintf("compiler: extension %d at point %d: %v", cell.Kind(), point, err))
 			}
 		}
@@ -172,10 +182,10 @@ func (c *PlanCompiler) unsupportedActive(plan *operationplan.Plan) []string {
 }
 
 func (c *PlanCompiler) preflight(ctx planCompileContext) string {
-	for point := 0; point < ctx.plan.PointCount(); point++ {
-		cursor := ctx.plan.Cursor(cfg.Point(point))
+	for _, point := range ctx.graph.RPO() {
+		cursor := ctx.plan.Cursor(point)
 		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-			if err := c.facts[cell.Kind()].Preflight(ctx, cfg.Point(point)); err != nil {
+			if err := c.facts[cell.Kind()].Preflight(ctx, point); err != nil {
 				return fmt.Sprintf("compiler: %s at point %d: %v", cell.Kind(), point, err)
 			}
 		}
@@ -260,6 +270,12 @@ func (returnPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) erro
 	}
 	fact, _ := ctx.facts.Return(point)
 	for _, source := range fact.Sources() {
+		if source.Kind == factflow.ValueSourcePath {
+			if _, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey); !ok || version != 0 || suffix != "" {
+				return fmt.Errorf("non-root or non-canonical return path")
+			}
+			continue
+		}
 		if _, err := exactReturnSourceValue(ctx.registry, ctx.facts, source); err != nil {
 			return err
 		}
@@ -273,7 +289,7 @@ func (returnPlanHandler) Lower(ctx planCompileContext, point cfg.Point, operatio
 		return nil
 	}
 	for i, source := range fact.Sources() {
-		value, err := exactReturnSourceValue(ctx.registry, ctx.facts, source)
+		term, err := exactReturnSourceTerm(ctx, source)
 		if err != nil {
 			return err
 		}
@@ -283,32 +299,41 @@ func (returnPlanHandler) Lower(ctx planCompileContext, point cfg.Point, operatio
 		}
 		*operations = append(*operations, Operation{
 			Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: uint32(slot),
-			Value: ctx.builder.Arena().Constant(value),
+			Value: term,
 		})
 	}
 	return nil
+}
+
+func exactReturnSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
+	if source.Kind == factflow.ValueSourcePath {
+		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
+		if !ok || version != 0 || suffix != "" || sym == 0 {
+			return 0, fmt.Errorf("non-root or non-canonical return path")
+		}
+		term, ok := ctx.locals[sym]
+		if !ok {
+			return 0, fmt.Errorf("return path symbol %d has no exact local binding", sym)
+		}
+		return term, nil
+	}
+	value, err := exactReturnSourceValue(ctx.registry, ctx.facts, source)
+	if err != nil {
+		return 0, err
+	}
+	return ctx.builder.Arena().Constant(value), nil
 }
 
 func exactReturnSourceValue(reg *axis.Registry, facts factflow.Facts, source factflow.ValueSource) (product.Value, error) {
 	if !source.Valid() || source.Expanded || source.Adjusted || source.OpenTail {
 		return product.Value{}, fmt.Errorf("non-scalar return source")
 	}
+	if value, ok := sourcevalue.StaticScalarValue(reg, source); ok {
+		return value, nil
+	}
 	switch source.Kind {
 	case factflow.ValueSourceUnknown:
 		return product.Top(), nil
-	case factflow.ValueSourceNil:
-		return typevalue.Nil(reg), nil
-	case factflow.ValueSourceLiteral:
-		switch source.LiteralKind {
-		case factflow.ValueSourceLiteralBool:
-			return typevalue.LiteralBool(reg, source.Bool), nil
-		case factflow.ValueSourceLiteralInteger:
-			return typevalue.LiteralInt(reg, source.Int), nil
-		case factflow.ValueSourceLiteralNumber:
-			return typevalue.LiteralNumber(reg, source.Float), nil
-		case factflow.ValueSourceLiteralString:
-			return typevalue.LiteralString(reg, source.String), nil
-		}
 	case factflow.ValueSourceExpression:
 		value, ok := facts.ExpressionValue(source.ExprRef)
 		if !ok || expressionHasContextualSidecar(facts, source.ExprRef) || !scalarValue(reg, value) {
@@ -317,6 +342,48 @@ func exactReturnSourceValue(reg *axis.Registry, facts factflow.Facts, source fac
 		return value, nil
 	}
 	return product.Value{}, fmt.Errorf("return source kind %d requires contextual source resolution", source.Kind)
+}
+
+type rootAssignmentPlanHandler struct{}
+
+func (rootAssignmentPlanHandler) Kind() operationplan.Kind { return operationplan.RootAssignment }
+func (rootAssignmentPlanHandler) Preflight(ctx planCompileContext, point cfg.Point) error {
+	fact, ok := ctx.facts.RootAssignment(point)
+	if !ok {
+		return fmt.Errorf("missing root-assignment payload")
+	}
+	if fact.Kind() != factflow.RootAssignmentLocalDeclaration || fact.TargetSymbol() == 0 {
+		return fmt.Errorf("only local declarations have exact symbolic binding semantics")
+	}
+	target := fact.TargetPathRef()
+	if target.Symbol != fact.TargetSymbol() || target.Version != 0 || len(target.Segments) != 0 {
+		return fmt.Errorf("assignment target is not its canonical root symbol")
+	}
+	if _, ok := fact.DeclaredValue(); ok || fact.DeclaredValueContracts() || fact.DeclaredValueOverlays() {
+		return fmt.Errorf("declared contracts and overlays require contextual root semantics")
+	}
+	if _, ok := fact.DeclaredAnnotationValue(); ok {
+		return fmt.Errorf("annotated roots require contextual declaration semantics")
+	}
+	if _, ok := sourcevalue.StaticScalarValue(ctx.registry, fact.Source()); !ok {
+		return fmt.Errorf("assignment source is not a context-independent scalar")
+	}
+	return nil
+}
+func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, _ *[]Operation) error {
+	fact, ok := ctx.facts.RootAssignment(point)
+	if !ok {
+		return fmt.Errorf("missing root-assignment payload")
+	}
+	if _, exists := ctx.locals[fact.TargetSymbol()]; exists {
+		return fmt.Errorf("symbol %d has multiple writes", fact.TargetSymbol())
+	}
+	value, ok := sourcevalue.StaticScalarValue(ctx.registry, fact.Source())
+	if !ok {
+		return fmt.Errorf("assignment source is not a context-independent scalar")
+	}
+	ctx.locals[fact.TargetSymbol()] = ctx.builder.Arena().Constant(value)
+	return nil
 }
 
 func expressionHasContextualSidecar(facts factflow.Facts, ref factflow.ExprRef) bool {
