@@ -67,15 +67,28 @@ func applyBranchPathRelation(
 	out state.State,
 	relation factflow.BranchPathRelation,
 ) state.State {
-	switch relation.Kind() {
+	return applyConcreteBranchPathRelation(typeValues, ctx, resolver, projectPath, out, relation.Kind(), relation.LeftPath(), relation.RightPath())
+}
+
+func applyConcreteBranchPathRelation(
+	typeValues *typevalue.Cache,
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	out state.State,
+	kind factflow.BranchPathRelationKind,
+	leftPath pathdom.Path,
+	rightPath pathdom.Path,
+) state.State {
+	switch kind {
 	case factflow.BranchPathRelationEqual:
-		return applyBranchPathEquality(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
+		return applyBranchPathEquality(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath)
 	case factflow.BranchPathRelationNotEqual:
-		return applyBranchPathInequality(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
+		return applyBranchPathInequality(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath)
 	case factflow.BranchPathRelationTypeMatch:
-		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath(), true)
+		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath, true)
 	case factflow.BranchPathRelationTypeUnmatch:
-		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath(), false)
+		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath, false)
 	default:
 		return out
 	}

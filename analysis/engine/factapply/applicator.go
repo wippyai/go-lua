@@ -230,7 +230,16 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {
 			var applied bool
-			out, applied = applyPathAssignment(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
+			out, applied = ApplyConcretePathAssignment(ConcretePathAssignmentRequest{
+				Context:    ctx,
+				Resolver:   config.Visibility,
+				Facts:      facts,
+				Sources:    sources,
+				Read:       ensureCallResults().ReadLazy(),
+				Input:      in,
+				Output:     out,
+				Assignment: fact,
+			})
 			if applied {
 				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact.TargetPathRef(), fact.Source(), config.TypeValues)
 				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcomeCache, callOutcome, config.Visibility, ensureCallResults().ReadLazy(), out)
@@ -362,7 +371,16 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if !relation.ActiveOnEdge(ctx.Edge.Cond) {
 				continue
 			}
-			out = applyBranchPathRelation(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, relation)
+			out = ApplyConcreteBranchPathRelation(ConcreteBranchPathRelationRequest{
+				Context:     ctx,
+				Resolver:    config.Visibility,
+				ProjectPath: config.ProjectPath,
+				TypeValues:  config.TypeValues,
+				Output:      out,
+				Kind:        relation.Kind(),
+				LeftPath:    relation.LeftPath(),
+				RightPath:   relation.RightPath(),
+			})
 			if stateIsBottom(ctx.Registry, out) {
 				return out
 			}
