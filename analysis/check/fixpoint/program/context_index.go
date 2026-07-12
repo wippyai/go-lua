@@ -20,6 +20,7 @@ type contextIndex struct {
 	variants               map[semanticContextRef][]summary.SummaryKey
 	callKeys               map[callContextRef]summary.SummaryKey
 	functionExpressionKeys map[functionExpressionRef]summary.SummaryKey
+	discoveryGeneration    uint64
 }
 
 // semanticContextRef is the interning identity of a solved callee variant.
@@ -102,8 +103,21 @@ func (idx *contextIndex) TransformEntries(transform func(keyedFunction) keyedFun
 		oldKey := idx.entries[i].key
 		next := transform(idx.entries[i])
 		next.key = oldKey
+		// An arbitrary entry transform cannot inherit an exact-entry proof.
+		next.relationContextEntry = nil
 		idx.entries[i] = next
 	}
+}
+
+func (idx *contextIndex) nextEntryDiscoveryGeneration() uint64 {
+	if idx == nil {
+		return 0
+	}
+	idx.discoveryGeneration++
+	if idx.discoveryGeneration == 0 {
+		idx.discoveryGeneration++
+	}
+	return idx.discoveryGeneration
 }
 
 func (idx *contextIndex) ForEach(fn func(keyedFunction)) {
@@ -161,6 +175,7 @@ func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *ke
 		context.entryState = entry
 		context.entryKeys = entryKeys
 		context.hasEntryState = true
+		context.relationContextEntry = nil
 		return true
 	}
 	// A variant keeps one canonical callee keyspace. Re-key a refreshed caller
@@ -178,6 +193,7 @@ func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *ke
 	context.entryState = joined
 	// Keep context.entryKeys: it is the variant's canonical representation.
 	context.hasEntryState = true
+	context.relationContextEntry = nil
 	return true
 }
 
@@ -400,7 +416,13 @@ func (k *programKeys) refreshContextForKey(reg *axis.Registry, key summary.Summa
 		return false
 	}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, fn, entry, entryKeys)
-	return k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
+	changed := k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
+	if changed {
+		// refreshContextForKey lacks the base/prepared identity required to
+		// rebuild the proof, so the merge above clears it transactionally.
+		k.contexts.nextEntryDiscoveryGeneration()
+	}
+	return changed
 }
 
 func (k *programKeys) upsertCallContext(
@@ -424,6 +446,10 @@ func (k *programKeys) upsertCallContext(
 	contextKey, changed, created := k.contexts.upsertCallContext(reg, ref, baseKey, fn, entry, entryKeys, digest)
 	if created && fnType != nil {
 		k.functionTypes[contextKey] = fnType
+	}
+	if context, ok := k.contexts.contextByKey(contextKey); ok {
+		generation := k.contexts.nextEntryDiscoveryGeneration()
+		context.relationContextEntry = certifyRelationContextEntry(reg, k.bindings, fn, contextKey, baseKey, digest, generation, context.entryState, context.entryKeys)
 	}
 	return contextKey, changed
 }
@@ -461,6 +487,10 @@ func (k *programKeys) upsertFunctionExpressionContext(
 			k.functionTypes[contextKey] = fnType
 			changed = true
 		}
+	}
+	if context, ok := k.contexts.contextByKey(contextKey); ok {
+		generation := k.contexts.nextEntryDiscoveryGeneration()
+		context.relationContextEntry = certifyRelationContextEntry(reg, k.bindings, callbackFn, contextKey, baseKey, digest, generation, context.entryState, context.entryKeys)
 	}
 	return contextKey, changed
 }

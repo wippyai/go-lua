@@ -44,6 +44,10 @@ type keyedFunction struct {
 	entryState    state.State
 	entryKeys     *keyspace.KeySpace
 	hasEntryState bool
+	// relationContextEntry is dormant proof material. Relation routing does not
+	// consult it yet. Any entry mutation must replace or clear it in the same
+	// transaction that publishes the new entry state.
+	relationContextEntry *relationContextEntryCertificate
 }
 
 type preparedBodies struct {
