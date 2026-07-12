@@ -47,78 +47,17 @@ func (o SymbolicCFGOptions) normalized() SymbolicCFGOptions {
 // stage propagates guard-only edges. Refinements and evidence must be lowered
 // by a later edge-row transfer rather than being silently discarded here.
 func SolveAcyclicCFGRows(graph cfg.Graph, arena *Arena, initial SymbolicCFGRow, transfer SymbolicCFGTransfer, branch SymbolicCFGBranch, options SymbolicCFGOptions) (map[cfg.Point][]SymbolicCFGRow, error) {
-	if graph == nil || arena == nil {
-		return nil, fmt.Errorf("transformer: symbolic CFG requires graph and arena")
-	}
-	options = options.normalized()
-	if !validCFGRow(arena, options.Shape, initial) {
-		return nil, fmt.Errorf("transformer: symbolic CFG initial row is invalid for boundary shape")
-	}
-	order, err := acyclicCFGOrder(graph)
-	if err != nil {
-		return nil, err
-	}
-	rows := make(map[cfg.Point][]SymbolicCFGRow, len(order))
-	rows[graph.Entry()] = []SymbolicCFGRow{cloneCFGRow(initial)}
-	for _, point := range order {
-		incoming := rows[point]
-		if len(incoming) == 0 {
-			continue
-		}
-		for _, in := range incoming {
-			out := cloneCFGRow(in)
-			if transfer != nil {
-				out, err = transfer(point, out)
-				if err != nil {
-					return nil, fmt.Errorf("transformer: symbolic CFG point %d: %w", point, err)
-				}
+	var expanded SymbolicCFGExpandTransfer
+	if transfer != nil {
+		expanded = func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+			out, err := transfer(point, row)
+			if err != nil {
+				return nil, err
 			}
-			if !validCFGRow(arena, options.Shape, out) {
-				return nil, fmt.Errorf("transformer: symbolic CFG point %d produced an invalid row", point)
-			}
-			successors := cfg.SuccessorsReadOnly(graph, point)
-			if len(successors) == 0 {
-				continue
-			}
-			if graph.IsBranch(point) {
-				if branch == nil || len(successors) != 2 {
-					return nil, fmt.Errorf("transformer: symbolic CFG branch %d has no exact branch algebra", point)
-				}
-				for _, successor := range successors {
-					cond, ok := graph.EdgeCond(point, successor)
-					if !ok {
-						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge polarity missing", point)
-					}
-					next, edgeGuard, branchErr := branch(point, cloneCFGRow(out), cond)
-					if branchErr != nil {
-						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge %t: %w", point, cond, branchErr)
-					}
-					if next.Guard != out.Guard {
-						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge %t replaced the incoming guard", point, cond)
-					}
-					if !validCFGRow(arena, options.Shape, next) || !arena.validGuard(edgeGuard, options.Shape) {
-						return nil, fmt.Errorf("transformer: symbolic CFG branch %d edge %t produced an invalid row", point, cond)
-					}
-					next.Guard = arena.And(out.Guard, edgeGuard)
-					if next.Guard != arena.False() {
-						rows[successor] = append(rows[successor], next)
-					}
-				}
-			} else {
-				if len(successors) != 1 {
-					return nil, fmt.Errorf("transformer: non-branch point %d has %d successors", point, len(successors))
-				}
-				rows[successors[0]] = append(rows[successors[0]], cloneCFGRow(out))
-			}
-		}
-		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
-			rows[successor] = dedupCFGRows(arena, rows[successor])
-			if len(rows[successor]) > options.MaxRows {
-				return nil, fmt.Errorf("transformer: symbolic CFG row budget at point %d", successor)
-			}
+			return []SymbolicCFGRow{out}, nil
 		}
 	}
-	return rows, nil
+	return SolveAcyclicCFGExpandedRows(graph, arena, initial, expanded, branch, options)
 }
 
 func acyclicCFGOrder(graph cfg.Graph) ([]cfg.Point, error) {
