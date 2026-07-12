@@ -118,3 +118,63 @@ func TestStaticIndexMalformedKeyFailsBeforeRebasePublication(t *testing.T) {
 		t.Fatal("malformed static key partially published caller terms")
 	}
 }
+
+func TestOperationPlanGenericAliasCarriesStaticIndexDirectBinding(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	iteratorCall := graph.AddNode(cfg.NodeCall)
+	genericPoint := graph.AddNode(cfg.NodeAssign)
+	aliasPoint := graph.AddNode(cfg.NodeAssign)
+	graphSymbol, routeSymbol, routeEntrySymbol := symbol.ID(10), symbol.ID(20), symbol.ID(21)
+	containerRef, memberRef := factflow.ExprRef(1), factflow.ExprRef(2)
+	scalar, _ := factflow.NewValueSourceShape(true, false, false, false)
+	adjusted, _ := factflow.NewValueSourceShape(true, false, true, false)
+	containerSource, _ := factflow.NewExpressionValueSource(containerRef, 0, 0, 0, adjusted)
+	memberSource, _ := factflow.NewExpressionValueSource(memberRef, 0, 0, 0, adjusted)
+	aliasSource, _ := factflow.NewPathValueSource(pathdom.NewPath(routeSymbol, "route").Key(), 0, 0, 0, scalar)
+	iteratorSite := factflow.NewCallSite(factflow.CallSiteConfig{Final: true, Expanded: true, ArgumentSources: []factflow.ValueSource{containerSource}})
+	record := typetable.NewRecord().Field("target_name", typ.String).Build()
+	op, ok := operationplan.NewGenericForOperation(1, routeSymbol, routeSymbol-1, operationplan.GenericForSource{
+		Kind: operationplan.GenericForSourceCall, CallPoint: iteratorCall, HasCallPoint: true,
+	}, []typ.Type{typ.NewArray(record)})
+	if !ok {
+		t.Fatal("generic operation rejected")
+	}
+	op = op.WithIterator(iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed})
+	plan := operationplan.New(graph, factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{iteratorCall: iteratorSite},
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{aliasPoint: factflow.NewRootAssignment(
+			factflow.RootAssignmentLocalDeclaration, routeEntrySymbol, pathdom.NewPath(routeEntrySymbol, "route_entry"), aliasSource,
+		)},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			containerRef: pathdom.NewPath(graphSymbol, "graph").Field("input_routes"),
+			memberRef:    pathdom.NewPath(routeEntrySymbol, "route_entry").Field("target_name"),
+		},
+	}).WithBoundaryParams([]symbol.ID{graphSymbol}).WithExtensions([]operationplan.ExtensionInput{{
+		Point: genericPoint, Kind: operationplan.BodyGenericFor, GenericFor: op,
+	}})
+	prepared, err := NewPlanCompiler().Prepare(reg, graph, plan, Shape{Params: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := prepared.base
+	ctx.locals = make(map[symbol.ID]ValueTerm, len(prepared.base.locals))
+	for id, term := range prepared.base.locals {
+		ctx.locals[id] = term
+	}
+	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
+	if _, err := lowerGenericForBinding(ctx, genericPoint, true); err != nil {
+		t.Fatalf("generic binding: %v", err)
+	}
+	if err := (rootAssignmentPlanHandler{}).Lower(ctx, aliasPoint, nil); err != nil {
+		t.Fatalf("alias assignment: %v", err)
+	}
+	value, path, err := exactDirectCallSourceBinding(ctx, memberSource)
+	if err != nil || value == 0 || path != 0 {
+		t.Fatalf("aliased member binding = %d/%d/%v", value, path, err)
+	}
+	node := prepared.builder.Arena().values[value]
+	if node.op != valueStaticIndex || len(node.args) != 2 || prepared.builder.Arena().values[node.args[0]].op != valueIteratorProjection {
+		t.Fatalf("aliased member term did not retain iterator provenance: %#v", node)
+	}
+}
