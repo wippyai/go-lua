@@ -36,11 +36,15 @@ type findRootNodesApplication struct {
 }
 
 type findRootNodesPOCFixture struct {
-	relation     transformer.Relation
-	base         summary.Summary
-	baseKey      summary.SummaryKey
-	validateKey  summary.SummaryKey
-	applications []findRootNodesApplication
+	relation            transformer.Relation
+	base                summary.Summary
+	baseKey             summary.SummaryKey
+	validateKey         summary.SummaryKey
+	applications        []findRootNodesApplication
+	result              Result
+	stats               *Stats
+	compileKey          summary.SummaryKey
+	compileApplications []findRootNodesApplication
 }
 
 func TestFindRootNodesStructuredTransformerMatchesRealValidateGraphContexts(t *testing.T) {
@@ -130,10 +134,14 @@ func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
 	findFn, validateFn := functionAtLine(tb, bindings, 690), functionAtLine(tb, bindings, 743)
 	var applications []findRootNodesApplication
-	config := Config{Check: check}
+	var compileApplications []findRootNodesApplication
+	stats := &Stats{}
+	config := Config{Check: check, Stats: stats}
 	config.semanticProgramAudit = func(prepared *body.Static, solveConfig body.Config, solved *body.Result) error {
 		if fn := solved.Function(); fn != nil && fn.Line() == 743 {
 			applications = append(applications, findRootNodesApplication{prepared: prepared, config: solveConfig, oracle: solved})
+		} else if fn != nil && fn.Line() == 1304 {
+			compileApplications = append(compileApplications, findRootNodesApplication{prepared: prepared, config: solveConfig, oracle: solved})
 		}
 		return nil
 	}
@@ -167,8 +175,22 @@ func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
 	if !ok {
 		tb.Fatal("validate_graph Summary key missing")
 	}
+	compileSymbol, ok := bindings.FunctionSymbol(functionAtLine(tb, bindings, 1304))
+	if !ok {
+		tb.Fatal("compiler.compile function symbol missing")
+	}
+	compileKey, ok := result.FunctionKey(compileSymbol)
+	if !ok {
+		tb.Fatal("compiler.compile Summary key missing")
+	}
+	if len(compileApplications) == 0 {
+		tb.Fatal("compiler.compile audit applications missing")
+	}
 	relation := buildFindRootNodesRelation(tb, reg, base)
-	return findRootNodesPOCFixture{relation: relation, base: base, baseKey: baseKey, validateKey: validateKey, applications: applications}
+	return findRootNodesPOCFixture{
+		relation: relation, base: base, baseKey: baseKey, validateKey: validateKey, applications: applications,
+		result: result, stats: stats, compileKey: compileKey, compileApplications: compileApplications,
+	}
 }
 
 func buildFindRootNodesRelation(tb testing.TB, reg *axis.Registry, base summary.Summary) transformer.Relation {
