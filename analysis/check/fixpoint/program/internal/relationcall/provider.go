@@ -50,11 +50,26 @@ type Specialization func(
 
 type Config struct {
 	Relations      transformer.RelationSnapshot
+	Catalog        *Catalog
 	TargetFor      TargetFor
 	Bindings       Bindings
 	Specialization Specialization
+	EffectResolver transformer.EffectSummaryResolver
 	Adapter        callresult.ProviderConfig
 }
+
+// TryOutcomeProvider distinguishes an exact handled application from a
+// fail-closed miss. Call routing uses this boolean to choose either Relation or
+// the legacy provider exactly once; an empty CallOutcome is not itself a miss.
+type TryOutcomeProvider func(
+	transfer.NodeContext,
+	factflow.CallSiteView,
+	state.State,
+	func(cfg.Point) state.State,
+) (callpayload.CallOutcome, bool)
+
+// Resolver is the handled-aware relation call seam.
+type Resolver = TryOutcomeProvider
 
 // OutcomeProvider is inactive infrastructure. Application performs no body
 // solve: Relation.Specialize emits the existing Summary representation, which
@@ -62,34 +77,64 @@ type Config struct {
 // Relation.Specialize. Missing identity/bindings and contextual relations fail
 // closed with an empty outcome.
 func OutcomeProvider(config Config) callpayload.CallOutcomeProvider {
-	transaction := callresult.NewPreparedSummaryTransaction(config.Adapter)
+	try := NewResolver(config)
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-		if config.TargetFor == nil || config.Bindings == nil {
-			return callpayload.CallOutcome{}
+		out, _ := try(ctx, site, in, read)
+		return out
+	}
+}
+
+// NewResolver prepares an immutable handled-aware relation call resolver.
+func NewResolver(config Config) Resolver {
+	transaction := callresult.NewPreparedSummaryTransaction(config.Adapter)
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (callpayload.CallOutcome, bool) {
+		if config.Bindings == nil {
+			return callpayload.CallOutcome{}, false
 		}
-		target, ok := config.TargetFor(ctx, site)
+		target, ok := resolveTarget(config, ctx, site)
 		if !ok {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, false
 		}
 		relation, ok := config.Relations.Lookup(target.Cell)
-		if !ok || relation.ContextualReason() != "" {
-			return callpayload.CallOutcome{}
+		if !ok || relation.ContextualReason() != "" || relation.Widened() {
+			return callpayload.CallOutcome{}, false
 		}
 		cursor, ok := config.Bindings(ctx, site, in, read, relation.Shape())
 		if !ok {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, false
 		}
 		var specialization transformer.SpecializationContext
 		if config.Specialization != nil {
 			specialization, ok = config.Specialization(ctx, site, in, read)
 			if !ok {
-				return callpayload.CallOutcome{}
+				return callpayload.CallOutcome{}, false
 			}
 		}
-		sum, ok := relation.SpecializeWithContext(cursor, nil, specialization)
+		sum, ok := relation.SpecializeWithEffects(cursor, nil, specialization, config.EffectResolver)
 		if !ok {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, false
 		}
-		return transaction.Apply(ctx, site, in, read, sum, transaction.FunctionType(target.SummaryKey), false)
+		return transaction.Apply(ctx, site, in, read, sum, transaction.FunctionType(target.SummaryKey), false), true
 	}
+}
+
+func resolveTarget(config Config, ctx transfer.NodeContext, site factflow.CallSiteView) (Target, bool) {
+	if config.Catalog != nil {
+		point, ok := site.Point()
+		if !ok {
+			return Target{}, false
+		}
+		return config.Catalog.Lookup(point)
+	}
+	if config.TargetFor == nil {
+		return Target{}, false
+	}
+	return config.TargetFor(ctx, site)
+}
+
+// TryOutcome is the exclusive routing seam. False guarantees a zero outcome
+// and means the caller may invoke its fallback; true means the Relation path
+// owns this call even when its exact semantic outcome is empty.
+func TryOutcome(config Config) TryOutcomeProvider {
+	return NewResolver(config)
 }
