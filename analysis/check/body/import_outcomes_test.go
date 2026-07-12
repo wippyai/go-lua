@@ -43,7 +43,7 @@ func TestCalleeValueProviderReturnsIdentityRichPathWithoutTypeWitness(t *testing
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
 	value = product.Set(reg, value, identity.Key, identity.Singleton(fnID))
 	in := state.State{}.WritePathKey(reg, resolver.KeySpace(), pathKey, value)
-	provider := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil)
+	provider := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil, nil)
 
 	got, ok := provider(transfer.NodeContext{Point: point, Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleePath: calleePath,
@@ -138,7 +138,7 @@ func TestCalleeValueProviderPrefersTypedStaticMethodOverWeakExactPath(t *testing
 	in := state.State{}.
 		WritePathStaticMember(resolver.KeySpace(), methodKey, staticValue).
 		WritePathKey(reg, resolver.KeySpace(), methodKey, weakValue)
-	provider := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil)
+	provider := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil, nil)
 
 	got, ok := provider(transfer.NodeContext{Point: point, Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		ReceiverPath:    receiverPath,
@@ -178,7 +178,7 @@ func TestCallableValueOutcomeUsesTypedStaticMethodOverWeakExactPath(t *testing.T
 	in := state.State{}.
 		WritePathStaticMember(resolver.KeySpace(), methodKey, staticValue).
 		WritePathKey(reg, resolver.KeySpace(), methodKey, weakValue)
-	calleeValue := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil)
+	calleeValue := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil, nil)
 	provider := effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
 		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),
 		Callable:    typecall.Callable,

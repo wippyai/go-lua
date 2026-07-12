@@ -1,6 +1,8 @@
 package body
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -34,13 +36,14 @@ func calleeValueProvider(
 	typeValues *typevalue.Cache,
 	bindings *bind.Result,
 	typeResolver *typeresolve.Resolver,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 ) CalleeValueFunc {
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 		if site.MethodName() != "" {
 			if value, ok := pathMethodCalleeValue(reg, typeValues, facts, resolver, ctx, site, in); ok {
 				return value, true
 			}
-			if value, ok := declaredReceiverMethodCalleeValue(reg, typeValues, facts, bindings, typeResolver, ctx, site); ok {
+			if value, ok := declaredReceiverMethodCalleeValue(reg, typeValues, facts, bindings, typeResolver, rootDeclarations, ctx, site); ok {
 				return value, true
 			}
 		}
@@ -81,10 +84,11 @@ func declaredReceiverMethodCalleeValue(
 	facts factflow.Facts,
 	bindings *bind.Result,
 	resolver *typeresolve.Resolver,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 	ctx transfer.NodeContext,
 	site factflow.CallSiteView,
 ) (product.Value, bool) {
-	fn, ok := declaredReceiverMethodFunction(facts, bindings, resolver, ctx, site)
+	fn, ok := declaredReceiverMethodFunction(facts, bindings, resolver, rootDeclarations, ctx, site)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -95,9 +99,10 @@ func declaredReceiverCallableProvider(
 	facts factflow.Facts,
 	bindings *bind.Result,
 	resolver *typeresolve.Resolver,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 ) ReceiverCallableFunc {
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView) (*typ.Function, bool) {
-		return declaredReceiverMethodFunction(facts, bindings, resolver, ctx, site)
+		return declaredReceiverMethodFunction(facts, bindings, resolver, rootDeclarations, ctx, site)
 	}
 }
 
@@ -105,6 +110,7 @@ func declaredReceiverMethodFunction(
 	facts factflow.Facts,
 	bindings *bind.Result,
 	resolver *typeresolve.Resolver,
+	rootDeclarations func() factquery.RootDeclarationQuery,
 	ctx transfer.NodeContext,
 	site factflow.CallSiteView,
 ) (*typ.Function, bool) {
@@ -119,7 +125,10 @@ func declaredReceiverMethodFunction(
 	if !ok || receiverPath.Symbol == 0 || len(receiverPath.Segments) != 0 {
 		return nil, false
 	}
-	if _, replaced := factquery.DominatingOrdinaryRootWrite(ctx.Point, receiverPath.Symbol, facts, ctx.Graph); replaced {
+	if rootDeclarations == nil {
+		rootDeclarations = preparedRootDeclarationQuery(facts, ctx.Graph)
+	}
+	if _, replaced := rootDeclarations().DominatingOrdinaryRootWrite(ctx.Point, receiverPath.Symbol); replaced {
 		return nil, false
 	}
 	typeExpr, ok := bindings.SymbolTypeAnnotation(receiverPath.Symbol)
@@ -138,6 +147,16 @@ func declaredReceiverMethodFunction(
 		return nil, false
 	}
 	return fn, true
+}
+
+// preparedRootDeclarationQuery owns the immutable CFG dominance analysis once
+// for every prepared body. Method resolution runs at transfer frequency, so
+// rebuilding dominators at each call turns a structural graph query into a
+// dominant allocation site on call-heavy bodies.
+func preparedRootDeclarationQuery(facts factflow.Facts, graph cfg.Graph) func() factquery.RootDeclarationQuery {
+	return sync.OnceValue(func() factquery.RootDeclarationQuery {
+		return factquery.NewRootDeclarationQuery(facts, graph)
+	})
 }
 
 func readablePrefixCalleeValue(
