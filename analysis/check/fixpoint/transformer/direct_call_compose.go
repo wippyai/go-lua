@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -219,7 +220,7 @@ func validateDirectCallStructuredOutput(reg *axis.Registry, out summary.Summary,
 func rebaseDirectCallOutputProofs(caller *Arena, bindings TermRootBindings, proofs []callboundary.BranchProof) ([]BranchProofTerm, error) {
 	out := make([]BranchProofTerm, 0, len(proofs))
 	for index, proof := range proofs {
-		if proof.Kind != pathevidence.BranchProofPathPresence || !proof.Other.IsEmpty() {
+		if proof.Kind != pathevidence.BranchProofPathPresence || !presence.Equal(proof.Presence, presence.Present()) || !proof.Other.IsEmpty() {
 			return nil, fmt.Errorf("structured branch proof %d kind requires contextual composition", index)
 		}
 		param := proof.Path.PlaceholderIndex()

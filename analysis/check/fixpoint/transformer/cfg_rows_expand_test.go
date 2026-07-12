@@ -50,9 +50,12 @@ func TestSolveAcyclicCFGExpandedRowsFailsAtomicallyAtExpansionBudget(t *testing.
 	rows, err := SolveAcyclicCFGExpandedRows(graph, arena, SymbolicCFGRow{
 		Guard: arena.True(), Values: map[symbol.ID]ValueTerm{1: param},
 	}, func(_ cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
-		other := cloneCFGRow(row)
-		other.Values[result] = arena.Constant(typevalue.LiteralString(reg, "distinct"))
-		return []SymbolicCFGRow{row, other}, nil
+		produced := make([]SymbolicCFGRow, 64)
+		for i := range produced {
+			produced[i] = cloneCFGRow(row)
+			produced[i].Values[result] = arena.Constant(typevalue.LiteralInt(reg, int64(i)))
+		}
+		return produced, nil
 	}, nil, SymbolicCFGOptions{Shape: shape, MaxRows: 1})
 	if err == nil || !strings.Contains(err.Error(), "row budget") || rows != nil {
 		t.Fatalf("expanded budget result = %#v/%v", rows, err)

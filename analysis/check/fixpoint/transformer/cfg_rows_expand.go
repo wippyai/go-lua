@@ -47,6 +47,9 @@ func SolveAcyclicCFGExpandedRows(graph cfg.Graph, arena *Arena, initial Symbolic
 					return nil, fmt.Errorf("transformer: symbolic CFG point %d produced an invalid row", point)
 				}
 				transferred = append(transferred, out)
+				if len(transferred) > options.MaxRows {
+					return nil, fmt.Errorf("transformer: symbolic CFG row budget at point %d", point)
+				}
 			}
 		}
 		transferred = dedupCFGRows(arena, transferred)
