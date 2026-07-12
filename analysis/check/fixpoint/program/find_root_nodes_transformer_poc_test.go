@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -179,6 +180,41 @@ func TestValidateGraphRelationCallCompositionCoverage(t *testing.T) {
 	// consume all six lexical identities once their relation compiler gates are
 	// exact; today find_root_nodes supplies the frozen relation for two sites.
 	t.Log("validate_graph relation composition: 2/49 calls exact now; 6/49 lexical routing ceiling; 40 signatures and 3 dynamic calls remain contextual")
+}
+
+func TestValidateGraphPreparedSignatureIdentityCensus(t *testing.T) {
+	fixture := newFindRootNodesPOCFixture(t)
+	application := fixture.applications[len(fixture.applications)-1]
+	oracle := application.oracle
+	producer := effectlowering.PrepareSignatureProducer(effectlowering.SignatureOutcomeProviderConfig{
+		Signatures: application.config.Signatures,
+		NameForSite: func(_ transfer.NodeContext, site factflow.CallSiteView) (string, bool) {
+			name := site.CalleePathRef().String()
+			return name, name != ""
+		},
+	})
+	if producer == nil {
+		t.Fatal("signature producer missing")
+	}
+	total, signatures, iterators := 0, 0, 0
+	ctx := transfer.NodeContext{Registry: application.config.Registry}
+	for point := cfg.Point(0); int(point) < oracle.Graph().Size(); point++ {
+		site, ok := oracle.CallSiteView(point)
+		if !ok {
+			continue
+		}
+		total++
+		if _, ok := producer.SignatureForSite(ctx, site); ok {
+			signatures++
+		}
+		if _, ok := producer.IteratorForSite(ctx, site); ok {
+			iterators++
+		}
+	}
+	if total != 49 || signatures != 40 || iterators != 19 {
+		t.Fatalf("validate_graph producer coverage: signatures=%d iterators=%d total=%d, want 40/19/49", signatures, iterators, total)
+	}
+	t.Log("validate_graph signature foundation resolves 40 stable identities and 19 iterator effects; signature Relation coverage remains 0, lexical Relation coverage remains 2/49, and 3 dynamic calls remain contextual")
 }
 
 func newFindRootNodesPOCFixture(tb testing.TB) findRootNodesPOCFixture {
