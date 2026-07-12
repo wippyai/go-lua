@@ -37,11 +37,23 @@ type Bindings func(
 	transformer.Shape,
 ) (transformer.BindingCursor, bool)
 
+// Specialization binds caller-state-dependent symbolic evaluators for one
+// relation application. Static relations need no factory. A relation carrying
+// dynamic/member reads fails closed unless the factory supplies the canonical
+// read resolver for this exact caller state.
+type Specialization func(
+	transfer.NodeContext,
+	factflow.CallSiteView,
+	state.State,
+	func(cfg.Point) state.State,
+) (transformer.SpecializationContext, bool)
+
 type Config struct {
-	Relations transformer.RelationSnapshot
-	TargetFor TargetFor
-	Bindings  Bindings
-	Adapter   callresult.ProviderConfig
+	Relations      transformer.RelationSnapshot
+	TargetFor      TargetFor
+	Bindings       Bindings
+	Specialization Specialization
+	Adapter        callresult.ProviderConfig
 }
 
 // OutcomeProvider is inactive infrastructure. Application performs no body
@@ -67,7 +79,14 @@ func OutcomeProvider(config Config) callpayload.CallOutcomeProvider {
 		if !ok {
 			return callpayload.CallOutcome{}
 		}
-		sum, ok := relation.Specialize(cursor, nil, nil)
+		var specialization transformer.SpecializationContext
+		if config.Specialization != nil {
+			specialization, ok = config.Specialization(ctx, site, in, read)
+			if !ok {
+				return callpayload.CallOutcome{}
+			}
+		}
+		sum, ok := relation.SpecializeWithContext(cursor, nil, specialization)
 		if !ok {
 			return callpayload.CallOutcome{}
 		}

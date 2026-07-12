@@ -244,3 +244,14 @@ func scalarSegmentValue(reg *axis.Registry, seg segment.Segment) (product.Value,
 		return product.Value{}, false
 	}
 }
+
+// StaticPathSegmentValue returns the canonical scalar key value for one
+// statically named path segment. Symbolic relation construction uses this
+// helper rather than maintaining a second field/index encoding beside the
+// concrete dynamic-read kernel above.
+func StaticPathSegmentValue(reg *axis.Registry, seg segment.Segment) (product.Value, bool) {
+	if reg == nil {
+		return product.Value{}, false
+	}
+	return scalarSegmentValue(reg, seg)
+}

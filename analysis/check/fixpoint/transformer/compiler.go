@@ -92,6 +92,7 @@ func NewPlanCompiler() *PlanCompiler {
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
 	c.facts[operationplan.ExpressionPath] = dynamicIndexDependencyPlanHandler{kind: operationplan.ExpressionPath}
+	c.facts[operationplan.DynamicIndexExpression] = dynamicIndexDependencyPlanHandler{kind: operationplan.DynamicIndexExpression}
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
 	c.facts[operationplan.Return] = returnPlanHandler{}
 	c.facts[operationplan.CallSite] = signatureCallPlanHandler{}
@@ -799,6 +800,14 @@ func exactReturnSourceTerm(ctx planCompileContext, source factflow.ValueSource) 
 	if term, ok := exactSignatureExpressionTerm(ctx, source); ok {
 		return term, nil
 	}
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		if _, pathBacked := ctx.facts.ExpressionPathRef(source.ExprRef); pathBacked {
+			return exactCompilerSourceTerm(ctx, source)
+		}
+		if _, dynamic := ctx.facts.DynamicIndexExpression(source.ExprRef); dynamic {
+			return exactCompilerSourceTerm(ctx, source)
+		}
+	}
 	if source.Kind == factflow.ValueSourcePath {
 		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
 		if !ok || version != 0 || suffix != "" || sym == 0 {
@@ -886,19 +895,46 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 }
 
 func exactCompilerSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
+	return exactCompilerSourceTermActive(ctx, source, nil)
+}
+
+func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.ValueSource, active map[factflow.ExprRef]bool) (ValueTerm, error) {
 	if term, ok := exactSignatureExpressionTerm(ctx, source); ok {
 		return term, nil
 	}
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		if p, ok := ctx.facts.ExpressionPathRef(source.ExprRef); ok {
-			if p.Symbol == 0 || p.Version != 0 || len(p.Segments) != 0 {
-				return 0, fmt.Errorf("source expression path is not a canonical root symbol")
+		if active[source.ExprRef] {
+			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)
+		}
+		if dynamic, ok := ctx.facts.DynamicIndexExpression(source.ExprRef); ok {
+			if active == nil {
+				active = make(map[factflow.ExprRef]bool, 1)
 			}
-			term, ok := ctx.locals[p.Symbol]
-			if !ok {
-				return 0, fmt.Errorf("source expression symbol %d has no exact binding", p.Symbol)
+			active[source.ExprRef] = true
+			term, err := exactCompilerDynamicReadTerm(ctx, dynamic, active)
+			delete(active, source.ExprRef)
+			if err != nil {
+				return 0, fmt.Errorf("dynamic expression %d: %w", source.ExprRef, err)
 			}
 			return term, nil
+		}
+		if p, ok := ctx.facts.ExpressionPathRef(source.ExprRef); ok {
+			if p.Symbol == 0 || p.Version != 0 {
+				return 0, fmt.Errorf("source expression path is not canonical")
+			}
+			if len(p.Segments) == 0 {
+				term, ok := ctx.locals[p.Symbol]
+				if !ok {
+					return 0, fmt.Errorf("source expression symbol %d has no exact binding", p.Symbol)
+				}
+				return term, nil
+			}
+			binding, err := exactBoundaryPathBinding(ctx, p)
+			if err != nil {
+				return 0, fmt.Errorf("source expression descendant: %w", err)
+			}
+			term, _, err := ctx.builder.Arena().LowerBoundaryPathValue(p, binding)
+			return term, err
 		}
 	}
 	if source.Kind == factflow.ValueSourcePath {
