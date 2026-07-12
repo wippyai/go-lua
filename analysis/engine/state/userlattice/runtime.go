@@ -2,6 +2,7 @@ package userlattice
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -58,13 +59,18 @@ func buildRuntime(reg *axis.Registry) Runtime {
 	if view.Len() == 0 {
 		return Runtime{}
 	}
-	axes := make([]Axis, 0, view.Len())
-	byID := make(map[AxisID]Axis, view.Len())
+	verifiedSpecs := make([]*verifiedSpec, 0, view.Len())
 	for i := 0; i < view.Len(); i++ {
 		verified, ok := view.At(i).(*verifiedSpec)
 		if !ok {
 			panic(fmt.Sprintf("userlattice: extension %q has type %T, want verified user lattice", extensionKind, view.At(i)))
 		}
+		verifiedSpecs = append(verifiedSpecs, verified)
+	}
+	sort.Slice(verifiedSpecs, func(i, j int) bool { return verifiedSpecs[i].id < verifiedSpecs[j].id })
+	axes := make([]Axis, 0, len(verifiedSpecs))
+	byID := make(map[AxisID]Axis, view.Len())
+	for i, verified := range verifiedSpecs {
 		if i > int(^AxisSlot(0)) {
 			panic("userlattice: too many registered axes")
 		}
