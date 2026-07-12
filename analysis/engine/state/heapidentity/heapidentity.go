@@ -160,24 +160,41 @@ func (o TableObject) withStaticMember(reg *axis.Registry, ks *keyspace.KeySpace,
 	if !ok {
 		return o, false
 	}
+	valueDomain := product.Domain(reg)
+	primaryValue := value
+	if joinExisting {
+		if existing, ok := o.staticMembers[key]; ok {
+			primaryValue = valueDomain.Join(existing, primaryValue)
+		}
+	}
+	canonical, hasCanonical := FieldCanonicalStaticMemberSuffixKey(ks, suffix)
+	canonicalValue := primaryValue
+	if hasCanonical && joinExisting {
+		if existing, ok := o.staticMembers[canonical]; ok {
+			canonicalValue = valueDomain.Join(existing, canonicalValue)
+		}
+	}
+	// Summary facts are applied repeatedly while interprocedural proofs
+	// converge. Preserve the immutable object when the write is already fully
+	// represented; cloning both its member map and the enclosing heap map would
+	// otherwise turn a semantic no-op into two persistent-map allocations.
+	primaryCurrent, primaryPresent := o.staticMembers[key]
+	changed := o.stableShape || !primaryPresent || !valueDomain.Equal(primaryCurrent, primaryValue)
+	if hasCanonical {
+		canonicalCurrent, canonicalPresent := o.staticMembers[canonical]
+		changed = changed || !canonicalPresent || !valueDomain.Equal(canonicalCurrent, canonicalValue)
+	}
+	if !changed {
+		return o, true
+	}
 	out := CloneObject(o)
 	if out.staticMembers == nil {
 		out.staticMembers = make(map[keyspace.Key]product.Value, 1)
 	}
 	out.stableShape = false
-	if joinExisting {
-		if existing, ok := out.staticMembers[key]; ok {
-			value = product.Domain(reg).Join(existing, value)
-		}
-	}
-	out.staticMembers[key] = value
-	if canonical, ok := FieldCanonicalStaticMemberSuffixKey(ks, suffix); ok {
-		if joinExisting {
-			if existing, ok := out.staticMembers[canonical]; ok {
-				value = product.Domain(reg).Join(existing, value)
-			}
-		}
-		out.staticMembers[canonical] = value
+	out.staticMembers[key] = primaryValue
+	if hasCanonical {
+		out.staticMembers[canonical] = canonicalValue
 	}
 	return out, true
 }

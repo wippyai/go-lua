@@ -1,6 +1,7 @@
 package heapidentity
 
 import (
+	"fmt"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -489,6 +490,56 @@ func TestStaticMemberSuffixKeyUsesCanonicalRelativeSegments(t *testing.T) {
 
 	if got, ok := StaticMemberSuffixKey(ks, nil); ok || (got != keyspace.Key{}) {
 		t.Fatalf("StaticMemberSuffixKey(nil) = %q/%v, want empty/false", ks.Format(got), ok)
+	}
+}
+
+func TestWithStaticMemberSharesImmutableObjectOnSemanticNoop(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	present := presentValue(reg)
+	suffix := []segment.Segment{{Kind: segment.SegmentField, Name: "name"}}
+	key := fieldSuffixKey(t, ks, "name")
+	object := NewTableObject(TableObjectConfig{
+		Root:          present,
+		StaticMembers: map[keyspace.Key]product.Value{key: present},
+	})
+
+	got, ok := object.WithStaticMember(reg, ks, suffix, present)
+	if !ok || !ObjectDomain(reg).Equal(got, object) {
+		t.Fatalf("equal static-member write = %#v/%v, want unchanged object", got, ok)
+	}
+	// StableShape is a proof invalidated by any write, even if the slot value
+	// is unchanged. The fast path must not retain that stronger proof.
+	stable := NewTableObject(TableObjectConfig{
+		Root:          present,
+		StaticMembers: map[keyspace.Key]product.Value{key: present},
+		StableShape:   true,
+	})
+	invalidated, ok := stable.WithStaticMember(reg, ks, suffix, present)
+	if !ok || invalidated.StableShape() {
+		t.Fatal("equal write retained final-shape proof")
+	}
+}
+
+func BenchmarkWithStaticMemberSemanticNoop(b *testing.B) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	present := presentValue(reg)
+	members := make(map[keyspace.Key]product.Value, 128)
+	for i := 0; i < 128; i++ {
+		name := fmt.Sprintf("member_%d", i)
+		key, _ := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: name}})
+		members[key] = present
+	}
+	object := NewTableObject(TableObjectConfig{Root: present, StaticMembers: members})
+	suffix := []segment.Segment{{Kind: segment.SegmentField, Name: "member_64"}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got, ok := object.WithStaticMember(reg, ks, suffix, present)
+		if !ok || !ObjectDomain(reg).Equal(got, object) {
+			b.Fatal("semantic no-op changed object")
+		}
 	}
 }
 
