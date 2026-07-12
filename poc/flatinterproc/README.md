@@ -136,8 +136,9 @@ test separately asserts the flat run performs exactly one transfer per declared
 cell. This demonstrates the structural multiplier and its order sensitivity;
 it does not claim the whole Kickside corpus will improve by 25x.
 
-Before production wiring, the next required measurement is to build the same
-flattened cell/influence census from representative automation units and compute
-their expected nested-versus-global transfer counts. If that measured model does
-not show a material multiplier, the engine should not absorb the integration
-complexity.
+The representative automation census is recorded in
+`AUTOMATION_CENSUS.md`. Its optimistic exact-context ceiling is only 1.61x for
+summary point transfers, so this mechanism is **not** recommended for production
+integration as the main performance architecture. The proof remains useful as
+the scheduling model inside a broader compositional design, where exact context
+body solves are removed rather than merely flattened.
