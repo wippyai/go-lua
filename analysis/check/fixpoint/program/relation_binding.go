@@ -49,7 +49,7 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 			return nil, false
 		}
 		relation, found := s.Lookup(identity)
-		if !found || relation.Shape() != target.Shape || !paramsOnlyShape(relation.Shape()) || relation.ContextualReason() != "" || relation.Widened() {
+		if !found || relation.Shape() != target.Shape || relation.ContextualReason() != "" || relation.Widened() {
 			return nil, false
 		}
 		dependencyKey := identity.Summary
@@ -61,6 +61,10 @@ func (s relationRunSnapshot) inactiveRelationResolverFactory(owner relationConsu
 			if !hasSpecialized {
 				return nil, false
 			}
+		} else if !paramsOnlyShape(relation.Shape()) {
+			// Capture-bearing relations are contextual publication products in
+			// this slice. Direct hot-path binding remains parameter-only.
+			return nil, false
 		}
 		routes = append(routes, relationcall.Route{Point: point, Target: relationcall.Target{
 			Cell: identity.Cell, SummaryKey: dependencyKey, LexicalSummaryKey: identity.Summary,

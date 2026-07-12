@@ -122,8 +122,9 @@ func (r Relation) SpecializeWithEffects(cursor BindingCursor, descriptors *Descr
 // ordinary generic Summary fact: only a concrete certified entry may project
 // it as a normal-return path refinement.
 type SpecializationResult struct {
-	Summary         summary.Summary
-	PreservedParams []uint32
+	Summary           summary.Summary
+	PreservedParams   []uint32
+	PreservedCaptures []uint32
 }
 
 // SpecializeDetailed evaluates the same transaction as Specialize while
@@ -137,57 +138,74 @@ func (r Relation) SpecializeDetailed(cursor BindingCursor, descriptors *Descript
 	if !ok {
 		return SpecializationResult{}, false
 	}
-	preserved, ok := r.specializedPreservedParams(cursor, context)
+	params, captures, ok := r.specializedPreservedRoots(cursor, context)
 	if !ok {
 		return SpecializationResult{}, false
 	}
-	return SpecializationResult{Summary: sum, PreservedParams: preserved}, true
+	return SpecializationResult{Summary: sum, PreservedParams: params, PreservedCaptures: captures}, true
 }
 
 // specializedPreservedParams intersects the must-preservation sets of every
 // feasible correlated row. One non-preserving alternative removes the root;
 // an infeasible alternative has no effect.
-func (r Relation) specializedPreservedParams(cursor BindingCursor, context SpecializationContext) ([]uint32, bool) {
+func (r Relation) specializedPreservedRoots(cursor BindingCursor, context SpecializationContext) ([]uint32, []uint32, bool) {
 	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
-		return nil, false
+		return nil, nil, false
 	}
-	var preserved []bool
+	var params, captures []bool
 	have := false
 	for _, row := range r.rows {
 		feasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
 		if !valid {
-			return nil, false
+			return nil, nil, false
 		}
 		if !feasible {
 			continue
 		}
-		rowPreserved := make([]bool, r.shape.Params)
+		rowParams := make([]bool, r.shape.Params)
+		rowCaptures := make([]bool, r.shape.Captures)
 		for _, refinement := range row.PathRefinements {
-			index, valid := refinement.preservedParam(r.arena)
-			if !valid || index >= r.shape.Params {
-				return nil, false
+			root, valid := refinement.preservedRoot(r.arena)
+			if !valid || !r.shape.validate(root) {
+				return nil, nil, false
 			}
-			rowPreserved[index] = true
+			switch root.Kind {
+			case RootParam:
+				rowParams[root.Index] = true
+			case RootCapture:
+				rowCaptures[root.Index] = true
+			default:
+				return nil, nil, false
+			}
 		}
 		if !have {
-			preserved = rowPreserved
+			params, captures = rowParams, rowCaptures
 			have = true
 			continue
 		}
-		for index := range preserved {
-			preserved[index] = preserved[index] && rowPreserved[index]
+		for index := range params {
+			params[index] = params[index] && rowParams[index]
+		}
+		for index := range captures {
+			captures[index] = captures[index] && rowCaptures[index]
 		}
 	}
 	if !have {
-		return nil, true
+		return nil, nil, true
 	}
-	out := make([]uint32, 0, len(preserved))
-	for index, present := range preserved {
+	outParams := make([]uint32, 0, len(params))
+	for index, present := range params {
 		if present {
-			out = append(out, uint32(index))
+			outParams = append(outParams, uint32(index))
 		}
 	}
-	return out, true
+	outCaptures := make([]uint32, 0, len(captures))
+	for index, present := range captures {
+		if present {
+			outCaptures = append(outCaptures, uint32(index))
+		}
+	}
+	return outParams, outCaptures, true
 }
 
 func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext, resolve EffectSummaryResolver) (out summary.Summary, ok bool) {

@@ -38,7 +38,10 @@ func resolveReferenceTransformerFixture(t testing.TB) *Static {
 
 func TestResolveReferenceFalsyBranchesAreWholeFunctionExact(t *testing.T) {
 	prepared := resolveReferenceTransformerFixture(t)
-	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
+	shape := transformer.Shape{
+		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
+		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
+	}
 	dynamicExact, dynamicTotal := 0, 0
 	rootExact, rootTotal := 0, 0
 	for _, entry := range transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape) {

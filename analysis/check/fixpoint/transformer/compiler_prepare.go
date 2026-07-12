@@ -197,7 +197,7 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	ctx.directCalls = direct
 	initial := SymbolicCFGRow{
 		Guard: p.builder.Arena().True(), Values: ctx.locals, genericBindings: ctx.genericBindings,
-		paramPreserved: newParamPreservationLedger(p.shape.Params),
+		paramPreserved: newBoundaryPreservationLedger(p.shape.Params, p.shape.Captures),
 	}
 	if p.shape.Params != 0 {
 		initial.Output.NormalReturnParams = make([]product.Value, p.shape.Params)
@@ -220,7 +220,7 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	for i, row := range exitRows {
 		rows[i] = Row{
 			Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs,
-			PathRefinements: row.paramPreserved.certifiedRefinements(p.builder.Arena(), p.builder.EffectArena(), p.shape, row, p.plan.BoundaryParams()),
+			PathRefinements: row.paramPreserved.certifiedRefinements(p.builder.Arena(), p.builder.EffectArena(), p.shape, row, p.plan.BoundaryParams(), p.plan.BoundaryCaptures()),
 		}
 	}
 	relation, err := p.builder.Build(p.certificate, rows)

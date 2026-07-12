@@ -79,7 +79,10 @@ func TestValidateGraphOwnsEightDurableAllocationSites(t *testing.T) {
 
 func TestValidateGraphAllocationRelationsMatchCanonicalOutcomesWithoutSolves(t *testing.T) {
 	prepared, _ := validateGraphSemanticProgramFixture(t)
-	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
+	shape := transformer.Shape{
+		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
+		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
+	}
 	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
 	exactCalls := make(map[cfg.Point]bool)
 	for _, entry := range entries {

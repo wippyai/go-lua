@@ -207,7 +207,7 @@ func rebaseDirectCallParamRefinements(arena, calleeArena *Arena, callerShape Sha
 		return paramPreservationLedger{}, fmt.Errorf("symbolic path refinements have foreign root bindings")
 	}
 	for index, refinement := range refinements {
-		if !refinement.validPreservedParamRoot(calleeArena, calleeShape) {
+		if !refinement.validPreservedBoundaryRoot(calleeArena, calleeShape) || calleeArena.paths[refinement.Path].root.Kind != RootParam {
 			// The relation builder already enforces this invariant. Keep the
 			// composition boundary independently fail-closed for forged relations.
 			return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d is not a preserved parameter root", index)

@@ -250,7 +250,6 @@ return truthy, falsy
 
 func TestRelationActivationCertifiedContextUnsafeFamiliesStayLegacy(t *testing.T) {
 	cases := []struct{ name, source string }{
-		{"capture", `local suffix = "!"; local function f(v: string): string return v .. suffix end; return f("x")`},
 		{"heap-mutation", `local function f(v: {x: string}): string v.x = "changed"; return v.x end; return f({x="x"})`},
 	}
 	for _, tc := range cases {
@@ -273,6 +272,35 @@ func TestRelationActivationCertifiedContextUnsafeFamiliesStayLegacy(t *testing.T
 			}
 			compareRelationObservableTrees(t, legacy.RootResult(), active.RootResult(), "root")
 		})
+	}
+}
+
+func TestRelationActivationCertifiedImmutableCaptureDifferential(t *testing.T) {
+	stmts := parseChunk(t, `
+local suffix = "!"
+local function captured(): string
+	return suffix
+end
+return captured()
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
+	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
+	legacyStats, activeStats := &Stats{}, &Stats{}
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: activeStats, enableRelationActivation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareRelationCorpusResult(t, reg, legacy, active)
+	if activeStats.RelationProducersEligible != 1 || activeStats.RelationContextsSpecialized != 1 || activeStats.RelationCallsHandled == 0 ||
+		activeStats.SummaryBodySolves >= legacyStats.SummaryBodySolves || activeStats.SummaryPointTransfers >= legacyStats.SummaryPointTransfers {
+		t.Fatalf("capture activation = legacy:%d/%d active:%d/%d producers:%d owners:%d contexts:%d handled:%d fallbacks:%d",
+			legacyStats.SummaryBodySolves, legacyStats.SummaryPointTransfers, activeStats.SummaryBodySolves, activeStats.SummaryPointTransfers,
+			activeStats.RelationProducersEligible, activeStats.RelationOwnersActive, activeStats.RelationContextsSpecialized, activeStats.RelationCallsHandled, activeStats.RelationActivationFallbacks)
 	}
 }
 

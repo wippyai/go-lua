@@ -40,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -206,8 +207,10 @@ func (c *checker) prepare(
 		declared, ok := genericForDeclaredPathIteratorSourceType(source, facts, resolver, lowered.SymbolTypes)
 		return index, declared, ok
 	})
+	boundaryCaptures := symbolicBoundaryCaptureSymbols(wirBody, bindings.DirectCaptures(fn))
 	operationPlan := lowered.Plan.
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
+		WithBoundaryCaptures(boundaryCaptures).
 		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn)).
 		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer))
 	functionSymbol, _ := bindings.FunctionSymbol(fn)
@@ -314,6 +317,39 @@ func (c *checker) prepare(
 		wtoPlan:               wtoPlan,
 		concreteFlow:          concretePlan,
 	}
+}
+
+// symbolicBoundaryCaptureSymbols retains only captures that participate in the
+// function's value relation. A captured function symbol used exclusively as a
+// direct callee is discharged by the direct-call catalog and must not widen the
+// producer shape. Any other operand occurrence is a semantic capture; if this
+// scan misses a future operand family, compiler binding fails closed because
+// the referenced symbol has no term.
+func symbolicBoundaryCaptureSymbols(body *wir.Body, captures []bind.Capture) []symbol.ID {
+	if body == nil || len(captures) == 0 {
+		return nil
+	}
+	used := make(map[symbol.ID]bool, len(captures))
+	isCapture := make(map[symbol.ID]bool, len(captures))
+	for _, capture := range captures {
+		if capture.Captured != 0 {
+			isCapture[capture.Captured] = true
+		}
+	}
+	observe := func(p pathdom.Path) bool {
+		if isCapture[p.Symbol] {
+			used[p.Symbol] = true
+		}
+		return true
+	}
+	body.ForEachValuePath(observe)
+	out := make([]symbol.ID, 0, len(captures))
+	for _, capture := range captures {
+		if used[capture.Captured] {
+			out = append(out, capture.Captured)
+		}
+	}
+	return out
 }
 
 func (s *Static) Solve(config SolveConfig) *Result {

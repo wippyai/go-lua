@@ -27,6 +27,39 @@ func (p *Plan) WithBoundaryParams(params []symbol.ID) *Plan {
 	return &out
 }
 
+// WithBoundaryCaptures returns a plan owning the ordered lexical capture
+// symbols used by symbolic capture roots. Duplicate/zero symbols, or a symbol
+// that is also a parameter, fail closed by clearing the capture boundary.
+func (p *Plan) WithBoundaryCaptures(captures []symbol.ID) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.boundaryCaptures = nil
+	out.boundaryCapturesValid = false
+	seen := make(map[symbol.ID]bool, len(p.boundaryParams)+len(captures))
+	for _, param := range p.boundaryParams {
+		seen[param] = true
+	}
+	owned := make([]symbol.ID, 0, len(captures))
+	for _, capture := range captures {
+		if capture == 0 || seen[capture] {
+			return &out
+		}
+		seen[capture] = true
+		owned = append(owned, capture)
+	}
+	out.boundaryCaptures = owned
+	out.boundaryCapturesValid = true
+	return &out
+}
+
+// BoundaryCapturesValid distinguishes an intentionally empty capture boundary
+// from one cleared after invalid duplicate/zero input.
+func (p *Plan) BoundaryCapturesValid() bool {
+	return p != nil && p.boundaryCapturesValid
+}
+
 // WithBoundaryReturns returns a plan owning the ordered declared return
 // contracts used by canonical Summary projection.
 func (p *Plan) WithBoundaryReturns(values []product.Value) *Plan {
@@ -53,12 +86,33 @@ func (p *Plan) BoundaryParams() []symbol.ID {
 	return append([]symbol.ID(nil), p.boundaryParams...)
 }
 
+// BoundaryCaptures returns an immutable snapshot of the ordered capture
+// symbols. Order is binder first-use order and therefore deterministic.
+func (p *Plan) BoundaryCaptures() []symbol.ID {
+	if p == nil {
+		return nil
+	}
+	return append([]symbol.ID(nil), p.boundaryCaptures...)
+}
+
 func (p *Plan) BoundaryParamIndex(target symbol.ID) (int, bool) {
 	if p == nil || target == 0 {
 		return 0, false
 	}
 	for index, param := range p.boundaryParams {
 		if param == target {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func (p *Plan) BoundaryCaptureIndex(target symbol.ID) (int, bool) {
+	if p == nil || target == 0 {
+		return 0, false
+	}
+	for index, capture := range p.boundaryCaptures {
+		if capture == target {
 			return index, true
 		}
 	}

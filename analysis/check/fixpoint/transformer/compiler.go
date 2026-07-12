@@ -571,6 +571,16 @@ func bindBoundaryParamTerms(ctx *planCompileContext, shape Shape) error {
 		}
 		ctx.locals[param] = ctx.builder.Arena().Root(Root{Kind: RootParam, Index: uint32(index)})
 	}
+	captures := ctx.plan.BoundaryCaptures()
+	if len(captures) != int(shape.Captures) {
+		return fmt.Errorf("capture symbols %d != shape captures %d", len(captures), shape.Captures)
+	}
+	for index, capture := range captures {
+		if _, exists := ctx.locals[capture]; exists {
+			return fmt.Errorf("duplicate capture symbol %d", capture)
+		}
+		ctx.locals[capture] = ctx.builder.Arena().Root(Root{Kind: RootCapture, Index: uint32(index)})
+	}
 	return nil
 }
 

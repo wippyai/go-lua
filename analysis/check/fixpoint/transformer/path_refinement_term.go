@@ -7,11 +7,11 @@ import (
 )
 
 // PathRefinementTerm is symbolic must-preservation metadata for one unchanged
-// parameter root. It is not itself an ordinary generic Summary fact: a
+// parameter or capture root. It is not itself an ordinary generic Summary fact: a
 // concrete certified boundary decides whether the corresponding entry root
 // refinement existed and may be republished. The first admitted slice is
 // intentionally root-only and identity-preserving: Path must be $N and Value
-// must be the same RootParam N. Descendants and computed values require
+// must be the same boundary root. Descendants and computed values require
 // explicit write/alias proofs and fail closed until that proof vocabulary
 // exists.
 type PathRefinementTerm struct {
@@ -19,13 +19,13 @@ type PathRefinementTerm struct {
 	Value ValueTerm
 }
 
-func (p PathRefinementTerm) validPreservedParamRoot(arena *Arena, shape Shape) bool {
+func (p PathRefinementTerm) validPreservedBoundaryRoot(arena *Arena, shape Shape) bool {
 	if arena == nil || !arena.validPath(p.Path, shape) ||
 		!arena.validValue(p.Value, shape, make(map[ValueTerm]bool)) {
 		return false
 	}
 	pathNode := arena.paths[p.Path]
-	if pathNode.root.Kind != RootParam || len(pathNode.segments) != 0 {
+	if (pathNode.root.Kind != RootParam && pathNode.root.Kind != RootCapture) || len(pathNode.segments) != 0 {
 		return false
 	}
 	valueNode := arena.values[p.Value]
@@ -36,19 +36,19 @@ func (p PathRefinementTerm) validPreservedParamRoot(arena *Arena, shape Shape) b
 // certifies. PathRefinementTerm is deliberately not an ordinary Summary fact:
 // a concrete boundary decides whether the corresponding root refinement was
 // present on entry and therefore whether it may be projected on return.
-func (p PathRefinementTerm) preservedParam(arena *Arena) (uint32, bool) {
+func (p PathRefinementTerm) preservedRoot(arena *Arena) (Root, bool) {
 	if arena == nil || p.Path == 0 || int(p.Path) >= len(arena.paths) || p.Value == 0 || int(p.Value) >= len(arena.values) {
-		return 0, false
+		return Root{}, false
 	}
 	node := arena.paths[p.Path]
-	if node.root.Kind != RootParam || len(node.segments) != 0 {
-		return 0, false
+	if (node.root.Kind != RootParam && node.root.Kind != RootCapture) || len(node.segments) != 0 {
+		return Root{}, false
 	}
 	value := arena.values[p.Value]
 	if value.op != valueRoot || value.root != node.root {
-		return 0, false
+		return Root{}, false
 	}
-	return node.root.Index, true
+	return node.root, true
 }
 
 func (p PathRefinementTerm) canonical(arena *Arena) string {

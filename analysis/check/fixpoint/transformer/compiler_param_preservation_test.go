@@ -142,7 +142,7 @@ func TestParamPreservationLedgerRejectsAliasMutationEscapeAndCall(t *testing.T) 
 			row := SymbolicCFGRow{
 				Guard: builder.Arena().True(), Values: ctx.locals, Output: emptyNormalReturnParams(1), paramPreserved: ledger,
 			}
-			if got := ledger.certifiedRefinements(builder.Arena(), builder.EffectArena(), Shape{Params: 1}, row, []symbol.ID{param}); len(got) != 0 {
+			if got := ledger.certifiedRefinements(builder.Arena(), builder.EffectArena(), Shape{Params: 1}, row, []symbol.ID{param}, nil); len(got) != 0 {
 				t.Fatalf("uncertified %s emitted %#v", test.name, got)
 			}
 		})

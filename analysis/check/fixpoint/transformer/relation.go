@@ -258,8 +258,8 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			}
 		}
 		for j, refinement := range owned[i].PathRefinements {
-			if !refinement.validPreservedParamRoot(b.arena, b.shape) {
-				return Relation{}, fmt.Errorf("transformer: row %d path refinement %d is not an unchanged parameter root", i, j)
+			if !refinement.validPreservedBoundaryRoot(b.arena, b.shape) {
+				return Relation{}, fmt.Errorf("transformer: row %d path refinement %d is not an unchanged parameter root or capture root", i, j)
 			}
 		}
 		sort.Slice(owned[i].Ops, func(x, y int) bool { return operationLess(b.arena, owned[i].Ops[x], owned[i].Ops[y]) })

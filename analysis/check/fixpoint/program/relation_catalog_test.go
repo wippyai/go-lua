@@ -100,7 +100,7 @@ return caller("ok")
 	}
 }
 
-func TestInactiveRelationCatalogFailsClosedForRecursiveAndContextualShapes(t *testing.T) {
+func TestInactiveRelationCatalogFailsClosedForRecursiveAndUnsupportedShapes(t *testing.T) {
 	stmts := parseChunk(t, `
 local function exact(x: any): any
     return x
@@ -138,11 +138,12 @@ return exact("ok")
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
 	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), reg, check.ModuleTypes, check.ModuleExports, stmts)
 	exactKey := relationTestTargetKey(t, bindings, keys, "exact")
+	captureKey := relationTestTargetKey(t, bindings, keys, "capture")
 	config := Config{Check: check}
 	config.relationCatalogAudit = func(catalog relationRunCatalog) error {
 		entries := catalog.Entries()
-		if len(entries) != 1 || entries[0].Summary != exactKey {
-			return fmt.Errorf("eligible identities = %#v, want only exact %v", entries, exactKey)
+		if len(entries) != 2 || entries[0].Summary != exactKey || entries[1].Summary != captureKey {
+			return fmt.Errorf("eligible identities = %#v, want exact %v plus certificate-gated capture %v", entries, exactKey, captureKey)
 		}
 		return nil
 	}
@@ -198,6 +199,9 @@ return leaf(captured_caller("ok"))
 			if !leafAdmitted {
 				return fmt.Errorf("leaf was not admitted as a producer: %#v", catalog.Entries())
 			}
+			if _, admitted := producerCells[callerKey]; admitted {
+				return fmt.Errorf("capture-bearing caller composed before capture-root call-flow proof")
+			}
 			for _, owner := range owners {
 				byKey[owner.Summary] = owner
 				direct, ok := policy.DirectCalls(owner)
@@ -209,7 +213,7 @@ return leaf(captured_caller("ok"))
 					if target, exists := direct.Lookup(point); exists {
 						routes = append(routes, target.Cell)
 						if target.Cell != leafCell {
-							return fmt.Errorf("consumer %v routed to unadmitted target %v", owner.Summary, target.Cell)
+							return fmt.Errorf("consumer %v routed to non-leaf target %v; admitted=%v", owner.Summary, target.Cell, producerCells)
 						}
 					}
 				}

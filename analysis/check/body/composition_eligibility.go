@@ -78,6 +78,15 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 		add("shape:vararg")
 	}
 	directCallees := make(map[symbol.ID]struct{})
+	boundaryCaptures := make(map[symbol.ID]struct{})
+	for _, capture := range symbolicBoundaryCaptureSymbols(s.wir, s.bindings.DirectCaptures(s.function)) {
+		boundaryCaptures[capture] = struct{}{}
+	}
+	for capture := range compositionDescendantCaptureInputs(s.bindings, s.function) {
+		if _, boundary := boundaryCaptures[capture]; boundary {
+			add("boundary:capture")
+		}
+	}
 	capturedLocals := compositionCapturedLocals(s.bindings, s.function)
 	numericForLocals := make(map[symbol.ID]struct{})
 	for i := 0; i < s.wir.Len(); i++ {
@@ -101,11 +110,10 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 			directCallees[p.Symbol] = struct{}{}
 		}
 	}
-	for _, capture := range s.bindings.DirectCaptures(s.function) {
-		if _, calleeOnly := directCallees[capture.Captured]; !calleeOnly {
-			add("boundary:capture")
-		}
-	}
+	// Capture-bearing value relations are admitted later only when the exact
+	// context certificate proves immutable scalar bindings. The same helper
+	// supplies the operation-plan RootCapture order; direct-callee-only symbols
+	// are absent from both authorities.
 	for _, global := range s.bindings.DirectGlobalReads(s.function) {
 		if _, calleeOnly := directCallees[global]; !calleeOnly {
 			add("boundary:global")
@@ -119,10 +127,10 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 		case wir.OpNoop, wir.OpEntry, wir.OpExit:
 		case wir.OpReturn:
 			for _, operand := range s.wir.Operands(inst.List) {
-				classifyBoundaryOperand(s.wir, operand, callTemps, directCallees, add)
+				classifyBoundaryOperand(s.wir, operand, callTemps, boundaryCaptures, add)
 			}
 		case wir.OpCall:
-			classifyDirectCall(s.wir, inst, callTemps, add)
+			classifyDirectCall(s.wir, inst, callTemps, boundaryCaptures, add)
 			for _, result := range s.wir.Operands(inst.Results) {
 				if result.Kind == wir.OperandTemp {
 					callTemps[result.Ref] = struct{}{}
@@ -251,6 +259,30 @@ func compositionCapturedLocals(bindings *bind.Result, owner *ast.FunctionExpr) m
 	return out
 }
 
+// compositionDescendantCaptureInputs reports boundary inputs that escape into
+// a nested closure. The first capture slice is intentionally non-escaping:
+// even an immutable scalar is declined when ownership crosses again into a
+// descendant function.
+func compositionDescendantCaptureInputs(bindings *bind.Result, owner *ast.FunctionExpr) map[symbol.ID]struct{} {
+	out := make(map[symbol.ID]struct{})
+	if bindings == nil || owner == nil {
+		return out
+	}
+	var visit func(*ast.FunctionExpr)
+	visit = func(parent *ast.FunctionExpr) {
+		for _, child := range bindings.NestedFunctions(parent) {
+			for _, capture := range bindings.DirectCaptures(child) {
+				if capture.Captured != 0 && capture.DeclaringFunction != owner {
+					out[capture.Captured] = struct{}{}
+				}
+			}
+			visit(child)
+		}
+	}
+	visit(owner)
+	return out
+}
+
 var compositionReasonPriority = []string{
 	"shape:missing-static",
 	"shape:chunk",
@@ -287,7 +319,7 @@ func compositionReasons(reasons map[string]struct{}) []string {
 	return out
 }
 
-func classifyDirectCall(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}, add func(string)) {
+func classifyDirectCall(body *wir.Body, inst wir.Instruction, callTemps map[uint32]struct{}, boundaryCaptures map[symbol.ID]struct{}, add func(string)) {
 	if inst.Call.Receiver.Kind != wir.OperandNone || inst.Call.Method != 0 {
 		add("call:method")
 		return
@@ -309,7 +341,7 @@ func classifyDirectCall(body *wir.Body, inst wir.Instruction, callTemps map[uint
 		}
 	}
 	for _, operand := range body.Operands(inst.List) {
-		classifyBoundaryOperand(body, operand, callTemps, nil, add)
+		classifyBoundaryOperand(body, operand, callTemps, boundaryCaptures, add)
 	}
 	// Open result tails remain representable as numbered result slots once the
 	// direct callee's summary is known. Only an expanding argument tail needs a
@@ -319,7 +351,7 @@ func classifyDirectCall(body *wir.Body, inst wir.Instruction, callTemps map[uint
 	}
 }
 
-func classifyBoundaryOperand(body *wir.Body, operand wir.Operand, callTemps map[uint32]struct{}, _ map[symbol.ID]struct{}, add func(string)) {
+func classifyBoundaryOperand(body *wir.Body, operand wir.Operand, callTemps map[uint32]struct{}, boundaryCaptures map[symbol.ID]struct{}, add func(string)) {
 	switch operand.Kind {
 	case wir.OperandConst:
 		return
@@ -344,7 +376,9 @@ func classifyBoundaryOperand(body *wir.Body, operand wir.Operand, callTemps map[
 		case wir.SymbolGlobal:
 			add("boundary:global")
 		case wir.SymbolUpvalue:
-			add("boundary:capture")
+			if _, represented := boundaryCaptures[p.Symbol]; !represented {
+				add("boundary:capture")
+			}
 		case wir.SymbolParam, wir.SymbolLocal:
 		default:
 			add("boundary:unknown-symbol")

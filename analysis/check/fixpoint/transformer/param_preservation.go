@@ -16,26 +16,32 @@ import (
 // and extension family passes through the closed policy below; a new family
 // defaults to clearing the complete proof until it gets an explicit review.
 type paramPreservationLedger struct {
-	tracked bool
-	words   []uint64
+	tracked        bool
+	boundaryParams uint32
+	words          []uint64
 }
 
 func newParamPreservationLedger(params uint32) paramPreservationLedger {
-	if params == 0 {
-		return paramPreservationLedger{tracked: true}
+	return newBoundaryPreservationLedger(params, 0)
+}
+
+func newBoundaryPreservationLedger(params, captures uint32) paramPreservationLedger {
+	count := params + captures
+	if count == 0 {
+		return paramPreservationLedger{tracked: true, boundaryParams: params}
 	}
-	words := make([]uint64, (params+63)/64)
+	words := make([]uint64, (count+63)/64)
 	for i := range words {
 		words[i] = ^uint64(0)
 	}
-	if remainder := params % 64; remainder != 0 {
+	if remainder := count % 64; remainder != 0 {
 		words[len(words)-1] = uint64(1)<<remainder - 1
 	}
-	return paramPreservationLedger{tracked: true, words: words}
+	return paramPreservationLedger{tracked: true, boundaryParams: params, words: words}
 }
 
 func (l paramPreservationLedger) clone() paramPreservationLedger {
-	return paramPreservationLedger{tracked: l.tracked, words: append([]uint64(nil), l.words...)}
+	return paramPreservationLedger{tracked: l.tracked, boundaryParams: l.boundaryParams, words: append([]uint64(nil), l.words...)}
 }
 
 func (l paramPreservationLedger) valid(params uint32) bool {
@@ -53,7 +59,7 @@ func (l paramPreservationLedger) valid(params uint32) bool {
 }
 
 func (l paramPreservationLedger) equal(other paramPreservationLedger) bool {
-	if l.tracked != other.tracked || len(l.words) != len(other.words) {
+	if l.tracked != other.tracked || l.boundaryParams != other.boundaryParams || len(l.words) != len(other.words) {
 		return false
 	}
 	for i := range l.words {
@@ -108,6 +114,9 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 		}
 		if index, boundary := ctx.plan.BoundaryParamIndex(assignment.TargetSymbol()); boundary {
 			l.invalidate(uint32(index))
+		}
+		if index, boundary := ctx.plan.BoundaryCaptureIndex(assignment.TargetSymbol()); boundary {
+			l.invalidate(uint32(len(ctx.plan.BoundaryParams()) + index))
 		}
 		// The root-assignment handler admits this ordinary write only after
 		// proving one bounded numeric-for accumulator update whose operands are
@@ -166,8 +175,13 @@ func (l *paramPreservationLedger) invalidateValueDependencies(arena *Arena, term
 		}
 		visited[current] = true
 		node := arena.values[current]
-		if node.op == valueRoot && node.root.Kind == RootParam {
-			l.invalidate(node.root.Index)
+		if node.op == valueRoot {
+			switch node.root.Kind {
+			case RootParam:
+				l.invalidate(node.root.Index)
+			case RootCapture:
+				l.invalidate(l.boundaryParams + node.root.Index)
+			}
 		}
 		for _, arg := range node.args {
 			visit(arg)
@@ -179,8 +193,9 @@ func (l *paramPreservationLedger) invalidateValueDependencies(arena *Arena, term
 // certifiedRefinements performs the exit audit after the operation ledger has
 // survived the whole CFG alternative. It independently rejects newly added
 // output/effect families, then emits only root-identity terms.
-func (l paramPreservationLedger) certifiedRefinements(arena *Arena, effects *EffectArena, shape Shape, row SymbolicCFGRow, boundaryParams []symbol.ID) []PathRefinementTerm {
-	if arena == nil || !l.tracked || !l.valid(shape.Params) || len(boundaryParams) != int(shape.Params) {
+func (l paramPreservationLedger) certifiedRefinements(arena *Arena, effects *EffectArena, shape Shape, row SymbolicCFGRow, boundaryParams, boundaryCaptures []symbol.ID) []PathRefinementTerm {
+	boundaryCount := shape.Params + shape.Captures
+	if arena == nil || !l.tracked || !l.valid(boundaryCount) || len(boundaryParams) != int(shape.Params) || len(boundaryCaptures) != int(shape.Captures) {
 		return nil
 	}
 	// This closed structured-output audit is intentionally shared with manual
@@ -192,9 +207,12 @@ func (l paramPreservationLedger) certifiedRefinements(arena *Arena, effects *Eff
 	// A surviving local alias would make later exposure/mutation reasoning
 	// incomplete. Boundary parameter symbols themselves are exempt: branch
 	// refinement may narrow their value term without changing object identity.
-	paramSymbols := make(map[symbol.ID]struct{}, len(boundaryParams))
+	paramSymbols := make(map[symbol.ID]struct{}, len(boundaryParams)+len(boundaryCaptures))
 	for _, param := range boundaryParams {
 		paramSymbols[param] = struct{}{}
+	}
+	for _, capture := range boundaryCaptures {
+		paramSymbols[capture] = struct{}{}
 	}
 	checked := l.clone()
 	for local, value := range row.Values {
@@ -203,12 +221,19 @@ func (l paramPreservationLedger) certifiedRefinements(arena *Arena, effects *Eff
 		}
 		checked.invalidateValueDependencies(arena, value)
 	}
-	result := make([]PathRefinementTerm, 0, shape.Params)
+	result := make([]PathRefinementTerm, 0, boundaryCount)
 	for index := uint32(0); index < shape.Params; index++ {
 		if !checked.preserves(index) {
 			continue
 		}
 		root := Root{Kind: RootParam, Index: index}
+		result = append(result, PathRefinementTerm{Path: arena.Path(root), Value: arena.Root(root)})
+	}
+	for index := uint32(0); index < shape.Captures; index++ {
+		if !checked.preserves(shape.Params + index) {
+			continue
+		}
+		root := Root{Kind: RootCapture, Index: index}
 		result = append(result, PathRefinementTerm{Path: arena.Path(root), Value: arena.Root(root)})
 	}
 	return result

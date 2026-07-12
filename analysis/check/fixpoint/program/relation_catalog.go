@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -70,6 +71,8 @@ type relationContextCandidate struct {
 	prepared            *body.Static
 	discoveryGeneration uint64
 	params              []product.Value
+	captures            []product.Value
+	paths               []pathdom.Path
 	certificate         *relationContextEntryCertificate
 }
 
@@ -167,7 +170,8 @@ func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 		for _, original := range c.entries {
 			entry := original
 			if _, exists := allowed[entry.identity.Cell]; exists || entry.compiler == nil ||
-				len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 {
+				len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 ||
+				len(entry.identity.Prepared.OperationPlan().BoundaryCaptures()) != 0 {
 				continue
 			}
 			direct, exact := relationCertifiedDirectCatalog(entry, contextIndex{}, nil, allowed)
@@ -239,10 +243,13 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 		base, ok := baseByKey[certificate.base]
 		if !ok || contextual.funcExpr == nil || contextual.funcExpr != base.function ||
 			certificate.preparedBodyDigest != base.identity.BodyDigest || certificate.preparedBodyDigest != base.identity.Prepared.IdentityDigest() ||
-			contextual.key.Ref != certificate.base.Ref || len(certificate.params) != len(base.identity.Prepared.OperationPlan().BoundaryParams()) {
+			contextual.key.Ref != certificate.base.Ref || !certificate.matchesBoundary(
+			base.identity.Prepared.OperationPlan().BoundaryParams(), base.identity.Prepared.OperationPlan().BoundaryCaptures()) {
 			continue
 		}
 		params := make([]product.Value, len(certificate.params))
+		captures := make([]product.Value, len(certificate.captures))
+		paths := make([]pathdom.Path, len(params)+len(captures))
 		valid := true
 		for i, param := range certificate.params {
 			if param.symbol == 0 || param.slot == 0 || product.ShapeOf(param.value).IsBottom() || product.PresenceOf(param.value).IsBottom() {
@@ -250,13 +257,22 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 				break
 			}
 			params[i] = param.value
+			paths[i] = pathdom.NewPlaceholder(i)
+		}
+		for i, capture := range certificate.captures {
+			if capture.symbol == 0 || capture.name == "" || !contextEntryCaptureValueUseful(reg, capture.value) {
+				valid = false
+				break
+			}
+			captures[i] = capture.value
+			paths[len(params)+i] = capture.path
 		}
 		if !valid {
 			continue
 		}
 		allContexts = append(allContexts, relationContextCandidate{
 			context: contextual.key, base: base.identity, prepared: base.identity.Prepared,
-			discoveryGeneration: certificate.discoveryGeneration, params: params, certificate: certificate,
+			discoveryGeneration: certificate.discoveryGeneration, params: params, captures: captures, paths: paths, certificate: certificate,
 		})
 	}
 	if len(allContexts) == 0 {
@@ -316,7 +332,7 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 				// application. Parameterized cells are internal composition
 				// authorities only until this exact call point carries a certified
 				// contextual dependency key below.
-				if _, admitted := allowed[target.Cell]; admitted && target.Shape.Params == 0 {
+				if _, admitted := allowed[target.Cell]; admitted && paramsOnlyShape(target.Shape) && target.Shape.Params == 0 {
 					routes[point] = target
 				}
 			}
@@ -336,7 +352,7 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 			if !ok {
 				continue
 			}
-			routes[point] = transformer.DirectCallTarget{Cell: candidate.base.Cell, Shape: transformer.Shape{Params: uint32(len(candidate.params))}}
+			routes[point] = transformer.DirectCallTarget{Cell: candidate.base.Cell, Shape: transformer.Shape{Params: uint32(len(candidate.params)), Captures: uint32(len(candidate.captures))}}
 			dependencyKeys[raw] = contextKey
 		}
 		direct, err := transformer.NewDirectCallCatalog(consumer.direct.PointCount(), routes)
@@ -401,10 +417,12 @@ func relationCertifiedCallTarget(owner relationCellIdentity, expr factflow.ExprR
 	)
 	accept := func(key summary.SummaryKey) bool {
 		candidate, ok := relationContextCandidateByKey(candidates, key)
-		if !ok {
+		if !ok || len(candidate.captures) != 0 {
+			// Captures are bound only by a concrete context certificate. They
+			// cannot be rebound while compiling another producer relation.
 			return false
 		}
-		next := transformer.DirectCallTarget{Cell: candidate.base.Cell, Shape: transformer.Shape{Params: uint32(len(candidate.params))}}
+		next := transformer.DirectCallTarget{Cell: candidate.base.Cell, Shape: transformer.Shape{Params: uint32(len(candidate.params)), Captures: uint32(len(candidate.captures))}}
 		if have && next != out {
 			return false
 		}
@@ -577,10 +595,18 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context certificate identity drift")}
 		}
 		relation, ok := relations.Lookup(candidate.base.Cell)
-		if !ok || relation.Shape().Params != uint32(len(candidate.params)) || !paramsOnlyShape(relation.Shape()) {
+		plan := candidate.base.Prepared.OperationPlan()
+		if plan == nil || !candidate.certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context boundary authority drift")}
+		}
+		if !ok || relation.Shape().Params != uint32(len(candidate.params)) || relation.Shape().Captures != uint32(len(candidate.captures)) ||
+			relation.Shape().Globals != 0 || relation.Shape().Results != 0 || relation.Shape().HeapTemplates != 0 {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context relation shape drift")}
 		}
-		cursor, cursorErr := transformer.NewBindingCursor(relation.Shape(), candidate.params, nil)
+		values := make([]product.Value, 0, len(candidate.params)+len(candidate.captures))
+		values = append(values, candidate.params...)
+		values = append(values, candidate.captures...)
+		cursor, cursorErr := transformer.NewBindingCursor(relation.Shape(), values, candidate.paths)
 		if cursorErr != nil {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeEquation, Identity: candidate.base, Err: cursorErr}
 		}
@@ -614,6 +640,47 @@ type relationCatalogOwner struct {
 	key      summary.SummaryKey
 	fn       *ast.FunctionExpr
 	prepared *body.Static
+}
+
+// relationBoundaryMatchesBindings makes the prepared plan and binder one
+// inseparable authority. Parameters must match exactly. Captures may be the
+// deterministic value-capture subsequence of DirectCaptures (direct-callee-only
+// symbols are deliberately omitted), but may never be reordered or invented.
+// Composition eligibility independently rejects any omitted capture that is
+// used as a value operand.
+func relationBoundaryMatchesBindings(bindings *bind.Result, fn *ast.FunctionExpr, params, captures []symbol.ID) bool {
+	if bindings == nil || fn == nil {
+		return false
+	}
+	wantParams := bindings.ParamSymbols(fn)
+	if len(params) != len(wantParams) {
+		return false
+	}
+	for i := range params {
+		if params[i] == 0 || params[i] != wantParams[i] {
+			return false
+		}
+	}
+	direct := bindings.DirectCaptures(fn)
+	next := 0
+	seen := make(map[symbol.ID]struct{}, len(captures))
+	for _, capture := range captures {
+		if capture == 0 {
+			return false
+		}
+		if _, duplicate := seen[capture]; duplicate {
+			return false
+		}
+		seen[capture] = struct{}{}
+		for next < len(direct) && direct[next].Captured != capture {
+			next++
+		}
+		if next == len(direct) {
+			return false
+		}
+		next++
+	}
+	return true
 }
 
 func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, keys programKeys, prepared preparedBodies, rootFn *ast.FunctionExpr) relationRunCatalog {
@@ -651,16 +718,16 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 			continue
 		}
 		plan := static.OperationPlan()
-		if plan == nil {
+		if plan == nil || !plan.BoundaryCapturesValid() || !relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures()) {
 			continue
 		}
-		shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams()))}
+		shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures()))}
 		compiler, err := transformer.NewPlanCompiler().Prepare(reg, static.Graph(), plan, shape)
-		if err != nil || !compiler.EffectFree() {
+		direct := exactRelationDirectTargets(bindings, keys, owner.key, static)
+		if err != nil || !compiler.EffectFree() || (shape.Captures != 0 && (relationPreparedHasCalls(static) || len(direct) != 0)) {
 			continue
 		}
-		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape}
-		candidate.direct = exactRelationDirectTargets(bindings, keys, owner.key, static)
+		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape, direct: direct}
 		candidates[owner.key] = candidate
 	}
 

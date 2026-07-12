@@ -91,6 +91,34 @@ func TestPreservedParamRootsIntersectAcrossFeasibleRows(t *testing.T) {
 	}
 }
 
+func TestPreservedCaptureRootRemainsDistinctSpecializationMetadata(t *testing.T) {
+	reg := standard.Registry()
+	shape := Shape{Captures: 1}
+	builder, certificate := emptyBuilder(t, reg, shape, pathRefinementCapabilities(t))
+	arena := builder.Arena()
+	root := Root{Kind: RootCapture, Index: 0}
+	value := arena.Root(root)
+	relation, err := builder.Build(certificate, []Row{{
+		Guard:           arena.True(),
+		Ops:             []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: value}},
+		PathRefinements: []PathRefinementTerm{{Path: arena.Path(root), Value: value}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := typevalue.LiteralString(reg, "capture")
+	wantPath := pathdom.Path{Symbol: 77, Version: 3}
+	cursor, err := NewBindingCursor(shape, []product.Value{captured}, []pathdom.Path{wantPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detailed, ok := relation.SpecializeDetailed(cursor, nil, SpecializationContext{})
+	if !ok || len(detailed.PreservedParams) != 0 || len(detailed.PreservedCaptures) != 1 || detailed.PreservedCaptures[0] != 0 ||
+		len(detailed.Summary.Returns) != 1 || !product.Equal(reg, detailed.Summary.Returns[0], captured) {
+		t.Fatalf("capture specialization = %#v/%v", detailed, ok)
+	}
+}
+
 func TestPreservedParamRootRefinementRejectsUnprovedPathShapesAndAliases(t *testing.T) {
 	reg := standard.Registry()
 	shape := Shape{Params: 2}

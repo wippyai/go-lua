@@ -46,3 +46,36 @@ func TestAmbiguousBoundaryParametersFailClosed(t *testing.T) {
 		t.Fatalf("ambiguous boundary published: %v", got)
 	}
 }
+
+func TestPlanOwnsOrderedBoundaryCaptureSymbols(t *testing.T) {
+	captures := []symbol.ID{11, 13}
+	plan := New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams([]symbol.ID{7}).
+		WithBoundaryCaptures(captures)
+	captures[0] = 99
+	if !plan.BoundaryCapturesValid() {
+		t.Fatal("valid capture boundary rejected")
+	}
+	if got := plan.BoundaryCaptures(); len(got) != 2 || got[0] != 11 || got[1] != 13 {
+		t.Fatalf("boundary captures = %v", got)
+	}
+	if index, ok := plan.BoundaryCaptureIndex(13); !ok || index != 1 {
+		t.Fatalf("capture index = %d/%v", index, ok)
+	}
+	returned := plan.BoundaryCaptures()
+	returned[0] = 88
+	if got := plan.BoundaryCaptures()[0]; got != 11 {
+		t.Fatalf("getter exposed storage: %d", got)
+	}
+}
+
+func TestAmbiguousBoundaryCapturesFailClosed(t *testing.T) {
+	for _, captures := range [][]symbol.ID{{0}, {11, 11}, {7}} {
+		plan := New(cfg.New(), factflow.FactsInput{}).
+			WithBoundaryParams([]symbol.ID{7}).
+			WithBoundaryCaptures(captures)
+		if plan.BoundaryCapturesValid() || len(plan.BoundaryCaptures()) != 0 {
+			t.Fatalf("ambiguous capture boundary %v published as %v", captures, plan.BoundaryCaptures())
+		}
+	}
+}

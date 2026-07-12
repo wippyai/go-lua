@@ -95,7 +95,8 @@ func acyclicCFGOrder(graph cfg.Graph) ([]cfg.Point, error) {
 }
 
 func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
-	if !arena.validGuard(row.Guard, shape) || !row.paramPreserved.valid(shape.Params) {
+	if !arena.validGuard(row.Guard, shape) || !row.paramPreserved.valid(shape.Params+shape.Captures) ||
+		(row.paramPreserved.tracked && row.paramPreserved.boundaryParams != shape.Params) {
 		return false
 	}
 	for _, value := range row.Values {

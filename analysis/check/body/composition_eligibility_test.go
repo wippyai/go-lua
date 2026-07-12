@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestCompositionEligibilityWhitelistsOnlyStraightValueWrappers(t *testing.T) {
@@ -96,6 +97,95 @@ func TestCompositionEligibilityReasonIsStableAcrossRepeatedPreparation(t *testin
 	}
 	if len(wantReasons) < 2 || wantReasons[0] != "boundary:allocation" {
 		t.Fatalf("full canonical reasons = %v, want allocation plus mutation", wantReasons)
+	}
+}
+
+func TestSymbolicBoundaryCapturesAreFilteredInBinderOrder(t *testing.T) {
+	stmts := parseChunk(t, `
+local first = "first"
+local function helper() return "helper" end
+local second = "second"
+local function target()
+	return second .. helper() .. first
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	var targetFn *ast.FunctionExpr
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == "target" {
+			targetFn = origin.Func
+			return false
+		}
+		return true
+	})
+	if targetFn == nil {
+		t.Fatal("target function missing")
+	}
+	reg := standard.Registry()
+	prepared, err := PrepareBoundFunction(targetFn, bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captures := prepared.OperationPlan().BoundaryCaptures()
+	if len(captures) != 2 {
+		t.Fatalf("filtered boundary captures = %v, want second,first without direct callee", captures)
+	}
+	if bindings.Name(captures[0]) != "second" || bindings.Name(captures[1]) != "first" {
+		t.Fatalf("filtered boundary captures = %v (%q/%q), want second,first without direct callee", captures, bindings.Name(captures[0]), bindings.Name(captures[1]))
+	}
+}
+
+func TestCompositionEligibilityRejectsCaptureEscapingToDescendant(t *testing.T) {
+	stmts := parseChunk(t, `
+local suffix = "!"
+local function target()
+	local function child() return suffix end
+	return suffix
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	var targetFn *ast.FunctionExpr
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == "target" {
+			targetFn = origin.Func
+			return false
+		}
+		return true
+	})
+	prepared, err := PrepareBoundFunction(targetFn, bindings, Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.CompositionEligibility().Reason; got != "boundary:capture" {
+		t.Fatalf("transitively escaping capture reason = %q, want boundary:capture", got)
+	}
+}
+
+func TestBranchOnlyCaptureIsAPlanBoundaryInput(t *testing.T) {
+	stmts := parseChunk(t, `
+local enabled = true
+local function leaf(value) return value end
+local function target(value)
+	if enabled then return leaf(value) end
+	return value
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	var targetFn *ast.FunctionExpr
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == "target" {
+			targetFn = origin.Func
+			return false
+		}
+		return true
+	})
+	prepared, err := PrepareBoundFunction(targetFn, bindings, Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captures := prepared.OperationPlan().BoundaryCaptures()
+	if len(captures) != 1 || bindings.Name(captures[0]) != "enabled" {
+		t.Fatalf("branch-only capture boundary = %v, want enabled and no direct-callee symbol", captures)
 	}
 }
 
