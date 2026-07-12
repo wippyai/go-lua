@@ -35,11 +35,11 @@ func TestFactsInputCatalogIsExhaustive(t *testing.T) {
 		}
 		switch d.class {
 		case Executable, CompositeSidecar:
+			if d.kind > 32 {
+				t.Fatalf("point-local %s exceeds the packed kind mask capacity", d.field)
+			}
 			if field.Type.Key() != pointType {
 				t.Fatalf("point-local %s uses key %v", d.field, field.Type.Key())
-			}
-			if d.at == nil {
-				t.Fatalf("point-local %s has no row accessor", d.field)
 			}
 			inputValue := reflect.New(typ).Elem()
 			fieldValue := inputValue.FieldByIndex(field.Index)
@@ -50,15 +50,18 @@ func TestFactsInputCatalogIsExhaustive(t *testing.T) {
 			}
 			factMap.SetMapIndex(reflect.ValueOf(cfg.Point(1)), factValue)
 			fieldValue.Set(factMap)
-			if !d.at(inputValue.Interface().(factflow.FactsInput), cfg.Point(1)) {
-				t.Fatalf("row accessor for %s does not observe its field", d.field)
+			plan := New(cfg.New(), inputValue.Interface().(factflow.FactsInput))
+			observed := false
+			cur := plan.Cursor(cfg.Point(1))
+			for cell, ok := cur.Next(); ok; cell, ok = cur.Next() {
+				observed = observed || cell.Kind() == d.kind
+			}
+			if !observed {
+				t.Fatalf("plan compiler does not observe FactsInput.%s", d.field)
 			}
 		case Dependency:
 			if field.Type.Key() != exprType {
 				t.Fatalf("dependency %s uses key %v", d.field, field.Type.Key())
-			}
-			if d.at != nil {
-				t.Fatalf("expression dependency %s has a point-row accessor", d.field)
 			}
 		default:
 			t.Fatalf("%s has unspecified class %d", d.field, d.class)
@@ -68,6 +71,22 @@ func TestFactsInputCatalogIsExhaustive(t *testing.T) {
 		if !seenFields[typ.Field(i).Name] {
 			t.Fatalf("FactsInput.%s is unclassified", typ.Field(i).Name)
 		}
+	}
+}
+
+func TestOccurrenceIndexMatchesPointFamilyProbes(t *testing.T) {
+	const points = 257
+	input := sparseBenchmarkFacts(points)
+	// Facts outside the graph were ignored by the old point-probe compiler and
+	// must not manufacture an unreachable dense row in the occurrence compiler.
+	input.NoNormalReturns[cfg.Point(points+100)] = struct{}{}
+	gotRows, gotCells := compileIndex(points, input)
+	wantRows, wantCells := compileIndexByProbing(points, input)
+	if !reflect.DeepEqual(gotRows, wantRows) {
+		t.Fatal("occurrence index rows differ from point-family probe rows")
+	}
+	if !reflect.DeepEqual(gotCells, wantCells) {
+		t.Fatal("occurrence index cells differ from point-family probe cells")
 	}
 }
 

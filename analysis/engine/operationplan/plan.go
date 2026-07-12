@@ -5,6 +5,7 @@ package operationplan
 
 import (
 	"fmt"
+	"math/bits"
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -90,13 +91,77 @@ func New(graph cfg.Graph, input factflow.FactsInput) *Plan {
 	if graph != nil {
 		size = graph.Size()
 	}
-	p := &Plan{facts: factflow.NewFacts(input), rows: make([]row, size)}
-	for point := 0; point < size; point++ {
-		p.rows[point].start = uint32(len(p.cells))
-		appendPointCells(&p.cells, cfg.Point(point), input)
-		p.rows[point].end = uint32(len(p.cells))
-	}
+	p := &Plan{facts: factflow.NewFacts(input)}
+	p.rows, p.cells = compileIndex(size, input)
 	return p
+}
+
+func compileIndex(size int, input factflow.FactsInput) ([]row, []Cell) {
+	rows := make([]row, size)
+	if size == 0 {
+		return rows, nil
+	}
+
+	// Facts are sparse in real bodies. Record each present family once instead
+	// of probing every family at every graph point. A bit set is also what makes
+	// packing independent of Go's randomized map iteration order.
+	masks := make([]uint32, size)
+	markMap(masks, RootAssignment, input.RootAssignments)
+	markMap(masks, PathAssignment, input.PathAssignments)
+	markMap(masks, PathStaticMemberWrite, input.PathStaticMemberWrites)
+	markMap(masks, DynamicIndexWrite, input.DynamicIndexWrites)
+	markMap(masks, PathDescendantInvalidation, input.PathDescendantInvalidations)
+	markNonEmpty(masks, CovariantExposure, input.CovariantExposures)
+	markMap(masks, NoNormalReturn, input.NoNormalReturns)
+	markMap(masks, BranchEdgeReachability, input.BranchEdgeReachability)
+	markMap(masks, BranchConditionSource, input.BranchConditionSources)
+	markMap(masks, BranchRefinement, input.BranchRefinements)
+	markMap(masks, BranchPresenceRelation, input.BranchPresenceRelations)
+	markMap(masks, BranchPathRelation, input.BranchPathRelations)
+	markMap(masks, BranchPathEvidence, input.BranchPathEvidence)
+	markMap(masks, BranchSufficientLiteralCase, input.BranchSufficientLiteralCases)
+	markMap(masks, PathValuePresenceImplication, input.PathValuePresenceImplications)
+	markMap(masks, ChannelSelect, input.ChannelSelects)
+	markMap(masks, PostconditionRefinement, input.PostconditionRefinements)
+	markNonEmpty(masks, PostconditionPathRelation, input.PostconditionPathRelations)
+	markMap(masks, CallResultValue, input.CallResultValues)
+	markMap(masks, ReturnPresenceRelation, input.ReturnPresenceRelations)
+	markMap(masks, Return, input.Returns)
+	markMap(masks, CallSite, input.CallSites)
+	cellCount := 0
+	for _, mask := range masks {
+		cellCount += bits.OnesCount32(mask)
+	}
+	cells := make([]Cell, 0, cellCount)
+	for point, mask := range masks {
+		rows[point].start = uint32(len(cells))
+		for mask != 0 {
+			index := bits.TrailingZeros32(mask)
+			d := descriptors[index]
+			cells = append(cells, Cell{kind: d.kind, class: d.class})
+			mask &^= uint32(1) << index
+		}
+		rows[point].end = uint32(len(cells))
+	}
+	return rows, cells
+}
+
+func markMap[V any](masks []uint32, kind Kind, facts map[cfg.Point]V) {
+	bit := uint32(1) << (kind - 1)
+	for point := range facts {
+		if uint64(point) < uint64(len(masks)) {
+			masks[point] |= bit
+		}
+	}
+}
+
+func markNonEmpty[V any](masks []uint32, kind Kind, facts map[cfg.Point][]V) {
+	bit := uint32(1) << (kind - 1)
+	for point, values := range facts {
+		if len(values) != 0 && uint64(point) < uint64(len(masks)) {
+			masks[point] |= bit
+		}
+	}
 }
 
 // Facts returns the plan-owned immutable transfer-fact snapshot. Facts has
@@ -156,53 +221,41 @@ type descriptor struct {
 	field string
 	kind  Kind
 	class Class
-	at    func(factflow.FactsInput, cfg.Point) bool
 }
 
 // descriptors is also the exhaustiveness contract with factflow.FactsInput.
 // Dependencies are expression-keyed and therefore have no dense point cell.
 var descriptors = [...]descriptor{
-	{"RootAssignments", RootAssignment, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.RootAssignments[p]; return ok }},
-	{"PathAssignments", PathAssignment, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.PathAssignments[p]; return ok }},
-	{"PathStaticMemberWrites", PathStaticMemberWrite, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.PathStaticMemberWrites[p]; return ok }},
-	{"DynamicIndexWrites", DynamicIndexWrite, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.DynamicIndexWrites[p]; return ok }},
-	{"PathDescendantInvalidations", PathDescendantInvalidation, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.PathDescendantInvalidations[p]; return ok }},
-	{"CovariantExposures", CovariantExposure, Executable, func(in factflow.FactsInput, p cfg.Point) bool { return len(in.CovariantExposures[p]) != 0 }},
-	{"NoNormalReturns", NoNormalReturn, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.NoNormalReturns[p]; return ok }},
-	{"BranchEdgeReachability", BranchEdgeReachability, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchEdgeReachability[p]; return ok }},
-	{"BranchConditionSources", BranchConditionSource, CompositeSidecar, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchConditionSources[p]; return ok }},
-	{"BranchRefinements", BranchRefinement, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchRefinements[p]; return ok }},
-	{"BranchPresenceRelations", BranchPresenceRelation, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchPresenceRelations[p]; return ok }},
-	{"BranchPathRelations", BranchPathRelation, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchPathRelations[p]; return ok }},
-	{"BranchPathEvidence", BranchPathEvidence, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchPathEvidence[p]; return ok }},
-	{"BranchSufficientLiteralCases", BranchSufficientLiteralCase, CompositeSidecar, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.BranchSufficientLiteralCases[p]; return ok }},
-	{"PathValuePresenceImplications", PathValuePresenceImplication, Executable, func(in factflow.FactsInput, p cfg.Point) bool {
-		_, ok := in.PathValuePresenceImplications[p]
-		return ok
-	}},
-	{"ChannelSelects", ChannelSelect, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.ChannelSelects[p]; return ok }},
-	{"PostconditionRefinements", PostconditionRefinement, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.PostconditionRefinements[p]; return ok }},
-	{"PostconditionPathRelations", PostconditionPathRelation, Executable, func(in factflow.FactsInput, p cfg.Point) bool { return len(in.PostconditionPathRelations[p]) != 0 }},
-	{"CallResultValues", CallResultValue, CompositeSidecar, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.CallResultValues[p]; return ok }},
-	{"ReturnPresenceRelations", ReturnPresenceRelation, CompositeSidecar, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.ReturnPresenceRelations[p]; return ok }},
-	{"Returns", Return, Executable, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.Returns[p]; return ok }},
-	{"CallSites", CallSite, CompositeSidecar, func(in factflow.FactsInput, p cfg.Point) bool { _, ok := in.CallSites[p]; return ok }},
-	{"ObjectLiterals", ObjectLiteral, Dependency, nil},
-	{"ExpressionValues", ExpressionValue, Dependency, nil},
-	{"ExpressionOperations", ExpressionOperation, Dependency, nil},
-	{"ExpressionFunctions", ExpressionFunction, Dependency, nil},
-	{"ExpressionRefinements", ExpressionRefinement, Dependency, nil},
-	{"ExpressionPaths", ExpressionPath, Dependency, nil},
-	{"DynamicIndexExpressions", DynamicIndexExpression, Dependency, nil},
-	{"ExpressionConditions", ExpressionCondition, Dependency, nil},
-}
-
-func appendPointCells(dst *[]Cell, point cfg.Point, in factflow.FactsInput) {
-	for _, d := range descriptors {
-		if d.at != nil && d.at(in, point) {
-			*dst = append(*dst, Cell{kind: d.kind, class: d.class})
-		}
-	}
+	{"RootAssignments", RootAssignment, Executable},
+	{"PathAssignments", PathAssignment, Executable},
+	{"PathStaticMemberWrites", PathStaticMemberWrite, Executable},
+	{"DynamicIndexWrites", DynamicIndexWrite, Executable},
+	{"PathDescendantInvalidations", PathDescendantInvalidation, Executable},
+	{"CovariantExposures", CovariantExposure, Executable},
+	{"NoNormalReturns", NoNormalReturn, Executable},
+	{"BranchEdgeReachability", BranchEdgeReachability, Executable},
+	{"BranchConditionSources", BranchConditionSource, CompositeSidecar},
+	{"BranchRefinements", BranchRefinement, Executable},
+	{"BranchPresenceRelations", BranchPresenceRelation, Executable},
+	{"BranchPathRelations", BranchPathRelation, Executable},
+	{"BranchPathEvidence", BranchPathEvidence, Executable},
+	{"BranchSufficientLiteralCases", BranchSufficientLiteralCase, CompositeSidecar},
+	{"PathValuePresenceImplications", PathValuePresenceImplication, Executable},
+	{"ChannelSelects", ChannelSelect, Executable},
+	{"PostconditionRefinements", PostconditionRefinement, Executable},
+	{"PostconditionPathRelations", PostconditionPathRelation, Executable},
+	{"CallResultValues", CallResultValue, CompositeSidecar},
+	{"ReturnPresenceRelations", ReturnPresenceRelation, CompositeSidecar},
+	{"Returns", Return, Executable},
+	{"CallSites", CallSite, CompositeSidecar},
+	{"ObjectLiterals", ObjectLiteral, Dependency},
+	{"ExpressionValues", ExpressionValue, Dependency},
+	{"ExpressionOperations", ExpressionOperation, Dependency},
+	{"ExpressionFunctions", ExpressionFunction, Dependency},
+	{"ExpressionRefinements", ExpressionRefinement, Dependency},
+	{"ExpressionPaths", ExpressionPath, Dependency},
+	{"DynamicIndexExpressions", DynamicIndexExpression, Dependency},
+	{"ExpressionConditions", ExpressionCondition, Dependency},
 }
 
 func (k Kind) String() string {
