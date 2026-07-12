@@ -40,6 +40,10 @@ func TestPreparedPlanCompilerReusesArenaAndMatchesLegacy(t *testing.T) {
 	if !EqualRelation(first, second) {
 		t.Fatal("repeated prepared evaluation replaced its relation arena or rows")
 	}
+	legacy := evaluatePreparedAcyclicLegacy(t, prepared, RelationView{}, nil)
+	if !EqualRelation(first, legacy) || canonicalRelationTestDigest(first) != canonicalRelationTestDigest(legacy) {
+		t.Fatal("prepared dense linear evaluation differs from legacy acyclic relation")
+	}
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
 	preparedSummary, preparedOK := first.Specialize(cursor, nil, nil)
 	want := summary.Normalize(reg, summary.Summary{Returns: []product.Value{typevalue.LiteralString(reg, "prepared")}})
@@ -129,6 +133,10 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *te
 	firstDirect, secondDirect := prepared.EvaluateDirect(view, catalog), prepared.EvaluateDirect(view, catalog)
 	if !EqualRelation(firstDirect, secondDirect) || firstDirect.authority == nil || !equalRelationOutputAuthority(firstDirect.authority, secondDirect.authority) {
 		t.Fatal("repeated direct evaluation changed relation identity or output authority")
+	}
+	legacyDirect := evaluatePreparedAcyclicLegacy(t, prepared, view, &catalog)
+	if !EqualRelation(firstDirect, legacyDirect) || canonicalRelationTestDigest(firstDirect) != canonicalRelationTestDigest(legacyDirect) {
+		t.Fatal("prepared dense direct-row evaluation differs from legacy acyclic relation")
 	}
 	callerEquation, err := prepared.DirectEquation(callerRef, catalog)
 	if err != nil {

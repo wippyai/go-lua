@@ -28,7 +28,10 @@ type PreparedPlanCompiler struct {
 	base        planCompileContext
 	certificate SemanticCertificate
 	wtoTape     *symbolicWTOTape
-	cyclic      bool
+	// cyclic is retained as prepared topology metadata for compatibility and
+	// diagnostics. Evaluation deliberately does not branch on it: DAGs are the
+	// zero-component case of the same exact dense executor.
+	cyclic bool
 }
 
 // EffectFree reports whether this prepared compiler can emit any structured
@@ -192,26 +195,11 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	branch := func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 		return compileBranchEdge(ctx, point, row, cond)
 	}
-	var rowsByPoint map[cfg.Point][]SymbolicCFGRow
-	var err error
-	if p.cyclic {
-		rowsByPoint, err = solveExactWTOCFGExpandedRowsWithTape(evalCtx, p.graph, p.wtoTape, p.builder.Arena(), initial,
-			transfer, branch, SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{Shape: p.shape}})
-	} else {
-		rowsByPoint, err = SolveAcyclicCFGExpandedRows(p.graph, p.builder.Arena(), initial,
-			func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
-				return transfer(point, row)
-			},
-			func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
-				return branch(point, row, cond)
-			},
-			SymbolicCFGOptions{Shape: p.shape},
-		)
-	}
+	exitRows, err := solveExactWTOCFGExpandedExitRowsWithTape(evalCtx, p.graph, p.wtoTape, p.builder.Arena(), initial,
+		transfer, branch, SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{Shape: p.shape}})
 	if err != nil {
 		return contextual("compiler: " + err.Error())
 	}
-	exitRows := rowsByPoint[p.graph.Exit()]
 	rows := make([]Row, len(exitRows))
 	for i, row := range exitRows {
 		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs}

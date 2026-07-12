@@ -72,6 +72,30 @@ func SolveExactWTOCFGExpandedRows(ctx context.Context, graph cfg.Graph, arena *A
 // compiled by the function owner. Prepared compilers use this entry so
 // repeated equation reads allocate only row scratch, never WTO structure.
 func solveExactWTOCFGExpandedRowsWithTape(ctx context.Context, graph cfg.Graph, tape *symbolicWTOTape, arena *Arena, initial SymbolicCFGRow, transfer SymbolicCFGExpandTransfer, branch SymbolicCFGBranch, options SymbolicExactWTOOptions) (map[cfg.Point][]SymbolicCFGRow, error) {
+	solver, err := solveExactWTOCFGExpandedWithTape(ctx, graph, tape, arena, initial, transfer, branch, options, true)
+	if err != nil {
+		return nil, err
+	}
+	return solver.publish()
+}
+
+// solveExactWTOCFGExpandedExitRowsWithTape is the prepared-compiler result
+// seam. Relation construction needs only rows entering the CFG exit, so it
+// avoids cloning and publishing every intermediate bucket. Public solver
+// compatibility remains map-shaped through solveExactWTOCFGExpandedRowsWithTape.
+func solveExactWTOCFGExpandedExitRowsWithTape(ctx context.Context, graph cfg.Graph, tape *symbolicWTOTape, arena *Arena, initial SymbolicCFGRow, transfer SymbolicCFGExpandTransfer, branch SymbolicCFGBranch, options SymbolicExactWTOOptions) ([]SymbolicCFGRow, error) {
+	solver, err := solveExactWTOCFGExpandedWithTape(ctx, graph, tape, arena, initial, transfer, branch, options, false)
+	if err != nil {
+		return nil, err
+	}
+	exit := tape.denseIndex(graph.Exit())
+	if exit < 0 {
+		return nil, fmt.Errorf("transformer: exact WTO exit is unreachable")
+	}
+	return solver.publishBucket(uint32(exit))
+}
+
+func solveExactWTOCFGExpandedWithTape(ctx context.Context, graph cfg.Graph, tape *symbolicWTOTape, arena *Arena, initial SymbolicCFGRow, transfer SymbolicCFGExpandTransfer, branch SymbolicCFGBranch, options SymbolicExactWTOOptions, retainIntermediates bool) (*exactWTOSolver, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("transformer: exact WTO requires a context")
 	}
@@ -89,7 +113,7 @@ func solveExactWTOCFGExpandedRowsWithTape(ctx context.Context, graph cfg.Graph, 
 		return nil, err
 	}
 	if len(tape.points) == 0 {
-		return map[cfg.Point][]SymbolicCFGRow{}, nil
+		return nil, fmt.Errorf("transformer: exact WTO tape has no reachable points")
 	}
 	hashRow := options.rowHash
 	if hashRow == nil {
@@ -99,6 +123,10 @@ func solveExactWTOCFGExpandedRowsWithTape(ctx context.Context, graph cfg.Graph, 
 		ctx: ctx, graph: graph, arena: arena, tape: tape,
 		transfer: transfer, branch: branch, options: options,
 		hashRow: hashRow, buckets: make([]exactWTOBucket, len(tape.points)),
+		// With no components, a row can never return to a drained bucket.
+		// Prepared relation evaluation publishes only the exit, so intermediate
+		// bucket rows can transfer ownership instead of being defensively cloned.
+		transientDAG: !retainIntermediates && len(tape.components) == 0,
 	}
 	entry := tape.denseIndex(graph.Entry())
 	if entry < 0 {
@@ -111,7 +139,7 @@ func solveExactWTOCFGExpandedRowsWithTape(ctx context.Context, graph cfg.Graph, 
 	if err := solver.solveSequence(0, uint32(len(tape.points)), -1); err != nil {
 		return nil, err
 	}
-	return solver.publish()
+	return &solver, nil
 }
 
 // certifyExactWTOComponentHeads gives phase zero/one-plus an unambiguous
@@ -140,16 +168,17 @@ func certifyExactWTOComponentHeads(graph cfg.Graph, tape *symbolicWTOTape) error
 }
 
 type exactWTOSolver struct {
-	ctx      context.Context
-	graph    cfg.Graph
-	arena    *Arena
-	tape     *symbolicWTOTape
-	transfer SymbolicCFGExpandTransfer
-	branch   SymbolicCFGBranch
-	options  SymbolicExactWTOOptions
-	hashRow  func(SymbolicCFGRow) uint64
-	buckets  []exactWTOBucket
-	passes   int
+	ctx          context.Context
+	graph        cfg.Graph
+	arena        *Arena
+	tape         *symbolicWTOTape
+	transfer     SymbolicCFGExpandTransfer
+	branch       SymbolicCFGBranch
+	options      SymbolicExactWTOOptions
+	hashRow      func(SymbolicCFGRow) uint64
+	buckets      []exactWTOBucket
+	passes       int
+	transientDAG bool
 }
 
 // solveSequence recursively follows the WTO component nesting. Each component
@@ -209,13 +238,20 @@ func (s *exactWTOSolver) processDelta(dense uint32) error {
 		if err := s.checkContext(); err != nil {
 			return err
 		}
-		candidate := cloneExactWTORow(bucket.rows[bucket.cursor])
+		candidate := bucket.rows[bucket.cursor]
+		if !s.transientDAG {
+			candidate = cloneExactWTORow(candidate)
+		}
 		bucket.cursor++
 		point := s.tape.points[dense].point
-		produced := []SymbolicCFGRow{cloneCFGRow(candidate.row)}
+		input := candidate.row
+		if !s.transientDAG {
+			input = cloneCFGRow(input)
+		}
+		produced := []SymbolicCFGRow{input}
 		var err error
 		if s.transfer != nil {
-			produced, err = s.transfer(point, cloneCFGRow(candidate.row))
+			produced, err = s.transfer(point, input)
 			if err != nil {
 				return fmt.Errorf("transformer: exact WTO point %d: %w", point, err)
 			}
@@ -273,6 +309,9 @@ func (s *exactWTOSolver) emitSuccessors(dense uint32, out exactWTORow) error {
 	if len(edges) != 1 {
 		return fmt.Errorf("transformer: exact WTO non-branch point %d has %d successors", point, len(edges))
 	}
+	if s.transientDAG {
+		return s.emitEdge(edges[0], out)
+	}
 	return s.emitEdge(edges[0], cloneExactWTORow(out))
 }
 
@@ -326,7 +365,10 @@ func (s *exactWTOSolver) insert(point uint32, row exactWTORow) (bool, error) {
 	if len(bucket.rows) >= s.options.MaxRows {
 		return false, fmt.Errorf("transformer: exact WTO row budget at point %d", s.tape.points[point].point)
 	}
-	bucket.rows = append(bucket.rows, cloneExactWTORow(row))
+	if !s.transientDAG {
+		row = cloneExactWTORow(row)
+	}
+	bucket.rows = append(bucket.rows, row)
 	bucket.hashes = append(bucket.hashes, hash)
 	return true, nil
 }
@@ -344,24 +386,38 @@ func (s *exactWTOSolver) publish() (map[cfg.Point][]SymbolicCFGRow, error) {
 		if err := s.checkContext(); err != nil {
 			return nil, err
 		}
-		rows := make([]SymbolicCFGRow, 0, len(s.buckets[dense].rows))
-		for _, candidate := range s.buckets[dense].rows {
-			duplicate := false
-			for _, kept := range rows {
-				if equalCFGRow(s.arena, kept, candidate.row) {
-					duplicate = true
-					break
-				}
-			}
-			if !duplicate {
-				rows = append(rows, cloneCFGRow(candidate.row))
-			}
+		rows, err := s.publishBucket(uint32(dense))
+		if err != nil {
+			return nil, err
 		}
 		if len(rows) != 0 {
 			out[s.tape.points[dense].point] = rows
 		}
 	}
 	return out, nil
+}
+
+func (s *exactWTOSolver) publishBucket(dense uint32) ([]SymbolicCFGRow, error) {
+	if dense >= uint32(len(s.buckets)) {
+		return nil, fmt.Errorf("transformer: exact WTO result bucket %d is out of range", dense)
+	}
+	if err := s.checkContext(); err != nil {
+		return nil, err
+	}
+	rows := make([]SymbolicCFGRow, 0, len(s.buckets[dense].rows))
+	for _, candidate := range s.buckets[dense].rows {
+		duplicate := false
+		for _, kept := range rows {
+			if equalCFGRow(s.arena, kept, candidate.row) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			rows = append(rows, cloneCFGRow(candidate.row))
+		}
+	}
+	return rows, nil
 }
 
 func cloneExactWTORow(row exactWTORow) exactWTORow {
