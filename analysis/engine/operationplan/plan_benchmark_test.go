@@ -58,7 +58,7 @@ func sparseBenchmarkFacts(points int) factflow.FactsInput {
 		RootAssignments:        make(map[cfg.Point]factflow.RootAssignment),
 		PathAssignments:        make(map[cfg.Point]factflow.PathAssignment),
 		NoNormalReturns:        make(map[cfg.Point]struct{}),
-		BranchConditionSources: make(map[cfg.Point]factflow.ValueSource),
+		BranchConditionSources: make(map[cfg.Point]factflow.BranchCondition),
 		BranchRefinements:      make(map[cfg.Point]factflow.BranchRefinementSet),
 		Returns:                make(map[cfg.Point]factflow.Return),
 		CallSites:              make(map[cfg.Point]factflow.CallSite),
@@ -75,7 +75,7 @@ func sparseBenchmarkFacts(points int) factflow.FactsInput {
 			in.NoNormalReturns[point] = struct{}{}
 		}
 		if i%17 == 0 {
-			in.BranchConditionSources[point] = factflow.ValueSource{}
+			in.BranchConditionSources[point] = factflow.BranchCondition{}
 			in.BranchRefinements[point] = factflow.BranchRefinementSet{}
 		}
 		if i%71 == 0 {

@@ -319,7 +319,8 @@ func randomWholePoint(rng *rand.Rand, point cfg.Point) (factflow.FactsInput, map
 		input.BranchEdgeReachability = map[cfg.Point]factflow.BranchEdgeReachability{point: factflow.NewBranchEdgeReachability(false, false)}
 	})
 	maybe(OpBranchConditionSource, func() {
-		input.BranchConditionSources = map[cfg.Point]factflow.ValueSource{point: factflow.NewNilValueSource(0)}
+		condition, _ := factflow.NewBranchCondition(factflow.NewNilValueSource(0), true)
+		input.BranchConditionSources = map[cfg.Point]factflow.BranchCondition{point: condition}
 	})
 	refN, lenN, floorN, ceilN, diffN := count(OpBranchRefinement), count(OpBranchLengthRefinement), count(OpBranchNumberFloor), count(OpBranchNumberCeil), count(OpBranchDifferenceConstraint)
 	if refN+lenN+floorN+ceilN+diffN != 0 {

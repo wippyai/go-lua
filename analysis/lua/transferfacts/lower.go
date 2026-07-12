@@ -82,7 +82,7 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 		PathDescendantInvalidations:   make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchEdgeReachability:        make(map[cfg.Point]factflow.BranchEdgeReachability),
 		NoNormalReturns:               make(map[cfg.Point]struct{}),
-		BranchConditionSources:        make(map[cfg.Point]factflow.ValueSource),
+		BranchConditionSources:        make(map[cfg.Point]factflow.BranchCondition),
 		BranchRefinements:             make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPresenceRelations:       make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 		BranchPathRelations:           make(map[cfg.Point]factflow.BranchPathRelationSet),
@@ -177,8 +177,8 @@ func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Po
 	if input == nil || !l.wir.HasInstruction(point, wir.OpBranch) {
 		return
 	}
-	if source, ok := l.branchConditionSourceAtWIR(point); ok {
-		input.BranchConditionSources[point] = source
+	if condition, ok := l.branchConditionAtWIR(point); ok {
+		input.BranchConditionSources[point] = condition
 	}
 	if reachability, ok := l.branchEdgeReachabilityFromWIR(point); ok {
 		input.BranchEdgeReachability[point] = reachability

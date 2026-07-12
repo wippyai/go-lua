@@ -37,7 +37,7 @@ func resolveReferenceTransformerFixture(t testing.TB) *Static {
 	return nil
 }
 
-func TestResolveReferenceConcatIsExactAndReportsNextBranchBlocker(t *testing.T) {
+func TestResolveReferenceFalsyBranchesReachCorrelatedReturnGate(t *testing.T) {
 	prepared := resolveReferenceTransformerFixture(t)
 	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
 	dynamicExact, dynamicTotal := 0, 0
@@ -63,12 +63,8 @@ func TestResolveReferenceConcatIsExactAndReportsNextBranchBlocker(t *testing.T) 
 		t.Fatalf("resolve_reference root assignment exact = %d/%d, want dynamic-read local admitted", rootExact, rootTotal)
 	}
 	relation := transformer.NewPlanCompiler().Compile(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
-	reason := relation.ContextualReason()
-	if reason == "" {
-		t.Fatal("resolve_reference unexpectedly became whole-function exact before its missing branch source is represented")
+	if reason := relation.ContextualReason(); !strings.Contains(reason, "correlated return projection is not represented") {
+		t.Fatalf("resolve_reference contextual reason = %q, want sound correlated-return gate after both falsy branches", reason)
 	}
-	if strings.Contains(reason, "ExpressionOperations") || !strings.Contains(reason, "branch:missing-condition-source") {
-		t.Fatalf("resolve_reference contextual reason = %q, want concat closed and honest next branch blocker", reason)
-	}
-	t.Logf("resolve_reference concat and dynamic read exact; root assignments=%d/%d; next blocker: %s", rootExact, rootTotal, reason)
+	t.Logf("resolve_reference concat, dynamic read, and both normalized falsy branches reach the correlated-return gate; root assignments=%d/%d", rootExact, rootTotal)
 }

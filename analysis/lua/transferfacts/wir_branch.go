@@ -15,21 +15,25 @@ func (l *lowerer) directBranchCheckFromWIR(point cfg.Point) (branchcond.Check, b
 	return l.firstDirectBranchCheckFromWIR(point)
 }
 
-func (l *lowerer) branchConditionSourceFromWIR(check branchcond.Check) (factflow.ValueSource, bool) {
-	if check.Kind != branchcond.CheckTruthy || check.Path.IsEmpty() {
-		return factflow.ValueSource{}, false
+func (l *lowerer) branchConditionFromWIR(check branchcond.Check) (factflow.BranchCondition, bool) {
+	if (check.Kind != branchcond.CheckTruthy && check.Kind != branchcond.CheckFalsy) || check.Path.IsEmpty() {
+		return factflow.BranchCondition{}, false
 	}
 	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
 	if !ok {
-		return factflow.ValueSource{}, false
+		return factflow.BranchCondition{}, false
 	}
-	return factflow.NewPathValueSource(check.Path.Key(), 0, factflow.NoValueSourceIndex, 0, shape)
+	source, ok := factflow.NewPathValueSource(check.Path.Key(), 0, factflow.NoValueSourceIndex, 0, shape)
+	if !ok {
+		return factflow.BranchCondition{}, false
+	}
+	return factflow.NewBranchCondition(source, check.Kind == branchcond.CheckTruthy)
 }
 
-func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSource, bool) {
+func (l *lowerer) branchConditionAtWIR(point cfg.Point) (factflow.BranchCondition, bool) {
 	if check, ok := l.firstDirectBranchCheckFromWIR(point); ok {
-		if check.Kind == branchcond.CheckTruthy {
-			return l.branchConditionSourceFromWIR(check)
+		if check.Kind == branchcond.CheckTruthy || check.Kind == branchcond.CheckFalsy {
+			return l.branchConditionFromWIR(check)
 		}
 	}
 	for _, inst := range l.wir.PointInstructions(point) {
@@ -47,9 +51,12 @@ func (l *lowerer) branchConditionSourceAtWIR(point cfg.Point) (factflow.ValueSou
 		if ok {
 			source.Adjusted = false
 		}
-		return source, ok
+		if !ok {
+			return factflow.BranchCondition{}, false
+		}
+		return factflow.NewBranchCondition(source, true)
 	}
-	return factflow.ValueSource{}, false
+	return factflow.BranchCondition{}, false
 }
 
 func (l *lowerer) firstDirectBranchCheckFromWIR(point cfg.Point) (branchcond.Check, bool) {

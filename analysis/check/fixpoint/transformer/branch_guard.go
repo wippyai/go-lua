@@ -23,12 +23,16 @@ func LowerBranchGuards(arena *Arena, branch factapply.BranchAlgebra, resolve Bra
 	if exact, reason := branch.GuardOnly(); !exact {
 		return 0, 0, fmt.Errorf("%s", reason)
 	}
-	source, _ := branch.ConditionSource()
+	condition, _ := branch.Condition()
+	source := condition.Source()
 	value, ok := resolve(source)
 	if !ok || value == 0 {
 		return 0, 0, fmt.Errorf("branch: contextual-condition-source")
 	}
-	return arena.Truthy(value), arena.Falsy(value), nil
+	if condition.TruthyOnTrueEdge() {
+		return arena.Truthy(value), arena.Falsy(value), nil
+	}
+	return arena.Falsy(value), arena.Truthy(value), nil
 }
 
 // LowerBranchConditionGuards lowers the condition polarity when scalar root
@@ -47,13 +51,17 @@ func lowerBranchConditionGuards(arena *Arena, branch factapply.BranchAlgebra, re
 			return 0, 0, fmt.Errorf("%s", reason)
 		}
 	}
-	source, ok := branch.ConditionSource()
+	condition, ok := branch.Condition()
 	if !ok {
 		return 0, 0, fmt.Errorf("branch:missing-condition-source")
 	}
+	source := condition.Source()
 	value, ok := resolve(source)
 	if !ok || value == 0 {
 		return 0, 0, fmt.Errorf("branch: contextual-condition-source")
 	}
-	return arena.Truthy(value), arena.Falsy(value), nil
+	if condition.TruthyOnTrueEdge() {
+		return arena.Truthy(value), arena.Falsy(value), nil
+	}
+	return arena.Falsy(value), arena.Truthy(value), nil
 }

@@ -133,10 +133,11 @@ func branchConditionEdgeUnreachable(
 	if sources == nil {
 		return false
 	}
-	source, ok := branch.ConditionSource()
+	condition, ok := branch.Condition()
 	if !ok {
 		return false
 	}
+	source := condition.Source()
 	value, ok := sources.ValueOfSource(ctx.Edge.From, source, in, ctx.Read)
 	if !ok {
 		return false
@@ -144,7 +145,7 @@ func branchConditionEdgeUnreachable(
 	if product.Equal(ctx.Registry, value, product.Bottom(ctx.Registry)) {
 		return false
 	}
-	if ctx.Edge.Cond {
+	if condition.TruthyOnEdge(ctx.Edge.Cond) {
 		return !valuerefine.CanBeTruthy(ctx.Registry, value)
 	}
 	return !valuerefine.CanBeFalsy(ctx.Registry, value)

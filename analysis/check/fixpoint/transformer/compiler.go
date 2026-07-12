@@ -439,6 +439,13 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err != nil {
 		return contextual("compiler: " + err.Error())
 	}
+	// The canonical concrete projection derives cross-slot presence and
+	// truthiness correlations from multi-result return points. Until those
+	// correlations are compiled from the same feasible rows, publishing only
+	// the joined return products would silently discard call-boundary facts.
+	if planReturnArity(plan) > 1 {
+		return contextual("compiler: correlated return projection is not represented")
+	}
 	exitRows := rowsByPoint[graph.Exit()]
 	rows := make([]Row, len(exitRows))
 	for i, row := range exitRows {
@@ -449,6 +456,21 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 		return contextual("compiler: relation admission: " + err.Error())
 	}
 	return relation
+}
+
+func planReturnArity(plan *operationplan.Plan) int {
+	if plan == nil {
+		return 0
+	}
+	arity := len(plan.BoundaryReturns())
+	facts := plan.Facts()
+	for rawPoint := 0; rawPoint < plan.PointCount(); rawPoint++ {
+		ret, ok := facts.Return(cfg.Point(rawPoint))
+		if ok && len(ret.Sources()) > arity {
+			arity = len(ret.Sources())
+		}
+	}
+	return arity
 }
 
 func planHasIteratorCall(plan *operationplan.Plan) bool {
@@ -591,13 +613,18 @@ func lowerCompilerBranchRefinements(arena *Arena, branch factapply.BranchAlgebra
 
 func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.BranchAlgebra, condition ValueTerm) error {
 	var validationErr error
+	branchCondition, hasCondition := branch.Condition()
+	if !hasCondition {
+		return fmt.Errorf("branch:missing-condition-source")
+	}
+	truthyEdge := branchCondition.TruthyOnTrueEdge()
 	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
 		term, ok := exactCompilerPathTerm(ctx, proof.PathRef())
 		if !ok || term != condition {
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-path")
 			return false
 		}
-		if !proof.ActiveOnEdge(true) || proof.ActiveOnEdge(false) {
+		if !proof.ActiveOnEdge(truthyEdge) || proof.ActiveOnEdge(!truthyEdge) {
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-polarity")
 			return false
 		}

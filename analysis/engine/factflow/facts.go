@@ -17,7 +17,7 @@ type FactsInput struct {
 	CovariantExposures            map[cfg.Point][]CovariantExposure
 	NoNormalReturns               map[cfg.Point]struct{}
 	BranchEdgeReachability        map[cfg.Point]BranchEdgeReachability
-	BranchConditionSources        map[cfg.Point]ValueSource
+	BranchConditionSources        map[cfg.Point]BranchCondition
 	BranchRefinements             map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations       map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations           map[cfg.Point]BranchPathRelationSet
@@ -51,7 +51,7 @@ type Facts struct {
 	covariantExposures            map[cfg.Point][]CovariantExposure
 	noNormalReturns               map[cfg.Point]struct{}
 	branchEdgeReachability        map[cfg.Point]BranchEdgeReachability
-	branchConditionSources        map[cfg.Point]ValueSource
+	branchConditionSources        map[cfg.Point]BranchCondition
 	branchRefinements             map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations       map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations           map[cfg.Point]BranchPathRelationSet
@@ -205,8 +205,15 @@ func (f Facts) BranchEdgeUnreachable(point cfg.Point, cond bool) bool {
 // BranchConditionSource returns the lowered value source for the condition at a
 // branch point.
 func (f Facts) BranchConditionSource(point cfg.Point) (ValueSource, bool) {
-	source, ok := f.branchConditionSources[point]
-	return source, ok
+	condition, ok := f.branchConditionSources[point]
+	return condition.Source(), ok
+}
+
+// BranchCondition returns the source together with its normalized edge
+// polarity. Consumers must use this form when selecting truthy/falsy edges.
+func (f Facts) BranchCondition(point cfg.Point) (BranchCondition, bool) {
+	condition, ok := f.branchConditionSources[point]
+	return condition, ok
 }
 
 // BranchRefinements returns all branch-edge value refinements at point.

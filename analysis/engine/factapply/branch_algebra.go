@@ -27,6 +27,10 @@ func (a BranchAlgebra) ConditionSource() (factflow.ValueSource, bool) {
 	return a.facts.BranchConditionSource(a.point)
 }
 
+func (a BranchAlgebra) Condition() (factflow.BranchCondition, bool) {
+	return a.facts.BranchCondition(a.point)
+}
+
 func (a BranchAlgebra) Refinements() []factflow.BranchRefinement {
 	return a.facts.BranchRefinements(a.point)
 }

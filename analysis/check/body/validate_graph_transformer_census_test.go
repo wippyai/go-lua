@@ -12,8 +12,8 @@ import (
 func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) {
 	prepared, _ := validateGraphSemanticProgramFixture(t)
 	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))})
-	if len(entries) != 320 {
-		t.Fatalf("eligibility entries = %d, want 320 active plan instances/family markers", len(entries))
+	if len(entries) != 328 {
+		t.Fatalf("eligibility entries = %d, want 328 active plan instances/family markers", len(entries))
 	}
 	type counts struct{ total, exact, unboundPath, iteratorCall int }
 	byFamily := map[string]counts{}
@@ -38,7 +38,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		"PathValuePresenceImplications": {total: 3},
 		"DynamicIndexWrites":            {total: 9},
 		"CallSites":                     {total: 49, exact: 33},
-		"BranchConditionSources":        {total: 36},
+		"BranchConditionSources":        {total: 44},
 		"BranchRefinements":             {total: 57},
 		"BranchPathEvidence":            {total: 43},
 		"extension:1":                   {total: 38, exact: 22, iteratorCall: 16},

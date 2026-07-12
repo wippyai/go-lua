@@ -24,8 +24,12 @@ func TestLowerBranchGuardsUsesConcreteFactapplyAlgebra(t *testing.T) {
 	if !ok {
 		t.Fatal("path source rejected")
 	}
+	condition, ok := factflow.NewBranchCondition(source, true)
+	if !ok {
+		t.Fatal("branch condition rejected")
+	}
 	branch := factapply.NewBranchAlgebra(factflow.NewFacts(factflow.FactsInput{
-		BranchConditionSources: map[cfg.Point]factflow.ValueSource{point: source},
+		BranchConditionSources: map[cfg.Point]factflow.BranchCondition{point: condition},
 	}), point)
 	arena := NewArena(reg)
 	param := arena.Root(Root{Kind: RootParam, Index: 0})
@@ -42,6 +46,36 @@ func TestLowerBranchGuardsUsesConcreteFactapplyAlgebra(t *testing.T) {
 	}
 	if got, valid := arena.evalGuard(falsy, falsyCursor, SpecializationContext{}); !valid || !got {
 		t.Fatalf("falsy guard = %v/%v", got, valid)
+	}
+}
+
+func TestLowerBranchGuardsPreservesFalsyCheckEdgePolarity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(5)
+	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	source, _ := factflow.NewPathValueSource("arg", 0, factflow.NoValueSourceIndex, 0, shape)
+	condition, ok := factflow.NewBranchCondition(source, false)
+	if !ok {
+		t.Fatal("falsy branch condition rejected")
+	}
+	branch := factapply.NewBranchAlgebra(factflow.NewFacts(factflow.FactsInput{
+		BranchConditionSources: map[cfg.Point]factflow.BranchCondition{point: condition},
+	}), point)
+	arena := NewArena(reg)
+	param := arena.Root(Root{Kind: RootParam, Index: 0})
+	trueEdge, falseEdge, err := LowerBranchGuards(arena, branch, func(got factflow.ValueSource) (ValueTerm, bool) {
+		return param, got == source
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	truthyCursor, _ := NewBindingCursor(Shape{Params: 1}, []product.Value{typevalue.LiteralString(reg, "yes")}, nil)
+	falsyCursor, _ := NewBindingCursor(Shape{Params: 1}, []product.Value{typevalue.LiteralBool(reg, false)}, nil)
+	if got, valid := arena.evalGuard(trueEdge, falsyCursor, SpecializationContext{}); !valid || !got {
+		t.Fatalf("true CFG edge did not accept falsy source: %v/%v", got, valid)
+	}
+	if got, valid := arena.evalGuard(falseEdge, truthyCursor, SpecializationContext{}); !valid || !got {
+		t.Fatalf("false CFG edge did not accept truthy source: %v/%v", got, valid)
 	}
 }
 
@@ -74,7 +108,8 @@ func TestLowerBranchGuardsFailsClosedForEveryEffectFamily(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.input.BranchConditionSources = map[cfg.Point]factflow.ValueSource{point: source}
+			condition, _ := factflow.NewBranchCondition(source, true)
+			tc.input.BranchConditionSources = map[cfg.Point]factflow.BranchCondition{point: condition}
 			branch := factapply.NewBranchAlgebra(factflow.NewFacts(tc.input), point)
 			arena := NewArena(reg)
 			_, _, err := LowerBranchGuards(arena, branch, func(factflow.ValueSource) (ValueTerm, bool) {

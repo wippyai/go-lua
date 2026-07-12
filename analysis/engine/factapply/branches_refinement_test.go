@@ -294,6 +294,7 @@ func TestFactsEdgeTransferKillsDynamicallyFalseConditionEdge(t *testing.T) {
 	graph.AddEdge(elsePoint, graph.Exit(), false)
 
 	source := factflow.NewNilValueSource(0)
+	condition, _ := factflow.NewBranchCondition(source, true)
 	trueValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.True), typ.True)
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -301,8 +302,8 @@ func TestFactsEdgeTransferKillsDynamicallyFalseConditionEdge(t *testing.T) {
 		EntryState: state.State{},
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchConditionSources: map[cfg.Point]factflow.ValueSource{
-					branch: source,
+				BranchConditionSources: map[cfg.Point]factflow.BranchCondition{
+					branch: condition,
 				},
 			}),
 			Sources: &recordingSourceValues{values: map[factflow.ValueSource]product.Value{

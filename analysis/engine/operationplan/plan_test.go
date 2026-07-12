@@ -139,7 +139,7 @@ func TestPlanDenseRowsAreCanonicalAndSnapshotIsOwned(t *testing.T) {
 	middle := graph.AddNode(cfg.NodeAssign)
 	input := factflow.FactsInput{
 		NoNormalReturns:        map[cfg.Point]struct{}{middle: {}},
-		BranchConditionSources: map[cfg.Point]factflow.ValueSource{middle: {}},
+		BranchConditionSources: map[cfg.Point]factflow.BranchCondition{middle: {}},
 		RootAssignments:        map[cfg.Point]factflow.RootAssignment{middle: {}},
 	}
 	plan := New(graph, input)
@@ -174,7 +174,7 @@ func TestCursorAndOwnersFollowConcreteSemanticBarriers(t *testing.T) {
 	input := factflow.FactsInput{
 		RootAssignments:               map[cfg.Point]factflow.RootAssignment{point: {}},
 		NoNormalReturns:               map[cfg.Point]struct{}{point: {}},
-		BranchConditionSources:        map[cfg.Point]factflow.ValueSource{point: {}},
+		BranchConditionSources:        map[cfg.Point]factflow.BranchCondition{point: {}},
 		BranchRefinements:             map[cfg.Point]factflow.BranchRefinementSet{point: {}},
 		PathValuePresenceImplications: map[cfg.Point]factflow.PathValuePresenceImplicationSet{point: {}},
 		CallResultValues:              map[cfg.Point]factflow.CallResultValueSet{point: {}},
@@ -282,11 +282,11 @@ func TestPlanOrderDoesNotDependOnMapInsertion(t *testing.T) {
 		rng.Shuffle(len(points), func(i, j int) { points[i], points[j] = points[j], points[i] })
 		input := factflow.FactsInput{
 			NoNormalReturns:        make(map[cfg.Point]struct{}),
-			BranchConditionSources: make(map[cfg.Point]factflow.ValueSource),
+			BranchConditionSources: make(map[cfg.Point]factflow.BranchCondition),
 		}
 		for _, point := range points {
 			input.NoNormalReturns[point] = struct{}{}
-			input.BranchConditionSources[point] = factflow.ValueSource{}
+			input.BranchConditionSources[point] = factflow.BranchCondition{}
 		}
 		got := planKinds(New(graph, input))
 		if seed == 0 {

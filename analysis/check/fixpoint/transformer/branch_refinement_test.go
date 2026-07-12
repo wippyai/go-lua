@@ -23,8 +23,9 @@ func TestBranchRefinementTermMatchesConcreteRootConstraint(t *testing.T) {
 	refinement := factflow.NewValueConstraint(constraint)
 	shape, _ := factflow.NewValueSourceShape(false, false, false, false)
 	source, _ := factflow.NewPathValueSource("value", 0, 0, 0, shape)
+	condition, _ := factflow.NewBranchCondition(source, true)
 	branch := factapply.NewBranchAlgebra(factflow.NewFacts(factflow.FactsInput{
-		BranchConditionSources: map[cfg.Point]factflow.ValueSource{point: source},
+		BranchConditionSources: map[cfg.Point]factflow.BranchCondition{point: condition},
 		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{point: factflow.NewBranchRefinementSet(
 			factflow.NewBranchRefinement(target, refinement, true, factflow.ValueRefinement{}, false),
 		)},
