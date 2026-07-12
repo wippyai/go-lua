@@ -125,6 +125,7 @@ func branchRefinementSegmentsHavePrefix(target []segment.Segment, prefix []segme
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
 	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(config.Facts)
 	callOutcomeCache := &callOutcomeTraversalCache{}
+	rootAssignmentExecutor := &ConcreteRootAssignmentPointExecutor{presenceCache: callOutcomeCache}
 	var refinedSourceRegistry *axis.Registry
 	var refinedSources sourcevalue.SourceValues
 	return func(ctx transfer.NodeContext, in state.State) state.State {
@@ -220,8 +221,8 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
 			out = applyDynamicIndexWrite(ctx, config.Visibility, facts, sources, ensureCallResults().ReadLazy(), in, out, fact)
 		}
-		if fact, ok := facts.RootAssignment(ctx.Point); ok {
-			result := ApplyConcreteRootAssignmentPoint(ConcreteRootAssignmentPointRequest{
+		if _, ok := facts.RootAssignment(ctx.Point); ok {
+			result := rootAssignmentExecutor.Apply(ConcreteRootAssignmentPointRequest{
 				Context:                ctx,
 				Resolver:               config.Visibility,
 				Facts:                  facts,
@@ -229,13 +230,11 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 				Read:                   ensureCallResults().ReadLazy(),
 				Input:                  in,
 				Output:                 out,
-				Assignment:             fact,
 				CallOutcome:            callOutcome,
 				ProjectPath:            config.ProjectPath,
 				CovariantWiden:         config.CovariantWiden,
 				TypeValues:             config.TypeValues,
 				ClosedDynamicAllValues: config.ClosedDynamicAllValues,
-				presenceCache:          callOutcomeCache,
 			})
 			out = result.Output
 		}

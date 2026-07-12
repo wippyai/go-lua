@@ -19,7 +19,9 @@ import (
 // The distinction is semantic: callers must not replace Input with Output.
 // Object-literal sibling reads and return-slot outcome reads use Input, while
 // the assignment and its sidecars publish onto Output in the order documented
-// by ApplyConcreteRootAssignmentPoint.
+// by ApplyConcreteRootAssignmentPoint. The assignment is derived from Facts at
+// Context.Point so core and presence sidecars cannot observe inconsistent
+// assignment descriptors; a missing fact fails closed with Output unchanged.
 type ConcreteRootAssignmentPointRequest struct {
 	Context                transfer.NodeContext
 	Resolver               *visibility.Resolver
@@ -28,16 +30,11 @@ type ConcreteRootAssignmentPointRequest struct {
 	Read                   func(cfg.Point) state.State
 	Input                  state.State
 	Output                 state.State
-	Assignment             factflow.RootAssignment
 	CallOutcome            callpayload.CallOutcomeProvider
 	ProjectPath            PathTypeProjector
 	CovariantWiden         CovariantWiden
 	TypeValues             *typevalue.Cache
 	ClosedDynamicAllValues []ClosedDynamicAllValueInvariant
-
-	// presenceCache is closure-owned acceleration only. It has no semantic
-	// effect and is deliberately not part of the public transaction contract.
-	presenceCache *callOutcomeTraversalCache
 }
 
 // ConcreteRootAssignmentPointResult reports the transaction's published state
@@ -66,6 +63,25 @@ type ConcreteRootAssignmentPointResult struct {
 // requires whole-node rollback rather than returning a partially published
 // transaction.
 func ApplyConcreteRootAssignmentPoint(req ConcreteRootAssignmentPointRequest) ConcreteRootAssignmentPointResult {
+	return new(ConcreteRootAssignmentPointExecutor).Apply(req)
+}
+
+// ConcreteRootAssignmentPointExecutor retains graph traversal acceleration
+// across root transactions without leaking cache representation into the
+// public request. Its zero value is ready to use. An executor belongs to one
+// prepared transfer closure and must not be used concurrently.
+type ConcreteRootAssignmentPointExecutor struct {
+	presenceCache *callOutcomeTraversalCache
+}
+
+// Apply executes one concrete root-assignment transaction. It is semantically
+// identical to ApplyConcreteRootAssignmentPoint; the method form only reuses
+// private traversal acceleration across calls.
+func (e *ConcreteRootAssignmentPointExecutor) Apply(req ConcreteRootAssignmentPointRequest) ConcreteRootAssignmentPointResult {
+	assignment, ok := req.Facts.RootAssignment(req.Context.Point)
+	if !ok {
+		return ConcreteRootAssignmentPointResult{Output: req.Output}
+	}
 	out, applied := applyRootAssignmentFact(
 		req.Context,
 		req.Resolver,
@@ -74,15 +90,15 @@ func ApplyConcreteRootAssignmentPoint(req ConcreteRootAssignmentPointRequest) Co
 		req.Read,
 		req.Input,
 		req.Output,
-		req.Assignment,
+		assignment,
 		req.ClosedDynamicAllValues,
 		req.TypeValues,
 	)
 	if !applied {
 		return ConcreteRootAssignmentPointResult{Output: out}
 	}
-	targetPath := req.Assignment.TargetPathRef()
-	source := req.Assignment.Source()
+	targetPath := assignment.TargetPathRef()
+	source := assignment.Source()
 	out = applyCallOutcomeReturnSlotFactsAfterRootAssignment(
 		req.Context,
 		req.Facts,
@@ -100,13 +116,20 @@ func ApplyConcreteRootAssignmentPoint(req ConcreteRootAssignmentPointRequest) Co
 	out = applyCallOutcomePresenceRelationPublishes(
 		req.Context,
 		req.Facts,
-		req.presenceCache,
+		e.callOutcomePresenceCache(),
 		req.CallOutcome,
 		req.Resolver,
 		req.Read,
 		out,
 	)
 	return ConcreteRootAssignmentPointResult{Output: out, Applied: true}
+}
+
+func (e *ConcreteRootAssignmentPointExecutor) callOutcomePresenceCache() *callOutcomeTraversalCache {
+	if e.presenceCache == nil {
+		e.presenceCache = &callOutcomeTraversalCache{}
+	}
+	return e.presenceCache
 }
 
 // ConcretePointFinalizerRequest contains the operations that observe the
