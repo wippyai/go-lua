@@ -9,6 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -149,15 +150,18 @@ type row struct {
 // Plan owns the immutable Facts snapshot and a packed index over point-local
 // fact families. Its fields are never exposed as mutable slices.
 type Plan struct {
-	facts          factflow.Facts
-	rows           []row
-	cells          []Cell
-	dependencies   []Kind
-	extensionRows  []extensionRow
-	extensionCells []ExtensionCell
-	boundaryParams []symbol.ID
-	signatureRefs  []uint32
-	signatures     []SignatureCallOperation
+	facts                        factflow.Facts
+	rows                         []row
+	cells                        []Cell
+	dependencies                 []Kind
+	extensionRows                []extensionRow
+	extensionCells               []ExtensionCell
+	boundaryParams               []symbol.ID
+	signatureRefs                []uint32
+	signatures                   []SignatureCallOperation
+	signatureAllocationRefs      []uint32
+	signatureAllocationOrdinals  []uint32
+	signatureAllocationTemplates []signature.ReturnAllocationTemplate
 }
 
 // New creates the only immutable Facts snapshot for input and indexes all

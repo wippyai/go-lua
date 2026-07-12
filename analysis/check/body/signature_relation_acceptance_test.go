@@ -55,3 +55,24 @@ func TestValidateGraphPureSignatureRelationsMatchCanonicalOutcomes(t *testing.T)
 		t.Fatalf("pure static signature relations = %d, want 6 string.format calls", matched)
 	}
 }
+
+func TestValidateGraphOwnsEightDurableAllocationSites(t *testing.T) {
+	prepared, _ := validateGraphSemanticProgramFixture(t)
+	count := 0
+	var last uint32
+	for rawPoint := 0; rawPoint < prepared.operationPlan.PointCount(); rawPoint++ {
+		op, ok := prepared.operationPlan.SignatureAllocationOperation(cfg.Point(rawPoint))
+		if !ok {
+			continue
+		}
+		site := op.Site()
+		if site.Template != "stdlib.table.create:return:0" || site.Ordinal != last+1 {
+			t.Fatalf("allocation site at point %d = %#v, want next table.create ordinal", rawPoint, site)
+		}
+		last = site.Ordinal
+		count++
+	}
+	if count != 8 {
+		t.Fatalf("durable allocation sites = %d, want 8 table.create calls", count)
+	}
+}

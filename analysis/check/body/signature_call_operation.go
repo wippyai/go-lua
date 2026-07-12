@@ -30,3 +30,31 @@ func signatureCallOperations(graph cfg.Graph, facts factflow.Facts, producer *ef
 	}
 	return out
 }
+
+func signatureAllocationOperations(plan *operationplan.Plan) map[cfg.Point]operationplan.SignatureAllocationOperation {
+	if plan == nil {
+		return nil
+	}
+	out := make(map[cfg.Point]operationplan.SignatureAllocationOperation)
+	ordinals := make(map[string]uint32)
+	for rawPoint := 0; rawPoint < plan.PointCount(); rawPoint++ {
+		point := cfg.Point(rawPoint)
+		call, ok := plan.SignatureCallOperation(point)
+		if !ok {
+			continue
+		}
+		template, exact := effectlowering.StaticSignatureAllocationTemplate(call.Signature())
+		if !exact {
+			continue
+		}
+		owner := string(template.Root)
+		ordinals[owner]++
+		op, ok := operationplan.NewSignatureAllocationOperation(operationplan.SignatureAllocationSite{
+			Template: template.Root, Ordinal: ordinals[owner],
+		}, template)
+		if ok {
+			out[point] = op
+		}
+	}
+	return out
+}
