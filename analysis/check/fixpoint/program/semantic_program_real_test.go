@@ -19,12 +19,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T) {
+func TestSemanticProgramValidateGraphConcreteDifferential(t *testing.T) {
 	src, err := os.ReadFile("../../../../testdata/fixtures/regression/deadlock-compiler-lua/main.lua")
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,8 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 	semanticDigests := make(map[summary.Digest]int)
 	semanticFields := make(map[string]int)
 	normalReturnFields := make(map[string]int)
-	config := Config{Check: check}
+	stats := &Stats{}
+	config := Config{Check: check, Stats: stats}
 	config.semanticProgramAudit = func(prepared *body.Static, oracleConfig body.Config, oracle *body.Result) error {
 		fn := oracle.Function()
 		if fn == nil || fn.Line() != 743 {
@@ -86,15 +88,52 @@ func TestSemanticProgramValidateGraphSevenEntryConcreteDifferential(t *testing.T
 		comparePreparedResults(t, reg, oracle, concrete, audits)
 		return nil
 	}
-	if _, err := RunBoundChunk(stmts, bindings, config); err != nil {
+	result, err := RunBoundChunk(stmts, bindings, config)
+	if err != nil {
 		t.Fatalf("RunBoundChunk: %v", err)
 	}
-	if audits != 7 {
-		t.Fatalf("compiler.validate_graph audited solves=%d, want 7", audits)
+	if audits != 6 {
+		t.Fatalf("compiler.validate_graph audited solves=%d, want 6 after dependency-first query scheduling", audits)
+	}
+	validateKey, ok := result.FunctionKey(mustFunctionSymbolAtLine(t, bindings, 743))
+	if !ok {
+		t.Fatal("compiler.validate_graph summary key missing")
+	}
+	validateSummarySolves := 0
+	validateSummaryVariants := 0
+	for _, attribution := range stats.BodySolveAttribution() {
+		if attribution.Function.Ref == validateKey.Ref && attribution.Phase == SolvePhaseSummary {
+			validateSummaryVariants++
+			validateSummarySolves += attribution.BodySolves
+			if attribution.BodySolves != 1 {
+				t.Fatalf("compiler.validate_graph summary key %v body solves=%d, want one initial acyclic solve", attribution.Function, attribution.BodySolves)
+			}
+		}
+	}
+	// validate_graph has one base equation and one context-specialized equation.
+	// Both now run exactly once: the old caller-first order revisited the base
+	// equation twice after its two lexical callee summaries grew. Removing the
+	// remaining distinct variant requires transformer/context abstraction, not
+	// scheduling: merging unequal entry equations here would change semantics.
+	if validateSummarySolves != 2 {
+		t.Fatalf("compiler.validate_graph summary body solves=%d, want one solve for each of two exact variants", validateSummarySolves)
+	}
+	if validateSummaryVariants != 2 {
+		t.Fatalf("compiler.validate_graph summary variants=%d, want 2", validateSummaryVariants)
 	}
 	t.Logf("compiler.validate_graph semantic summary classes=%d multiplicities=%v", len(semanticDigests), semanticDigests)
 	t.Logf("compiler.validate_graph non-empty Summary fields=%v", semanticFields)
 	t.Logf("compiler.validate_graph non-empty NormalReturnFacts fields=%v", normalReturnFields)
+}
+
+func mustFunctionSymbolAtLine(t *testing.T, bindings *bind.Result, line int) symbol.ID {
+	t.Helper()
+	fn := functionAtLine(t, bindings, line)
+	id, ok := bindings.FunctionSymbol(fn)
+	if !ok {
+		t.Fatalf("function symbol at line %d missing", line)
+	}
+	return id
 }
 
 func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *body.Result, solve int) {

@@ -57,6 +57,11 @@ type programKeys struct {
 	// parameters may be inferred from call sites and body usage.
 	bindings *bind.Result
 	enclosed map[symbol.ID]struct{}
+
+	// queryDependencies is compact scheduling evidence extracted while each
+	// context-discovery prepass Result is already live. Edges point from caller
+	// to runtime-resolved lexical callees; no body graph is retained.
+	queryDependencies map[summary.SummaryKey]map[summary.SummaryKey]struct{}
 }
 
 // functionSymbol returns the function symbol owning fn.

@@ -132,6 +132,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	keys.contexts.ForEach(func(context keyedFunction) {
 		functions = append(functions, boundFunction(context, prepared.function(context.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(context.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, context.key), contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
 	})
+	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
 
 	snapshot, err := query.Run(query.Config{
 		Context:    config.Context,
@@ -214,6 +215,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		seen[origin.key] = struct{}{}
 		functions = append(functions, boundFunction(origin, prepared.function(origin.funcExpr), config.Check, config.Stats, config.SummaryCache, retained.newOwner(origin.key), config.CacheProfile, summaryOwnerResolutionDigest(keys, origin.key), contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
+	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
 
 	snapshot, err := query.Run(query.Config{
 		Context:    config.Context,

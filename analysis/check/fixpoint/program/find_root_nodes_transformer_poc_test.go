@@ -45,8 +45,8 @@ type findRootNodesPOCFixture struct {
 
 func TestFindRootNodesStructuredTransformerMatchesRealValidateGraphContexts(t *testing.T) {
 	fixture := newFindRootNodesPOCFixture(t)
-	if got := len(fixture.applications); got != 7 {
-		t.Fatalf("validate_graph applications = %d, want 7", got)
+	if got := len(fixture.applications); got != 6 {
+		t.Fatalf("validate_graph applications = %d, want 6 after dependency-first query scheduling", got)
 	}
 	if len(state.DefaultLanes()) != 17 {
 		t.Fatalf("default State lanes = %d, want 17", len(state.DefaultLanes()))

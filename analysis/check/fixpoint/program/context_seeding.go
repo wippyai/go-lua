@@ -141,6 +141,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 				return nil, err
 			}
 		}
+		recordQueryDependencies(config.Registry, keys, keys.rootKey, prepass)
 	}
 	// A call whose context-sensitive caller state matters can live inside a
 	// nested function body (e.g. a field-defined wrapper that calls a captured
@@ -176,6 +177,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 				return nil, err
 			}
 		}
+		recordQueryDependencies(config.Registry, keys, fn.key, functionPrepass)
 	}
 	for i := 0; i < keys.contexts.Len(); i++ {
 		context := keys.contexts.Entry(i)
@@ -210,6 +212,7 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 				return nil, err
 			}
 		}
+		recordQueryDependencies(config.Registry, keys, context.key, contextPrepass)
 	}
 	applyClosedDynamicAllValueEntryStates(keys, prepared, config.Registry, rootPrepass, prepassResults)
 	return inferred, nil

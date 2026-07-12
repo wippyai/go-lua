@@ -361,11 +361,21 @@ func (idx *contextIndex) CallContextKey(owner summary.SummaryKey, expr factflow.
 }
 
 func (idx *contextIndex) HasFunctionExpression(owner summary.SummaryKey, expr factflow.ExprRef) bool {
+	_, ok := idx.FunctionExpressionKey(owner, expr)
+	return ok
+}
+
+// FunctionExpressionKey returns the live context summary key for an owner-local
+// callback expression without materializing the owner's complete routing map.
+func (idx *contextIndex) FunctionExpressionKey(owner summary.SummaryKey, expr factflow.ExprRef) (summary.SummaryKey, bool) {
 	if idx == nil {
-		return false
+		return summary.SummaryKey{}, false
 	}
 	key, ok := idx.functionExpressionKeys[functionExpressionRef{owner: canonicalContextOwner(owner), expr: expr}]
-	return ok && idx.hasContextKey(key)
+	if !ok || !idx.hasContextKey(key) {
+		return summary.SummaryKey{}, false
+	}
+	return key, true
 }
 
 func (idx *contextIndex) FunctionExpressionKeysForOwner(owner summary.SummaryKey) map[factflow.ExprRef]summary.SummaryKey {
