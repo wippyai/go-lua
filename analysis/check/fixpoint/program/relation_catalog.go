@@ -29,12 +29,71 @@ type relationCatalogEntry struct {
 	direct   transformer.DirectCallCatalog
 }
 
+// relationConsumerIdentity is the cache-fence authority for one query owner.
+// It intentionally has no Cell: consuming an admitted relation does not make
+// the caller a relation producer. Prepared pointer equality prevents a route
+// index prepared for one body instance from being installed on another body
+// with coincidentally equal content.
+type relationConsumerIdentity struct {
+	Summary    summary.SummaryKey
+	BodyDigest uint64
+	Prepared   *body.Static
+}
+
+type relationConsumerEntry struct {
+	identity relationConsumerIdentity
+	direct   transformer.DirectCallCatalog
+	active   bool
+}
+
+// relationConsumerPolicy is a separate immutable index over every lexical
+// query owner. Its point routes contain only targets admitted into the strict
+// producer catalog. Ineligible callers may therefore consume exact relations,
+// while leaf producers and unrelated owners remain inactive/cacheable.
+type relationConsumerPolicy struct {
+	entries []relationConsumerEntry
+	byKey   map[summary.SummaryKey]int
+}
+
+func (p relationConsumerPolicy) Owners() []relationConsumerIdentity {
+	out := make([]relationConsumerIdentity, len(p.entries))
+	for i := range p.entries {
+		out[i] = p.entries[i].identity
+	}
+	return out
+}
+
+func (p relationConsumerPolicy) Active(owner relationConsumerIdentity) bool {
+	entry, ok := p.lookup(owner)
+	return ok && entry.active
+}
+
+// DirectCalls returns the immutable point routing for the exact owner
+// identity. Inactive owners are valid and return an empty catalog; identity
+// drift fails closed.
+func (p relationConsumerPolicy) DirectCalls(owner relationConsumerIdentity) (transformer.DirectCallCatalog, bool) {
+	entry, ok := p.lookup(owner)
+	if !ok {
+		return transformer.DirectCallCatalog{}, false
+	}
+	return entry.direct, true
+}
+
+func (p relationConsumerPolicy) lookup(owner relationConsumerIdentity) (relationConsumerEntry, bool) {
+	index, ok := p.byKey[owner.Summary]
+	if !ok || index < 0 || index >= len(p.entries) || p.entries[index].identity != owner {
+		return relationConsumerEntry{}, false
+	}
+	return p.entries[index], true
+}
+
 // relationRunCatalog is an immutable run-local preparation product. It is not
 // consulted by production solving yet. Order is canonical SummaryKey order;
 // maps are private lookup indexes over immutable entries.
 type relationRunCatalog struct {
-	entries []relationCatalogEntry
-	byKey   map[summary.SummaryKey]int
+	entries   []relationCatalogEntry
+	byKey     map[summary.SummaryKey]int
+	consumers relationConsumerPolicy
 }
 
 func (c relationRunCatalog) Entries() []relationCellIdentity {
@@ -44,6 +103,8 @@ func (c relationRunCatalog) Entries() []relationCellIdentity {
 	}
 	return out
 }
+
+func (c relationRunCatalog) ConsumerPolicy() relationConsumerPolicy { return c.consumers }
 
 // DirectCalls requires the complete cell identity, not a free-standing key or
 // digest. Identity drift therefore fails closed before point routing is read.
@@ -64,16 +125,18 @@ type relationCatalogCandidate struct {
 	direct   map[cfg.Point]summary.SummaryKey
 }
 
+type relationCatalogOwner struct {
+	key      summary.SummaryKey
+	fn       *ast.FunctionExpr
+	prepared *body.Static
+}
+
 func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, keys programKeys, prepared preparedBodies, rootFn *ast.FunctionExpr) relationRunCatalog {
 	if reg == nil || bindings == nil {
 		return relationRunCatalog{}
 	}
-	owners := make([]keyedFunction, 0, len(keys.functions)+1)
-	if rootFn != nil {
-		owners = append(owners, keyedFunction{funcExpr: rootFn, key: keys.rootKey})
-	}
-	owners = append(owners, keys.functions...)
-	slices.SortFunc(owners, func(a, b keyedFunction) int {
+	owners := relationCatalogOwners(keys, prepared, rootFn)
+	slices.SortFunc(owners, func(a, b relationCatalogOwner) int {
 		if a.key.Less(b.key) {
 			return -1
 		}
@@ -85,23 +148,20 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 
 	candidates := make(map[summary.SummaryKey]*relationCatalogCandidate, len(owners))
 	for _, owner := range owners {
-		if owner.funcExpr == nil || owner.key.Ref.IsZero() {
+		if owner.fn == nil || owner.key.Ref.IsZero() {
 			continue
 		}
 		// BindFunction also reports its root as a function origin under the
 		// lexical symbol key. The program equation owns that body under rootKey;
 		// never publish the same prepared body under both identities.
-		if rootFn != nil && owner.funcExpr == rootFn && owner.key != keys.rootKey {
-			continue
-		}
 		if _, exists := candidates[owner.key]; exists {
 			continue
 		}
-		origin, ok := bindings.FunctionOrigin(owner.funcExpr)
+		origin, ok := bindings.FunctionOrigin(owner.fn)
 		if !ok || origin.Kind == bind.FunctionOriginMethod {
 			continue
 		}
-		static := prepared.function(owner.funcExpr)
+		static := owner.prepared
 		if static == nil || !static.CompositionEligibility().Eligible() {
 			continue
 		}
@@ -114,7 +174,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		if err != nil || !compiler.EffectFree() {
 			continue
 		}
-		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.funcExpr, prepared: static, compiler: compiler, shape: shape}
+		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape}
 		candidate.direct = exactRelationDirectTargets(bindings, keys, static)
 		candidates[owner.key] = candidate
 	}
@@ -139,7 +199,14 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		return 0
 	})
 
-	out := relationRunCatalog{entries: make([]relationCatalogEntry, 0, len(ordered)), byKey: make(map[summary.SummaryKey]int, len(ordered))}
+	out := relationRunCatalog{
+		entries: make([]relationCatalogEntry, 0, len(ordered)),
+		byKey:   make(map[summary.SummaryKey]int, len(ordered)),
+		consumers: relationConsumerPolicy{
+			entries: make([]relationConsumerEntry, 0, len(owners)),
+			byKey:   make(map[summary.SummaryKey]int, len(owners)),
+		},
+	}
 	identities := make(map[summary.SummaryKey]relationCellIdentity, len(ordered))
 	for i, key := range ordered {
 		candidate := candidates[key]
@@ -164,7 +231,62 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		out.byKey[key] = len(out.entries)
 		out.entries = append(out.entries, entry)
 	}
+	for _, owner := range owners {
+		if owner.prepared == nil || owner.key.Ref.IsZero() {
+			continue
+		}
+		plan := owner.prepared.OperationPlan()
+		if plan == nil {
+			continue
+		}
+		routes := make(map[cfg.Point]transformer.DirectCallTarget)
+		for point, targetKey := range exactRelationDirectTargets(bindings, keys, owner.prepared) {
+			targetIdentity, ok := identities[targetKey]
+			target := candidates[targetKey]
+			if !ok || target == nil {
+				continue
+			}
+			routes[point] = transformer.DirectCallTarget{Cell: targetIdentity.Cell, Shape: target.shape}
+		}
+		direct, err := transformer.NewDirectCallCatalog(plan.PointCount(), routes)
+		if err != nil {
+			continue
+		}
+		identity := relationConsumerIdentity{Summary: owner.key, BodyDigest: owner.prepared.IdentityDigest(), Prepared: owner.prepared}
+		entry := relationConsumerEntry{identity: identity, direct: direct, active: len(routes) != 0}
+		out.consumers.byKey[owner.key] = len(out.consumers.entries)
+		out.consumers.entries = append(out.consumers.entries, entry)
+	}
 	return out
+}
+
+// relationCatalogOwners returns every non-context query owner exactly once.
+// Chunk roots have no FunctionExpr but do have a prepared body; RunFunction's
+// root is owned by rootKey rather than its lexical symbol key.
+func relationCatalogOwners(keys programKeys, prepared preparedBodies, rootFn *ast.FunctionExpr) []relationCatalogOwner {
+	owners := make([]relationCatalogOwner, 0, len(keys.functions)+1)
+	if rootFn == nil {
+		owners = append(owners, relationCatalogOwner{key: keys.rootKey, prepared: prepared.root})
+	} else {
+		owners = append(owners, relationCatalogOwner{key: keys.rootKey, fn: rootFn, prepared: prepared.function(rootFn)})
+	}
+	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
+	for _, fn := range keys.functions {
+		if fn.funcExpr == nil {
+			continue
+		}
+		// BindFunction reports rootFn under its lexical symbol as well. It is
+		// still one query owner, under rootKey.
+		if rootFn != nil && fn.funcExpr == rootFn {
+			continue
+		}
+		if _, ok := seen[fn.key]; ok {
+			continue
+		}
+		seen[fn.key] = struct{}{}
+		owners = append(owners, relationCatalogOwner{key: fn.key, fn: fn.funcExpr, prepared: prepared.function(fn.funcExpr)})
+	}
+	return owners
 }
 
 func exactRelationDirectTargets(bindings *bind.Result, keys programKeys, static *body.Static) map[cfg.Point]summary.SummaryKey {

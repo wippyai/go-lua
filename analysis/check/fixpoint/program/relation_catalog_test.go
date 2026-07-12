@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestInactiveRelationCatalogUsesDeterministicPairedIdentityAndExactRoutes(t *testing.T) {
@@ -147,6 +148,156 @@ return exact("ok")
 	}
 	if _, err := RunBoundChunk(stmts, bindings, config); err != nil {
 		t.Fatalf("RunBoundChunk: %v", err)
+	}
+}
+
+func TestInactiveRelationConsumerPolicySeparatesCallersFromProducers(t *testing.T) {
+	stmts := parseChunk(t, `
+local captured = "captured"
+local function leaf(x: any): any
+    return x
+end
+local function captured_caller(x: any): any
+    if captured then
+        return leaf(x)
+    end
+    return x
+end
+local function unrelated(x: any): any
+    return x
+end
+return leaf(captured_caller("ok"))
+`)
+	reg := standard.Registry()
+	check := body.Config{Registry: reg}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), reg, check.ModuleTypes, check.ModuleExports, stmts)
+	leafKey := relationTestTargetKey(t, bindings, keys, "leaf")
+	callerKey := relationTestTargetKey(t, bindings, keys, "captured_caller")
+	unrelatedKey := relationTestTargetKey(t, bindings, keys, "unrelated")
+
+	type consumerSnapshot struct {
+		Key    summary.SummaryKey
+		Digest uint64
+		Active bool
+		Routes []transformer.CellRef
+	}
+	var snapshots [][]consumerSnapshot
+	for run := 0; run < 2; run++ {
+		config := Config{Check: check}
+		config.relationCatalogAudit = func(catalog relationRunCatalog) error {
+			policy := catalog.ConsumerPolicy()
+			owners := policy.Owners()
+			byKey := make(map[summary.SummaryKey]relationConsumerIdentity, len(owners))
+			got := make([]consumerSnapshot, 0, len(owners))
+			producerCells := make(map[summary.SummaryKey]transformer.CellRef)
+			for _, producer := range catalog.Entries() {
+				producerCells[producer.Summary] = producer.Cell
+			}
+			leafCell, leafAdmitted := producerCells[leafKey]
+			if !leafAdmitted {
+				return fmt.Errorf("leaf was not admitted as a producer: %#v", catalog.Entries())
+			}
+			for _, owner := range owners {
+				byKey[owner.Summary] = owner
+				direct, ok := policy.DirectCalls(owner)
+				if !ok {
+					return fmt.Errorf("complete consumer identity rejected: %#v", owner)
+				}
+				var routes []transformer.CellRef
+				for point := cfg.Point(0); int(point) < direct.PointCount(); point++ {
+					if target, exists := direct.Lookup(point); exists {
+						routes = append(routes, target.Cell)
+						if target.Cell != leafCell {
+							return fmt.Errorf("consumer %v routed to unadmitted target %v", owner.Summary, target.Cell)
+						}
+					}
+				}
+				got = append(got, consumerSnapshot{Key: owner.Summary, Digest: owner.BodyDigest, Active: policy.Active(owner), Routes: routes})
+			}
+			for key, wantActive := range map[summary.SummaryKey]bool{
+				keys.rootKey: true, callerKey: true, leafKey: false, unrelatedKey: false,
+			} {
+				owner, ok := byKey[key]
+				if !ok {
+					return fmt.Errorf("consumer owner %v missing", key)
+				}
+				if active := policy.Active(owner); active != wantActive {
+					return fmt.Errorf("consumer %v active = %v, want %v", key, active, wantActive)
+				}
+			}
+			if len(got) != 4 {
+				return fmt.Errorf("consumer owners = %d, want chunk root plus three lexical functions", len(got))
+			}
+			if len(got[0].Routes)+len(got[1].Routes)+len(got[2].Routes)+len(got[3].Routes) != 2 {
+				return fmt.Errorf("consumer routes = %#v, want root and captured caller only", got)
+			}
+
+			owner := byKey[callerKey]
+			for name, mutate := range map[string]func(*relationConsumerIdentity){
+				"summary":  func(id *relationConsumerIdentity) { id.Summary.Entry.Values++ },
+				"digest":   func(id *relationConsumerIdentity) { id.BodyDigest++ },
+				"prepared": func(id *relationConsumerIdentity) { id.Prepared = nil },
+			} {
+				mismatch := owner
+				mutate(&mismatch)
+				if policy.Active(mismatch) {
+					return fmt.Errorf("%s identity mismatch was active", name)
+				}
+				if _, ok := policy.DirectCalls(mismatch); ok {
+					return fmt.Errorf("%s identity mismatch read routes", name)
+				}
+			}
+			snapshots = append(snapshots, got)
+			return nil
+		}
+		if _, err := RunBoundChunk(stmts, bindings, config); err != nil {
+			t.Fatalf("run %d: RunBoundChunk: %v", run, err)
+		}
+	}
+	if !reflect.DeepEqual(snapshots[0], snapshots[1]) {
+		t.Fatalf("consumer policy is not deterministic\nfirst:  %#v\nsecond: %#v", snapshots[0], snapshots[1])
+	}
+}
+
+func TestInactiveRelationConsumerPolicyIncludesRunBoundFunctionRoot(t *testing.T) {
+	stmts := parseChunk(t, `
+local function root(x: any): any
+    local function leaf(y: any): any
+        return y
+    end
+    return leaf(x)
+end
+`)
+	reg := standard.Registry()
+	check := body.Config{Registry: reg}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
+	var rootFn *ast.FunctionExpr
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == "root" {
+			rootFn = origin.Func
+			return false
+		}
+		return true
+	})
+	if rootFn == nil {
+		t.Fatal("root function not found")
+	}
+	config := Config{Check: check}
+	config.relationCatalogAudit = func(catalog relationRunCatalog) error {
+		policy := catalog.ConsumerPolicy()
+		for _, owner := range policy.Owners() {
+			if owner.Summary == rootKey(config.RootKey) {
+				if !policy.Active(owner) {
+					return fmt.Errorf("RunBoundFunction root is not an active relation consumer")
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("RunBoundFunction root consumer missing")
+	}
+	if _, err := RunBoundFunction(rootFn, bindings, config); err != nil {
+		t.Fatalf("RunBoundFunction: %v", err)
 	}
 }
 
