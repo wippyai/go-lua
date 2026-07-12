@@ -29,6 +29,20 @@ type BodySolveAttribution struct {
 	PointTransfers                 int
 	DependencyChangeResolves       int
 	DependencyChangePointTransfers int
+	// CompositionEligible and CompositionReason are the behavior-neutral
+	// Stage-0 census verdict for this prepared body. They never select a solve
+	// path; unknown shapes fail closed with a stable reason.
+	CompositionEligible bool
+	CompositionReason   string
+}
+
+// CompositionCost aggregates existing solve work by the Stage-0 symbolic-call
+// eligibility verdict. Eligible work has an empty Reason.
+type CompositionCost struct {
+	Eligible       bool
+	Reason         string
+	BodySolves     int
+	PointTransfers int
 }
 
 type bodySolveAttributionKey struct {
@@ -42,6 +56,7 @@ type solveAttribution struct {
 	stats            *Stats
 	key              bodySolveAttributionKey
 	dependencyChange bool
+	composition      body.CompositionEligibility
 }
 
 func newSolveAttribution(stats *Stats, bodyID uint64, function summary.SummaryKey, phase SolvePhase, context bool) *solveAttribution {
@@ -55,7 +70,9 @@ func solveAttributionFor(stats *Stats, prepared *body.Static, function summary.S
 	if stats == nil || prepared == nil {
 		return nil
 	}
-	return newSolveAttribution(stats, prepared.IdentityDigest(), function, phase, context)
+	attribution := newSolveAttribution(stats, prepared.IdentityDigest(), function, phase, context)
+	attribution.composition = prepared.CompositionEligibility()
+	return attribution
 }
 
 func (a *solveAttribution) afterDependencyChange() *solveAttribution {
@@ -80,6 +97,8 @@ func (s *Stats) recordBodySolve(a *solveAttribution, pointTransfers int) {
 		entry.Function = a.key.function
 		entry.Phase = a.key.phase
 		entry.Context = a.key.context
+		entry.CompositionEligible = a.composition.Eligible()
+		entry.CompositionReason = a.composition.Reason
 	}
 	entry.BodySolves++
 	entry.PointTransfers += pointTransfers
@@ -88,6 +107,35 @@ func (s *Stats) recordBodySolve(a *solveAttribution, pointTransfers int) {
 		entry.DependencyChangePointTransfers += pointTransfers
 	}
 	s.bodySolveAttribution[a.key] = entry
+}
+
+// CompositionCostCensus returns a stable eligible-versus-rejection aggregation
+// of the body solves and point transfers already recorded by Stats.
+func (s *Stats) CompositionCostCensus() []CompositionCost {
+	if s == nil || len(s.bodySolveAttribution) == 0 {
+		return nil
+	}
+	byReason := make(map[string]CompositionCost)
+	for _, entry := range s.bodySolveAttribution {
+		reason := entry.CompositionReason
+		cost := byReason[reason]
+		cost.Eligible = entry.CompositionEligible
+		cost.Reason = reason
+		cost.BodySolves += entry.BodySolves
+		cost.PointTransfers += entry.PointTransfers
+		byReason[reason] = cost
+	}
+	out := make([]CompositionCost, 0, len(byReason))
+	for _, cost := range byReason {
+		out = append(out, cost)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Eligible != out[j].Eligible {
+			return out[i].Eligible
+		}
+		return out[i].Reason < out[j].Reason
+	})
+	return out
 }
 
 // BodySolveAttribution returns a stable snapshot of per-body solve work.

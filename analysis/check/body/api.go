@@ -167,6 +167,9 @@ type Static struct {
 	resultVersionPrefixMu    sync.Mutex
 	resultVersionPrefix      internalhash.Writer
 	resultVersionPrefixReady bool
+
+	compositionEligibilityOnce sync.Once
+	compositionEligibility     CompositionEligibility
 }
 
 // HasCallSites reports whether the prepared body contains any statically
