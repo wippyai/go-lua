@@ -81,7 +81,10 @@ type Stats struct {
 	MaterializedContextNewContexts             int
 	SummaryCacheHits                           int
 	SummaryCacheMisses                         int
+	RelationProducersEligible                  int
+	RelationOwnersActive                       int
 	RelationCallsHandled                       int
+	RelationActivationFallbacks                int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }
@@ -153,11 +156,10 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	var relationActivation *relationRunActivation
 	if config.enableRelationActivation {
 		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil).exactLeafActivationSlice()
-		frozen, err := catalog.Freeze(config.Context)
+		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
 			return Result{}, err
 		}
-		relationActivation = newRelationRunActivation(frozen)
 	}
 	functions := make([]query.Function, 0, 1+len(keys.functions)+keys.contexts.Len())
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
@@ -266,11 +268,10 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	var relationActivation *relationRunActivation
 	if config.enableRelationActivation {
 		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn).exactLeafActivationSlice()
-		frozen, err := catalog.Freeze(config.Context)
+		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
 			return Result{}, err
 		}
-		relationActivation = newRelationRunActivation(frozen)
 	}
 	functions := make([]query.Function, 0, 1+len(keys.functions))
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)

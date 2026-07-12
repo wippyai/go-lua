@@ -1,9 +1,30 @@
 package program
 
 import (
+	"context"
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 )
+
+func freezeRelationActivation(ctx context.Context, stats *Stats, catalog relationRunCatalog) (*relationRunActivation, error) {
+	recordRelationActivationCensus(stats, catalog)
+	frozen, err := catalog.Freeze(ctx)
+	if err == nil {
+		return newRelationRunActivation(frozen), nil
+	}
+	// Cancellation belongs to the whole program transaction and must remain
+	// observable. A relation-specific preparation/certification rejection only
+	// declines the optimization: legacy solving is still complete and sound.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	if stats != nil {
+		stats.RelationActivationFallbacks++
+	}
+	return nil, nil
+}
 
 // relationRunActivation is the single immutable authority installed for one
 // program run.  Resolver routing, cache fencing and retained-state ownership
@@ -36,6 +57,18 @@ func newRelationRunActivation(snapshot relationRunSnapshot) *relationRunActivati
 	return &relationRunActivation{
 		snapshot: snapshot,
 		policy:   newRelationOwnerCachePolicy(snapshot.consumers),
+	}
+}
+
+func recordRelationActivationCensus(stats *Stats, catalog relationRunCatalog) {
+	if stats == nil {
+		return
+	}
+	stats.RelationProducersEligible += len(catalog.entries)
+	for _, owner := range catalog.consumers.entries {
+		if owner.active {
+			stats.RelationOwnersActive++
+		}
 	}
 }
 

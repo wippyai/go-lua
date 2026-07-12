@@ -80,6 +80,29 @@ func TestRelationActivationCancellationPublishesNoSharedState(t *testing.T) {
 	}
 }
 
+func TestRelationActivationFreezeRejectionFallsBackToLegacy(t *testing.T) {
+	stats := &Stats{}
+	activation, err := freezeRelationActivation(context.Background(), stats, relationRunCatalog{})
+	if err != nil {
+		t.Fatalf("freeze rejection escaped optimization boundary: %v", err)
+	}
+	if activation != nil {
+		t.Fatal("rejected catalog produced an activation")
+	}
+	if stats.RelationActivationFallbacks != 1 {
+		t.Fatalf("activation fallbacks = %d, want 1", stats.RelationActivationFallbacks)
+	}
+}
+
+func TestRelationActivationFreezeCancellationDoesNotFallBack(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	activation, err := freezeRelationActivation(ctx, &Stats{}, relationRunCatalog{})
+	if activation != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled freeze = activation:%v error:%v, want nil/context.Canceled", activation, err)
+	}
+}
+
 func TestRelationActivationRunBoundChunkExactDifferential(t *testing.T) {
 	stmts := parseChunk(t, `
 local function leaf(): string
