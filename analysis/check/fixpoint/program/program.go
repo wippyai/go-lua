@@ -117,7 +117,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	applyMetatableMethodReceiverEntryStates(&keys, bindings, config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
 	applyInferredParamEntryStates(&keys, bindings, inferred)
 	functions := make([]query.Function, 0, 1+len(keys.functions)+keys.contexts.Len())
-	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO)
+	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
 	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, config.SummaryCache, retained.newOwner(keys.rootKey), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
@@ -196,7 +196,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		return Result{}, err
 	}
 	functions := make([]query.Function, 0, 1+len(keys.functions))
-	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO)
+	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
 	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, prepared.function(fn), config.Check, config.Stats, config.SummaryCache, retained.newOwner(keys.rootKey), config.CacheProfile, summaryOwnerResolutionDigest(keys, keys.rootKey), contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))

@@ -75,12 +75,13 @@ type retainedSummaryApplicationOwner struct {
 type retainedSummaryApplicationRun struct {
 	reg     *axis.Registry
 	enabled bool
+	profile string
 	owners  []*retainedSummaryApplicationOwner
 	byKey   map[summary.SummaryKey]*retainedSummaryApplicationOwner
 }
 
-func newRetainedSummaryApplicationRun(reg *axis.Registry, enabled bool) *retainedSummaryApplicationRun {
-	return &retainedSummaryApplicationRun{reg: reg, enabled: enabled}
+func newRetainedSummaryApplicationRun(reg *axis.Registry, enabled bool, profile string) *retainedSummaryApplicationRun {
+	return &retainedSummaryApplicationRun{reg: reg, enabled: enabled, profile: profile}
 }
 
 func (r *retainedSummaryApplicationRun) newOwner(key summary.SummaryKey) *retainedSummaryApplicationOwner {
@@ -126,19 +127,33 @@ func (r *retainedSummaryApplicationRun) takeMaterializationResult(
 		return nil, nil, false, nil
 	}
 	published := owner.published
-	if !published.retained || published.result == nil || published.key.resolution != resolution {
+	if published.result == nil || published.key.profile != r.profile || published.key.resolution != resolution {
 		return nil, nil, false, nil
 	}
 	if len(changedRetainedSummaryDependencies(owner.reg, published.deps, reader)) != 0 {
 		return nil, nil, false, nil
 	}
-	session, ok := published.resource.(*body.RetainedPreparedSession)
-	if !ok || session == nil {
-		return nil, nil, false, nil
-	}
-	compatible, err := session.Compatible(prepared, config)
-	if err != nil || !compatible {
-		return nil, nil, false, err
+	if published.retained {
+		session, ok := published.resource.(*body.RetainedPreparedSession)
+		if !ok || session == nil {
+			return nil, nil, false, nil
+		}
+		compatible, err := session.Compatible(prepared, config)
+		if err != nil || !compatible {
+			return nil, nil, false, err
+		}
+	} else {
+		bodyDigest, err := prepared.IdentityDigestContext(config.Context)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		inputDigest, err := body.InputDigestContext(prepared, config)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if published.key.body != bodyDigest || published.key.input != inputDigest {
+			return nil, nil, false, nil
+		}
 	}
 	result := published.result
 	published.result = nil

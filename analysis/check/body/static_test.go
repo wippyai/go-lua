@@ -232,6 +232,37 @@ func TestRebindBoundaryProvidersClearsLazyCallOutcomeCache(t *testing.T) {
 	assertProductEqual(t, reg, second.Results[0].Value, secondWant)
 }
 
+func TestRebindBoundaryProvidersExactPreservesPublishedFacts(t *testing.T) {
+	reg, markKey := testRegistry(t)
+	stmts := parseChunk(t, `local out = f()`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
+	prepared, err := PrepareBoundChunk(stmts, bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+
+	want := markedValue(reg, markKey, markLow)
+	result := solvePreparedForTest(t, prepared, SolveConfig{CallOutcome: staticCallOutcome(want)})
+	point := requireOnlyCallSitePoint(t, result)
+	if _, ok := result.CallOutcomeAt(point); !ok {
+		t.Fatal("initial CallOutcomeAt failed")
+	}
+	sentinel := cfg.Point(^uint32(0))
+	result.published.pointReachable[sentinel] = true
+
+	if _, err := RebindBoundaryProvidersExact(result, prepared, SolveConfig{CallOutcome: staticCallOutcome(want)}); err != nil {
+		t.Fatalf("RebindBoundaryProvidersExact: %v", err)
+	}
+	if !result.published.pointReachable[sentinel] {
+		t.Fatal("exact rebind rebuilt validated PublishedFacts")
+	}
+	got, ok := result.CallOutcomeAt(point)
+	if !ok || len(got.Results) != 1 {
+		t.Fatalf("rebound CallOutcomeAt = %#v/%v, want one result", got, ok)
+	}
+	assertProductEqual(t, reg, got.Results[0].Value, want)
+}
+
 func TestOpenTailReturnPresenceRelationsUseCachedCallOutcome(t *testing.T) {
 	reg, _ := testRegistry(t)
 	stmts := parseChunk(t, `return f()`)

@@ -87,9 +87,10 @@ type materializedSolveCacheKey struct {
 type materializedSolveCacheEntry struct {
 	// routing identifies the owner-local call-context routing table captured by
 	// this solve. It deliberately excludes unrelated program contexts.
-	routing uint64
-	entry   materializedSolveEntryState
-	deps    map[summary.SummaryKey]trackedSummaryRead
+	routing    uint64
+	resolution uint64
+	entry      materializedSolveEntryState
+	deps       map[summary.SummaryKey]trackedSummaryRead
 	// noDepUniverse pins solves with zero tracked summary reads to the summary
 	// universe they observed. A later materialization pass can make a callee
 	// summary nameable even though the first solve had no dependency to track.
@@ -230,9 +231,9 @@ func solveMaterializedPreparedAttributed(
 		result, err := solvePreparedCountedWithTransfers(prepared, buildConfig(summaries), counter, nil, attribution)
 		return result, true, err
 	}
-	if cached, ok := cache.read(prepared, owner, routing, entry, summaries); ok {
+	if cached, ok := cache.read(prepared, owner, routing, resolution, entry, summaries); ok {
 		config := buildConfig(summaries)
-		result, err := body.RebindBoundaryProviders(cached, prepared, config.SolveConfig())
+		result, err := body.RebindBoundaryProvidersExact(cached, prepared, config.SolveConfig())
 		return result, false, err
 	}
 	if cache.handoff != nil {
@@ -242,12 +243,12 @@ func solveMaterializedPreparedAttributed(
 			return nil, false, err
 		}
 		if ok {
-			result, err = body.RebindBoundaryProviders(result, prepared, config.SolveConfig())
+			result, err = body.RebindBoundaryProvidersExact(result, prepared, config.SolveConfig())
 			if err != nil {
 				result.ReleaseTransient()
 				return nil, false, err
 			}
-			cache.write(prepared, owner, routing, entry, summaries, deps, result)
+			cache.write(prepared, owner, routing, resolution, entry, summaries, deps, result)
 			cache.handoff.finishMaterializationHandoff(owner)
 			return result, false, nil
 		}
@@ -261,7 +262,7 @@ func solveMaterializedPreparedAttributed(
 	if err != nil {
 		return nil, true, err
 	}
-	cache.write(prepared, owner, routing, entry, summaries, tracked.deps, result)
+	cache.write(prepared, owner, routing, resolution, entry, summaries, tracked.deps, result)
 	return result, true, nil
 }
 
@@ -289,6 +290,7 @@ func (c *materializedSolveCache) read(
 	prepared *body.Static,
 	owner summary.SummaryKey,
 	routing uint64,
+	resolution uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
 ) (*body.Result, bool) {
@@ -296,7 +298,7 @@ func (c *materializedSolveCache) read(
 		return nil, false
 	}
 	cached, ok := c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}]
-	if !ok || cached.result == nil || cached.routing != routing {
+	if !ok || cached.result == nil || cached.routing != routing || cached.resolution != resolution {
 		return nil, false
 	}
 	if !materializedSolveEntryStatesEqual(c.reg, cached.entry, entry) {
@@ -344,6 +346,7 @@ func (c *materializedSolveCache) write(
 	prepared *body.Static,
 	owner summary.SummaryKey,
 	routing uint64,
+	resolution uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
 	deps map[summary.SummaryKey]trackedSummaryRead,
@@ -362,6 +365,7 @@ func (c *materializedSolveCache) write(
 	}
 	c.entries[materializedSolveCacheKey{prepared: prepared, owner: owner}] = materializedSolveCacheEntry{
 		routing:            routing,
+		resolution:         resolution,
 		entry:              entry,
 		deps:               cloneTrackedSummaryReads(deps),
 		noDepUniverseKnown: noDepUniverseKnown,

@@ -305,12 +305,14 @@ func (c *SummarySolveCache) solveRetainedOrdinary(
 	projected, err := summaryprojection.FromResultContext(config.Context, result)
 	if err != nil {
 		attempt.Abort()
+		result.ReleaseTransient()
 		return summary.Summary{}, err
 	}
 	if dependencyChanged && dependencyChangeTransfers != nil && config.Stats != nil {
 		*dependencyChangeTransfers += config.Stats.Transfer.Solver.TransferCalls - beforeTransfers
 	}
-	if !attempt.publishResult(tracked.deps, pointSummaryDependencies{}, nil, projected, nil) {
+	if !attempt.publishResult(tracked.deps, pointSummaryDependencies{}, nil, projected, result) {
+		result.ReleaseTransient()
 		return summary.Summary{}, fmt.Errorf("program: ordinary summary publication rejected")
 	}
 	c.write(cacheKey, tracked.deps, projected)

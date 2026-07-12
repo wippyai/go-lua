@@ -558,12 +558,21 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	if firstSnapshot.publicReads != 0 || firstSnapshot.ownedReads == 0 {
 		t.Fatalf("summary dependency reads = public:%d owned:%d, want owned-only dependency reads", firstSnapshot.publicReads, firstSnapshot.ownedReads)
 	}
+	resolutionChanged, resolutionChangedSolved, err := solveMaterializedPreparedAttributed(
+		cache, prepared, owner, 7, 9, materializedSolveEntryState{}, firstSnapshot, build, &solves, nil,
+	)
+	if err != nil {
+		t.Fatalf("resolution-changed solveMaterializedPreparedAttributed: %v", err)
+	}
+	if resolutionChanged == first || !resolutionChangedSolved || solves != 2 {
+		t.Fatalf("resolution miss = same:%v solved:%v solves:%d, want new result, solve, two solves total", resolutionChanged == first, resolutionChangedSolved, solves)
+	}
 	changed, changedSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, secondSnapshot, build, &solves)
 	if err != nil {
 		t.Fatalf("changed solveMaterializedPrepared: %v", err)
 	}
-	if changed == first || !changedSolved || solves != 2 {
-		t.Fatalf("cache miss = same:%v solved:%v solves:%d, want new result, solve, two solves total", changed == first, changedSolved, solves)
+	if changed == first || !changedSolved || solves != 3 {
+		t.Fatalf("cache miss = same:%v solved:%v solves:%d, want new result, solve, three solves total", changed == first, changedSolved, solves)
 	}
 	if secondSnapshot.publicReads != 0 || secondSnapshot.ownedReads == 0 {
 		t.Fatalf("changed summary dependency reads = public:%d owned:%d, want owned-only dependency reads", secondSnapshot.publicReads, secondSnapshot.ownedReads)

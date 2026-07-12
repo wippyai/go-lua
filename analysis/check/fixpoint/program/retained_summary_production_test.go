@@ -159,6 +159,74 @@ func TestRetainedSummaryProductionCancellationPublishesNothingAndReleases(t *tes
 	}
 }
 
+func TestOrdinarySummaryMaterializationHandoffSkipsDuplicateBodySolve(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, "local total = 0\nfor i = 1, 40 do total = total + i end\nreturn f(total)")
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
+	prepared, err := body.PrepareBoundChunk(stmts, bindings, body.Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+	dep := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99711)))
+	ownerKey := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99712)))
+	const resolution = uint64(992)
+	reader := retainedSummaryTestSnapshot(reg, typevalue.FromType(reg, typ.String), dep)
+
+	run := newRetainedSummaryApplicationRun(reg, true, "ordinary-handoff")
+	defer run.Release()
+	owner := run.newOwner(ownerKey)
+	summaryCache := NewSummarySolveCache(reg)
+	if _, err := summaryCache.solveRetainedAttributed(
+		prepared, "ordinary-handoff", resolution, reader,
+		retainedProductionConfig(reg, dep, &body.Stats{}), owner,
+		nil, nil, nil, nil, nil, nil, nil,
+	); err != nil {
+		t.Fatalf("ordinary summary solve: %v", err)
+	}
+	if owner.published == nil || owner.published.retained || owner.published.result == nil {
+		t.Fatal("ordinary summary solve did not publish its completed body result")
+	}
+
+	materialStats := body.Stats{}
+	materialCache := newMaterializedSolveCache(reg, run)
+	materialSolves := 0
+	handoff, solved, err := solveMaterializedPreparedAttributed(
+		materialCache, prepared, ownerKey, 17, resolution, materializedSolveEntryState{}, reader,
+		retainedProductionConfig(reg, dep, &materialStats), &materialSolves, nil,
+	)
+	if err != nil {
+		t.Fatalf("ordinary materialization handoff: %v", err)
+	}
+	if solved || materialSolves != 0 || materialStats.Transfer.Solver.TransferCalls != 0 {
+		t.Fatalf("ordinary handoff = solved:%v bodies:%d transfers:%d, want no body solve", solved, materialSolves, materialStats.Transfer.Solver.TransferCalls)
+	}
+	if owner.published.result != nil {
+		t.Fatal("ordinary handoff owner still owns the transferred result")
+	}
+
+	tracked := &trackingSummaryReader{reg: reg, base: reader}
+	cleanConfig := retainedProductionConfig(reg, dep, &body.Stats{})(tracked)
+	cleanConfig.SummaryInputDigests = func() []uint64 { return trackedSummaryReadDigests(reg, tracked.deps) }
+	clean, err := body.SolvePrepared(prepared, cleanConfig.SolveConfig())
+	if err != nil {
+		t.Fatalf("clean materialization solve: %v", err)
+	}
+	if handoff.ResultVersion() != clean.ResultVersion() {
+		t.Fatalf("ResultVersion handoff=%d clean=%d", handoff.ResultVersion(), clean.ResultVersion())
+	}
+	gotSummary, err := summaryprojection.FromResultContext(context.Background(), handoff)
+	if err != nil {
+		t.Fatalf("handoff projection: %v", err)
+	}
+	wantSummary, err := summaryprojection.FromResultContext(context.Background(), clean)
+	if err != nil {
+		t.Fatalf("clean projection: %v", err)
+	}
+	if !summary.EqualNormalized(reg, gotSummary, wantSummary) {
+		t.Fatal("ordinary handoff summary differs from clean solve")
+	}
+}
+
 func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity(t *testing.T) {
 	reg := standard.Registry()
 	// This shape represents the expensive edge we care about: loop work followed
@@ -176,7 +244,7 @@ func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity
 	summaryStats := body.Stats{}
 	buildSummary := retainedProductionConfig(reg, dep, &summaryStats)
 	summaryCache := NewSummarySolveCache(reg)
-	run := newRetainedSummaryApplicationRun(reg, true)
+	run := newRetainedSummaryApplicationRun(reg, true, "handoff")
 	defer run.Release()
 	owner := run.newOwner(ownerKey)
 	readers := []summary.Snapshot{
