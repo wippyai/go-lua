@@ -209,11 +209,22 @@ func evaluatePreparedAcyclicLegacyRaw(prepared *PreparedPlanCompiler, view Relat
 	exit := rowsByPoint[prepared.graph.Exit()]
 	rows := make([]Row, len(exit))
 	for i, row := range exit {
-		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs}
+		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs, Observations: row.Observations,
+			PathRefinements: row.paramPreserved.certifiedRefinements(prepared.builder.Arena(), prepared.builder.EffectArena(), prepared.shape, row, prepared.plan.BoundaryParams(), prepared.plan.BoundaryCaptures())}
 	}
 	relation, err := prepared.builder.Build(prepared.certificate, rows)
 	if err != nil {
 		return Relation{}, err
+	}
+	relation.observationComplete = prepared.observationComplete
+	if direct != nil {
+		for _, cell := range direct.Cells() {
+			dependency, ok := view.Lookup(cell)
+			if !ok || !dependency.ObservationCoverageComplete() {
+				relation.observationComplete = false
+				break
+			}
+		}
 	}
 	return relation, nil
 }

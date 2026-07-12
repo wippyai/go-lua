@@ -17,6 +17,7 @@ type SymbolicCFGRow struct {
 	Operations      []Operation
 	Effects         []EffectTerm
 	Proofs          []BranchProofTerm
+	Observations    []ObservationTerm
 	Output          summary.Summary
 	genericBindings map[symbol.ID]symbolicGenericBinding
 	paramPreserved  paramPreservationLedger
@@ -114,6 +115,11 @@ func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
 			return false
 		}
 	}
+	for _, observation := range row.Observations {
+		if !observation.valid(arena, shape) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -124,6 +130,7 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 		Operations:      append([]Operation(nil), row.Operations...),
 		Effects:         append([]EffectTerm(nil), row.Effects...),
 		Proofs:          append([]BranchProofTerm(nil), row.Proofs...),
+		Observations:    append([]ObservationTerm(nil), row.Observations...),
 		Output:          row.Output.Clone(),
 		genericBindings: make(map[symbol.ID]symbolicGenericBinding, len(row.genericBindings)),
 		paramPreserved:  row.paramPreserved.clone(),
@@ -161,7 +168,7 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 }
 
 func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
+	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.Observations) != len(right.Observations) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
 		return false
 	}
 	if !summary.Equal(arena.reg, left.Output, right.Output) {
@@ -184,6 +191,11 @@ func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
 	}
 	for i := range left.Proofs {
 		if left.Proofs[i] != right.Proofs[i] {
+			return false
+		}
+	}
+	for i := range left.Observations {
+		if left.Observations[i] != right.Observations[i] {
 			return false
 		}
 	}

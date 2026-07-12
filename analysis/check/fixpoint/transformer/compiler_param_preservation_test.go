@@ -28,10 +28,12 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 		Guard:           calleeBuilder.Arena().True(),
 		Ops:             []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: calleeBuilder.Arena().Constant(typevalue.LiteralString(reg, "done"))}},
 		PathRefinements: []PathRefinementTerm{{Path: calleeBuilder.Arena().Path(calleeRoot), Value: calleeBuilder.Arena().Root(calleeRoot)}},
+		Observations:    []ObservationTerm{{Kind: ObservationAssignment, Point: 0, Guard: calleeBuilder.Arena().True(), Symbol: 9001, Actual: calleeBuilder.Arena().Root(calleeRoot)}},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	callee.observationComplete = true
 
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -73,6 +75,18 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 	detailed, exact := caller.SpecializeDetailed(cursor, nil, SpecializationContext{})
 	if !exact || len(detailed.Summary.NormalReturnFacts.PathRefinements) != 0 || len(detailed.PreservedParams) != 1 || detailed.PreservedParams[0] != 0 {
 		t.Fatalf("forwarded chain specialization = %#v/%v, want canonical Summary plus preserved param 0", detailed, exact)
+	}
+	items := detailed.Observations.Items()
+	if caller.ObservationCoverageComplete() || len(items) < 2 {
+		t.Fatalf("direct observation projection complete=%v items=%#v, want evidence but fail-closed whole-owner coverage", caller.ObservationCoverageComplete(), items)
+	}
+	var assignmentSeen, callResultSeen bool
+	for _, item := range items {
+		assignmentSeen = assignmentSeen || item.Kind == ObservationAssignment && item.Symbol == 9001 && product.Equal(reg, item.Actual, argumentValue)
+		callResultSeen = callResultSeen || item.Kind == ObservationCallResult && item.Point == call && item.Symbol == result && product.Equal(reg, item.Actual, typevalue.LiteralString(reg, "done"))
+	}
+	if !assignmentSeen || !callResultSeen {
+		t.Fatalf("direct observation projection = %#v", items)
 	}
 }
 

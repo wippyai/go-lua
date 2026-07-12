@@ -158,6 +158,7 @@ type Plan struct {
 	extensionRows                []extensionRow
 	extensionCells               []ExtensionCell
 	boundaryParams               []symbol.ID
+	boundaryParamContracts       []product.Value
 	boundaryCaptures             []symbol.ID
 	boundaryCapturesValid        bool
 	boundaryReturns              []product.Value

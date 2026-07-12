@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestPlanOwnsOrderedBoundaryParameterSymbols(t *testing.T) {
@@ -37,6 +39,25 @@ func TestPlanOwnsDeclaredBoundaryReturns(t *testing.T) {
 	got = append(got, product.Top())
 	if len(plan.BoundaryReturns()) != 1 {
 		t.Fatal("boundary return getter exposed storage")
+	}
+}
+
+func TestPlanOwnsWidthMatchedBoundaryParamContracts(t *testing.T) {
+	reg := standard.Registry()
+	first := typevalue.LiteralString(reg, "first")
+	values := []product.Value{first, product.Top()}
+	plan := New(cfg.New(), factflow.FactsInput{}).WithBoundaryParams([]symbol.ID{7, 9}).WithBoundaryParamContracts(values)
+	values[0] = product.Top()
+	got := plan.BoundaryParamContracts()
+	if len(got) != 2 || !product.Equal(reg, got[0], first) {
+		t.Fatalf("boundary param contracts = %#v", got)
+	}
+	got[0] = product.Top()
+	if !product.Equal(reg, plan.BoundaryParamContracts()[0], first) {
+		t.Fatal("boundary param contract getter exposed storage")
+	}
+	if mismatch := plan.WithBoundaryParamContracts([]product.Value{product.Top()}).BoundaryParamContracts(); len(mismatch) != 0 {
+		t.Fatalf("width-mismatched contracts published: %#v", mismatch)
 	}
 }
 

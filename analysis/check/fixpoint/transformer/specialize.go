@@ -125,6 +125,7 @@ type SpecializationResult struct {
 	Summary           summary.Summary
 	PreservedParams   []uint32
 	PreservedCaptures []uint32
+	Observations      ObservationProjection
 }
 
 // SpecializeDetailed evaluates the same transaction as Specialize while
@@ -142,7 +143,50 @@ func (r Relation) SpecializeDetailed(cursor BindingCursor, descriptors *Descript
 	if !ok {
 		return SpecializationResult{}, false
 	}
-	return SpecializationResult{Summary: sum, PreservedParams: params, PreservedCaptures: captures}, true
+	observations, ok := r.specializedObservations(cursor, context)
+	if !ok {
+		return SpecializationResult{}, false
+	}
+	return SpecializationResult{Summary: sum, PreservedParams: params, PreservedCaptures: captures, Observations: observations}, true
+}
+
+func (r Relation) specializedObservations(cursor BindingCursor, context SpecializationContext) (ObservationProjection, bool) {
+	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
+		return ObservationProjection{}, false
+	}
+	var out []Observation
+	for _, row := range r.rows {
+		rowFeasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
+		if !valid {
+			return ObservationProjection{}, false
+		}
+		if !rowFeasible {
+			continue
+		}
+		for _, term := range row.Observations {
+			feasible, valid := r.arena.evalGuard(term.Guard, cursor, context)
+			if !valid {
+				return ObservationProjection{}, false
+			}
+			if !feasible {
+				continue
+			}
+			actual, valid := r.arena.evalValue(term.Actual, cursor, context)
+			if !valid {
+				return ObservationProjection{}, false
+			}
+			item := Observation{Owner: term.Owner, Route: term.Route, Kind: term.Kind, Point: term.Point, Anchor: term.Anchor, Symbol: term.Symbol, Slot: term.Slot, Actual: actual}
+			if term.Expected != 0 {
+				item.Expected, valid = r.arena.evalValue(term.Expected, cursor, context)
+				if !valid {
+					return ObservationProjection{}, false
+				}
+				item.HasExpected = true
+			}
+			out = append(out, item)
+		}
+	}
+	return canonicalizeObservations(r.arena.reg, out), true
 }
 
 // specializedPreservedParams intersects the must-preservation sets of every

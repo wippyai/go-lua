@@ -43,6 +43,25 @@ func materializeDeclaredReturnTypeValues(reg *axis.Registry, values *typevalue.C
 	return out
 }
 
+func materializeDeclaredParamTypeValues(reg *axis.Registry, values *typevalue.Cache, resolver *typeresolve.Resolver, fn *ast.FunctionExpr) []product.Value {
+	if reg == nil || values == nil || resolver == nil || fn == nil || fn.ParList == nil {
+		return nil
+	}
+	out := make([]product.Value, len(fn.ParList.Names))
+	for i := range out {
+		out[i] = product.Top()
+		if i >= len(fn.ParList.Types) || fn.ParList.Types[i] == nil {
+			continue
+		}
+		t, ok := resolver.Type(fn.ParList.Types[i])
+		if !ok {
+			continue
+		}
+		out[i] = values.FromTypeWithWitness(reg, t)
+	}
+	return out
+}
+
 func declaredReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {
 	if len(types) == 1 {
 		if tuple, ok := types[0].(*ast.TupleTypeExpr); ok {

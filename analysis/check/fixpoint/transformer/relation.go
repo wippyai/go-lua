@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -37,6 +38,7 @@ type Row struct {
 	Effects         []EffectTerm
 	Proofs          []BranchProofTerm
 	PathRefinements []PathRefinementTerm
+	Observations    []ObservationTerm
 }
 
 // Relation is immutable. contextual is lattice Top: callers must use the
@@ -51,6 +53,8 @@ type Relation struct {
 	inferReturnCorrelations bool
 	contextual              string
 	widened                 bool
+	observationComplete     bool
+	paramContracts          []product.Value
 }
 
 // relationOutputAuthority is the immutable capability snapshot carried by a
@@ -123,10 +127,11 @@ func (a *relationOutputAuthority) allowsSummary(kind callboundary.BoundaryFactKi
 	return ok
 }
 
-func (r Relation) Shape() Shape             { return r.shape }
-func (r Relation) ContextualReason() string { return r.contextual }
-func (r Relation) Widened() bool            { return r.widened }
-func (r Relation) Rows() int                { return len(r.rows) }
+func (r Relation) Shape() Shape                      { return r.shape }
+func (r Relation) ContextualReason() string          { return r.contextual }
+func (r Relation) Widened() bool                     { return r.widened }
+func (r Relation) Rows() int                         { return len(r.rows) }
+func (r Relation) ObservationCoverageComplete() bool { return r.observationComplete }
 
 // Builder performs atomic validation before publishing an immutable relation.
 type Builder struct {
@@ -188,6 +193,7 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			Effects:         append([]EffectTerm(nil), row.Effects...),
 			Proofs:          append([]BranchProofTerm(nil), row.Proofs...),
 			PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...),
+			Observations:    append([]ObservationTerm(nil), row.Observations...),
 		}
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
@@ -262,6 +268,14 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 				return Relation{}, fmt.Errorf("transformer: row %d path refinement %d is not an unchanged parameter root or capture root", i, j)
 			}
 		}
+		for j, observation := range owned[i].Observations {
+			if !observation.valid(b.arena, b.shape) {
+				return Relation{}, fmt.Errorf("transformer: row %d observation %d is invalid or unsupported", i, j)
+			}
+		}
+		sort.Slice(owned[i].Observations, func(x, y int) bool {
+			return owned[i].Observations[x].canonical(b.arena) < owned[i].Observations[y].canonical(b.arena)
+		})
 		sort.Slice(owned[i].Ops, func(x, y int) bool { return operationLess(b.arena, owned[i].Ops[x], owned[i].Ops[y]) })
 		sort.Slice(owned[i].PathRefinements, func(x, y int) bool {
 			return owned[i].PathRefinements[x].canonical(b.arena) < owned[i].PathRefinements[y].canonical(b.arena)
@@ -273,6 +287,7 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 		shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors,
 		authority: snapshotRelationOutputAuthority(b.effectCatalog, b.caps), rows: owned,
 		inferReturnCorrelations: b.inferReturnCorrelations,
+		paramContracts:          append([]product.Value(nil), b.plan.BoundaryParamContracts()...),
 	}, nil
 }
 
@@ -318,7 +333,11 @@ func rowKey(a *Arena, effects *EffectArena, row Row) string {
 	for i, refinement := range row.PathRefinements {
 		refinementKeys[i] = refinement.canonical(a)
 	}
-	return fmt.Sprintf("%s|%016x|%s|%s|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"), strings.Join(proofKeys, ";"), strings.Join(refinementKeys, ";"))
+	observationKeys := make([]string, len(row.Observations))
+	for i, observation := range row.Observations {
+		observationKeys[i] = observation.canonical(a)
+	}
+	return fmt.Sprintf("%s|%016x|%s|%s|%s|%s|%s", a.canonicalGuard(row.Guard), uint64(summary.NormalizedPayloadDigest(a.reg, row.Output)), strings.Join(parts, ";"), strings.Join(effectKeys, ";"), strings.Join(proofKeys, ";"), strings.Join(refinementKeys, ";"), strings.Join(observationKeys, ";"))
 }
 func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
 	lk, rk := rowKey(a, effects, left), rowKey(a, effects, right)
@@ -338,7 +357,7 @@ func rowLess(a *Arena, effects *EffectArena, left, right Row) bool {
 }
 func operationEqual(a, b Operation) bool { return a == b }
 func rowEqual(arena *Arena, a, b Row) bool {
-	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || len(a.Proofs) != len(b.Proofs) || len(a.PathRefinements) != len(b.PathRefinements) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
+	if a.Guard != b.Guard || len(a.Ops) != len(b.Ops) || len(a.Effects) != len(b.Effects) || len(a.Proofs) != len(b.Proofs) || len(a.PathRefinements) != len(b.PathRefinements) || len(a.Observations) != len(b.Observations) || !summary.EqualNormalized(arena.reg, a.Output, b.Output) {
 		return false
 	}
 	for i := range a.Ops {
@@ -358,6 +377,11 @@ func rowEqual(arena *Arena, a, b Row) bool {
 	}
 	for i := range a.PathRefinements {
 		if a.PathRefinements[i] != b.PathRefinements[i] {
+			return false
+		}
+	}
+	for i := range a.Observations {
+		if a.Observations[i] != b.Observations[i] {
 			return false
 		}
 	}
@@ -432,20 +456,24 @@ func JoinRelation(a, b Relation) Relation {
 		a.authority = b.authority
 		a.descriptors = b.descriptors
 		a.inferReturnCorrelations = b.inferReturnCorrelations
+		a.observationComplete = b.observationComplete
+		a.paramContracts = append([]product.Value(nil), b.paramContracts...)
 	}
 	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
 		b.effects = a.effects
 		b.authority = a.authority
 		b.descriptors = a.descriptors
 		b.inferReturnCorrelations = a.inferReturnCorrelations
+		b.observationComplete = a.observationComplete
+		b.paramContracts = append([]product.Value(nil), a.paramContracts...)
 	}
-	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalRelationOutputAuthority(a.authority, b.authority) {
+	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || a.observationComplete != b.observationComplete || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) {
 		return Relation{shape: a.shape, arena: a.arena, effects: a.effects, contextual: "incompatible or contextual relation"}
 	}
 	rows := append(cloneRows(a.rows), b.rows...)
 	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
 	rows = dedupRows(a.arena, a.effects, rows)
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: a.observationComplete, paramContracts: append([]product.Value(nil), a.paramContracts...)}
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -466,7 +494,7 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || a.observationComplete != b.observationComplete || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))
@@ -485,6 +513,18 @@ func EqualRelation(a, b Relation) bool {
 	}
 	return true
 }
+
+func equalParamContracts(reg *axis.Registry, left, right []product.Value) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !product.Equal(reg, left[i], right[i]) {
+			return false
+		}
+	}
+	return true
+}
 func LessOrEqRelation(a, b Relation) bool {
 	if b.contextual != "" {
 		return true
@@ -497,7 +537,28 @@ func LessOrEqRelation(a, b Relation) bool {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, row := range rows {
-		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...), PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...)}
+		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...), PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...), Observations: append([]ObservationTerm(nil), row.Observations...)}
 	}
 	return out
+}
+
+func (r Relation) withObservationOwner(owner CellRef) Relation {
+	if owner == (CellRef{}) {
+		return Relation{shape: r.shape, arena: r.arena, contextual: "zero observation owner", widened: true}
+	}
+	r.rows = cloneRows(r.rows)
+	for i := range r.rows {
+		for j := range r.rows[i].Observations {
+			if prior := r.rows[i].Observations[j].Owner; prior != (CellRef{}) && prior != owner {
+				continue
+			}
+			r.rows[i].Observations[j].Owner = owner
+		}
+		sort.Slice(r.rows[i].Observations, func(a, b int) bool {
+			return r.rows[i].Observations[a].canonical(r.arena) < r.rows[i].Observations[b].canonical(r.arena)
+		})
+	}
+	sort.Slice(r.rows, func(i, j int) bool { return rowLess(r.arena, r.effects, r.rows[i], r.rows[j]) })
+	r.rows = dedupRows(r.arena, r.effects, r.rows)
+	return r
 }

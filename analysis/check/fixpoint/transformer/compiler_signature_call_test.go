@@ -52,6 +52,9 @@ func TestPlanCompilerPureSignatureCallFeedsReturnExactly(t *testing.T) {
 	if reason := relation.ContextualReason(); reason != "" {
 		t.Fatalf("pure signature call compiled contextually: %s", reason)
 	}
+	if relation.ObservationCoverageComplete() {
+		t.Fatal("return-target signature call incorrectly claimed complete diagnostic observation coverage")
+	}
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
 	got, exact := relation.Specialize(cursor, nil, nil)
 	returns, accepted := effectlowering.StaticScalarSignatureReturns(reg, nil, sig)

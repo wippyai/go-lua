@@ -62,7 +62,7 @@ func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicC
 	}
 	out := make([]SymbolicCFGRow, 0, len(callee.rows))
 	for rowIndex, calleeRow := range callee.rows {
-		rebased, err := rebaseDirectCallRow(builder, callerShape, caller, callee, rootBindings, calleeRow, targets)
+		rebased, err := rebaseDirectCallRow(builder, callerShape, caller, callee, rootBindings, calleeRow, targets, site)
 		if err != nil {
 			return nil, fmt.Errorf("transformer: direct-call callee row %d: %w", rowIndex, err)
 		}
@@ -104,7 +104,7 @@ func exactDirectCallTargets(site factflow.CallSiteView) ([]directCallTarget, err
 	return out, nil
 }
 
-func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, row Row, targets []directCallTarget) (SymbolicCFGRow, error) {
+func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, row Row, targets []directCallTarget, site factflow.CallSiteView) (SymbolicCFGRow, error) {
 	paramPreserved, err := rebaseDirectCallParamRefinements(builder.arena, callee.arena, callerShape, caller.paramPreserved, callee.shape, bindings, row.PathRefinements)
 	if err != nil {
 		return SymbolicCFGRow{}, err
@@ -112,7 +112,7 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 	if err := validateDirectCallStructuredOutput(callee.arena.reg, row.Output, callee.shape); err != nil {
 		return SymbolicCFGRow{}, err
 	}
-	values := make([]ValueTerm, 0, len(row.Ops)+len(row.Proofs))
+	values := make([]ValueTerm, 0, len(row.Ops)+len(row.Proofs)+len(row.Observations))
 	guards := []Guard{row.Guard}
 	opValueAt := make([]int, len(row.Ops))
 	for i, op := range row.Ops {
@@ -134,6 +134,17 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 			values = append(values, proof.Key)
 		}
 	}
+	observationValueAt := make([]int, len(row.Observations))
+	observationGuardAt := make([]int, len(row.Observations))
+	for i, observation := range row.Observations {
+		observationValueAt[i] = len(values)
+		values = append(values, observation.Actual)
+		if observation.Expected != 0 {
+			values = append(values, observation.Expected)
+		}
+		observationGuardAt[i] = len(guards)
+		guards = append(guards, observation.Guard)
+	}
 	rebasedTerms, err := RebaseTermDAGs(builder.arena, callee.arena, bindings, TermRebaseInput{Values: values, Paths: paths, Guards: guards})
 	if err != nil {
 		return SymbolicCFGRow{}, err
@@ -141,6 +152,18 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 	next := cloneCFGRow(caller)
 	next.paramPreserved = paramPreserved
 	next.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[0])
+	if len(callee.paramContracts) == int(callee.shape.Params) {
+		point, hasPoint := site.Point()
+		anchor, _ := site.Expr()
+		if !hasPoint {
+			return SymbolicCFGRow{}, fmt.Errorf("call observation has no source point")
+		}
+		for slot := uint32(0); slot < callee.shape.Params; slot++ {
+			actual := bindings.value(Root{Kind: RootParam, Index: slot})
+			expected := builder.arena.Constant(callee.paramContracts[slot])
+			next.Observations = recordObservationTerm(next.Observations, ObservationTerm{Kind: ObservationCallArgument, Point: point, Anchor: anchor, Guard: caller.Guard, Slot: slot, Actual: actual, Expected: expected})
+		}
+	}
 	returns := make(map[uint32]ValueTerm, len(row.Ops))
 	for i, op := range row.Ops {
 		value := rebasedTerms.Values[opValueAt[i]]
@@ -178,6 +201,17 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		return SymbolicCFGRow{}, err
 	}
 	next.Proofs = append(next.Proofs, structuredProofs...)
+	for i, observation := range row.Observations {
+		rebased := observation
+		point, _ := site.Point()
+		rebased = routeObservationTerm(rebased, point)
+		rebased.Actual = rebasedTerms.Values[observationValueAt[i]]
+		if observation.Expected != 0 {
+			rebased.Expected = rebasedTerms.Values[observationValueAt[i]+1]
+		}
+		rebased.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[observationGuardAt[i]])
+		next.Observations = recordObservationTerm(next.Observations, rebased)
+	}
 	if len(row.Effects) != 0 {
 		if callee.effects == nil {
 			return SymbolicCFGRow{}, fmt.Errorf("callee row effects have no arena")

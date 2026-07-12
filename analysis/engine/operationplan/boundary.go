@@ -27,6 +27,28 @@ func (p *Plan) WithBoundaryParams(params []symbol.ID) *Plan {
 	return &out
 }
 
+// WithBoundaryParamContracts binds the ordered declared parameter contracts
+// to BoundaryParams. A width mismatch clears the contracts fail-closed.
+func (p *Plan) WithBoundaryParamContracts(values []product.Value) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.boundaryParamContracts = nil
+	if len(values) != len(p.boundaryParams) {
+		return &out
+	}
+	out.boundaryParamContracts = append([]product.Value(nil), values...)
+	return &out
+}
+
+func (p *Plan) BoundaryParamContracts() []product.Value {
+	if p == nil {
+		return nil
+	}
+	return append([]product.Value(nil), p.boundaryParamContracts...)
+}
+
 // WithBoundaryCaptures returns a plan owning the ordered lexical capture
 // symbols used by symbolic capture roots. Duplicate/zero symbols, or a symbol
 // that is also a parameter, fail closed by clearing the capture boundary.

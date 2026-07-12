@@ -19,15 +19,16 @@ import (
 // certificate for one function. Evaluate allocates row scratch only; term DAGs,
 // descriptors, and operation-plan catalogs remain stable across equation reads.
 type PreparedPlanCompiler struct {
-	compiler    *PlanCompiler
-	registry    *axis.Registry
-	graph       cfg.Graph
-	plan        *operationplan.Plan
-	shape       Shape
-	builder     *Builder
-	base        planCompileContext
-	certificate SemanticCertificate
-	wtoTape     *symbolicWTOTape
+	compiler            *PlanCompiler
+	registry            *axis.Registry
+	graph               cfg.Graph
+	plan                *operationplan.Plan
+	shape               Shape
+	builder             *Builder
+	base                planCompileContext
+	certificate         SemanticCertificate
+	wtoTape             *symbolicWTOTape
+	observationComplete bool
 	// cyclic is retained as prepared topology metadata for compatibility and
 	// diagnostics. Evaluation deliberately does not branch on it: DAGs are the
 	// zero-component case of the same exact dense executor.
@@ -152,7 +153,8 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	return &PreparedPlanCompiler{
 		compiler: c, registry: reg, graph: graph, plan: plan, shape: shape,
 		builder: builder, base: ctx, certificate: certificate, wtoTape: tape,
-		cyclic: len(tape.components) != 0,
+		observationComplete: exactObservationCoverage(plan, shape),
+		cyclic:              len(tape.components) != 0,
 	}, nil
 }
 
@@ -220,12 +222,23 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	for i, row := range exitRows {
 		rows[i] = Row{
 			Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs,
+			Observations:    row.Observations,
 			PathRefinements: row.paramPreserved.certifiedRefinements(p.builder.Arena(), p.builder.EffectArena(), p.shape, row, p.plan.BoundaryParams(), p.plan.BoundaryCaptures()),
 		}
 	}
 	relation, err := p.builder.Build(p.certificate, rows)
 	if err != nil {
 		return contextual("compiler: relation admission: " + err.Error())
+	}
+	relation.observationComplete = p.observationComplete
+	if direct != nil {
+		for _, cell := range direct.Cells() {
+			dependency, ok := view.Lookup(cell)
+			if !ok || !dependency.ObservationCoverageComplete() {
+				relation.observationComplete = false
+				break
+			}
+		}
 	}
 	return relation
 }
@@ -298,8 +311,60 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 		}
 		rows[index].Values = rowCtx.locals
 		rows[index].genericBindings = rowCtx.genericBindings
+		if assignment, ok := p.plan.Facts().RootAssignment(point); ok && !p.cyclic {
+			value, present := rows[index].Values[assignment.TargetSymbol()]
+			if !present {
+				return nil, fmt.Errorf("observation: assignment target %d has no symbolic value", assignment.TargetSymbol())
+			}
+			anchor := factflow.ExprRef(0)
+			if source := assignment.Source(); source.HasExpr {
+				anchor = source.ExprRef
+			}
+			rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{Kind: ObservationAssignment, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: assignment.TargetSymbol(), Actual: value})
+		}
+		if site, ok := p.plan.Facts().CallSiteView(point); ok && !p.cyclic {
+			for targetIndex := 0; targetIndex < site.ResultTargetCount(); targetIndex++ {
+				target, found := site.ResultTargetAt(targetIndex)
+				if !found || target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 {
+					continue
+				}
+				value, present := rows[index].Values[target.TargetSymbol()]
+				if !present {
+					return nil, fmt.Errorf("observation: call result target %d has no symbolic value", target.TargetSymbol())
+				}
+				anchor, _ := site.Expr()
+				rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{Kind: ObservationCallResult, Point: point, Anchor: anchor, Guard: rows[index].Guard, Symbol: target.TargetSymbol(), Actual: value})
+			}
+		}
 	}
 	return rows, nil
+}
+
+func exactObservationCoverage(plan *operationplan.Plan, shape Shape) bool {
+	if plan == nil {
+		return false
+	}
+	if len(plan.BoundaryParamContracts()) != int(shape.Params) {
+		return false
+	}
+	facts := plan.Facts()
+	for raw := 0; raw < plan.PointCount(); raw++ {
+		site, ok := facts.CallSiteView(cfg.Point(raw))
+		if !ok {
+			continue
+		}
+		for i := 0; i < site.ResultTargetCount(); i++ {
+			target, found := site.ResultTargetAt(i)
+			if !found || target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 || target.TargetPathEmpty() || target.TargetPathSegmentCount() != 0 {
+				return false
+			}
+		}
+	}
+	// The term vocabulary currently covers assignment/call occurrences only.
+	// Until operationplan publishes a closed diagnostic-family requirement
+	// certificate (including abnormal terminals), whole-owner completeness must
+	// remain false even when every represented occurrence is exact.
+	return false
 }
 
 func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.CallSiteView) (DirectCallBindings, error) {
@@ -421,7 +486,7 @@ func (p *PreparedPlanCompiler) Equation(ref CellRef) (*PreparedEquation, error) 
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err
 		}
-		return p.evaluate(ctx, RelationView{}, nil), nil
+		return p.evaluate(ctx, RelationView{}, nil).withObservationOwner(ref), nil
 	})
 }
 
@@ -442,7 +507,7 @@ func (p *PreparedPlanCompiler) DirectEquation(ref CellRef, catalog DirectCallCat
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err
 		}
-		return p.evaluate(ctx, view, &catalog), nil
+		return p.evaluate(ctx, view, &catalog).withObservationOwner(ref), nil
 	})
 }
 
