@@ -68,6 +68,7 @@ func rowPreservesRefinementRoots(arena *EffectArena, row Row) bool {
 	residual := row.Output.Clone()
 	residual.Returns = nil
 	residual.ParamObligations = nil
+	residual.NormalReturnParams = nil
 	residual.NormalReturnFacts = facts
 	residual.MaySuspend = false
 	return len(summary.PresentFactKinds(residual)) == 0 && residual.HeapKeySpace == nil

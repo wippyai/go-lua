@@ -184,6 +184,7 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	ctx.directCalls = direct
 	initial := SymbolicCFGRow{
 		Guard: p.builder.Arena().True(), Values: ctx.locals, genericBindings: ctx.genericBindings,
+		paramPreserved: newParamPreservationLedger(p.shape.Params),
 	}
 	if p.shape.Params != 0 {
 		initial.Output.NormalReturnParams = make([]product.Value, p.shape.Params)
@@ -204,7 +205,10 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	}
 	rows := make([]Row, len(exitRows))
 	for i, row := range exitRows {
-		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs}
+		rows[i] = Row{
+			Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs,
+			PathRefinements: row.paramPreserved.certifiedRefinements(p.builder.Arena(), p.builder.EffectArena(), p.shape, row, p.plan.BoundaryParams()),
+		}
 	}
 	relation, err := p.builder.Build(p.certificate, rows)
 	if err != nil {
@@ -225,6 +229,7 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 			rowCtx.genericBindings = row.genericBindings
 			rowCtx.rowEffects = &row.Effects
 			rowCtx.rowOutput = &row.Output
+			row.paramPreserved.observeFact(rowCtx, point, cell.Kind())
 			if err := handler.Preflight(rowCtx, point); err != nil {
 				return nil, fmt.Errorf("%s: %w", cell.Kind(), err)
 			}
@@ -266,6 +271,7 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 		extensions := p.plan.ExtensionCursor(point)
 		for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
 			handler := p.compiler.extensions[cell.Kind()]
+			rows[index].paramPreserved.observeExtension(cell.Kind())
 			if err := handler.Preflight(rowCtx, point); err != nil {
 				return nil, fmt.Errorf("extension %d: %w", cell.Kind(), err)
 			}

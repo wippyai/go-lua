@@ -19,6 +19,7 @@ type SymbolicCFGRow struct {
 	Proofs          []BranchProofTerm
 	Output          summary.Summary
 	genericBindings map[symbol.ID]symbolicGenericBinding
+	paramPreserved  paramPreservationLedger
 }
 
 type SymbolicCFGTransfer func(cfg.Point, SymbolicCFGRow) (SymbolicCFGRow, error)
@@ -94,7 +95,7 @@ func acyclicCFGOrder(graph cfg.Graph) ([]cfg.Point, error) {
 }
 
 func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
-	if !arena.validGuard(row.Guard, shape) {
+	if !arena.validGuard(row.Guard, shape) || !row.paramPreserved.valid(shape.Params) {
 		return false
 	}
 	for _, value := range row.Values {
@@ -124,6 +125,7 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 		Proofs:          append([]BranchProofTerm(nil), row.Proofs...),
 		Output:          row.Output.Clone(),
 		genericBindings: make(map[symbol.ID]symbolicGenericBinding, len(row.genericBindings)),
+		paramPreserved:  row.paramPreserved.clone(),
 	}
 	for key, value := range row.Values {
 		out.Values[key] = value
@@ -158,7 +160,7 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 }
 
 func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) {
+	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
 		return false
 	}
 	if !summary.Equal(arena.reg, left.Output, right.Output) {

@@ -464,6 +464,12 @@ func exactWTOCFGRowHash(row SymbolicCFGRow) uint64 {
 	mix(uint64(len(row.Effects)))
 	mix(uint64(len(row.Proofs)))
 	mix(uint64(len(row.genericBindings)))
+	if row.paramPreserved.tracked {
+		mix(1)
+	}
+	for _, word := range row.paramPreserved.words {
+		mix(word)
+	}
 	return h
 }
 
