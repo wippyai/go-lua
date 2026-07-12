@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -17,6 +18,50 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestPreparedPlanCompilerReusesArenaAndMatchesLegacy(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), point, false)
+	graph.AddEdge(point, graph.Exit(), false)
+	shape, _ := factflow.NewValueSourceShape(false, false, false, false)
+	source, _ := factflow.NewStringLiteralValueSource("prepared", 0, 0, 0, shape)
+	plan := operationplan.New(graph, factflow.FactsInput{
+		Returns: map[cfg.Point]factflow.Return{point: factflow.NewReturn([]factflow.ValueSource{source})},
+	})
+	compiler := NewPlanCompiler()
+	prepared, err := compiler.Prepare(reg, graph, plan, Shape{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := prepared.Evaluate(), prepared.Evaluate()
+	if !EqualRelation(first, second) {
+		t.Fatal("repeated prepared evaluation replaced its relation arena or rows")
+	}
+	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
+	preparedSummary, preparedOK := first.Specialize(cursor, nil, nil)
+	want := summary.Normalize(reg, summary.Summary{Returns: []product.Value{typevalue.LiteralString(reg, "prepared")}})
+	if !preparedOK || !summary.Equal(reg, preparedSummary, want) {
+		t.Fatalf("prepared specialization differs\n got=%#v\nwant=%#v", preparedSummary, want)
+	}
+	equation, err := prepared.Equation(CellRef{Function: 101})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell, err := equation.Cell()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := SolveRelationCells(context.Background(), []RelationCell{cell}, RelationSolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, ok := snapshot.Lookup(cell.Ref)
+	if !ok || !EqualRelation(first, frozen) {
+		t.Fatal("prepared RelationCell changed the persistent relation identity")
+	}
+}
 
 func TestPlanCompilerDirectScalarReturnSpecializesExactly(t *testing.T) {
 	reg := standard.Registry()

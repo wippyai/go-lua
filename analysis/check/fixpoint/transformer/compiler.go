@@ -3,7 +3,6 @@ package transformer
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -20,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -314,145 +312,6 @@ func lowerGenericForBinding(ctx planCompileContext, point cfg.Point, publish boo
 	default:
 		return symbolicGenericBinding{}, fmt.Errorf("generic-for: iterator source unknown")
 	}
-}
-
-// Compile atomically returns either a complete relation or one contextual
-// relation naming every unsupported active family. No partial rows escape.
-func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape) Relation {
-	arena := NewArena(reg)
-	contextual := func(reason string) Relation {
-		return Relation{shape: shape, arena: arena, contextual: reason, widened: true}
-	}
-	if c == nil || reg == nil || graph == nil || plan == nil {
-		return contextual("compiler: registry, graph, plan, and compiler are required")
-	}
-	if graph.Size() != plan.PointCount() {
-		return contextual(fmt.Sprintf("compiler: graph points %d != operation rows %d", graph.Size(), plan.PointCount()))
-	}
-	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
-	outputCaps := DefaultOutputCapabilityRegistry()
-	summaryKinds := []callboundary.BoundaryFactKind{"NormalReturnParams", "NormalReturnFacts"}
-	if planReturnArity(plan) > 1 {
-		summaryKinds = append(summaryKinds, "ReturnConditionSlotRefinements", "ReturnPresenceRelations")
-	}
-	if planHasIteratorCall(plan) {
-		summaryKinds = append(summaryKinds, "MaySuspend")
-	}
-	for _, kind := range summaryKinds {
-		for _, lane := range state.DefaultLanes() {
-			_ = outputCaps.SetSummary(kind, lane, CapabilitySupported)
-		}
-	}
-	descriptors, descriptorErr := NewDescriptorRegistry(returnHandler{declared: plan.BoundaryReturns()}, obligationHandler{})
-	if descriptorErr != nil {
-		return contextual("compiler: descriptors: " + descriptorErr.Error())
-	}
-	builder := NewBuilderWithDescriptors(reg, shape, outputCaps, descriptors, plan)
-	builder.inferReturnCorrelations = planReturnArity(plan) > 1
-	ctx.builder = builder
-	ctx.locals = make(map[symbol.ID]ValueTerm)
-	ctx.expressions = make(map[factflow.ExprRef][]ValueTerm)
-	ctx.allocationEffects = make(map[cfg.Point]EffectTerm)
-	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
-	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
-		return contextual("compiler: boundary: " + err.Error())
-	}
-	if err := bindStaticSignatureTerms(&ctx); err != nil {
-		return contextual("compiler: signature calls: " + err.Error())
-	}
-	unsupported := c.unsupportedActive(plan)
-	if len(unsupported) != 0 {
-		return contextual("compiler: contextual operations: " + strings.Join(unsupported, ", "))
-	}
-	semantic := DefaultSemanticCapabilityRegistry()
-	for _, fact := range operationplan.Kinds() {
-		if c.facts[fact] == nil || !planHasFact(plan, fact) {
-			continue
-		}
-		for _, lane := range state.DefaultLanes() {
-			capability := CapabilityUnaffected
-			if dynamicCapability, handled := dynamicIndexEffectCapability(fact, lane); handled {
-				capability = dynamicCapability
-			} else if fact == operationplan.RootAssignment || isBranchEdgeOwnedKind(fact) {
-				capability = CapabilitySupported
-			}
-			_ = semantic.SetFact(fact, lane, capability)
-		}
-		_ = semantic.SetFact(fact, state.LaneValues, CapabilitySupported)
-	}
-	for _, extension := range operationplan.ExtensionKinds() {
-		if c.extensions[extension] == nil || !planHasExtension(plan, extension) {
-			continue
-		}
-		for _, lane := range state.DefaultLanes() {
-			_ = semantic.SetExtension(extension, lane, CapabilityUnaffected)
-		}
-		_ = semantic.SetExtension(extension, state.LaneValues, CapabilitySupported)
-	}
-	certificate, err := CertifyPlan(plan, semantic)
-	if err != nil {
-		return contextual("compiler: certificate: " + err.Error())
-	}
-	initial := SymbolicCFGRow{
-		Guard:           builder.Arena().True(),
-		Values:          ctx.locals,
-		genericBindings: ctx.genericBindings,
-	}
-	if shape.Params != 0 {
-		initial.Output.NormalReturnParams = make([]product.Value, shape.Params)
-		for i := range initial.Output.NormalReturnParams {
-			initial.Output.NormalReturnParams[i] = product.Top()
-		}
-	}
-	rowsByPoint, err := SolveAcyclicCFGRows(graph, builder.Arena(), initial,
-		func(point cfg.Point, row SymbolicCFGRow) (SymbolicCFGRow, error) {
-			rowCtx := ctx
-			rowCtx.locals = row.Values
-			rowCtx.genericBindings = row.genericBindings
-			rowCtx.rowEffects = &row.Effects
-			rowCtx.rowOutput = &row.Output
-			cursor := plan.Cursor(point)
-			for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-				handler := c.facts[cell.Kind()]
-				if err := handler.Preflight(rowCtx, point); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("%s: %w", cell.Kind(), err)
-				}
-				if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("%s: %w", cell.Kind(), err)
-				}
-			}
-			extensions := plan.ExtensionCursor(point)
-			for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
-				handler := c.extensions[cell.Kind()]
-				if err := handler.Preflight(rowCtx, point); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
-				}
-				if err := handler.Lower(rowCtx, point, &row.Operations); err != nil {
-					return SymbolicCFGRow{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
-				}
-			}
-			row.Values = rowCtx.locals
-			row.genericBindings = rowCtx.genericBindings
-			return row, nil
-		},
-		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
-			return compileBranchEdge(ctx, point, row, cond)
-		},
-		SymbolicCFGOptions{Shape: shape},
-	)
-	if err != nil {
-		return contextual("compiler: " + err.Error())
-	}
-	exitRows := rowsByPoint[graph.Exit()]
-	rows := make([]Row, len(exitRows))
-	for i, row := range exitRows {
-		rows[i] = Row{Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs}
-	}
-	relation, err := builder.Build(certificate, rows)
-	if err != nil {
-		return contextual("compiler: relation admission: " + err.Error())
-	}
-	return relation
 }
 
 func planReturnArity(plan *operationplan.Plan) int {
