@@ -20,15 +20,19 @@ fallback.
 
 ## Architectural authority
 
-The following components remain:
+The following components are the final authorities:
 
 - `analysis/check/fixpoint/transformer` owns symbolic function compilation,
-  relation composition, and the interprocedural SCC fixed point through
-  `SolveRelationCells`.
-- `analysis/check/body` and `analysis/engine/solve` remain the single concrete
-  intraprocedural solver and diagnostic materializer. A lexical body may be
-  materialized at most once in a run; it is never solved once per caller,
-  context, or summary iteration.
+  relation composition, and immutable relation vocabulary. Its local WTO and
+  `SolveRelationCells` scheduler are migration oracles, not final scheduling
+  authorities.
+- `analysis/semantic/program` owns loop and call/resource-SCC structure;
+  `analysis/engine/region` is the sole execution boundary and delegates generic
+  WTO mechanics to `analysis/engine/solve`.
+- `analysis/check/body` remains lexical preparation and a differential oracle
+  during migration. Final diagnostics and summaries are projected from guarded
+  observation/evidence terms on stabilized evaluated roots; production does
+  not replay a concrete body to materialize them.
 - `analysis/check/fixpoint/summary` remains the normalized, versioned module
   boundary and cache artifact vocabulary. It is not an equation engine.
 - `program/internal/relationcall` specializes known lexical relations.
@@ -93,8 +97,10 @@ artifact is published.
 ### 4. Remove the concrete outer summary fixed point
 
 Replace the `query.Function` construction and `query.Run` calls in
-`program.go` with relation cells, `transformer.SolveRelationCells`, and a
-single normalized summary projection per lexical relation.
+`program.go` with semantic program cells executed by `engine/region`, and a
+single normalized summary/observation projection per stabilized lexical
+relation. `transformer.SolveRelationCells` remains only until region parity is
+complete, then is deleted with the duplicate transformer scheduler.
 
 Delete:
 
@@ -152,16 +158,17 @@ both lint and compile. Its key must include source and binding identity, axis
 registry/schema identity, semantic configuration, and dependency artifact
 identities.
 
-### 7. Collapse materialization to one lexical pass
+### 7. Replace materialization with evaluated-root projection
 
-Make `materialization_flow.go` consume the frozen relation snapshot and
-materialize each lexical body at most once. Delete discovered-context solves
-and retained handoff.
+Make guarded observation/evidence terms part of the atomic relation row and
+project diagnostics, read models and summaries directly from the frozen
+evaluated-root snapshot. Delete discovered-context solves, retained handoff and
+final concrete body replay.
 
 In `materialization_cache.go`, delete `materializedSolveCache`,
-`trackingSummaryReader`, dependency-universe comparison, and retained-handoff
-state. Retain only result projection and attachment helpers that diagnostics
-still require.
+`trackingSummaryReader`, dependency-universe comparison, retained-handoff state
+and concrete result attachment. Retain only immutable evaluated-root projection
+helpers used by diagnostics and compiler DTO construction.
 
 Finally remove activation census adapters, duplicate producer/consumer
 identity indexes, compatibility APIs, and superseded POC tests. Preserve
