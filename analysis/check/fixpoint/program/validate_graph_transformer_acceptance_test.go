@@ -105,6 +105,34 @@ func TestValidateGraphInactiveRelationAcceptance(t *testing.T) {
 	t.Logf("inactive validate_graph acceptance: one Relation build, two exact specializations, zero callee body solves after build; concrete baseline=%d summary solves/%d point transfers", summarySolves, summaryTransfers)
 }
 
+func TestValidateGraphBranchGuardOnlyEligibilityCensus(t *testing.T) {
+	fixture := newFindRootNodesPOCFixture(t)
+	oracle := fixture.applications[len(fixture.applications)-1].oracle
+	total, conditions, exact := 0, 0, 0
+	blocked := make(map[string]int)
+	for point := cfg.Point(0); int(point) < oracle.Graph().Size(); point++ {
+		if !oracle.Graph().IsBranch(point) {
+			continue
+		}
+		total++
+		algebra := oracle.BranchAlgebra(point)
+		if _, ok := algebra.ConditionSource(); ok {
+			conditions++
+		}
+		if ok, _ := algebra.GuardOnly(); ok {
+			exact++
+		} else {
+			for _, reason := range algebra.GuardOnlyBlockers() {
+				blocked[reason]++
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("validate_graph branch census is empty")
+	}
+	t.Logf("validate_graph guard-only eligibility: %d/%d condition branches exact (%d structural branch points); blockers=%v", exact, conditions, total, blocked)
+}
+
 func newValidateGraphTransformerAcceptance(tb testing.TB) validateGraphTransformerAcceptance {
 	tb.Helper()
 	base := newFindRootNodesPOCFixture(tb)

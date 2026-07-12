@@ -1,8 +1,6 @@
 package factapply
 
 import (
-	"sort"
-
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -65,33 +63,7 @@ type FactsEdgeTransferConfig struct {
 	TypeValues  *typevalue.Cache
 }
 
-type activeBranchRefinement struct {
-	targetPath pathdom.Path
-	refinement factflow.ValueRefinement
-}
-
-func activeBranchRefinementsForEdge(refinements []factflow.BranchRefinement, cond bool) []activeBranchRefinement {
-	if len(refinements) == 0 {
-		return nil
-	}
-	out := make([]activeBranchRefinement, 0, len(refinements))
-	for _, fact := range refinements {
-		refinement, ok := fact.ValueForEdge(cond)
-		if !ok {
-			continue
-		}
-		out = append(out, activeBranchRefinement{
-			targetPath: fact.TargetPathRef(),
-			refinement: refinement,
-		})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return len(out[i].targetPath.Segments) < len(out[j].targetPath.Segments)
-	})
-	return out
-}
-
-func activeBranchRefinementHasStrictPrefix(refinements []activeBranchRefinement, target pathdom.Path) bool {
+func activeBranchRefinementHasStrictPrefix(refinements []ActiveBranchRefinement, target pathdom.Path) bool {
 	if target.Symbol == 0 || len(target.Segments) == 0 {
 		return false
 	}
@@ -154,14 +126,14 @@ func tokenOf(session *cancellation.Session) *cancellation.Token {
 
 func branchConditionEdgeUnreachable(
 	ctx transfer.EdgeContext,
-	facts factflow.Facts,
+	branch BranchAlgebra,
 	sources sourcevalue.SourceValues,
 	in state.State,
 ) bool {
 	if sources == nil {
 		return false
 	}
-	source, ok := facts.BranchConditionSource(ctx.Edge.From)
+	source, ok := branch.ConditionSource()
 	if !ok {
 		return false
 	}

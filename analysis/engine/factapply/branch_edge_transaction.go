@@ -62,17 +62,18 @@ func (e *ConcreteBranchEdgePointExecutor) Apply(req ConcreteBranchEdgePointReque
 	if !ctx.HasCond {
 		return done()
 	}
+	branch := NewBranchAlgebra(req.Facts, ctx.Edge.From)
 	if req.Facts.BranchEdgeUnreachable(ctx.Edge.From, ctx.Edge.Cond) ||
-		branchConditionEdgeUnreachable(ctx, req.Facts, req.Sources, out) {
+		branchConditionEdgeUnreachable(ctx, branch, req.Sources, out) {
 		out = unreachableState(ctx.Registry)
 		return done()
 	}
 
-	branchRefinements := req.Facts.BranchRefinements(ctx.Edge.From)
+	branchRefinements := branch.Refinements()
 	unreachable := false
 	interrupted := false
 	poll := cancellation.NewPoller(token, cancellation.EveryCheap)
-	req.Facts.ForEachBranchPathEvidence(ctx.Edge.From, func(proof factflow.BranchPathEvidence) bool {
+	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
 		if poll.Poll() {
 			interrupted = true
 			return false
@@ -101,18 +102,18 @@ func (e *ConcreteBranchEdgePointExecutor) Apply(req ConcreteBranchEdgePointReque
 		return done()
 	}
 
-	activeRefinements := activeBranchRefinementsForEdge(branchRefinements, ctx.Edge.Cond)
+	activeRefinements := branch.ActiveRefinements(ctx.Edge.Cond)
 	for _, fact := range activeRefinements {
 		if poll.Poll() {
 			return canceled()
 		}
-		targetPath := fact.targetPath
+		targetPath := fact.TargetPathRef()
 		if activeBranchRefinementHasStrictPrefix(activeRefinements, targetPath) {
 			if invalidated, ok := invalidatePathSubtreeAt(out, req.Resolver, ctx.Edge.From, targetPath); ok {
 				out = invalidated
 			}
 		}
-		out = applyBranchRefinementCached(req.TypeValues, ctx, req.Resolver, req.ProjectPath, out, targetPath, fact.refinement)
+		out = applyBranchRefinementCached(req.TypeValues, ctx, req.Resolver, req.ProjectPath, out, targetPath, fact.Refinement())
 		if stateIsBottom(ctx.Registry, out) {
 			return done()
 		}
@@ -170,12 +171,9 @@ func (e *ConcreteBranchEdgePointExecutor) Apply(req ConcreteBranchEdgePointReque
 			out = applyBranchRefinementCached(req.TypeValues, ctx, req.Resolver, req.ProjectPath, out, relation.TargetPathRef(), refinement)
 		}
 	}
-	for _, relation := range req.Facts.BranchPathRelations(ctx.Edge.From) {
+	for _, relation := range branch.ActivePathRelations(ctx.Edge.Cond) {
 		if poll.Poll() {
 			return canceled()
-		}
-		if !relation.ActiveOnEdge(ctx.Edge.Cond) {
-			continue
 		}
 		out = ApplyConcreteBranchPathRelation(ConcreteBranchPathRelationRequest{
 			Context: ctx, Resolver: req.Resolver, ProjectPath: req.ProjectPath,
@@ -188,7 +186,7 @@ func (e *ConcreteBranchEdgePointExecutor) Apply(req ConcreteBranchEdgePointReque
 	}
 
 	interrupted = false
-	req.Facts.ForEachBranchPathEvidence(ctx.Edge.From, func(proof factflow.BranchPathEvidence) bool {
+	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
 		if poll.Poll() {
 			interrupted = true
 			return false
