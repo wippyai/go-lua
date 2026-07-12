@@ -365,7 +365,13 @@ func (rootAssignmentPlanHandler) Preflight(ctx planCompileContext, point cfg.Poi
 	if _, ok := fact.DeclaredAnnotationValue(); ok {
 		return fmt.Errorf("annotated roots require contextual declaration semantics")
 	}
-	if _, ok := sourcevalue.StaticScalarValue(ctx.registry, fact.Source()); !ok {
+	if fact.Source().Kind == factflow.ValueSourcePath {
+		if _, version, suffix, ok := pathaddr.ParseResolverPath(fact.Source().PathKey); !ok || version != 0 || suffix != "" {
+			return fmt.Errorf("assignment source path is not a canonical root symbol")
+		}
+		return nil
+	}
+	if _, err := exactReturnSourceValue(ctx.registry, ctx.facts, fact.Source()); err != nil {
 		return fmt.Errorf("assignment source is not a context-independent scalar")
 	}
 	return nil
@@ -378,12 +384,31 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 	if _, exists := ctx.locals[fact.TargetSymbol()]; exists {
 		return fmt.Errorf("symbol %d has multiple writes", fact.TargetSymbol())
 	}
-	value, ok := sourcevalue.StaticScalarValue(ctx.registry, fact.Source())
-	if !ok {
-		return fmt.Errorf("assignment source is not a context-independent scalar")
+	term, err := exactCompilerSourceTerm(ctx, fact.Source())
+	if err != nil {
+		return err
 	}
-	ctx.locals[fact.TargetSymbol()] = ctx.builder.Arena().Constant(value)
+	ctx.locals[fact.TargetSymbol()] = term
 	return nil
+}
+
+func exactCompilerSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
+	if source.Kind == factflow.ValueSourcePath {
+		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
+		if !ok || sym == 0 || version != 0 || suffix != "" {
+			return 0, fmt.Errorf("source path is not a canonical root symbol")
+		}
+		term, ok := ctx.locals[sym]
+		if !ok {
+			return 0, fmt.Errorf("source path symbol %d has no exact local binding", sym)
+		}
+		return term, nil
+	}
+	value, err := exactReturnSourceValue(ctx.registry, ctx.facts, source)
+	if err != nil {
+		return 0, fmt.Errorf("assignment source is not a context-independent scalar")
+	}
+	return ctx.builder.Arena().Constant(value), nil
 }
 
 func expressionHasContextualSidecar(facts factflow.Facts, ref factflow.ExprRef) bool {

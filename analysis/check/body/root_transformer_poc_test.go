@@ -53,3 +53,27 @@ func TestScalarLocalAssignmentTransformerMatchesConcreteReturnBoundary(t *testin
 		t.Fatalf("symbolic Summary fields = %v, want only Returns", kinds)
 	}
 }
+
+func TestScalarLocalCopyTransformerMatchesConcreteReturnBoundary(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, "function f() local first = 42 local second = first return second end")
+	prepared, err := PrepareFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("PrepareFunction: %v", err)
+	}
+	relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{})
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatalf("scalar-copy relation contextual: %s", reason)
+	}
+	cursor, _ := transformer.NewBindingCursor(transformer.Shape{}, nil, nil)
+	got, exact := relation.Specialize(cursor, nil, nil)
+	concrete := solvePreparedForTest(t, prepared, SolveConfig{})
+	exit, ok := concrete.ExitState()
+	if !ok {
+		t.Fatal("concrete solve has no exit state")
+	}
+	want := summary.Normalize(reg, summary.Summary{Returns: []product.Value{exit.ReadReturnSlot(reg, 0)}})
+	if !exact || !summary.Equal(reg, got, want) || summary.NormalizedPayloadDigest(reg, got) != summary.NormalizedPayloadDigest(reg, want) {
+		t.Fatalf("symbolic/concrete copied-local Summary differs: exact=%v got=%#v want=%#v", exact, got, want)
+	}
+}
