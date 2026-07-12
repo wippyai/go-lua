@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -329,7 +330,59 @@ func TestExecutableSymbolicPathAssignmentMatchesOracleAcrossAllLanesRandomized(t
 	}
 }
 
-func TestExecutableSymbolicPathAssignmentFailsClosedOnUnexportedSemantics(t *testing.T) {
+func TestExecutablePathAssignmentMatchesOracleOnRandomWholeStates(t *testing.T) {
+	fixture := newPathFixture()
+	plan, err := CompilePathAssignments(fixture.input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, _ := plan.Operation(fixture.point)
+	transformer := DefaultPathAssignmentRegistry().Lift(op)
+	reg := standard.Registry()
+	domain := state.Domain(reg)
+	lanes := state.DefaultLanes()
+	if len(lanes) != 17 {
+		t.Fatalf("test must track the complete lane catalog: got %d", len(lanes))
+	}
+	rng := rand.New(rand.NewSource(17017))
+	ctx := transfer.NodeContext{Graph: fixture.graph, Registry: reg, Point: fixture.point, Node: fixture.graph.Node(fixture.point)}
+	memberKey := fixture.resolver.KeyAt(fixture.point, fixture.target.Field("member"))
+	sourceMemberKey := fixture.resolver.KeyAt(fixture.point, fixture.sourcePath.Field("copied"))
+	for i := 0; i < 256; i++ {
+		base := domain.Bottom()
+		topped := make(map[state.LaneID]bool, len(lanes))
+		for _, lane := range lanes {
+			// May-map Top cannot be finitely overwritten and is not a
+			// reachable input spelling for an assignment transfer.
+			if lane != state.LaneValues && lane != state.LaneHeapTableIdentity && rng.Intn(4) == 0 {
+				base = domain.Join(base, state.DomainWithLanes(reg, []state.LaneID{lane}).Top())
+				topped[lane] = true
+			}
+		}
+		// Exercise populated production-only details whenever their lane was
+		// not already Top: root values/origins, heap objects, and descendants.
+		if !topped[state.LaneValues] {
+			base = base.WriteValue(reg, key.SymbolValue(fixture.target.Symbol), typevalue.LiteralString(reg, "old-root"))
+		}
+		if !topped[state.LanePathEvidence] {
+			base = base.WritePathStaticMember(fixture.resolver.KeySpace(), memberKey, typevalue.LiteralInt(reg, int64(i)))
+			base = base.WritePathStaticMember(fixture.resolver.KeySpace(), sourceMemberKey, typevalue.LiteralString(reg, "copied"))
+		}
+		if !topped[state.LaneHeapTableIdentity] {
+			heapID := identity.ID{Kind: "table", Site: "whole-state", Index: uint64(i + 1)}
+			base = base.WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}))
+		}
+		assigned := typevalue.LiteralInt(reg, int64(rng.Intn(1000)))
+		config := factapply.FactsNodeTransferConfig{Facts: factflow.NewFacts(fixture.input), Sources: fixedSources{value: assigned, ok: true}, Visibility: fixture.resolver}
+		want := factapply.NewFactsNodeTransfer(config)(ctx, base)
+		got, applied := transformer.Execute(ctx, fixture.resolver, config, base)
+		if !applied || !domain.Equal(want, got) {
+			t.Fatalf("whole-state case %d differs (applied=%v)", i, applied)
+		}
+	}
+}
+
+func TestExecutableSymbolicPathAssignmentMatchesPopulatedValuesHeapAndStaticDescendants(t *testing.T) {
 	fixture := newPathFixture()
 	plan, err := CompilePathAssignments(fixture.input)
 	if err != nil {
@@ -339,21 +392,24 @@ func TestExecutableSymbolicPathAssignmentFailsClosedOnUnexportedSemantics(t *tes
 	transformer := DefaultPathAssignmentRegistry().Lift(op)
 	reg := standard.Registry()
 	ctx := transfer.NodeContext{Graph: fixture.graph, Registry: reg, Point: fixture.point, Node: fixture.graph.Node(fixture.point)}
-	config := factapply.FactsNodeTransferConfig{Sources: fixedSources{value: product.Top(), ok: true}, Visibility: fixture.resolver}
-
-	withRootOriginCandidate := state.Domain(reg).Bottom().WriteValue(
+	config := factapply.FactsNodeTransferConfig{Facts: factflow.NewFacts(fixture.input), Sources: fixedSources{value: product.Top(), ok: true}, Visibility: fixture.resolver}
+	base := state.Domain(reg).Bottom().WriteValue(
 		reg, key.SymbolValue(fixture.target.Symbol), typevalue.LiteralString(reg, "root"),
 	)
-	if got, ok := transformer.Execute(ctx, fixture.resolver, config, withRootOriginCandidate); ok || !state.Domain(reg).Equal(got, withRootOriginCandidate) {
-		t.Fatal("root-origin-dependent state did not fail closed atomically")
-	}
-
-	targetKey := fixture.resolver.KeyAt(fixture.point, fixture.target.Field("member"))
-	withStaticDescendant := state.Domain(reg).Bottom().WritePathStaticMember(
-		fixture.resolver.KeySpace(), targetKey, typevalue.LiteralString(reg, "member"),
+	memberKey := fixture.resolver.KeyAt(fixture.point, fixture.target.Field("member"))
+	sourceMemberKey := fixture.resolver.KeyAt(fixture.point, fixture.sourcePath.Field("copied"))
+	base = base.WritePathStaticMember(
+		fixture.resolver.KeySpace(), memberKey, typevalue.LiteralString(reg, "member"),
 	)
-	if got, ok := transformer.Execute(ctx, fixture.resolver, config, withStaticDescendant); ok || !state.Domain(reg).Equal(got, withStaticDescendant) {
-		t.Fatal("static-member-dependent state did not fail closed atomically")
+	base = base.WritePathStaticMember(
+		fixture.resolver.KeySpace(), sourceMemberKey, typevalue.LiteralString(reg, "copied"),
+	)
+	heapID := identity.ID{Kind: "table", Site: "semanticplan", Index: 7}
+	base = base.WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}))
+	want := factapply.NewFactsNodeTransfer(config)(ctx, base)
+	got, ok := transformer.Execute(ctx, fixture.resolver, config, base)
+	if !ok || !state.Domain(reg).Equal(got, want) {
+		t.Fatalf("populated transaction differs (applied=%v member=%v source-member=%v)", ok, memberKey, sourceMemberKey)
 	}
 }
 
@@ -385,5 +441,57 @@ func TestPathAssignmentMetadataIsStable(t *testing.T) {
 	}
 	if len(op.Ownership()) != 3 || len(op.Rebasing()) != 2 {
 		t.Fatalf("ownership/rebasing=%v/%v", op.Ownership(), op.Rebasing())
+	}
+}
+
+func TestSemanticGuardConcreteExecutionMatchesEdgeOracleAllKindsOnUpdatedState(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	next := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, next, true)
+	graph.AddEdge(next, graph.Exit(), false)
+	left, right, marker := symbol.ID(701), symbol.ID(702), symbol.ID(703)
+	leftPath, rightPath := pathdom.NewPath(left, "left"), pathdom.NewPath(right, "right")
+	builder := visibility.NewBuilder()
+	for _, id := range []symbol.ID{left, right, marker} {
+		builder.Define(branch, id, "value")
+	}
+	resolver := visibility.NewResolver(builder.Build())
+	ctx := transfer.EdgeContext{Graph: graph, Registry: reg, Edge: cfg.Edge{From: branch, To: next, Cond: true}, HasCond: true}
+	number := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	stringName := typevalue.LiteralString(reg, "number")
+	tests := []struct {
+		name     string
+		relation factflow.BranchPathRelation
+		left     product.Value
+		right    product.Value
+	}{
+		{"equal", factflow.NewBranchPathEquality(leftPath, rightPath, true, false), number, product.Top()},
+		{"not-equal", factflow.NewBranchPathInequality(leftPath, rightPath, true, false), number, typevalue.LiteralString(reg, "x")},
+		{"type-match", factflow.NewBranchPathTypeMatch(leftPath, rightPath, true, false), product.Top(), stringName},
+		{"type-unmatch", factflow.NewBranchPathTypeUnmatch(leftPath, rightPath, true, false), product.Top(), stringName},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Marker and operand writes model preceding edge operations. The
+			// guard must consume this evolving output, not node-entry state.
+			updated := state.Domain(reg).Bottom().
+				WriteValue(reg, key.SymbolValue(marker), typevalue.LiteralInt(reg, 99)).
+				WriteValue(reg, key.SymbolValue(left), tc.left).
+				WriteValue(reg, key.SymbolValue(right), tc.right)
+			facts := factflow.NewFacts(factflow.FactsInput{BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+				branch: factflow.NewBranchPathRelationSet(tc.relation),
+			}})
+			want := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{Facts: facts, Visibility: resolver})(ctx, updated)
+			got := CompileBranchPathRelation(tc.relation).Execute(ctx, resolver, nil, nil, updated)
+			if !state.Domain(reg).Equal(want, got) {
+				t.Fatal("semantic guard differs from edge oracle")
+			}
+			if !product.Equal(reg, got.ReadValue(reg, key.SymbolValue(marker)), typevalue.LiteralInt(reg, 99)) {
+				t.Fatal("guard lost preceding edge update")
+			}
+		})
 	}
 }

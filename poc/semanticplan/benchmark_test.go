@@ -46,7 +46,7 @@ func BenchmarkPathAssignmentPlanBuild(b *testing.B) {
 }
 
 func BenchmarkPathAssignmentConcrete(b *testing.B) {
-	_, config, ctx, base := benchmarkFixture(b)
+	fixture, config, ctx, base := benchmarkFixture(b)
 	oracle := factapply.NewFactsNodeTransfer(config)
 	plan, err := CompilePathAssignments(newPathFixture().input)
 	if err != nil {
@@ -54,16 +54,28 @@ func BenchmarkPathAssignmentConcrete(b *testing.B) {
 	}
 	config.Facts = factflow.Facts{}
 	planned := plan.BindConcrete(config)
+	op, _ := plan.Operation(ctx.Point)
+	transformer := DefaultPathAssignmentRegistry().Lift(op)
 	b.Run("oracle", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			benchmarkState = oracle(ctx, base)
 		}
 	})
-	b.Run("plan-delegate", func(b *testing.B) {
+	b.Run("plan-kernel", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			benchmarkState = planned(ctx, base)
+		}
+	})
+	b.Run("symbolic-kernel", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			var ok bool
+			benchmarkState, ok = transformer.Execute(ctx, fixture.resolver, config, base)
+			if !ok {
+				b.Fatal("operation rejected")
+			}
 		}
 	})
 }

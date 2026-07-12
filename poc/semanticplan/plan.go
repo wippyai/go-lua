@@ -61,6 +61,8 @@ type PathAssignmentOp struct {
 	// them atomically until their operation handlers exist.
 	HasStaticMemberWrite bool
 	CovariantExposures   int
+	assignment           factflow.PathAssignment
+	facts                factflow.Facts
 }
 
 type Plan struct {
@@ -113,7 +115,7 @@ func CompilePathAssignments(input factflow.FactsInput) (Plan, error) {
 		}
 		fact := input.PathAssignments[point]
 		compiled.PathAssignments[point] = fact
-		op := PathAssignmentOp{Point: point, Target: fact.TargetPath(), Source: fact.Source()}
+		op := PathAssignmentOp{Point: point, Target: fact.TargetPath(), Source: fact.Source(), assignment: fact}
 		if companion, ok := input.PathStaticMemberWrites[point]; ok {
 			op.HasStaticMemberWrite = true
 			compiled.PathStaticMemberWrites[point] = companion
@@ -131,7 +133,12 @@ func CompilePathAssignments(input factflow.FactsInput) (Plan, error) {
 		}
 		operations[point] = op
 	}
-	return Plan{facts: factflow.NewFacts(compiled), operations: operations}, nil
+	facts := factflow.NewFacts(compiled)
+	for point, op := range operations {
+		op.facts = facts
+		operations[point] = op
+	}
+	return Plan{facts: facts, operations: operations}, nil
 }
 
 func unsupportedCompanionAt(input factflow.FactsInput, point cfg.Point) string {
@@ -180,16 +187,23 @@ func (p Plan) Operation(point cfg.Point) (PathAssignmentOp, bool) {
 	return op, true
 }
 
-// BindConcrete delegates the operation semantics to the exported production
-// fact applicator. This is oracle plumbing, not evidence that production has
-// already been factored into a cheap operation interpreter.
+// BindConcrete executes the compiled operation through the production concrete
+// kernel. Companion facts remain an all-or-nothing contextual fallback: this
+// narrow operation must never publish only the assignment half of a point.
 func (p Plan) BindConcrete(config factapply.FactsNodeTransferConfig) transfer.NodeTransfer {
-	config.Facts = p.facts
-	delegate := factapply.NewFactsNodeTransfer(config)
 	return func(ctx transfer.NodeContext, in state.State) state.State {
-		if _, ok := p.operations[ctx.Point]; !ok {
+		op, ok := p.operations[ctx.Point]
+		if !ok || op.HasStaticMemberWrite || op.CovariantExposures != 0 {
 			return in
 		}
-		return delegate(ctx, in)
+		out, applied := factapply.ApplyConcretePathAssignment(factapply.ConcretePathAssignmentRequest{
+			Context: ctx, Resolver: config.Visibility, Facts: p.facts,
+			Sources: config.Sources, Read: func(cfg.Point) state.State { return in },
+			Input: in, Output: in, Assignment: op.assignment,
+		})
+		if !applied {
+			return in
+		}
+		return out
 	}
 }

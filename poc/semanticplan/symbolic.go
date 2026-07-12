@@ -5,13 +5,9 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -190,15 +186,9 @@ func (r *SymbolicRegistry) Lift(op PathAssignmentOp) SymbolicTransformer {
 	return SymbolicTransformer{rows: []GuardedRow{row}, fallback: fallback, operation: op, executable: len(fallback) == 0}
 }
 
-// Execute applies the compiled path-assignment operation without calling the
-// production fact applicator. It is intentionally fail-closed. The admitted
-// slice uses exported State operations for subtree invalidation, alias writes,
-// equality, typestate canonicalization, and user-lattice propagation.
-//
-// Root-origin invalidation, heap-member invalidation, and copying source static
-// descendants currently live behind unexported factapply helpers. Execute
-// rejects states where those helpers could matter rather than duplicating
-// their behavior in this POC.
+// Execute applies the compiled path-assignment operation through the shared
+// concrete semantic kernel. Symbolic lane coverage remains fail-closed: no
+// contextual or companion-bearing operation may partially publish.
 func (t SymbolicTransformer) Execute(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
@@ -209,88 +199,14 @@ func (t SymbolicTransformer) Execute(
 		return in, false
 	}
 	op := t.operation
-	if op.Point != ctx.Point || !op.HasSourcePath || op.Target.IsEmpty() || len(op.Target.Segments) == 0 {
+	if op.Point != ctx.Point || !op.HasSourcePath || op.Target.IsEmpty() || len(op.Target.Segments) == 0 || op.HasStaticMemberWrite || op.CovariantExposures != 0 {
 		return in, false
 	}
-	value, ok := sources.Sources.ValueOfSource(ctx.Point, op.Source, in, func(_ cfg.Point) state.State { return in })
-	if !ok || !exactExecutableState(ctx.Registry, resolver.KeySpace(), in) {
-		return in, false
-	}
-	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, op.Target).VisibleStateKey()
-	if !ok {
-		return in, false
-	}
-	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, op.SourcePath).VisibleStateKey()
-	if !ok {
-		return in, false
-	}
-
-	// Capture aliases before invalidation removes the equality proofs that
-	// justify them. This is the same transaction boundary as production.
-	targets := append([]pathaddr.StateKey{targetKey}, in.EquivalentStateKeys(resolver.KeySpace(), targetKey)...)
-	out := in
-	for _, target := range dedupeStateKeys(targets) {
-		var valid bool
-		out, valid = out.InvalidatePathKeySubtree(resolver.KeySpace(), target.PathKey())
-		if !valid {
-			return in, false
-		}
-	}
-	edit := out.EditPathEvidence(ctx.Registry)
-	for _, target := range dedupeStateKeys(targets) {
-		local, valid := resolver.KeySpace().FromPathKey(target.PathKey())
-		if !valid {
-			return in, false
-		}
-		edit.WriteLocalPathKey(local, value)
-		if canonical, valid := resolver.KeySpace().FieldCanonical(local); valid {
-			edit.WriteLocalPathKey(canonical, value)
-		}
-	}
-	out = edit.Done()
-	if targetKey != sourceKey {
-		target, targetOK := visibility.KeyspaceKeyFromStateKey(resolver, targetKey)
-		source, sourceOK := visibility.KeyspaceKeyFromStateKey(resolver, sourceKey)
-		if !targetOK || !sourceOK {
-			return in, false
-		}
-		out = out.AddBranchProof(pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: target, Other: source})
-		out = out.CanonicalizeTypestateResources(resolver.KeySpace())
-	}
-	out = out.PropagateUserAssignmentFrom(ctx.Registry, resolver.KeySpace(), targetKey, in, sourceKey)
-	return out, true
-}
-
-func exactExecutableState(reg *axis.Registry, ks *keyspace.KeySpace, in state.State) bool {
-	if reg == nil || ks == nil {
-		return false
-	}
-	values := in.ValuesSnapshot()
-	if values.Top || len(values.Values) != 0 {
-		return false
-	}
-	heap := in.HeapTableObjectsSnapshot()
-	if heap.Top || len(heap.Objects) != 0 {
-		return false
-	}
-	static := in.PathStaticMembersSnapshot(ks)
-	return len(static.Members) == 0
-}
-
-func dedupeStateKeys(keys []pathaddr.StateKey) []pathaddr.StateKey {
-	seen := make(map[pathaddr.StateKey]struct{}, len(keys))
-	out := keys[:0]
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, key)
-	}
-	return out
+	return factapply.ApplyConcretePathAssignment(factapply.ConcretePathAssignmentRequest{
+		Context: ctx, Resolver: resolver, Facts: op.facts, Sources: sources.Sources,
+		Read: func(cfg.Point) state.State { return in }, Input: in, Output: in,
+		Assignment: op.assignment,
+	})
 }
 
 func accessesToLanes(accesses []LaneAccess) []state.LaneID {
