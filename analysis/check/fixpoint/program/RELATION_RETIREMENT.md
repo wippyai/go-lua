@@ -277,5 +277,21 @@ legacy/strict differentials are byte-identical and the owner moves from 10
 body solves/70 transfers to 6/42 with contexts/omissions/reuses = 4/4/4. The
 whole frozen file moves from 271/11,882 to 267/11,854, which is too small to
 change wall time outside noise. This is a semantic-reuse proof, not a
-production promotion. The next value gate is a closed direct-call fanout
-transaction with every lexical target sealed in one catalog generation.
+production promotion.
+
+The next private slice closes statement-form sealed Lua type predicates and
+prepares the direct-call boundary without activating it. The plan now owns an
+immutable, owner/CFG-width-fenced call census built independently from WIR;
+stable local targets use a binder-owned O(1) index, while method, dynamic,
+mutable, ambiguous and unresolved calls remain explicit rejected sites. The
+frozen graph `str` function then moves from 36 body solves/288 transfers to
+14/112, with contexts/omissions/reuses = 19/19/38, zero misses/fallbacks, and
+exact products and diagnostics. Its relation reconstructs the sealed
+`lua_type(param) == literal` expression DAG instead of treating the operand as
+a boolean. Syntactic return aliases live in a separate relation projection
+semilattice, so they survive SCC joins without contaminating row feasibility,
+ReturnFlow, or parameter-preservation proofs.
+
+This remains private strict evidence and does not claim a default wall-time
+improvement. The next value gate is a closed direct-call fanout transaction
+with every lexical target sealed in one catalog generation.

@@ -229,14 +229,16 @@ func (c *checker) prepare(
 	if fn == nil {
 		boundaryGlobals = bindings.ChunkGlobalReads()
 	}
+	signatureCalls := signatureCallOperations(built.Graph, facts, signatureProducer)
 	operationPlan := lowered.Plan.
 		WithObservationIdentity(lexicalBodyID, wirBody).
+		WithCallSurface(sealPreparedCallSurface(bindings, wirBody, facts, signatureCalls, lexicalBodyID, unitNamespace, built.Graph.Size())).
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
 		WithBoundaryParamContracts(materializeDeclaredParamTypeValues(config.Registry, typevalue.NewCache(), typeResolver, fn)).
 		WithBoundaryCaptures(boundaryCaptures).
 		WithBoundaryGlobals(boundaryGlobals).
 		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn)).
-		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer))
+		WithSignatureCalls(signatureCalls)
 	operationPlan = operationPlan.
 		WithSignatureAllocations(signatureAllocationOperations(operationPlan, uint64(functionSymbol))).
 		WithExtensions(genericForOperationExtensions(genericForOperations))

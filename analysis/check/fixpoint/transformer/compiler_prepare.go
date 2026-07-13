@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -115,8 +118,8 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err := bindStaticSignatureTerms(&ctx); err != nil {
 		return nil, fmt.Errorf("compiler: signature calls: %w", err)
 	}
-	if err := prepareReturnedStructuralPredicates(&ctx); err != nil {
-		return nil, fmt.Errorf("compiler: returned predicate: %w", err)
+	if err := preparePredicateExpressions(&ctx); err != nil {
+		return nil, fmt.Errorf("compiler: predicate: %w", err)
 	}
 	if unsupported := c.unsupportedActive(plan); len(unsupported) != 0 {
 		return nil, fmt.Errorf("compiler: contextual operations: %s", strings.Join(unsupported, ", "))
@@ -234,6 +237,11 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	if err != nil {
 		return contextual("compiler: relation admission: " + err.Error())
 	}
+	aliases, exact := projectedReturnParamAliases(p.builder.Arena(), rows)
+	if !exact || len(aliases) != 0 && !relation.authority.allowsSummary("ReturnParamPathAliases") {
+		return contextual("compiler: relation admission: return parameter alias projection unsupported")
+	}
+	relation.projection = normalizeRelationProjection(p.registry, aliases)
 	relation.observationComplete = p.observationComplete
 	if direct != nil {
 		for _, cell := range direct.Cells() {
@@ -245,6 +253,34 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 		}
 	}
 	return relation
+}
+
+// projectedReturnParamAliases preserves the concrete projector's syntactic
+// may-alias contract across all return alternatives. This metadata is not a
+// row effect: an unreachable return still contributes a conservative alias,
+// while it must not manufacture an unconditional ReturnFlow.
+func projectedReturnParamAliases(arena *Arena, rows []Row) ([]summary.ReturnParamPathAlias, bool) {
+	var out []summary.ReturnParamPathAlias
+	for _, row := range rows {
+		for _, operation := range row.Ops {
+			if operation.Descriptor != DescriptorReturn {
+				continue
+			}
+			param, exact := arena.directParamRoot(operation.Value)
+			if !exact {
+				param, exact = arena.refinedParamRoot(operation.Value)
+			}
+			if !exact {
+				continue
+			}
+			placeholder, ok := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(param))
+			if !ok {
+				return nil, false
+			}
+			out = append(out, summary.ReturnParamPathAlias{ReturnIndex: int(operation.Slot), Source: placeholder})
+		}
+	}
+	return out, true
 }
 
 func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view RelationView, direct *DirectCallCatalog, point cfg.Point, initial SymbolicCFGRow) ([]SymbolicCFGRow, error) {

@@ -324,6 +324,14 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 							ReturnIndex: int(operation.Slot), Source: placeholder,
 						})
 					}
+				} else if param, exact := r.arena.refinedParamRoot(operation.Value); exact && r.authority.allowsSummary("ReturnParamPathAliases") {
+					placeholder, placeholderOK := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(param))
+					if !placeholderOK {
+						return summary.Summary{}, false
+					}
+					candidate.ReturnParamPathAliases = append(candidate.ReturnParamPathAliases, summary.ReturnParamPathAlias{
+						ReturnIndex: int(operation.Slot), Source: placeholder,
+					})
 				}
 			}
 		}
@@ -383,6 +391,7 @@ func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *Descr
 	if !have {
 		return summary.Summary{}, true
 	}
+	accumulated.ReturnParamPathAliases = append(accumulated.ReturnParamPathAliases, r.projection.returnParamPathAliases...)
 	if r.inferReturnCorrelations {
 		var declared []product.Value
 		if handler, ok := descriptors.handlers[DescriptorReturn].(returnHandler); ok {

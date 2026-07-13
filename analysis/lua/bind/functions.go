@@ -152,6 +152,25 @@ func (r *Result) FunctionBySymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {
 	return fn, ok
 }
 
+// StableLocalFunctionIdentity returns the binder function identity introduced
+// for targetBinding when that non-global binding has exactly one function
+// origin and has not subsequently been assigned. Ambiguous, mutable, method,
+// global, and unknown targets fail closed.
+//
+// The lookup is constant-time. Consumers must not reconstruct this relation by
+// scanning FunctionOrigins: the private index is sealed as functions register.
+func (r *Result) StableLocalFunctionIdentity(targetBinding symbol.ID) (symbol.ID, bool) {
+	if r == nil || targetBinding == 0 || len(r.writeIdents[targetBinding]) != 0 {
+		return 0, false
+	}
+	kind, known := r.kinds[targetBinding]
+	if !known || kind != symbol.Local {
+		return 0, false
+	}
+	functionIdentity, indexed := r.functionTargetIndex[targetBinding]
+	return functionIdentity, indexed && functionIdentity != 0
+}
+
 // Functions returns all bound functions in parent-before-child order.
 func (r *Result) Functions() []*ast.FunctionExpr {
 	if r == nil {
@@ -430,6 +449,15 @@ func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details function
 		Method:          details.method,
 		TargetSymbol:    details.targetSymbol,
 		HasTargetSymbol: details.hasTargetSymbol,
+	}
+	if details.kind != FunctionOriginMethod && details.hasTargetSymbol && details.targetSymbol != 0 {
+		if _, indexed := r.functionTargetIndex[details.targetSymbol]; indexed {
+			// Zero is a permanent ambiguity marker: later registrations cannot
+			// make a multiply-origin binding unique again.
+			r.functionTargetIndex[details.targetSymbol] = 0
+		} else {
+			r.functionTargetIndex[details.targetSymbol] = id
+		}
 	}
 	return id
 }

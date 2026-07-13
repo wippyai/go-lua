@@ -3,7 +3,9 @@ package operationplan
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -71,6 +73,48 @@ func TestCallSurfaceClassifiesSealedLuaTypeAsExternal(t *testing.T) {
 	intrinsic, ok := operation.Intrinsic()
 	if !ok || intrinsic != signature.IntrinsicLuaType {
 		t.Fatalf("intrinsic = %d/%v", intrinsic, ok)
+	}
+}
+
+func TestPlanOwnsOnlyMatchingCompleteCallSurface(t *testing.T) {
+	owner := callSurfaceBody("owner", 1)
+	callee := callSurfaceBody("owner", 2)
+	target, ok := NewLexicalCallSurfaceTarget(callee)
+	if !ok {
+		t.Fatal("lexical target rejected")
+	}
+	surface := mustCallSurface(t, owner, 3, CallSurfaceSite{Point: 1, Target: target})
+	plan := New(testCallSurfaceGraph(3), factflow.FactsInput{}).
+		WithObservationIdentity(owner, testCallSurfaceWIR(3)).
+		WithCallSurface(surface)
+	got, ok := plan.CallSurface()
+	if !ok || !got.Complete() || got.Owner() != owner || got.Digest() != surface.Digest() {
+		t.Fatalf("owned call surface = %#v/%v", got, ok)
+	}
+	sites := got.Sites()
+	sites[0] = CallSurfaceSite{}
+	again, ok := plan.CallSurface()
+	if !ok || len(again.Sites()) != 1 || again.Sites()[0].Target.Kind() != CallSurfaceTargetLexical {
+		t.Fatal("plan call surface exposed mutable site storage")
+	}
+	rebound := plan.WithObservationIdentity(owner, testCallSurfaceWIR(3))
+	if got, ok := rebound.CallSurface(); ok || got.Complete() {
+		t.Fatal("observation identity rebind retained a stale call surface")
+	}
+
+	for name, rejected := range map[string]CallSurface{
+		"wrong owner": mustCallSurface(t, callSurfaceBody("other", 1), 3, CallSurfaceSite{Point: 1, Target: target}),
+		"wrong width": mustCallSurface(t, owner, 4, CallSurfaceSite{Point: 1, Target: target}),
+		"zero":        {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := New(testCallSurfaceGraph(3), factflow.FactsInput{}).
+				WithObservationIdentity(owner, testCallSurfaceWIR(3)).
+				WithCallSurface(rejected)
+			if got, ok := candidate.CallSurface(); ok || got.Complete() || got.Digest().Available() {
+				t.Fatalf("rejected surface remained available: %#v", got)
+			}
+		})
 	}
 }
 
@@ -189,6 +233,24 @@ func callSurfaceExternal(t *testing.T, intrinsic bool) CallSurfaceTarget {
 
 func inputSite(point cfg.Point, target CallSurfaceTarget) CallSurfaceSite {
 	return CallSurfaceSite{Point: point, Target: target}
+}
+
+func testCallSurfaceGraph(points int) cfg.Graph {
+	graph := cfg.New()
+	previous := graph.Entry()
+	for graph.Size() < points {
+		next := graph.AddNode(cfg.NodeAssign)
+		graph.AddEdge(previous, next, false)
+		previous = next
+	}
+	graph.AddEdge(previous, graph.Exit(), false)
+	return graph
+}
+
+func testCallSurfaceWIR(points int) *wir.Body {
+	body := wir.NewBody("call-surface")
+	body.AssignDebugPointOrdinals(testCallSurfaceGraph(points))
+	return body
 }
 
 func mustCallSurface(t *testing.T, owner lexicalidentity.StableLexicalBodyID, pointCount int, sites ...CallSurfaceSite) CallSurface {

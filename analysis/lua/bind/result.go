@@ -31,21 +31,25 @@ type Result struct {
 
 	globals map[string]globalSymbol
 
-	functionSymbols    map[*ast.FunctionExpr]symbol.ID
-	functionsBySymbol  map[symbol.ID]*ast.FunctionExpr
-	functions          []*ast.FunctionExpr
-	nestedFunctions    map[*ast.FunctionExpr][]*ast.FunctionExpr
-	functionOrigins    map[*ast.FunctionExpr]FunctionOrigin
-	functionIndex      map[*ast.FunctionExpr]int
-	functionSubtreeEnd map[*ast.FunctionExpr]int
-	declaringFunctions map[symbol.ID]*ast.FunctionExpr
-	directCaptures     map[*ast.FunctionExpr][]Capture
-	directCaptureSeen  map[*ast.FunctionExpr]map[symbol.ID]struct{}
-	hasEntryCaptures   map[*ast.FunctionExpr]bool
-	directGlobalReads  map[*ast.FunctionExpr][]symbol.ID
-	directGlobalSeen   map[*ast.FunctionExpr]map[symbol.ID]struct{}
-	chunkGlobalReads   []symbol.ID
-	chunkGlobalSeen    map[symbol.ID]struct{}
+	functionSymbols   map[*ast.FunctionExpr]symbol.ID
+	functionsBySymbol map[symbol.ID]*ast.FunctionExpr
+	functions         []*ast.FunctionExpr
+	nestedFunctions   map[*ast.FunctionExpr][]*ast.FunctionExpr
+	functionOrigins   map[*ast.FunctionExpr]FunctionOrigin
+	// functionTargetIndex maps a value binding to the sole function identity
+	// introduced for that binding. A present zero value is an ambiguity marker.
+	// It is built once with the function-origin table and is never exposed.
+	functionTargetIndex map[symbol.ID]symbol.ID
+	functionIndex       map[*ast.FunctionExpr]int
+	functionSubtreeEnd  map[*ast.FunctionExpr]int
+	declaringFunctions  map[symbol.ID]*ast.FunctionExpr
+	directCaptures      map[*ast.FunctionExpr][]Capture
+	directCaptureSeen   map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	hasEntryCaptures    map[*ast.FunctionExpr]bool
+	directGlobalReads   map[*ast.FunctionExpr][]symbol.ID
+	directGlobalSeen    map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	chunkGlobalReads    []symbol.ID
+	chunkGlobalSeen     map[symbol.ID]struct{}
 
 	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
 	varargSymbols     map[*ast.FunctionExpr]symbol.ID
@@ -85,6 +89,7 @@ func newResult(opts Options) *Result {
 		functionsBySymbol:     make(map[symbol.ID]*ast.FunctionExpr),
 		nestedFunctions:       make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
 		functionOrigins:       make(map[*ast.FunctionExpr]FunctionOrigin),
+		functionTargetIndex:   make(map[symbol.ID]symbol.ID),
 		functionIndex:         make(map[*ast.FunctionExpr]int),
 		functionSubtreeEnd:    make(map[*ast.FunctionExpr]int),
 		declaringFunctions:    make(map[symbol.ID]*ast.FunctionExpr),

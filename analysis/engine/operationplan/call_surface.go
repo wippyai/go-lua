@@ -120,6 +120,35 @@ type CallSurface struct {
 	complete   bool
 }
 
+// WithCallSurface binds a complete lowering-owned call census to the plan.
+// Ownership and CFG width must agree with the already attached observation
+// identity. Invalid or independently prepared surfaces clear the authority so
+// downstream compositional admission fails closed.
+func (p *Plan) WithCallSurface(surface CallSurface) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.callSurface = CallSurface{}
+	if !surface.Complete() || !surface.Digest().Available() ||
+		p.observationBody == (lexicalidentity.StableLexicalBodyID{}) ||
+		surface.Owner() != p.observationBody || surface.PointCount() != p.PointCount() {
+		return &out
+	}
+	out.callSurface = surface
+	return &out
+}
+
+// CallSurface returns the immutable complete call census owned by this plan.
+// The bool is false when preparation could not certify the independent census.
+func (p *Plan) CallSurface() (CallSurface, bool) {
+	if p == nil || !p.callSurface.Complete() || !p.callSurface.Digest().Available() ||
+		p.callSurface.Owner() != p.observationBody || p.callSurface.PointCount() != p.PointCount() {
+		return CallSurface{}, false
+	}
+	return p.callSurface, true
+}
+
 // SealCallSurface validates and owns a complete call census. extractedCallPoints
 // must come from the extraction authority rather than the classifier. Exact
 // point-set equality prevents a classifier from substituting an unrelated CFG

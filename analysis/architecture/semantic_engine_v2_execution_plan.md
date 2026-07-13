@@ -391,11 +391,20 @@ guarded relation contexts and closed local-function use proofs. These commits
 are migration evidence and regression oracles, not permission to preserve
 duplicate final execution paths.
 
-The current worktree also contains uncommitted canonical-identity,
-literal-allocation and WTO-row experiments. They are deliberately not approved
-for commit. Do not bulk-clean or commit them: distinguish agent WIP from the two
-pre-existing WTO-row prototypes, preserve useful red/codec tests, and migrate
-only evidence that satisfies this document’s ownership rules.
+The current guarded migration has now proven two private real-source slices.
+Frozen threads `is_str` reduces from 10/70 to 6/42 solves/transfers; frozen
+graph `str` reduces from 36/288 to 14/112, with exact summaries, diagnostics
+and products and zero strict fallback. The latter adds a sealed statement
+predicate DAG plus relation-level structural projection metadata whose lattice
+identity is separate from semantic row identity. A neutral immutable call
+surface is prepared from WIR and stable binder identities in O(calls), but does
+not yet activate direct-call execution.
+
+The worktree also contains uncommitted canonical-identity, literal-allocation
+and WTO-row experiments. They are deliberately not approved for commit. Do not
+bulk-clean or commit them: distinguish agent WIP from the two pre-existing
+WTO-row prototypes, preserve useful red/codec tests, and migrate only evidence
+that satisfies this document’s ownership rules.
 
 Implementation commits must be small enough to review one semantic ownership
 move, must state which census rows close, and must include their differential and

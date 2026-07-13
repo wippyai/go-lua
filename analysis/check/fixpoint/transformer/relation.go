@@ -55,6 +55,34 @@ type Relation struct {
 	widened                 bool
 	observationComplete     bool
 	paramContracts          []product.Value
+	projection              relationProjection
+}
+
+// relationProjection carries source-structural summary metadata whose legacy
+// meaning is independent of row feasibility. It is attached after semantic
+// rows are evaluated, so syntactic may-alias facts cannot invalidate the
+// separate must-preservation proof used by path refinements.
+type relationProjection struct {
+	returnParamPathAliases []summary.ReturnParamPathAlias
+}
+
+func normalizeRelationProjection(reg *axis.Registry, aliases []summary.ReturnParamPathAlias) relationProjection {
+	normalized := summary.Normalize(reg, summary.Summary{ReturnParamPathAliases: append([]summary.ReturnParamPathAlias(nil), aliases...)})
+	return relationProjection{returnParamPathAliases: normalized.ReturnParamPathAliases}
+}
+
+func joinRelationProjection(reg *axis.Registry, left, right relationProjection) relationProjection {
+	aliases := make([]summary.ReturnParamPathAlias, 0, len(left.returnParamPathAliases)+len(right.returnParamPathAliases))
+	aliases = append(aliases, left.returnParamPathAliases...)
+	aliases = append(aliases, right.returnParamPathAliases...)
+	return normalizeRelationProjection(reg, aliases)
+}
+
+func equalRelationProjection(reg *axis.Registry, left, right relationProjection) bool {
+	return summary.EqualNormalized(reg,
+		summary.Summary{ReturnParamPathAliases: left.returnParamPathAliases},
+		summary.Summary{ReturnParamPathAliases: right.returnParamPathAliases},
+	)
 }
 
 // relationOutputAuthority is the immutable capability snapshot carried by a
@@ -465,7 +493,7 @@ func JoinRelation(a, b Relation) Relation {
 	rows := append(cloneRows(a.rows), b.rows...)
 	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
 	rows = dedupRows(a.arena, a.effects, rows)
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: a.observationComplete && b.observationComplete, paramContracts: append([]product.Value(nil), a.paramContracts...)}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: a.observationComplete && b.observationComplete, paramContracts: append([]product.Value(nil), a.paramContracts...), projection: joinRelationProjection(a.arena.reg, a.projection, b.projection)}
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -486,7 +514,7 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) || !equalRelationProjection(a.arena.reg, a.projection, b.projection) || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))

@@ -149,6 +149,9 @@ func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *
 			t.Fatalf("solve %d point %d presence differs", solve, point)
 		}
 		if wantOK {
+			// Path-evidence keys are local to each independently prepared Result.
+			// Compare semantic paths, not incidental keyspace ordinals.
+			got = got.RekeyPathEvidence(concrete.KeySpace(), oracle.KeySpace())
 			for _, lane := range state.DefaultLanes() {
 				domain := state.DomainWithLanes(reg, []state.LaneID{lane})
 				if !domain.Equal(want, got) {
@@ -158,6 +161,9 @@ func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *
 		}
 		wantBoundary, wantBoundaryOK := oracle.StateAtBoundary(point)
 		gotBoundary, gotBoundaryOK := concrete.StateAtBoundary(point)
+		if gotBoundaryOK {
+			gotBoundary = gotBoundary.RekeyPathEvidence(concrete.KeySpace(), oracle.KeySpace())
+		}
 		if wantBoundaryOK != gotBoundaryOK || (wantBoundaryOK && !state.Domain(reg).Equal(wantBoundary, gotBoundary)) {
 			t.Fatalf("solve %d boundary observation %d differs", solve, point)
 		}
@@ -169,6 +175,9 @@ func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *
 	}
 	wantExit, wantExitOK := oracle.ExitState()
 	gotExit, gotExitOK := concrete.ExitState()
+	if gotExitOK {
+		gotExit = gotExit.RekeyPathEvidence(concrete.KeySpace(), oracle.KeySpace())
+	}
 	if wantExitOK != gotExitOK || (wantExitOK && !state.Domain(reg).Equal(wantExit, gotExit)) {
 		t.Fatalf("solve %d exit differs", solve)
 	}

@@ -175,6 +175,7 @@ type Plan struct {
 	signatureAllocationTemplates []signature.ReturnAllocationTemplate
 	observationBody              lexicalidentity.StableLexicalBodyID
 	observationPoints            []observationPoint
+	callSurface                  CallSurface
 	structuralExpressionRegions  []structuralExpressionRegionEntry
 }
 
@@ -584,7 +585,7 @@ var descriptors = [...]descriptor{
 	{"CallSites", CallSite, Composite, Node, N0Materialize, barriers(N0Materialize, E5CallEffects), 0},
 	{"ObjectLiterals", ObjectLiteral, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment)},
 	{"ExpressionValues", ExpressionValue, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
-	{"ExpressionOperations", ExpressionOperation, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
+	{"ExpressionOperations", ExpressionOperation, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return, BranchEdgeReachability)},
 	{"ExpressionFunctions", ExpressionFunction, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
 	{"ExpressionRefinements", ExpressionRefinement, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return)},
 	{"ExpressionPaths", ExpressionPath, Dependency, 0, 0, 0, owners(CallSite, RootAssignment, PathAssignment, PathStaticMemberWrite, DynamicIndexWrite, Return, BranchEdgeReachability)},

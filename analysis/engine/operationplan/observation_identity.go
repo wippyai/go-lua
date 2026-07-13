@@ -19,6 +19,7 @@ func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID,
 	out := *p
 	out.observationBody = lexicalidentity.StableLexicalBodyID{}
 	out.observationPoints = nil
+	out.callSurface = CallSurface{}
 	if body == (lexicalidentity.StableLexicalBodyID{}) || lowered == nil {
 		return &out
 	}

@@ -48,7 +48,7 @@ func TestReturnedPredicateRefinementCertificateRejectsForgedModesAndPaths(t *tes
 				ExpressionPaths:       test.paths,
 			})
 			ctx := planCompileContext{facts: facts, predicateRefinements: make(map[factflow.ExprRef]struct{})}
-			err := validateReturnedPredicateSource(&ctx, outer, make(map[factflow.ExprRef]bool))
+			err := validatePredicateSource(&ctx, outer, make(map[factflow.ExprRef]bool))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("certificate error = %v, want %q", err, test.want)
 			}

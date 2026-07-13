@@ -129,6 +129,33 @@ func (a *Arena) directParamRoot(term ValueTerm) (int, bool) {
 	}
 	return int(node.root.Index), true
 }
+
+// refinedParamRoot reports exact parameter identity through unary constraints.
+// It is deliberately separate from directParamRoot: refinement preserves the
+// return alias, but does not establish the legacy whole-function ReturnFlow.
+func (a *Arena) refinedParamRoot(term ValueTerm) (int, bool) {
+	wrapped := false
+	for a != nil && term != 0 && int(term) < len(a.values) {
+		node := a.values[term]
+		switch node.op {
+		case valueRoot:
+			if wrapped && node.root.Kind == RootParam {
+				return int(node.root.Index), true
+			}
+			return 0, false
+		case valueRefinement, valueRuntimeValidation:
+			if len(node.args) != 1 {
+				return 0, false
+			}
+			wrapped = true
+			term = node.args[0]
+		default:
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
 func (a *Arena) Constant(value product.Value) ValueTerm {
 	return a.internValue(valueNode{op: valueConstant, value: value})
 }

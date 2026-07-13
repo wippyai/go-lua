@@ -1375,13 +1375,10 @@ func (l *lowerer) wirCheckTempExpressionValueSource(
 type wirSealedLuaTypeExprRefKey struct{ predicate factflow.ExprRef }
 
 func (l *lowerer) addSealedLuaTypeCheckOperation(predicate factflow.ExprRef, inst wir.Instruction) {
-	if l == nil || !l.sealedLuaTypeChecks || predicate == 0 || inst.Check == 0 || l.wir == nil {
+	if predicate == 0 || !l.sealedLuaTypeCheckAuthorized(inst) {
 		return
 	}
 	check := l.wir.Check(inst.Check)
-	if (check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot) || check.Path.IsEmpty() || check.TypeName == "" {
-		return
-	}
 	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
 	if !ok {
 		return
@@ -1416,6 +1413,18 @@ func (l *lowerer) addSealedLuaTypeCheckOperation(predicate factflow.ExprRef, ins
 	}
 	l.expressionOperations[typeRef] = typeOp
 	l.expressionOperations[predicate] = predicateOp
+}
+
+func (l *lowerer) sealedLuaTypeCheckAuthorized(inst wir.Instruction) bool {
+	if l == nil || !l.sealedLuaTypeChecks || inst.Check == 0 || l.wir == nil {
+		return false
+	}
+	check := l.wir.Check(inst.Check)
+	if (check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot) || check.Path.IsEmpty() || check.TypeName == "" {
+		return false
+	}
+	_, exact := runtimekind.ParseTag(check.TypeName)
+	return exact
 }
 
 func (l *lowerer) addWIRExpressionOperationValue(exprRef factflow.ExprRef, op factflow.ExpressionOperation, left, right factflow.ValueSource) {

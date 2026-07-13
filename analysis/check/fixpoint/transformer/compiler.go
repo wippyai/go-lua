@@ -11,6 +11,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -577,7 +578,7 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 	truthyEdge := branchCondition.TruthyOnTrueEdge()
 	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
 		term, ok := exactCompilerPathTerm(ctx, proof.PathRef())
-		if !ok || term != condition && !structuralPredicateConditionEvidence(ctx, branch.Point(), condition, term) {
+		if !ok || term != condition && !predicateConditionEvidence(ctx, condition, term) {
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-path")
 			return false
 		}
@@ -605,22 +606,13 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 	return validationErr
 }
 
-func structuralPredicateConditionEvidence(ctx planCompileContext, point cfg.Point, condition, evidence ValueTerm) bool {
+// predicateConditionEvidence reports whether an exact certified predicate is a
+// Lua type comparison over evidence. The condition term already came from the
+// branch's canonical source and immutable predicate allow-set, so structural
+// term identity—not AST/CFG spelling—is the authority shared by statement and
+// expression-form predicates.
+func predicateConditionEvidence(ctx planCompileContext, condition, evidence ValueTerm) bool {
 	if ctx.builder == nil || condition == 0 || evidence == 0 {
-		return false
-	}
-	owned := false
-	for owner, region := range ctx.structuralPredicates {
-		if region.Branch() == point && region.RHSOnTrue() && structuralRHSIsEffectFree(ctx.plan, region) {
-			op, exists := ctx.facts.ExpressionOperation(owner)
-			left, err := exactCompilerSourceTerm(ctx, op.Left())
-			if exists && err == nil && left == condition {
-				owned = true
-				break
-			}
-		}
-	}
-	if !owned {
 		return false
 	}
 	arena := ctx.builder.Arena()
@@ -631,14 +623,32 @@ func structuralPredicateConditionEvidence(ctx planCompileContext, point cfg.Poin
 	if (node.op != valueScalarEqual && node.op != valueScalarNotEqual) || len(node.args) != 2 {
 		return false
 	}
-	for _, arg := range node.args {
+	for index, arg := range node.args {
 		if arg == 0 || int(arg) >= len(arena.values) {
 			continue
 		}
 		typeNode := arena.values[arg]
-		if typeNode.op == valueLuaTypeName && len(typeNode.args) == 1 && typeNode.args[0] == evidence {
-			return true
+		if typeNode.op != valueLuaTypeName || len(typeNode.args) != 1 || typeNode.args[0] != evidence {
+			continue
 		}
+		literalTerm := node.args[1-index]
+		if literalTerm == 0 || int(literalTerm) >= len(arena.values) {
+			return false
+		}
+		literalNode := arena.values[literalTerm]
+		if literalNode.op != valueConstant {
+			return false
+		}
+		name, exact := typevalue.StringLiteralOf(ctx.registry, literalNode.value)
+		tag, validTag := runtimekind.ParseTag(name)
+		if !exact || !validTag {
+			return false
+		}
+		// This helper represents a Present proof on the predicate's truthy
+		// edge. Equality implies presence only for non-nil tags; inequality
+		// implies it only when excluding nil itself.
+		return node.op == valueScalarEqual && tag != runtimekind.Nil ||
+			node.op == valueScalarNotEqual && tag == runtimekind.Nil
 	}
 	return false
 }
