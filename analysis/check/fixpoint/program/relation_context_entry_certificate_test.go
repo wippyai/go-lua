@@ -271,6 +271,16 @@ end
 	if len(certificate.captures) != 0 || !state.Domain(reg).Equal(frame.fullEntry, context(functionValue).entryState) {
 		t.Fatalf("direct callee leaked into symbolic captures or left the full carrier: captures=%#v", certificate.captures)
 	}
+	absent := keyedFunction{
+		funcExpr: caller, key: contextKey,
+		entryState: state.State{}.WriteValue(reg, statekey.SymbolValue(params[0]), paramValue),
+		entryKeys:  entryKeys, hasEntryState: true,
+	}
+	if certificate, frame, exact := strictValidatedFrameContextCertificate(
+		reg, bindings, caller, plan, shape, transformer.GlobalBoundary{}, absent, base, callerPrepared.IdentityDigest(), 7,
+	); exact || certificate != nil || frame != nil {
+		t.Fatalf("absent direct-callee carrier was accepted: certificate=%#v frame=%#v", certificate, frame)
+	}
 
 	foreign := product.Set(reg, functionValue, identity.Key, identity.Singleton(identity.LuaFunction(uint64(functionIdentity)+1)))
 	nonExact := product.Set(reg, functionValue, identity.Key, identity.Top())

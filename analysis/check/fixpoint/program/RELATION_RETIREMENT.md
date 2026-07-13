@@ -333,3 +333,15 @@ contexts/omissions/reuses = 5/7/7. Diagnostics, summaries, every registered
 product oracle, and repeated-run digests are byte-identical. Wall time remains
 within measurement noise, so this remains private capability evidence and is
 not a default-path performance claim.
+
+The private strict path also admits one ordered immutable primitive capture in
+a parameterized caller that composes only with independently sealed params-only
+lexical callees. The capture participates in the symbolic frame and context
+certificate; hidden callee identities remain exclusively in the full concrete
+carrier, and every expected identity must be present and exact. Capture-only,
+capture-plus-global, mutable, nonprimitive, capture-bearing-callee, and cyclic
+shapes remain concrete. The representative two-context fixture moves from
+13 solves/101 transfers to 9/73 with two owners, four equations omitted and
+four materializations reused. All summaries, products, diagnostics, manifests,
+and result lineage are identical. No current frozen corpus owner has this exact
+shape, so this is capability groundwork rather than a corpus performance claim.

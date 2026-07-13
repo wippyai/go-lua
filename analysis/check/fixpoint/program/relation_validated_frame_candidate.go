@@ -73,13 +73,16 @@ func strictValidatedFrameContextCertificate(
 	bodyDigest, generation uint64,
 ) (*relationContextEntryCertificate, *strictValidatedFrameCandidate, bool) {
 	if reg == nil || bindings == nil || fn == nil || plan == nil || context.entryKeys == nil || !context.hasEntryState ||
-		context.key.Entry == (summary.EntryKey{}) || bodyDigest == 0 || generation == 0 || shape.Captures != 0 ||
+		context.key.Entry == (summary.EntryKey{}) || bodyDigest == 0 || generation == 0 ||
 		shape.Results != 0 || shape.HeapTemplates != 0 || int(shape.Params) != len(plan.BoundaryParams()) ||
-		int(shape.Globals) != len(plan.BoundaryGlobals()) || !stagedStrictAnnotatedParams(bindings, fn, plan.BoundaryParams()) {
+		int(shape.Captures) != len(plan.BoundaryCaptures()) || int(shape.Globals) != len(plan.BoundaryGlobals()) ||
+		(shape.Captures != 0 && (shape.Params == 0 || shape.Globals != 0)) ||
+		(shape.Params != 0 && !stagedStrictAnnotatedParams(bindings, fn, plan.BoundaryParams())) {
 		return nil, nil, false
 	}
 	params := plan.BoundaryParams()
-	visible := make(map[symbol.ID]struct{}, len(params)+len(plan.BoundaryGlobals()))
+	captures := plan.BoundaryCaptures()
+	visible := make(map[symbol.ID]struct{}, len(params)+len(captures)+len(plan.BoundaryGlobals()))
 	projected := state.State{}
 	carrier := state.State{}
 	for _, param := range params {
@@ -93,6 +96,24 @@ func strictValidatedFrameContextCertificate(
 		}
 		projected = projected.WriteValue(reg, statekey.SymbolValue(param), value)
 		carrier = carrier.WriteValue(reg, statekey.SymbolValue(param), value)
+	}
+	directCaptures := bindings.DirectCaptures(fn)
+	nextCapture := 0
+	for _, capture := range captures {
+		for nextCapture < len(directCaptures) && directCaptures[nextCapture].Captured != capture {
+			nextCapture++
+		}
+		if capture == 0 || nextCapture == len(directCaptures) || directCaptures[nextCapture].CapturedName == "" || bindings.HasWrite(capture) {
+			return nil, nil, false
+		}
+		nextCapture++
+		visible[capture] = struct{}{}
+		value := context.entryState.ReadValue(reg, statekey.SymbolValue(capture))
+		if !contextEntryCaptureValueUseful(reg, value) {
+			return nil, nil, false
+		}
+		projected = projected.WriteValue(reg, statekey.SymbolValue(capture), value)
+		carrier = carrier.WriteValue(reg, statekey.SymbolValue(capture), value)
 	}
 	for _, global := range plan.BoundaryGlobals() {
 		if global == 0 {
@@ -123,7 +144,14 @@ func strictValidatedFrameContextCertificate(
 		if !sealed || !exactIdentity || valueIdentity != identity.LuaFunction(uint64(functionIdentity)) {
 			return nil, nil, false
 		}
+		delete(directCallees, sym)
 		carrier = carrier.WriteValue(reg, slot, value)
+	}
+	// The sealed call surface is positive authority, not merely a whitelist for
+	// whatever happened to be present. Every omitted lexical-callee capture must
+	// have contributed its exact function identity to the full concrete carrier.
+	if len(directCallees) != 0 {
+		return nil, nil, false
 	}
 	valid := true
 	context.entryState.ForEachPathRefinement(func(pathKey keyspace.Key, value product.Value) bool {
@@ -157,7 +185,7 @@ func strictValidatedFrameContextCertificate(
 	if !valid || !state.Domain(reg).Equal(context.entryState, carrier) {
 		return nil, nil, false
 	}
-	certificate := certifyRelationContextEntry(reg, bindings, fn, params, nil, context.key, base, bodyDigest, generation, projected, context.entryKeys, true)
+	certificate := certifyRelationContextEntry(reg, bindings, fn, params, captures, context.key, base, bodyDigest, generation, projected, context.entryKeys, true)
 	if certificate == nil {
 		return nil, nil, false
 	}

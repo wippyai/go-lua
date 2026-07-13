@@ -20,8 +20,10 @@ import (
 
 // prepareStagedStrictRelationCatalog is the internal-only phase-collapse
 // planner. It keeps the existing zero-boundary leaf slice and adds only exact
-// parameterized leaves whose complete context State and immutable stdlib
-// global vector can be bound before any equation is omitted.
+// parameterized owners whose complete context State and boundary can be bound
+// before any equation is omitted. The capture-bearing extension is limited to
+// ordered immutable primitive captures and closed params-only lexical calls;
+// all other capture shapes stay concrete.
 type stagedStrictContext struct {
 	origin      keyedFunction
 	certificate *relationContextEntryCertificate
@@ -101,6 +103,18 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 			}
 			var exact bool
 			candidate.contexts, exact = stagedStrictCertifiedContexts(reg, bindings, keys, owner, plan, shape, candidate.globalBoundary)
+			if !exact {
+				continue
+			}
+		case shape.Params != 0 && shape.Captures != 0:
+			// This first capture-bearing relation is intentionally smaller than
+			// the existing parameter/global slice. A global plus capture would be
+			// a new mixed boundary proof and remains on the concrete path.
+			if shape.Globals != 0 || !stagedStrictAnnotatedParams(bindings, owner.fn, plan.BoundaryParams()) {
+				continue
+			}
+			var exact bool
+			candidate.contexts, exact = stagedStrictCertifiedContexts(reg, bindings, keys, owner, plan, shape, transformer.GlobalBoundary{})
 			if !exact {
 				continue
 			}
@@ -194,6 +208,13 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 		}
 		direct, err := transformer.NewDirectCallCatalog(plan.PointCount(), routes)
 		if err != nil {
+			continue
+		}
+		// The first capture-bearing slice is deliberately compositional: its
+		// immutable primitive captures may parameterize a caller only when that
+		// caller is joined to at least one independently sealed params-only
+		// lexical producer. Capture-only leaves remain on the concrete path.
+		if candidate.shape.Captures != 0 && len(direct.Cells()) == 0 {
 			continue
 		}
 		candidate.direct = direct
