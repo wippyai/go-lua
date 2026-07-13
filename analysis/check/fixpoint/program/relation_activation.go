@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 )
 
+var errStrictRelationRetainedResultMissing = errors.New("program: strict relation owner missing retained result")
+
 func freezeRelationActivation(ctx context.Context, stats *Stats, catalog relationRunCatalog) (*relationRunActivation, error) {
 	recordRelationActivationCensus(stats, catalog)
 	frozen, err := catalog.Freeze(ctx)
@@ -31,8 +33,20 @@ func freezeRelationActivation(ctx context.Context, stats *Stats, catalog relatio
 // are deliberately derived together so no active owner can observe a mixture
 // of relation and legacy generations.
 type relationRunActivation struct {
-	snapshot relationRunSnapshot
-	policy   relationOwnerCachePolicy
+	snapshot     relationRunSnapshot
+	policy       relationOwnerCachePolicy
+	pinned       []summary.EntrySummary
+	retained     map[summary.SummaryKey]relationRetainedOwner
+	used         map[summary.SummaryKey]struct{}
+	strict       bool
+	ownsRetained bool
+	stats        *Stats
+}
+
+type relationRetainedOwner struct {
+	identity relationCellIdentity
+	result   *body.Result
+	inputs   []uint64
 }
 
 type relationOwnerRuntime struct {
@@ -42,6 +56,7 @@ type relationOwnerRuntime struct {
 	retained       *retainedSummaryApplicationOwner
 	resolution     uint64
 	contextSummary *summary.Summary
+	strict         bool
 }
 
 func (a *relationRunActivation) contextOwnerRuntime(
@@ -69,6 +84,10 @@ type relationMaterializedRuntime struct {
 	cache      *materializedSolveCache
 	resolution uint64
 	active     bool
+	retained   *body.Result
+	inputs     []uint64
+	strict     bool
+	missing    bool
 }
 
 func newRelationRunActivation(snapshot relationRunSnapshot) *relationRunActivation {
@@ -79,6 +98,80 @@ func newRelationRunActivation(snapshot relationRunSnapshot) *relationRunActivati
 		snapshot: snapshot,
 		policy:   newRelationOwnerCachePolicy(snapshot.consumers),
 	}
+}
+
+func (a *relationRunActivation) pinnedSummaries() []summary.EntrySummary {
+	if a == nil {
+		return nil
+	}
+	return a.pinned
+}
+
+func (a *relationRunActivation) retain(identity relationCellIdentity, result *body.Result, inputs []uint64) bool {
+	if a == nil || result == nil || identity.Generation != a.snapshot.generation {
+		return false
+	}
+	if a.retained == nil {
+		a.retained = make(map[summary.SummaryKey]relationRetainedOwner)
+	}
+	a.retained[identity.Summary] = relationRetainedOwner{identity: identity, result: result, inputs: append([]uint64(nil), inputs...)}
+	a.ownsRetained = true
+	return true
+}
+
+func (a *relationRunActivation) discardOwnedRetained() {
+	if a == nil || !a.ownsRetained {
+		return
+	}
+	for _, owner := range a.retained {
+		owner.result.ReleaseTransient()
+		if a.stats != nil {
+			a.stats.RelationRetainedResultsReleased++
+		}
+	}
+	clear(a.retained)
+	clear(a.used)
+	a.ownsRetained = false
+}
+
+func (a *relationRunActivation) handoffRetained() bool {
+	if a == nil {
+		return true
+	}
+	for key := range a.retained {
+		if _, used := a.used[key]; !used {
+			return false
+		}
+	}
+	// The materialized Result tree now owns the retained bodies.
+	a.ownsRetained = false
+	clear(a.retained)
+	clear(a.used)
+	return true
+}
+
+func (a *relationRunActivation) retainedResult(key summary.SummaryKey, prepared *body.Static) (relationRetainedOwner, bool) {
+	if a == nil || prepared == nil {
+		return relationRetainedOwner{}, false
+	}
+	owner, ok := a.retained[key]
+	if !ok || owner.result == nil || owner.identity.Prepared != prepared ||
+		owner.identity.BodyDigest != prepared.IdentityDigest() || owner.identity.Generation != a.snapshot.generation {
+		return relationRetainedOwner{}, false
+	}
+	return owner, true
+}
+
+func (a *relationRunActivation) takeRetainedResult(key summary.SummaryKey, prepared *body.Static) (relationRetainedOwner, bool) {
+	owner, ok := a.retainedResult(key, prepared)
+	if !ok {
+		return relationRetainedOwner{}, false
+	}
+	if a.used == nil {
+		a.used = make(map[summary.SummaryKey]struct{})
+	}
+	a.used[key] = struct{}{}
+	return owner, true
 }
 
 func recordRelationActivationCensus(stats *Stats, catalog relationRunCatalog) {
@@ -115,7 +208,7 @@ func (a *relationRunActivation) ownerRuntime(
 	retained *retainedSummaryApplicationRun,
 	legacyResolution uint64,
 ) relationOwnerRuntime {
-	out := relationOwnerRuntime{cache: legacyCache, resolution: legacyResolution}
+	out := relationOwnerRuntime{cache: legacyCache, resolution: legacyResolution, strict: a != nil && a.strict}
 	owner, ok := a.ownerIdentity(key, prepared)
 	if !ok {
 		if retained != nil {
@@ -144,7 +237,7 @@ func (a *relationRunActivation) materializedOwnerRuntime(
 	legacyCache *materializedSolveCache,
 	legacyResolution uint64,
 ) relationMaterializedRuntime {
-	out := relationMaterializedRuntime{cache: legacyCache, resolution: legacyResolution}
+	out := relationMaterializedRuntime{cache: legacyCache, resolution: legacyResolution, strict: a != nil && a.strict}
 	owner, ok := a.ownerIdentity(key, prepared)
 	if !ok {
 		return out
@@ -157,5 +250,12 @@ func (a *relationRunActivation) materializedOwnerRuntime(
 	out.resolver = resolver
 	out.cache = legacyCache.withoutRetainedHandoff()
 	out.resolution = a.policy.resolutionDigest(owner, legacyResolution)
+	retained, retainedOK := a.takeRetainedResult(key, prepared)
+	if retainedOK {
+		out.retained = retained.result
+		out.inputs = retained.inputs
+	} else if a.strict {
+		out.missing = true
+	}
 	return out
 }

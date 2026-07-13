@@ -37,10 +37,11 @@ type relationCellIdentity struct {
 }
 
 type relationCatalogEntry struct {
-	identity relationCellIdentity
-	function *ast.FunctionExpr
-	compiler *transformer.PreparedPlanCompiler
-	direct   transformer.DirectCallCatalog
+	identity      relationCellIdentity
+	function      *ast.FunctionExpr
+	compiler      *transformer.PreparedPlanCompiler
+	direct        transformer.DirectCallCatalog
+	hasEntryState bool
 }
 
 // relationConsumerIdentity is the cache-fence authority for one query owner.
@@ -203,6 +204,76 @@ func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 		}
 		consumer.direct = direct
 		consumer.active = len(routes) != 0
+		out.consumers.byKey[consumer.identity.Summary] = len(out.consumers.entries)
+		out.consumers.entries = append(out.consumers.entries, consumer)
+	}
+	return out
+}
+
+// strictProductionActivationSlice admits complete lexical owners, never
+// individual call points.  The producer slice is already bottom-up,
+// effect-free and recursion-free; this final projection makes that same set
+// the consumer authority.  A leaf with no calls is still active because its
+// frozen relation fulfills the owner's summary equation.
+func (c relationRunCatalog) strictProductionActivationSlice() relationRunCatalog {
+	out := c.exactLeafActivationSlice()
+	if out.generation == nil {
+		return out
+	}
+	byCell := make(map[transformer.CellRef]relationCatalogEntry, len(out.entries))
+	for _, entry := range out.entries {
+		if entry.compiler == nil || !entry.compiler.EffectFree() ||
+			entry.hasEntryState ||
+			len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 ||
+			len(entry.identity.Prepared.OperationPlan().BoundaryCaptures()) != 0 {
+			continue
+		}
+		byCell[entry.identity.Cell] = entry
+	}
+	// Removing a stateful/effectful dependency also removes every caller that
+	// was certified only while that dependency was present.  This preserves the
+	// complete-call-surface invariant after filtering.
+	for changed := true; changed; {
+		changed = false
+		for cell, entry := range byCell {
+			for _, target := range entry.direct.Cells() {
+				if _, ok := byCell[target]; ok {
+					continue
+				}
+				delete(byCell, cell)
+				changed = true
+				break
+			}
+		}
+	}
+	originalEntries := append([]relationCatalogEntry(nil), out.entries...)
+	entries := out.entries[:0]
+	clear(out.byKey)
+	byKey := make(map[summary.SummaryKey]relationCatalogEntry, len(byCell))
+	for _, entry := range originalEntries {
+		if _, ok := byCell[entry.identity.Cell]; !ok {
+			continue
+		}
+		out.byKey[entry.identity.Summary] = len(entries)
+		entries = append(entries, entry)
+		byKey[entry.identity.Summary] = entry
+	}
+	out.entries = entries
+	out.consumers.entries = out.consumers.entries[:0]
+	clear(out.consumers.byKey)
+	for _, consumer := range c.consumers.entries {
+		entry, admitted := byKey[consumer.identity.Summary]
+		if !admitted || consumer.identity.Prepared != entry.identity.Prepared ||
+			consumer.identity.BodyDigest != entry.identity.BodyDigest ||
+			consumer.identity.Generation != out.generation {
+			continue
+		}
+		// entry.direct was certified against the complete call surface while the
+		// bottom-up producer set was built.  Installing it as a unit ensures an
+		// admitted owner has no relation/legacy mixed routing.
+		consumer.direct = entry.direct
+		consumer.dependencyKeys = nil
+		consumer.active = true
 		out.consumers.byKey[consumer.identity.Summary] = len(out.consumers.entries)
 		out.consumers.entries = append(out.consumers.entries, consumer)
 	}
@@ -628,18 +699,20 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 }
 
 type relationCatalogCandidate struct {
-	key      summary.SummaryKey
-	fn       *ast.FunctionExpr
-	prepared *body.Static
-	compiler *transformer.PreparedPlanCompiler
-	shape    transformer.Shape
-	direct   map[cfg.Point]summary.SummaryKey
+	key           summary.SummaryKey
+	fn            *ast.FunctionExpr
+	prepared      *body.Static
+	compiler      *transformer.PreparedPlanCompiler
+	shape         transformer.Shape
+	direct        map[cfg.Point]summary.SummaryKey
+	hasEntryState bool
 }
 
 type relationCatalogOwner struct {
-	key      summary.SummaryKey
-	fn       *ast.FunctionExpr
-	prepared *body.Static
+	key           summary.SummaryKey
+	fn            *ast.FunctionExpr
+	prepared      *body.Static
+	hasEntryState bool
 }
 
 // relationBoundaryMatchesBindings makes the prepared plan and binder one
@@ -727,7 +800,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		if err != nil || !compiler.EffectFree() || (shape.Captures != 0 && (relationPreparedHasCalls(static) || len(direct) != 0)) {
 			continue
 		}
-		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape, direct: direct}
+		candidate := &relationCatalogCandidate{key: owner.key, fn: owner.fn, prepared: static, compiler: compiler, shape: shape, direct: direct, hasEntryState: owner.hasEntryState}
 		candidates[owner.key] = candidate
 	}
 
@@ -781,7 +854,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		if err != nil {
 			continue
 		}
-		entry := relationCatalogEntry{identity: identities[key], function: candidate.fn, compiler: candidate.compiler, direct: direct}
+		entry := relationCatalogEntry{identity: identities[key], function: candidate.fn, compiler: candidate.compiler, direct: direct, hasEntryState: candidate.hasEntryState}
 		out.byKey[key] = len(out.entries)
 		out.entries = append(out.entries, entry)
 	}
@@ -838,7 +911,7 @@ func relationCatalogOwners(keys programKeys, prepared preparedBodies, rootFn *as
 			continue
 		}
 		seen[fn.key] = struct{}{}
-		owners = append(owners, relationCatalogOwner{key: fn.key, fn: fn.funcExpr, prepared: prepared.function(fn.funcExpr)})
+		owners = append(owners, relationCatalogOwner{key: fn.key, fn: fn.funcExpr, prepared: prepared.function(fn.funcExpr), hasEntryState: fn.hasEntryState})
 	}
 	return owners
 }

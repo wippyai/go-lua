@@ -49,9 +49,15 @@ type Config struct {
 	// It is test-only and never changes production call routing.
 	relationSnapshotAudit func(relationRunSnapshot) error
 	// enableRelationActivation is an internal differential-test gate. Production
-	// remains legacy until whole-program equivalence and corpus performance gates
-	// promote the relation path.
+	// compatibility knob retained while older package tests migrate. Production
+	// now attempts the stricter whole-owner catalog regardless of this value.
 	enableRelationActivation bool
+	// forceLegacyRelations is the test-only escape hatch for differential
+	// oracles. Production callers cannot set it outside this package.
+	forceLegacyRelations bool
+	// strictRelationForceReject injects a transaction rejection for package tests.
+	// It is never reachable from public Config construction.
+	strictRelationForceReject bool
 }
 
 // Stats holds caller-owned observational counters for a program fixed-point
@@ -86,6 +92,10 @@ type Stats struct {
 	RelationContextsSpecialized                int
 	RelationCallsHandled                       int
 	RelationActivationFallbacks                int
+	RelationSummaryEquationsOmitted            int
+	RelationMaterializationsReused             int
+	RelationUnexpectedMisses                   int
+	RelationRetainedResultsReleased            int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }
@@ -117,7 +127,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		return Result{}, err
 	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = !config.forceLegacyRelations || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
@@ -157,13 +167,27 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	applyInferredParamEntryStates(&keys, bindings, inferred)
 	keys.certifyFinalRelationContextEntries(config.Check.Registry, prepared)
 	var relationActivation *relationRunActivation
-	if config.enableRelationActivation {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil).certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
+	if !config.forceLegacyRelations {
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
+		strict := !config.enableRelationActivation
+		if !strict {
+			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
+		} else {
+			catalog = catalog.strictProductionActivationSlice()
+		}
 		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
 			return Result{}, err
 		}
+		if relationActivation != nil && strict {
+			relationActivation.strict = true
+			relationActivation, err = prepareStrictRelationOwners(config.Check, config.Stats, relationActivation, prepared, keys, config.strictRelationForceReject)
+			if err != nil {
+				return Result{}, err
+			}
+		}
 	}
+	defer relationActivation.discardOwnedRetained()
 	functions := make([]query.Function, 0, 1+len(keys.functions)+keys.contexts.Len())
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
 	defer retained.Release()
@@ -172,6 +196,12 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
 	for _, origin := range keys.functions {
 		static := prepared.function(origin.funcExpr)
+		if relationActivation.omitsEquation(origin.key, static) {
+			if config.Stats != nil {
+				config.Stats.RelationSummaryEquationsOmitted++
+			}
+			continue
+		}
 		runtime := relationActivation.ownerRuntime(origin.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, origin.key))
 		functions = append(functions, boundFunction(origin, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
@@ -186,6 +216,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		Context:    config.Context,
 		Registry:   config.Check.Registry,
 		Functions:  functions,
+		Pinned:     relationActivation.pinnedSummaries(),
 		Seed:       config.Seed,
 		WidenAt:    config.WidenAt,
 		WidenDelay: config.WidenDelay,
@@ -211,6 +242,9 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	)
 	if err != nil {
 		return Result{}, err
+	}
+	if !relationActivation.handoffRetained() {
+		return Result{}, errStrictRelationRetainedResultMissing
 	}
 	return Result{
 		snapshot:     snapshot,
@@ -239,7 +273,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = !config.forceLegacyRelations || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	if fnType, ok := lowerFunctionExprType(fn, bindings, config.Check.ModuleTypes); ok {
@@ -270,20 +304,40 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		return Result{}, err
 	}
 	var relationActivation *relationRunActivation
-	if config.enableRelationActivation {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn).certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
+	if !config.forceLegacyRelations {
+		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
+		strict := !config.enableRelationActivation
+		if !strict {
+			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
+		} else {
+			catalog = catalog.strictProductionActivationSlice()
+		}
 		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
 			return Result{}, err
 		}
+		if relationActivation != nil && strict {
+			relationActivation.strict = true
+			relationActivation, err = prepareStrictRelationOwners(config.Check, config.Stats, relationActivation, prepared, keys, config.strictRelationForceReject)
+			if err != nil {
+				return Result{}, err
+			}
+		}
 	}
+	defer relationActivation.discardOwnedRetained()
 	functions := make([]query.Function, 0, 1+len(keys.functions))
 	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
 	defer retained.Release()
 	indexBase := summaryIndexBase(keys)
 	rootPrepared := prepared.function(fn)
-	rootRuntime := relationActivation.ownerRuntime(keys.rootKey, rootPrepared, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, keys.rootKey))
-	functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, rootPrepared, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
+	if relationActivation.omitsEquation(keys.rootKey, rootPrepared) {
+		if config.Stats != nil {
+			config.Stats.RelationSummaryEquationsOmitted++
+		}
+	} else {
+		rootRuntime := relationActivation.ownerRuntime(keys.rootKey, rootPrepared, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, keys.rootKey))
+		functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, rootPrepared, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
+	}
 	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
 	for _, origin := range keys.functions {
 		if _, ok := seen[origin.key]; ok {
@@ -291,6 +345,12 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		}
 		seen[origin.key] = struct{}{}
 		static := prepared.function(origin.funcExpr)
+		if relationActivation.omitsEquation(origin.key, static) {
+			if config.Stats != nil {
+				config.Stats.RelationSummaryEquationsOmitted++
+			}
+			continue
+		}
 		runtime := relationActivation.ownerRuntime(origin.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, origin.key))
 		functions = append(functions, boundFunction(origin, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
 	}
@@ -300,6 +360,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		Context:    config.Context,
 		Registry:   config.Check.Registry,
 		Functions:  functions,
+		Pinned:     relationActivation.pinnedSummaries(),
 		Seed:       config.Seed,
 		WidenAt:    config.WidenAt,
 		WidenDelay: config.WidenDelay,
@@ -326,6 +387,9 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	)
 	if err != nil {
 		return Result{}, err
+	}
+	if !relationActivation.handoffRetained() {
+		return Result{}, errStrictRelationRetainedResultMissing
 	}
 	return Result{
 		snapshot:     snapshot,

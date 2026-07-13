@@ -29,6 +29,7 @@ return leaf()
 	legacyConfig := Config{
 		Check:        body.Config{Registry: reg, Schedule: transfer.ScheduleWTO},
 		SummaryCache: cache, CacheProfile: "relation-activation-test",
+		forceLegacyRelations: true,
 	}
 	legacy, err := RunBoundChunk(stmts, bindings, legacyConfig)
 	if err != nil {
@@ -48,6 +49,7 @@ return leaf()
 	activeConfig := legacyConfig
 	activeConfig.Stats = stats
 	activeConfig.enableRelationActivation = true
+	activeConfig.forceLegacyRelations = false
 	active, err := RunBoundChunk(stmts, bindings, activeConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +159,7 @@ return identity("caller-value")
 	reg := standard.Registry()
 	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
 	legacyStats := &Stats{}
-	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats, forceLegacyRelations: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +197,7 @@ return result
 	reg := standard.Registry()
 	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
 	legacyStats, activeStats := &Stats{}, &Stats{}
-	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats, forceLegacyRelations: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +233,7 @@ return truthy, falsy
 	reg := standard.Registry()
 	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
 	legacyStats, activeStats := &Stats{}, &Stats{}
-	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats, forceLegacyRelations: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +261,7 @@ func TestRelationActivationCertifiedContextUnsafeFamiliesStayLegacy(t *testing.T
 			reg := standard.Registry()
 			check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
 			legacyStats, activeStats := &Stats{}, &Stats{}
-			legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+			legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats, forceLegacyRelations: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -287,7 +289,7 @@ return captured()
 	reg := standard.Registry()
 	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO}
 	legacyStats, activeStats := &Stats{}, &Stats{}
-	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats})
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats, forceLegacyRelations: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +310,7 @@ func assertRelationActivationDifferential(t *testing.T, run func(Config) (Result
 	t.Helper()
 	reg := standard.Registry()
 	legacyStats := &Stats{}
-	legacy, err := run(Config{Check: body.Config{Registry: reg}, Stats: legacyStats})
+	legacy, err := run(Config{Check: body.Config{Registry: reg}, Stats: legacyStats, forceLegacyRelations: true})
 	if err != nil {
 		t.Fatal(err)
 	}

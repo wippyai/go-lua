@@ -194,7 +194,7 @@ func chunkFunction(
 		Body: func(ctx query.Context) (summary.Summary, error) {
 			return solveSummaryPrepared(runtime.cache, runtime.retained, profile, runtime.resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				reader, observe := relationTrackedSummaryReader(captured.Registry, reader, runtime.active, stats)
-				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe)
+				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe, runtime.strict, nil, stats)
 				installRelationInputDigests(&config, reader, runtime.active)
 				return config
 			}, stats, solveAttributionFor(stats, prepared, key, SolvePhaseSummary, false))
@@ -224,7 +224,7 @@ func boundFunction(
 			}
 			return solveSummaryPrepared(runtime.cache, runtime.retained, profile, runtime.resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				reader, observe := relationTrackedSummaryReader(captured.Registry, reader, runtime.active, stats)
-				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe)
+				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe, runtime.strict, nil, stats)
 				installRelationInputDigests(&config, reader, runtime.active)
 				if origin.hasEntryState {
 					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
@@ -293,6 +293,9 @@ func checkConfigWithSummaries(
 	metatableProof metatableMethodProof,
 	relationFactory relationResolverFactory,
 	relationObserve func(summary.SummaryKey, summary.Summary),
+	strictRelation bool,
+	onRelationMiss func(),
+	stats *Stats,
 ) body.Config {
 	out := cloneCheckConfig(config)
 	baseFactory := out.CallOutcomeFactory
@@ -337,7 +340,28 @@ func checkConfigWithSummaries(
 		if relationFactory == nil {
 			return legacy
 		}
-		return relationcall.Exclusive(relationFactory(ctx, relationResolverInput{adapter: providerConfig, observe: relationObserve}), legacy)
+		resolver := relationFactory(ctx, relationResolverInput{adapter: providerConfig, observe: relationObserve})
+		if !strictRelation {
+			return relationcall.Exclusive(resolver, legacy)
+		}
+		// Active owners are admitted only when their complete call surface is
+		// represented by exact relation routes.  A resolver miss is therefore a
+		// transaction invariant violation, never permission to run the legacy
+		// call provider for one point.
+		return func(node transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			if resolver != nil {
+				if outcome, handled := resolver(node, site, in, read); handled {
+					return outcome
+				}
+			}
+			if stats != nil {
+				stats.RelationUnexpectedMisses++
+			}
+			if onRelationMiss != nil {
+				onRelationMiss()
+			}
+			return callpayload.CallOutcome{}
+		}
 	}
 	out.SignatureArgumentTypeFactory = func(ctx body.CallOutcomeContext) body.SignatureArgumentTypeFunc {
 		provider := body.SignatureArgumentTypeFunc(callresult.SummaryArgumentTypeProvider(callresult.ProviderConfig{

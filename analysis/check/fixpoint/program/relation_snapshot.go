@@ -9,6 +9,39 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
+// PinnedSummaries projects every zero-boundary frozen producer into the
+// canonical Summary vocabulary.  These entries are immutable query inputs,
+// not equations.  False rejects the complete activation transaction.
+func (s relationRunSnapshot) PinnedSummaries() ([]summary.EntrySummary, bool) {
+	identities := s.Entries()
+	out := make([]summary.EntrySummary, 0, len(identities))
+	for _, identity := range identities {
+		relation, ok := s.Lookup(identity)
+		if !ok || relation.Shape() != (transformer.Shape{}) {
+			return nil, false
+		}
+		cursor, err := transformer.NewBindingCursor(relation.Shape(), nil, nil)
+		if err != nil {
+			return nil, false
+		}
+		projected, exact := relation.Specialize(cursor, nil, nil)
+		if !exact {
+			return nil, false
+		}
+		out = append(out, summary.EntrySummary{Key: identity.Summary, Summary: projected})
+	}
+	slices.SortFunc(out, func(a, b summary.EntrySummary) int {
+		if a.Key.Less(b.Key) {
+			return -1
+		}
+		if b.Key.Less(a.Key) {
+			return 1
+		}
+		return 0
+	})
+	return out, true
+}
+
 type relationFreezeCategory string
 
 const (

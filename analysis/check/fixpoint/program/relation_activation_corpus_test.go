@@ -186,7 +186,7 @@ func measureRelationCorpusRun(t *testing.T, stmts []ast.Stmt, bindings *bind.Res
 	runtime.ReadMemStats(&before)
 	stats := Stats{}
 	start := time.Now()
-	result, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: &stats, enableRelationActivation: active})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: &stats, enableRelationActivation: active, forceLegacyRelations: !active})
 	wall := time.Since(start)
 	runtime.ReadMemStats(&after)
 	if err != nil {

@@ -31,20 +31,33 @@ func materializeChunkWithResultKeys(
 ) (materializedProgram, error) {
 	indexBase := summaryIndexBase(keys)
 	rootRuntime := activation.materializedOwnerRuntime(keys.rootKey, prepared.root, solveCache, summaryOwnerResolutionDigest(keys, keys.rootKey))
-	root, _, err := solveMaterializedPreparedAttributed(
-		rootRuntime.cache,
-		prepared.root,
-		keys.rootKey,
-		materializedOwnerRoutingDigest(keys, keys.rootKey),
-		rootRuntime.resolution,
-		materializedSolveEntryState{},
-		summaries,
-		func(reader summary.Reader) body.Config {
-			return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats))
-		},
-		materializeCounter(stats),
-		solveAttributionFor(stats, prepared.root, keys.rootKey, SolvePhaseMaterialize, false),
-	)
+	if rootRuntime.missing {
+		return materializedProgram{}, errStrictRelationRetainedResultMissing
+	}
+	root := rootRuntime.retained
+	var err error
+	if root != nil {
+		retainedConfig := checkConfigWithSummaries(config, summaries, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, nil, true, nil, stats)
+		root, err = rebindStrictRetainedResult(root, prepared.root, rootRuntime.inputs, retainedConfig)
+		if stats != nil {
+			stats.RelationMaterializationsReused++
+		}
+	} else {
+		root, _, err = solveMaterializedPreparedAttributed(
+			rootRuntime.cache,
+			prepared.root,
+			keys.rootKey,
+			materializedOwnerRoutingDigest(keys, keys.rootKey),
+			rootRuntime.resolution,
+			materializedSolveEntryState{},
+			summaries,
+			func(reader summary.Reader) body.Config {
+				return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats), rootRuntime.strict, nil, stats)
+			},
+			materializeCounter(stats),
+			solveAttributionFor(stats, prepared.root, keys.rootKey, SolvePhaseMaterialize, false),
+		)
+	}
 	if err != nil {
 		return materializedProgram{}, err
 	}
@@ -76,21 +89,35 @@ func materializeFunctionWithResultKeys(
 	indexBase := summaryIndexBase(keys)
 	rootPrepared := prepared.function(fn)
 	rootRuntime := activation.materializedOwnerRuntime(keys.rootKey, rootPrepared, solveCache, summaryOwnerResolutionDigest(keys, keys.rootKey))
-	root, _, err := solveMaterializedPreparedAttributed(
-		rootRuntime.cache,
-		rootPrepared,
-		keys.rootKey,
-		materializedOwnerRoutingDigest(keys, keys.rootKey),
-		rootRuntime.resolution,
-		materializedSolveEntryState{},
-		summaries,
-		func(reader summary.Reader) body.Config {
-			rootConfig := checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats))
-			return functionMaterializeConfig(rootConfig, keys, reader, fn)
-		},
-		materializeCounter(stats),
-		solveAttributionFor(stats, rootPrepared, keys.rootKey, SolvePhaseMaterialize, false),
-	)
+	if rootRuntime.missing {
+		return materializedProgram{}, errStrictRelationRetainedResultMissing
+	}
+	root := rootRuntime.retained
+	var err error
+	if root != nil {
+		retainedConfig := checkConfigWithSummaries(config, summaries, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, nil, true, nil, stats)
+		retainedConfig = functionMaterializeConfig(retainedConfig, keys, summaries, fn)
+		root, err = rebindStrictRetainedResult(root, rootPrepared, rootRuntime.inputs, retainedConfig)
+		if stats != nil {
+			stats.RelationMaterializationsReused++
+		}
+	} else {
+		root, _, err = solveMaterializedPreparedAttributed(
+			rootRuntime.cache,
+			rootPrepared,
+			keys.rootKey,
+			materializedOwnerRoutingDigest(keys, keys.rootKey),
+			rootRuntime.resolution,
+			materializedSolveEntryState{},
+			summaries,
+			func(reader summary.Reader) body.Config {
+				rootConfig := checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats), rootRuntime.strict, nil, stats)
+				return functionMaterializeConfig(rootConfig, keys, reader, fn)
+			},
+			materializeCounter(stats),
+			solveAttributionFor(stats, rootPrepared, keys.rootKey, SolvePhaseMaterialize, false),
+		)
+	}
 	if err != nil {
 		return materializedProgram{}, err
 	}
@@ -233,6 +260,14 @@ func obligationParamSeeds(reg *axis.Registry, keys programKeys, summaries summar
 	if reg == nil || summaries == nil || fn == nil || keys.bindings == nil {
 		return nil
 	}
+	slots := keys.bindings.ParamSlots(fn)
+	if len(slots) == 0 {
+		// A zero-boundary owner cannot consume parameter obligations. Avoid an
+		// irrelevant self-summary read: besides wasted work, that read polluted
+		// ResultVersion input lineage and made an otherwise interchangeable
+		// retained relation result differ from the concrete replay.
+		return nil
+	}
 	callee, ok := keys.functionSymbol(fn)
 	if !ok {
 		return nil
@@ -245,7 +280,6 @@ func obligationParamSeeds(reg *axis.Registry, keys programKeys, summaries summar
 	if !ok || len(sum.ParamObligations) == 0 {
 		return nil
 	}
-	slots := keys.bindings.ParamSlots(fn)
 	var out []paramSeed
 	for i, slot := range slots {
 		if slot.Symbol == 0 || slot.Vararg || slot.Type != nil {
@@ -319,21 +353,35 @@ func materializeFunctionTree(
 		ownerIndex := summaryIndexForOwner(indexBase, keys, origin.key)
 		originPrepared := prepared.function(origin.funcExpr)
 		ownerRuntime := activation.materializedOwnerRuntime(origin.key, originPrepared, solveCache, summaryOwnerResolutionDigest(keys, origin.key))
-		result, _, err := solveMaterializedPreparedAttributed(
-			ownerRuntime.cache,
-			originPrepared,
-			origin.key,
-			materializedOwnerRoutingDigest(keys, origin.key),
-			ownerRuntime.resolution,
-			materializedSolveEntryFor(originPrepared, origin),
-			cache,
-			func(reader summary.Reader) body.Config {
-				ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats))
-				return keyedFunctionMaterializeConfig(originPrepared, ownerConfig, keys, reader, origin)
-			},
-			materializeCounter(stats),
-			solveAttributionFor(stats, originPrepared, origin.key, SolvePhaseMaterialize, false),
-		)
+		if ownerRuntime.missing {
+			return nil, keys, errStrictRelationRetainedResultMissing
+		}
+		result := ownerRuntime.retained
+		var err error
+		if result != nil {
+			retainedConfig := checkConfigWithSummaries(config, cache, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, nil, true, nil, stats)
+			retainedConfig = keyedFunctionMaterializeConfig(originPrepared, retainedConfig, keys, cache, origin)
+			result, err = rebindStrictRetainedResult(result, originPrepared, ownerRuntime.inputs, retainedConfig)
+			if stats != nil {
+				stats.RelationMaterializationsReused++
+			}
+		} else {
+			result, _, err = solveMaterializedPreparedAttributed(
+				ownerRuntime.cache,
+				originPrepared,
+				origin.key,
+				materializedOwnerRoutingDigest(keys, origin.key),
+				ownerRuntime.resolution,
+				materializedSolveEntryFor(originPrepared, origin),
+				cache,
+				func(reader summary.Reader) body.Config {
+					ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats), ownerRuntime.strict, nil, stats)
+					return keyedFunctionMaterializeConfig(originPrepared, ownerConfig, keys, reader, origin)
+				},
+				materializeCounter(stats),
+				solveAttributionFor(stats, originPrepared, origin.key, SolvePhaseMaterialize, false),
+			)
+		}
 		if err != nil {
 			return nil, keys, err
 		}
@@ -540,21 +588,36 @@ func materializeDiscoveredContexts(
 		ownerIndex := summaryIndexForOwner(indexBase, *keys, context.key)
 		contextPrepared := prepared.function(context.funcExpr)
 		ownerRuntime := activation.materializedOwnerRuntime(context.key, contextPrepared, solveCache, summaryOwnerResolutionDigest(*keys, context.key))
-		result, solved, err := solveMaterializedPreparedAttributed(
-			ownerRuntime.cache,
-			contextPrepared,
-			context.key,
-			materializedOwnerRoutingDigest(*keys, context.key),
-			ownerRuntime.resolution,
-			materializedSolveEntryFor(contextPrepared, context),
-			cache,
-			func(reader summary.Reader) body.Config {
-				ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats))
-				return keyedFunctionMaterializeConfig(contextPrepared, ownerConfig, *keys, reader, context)
-			},
-			materializeCounter(stats),
-			solveAttributionFor(stats, contextPrepared, context.key, SolvePhaseMaterialize, true),
-		)
+		if ownerRuntime.missing {
+			return nil, errStrictRelationRetainedResultMissing
+		}
+		result := ownerRuntime.retained
+		solved := false
+		var err error
+		if result != nil {
+			retainedConfig := checkConfigWithSummaries(config, cache, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, nil, true, nil, stats)
+			retainedConfig = keyedFunctionMaterializeConfig(contextPrepared, retainedConfig, *keys, cache, context)
+			result, err = rebindStrictRetainedResult(result, contextPrepared, ownerRuntime.inputs, retainedConfig)
+			if stats != nil {
+				stats.RelationMaterializationsReused++
+			}
+		} else {
+			result, solved, err = solveMaterializedPreparedAttributed(
+				ownerRuntime.cache,
+				contextPrepared,
+				context.key,
+				materializedOwnerRoutingDigest(*keys, context.key),
+				ownerRuntime.resolution,
+				materializedSolveEntryFor(contextPrepared, context),
+				cache,
+				func(reader summary.Reader) body.Config {
+					ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats), ownerRuntime.strict, nil, stats)
+					return keyedFunctionMaterializeConfig(contextPrepared, ownerConfig, *keys, reader, context)
+				},
+				materializeCounter(stats),
+				solveAttributionFor(stats, contextPrepared, context.key, SolvePhaseMaterialize, true),
+			)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -576,6 +639,12 @@ func materializeDiscoveredContexts(
 		recordProgramShape(stats, *keys)
 	}
 	return results, nil
+}
+
+func rebindStrictRetainedResult(result *body.Result, prepared *body.Static, inputs []uint64, config body.Config) (*body.Result, error) {
+	digests := append([]uint64(nil), inputs...)
+	config.SummaryInputDigests = func() []uint64 { return append([]uint64(nil), digests...) }
+	return body.RebindBoundaryProvidersExact(result, prepared, config.SolveConfig())
 }
 
 func materializedRelationObserver(reader summary.Reader, active bool, stats *Stats) func(summary.SummaryKey, summary.Summary) {
