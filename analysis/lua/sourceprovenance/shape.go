@@ -26,14 +26,14 @@ func ValueListSources(exprs []ast.Expr, openTailFinal bool, resolver CallPointRe
 	sources := make([]ASTSource, len(exprs))
 	for i, expr := range exprs {
 		final := i == len(exprs)-1
-		openTail := openTailFinal && final && canExpandFinal(expr)
+		openTail := openTailFinal && final && CanExpandFinal(expr)
 		sources[i] = SourceForExpr(expr, i, i, 0, final, openTail, resolver)
 	}
 	return sources
 }
 
 func ValueShape(expr ast.Expr, final, allowExpansion, openTail bool) (expanded, adjusted, shapedOpenTail bool) {
-	expanded = final && allowExpansion && canExpandFinal(expr)
+	expanded = final && allowExpansion && CanExpandFinal(expr)
 	adjusted = CanProduceMultipleValues(expr) && !expanded
 	shapedOpenTail = openTail && expanded
 	return expanded, adjusted, shapedOpenTail
@@ -61,7 +61,7 @@ func assignmentSource(exprs []ast.Expr, targetIndex int, resolver CallPointResol
 	}
 
 	finalExpr := exprs[finalExprIndex]
-	finalExpands := canExpandFinal(finalExpr)
+	finalExpands := CanExpandFinal(finalExpr)
 	if targetIndex == finalExprIndex {
 		return SourceForExpr(finalExpr, finalExprIndex, targetIndex, 0, true, false, resolver)
 	}
@@ -124,6 +124,9 @@ func valueSourceKind(expr ast.Expr) SourceKind {
 	}
 }
 
-func canExpandFinal(expr ast.Expr) bool {
+// CanExpandFinal reports whether expr contributes an open multi-value tail in
+// the final slot of a Lua value list. Parentheses set AdjustRet on call/vararg
+// producers and therefore deliberately suppress expansion.
+func CanExpandFinal(expr ast.Expr) bool {
 	return CanProduceMultipleValues(expr) && !AdjustRet(expr)
 }

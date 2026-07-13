@@ -660,13 +660,17 @@ func (b *builder) planValues(n int, exprs []ast.Expr) []binding {
 		e := exprs[last]
 		if call, ok := tailCall(e); ok {
 			if cr, ok := b.callTemps[call]; ok {
-				for j := last; j < n; j++ {
+				limit := last + 1
+				if sourceprovenance.CanExpandFinal(e) {
+					limit = n
+				}
+				for j := last; j < limit; j++ {
 					out[j] = b.tempBinding(cr, j-last, e)
 				}
 				return out
 			}
 		}
-		if isVararg(e) {
+		if isVararg(e) && sourceprovenance.CanExpandFinal(e) {
 			for j := last; j < n; j++ {
 				out[j] = binding{kind: bindVararg}
 			}
@@ -958,7 +962,7 @@ func (b *builder) preLowerAssignCalls(exprs []ast.Expr, callPoints []cfg.Point, 
 		topLevel := isValueListRootCall(exprs, occ)
 		context := valueListCallContext(exprs, occ, wir.CallContextAssignmentSource)
 		meta := b.callMetadata(context, exprs, occ.ExprIndex, occ.Call, false)
-		if occ.ExprIndex == last && last < targetCount && topLevel {
+		if occ.ExprIndex == last && last < targetCount && topLevel && sourceprovenance.CanExpandFinal(exprs[last]) {
 			results = targetCount - last
 		}
 		b.emitCallAt(callPoints[i], occ.Call, results, meta)
@@ -1531,7 +1535,16 @@ func (b *builder) lowerMultiValue(e ast.Expr) wir.Operand {
 func (b *builder) markSpread(cr *callResult) {
 	insts := b.pointInstrs[cr.point]
 	if cr.index >= 0 && cr.index < len(insts) && insts[cr.index].Op == wir.OpCall {
-		insts[cr.index].ResultSpread = true
+		inst := &insts[cr.index]
+		inst.ResultSpread = true
+		// ResultSpread is the producer-side form of the same Lua value-list
+		// decision recorded as ListSpread by the consumer. Keep canonical call
+		// evidence synchronized for nested tail producers. CallOpenTail remains
+		// producer-context metadata: true for an open return, false for expanded
+		// argument, table, and iterator tails.
+		inst.CallFinal = true
+		inst.CallExpanded = true
+		inst.CallAdjusted = false
 	}
 }
 
@@ -1545,7 +1558,7 @@ func (b *builder) lowerValueList(exprs []ast.Expr) ([]wir.Operand, bool) {
 	spread := false
 	last := len(exprs) - 1
 	for i, e := range exprs {
-		if i == last && ast.CanProduceMultipleValues(e) {
+		if i == last && sourceprovenance.CanExpandFinal(e) {
 			ops = append(ops, b.lowerMultiValue(e))
 			spread = true
 			continue
@@ -1730,7 +1743,7 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 			continue
 		}
 		var value wir.Operand
-		if i == last && f.Key == nil && ast.CanProduceMultipleValues(f.Value) {
+		if i == last && f.Key == nil && sourceprovenance.CanExpandFinal(f.Value) {
 			value = b.lowerMultiValue(f.Value)
 			spread = true
 		} else {
