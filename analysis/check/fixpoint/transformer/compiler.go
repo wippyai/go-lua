@@ -575,19 +575,30 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 	if !hasCondition {
 		return fmt.Errorf("branch:missing-condition-source")
 	}
-	truthyEdge := branchCondition.TruthyOnTrueEdge()
 	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
 		term, ok := exactCompilerPathTerm(ctx, proof.PathRef())
-		if !ok || term != condition && !predicateConditionEvidence(ctx, condition, term) {
+		if !ok {
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-path")
 			return false
 		}
-		if !proof.ActiveOnEdge(truthyEdge) || proof.ActiveOnEdge(!truthyEdge) {
+		activeEdge, exactEdge := singleActiveEvidenceEdge(proof.ActiveOnEdge(true), proof.ActiveOnEdge(false))
+		if !exactEdge {
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-polarity")
+			return false
+		}
+		predicateTruthy := branchCondition.TruthyOnEdge(activeEdge)
+		directCondition := term == condition
+		predicate, predicatePath := exactTypePredicateEvidence(ctx, condition, term)
+		if !directCondition && !predicatePath {
+			validationErr = fmt.Errorf("branch: contextual-path-evidence-path")
 			return false
 		}
 		switch proof.Kind() {
 		case factflow.BranchPathEvidenceTruthy:
+			if !directCondition {
+				validationErr = fmt.Errorf("branch: contextual-path-evidence-kind %d", proof.Kind())
+				return false
+			}
 			// The truthy row guard is the exact durable representation.
 		case factflow.BranchPathEvidencePresence:
 			value, hasPresence := proof.Presence()
@@ -595,10 +606,24 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 				validationErr = fmt.Errorf("branch: contextual-path-evidence-presence")
 				return false
 			}
-			// Truthiness of this same root implies presence, so the row guard
-			// represents this fact without a parallel mutable evidence lane.
 		default:
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-kind %d", proof.Kind())
+			return false
+		}
+		if directCondition {
+			// A direct condition establishes truthiness (and therefore presence)
+			// only when the canonical source is truthy on this CFG edge.
+			if !predicateTruthy {
+				validationErr = fmt.Errorf("branch: contextual-path-evidence-polarity")
+				return false
+			}
+			return true
+		}
+		// A type predicate can establish root presence on either predicate
+		// outcome. The exact implication is derived from the canonical term;
+		// syntax and mutable concrete state are never consulted here.
+		if proof.Kind() != factflow.BranchPathEvidencePresence || !predicate.impliesPresence(predicateTruthy) {
+			validationErr = fmt.Errorf("branch: contextual-path-evidence-polarity")
 			return false
 		}
 		return true
@@ -606,22 +631,43 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 	return validationErr
 }
 
-// predicateConditionEvidence reports whether an exact certified predicate is a
-// Lua type comparison over evidence. The condition term already came from the
-// branch's canonical source and immutable predicate allow-set, so structural
-// term identity—not AST/CFG spelling—is the authority shared by statement and
-// expression-form predicates.
-func predicateConditionEvidence(ctx planCompileContext, condition, evidence ValueTerm) bool {
+func singleActiveEvidenceEdge(activeTrue, activeFalse bool) (bool, bool) {
+	if activeTrue == activeFalse {
+		return false, false
+	}
+	return activeTrue, true
+}
+
+type exactTypePredicate struct {
+	equal bool
+	tag   runtimekind.Tag
+}
+
+func (p exactTypePredicate) impliesPresence(predicateTruthy bool) bool {
+	equalityHolds := p.equal == predicateTruthy
+	if equalityHolds {
+		return p.tag != runtimekind.Nil
+	}
+	return p.tag == runtimekind.Nil
+}
+
+// exactTypePredicateEvidence recognizes an exact certified Lua type comparison
+// over evidence. The condition term already came from the branch's canonical
+// source and immutable predicate allow-set, so structural term identity—not
+// AST/CFG spelling—is the authority shared by statement and expression forms.
+// The returned predicate describes both outcomes; callers decide whether the
+// active predicate truth value entails the requested evidence.
+func exactTypePredicateEvidence(ctx planCompileContext, condition, evidence ValueTerm) (exactTypePredicate, bool) {
 	if ctx.builder == nil || condition == 0 || evidence == 0 {
-		return false
+		return exactTypePredicate{}, false
 	}
 	arena := ctx.builder.Arena()
 	if int(condition) >= len(arena.values) {
-		return false
+		return exactTypePredicate{}, false
 	}
 	node := arena.values[condition]
 	if (node.op != valueScalarEqual && node.op != valueScalarNotEqual) || len(node.args) != 2 {
-		return false
+		return exactTypePredicate{}, false
 	}
 	for index, arg := range node.args {
 		if arg == 0 || int(arg) >= len(arena.values) {
@@ -633,24 +679,20 @@ func predicateConditionEvidence(ctx planCompileContext, condition, evidence Valu
 		}
 		literalTerm := node.args[1-index]
 		if literalTerm == 0 || int(literalTerm) >= len(arena.values) {
-			return false
+			return exactTypePredicate{}, false
 		}
 		literalNode := arena.values[literalTerm]
 		if literalNode.op != valueConstant {
-			return false
+			return exactTypePredicate{}, false
 		}
 		name, exact := typevalue.StringLiteralOf(ctx.registry, literalNode.value)
 		tag, validTag := runtimekind.ParseTag(name)
 		if !exact || !validTag {
-			return false
+			return exactTypePredicate{}, false
 		}
-		// This helper represents a Present proof on the predicate's truthy
-		// edge. Equality implies presence only for non-nil tags; inequality
-		// implies it only when excluding nil itself.
-		return node.op == valueScalarEqual && tag != runtimekind.Nil ||
-			node.op == valueScalarNotEqual && tag == runtimekind.Nil
+		return exactTypePredicate{equal: node.op == valueScalarEqual, tag: tag}, true
 	}
-	return false
+	return exactTypePredicate{}, false
 }
 
 func exactCompilerPathTerm(ctx planCompileContext, path pathdom.Path) (ValueTerm, bool) {
