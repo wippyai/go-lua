@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -142,6 +143,16 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 	if !ok {
 		return fmt.Errorf("signature call: resolved producer missing")
 	}
+	if intrinsic, exact := op.Intrinsic(); exact {
+		if intrinsic != signature.IntrinsicLuaType {
+			return fmt.Errorf("signature call: unsupported intrinsic identity %d", intrinsic)
+		}
+		site, exists := ctx.facts.CallSiteView(point)
+		if !exists || site.ArgumentSourceCount() != 1 {
+			return fmt.Errorf("signature call: intrinsic call-site payload missing or malformed")
+		}
+		return nil
+	}
 	sig := op.Signature()
 	if _, exact := ctx.plan.SignatureAllocationOperation(point); exact {
 		if ctx.allocationEffects[point] == 0 {
@@ -230,6 +241,39 @@ func bindStaticSignatureTerms(ctx *planCompileContext) error {
 		}
 		op, ok := ctx.plan.SignatureCallOperation(point)
 		if !ok {
+			continue
+		}
+		if intrinsic, exact := op.Intrinsic(); exact {
+			site, exists := ctx.facts.CallSiteView(point)
+			if !exists {
+				return fmt.Errorf("intrinsic signature call at point %d has no call-site payload", point)
+			}
+			ref, hasExpr := site.Expr()
+			if !hasExpr || site.ArgumentSourceCount() != 1 {
+				return fmt.Errorf("intrinsic signature call at point %d has no scalar expression/argument", point)
+			}
+			arg, present := site.ArgumentSourceAt(0)
+			if !present {
+				return fmt.Errorf("intrinsic signature call at point %d has no first argument", point)
+			}
+			argTerm, err := exactCompilerSourceTerm(*ctx, arg)
+			if err != nil {
+				return fmt.Errorf("intrinsic signature call at point %d argument: %w", point, err)
+			}
+			var result ValueTerm
+			switch intrinsic {
+			case signature.IntrinsicLuaType:
+				result = ctx.builder.Arena().LuaTypeNameValue(argTerm)
+			default:
+				return fmt.Errorf("intrinsic signature call at point %d has unsupported identity %d", point, intrinsic)
+			}
+			if result == 0 {
+				return fmt.Errorf("intrinsic signature call at point %d failed symbolic construction", point)
+			}
+			if _, duplicate := ctx.expressions[ref]; duplicate {
+				return fmt.Errorf("signature call expression %d has multiple producers", ref)
+			}
+			ctx.expressions[ref] = []ValueTerm{result}
 			continue
 		}
 		values, ok := effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, op.Signature())
@@ -1177,6 +1221,28 @@ func exactStringConcatSourceTerm(ctx planCompileContext, source factflow.ValueSo
 }
 
 func exactSignatureExpressionTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, bool) {
+	if source.Kind == factflow.ValueSourceCall && source.HasCallPoint {
+		op, intrinsic := ctx.plan.SignatureCallOperation(source.CallPoint)
+		if intrinsic {
+			_, intrinsic = op.Intrinsic()
+		}
+		if intrinsic {
+			site, ok := ctx.facts.CallSiteView(source.CallPoint)
+			if ok {
+				ref, hasExpr := site.Expr()
+				if hasExpr {
+					terms := ctx.expressions[ref]
+					index := source.ResultIndex
+					if index < 0 {
+						index = 0
+					}
+					if index < len(terms) {
+						return terms[index], true
+					}
+				}
+			}
+		}
+	}
 	if (source.Kind != factflow.ValueSourceExpression && source.Kind != factflow.ValueSourceCall) || !source.HasExpr {
 		return 0, false
 	}

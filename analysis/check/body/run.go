@@ -196,6 +196,7 @@ func (c *checker) prepare(
 	}
 	signatureProducer := effectlowering.PrepareSignatureProducer(effectlowering.SignatureOutcomeProviderConfig{
 		Signatures: config.Signatures, NameForSite: signatureID.nameForCallSiteView,
+		IntrinsicForSite: signatureID.intrinsicForCallSiteView,
 	})
 	genericForOperations := compileGenericForOperations(genericFors, typeResolver, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, bindings)

@@ -28,6 +28,12 @@ type SignatureNameFunc func(ctx transfer.NodeContext, call factflow.CallProducer
 // stable signature name without materializing a producer DTO.
 type SignatureSiteNameFunc func(ctx transfer.NodeContext, site factflow.CallSiteView) (string, bool)
 
+// SignatureSiteIntrinsicFunc projects a sealed semantic intrinsic identity
+// from the same lexical binding authority used for signature resolution.
+// Implementations must fail closed for shadowed, replaced, imported, or
+// otherwise non-canonical bindings.
+type SignatureSiteIntrinsicFunc func(ctx transfer.NodeContext, site factflow.CallSiteView) (signature.Intrinsic, bool)
+
 // SignatureArgumentTypeFunc resolves a call argument source to a type when the
 // caller owns stronger evidence than the generic source-value projection.
 type SignatureArgumentTypeFunc func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
@@ -67,15 +73,16 @@ type immutableSignatureLookup interface {
 // SignatureOutcomeProviderConfig carries the signature/effect lookup plus the generic
 // fact/source read models needed to resolve call argument values.
 type SignatureOutcomeProviderConfig struct {
-	Signatures    SignatureLookup
-	NameFor       SignatureNameFunc
-	NameForSite   SignatureSiteNameFunc
-	ReturnTypeOps ReturnTypeOps
-	TypeValues    *typevalue.Cache
-	Facts         factflow.Facts
-	Sources       sourcevalue.SourceValues
-	ArgumentType  SignatureArgumentTypeFunc
-	ReturnValue   SignatureReturnValueFunc
+	Signatures       SignatureLookup
+	NameFor          SignatureNameFunc
+	NameForSite      SignatureSiteNameFunc
+	IntrinsicForSite SignatureSiteIntrinsicFunc
+	ReturnTypeOps    ReturnTypeOps
+	TypeValues       *typevalue.Cache
+	Facts            factflow.Facts
+	Sources          sourcevalue.SourceValues
+	ArgumentType     SignatureArgumentTypeFunc
+	ReturnValue      SignatureReturnValueFunc
 	// KeySpace is the consuming (caller) analysis keyspace into which rehydrated
 	// heap allocation templates intern their rootless static-member keys.
 	KeySpace *keyspace.KeySpace

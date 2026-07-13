@@ -67,6 +67,12 @@ func LiteralString(reg *axis.Registry, value string) product.Value {
 	return WithWitness(reg, FromType(reg, t), t)
 }
 
+// String materializes the canonical broad string value without requiring
+// higher orchestration layers to import the type vocabulary directly.
+func String(reg *axis.Registry) product.Value {
+	return WithWitness(reg, FromType(reg, typ.String), typ.String)
+}
+
 // HasConcreteType reports whether value carries type evidence precise enough to
 // prefer over a broader cached declaration. Unknown, any, and never are not
 // concrete refinements.

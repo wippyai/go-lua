@@ -22,7 +22,14 @@ func (e *typeEncoder) encodeFunction(f *typ.Function) (*typeWire, error) {
 		if err != nil {
 			return nil, err
 		}
-		out.Params = append(out.Params, paramWire{Name: p.Name, Type: encoded, Optional: p.Optional})
+		name := p.Name
+		if e.semanticFunctions {
+			name = ""
+			if p.Receiver {
+				name = "self"
+			}
+		}
+		out.Params = append(out.Params, paramWire{Name: name, Type: encoded, Optional: p.Optional})
 	}
 	var err error
 	out.Variadic, err = e.encode(f.Variadic)

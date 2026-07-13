@@ -294,6 +294,13 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		if len(n.args) != 0 || !v.callee.validAllocation(n.allocation) || n.resultIndex < 0 {
 			return fmt.Errorf("transformer: malformed allocation result term %d", term)
 		}
+	case valueLuaTypeName:
+		if len(n.args) != 1 {
+			return fmt.Errorf("transformer: malformed Lua type-name term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("transformer: invalid source value operation at term %d", term)
 	}
@@ -422,6 +429,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) != 0 || !arena.validAllocation(n.allocation) || n.resultIndex < 0 {
 			return fmt.Errorf("malformed allocation result term %d", term)
 		}
+	case valueLuaTypeName:
+		if len(n.args) != 1 {
+			return fmt.Errorf("malformed Lua type-name term %d", term)
+		}
 	default:
 		return fmt.Errorf("invalid value operation at term %d", term)
 	}
@@ -508,6 +519,8 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 	case valueAllocationResult:
 		allocation := s.caller.AllocationTemplate(s.callee.allocations[n.allocation].op)
 		out = s.caller.AllocationResultValue(allocation, n.resultIndex)
+	case valueLuaTypeName:
+		out = s.caller.LuaTypeNameValue(s.value(n.args[0]))
 	}
 	s.values[term] = out
 	return out

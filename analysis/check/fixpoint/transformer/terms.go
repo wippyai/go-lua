@@ -44,6 +44,7 @@ const (
 	valueIteratorProjection
 	valueStaticIndex
 	valueAllocationResult
+	valueLuaTypeName
 )
 
 // CellRef is a stable SCC equation reference. Generation is deliberately not
@@ -643,6 +644,15 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 		return enginesourcevalue.StaticIndexValue(a.reg, nil, owner, key)
 	case valueAllocationResult:
 		return a.allocationResult(n.allocation, n.resultIndex)
+	case valueLuaTypeName:
+		if len(n.args) != 1 {
+			return product.Value{}, false
+		}
+		arg, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		return enginesourcevalue.LuaTypeNameValue(a.reg, nil, arg)
 	default:
 		return product.Value{}, false
 	}
@@ -717,6 +727,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 	case valueAllocationResult:
 		op := a.allocations[n.allocation].op
 		return fmt.Sprintf("a%d.%s.%d:r%d", op.Site().Owner, op.Site().Template, op.Site().Ordinal, n.resultIndex)
+	case valueLuaTypeName:
+		return "lua:type(" + a.canonicalValue(n.args[0]) + ")"
 	default:
 		return "_"
 	}
@@ -757,6 +769,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueAllocationResult && (len(n.args) != 0 || !a.validAllocation(n.allocation) || n.resultIndex < 0) {
+		return false
+	}
+	if n.op == valueLuaTypeName && len(n.args) != 1 {
 		return false
 	}
 	if n.op == valueInvalid {

@@ -595,6 +595,10 @@ func canonicalizeOperationalEffectsWireContext(ctx context.Context, w *operation
 }
 
 func encodePathPresenceImplication(fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
+	return encodePathPresenceImplicationContext(context.Background(), fact)
+}
+
+func encodePathPresenceImplicationContext(ctx context.Context, fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
 	trigger, err := encodeBoundaryPath(fact.Trigger)
 	if err != nil {
 		return pathPresenceImplicationWire{}, fmt.Errorf("trigger: %w", err)
@@ -621,7 +625,7 @@ func encodePathPresenceImplication(fact signature.PathPresenceImplication) (path
 		if fact.TriggerType == nil {
 			return pathPresenceImplicationWire{}, fmt.Errorf("trigger type: missing")
 		}
-		triggerType, err := encodeType(fact.TriggerType)
+		triggerType, err := encodeOperationalEffectType(ctx, fact.TriggerType)
 		if err != nil {
 			return pathPresenceImplicationWire{}, fmt.Errorf("trigger type: %w", err)
 		}
@@ -755,6 +759,10 @@ func compareBranchProofWire(a, b branchProofWire) int {
 }
 
 func encodeDynamicIndexFact(fact signature.DynamicIndexFact) (dynamicIndexFactWire, error) {
+	return encodeDynamicIndexFactContext(context.Background(), fact)
+}
+
+func encodeDynamicIndexFactContext(ctx context.Context, fact signature.DynamicIndexFact) (dynamicIndexFactWire, error) {
 	if fact.Site == "" {
 		return dynamicIndexFactWire{}, fmt.Errorf("missing site")
 	}
@@ -766,11 +774,11 @@ func encodeDynamicIndexFact(fact signature.DynamicIndexFact) (dynamicIndexFactWi
 	if err != nil {
 		return dynamicIndexFactWire{}, fmt.Errorf("key presence: %w", err)
 	}
-	key, err := encodeDynamicIndexOperand(fact.Key)
+	key, err := encodeDynamicIndexOperandContext(ctx, fact.Key)
 	if err != nil {
 		return dynamicIndexFactWire{}, fmt.Errorf("key: %w", err)
 	}
-	value, err := encodeDynamicIndexOperand(fact.Value)
+	value, err := encodeDynamicIndexOperandContext(ctx, fact.Value)
 	if err != nil {
 		return dynamicIndexFactWire{}, fmt.Errorf("value: %w", err)
 	}
@@ -789,6 +797,10 @@ func encodeDynamicIndexFact(fact signature.DynamicIndexFact) (dynamicIndexFactWi
 }
 
 func encodeDynamicIndexOperand(operand signature.DynamicIndexOperand) (dynamicIndexOperandWire, error) {
+	return encodeDynamicIndexOperandContext(context.Background(), operand)
+}
+
+func encodeDynamicIndexOperandContext(ctx context.Context, operand signature.DynamicIndexOperand) (dynamicIndexOperandWire, error) {
 	var out dynamicIndexOperandWire
 	if !operand.Path.IsEmpty() {
 		path, err := encodePlaceholderPath(operand.Path)
@@ -798,7 +810,7 @@ func encodeDynamicIndexOperand(operand signature.DynamicIndexOperand) (dynamicIn
 		out.Path = path
 	}
 	if operand.Type != nil {
-		typ, err := encodeType(operand.Type)
+		typ, err := encodeOperationalEffectType(ctx, operand.Type)
 		if err != nil {
 			return dynamicIndexOperandWire{}, fmt.Errorf("type: %w", err)
 		}
@@ -1095,6 +1107,10 @@ func compareTypestateRequirementWire(a, b typestateRequirementWire) int {
 }
 
 func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate) (returnAllocationTemplateWire, error) {
+	return encodeReturnAllocationTemplateContext(context.Background(), template)
+}
+
+func encodeReturnAllocationTemplateContext(ctx context.Context, template signature.ReturnAllocationTemplate) (returnAllocationTemplateWire, error) {
 	if template.ReturnIndex < 0 {
 		return returnAllocationTemplateWire{}, fmt.Errorf("negative return index %d", template.ReturnIndex)
 	}
@@ -1109,7 +1125,7 @@ func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate)
 		Root:        string(template.Root),
 	}
 	for _, object := range template.Objects {
-		encoded, err := encodeAllocationObjectTemplate(object)
+		encoded, err := encodeAllocationObjectTemplateContext(ctx, object)
 		if err != nil {
 			return returnAllocationTemplateWire{}, err
 		}
@@ -1119,12 +1135,16 @@ func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate)
 }
 
 func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (allocationObjectWire, error) {
+	return encodeAllocationObjectTemplateContext(context.Background(), object)
+}
+
+func encodeAllocationObjectTemplateContext(ctx context.Context, object signature.AllocationObjectTemplate) (allocationObjectWire, error) {
 	if object.ID == "" {
 		return allocationObjectWire{}, fmt.Errorf("missing object id")
 	}
 	out := allocationObjectWire{ID: string(object.ID), StableShape: object.StableShape, PrefixStable: object.PrefixStable}
 	if object.Type != nil {
-		encoded, err := encodeType(object.Type)
+		encoded, err := encodeOperationalEffectType(ctx, object.Type)
 		if err != nil {
 			return allocationObjectWire{}, fmt.Errorf("object %s type: %w", object.ID, err)
 		}
@@ -1145,7 +1165,7 @@ func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (
 		}
 		var keyType *typeWire
 		if entry.KeyType != nil {
-			encoded, err := encodeType(entry.KeyType)
+			encoded, err := encodeOperationalEffectType(ctx, entry.KeyType)
 			if err != nil {
 				return allocationObjectWire{}, fmt.Errorf("dynamic entry key type: %w", err)
 			}

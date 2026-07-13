@@ -13,18 +13,59 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type signatureIdentityResolver struct {
-	bindings            *bind.Result
-	graph               cfg.Graph
-	imports             moduleidentity.Projection
-	implicitStdlibNames map[string]struct{}
-	shadowedGlobalNames map[string]struct{}
-	rootWriteQuery      factquery.DominatingOrdinaryRootWriteQuery
+	bindings                     *bind.Result
+	graph                        cfg.Graph
+	imports                      moduleidentity.Projection
+	implicitStdlibNames          map[string]struct{}
+	shadowedGlobalNames          map[string]struct{}
+	intrinsicShadowedGlobalNames map[string]struct{}
+	rootWriteQuery               factquery.DominatingOrdinaryRootWriteQuery
+}
+
+// intrinsicForCallSiteView assigns semantic intrinsic identity only to the
+// canonical Lua global installed by the prepared base environment. A matching
+// spelling on a local, typed environment override, import, member, or replaced
+// root is deliberately not sufficient.
+func (r *signatureIdentityResolver) intrinsicForCallSiteView(ctx transfer.NodeContext, site factflow.CallSiteView) (signature.Intrinsic, bool) {
+	if r == nil || r.bindings == nil || site.MethodName() != "" {
+		return signature.IntrinsicNone, false
+	}
+	calleePath := site.CalleePathRef()
+	if len(calleePath.Segments) != 0 || r.rootReplacedAt(ctx.Point, site.CalleeSymbol(), calleePath) {
+		return signature.IntrinsicNone, false
+	}
+	root := site.CalleeSymbol()
+	if calleePath.Symbol != 0 {
+		root = calleePath.Symbol
+	}
+	kind, known := r.bindings.Kind(root)
+	if root == 0 || !known || kind != symbol.Global || r.bindings.Name(root) != "type" {
+		return signature.IntrinsicNone, false
+	}
+	// Intrinsic identity is stronger than point-local signature lookup: it must
+	// survive every call context that may instantiate the relation. Reject any
+	// ordinary write in the complete bound lexical unit. Any explicit _G read
+	// is also disqualifying: the table may escape through calls, containers,
+	// returns, rawset, aliases, or dynamic indexing, and a body-local points-to
+	// proof is not immutable environment authority.
+	globalTable, hasGlobalTable := r.bindings.GlobalSymbol("_G")
+	if r.bindings.HasWrite(root) || hasGlobalTable && r.bindings.HasRead(globalTable) {
+		return signature.IntrinsicNone, false
+	}
+	if _, shadowed := r.intrinsicShadowedGlobalNames["type"]; shadowed {
+		return signature.IntrinsicNone, false
+	}
+	if _, present := r.implicitStdlibNames["type"]; !present {
+		return signature.IntrinsicNone, false
+	}
+	return signature.IntrinsicLuaType, true
 }
 
 func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *wir.Body, modules moduleidentity.Projection, signatures signaturelookup.Source, globalTypes map[string]typ.Type, moduleExports importlookup.Source) *signatureIdentityResolver {
@@ -37,13 +78,18 @@ func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *
 		_, ok := roots[target]
 		return ok
 	})
+	intrinsicShadowed := make(map[string]struct{})
+	if _, configured := globalTypes["type"]; configured {
+		intrinsicShadowed["type"] = struct{}{}
+	}
 	return &signatureIdentityResolver{
-		bindings:            bindings,
-		graph:               graph,
-		imports:             modules,
-		implicitStdlibNames: implicitStdlibSignatureNames(signatures),
-		shadowedGlobalNames: shadowedGlobalSignatureNames(globalTypes, moduleExports),
-		rootWriteQuery:      rootWriteQuery,
+		bindings:                     bindings,
+		graph:                        graph,
+		imports:                      modules,
+		implicitStdlibNames:          implicitStdlibSignatureNames(signatures),
+		shadowedGlobalNames:          shadowedGlobalSignatureNames(globalTypes, moduleExports),
+		intrinsicShadowedGlobalNames: intrinsicShadowed,
+		rootWriteQuery:               rootWriteQuery,
 	}
 }
 

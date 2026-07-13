@@ -13,9 +13,10 @@ import (
 // wire remains a tree. Binder-local references preserve those graph edges
 // without leaking process-local type IDs into deterministic manifest bytes.
 type typeEncoder struct {
-	activeGenerics   map[*typ.Generic]bool
-	recursiveBinders map[*typ.Recursive]uint64
-	nextBinder       uint64
+	activeGenerics    map[*typ.Generic]bool
+	recursiveBinders  map[*typ.Recursive]uint64
+	nextBinder        uint64
+	semanticFunctions bool
 }
 
 func encodeType(t typ.Type) (*typeWire, error) {
@@ -25,9 +26,29 @@ func encodeType(t typ.Type) (*typeWire, error) {
 	}).encode(t)
 }
 
+// encodeSemanticType projects function parameter presentation out of every
+// function node while preserving the receiver convention observed by
+// typ.TypeEquals. It is for semantic content identity, not manifest display.
+func encodeSemanticType(t typ.Type) (*typeWire, error) {
+	return (&typeEncoder{
+		activeGenerics:    make(map[*typ.Generic]bool),
+		recursiveBinders:  make(map[*typ.Recursive]uint64),
+		semanticFunctions: true,
+	}).encode(t)
+}
+
 func (e *typeEncoder) encode(t typ.Type) (*typeWire, error) {
 	if t == nil {
 		return nil, nil
+	}
+	if e.semanticFunctions {
+		if alias, ok := t.(*typ.Alias); ok {
+			target := alias.UnaliasedTarget()
+			if target == nil || target == t {
+				return nil, fmt.Errorf("manifest: semantic alias %q has no acyclic target", alias.Name)
+			}
+			return e.encode(target)
+		}
 	}
 
 	switch tt := t.(type) {

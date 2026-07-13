@@ -12,10 +12,11 @@ import (
 // effect lowering. OutcomeProvider and iterator projection share the same name
 // resolution and signature lookup; neither re-encodes stdlib names or effects.
 type SignatureProducer struct {
-	outcome     callpayload.CallOutcomeProvider
-	lookup      func(string) (signature.Function, bool)
-	nameFor     SignatureNameFunc
-	nameForSite SignatureSiteNameFunc
+	outcome          callpayload.CallOutcomeProvider
+	lookup           func(string) (signature.Function, bool)
+	nameFor          SignatureNameFunc
+	nameForSite      SignatureSiteNameFunc
+	intrinsicForSite SignatureSiteIntrinsicFunc
 }
 
 func PrepareSignatureProducer(config SignatureOutcomeProviderConfig) *SignatureProducer {
@@ -29,7 +30,19 @@ func PrepareSignatureProducer(config SignatureOutcomeProviderConfig) *SignatureP
 	return &SignatureProducer{
 		outcome: SignatureOutcomeProvider(config), lookup: lookup,
 		nameFor: config.NameFor, nameForSite: config.NameForSite,
+		intrinsicForSite: config.IntrinsicForSite,
 	}
+}
+
+// IntrinsicForSite returns a sealed semantic identity supplied by the lexical
+// binding authority. SignatureProducer transports the identity but does not
+// infer it from a resolved signature name.
+func (p *SignatureProducer) IntrinsicForSite(ctx transfer.NodeContext, site factflow.CallSiteView) (signature.Intrinsic, bool) {
+	if p == nil || p.intrinsicForSite == nil {
+		return signature.IntrinsicNone, false
+	}
+	intrinsic, ok := p.intrinsicForSite(ctx, site)
+	return intrinsic, ok && intrinsic.Valid()
 }
 
 func (p *SignatureProducer) OutcomeProvider() callpayload.CallOutcomeProvider {

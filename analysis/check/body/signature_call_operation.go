@@ -22,7 +22,13 @@ func signatureCallOperations(graph cfg.Graph, facts factflow.Facts, producer *ef
 		if !ok {
 			continue
 		}
-		op, ok := operationplan.NewSignatureCallOperation(sig)
+		intrinsic, hasIntrinsic := producer.IntrinsicForSite(transfer.NodeContext{Point: point}, site)
+		var op operationplan.SignatureCallOperation
+		if hasIntrinsic {
+			op, ok = operationplan.NewSignatureIntrinsicCallOperation(sig, intrinsic)
+		} else {
+			op, ok = operationplan.NewSignatureCallOperation(sig)
+		}
 		if !ok {
 			continue
 		}

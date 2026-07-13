@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
@@ -72,17 +71,7 @@ func typeCallReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	kinds := product.Get(reg, value, runtimekind.Key)
-	if kinds.IsTop() || kinds.IsBottom() {
-		if t, ok := typeValues.TypeOf(reg, value); ok {
-			kinds, _ = typevalue.RuntimeKindFromType(t)
-		}
-	}
-	tags := kinds.Tags()
-	if len(tags) != 1 {
-		return product.Value{}, false
-	}
-	return returnValueWithType(reg, typ.LiteralString(tags[0].String())), true
+	return sourcevalue.LuaTypeNameValue(reg, typeValues, value)
 }
 
 func selectCountReturnValue(

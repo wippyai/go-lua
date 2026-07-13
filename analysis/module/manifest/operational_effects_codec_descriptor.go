@@ -28,6 +28,20 @@ func wireLane[Fact any, Wire any](
 	compare func(Wire, Wire) int,
 	canonElem func(context.Context, *Wire) error,
 ) operationalEffectsWireLane {
+	return contextWireLane(fieldName, facts, wires,
+		func(_ context.Context, fact Fact) (Wire, error) { return encodeElem(fact) },
+		decodeElem, compare, canonElem)
+}
+
+func contextWireLane[Fact any, Wire any](
+	fieldName string,
+	facts func(*signature.OperationalEffects) *[]Fact,
+	wires func(*operationalEffectsWire) *[]Wire,
+	encodeElem func(context.Context, Fact) (Wire, error),
+	decodeElem func(Wire) (Fact, error),
+	compare func(Wire, Wire) int,
+	canonElem func(context.Context, *Wire) error,
+) operationalEffectsWireLane {
 	return operationalEffectsWireLane{
 		fieldName: fieldName,
 		encode: func(ctx context.Context, e *signature.OperationalEffects, out *operationalEffectsWire) error {
@@ -42,7 +56,7 @@ func wireLane[Fact any, Wire any](
 						return err
 					}
 				}
-				encoded, err := encodeElem(src[i])
+				encoded, err := encodeElem(ctx, src[i])
 				if err != nil {
 					return err
 				}
@@ -143,30 +157,30 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 			return &w.NormalReturnPresenceRefinements
 		},
 		encodeNormalReturnPresenceRefinement, decodeNormalReturnPresenceRefinement, comparePathPresenceRefinementWire, nil),
-	wireLane("NormalReturnTypeRefinements",
+	contextWireLane("NormalReturnTypeRefinements",
 		func(e *signature.OperationalEffects) *[]signature.PathTypeRefinement {
 			return &e.NormalReturnTypeRefinements
 		},
 		func(w *operationalEffectsWire) *[]pathTypeRefinementWire { return &w.NormalReturnTypeRefinements },
-		encodeNormalReturnTypeRefinement, decodeNormalReturnTypeRefinement, comparePathTypeRefinementWire, nil),
-	wireLane("PathPresenceImplications",
+		encodeNormalReturnTypeRefinementContext, decodeNormalReturnTypeRefinement, comparePathTypeRefinementWire, nil),
+	contextWireLane("PathPresenceImplications",
 		func(e *signature.OperationalEffects) *[]signature.PathPresenceImplication {
 			return &e.PathPresenceImplications
 		},
 		func(w *operationalEffectsWire) *[]pathPresenceImplicationWire { return &w.PathPresenceImplications },
-		encodePathPresenceImplication, decodePathPresenceImplication, comparePathPresenceImplicationWire, nil),
-	wireLane("PathStaticMembers",
+		encodePathPresenceImplicationContext, decodePathPresenceImplication, comparePathPresenceImplicationWire, nil),
+	contextWireLane("PathStaticMembers",
 		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberFact { return &e.PathStaticMembers },
 		func(w *operationalEffectsWire) *[]pathStaticMemberWire { return &w.PathStaticMembers },
-		encodePathStaticMember, decodePathStaticMember, comparePathStaticMemberWire, nil),
-	wireLane("PathStaticMemberDeltas",
+		encodePathStaticMemberContext, decodePathStaticMember, comparePathStaticMemberWire, nil),
+	contextWireLane("PathStaticMemberDeltas",
 		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberDelta {
 			return &e.PathStaticMemberDeltas
 		},
 		func(w *operationalEffectsWire) *[]pathStaticMemberDeltaWire {
 			return &w.PathStaticMemberDeltas
 		},
-		encodePathStaticMemberDelta, decodePathStaticMemberDelta, comparePathStaticMemberDeltaWire, nil),
+		encodePathStaticMemberDeltaContext, decodePathStaticMemberDelta, comparePathStaticMemberDeltaWire, nil),
 	wireLane("PathInvalidations",
 		func(e *signature.OperationalEffects) *[]signature.PathInvalidation { return &e.PathInvalidations },
 		func(w *operationalEffectsWire) *[]pathInvalidationWire { return &w.PathInvalidations },
@@ -175,10 +189,10 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		func(e *signature.OperationalEffects) *[]signature.BranchProof { return &e.BranchProofs },
 		func(w *operationalEffectsWire) *[]branchProofWire { return &w.BranchProofs },
 		encodeBranchProof, decodeBranchProof, compareBranchProofWire, nil),
-	wireLane("DynamicIndexFacts",
+	contextWireLane("DynamicIndexFacts",
 		func(e *signature.OperationalEffects) *[]signature.DynamicIndexFact { return &e.DynamicIndexFacts },
 		func(w *operationalEffectsWire) *[]dynamicIndexFactWire { return &w.DynamicIndexFacts },
-		encodeDynamicIndexFact, decodeDynamicIndexFact, compareDynamicIndexFactWire, nil),
+		encodeDynamicIndexFactContext, decodeDynamicIndexFact, compareDynamicIndexFactWire, nil),
 	wireLane("KeyMemberships",
 		func(e *signature.OperationalEffects) *[]signature.KeyMembership { return &e.KeyMemberships },
 		func(w *operationalEffectsWire) *[]keyMembershipWire { return &w.KeyMemberships },
@@ -219,12 +233,12 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		},
 		func(w *operationalEffectsWire) *[]typestateRequirementWire { return &w.TypestateRequirements },
 		encodeTypestateRequirement, decodeTypestateRequirement, compareTypestateRequirementWire, nil),
-	wireLane("ReturnAllocationTemplates",
+	contextWireLane("ReturnAllocationTemplates",
 		func(e *signature.OperationalEffects) *[]signature.ReturnAllocationTemplate {
 			return &e.ReturnAllocationTemplates
 		},
 		func(w *operationalEffectsWire) *[]returnAllocationTemplateWire { return &w.ReturnAllocationTemplates },
-		encodeReturnAllocationTemplate, decodeReturnAllocationTemplate, compareReturnAllocationTemplateWire,
+		encodeReturnAllocationTemplateContext, decodeReturnAllocationTemplate, compareReturnAllocationTemplateWire,
 		canonicalizeReturnAllocationTemplateWire),
 }
 
@@ -295,6 +309,10 @@ func decodeNormalReturnPresenceRefinement(w pathPresenceRefinementWire) (signatu
 }
 
 func encodeNormalReturnTypeRefinement(refinement signature.PathTypeRefinement) (pathTypeRefinementWire, error) {
+	return encodeNormalReturnTypeRefinementContext(context.Background(), refinement)
+}
+
+func encodeNormalReturnTypeRefinementContext(ctx context.Context, refinement signature.PathTypeRefinement) (pathTypeRefinementWire, error) {
 	p, err := encodePlaceholderPath(refinement.Path)
 	if err != nil {
 		return pathTypeRefinementWire{}, fmt.Errorf("normal return type refinement path: %w", err)
@@ -302,7 +320,7 @@ func encodeNormalReturnTypeRefinement(refinement signature.PathTypeRefinement) (
 	if refinement.Type == nil {
 		return pathTypeRefinementWire{}, fmt.Errorf("normal return type refinement type: missing")
 	}
-	t, err := encodeType(refinement.Type)
+	t, err := encodeOperationalEffectType(ctx, refinement.Type)
 	if err != nil {
 		return pathTypeRefinementWire{}, fmt.Errorf("normal return type refinement type: %w", err)
 	}
@@ -333,6 +351,10 @@ func decodeNormalReturnTypeRefinement(w pathTypeRefinementWire) (signature.PathT
 }
 
 func encodePathStaticMember(member signature.PathStaticMemberFact) (pathStaticMemberWire, error) {
+	return encodePathStaticMemberContext(context.Background(), member)
+}
+
+func encodePathStaticMemberContext(ctx context.Context, member signature.PathStaticMemberFact) (pathStaticMemberWire, error) {
 	p, err := encodePlaceholderPath(member.Path)
 	if err != nil {
 		return pathStaticMemberWire{}, fmt.Errorf("path static member path: %w", err)
@@ -340,7 +362,7 @@ func encodePathStaticMember(member signature.PathStaticMemberFact) (pathStaticMe
 	if member.Type == nil {
 		return pathStaticMemberWire{}, fmt.Errorf("path static member type: missing")
 	}
-	t, err := encodeType(member.Type)
+	t, err := encodeOperationalEffectType(ctx, member.Type)
 	if err != nil {
 		return pathStaticMemberWire{}, fmt.Errorf("path static member type: %w", err)
 	}
@@ -363,6 +385,10 @@ func decodePathStaticMember(w pathStaticMemberWire) (signature.PathStaticMemberF
 }
 
 func encodePathStaticMemberDelta(delta signature.PathStaticMemberDelta) (pathStaticMemberDeltaWire, error) {
+	return encodePathStaticMemberDeltaContext(context.Background(), delta)
+}
+
+func encodePathStaticMemberDeltaContext(ctx context.Context, delta signature.PathStaticMemberDelta) (pathStaticMemberDeltaWire, error) {
 	p, err := encodePlaceholderPath(delta.Path)
 	if err != nil {
 		return pathStaticMemberDeltaWire{}, fmt.Errorf("path static member delta: %w", err)
@@ -370,7 +396,7 @@ func encodePathStaticMemberDelta(delta signature.PathStaticMemberDelta) (pathSta
 	if delta.Type == nil {
 		return pathStaticMemberDeltaWire{}, fmt.Errorf("path static member delta type: missing")
 	}
-	t, err := encodeType(delta.Type)
+	t, err := encodeOperationalEffectType(ctx, delta.Type)
 	if err != nil {
 		return pathStaticMemberDeltaWire{}, fmt.Errorf("path static member delta type: %w", err)
 	}
