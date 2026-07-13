@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -70,6 +70,9 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 				continue
 			}
 		case shape.Params != 0 && shape.Captures == 0 && shape.Globals != 0:
+			if !stagedStrictAnnotatedParams(bindings, owner.fn, plan.BoundaryParams()) || !stagedStrictCallFree(owner.prepared.HasCallSites(), plan) {
+				continue
+			}
 			var exact bool
 			candidate.globalBoundary, candidate.globalBindings, exact = stagedStrictIntrinsicGlobals(bindings, owner, plan)
 			if !exact {
@@ -131,25 +134,29 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 	return out
 }
 
+func stagedStrictAnnotatedParams(bindings *bind.Result, fn *ast.FunctionExpr, boundary []symbol.ID) bool {
+	if bindings == nil || fn == nil {
+		return false
+	}
+	slots := bindings.ParamSlots(fn)
+	if len(slots) == 0 || len(slots) != len(boundary) {
+		return false
+	}
+	for i, slot := range slots {
+		if slot.Symbol == 0 || slot.Symbol != boundary[i] || slot.Vararg || slot.ImplicitSelf || slot.Type == nil {
+			return false
+		}
+	}
+	return true
+}
+
 // stagedStrictIntrinsicGlobals accepts only the canonical immutable Lua type
-// global. Any surviving call-site fact must itself carry the sealed Lua type
-// intrinsic content identity; normalized structural type checks have no call
-// site and are certified by PlanCompiler.
+// global. The parameterized slice is independently call-free; normalized
+// structural type predicates have no call site and are certified by
+// PlanCompiler.
 func stagedStrictIntrinsicGlobals(bindings *bind.Result, owner relationCatalogOwner, plan *operationplan.Plan) (transformer.GlobalBoundary, []transformer.GlobalRootBinding, bool) {
 	if bindings == nil || owner.prepared == nil || plan == nil {
 		return transformer.GlobalBoundary{}, nil, false
-	}
-	facts := plan.Facts()
-	for raw := 0; raw < plan.PointCount(); raw++ {
-		point := cfg.Point(raw)
-		if _, call := facts.CallSiteView(point); !call {
-			continue
-		}
-		op, exact := plan.SignatureCallOperation(point)
-		intrinsic, sealed := op.Intrinsic()
-		if !exact || !sealed || intrinsic != signature.IntrinsicLuaType || !op.ContentID().Available() {
-			return transformer.GlobalBoundary{}, nil, false
-		}
 	}
 	environment := owner.prepared.BoundaryEnvironmentDigest()
 	descriptors := make([]transformer.GlobalRootDescriptor, 0, len(plan.BoundaryGlobals()))

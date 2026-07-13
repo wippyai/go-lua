@@ -115,6 +115,52 @@ return first, second
 	t.Logf("is_str work legacy=%d solves/%d transfers strict=%d/%d", legacySolves, legacyStats.Body.Transfer.Solver.TransferCalls, strictSolves, strictStats.Body.Transfer.Solver.TransferCalls)
 }
 
+func TestStrictParameterizedAdmissionRejectsUnannotatedAndGradualInputs(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "unannotated parameter",
+			source: `
+local function is_str(value): boolean
+  return type(value) == "string" and (value :: string) ~= ""
+end
+return is_str("value")
+`,
+		},
+		{
+			name: "unannotated gradual argument",
+			source: `
+local function is_str(value): boolean
+  return type(value) == "string" and (value :: string) ~= ""
+end
+return is_str(dynamic_value)
+`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stmts := parseChunk(t, test.source)
+			bindings := bind.BindChunk(stmts, bind.Options{})
+			reg := standard.Registry()
+			check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO, Signatures: signaturelookup.Source{IncludeStdlib: true}}
+			legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, forceLegacyRelations: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stats := &Stats{}
+			strict, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: stats, enableStrictRelationPhaseCollapse: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			compareStrictPhaseCollapseParity(t, reg, legacy, strict)
+			if stats.RelationPlannerOwnersActivated != 0 || stats.RelationContextsSpecialized != 0 || stats.RelationSummaryEquationsOmitted != 0 || stats.RelationMaterializationsReused != 0 {
+				t.Fatalf("unsafe parameterized activation: activated/contexts/omitted/reused=%d/%d/%d/%d", stats.RelationPlannerOwnersActivated, stats.RelationContextsSpecialized, stats.RelationSummaryEquationsOmitted, stats.RelationMaterializationsReused)
+			}
+		})
+	}
+}
+
 func strictDiagnosticCount(result *body.Result) int {
 	if result == nil {
 		return 0
@@ -188,7 +234,7 @@ return first(), second()
 	}
 }
 
-func TestStagedStrictCallFreeFailsClosedOnMetadataDisagreement(t *testing.T) {
+func TestStagedStrictCallFreeRejectsMalformedAndOutOfRangeCallFacts(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	plan := operationplan.New(graph, factflow.FactsInput{
