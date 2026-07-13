@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -98,6 +100,31 @@ func strictValidatedFrameContextCertificate(
 		}
 		visible[global] = struct{}{}
 	}
+	// Direct-callee-only captures are deliberately absent from Shape.Captures:
+	// their immutable lexical identity is owned by the independently sealed
+	// CallSurface and later rebound to a generation-local relation cell. Keep
+	// the concrete value in the validation carrier, but never project it into
+	// the symbolic frame. Any other hidden value remains a hard rejection.
+	directCallees := strictSealedDirectCalleeCaptures(bindings, fn, plan)
+	values := context.entryState.ValuesSnapshot()
+	if values.Top {
+		return nil, nil, false
+	}
+	for slot, value := range values.Values {
+		sym, symbolSlot := statekey.ParseSymbolValue(slot)
+		if !symbolSlot {
+			return nil, nil, false
+		}
+		if _, boundary := visible[sym]; boundary {
+			continue
+		}
+		functionIdentity, sealed := directCallees[sym]
+		valueIdentity, exactIdentity := identityvalue.ExactID(reg, value)
+		if !sealed || !exactIdentity || valueIdentity != identity.LuaFunction(uint64(functionIdentity)) {
+			return nil, nil, false
+		}
+		carrier = carrier.WriteValue(reg, slot, value)
+	}
 	valid := true
 	context.entryState.ForEachPathRefinement(func(pathKey keyspace.Key, value product.Value) bool {
 		carrier = carrier.WriteLocalPathKey(reg, pathKey, value)
@@ -139,6 +166,42 @@ func strictValidatedFrameContextCertificate(
 		prepared: bodyDigest, generation: generation, plan: plan, shape: shape, globalContent: globalBoundary.ContentID(),
 	}
 	return certificate, frame, true
+}
+
+func strictSealedDirectCalleeCaptures(bindings *bind.Result, fn *ast.FunctionExpr, plan *operationplan.Plan) map[symbol.ID]symbol.ID {
+	if bindings == nil || fn == nil || plan == nil {
+		return nil
+	}
+	surface, exact := plan.CallSurface()
+	if !exact || !surface.Complete() {
+		return nil
+	}
+	captures := make(map[symbol.ID]struct{})
+	for _, capture := range bindings.DirectCaptures(fn) {
+		if capture.Captured != 0 {
+			captures[capture.Captured] = struct{}{}
+		}
+	}
+	for _, boundary := range plan.BoundaryCaptures() {
+		delete(captures, boundary)
+	}
+	sealed := make(map[symbol.ID]symbol.ID)
+	for _, site := range surface.Sites() {
+		if _, lexical := site.Target.LexicalBody(); !lexical {
+			continue
+		}
+		call, represented := plan.Facts().CallSiteView(site.Point)
+		if !represented {
+			continue
+		}
+		callee := call.CalleeSymbol()
+		if _, captured := captures[callee]; captured {
+			if functionIdentity, stable := bindings.StableLocalFunctionIdentity(callee); stable {
+				sealed[callee] = functionIdentity
+			}
+		}
+	}
+	return sealed
 }
 
 func strictDiscardableCallerPathRoot(bindings *bind.Result, fn *ast.FunctionExpr, keys *keyspace.KeySpace, pathKey keyspace.Key) bool {

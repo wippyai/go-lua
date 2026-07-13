@@ -292,6 +292,24 @@ a boolean. Syntactic return aliases live in a separate relation projection
 semilattice, so they survive SCC joins without contaminating row feasibility,
 ReturnFlow, or parameter-preservation proofs.
 
-This remains private strict evidence and does not claim a default wall-time
-improvement. The next value gate is a closed direct-call fanout transaction
-with every lexical target sealed in one catalog generation.
+The closed direct-call fanout gate is now implemented privately. Exact lexical
+CallSurface identities are resolved to generation-local relation cells, and
+only outgoing-closed acyclic producer regions activate. Direct-callee-only
+capture values may remain in the concrete validation carrier only when their
+exact Lua function identity matches the binder's immutable local-function
+identity; they never enter the symbolic Shape. Every admitted lexical base is
+then solved once in dependency order, every summary read must already be
+present and belong to a strictly earlier producer rank (apart from independent
+zero-boundary pins), and every specialized context is concretely revalidated
+in the same order before atomic publication. This preserves diagnostic
+Results and byte-identical ResultVersion lineage while omitting both base and
+context equations.
+
+The three-function shared-leaf fanout regression owns 3 producers and omits
+and reuses all 6 base/context equations with exact summaries, products,
+diagnostics, manifests, and recursive ResultVersion parity. On the frozen
+oracles, graph.str improves from 36/288 to 12/96 solves/transfers with
+contexts/omissions/reuses = 19/21/42, and threads `is_str` improves from 10/70
+to 5/35 with 4/5/5; the whole threads file moves from 271/11,882 to
+266/11,847. There are zero misses or fallbacks. This is still private strict
+evidence and does not claim a default wall-time improvement.

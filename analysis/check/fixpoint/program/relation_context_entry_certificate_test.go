@@ -3,6 +3,7 @@ package program
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
@@ -18,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -183,6 +185,108 @@ func TestStrictValidatedFrameCandidateKeepsDistinctParameterProductsDistinct(t *
 	}
 	if product.Equal(reg, first.params[0].value, second.params[0].value) || firstFrame.stateEntry == secondFrame.stateEntry {
 		t.Fatal("distinct parameter products collapsed to one validated frame identity")
+	}
+}
+
+func TestStrictValidatedFrameCandidateAcceptsOnlySealedExactDirectCalleeCarrier(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function leaf(value: any): any
+  return value
+end
+local function caller(value: any): any
+  return leaf(value)
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	leaf := findLocalFunctionByName(t, bindings, "leaf")
+	caller := findLocalFunctionByName(t, bindings, "caller")
+	check := body.Config{
+		Registry:      reg,
+		UnitNamespace: lexicalidentity.UnitNamespaceFromContent([]byte("strict-frame-direct-callee")),
+	}
+	leafPrepared, err := body.PrepareBoundFunction(leaf, bindings, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerPrepared, err := body.PrepareBoundFunction(caller, bindings, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := callerPrepared.OperationPlan()
+	surface, sealed := plan.CallSurface()
+	if !sealed || !surface.Complete() || len(surface.Sites()) != 1 {
+		t.Fatalf("caller CallSurface = %#v/%v, want one sealed site", surface, sealed)
+	}
+	target, lexical := surface.Sites()[0].Target.LexicalBody()
+	if !lexical || target != leafPrepared.StableLexicalBodyID() {
+		t.Fatalf("sealed direct target = %x/%v, want leaf %x", target, lexical, leafPrepared.StableLexicalBodyID())
+	}
+	if len(plan.BoundaryCaptures()) != 0 {
+		t.Fatalf("direct-callee-only capture entered symbolic boundary: %v", plan.BoundaryCaptures())
+	}
+
+	params := plan.BoundaryParams()
+	if len(params) != 1 {
+		t.Fatalf("caller boundary params = %v, want one", params)
+	}
+	directCaptures := bindings.DirectCaptures(caller)
+	if len(directCaptures) != 1 {
+		t.Fatalf("caller direct captures = %#v, want leaf only", directCaptures)
+	}
+	calleeSymbol := directCaptures[0].Captured
+	functionIdentity, stable := bindings.StableLocalFunctionIdentity(calleeSymbol)
+	if !stable {
+		t.Fatal("captured leaf has no stable local function identity")
+	}
+
+	paramValue := typevalue.LiteralString(reg, "argument")
+	functionValue := typevalue.FromType(reg, typ.Func().Build())
+	functionValue = product.Set(reg, functionValue, identity.Key, identity.Singleton(identity.LuaFunction(uint64(functionIdentity))))
+	entry := state.State{}.
+		WriteValue(reg, statekey.SymbolValue(params[0]), paramValue).
+		WriteValue(reg, statekey.SymbolValue(calleeSymbol), functionValue)
+	entryKeys := keyspace.New()
+	base := summary.DefaultSummaryKey(ref.FromSymbol(405))
+	contextKey := base
+	contextKey.Entry = summary.EntryKey{Values: 1, Facts: 2, References: 3}
+	context := func(candidate product.Value) keyedFunction {
+		return keyedFunction{
+			funcExpr: caller, key: contextKey,
+			entryState: entry.WriteValue(reg, statekey.SymbolValue(calleeSymbol), candidate),
+			entryKeys:  entryKeys, hasEntryState: true,
+		}
+	}
+	shape := transformer.Shape{
+		Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures())),
+		Globals: uint32(len(plan.BoundaryGlobals())),
+	}
+
+	certificate, frame, exact := strictValidatedFrameContextCertificate(
+		reg, bindings, caller, plan, shape, transformer.GlobalBoundary{}, context(functionValue), base, callerPrepared.IdentityDigest(), 7,
+	)
+	if !exact || certificate == nil || frame == nil {
+		t.Fatal("sealed exact captured Lua function identity was not accepted as a validation-only carrier")
+	}
+	if len(certificate.captures) != 0 || !state.Domain(reg).Equal(frame.fullEntry, context(functionValue).entryState) {
+		t.Fatalf("direct callee leaked into symbolic captures or left the full carrier: captures=%#v", certificate.captures)
+	}
+
+	foreign := product.Set(reg, functionValue, identity.Key, identity.Singleton(identity.LuaFunction(uint64(functionIdentity)+1)))
+	nonExact := product.Set(reg, functionValue, identity.Key, identity.Top())
+	for name, candidate := range map[string]product.Value{
+		"foreign identity":   foreign,
+		"top product":        product.Top(),
+		"non-exact identity": nonExact,
+	} {
+		t.Run(name, func(t *testing.T) {
+			certificate, frame, exact := strictValidatedFrameContextCertificate(
+				reg, bindings, caller, plan, shape, transformer.GlobalBoundary{}, context(candidate), base, callerPrepared.IdentityDigest(), 7,
+			)
+			if exact || certificate != nil || frame != nil {
+				t.Fatalf("%s direct-callee carrier was accepted: certificate=%#v frame=%#v", name, certificate, frame)
+			}
+		})
 	}
 }
 

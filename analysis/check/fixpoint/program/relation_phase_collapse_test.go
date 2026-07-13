@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/relationcall"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -24,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -104,7 +106,7 @@ return first, second
 	if strictStats.RelationUnexpectedMisses != 0 || strictStats.RelationActivationFallbacks != 0 {
 		t.Fatalf("strict misses/fallbacks=%d/%d", strictStats.RelationUnexpectedMisses, strictStats.RelationActivationFallbacks)
 	}
-	if strictStats.RelationContextsSpecialized != 1 || strictStats.RelationSummaryEquationsOmitted != 1 || strictStats.RelationMaterializationsReused != 1 {
+	if strictStats.RelationContextsSpecialized != 1 || strictStats.RelationSummaryEquationsOmitted != 2 || strictStats.RelationMaterializationsReused != 2 {
 		t.Fatalf("strict contexts/omitted/reused=%d/%d/%d", strictStats.RelationContextsSpecialized, strictStats.RelationSummaryEquationsOmitted, strictStats.RelationMaterializationsReused)
 	}
 	legacySolves := legacyStats.PrepassBodySolves + legacyStats.SummaryBodySolves + legacyStats.MaterializeBodySolves
@@ -113,6 +115,40 @@ return first, second
 		t.Fatalf("work did not fall: legacy=%d/%d strict=%d/%d", legacySolves, legacyStats.Body.Transfer.Solver.TransferCalls, strictSolves, strictStats.Body.Transfer.Solver.TransferCalls)
 	}
 	t.Logf("is_str work legacy=%d solves/%d transfers strict=%d/%d", legacySolves, legacyStats.Body.Transfer.Solver.TransferCalls, strictSolves, strictStats.Body.Transfer.Solver.TransferCalls)
+}
+
+func TestStrictRelationReadAuthorityRequiresEarlierProducer(t *testing.T) {
+	key := func(id symbol.ID) summary.SummaryKey { return summary.DefaultSummaryKey(ref.FromSymbol(id)) }
+	leaf, caller, later, zero := key(9101), key(9102), key(9103), key(9104)
+	leafContext, callerContext := leaf, caller
+	leafContext.Entry = summary.EntryKey{Values: 1}
+	callerContext.Entry = summary.EntryKey{Values: 2}
+	authority := strictRelationReadAuthority{
+		base:     map[summary.SummaryKey]int{leaf: 0, caller: 1, later: 2, zero: 3},
+		contexts: map[summary.SummaryKey]int{leafContext: 0, callerContext: 1},
+		zeroPins: map[summary.SummaryKey]struct{}{zero: {}},
+	}
+	present := trackedSummaryRead{present: true}
+	if !authority.permits(map[summary.SummaryKey]trackedSummaryRead{leaf: present, leafContext: present}, 1, false) {
+		t.Fatal("caller could not consume its already validated leaf producer")
+	}
+	if !authority.permits(map[summary.SummaryKey]trackedSummaryRead{zero: present}, 0, true) {
+		t.Fatal("base phase could not consume an independently exact zero-boundary pin")
+	}
+	for name, reads := range map[string]map[summary.SummaryKey]trackedSummaryRead{
+		"missing":      {leaf: {}},
+		"same base":    {caller: present},
+		"same context": {callerContext: present},
+		"later base":   {later: present},
+		"unknown":      {key(9199): present},
+		"zero context": {zero: present},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if authority.permits(reads, 1, false) {
+				t.Fatalf("%s dependency escaped producer-rank closure", name)
+			}
+		})
+	}
 }
 
 func TestStrictParameterizedAdmissionRejectsUnannotatedAndGradualInputs(t *testing.T) {
