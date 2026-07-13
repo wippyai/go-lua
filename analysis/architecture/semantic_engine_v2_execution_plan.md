@@ -179,12 +179,25 @@ Uncommitted identity and allocation/WTO-row prototypes remain quarantined. Salva
 
 ## 13. Measured baseline and performance budget
 
-The current honest end-to-end baseline is a cold standalone lint of Kickside from
-`/home/wolfy-j/kickside/kickside/app`, using the reconstructed canonical binary.
-The recorded run processed 2,218 entries in **3:50.99 wall**, consumed roughly
-2,800 user-CPU seconds at 1,229% aggregate CPU, and peaked at **3.115 GiB RSS**.
-Several entries reached a 10-second solve deadline, so this is a performance
-baseline, not an acceptable quality result.
+The current accepted end-to-end baseline is a cold standalone lint of Kickside
+from `/home/wolfy-j/kickside/kickside/app`, using the reconstructed canonical
+binary. Commit `7ac918e28` processed all 1,891 then-present entries in **2:14.07
+wall**, consumed **1,202.71 user-CPU seconds** plus 33.14 system seconds at 921%
+aggregate CPU, and peaked at **1,222,588 KiB RSS**. It reported 2,365 errors and
+38 warnings with zero deadline-failed or unchecked entries. Corpus entry and
+diagnostic counts are not stable while Kickside is being edited, so performance
+comparisons must intersect physical sources and record the input snapshot.
+
+The first strict relation phase-collapse experiment at `61d42a154` was rejected
+by this gate. It processed the then-present 1,889 entries in **3:07.06 wall**,
+used **1,510.16 user-CPU seconds** plus 44.84 system seconds at 831% CPU, and
+peaked at 1,191,952 KiB RSS. Among 1,885 comparable timed entries, 1,812 slowed
+and their summed durations grew by roughly 428 seconds. The mechanism preserved
+semantic and `ResultVersion` parity, but globally enabled context certificates,
+compiled transformer plans for owners later rejected, and repeatedly rescanned
+call surfaces before admitting only a small call-free slice. Commit `d06381635`
+therefore returned it to an internal gate. This is a design measurement, not a
+production optimization.
 
 The important shape is not broad parser or loader cost. About 1,300 entries can
 finish in roughly the first second, after which a small heavy tail dominates.
@@ -219,6 +232,8 @@ Acceptance targets are empirical and conjunctive:
 The 30–40 second objective is not claimed by design arithmetic alone. Each
 migration stage must publish cold/warm wall, CPU, RSS, allocation, solve,
 transfer, fixed-point and diagnostic results from the real Kickside corpus.
+Counts that exclude relation preparation, prepass solves, transformer
+compilation, admission scans, or rejected owners are not promotion evidence.
 
 ## 14. Frozen validation corpus and commands
 

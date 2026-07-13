@@ -98,6 +98,13 @@ type Stats struct {
 	RelationMaterializationsReused             int
 	RelationUnexpectedMisses                   int
 	RelationRetainedResultsReleased            int
+	// RelationPlanner* expose the staged strict planner's deterministic work
+	// funnel. Prefiltered counts owners that survive the cheap static and
+	// complete-call-surface scan; Compiled counts transformer Prepare calls.
+	RelationPlannerOwnersScanned     int
+	RelationPlannerOwnersPrefiltered int
+	RelationPlannerOwnersCompiled    int
+	RelationPlannerOwnersActivated   int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }
@@ -129,7 +136,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		return Result{}, err
 	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
@@ -170,12 +177,13 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	keys.certifyFinalRelationContextEntries(config.Check.Registry, prepared)
 	var relationActivation *relationRunActivation
 	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
 		strict := config.enableStrictRelationPhaseCollapse
-		if !strict {
-			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
+		var catalog relationRunCatalog
+		if strict {
+			catalog = prepareStagedStrictRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil, config.Stats)
 		} else {
-			catalog = catalog.strictProductionActivationSlice()
+			catalog = prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
+			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
 		}
 		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {
@@ -275,7 +283,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	if fnType, ok := lowerFunctionExprType(fn, bindings, config.Check.ModuleTypes); ok {
@@ -307,12 +315,13 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	var relationActivation *relationRunActivation
 	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
 		strict := config.enableStrictRelationPhaseCollapse
-		if !strict {
-			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
+		var catalog relationRunCatalog
+		if strict {
+			catalog = prepareStagedStrictRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn, config.Stats)
 		} else {
-			catalog = catalog.strictProductionActivationSlice()
+			catalog = prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
+			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
 		}
 		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
 		if err != nil {

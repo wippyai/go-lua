@@ -232,6 +232,11 @@ Add an architectural test that fails if a known lexical call can invoke
 - The selected pathological Lua file completes in under one second.
 - A warm run approaches immutable artifact loading cost.
 - Peak RSS does not regress from the frozen baseline.
+- Promotion measures total preparation, admission, transformer compilation,
+  prepass, evaluation, projection, and rejected-owner work. A reduction in
+  summary/materialization counters alone is insufficient.
+- Relation plans are immutable preparation/cache artifacts. Production must
+  not rebuild a broad per-run catalog merely to admit a narrow owner slice.
 
 Only after all four gate groups pass is the legacy code deleted. The deletion
 is part of the migration definition of done, not optional follow-up cleanup.

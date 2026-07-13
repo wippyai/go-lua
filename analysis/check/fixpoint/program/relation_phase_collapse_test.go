@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -54,8 +55,26 @@ return wrapper()
 	if strictStats.RelationSummaryEquationsOmitted != 1 || strictStats.RelationMaterializationsReused != 1 {
 		t.Fatalf("strict collapse counters = omitted:%d reused:%d, want 1/1", strictStats.RelationSummaryEquationsOmitted, strictStats.RelationMaterializationsReused)
 	}
+	if strictStats.RelationPlannerOwnersScanned != 3 || strictStats.RelationPlannerOwnersPrefiltered != 1 ||
+		strictStats.RelationPlannerOwnersCompiled != 1 || strictStats.RelationPlannerOwnersActivated != 1 {
+		t.Fatalf("strict planner funnel = scanned:%d prefiltered:%d compiled:%d activated:%d, want 3/1/1/1",
+			strictStats.RelationPlannerOwnersScanned, strictStats.RelationPlannerOwnersPrefiltered,
+			strictStats.RelationPlannerOwnersCompiled, strictStats.RelationPlannerOwnersActivated)
+	}
 	if strictStats.SummaryBodySolves+1 != legacyStats.SummaryBodySolves || strictStats.MaterializeBodySolves+1 != legacyStats.MaterializeBodySolves {
 		t.Fatalf("strict phase work = legacy summary/materialize %d/%d strict %d/%d", legacyStats.SummaryBodySolves, legacyStats.MaterializeBodySolves, strictStats.SummaryBodySolves, strictStats.MaterializeBodySolves)
+	}
+	if strictStats.PrepassBodySolves != legacyStats.PrepassBodySolves+1 {
+		t.Fatalf("strict prepass solves = %d, legacy = %d, want one retained validation solve", strictStats.PrepassBodySolves, legacyStats.PrepassBodySolves)
+	}
+	legacySolves := legacyStats.PrepassBodySolves + legacyStats.SummaryBodySolves + legacyStats.MaterializeBodySolves
+	strictSolves := strictStats.PrepassBodySolves + strictStats.SummaryBodySolves + strictStats.MaterializeBodySolves
+	if strictSolves+1 != legacySolves {
+		t.Fatalf("strict total body solves = %d, legacy = %d, want net reduction of one", strictSolves, legacySolves)
+	}
+	if legacyStats.Body.BodySolves != legacySolves || strictStats.Body.BodySolves != strictSolves {
+		t.Fatalf("authoritative body solves diverge from phase totals: legacy %d/%d strict %d/%d",
+			legacyStats.Body.BodySolves, legacySolves, strictStats.Body.BodySolves, strictSolves)
 	}
 }
 
@@ -129,6 +148,47 @@ return first(), second()
 	}
 	if !seen {
 		t.Fatal("relation catalog audit did not run")
+	}
+}
+
+func TestStagedStrictCallFreeFailsClosedOnMetadataDisagreement(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	plan := operationplan.New(graph, factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{call: {}},
+	})
+	if stagedStrictCallFree(false, plan) {
+		t.Fatal("metadata reported call-free but authoritative plan call was admitted")
+	}
+	callFreeGraph := cfg.New()
+	callFreePlan := operationplan.New(callFreeGraph, factflow.FactsInput{})
+	if stagedStrictCallFree(true, callFreePlan) {
+		t.Fatal("metadata call report did not fail closed")
+	}
+	if !stagedStrictCallFree(false, callFreePlan) {
+		t.Fatal("matching call-free metadata and plan were rejected")
+	}
+	outOfRangePlan := operationplan.New(callFreeGraph, factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{cfg.Point(100): {}},
+	})
+	if stagedStrictCallFree(false, outOfRangePlan) {
+		t.Fatal("out-of-range call evidence was admitted as call-free")
+	}
+}
+
+func TestStrictRelationPlannerIsOffByDefault(t *testing.T) {
+	stats := &Stats{}
+	_, err := RunChunk(parseChunk(t, `local function leaf() return "ok" end return leaf()`), Config{
+		Check: body.Config{Registry: standard.Registry(), TypeValues: typevalue.NewCache()},
+		Stats: stats,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.RelationPlannerOwnersScanned != 0 || stats.RelationPlannerOwnersPrefiltered != 0 ||
+		stats.RelationPlannerOwnersCompiled != 0 || stats.RelationPlannerOwnersActivated != 0 ||
+		stats.RelationSummaryEquationsOmitted != 0 || stats.RelationMaterializationsReused != 0 {
+		t.Fatalf("default run activated strict planner: %#v", stats)
 	}
 }
 
