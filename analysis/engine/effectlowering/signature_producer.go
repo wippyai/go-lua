@@ -70,6 +70,20 @@ func (p *SignatureProducer) SignatureForSite(ctx transfer.NodeContext, site fact
 	return got.Clone(), true
 }
 
+// LookupStringMethodSignature performs canonical lookup only. It grants no
+// receiver or call-shape authority; consumers must independently prove both
+// and must apply their own effect/composability gate.
+func (p *SignatureProducer) LookupStringMethodSignature(method string) (signature.Function, bool) {
+	if p == nil || p.lookup == nil || method == "" {
+		return signature.Function{}, false
+	}
+	got, ok := p.lookup("string." + method)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return got.Clone(), true
+}
+
 func (p *SignatureProducer) IteratorForSite(ctx transfer.NodeContext, site factflow.CallSiteView) (iteration.Iterator, bool) {
 	sig, ok := p.SignatureForSite(ctx, site)
 	if !ok {

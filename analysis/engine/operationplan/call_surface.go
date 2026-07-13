@@ -82,6 +82,13 @@ func (t CallSurfaceTarget) ExternalOperation() (SignatureCallOperation, bool) {
 	return t.external.clone(), true
 }
 
+// MatchesExternalOperation reports whether t owns exactly the same resolved
+// signature-call descriptor as operation. Consumers use this narrow seam
+// instead of reconstructing descriptor equality from names or digests.
+func (t CallSurfaceTarget) MatchesExternalOperation(operation SignatureCallOperation) bool {
+	return t.kind == CallSurfaceTargetExternal && t.external.valid() && operation.valid() && t.external.equal(operation)
+}
+
 func (t CallSurfaceTarget) valid() bool {
 	switch t.kind {
 	case CallSurfaceTargetLexical:

@@ -76,6 +76,24 @@ func TestCallSurfaceClassifiesSealedLuaTypeAsExternal(t *testing.T) {
 	}
 }
 
+func TestExternalCallSurfaceTargetMatchesOnlyExactDescriptor(t *testing.T) {
+	want, ok := NewSignatureCallOperation(signature.Function{Type: typ.Func().Param("value", typ.String).Returns(typ.String).Build()})
+	if !ok {
+		t.Fatal("signature operation rejected")
+	}
+	target, ok := NewExternalCallSurfaceTarget(want)
+	if !ok || !target.MatchesExternalOperation(want) {
+		t.Fatal("external target did not match owned descriptor")
+	}
+	drifted, _ := NewSignatureCallOperation(signature.Function{Type: typ.Func().Param("value", typ.String).Returns(typ.Number).Build()})
+	if target.MatchesExternalOperation(drifted) {
+		t.Fatal("external target admitted descriptor drift")
+	}
+	if RejectedCallSurfaceTarget().MatchesExternalOperation(want) {
+		t.Fatal("rejected target matched external descriptor")
+	}
+}
+
 func TestPlanOwnsOnlyMatchingCompleteCallSurface(t *testing.T) {
 	owner := callSurfaceBody("owner", 1)
 	callee := callSurfaceBody("owner", 2)

@@ -229,7 +229,7 @@ func (c *checker) prepare(
 	if fn == nil {
 		boundaryGlobals = bindings.ChunkGlobalReads()
 	}
-	signatureCalls := signatureCallOperations(built.Graph, facts, signatureProducer)
+	signatureCalls := signatureCallOperations(config.Registry, bindings, built.Graph, facts, signatureProducer)
 	operationPlan := lowered.Plan.
 		WithObservationIdentity(lexicalBodyID, wirBody).
 		WithCallSurface(sealPreparedCallSurface(bindings, wirBody, facts, signatureCalls, lexicalBodyID, unitNamespace, built.Graph.Size())).

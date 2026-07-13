@@ -1,6 +1,8 @@
 package body
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -44,8 +46,13 @@ func sealPreparedCallSurface(bindings *bind.Result, lowered *wir.Body, facts fac
 }
 
 func exactPreparedExternalCallShape(lowered *wir.Body, instruction wir.Instruction, facts factflow.Facts) bool {
-	if lowered == nil || instruction.Call.Callee.Kind != wir.OperandPath ||
-		instruction.Call.Receiver.Kind != wir.OperandNone || instruction.Call.Method != 0 {
+	if lowered == nil {
+		return false
+	}
+	if instruction.Call.Method != 0 {
+		return exactPreparedExternalMethodCallShape(lowered, instruction, facts)
+	}
+	if instruction.Call.Callee.Kind != wir.OperandPath || instruction.Call.Receiver.Kind != wir.OperandNone {
 		return false
 	}
 	calleePath := lowered.Path(wir.PathRef(instruction.Call.Callee.Ref))
@@ -67,6 +74,46 @@ func exactPreparedExternalCallShape(lowered *wir.Body, instruction wir.Instructi
 		return false
 	}
 	return true
+}
+
+func exactPreparedExternalMethodCallShape(lowered *wir.Body, instruction wir.Instruction, facts factflow.Facts) bool {
+	if instruction.Call.Callee.Kind != wir.OperandNone || instruction.Call.Receiver.Kind != wir.OperandPath || instruction.Call.Method == 0 {
+		return false
+	}
+	method := lowered.Const(instruction.Call.Method)
+	if method.Kind != wir.ConstString || method.Str == "" {
+		return false
+	}
+	receiver := lowered.Path(wir.PathRef(instruction.Call.Receiver.Ref))
+	if receiver.IsEmpty() || receiver.Symbol == 0 {
+		return false
+	}
+	methodPath := receiver.Field(method.Str)
+	site, ok := facts.CallSiteView(instruction.Point)
+	if !ok || site.CalleeSymbol() != 0 || !site.CalleeMemberAccess() || site.MethodName() != method.Str || !site.CalleePathEqual(methodPath) {
+		return false
+	}
+	siteReceiver, hasReceiver := site.ReceiverPath()
+	siteMethod, hasMethod := site.MethodPath()
+	memberReceiver, member, hasMember := site.CalleeMemberAccessPath()
+	if !hasReceiver || !siteReceiver.Equal(receiver) || !hasMethod || !siteMethod.Equal(methodPath) ||
+		!hasMember || !memberReceiver.Equal(receiver) || member.Kind != segment.SegmentField || member.Name != method.Str {
+		return false
+	}
+	source, hasSource := site.ReceiverSource()
+	return hasSource && exactPreparedReceiverSourcePath(facts, source, receiver)
+}
+
+func exactPreparedReceiverSourcePath(facts factflow.Facts, source factflow.ValueSource, receiver pathdom.Path) bool {
+	switch source.Kind {
+	case factflow.ValueSourcePath:
+		return source.Valid() && source.PathKey == receiver.Key()
+	case factflow.ValueSourceExpression:
+		path, ok := facts.ExpressionPath(source.ExprRef)
+		return source.Valid() && ok && path.Equal(receiver)
+	default:
+		return false
+	}
 }
 
 func exactPreparedLexicalCallTarget(bindings *bind.Result, namespace lexicalidentity.UnitNamespace, lowered *wir.Body, instruction wir.Instruction, facts factflow.Facts) (lexicalidentity.StableLexicalBodyID, bool) {

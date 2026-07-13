@@ -313,3 +313,23 @@ contexts/omissions/reuses = 19/21/42, and threads `is_str` improves from 10/70
 to 5/35 with 4/5/5; the whole threads file moves from 271/11,882 to
 266/11,847. There are zero misses or fallbacks. This is still private strict
 evidence and does not claim a default wall-time improvement.
+
+Exact early-return type-guard evidence is now preserved by the transformer
+compiler (commit `b4fabba3e`). The compiler derives the active CFG edge,
+respects canonical branch truth polarity, and proves only the exact
+string/number/nil refinement implied by that edge; alternate predecessors,
+wrong polarity, mismatched paths, unsupported truthiness, and ambiguous active
+edges fail closed.
+
+On top of that evidence, the private strict path now seals the canonical
+`string.gsub` method boundary for the frozen `trim` owner. Admission requires
+an exact unversioned receiver root, binder-wide immutability, an edge-dominating
+string refinement, no intervening root assignment, a complete call-surface
+descriptor match, and a pure context-independent static scalar signature.
+Dynamic or descriptor-drifted methods, effects, generics, composite returns,
+and open multi-return forwarding remain legacy. The frozen threads oracle moves
+from 271 solves/11,882 transfers to 264/11,829 with
+contexts/omissions/reuses = 5/7/7. Diagnostics, summaries, every registered
+product oracle, and repeated-run digests are byte-identical. Wall time remains
+within measurement noise, so this remains private capability evidence and is
+not a default-path performance claim.

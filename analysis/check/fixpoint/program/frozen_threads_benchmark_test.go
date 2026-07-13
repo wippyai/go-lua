@@ -100,8 +100,8 @@ func TestFrozenThreadsContractDifferential(t *testing.T) {
 		}
 	}
 	for _, run := range []frozenThreadsRun{strictA, strictB} {
-		if run.report.TargetBodySolves != 5 || run.report.TargetTransfers != 35 || run.report.ContextsSpecialized != 4 || run.report.EquationsOmitted != 5 || run.report.MaterializationsReused != 5 {
-			t.Fatalf("strict is_str work=%d/%d contexts/omitted/reused=%d/%d/%d, want 5/35 and 4/5/5", run.report.TargetBodySolves, run.report.TargetTransfers, run.report.ContextsSpecialized, run.report.EquationsOmitted, run.report.MaterializationsReused)
+		if run.report.TargetBodySolves != 5 || run.report.TargetTransfers != 35 || run.report.ContextsSpecialized != 5 || run.report.EquationsOmitted != 7 || run.report.MaterializationsReused != 7 {
+			t.Fatalf("strict is_str work=%d/%d contexts/omitted/reused=%d/%d/%d, want 5/35 and 5/7/7", run.report.TargetBodySolves, run.report.TargetTransfers, run.report.ContextsSpecialized, run.report.EquationsOmitted, run.report.MaterializationsReused)
 		}
 	}
 }

@@ -830,6 +830,8 @@ analysis/check/fixpoint/program,relation_catalog.go,relationRunCatalog.ConsumerP
 analysis/check/fixpoint/program,relation_catalog.go,relationRunCatalog.DirectCalls,method,analysis/check/fixpoint/program,,unclassified,,,
 analysis/check/fixpoint/program,relation_catalog.go,relationRunCatalog.Entries,method,analysis/check/fixpoint/program,,unclassified,,,
 analysis/check/fixpoint/program,relation_catalog.go,relationRunCatalog.Freeze,method,analysis/check/fixpoint/program,,unclassified,,,
+analysis/check/fixpoint/program,relation_phase_collapse.go,strictRelationPublishedReader.Read,method,analysis/check/fixpoint/program,analysis/check/fixpoint/program,boundary-provider,boundary:strict-relation-publication,go-lua.summary.reader/v1,fixture:frozen-threads-relation-differential
+analysis/check/fixpoint/program,relation_phase_collapse.go,strictRelationPublishedReader.ReadOwnedNormalized,method,analysis/check/fixpoint/program,analysis/check/fixpoint/program,boundary-provider,boundary:strict-relation-publication,go-lua.summary.reader/v1,fixture:frozen-threads-relation-differential
 analysis/check/fixpoint/program,relation_snapshot.go,relationFreezeError.Error,method,analysis/check/fixpoint/program,,unclassified,,,
 analysis/check/fixpoint/program,relation_snapshot.go,relationFreezeError.Unwrap,method,analysis/check/fixpoint/program,,unclassified,,,
 analysis/check/fixpoint/program,relation_snapshot.go,relationRunSnapshot.ContextSummary,method,analysis/check/fixpoint/program,,unclassified,,,
@@ -2554,6 +2556,7 @@ analysis/engine/effectlowering,signature_producer.go,PrepareSignatureProducer,fu
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer,type,analysis/engine/effectlowering,,unclassified,,,
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer.IntrinsicForSite,method,analysis/engine/effectlowering,,unclassified,,,
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer.IteratorForSite,method,analysis/engine/effectlowering,,unclassified,,,
+analysis/engine/effectlowering,signature_producer.go,SignatureProducer.LookupStringMethodSignature,method,analysis/engine/effectlowering,analysis/engine/effectlowering,boundary-provider,boundary:string-method-signature,go-lua.signature.function/v1,fixture:string-method-signature
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer.OutcomeProvider,method,analysis/engine/effectlowering,,unclassified,,,
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer.SignatureForSite,method,analysis/engine/effectlowering,,unclassified,,,
 analysis/engine/effectlowering,static_allocation.go,StaticSignatureAllocationTemplate,func,analysis/engine/effectlowering,,unclassified,,,
@@ -3241,6 +3244,7 @@ analysis/engine/operationplan,call_surface.go,CallSurfaceTarget.ExternalContentI
 analysis/engine/operationplan,call_surface.go,CallSurfaceTarget.ExternalOperation,method,analysis/engine/operationplan,,unclassified,,,
 analysis/engine/operationplan,call_surface.go,CallSurfaceTarget.Kind,method,analysis/engine/operationplan,,unclassified,,,
 analysis/engine/operationplan,call_surface.go,CallSurfaceTarget.LexicalBody,method,analysis/engine/operationplan,,unclassified,,,
+analysis/engine/operationplan,call_surface.go,CallSurfaceTarget.MatchesExternalOperation,method,analysis/engine/operationplan,analysis/engine/operationplan,retained-lexical,lexical:call-surface,go-lua.operationplan.call-surface/v1,fixture:call-surface
 analysis/engine/operationplan,call_surface.go,CallSurfaceTargetExternal,const,analysis/engine/operationplan,,unclassified,,,
 analysis/engine/operationplan,call_surface.go,CallSurfaceTargetKind,type,analysis/engine/operationplan,,unclassified,,,
 analysis/engine/operationplan,call_surface.go,CallSurfaceTargetLexical,const,analysis/engine/operationplan,,unclassified,,,

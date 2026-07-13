@@ -8,6 +8,8 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
@@ -153,13 +155,30 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 		routes := make(map[cfg.Point]transformer.DirectCallTarget)
 		for _, site := range surface.Sites() {
 			call, represented := plan.Facts().CallSiteView(site.Point)
-			if !represented || !relationDirectSiteExact(call) {
+			if !represented {
 				exact = false
 				break
 			}
-			targetBody, lexical := site.Target.LexicalBody()
+			switch site.Target.Kind() {
+			case operationplan.CallSurfaceTargetExternal:
+				operation, sealed := plan.SignatureCallOperation(site.Point)
+				if !sealed || !strictExternalCallSurfaceExact(reg, call, site.Target, operation) {
+					exact = false
+				}
+				continue
+			case operationplan.CallSurfaceTargetLexical:
+				if !relationDirectSiteExact(call) {
+					exact = false
+				}
+			default:
+				exact = false
+			}
+			if !exact {
+				break
+			}
+			targetBody, _ := site.Target.LexicalBody()
 			targetIndex, found := byBody[targetBody]
-			if !lexical || !found || targetIndex < 0 {
+			if !found || targetIndex < 0 {
 				exact = false
 				break
 			}
@@ -234,6 +253,17 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 		}
 	}
 	return out
+}
+
+func strictExternalCallSurfaceExact(reg *axis.Registry, call factflow.CallSiteView, target operationplan.CallSurfaceTarget, operation operationplan.SignatureCallOperation) bool {
+	if reg == nil || !target.MatchesExternalOperation(operation) {
+		return false
+	}
+	if call.MethodName() == "" {
+		return true
+	}
+	_, exact := effectlowering.StaticScalarSignatureReturns(reg, nil, operation.Signature())
+	return exact
 }
 
 func stagedStrictAnnotatedParams(bindings *bind.Result, fn *ast.FunctionExpr, boundary []symbol.ID) bool {

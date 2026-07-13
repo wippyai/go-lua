@@ -205,7 +205,7 @@ func TestPreparedCallSurfaceNeverHidesWIRCallsMissingFacts(t *testing.T) {
 	}
 }
 
-func TestPreparedCallSurfaceRejectsMethodEvenWithSignatureOperation(t *testing.T) {
+func TestPreparedCallSurfaceSealsOnlyExactExternalMethodShape(t *testing.T) {
 	stmts, err := parse.ParseString(`return nil`, "method-call.lua")
 	if err != nil {
 		t.Fatal(err)
@@ -214,18 +214,66 @@ func TestPreparedCallSurfaceRejectsMethodEvenWithSignatureOperation(t *testing.T
 	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("method-call"))
 	owner := lexicalidentity.RootBody(namespace)
 	body := wir.NewBody("method-call")
+	receiver := pathdom.NewPath(11, "value")
+	method := body.InternConst(wir.Const{Kind: wir.ConstString, Str: "gsub"})
 	body.Emit(wir.Instruction{Op: wir.OpCall, Point: 1, Call: wir.CallInfo{
-		Receiver: wir.Operand{Kind: wir.OperandPath, Ref: 1}, Method: 1,
+		Receiver: wir.Operand{Kind: wir.OperandPath, Ref: uint32(body.InternPath(receiver))}, Method: method,
 	}})
 	operation, ok := operationplan.NewSignatureCallOperation(signature.Function{Type: typ.Func().Build()})
 	if !ok {
 		t.Fatal("signature operation rejected")
 	}
-	surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{
-		CallSites: map[cfg.Point]factflow.CallSite{1: {}},
-	}), map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, owner, namespace, 2)
-	if !surface.Complete() || len(surface.Sites()) != 1 || surface.Sites()[0].Target.Kind() != operationplan.CallSurfaceTargetRejected {
-		t.Fatalf("method dispatch gained external authority: %#v", surface)
+	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	receiverSource, _ := factflow.NewPathValueSource(receiver.Key(), 0, 0, 0, shape)
+	exact := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: receiver.Field("gsub"), CalleeMemberAccess: true,
+		ReceiverPath: receiver, HasReceiverPath: true, MethodPath: receiver.Field("gsub"), HasMethodPath: true, MethodName: "gsub",
+		ReceiverSource: receiverSource, HasReceiverSource: true,
+	})
+	for _, test := range []struct {
+		name       string
+		site       factflow.CallSite
+		operations map[cfg.Point]operationplan.SignatureCallOperation
+		want       operationplan.CallSurfaceTargetKind
+	}{
+		{name: "exact", site: exact, operations: map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, want: operationplan.CallSurfaceTargetExternal},
+		{name: "unsealed", site: exact, want: operationplan.CallSurfaceTargetRejected},
+		{name: "receiver mismatch", site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleePath: pathdom.NewPath(12, "other").Field("gsub"), CalleeMemberAccess: true,
+			ReceiverPath: pathdom.NewPath(12, "other"), HasReceiverPath: true, MethodPath: pathdom.NewPath(12, "other").Field("gsub"), HasMethodPath: true, MethodName: "gsub",
+			ReceiverSource: receiverSource, HasReceiverSource: true,
+		}), operations: map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, want: operationplan.CallSurfaceTargetRejected},
+		{name: "name mismatch", site: factflow.NewCallSite(factflow.CallSiteConfig{
+			CalleePath: receiver.Field("match"), CalleeMemberAccess: true,
+			ReceiverPath: receiver, HasReceiverPath: true, MethodPath: receiver.Field("match"), HasMethodPath: true, MethodName: "match",
+			ReceiverSource: receiverSource, HasReceiverSource: true,
+		}), operations: map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, want: operationplan.CallSurfaceTargetRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{1: test.site}}), test.operations, owner, namespace, 2)
+			if !surface.Complete() || len(surface.Sites()) != 1 || surface.Sites()[0].Target.Kind() != test.want {
+				t.Fatalf("method surface = %#v, want complete target kind %v", surface, test.want)
+			}
+		})
+	}
+}
+
+func TestPreparedCallSurfaceRejectsDynamicExternalMethodReceiver(t *testing.T) {
+	stmts, err := parse.ParseString(`return nil`, "dynamic-method-call.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("dynamic-method-call"))
+	body := wir.NewBody("dynamic-method-call")
+	body.Emit(wir.Instruction{Op: wir.OpCall, Point: 1, Call: wir.CallInfo{Receiver: wir.Operand{Kind: wir.OperandTemp, Ref: 1}, Method: body.InternConst(wir.Const{Kind: wir.ConstString, Str: "gsub"})}})
+	operation, ok := operationplan.NewSignatureCallOperation(signature.Function{Type: typ.Func().Build()})
+	if !ok {
+		t.Fatal("signature operation rejected")
+	}
+	surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{1: factflow.NewCallSite(factflow.CallSiteConfig{MethodName: "gsub", CalleeMemberAccess: true})}}), map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, lexicalidentity.RootBody(namespace), namespace, 2)
+	if !surface.Complete() || surface.Sites()[0].Target.Kind() != operationplan.CallSurfaceTargetRejected {
+		t.Fatalf("dynamic method surface = %#v, want rejected", surface)
 	}
 }
 

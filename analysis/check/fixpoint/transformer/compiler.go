@@ -1425,13 +1425,14 @@ func exactStringConcatSourceTerm(ctx planCompileContext, source factflow.ValueSo
 
 func exactSignatureExpressionTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, bool) {
 	if source.Kind == factflow.ValueSourceCall && source.HasCallPoint {
-		op, intrinsic := ctx.plan.SignatureCallOperation(source.CallPoint)
-		if intrinsic {
-			_, intrinsic = op.Intrinsic()
-		}
-		if intrinsic {
+		op, sealed := ctx.plan.SignatureCallOperation(source.CallPoint)
+		if sealed {
+			_, intrinsic := op.Intrinsic()
 			site, ok := ctx.facts.CallSiteView(source.CallPoint)
-			if ok {
+			// A no-expr return source represents a value-list forwarding
+			// boundary. Only an adjusted call is scalar there; admitting an
+			// expanded/open-tail call would silently discard later returns.
+			if ok && (intrinsic || source.HasExpr || exactAdjustedSignatureCallSource(source, site)) {
 				ref, hasExpr := site.Expr()
 				if hasExpr {
 					terms := ctx.expressions[ref]
@@ -1461,6 +1462,13 @@ func exactSignatureExpressionTerm(ctx planCompileContext, source factflow.ValueS
 		return 0, false
 	}
 	return terms[index], true
+}
+
+func exactAdjustedSignatureCallSource(source factflow.ValueSource, site factflow.CallSiteView) bool {
+	return source.Valid() && source.ResultIndex == 0 && source.Final == site.Final() &&
+		source.Adjusted && site.Adjusted() &&
+		!source.Expanded && !site.Expanded() &&
+		!source.OpenTail && !site.OpenTail()
 }
 
 func expressionHasContextualSidecar(facts factflow.Facts, ref factflow.ExprRef) bool {
