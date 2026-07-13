@@ -123,7 +123,7 @@ local function f(v: number | string): number
         return need_number(v)
     end
 end
-`)
+`, WithStdlib())
 	requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDirectCallArgType,
 		DiagnosticCount: 1,

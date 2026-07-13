@@ -44,7 +44,7 @@ local function decode(raw: any): UserResult
     end
     return result.ok({id = raw.id, retries = raw.retries})
 end
-`, WithModule("result", resultManifest))
+`, WithModule("result", resultManifest), WithStdlib())
 
 	if len(result.Diagnostics) != 0 {
 		debug := "<no checked result>"
@@ -85,7 +85,7 @@ local function decode(raw: any): ()
     end
     local id: string = raw.id
 end
-`)
+`, WithStdlib())
 
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want early-return type guard to refine raw.id", result.Diagnostics)

@@ -8732,7 +8732,7 @@ local function target_id(agent_identifier: AgentRef): string?
         and (agent_identifier.id or agent_identifier.name)
         or agent_identifier
 end
-`)
+`, WithStdlib())
 	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeMissingMember) {
 		t.Fatalf("diagnostics = %#v, want short-circuit RHS reads checked under the LHS type guard", result.Diagnostics)
 	}
@@ -9016,7 +9016,7 @@ local function load_agent(agent_spec_or_id: AgentRef): string
 
     return "Failed to load agent '" .. agent_identifier .. "'"
 end
-`)
+`, WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want both assigned branches to prove agent_identifier is a string after merge", result.Diagnostics)
 	}
@@ -9038,7 +9038,7 @@ local function load_agent(agent_spec_or_id: AgentRef): string
 
 	return "Failed to load agent '" .. agent_identifier .. "'"
 end
-`)
+`, WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, assignment value = %s, want literal fallback to remove nil from open-table field chain after branch merge",
 			result.Diagnostics,

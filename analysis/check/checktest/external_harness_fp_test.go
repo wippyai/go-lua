@@ -2742,7 +2742,7 @@ local function normalize_bindings(bindings: any): {BindingSpec}
     end
     return normalized
 end
-`)
+`, WithStdlib())
 	requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeAssignmentType,
 		DiagnosticCount: 1,

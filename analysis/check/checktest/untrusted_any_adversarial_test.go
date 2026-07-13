@@ -281,7 +281,7 @@ local function decode(raw: any): {ok: false, error: {code: string, message: stri
     end
     return {ok = false, error = protocol.err("unknown_kind", raw.kind)}
 end
-`, "main.lua", WithModule("protocol", protocol))
+`, "main.lua", WithModule("protocol", protocol), WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want scalar type guard to validate raw.kind for imported call", result.Diagnostics)
 	}
@@ -320,7 +320,7 @@ function M.decode(raw: any): protocol.Result
 end
 
 return M
-`, "validator", "validator.lua", WithModule("protocol", protocol))
+`, "validator", "validator.lua", WithModule("protocol", protocol), WithStdlib())
 	if len(result.Errors) != 0 {
 		t.Fatalf("diagnostics = %#v, want scalar type guard to validate raw.kind in exported function", result.Errors)
 	}
@@ -368,7 +368,7 @@ local function decode(raw: any): ()
     end
     local kind: string = raw.kind
 end
-`)
+`, WithStdlib())
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want child scalar type guard to validate raw.kind for assignment", result.Diagnostics)
 	}

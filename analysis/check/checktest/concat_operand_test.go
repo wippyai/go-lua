@@ -586,7 +586,7 @@ end
 `,
 	}
 	for name, src := range cases {
-		if diagnostics := Check(src).Diagnostics; len(diagnostics) != 0 {
+		if diagnostics := Check(src, WithStdlib()).Diagnostics; len(diagnostics) != 0 {
 			t.Fatalf("%s: diagnostics = %#v, want expression-local guard to prove concat operand present", name, diagnostics)
 		}
 	}
