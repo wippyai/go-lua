@@ -53,7 +53,9 @@ end`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relation := transformer.NewPlanCompiler().Compile(reg, prepared.Graph(), prepared.OperationPlan(), transformer.Shape{})
+	plan := prepared.OperationPlan()
+	shape := transformer.Shape{Globals: uint32(len(plan.BoundaryGlobals()))}
+	relation := transformer.NewPlanCompiler().Compile(reg, prepared.Graph(), plan, shape)
 	reason := relation.ContextualReason()
 	if !strings.Contains(reason, "PathAssignments") || !strings.Contains(reason, "PathStaticMemberWrites") {
 		t.Fatalf("static mutation contextual reason = %q, want distinct PathAssignment + PathStaticMemberWrite effect vocabulary", reason)
@@ -71,14 +73,16 @@ func TestAllocationOnlyTransformerMatchesAuthenticConcreteSummaryAndDigest(t *te
 		t.Fatal(err)
 	}
 	stats := &body.Stats{}
-	relation := transformer.NewPlanCompiler().Compile(reg, prepared.Graph(), prepared.OperationPlan(), transformer.Shape{})
+	plan := prepared.OperationPlan()
+	shape := transformer.Shape{Globals: uint32(len(plan.BoundaryGlobals()))}
+	relation := transformer.NewPlanCompiler().Compile(reg, prepared.Graph(), plan, shape)
 	if reason := relation.ContextualReason(); reason != "" {
 		t.Fatalf("allocation-only relation contextual: %s", reason)
 	}
 	if stats.BodySolves != 0 {
 		t.Fatalf("relation build ran %d body solves", stats.BodySolves)
 	}
-	cursor, _ := transformer.NewBindingCursor(transformer.Shape{}, nil, nil)
+	cursor, _ := transformer.NewBindingCursor(shape, make([]product.Value, len(plan.BoundaryGlobals())), nil)
 	lowered, exact := relation.SpecializeWithEffects(cursor, nil, transformer.SpecializationContext{}, ResolvedEffectSummaryResolver(reg))
 	if !exact {
 		t.Fatal("allocation-only relation failed specialization")

@@ -33,7 +33,7 @@ func TestIPairsTransformerMatchesCanonicalProductionComposition(t *testing.T) {
 	if len(params) != 1 {
 		t.Fatalf("boundary params = %v, want one", params)
 	}
-	shape := transformer.Shape{Params: 1}
+	shape := transformer.Shape{Params: 1, Globals: uint32(len(plan.BoundaryGlobals()))}
 	relation := transformer.NewPlanCompiler().Compile(reg, prepared.Graph(), plan, shape)
 	if reason := relation.ContextualReason(); reason != "" {
 		t.Fatalf("ipairs relation compiled contextually: %s", reason)
@@ -47,7 +47,8 @@ func TestIPairsTransformerMatchesCanonicalProductionComposition(t *testing.T) {
 
 	arrayType := typ.NewArray(typ.String)
 	input := typevalue.WithWitness(reg, typevalue.FromType(reg, arrayType), arrayType)
-	cursor, err := transformer.NewBindingCursor(shape, []product.Value{input}, nil)
+	bindings := append([]product.Value{input}, make([]product.Value, len(plan.BoundaryGlobals()))...)
+	cursor, err := transformer.NewBindingCursor(shape, bindings, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
