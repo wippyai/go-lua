@@ -22,11 +22,13 @@ func TestCallSurfaceSealsCanonicalImmutableCensus(t *testing.T) {
 		{Point: 1, Target: lexical},
 		{Point: 4, Target: external},
 	}
-	surface, err := SealCallSurface(owner, 9, 3, input)
+	extracted := []cfg.Point{4, 7, 1}
+	surface, err := SealCallSurface(owner, 9, extracted, input)
 	if err != nil {
 		t.Fatalf("SealCallSurface: %v", err)
 	}
 	input[0] = CallSurfaceSite{}
+	extracted[0] = 8
 	if !surface.Complete() || !surface.Digest().Available() || surface.Owner() != owner || surface.PointCount() != 9 {
 		t.Fatalf("invalid sealed surface: %#v", surface)
 	}
@@ -42,7 +44,7 @@ func TestCallSurfaceSealsCanonicalImmutableCensus(t *testing.T) {
 		t.Fatal("published absent point")
 	}
 
-	reordered, err := SealCallSurface(owner, 9, 3, []CallSurfaceSite{inputSite(4, external), inputSite(7, RejectedCallSurfaceTarget()), inputSite(1, lexical)})
+	reordered, err := SealCallSurface(owner, 9, []cfg.Point{7, 1, 4}, []CallSurfaceSite{inputSite(4, external), inputSite(7, RejectedCallSurfaceTarget()), inputSite(1, lexical)})
 	if err != nil {
 		t.Fatalf("SealCallSurface reordered: %v", err)
 	}
@@ -78,25 +80,27 @@ func TestCallSurfaceFailsClosedOnIncompleteOrMalformedCensus(t *testing.T) {
 	lexical, _ := NewLexicalCallSurfaceTarget(callee)
 	valid := []CallSurfaceSite{{Point: 1, Target: lexical}}
 	tests := []struct {
-		name     string
-		owner    lexicalidentity.StableLexicalBodyID
-		points   int
-		expected int
-		sites    []CallSurfaceSite
+		name      string
+		owner     lexicalidentity.StableLexicalBodyID
+		points    int
+		extracted []cfg.Point
+		sites     []CallSurfaceSite
 	}{
-		{name: "missing owner", points: 2, expected: 1, sites: valid},
-		{name: "negative points", owner: owner, points: -1},
-		{name: "negative expected", owner: owner, points: 2, expected: -1},
-		{name: "missing call", owner: owner, points: 2, expected: 2, sites: valid},
-		{name: "extra call", owner: owner, points: 2, expected: 0, sites: valid},
-		{name: "out of range", owner: owner, points: 1, expected: 1, sites: valid},
-		{name: "duplicate point", owner: owner, points: 3, expected: 2, sites: []CallSurfaceSite{{Point: 1, Target: lexical}, {Point: 1, Target: RejectedCallSurfaceTarget()}}},
-		{name: "unclassified", owner: owner, points: 2, expected: 1, sites: []CallSurfaceSite{{Point: 1}}},
-		{name: "mixed target", owner: owner, points: 2, expected: 1, sites: []CallSurfaceSite{{Point: 1, Target: CallSurfaceTarget{kind: CallSurfaceTargetRejected, lexical: callee}}}},
+		{name: "missing owner", points: 2, extracted: []cfg.Point{1}, sites: valid},
+		{name: "below minimum points", owner: owner, points: 1},
+		{name: "missing call", owner: owner, points: 3, extracted: []cfg.Point{1, 2}, sites: valid},
+		{name: "extra call", owner: owner, points: 2, sites: valid},
+		{name: "classified out of range", owner: owner, points: 2, extracted: []cfg.Point{1}, sites: []CallSurfaceSite{{Point: 2, Target: lexical}}},
+		{name: "extracted out of range", owner: owner, points: 2, extracted: []cfg.Point{2}, sites: valid},
+		{name: "duplicate extracted point", owner: owner, points: 3, extracted: []cfg.Point{1, 1}, sites: []CallSurfaceSite{{Point: 1, Target: lexical}, {Point: 2, Target: RejectedCallSurfaceTarget()}}},
+		{name: "duplicate classified point", owner: owner, points: 3, extracted: []cfg.Point{1, 2}, sites: []CallSurfaceSite{{Point: 1, Target: lexical}, {Point: 1, Target: RejectedCallSurfaceTarget()}}},
+		{name: "substituted non-call point", owner: owner, points: 4, extracted: []cfg.Point{1, 2}, sites: []CallSurfaceSite{{Point: 1, Target: lexical}, {Point: 3, Target: RejectedCallSurfaceTarget()}}},
+		{name: "unclassified", owner: owner, points: 2, extracted: []cfg.Point{1}, sites: []CallSurfaceSite{{Point: 1}}},
+		{name: "mixed target", owner: owner, points: 2, extracted: []cfg.Point{1}, sites: []CallSurfaceSite{{Point: 1, Target: CallSurfaceTarget{kind: CallSurfaceTargetRejected, lexical: callee}}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if surface, err := SealCallSurface(test.owner, test.points, test.expected, test.sites); err == nil || surface.Complete() || surface.Digest().Available() {
+			if surface, err := SealCallSurface(test.owner, test.points, test.extracted, test.sites); err == nil || surface.Complete() || surface.Digest().Available() {
 				t.Fatalf("malformed census published: %#v, err=%v", surface, err)
 			}
 		})
@@ -152,7 +156,7 @@ func TestCallSurfaceAcceptsExplicitlyRejectedAndEmptyCompleteCensuses(t *testing
 	if got, ok := rejected.Site(1); !ok || got.Target.Kind() != CallSurfaceTargetRejected {
 		t.Fatalf("rejected site absent: %#v/%v", got, ok)
 	}
-	empty, err := SealCallSurface(owner, 1, 0, nil)
+	empty, err := SealCallSurface(owner, 2, nil, nil)
 	if err != nil || !empty.Complete() || !empty.Digest().Available() || len(empty.Sites()) != 0 {
 		t.Fatalf("empty complete census rejected: %#v, err=%v", empty, err)
 	}
@@ -189,7 +193,11 @@ func inputSite(point cfg.Point, target CallSurfaceTarget) CallSurfaceSite {
 
 func mustCallSurface(t *testing.T, owner lexicalidentity.StableLexicalBodyID, pointCount int, sites ...CallSurfaceSite) CallSurface {
 	t.Helper()
-	surface, err := SealCallSurface(owner, pointCount, len(sites), sites)
+	extracted := make([]cfg.Point, len(sites))
+	for index := range sites {
+		extracted[index] = sites[index].Point
+	}
+	surface, err := SealCallSurface(owner, pointCount, extracted, sites)
 	if err != nil {
 		t.Fatalf("SealCallSurface: %v", err)
 	}

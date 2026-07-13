@@ -73,7 +73,8 @@ func (o SignatureCallOperation) Intrinsic() (signature.Intrinsic, bool) {
 	return o.intrinsic, o.intrinsic.Valid()
 }
 func (o SignatureCallOperation) valid() bool {
-	return o.signature.Type != nil && o.contentID.Available()
+	return o.signature.Type != nil && o.contentID.Available() &&
+		(o.intrinsic == signature.IntrinsicNone || o.intrinsic.Valid())
 }
 func (o SignatureCallOperation) clone() SignatureCallOperation {
 	return SignatureCallOperation{

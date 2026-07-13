@@ -40,4 +40,12 @@ func TestSignatureIntrinsicIsImmutableOperationContent(t *testing.T) {
 	if _, accepted := NewSignatureIntrinsicCallOperation(sig, signature.IntrinsicNone); accepted {
 		t.Fatal("invalid intrinsic was accepted")
 	}
+	forged := plain
+	forged.intrinsic = signature.Intrinsic(255)
+	if forged.valid() {
+		t.Fatal("unknown nonzero intrinsic passed operation validation")
+	}
+	if plan := New(graph, factflow.FactsInput{}).WithSignatureCalls(map[cfg.Point]SignatureCallOperation{plainPoint: forged}); len(plan.signatures) != 0 {
+		t.Fatal("unknown nonzero intrinsic entered an operation plan")
+	}
 }

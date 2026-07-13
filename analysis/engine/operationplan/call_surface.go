@@ -109,8 +109,9 @@ type CallSurfaceDigest [sha256.Size]byte
 func (d CallSurfaceDigest) Available() bool { return d != CallSurfaceDigest{} }
 
 // CallSurface is an immutable, canonically ordered census of every call in one
-// lexical body. Complete means the supplied site count exactly matched the
-// independent extraction count; rejected targets do not make a census partial.
+// lexical body. Complete means the classified site points matched the
+// independently extracted call point set exactly; rejected targets do not make
+// a census partial.
 type CallSurface struct {
 	owner      lexicalidentity.StableLexicalBodyID
 	pointCount int
@@ -119,23 +120,35 @@ type CallSurface struct {
 	complete   bool
 }
 
-// SealCallSurface validates and owns a complete call census. expectedCallCount
-// must come from the extraction authority rather than len(sites), making a
-// dropped call fail closed. At most one call may occupy a CFG point.
+// SealCallSurface validates and owns a complete call census. extractedCallPoints
+// must come from the extraction authority rather than the classifier. Exact
+// point-set equality prevents a classifier from substituting an unrelated CFG
+// point for a missed call while preserving the expected cardinality. At most
+// one call may occupy a CFG point.
 func SealCallSurface(
 	owner lexicalidentity.StableLexicalBodyID,
 	pointCount int,
-	expectedCallCount int,
+	extractedCallPoints []cfg.Point,
 	sites []CallSurfaceSite,
 ) (CallSurface, error) {
 	if owner == (lexicalidentity.StableLexicalBodyID{}) {
 		return CallSurface{}, errors.New("operationplan: call surface has no lexical owner")
 	}
-	if pointCount < 0 {
-		return CallSurface{}, errors.New("operationplan: call surface has negative point count")
+	if pointCount < 2 {
+		return CallSurface{}, fmt.Errorf("operationplan: call surface point count %d is below the CFG minimum", pointCount)
 	}
-	if expectedCallCount < 0 || expectedCallCount != len(sites) {
-		return CallSurface{}, fmt.Errorf("operationplan: call surface count mismatch: extracted=%d classified=%d", expectedCallCount, len(sites))
+	extracted := append([]cfg.Point(nil), extractedCallPoints...)
+	sort.Slice(extracted, func(i, j int) bool { return extracted[i] < extracted[j] })
+	for index, point := range extracted {
+		if uint64(point) >= uint64(pointCount) {
+			return CallSurface{}, fmt.Errorf("operationplan: extracted call point %d outside point count %d", point, pointCount)
+		}
+		if index != 0 && extracted[index-1] == point {
+			return CallSurface{}, fmt.Errorf("operationplan: extracted call point %d is duplicated", point)
+		}
+	}
+	if len(extracted) != len(sites) {
+		return CallSurface{}, fmt.Errorf("operationplan: call surface count mismatch: extracted=%d classified=%d", len(extracted), len(sites))
 	}
 
 	owned := append([]CallSurfaceSite(nil), sites...)
@@ -149,6 +162,9 @@ func SealCallSurface(
 		}
 		if index != 0 && owned[index-1].Point == site.Point {
 			return CallSurface{}, fmt.Errorf("operationplan: call surface point %d is duplicated", site.Point)
+		}
+		if extracted[index] != site.Point {
+			return CallSurface{}, fmt.Errorf("operationplan: classified call point %d does not match extracted call point %d", site.Point, extracted[index])
 		}
 	}
 
