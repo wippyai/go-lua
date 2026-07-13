@@ -56,6 +56,7 @@ type planCompileContext struct {
 	directCalls          *DirectCallCatalog
 	allowConstantAdd     bool
 	predicateExpressions map[factflow.ExprRef]struct{}
+	predicateRefinements map[factflow.ExprRef]struct{}
 	structuralPredicates map[factflow.ExprRef]factflow.StructuralExpressionRegion
 }
 
@@ -98,6 +99,10 @@ func NewPlanCompiler() *PlanCompiler {
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
 	c.facts[operationplan.ExpressionOperation] = expressionOperationPlanHandler{}
+	// ExpressionRefinement is only a dependency carrier. Preparation admits it
+	// iff every refinement is an exact runtime-cast member of one certified
+	// returned predicate DAG; the point-local handler has no executable effect.
+	c.facts[operationplan.ExpressionRefinement] = dynamicIndexDependencyPlanHandler{kind: operationplan.ExpressionRefinement}
 	c.facts[operationplan.ExpressionCondition] = expressionConditionPlanHandler{}
 	c.facts[operationplan.ExpressionPath] = dynamicIndexDependencyPlanHandler{kind: operationplan.ExpressionPath}
 	c.facts[operationplan.DynamicIndexExpression] = dynamicIndexDependencyPlanHandler{kind: operationplan.DynamicIndexExpression}
@@ -1198,6 +1203,25 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
 		if active[source.ExprRef] {
 			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)
+		}
+		if refinement, ok := ctx.facts.ExpressionRefinement(source.ExprRef); ok {
+			if _, certified := ctx.predicateRefinements[source.ExprRef]; !certified || refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
+				return 0, fmt.Errorf("expression refinement %d is not a certified runtime cast", source.ExprRef)
+			}
+			if active == nil {
+				active = make(map[factflow.ExprRef]bool, 1)
+			}
+			active[source.ExprRef] = true
+			inner, innerErr := exactCompilerSourceTermActive(ctx, refinement.Source(), active)
+			delete(active, source.ExprRef)
+			if innerErr != nil {
+				return 0, fmt.Errorf("runtime cast %d source: %w", source.ExprRef, innerErr)
+			}
+			term := ctx.builder.Arena().runtimeValidationValue(inner, refinement.Refinement())
+			if term == 0 {
+				return 0, fmt.Errorf("runtime cast %d failed symbolic construction", source.ExprRef)
+			}
+			return term, nil
 		}
 		if operation, ok := ctx.facts.ExpressionOperation(source.ExprRef); ok {
 			identity, hasIdentity := operation.Intrinsic()

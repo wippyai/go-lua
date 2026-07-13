@@ -33,6 +33,7 @@ const (
 	valueConstant
 	valueJoin
 	valueRefinement
+	valueRuntimeValidation
 	valueCellResult
 	valueDynamicRead
 	valueDynamicTableRead
@@ -156,6 +157,16 @@ func (a *Arena) refineConstraintValue(value ValueTerm, constraint product.Value)
 		}
 	}
 	return a.internValue(valueNode{op: valueRefinement, value: constraint, args: []ValueTerm{value}})
+}
+
+// runtimeValidationValue retains an exact source-authored cast over a caller-
+// dependent value. It is deliberately distinct from ValueRefinement: casts use
+// the canonical expression-refinement merge and evidence semantics, not meet.
+func (a *Arena) runtimeValidationValue(value ValueTerm, validated product.Value) ValueTerm {
+	if a == nil || value == 0 || int(value) >= len(a.values) {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueRuntimeValidation, value: validated, args: []ValueTerm{value}})
 }
 
 // JoinValue constructs a flattened, commutative and idempotent value join.
@@ -428,7 +439,7 @@ func (a *Arena) valueFingerprint(n valueNode) uint64 {
 	h = internalhash.MixHash(h, uint64(n.allocation))
 	h = internalhash.MixHash(h, uint64(int64(n.resultIndex)))
 	h = hashValueTerms(h, n.args)
-	if (n.op == valueConstant || n.op == valueRefinement) && a.reg != nil {
+	if (n.op == valueConstant || n.op == valueRefinement || n.op == valueRuntimeValidation) && a.reg != nil {
 		h = internalhash.MixHash(h, product.Hash(a.reg, n.value))
 	}
 	return h
@@ -465,7 +476,7 @@ func (a *Arena) valueEqual(x, y valueNode) bool {
 			return false
 		}
 	}
-	if x.op == valueConstant || x.op == valueRefinement {
+	if x.op == valueConstant || x.op == valueRefinement || x.op == valueRuntimeValidation {
 		return a.reg != nil && product.Equal(a.reg, x.value, y.value)
 	}
 	return true
@@ -544,6 +555,16 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			return product.Value{}, false
 		}
 		return factapply.RefineProductValueConstraint(a.reg, value, n.value), true
+	case valueRuntimeValidation:
+		if len(n.args) != 1 {
+			return product.Value{}, false
+		}
+		value, ok := a.evalValue(n.args[0], cursor, context)
+		if !ok {
+			return product.Value{}, false
+		}
+		refinement := factflow.NewExpressionRuntimeValidation(factflow.ValueSource{}, n.value)
+		return enginesourcevalue.ApplyExpressionRefinement(a.reg, value, refinement), true
 	case valueCellResult:
 		if context.CellResult == nil {
 			return product.Value{}, false
@@ -699,6 +720,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 		return "j(" + strings.Join(parts, ",") + ")"
 	case valueRefinement:
 		return "m(" + a.canonicalValue(n.args[0]) + "," + strconv.FormatUint(product.Hash(a.reg, n.value), 16) + ")"
+	case valueRuntimeValidation:
+		return "rv(" + a.canonicalValue(n.args[0]) + "," + strconv.FormatUint(product.Hash(a.reg, n.value), 16) + ")"
 	case valueCellResult:
 		parts := make([]string, len(n.args))
 		for i, x := range n.args {
@@ -749,7 +772,7 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 	if n.op == valueDynamicRead && (len(n.args) != 2 || !a.validPath(n.path, shape)) {
 		return false
 	}
-	if n.op == valueRefinement && len(n.args) != 1 {
+	if (n.op == valueRefinement || n.op == valueRuntimeValidation) && len(n.args) != 1 {
 		return false
 	}
 	if n.op == valueDynamicTableRead && ((len(n.args) != 2 && len(n.args) != 3) || !a.validPath(n.path, shape)) {

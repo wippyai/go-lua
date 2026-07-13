@@ -490,7 +490,7 @@ func TestPlanCompilerExpressionValueWithContextualSidecarFailsClosed(t *testing.
 	})
 
 	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{})
-	if got := relation.ContextualReason(); got != "compiler: contextual operations: ExpressionRefinements" {
+	if got := relation.ContextualReason(); got != "compiler: returned predicate: expression refinement 1 is outside a returned structural predicate" {
 		t.Fatalf("contextual sidecar reason = %q", got)
 	}
 	if relation.Rows() != 0 {

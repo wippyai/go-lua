@@ -230,6 +230,13 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		if err := v.value(n.args[0]); err != nil {
 			return err
 		}
+	case valueRuntimeValidation:
+		if len(n.args) != 1 {
+			return fmt.Errorf("transformer: malformed runtime validation term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
+		}
 	case valueCellResult:
 		return fmt.Errorf("transformer: scalar CellResult term %d requires relational composition", term)
 	case valueDynamicRead:
@@ -391,6 +398,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) != 1 {
 			return fmt.Errorf("malformed refinement term %d", term)
 		}
+	case valueRuntimeValidation:
+		if len(n.args) != 1 {
+			return fmt.Errorf("malformed runtime validation term %d", term)
+		}
 	case valueCellResult:
 		if !allowCell {
 			return fmt.Errorf("unsupported value operation at term %d", term)
@@ -487,6 +498,12 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		out, ok = s.caller.RefineValue(s.value(n.args[0]), factflow.NewValueConstraint(n.value))
 		if !ok {
 			s.err = fmt.Errorf("transformer: validated refinement term %d failed to rebase", term)
+			return 0
+		}
+	case valueRuntimeValidation:
+		out = s.caller.runtimeValidationValue(s.value(n.args[0]), n.value)
+		if out == 0 {
+			s.err = fmt.Errorf("transformer: validated runtime validation term %d failed to rebase", term)
 			return 0
 		}
 	case valueDynamicRead:

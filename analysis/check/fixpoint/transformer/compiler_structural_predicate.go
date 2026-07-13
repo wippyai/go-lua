@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -18,6 +19,12 @@ func prepareReturnedStructuralPredicates(ctx *planCompileContext) error {
 	if ctx == nil || ctx.plan == nil {
 		return fmt.Errorf("missing plan")
 	}
+	var refinementRefs []factflow.ExprRef
+	ctx.facts.ForEachExpressionRefinement(func(ref factflow.ExprRef, _ factflow.ExpressionRefinement) bool {
+		refinementRefs = append(refinementRefs, ref)
+		return true
+	})
+	sort.Slice(refinementRefs, func(i, j int) bool { return refinementRefs[i] < refinementRefs[j] })
 	var roots []factflow.ExprRef
 	for raw := 0; raw < ctx.plan.PointCount(); raw++ {
 		ret, ok := ctx.facts.Return(cfg.Point(raw))
@@ -36,15 +43,24 @@ func prepareReturnedStructuralPredicates(ctx *planCompileContext) error {
 		}
 	}
 	if len(roots) == 0 {
+		if len(refinementRefs) != 0 {
+			return fmt.Errorf("expression refinement %d is outside a returned structural predicate", refinementRefs[0])
+		}
 		return nil
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i] < roots[j] })
 	ctx.predicateExpressions = make(map[factflow.ExprRef]struct{})
+	ctx.predicateRefinements = make(map[factflow.ExprRef]struct{})
 	ctx.structuralPredicates = make(map[factflow.ExprRef]factflow.StructuralExpressionRegion)
 	active := make(map[factflow.ExprRef]bool)
 	for _, root := range roots {
 		if err := validateReturnedPredicateExpr(ctx, root, active); err != nil {
 			return fmt.Errorf("expression %d: %w", root, err)
+		}
+	}
+	for _, ref := range refinementRefs {
+		if _, certified := ctx.predicateRefinements[ref]; !certified {
+			return fmt.Errorf("expression refinement %d is outside returned DAG", ref)
 		}
 	}
 	// Graph/source ownership is checked after the whole DAG is known. Every
@@ -168,33 +184,70 @@ func validateReturnedPredicateExpr(ctx *planCompileContext, ref factflow.ExprRef
 		sources = append(sources, op.Right())
 	}
 	for _, source := range sources {
-		if !source.Valid() || source.Expanded || source.OpenTail {
+		if err := validateReturnedPredicateSource(ctx, source, active); err != nil {
 			delete(active, ref)
-			return fmt.Errorf("non-scalar operand %#v", source)
-		}
-		if source.HasExpr {
-			if _, nested := ctx.facts.ExpressionOperation(source.ExprRef); nested {
-				if err := validateReturnedPredicateExpr(ctx, source.ExprRef, active); err != nil {
-					delete(active, ref)
-					return err
-				}
-				continue
-			}
-			if _, conflict := ctx.facts.ObjectLiteralView(source.ExprRef); conflict {
-				delete(active, ref)
-				return fmt.Errorf("operand %d is an object literal", source.ExprRef)
-			}
-			if _, exact := exactSignatureExpressionTerm(*ctx, source); exact {
-				continue
-			}
-		}
-		if _, err := exactCompilerSourceTermActive(*ctx, source, active); err != nil {
-			delete(active, ref)
-			return fmt.Errorf("operand %#v expressions=%v: %w", source, sortedExpressionTermRefs(ctx.expressions), err)
+			return err
 		}
 	}
 	delete(active, ref)
 	ctx.predicateExpressions[ref] = struct{}{}
+	return nil
+}
+
+func validateReturnedPredicateSource(ctx *planCompileContext, source factflow.ValueSource, active map[factflow.ExprRef]bool) error {
+	if !source.Valid() || source.Expanded || source.OpenTail {
+		return fmt.Errorf("non-scalar operand %#v", source)
+	}
+	if source.HasExpr {
+		if refinement, refined := ctx.facts.ExpressionRefinement(source.ExprRef); refined {
+			if refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
+				return fmt.Errorf("operand %d refinement is not a runtime cast", source.ExprRef)
+			}
+			if active[source.ExprRef] {
+				return fmt.Errorf("cyclic expression DAG")
+			}
+			if _, conflict := ctx.facts.ExpressionOperation(source.ExprRef); conflict {
+				return fmt.Errorf("refinement and scalar operation share expression %d", source.ExprRef)
+			}
+			if _, conflict := ctx.facts.ObjectLiteralView(source.ExprRef); conflict {
+				return fmt.Errorf("refinement and object literal share expression %d", source.ExprRef)
+			}
+			if _, conflict := ctx.facts.ExpressionFunction(source.ExprRef); conflict {
+				return fmt.Errorf("refinement and function literal share expression %d", source.ExprRef)
+			}
+			if path, shared := ctx.facts.ExpressionPathRef(source.ExprRef); shared {
+				inner := refinement.Source()
+				sym, version, suffix, exact := pathaddr.ParseResolverPath(inner.PathKey)
+				if inner.Kind != factflow.ValueSourcePath || !exact || sym == 0 || version != 0 || suffix != "" ||
+					path.Symbol != sym || path.Version != version || len(path.Segments) != 0 {
+					return fmt.Errorf("refinement and unrelated path share expression %d", source.ExprRef)
+				}
+			}
+			if _, conflict := ctx.facts.DynamicIndexExpression(source.ExprRef); conflict {
+				return fmt.Errorf("refinement and dynamic index share expression %d", source.ExprRef)
+			}
+			active[source.ExprRef] = true
+			if err := validateReturnedPredicateSource(ctx, refinement.Source(), active); err != nil {
+				delete(active, source.ExprRef)
+				return fmt.Errorf("runtime cast %d source: %w", source.ExprRef, err)
+			}
+			delete(active, source.ExprRef)
+			ctx.predicateRefinements[source.ExprRef] = struct{}{}
+			return nil
+		}
+		if _, nested := ctx.facts.ExpressionOperation(source.ExprRef); nested {
+			return validateReturnedPredicateExpr(ctx, source.ExprRef, active)
+		}
+		if _, conflict := ctx.facts.ObjectLiteralView(source.ExprRef); conflict {
+			return fmt.Errorf("operand %d is an object literal", source.ExprRef)
+		}
+		if _, exact := exactSignatureExpressionTerm(*ctx, source); exact {
+			return nil
+		}
+	}
+	if _, err := exactCompilerSourceTermActive(*ctx, source, active); err != nil {
+		return fmt.Errorf("operand %#v expressions=%v: %w", source, sortedExpressionTermRefs(ctx.expressions), err)
+	}
 	return nil
 }
 

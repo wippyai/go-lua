@@ -17,7 +17,7 @@ import (
 func TestParsedIsStrTransformerMatchesCanonicalConcreteProjection(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseBranchTransformerFunction(t, `function is_str(value: any): boolean
-		return type(value) == "string" and value ~= ""
+		return type(value) == "string" and (value :: string) ~= ""
 	end`)
 	prepared, err := body.PrepareFunction(fn, body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 	if err != nil {
@@ -37,6 +37,7 @@ func TestParsedIsStrTransformerMatchesCanonicalConcreteProjection(t *testing.T) 
 		{name: "nonempty-string", value: typevalue.LiteralString(reg, "value")},
 		{name: "empty-string", value: typevalue.LiteralString(reg, "")},
 		{name: "number", value: typevalue.LiteralNumber(reg, 7)},
+		{name: "top", value: product.Top()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			bindings := make([]product.Value, shape.ValueCount())
