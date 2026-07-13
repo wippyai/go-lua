@@ -149,7 +149,10 @@ func TestE2E_ParseTypeCheckCompileRun(t *testing.T) {
 				t.Fatalf("parse error: %v", err)
 			}
 			_ = stmts
-			diagnostics := checktest.Check(tc.code).Diagnostics
+			// Execution below installs the base library, so the analysis environment
+			// must describe that same canonical stdlib rather than relying on an
+			// implicit global-name assumption.
+			diagnostics := checktest.Check(tc.code, checktest.WithStdlib()).Diagnostics
 			if len(diagnostics) != tc.typeErrors {
 				t.Errorf("expected %d type errors, got %d:", tc.typeErrors, len(diagnostics))
 				for _, d := range diagnostics {
