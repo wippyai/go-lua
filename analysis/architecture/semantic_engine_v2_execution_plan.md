@@ -199,6 +199,16 @@ call surfaces before admitting only a small call-free slice. Commit `d06381635`
 therefore returned it to an internal gate. This is a design measurement, not a
 production optimization.
 
+The staged call-free planner then removed the broad tax: it performs cheap
+owner filtering before transformer preparation and remains off by default. On
+the frozen threads contract it scanned 41 lexical owners, compiled and
+activated zero, preserved all 271 body solves/11,882 transfers and exact
+diagnostic/summary products, and ran within ordinary noise of the roughly
+two-second legacy result. This proves the staged funnel is cheap, but also that
+call-free leaves cannot move the pathological workload. The next value-bearing
+slice is immutable symbolic plans for parameterized, captured, or repeatedly
+contextual owners, admitted through a complete call graph/SCC transaction.
+
 The important shape is not broad parser or loader cost. About 1,300 entries can
 finish in roughly the first second, after which a small heavy tail dominates.
 The frozen four-offender sample performed 1,691 body solves and 64,671 transfers

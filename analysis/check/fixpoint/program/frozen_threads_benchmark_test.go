@@ -32,23 +32,27 @@ const frozenThreadsPath = "/tmp/frozen-threads-contract.lua"
 const frozenThreadsEnv = "GO_LUA_FROZEN_THREADS"
 
 type frozenThreadsReport struct {
-	Mode              string            `json:"mode"`
-	Wall              time.Duration     `json:"wall"`
-	AllocatedBytes    uint64            `json:"allocated_bytes"`
-	HeapDeltaBytes    int64             `json:"heap_delta_bytes"`
-	BodySolves        int               `json:"body_solves"`
-	PointTransfers    int               `json:"point_transfers"`
-	PrepassSolves     int               `json:"prepass_solves"`
-	SummarySolves     int               `json:"summary_solves"`
-	SummaryTransfers  int               `json:"summary_transfers"`
-	MaterializeSolves int               `json:"materialize_solves"`
-	Composition       []CompositionCost `json:"composition"`
-	Diagnostics       int               `json:"diagnostics"`
-	DiagnosticsDigest string            `json:"diagnostics_digest"`
-	SummaryDigest     string            `json:"summary_digest"`
-	RelationProducers int               `json:"relation_producers"`
-	RelationOwners    int               `json:"relation_owners"`
-	RelationCalls     int               `json:"relation_calls"`
+	Mode               string            `json:"mode"`
+	Wall               time.Duration     `json:"wall"`
+	AllocatedBytes     uint64            `json:"allocated_bytes"`
+	HeapDeltaBytes     int64             `json:"heap_delta_bytes"`
+	BodySolves         int               `json:"body_solves"`
+	PointTransfers     int               `json:"point_transfers"`
+	PrepassSolves      int               `json:"prepass_solves"`
+	SummarySolves      int               `json:"summary_solves"`
+	SummaryTransfers   int               `json:"summary_transfers"`
+	MaterializeSolves  int               `json:"materialize_solves"`
+	Composition        []CompositionCost `json:"composition"`
+	Diagnostics        int               `json:"diagnostics"`
+	DiagnosticsDigest  string            `json:"diagnostics_digest"`
+	SummaryDigest      string            `json:"summary_digest"`
+	RelationProducers  int               `json:"relation_producers"`
+	RelationOwners     int               `json:"relation_owners"`
+	RelationCalls      int               `json:"relation_calls"`
+	PlannerScanned     int               `json:"planner_scanned"`
+	PlannerPrefiltered int               `json:"planner_prefiltered"`
+	PlannerCompiled    int               `json:"planner_compiled"`
+	PlannerActivated   int               `json:"planner_activated"`
 }
 
 type frozenThreadsRun struct {
@@ -61,37 +65,42 @@ type frozenThreadsRun struct {
 // Set GO_LUA_FROZEN_THREADS=1 to opt in.
 func TestFrozenThreadsContractDifferential(t *testing.T) {
 	stmts, bindings := loadFrozenThreads(t)
-	legacyA := runFrozenThreads(t, stmts, bindings, false)
-	legacyB := runFrozenThreads(t, stmts, bindings, false)
-	activeA := runFrozenThreads(t, stmts, bindings, true)
-	activeB := runFrozenThreads(t, stmts, bindings, true)
-	for _, run := range []frozenThreadsRun{legacyA, legacyB, activeA, activeB} {
+	legacyA := runFrozenThreads(t, stmts, bindings, "legacy")
+	legacyB := runFrozenThreads(t, stmts, bindings, "legacy")
+	activeA := runFrozenThreads(t, stmts, bindings, "active")
+	activeB := runFrozenThreads(t, stmts, bindings, "active")
+	strictA := runFrozenThreads(t, stmts, bindings, "strict")
+	strictB := runFrozenThreads(t, stmts, bindings, "strict")
+	for _, run := range []frozenThreadsRun{legacyA, legacyB, activeA, activeB, strictA, strictB} {
 		logFrozenReport(t, run.report)
 	}
 	reg := standard.Registry()
 	legacyRepeat := firstFrozenProductDivergence(reg, legacyA.result, legacyB.result)
 	activeRepeat := firstFrozenProductDivergence(reg, activeA.result, activeB.result)
 	cross := firstFrozenProductDivergence(reg, legacyA.result, activeA.result)
-	t.Logf("FROZEN_THREADS_ORACLE legacy_repeat=%q active_repeat=%q legacy_active=%q", legacyRepeat, activeRepeat, cross)
-	if legacyA.report.DiagnosticsDigest != legacyB.report.DiagnosticsDigest || legacyA.report.DiagnosticsDigest != activeA.report.DiagnosticsDigest || activeA.report.DiagnosticsDigest != activeB.report.DiagnosticsDigest {
+	strictRepeat := firstFrozenProductDivergence(reg, strictA.result, strictB.result)
+	strictCross := firstFrozenProductDivergence(reg, legacyA.result, strictA.result)
+	t.Logf("FROZEN_THREADS_ORACLE legacy_repeat=%q active_repeat=%q strict_repeat=%q legacy_active=%q legacy_strict=%q", legacyRepeat, activeRepeat, strictRepeat, cross, strictCross)
+	if legacyA.report.DiagnosticsDigest != legacyB.report.DiagnosticsDigest || legacyA.report.DiagnosticsDigest != activeA.report.DiagnosticsDigest ||
+		activeA.report.DiagnosticsDigest != activeB.report.DiagnosticsDigest || legacyA.report.DiagnosticsDigest != strictA.report.DiagnosticsDigest ||
+		strictA.report.DiagnosticsDigest != strictB.report.DiagnosticsDigest {
 		t.Fatal("diagnostic oracle is nondeterministic")
 	}
-	if legacyRepeat != "" || activeRepeat != "" || cross != "" {
-		t.Fatalf("frozen oracle diverged: legacy repeat=%q active repeat=%q legacy/active=%q", legacyRepeat, activeRepeat, cross)
+	if legacyRepeat != "" || activeRepeat != "" || strictRepeat != "" || cross != "" || strictCross != "" {
+		t.Fatalf("frozen oracle diverged: legacy repeat=%q active repeat=%q strict repeat=%q legacy/active=%q legacy/strict=%q", legacyRepeat, activeRepeat, strictRepeat, cross, strictCross)
 	}
 }
 
 func BenchmarkFrozenThreadsContract(b *testing.B) {
 	stmts, bindings := loadFrozenThreads(b)
 	for _, mode := range []struct {
-		name   string
-		active bool
-	}{{"legacy", false}, {"active", true}} {
+		name string
+	}{{"legacy"}, {"active"}, {"strict"}} {
 		b.Run(mode.name, func(b *testing.B) {
 			b.ReportAllocs()
 			var last frozenThreadsRun
 			for range b.N {
-				last = runFrozenThreads(b, stmts, bindings, mode.active)
+				last = runFrozenThreads(b, stmts, bindings, mode.name)
 			}
 			b.ReportMetric(float64(last.report.BodySolves), "body-solves/op")
 			b.ReportMetric(float64(last.report.PointTransfers), "transfers/op")
@@ -123,21 +132,32 @@ func frozenThreadsCheck(reg *axis.Registry) body.Config {
 	return body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO, Signatures: signaturelookup.Source{IncludeStdlib: true}}
 }
 
-func runFrozenThreads(t testing.TB, stmts []ast.Stmt, bindings *bind.Result, active bool) frozenThreadsRun {
+func runFrozenThreads(t testing.TB, stmts []ast.Stmt, bindings *bind.Result, mode string) frozenThreadsRun {
 	t.Helper()
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	stats := Stats{}
 	start := time.Now()
-	result, err := RunBoundChunk(stmts, bindings, Config{Check: frozenThreadsCheck(standard.Registry()), Stats: &stats, enableRelationActivation: active})
+	config := Config{Check: frozenThreadsCheck(standard.Registry()), Stats: &stats}
+	switch mode {
+	case "legacy":
+		config.forceLegacyRelations = true
+	case "active":
+		config.enableRelationActivation = true
+	case "strict":
+		config.enableStrictRelationPhaseCollapse = true
+	default:
+		t.Fatalf("unknown frozen threads mode %q", mode)
+	}
+	result, err := RunBoundChunk(stmts, bindings, config)
 	wall := time.Since(start)
 	runtime.ReadMemStats(&after)
 	if err != nil {
 		t.Fatal(err)
 	}
 	diagnosticBytes, count := frozenDiagnosticBytes(result.RootResult())
-	report := frozenThreadsReport{Mode: map[bool]string{false: "legacy", true: "active"}[active], Wall: wall, AllocatedBytes: after.TotalAlloc - before.TotalAlloc, HeapDeltaBytes: int64(after.HeapAlloc) - int64(before.HeapAlloc), BodySolves: stats.Body.BodySolves, PointTransfers: stats.Body.Transfer.Solver.TransferCalls, PrepassSolves: stats.PrepassBodySolves, SummarySolves: stats.SummaryBodySolves, SummaryTransfers: stats.SummaryPointTransfers, MaterializeSolves: stats.MaterializeBodySolves, Composition: stats.CompositionCostCensus(), Diagnostics: count, DiagnosticsDigest: sha256Hex(diagnosticBytes), SummaryDigest: frozenSummaryDigest(standard.Registry(), result), RelationProducers: stats.RelationProducersEligible, RelationOwners: stats.RelationOwnersActive, RelationCalls: stats.RelationCallsHandled}
+	report := frozenThreadsReport{Mode: mode, Wall: wall, AllocatedBytes: after.TotalAlloc - before.TotalAlloc, HeapDeltaBytes: int64(after.HeapAlloc) - int64(before.HeapAlloc), BodySolves: stats.Body.BodySolves, PointTransfers: stats.Body.Transfer.Solver.TransferCalls, PrepassSolves: stats.PrepassBodySolves, SummarySolves: stats.SummaryBodySolves, SummaryTransfers: stats.SummaryPointTransfers, MaterializeSolves: stats.MaterializeBodySolves, Composition: stats.CompositionCostCensus(), Diagnostics: count, DiagnosticsDigest: sha256Hex(diagnosticBytes), SummaryDigest: frozenSummaryDigest(standard.Registry(), result), RelationProducers: stats.RelationProducersEligible, RelationOwners: stats.RelationOwnersActive, RelationCalls: stats.RelationCallsHandled, PlannerScanned: stats.RelationPlannerOwnersScanned, PlannerPrefiltered: stats.RelationPlannerOwnersPrefiltered, PlannerCompiled: stats.RelationPlannerOwnersCompiled, PlannerActivated: stats.RelationPlannerOwnersActivated}
 	return frozenThreadsRun{result, report}
 }
 
