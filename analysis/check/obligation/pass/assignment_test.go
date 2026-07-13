@@ -618,7 +618,7 @@ func TestAssignmentsPreservesRuntimeKindAtUntrustedBoundary(t *testing.T) {
 	if type(block.items) == "table" then
 		local labels: {string} = block.items
 	end
-end`, "test.lua")
+end`, "test.lua", testutil.WithStdlib())
 
 	var got []judgment.Judgment
 	for _, result := range checked.BodyResults() {

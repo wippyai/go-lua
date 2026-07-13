@@ -858,8 +858,9 @@ function f(x: unknown)
 		return x * 2
 	end
 end`), body.Config{
-		Registry: reg,
-		Globals:  []string{"type"},
+		Registry:   reg,
+		Globals:    []string{"type"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
 	})
 
 	got := summaryprojection.FromResult(result)
@@ -919,8 +920,9 @@ function f(provider: { emit: fun(value: string): () }, x: unknown)
 		provider.emit(x)
 	end
 end`), body.Config{
-		Registry: reg,
-		Globals:  []string{"type"},
+		Registry:   reg,
+		Globals:    []string{"type"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
 	})
 
 	got := summaryprojection.FromResult(result)

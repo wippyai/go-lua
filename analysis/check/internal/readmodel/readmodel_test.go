@@ -3318,7 +3318,7 @@ local function process(inputs: any): ()
 	need_context(input_context)
 end
 `)
-	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -3702,7 +3702,7 @@ local function f(v: number | string): number
     end
 end
 `)
-	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -3766,8 +3766,9 @@ else
 end
 `)
 	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{
-		Registry: reg,
-		Globals:  []string{"value"},
+		Registry:   reg,
+		Globals:    []string{"value"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
 	}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
@@ -4003,7 +4004,7 @@ local function normalize(raw: unknown): ()
     consume(value)
 end
 `)
-	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
+	checked, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -5068,8 +5069,9 @@ if type(block.items) == "table" then
 end
 `)
 	result, err := body.CheckChunk(stmts, body.Config{
-		Registry: reg,
-		Globals:  []string{"type"},
+		Registry:   reg,
+		Globals:    []string{"type"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
 	})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
