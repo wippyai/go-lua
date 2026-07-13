@@ -84,6 +84,7 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	outputCaps := DefaultOutputCapabilityRegistry()
 	summaryKinds := []callboundary.BoundaryFactKind{
 		"NormalReturnParams", "NormalReturnFacts", "ReturnFlows", "ReturnParamPathAliases",
+		"ReturnConditionParamRefinements",
 	}
 	if planReturnArity(plan) > 1 {
 		summaryKinds = append(summaryKinds, "ReturnConditionSlotRefinements", "ReturnPresenceRelations")
@@ -113,6 +114,9 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	}
 	if err := bindStaticSignatureTerms(&ctx); err != nil {
 		return nil, fmt.Errorf("compiler: signature calls: %w", err)
+	}
+	if err := prepareReturnedStructuralPredicates(&ctx); err != nil {
+		return nil, fmt.Errorf("compiler: returned predicate: %w", err)
 	}
 	if unsupported := c.unsupportedActive(plan); len(unsupported) != 0 {
 		return nil, fmt.Errorf("compiler: contextual operations: %s", strings.Join(unsupported, ", "))

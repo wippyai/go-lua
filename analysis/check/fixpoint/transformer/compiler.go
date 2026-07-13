@@ -41,19 +41,21 @@ type PlanCompiler struct {
 }
 
 type planCompileContext struct {
-	registry          *axis.Registry
-	graph             cfg.Graph
-	plan              *operationplan.Plan
-	facts             factflow.Facts
-	builder           *Builder
-	locals            map[symbol.ID]ValueTerm
-	expressions       map[factflow.ExprRef][]ValueTerm
-	allocationEffects map[cfg.Point]EffectTerm
-	rowEffects        *[]EffectTerm
-	rowOutput         *summary.Summary
-	genericBindings   map[symbol.ID]symbolicGenericBinding
-	directCalls       *DirectCallCatalog
-	allowConstantAdd  bool
+	registry             *axis.Registry
+	graph                cfg.Graph
+	plan                 *operationplan.Plan
+	facts                factflow.Facts
+	builder              *Builder
+	locals               map[symbol.ID]ValueTerm
+	expressions          map[factflow.ExprRef][]ValueTerm
+	allocationEffects    map[cfg.Point]EffectTerm
+	rowEffects           *[]EffectTerm
+	rowOutput            *summary.Summary
+	genericBindings      map[symbol.ID]symbolicGenericBinding
+	directCalls          *DirectCallCatalog
+	allowConstantAdd     bool
+	predicateExpressions map[factflow.ExprRef]struct{}
+	structuralPredicates map[factflow.ExprRef]factflow.StructuralExpressionRegion
 }
 
 type symbolicGenericBinding struct {
@@ -95,6 +97,7 @@ func NewPlanCompiler() *PlanCompiler {
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
 	c.facts[operationplan.ExpressionOperation] = expressionOperationPlanHandler{}
+	c.facts[operationplan.ExpressionCondition] = expressionConditionPlanHandler{}
 	c.facts[operationplan.ExpressionPath] = dynamicIndexDependencyPlanHandler{kind: operationplan.ExpressionPath}
 	c.facts[operationplan.DynamicIndexExpression] = dynamicIndexDependencyPlanHandler{kind: operationplan.DynamicIndexExpression}
 	c.facts[operationplan.RootAssignment] = rootAssignmentPlanHandler{}
@@ -568,7 +571,7 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 	truthyEdge := branchCondition.TruthyOnTrueEdge()
 	branch.ForEachPathEvidence(func(proof factflow.BranchPathEvidence) bool {
 		term, ok := exactCompilerPathTerm(ctx, proof.PathRef())
-		if !ok || term != condition {
+		if !ok || term != condition && !structuralPredicateConditionEvidence(ctx, branch.Point(), condition, term) {
 			validationErr = fmt.Errorf("branch: contextual-path-evidence-path")
 			return false
 		}
@@ -594,6 +597,40 @@ func validateRepresentedBranchEvidence(ctx planCompileContext, branch factapply.
 		return true
 	})
 	return validationErr
+}
+
+func structuralPredicateConditionEvidence(ctx planCompileContext, point cfg.Point, condition, evidence ValueTerm) bool {
+	if ctx.builder == nil || condition == 0 || evidence == 0 {
+		return false
+	}
+	owned := false
+	for _, region := range ctx.structuralPredicates {
+		if region.Branch() == point && structuralRHSIsEffectFree(ctx.plan, region) {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		return false
+	}
+	arena := ctx.builder.Arena()
+	if int(condition) >= len(arena.values) {
+		return false
+	}
+	node := arena.values[condition]
+	if (node.op != valueScalarEqual && node.op != valueScalarNotEqual) || len(node.args) != 2 {
+		return false
+	}
+	for _, arg := range node.args {
+		if arg == 0 || int(arg) >= len(arena.values) {
+			continue
+		}
+		typeNode := arena.values[arg]
+		if typeNode.op == valueLuaTypeName && len(typeNode.args) == 1 && typeNode.args[0] == evidence {
+			return true
+		}
+	}
+	return false
 }
 
 func exactCompilerPathTerm(ctx planCompileContext, path pathdom.Path) (ValueTerm, bool) {
@@ -770,6 +807,16 @@ type expressionOperationPlanHandler struct{}
 func (expressionOperationPlanHandler) Kind() operationplan.Kind {
 	return operationplan.ExpressionOperation
 }
+
+type expressionConditionPlanHandler struct{}
+
+func (expressionConditionPlanHandler) Kind() operationplan.Kind {
+	return operationplan.ExpressionCondition
+}
+func (expressionConditionPlanHandler) Preflight(planCompileContext, cfg.Point) error { return nil }
+func (expressionConditionPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error {
+	return nil
+}
 func (expressionOperationPlanHandler) Preflight(planCompileContext, cfg.Point) error { return nil }
 func (expressionOperationPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error {
 	return nil
@@ -814,8 +861,44 @@ func (returnPlanHandler) Lower(ctx planCompileContext, point cfg.Point, operatio
 			Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: uint32(slot),
 			Value: term,
 		})
+		appendReturnedParamRefinements(&ctx, source, slot)
 	}
 	return nil
+}
+
+// appendReturnedParamRefinements mirrors the concrete summary projector for
+// an exact returned source. Only certified parameter symbols become boundary
+// placeholders; locals, captures, globals, and malformed roots cannot leak.
+func appendReturnedParamRefinements(ctx *planCompileContext, source factflow.ValueSource, returnIndex int) {
+	if ctx == nil || ctx.rowOutput == nil || !source.HasExpr ||
+		(source.Kind != factflow.ValueSourceExpression && !(source.Kind == factflow.ValueSourceCall && source.ResultIndex == 0)) {
+		return
+	}
+	condition, ok := ctx.facts.ExpressionCondition(source.ExprRef)
+	if !ok {
+		return
+	}
+	params := ctx.plan.BoundaryParams()
+	for _, selected := range []bool{true, false} {
+		for _, refinement := range condition.FactsForValue(selected).Refinements() {
+			target := refinement.TargetPath()
+			value, exact := refinement.Value().Constraint()
+			if !exact || target.Symbol == 0 {
+				continue
+			}
+			for index, param := range params {
+				if param == 0 || target.Symbol != param {
+					continue
+				}
+				ctx.rowOutput.ReturnConditionParamRefinements = append(ctx.rowOutput.ReturnConditionParamRefinements,
+					summary.ReturnConditionParamRefinement{
+						ReturnIndex: returnIndex, ReturnValue: selected,
+						Target: pathdom.NewPlaceholder(index).AppendSegments(target.Segments), Value: value,
+					})
+				break
+			}
+		}
+	}
 }
 
 func exactReturnSourceTerm(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, error) {
@@ -1112,6 +1195,45 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)
 		}
 		if operation, ok := ctx.facts.ExpressionOperation(source.ExprRef); ok {
+			if _, certified := ctx.predicateExpressions[source.ExprRef]; certified &&
+				operation.Kind() == factflow.ExpressionOperationUnary && operation.Op() == "lua_type" {
+				if active == nil {
+					active = make(map[factflow.ExprRef]bool, 1)
+				}
+				active[source.ExprRef] = true
+				arg, argErr := exactCompilerSourceTermActive(ctx, operation.Left(), active)
+				delete(active, source.ExprRef)
+				if argErr != nil {
+					return 0, fmt.Errorf("lua type expression %d argument: %w", source.ExprRef, argErr)
+				}
+				term := ctx.builder.Arena().LuaTypeNameValue(arg)
+				if term == 0 {
+					return 0, fmt.Errorf("lua type expression %d failed symbolic construction", source.ExprRef)
+				}
+				return term, nil
+			}
+			if _, certified := ctx.predicateExpressions[source.ExprRef]; certified &&
+				operation.Kind() == factflow.ExpressionOperationBinary &&
+				(operation.Op() == "==" || operation.Op() == "~=" || operation.Op() == "and") {
+				if active == nil {
+					active = make(map[factflow.ExprRef]bool, 1)
+				}
+				active[source.ExprRef] = true
+				left, leftErr := exactCompilerSourceTermActive(ctx, operation.Left(), active)
+				right, rightErr := exactCompilerSourceTermActive(ctx, operation.Right(), active)
+				delete(active, source.ExprRef)
+				if leftErr != nil {
+					return 0, fmt.Errorf("structural predicate %d left operand: %w", source.ExprRef, leftErr)
+				}
+				if rightErr != nil {
+					return 0, fmt.Errorf("structural predicate %d right operand: %w", source.ExprRef, rightErr)
+				}
+				term, exact := ctx.builder.Arena().ScalarBinaryValue(operation.Op(), left, right)
+				if !exact || term == 0 {
+					return 0, fmt.Errorf("structural predicate %d failed symbolic construction", source.ExprRef)
+				}
+				return term, nil
+			}
 			if ctx.allowConstantAdd && operation.Kind() == factflow.ExpressionOperationBinary && operation.Op() == "+" {
 				if active == nil {
 					active = make(map[factflow.ExprRef]bool, 1)

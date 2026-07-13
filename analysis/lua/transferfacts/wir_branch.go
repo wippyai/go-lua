@@ -31,6 +31,30 @@ func (l *lowerer) branchConditionFromWIR(check branchcond.Check) (factflow.Branc
 }
 
 func (l *lowerer) branchConditionAtWIR(point cfg.Point) (factflow.BranchCondition, bool) {
+	if l.sealedLuaTypeChecks {
+		for _, inst := range l.wir.PointInstructions(point) {
+			if inst.Check == 0 || inst.Dst.Kind != wir.OperandTemp {
+				continue
+			}
+			check := l.wir.Check(inst.Check)
+			if check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot {
+				continue
+			}
+			ref, ok := l.exprRef(wirTempExprRefKey{temp: inst.Dst.Ref})
+			if !ok {
+				return factflow.BranchCondition{}, false
+			}
+			shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+			if !ok {
+				return factflow.BranchCondition{}, false
+			}
+			source, ok := factflow.NewExpressionValueSource(ref, 0, factflow.NoValueSourceIndex, 0, shape)
+			if !ok {
+				return factflow.BranchCondition{}, false
+			}
+			return factflow.NewBranchCondition(source, true)
+		}
+	}
 	if check, ok := l.firstDirectBranchCheckFromWIR(point); ok {
 		if check.Kind == branchcond.CheckTruthy || check.Kind == branchcond.CheckFalsy {
 			return l.branchConditionFromWIR(check)

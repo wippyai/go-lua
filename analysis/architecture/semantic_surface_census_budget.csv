@@ -17,7 +17,7 @@ engine/transfer,31
 engine/solve,61
 engine/workplan,5
 check/body,566
-check/fixpoint,557
+check/fixpoint,560
 check/readmodel,214
 check/internal/readmodel,121
 check/obligation,98

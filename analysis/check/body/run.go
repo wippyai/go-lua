@@ -177,14 +177,15 @@ func (c *checker) prepare(
 		NameFor:    signatureNameForCall,
 	})
 	lowered := transferfacts.LowerDetailed(built.Graph, transferfacts.Config{
-		Registry:           config.Registry,
-		LexicalBodyID:      lexicalBodyID,
-		TableLiteralSite:   tableLiteralSite,
-		TypeResolver:       typeResolver,
-		TypeValues:         config.TypeValues,
-		ModuleExports:      config.ModuleExports,
-		WIR:                wirBody,
-		NoNormalReturnCall: noNormalReturnCall,
+		Registry:            config.Registry,
+		LexicalBodyID:       lexicalBodyID,
+		TableLiteralSite:    tableLiteralSite,
+		TypeResolver:        typeResolver,
+		TypeValues:          config.TypeValues,
+		ModuleExports:       config.ModuleExports,
+		WIR:                 wirBody,
+		SealedLuaTypeChecks: signatureID.luaTypePredicateChecksSealed(),
+		NoNormalReturnCall:  noNormalReturnCall,
 	})
 	facts := lowered.Facts
 	assignments := assignmentFactsFromSource(bindings, built, sourceStmts)

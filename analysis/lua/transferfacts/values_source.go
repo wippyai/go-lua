@@ -1286,6 +1286,8 @@ func (l *lowerer) wirBinaryTempExpressionValueSourceWithRef(
 	if !ok {
 		return l.wirCheckTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail)
 	}
+	left = l.sealLuaTypeCheckOperand(inst, left)
+	right = l.sealLuaTypeCheckOperand(inst, right)
 	operation, ok := factflow.NewBinaryExpressionOperation(op, left, right)
 	if !ok {
 		return factflow.ValueSource{}, false
@@ -1306,6 +1308,40 @@ func (l *lowerer) wirBinaryTempExpressionValueSourceWithRef(
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
 }
 
+// sealLuaTypeCheckOperand recovers the value-producing type() node erased by
+// normalized WIR predicate lowering. It is enabled only by the binding-owned
+// unit seal carried in Config; CheckTypeEqual by itself is not authority.
+func (l *lowerer) sealLuaTypeCheckOperand(inst wir.Instruction, source factflow.ValueSource) factflow.ValueSource {
+	if l == nil || !l.sealedLuaTypeChecks || !source.HasExpr || source.Kind != factflow.ValueSourceExpression ||
+		inst.Check == 0 || l.wir == nil {
+		return source
+	}
+	check := l.wir.Check(inst.Check)
+	if (check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot) || check.Path.IsEmpty() {
+		return source
+	}
+	if _, exists := l.expressionOperations[source.ExprRef]; exists {
+		return source
+	}
+	if _, exists := l.expressionPaths[source.ExprRef]; exists {
+		return source
+	}
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		return source
+	}
+	arg, ok := factflow.NewPathValueSource(check.Path.Key(), 0, 0, 0, shape)
+	if !ok {
+		return source
+	}
+	op, ok := factflow.NewUnaryExpressionOperation("lua_type", arg)
+	if !ok {
+		return source
+	}
+	l.expressionOperations[source.ExprRef] = op
+	return source
+}
+
 func (l *lowerer) wirCheckTempExpressionValueSource(
 	temp uint32,
 	inst wir.Instruction,
@@ -1323,6 +1359,7 @@ func (l *lowerer) wirCheckTempExpressionValueSource(
 		return factflow.ValueSource{}, false
 	}
 	l.addWIRExpressionCondition(exprRef, inst)
+	l.addSealedLuaTypeCheckOperation(exprRef, inst)
 	if l.expressionValues == nil {
 		l.expressionValues = make(map[factflow.ExprRef]product.Value)
 	}
@@ -1332,6 +1369,52 @@ func (l *lowerer) wirCheckTempExpressionValueSource(
 		return factflow.ValueSource{}, false
 	}
 	return factflow.NewExpressionValueSource(exprRef, exprIndex, targetIndex, 0, shape)
+}
+
+type wirSealedLuaTypeExprRefKey struct{ predicate factflow.ExprRef }
+
+func (l *lowerer) addSealedLuaTypeCheckOperation(predicate factflow.ExprRef, inst wir.Instruction) {
+	if l == nil || !l.sealedLuaTypeChecks || predicate == 0 || inst.Check == 0 || l.wir == nil {
+		return
+	}
+	check := l.wir.Check(inst.Check)
+	if (check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot) || check.Path.IsEmpty() || check.TypeName == "" {
+		return
+	}
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		return
+	}
+	arg, ok := factflow.NewPathValueSource(check.Path.Key(), 0, 0, 0, shape)
+	if !ok {
+		return
+	}
+	typeRef, ok := l.exprRef(wirSealedLuaTypeExprRefKey{predicate: predicate})
+	if !ok {
+		return
+	}
+	typeOp, ok := factflow.NewUnaryExpressionOperation("lua_type", arg)
+	if !ok {
+		return
+	}
+	typeSource, ok := factflow.NewExpressionValueSource(typeRef, 0, 0, 0, shape)
+	if !ok {
+		return
+	}
+	literal, ok := factflow.NewStringLiteralValueSource(check.TypeName, 0, 0, 0, shape)
+	if !ok {
+		return
+	}
+	op := "=="
+	if check.Kind == wir.CheckTypeNot {
+		op = "~="
+	}
+	predicateOp, ok := factflow.NewBinaryExpressionOperation(op, typeSource, literal)
+	if !ok {
+		return
+	}
+	l.expressionOperations[typeRef] = typeOp
+	l.expressionOperations[predicate] = predicateOp
 }
 
 func (l *lowerer) addWIRExpressionOperationValue(exprRef factflow.ExprRef, op factflow.ExpressionOperation, left, right factflow.ValueSource) {

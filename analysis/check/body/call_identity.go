@@ -49,23 +49,42 @@ func (r *signatureIdentityResolver) intrinsicForCallSiteView(ctx transfer.NodeCo
 	if root == 0 || !known || kind != symbol.Global || r.bindings.Name(root) != "type" {
 		return signature.IntrinsicNone, false
 	}
-	// Intrinsic identity is stronger than point-local signature lookup: it must
-	// survive every call context that may instantiate the relation. Reject any
-	// ordinary write in the complete bound lexical unit. Any explicit _G read
-	// is also disqualifying: the table may escape through calls, containers,
-	// returns, rawset, aliases, or dynamic indexing, and a body-local points-to
-	// proof is not immutable environment authority.
-	globalTable, hasGlobalTable := r.bindings.GlobalSymbol("_G")
-	if r.bindings.HasWrite(root) || hasGlobalTable && r.bindings.HasRead(globalTable) {
-		return signature.IntrinsicNone, false
-	}
-	if _, shadowed := r.intrinsicShadowedGlobalNames["type"]; shadowed {
-		return signature.IntrinsicNone, false
-	}
-	if _, present := r.implicitStdlibNames["type"]; !present {
+	if !r.luaTypeIntrinsicEnvironmentSealed(root) {
 		return signature.IntrinsicNone, false
 	}
 	return signature.IntrinsicLuaType, true
+}
+
+// luaTypeIntrinsicEnvironmentSealed is the unit-wide half of intrinsic
+// authority shared by call sites and normalized type predicates. The latter
+// have no call site after WIR normalization, so this proof is transported to
+// transferfacts explicitly rather than reconstructed from the spelling
+// "type" or from CheckTypeEqual alone.
+func (r *signatureIdentityResolver) luaTypeIntrinsicEnvironmentSealed(root symbol.ID) bool {
+	if r == nil || r.bindings == nil || root == 0 {
+		return false
+	}
+	globalTable, hasGlobalTable := r.bindings.GlobalSymbol("_G")
+	if r.bindings.HasWrite(root) || hasGlobalTable && r.bindings.HasRead(globalTable) {
+		return false
+	}
+	if _, shadowed := r.intrinsicShadowedGlobalNames["type"]; shadowed {
+		return false
+	}
+	_, present := r.implicitStdlibNames["type"]
+	return present
+}
+
+func (r *signatureIdentityResolver) luaTypePredicateChecksSealed() bool {
+	if r == nil || r.bindings == nil {
+		return false
+	}
+	root, ok := r.bindings.GlobalSymbol("type")
+	if !ok {
+		return false
+	}
+	kind, known := r.bindings.Kind(root)
+	return known && kind == symbol.Global && r.bindings.Name(root) == "type" && r.luaTypeIntrinsicEnvironmentSealed(root)
 }
 
 func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *wir.Body, modules moduleidentity.Projection, signatures signaturelookup.Source, globalTypes map[string]typ.Type, moduleExports importlookup.Source) *signatureIdentityResolver {

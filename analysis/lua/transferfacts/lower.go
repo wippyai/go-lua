@@ -29,6 +29,11 @@ type Config struct {
 	TypeValues       *typevalue.Cache
 	ModuleExports    importlookup.Source
 	WIR              *wir.Body
+	// SealedLuaTypeChecks authorizes CheckTypeEqual/CheckTypeNot descriptors
+	// as canonical Lua type() semantics. The body binding authority sets it only
+	// after proving the global is stdlib-owned, unwritten, unoverridden, and _G
+	// cannot escape. A WIR check alone is deliberately insufficient authority.
+	SealedLuaTypeChecks bool
 
 	// NoNormalReturnCall reports whether a lowered call site cannot complete
 	// normally. The predicate is supplied by higher layers that own declared
@@ -70,6 +75,7 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 		typeResolver:            typeResolver,
 		typeValues:              config.TypeValues,
 		wir:                     config.WIR,
+		sealedLuaTypeChecks:     config.SealedLuaTypeChecks,
 		symbolTypes:             symbolTypes,
 		returnLocalTypes:        returnLocalTypes,
 		exprs:                   make(map[any]factflow.ExprRef),
@@ -276,6 +282,7 @@ type lowerer struct {
 	typeResolver            *typeresolve.Resolver
 	typeValues              *typevalue.Cache
 	wir                     *wir.Body
+	sealedLuaTypeChecks     bool
 	wirTempDefinitions      map[uint32]wir.Instruction
 	wirTempDefinitionSets   map[uint32][]wir.Instruction
 	wirStaticReachable      map[cfg.Point]bool
