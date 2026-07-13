@@ -82,6 +82,7 @@ func TestValidateGraphAllocationRelationsMatchCanonicalOutcomesWithoutSolves(t *
 	shape := transformer.Shape{
 		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
 		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
+		Globals:  uint32(len(prepared.operationPlan.BoundaryGlobals())),
 	}
 	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
 	exactCalls := make(map[cfg.Point]bool)

@@ -1,6 +1,8 @@
 package operationplan
 
 import (
+	"slices"
+
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -14,7 +16,14 @@ func (p *Plan) WithBoundaryParams(params []symbol.ID) *Plan {
 	}
 	out := *p
 	out.boundaryParams = nil
-	seen := make(map[symbol.ID]bool, len(params))
+	out.boundaryParamsValid = false
+	seen := make(map[symbol.ID]bool, len(params)+len(p.boundaryCaptures)+len(p.boundaryGlobals))
+	for _, capture := range p.boundaryCaptures {
+		seen[capture] = true
+	}
+	for _, global := range p.boundaryGlobals {
+		seen[global] = true
+	}
 	owned := make([]symbol.ID, 0, len(params))
 	for _, param := range params {
 		if param == 0 || seen[param] {
@@ -24,7 +33,14 @@ func (p *Plan) WithBoundaryParams(params []symbol.ID) *Plan {
 		owned = append(owned, param)
 	}
 	out.boundaryParams = owned
+	out.boundaryParamsValid = true
 	return &out
+}
+
+// BoundaryParamsValid distinguishes an exact empty parameter boundary from
+// one rejected because its namespaces were malformed.
+func (p *Plan) BoundaryParamsValid() bool {
+	return p != nil && p.boundaryParamsValid
 }
 
 // WithBoundaryParamContracts binds the ordered declared parameter contracts
@@ -59,9 +75,15 @@ func (p *Plan) WithBoundaryCaptures(captures []symbol.ID) *Plan {
 	out := *p
 	out.boundaryCaptures = nil
 	out.boundaryCapturesValid = false
-	seen := make(map[symbol.ID]bool, len(p.boundaryParams)+len(captures))
+	if !p.boundaryParamsValid {
+		return &out
+	}
+	seen := make(map[symbol.ID]bool, len(p.boundaryParams)+len(captures)+len(p.boundaryGlobals))
 	for _, param := range p.boundaryParams {
 		seen[param] = true
+	}
+	for _, global := range p.boundaryGlobals {
+		seen[global] = true
 	}
 	owned := make([]symbol.ID, 0, len(captures))
 	for _, capture := range captures {
@@ -139,4 +161,58 @@ func (p *Plan) BoundaryCaptureIndex(target symbol.ID) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// WithBoundaryGlobals returns a plan owning the exact ordered global symbols
+// read directly by the body. GlobalBoundary remains the authority which may
+// later certify those roots immutable and instantiate them; this plan field is
+// only its canonical symbol-sorted dense order. Zero, duplicate, parameter,
+// and capture overlaps fail closed rather than publishing an ambiguous
+// namespace.
+func (p *Plan) WithBoundaryGlobals(globals []symbol.ID) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.boundaryGlobals = nil
+	out.boundaryGlobalsValid = false
+	if !p.boundaryParamsValid || !p.boundaryCapturesValid {
+		return &out
+	}
+	seen := make(map[symbol.ID]bool, len(p.boundaryParams)+len(p.boundaryCaptures)+len(globals))
+	for _, param := range p.boundaryParams {
+		seen[param] = true
+	}
+	for _, capture := range p.boundaryCaptures {
+		seen[capture] = true
+	}
+	owned := make([]symbol.ID, 0, len(globals))
+	for _, global := range globals {
+		if global == 0 || seen[global] {
+			return &out
+		}
+		seen[global] = true
+		owned = append(owned, global)
+	}
+	// GlobalBoundary seals descriptors by Symbol. Use the same dense order here
+	// so RootGlobal indices have one canonical meaning from plan to artifact.
+	slices.Sort(owned)
+	out.boundaryGlobals = owned
+	out.boundaryGlobalsValid = true
+	return &out
+}
+
+// BoundaryGlobalsValid distinguishes an exact empty global-read census from
+// one rejected because its namespaces were malformed.
+func (p *Plan) BoundaryGlobalsValid() bool {
+	return p != nil && p.boundaryGlobalsValid
+}
+
+// BoundaryGlobals returns an immutable snapshot in canonical symbol order,
+// matching GlobalBoundary's dense RootGlobal authority.
+func (p *Plan) BoundaryGlobals() []symbol.ID {
+	if p == nil {
+		return nil
+	}
+	return append([]symbol.ID(nil), p.boundaryGlobals...)
 }

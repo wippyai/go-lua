@@ -44,6 +44,8 @@ type Result struct {
 	hasEntryCaptures   map[*ast.FunctionExpr]bool
 	directGlobalReads  map[*ast.FunctionExpr][]symbol.ID
 	directGlobalSeen   map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	chunkGlobalReads   []symbol.ID
+	chunkGlobalSeen    map[symbol.ID]struct{}
 
 	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
 	varargSymbols     map[*ast.FunctionExpr]symbol.ID
@@ -91,6 +93,7 @@ func newResult(opts Options) *Result {
 		hasEntryCaptures:      make(map[*ast.FunctionExpr]bool),
 		directGlobalReads:     make(map[*ast.FunctionExpr][]symbol.ID),
 		directGlobalSeen:      make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
+		chunkGlobalSeen:       make(map[symbol.ID]struct{}),
 		paramSymbols:          make(map[*ast.FunctionExpr][]symbol.ID),
 		varargSymbols:         make(map[*ast.FunctionExpr]symbol.ID),
 		paramSlots:            make(map[*ast.FunctionExpr][]ParamSlot),

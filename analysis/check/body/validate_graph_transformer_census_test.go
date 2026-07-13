@@ -14,6 +14,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{
 		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
 		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
+		Globals:  uint32(len(prepared.operationPlan.BoundaryGlobals())),
 	})
 	if len(entries) != 328 {
 		t.Fatalf("eligibility entries = %d, want 328 active plan instances/family markers", len(entries))

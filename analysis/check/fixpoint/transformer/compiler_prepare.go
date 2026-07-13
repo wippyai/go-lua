@@ -108,7 +108,7 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	ctx.expressions = make(map[factflow.ExprRef][]ValueTerm)
 	ctx.allocationEffects = make(map[cfg.Point]EffectTerm)
 	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
-	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
+	if err := bindBoundaryTerms(&ctx, shape); err != nil {
 		return nil, fmt.Errorf("compiler: boundary: %w", err)
 	}
 	if err := bindStaticSignatureTerms(&ctx); err != nil {

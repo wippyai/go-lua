@@ -172,7 +172,8 @@ func (c relationRunCatalog) exactLeafActivationSlice() relationRunCatalog {
 			entry := original
 			if _, exists := allowed[entry.identity.Cell]; exists || entry.compiler == nil ||
 				len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 ||
-				len(entry.identity.Prepared.OperationPlan().BoundaryCaptures()) != 0 {
+				len(entry.identity.Prepared.OperationPlan().BoundaryCaptures()) != 0 ||
+				len(entry.identity.Prepared.OperationPlan().BoundaryGlobals()) != 0 {
 				continue
 			}
 			direct, exact := relationCertifiedDirectCatalog(entry, contextIndex{}, nil, allowed)
@@ -225,7 +226,8 @@ func (c relationRunCatalog) strictProductionActivationSlice() relationRunCatalog
 		if entry.compiler == nil || !entry.compiler.EffectFree() ||
 			entry.hasEntryState ||
 			len(entry.identity.Prepared.OperationPlan().BoundaryParams()) != 0 ||
-			len(entry.identity.Prepared.OperationPlan().BoundaryCaptures()) != 0 {
+			len(entry.identity.Prepared.OperationPlan().BoundaryCaptures()) != 0 ||
+			len(entry.identity.Prepared.OperationPlan().BoundaryGlobals()) != 0 {
 			continue
 		}
 		byCell[entry.identity.Cell] = entry
@@ -299,7 +301,7 @@ func (c relationRunCatalog) certifiedContextActivationSlice(reg *axis.Registry, 
 		allowed[entry.identity.Cell] = struct{}{}
 	}
 	for _, entry := range c.entries {
-		if entry.compiler == nil || !entry.compiler.EffectFree() {
+		if entry.compiler == nil || !entry.compiler.EffectFree() || len(entry.identity.Prepared.OperationPlan().BoundaryGlobals()) != 0 {
 			continue
 		}
 		baseByKey[entry.identity.Summary] = entry
@@ -667,7 +669,7 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 		}
 		relation, ok := relations.Lookup(candidate.base.Cell)
 		plan := candidate.base.Prepared.OperationPlan()
-		if plan == nil || !candidate.certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
+		if plan == nil || len(plan.BoundaryGlobals()) != 0 || !candidate.certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context boundary authority drift")}
 		}
 		if !ok || relation.Shape().Params != uint32(len(candidate.params)) || relation.Shape().Captures != uint32(len(candidate.captures)) ||
@@ -720,8 +722,9 @@ type relationCatalogOwner struct {
 // deterministic value-capture subsequence of DirectCaptures (direct-callee-only
 // symbols are deliberately omitted), but may never be reordered or invented.
 // Composition eligibility independently rejects any omitted capture that is
-// used as a value operand.
-func relationBoundaryMatchesBindings(bindings *bind.Result, fn *ast.FunctionExpr, params, captures []symbol.ID) bool {
+// used as a value operand. Globals must match the bind census exactly in the
+// same canonical symbol order used by GlobalBoundary.
+func relationBoundaryMatchesBindings(bindings *bind.Result, fn *ast.FunctionExpr, params, captures, globals []symbol.ID) bool {
 	if bindings == nil || fn == nil {
 		return false
 	}
@@ -752,6 +755,11 @@ func relationBoundaryMatchesBindings(bindings *bind.Result, fn *ast.FunctionExpr
 			return false
 		}
 		next++
+	}
+	wantGlobals := bindings.DirectGlobalReads(fn)
+	slices.Sort(wantGlobals)
+	if !slices.Equal(globals, wantGlobals) {
+		return false
 	}
 	return true
 }
@@ -791,10 +799,13 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 			continue
 		}
 		plan := static.OperationPlan()
-		if plan == nil || !plan.BoundaryCapturesValid() || !relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures()) {
+		if plan == nil || !plan.BoundaryParamsValid() || !plan.BoundaryCapturesValid() || !plan.BoundaryGlobalsValid() ||
+			!relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures(), plan.BoundaryGlobals()) {
 			continue
 		}
-		shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures()))}
+		shape := transformer.Shape{
+			Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures())), Globals: uint32(len(plan.BoundaryGlobals())),
+		}
 		compiler, err := transformer.NewPlanCompiler().Prepare(reg, static.Graph(), plan, shape)
 		direct := exactRelationDirectTargets(bindings, keys, owner.key, static)
 		if err != nil || !compiler.EffectFree() || (shape.Captures != 0 && (relationPreparedHasCalls(static) || len(direct) != 0)) {

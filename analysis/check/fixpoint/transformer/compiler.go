@@ -560,7 +560,16 @@ func exactCompilerPathTerm(ctx planCompileContext, path pathdom.Path) (ValueTerm
 	return term, ok
 }
 
-func bindBoundaryParamTerms(ctx *planCompileContext, shape Shape) error {
+func bindBoundaryTerms(ctx *planCompileContext, shape Shape) error {
+	if !ctx.plan.BoundaryParamsValid() {
+		return fmt.Errorf("parameter boundary is malformed")
+	}
+	if !ctx.plan.BoundaryCapturesValid() {
+		return fmt.Errorf("capture boundary is malformed")
+	}
+	if !ctx.plan.BoundaryGlobalsValid() {
+		return fmt.Errorf("global boundary is malformed")
+	}
 	params := ctx.plan.BoundaryParams()
 	if len(params) != int(shape.Params) {
 		return fmt.Errorf("parameter symbols %d != shape params %d", len(params), shape.Params)
@@ -581,7 +590,24 @@ func bindBoundaryParamTerms(ctx *planCompileContext, shape Shape) error {
 		}
 		ctx.locals[capture] = ctx.builder.Arena().Root(Root{Kind: RootCapture, Index: uint32(index)})
 	}
+	globals := ctx.plan.BoundaryGlobals()
+	if len(globals) != int(shape.Globals) {
+		return fmt.Errorf("global symbols %d != shape globals %d", len(globals), shape.Globals)
+	}
+	for index, global := range globals {
+		if _, exists := ctx.locals[global]; exists {
+			return fmt.Errorf("duplicate global symbol %d", global)
+		}
+		ctx.locals[global] = ctx.builder.Arena().Root(Root{Kind: RootGlobal, Index: uint32(index)})
+	}
 	return nil
+}
+
+// bindBoundaryParamTerms is retained for focused package tests and the
+// eligibility census; boundary binding is now one atomic three-namespace
+// transaction despite the historical name.
+func bindBoundaryParamTerms(ctx *planCompileContext, shape Shape) error {
+	return bindBoundaryTerms(ctx, shape)
 }
 
 func (c *PlanCompiler) unsupportedActive(plan *operationplan.Plan) []string {

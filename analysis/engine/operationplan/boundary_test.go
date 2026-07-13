@@ -63,7 +63,7 @@ func TestPlanOwnsWidthMatchedBoundaryParamContracts(t *testing.T) {
 
 func TestAmbiguousBoundaryParametersFailClosed(t *testing.T) {
 	plan := New(cfg.New(), factflow.FactsInput{}).WithBoundaryParams([]symbol.ID{7, 7})
-	if got := plan.BoundaryParams(); len(got) != 0 {
+	if got := plan.BoundaryParams(); plan.BoundaryParamsValid() || len(got) != 0 {
 		t.Fatalf("ambiguous boundary published: %v", got)
 	}
 }
@@ -98,5 +98,51 @@ func TestAmbiguousBoundaryCapturesFailClosed(t *testing.T) {
 		if plan.BoundaryCapturesValid() || len(plan.BoundaryCaptures()) != 0 {
 			t.Fatalf("ambiguous capture boundary %v published as %v", captures, plan.BoundaryCaptures())
 		}
+	}
+}
+
+func TestPlanOwnsOrderedBoundaryGlobalSymbols(t *testing.T) {
+	globals := []symbol.ID{19, 17}
+	plan := New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams([]symbol.ID{7}).
+		WithBoundaryCaptures([]symbol.ID{11}).
+		WithBoundaryGlobals(globals)
+	globals[0] = 99
+	if !plan.BoundaryGlobalsValid() {
+		t.Fatal("valid global boundary rejected")
+	}
+	if got := plan.BoundaryGlobals(); len(got) != 2 || got[0] != 17 || got[1] != 19 {
+		t.Fatalf("boundary globals = %v", got)
+	}
+	returned := plan.BoundaryGlobals()
+	returned[0] = 88
+	if got := plan.BoundaryGlobals()[0]; got != 17 {
+		t.Fatalf("getter exposed storage: %d", got)
+	}
+}
+
+func TestAmbiguousBoundaryGlobalsFailClosed(t *testing.T) {
+	for _, globals := range [][]symbol.ID{{0}, {17, 17}, {7}, {11}} {
+		plan := New(cfg.New(), factflow.FactsInput{}).
+			WithBoundaryParams([]symbol.ID{7}).
+			WithBoundaryCaptures([]symbol.ID{11}).
+			WithBoundaryGlobals(globals)
+		if plan.BoundaryGlobalsValid() || len(plan.BoundaryGlobals()) != 0 {
+			t.Fatalf("ambiguous global boundary %v published as %v", globals, plan.BoundaryGlobals())
+		}
+	}
+	plan := New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams([]symbol.ID{7}).
+		WithBoundaryCaptures([]symbol.ID{7}).
+		WithBoundaryGlobals(nil)
+	if plan.BoundaryGlobalsValid() {
+		t.Fatal("global boundary accepted after malformed capture namespace")
+	}
+	plan = New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams([]symbol.ID{7, 7}).
+		WithBoundaryCaptures(nil).
+		WithBoundaryGlobals(nil)
+	if plan.BoundaryCapturesValid() || plan.BoundaryGlobalsValid() {
+		t.Fatal("downstream boundaries accepted after malformed parameter namespace")
 	}
 }

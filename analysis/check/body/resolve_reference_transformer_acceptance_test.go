@@ -41,6 +41,7 @@ func TestResolveReferenceFalsyBranchesAreWholeFunctionExact(t *testing.T) {
 	shape := transformer.Shape{
 		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
 		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
+		Globals:  uint32(len(prepared.operationPlan.BoundaryGlobals())),
 	}
 	dynamicExact, dynamicTotal := 0, 0
 	rootExact, rootTotal := 0, 0

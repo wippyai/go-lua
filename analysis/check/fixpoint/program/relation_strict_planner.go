@@ -58,9 +58,9 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 			continue
 		}
 		plan := owner.prepared.OperationPlan()
-		if plan == nil || !plan.BoundaryCapturesValid() ||
-			len(plan.BoundaryParams()) != 0 || len(plan.BoundaryCaptures()) != 0 ||
-			!relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures()) {
+		if plan == nil || !plan.BoundaryParamsValid() || !plan.BoundaryCapturesValid() || !plan.BoundaryGlobalsValid() ||
+			len(plan.BoundaryParams()) != 0 || len(plan.BoundaryCaptures()) != 0 || len(plan.BoundaryGlobals()) != 0 ||
+			!relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures(), plan.BoundaryGlobals()) {
 			continue
 		}
 		if !stagedStrictCallFree(owner.prepared.HasCallSites(), plan) {

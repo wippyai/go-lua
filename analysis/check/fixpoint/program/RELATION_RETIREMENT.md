@@ -240,3 +240,30 @@ Add an architectural test that fails if a known lexical call can invoke
 
 Only after all four gate groups pass is the legacy code deleted. The deletion
 is part of the migration definition of done, not optional follow-up cleanup.
+
+## Next measured slice: parameter plus immutable global
+
+The first production-value proof is the frozen threads `is_str` function at
+lines 31–33 (body `16010901263544322178`). It currently accounts for 10 body
+solves and 70 transfers across phases and exercises a parameter plus immutable
+stdlib global `type`. The larger immutable-global family accounts for 160 of
+271 solves and 7,205 of 11,882 transfers, so this boundary is the measured next
+step rather than another call-free leaf optimization.
+
+Land it in three independently gated pieces:
+
+1. publish exact ordered global roots, bind `RootGlobal`, and seal a complete
+   call-surface artifact whose sites are lexical, content-bound external, or
+   rejected;
+2. close only the existing scalar expression-condition/refinement vocabulary
+   required by `type(value) == "string" and value ~= ""`; and
+3. publish certified parameter/capture/global contextual summaries as pinned
+   equations for an acyclic singleton transaction, retaining concrete
+   materialization until observation projection is complete.
+
+The first slice does not claim recursive SCC support. Any binding,
+specialization, content-identity, coverage, or call-surface miss rejects the
+whole owner before query publication. Acceptance requires eight contextual
+summary-equation omissions for this owner, strictly lower total summary work,
+and exact all-lane states, summaries, diagnostics, manifests, observation
+products, and `ResultVersion` across legacy, repeated, and strict runs.

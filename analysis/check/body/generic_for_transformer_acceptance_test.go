@@ -21,7 +21,9 @@ func TestGenericForTransformerAdmitsCanonicalIPairsZeroVsOnePlusRows(t *testing.
 	if got := prepared.operationPlan.BoundaryParams(); len(got) != 1 {
 		t.Fatalf("boundary params = %v, want one", got)
 	}
-	relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{Params: 1})
+	relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{
+		Params: 1, Globals: uint32(len(prepared.operationPlan.BoundaryGlobals())),
+	})
 	if reason := relation.ContextualReason(); reason != "" {
 		t.Fatalf("generic-for relation compiled contextually: %s", reason)
 	}

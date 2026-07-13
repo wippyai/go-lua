@@ -159,9 +159,12 @@ type Plan struct {
 	extensionRows                []extensionRow
 	extensionCells               []ExtensionCell
 	boundaryParams               []symbol.ID
+	boundaryParamsValid          bool
 	boundaryParamContracts       []product.Value
 	boundaryCaptures             []symbol.ID
 	boundaryCapturesValid        bool
+	boundaryGlobals              []symbol.ID
+	boundaryGlobalsValid         bool
 	boundaryReturns              []product.Value
 	signatureRefs                []uint32
 	signatures                   []SignatureCallOperation
@@ -182,7 +185,10 @@ func New(graph cfg.Graph, input factflow.FactsInput) *Plan {
 	if graph != nil {
 		size = graph.Size()
 	}
-	p := &Plan{facts: factflow.NewFacts(input), dependencies: compileDependencies(input), boundaryCapturesValid: true}
+	p := &Plan{
+		facts: factflow.NewFacts(input), dependencies: compileDependencies(input),
+		boundaryParamsValid: true, boundaryCapturesValid: true, boundaryGlobalsValid: true,
+	}
 	p.rows, p.cells = compileIndex(size, input)
 	return p
 }

@@ -361,6 +361,15 @@ func (r *Result) DirectGlobalReads(fn *ast.FunctionExpr) []symbol.ID {
 	return cloneSymbols(r.directGlobalReads[fn])
 }
 
+// ChunkGlobalReads returns global symbols directly read by the lexical chunk
+// (outside nested functions) in first-use order.
+func (r *Result) ChunkGlobalReads() []symbol.ID {
+	if r == nil {
+		return nil
+	}
+	return cloneSymbols(r.chunkGlobalReads)
+}
+
 // ParamSymbols returns ordered parameter symbols for fn.
 func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []symbol.ID {
 	if r == nil || fn == nil {
@@ -501,6 +510,15 @@ func (b *binder) recordDirectGlobalRead(id symbol.ID) {
 	}
 	current := b.currentFunction()
 	if current == nil {
+		if _, ok := b.result.chunkGlobalSeen[id]; ok {
+			return
+		}
+		kind, ok := b.result.kinds[id]
+		if !ok || kind != symbol.Global {
+			return
+		}
+		b.result.chunkGlobalSeen[id] = struct{}{}
+		b.result.chunkGlobalReads = append(b.result.chunkGlobalReads, id)
 		return
 	}
 	kind, ok := b.result.kinds[id]

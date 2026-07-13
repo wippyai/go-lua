@@ -222,11 +222,16 @@ func (c *checker) prepare(
 		return index, declared, ok
 	})
 	boundaryCaptures := symbolicBoundaryCaptureSymbols(wirBody, bindings.DirectCaptures(fn))
+	boundaryGlobals := bindings.DirectGlobalReads(fn)
+	if fn == nil {
+		boundaryGlobals = bindings.ChunkGlobalReads()
+	}
 	operationPlan := lowered.Plan.
 		WithObservationIdentity(lexicalBodyID, wirBody).
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
 		WithBoundaryParamContracts(materializeDeclaredParamTypeValues(config.Registry, typevalue.NewCache(), typeResolver, fn)).
 		WithBoundaryCaptures(boundaryCaptures).
+		WithBoundaryGlobals(boundaryGlobals).
 		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn)).
 		WithSignatureCalls(signatureCallOperations(built.Graph, facts, signatureProducer))
 	operationPlan = operationPlan.

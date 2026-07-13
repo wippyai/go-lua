@@ -714,6 +714,30 @@ func TestDirectGlobalReadsTracksGlobalsWithoutCapturingThem(t *testing.T) {
 	}
 }
 
+func TestChunkGlobalReadsTracksOnlyLexicalChunkAndOwnsResult(t *testing.T) {
+	chunkRead := ident("chunk_global")
+	nestedRead := ident("nested_global")
+	nested := function(nil, ret(nestedRead))
+	stmts := []ast.Stmt{
+		localAssign([]string{"nested"}, nested),
+		ret(chunkRead, chunkRead),
+	}
+	r := BindChunk(stmts, Options{Globals: []string{"chunk_global", "nested_global"}})
+	chunkID := mustSymbol(t, r, chunkRead)
+	nestedID := mustSymbol(t, r, nestedRead)
+	if got, want := r.ChunkGlobalReads(), []symbol.ID{chunkID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ChunkGlobalReads = %v, want %v", got, want)
+	}
+	if got, want := r.DirectGlobalReads(nested), []symbol.ID{nestedID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirectGlobalReads(nested) = %v, want %v", got, want)
+	}
+	got := r.ChunkGlobalReads()
+	got[0] = 0
+	if reread := r.ChunkGlobalReads(); len(reread) != 1 || reread[0] != chunkID {
+		t.Fatalf("ChunkGlobalReads returned mutable backing slice: %v", reread)
+	}
+}
+
 func TestDirectCapturesNestedNonVarargDoesNotCaptureOuterVararg(t *testing.T) {
 	localRead := ident("x")
 	child := function(nil, ret(&ast.Comma3Expr{}, localRead))
