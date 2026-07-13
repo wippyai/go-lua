@@ -152,12 +152,44 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	input.ExpressionPaths = l.expressionPaths
 	input.DynamicIndexExpressions = l.dynamicIndexExpressions
 	input.ExpressionConditions = l.expressionConditions
-	plan := operationplan.New(graph, input)
+	regions := l.structuralExpressionRegionsFromWIR()
+	plan := operationplan.NewWithStructuralExpressionRegions(graph, input, regions)
 	return Lowered{
 		Facts:       plan.Facts(),
 		Plan:        plan,
 		SymbolTypes: copySymbolTypes(symbolTypes),
 	}
+}
+
+func (l *lowerer) structuralExpressionRegionsFromWIR() map[factflow.ExprRef]factflow.StructuralExpressionRegion {
+	if l == nil || l.wir == nil {
+		return nil
+	}
+	regions := make(map[factflow.ExprRef]factflow.StructuralExpressionRegion)
+	l.wir.ForEachStructuralExpressionRegion(func(owner wir.StructuralExpressionOwner, source wir.StructuralExpressionRegion) bool {
+		var refKey any
+		if owner.HasTemp {
+			refKey = wirTempExprRefKey{temp: owner.Temp}
+		} else {
+			refKey = wirAssignmentProducerExprRefKey{point: owner.Point, op: wir.OpLogical}
+		}
+		ownerRef, ok := l.exprs[refKey]
+		if !ok || ownerRef == 0 {
+			return true
+		}
+		region, ok := factflow.NewStructuralExpressionRegion(
+			source.Guard, source.TrueTarget, source.FalseTarget, source.Join,
+			source.RHSOnTrue, source.OwnedRHSPoints,
+		)
+		if ok {
+			regions[ownerRef] = region
+		}
+		return true
+	})
+	if len(regions) == 0 {
+		return nil
+	}
+	return regions
 }
 
 func (l *lowerer) addTypeIsReturnPresenceRelationsFromSources(input *factflow.FactsInput, point cfg.Point, sources []factflow.ValueSource) {

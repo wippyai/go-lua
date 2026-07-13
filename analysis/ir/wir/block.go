@@ -1,6 +1,8 @@
 package wir
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -40,6 +42,7 @@ type Body struct {
 	branchDiffs          []BranchDiffConstraint
 	callTargets          map[callResultTargetKey]CallResultTarget
 	evaluations          map[cfg.Point]ExpressionEvaluation
+	structuralRegions    map[StructuralExpressionOwner]StructuralExpressionRegion
 	symbols              map[SymbolID]SymbolInfo
 	globalSymbols        map[string]SymbolID
 	debugPointOrdinals   map[cfg.Point]uint32
@@ -125,6 +128,28 @@ type ReturnValueMeta struct {
 type ExpressionEvaluation struct {
 	ExprID ExpressionID
 	Span   Span
+}
+
+// StructuralExpressionRegion preserves source-authored short-circuit topology
+// under the result temporary which transfer lowering turns into an ExprRef.
+// OwnedRHSPoints is complete effect ownership: every point conditionally
+// executed as part of the RHS is included, regardless of its current opcode.
+type StructuralExpressionRegion struct {
+	Guard          cfg.Point
+	TrueTarget     cfg.Point
+	FalseTarget    cfg.Point
+	Join           cfg.Point
+	RHSOnTrue      bool
+	OwnedRHSPoints []cfg.Point
+}
+
+// StructuralExpressionOwner identifies the exact WIR producer whose ExprRef
+// transfer lowering owns. Temps include zero; HasTemp distinguishes them from
+// direct point-local OpLogical producers.
+type StructuralExpressionOwner struct {
+	HasTemp bool
+	Temp    uint32
+	Point   cfg.Point
 }
 
 // TableEntryRange is a [Start, Start+Len) window into Body.tableEntries.
@@ -768,6 +793,84 @@ func (b *Body) ExpressionEvaluation(point cfg.Point) (ExpressionEvaluation, bool
 	}
 	eval, ok := b.evaluations[point]
 	return eval, ok
+}
+
+// SetStructuralExpressionRegion records an exact region for a result temp.
+// Malformed or incomplete records are rejected fail-closed.
+func (b *Body) SetStructuralExpressionRegion(owner StructuralExpressionOwner, region StructuralExpressionRegion) {
+	if b == nil || region.TrueTarget == region.FalseTarget || len(region.OwnedRHSPoints) == 0 {
+		return
+	}
+	// Irrelevant owner fields must be zero. Otherwise two distinct Go keys can
+	// spell the same semantic producer and make insertion order choose the
+	// retained region nondeterministically.
+	if (owner.HasTemp && owner.Point != 0) || (!owner.HasTemp && owner.Temp != 0) {
+		return
+	}
+	rhsTarget, bypassTarget := region.FalseTarget, region.TrueTarget
+	if region.RHSOnTrue {
+		rhsTarget, bypassTarget = region.TrueTarget, region.FalseTarget
+	}
+	if bypassTarget != region.Join {
+		return
+	}
+	points := append([]cfg.Point(nil), region.OwnedRHSPoints...)
+	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
+	foundRHS := false
+	for i, point := range points {
+		if point == region.Guard || point == region.Join || (i != 0 && points[i-1] == point) {
+			return
+		}
+		foundRHS = foundRHS || point == rhsTarget
+	}
+	if !foundRHS {
+		return
+	}
+	if b.structuralRegions == nil {
+		b.structuralRegions = make(map[StructuralExpressionOwner]StructuralExpressionRegion)
+	}
+	region.OwnedRHSPoints = points
+	b.structuralRegions[owner] = region
+}
+
+// StructuralExpressionRegion returns a defensive copy of the region owned by owner.
+func (b *Body) StructuralExpressionRegion(owner StructuralExpressionOwner) (StructuralExpressionRegion, bool) {
+	if b == nil {
+		return StructuralExpressionRegion{}, false
+	}
+	region, ok := b.structuralRegions[owner]
+	if !ok {
+		return StructuralExpressionRegion{}, false
+	}
+	region.OwnedRHSPoints = append([]cfg.Point(nil), region.OwnedRHSPoints...)
+	return region, true
+}
+
+// ForEachStructuralExpressionRegion visits regions in canonical result-temp order.
+func (b *Body) ForEachStructuralExpressionRegion(fn func(StructuralExpressionOwner, StructuralExpressionRegion) bool) {
+	if b == nil || fn == nil || len(b.structuralRegions) == 0 {
+		return
+	}
+	owners := make([]StructuralExpressionOwner, 0, len(b.structuralRegions))
+	for owner := range b.structuralRegions {
+		owners = append(owners, owner)
+	}
+	sort.Slice(owners, func(i, j int) bool {
+		if owners[i].HasTemp != owners[j].HasTemp {
+			return owners[i].HasTemp
+		}
+		if owners[i].HasTemp {
+			return owners[i].Temp < owners[j].Temp
+		}
+		return owners[i].Point < owners[j].Point
+	})
+	for _, owner := range owners {
+		region := b.structuralRegions[owner]
+		region.OwnedRHSPoints = append([]cfg.Point(nil), region.OwnedRHSPoints...)
+		if !fn(owner, region) {
+			return
+		}
+	}
 }
 
 // AppendOperands copies ops into the shared pool and returns their range.

@@ -1487,6 +1487,7 @@ func (b *builder) lowerExpr(e ast.Expr) wir.Operand {
 			t := b.newTemp()
 			b.emitLogicalGuard(e)
 			b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+			b.recordStructuralExpressionRegion(e, t, b.curPoint)
 			b.logicalValues[e] = t
 			return t
 		}
@@ -1568,6 +1569,7 @@ func (b *builder) lowerLogicalInto(dst wir.Operand, e *ast.LogicalOpExpr) {
 			return
 		}
 		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: dst, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+		b.recordStructuralExpressionRegion(e, dst, b.curPoint)
 		b.logicalValues[e] = dst
 		return
 	}
@@ -1588,6 +1590,7 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 		// rejected): fall back to the value form so the result is still bound.
 		t := b.newTemp()
 		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
+		b.recordStructuralExpressionRegion(e, t, b.curPoint)
 		return t
 	}
 	result := b.newTemp()
@@ -1603,7 +1606,26 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 
 	b.curPoint = prev
 	b.logicalValues[e] = result
+	b.recordStructuralExpressionRegion(e, result, prev)
 	return result
+}
+
+func (b *builder) recordStructuralExpressionRegion(e *ast.LogicalOpExpr, result wir.Operand, point cfg.Point) {
+	if e == nil {
+		return
+	}
+	if region, ok := b.shortCircuits.Region(e); ok && region.Complete() {
+		owner := wir.StructuralExpressionOwner{Point: point}
+		if result.Kind == wir.OperandTemp {
+			owner = wir.StructuralExpressionOwner{HasTemp: true, Temp: result.Ref}
+		}
+		b.body.SetStructuralExpressionRegion(owner, wir.StructuralExpressionRegion{
+			Guard:      region.Guard,
+			TrueTarget: region.TrueTarget, FalseTarget: region.FalseTarget,
+			Join: region.Join, RHSOnTrue: region.RHSOnTrue,
+			OwnedRHSPoints: region.OwnedRHSPoints,
+		})
+	}
 }
 
 func (b *builder) emitLogicalGuard(e *ast.LogicalOpExpr) {

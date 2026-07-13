@@ -118,6 +118,56 @@ func TestGlobalBoundaryCanonicalIdentityIgnoresInputOrderAndBindingsDetach(t *te
 
 func globalID(value string) GlobalContentID { return sha256.Sum256([]byte(value)) }
 
+func TestDeriveGlobalContentIDUsesEnvironmentClassAndName(t *testing.T) {
+	var firstEnvironment [sha256.Size]byte
+	firstEnvironment[0] = 1
+	var secondEnvironment [sha256.Size]byte
+	secondEnvironment[0] = 2
+	base, err := DeriveGlobalContentID(firstEnvironment, GlobalRootImmutableStdlib, "pairs")
+	if err != nil {
+		t.Fatalf("DeriveGlobalContentID: %v", err)
+	}
+	again, err := DeriveGlobalContentID(firstEnvironment, GlobalRootImmutableStdlib, "pairs")
+	if err != nil || again != base {
+		t.Fatalf("deterministic derivation = %x/%v, want %x", again, err, base)
+	}
+	variants := []struct {
+		name        string
+		environment [sha256.Size]byte
+		class       GlobalRootClass
+		stableName  string
+	}{
+		{"environment", secondEnvironment, GlobalRootImmutableStdlib, "pairs"},
+		{"class", firstEnvironment, GlobalRootImportedAlias, "pairs"},
+		{"name", firstEnvironment, GlobalRootImmutableStdlib, "ipairs"},
+	}
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			got, err := DeriveGlobalContentID(variant.environment, variant.class, variant.stableName)
+			if err != nil {
+				t.Fatalf("DeriveGlobalContentID: %v", err)
+			}
+			if got == base {
+				t.Fatalf("variant retained content identity %x", got)
+			}
+		})
+	}
+}
+
+func TestDeriveGlobalContentIDRejectsNonImmutableIdentity(t *testing.T) {
+	var environment [sha256.Size]byte
+	environment[0] = 1
+	if _, err := DeriveGlobalContentID(environment, GlobalRootMutableUnknown, "application"); err == nil {
+		t.Fatal("mutable global derived immutable content identity")
+	}
+	if _, err := DeriveGlobalContentID(environment, GlobalRootImmutableStdlib, " pairs "); err == nil {
+		t.Fatal("non-canonical stable name derived content identity")
+	}
+	if _, err := DeriveGlobalContentID([sha256.Size]byte{}, GlobalRootImmutableStdlib, "pairs"); err == nil {
+		t.Fatal("missing environment derived content identity")
+	}
+}
+
 func containsGlobalID(values []GlobalContentID, target GlobalContentID) bool {
 	for _, value := range values {
 		if value == target {

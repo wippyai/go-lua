@@ -6,6 +6,7 @@ package operationplan
 import (
 	"fmt"
 	"math/bits"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -174,6 +175,12 @@ type Plan struct {
 	signatureAllocationTemplates []signature.ReturnAllocationTemplate
 	observationBody              lexicalidentity.StableLexicalBodyID
 	observationPoints            []observationPoint
+	structuralExpressionRegions  []structuralExpressionRegionEntry
+}
+
+type structuralExpressionRegionEntry struct {
+	owner  factflow.ExprRef
+	region factflow.StructuralExpressionRegion
 }
 
 // New creates the only immutable Facts snapshot for input and indexes all
@@ -190,6 +197,16 @@ func New(graph cfg.Graph, input factflow.FactsInput) *Plan {
 		boundaryParamsValid: true, boundaryCapturesValid: true, boundaryGlobalsValid: true,
 	}
 	p.rows, p.cells = compileIndex(size, input)
+	return p
+}
+
+// NewWithStructuralExpressionRegions creates a plan with separately indexed
+// structural metadata. Regions are not semantic dependencies and therefore do
+// not enter DependencyCursor or transformer admission. Invalid or incomplete
+// regions are omitted fail-closed.
+func NewWithStructuralExpressionRegions(graph cfg.Graph, input factflow.FactsInput, regions map[factflow.ExprRef]factflow.StructuralExpressionRegion) *Plan {
+	p := New(graph, input)
+	p.structuralExpressionRegions = compileStructuralExpressionRegions(graph, regions)
 	return p
 }
 
@@ -220,6 +237,138 @@ func compileDependencies(input factflow.FactsInput) []Kind {
 		out = append(out, ExpressionCondition)
 	}
 	return out
+}
+
+// StructuralExpressionRegion returns immutable source-authored region metadata
+// for expr. It is preparation metadata, not executable transfer work.
+func (p *Plan) StructuralExpressionRegion(expr factflow.ExprRef) (factflow.StructuralExpressionRegion, bool) {
+	if p == nil || expr == 0 {
+		return factflow.StructuralExpressionRegion{}, false
+	}
+	index := sort.Search(len(p.structuralExpressionRegions), func(i int) bool {
+		return p.structuralExpressionRegions[i].owner >= expr
+	})
+	if index == len(p.structuralExpressionRegions) || p.structuralExpressionRegions[index].owner != expr {
+		return factflow.StructuralExpressionRegion{}, false
+	}
+	return p.structuralExpressionRegions[index].region, true
+}
+
+// ForEachStructuralExpressionRegion visits exact regions in canonical ExprRef order.
+func (p *Plan) ForEachStructuralExpressionRegion(fn func(factflow.ExprRef, factflow.StructuralExpressionRegion) bool) {
+	if p == nil {
+		return
+	}
+	for _, entry := range p.structuralExpressionRegions {
+		if !fn(entry.owner, entry.region) {
+			return
+		}
+	}
+}
+
+func compileStructuralExpressionRegions(graph cfg.Graph, regions map[factflow.ExprRef]factflow.StructuralExpressionRegion) []structuralExpressionRegionEntry {
+	if graph == nil || len(regions) == 0 {
+		return nil
+	}
+	out := make([]structuralExpressionRegionEntry, 0, len(regions))
+	for owner, region := range regions {
+		if owner != 0 && validateStructuralExpressionRegion(graph, region) {
+			out = append(out, structuralExpressionRegionEntry{owner: owner, region: region})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].owner < out[j].owner })
+	return out
+}
+
+func validateStructuralExpressionRegion(graph cfg.Graph, region factflow.StructuralExpressionRegion) bool {
+	branch, join := region.Branch(), region.Join()
+	trueTarget, falseTarget := region.TrueTarget(), region.FalseTarget()
+	points := region.OwnedRHSPoints()
+	validPoint := func(point cfg.Point) bool { return uint64(point) < uint64(graph.Size()) && graph.Node(point) != nil }
+	if !validPoint(branch) || !validPoint(join) || !validPoint(trueTarget) || !validPoint(falseTarget) ||
+		graph.Node(branch).Kind != cfg.NodeBranch || graph.Node(join).Kind != cfg.NodeJoin || len(graph.Successors(branch)) != 2 {
+		return false
+	}
+	if cond, ok := graph.EdgeCond(branch, trueTarget); !ok || !cond {
+		return false
+	}
+	if cond, ok := graph.EdgeCond(branch, falseTarget); !ok || cond {
+		return false
+	}
+	rhsTarget := falseTarget
+	bypassTarget := trueTarget
+	if region.RHSOnTrue() {
+		rhsTarget, bypassTarget = trueTarget, falseTarget
+	}
+	if bypassTarget != join || len(points) == 0 {
+		return false
+	}
+	owned := make(map[cfg.Point]struct{}, len(points))
+	for _, point := range points {
+		if !validPoint(point) || point == branch || point == join {
+			return false
+		}
+		owned[point] = struct{}{}
+	}
+	if _, ok := owned[rhsTarget]; !ok || len(owned) != len(points) {
+		return false
+	}
+	for point := range owned {
+		for _, prev := range graph.Predecessors(point) {
+			if _, ok := owned[prev]; ok {
+				continue
+			}
+			if point != rhsTarget || prev != branch {
+				return false
+			}
+		}
+	}
+	reachable := map[cfg.Point]struct{}{rhsTarget: {}}
+	stack := []cfg.Point{rhsTarget}
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, next := range graph.Successors(point) {
+			if next == join {
+				continue
+			}
+			if _, ok := owned[next]; !ok {
+				return false
+			}
+			if _, seen := reachable[next]; !seen {
+				reachable[next] = struct{}{}
+				stack = append(stack, next)
+			}
+		}
+	}
+	if len(reachable) != len(owned) {
+		return false
+	}
+	canReachJoin := make(map[cfg.Point]struct{}, len(owned))
+	stack = nil
+	for point := range owned {
+		for _, next := range graph.Successors(point) {
+			if next == join {
+				canReachJoin[point] = struct{}{}
+				stack = append(stack, point)
+				break
+			}
+		}
+	}
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, prev := range graph.Predecessors(point) {
+			if _, ok := owned[prev]; !ok {
+				continue
+			}
+			if _, seen := canReachJoin[prev]; !seen {
+				canReachJoin[prev] = struct{}{}
+				stack = append(stack, prev)
+			}
+		}
+	}
+	return len(canReachJoin) == len(owned)
 }
 
 // DependencyCursor traverses present expression-keyed fact families without

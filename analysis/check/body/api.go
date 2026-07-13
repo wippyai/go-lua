@@ -172,14 +172,16 @@ type Static struct {
 	wtoPlan               *solve.WTOPlan[cfg.Point]
 	concreteFlow          *concreteflow.Plan
 
-	// resultVersionPrefix is the digest state after immutable prepared-body
-	// inputs. A Static is solved many times across prepass, summary convergence,
-	// contexts, and materialization; re-encoding its WIR and imported manifests
-	// on every solve is pure duplication. Per-solve state is appended to a copy
-	// of this writer by computeResultVersion.
-	resultVersionPrefixMu    sync.Mutex
-	resultVersionPrefix      internalhash.Writer
-	resultVersionPrefixReady bool
+	// The immutable digests cache canonical prepared-body inputs. A Static is
+	// solved many times across prepass, summary convergence, contexts, and
+	// materialization; re-encoding its WIR and imported manifests on every solve
+	// is pure duplication. Per-solve state is appended to resultVersionPrefix by
+	// computeResultVersion.
+	immutableDigestMu              sync.Mutex
+	resultVersionPrefix            internalhash.Writer
+	resultVersionPrefixReady       bool
+	boundaryEnvironmentDigest      BoundaryEnvironmentDigest
+	boundaryEnvironmentDigestReady bool
 
 	compositionEligibilityOnce sync.Once
 	compositionEligibility     CompositionEligibility

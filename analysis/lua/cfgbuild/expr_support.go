@@ -150,17 +150,49 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 	b.connect(state, branch)
 	b.shortCircuits.SetGuard(branch, ShortCircuitGuard{Condition: expr.Lhs})
 	join := b.graph.AddNode(cfg.NodeJoin)
+	region := ShortCircuitRegion{Guard: branch, Join: join, RHSOnTrue: rhsCond}
 	if len(rhsCalls) == 0 {
 		eval := b.graph.AddNode(cfg.NodeNoop)
 		b.graph.AddEdge(branch, eval, rhsCond)
 		b.shortCircuits.SetEvaluation(eval, ExpressionEvaluation{Expr: expr.Rhs})
 		b.graph.AddEdge(eval, join, false)
 		b.graph.AddEdge(branch, join, !rhsCond)
+		region.OwnedRHSPoints = []cfg.Point{eval}
+		if rhsCond {
+			region.TrueTarget, region.FalseTarget = eval, join
+		} else {
+			region.TrueTarget, region.FalseTarget = join, eval
+		}
+		region.complete = true
+		b.shortCircuits.setRegion(expr, region)
 		return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
 	}
 	b.graph.AddEdge(branch, join, !rhsCond)
+	rhsStart := b.graph.Size()
 	rhsState := b.appendValueExprCalls(branchPath(branch, rhsCond), stmt, expr.Rhs)
+	rhsEnd := b.graph.Size()
 	b.connect(rhsState, join)
+	for raw := rhsStart; raw < rhsEnd; raw++ {
+		region.OwnedRHSPoints = append(region.OwnedRHSPoints, cfg.Point(raw))
+	}
+	for _, target := range b.graph.Successors(branch) {
+		cond, ok := b.graph.EdgeCond(branch, target)
+		if !ok {
+			continue
+		}
+		if cond {
+			region.TrueTarget = target
+		} else {
+			region.FalseTarget = target
+		}
+	}
+	rhsTarget := region.FalseTarget
+	if rhsCond {
+		rhsTarget = region.TrueTarget
+	}
+	region.complete = len(region.OwnedRHSPoints) != 0 && rhsTarget != join &&
+		region.TrueTarget != region.FalseTarget
+	b.shortCircuits.setRegion(expr, region)
 	return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
 }
 

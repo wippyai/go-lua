@@ -11,8 +11,9 @@ import (
 // logical operators whose right operand must be evaluated on only one branch.
 // It is structural cfgbuild output, not a semantic fact lane.
 type ShortCircuits struct {
-	guards map[cfg.Point]ShortCircuitGuard
-	evals  map[cfg.Point]ExpressionEvaluation
+	guards  map[cfg.Point]ShortCircuitGuard
+	evals   map[cfg.Point]ExpressionEvaluation
+	regions map[*ast.LogicalOpExpr]ShortCircuitRegion
 }
 
 // ShortCircuitGuard records the guard branch point for a short-circuit logical.
@@ -24,6 +25,48 @@ type ShortCircuitGuard struct {
 // expression with no call point of its own.
 type ExpressionEvaluation struct {
 	Expr ast.Expr
+}
+
+// ShortCircuitRegion is the source-authored ownership record for one
+// value-position logical expression. OwnedRHSPoints is the complete CFG region
+// whose execution is gated by the logical's RHS edge. It intentionally owns
+// every point in that region, rather than only today's known effect opcodes, so
+// adding a new effect axis cannot silently escape the structural boundary.
+//
+// Values are valid only when Complete reports true. Incomplete records remain
+// internal to lowering and must not be published as analysis facts.
+type ShortCircuitRegion struct {
+	Guard          cfg.Point
+	TrueTarget     cfg.Point
+	FalseTarget    cfg.Point
+	Join           cfg.Point
+	RHSOnTrue      bool
+	OwnedRHSPoints []cfg.Point
+	complete       bool
+}
+
+// Complete reports whether lowering recorded the entire structural boundary.
+func (r ShortCircuitRegion) Complete() bool { return r.complete }
+
+// Region returns a defensive copy of the exact region for expr.
+func (s ShortCircuits) Region(expr *ast.LogicalOpExpr) (ShortCircuitRegion, bool) {
+	region, ok := s.regions[expr]
+	if !ok {
+		return ShortCircuitRegion{}, false
+	}
+	region.OwnedRHSPoints = append([]cfg.Point(nil), region.OwnedRHSPoints...)
+	return region, true
+}
+
+func (s *ShortCircuits) setRegion(expr *ast.LogicalOpExpr, region ShortCircuitRegion) {
+	if s == nil || expr == nil {
+		return
+	}
+	if s.regions == nil {
+		s.regions = make(map[*ast.LogicalOpExpr]ShortCircuitRegion)
+	}
+	region.OwnedRHSPoints = append([]cfg.Point(nil), region.OwnedRHSPoints...)
+	s.regions[expr] = region
 }
 
 func (s ShortCircuits) Guard(point cfg.Point) (ShortCircuitGuard, bool) {

@@ -15,6 +15,7 @@ import (
 )
 
 const GlobalBoundarySchema = "go-lua.transformer.global-boundary/v1"
+const globalContentIdentitySchema = "go-lua.transformer.global-content/v1"
 
 // GlobalRootClass separates immutable artifact-backed roots from roots whose
 // value can change without an exact dependency invalidation edge.
@@ -47,6 +48,32 @@ const (
 type GlobalContentID [sha256.Size]byte
 
 func (id GlobalContentID) zero() bool { return id == GlobalContentID{} }
+
+// DeriveGlobalContentID derives the immutable identity of one global artifact
+// binding from the complete body-boundary environment that gave the name its
+// meaning. Class and name are domain-separated components, not a SHA(name)
+// surrogate. Mutable roots cannot claim immutable content identity.
+func DeriveGlobalContentID(environment [sha256.Size]byte, class GlobalRootClass, stableName string) (GlobalContentID, error) {
+	if environment == [sha256.Size]byte{} {
+		return GlobalContentID{}, errors.New("transformer: global content identity has no boundary environment")
+	}
+	if !class.valid() || class == GlobalRootMutableUnknown {
+		return GlobalContentID{}, fmt.Errorf("transformer: global content identity has invalid immutable class %d", class)
+	}
+	if stableName == "" || strings.TrimSpace(stableName) != stableName {
+		return GlobalContentID{}, errors.New("transformer: global content identity has invalid stable name")
+	}
+	var canonical bytes.Buffer
+	if err := writeGlobalString(&canonical, globalContentIdentitySchema); err != nil {
+		return GlobalContentID{}, err
+	}
+	canonical.Write(environment[:])
+	canonical.WriteByte(byte(class))
+	if err := writeGlobalString(&canonical, stableName); err != nil {
+		return GlobalContentID{}, err
+	}
+	return sha256.Sum256(canonical.Bytes()), nil
+}
 
 // GlobalRootDescriptor classifies one referenced global root. StableName is
 // diagnostic/canonical identity (e.g. stdlib name or imported alias path);

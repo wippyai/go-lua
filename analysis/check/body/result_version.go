@@ -75,13 +75,13 @@ func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Wri
 			return internalhash.Writer{}, errors.Join(solve.ErrCanceled, err)
 		}
 	}
-	s.resultVersionPrefixMu.Lock()
+	s.immutableDigestMu.Lock()
 	if s.resultVersionPrefixReady {
 		prefix := s.resultVersionPrefix
-		s.resultVersionPrefixMu.Unlock()
+		s.immutableDigestMu.Unlock()
 		return prefix, nil
 	}
-	s.resultVersionPrefixMu.Unlock()
+	s.immutableDigestMu.Unlock()
 
 	// Do not hold the cache lock while encoding: a canceled solve must remain
 	// independently cancelable even if another solve is computing the prefix.
@@ -91,22 +91,84 @@ func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Wri
 	w.label("body-inputs-v1")
 	w.writeWIR(s.wir, s.cfg.Graph)
 	w.writeSymbolTypes(s.symbolTypes)
-	w.writeGlobals(s.globals, s.globalTypes)
-	w.writeManifestSource("signatures", s.signatures.Manifests)
-	w.writeManifestSource("module-types", s.moduleTypes.Manifests)
-	w.writeManifestSource("module-loads", s.moduleLoads.Manifests)
-	w.writeBool("signatures-stdlib", s.signatures.IncludeStdlib)
+	w.writeBoundaryEnvironment()
 	if err := w.err(); err != nil {
 		return internalhash.Writer{}, errors.Join(solve.ErrCanceled, err)
 	}
-	s.resultVersionPrefixMu.Lock()
-	defer s.resultVersionPrefixMu.Unlock()
+	s.immutableDigestMu.Lock()
+	defer s.immutableDigestMu.Unlock()
 	if s.resultVersionPrefixReady {
 		return s.resultVersionPrefix, nil
 	}
 	s.resultVersionPrefix = w.h
 	s.resultVersionPrefixReady = true
 	return s.resultVersionPrefix, nil
+}
+
+// BoundaryEnvironmentDigest is the immutable semantic environment consumed at
+// a prepared body boundary. It deliberately excludes the body's WIR and all
+// per-solve inputs. The digest mirrors the exact symbol/signature/module/global
+// encoding used by ResultVersion, so transformer
+// identities cannot drift onto a parallel notion of environment equality.
+type BoundaryEnvironmentDigest [sha256.Size]byte
+
+// BoundaryEnvironmentDigest returns the prepared body's canonical boundary
+// environment identity. It is stable across distinct bodies prepared against
+// the same environment. Callers needing cancellation should use the Context
+// form.
+func (s *Static) BoundaryEnvironmentDigest() BoundaryEnvironmentDigest {
+	digest, _ := s.BoundaryEnvironmentDigestContext(context.Background())
+	return digest
+}
+
+// BoundaryEnvironmentDigestContext returns BoundaryEnvironmentDigest while
+// observing ctx during potentially large type and manifest encodings.
+func (s *Static) BoundaryEnvironmentDigestContext(ctx context.Context) (BoundaryEnvironmentDigest, error) {
+	if s == nil {
+		return BoundaryEnvironmentDigest{}, nil
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return BoundaryEnvironmentDigest{}, errors.Join(solve.ErrCanceled, err)
+		}
+	}
+	s.immutableDigestMu.Lock()
+	if s.boundaryEnvironmentDigestReady {
+		digest := s.boundaryEnvironmentDigest
+		s.immutableDigestMu.Unlock()
+		return digest, nil
+	}
+	s.immutableDigestMu.Unlock()
+
+	w := newBodyDigestWriter(s, ctx)
+	w.wide = sha256.New()
+	w.label("body-boundary-environment-v1")
+	w.writeBoundaryEnvironment()
+	if err := w.err(); err != nil {
+		return BoundaryEnvironmentDigest{}, errors.Join(solve.ErrCanceled, err)
+	}
+	var digest BoundaryEnvironmentDigest
+	copy(digest[:], w.wide.Sum(nil))
+
+	s.immutableDigestMu.Lock()
+	defer s.immutableDigestMu.Unlock()
+	if s.boundaryEnvironmentDigestReady {
+		return s.boundaryEnvironmentDigest, nil
+	}
+	s.boundaryEnvironmentDigest = digest
+	s.boundaryEnvironmentDigestReady = true
+	return digest, nil
+}
+
+// writeBoundaryEnvironment is the single semantic encoder shared by
+// ResultVersion and BoundaryEnvironmentDigest. Keep additions here rather than
+// teaching transformer identity about body configuration independently.
+func (w *bodyDigestWriter) writeBoundaryEnvironment() {
+	w.writeGlobals(w.static.globals, w.static.globalTypes)
+	w.writeManifestSource("signatures", w.static.signatures.Manifests)
+	w.writeManifestSource("module-types", w.static.moduleTypes.Manifests)
+	w.writeManifestSource("module-loads", w.static.moduleLoads.Manifests)
+	w.writeBool("signatures-stdlib", w.static.signatures.IncludeStdlib)
 }
 
 type bodyDigestWriter struct {
