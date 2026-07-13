@@ -48,10 +48,12 @@ type Config struct {
 	// relationSnapshotAudit observes the fully frozen inactive relation system.
 	// It is test-only and never changes production call routing.
 	relationSnapshotAudit func(relationRunSnapshot) error
-	// enableRelationActivation is an internal differential-test gate. Production
-	// compatibility knob retained while older package tests migrate. Production
-	// now attempts the stricter whole-owner catalog regardless of this value.
+	// enableRelationActivation is the internal differential gate for the older
+	// mixed relation path. It is never enabled by production callers.
 	enableRelationActivation bool
+	// enableStrictRelationPhaseCollapse gates the transactional whole-owner path.
+	// Corpus promotion remains off until its admitted slice is net-positive.
+	enableStrictRelationPhaseCollapse bool
 	// forceLegacyRelations is the test-only escape hatch for differential
 	// oracles. Production callers cannot set it outside this package.
 	forceLegacyRelations bool
@@ -127,7 +129,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		return Result{}, err
 	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = !config.forceLegacyRelations || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
@@ -167,9 +169,9 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	applyInferredParamEntryStates(&keys, bindings, inferred)
 	keys.certifyFinalRelationContextEntries(config.Check.Registry, prepared)
 	var relationActivation *relationRunActivation
-	if !config.forceLegacyRelations {
+	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {
 		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
-		strict := !config.enableRelationActivation
+		strict := config.enableStrictRelationPhaseCollapse
 		if !strict {
 			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
 		} else {
@@ -273,7 +275,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = !config.forceLegacyRelations || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	if fnType, ok := lowerFunctionExprType(fn, bindings, config.Check.ModuleTypes); ok {
@@ -304,9 +306,9 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		return Result{}, err
 	}
 	var relationActivation *relationRunActivation
-	if !config.forceLegacyRelations {
+	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {
 		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
-		strict := !config.enableRelationActivation
+		strict := config.enableStrictRelationPhaseCollapse
 		if !strict {
 			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
 		} else {

@@ -40,7 +40,7 @@ return wrapper()
 	if err != nil {
 		t.Fatal(err)
 	}
-	strict, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: strictStats})
+	strict, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: strictStats, enableStrictRelationPhaseCollapse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ return mixed()
 		t.Fatal(err)
 	}
 	stats := &Stats{}
-	strict, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: stats})
+	strict, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: stats, enableStrictRelationPhaseCollapse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ local out = ""
 		t.Fatal(err)
 	}
 	stats := &Stats{}
-	strict, err := RunChunk(stmts, Config{Check: check, Stats: stats})
+	strict, err := RunChunk(stmts, Config{Check: check, Stats: stats, enableStrictRelationPhaseCollapse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ return wrapper()
 	stats := &Stats{}
 	result, err := RunChunk(stmts, Config{
 		Check: body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO},
-		Stats: stats, strictRelationForceReject: true,
+		Stats: stats, enableStrictRelationPhaseCollapse: true, strictRelationForceReject: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestStrictRelationPhaseCollapseStatsNilRejectionFallsBackWholly(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	rejected, err := RunChunk(stmts, Config{Check: check, strictRelationForceReject: true})
+	rejected, err := RunChunk(stmts, Config{Check: check, enableStrictRelationPhaseCollapse: true, strictRelationForceReject: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,9 +238,10 @@ func TestStrictRelationPhaseCollapseCancellationReleasesRetainedResults(t *testi
 	ctx, cancel := context.WithCancel(context.Background())
 	stats := &Stats{}
 	_, err := RunChunk(stmts, Config{
-		Context: ctx,
-		Check:   body.Config{Registry: standard.Registry(), TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO},
-		Stats:   stats,
+		Context:                           ctx,
+		Check:                             body.Config{Registry: standard.Registry(), TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO},
+		Stats:                             stats,
+		enableStrictRelationPhaseCollapse: true,
 		WidenAt: func(summary.SummaryKey) bool {
 			cancel()
 			return false
