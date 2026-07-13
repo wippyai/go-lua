@@ -238,6 +238,16 @@ func (a *relationRunActivation) materializedOwnerRuntime(
 	legacyResolution uint64,
 ) relationMaterializedRuntime {
 	out := relationMaterializedRuntime{cache: legacyCache, resolution: legacyResolution, strict: a != nil && a.strict}
+	// A strict contextual equation may be pinned from a parameterized lexical
+	// relation while its independently validated Result is retained under the
+	// contextual SummaryKey. It needs no call-routing consumer identity.
+	if retained, ok := a.takeRetainedResult(key, prepared); ok {
+		out.active = true
+		out.retained = retained.result
+		out.inputs = retained.inputs
+		out.cache = legacyCache.withoutRetainedHandoff()
+		return out
+	}
 	owner, ok := a.ownerIdentity(key, prepared)
 	if !ok {
 		return out

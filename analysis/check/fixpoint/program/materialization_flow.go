@@ -268,6 +268,20 @@ func obligationParamSeeds(reg *axis.Registry, keys programKeys, summaries summar
 		// retained relation result differ from the concrete replay.
 		return nil
 	}
+	// Do not consume the function summary unless at least one parameter can
+	// actually receive an obligation seed. Besides avoiding needless work, the
+	// read is part of ResultVersion lineage: recording a dependency that cannot
+	// affect EntryState makes equivalent materialization paths version-different.
+	eligible := false
+	for _, slot := range slots {
+		if slot.Symbol != 0 && !slot.Vararg && slot.Type == nil {
+			eligible = true
+			break
+		}
+	}
+	if !eligible {
+		return nil
+	}
 	callee, ok := keys.functionSymbol(fn)
 	if !ok {
 		return nil

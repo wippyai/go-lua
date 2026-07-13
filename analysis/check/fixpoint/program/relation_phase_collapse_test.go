@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -76,6 +77,42 @@ return wrapper()
 		t.Fatalf("authoritative body solves diverge from phase totals: legacy %d/%d strict %d/%d",
 			legacyStats.Body.BodySolves, legacySolves, strictStats.Body.BodySolves, strictSolves)
 	}
+}
+
+func TestStrictParameterizedIsStrCollapsesCertifiedContextEquations(t *testing.T) {
+	stmts := parseChunk(t, `
+local function is_str(value: any): boolean
+  return type(value) == "string" and (value :: string) ~= ""
+end
+local first = is_str("value")
+local second = is_str(7)
+return first, second
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
+	check := body.Config{Registry: reg, TypeValues: typevalue.NewCache(), Schedule: transfer.ScheduleWTO, Signatures: signaturelookup.Source{IncludeStdlib: true}}
+	legacyStats, strictStats := &Stats{}, &Stats{}
+	legacy, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: legacyStats, forceLegacyRelations: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strict, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: strictStats, enableStrictRelationPhaseCollapse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compareStrictPhaseCollapseParity(t, reg, legacy, strict)
+	if strictStats.RelationUnexpectedMisses != 0 || strictStats.RelationActivationFallbacks != 0 {
+		t.Fatalf("strict misses/fallbacks=%d/%d", strictStats.RelationUnexpectedMisses, strictStats.RelationActivationFallbacks)
+	}
+	if strictStats.RelationContextsSpecialized != 1 || strictStats.RelationSummaryEquationsOmitted != 1 || strictStats.RelationMaterializationsReused != 1 {
+		t.Fatalf("strict contexts/omitted/reused=%d/%d/%d", strictStats.RelationContextsSpecialized, strictStats.RelationSummaryEquationsOmitted, strictStats.RelationMaterializationsReused)
+	}
+	legacySolves := legacyStats.PrepassBodySolves + legacyStats.SummaryBodySolves + legacyStats.MaterializeBodySolves
+	strictSolves := strictStats.PrepassBodySolves + strictStats.SummaryBodySolves + strictStats.MaterializeBodySolves
+	if strictSolves >= legacySolves || strictStats.Body.Transfer.Solver.TransferCalls >= legacyStats.Body.Transfer.Solver.TransferCalls {
+		t.Fatalf("work did not fall: legacy=%d/%d strict=%d/%d", legacySolves, legacyStats.Body.Transfer.Solver.TransferCalls, strictSolves, strictStats.Body.Transfer.Solver.TransferCalls)
+	}
+	t.Logf("is_str work legacy=%d solves/%d transfers strict=%d/%d", legacySolves, legacyStats.Body.Transfer.Solver.TransferCalls, strictSolves, strictStats.Body.Transfer.Solver.TransferCalls)
 }
 
 func strictDiagnosticCount(result *body.Result) int {

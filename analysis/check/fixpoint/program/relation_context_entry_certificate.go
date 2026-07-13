@@ -67,6 +67,7 @@ func certifyRelationContextEntry(
 	bodyDigest, generation uint64,
 	entry state.State,
 	keys *keyspace.KeySpace,
+	fullProducts ...bool,
 ) *relationContextEntryCertificate {
 	if reg == nil || bindings == nil || fn == nil || keys == nil ||
 		context.Entry == (summary.EntryKey{}) || bodyDigest == 0 || generation == 0 {
@@ -101,7 +102,11 @@ func certifyRelationContextEntry(
 		}
 		slot := statekey.SymbolValue(param.Symbol)
 		value := entry.ReadValue(reg, slot)
-		if slot == 0 || !contextEntryParamValueUseful(reg, value) {
+		useful := contextEntryParamValueUseful(reg, value)
+		if len(fullProducts) != 0 && fullProducts[0] {
+			useful = contextEntryValueUseful(reg, value)
+		}
+		if slot == 0 || !useful {
 			return nil
 		}
 		params = append(params, relationContextEntryParam{slot: slot, symbol: param.Symbol, value: value})
@@ -233,7 +238,7 @@ func (k *programKeys) certifyFinalRelationContextEntries(reg *axis.Registry, pre
 		}
 		context.relationContextEntry = certifyRelationContextEntry(
 			reg, k.bindings, context.funcExpr, static.OperationPlan().BoundaryParams(), static.OperationPlan().BoundaryCaptures(), context.key, base,
-			static.IdentityDigest(), generation, context.entryState, context.entryKeys,
+			static.IdentityDigest(), generation, context.entryState, context.entryKeys, k.certifyRelationFullProducts,
 		)
 	}
 }

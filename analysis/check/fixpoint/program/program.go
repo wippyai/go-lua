@@ -136,7 +136,8 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		return Result{}, err
 	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationFullProducts = config.enableStrictRelationPhaseCollapse
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
@@ -217,6 +218,12 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	}
 	keys.contexts.ForEach(func(context keyedFunction) {
 		static := prepared.function(context.funcExpr)
+		if relationActivation.omitsEquation(context.key, static) {
+			if config.Stats != nil {
+				config.Stats.RelationSummaryEquationsOmitted++
+			}
+			return
+		}
 		runtime := relationActivation.contextOwnerRuntime(context, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, context.key))
 		functions = append(functions, boundFunction(context, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
 	})
@@ -283,7 +290,8 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	}
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
+	keys.certifyRelationFullProducts = config.enableStrictRelationPhaseCollapse
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	if fnType, ok := lowerFunctionExprType(fn, bindings, config.Check.ModuleTypes); ok {

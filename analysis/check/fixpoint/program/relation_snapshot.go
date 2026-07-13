@@ -9,16 +9,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-// PinnedSummaries projects every zero-boundary frozen producer into the
-// canonical Summary vocabulary.  These entries are immutable query inputs,
-// not equations.  False rejects the complete activation transaction.
+// PinnedSummaries returns the complete equation set discharged by a strict
+// transaction. Zero-boundary producers publish their lexical summary;
+// parameterized producers publish only exact certified context summaries, so
+// their unbound lexical base remains a normal equation. False rejects the
+// complete activation transaction.
 func (s relationRunSnapshot) PinnedSummaries() ([]summary.EntrySummary, bool) {
 	identities := s.Entries()
-	out := make([]summary.EntrySummary, 0, len(identities))
+	out := make([]summary.EntrySummary, 0, len(identities)+len(s.contexts))
+	contextCount := make(map[summary.SummaryKey]int, len(s.contexts))
+	for _, contextual := range s.contexts {
+		contextCount[contextual.base.Summary]++
+		out = append(out, summary.EntrySummary{Key: contextual.context, Summary: contextual.summary})
+	}
 	for _, identity := range identities {
 		relation, ok := s.Lookup(identity)
-		if !ok || relation.Shape() != (transformer.Shape{}) {
+		if !ok {
 			return nil, false
+		}
+		if relation.Shape() != (transformer.Shape{}) {
+			if contextCount[identity.Summary] == 0 {
+				return nil, false
+			}
+			continue
 		}
 		cursor, err := transformer.NewBindingCursor(relation.Shape(), nil, nil)
 		if err != nil {
@@ -39,6 +52,11 @@ func (s relationRunSnapshot) PinnedSummaries() ([]summary.EntrySummary, bool) {
 		}
 		return 0
 	})
+	for i := 1; i < len(out); i++ {
+		if out[i-1].Key == out[i].Key {
+			return nil, false
+		}
+	}
 	return out, true
 }
 

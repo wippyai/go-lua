@@ -66,6 +66,10 @@ type programKeys struct {
 	// certifyRelationContexts keeps the expensive full-domain entry proof off
 	// the legacy hot path. It is enabled only by relation activation/audits.
 	certifyRelationContexts bool
+	// Strict symbolic validation accepts an exact non-Top product even when it
+	// lacks a portable call-boundary type. The certificate still reconstructs
+	// and compares the complete registered State domain.
+	certifyRelationFullProducts bool
 }
 
 // functionSymbol returns the function symbol owning fn.

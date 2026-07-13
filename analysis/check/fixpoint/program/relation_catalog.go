@@ -37,11 +37,12 @@ type relationCellIdentity struct {
 }
 
 type relationCatalogEntry struct {
-	identity      relationCellIdentity
-	function      *ast.FunctionExpr
-	compiler      *transformer.PreparedPlanCompiler
-	direct        transformer.DirectCallCatalog
-	hasEntryState bool
+	identity       relationCellIdentity
+	function       *ast.FunctionExpr
+	compiler       *transformer.PreparedPlanCompiler
+	direct         transformer.DirectCallCatalog
+	globalBoundary transformer.GlobalBoundary
+	hasEntryState  bool
 }
 
 // relationConsumerIdentity is the cache-fence authority for one query owner.
@@ -73,6 +74,8 @@ type relationContextCandidate struct {
 	discoveryGeneration uint64
 	params              []product.Value
 	captures            []product.Value
+	globalBoundary      transformer.GlobalBoundary
+	globalBindings      []transformer.GlobalRootBinding
 	paths               []pathdom.Path
 	certificate         *relationContextEntryCertificate
 }
@@ -669,17 +672,35 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 		}
 		relation, ok := relations.Lookup(candidate.base.Cell)
 		plan := candidate.base.Prepared.OperationPlan()
-		if plan == nil || len(plan.BoundaryGlobals()) != 0 || !candidate.certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
+		if plan == nil || !candidate.certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context boundary authority drift")}
 		}
 		if !ok || relation.Shape().Params != uint32(len(candidate.params)) || relation.Shape().Captures != uint32(len(candidate.captures)) ||
-			relation.Shape().Globals != 0 || relation.Shape().Results != 0 || relation.Shape().HeapTemplates != 0 {
+			relation.Shape().Globals != uint32(len(plan.BoundaryGlobals())) || relation.Shape().Results != 0 || relation.Shape().HeapTemplates != 0 {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context relation shape drift")}
 		}
-		values := make([]product.Value, 0, len(candidate.params)+len(candidate.captures))
+		globalValues := []product.Value(nil)
+		globalPaths := []pathdom.Path(nil)
+		if len(plan.BoundaryGlobals()) != 0 {
+			entryIndex, present := c.byKey[candidate.base.Summary]
+			if !present || entryIndex < 0 || entryIndex >= len(c.entries) ||
+				c.entries[entryIndex].identity != candidate.base ||
+				c.entries[entryIndex].globalBoundary.ContentID() != candidate.globalBoundary.ContentID() {
+				return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context global boundary identity drift")}
+			}
+			bound, bindErr := transformer.InstantiateGlobalBoundary(candidate.globalBoundary, candidate.globalBindings)
+			if bindErr != nil {
+				return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: bindErr}
+			}
+			globalValues, globalPaths = bound.Values(), bound.Paths()
+		}
+		values := make([]product.Value, 0, len(candidate.params)+len(candidate.captures)+len(globalValues))
 		values = append(values, candidate.params...)
 		values = append(values, candidate.captures...)
-		cursor, cursorErr := transformer.NewBindingCursor(relation.Shape(), values, candidate.paths)
+		values = append(values, globalValues...)
+		paths := append([]pathdom.Path(nil), candidate.paths...)
+		paths = append(paths, globalPaths...)
+		cursor, cursorErr := transformer.NewBindingCursor(relation.Shape(), values, paths)
 		if cursorErr != nil {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeEquation, Identity: candidate.base, Err: cursorErr}
 		}
