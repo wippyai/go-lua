@@ -51,12 +51,28 @@ func TestFrozenGraphStrStrictDifferential(t *testing.T) {
 	}
 	legacySolves, legacyTransfers := frozenFunctionWork(t, bindings, legacy, legacyStats.BodySolveAttribution(), 95, 98)
 	strictSolves, strictTransfers := frozenFunctionWork(t, bindings, strict, strictStats.BodySolveAttribution(), 95, 98)
+	legacyReservedSolves, legacyReservedTransfers := frozenFunctionWork(t, bindings, legacy, legacyStats.BodySolveAttribution(), 104, 106)
+	strictReservedSolves, strictReservedTransfers := frozenFunctionWork(t, bindings, strict, strictStats.BodySolveAttribution(), 104, 106)
 	t.Logf("FROZEN_GRAPH_STR legacy=%d/%d strict=%d/%d planner=%d/%d/%d/%d contexts/omitted/reused=%d/%d/%d misses/fallbacks=%d/%d", legacySolves, legacyTransfers, strictSolves, strictTransfers,
 		strictStats.RelationPlannerOwnersScanned, strictStats.RelationPlannerOwnersPrefiltered, strictStats.RelationPlannerOwnersCompiled, strictStats.RelationPlannerOwnersActivated,
 		strictStats.RelationContextsSpecialized, strictStats.RelationSummaryEquationsOmitted, strictStats.RelationMaterializationsReused,
 		strictStats.RelationUnexpectedMisses, strictStats.RelationActivationFallbacks)
 	if strictSolves >= legacySolves || strictTransfers >= legacyTransfers {
 		t.Fatalf("graph.str work did not fall: legacy=%d/%d strict=%d/%d", legacySolves, legacyTransfers, strictSolves, strictTransfers)
+	}
+	if legacyReservedSolves != 8 || legacyReservedTransfers != 40 || strictReservedSolves != 4 || strictReservedTransfers != 20 {
+		t.Fatalf("is_reserved_id work = legacy %d/%d strict %d/%d, want 8/40 -> 4/20",
+			legacyReservedSolves, legacyReservedTransfers, strictReservedSolves, strictReservedTransfers)
+	}
+	if legacyStats.Body.BodySolves != 361 || legacyStats.Body.Transfer.Solver.TransferCalls != 18763 ||
+		strictStats.Body.BodySolves != 315 || strictStats.Body.Transfer.Solver.TransferCalls != 18425 {
+		t.Fatalf("graph aggregate = legacy %d/%d strict %d/%d, want 361/18763 -> 315/18425",
+			legacyStats.Body.BodySolves, legacyStats.Body.Transfer.Solver.TransferCalls,
+			strictStats.Body.BodySolves, strictStats.Body.Transfer.Solver.TransferCalls)
+	}
+	if strictStats.RelationContextsSpecialized != 20 || strictStats.RelationSummaryEquationsOmitted != 23 || strictStats.RelationMaterializationsReused != 46 {
+		t.Fatalf("graph contexts/omitted/reused = %d/%d/%d, want 20/23/46",
+			strictStats.RelationContextsSpecialized, strictStats.RelationSummaryEquationsOmitted, strictStats.RelationMaterializationsReused)
 	}
 }
 

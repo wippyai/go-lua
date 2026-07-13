@@ -170,7 +170,7 @@ func (signatureCallPlanHandler) Preflight(ctx planCompileContext, point cfg.Poin
 		}
 		return nil
 	}
-	if _, ok := effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, sig); ok {
+	if _, ok := exactStaticSignatureReturnsAtPoint(ctx, point, op); ok {
 		if _, exists := ctx.facts.CallSiteView(point); !exists {
 			return fmt.Errorf("signature call: call-site payload missing")
 		}
@@ -286,7 +286,7 @@ func bindStaticSignatureTerms(ctx *planCompileContext) error {
 			ctx.expressions[ref] = []ValueTerm{result}
 			continue
 		}
-		values, ok := effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, op.Signature())
+		values, ok := exactStaticSignatureReturnsAtPoint(*ctx, point, op)
 		if !ok {
 			continue
 		}
@@ -311,6 +311,17 @@ func bindStaticSignatureTerms(ctx *planCompileContext) error {
 		ctx.expressions[ref] = terms
 	}
 	return nil
+}
+
+func exactStaticSignatureReturnsAtPoint(ctx planCompileContext, point cfg.Point, op operationplan.SignatureCallOperation) ([]product.Value, bool) {
+	site, ok := ctx.facts.CallSiteView(point)
+	if !ok {
+		return nil, false
+	}
+	if site.MethodName() != "" {
+		return effectlowering.StaticScalarStringMethodReturns(ctx.registry, nil, op.Signature(), site)
+	}
+	return effectlowering.StaticScalarSignatureReturns(ctx.registry, nil, op.Signature())
 }
 
 type genericForPlanHandler struct{}
@@ -1293,9 +1304,10 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 				}
 				return term, nil
 			}
-			if _, certified := ctx.predicateExpressions[source.ExprRef]; certified &&
-				operation.Kind() == factflow.ExpressionOperationBinary &&
-				(operation.Op() == "==" || operation.Op() == "~=" || operation.Op() == "and") {
+			_, certifiedPredicate := ctx.predicateExpressions[source.ExprRef]
+			exactScalarComparison := operation.Kind() == factflow.ExpressionOperationBinary &&
+				(operation.Op() == "==" || operation.Op() == "~=")
+			if exactScalarComparison || certifiedPredicate && operation.Kind() == factflow.ExpressionOperationBinary && operation.Op() == "and" {
 				if active == nil {
 					active = make(map[factflow.ExprRef]bool, 1)
 				}
@@ -1308,6 +1320,11 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 				}
 				if rightErr != nil {
 					return 0, fmt.Errorf("structural predicate %d right operand: %w", source.ExprRef, rightErr)
+				}
+				safeScalarComparison := compilerConstantScalarValue(ctx.builder.Arena(), left) ||
+					compilerConstantScalarValue(ctx.builder.Arena(), right)
+				if exactScalarComparison && !certifiedPredicate && !safeScalarComparison {
+					return 0, fmt.Errorf("scalar comparison %d has non-scalar or metamethod-capable operands", source.ExprRef)
 				}
 				term, exact := ctx.builder.Arena().ScalarBinaryValue(operation.Op(), left, right)
 				if !exact || term == 0 {
@@ -1412,6 +1429,14 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 	return ctx.builder.Arena().Constant(value), nil
 }
 
+func compilerConstantScalarValue(arena *Arena, term ValueTerm) bool {
+	if arena == nil || term == 0 || int(term) >= len(arena.values) {
+		return false
+	}
+	node := arena.values[term]
+	return node.op == valueConstant && scalarValue(arena.reg, node.value)
+}
+
 func exactStringConcatSourceTerm(ctx planCompileContext, source factflow.ValueSource, active map[factflow.ExprRef]bool) (ValueTerm, error) {
 	if !source.Valid() || source.Expanded || source.Adjusted || source.OpenTail {
 		return 0, fmt.Errorf("non-scalar or malformed operand")
@@ -1499,8 +1524,19 @@ func scalarValue(reg *axis.Registry, value product.Value) bool {
 		return false
 	}
 	switch t.Kind() {
-	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal:
+	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String:
 		return true
+	case kind.Literal:
+		literal, exact := t.(*typ.Literal)
+		if !exact {
+			return false
+		}
+		switch literal.Base {
+		case kind.Boolean, kind.Number, kind.Integer, kind.String:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}

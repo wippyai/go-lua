@@ -6,11 +6,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -134,5 +137,34 @@ func TestPlanCompilerAdjustedMultiReturnSignatureSelectsFirstWithoutSourceExpr(t
 				t.Fatalf("adjusted signature relation accepted/exact=%v/%v got=%#v want=%#v", accepted, exact, got, want)
 			}
 		})
+	}
+}
+
+func TestPlanCompilerRejectsUncertifiedCompositeEquality(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	leftSymbol, rightSymbol := symbol.ID(8701), symbol.ID(8702)
+	operandShape, _ := factflow.NewValueSourceShape(false, false, false, false)
+	left, _ := factflow.NewPathValueSource(pathdom.NewPath(leftSymbol, "left").Key(), 0, 0, 0, operandShape)
+	right, _ := factflow.NewPathValueSource(pathdom.NewPath(rightSymbol, "right").Key(), 0, 0, 0, operandShape)
+	operation, ok := factflow.NewBinaryExpressionOperation("==", left, right)
+	if !ok {
+		t.Fatal("composite equality operation rejected")
+	}
+	ref := factflow.ExprRef(71)
+	returnShape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	returned, _ := factflow.NewExpressionValueSource(ref, 0, 0, 0, returnShape)
+	contract := typevalue.NewCache().FromTypeWithWitness(reg, typ.NewArray(typ.String))
+	plan := operationplan.New(graph, factflow.FactsInput{
+		ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{ref: operation},
+		Returns:              map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{returned})},
+	}).WithBoundaryParams([]symbol.ID{leftSymbol, rightSymbol}).
+		WithBoundaryParamContracts([]product.Value{contract, contract})
+	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{Params: 2})
+	if relation.ContextualReason() == "" || relation.Rows() != 0 {
+		t.Fatalf("uncertified array equality compiled symbolically: reason=%q rows=%d", relation.ContextualReason(), relation.Rows())
 	}
 }

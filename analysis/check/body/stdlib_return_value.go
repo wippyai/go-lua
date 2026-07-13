@@ -194,15 +194,9 @@ func stringMatchReturnValue(
 	ctx effectlowering.SignatureReturnContext,
 ) (product.Value, bool) {
 	if pattern, ok := stringPatternLiteral(reg, resolver, ctx, 1); ok {
-		captures := stringlib.CaptureTypes(pattern)
-		if len(captures) == 0 {
-			if ctx.Index == 0 {
-				return returnValueWithType(reg, normalize.Optional(typ.String)), true
-			}
-			return typevalue.Nil(reg), true
-		}
-		if ctx.Index < len(captures) {
-			return returnValueWithType(reg, stringlib.OptionalCaptureValue(captures[ctx.Index])), true
+		returns := stringlib.MatchReturnTypes(pattern)
+		if ctx.Index < len(returns) {
+			return returnValueWithType(reg, returns[ctx.Index]), true
 		}
 		return typevalue.Nil(reg), true
 	}

@@ -2560,7 +2560,9 @@ analysis/engine/effectlowering,signature_producer.go,SignatureProducer.LookupStr
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer.OutcomeProvider,method,analysis/engine/effectlowering,,unclassified,,,
 analysis/engine/effectlowering,signature_producer.go,SignatureProducer.SignatureForSite,method,analysis/engine/effectlowering,,unclassified,,,
 analysis/engine/effectlowering,static_allocation.go,StaticSignatureAllocationTemplate,func,analysis/engine/effectlowering,,unclassified,,,
+analysis/engine/effectlowering,static_signature.go,RefineStaticStringMethodSignature,func,analysis/engine/effectlowering,analysis/engine/effectlowering,boundary-provider,boundary:static-string-method-signature,go-lua.signature.function/v1,fixture:string-method-signature
 analysis/engine/effectlowering,static_signature.go,StaticScalarSignatureReturns,func,analysis/engine/effectlowering,,unclassified,,,
+analysis/engine/effectlowering,static_signature.go,StaticScalarStringMethodReturns,func,analysis/engine/effectlowering,analysis/engine/effectlowering,boundary-provider,boundary:static-string-method-signature,go-lua.signature.function/v1,fixture:string-method-signature
 analysis/engine/factapply,applicator.go,ClosedDynamicAllValueInvariant,type,analysis/engine/factapply,,unclassified,,,
 analysis/engine/factapply,applicator.go,CovariantWiden,type,analysis/engine/factapply,,unclassified,,,
 analysis/engine/factapply,applicator.go,FactsEdgeTransferConfig,type,analysis/engine/factapply,,unclassified,,,

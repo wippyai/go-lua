@@ -4,15 +4,20 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.T) {
@@ -187,6 +192,69 @@ func TestParamPreservationLedgerRejectsAliasMutationEscapeAndCall(t *testing.T) 
 			t.Fatalf("p = 2 relation did not fail closed: %q/%d rows", relation.ContextualReason(), relation.Rows())
 		}
 	})
+}
+
+func TestParamPreservationLedgerPreservesOnlyExactBoundaryStringMatchReceiver(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+	param := symbol.ID(8251)
+
+	check := func(t *testing.T, site factflow.CallSite, sig signature.Function, want bool) {
+		t.Helper()
+		op, ok := operationplan.NewSignatureCallOperation(sig)
+		if !ok {
+			t.Fatal("signature operation rejected")
+		}
+		plan := operationplan.New(graph, factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{call: site}}).
+			WithBoundaryParams([]symbol.ID{param}).
+			WithBoundaryParamContracts([]product.Value{typevalue.String(reg)}).
+			WithSignatureCalls(map[cfg.Point]operationplan.SignatureCallOperation{call: op})
+		ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts(), builder: NewBuilder(reg, Shape{Params: 1}, DefaultOutputCapabilityRegistry(), plan)}
+		ledger := newParamPreservationLedger(1)
+		ledger.observeFact(ctx, call, operationplan.CallSite)
+		if got := ledger.preserves(0); got != want {
+			t.Fatalf("preserves = %v, want %v", got, want)
+		}
+	}
+
+	shape, _ := factflow.NewValueSourceShape(false, false, false, false)
+	receiver := pathdom.NewPath(param, "id")
+	receiverSource, _ := factflow.NewPathValueSource(receiver.Key(), 0, 0, 0, shape)
+	pattern, _ := factflow.NewStringLiteralValueSource("^__", 0, 0, 0, shape)
+	result := factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 0, 0, 0, pathdom.Path{})
+	matchSite := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: receiver.Field("match"), CalleeMemberAccess: true,
+		ReceiverPath: receiver, HasReceiverPath: true, MethodPath: receiver.Field("match"), HasMethodPath: true, MethodName: "match",
+		ReceiverSource: receiverSource, HasReceiverSource: true,
+		ArgumentSources: []factflow.ValueSource{pattern}, ResultTargets: []factflow.CallResultTarget{result},
+	})
+	base, _ := (signaturelookup.Source{IncludeStdlib: true}).Lookup("string.match")
+	refined, exact := effectlowering.RefineStaticStringMethodSignature(reg, base, matchSite.View())
+	if !exact {
+		t.Fatal("exact match fixture did not refine")
+	}
+	check(t, matchSite, refined, true)
+
+	effectful := refined.Clone()
+	effectful.Effect = effect.Row{Tail: &effect.Var{Name: "e"}}
+	check(t, matchSite, effectful, false)
+
+	gsubSite := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: receiver.Field("gsub"), CalleeMemberAccess: true,
+		ReceiverPath: receiver, HasReceiverPath: true, MethodPath: receiver.Field("gsub"), HasMethodPath: true, MethodName: "gsub",
+		ReceiverSource: receiverSource, HasReceiverSource: true, ResultTargets: []factflow.CallResultTarget{result},
+	})
+	check(t, gsubSite, signature.Function{Type: typ.Func().Returns(typ.String).Build()}, false)
+
+	malformedMatch := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: receiver.Field("match"), CalleeMemberAccess: true,
+		ReceiverPath: receiver, HasReceiverPath: true, MethodPath: receiver.Field("match"), HasMethodPath: true, MethodName: "match",
+		ReceiverSource: receiverSource, HasReceiverSource: true, ResultTargets: []factflow.CallResultTarget{result},
+	})
+	check(t, malformedMatch, refined, false)
 }
 
 func TestParamPreservationLedgerParticipatesInCloneEqualityAndHash(t *testing.T) {

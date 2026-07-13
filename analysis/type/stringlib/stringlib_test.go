@@ -36,6 +36,20 @@ func TestCaptureTypes(t *testing.T) {
 	}
 }
 
+func TestMatchReturnTypes(t *testing.T) {
+	for _, test := range []struct {
+		pattern string
+		want    []typ.Type
+	}{
+		{pattern: "^__", want: []typ.Type{normalize.Optional(typ.String)}},
+		{pattern: "()(%w+)", want: []typ.Type{normalize.Optional(typ.Integer), normalize.Optional(typ.String)}},
+	} {
+		if got := MatchReturnTypes(test.pattern); !sameTypes(got, test.want) {
+			t.Fatalf("MatchReturnTypes(%q) = %v, want %v", test.pattern, got, test.want)
+		}
+	}
+}
+
 func TestStringLibraryReturnShapes(t *testing.T) {
 	captureValue := typeexpr.Union(typ.String, typ.Integer)
 

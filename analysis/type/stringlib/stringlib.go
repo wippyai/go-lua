@@ -155,6 +155,13 @@ func captureReturnTypes(captures []typ.Type, general bool) []typ.Type {
 	return out
 }
 
+// MatchReturnTypes returns the exact result tuple for one literal Lua pattern.
+// A pattern without captures returns the matched string or nil; otherwise each
+// syntactic capture owns one optional result slot in source order.
+func MatchReturnTypes(pattern string) []typ.Type {
+	return captureReturnTypes(CaptureTypes(pattern), false)
+}
+
 // CaptureTypes returns the capture result types implied by a Lua pattern
 // literal. Empty captures "()" are position captures and produce integers; all
 // other captures produce strings. It deliberately does not validate the pattern.

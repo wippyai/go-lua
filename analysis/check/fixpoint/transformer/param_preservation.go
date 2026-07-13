@@ -1,6 +1,9 @@
 package transformer
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -86,6 +89,17 @@ func (l *paramPreservationLedger) invalidate(index uint32) {
 	l.words[index/64] &^= uint64(1) << (index % 64)
 }
 
+func (l *paramPreservationLedger) retainOnly(index uint32) {
+	if l == nil {
+		return
+	}
+	retained := l.preserves(index)
+	l.invalidateAll()
+	if retained && int(index/64) < len(l.words) {
+		l.words[index/64] |= uint64(1) << (index % 64)
+	}
+}
+
 func (l paramPreservationLedger) preserves(index uint32) bool {
 	return int(index/64) < len(l.words) && l.words[index/64]&(uint64(1)<<(index%64)) != 0
 }
@@ -137,8 +151,22 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 		// capabilities remain independently represented by output operations;
 		// preservation only certifies the formal's post-state identity.
 		return
-	case operationplan.CallSite,
-		operationplan.DynamicIndexExpression,
+	case operationplan.CallSite:
+		// Only the exact no-capture string.match slice proves a non-escaping
+		// receiver: its pattern is a literal and it has no callback argument.
+		// Preserve that immutable string boundary root and nothing else. Even
+		// otherwise-pure methods such as gsub can invoke caller-supplied callbacks,
+		// so all other calls invalidate the complete ledger.
+		operation, sealed := ctx.plan.SignatureCallOperation(point)
+		if sealed {
+			if receiver, exact := exactPreservedBoundaryStringMatchReceiver(ctx, point, operation); exact {
+				l.retainOnly(receiver)
+				return
+			}
+		}
+		l.invalidateAll()
+		return
+	case operationplan.DynamicIndexExpression,
 		operationplan.DynamicIndexWrite,
 		operationplan.PathDescendantInvalidation:
 		l.invalidateAll()
@@ -146,6 +174,38 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 	default:
 		l.invalidateAll()
 	}
+}
+
+func exactPreservedBoundaryStringMatchReceiver(ctx planCompileContext, point cfg.Point, operation operationplan.SignatureCallOperation) (uint32, bool) {
+	if ctx.plan == nil || ctx.registry == nil {
+		return 0, false
+	}
+	site, ok := ctx.facts.CallSiteView(point)
+	if !ok || site.MethodName() != "match" {
+		return 0, false
+	}
+	if _, exact := effectlowering.StaticScalarStringMethodReturns(ctx.registry, nil, operation.Signature(), site); !exact {
+		return 0, false
+	}
+	receiver, ok := site.ReceiverPath()
+	if !ok || receiver.Symbol == 0 || receiver.Version != 0 || len(receiver.Segments) != 0 {
+		return 0, false
+	}
+	method, hasMethod := site.MethodPath()
+	if !hasMethod || !method.Equal(receiver.Field("match")) || !site.CalleePathEqual(method) {
+		return 0, false
+	}
+	source, hasSource := site.ReceiverSource()
+	if !hasSource || !source.Valid() || source.Kind != factflow.ValueSourcePath || source.PathKey != receiver.Key() ||
+		source.Expanded || source.Adjusted || source.OpenTail {
+		return 0, false
+	}
+	index, boundary := ctx.plan.BoundaryParamIndex(receiver.Symbol)
+	contracts := ctx.plan.BoundaryParamContracts()
+	if !boundary || index < 0 || index >= len(contracts) || !product.Equal(ctx.registry, contracts[index], typevalue.String(ctx.registry)) {
+		return 0, false
+	}
+	return uint32(index), true
 }
 
 func (l *paramPreservationLedger) observeExtension(kind operationplan.ExtensionKind) {

@@ -3,6 +3,7 @@ package body
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -15,8 +16,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cfg.Graph, facts factflow.Facts, producer *effectlowering.SignatureProducer) map[cfg.Point]operationplan.SignatureCallOperation {
-	if reg == nil || bindings == nil || graph == nil || producer == nil {
+func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cfg.Graph, facts factflow.Facts, plan *operationplan.Plan, producer *effectlowering.SignatureProducer) map[cfg.Point]operationplan.SignatureCallOperation {
+	if reg == nil || bindings == nil || graph == nil || plan == nil || producer == nil {
 		return nil
 	}
 	out := make(map[cfg.Point]operationplan.SignatureCallOperation, facts.CallSiteCount())
@@ -26,10 +27,13 @@ func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cf
 			continue
 		}
 		sig, ok := producer.SignatureForSite(transfer.NodeContext{Point: point}, site)
-		if !ok && exactGuardedStringMethodReceiver(reg, bindings, graph, facts, point, site) {
+		if !ok && (exactGuardedStringMethodReceiver(reg, bindings, graph, facts, point, site) || exactBoundaryStringMethodReceiver(reg, bindings, plan, site)) {
 			sig, ok = producer.LookupStringMethodSignature(site.MethodName())
 			if ok {
-				ok = staticScalarSignature(reg, sig)
+				sig, ok = effectlowering.RefineStaticStringMethodSignature(reg, sig, site)
+			}
+			if ok {
+				_, ok = effectlowering.StaticScalarStringMethodReturns(reg, nil, sig, site)
 			}
 		}
 		if !ok {
@@ -50,6 +54,33 @@ func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cf
 	return out
 }
 
+// exactBoundaryStringMethodReceiver grants canonical string-method lookup only
+// when the receiver is an immutable, unversioned root parameter whose plan-
+// owned declared contract reconstructs to exactly string. The boundary product
+// is the authority: any, optional string, descendants, writes, and path drift
+// all fail closed rather than being inferred from source spelling.
+func exactBoundaryStringMethodReceiver(reg *axis.Registry, bindings *bind.Result, plan *operationplan.Plan, site factflow.CallSiteView) bool {
+	if reg == nil || bindings == nil || plan == nil || !plan.BoundaryParamsValid() {
+		return false
+	}
+	receiver, ok := exactStringMethodReceiverRoot(site)
+	if !ok || bindings.HasWrite(receiver.Symbol) {
+		return false
+	}
+	params := plan.BoundaryParams()
+	contracts := plan.BoundaryParamContracts()
+	if len(params) == 0 || len(contracts) != len(params) {
+		return false
+	}
+	for i, param := range params {
+		if param != receiver.Symbol {
+			continue
+		}
+		return product.Equal(reg, contracts[i], typevalue.String(reg))
+	}
+	return false
+}
+
 func staticScalarSignature(reg *axis.Registry, sig signature.Function) bool {
 	_, exact := effectlowering.StaticScalarSignatureReturns(reg, nil, sig)
 	return exact
@@ -64,15 +95,8 @@ func exactGuardedStringMethodReceiver(reg *axis.Registry, bindings *bind.Result,
 	if reg == nil || bindings == nil || graph == nil || site.MethodName() == "" {
 		return false
 	}
-	receiver, ok := site.ReceiverPath()
-	if !ok || receiver.Symbol == 0 || len(receiver.Segments) != 0 {
-		return false
-	}
-	if bindings.HasWrite(receiver.Symbol) {
-		return false
-	}
-	methodPath, hasMethod := site.MethodPath()
-	if !hasMethod || !methodPath.Equal(receiver.Field(site.MethodName())) || !site.CalleePathEqual(methodPath) {
+	receiver, ok := exactStringMethodReceiverRoot(site)
+	if !ok || bindings.HasWrite(receiver.Symbol) {
 		return false
 	}
 	dominators := dominance.ComputeImmediateDominatorInfo(graph)
@@ -103,6 +127,26 @@ func exactGuardedStringMethodReceiver(reg *axis.Registry, bindings *bind.Result,
 		}
 	}
 	return false
+}
+
+func exactStringMethodReceiverRoot(site factflow.CallSiteView) (pathdom.Path, bool) {
+	if site.MethodName() == "" {
+		return pathdom.Path{}, false
+	}
+	receiver, ok := site.ReceiverPath()
+	if !ok || receiver.Symbol == 0 || receiver.Version != 0 || len(receiver.Segments) != 0 {
+		return pathdom.Path{}, false
+	}
+	methodPath, hasMethod := site.MethodPath()
+	if !hasMethod || !methodPath.Equal(receiver.Field(site.MethodName())) || !site.CalleePathEqual(methodPath) {
+		return pathdom.Path{}, false
+	}
+	receiverSource, hasSource := site.ReceiverSource()
+	if !hasSource || !receiverSource.Valid() || receiverSource.Kind != factflow.ValueSourcePath ||
+		receiverSource.PathKey != receiver.Key() || receiverSource.Expanded || receiverSource.Adjusted || receiverSource.OpenTail {
+		return pathdom.Path{}, false
+	}
+	return receiver, true
 }
 
 func guardedMethodProofEdgeDominates(graph cfg.Graph, dominators *dominance.ImmediateDominators, branch, succ, point cfg.Point) bool {

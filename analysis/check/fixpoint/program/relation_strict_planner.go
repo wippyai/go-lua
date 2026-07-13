@@ -283,7 +283,7 @@ func strictExternalCallSurfaceExact(reg *axis.Registry, call factflow.CallSiteVi
 	if call.MethodName() == "" {
 		return true
 	}
-	_, exact := effectlowering.StaticScalarSignatureReturns(reg, nil, operation.Signature())
+	_, exact := effectlowering.StaticScalarStringMethodReturns(reg, nil, operation.Signature(), call)
 	return exact
 }
 

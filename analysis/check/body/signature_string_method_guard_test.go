@@ -44,6 +44,36 @@ return target
 	}
 }
 
+func TestSignatureCallOperationAcceptsOnlyExactImmutableStringBoundaryParam(t *testing.T) {
+	positive := `
+local function target(id: string): boolean
+  return id:match("^__") ~= nil
+end
+return target
+`
+	if !preparedTargetHasMethodSignature(t, positive, "match") {
+		t.Fatal("exact string boundary parameter did not seal string.match")
+	}
+
+	for name, source := range map[string]string{
+		"any contract":      `local function target(id: any): boolean return id:match("^__") ~= nil end return target`,
+		"optional contract": `local function target(id: string?): boolean return id:match("^__") ~= nil end return target`,
+		"root write":        `local function target(id: string): boolean id = "changed" return id:match("^__") ~= nil end return target`,
+		"captured mutation": `local function target(id: string): boolean local function mutate() id = "changed" end mutate() return id:match("^__") ~= nil end return target`,
+		"alternate root":    `local function target(id: string, other: any): boolean return other:match("^__") ~= nil end return target`,
+		"descendant path":   `local function target(id: { value: string }): boolean return id.value:match("^__") ~= nil end return target`,
+		"dynamic pattern":   `local function target(id: string, pattern: string): boolean return id:match(pattern) ~= nil end return target`,
+		"capture pattern":   `local function target(id: string): boolean return id:match("(__)") ~= nil end return target`,
+		"multiple targets":  `local function target(id: string): boolean local first, second = id:match("^__") return first ~= nil end return target`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if preparedTargetHasMethodSignature(t, source, "match") {
+				t.Fatal("unproven boundary receiver gained string.match authority")
+			}
+		})
+	}
+}
+
 func TestStaticScalarSignatureGateRejectsContextualDescriptors(t *testing.T) {
 	reg := standard.Registry()
 	tp := typ.NewTypeParam("T", nil)
@@ -64,6 +94,10 @@ func TestStaticScalarSignatureGateRejectsContextualDescriptors(t *testing.T) {
 }
 
 func preparedTargetHasGsubSignature(t *testing.T, source string) bool {
+	return preparedTargetHasMethodSignature(t, source, "gsub")
+}
+
+func preparedTargetHasMethodSignature(t *testing.T, source, method string) bool {
 	t.Helper()
 	stmts, err := parse.ParseString(source, "guarded-string-method.lua")
 	if err != nil {
@@ -98,11 +132,11 @@ func preparedTargetHasGsubSignature(t *testing.T, source string) bool {
 	for raw := 0; raw < plan.PointCount(); raw++ {
 		point := cfg.Point(raw)
 		site, ok := plan.Facts().CallSiteView(point)
-		if !ok || site.MethodName() != "gsub" {
+		if !ok || site.MethodName() != method {
 			continue
 		}
 		if found {
-			t.Fatal("fixture contains multiple gsub sites")
+			t.Fatalf("fixture contains multiple %s sites", method)
 		}
 		found = true
 		if _, exact := plan.SignatureCallOperation(point); exact {
@@ -110,7 +144,7 @@ func preparedTargetHasGsubSignature(t *testing.T, source string) bool {
 		}
 	}
 	if !found {
-		t.Fatal("gsub site not found")
+		t.Fatalf("%s site not found", method)
 	}
 	return false
 }

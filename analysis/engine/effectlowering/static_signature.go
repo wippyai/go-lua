@@ -4,8 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -27,12 +30,129 @@ func StaticScalarSignatureReturns(reg *axis.Registry, typeValues *typevalue.Cach
 	return out, true
 }
 
+// StaticScalarStringMethodReturns additionally proves that a method call's
+// site-dependent result shape is represented exactly by sig. string.match is
+// the exceptional stdlib method in this slice: captures change result arity,
+// so only a scalar literal no-capture pattern can use its one-slot base
+// signature. The caller must separately prove receiver authority and canonical
+// method-name resolution; this projector validates shape, not name lookup.
+func StaticScalarStringMethodReturns(reg *axis.Registry, typeValues *typevalue.Cache, sig signature.Function, site factflow.CallSiteView) ([]product.Value, bool) {
+	if site.MethodName() == "" {
+		return nil, false
+	}
+	if site.MethodName() != "match" {
+		return StaticScalarSignatureReturns(reg, typeValues, sig)
+	}
+	refined, exact := RefineStaticStringMethodSignature(reg, sig, site)
+	if !exact || !refined.Equals(sig) {
+		return nil, false
+	}
+	if reg == nil || sig.Type == nil || !sig.Effect.Pure() || (sig.OperationalEffects != nil && !sig.OperationalEffects.IsEmpty()) || len(sig.Type.TypeParams) != 0 {
+		return nil, false
+	}
+	out := make([]product.Value, len(sig.Type.Returns))
+	for i, ret := range sig.Type.Returns {
+		if !staticFiniteScalarReturnType(ret, 0) {
+			return nil, false
+		}
+		out[i] = returnValueFromSignatureTypeCached(reg, typeValues, sig.Type, ret)
+	}
+	return out, true
+}
+
+// RefineStaticStringMethodSignature returns an owned signature whose result
+// tuple is exact for the represented call site. It never mutates a Function's
+// exported slices because doing so would invalidate its canonical hash.
+func RefineStaticStringMethodSignature(reg *axis.Registry, sig signature.Function, site factflow.CallSiteView) (signature.Function, bool) {
+	if reg == nil || sig.Type == nil || site.MethodName() == "" {
+		return signature.Function{}, false
+	}
+	refined := sig.Clone()
+	if site.MethodName() != "match" {
+		return refined, true
+	}
+	if site.Expanded() || site.OpenTail() || site.ResultTargetCount() != 1 {
+		return signature.Function{}, false
+	}
+	target, ok := site.ResultTargetAt(0)
+	if !ok || target.ResultIndex() != 0 {
+		return signature.Function{}, false
+	}
+	patternSource, ok := site.ArgumentSourceAt(0)
+	if !ok {
+		return signature.Function{}, false
+	}
+	patternValue, ok := sourcevalue.StaticScalarValue(reg, patternSource)
+	if !ok {
+		return signature.Function{}, false
+	}
+	pattern, ok := typevalue.StringLiteralOf(reg, patternValue)
+	if !ok || len(stringlib.CaptureTypes(pattern)) != 0 {
+		return signature.Function{}, false
+	}
+	refined.Type = typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: refined.Type.TypeParams,
+		Params:     refined.Type.Params,
+		Variadic:   refined.Type.Variadic,
+		Returns:    stringlib.MatchReturnTypes(pattern),
+	})
+	return refined, true
+}
+
 func staticScalarReturnType(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
 	switch t.Kind() {
-	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal:
+	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String:
+		return true
+	case kind.Literal:
+		literal, ok := t.(*typ.Literal)
+		if !ok {
+			return false
+		}
+		switch literal.Base {
+		case kind.Boolean, kind.Number, kind.Integer, kind.String:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func staticFiniteScalarReturnType(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String:
+		return true
+	case kind.Literal:
+		literal, ok := t.(*typ.Literal)
+		if !ok {
+			return false
+		}
+		switch literal.Base {
+		case kind.Boolean, kind.Number, kind.Integer, kind.String:
+			return true
+		default:
+			return false
+		}
+	case kind.Optional:
+		optional, ok := t.(*typ.Optional)
+		return ok && staticFiniteScalarReturnType(optional.Inner, depth+1)
+	case kind.Union:
+		union, ok := t.(*typ.Union)
+		if !ok || len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !staticFiniteScalarReturnType(member, depth+1) {
+				return false
+			}
+		}
 		return true
 	default:
 		return false

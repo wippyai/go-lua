@@ -345,3 +345,21 @@ shapes remain concrete. The representative two-context fixture moves from
 four materializations reused. All summaries, products, diagnostics, manifests,
 and result lineage are identical. No current frozen corpus owner has this exact
 shape, so this is capability groundwork rather than a corpus performance claim.
+
+The private strict path now also owns the exact no-capture `string.match`
+boundary used by frozen graph `is_reserved_id`. Admission is derived from the
+plan-owned exact string parameter contract, an immutable unversioned receiver
+root, an exact receiver/callee/method source shape, a context-independent
+literal pattern, and a hash-stable rebuilt result tuple. Capturing or dynamic
+patterns, adjusted/open/multi-result sites, composite equality, effects, and
+callback-capable methods remain concrete. The parameter-preservation ledger
+retains only the proven receiver root across this intrinsic call; it never
+generalizes preservation to other arguments or methods.
+
+The owner moves from 8 solves/40 transfers to 4/20. The frozen graph aggregate
+moves from 319/18,445 to 315/18,425 with contexts/omissions/reuses = 20/23/46,
+zero misses/fallbacks, and byte-identical summaries, products, diagnostics,
+manifests, and result lineage. The always-on differential moves from 9/63 to
+7/53. This remains private semantic-reuse evidence; the duplicate base/context
+validation is intentionally retained until a separate equality proof can
+remove it transactionally.

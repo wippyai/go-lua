@@ -36,7 +36,7 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		byFamily[entry.Family] = count
 	}
 	want := map[string]counts{
-		"RootAssignments":               {total: 56, exact: 27},
+		"RootAssignments":               {total: 56, exact: 29},
 		"Returns":                       {total: 5, exact: 2},
 		"PathDescendantInvalidations":   {total: 9},
 		"PathValuePresenceImplications": {total: 3},
@@ -74,5 +74,5 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 	if indexed != 28 || keyed != 10 {
 		t.Fatalf("signature iterator bindings indexed/keyed = %d/%d, want 28/10", indexed, keyed)
 	}
-	t.Log("validate_graph exact now: CallSite 33/49, RootAssignment 27/56 (+13 pure descendant projections), generic-for 34/38 (+12 declared-source contracts, +18 reusable descendant bindings), Return 2/5")
+	t.Log("validate_graph exact now: CallSite 33/49, RootAssignment 29/56 (+13 pure descendant projections, +2 exact scalar comparisons), generic-for 34/38 (+12 declared-source contracts, +18 reusable descendant bindings), Return 2/5")
 }
