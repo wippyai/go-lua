@@ -149,6 +149,7 @@ type Static struct {
 	globalTypes           map[string]typ.Type
 	modules               moduleidentity.Projection
 	signatureID           *signatureIdentityResolver
+	sealedLuaTypeChecks   bool
 	facts                 factflow.Facts
 	operationPlan         *operationplan.Plan
 	symbolTypes           map[symbol.ID]typ.Type
@@ -288,6 +289,7 @@ type Result struct {
 	moduleTypes           typelookup.Source
 	modules               moduleidentity.Projection
 	signatureID           *signatureIdentityResolver
+	sealedLuaTypeChecks   bool
 	facts                 factflow.Facts
 	symbolTypes           map[symbol.ID]typ.Type
 	assignments           assignmentFactSet

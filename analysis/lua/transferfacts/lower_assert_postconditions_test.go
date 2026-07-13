@@ -68,7 +68,7 @@ func TestLowerDirectAssertTypeEqualPostcondition(t *testing.T) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
 	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
-	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body, SealedLuaTypeChecks: true}).Facts
 	point := requireStmtPoints(t, built, stmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredPostconditionRefinement(t, facts, point, xPath, valueRefinementExpectation{

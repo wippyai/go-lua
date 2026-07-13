@@ -182,6 +182,12 @@ func lowerChunkFactsWithWIR(t *testing.T, name string, stmts []ast.Stmt, built *
 	return LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
 }
 
+func lowerChunkFactsWithSealedLuaTypeWIR(t *testing.T, name string, stmts []ast.Stmt, built *cfgbuild.Result, bindings *bind.Result, reg *axis.Registry) factflow.Facts {
+	t.Helper()
+	body := wirlower.Lower(name, stmts, bindings, built)
+	return LowerDetailed(built.Graph, Config{Registry: reg, WIR: body, SealedLuaTypeChecks: true}).Facts
+}
+
 func TestLowerBooleanRootTruthyFalsyBranchesPublishLiteralRefinements(t *testing.T) {
 	fn, bindings, built := parseSemanticFunction(t, `
 function f(b: boolean)
@@ -810,7 +816,7 @@ func TestLowerTypeGuardBranchPathEvidence(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, typeRead), "x")
 	assertLoweredBranchPresenceProof(t, facts, point, xPath, presence.Present(), true, false)
@@ -2104,7 +2110,7 @@ func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2132,7 +2138,7 @@ func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -2166,7 +2172,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 	stmts := []ast.Stmt{decl, eqStmt, notStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
 	nilValue := valueRefinementExpectation{
 		presence:       presence.Absent(),
@@ -2263,7 +2269,7 @@ func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,

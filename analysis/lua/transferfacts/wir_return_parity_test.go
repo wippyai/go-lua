@@ -182,7 +182,7 @@ end
 	points := requireStmtPoints(t, built, ret, 1)
 	body := wirlower.LowerFunction("nested-logical-return", fn, bindings, built)
 	reg := standard.Registry()
-	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body, SealedLuaTypeChecks: true}).Facts
 
 	returnFact, ok := facts.Return(points[0])
 	if !ok {
@@ -618,7 +618,7 @@ end
 	point := requireStmtPoints(t, built, ret, 1)[0]
 	body := wirlower.LowerFunction("returned-type-predicate", fn, bindings, built)
 
-	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body, SealedLuaTypeChecks: true}).Facts
 	retFact, ok := facts.Return(point)
 	if !ok {
 		t.Fatalf("missing WIR-owned return at point %d", point)

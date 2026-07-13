@@ -415,7 +415,7 @@ func TestDominatingRuntimeTypeGuardProvesRejectingBranchCannotReach(t *testing.T
 		if type(value) == "string" then
 			local after = value
 		end
-	`), Config{Registry: reg})
+	`), Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
@@ -1289,7 +1289,7 @@ func TestBranchConditionChecksResolvePathsFromBodySites(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stmts := parseChunk(t, tt.src)
-			result, err := CheckChunk(stmts, Config{Registry: standard.Registry(), Globals: []string{"type"}})
+			result, err := CheckChunk(stmts, Config{Registry: standard.Registry(), Globals: []string{"type"}, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 			if err != nil {
 				t.Fatalf("CheckChunk: %v", err)
 			}
@@ -1799,7 +1799,7 @@ function select_bindings(bindings: any): table
 		return selected
 	end
 	return {}
-end`), Config{Registry: reg})
+end`), Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
@@ -4138,7 +4138,7 @@ end
 	if len(functions) != 1 {
 		t.Fatalf("nested functions = %d, want 1", len(functions))
 	}
-	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 	if err != nil {
 		t.Fatalf("CheckBoundFunction: %v", err)
 	}
@@ -4538,7 +4538,7 @@ end
 	if len(functions) < 2 {
 		t.Fatalf("nested functions = %d, want flip and render", len(functions))
 	}
-	result, err := CheckBoundFunction(functions[1], bindings, Config{Registry: reg})
+	result, err := CheckBoundFunction(functions[1], bindings, Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 	if err != nil {
 		t.Fatalf("CheckBoundFunction(render): %v", err)
 	}

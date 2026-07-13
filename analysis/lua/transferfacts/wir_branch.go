@@ -88,7 +88,7 @@ func (l *lowerer) firstDirectBranchCheckFromWIR(point cfg.Point) (branchcond.Che
 	var found bool
 	l.wir.ForEachBranchCheck(point, func(check wir.Check) bool {
 		candidate := branchCheckFromWIR(check)
-		if candidate.Kind == branchcond.CheckNone {
+		if candidate.Kind == branchcond.CheckNone || !l.branchCheckAuthorized(candidate) {
 			return true
 		}
 		out = candidate

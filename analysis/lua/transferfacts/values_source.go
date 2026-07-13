@@ -1813,7 +1813,7 @@ func postconditionRefinementsFromBranchEdge(refinements []factflow.BranchRefinem
 func (l *lowerer) wirExpressionConditionCheck(inst wir.Instruction) (branchcond.Check, bool) {
 	if inst.Check != 0 {
 		check := branchCheckFromWIR(l.wir.Check(inst.Check))
-		return check, check.Kind != branchcond.CheckNone
+		return check, check.Kind != branchcond.CheckNone && l.branchCheckAuthorized(check)
 	}
 	if inst.Op != wir.OpBinOp || (inst.Operator != wir.BinEq && inst.Operator != wir.BinNe) {
 		return branchcond.Check{}, false

@@ -516,7 +516,7 @@ func (r *Result) branchConditionCheckFromWIR(point cfg.Point) (branchcond.Check,
 	var found bool
 	r.wir.ForEachBranchCheck(point, func(check wir.Check) bool {
 		candidate := branchConditionCheckFromWIR(check)
-		if candidate.Kind == branchcond.CheckNone {
+		if candidate.Kind == branchcond.CheckNone || !r.branchCheckAuthorized(candidate) {
 			return true
 		}
 		out = candidate
@@ -547,7 +547,24 @@ func (r *Result) ExpressionImpliedChecksOnEdge(expr ast.Expr, cond bool) []branc
 	if r == nil || r.bindings == nil || expr == nil {
 		return nil
 	}
-	return branchcond.ImpliedChecksOnEdge(expr, r.bindings, cond)
+	checks := branchcond.ImpliedChecksOnEdge(expr, r.bindings, cond)
+	if r.sealedLuaTypeChecks {
+		return checks
+	}
+	out := checks[:0]
+	for _, check := range checks {
+		if r.branchCheckAuthorized(check.Check) {
+			out = append(out, check)
+		}
+	}
+	return out
+}
+
+func (r *Result) branchCheckAuthorized(check branchcond.Check) bool {
+	if check.Kind == branchcond.CheckTypeEqual || check.Kind == branchcond.CheckTypeNot {
+		return r != nil && r.sealedLuaTypeChecks
+	}
+	return true
 }
 
 func (r *Result) TypeDefinition(point cfg.Point) (TypeDefinitionFact, bool) {

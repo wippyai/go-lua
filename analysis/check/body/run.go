@@ -169,6 +169,7 @@ func (c *checker) prepare(
 	globals := configGlobals(config)
 	modules := moduleidentity.NewFromWIR(bindings, built.Graph, wirBody, fn)
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, wirBody, modules, config.Signatures, config.GlobalTypes, config.ModuleExports)
+	sealedLuaTypeChecks := signatureID.luaTypePredicateChecksSealed()
 	signatureNameForCall := signatureID.nameForCall
 	noNormalReturnCall := effectlowering.SignatureNoNormalReturnPredicate(effectlowering.SignatureNoNormalReturnConfig{
 		Graph:      built.Graph,
@@ -184,7 +185,7 @@ func (c *checker) prepare(
 		TypeValues:          config.TypeValues,
 		ModuleExports:       config.ModuleExports,
 		WIR:                 wirBody,
-		SealedLuaTypeChecks: signatureID.luaTypePredicateChecksSealed(),
+		SealedLuaTypeChecks: sealedLuaTypeChecks,
 		NoNormalReturnCall:  noNormalReturnCall,
 	})
 	facts := lowered.Facts
@@ -320,6 +321,7 @@ func (c *checker) prepare(
 		globalTypes:           config.GlobalTypes,
 		modules:               modules,
 		signatureID:           signatureID,
+		sealedLuaTypeChecks:   sealedLuaTypeChecks,
 		facts:                 facts,
 		operationPlan:         operationPlan,
 		symbolTypes:           lowered.SymbolTypes,
@@ -519,6 +521,7 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		moduleTypes:           s.moduleTypes,
 		modules:               s.modules,
 		signatureID:           s.signatureID,
+		sealedLuaTypeChecks:   s.sealedLuaTypeChecks,
 		facts:                 s.facts,
 		symbolTypes:           s.symbolTypes,
 		assignments:           s.assignments,

@@ -1931,7 +1931,7 @@ func renderLineDiff(want, got string) string {
 
 func runDiagnosticsWithGlobals(t *testing.T, src string, globals []string) []diagnostic.Diagnostic {
 	t.Helper()
-	return runDiagnosticsFull(t, src, globals, signaturelookup.Source{})
+	return runDiagnosticsFull(t, src, globals, signaturelookup.Source{IncludeStdlib: true})
 }
 
 func runDiagnosticsWithSignatures(t *testing.T, src string, signatures signaturelookup.Source) []diagnostic.Diagnostic {
@@ -1973,7 +1973,7 @@ func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures s
 
 func runDiagnosticsResult(t *testing.T, src string) *body.Result {
 	t.Helper()
-	return runDiagnosticsResultFull(t, src, []string{"test", "type", "value"}, signaturelookup.Source{})
+	return runDiagnosticsResultFull(t, src, []string{"test", "type", "value"}, signaturelookup.Source{IncludeStdlib: true})
 }
 
 func runDiagnosticsResultFull(t *testing.T, src string, globals []string, signatures signaturelookup.Source) *body.Result {

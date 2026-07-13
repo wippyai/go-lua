@@ -200,16 +200,30 @@ func (l *lowerer) forEachWIRBranchCheck(
 			continue
 		}
 		check := branchCheckFromWIR(l.wir.Check(inst.Check))
-		if check.Kind != branchcond.CheckNone {
+		if check.Kind != branchcond.CheckNone && l.branchCheckAuthorized(check) {
 			direct(check)
 			continue
 		}
 		for _, wirImplied := range l.wir.ImpliedChecks(inst.ImpliedChecks) {
-			implied(branchcond.ImpliedCheck{
+			candidate := branchcond.ImpliedCheck{
 				Check:    branchCheckFromWIR(wirImplied.Check),
 				Edge:     wirImplied.Edge,
 				Polarity: wirImplied.Polarity,
-			})
+			}
+			if l.branchCheckAuthorized(candidate.Check) {
+				implied(candidate)
+			}
 		}
 	}
+}
+
+// branchCheckAuthorized is the sole transferfacts authority gate for
+// normalized Lua type predicates. WIR preserves their syntax, but only the
+// binding-owned environment seal proves that `type` still has canonical Lua
+// semantics. All other checks remain self-authorizing descriptors.
+func (l *lowerer) branchCheckAuthorized(check branchcond.Check) bool {
+	if check.Kind == branchcond.CheckTypeEqual || check.Kind == branchcond.CheckTypeNot {
+		return l != nil && l.sealedLuaTypeChecks
+	}
+	return true
 }

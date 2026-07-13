@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -222,7 +223,7 @@ function f(bindings: any): table
 		bindings = bindings.checkpoint
 	end
 	return bindings
-end`), Config{Registry: reg})
+end`), Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}

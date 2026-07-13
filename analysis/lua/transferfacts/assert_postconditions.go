@@ -12,6 +12,9 @@ func (l *lowerer) assertPostconditionRefinementFromWIR(point cfg.Point) (factflo
 		return factflow.PostconditionRefinement{}, false
 	}
 	check := branchCheckFromWIR(l.wir.Check(inst.Check))
+	if !l.branchCheckAuthorized(check) {
+		return factflow.PostconditionRefinement{}, false
+	}
 	branchRefinement, ok := l.branchValueRefinementForCheck(check)
 	if !ok {
 		return factflow.PostconditionRefinement{}, false
