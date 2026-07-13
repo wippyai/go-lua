@@ -87,7 +87,9 @@ func prepareStrictRelationOwners(config body.Config, stats *Stats, activation *r
 	}
 	for _, contextual := range activation.snapshot.contexts {
 		origin, ok := keys.contexts.contextByKey(contextual.context)
-		if !ok || origin == nil || origin.relationContextEntry != contextual.certificate || origin.funcExpr == nil || contextual.base.Prepared == nil || contextual.base.Prepared != prepared.function(origin.funcExpr) {
+		exactEntry := ok && origin != nil && origin.relationContextEntry == contextual.certificate
+		validatedFrame := ok && origin != nil && contextual.validatedFrame != nil && contextual.validatedFrame.matchesFullContext(config.Registry, origin, contextual.base, keys.contexts.discoveryGeneration)
+		if !ok || origin == nil || (!exactEntry && !validatedFrame) || origin.funcExpr == nil || contextual.base.Prepared == nil || contextual.base.Prepared != prepared.function(origin.funcExpr) {
 			if stats != nil {
 				stats.RelationUnexpectedMisses++
 			}

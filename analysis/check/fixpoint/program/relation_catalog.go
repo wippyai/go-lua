@@ -78,6 +78,7 @@ type relationContextCandidate struct {
 	globalBindings      []transformer.GlobalRootBinding
 	paths               []pathdom.Path
 	certificate         *relationContextEntryCertificate
+	validatedFrame      *strictValidatedFrameCandidate
 }
 
 // relationConsumerPolicy is a separate immutable index over every lexical
@@ -672,6 +673,12 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 		}
 		relation, ok := relations.Lookup(candidate.base.Cell)
 		plan := candidate.base.Prepared.OperationPlan()
+		if candidate.validatedFrame != nil && (candidate.validatedFrame.context != candidate.context ||
+			candidate.validatedFrame.base != candidate.base.Summary || candidate.validatedFrame.prepared != candidate.base.BodyDigest ||
+			candidate.validatedFrame.generation != candidate.discoveryGeneration || candidate.validatedFrame.plan != plan ||
+			candidate.validatedFrame.globalContent != candidate.globalBoundary.ContentID()) {
+			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("validated frame identity drift")}
+		}
 		if plan == nil || !candidate.certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
 			return relationRunSnapshot{}, relationFreezeError{Category: relationFreezeIdentity, Identity: candidate.base, Err: fmt.Errorf("context boundary authority drift")}
 		}
@@ -715,7 +722,8 @@ func (c relationRunCatalog) Freeze(ctx context.Context) (relationRunSnapshot, er
 		contextSummaries = append(contextSummaries, relationContextSummary{
 			context: candidate.context, base: candidate.base,
 			discoveryGeneration: candidate.discoveryGeneration, certificate: candidate.certificate,
-			summary: summary.Normalize(c.registry, specialized),
+			validatedFrame: candidate.validatedFrame,
+			summary:        summary.Normalize(c.registry, specialized),
 		})
 	}
 	return relationRunSnapshot{generation: c.generation, relations: relations, identities: identities, consumers: c.consumers, contexts: contextSummaries}, nil

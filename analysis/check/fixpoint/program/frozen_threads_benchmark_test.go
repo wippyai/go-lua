@@ -32,27 +32,32 @@ const frozenThreadsPath = "/tmp/frozen-threads-contract.lua"
 const frozenThreadsEnv = "GO_LUA_FROZEN_THREADS"
 
 type frozenThreadsReport struct {
-	Mode               string            `json:"mode"`
-	Wall               time.Duration     `json:"wall"`
-	AllocatedBytes     uint64            `json:"allocated_bytes"`
-	HeapDeltaBytes     int64             `json:"heap_delta_bytes"`
-	BodySolves         int               `json:"body_solves"`
-	PointTransfers     int               `json:"point_transfers"`
-	PrepassSolves      int               `json:"prepass_solves"`
-	SummarySolves      int               `json:"summary_solves"`
-	SummaryTransfers   int               `json:"summary_transfers"`
-	MaterializeSolves  int               `json:"materialize_solves"`
-	Composition        []CompositionCost `json:"composition"`
-	Diagnostics        int               `json:"diagnostics"`
-	DiagnosticsDigest  string            `json:"diagnostics_digest"`
-	SummaryDigest      string            `json:"summary_digest"`
-	RelationProducers  int               `json:"relation_producers"`
-	RelationOwners     int               `json:"relation_owners"`
-	RelationCalls      int               `json:"relation_calls"`
-	PlannerScanned     int               `json:"planner_scanned"`
-	PlannerPrefiltered int               `json:"planner_prefiltered"`
-	PlannerCompiled    int               `json:"planner_compiled"`
-	PlannerActivated   int               `json:"planner_activated"`
+	Mode                   string            `json:"mode"`
+	Wall                   time.Duration     `json:"wall"`
+	AllocatedBytes         uint64            `json:"allocated_bytes"`
+	HeapDeltaBytes         int64             `json:"heap_delta_bytes"`
+	BodySolves             int               `json:"body_solves"`
+	PointTransfers         int               `json:"point_transfers"`
+	PrepassSolves          int               `json:"prepass_solves"`
+	SummarySolves          int               `json:"summary_solves"`
+	SummaryTransfers       int               `json:"summary_transfers"`
+	MaterializeSolves      int               `json:"materialize_solves"`
+	Composition            []CompositionCost `json:"composition"`
+	Diagnostics            int               `json:"diagnostics"`
+	DiagnosticsDigest      string            `json:"diagnostics_digest"`
+	SummaryDigest          string            `json:"summary_digest"`
+	RelationProducers      int               `json:"relation_producers"`
+	RelationOwners         int               `json:"relation_owners"`
+	RelationCalls          int               `json:"relation_calls"`
+	PlannerScanned         int               `json:"planner_scanned"`
+	PlannerPrefiltered     int               `json:"planner_prefiltered"`
+	PlannerCompiled        int               `json:"planner_compiled"`
+	PlannerActivated       int               `json:"planner_activated"`
+	ContextsSpecialized    int               `json:"contexts_specialized"`
+	EquationsOmitted       int               `json:"equations_omitted"`
+	MaterializationsReused int               `json:"materializations_reused"`
+	TargetBodySolves       int               `json:"target_body_solves"`
+	TargetTransfers        int               `json:"target_transfers"`
 }
 
 type frozenThreadsRun struct {
@@ -88,6 +93,16 @@ func TestFrozenThreadsContractDifferential(t *testing.T) {
 	}
 	if legacyRepeat != "" || activeRepeat != "" || strictRepeat != "" || cross != "" || strictCross != "" {
 		t.Fatalf("frozen oracle diverged: legacy repeat=%q active repeat=%q strict repeat=%q legacy/active=%q legacy/strict=%q", legacyRepeat, activeRepeat, strictRepeat, cross, strictCross)
+	}
+	for _, run := range []frozenThreadsRun{legacyA, legacyB} {
+		if run.report.TargetBodySolves != 10 || run.report.TargetTransfers != 70 {
+			t.Fatalf("legacy is_str work = %d/%d, want 10/70", run.report.TargetBodySolves, run.report.TargetTransfers)
+		}
+	}
+	for _, run := range []frozenThreadsRun{strictA, strictB} {
+		if run.report.TargetBodySolves != 6 || run.report.TargetTransfers != 42 || run.report.ContextsSpecialized != 4 || run.report.EquationsOmitted != 4 || run.report.MaterializationsReused != 4 {
+			t.Fatalf("strict is_str work=%d/%d contexts/omitted/reused=%d/%d/%d, want 6/42 and 4/4/4", run.report.TargetBodySolves, run.report.TargetTransfers, run.report.ContextsSpecialized, run.report.EquationsOmitted, run.report.MaterializationsReused)
+		}
 	}
 }
 
@@ -157,8 +172,19 @@ func runFrozenThreads(t testing.TB, stmts []ast.Stmt, bindings *bind.Result, mod
 		t.Fatal(err)
 	}
 	diagnosticBytes, count := frozenDiagnosticBytes(result.RootResult())
-	report := frozenThreadsReport{Mode: mode, Wall: wall, AllocatedBytes: after.TotalAlloc - before.TotalAlloc, HeapDeltaBytes: int64(after.HeapAlloc) - int64(before.HeapAlloc), BodySolves: stats.Body.BodySolves, PointTransfers: stats.Body.Transfer.Solver.TransferCalls, PrepassSolves: stats.PrepassBodySolves, SummarySolves: stats.SummaryBodySolves, SummaryTransfers: stats.SummaryPointTransfers, MaterializeSolves: stats.MaterializeBodySolves, Composition: stats.CompositionCostCensus(), Diagnostics: count, DiagnosticsDigest: sha256Hex(diagnosticBytes), SummaryDigest: frozenSummaryDigest(standard.Registry(), result), RelationProducers: stats.RelationProducersEligible, RelationOwners: stats.RelationOwnersActive, RelationCalls: stats.RelationCallsHandled, PlannerScanned: stats.RelationPlannerOwnersScanned, PlannerPrefiltered: stats.RelationPlannerOwnersPrefiltered, PlannerCompiled: stats.RelationPlannerOwnersCompiled, PlannerActivated: stats.RelationPlannerOwnersActivated}
+	targetSolves, targetTransfers := frozenBodyWork(stats.BodySolveAttribution(), 16010901263544322178)
+	report := frozenThreadsReport{Mode: mode, Wall: wall, AllocatedBytes: after.TotalAlloc - before.TotalAlloc, HeapDeltaBytes: int64(after.HeapAlloc) - int64(before.HeapAlloc), BodySolves: stats.Body.BodySolves, PointTransfers: stats.Body.Transfer.Solver.TransferCalls, PrepassSolves: stats.PrepassBodySolves, SummarySolves: stats.SummaryBodySolves, SummaryTransfers: stats.SummaryPointTransfers, MaterializeSolves: stats.MaterializeBodySolves, Composition: stats.CompositionCostCensus(), Diagnostics: count, DiagnosticsDigest: sha256Hex(diagnosticBytes), SummaryDigest: frozenSummaryDigest(standard.Registry(), result), RelationProducers: stats.RelationProducersEligible, RelationOwners: stats.RelationOwnersActive, RelationCalls: stats.RelationCallsHandled, PlannerScanned: stats.RelationPlannerOwnersScanned, PlannerPrefiltered: stats.RelationPlannerOwnersPrefiltered, PlannerCompiled: stats.RelationPlannerOwnersCompiled, PlannerActivated: stats.RelationPlannerOwnersActivated, ContextsSpecialized: stats.RelationContextsSpecialized, EquationsOmitted: stats.RelationSummaryEquationsOmitted, MaterializationsReused: stats.RelationMaterializationsReused, TargetBodySolves: targetSolves, TargetTransfers: targetTransfers}
 	return frozenThreadsRun{result, report}
+}
+
+func frozenBodyWork(entries []BodySolveAttribution, bodyID uint64) (solves, transfers int) {
+	for _, entry := range entries {
+		if entry.BodyID == bodyID {
+			solves += entry.BodySolves
+			transfers += entry.PointTransfers
+		}
+	}
+	return solves, transfers
 }
 
 func logFrozenReport(t testing.TB, report frozenThreadsReport) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
@@ -14,7 +15,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -112,6 +115,74 @@ func TestRelationContextEntryCertificateRejectsHiddenLane(t *testing.T) {
 	context.relationContextEntry = certifyRelationContextEntry(reg, bindings, fn, bindings.ParamSymbols(fn), nil, contextKey, base, 0xdef, keys.contexts.nextEntryDiscoveryGeneration(), context.entryState, context.entryKeys)
 	if context.relationContextEntry != nil {
 		t.Fatal("placement-lane fact was hidden by the certificate projection")
+	}
+}
+
+func TestStrictValidatedFrameCandidateIgnoresOnlyCallerPathFacts(t *testing.T) {
+	reg, bindings, fn, entry, ks, base := strictFrameCertificateFixture(t)
+	param := bindings.ParamSymbols(fn)[0]
+	origin, ok := bindings.FunctionOrigin(fn)
+	target := origin.TargetSymbol
+	if !ok || !origin.HasTargetSymbol || target == 0 {
+		t.Fatal("function target symbol missing")
+	}
+	ambient := ks.FromPath(path.NewPath(target, "identity").Field("caller_only"))
+	if !strictDiscardableCallerPathRoot(bindings, fn, ks, ambient) {
+		t.Fatal("caller-only path root was not classified as discardable")
+	}
+	value := entry.ReadValue(reg, statekey.SymbolValue(param))
+	full := entry.
+		WriteLocalPathKey(reg, ambient, value).
+		WriteLocalPathStaticMember(ambient, value)
+	contextKey := base
+	contextKey.Entry = summary.EntryKey{Values: 1, Facts: 2, References: 3}
+	context := keyedFunction{funcExpr: fn, key: contextKey, entryState: full, entryKeys: ks, hasEntryState: true}
+	plan := operationplan.New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams([]symbol.ID{param}).
+		WithBoundaryCaptures(nil).
+		WithBoundaryGlobals(nil)
+	shape := transformer.Shape{Params: 1}
+	certificate, frame, exact := strictValidatedFrameContextCertificate(reg, bindings, fn, plan, shape, transformer.GlobalBoundary{}, context, base, 0xabc, 7)
+	if !exact || certificate == nil || frame == nil {
+		t.Fatal("caller-only path facts rejected the validated frame candidate")
+	}
+	if got := certifyRelationContextEntry(reg, bindings, fn, []symbol.ID{param}, nil, contextKey, base, 0xabc, 7, full, ks, true); got != nil {
+		t.Fatal("ordinary exact certificate accepted discarded caller path facts")
+	}
+	if len(certificate.params) != 1 || !product.Equal(reg, certificate.params[0].value, value) {
+		t.Fatalf("candidate parameter binding = %#v", certificate.params)
+	}
+
+	hidden := context
+	hidden.entryState = full.WritePlacement(identity.ID{Kind: "test", Site: "frame-hidden", Index: 1}, placement.OwnedHeap)
+	if frame.matchesFullEntry(reg, &hidden) {
+		t.Fatal("validated frame full-entry fence ignored a later hidden-lane mutation")
+	}
+	if _, _, ok := strictValidatedFrameContextCertificate(reg, bindings, fn, plan, shape, transformer.GlobalBoundary{}, hidden, base, 0xabc, 7); ok {
+		t.Fatal("validated frame candidate hid a non-path State lane")
+	}
+}
+
+func TestStrictValidatedFrameCandidateKeepsDistinctParameterProductsDistinct(t *testing.T) {
+	reg, bindings, fn, entry, ks, base := strictFrameCertificateFixture(t)
+	param := bindings.ParamSymbols(fn)[0]
+	plan := operationplan.New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams([]symbol.ID{param}).
+		WithBoundaryCaptures(nil).
+		WithBoundaryGlobals(nil)
+	shape := transformer.Shape{Params: 1}
+	firstKey := base
+	firstKey.Entry = summary.EntryKey{Values: 1, Facts: 1, References: 1}
+	secondKey := base
+	secondKey.Entry = summary.EntryKey{Values: 2, Facts: 2, References: 2}
+	first, firstFrame, firstOK := strictValidatedFrameContextCertificate(reg, bindings, fn, plan, shape, transformer.GlobalBoundary{}, keyedFunction{funcExpr: fn, key: firstKey, entryState: entry, entryKeys: ks, hasEntryState: true}, base, 1, 1)
+	secondEntry := state.State{}.WriteValue(reg, statekey.SymbolValue(param), typevalue.FromType(reg, typ.Number))
+	second, secondFrame, secondOK := strictValidatedFrameContextCertificate(reg, bindings, fn, plan, shape, transformer.GlobalBoundary{}, keyedFunction{funcExpr: fn, key: secondKey, entryState: secondEntry, entryKeys: ks, hasEntryState: true}, base, 1, 1)
+	if !firstOK || !secondOK || first == nil || second == nil || firstFrame == nil || secondFrame == nil {
+		t.Fatal("distinct exact parameter candidates were not constructed")
+	}
+	if product.Equal(reg, first.params[0].value, second.params[0].value) || firstFrame.stateEntry == secondFrame.stateEntry {
+		t.Fatal("distinct parameter products collapsed to one validated frame identity")
 	}
 }
 
@@ -259,4 +330,15 @@ func relationCertificateFixture(t *testing.T) (*axis.Registry, *bind.Result, *as
 	slot := bindings.ParamSlots(fn)[0]
 	entry := state.State{}.WriteValue(reg, statekey.SymbolValue(slot.Symbol), typevalue.FromType(reg, typ.String))
 	return reg, bindings, fn, entry, keyspace.New(), summary.DefaultSummaryKey(ref.FromSymbol(202))
+}
+
+func strictFrameCertificateFixture(t *testing.T) (*axis.Registry, *bind.Result, *ast.FunctionExpr, state.State, *keyspace.KeySpace, summary.SummaryKey) {
+	t.Helper()
+	reg := standard.Registry()
+	stmts := parseChunk(t, `local function identity(value: any): any return value end`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	fn := bindings.NestedFunctions(nil)[0]
+	slot := bindings.ParamSlots(fn)[0]
+	entry := state.State{}.WriteValue(reg, statekey.SymbolValue(slot.Symbol), typevalue.FromType(reg, typ.String))
+	return reg, bindings, fn, entry, keyspace.New(), summary.DefaultSummaryKey(ref.FromSymbol(404))
 }

@@ -101,6 +101,7 @@ type relationContextSummary struct {
 	base                relationCellIdentity
 	discoveryGeneration uint64
 	certificate         *relationContextEntryCertificate
+	validatedFrame      *strictValidatedFrameCandidate
 	summary             summary.Summary
 }
 

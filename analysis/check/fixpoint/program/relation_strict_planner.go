@@ -19,6 +19,12 @@ import (
 // planner. It keeps the existing zero-boundary leaf slice and adds only exact
 // parameterized leaves whose complete context State and immutable stdlib
 // global vector can be bound before any equation is omitted.
+type stagedStrictContext struct {
+	origin      keyedFunction
+	certificate *relationContextEntryCertificate
+	frame       *strictValidatedFrameCandidate
+}
+
 func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Result, keys programKeys, prepared preparedBodies, rootFn *ast.FunctionExpr, stats *Stats) relationRunCatalog {
 	if reg == nil || bindings == nil {
 		return relationRunCatalog{}
@@ -38,7 +44,7 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 		shape          transformer.Shape
 		globalBoundary transformer.GlobalBoundary
 		globalBindings []transformer.GlobalRootBinding
-		contexts       []keyedFunction
+		contexts       []stagedStrictContext
 	}
 	var survivors []survivor
 	seen := make(map[summary.SummaryKey]struct{}, len(owners))
@@ -78,7 +84,7 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 			if !exact {
 				continue
 			}
-			candidate.contexts, exact = stagedStrictCertifiedContexts(keys, owner, plan)
+			candidate.contexts, exact = stagedStrictCertifiedContexts(reg, bindings, keys, owner, plan, shape, candidate.globalBoundary)
 			if !exact {
 				continue
 			}
@@ -115,7 +121,7 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 		out.consumers.byKey[owner.key] = len(out.consumers.entries)
 		out.consumers.entries = append(out.consumers.entries, relationConsumerEntry{identity: consumerIdentity, direct: direct, active: candidate.shape == (transformer.Shape{})})
 		for _, context := range candidate.contexts {
-			certificate := context.relationContextEntry
+			certificate := context.certificate
 			params := make([]product.Value, len(certificate.params))
 			captures := make([]product.Value, len(certificate.captures))
 			paths := make([]pathdom.Path, len(params)+len(captures))
@@ -125,7 +131,7 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 			for i, capture := range certificate.captures {
 				captures[i], paths[len(params)+i] = capture.value, capture.path
 			}
-			out.contexts = append(out.contexts, relationContextCandidate{context: context.key, base: identity, prepared: owner.prepared, discoveryGeneration: certificate.discoveryGeneration, params: params, captures: captures, globalBoundary: candidate.globalBoundary, globalBindings: append([]transformer.GlobalRootBinding(nil), candidate.globalBindings...), paths: paths, certificate: certificate})
+			out.contexts = append(out.contexts, relationContextCandidate{context: context.origin.key, base: identity, prepared: owner.prepared, discoveryGeneration: certificate.discoveryGeneration, params: params, captures: captures, globalBoundary: candidate.globalBoundary, globalBindings: append([]transformer.GlobalRootBinding(nil), candidate.globalBindings...), paths: paths, certificate: certificate, validatedFrame: context.frame})
 		}
 		if stats != nil {
 			stats.RelationPlannerOwnersActivated++
@@ -183,26 +189,34 @@ func stagedStrictIntrinsicGlobals(bindings *bind.Result, owner relationCatalogOw
 	return boundary, bound, true
 }
 
-func stagedStrictCertifiedContexts(keys programKeys, owner relationCatalogOwner, plan *operationplan.Plan) ([]keyedFunction, bool) {
-	if plan == nil || keys.contexts.discoveryGeneration == 0 {
+func stagedStrictCertifiedContexts(reg *axis.Registry, bindings *bind.Result, keys programKeys, owner relationCatalogOwner, plan *operationplan.Plan, shape transformer.Shape, globalBoundary transformer.GlobalBoundary) ([]stagedStrictContext, bool) {
+	if reg == nil || bindings == nil || plan == nil || keys.contexts.discoveryGeneration == 0 {
 		return nil, false
 	}
-	var out []keyedFunction
+	var out []stagedStrictContext
 	for _, context := range keys.contexts.entries {
 		if context.funcExpr != owner.fn {
 			continue
 		}
 		certificate := context.relationContextEntry
-		if certificate == nil || certificate.context != context.key || certificate.base != owner.key || certificate.discoveryGeneration != keys.contexts.discoveryGeneration || certificate.preparedBodyDigest != owner.prepared.IdentityDigest() || !certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
+		var frame *strictValidatedFrameCandidate
+		if certificate == nil {
+			var exact bool
+			certificate, frame, exact = strictValidatedFrameContextCertificate(reg, bindings, owner.fn, plan, shape, globalBoundary, context, owner.key, owner.prepared.IdentityDigest(), keys.contexts.discoveryGeneration)
+			if !exact {
+				return nil, false
+			}
+		}
+		if certificate.context != context.key || certificate.base != owner.key || certificate.discoveryGeneration != keys.contexts.discoveryGeneration || certificate.preparedBodyDigest != owner.prepared.IdentityDigest() || !certificate.matchesBoundary(plan.BoundaryParams(), plan.BoundaryCaptures()) {
 			return nil, false
 		}
-		out = append(out, context)
+		out = append(out, stagedStrictContext{origin: context, certificate: certificate, frame: frame})
 	}
-	slices.SortFunc(out, func(a, b keyedFunction) int {
-		if a.key.Less(b.key) {
+	slices.SortFunc(out, func(a, b stagedStrictContext) int {
+		if a.origin.key.Less(b.origin.key) {
 			return -1
 		}
-		if b.key.Less(a.key) {
+		if b.origin.key.Less(a.origin.key) {
 			return 1
 		}
 		return 0
