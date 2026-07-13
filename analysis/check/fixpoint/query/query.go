@@ -4,6 +4,7 @@ package query
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -36,9 +37,13 @@ type Stats struct {
 type Config struct {
 	// Context cooperatively stops summary worklist iteration. Nil preserves the
 	// legacy uncancelable driver behavior.
-	Context    context.Context
-	Registry   *axis.Registry
-	Functions  []Function
+	Context   context.Context
+	Registry  *axis.Registry
+	Functions []Function
+	// Pinned are immutable, externally computed summaries visible to equation
+	// bodies. Pinned keys are inputs, not equation cells: the driver never
+	// schedules, joins, or widens them.
+	Pinned     []summary.EntrySummary
 	Seed       summary.Reader
 	WidenAt    func(summary.SummaryKey) bool
 	WidenDelay func(summary.SummaryKey) int
@@ -47,18 +52,22 @@ type Config struct {
 
 // Driver is a reusable validated summary fixed-point driver.
 type Driver struct {
-	ctx        context.Context
-	reg        *axis.Registry
-	functions  []Function
-	known      map[summary.SummaryKey]struct{}
-	seed       summary.Reader
-	widenAt    func(summary.SummaryKey) bool
-	widenDelay func(summary.SummaryKey) int
-	Stats      *Stats
+	ctx         context.Context
+	reg         *axis.Registry
+	functions   []Function
+	known       map[summary.SummaryKey]struct{}
+	pinned      []summary.EntrySummary
+	pinnedByKey map[summary.SummaryKey]summary.Summary
+	seed        summary.Reader
+	widenAt     func(summary.SummaryKey) bool
+	widenDelay  func(summary.SummaryKey) int
+	Stats       *Stats
 }
 
 var ErrRegistryRequired = errors.New("query: registry is required")
 var ErrDuplicateFunction = errors.New("query: duplicate function")
+var ErrDuplicatePinned = errors.New("query: duplicate pinned summary")
+var ErrPinnedFunctionConflict = errors.New("query: pinned summary conflicts with function")
 var ErrNilBody = errors.New("query: nil body")
 
 // New validates config and returns a driver.
@@ -79,16 +88,32 @@ func New(config Config) (*Driver, error) {
 		known[fn.Key] = struct{}{}
 		functions[i] = fn
 	}
+	pinned := make([]summary.EntrySummary, len(config.Pinned))
+	pinnedByKey := make(map[summary.SummaryKey]summary.Summary, len(config.Pinned))
+	for i, entry := range config.Pinned {
+		if _, ok := pinnedByKey[entry.Key]; ok {
+			return nil, ErrDuplicatePinned
+		}
+		if _, ok := known[entry.Key]; ok {
+			return nil, ErrPinnedFunctionConflict
+		}
+		normalized := summary.Normalize(config.Registry, entry.Summary)
+		pinned[i] = summary.EntrySummary{Key: entry.Key, Summary: normalized}
+		pinnedByKey[entry.Key] = normalized
+	}
+	sort.Slice(pinned, func(i, j int) bool { return pinned[i].Key.Less(pinned[j].Key) })
 
 	return &Driver{
-		ctx:        config.Context,
-		reg:        config.Registry,
-		functions:  functions,
-		known:      known,
-		seed:       config.Seed,
-		widenAt:    config.WidenAt,
-		widenDelay: config.WidenDelay,
-		Stats:      config.Stats,
+		ctx:         config.Context,
+		reg:         config.Registry,
+		functions:   functions,
+		known:       known,
+		pinned:      pinned,
+		pinnedByKey: pinnedByKey,
+		seed:        config.Seed,
+		widenAt:     config.WidenAt,
+		widenDelay:  config.WidenDelay,
+		Stats:       config.Stats,
 	}, nil
 }
 
@@ -143,7 +168,7 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 			}
 			got, err := body(Context{
 				Key:       key,
-				Summaries: activeReader{reg: d.reg, known: d.known, seed: d.seed, read: read},
+				Summaries: activeReader{reg: d.reg, known: d.known, pinned: d.pinnedByKey, seed: d.seed, read: read},
 			})
 			if err != nil {
 				firstErr = err
@@ -169,7 +194,7 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 		return summary.Snapshot{}, firstErr
 	}
 
-	entries := make([]summary.EntrySummary, 0, len(d.functions))
+	entries := make([]summary.EntrySummary, 0, len(d.functions)+len(d.pinned))
 	for i, fn := range d.functions {
 		if i%256 == 0 {
 			if err := driverContextErr(d.ctx); err != nil {
@@ -181,6 +206,8 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 			Summary: result[fn.Key],
 		})
 	}
+	entries = append(entries, d.pinned...)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Key.Less(entries[j].Key) })
 	return summary.NewSnapshotOwnedNormalized(d.reg, entries...), nil
 }
 
@@ -199,16 +226,20 @@ func solverStats(stats *Stats) *solve.Stats {
 }
 
 type activeReader struct {
-	reg   *axis.Registry
-	known map[summary.SummaryKey]struct{}
-	seed  summary.Reader
-	read  func(summary.SummaryKey) summary.Summary
+	reg    *axis.Registry
+	known  map[summary.SummaryKey]struct{}
+	pinned map[summary.SummaryKey]summary.Summary
+	seed   summary.Reader
+	read   func(summary.SummaryKey) summary.Summary
 }
 
 func (r activeReader) Read(key summary.SummaryKey) (summary.Summary, bool) {
-	got := r.read(key)
 	if _, ok := r.known[key]; ok {
+		got := r.read(key)
 		return summary.Normalize(r.reg, got), true
+	}
+	if pinned, ok := r.pinned[key]; ok {
+		return summary.Normalize(r.reg, pinned), true
 	}
 	if r.seed == nil {
 		return summary.Summary{}, false

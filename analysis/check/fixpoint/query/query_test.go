@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -290,6 +292,137 @@ func TestWidenHooksAreForwardedForSummaryKeys(t *testing.T) {
 	}
 }
 
+func TestPinnedSummaryIsVisibleButNeverScheduledOrWidened(t *testing.T) {
+	reg := standard.Registry()
+	pinnedKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 101})
+	functionKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 102})
+	input := []summary.EntrySummary{{Key: pinnedKey, Summary: oneReturn(product.Top())}}
+	stats := Stats{}
+	var widened []summary.SummaryKey
+
+	driver, err := New(Config{
+		Registry: reg,
+		Pinned:   input,
+		Stats:    &stats,
+		Functions: []Function{{
+			Key: functionKey,
+			Body: func(ctx Context) (summary.Summary, error) {
+				got, ok := ctx.Summaries.Read(pinnedKey)
+				if !ok {
+					t.Fatalf("Read(pinnedKey) missing")
+				}
+				return got, nil
+			},
+		}},
+		WidenAt: func(key summary.SummaryKey) bool {
+			widened = append(widened, key)
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// New owns a normalized copy; caller mutation cannot alter the pinned input.
+	input[0].Summary.Returns = nil
+
+	snap, err := driver.Run()
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, key := range []summary.SummaryKey{pinnedKey, functionKey} {
+		got, ok := snap.Read(key)
+		if !ok || len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], product.Top()) {
+			t.Fatalf("Read(%v) = %#v, %v; want one top return", key, got, ok)
+		}
+	}
+	if stats.BodyInvocations != 1 {
+		t.Fatalf("BodyInvocations = %d, want only the configured equation body", stats.BodyInvocations)
+	}
+	if containsKey(widened, pinnedKey) {
+		t.Fatalf("WidenAt called for pinned key; calls=%v", widened)
+	}
+}
+
+func TestActiveReaderPinnedReadBypassesSolverRead(t *testing.T) {
+	reg := standard.Registry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 107})
+	reads := 0
+	r := activeReader{
+		reg:    reg,
+		known:  map[summary.SummaryKey]struct{}{},
+		pinned: map[summary.SummaryKey]summary.Summary{key: oneReturn(product.Top())},
+		read: func(summary.SummaryKey) summary.Summary {
+			reads++
+			return summary.Summary{}
+		},
+	}
+	got, ok := r.Read(key)
+	if !ok || len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], product.Top()) {
+		t.Fatalf("Read(pinned) = %#v, %v; want one top return", got, ok)
+	}
+	if reads != 0 {
+		t.Fatalf("solver reads = %d, want 0 for pinned input", reads)
+	}
+}
+
+func TestPinnedSnapshotOrderIsDeterministic(t *testing.T) {
+	reg := standard.Registry()
+	low := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 103})
+	high := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 104})
+	entry := func(key summary.SummaryKey) summary.EntrySummary {
+		return summary.EntrySummary{Key: key, Summary: oneReturn(product.Top())}
+	}
+
+	first, err := Run(Config{Registry: reg, Pinned: []summary.EntrySummary{entry(high), entry(low)}})
+	if err != nil {
+		t.Fatalf("Run(first) error = %v", err)
+	}
+	second, err := Run(Config{Registry: reg, Pinned: []summary.EntrySummary{entry(low), entry(high)}})
+	if err != nil {
+		t.Fatalf("Run(second) error = %v", err)
+	}
+	firstEntries, secondEntries := first.Entries(), second.Entries()
+	if len(firstEntries) != 2 || len(secondEntries) != 2 {
+		t.Fatalf("entry lengths = %d, %d; want 2", len(firstEntries), len(secondEntries))
+	}
+	for i := range firstEntries {
+		if firstEntries[i].Key != secondEntries[i].Key || !summary.Equal(reg, firstEntries[i].Summary, secondEntries[i].Summary) {
+			t.Fatalf("entry %d differs across pinned input order", i)
+		}
+	}
+	if firstEntries[0].Key != low || firstEntries[1].Key != high {
+		t.Fatalf("entry order = %v, %v; want key order", firstEntries[0].Key, firstEntries[1].Key)
+	}
+}
+
+func TestCanceledRunDoesNotEvaluateOrPublishPinnedInputs(t *testing.T) {
+	reg := standard.Registry()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pinnedKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 105})
+	functionKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 106})
+	invocations := 0
+
+	snap, err := Run(Config{
+		Context:  ctx,
+		Registry: reg,
+		Pinned:   []summary.EntrySummary{{Key: pinnedKey, Summary: oneReturn(product.Top())}},
+		Functions: []Function{{Key: functionKey, Body: func(Context) (summary.Summary, error) {
+			invocations++
+			return oneReturn(product.Top()), nil
+		}}},
+	})
+	if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want solve and context cancellation", err)
+	}
+	if invocations != 0 {
+		t.Fatalf("body invocations = %d, want 0", invocations)
+	}
+	if len(snap.Entries()) != 0 {
+		t.Fatalf("canceled snapshot entries = %v, want none", snap.Entries())
+	}
+}
+
 func TestNewValidationErrors(t *testing.T) {
 	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 10})
@@ -311,6 +444,25 @@ func TestNewValidationErrors(t *testing.T) {
 		Functions: []Function{{Key: key}},
 	}); !errors.Is(err, ErrNilBody) {
 		t.Fatalf("New(nil body) error = %v, want ErrNilBody", err)
+	}
+	if _, err := New(Config{
+		Registry: reg,
+		Pinned: []summary.EntrySummary{
+			{Key: key},
+			{Key: key},
+		},
+	}); !errors.Is(err, ErrDuplicatePinned) {
+		t.Fatalf("New(duplicate pinned) error = %v, want ErrDuplicatePinned", err)
+	}
+	if _, err := New(Config{
+		Registry: reg,
+		Functions: []Function{{
+			Key:  key,
+			Body: func(Context) (summary.Summary, error) { return summary.Summary{}, nil },
+		}},
+		Pinned: []summary.EntrySummary{{Key: key}},
+	}); !errors.Is(err, ErrPinnedFunctionConflict) {
+		t.Fatalf("New(pinned/function conflict) error = %v, want ErrPinnedFunctionConflict", err)
 	}
 }
 
