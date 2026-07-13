@@ -265,6 +265,15 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 				return err
 			}
 		}
+	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
+		if len(n.args) != 2 {
+			return fmt.Errorf("transformer: malformed scalar binary term %d", term)
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
 	case valueIteratorProjection:
 		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
 			return fmt.Errorf("transformer: malformed iterator projection term %d", term)
@@ -397,6 +406,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) != 2 {
 			return fmt.Errorf("malformed string concat term %d", term)
 		}
+	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
+		if len(n.args) != 2 {
+			return fmt.Errorf("malformed scalar binary term %d", term)
+		}
 	case valueIteratorProjection:
 		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
 			return fmt.Errorf("malformed iterator projection term %d", term)
@@ -475,6 +488,8 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		}
 	case valueStringConcat:
 		out = s.caller.StringConcatValue(s.value(n.args[0]), s.value(n.args[1]))
+	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
+		out = s.caller.scalarBinaryValue(n.op, s.value(n.args[0]), s.value(n.args[1]))
 	case valueIteratorProjection:
 		out = s.caller.IteratorProjectionValueWithContract(n.iterator, n.variableIndex, s.value(n.args[0]), n.assertedType, n.hasAsserted)
 	case valueStaticIndex:

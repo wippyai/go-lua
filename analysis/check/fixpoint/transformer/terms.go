@@ -37,6 +37,10 @@ const (
 	valueDynamicRead
 	valueDynamicTableRead
 	valueStringConcat
+	valueScalarEqual
+	valueScalarNotEqual
+	valueScalarAnd
+	valueScalarOr
 	valueIteratorProjection
 	valueStaticIndex
 	valueAllocationResult
@@ -605,6 +609,8 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			return product.Value{}, false
 		}
 		return luasourcevalue.BinaryOperationValue(a.reg, nil, "..", left, right)
+	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
+		return a.evalScalarBinaryValue(n.op, n.args, cursor, context)
 	case valueIteratorProjection:
 		if len(n.args) != 1 {
 			return product.Value{}, false
@@ -699,6 +705,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 		return "dt(" + strings.Join(parts, ",") + ")"
 	case valueStringConcat:
 		return "s(" + a.canonicalValue(n.args[0]) + "," + a.canonicalValue(n.args[1]) + ")"
+	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
+		return canonicalScalarBinaryValue(n.op, a.canonicalValue(n.args[0]), a.canonicalValue(n.args[1]))
 	case valueIteratorProjection:
 		if !n.hasAsserted {
 			return fmt.Sprintf("i%d.%d.%d(%s)", n.iterator.Kind, n.iterator.Source.Index, n.variableIndex, a.canonicalValue(n.args[0]))
@@ -736,6 +744,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if n.op == valueStringConcat && len(n.args) != 2 {
+		return false
+	}
+	if isScalarBinaryValueOp(n.op) && len(n.args) != 2 {
 		return false
 	}
 	if n.op == valueIteratorProjection && (len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 ||
