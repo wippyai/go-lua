@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/semantic/intrinsic"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -1393,7 +1394,7 @@ func (l *lowerer) addSealedLuaTypeCheckOperation(predicate factflow.ExprRef, ins
 	if !ok {
 		return
 	}
-	typeOp, ok := factflow.NewUnaryExpressionOperation("lua_type", arg)
+	typeOp, ok := factflow.NewIntrinsicExpressionOperation(intrinsic.LuaType, arg)
 	if !ok {
 		return
 	}

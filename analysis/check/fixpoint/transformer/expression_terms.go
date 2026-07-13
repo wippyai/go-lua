@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 )
 
@@ -73,6 +74,12 @@ func (a *Arena) evalScalarBinaryValue(op valueOp, args []ValueTerm, cursor Bindi
 	left, ok := a.evalValue(args[0], cursor, context)
 	if !ok {
 		return product.Value{}, false
+	}
+	if op == valueScalarAnd && !valuerefine.CanBeTruthy(a.reg, left) {
+		return left, true
+	}
+	if op == valueScalarOr && !valuerefine.CanBeFalsy(a.reg, left) {
+		return left, true
 	}
 	right, ok := a.evalValue(args[1], cursor, context)
 	if !ok {

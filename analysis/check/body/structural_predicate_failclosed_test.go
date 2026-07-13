@@ -35,7 +35,7 @@ func TestStructuralLuaTypePredicateRejectsUnsealedGlobalEnvironment(t *testing.T
 			}
 			sealedTerm := false
 			prepared.operationPlan.Facts().ForEachExpressionOperation(func(_ factflow.ExprRef, op factflow.ExpressionOperation) bool {
-				if op.Kind() == factflow.ExpressionOperationUnary && op.Op() == "lua_type" {
+				if _, exact := op.Intrinsic(); exact {
 					sealedTerm = true
 				}
 				return true
@@ -53,5 +53,33 @@ func TestStructuralLuaTypePredicateRejectsUnsealedGlobalEnvironment(t *testing.T
 				t.Fatal("unsealed structural type predicate compiled non-contextually")
 			}
 		})
+	}
+}
+
+func TestStructuralLuaTypePredicateRejectsEffectfulRHS(t *testing.T) {
+	reg := standard.Registry()
+	prepared, err := PrepareFunction(parseFunction(t, `function f(value)
+		return type(value) == "string" and effect(value)
+	end`), Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}, Globals: []string{"effect"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams())), Globals: uint32(len(prepared.operationPlan.BoundaryGlobals()))}
+	if relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, shape); relation.ContextualReason() == "" {
+		t.Fatal("effectful structural RHS compiled non-contextually")
+	}
+}
+
+func TestStructuralLuaTypePredicateRejectsWrongShortCircuitPolarity(t *testing.T) {
+	reg := standard.Registry()
+	prepared, err := PrepareFunction(parseFunction(t, `function f(value)
+		return type(value) == "string" or value ~= ""
+	end`), Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams())), Globals: uint32(len(prepared.operationPlan.BoundaryGlobals()))}
+	if relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, shape); relation.ContextualReason() == "" {
+		t.Fatal("logical or predicate compiled through and-only structural slice")
 	}
 }

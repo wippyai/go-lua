@@ -44,11 +44,11 @@ func (l *lowerer) branchConditionAtWIR(point cfg.Point) (factflow.BranchConditio
 			if !ok {
 				return factflow.BranchCondition{}, false
 			}
-			shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+			shape, ok := factflow.NewValueSourceShape(true, false, true, false)
 			if !ok {
 				return factflow.BranchCondition{}, false
 			}
-			source, ok := factflow.NewExpressionValueSource(ref, 0, factflow.NoValueSourceIndex, 0, shape)
+			source, ok := factflow.NewExpressionValueSource(ref, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
 			if !ok {
 				return factflow.BranchCondition{}, false
 			}

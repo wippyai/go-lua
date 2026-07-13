@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/semantic/intrinsic"
 )
 
 // prepareReturnedStructuralPredicates admits only complete source-authored
@@ -56,6 +57,9 @@ func prepareReturnedStructuralPredicates(ctx *planCompileContext) error {
 	sort.Slice(owners, func(i, j int) bool { return owners[i] < owners[j] })
 	for _, owner := range owners {
 		region := ctx.structuralPredicates[owner]
+		if !region.RHSOnTrue() {
+			return fmt.Errorf("expression %d logical and region has wrong RHS polarity", owner)
+		}
 		source, ok := ctx.facts.BranchConditionSource(region.Branch())
 		if !ok {
 			return fmt.Errorf("expression %d structural branch has no condition source", owner)
@@ -67,12 +71,15 @@ func prepareReturnedStructuralPredicates(ctx *planCompileContext) error {
 			return fmt.Errorf("expression %d structural branch condition %d is outside returned DAG", owner, source.ExprRef)
 		}
 		op, _ := ctx.facts.ExpressionOperation(owner)
+		if op.Left() != source {
+			return fmt.Errorf("expression %d structural branch condition is not its exact left operand", owner)
+		}
 		rhs := op.Right()
 		if rhs.HasSourcePoint && !containsStructuralPoint(region.OwnedRHSPoints(), rhs.SourcePoint) {
 			return fmt.Errorf("expression %d RHS producer is outside certified effect region", owner)
 		}
-		if !rhs.HasSourcePoint && !structuralRHSIsEffectFree(ctx.plan, region) {
-			return fmt.Errorf("expression %d RHS has no producer point and certified region owns effects", owner)
+		if !structuralRHSIsEffectFree(ctx.plan, region) {
+			return fmt.Errorf("expression %d certified RHS region owns impure operations", owner)
 		}
 	}
 	return nil
@@ -82,19 +89,37 @@ func structuralRHSIsEffectFree(plan *operationplan.Plan, region factflow.Structu
 	if plan == nil {
 		return false
 	}
-	catalog := DefaultEffectCatalog()
 	for _, point := range region.OwnedRHSPoints() {
-		var active []operationplan.Kind
 		cursor := plan.Cursor(point)
 		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-			active = append(active, cell.Kind())
-		}
-		_, admitted, err := catalog.AdmitPoint(active)
-		if err != nil || admitted {
-			return false
+			pure, known := structuralPredicatePointKindPurity(cell.Kind())
+			if !known || !pure {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+func structuralPredicatePointKindPurity(kind operationplan.Kind) (pure, known bool) {
+	switch kind {
+	case operationplan.BranchEdgeReachability, operationplan.BranchConditionSource,
+		operationplan.BranchRefinement, operationplan.BranchPresenceRelation,
+		operationplan.BranchPathRelation, operationplan.BranchPathEvidence,
+		operationplan.BranchSufficientLiteralCase:
+		return true, true
+	case operationplan.RootAssignment, operationplan.PathAssignment, operationplan.PathStaticMemberWrite,
+		operationplan.DynamicIndexWrite, operationplan.PathDescendantInvalidation, operationplan.CovariantExposure,
+		operationplan.NoNormalReturn, operationplan.PathValuePresenceImplication, operationplan.ChannelSelect,
+		operationplan.PostconditionRefinement, operationplan.PostconditionPathRelation, operationplan.CallResultValue,
+		operationplan.ReturnPresenceRelation, operationplan.Return, operationplan.CallSite, operationplan.ObjectLiteral,
+		operationplan.ExpressionValue, operationplan.ExpressionOperation, operationplan.ExpressionFunction,
+		operationplan.ExpressionRefinement, operationplan.ExpressionPath, operationplan.DynamicIndexExpression,
+		operationplan.ExpressionCondition:
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func validateReturnedPredicateExpr(ctx *planCompileContext, ref factflow.ExprRef, active map[factflow.ExprRef]bool) error {
@@ -108,7 +133,8 @@ func validateReturnedPredicateExpr(ctx *planCompileContext, ref factflow.ExprRef
 		return fmt.Errorf("cyclic expression DAG")
 	}
 	op, ok := ctx.facts.ExpressionOperation(ref)
-	validUnary := ok && op.Kind() == factflow.ExpressionOperationUnary && op.Op() == "lua_type"
+	identity, hasIdentity := op.Intrinsic()
+	validUnary := ok && op.Kind() == factflow.ExpressionOperationUnary && hasIdentity && identity == intrinsic.LuaType
 	validBinary := ok && op.Kind() == factflow.ExpressionOperationBinary &&
 		(op.Op() == "==" || op.Op() == "~=" || op.Op() == "and")
 	if !validUnary && !validBinary {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -36,6 +37,12 @@ func TestScalarBinaryValueDifferentialAgainstLuaKernel(t *testing.T) {
 				}
 				got, gotOK := arena.evalValue(term, cursor, SpecializationContext{})
 				want, wantOK := luasourcevalue.BinaryOperationValue(reg, nil, operator, leftValue, rightValue)
+				if operator == "and" && !valuerefine.CanBeTruthy(reg, leftValue) {
+					want, wantOK = leftValue, true
+				}
+				if operator == "or" && !valuerefine.CanBeFalsy(reg, leftValue) {
+					want, wantOK = leftValue, true
+				}
 				if gotOK != wantOK || gotOK && !product.Equal(reg, got, want) {
 					t.Fatalf("%s sample %d/%d: got ok=%v value=%#v, canonical ok=%v value=%#v", operator, li, ri, gotOK, got, wantOK, want)
 				}
@@ -57,6 +64,33 @@ func TestScalarBinaryValuePreservesCallerDependence(t *testing.T) {
 	gotDifferent, differentOK := arena.evalValue(equal, differentCursor, SpecializationContext{})
 	if !equalOK || !differentOK || product.Equal(reg, gotEqual, gotDifferent) {
 		t.Fatalf("caller substitution collapsed: equal=%#v/%v different=%#v/%v", gotEqual, equalOK, gotDifferent, differentOK)
+	}
+}
+
+func TestLogicalTermsLazilyBypassUnresolvedRHS(t *testing.T) {
+	reg := standard.Registry()
+	a := NewArena(reg)
+	rhs := a.CellResultValue(CellRef{Function: 99})
+	for _, tc := range []struct {
+		op   string
+		left product.Value
+	}{
+		{"and", typevalue.LiteralBool(reg, false)}, {"and", typevalue.Nil(reg)},
+		{"or", typevalue.LiteralBool(reg, true)}, {"or", typevalue.LiteralString(reg, "truthy")},
+	} {
+		term, _ := a.ScalarBinaryValue(tc.op, a.Constant(tc.left), rhs)
+		cursor, _ := NewBindingCursor(Shape{}, nil, nil)
+		got, ok := a.evalValue(term, cursor, SpecializationContext{})
+		if !ok || !product.Equal(reg, got, tc.left) {
+			t.Fatalf("%s lazy bypass = %#v/%v", tc.op, got, ok)
+		}
+	}
+	for _, op := range []string{"and", "or"} {
+		term, _ := a.ScalarBinaryValue(op, a.Constant(product.Top()), rhs)
+		cursor, _ := NewBindingCursor(Shape{}, nil, nil)
+		if _, ok := a.evalValue(term, cursor, SpecializationContext{}); ok {
+			t.Fatalf("%s incorrectly bypassed unresolved RHS for Top left", op)
+		}
 	}
 }
 

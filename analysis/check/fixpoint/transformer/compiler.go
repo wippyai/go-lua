@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/semantic/intrinsic"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -604,10 +605,14 @@ func structuralPredicateConditionEvidence(ctx planCompileContext, point cfg.Poin
 		return false
 	}
 	owned := false
-	for _, region := range ctx.structuralPredicates {
-		if region.Branch() == point && structuralRHSIsEffectFree(ctx.plan, region) {
-			owned = true
-			break
+	for owner, region := range ctx.structuralPredicates {
+		if region.Branch() == point && region.RHSOnTrue() && structuralRHSIsEffectFree(ctx.plan, region) {
+			op, exists := ctx.facts.ExpressionOperation(owner)
+			left, err := exactCompilerSourceTerm(ctx, op.Left())
+			if exists && err == nil && left == condition {
+				owned = true
+				break
+			}
 		}
 	}
 	if !owned {
@@ -861,7 +866,7 @@ func (returnPlanHandler) Lower(ctx planCompileContext, point cfg.Point, operatio
 			Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: uint32(slot),
 			Value: term,
 		})
-		appendReturnedParamRefinements(&ctx, source, slot)
+		appendReturnedParamRefinements(&ctx, source, i)
 	}
 	return nil
 }
@@ -1195,8 +1200,8 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 			return 0, fmt.Errorf("cyclic expression source %d", source.ExprRef)
 		}
 		if operation, ok := ctx.facts.ExpressionOperation(source.ExprRef); ok {
-			if _, certified := ctx.predicateExpressions[source.ExprRef]; certified &&
-				operation.Kind() == factflow.ExpressionOperationUnary && operation.Op() == "lua_type" {
+			identity, hasIdentity := operation.Intrinsic()
+			if _, certified := ctx.predicateExpressions[source.ExprRef]; certified && hasIdentity && identity == intrinsic.LuaType {
 				if active == nil {
 					active = make(map[factflow.ExprRef]bool, 1)
 				}
@@ -1399,9 +1404,6 @@ func expressionHasContextualSidecar(facts factflow.Facts, ref factflow.ExprRef) 
 		return true
 	}
 	if _, ok := facts.DynamicIndexExpression(ref); ok {
-		return true
-	}
-	if _, ok := facts.ExpressionCondition(ref); ok {
 		return true
 	}
 	return false

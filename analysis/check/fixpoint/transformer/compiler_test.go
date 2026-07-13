@@ -68,6 +68,36 @@ func TestPreparedPlanCompilerReusesArenaAndMatchesLegacy(t *testing.T) {
 	}
 }
 
+func TestReturnConditionUsesSourceOrdinalNotTargetSlot(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	param := symbol.ID(9001)
+	ref := factflow.ExprRef(77)
+	shapeSource, _ := factflow.NewValueSourceShape(true, false, false, false)
+	source, _ := factflow.NewExpressionValueSource(ref, 0, 1, 0, shapeSource)
+	constraint := typevalue.LiteralString(reg, "selected")
+	condition := factflow.NewExpressionCondition([]factflow.PostconditionRefinement{
+		factflow.NewPostconditionRefinement(pathdom.NewPath(param, "value"), factflow.NewValueConstraint(constraint)),
+	}, nil, nil, nil)
+	plan := operationplan.New(graph, factflow.FactsInput{
+		Returns:              map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{source})},
+		ExpressionValues:     map[factflow.ExprRef]product.Value{ref: typevalue.LiteralBool(reg, true)},
+		ExpressionConditions: map[factflow.ExprRef]factflow.ExpressionCondition{ref: condition},
+	}).WithBoundaryParams([]symbol.ID{param})
+	relation := NewPlanCompiler().Compile(reg, graph, plan, Shape{Params: 1})
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatal(reason)
+	}
+	cursor, _ := NewBindingCursor(Shape{Params: 1}, []product.Value{constraint}, nil)
+	got, ok := relation.Specialize(cursor, nil, nil)
+	if !ok || len(got.Returns) != 2 || len(got.ReturnConditionParamRefinements) != 1 || got.ReturnConditionParamRefinements[0].ReturnIndex != 0 {
+		t.Fatalf("reordered return condition = %#v/%v", got, ok)
+	}
+}
+
 func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *testing.T) {
 	reg := standard.Registry()
 	calleeShape := Shape{Params: 2}
