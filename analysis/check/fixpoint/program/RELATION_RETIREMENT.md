@@ -263,7 +263,19 @@ Land it in three independently gated pieces:
 
 The first slice does not claim recursive SCC support. Any binding,
 specialization, content-identity, coverage, or call-surface miss rejects the
-whole owner before query publication. Acceptance requires eight contextual
-summary-equation omissions for this owner, strictly lower total summary work,
-and exact all-lane states, summaries, diagnostics, manifests, observation
-products, and `ResultVersion` across legacy, repeated, and strict runs.
+whole owner before query publication. Acceptance requires every discovered
+contextual summary equation for this owner to be discharged, strictly lower
+total summary work, and exact all-lane states, summaries, diagnostics,
+manifests, observation products, and `ResultVersion` across legacy, repeated,
+and strict runs.
+
+Commit `54f4b86f0` met that private strict gate for the frozen `is_str` owner.
+Four independently identity-fenced full contexts are concretely validated and
+retained; caller-only ambient path facts are ignored only by the symbolic
+candidate, never removed from the validation or diagnostic Result. Repeated
+legacy/strict differentials are byte-identical and the owner moves from 10
+body solves/70 transfers to 6/42 with contexts/omissions/reuses = 4/4/4. The
+whole frozen file moves from 271/11,882 to 267/11,854, which is too small to
+change wall time outside noise. This is a semantic-reuse proof, not a
+production promotion. The next value gate is a closed direct-call fanout
+transaction with every lexical target sealed in one catalog generation.
