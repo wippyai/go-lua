@@ -77,6 +77,7 @@ type wirResultSource struct {
 	point       cfg.Point
 	resultIndex int
 	targetIndex int
+	topLevel    bool
 	final       bool
 	expanded    bool
 	adjusted    bool
@@ -2064,6 +2065,7 @@ func (l *lowerer) resultValueSourcesByTempFromWIR() map[uint32]wirResultSource {
 					point:       inst.Point,
 					resultIndex: resultIndex,
 					targetIndex: wirCallResultTargetIndex(l.wir, inst.Point, resultIndex),
+					topLevel:    inst.CallContext != wir.CallContextExpressionProducer,
 					final:       inst.CallFinal,
 					expanded:    inst.CallExpanded,
 					adjusted:    inst.CallAdjusted,
@@ -2122,16 +2124,25 @@ func resultValueSourceFromWIR(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	if exprIndex == factflow.NoValueSourceIndex {
+	// A top-level call result carries the value-list shape of the call
+	// instruction that produced it. In particular, parentheses adjust a final
+	// call to one result even when the surrounding return instruction has an
+	// open tail. Expression-producer calls are nested: their value can be
+	// reshaped by the enclosing expression/list consumer (for example, a final
+	// call argument expands), so keep the consumer shape for those.
+	producerShape := exprIndex == factflow.NoValueSourceIndex || result.topLevel
+	if producerShape {
 		final = result.final
 		expanded = result.expanded
 		openTail = result.openTail
+	}
+	if exprIndex == factflow.NoValueSourceIndex {
 		if result.targetIndex != factflow.NoValueSourceIndex {
 			targetIndex = result.targetIndex
 		}
 	}
 	adjusted := !expanded
-	if exprIndex == factflow.NoValueSourceIndex {
+	if producerShape {
 		adjusted = result.adjusted
 	}
 	shape, ok := factflow.NewValueSourceShape(final, expanded, adjusted, openTail)
