@@ -1043,7 +1043,7 @@ analysis/check/fixpoint/summary,summary.go,FreshHeapAllocation,type,analysis/che
 analysis/check/fixpoint/summary,summary.go,FreshHeapAllocation.CallerPlacement,method,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary.go,Summary,type,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary.go,Summary.Clone,method,analysis/check/fixpoint/summary,,unclassified,,,
-analysis/check/fixpoint/summary,summary.go,Summary.RekeyHeapTableObjects,method,analysis/check/fixpoint/summary,,unclassified,,,
+analysis/check/fixpoint/summary,summary.go,Summary.RekeyHeapTableObjects,method,analysis/check/fixpoint/summary,analysis/semantic/transaction,boundary-provider,boundary:allocation-keyspace-rekey,go-lua.semantic.transaction.allocation-keyspace-rekey/v1,test:TestRekeyHeapTableObjectsImportsDynamicTableKeys+TestRekeyHeapTableObjectsRejectsForeignNestedKeyTransactionally+TestRekeyHeapTableObjectsAllowsNilOnlyForKeyFreePayload
 analysis/check/fixpoint/summary,summary_key.go,DefaultSummaryKey,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary_key.go,Digest,type,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary_key.go,EntryKey,type,analysis/check/fixpoint/summary,,unclassified,,,
@@ -2534,6 +2534,7 @@ analysis/engine/callpayload,call_outcome.go,CallTypestateRequirement,type,analys
 analysis/engine/callpayload,outcome_descriptors.go,CallOutcomeDescriptors,func,analysis/engine/callpayload,,unclassified,,,
 analysis/engine/callpayload,outcome_descriptors.go,CallOutcomeLaneOps,type,analysis/engine/callpayload,,unclassified,,,
 analysis/engine/callpayload,outcome_descriptors.go,CallOutcomeLaneOps.PostReturn,method,analysis/engine/callpayload,,unclassified,,,
+analysis/engine/callpayload,rekey.go,CallOutcome.RekeyHeapTableObjects,method,analysis/engine/callpayload,analysis/semantic/transaction,boundary-provider,boundary:allocation-keyspace-rekey,go-lua.semantic.transaction.allocation-keyspace-rekey/v1,test:TestCallOutcomeRekeyHeapTableObjectsRejectsForeignKeyTransactionally+TestCallOutcomeRekeyHeapTableObjectsAllowsNilForKeyFreeObject
 analysis/engine/callproducer,callproducer.go,FromFacts,func,analysis/engine/callproducer,,unclassified,,,
 analysis/engine/callproducer,callproducer.go,Has,func,analysis/engine/callproducer,,unclassified,,,
 analysis/engine/callproducer,callproducer.go,HasView,func,analysis/engine/callproducer,analysis/engine/callproducer,boundary-provider,boundary:call-producer-eligibility,go-lua.callproducer.eligibility/v1,fixture:call-producer
