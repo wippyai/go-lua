@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
 // BoundaryPolicy declares how one sparse value axis crosses a function-summary
@@ -37,6 +38,10 @@ type Spec[T any] struct {
 	// Retention is mandatory for every registered sparse axis. It proves whether
 	// values may cross an immutable artifact boundary.
 	Retention RetentionPolicy[T]
+	// Canonical is mandatory and explicitly Ready or Pending. Pending axes remain
+	// valid solver axes but prevent their registry from publishing canonical
+	// authority.
+	Canonical CanonicalDescriptor[T]
 	// Boundary is mandatory for registered product axes. Projected additionally
 	// requires BoundaryProject; the other policies reject a projector so stale
 	// configuration cannot be ignored accidentally.
@@ -122,6 +127,9 @@ func validate[T any](s Spec[T]) error {
 	if err := validateRetentionPolicy(s.Key.ID(), s.Retention); err != nil {
 		return err
 	}
+	if err := validateCanonicalDescriptor(s.Key.ID(), s.Canonical); err != nil {
+		return err
+	}
 	switch s.Boundary {
 	case LocalOnly, PortableIdentity:
 		if s.BoundaryProject != nil {
@@ -157,6 +165,11 @@ type ErasedSpec interface {
 	HashAny(any) uint64
 	RetentionMode() RetentionMode
 	RetentionSafeAny(any) bool
+	CanonicalStatus() CanonicalStatus
+	CanonicalCodecID() string
+	CanonicalCodecVersion() uint64
+	CanonicalPendingReason() string
+	EncodeCanonicalAny(*canonical.Writer, any) error
 	BoundaryPolicy() BoundaryPolicy
 	ProjectBoundaryAny(any) any
 	ReducerHook() Reducer
@@ -221,6 +234,21 @@ func (e erasedSpec[T]) HashAny(v any) uint64 {
 }
 
 func (e erasedSpec[T]) RetentionMode() RetentionMode { return e.spec.Retention.Mode }
+
+func (e erasedSpec[T]) CanonicalStatus() CanonicalStatus { return e.spec.Canonical.status }
+
+func (e erasedSpec[T]) CanonicalCodecID() string { return e.spec.Canonical.codecID }
+
+func (e erasedSpec[T]) CanonicalCodecVersion() uint64 { return e.spec.Canonical.version }
+
+func (e erasedSpec[T]) CanonicalPendingReason() string { return e.spec.Canonical.pendingReason }
+
+func (e erasedSpec[T]) EncodeCanonicalAny(writer *canonical.Writer, value any) error {
+	if e.spec.Canonical.status != CanonicalReady || e.spec.Canonical.encode == nil {
+		return fmt.Errorf("axis %q: canonical codec is not ready", e.ID())
+	}
+	return e.spec.Canonical.encode(writer, e.cast(value))
+}
 
 func (e erasedSpec[T]) RetentionSafeAny(value any) bool {
 	typed, ok := value.(T)

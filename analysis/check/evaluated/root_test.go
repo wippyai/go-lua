@@ -188,6 +188,7 @@ func unsafeObservationRegistry(t *testing.T) (*axis.Registry, product.Value) {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ValidatedRetention(func(value unsafeObservationAxis) bool { return value.safe }),
+		Canonical: axis.PendingCanonical[unsafeObservationAxis]("test-only axis"),
 	})
 	reg.Freeze()
 	return reg, product.Set(reg, product.Top(), key, unsafeObservationAxis{safe: false})

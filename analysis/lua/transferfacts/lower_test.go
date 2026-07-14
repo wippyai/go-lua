@@ -986,6 +986,7 @@ func testLowerSparseAxisSpec() axis.Spec[testLowerSparseAxis] {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[testLowerSparseAxis](),
+		Canonical: axis.PendingCanonical[testLowerSparseAxis]("test-only axis"),
 	}
 }
 

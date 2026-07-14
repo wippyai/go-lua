@@ -336,6 +336,7 @@ func registryTestSpec(id string, reducer axis.Reducer) axis.Spec[int] {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[int](),
+		Canonical: axis.PendingCanonical[int]("test-only axis"),
 		Reducer:   reducer,
 	}
 }
@@ -369,5 +370,6 @@ func registryStringSpec(id string) axis.Spec[string] {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[string](),
+		Canonical: axis.PendingCanonical[string]("test-only axis"),
 	}
 }

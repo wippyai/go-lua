@@ -1447,6 +1447,7 @@ func projectTestRegistry(t *testing.T) (*axis.Registry, axis.Key[projectMark]) {
 		Hash:      func(v projectMark) uint64 { return uint64(v) },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[projectMark](),
+		Canonical: axis.PendingCanonical[projectMark]("test-only axis"),
 	}.Erase())
 	if err != nil {
 		t.Fatalf("RegistryWithAxes: %v", err)

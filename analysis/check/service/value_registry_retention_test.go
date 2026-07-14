@@ -1,6 +1,7 @@
 package service
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -34,5 +35,28 @@ func TestGeneratedRegistryMatchesPinnedStandardRetentionSchema(t *testing.T) {
 	}
 	if got := presence.Spec().Erase().RetentionMode(); got != axis.RetentionImmutable {
 		t.Fatalf("core presence retention = %d, want immutable", got)
+	}
+}
+
+func TestGeneratedRegistryMatchesStandardCanonicalPlanExactly(t *testing.T) {
+	generated, err := checkerRegistry.CanonicalPlan()
+	if err != nil {
+		t.Fatalf("generated CanonicalPlan error = %v", err)
+	}
+	reference, err := standard.Registry().CanonicalPlan()
+	if err != nil {
+		t.Fatalf("standard CanonicalPlan error = %v", err)
+	}
+	if !slices.Equal(generated.Entries(), reference.Entries()) {
+		t.Fatalf("generated canonical plan = %#v, want %#v", generated.Entries(), reference.Entries())
+	}
+	if generated.SchemaIdentity() != reference.SchemaIdentity() {
+		t.Fatalf("generated/standard schema identities = %x/%x", generated.SchemaIdentity(), reference.SchemaIdentity())
+	}
+	if got := generated.PendingAxes(); !slices.Equal(got, []string{"typewitness"}) {
+		t.Fatalf("generated pending axes = %v, want [typewitness]", got)
+	}
+	if _, ok := generated.AuthorityIdentity(); ok {
+		t.Fatal("generated registry published authority while typewitness is Pending")
 	}
 }

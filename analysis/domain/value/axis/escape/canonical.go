@@ -1,8 +1,15 @@
 package escape
 
-import "github.com/wippyai/go-lua/analysis/internal/canonical"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
+)
 
 const canonicalValueRecord uint64 = 1
+
+func canonicalDescriptor() axis.CanonicalDescriptor[Value] {
+	return axis.ReadyCanonical("value.axis.escape", 1, encodeCanonical)
+}
 
 // encodeCanonical writes the exact Equal identity of v. It is intentionally
 // package-private until the axis registry owns codec completeness.

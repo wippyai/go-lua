@@ -544,6 +544,7 @@ func queryTestSpec() axis.Spec[queryTestAxis] {
 		Hash:      func(v queryTestAxis) uint64 { return uint64(v) },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[queryTestAxis](),
+		Canonical: axis.PendingCanonical[queryTestAxis]("test-only axis"),
 	}
 }
 

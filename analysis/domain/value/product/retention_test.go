@@ -36,6 +36,7 @@ func TestRetentionSafeIsAxisOwnedAndRegistryFenced(t *testing.T) {
 			Hash:      func(v retentionTestValue) uint64 { return uint64(v.rank)<<1 | boolBit(v.safe) },
 			Boundary:  axis.PortableIdentity,
 			Retention: axis.ValidatedRetention(func(value retentionTestValue) bool { return value.safe }),
+			Canonical: axis.PendingCanonical[retentionTestValue]("test-only axis"),
 		})
 		return reg.Freeze()
 	}
@@ -72,6 +73,7 @@ func TestRetentionSafeUsesCanonicalSlotOrdinals(t *testing.T) {
 		Hash:      func(v int) uint64 { return uint64(v) },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[int](),
+		Canonical: axis.PendingCanonical[int]("test-only axis"),
 	})
 	rank := func(v string) int {
 		switch v {
@@ -109,6 +111,7 @@ func TestRetentionSafeUsesCanonicalSlotOrdinals(t *testing.T) {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ValidatedRetention(func(v string) bool { return v != "unsafe" }),
+		Canonical: axis.PendingCanonical[string]("test-only axis"),
 	})
 	reg.Freeze()
 
@@ -162,6 +165,7 @@ func TestRetentionSafeRejectsRegistryWithUnsafeImplicitTop(t *testing.T) {
 		Retention: axis.ValidatedRetention(func(v mutableTopRetentionValue) bool {
 			return v.safe
 		}),
+		Canonical: axis.PendingCanonical[mutableTopRetentionValue]("test-only axis"),
 	}.Erase())
 	if err != nil {
 		t.Fatalf("RegistryWithAxes: %v", err)

@@ -4,13 +4,15 @@ import "fmt"
 
 // Registry owns the ordered set of axes in one value product.
 type Registry struct {
-	specs        map[string]ErasedSpec
-	order        []ErasedSpec
-	reducers     []Reducer
-	reducerReads [][]string
-	extensions   map[string]map[string]Extension
-	extensionSeq map[string][]Extension
-	frozen       bool
+	specs              map[string]ErasedSpec
+	order              []ErasedSpec
+	canonicalCore      map[string]ErasedSpec
+	canonicalCoreOrder []ErasedSpec
+	reducers           []Reducer
+	reducerReads       [][]string
+	extensions         map[string]map[string]Extension
+	extensionSeq       map[string][]Extension
+	frozen             bool
 }
 
 // SpecsView is a read-only, allocation-free view of a registry's ordered specs.
@@ -92,7 +94,54 @@ func Register[T any](r *Registry, spec Spec[T]) {
 	}
 }
 
+// RegisterCanonicalCore adds an always-present product lane to canonical
+// registry metadata without registering it as a sparse product slot.
+func RegisterCanonicalCore[T any](r *Registry, spec Spec[T]) {
+	if err := r.registerCanonicalCoreErased(spec.Erase()); err != nil {
+		panic(err)
+	}
+}
+
+func (r *Registry) registerCanonicalCoreErased(spec ErasedSpec) error {
+	if err := r.validateRegistration(spec); err != nil {
+		return err
+	}
+	id := spec.ID()
+	if _, exists := r.specs[id]; exists {
+		return fmt.Errorf("axis: duplicate spec %q", id)
+	}
+	if r.canonicalCore == nil {
+		r.canonicalCore = make(map[string]ErasedSpec)
+	}
+	if _, exists := r.canonicalCore[id]; exists {
+		return fmt.Errorf("axis: duplicate canonical core spec %q", id)
+	}
+	r.canonicalCore[id] = spec
+	r.canonicalCoreOrder = append(r.canonicalCoreOrder, spec)
+	return nil
+}
+
 func (r *Registry) RegisterErased(spec ErasedSpec) error {
+	if err := r.validateRegistration(spec); err != nil {
+		return err
+	}
+	id := spec.ID()
+	if _, exists := r.canonicalCore[id]; exists {
+		return fmt.Errorf("axis: duplicate spec %q", id)
+	}
+	if _, exists := r.specs[id]; exists {
+		return fmt.Errorf("axis: duplicate spec %q", id)
+	}
+	r.specs[id] = spec
+	r.order = append(r.order, spec)
+	if reducer := spec.ReducerHook(); reducer != nil {
+		r.reducers = append(r.reducers, reducer)
+		r.reducerReads = append(r.reducerReads, spec.ReducerReadsHook())
+	}
+	return nil
+}
+
+func (r *Registry) validateRegistration(spec ErasedSpec) error {
 	if r == nil {
 		return fmt.Errorf("axis: nil registry")
 	}
@@ -119,14 +168,20 @@ func (r *Registry) RegisterErased(spec ErasedSpec) error {
 	default:
 		return fmt.Errorf("axis %q: erased boundary policy is unspecified", id)
 	}
-	if _, exists := r.specs[id]; exists {
-		return fmt.Errorf("axis: duplicate spec %q", id)
-	}
-	r.specs[id] = spec
-	r.order = append(r.order, spec)
-	if reducer := spec.ReducerHook(); reducer != nil {
-		r.reducers = append(r.reducers, reducer)
-		r.reducerReads = append(r.reducerReads, spec.ReducerReadsHook())
+	switch spec.CanonicalStatus() {
+	case CanonicalReady:
+		if spec.CanonicalCodecID() == "" {
+			return fmt.Errorf("axis %q: erased ready canonical codec id is empty", id)
+		}
+		if spec.CanonicalCodecVersion() == 0 {
+			return fmt.Errorf("axis %q: erased ready canonical codec version is zero", id)
+		}
+	case CanonicalPending:
+		if spec.CanonicalPendingReason() == "" {
+			return fmt.Errorf("axis %q: erased pending canonical reason is empty", id)
+		}
+	default:
+		return fmt.Errorf("axis %q: erased canonical descriptor is unspecified", id)
 	}
 	return nil
 }

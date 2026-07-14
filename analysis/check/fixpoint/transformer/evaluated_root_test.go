@@ -116,6 +116,7 @@ func TestEvaluateGuardWorldProofFailsClosedOnCanonicalAtomCollision(t *testing.T
 		},
 		Hash: func(evaluatedCollisionValue) uint64 { return 0 }, Boundary: axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[evaluatedCollisionValue](),
+		Canonical: axis.PendingCanonical[evaluatedCollisionValue]("test-only axis"),
 	})
 	reg.Freeze()
 	first := product.Set(reg, product.Top(), key, evaluatedCollisionValue{rank: 1})
@@ -225,6 +226,7 @@ func TestEvaluateSparseRootRejectsForeignBindingRegistryWithoutPanic(t *testing.
 		},
 		Hash:     func(value evaluatedCollisionValue) uint64 { return uint64(value.rank) },
 		Boundary: axis.PortableIdentity, Retention: axis.ImmutableRetention[evaluatedCollisionValue](),
+		Canonical: axis.PendingCanonical[evaluatedCollisionValue]("test-only axis"),
 	}.Erase())
 	if err != nil {
 		t.Fatal(err)

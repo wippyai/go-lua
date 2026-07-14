@@ -6130,6 +6130,7 @@ func testRegistry(t *testing.T) (*axis.Registry, axis.Key[markValue]) {
 		Hash:      func(v markValue) uint64 { return uint64(v) },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[markValue](),
+		Canonical: axis.PendingCanonical[markValue]("test-only axis"),
 	}.Erase())
 	if err != nil {
 		t.Fatalf("RegistryWithAxes: %v", err)

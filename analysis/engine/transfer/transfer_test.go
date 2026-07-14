@@ -719,6 +719,7 @@ func wideningRegistry() *axis.Registry {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[widening](),
+		Canonical: axis.PendingCanonical[widening]("test-only axis"),
 	})
 	return reg.Freeze()
 }

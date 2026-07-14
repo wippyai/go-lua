@@ -1,8 +1,15 @@
 package evidence
 
-import "github.com/wippyai/go-lua/analysis/internal/canonical"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
+)
 
 const canonicalValueRecord uint64 = 1
+
+func canonicalDescriptor() axis.CanonicalDescriptor[Value] {
+	return axis.ReadyCanonical("value.axis.evidence", 1, encodeCanonical)
+}
 
 // encodeCanonical writes the complete fixed carrier observed by Equal. Even
 // inactive array slots are included because raw Value equality observes them.

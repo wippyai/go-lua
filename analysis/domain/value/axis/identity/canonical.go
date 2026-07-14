@@ -1,8 +1,15 @@
 package identity
 
-import "github.com/wippyai/go-lua/analysis/internal/canonical"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/internal/canonical"
+)
 
 const canonicalValueRecord uint64 = 1
+
+func canonicalDescriptor() axis.CanonicalDescriptor[Value] {
+	return axis.ReadyCanonical("value.axis.identity", 1, encodeCanonical)
+}
 
 // encodeCanonical writes exactly the state observed by Equal. Only singleton
 // state gives the stored ID semantic meaning; all other states ignore it.

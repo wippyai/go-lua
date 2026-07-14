@@ -810,6 +810,7 @@ func syntheticSpec() axis.Spec[synthetic] {
 		},
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[synthetic](),
+		Canonical: axis.PendingCanonical[synthetic]("test-only axis"),
 	}
 }
 

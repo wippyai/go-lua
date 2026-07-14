@@ -86,6 +86,38 @@ func TestRegistryArtifactRetentionInventoryIsComplete(t *testing.T) {
 	}
 }
 
+func TestRegistryCanonicalPlanPinsPresenceAndWithholdsAuthorityAtTypeWitness(t *testing.T) {
+	plan, err := Registry().CanonicalPlan()
+	if err != nil {
+		t.Fatalf("CanonicalPlan error = %v", err)
+	}
+	entries := plan.Entries()
+	wantIDs := []string{
+		"assertion", "escape", "evidence", "identity", "presence",
+		"runtimekind", "typewitness", "variantorigin",
+	}
+	gotIDs := make([]string, len(entries))
+	presenceCount := 0
+	for i, entry := range entries {
+		gotIDs[i] = entry.AxisID
+		if entry.AxisID == presence.Key.ID() {
+			presenceCount++
+		}
+	}
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Fatalf("canonical plan axes = %v, want %v", gotIDs, wantIDs)
+	}
+	if presenceCount != 1 {
+		t.Fatalf("canonical plan contains presence %d times, want exactly once", presenceCount)
+	}
+	if got := plan.PendingAxes(); !slices.Equal(got, []string{"typewitness"}) {
+		t.Fatalf("pending canonical axes = %v, want [typewitness]", got)
+	}
+	if _, ok := plan.AuthorityIdentity(); ok {
+		t.Fatal("standard registry published authority while typewitness is Pending")
+	}
+}
+
 func TestStandardBoundaryProjectionIsAnIdempotentUpperClosure(t *testing.T) {
 	reg := Registry()
 	domain := product.Domain(reg)
@@ -317,5 +349,6 @@ func syntheticSpec() axis.Spec[synthetic] {
 		Hash:      func(v synthetic) uint64 { return uint64(v) + 1 },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[synthetic](),
+		Canonical: axis.PendingCanonical[synthetic]("test-only axis"),
 	}
 }

@@ -22,6 +22,7 @@ func Spec() axis.Spec[Value] {
 		Widen:     Widen,
 		Hash:      Value.Hash,
 		Retention: axis.ImmutableRetention[Value](),
+		Canonical: canonicalDescriptor(),
 		Boundary:  axis.Projected,
 		BoundaryProject: func(Value) Value {
 			return Top()

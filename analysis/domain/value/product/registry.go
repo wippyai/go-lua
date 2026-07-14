@@ -11,6 +11,7 @@ import (
 // sparse axes in registration order.
 func RegistryWithAxes(specs ...axis.ErasedSpec) (*axis.Registry, error) {
 	reg := axis.NewRegistry()
+	axis.RegisterCanonicalCore(reg, presence.Spec())
 	for _, spec := range specs {
 		if err := registerProductSparseAxis(reg, spec); err != nil {
 			return nil, err

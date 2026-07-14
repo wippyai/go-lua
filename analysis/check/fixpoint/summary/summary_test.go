@@ -1102,6 +1102,7 @@ func summaryTestSpec() axis.Spec[summaryTestAxis] {
 		Hash:      func(v summaryTestAxis) uint64 { return uint64(v) },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[summaryTestAxis](),
+		Canonical: axis.PendingCanonical[summaryTestAxis]("test-only axis"),
 	}
 }
 
