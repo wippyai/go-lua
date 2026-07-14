@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -105,6 +106,14 @@ type Stats struct {
 	RelationPlannerOwnersPrefiltered int
 	RelationPlannerOwnersCompiled    int
 	RelationPlannerOwnersActivated   int
+	// PrebuiltSemanticLexicalEvaluations counts lexical symbolic programs read
+	// from a caller-prepared relation catalog by the evaluated-program
+	// transaction. Catalog construction is intentionally outside this counter.
+	PrebuiltSemanticLexicalEvaluations       int
+	PrebuiltSemanticLexicalEvaluationsByBody map[lexicalidentity.StableLexicalBodyID]int
+	// EvaluatedShadowRootsProduced counts complete neutral roots. They are not
+	// authoritative or published until canonical identities are installed.
+	EvaluatedShadowRootsProduced int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }

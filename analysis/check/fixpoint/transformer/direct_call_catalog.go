@@ -57,6 +57,24 @@ func (c DirectCallCatalog) Lookup(point cfg.Point) (DirectCallTarget, bool) {
 // PointCount is the dense preparation width.
 func (c DirectCallCatalog) PointCount() int { return len(c.targets) }
 
+// Equal reports exact dense route equality. Shape equality is part of every
+// target comparison: redirecting a point to a same-shaped cell is still a
+// different compiled equation.
+func (c DirectCallCatalog) Equal(other DirectCallCatalog) bool {
+	if len(c.targets) != len(other.targets) || len(c.present) != len(other.present) {
+		return false
+	}
+	for point := range c.targets {
+		if c.present[point] != other.present[point] {
+			return false
+		}
+		if c.present[point] && c.targets[point] != other.targets[point] {
+			return false
+		}
+	}
+	return true
+}
+
 // Cells returns sorted unique dependencies for RelationCell validation.
 func (c DirectCallCatalog) Cells() []CellRef {
 	refs := make([]CellRef, 0)

@@ -252,7 +252,7 @@ func prepareStagedStrictRelationCatalog(reg *axis.Registry, bindings *bind.Resul
 		candidate = routed[candidate.identity.Cell]
 		owner, identity, direct := candidate.owner, candidate.identity, candidate.direct
 		out.byKey[owner.key] = len(out.entries)
-		out.entries = append(out.entries, relationCatalogEntry{identity: identity, function: owner.fn, compiler: candidate.compiler, direct: direct, globalBoundary: candidate.globalBoundary})
+		out.entries = append(out.entries, sealRelationCatalogEntry(relationCatalogEntry{identity: identity, function: owner.fn, compiler: candidate.compiler, direct: direct, globalBoundary: candidate.globalBoundary}))
 		consumerIdentity := relationConsumerIdentity{Summary: owner.key, BodyDigest: identity.BodyDigest, Prepared: owner.prepared, Generation: out.generation}
 		out.consumers.byKey[owner.key] = len(out.consumers.entries)
 		out.consumers.entries = append(out.consumers.entries, relationConsumerEntry{identity: consumerIdentity, direct: direct, active: candidate.shape == (transformer.Shape{})})

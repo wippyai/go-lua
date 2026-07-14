@@ -41,8 +41,34 @@ type relationCatalogEntry struct {
 	function       *ast.FunctionExpr
 	compiler       *transformer.PreparedPlanCompiler
 	direct         transformer.DirectCallCatalog
+	equation       relationCatalogEquationIdentity
 	globalBoundary transformer.GlobalBoundary
 	hasEntryState  bool
+}
+
+// relationCatalogEquationIdentity seals the executable equation, not merely
+// its boundary shape. The direct catalog is an immutable snapshot, so exact
+// route comparison detects a forged same-shape redirect without relying on a
+// compact digest. Generation and compiler ownership prevent cross-run pairing.
+type relationCatalogEquationIdentity struct {
+	generation *relationCatalogGeneration
+	compiler   *transformer.PreparedPlanCompiler
+	direct     transformer.DirectCallCatalog
+}
+
+func sealRelationCatalogEntry(entry relationCatalogEntry) relationCatalogEntry {
+	entry.equation = relationCatalogEquationIdentity{
+		generation: entry.identity.Generation,
+		compiler:   entry.compiler,
+		direct:     entry.direct,
+	}
+	return entry
+}
+
+func (entry relationCatalogEntry) equationIdentityMatches(generation *relationCatalogGeneration) bool {
+	return generation != nil && entry.identity.Generation == generation &&
+		entry.equation.generation == generation && entry.equation.compiler == entry.compiler &&
+		entry.equation.direct.Equal(entry.direct)
 }
 
 // relationConsumerIdentity is the cache-fence authority for one query owner.
@@ -865,8 +891,9 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 	})
 
 	out := relationRunCatalog{
-		entries: make([]relationCatalogEntry, 0, len(ordered)),
-		byKey:   make(map[summary.SummaryKey]int, len(ordered)),
+		entries:  make([]relationCatalogEntry, 0, len(ordered)),
+		byKey:    make(map[summary.SummaryKey]int, len(ordered)),
+		registry: reg,
 		consumers: relationConsumerPolicy{
 			entries: make([]relationConsumerEntry, 0, len(owners)),
 			byKey:   make(map[summary.SummaryKey]int, len(owners)),
@@ -894,7 +921,7 @@ func prepareInactiveRelationCatalog(reg *axis.Registry, bindings *bind.Result, k
 		if err != nil {
 			continue
 		}
-		entry := relationCatalogEntry{identity: identities[key], function: candidate.fn, compiler: candidate.compiler, direct: direct, hasEntryState: candidate.hasEntryState}
+		entry := sealRelationCatalogEntry(relationCatalogEntry{identity: identities[key], function: candidate.fn, compiler: candidate.compiler, direct: direct, hasEntryState: candidate.hasEntryState})
 		out.byKey[key] = len(out.entries)
 		out.entries = append(out.entries, entry)
 	}
