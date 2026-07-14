@@ -27,6 +27,9 @@ type registryRuntime struct {
 
 	bottomOnce sync.Once
 	bottom     Value
+
+	canonicalCodecOnce sync.Once
+	canonicalCodec     canonicalProductCodec
 }
 
 type axisRuntimeAxis struct {
