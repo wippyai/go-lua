@@ -65,7 +65,7 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 	plan := operationplan.New(graph, factflow.FactsInput{
 		CallSites: map[cfg.Point]factflow.CallSite{call: site},
 		Returns:   map[cfg.Point]factflow.Return{ret: factflow.NewReturn([]factflow.ValueSource{returned})},
-	}).WithObservationIdentity(testObservationBody(4), lowered).WithBoundaryParams([]symbol.ID{param})
+	}).WithObservationIdentity(testObservationBody(4), lowered, graph).WithBoundaryParams([]symbol.ID{param})
 	prepared, err := NewPlanCompiler().Prepare(reg, graph, plan, Shape{Params: 1})
 	if err != nil {
 		t.Fatal(err)

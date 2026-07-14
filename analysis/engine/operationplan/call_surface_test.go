@@ -103,7 +103,7 @@ func TestPlanOwnsOnlyMatchingCompleteCallSurface(t *testing.T) {
 	}
 	surface := mustCallSurface(t, owner, 3, CallSurfaceSite{Point: 1, Target: target})
 	plan := New(testCallSurfaceGraph(3), factflow.FactsInput{}).
-		WithObservationIdentity(owner, testCallSurfaceWIR(3)).
+		WithObservationIdentity(owner, testCallSurfaceWIR(3), testCallSurfaceGraph(3)).
 		WithCallSurface(surface)
 	got, ok := plan.CallSurface()
 	if !ok || !got.Complete() || got.Owner() != owner || got.Digest() != surface.Digest() {
@@ -115,7 +115,7 @@ func TestPlanOwnsOnlyMatchingCompleteCallSurface(t *testing.T) {
 	if !ok || len(again.Sites()) != 1 || again.Sites()[0].Target.Kind() != CallSurfaceTargetLexical {
 		t.Fatal("plan call surface exposed mutable site storage")
 	}
-	rebound := plan.WithObservationIdentity(owner, testCallSurfaceWIR(3))
+	rebound := plan.WithObservationIdentity(owner, testCallSurfaceWIR(3), testCallSurfaceGraph(3))
 	if got, ok := rebound.CallSurface(); ok || got.Complete() {
 		t.Fatal("observation identity rebind retained a stale call surface")
 	}
@@ -127,7 +127,7 @@ func TestPlanOwnsOnlyMatchingCompleteCallSurface(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := New(testCallSurfaceGraph(3), factflow.FactsInput{}).
-				WithObservationIdentity(owner, testCallSurfaceWIR(3)).
+				WithObservationIdentity(owner, testCallSurfaceWIR(3), testCallSurfaceGraph(3)).
 				WithCallSurface(rejected)
 			if got, ok := candidate.CallSurface(); ok || got.Complete() || got.Digest().Available() {
 				t.Fatalf("rejected surface remained available: %#v", got)

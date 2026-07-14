@@ -230,7 +230,7 @@ func (c *checker) prepare(
 		boundaryGlobals = bindings.ChunkGlobalReads()
 	}
 	operationPlan := lowered.Plan.
-		WithObservationIdentity(lexicalBodyID, wirBody).
+		WithObservationIdentity(lexicalBodyID, wirBody, built.Graph).
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
 		WithBoundaryParamContracts(materializeDeclaredParamTypeValues(config.Registry, typevalue.NewCache(), typeResolver, fn)).
 		WithBoundaryCaptures(boundaryCaptures).

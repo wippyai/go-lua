@@ -74,7 +74,7 @@ func TestDirectCompositionRetainsSameCalleeObservationAtTwoCallSites(t *testing.
 		lowered.SetPointRange(point, start, start+1)
 	}
 	lowered.AssignDebugPointOrdinals(callerGraph)
-	callerPlan := operationplan.New(callerGraph, factflow.FactsInput{}).WithObservationIdentity(testObservationBody(88), lowered).WithBoundaryParams([]symbol.ID{11, 12}).WithBoundaryParamContracts([]product.Value{product.Top(), product.Top()})
+	callerPlan := operationplan.New(callerGraph, factflow.FactsInput{}).WithObservationIdentity(testObservationBody(88), lowered, callerGraph).WithBoundaryParams([]symbol.ID{11, 12}).WithBoundaryParamContracts([]product.Value{product.Top(), product.Top()})
 	callerBuilder := NewBuilder(reg, Shape{Params: 2}, DefaultOutputCapabilityRegistry(), callerPlan)
 	callerCertificate, _ := CertifyPlan(callerPlan, DefaultSemanticCapabilityRegistry())
 	row := SymbolicCFGRow{Guard: callerBuilder.Arena().True(), Values: map[symbol.ID]ValueTerm{}}

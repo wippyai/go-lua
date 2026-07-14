@@ -60,7 +60,7 @@ func TestValidateGraphCallCompositionCensus(t *testing.T) {
 	var got map[validateGraphCallCensusKey]int
 	leafAudited := make(map[int]bool)
 	config := Config{Check: check}
-	config.semanticProgramAudit = func(_ *body.Static, _ body.Config, solved *body.Result) error {
+	config.semanticProgramAudit = func(prepared *body.Static, _ body.Config, solved *body.Result) error {
 		fn := solved.Function()
 		if fn == nil {
 			return nil
@@ -83,6 +83,13 @@ func TestValidateGraphCallCompositionCensus(t *testing.T) {
 		case 743:
 			if got != nil {
 				return nil
+			}
+			if prepared == nil || prepared.OperationPlan() == nil || prepared.OperationPlan().ObservationBody() != prepared.StableLexicalBodyID() {
+				return fmt.Errorf("compiler.validate_graph observation identity unavailable")
+			}
+			surface, exact := prepared.OperationPlan().CallSurface()
+			if !exact || !surface.Complete() || surface.Owner() != prepared.StableLexicalBodyID() || len(surface.Sites()) != 49 {
+				return fmt.Errorf("compiler.validate_graph call surface = complete:%v exact:%v owner:%x sites:%d", surface.Complete(), exact, surface.Owner(), len(surface.Sites()))
 			}
 			got = make(map[validateGraphCallCensusKey]int)
 			for point := cfg.Point(0); int(point) < solved.Graph().Size(); point++ {

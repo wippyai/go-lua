@@ -10,9 +10,12 @@ import (
 type observationPoint struct{ after, call wir.DebugPointID }
 
 // WithObservationIdentity binds lowering-owned debug points to stable lexical
-// ownership. The plan retains no source spans, dense expression IDs, or wire
-// artifact digest; service projection owns the canonical DebugMap fence.
-func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID, lowered *wir.Body) *Plan {
+// ownership. Graph is the independent reachable-topology authority: its exact
+// RPO must match lowering's canonical debug traversal. Dense unreachable plan
+// slots intentionally retain zero anchors. The plan retains no source spans,
+// dense expression IDs, or wire artifact digest; service projection owns the
+// canonical DebugMap fence.
+func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID, lowered *wir.Body, graph cfg.Graph) *Plan {
 	if p == nil {
 		return nil
 	}
@@ -20,18 +23,34 @@ func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID,
 	out.observationBody = lexicalidentity.StableLexicalBodyID{}
 	out.observationPoints = nil
 	out.callSurface = CallSurface{}
-	if body == (lexicalidentity.StableLexicalBodyID{}) || lowered == nil {
+	if body == (lexicalidentity.StableLexicalBodyID{}) || lowered == nil || graph == nil || graph.Size() != p.PointCount() {
+		return &out
+	}
+	reachable := cfg.RPOReadOnly(graph)
+	debugPoints := lowered.DebugPoints()
+	if len(reachable) == 0 || len(debugPoints) != len(reachable) {
 		return &out
 	}
 	points := make([]observationPoint, p.PointCount())
-	for raw := range points {
-		after, afterOK := lowered.DebugPointID(cfg.Point(raw), wir.DebugPhaseAfter)
-		if !afterOK {
+	for index, point := range reachable {
+		if uint64(point) >= uint64(len(points)) || points[point].after.Valid() {
 			return &out
 		}
-		points[raw].after = after
-		if lowered.HasInstruction(cfg.Point(raw), wir.OpCall) {
-			points[raw].call, _ = lowered.DebugPointID(cfg.Point(raw), wir.DebugPhaseCall)
+		debugPoint := debugPoints[index]
+		if debugPoint.Point != point || debugPoint.Ordinal != uint32(index+1) {
+			return &out
+		}
+		after, afterOK := lowered.DebugPointID(point, wir.DebugPhaseAfter)
+		if !afterOK || after != (wir.DebugPointID{Ordinal: debugPoint.Ordinal, Phase: wir.DebugPhaseAfter}) {
+			return &out
+		}
+		points[point].after = after
+		if lowered.HasInstruction(point, wir.OpCall) {
+			call, callOK := lowered.DebugPointID(point, wir.DebugPhaseCall)
+			if !callOK || call != (wir.DebugPointID{Ordinal: debugPoint.Ordinal, Phase: wir.DebugPhaseCall}) {
+				return &out
+			}
+			points[point].call = call
 		}
 	}
 	out.observationBody, out.observationPoints = body, points
