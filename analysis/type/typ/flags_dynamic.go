@@ -34,14 +34,26 @@ func containsDynamicFlag(
 	if t == nil {
 		return false
 	}
-	if known(t) {
-		return true
+	// Traverse nested recursive declarations in the current graph walk instead
+	// of starting another cached derivation with a fresh cycle guard. This is
+	// both complete for mutually recursive graphs and safe while the root memo
+	// is absent.
+	if recursive, ok := t.(*Recursive); ok {
+		if seen == nil {
+			seen = make(map[Type]bool)
+		}
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		return containsDynamicFlag(recursive.Body, seen, depth+1, maxDepth, known)
 	}
-	if _, ok := t.(*Recursive); ok {
-		return false
-	}
+	// Construction-time product flags may include an earlier revision of a
+	// recursive child. For a recursive-containing product, walk its children so
+	// freshness is governed by the recursive generation fence rather than by a
+	// stale conservative positive. Non-recursive products keep the O(1) cache.
 	if !knownContainsRecursive(t) {
-		return false
+		return known(t)
 	}
 	if seen == nil {
 		seen = make(map[Type]bool)

@@ -65,8 +65,12 @@ func equalityHashNeedsRefresh(t Type) bool {
 }
 
 func (r *Recursive) Hash() uint64 {
-	if r.hash != 0 && recursiveHashDepsValid(r.hashDeps) {
-		return r.hash
+	if r == nil {
+		return 0
+	}
+	rev := r.rev
+	if memo := r.hashMemo.Load(); memo != nil && memo.rev == rev && recursiveHashDepsValid(memo.deps) {
+		return memo.hash
 	}
 	// Compute hash on demand with cycle detection. Recursive types are mutable
 	// only until SetBody completes, then share the same cached-hash contract as
@@ -75,8 +79,16 @@ func (r *Recursive) Hash() uint64 {
 	h := hashWithVisitedMemo(r, scratch)
 	putRecursiveHashScratch(scratch)
 	if deps, ok := recursiveHashDeps(r); ok {
-		r.hash = h
-		r.hashDeps = deps
+		memo := &recursiveHashMemo{rev: rev, hash: h, deps: deps}
+		if r.rev == rev {
+			r.hashMemo.Store(memo)
+		}
 	}
 	return h
+}
+
+type recursiveHashMemo struct {
+	rev  uint64
+	hash uint64
+	deps []recursiveHashDep
 }

@@ -98,8 +98,7 @@ func (s *benchmarkOpenRecursiveScan) contains(t Type) bool {
 		return false
 	}
 	if rec, ok := t.(*Recursive); ok {
-		rec.ensureContainsClosedFlag()
-		return !rec.containsFlagsClosed
+		return !recursiveContainsGraphClosed(rec, nil)
 	}
 	if !knownContainsRecursive(t) || !s.enter(t) {
 		return false

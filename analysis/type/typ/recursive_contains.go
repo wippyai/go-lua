@@ -1,67 +1,71 @@
 package typ
 
-func (r *Recursive) ensureContainsFlags() {
-	if r == nil || !r.containsFlagsDirty || r.containsFlagsComputing {
-		return
-	}
-	r.refreshContainsFlags()
+type recursiveContainsMemo struct {
+	rev                  uint64
+	deps                 []recursiveHashDep
+	containsAny          bool
+	containsNever        bool
+	containsTypeParam    bool
+	containsInstantiated bool
+	containsGeneric      bool
 }
 
-func (r *Recursive) ensureContainsClosedFlag() {
-	if r == nil || r.containsClosedComputing {
-		return
-	}
-	if !r.containsClosedDirty && recursiveHashDepsValid(r.containsClosedDeps) {
-		return
-	}
-	r.refreshContainsClosedFlag()
+type recursiveClosedMemo struct {
+	rev    uint64
+	closed bool
+	deps   []recursiveHashDep
 }
 
-func (r *Recursive) refreshContainsFlags() {
+func (r *Recursive) containsFlags() recursiveContainsMemo {
 	if r == nil {
-		return
+		return recursiveContainsMemo{}
 	}
+	rev := r.rev
+	if cached := r.containsMemo.Load(); cached != nil && cached.rev == rev && recursiveHashDepsValid(cached.deps) {
+		return *cached
+	}
+	memo := &recursiveContainsMemo{rev: rev}
 	if r.Body == nil {
-		r.containsAny = false
-		r.containsNever = false
-		r.containsTypeParam = false
-		r.containsInstantiated = false
-		r.containsGeneric = false
-		r.containsFlagsDirty = false
-		return
+		return *memo
 	}
-	r.containsFlagsComputing = true
-	defer func() {
-		r.containsFlagsComputing = false
-		r.containsFlagsDirty = false
-	}()
 	seen := map[Type]bool{r: true}
-	r.containsAny = containsAnyDynamic(r.Body, seen, 1)
+	memo.containsAny = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsAny)
 	seen = map[Type]bool{r: true}
-	r.containsNever = containsNeverDynamic(r.Body, seen)
+	memo.containsNever = containsNeverDynamic(r.Body, seen)
 	seen = map[Type]bool{r: true}
-	r.containsTypeParam = containsTypeParamDynamic(r.Body, seen, 1)
+	memo.containsTypeParam = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsTypeParam)
 	seen = map[Type]bool{r: true}
-	r.containsInstantiated = containsInstantiatedDynamic(r.Body, seen, 1)
+	memo.containsInstantiated = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsInstantiated)
 	seen = map[Type]bool{r: true}
-	r.containsGeneric = containsGenericDynamic(r.Body, seen, 1)
+	memo.containsGeneric = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsGeneric)
+	// SetBody is a construction operation and must not race with queries. The
+	// revision check still prevents a sequential rewrite from publishing an
+	// obsolete computation.
+	deps, complete := recursiveHashDeps(r)
+	if complete && r.rev == rev {
+		memo.deps = deps
+		r.containsMemo.Store(memo)
+	}
+	return *memo
 }
 
-func (r *Recursive) refreshContainsClosedFlag() {
+func (r *Recursive) containsClosedFlag() bool {
 	if r == nil {
-		return
+		return false
+	}
+	rev := r.rev
+	if cached := r.closedMemo.Load(); cached != nil && cached.rev == rev && recursiveHashDepsValid(cached.deps) {
+		return cached.closed
 	}
 	if r.Body == nil {
-		r.containsFlagsClosed = false
-		r.containsClosedDirty = false
-		return
+		memo := &recursiveClosedMemo{rev: rev}
+		r.closedMemo.Store(memo)
+		return false
 	}
-	r.containsClosedComputing = true
-	defer func() {
-		r.containsClosedComputing = false
-		r.containsClosedDirty = false
-	}()
 	closed, deps := recursiveGraphClosureForRecursive(r)
-	r.containsFlagsClosed = closed
-	r.containsClosedDeps = deps
+	memo := &recursiveClosedMemo{rev: rev, closed: closed, deps: deps}
+	if r.rev == rev {
+		r.closedMemo.Store(memo)
+	}
+	return closed
 }

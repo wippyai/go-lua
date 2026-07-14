@@ -8,8 +8,8 @@ package typ
 func cachedContainsFlags(t Type) (containsAny, containsNever, containsTypeParam, containsInstantiated bool) {
 	switch n := t.(type) {
 	case *Recursive:
-		n.ensureContainsFlags()
-		return n.containsAny, n.containsNever, n.containsTypeParam, n.containsInstantiated
+		flags := n.containsFlags()
+		return flags.containsAny, flags.containsNever, flags.containsTypeParam, flags.containsInstantiated
 	case *Instantiated:
 		return n.containsAny, n.containsNever, n.containsTypeParam, true
 	case *TypeParam:
@@ -160,8 +160,7 @@ func knownContainsGeneric(t Type) bool {
 func cachedContainsGeneric(t Type) bool {
 	switch n := t.(type) {
 	case *Recursive:
-		n.ensureContainsFlags()
-		return n.containsGeneric
+		return n.containsFlags().containsGeneric
 	case *Generic:
 		return true
 	case *Instantiated:

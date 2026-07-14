@@ -185,7 +185,7 @@ func CloneFunction(fn *Function) *Function {
 		Returns:           append([]Type(nil), fn.Returns...),
 		hash:              fn.hash,
 		equalityHashCache: fn.equalityHashCache,
-		typeProperties:    fn.typeProperties,
+		typeProperties:    fn.typeProperties.copyStatic(),
 	}
 	if functionSemanticNamesCanonical(clone.Params) {
 		clone.semantic.Store(clone)

@@ -638,23 +638,23 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
 	rec.SetBody(newRecord().Field("value", String).Build())
 
-	if !rec.containsFlagsDirty || !rec.containsClosedDirty {
-		t.Fatal("fresh recursive body should mark both content and graph-closure flags dirty")
+	if rec.containsMemo.Load() != nil || rec.closedMemo.Load() != nil {
+		t.Fatal("fresh recursive body should have no derived content or graph-closure memo")
 	}
 	if knownContainsAny(rec) {
 		t.Fatal("record without any should not contain any")
 	}
-	if rec.containsFlagsDirty {
-		t.Fatal("content flag query should refresh content flags")
+	if rec.containsMemo.Load() == nil {
+		t.Fatal("content flag query should publish content memo")
 	}
-	if !rec.containsClosedDirty {
+	if rec.closedMemo.Load() != nil {
 		t.Fatal("content flag query must not force graph-closure proof")
 	}
 	if knownContainsOpenRecursive(rec) {
 		t.Fatal("closed recursive body should not be open-recursive")
 	}
-	if rec.containsClosedDirty {
-		t.Fatal("open-recursive query should refresh graph-closure flag")
+	if rec.closedMemo.Load() == nil {
+		t.Fatal("open-recursive query should publish graph-closure memo")
 	}
 
 	direct := NewRecursivePlaceholder("Direct")
@@ -662,17 +662,19 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 	if knownContainsAny(direct) {
 		t.Fatal("direct recursive record without any should not contain any")
 	}
-	if !direct.containsClosedDirty {
+	if direct.closedMemo.Load() != nil {
 		t.Fatal("direct content predicate must not force graph-closure proof")
 	}
 }
 
 func TestNilRecursiveFlagRefreshIsNoop(t *testing.T) {
 	var rec *Recursive
-	rec.ensureContainsFlags()
-	rec.ensureContainsClosedFlag()
-	rec.refreshContainsFlags()
-	rec.refreshContainsClosedFlag()
+	if got := rec.containsFlags(); got.rev != 0 || len(got.deps) != 0 || got.containsAny || got.containsNever || got.containsTypeParam || got.containsInstantiated || got.containsGeneric {
+		t.Fatalf("nil recursive content flags = %#v", got)
+	}
+	if rec.containsClosedFlag() {
+		t.Fatal("nil recursive node reported closed")
+	}
 }
 
 func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
@@ -942,16 +944,17 @@ func TestKnownContainsOpenRecursiveCachesCompositeClosureByRevision(t *testing.T
 	child.SetBody(newRecord().Field("value", String).Build())
 	wrapper := NewArray(child)
 
-	if wrapper.containsOpenRecursiveComputed {
+	if wrapper.loadOpenRecursiveMemo() != nil {
 		t.Fatal("construction must not prove recursive graph closure")
 	}
 	if knownContainsOpenRecursive(wrapper) {
 		t.Fatal("closed child should not make wrapper open-recursive")
 	}
-	if !wrapper.containsOpenRecursiveComputed || len(wrapper.containsOpenRecursiveDeps) != 1 {
+	memo := wrapper.loadOpenRecursiveMemo()
+	if memo == nil || len(memo.deps) != 1 {
 		t.Fatal("open-recursive query must memoize the closure proof on the wrapper")
 	}
-	if got := wrapper.containsOpenRecursiveDeps[0]; got.rec != child || got.rev != child.rev {
+	if got := memo.deps[0]; got.rec != child || got.rev != child.rev {
 		t.Fatalf("closure proof dependency = %#v, want child at revision %d", got, child.rev)
 	}
 

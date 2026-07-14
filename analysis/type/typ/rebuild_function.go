@@ -119,7 +119,7 @@ func newSemanticFunction(source *Function) *Function {
 		Returns:           source.Returns,
 		hash:              source.hash,
 		equalityHashCache: &equalityHashCache{},
-		typeProperties:    source.typeProperties,
+		typeProperties:    source.typeProperties.copyStatic(),
 	}
 	semantic.semantic.Store(semantic)
 	return semantic

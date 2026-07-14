@@ -6,8 +6,7 @@ func knownContainsOpenRecursive(t Type) bool {
 		return false
 	}
 	if n, ok := t.(*Recursive); ok {
-		n.ensureContainsClosedFlag()
-		return !n.containsFlagsClosed
+		return !n.containsClosedFlag()
 	}
 	if !knownContainsRecursive(t) {
 		return false
@@ -16,19 +15,18 @@ func knownContainsOpenRecursive(t Type) bool {
 	if p == nil {
 		return false
 	}
-	if p.containsOpenRecursiveComputed && recursiveHashDepsValid(p.containsOpenRecursiveDeps) {
-		return p.containsOpenRecursive
+	if memo := p.loadOpenRecursiveMemo(); memo != nil && recursiveHashDepsValid(memo.deps) {
+		return memo.contains
 	}
 	closed, deps := recursiveGraphClosureForType(t)
-	p.containsOpenRecursive = !closed
-	p.containsOpenRecursiveDeps = deps
-	p.containsOpenRecursiveComputed = true
-	return p.containsOpenRecursive
+	contains := !closed
+	p.storeOpenRecursiveMemo(&openRecursiveMemo{contains: contains, deps: deps})
+	return contains
 }
 
-// openRecursiveProperties returns the mutable memo stored by each product node.
-// The node structure itself is immutable once built; only this derived cache is
-// refreshed when a recursive placeholder revision changes.
+// openRecursiveProperties returns the atomic immutable-memo slot stored by
+// each product node. The node structure itself is immutable once built; a new
+// memo record replaces the old proof when a recursive revision changes.
 func openRecursiveProperties(t Type) *typeProperties {
 	switch n := t.(type) {
 	case *Optional:

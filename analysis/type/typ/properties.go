@@ -1,5 +1,10 @@
 package typ
 
+import (
+	"sync/atomic"
+	"unsafe"
+)
+
 type typeProperties struct {
 	containsAny           bool
 	containsNever         bool
@@ -12,16 +17,54 @@ type typeProperties struct {
 	// The construction-time bit above is conservative. The resolved value is
 	// memoized separately because a recursive placeholder can receive its body
 	// after a product containing it has been built.
-	containsOpenRecursiveComputed bool
-	containsOpenRecursiveDeps     []recursiveHashDep
+	// Points to an immutable openRecursiveMemo. unsafe.Pointer is used instead
+	// of embedding atomic.Pointer because typeProperties is copied by value
+	// while product nodes are constructed; published memo records themselves
+	// are never mutated.
+	openRecursiveMemo unsafe.Pointer
+}
+
+type openRecursiveMemo struct {
+	contains bool
+	deps     []recursiveHashDep
+}
+
+func (p *typeProperties) loadOpenRecursiveMemo() *openRecursiveMemo {
+	if p == nil {
+		return nil
+	}
+	return (*openRecursiveMemo)(atomic.LoadPointer(&p.openRecursiveMemo))
+}
+
+func (p *typeProperties) storeOpenRecursiveMemo(memo *openRecursiveMemo) {
+	if p != nil {
+		atomic.StorePointer(&p.openRecursiveMemo, unsafe.Pointer(memo))
+	}
+}
+
+// copyStatic returns only construction-time properties. It deliberately does
+// not copy the asynchronously published memo slot when a canonical product is
+// ownership-cloned.
+func (p *typeProperties) copyStatic() typeProperties {
+	if p == nil {
+		return typeProperties{}
+	}
+	return typeProperties{
+		containsAny:           p.containsAny,
+		containsNever:         p.containsNever,
+		containsTypeParam:     p.containsTypeParam,
+		containsInstantiated:  p.containsInstantiated,
+		containsGeneric:       p.containsGeneric,
+		containsRecursive:     p.containsRecursive,
+		containsOpenRecursive: p.containsOpenRecursive,
+	}
 }
 
 func (p *typeProperties) invalidateOpenRecursiveCache() {
 	if p == nil {
 		return
 	}
-	p.containsOpenRecursiveComputed = false
-	p.containsOpenRecursiveDeps = nil
+	p.storeOpenRecursiveMemo(nil)
 }
 
 func typePropertiesOf(types ...Type) typeProperties {

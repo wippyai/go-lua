@@ -21,21 +21,16 @@ type Recursive struct {
 	ID   uint64
 	Name string
 	Body Type
-	hash uint64
 	rev  uint64
 
-	containsAny             bool
-	containsNever           bool
-	containsTypeParam       bool
-	containsInstantiated    bool
-	containsGeneric         bool
-	containsFlagsClosed     bool
-	containsFlagsDirty      bool
-	containsClosedDirty     bool
-	containsFlagsComputing  bool
-	containsClosedComputing bool
-	hashDeps                []recursiveHashDep
-	containsClosedDeps      []recursiveHashDep
+	// Recursive nodes are shared across concurrent solves after construction.
+	// Derived values are therefore published as immutable memo records rather
+	// than by mutating individual flag/hash fields. Duplicate first-use
+	// computation is harmless; readers always observe either no memo or one
+	// complete memo.
+	containsMemo atomic.Pointer[recursiveContainsMemo]
+	closedMemo   atomic.Pointer[recursiveClosedMemo]
+	hashMemo     atomic.Pointer[recursiveHashMemo]
 }
 
 // RecursiveBuilder is used during construction to provide a self-reference.
@@ -61,22 +56,18 @@ func NewRecursive(name string, builder RecursiveBuilder) *Recursive {
 func NewRecursivePlaceholder(name string) *Recursive {
 	id := atomic.AddUint64(&recursiveIDCounter, 1)
 	return &Recursive{
-		ID:                  id,
-		Name:                name,
-		containsFlagsDirty:  true,
-		containsClosedDirty: true,
+		ID:   id,
+		Name: name,
 	}
 }
 
 // SetBody assigns the body to a placeholder recursive type.
 func (r *Recursive) SetBody(body Type) {
 	r.Body = body
-	r.hash = 0
 	r.rev++
-	r.hashDeps = nil
-	r.containsClosedDeps = nil
-	r.containsFlagsDirty = true
-	r.containsClosedDirty = true
+	r.containsMemo.Store(nil)
+	r.closedMemo.Store(nil)
+	r.hashMemo.Store(nil)
 }
 
 func (r *Recursive) Kind() kind.Kind { return kind.Recursive }
