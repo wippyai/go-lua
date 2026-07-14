@@ -17,6 +17,7 @@ import (
 type registryRuntime struct {
 	reg           *axis.Registry
 	err           error
+	retentionSafe bool
 	axes          []axisRuntimeAxis
 	canonicalAxes []uint16
 	byID          map[string]uint16
@@ -95,7 +96,7 @@ func mustRuntime(reg *axis.Registry) *registryRuntime {
 }
 
 func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
-	rt := &registryRuntime{reg: reg}
+	rt := &registryRuntime{reg: reg, retentionSafe: true}
 	if reg == nil {
 		rt.err = fmt.Errorf("product: registry is required; pass a non-nil frozen registry")
 		return rt
@@ -107,6 +108,18 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
 		rt.err = fmt.Errorf("product: presence is a core lane and must not be registered as a sparse axis")
 		return rt
+	}
+	// Presence is a mandatory core lane rather than a sparse registered axis.
+	// Pin it explicitly so a future mutable core representation cannot bypass
+	// the sparse-axis retention inventory.
+	presenceSpec := presence.Spec().Erase()
+	if presenceSpec.RetentionMode() != axis.RetentionImmutable ||
+		!presenceSpec.RetentionSafeAny(presence.Bottom()) ||
+		!presenceSpec.RetentionSafeAny(presence.Present()) ||
+		!presenceSpec.RetentionSafeAny(presence.Absent()) ||
+		!presenceSpec.RetentionSafeAny(presence.Maybe()) ||
+		!presenceSpec.RetentionSafeAny(presence.Top()) {
+		rt.retentionSafe = false
 	}
 
 	specs := reg.SpecsView()
@@ -121,6 +134,14 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 		}
 		id := spec.ID()
 		topAny := spec.TopAny()
+		switch spec.RetentionMode() {
+		case axis.RetentionImmutable, axis.RetentionValidated:
+		default:
+			rt.retentionSafe = false
+		}
+		if !spec.RetentionSafeAny(topAny) {
+			rt.retentionSafe = false
+		}
 		topType := reflect.TypeOf(topAny)
 		if topType == nil {
 			topType = reflect.TypeOf(spec.BottomAny())

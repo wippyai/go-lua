@@ -12,16 +12,17 @@ var Key = axis.NewKey[Value]("evidence")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:      Key,
-		Bottom:   Bottom,
-		Top:      Top,
-		Equal:    Equal,
-		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
-		Join:     Join,
-		Meet:     Meet,
-		Widen:    Widen,
-		Hash:     Value.Hash,
-		Boundary: axis.Projected,
+		Key:       Key,
+		Bottom:    Bottom,
+		Top:       Top,
+		Equal:     Equal,
+		LessOrEq:  func(a, b Value) bool { return b.Covers(a) },
+		Join:      Join,
+		Meet:      Meet,
+		Widen:     Widen,
+		Hash:      Value.Hash,
+		Retention: axis.ImmutableRetention[Value](),
+		Boundary:  axis.Projected,
 		BoundaryProject: func(Value) Value {
 			return Top()
 		},

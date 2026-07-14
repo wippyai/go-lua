@@ -252,15 +252,16 @@ var Key = axis.NewKey[Value]("identity")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:      Key,
-		Bottom:   Bottom,
-		Top:      Top,
-		Equal:    Equal,
-		LessOrEq: LessOrEq,
-		Join:     Join,
-		Meet:     Meet,
-		Widen:    Widen,
-		Hash:     Value.Hash,
-		Boundary: axis.PortableIdentity,
+		Key:       Key,
+		Bottom:    Bottom,
+		Top:       Top,
+		Equal:     Equal,
+		LessOrEq:  LessOrEq,
+		Join:      Join,
+		Meet:      Meet,
+		Widen:     Widen,
+		Hash:      Value.Hash,
+		Retention: axis.ImmutableRetention[Value](),
+		Boundary:  axis.PortableIdentity,
 	}
 }

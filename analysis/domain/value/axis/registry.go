@@ -99,12 +99,25 @@ func (r *Registry) RegisterErased(spec ErasedSpec) error {
 	if spec == nil {
 		return fmt.Errorf("axis: nil spec")
 	}
+	if !spec.erasedSpecSeal().validated {
+		return fmt.Errorf("axis: erased spec did not originate from validated typed Spec.Erase")
+	}
 	if r.frozen {
 		return fmt.Errorf("axis: registry is frozen")
 	}
 	id := spec.ID()
 	if id == "" {
 		return fmt.Errorf("axis: empty spec id")
+	}
+	switch spec.RetentionMode() {
+	case RetentionImmutable, RetentionValidated:
+	default:
+		return fmt.Errorf("axis %q: erased artifact retention policy is unspecified", id)
+	}
+	switch spec.BoundaryPolicy() {
+	case LocalOnly, PortableIdentity, Projected:
+	default:
+		return fmt.Errorf("axis %q: erased boundary policy is unspecified", id)
 	}
 	if _, exists := r.specs[id]; exists {
 		return fmt.Errorf("axis: duplicate spec %q", id)

@@ -984,7 +984,8 @@ func testLowerSparseAxisSpec() axis.Spec[testLowerSparseAxis] {
 		Hash: func(v testLowerSparseAxis) uint64 {
 			return uint64(v) + 1
 		},
-		Boundary: axis.PortableIdentity,
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[testLowerSparseAxis](),
 	}
 }
 

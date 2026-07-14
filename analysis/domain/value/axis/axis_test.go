@@ -165,6 +165,36 @@ func TestAxisSpecRequiresExplicitValidBoundaryPolicy(t *testing.T) {
 	}
 }
 
+func TestAxisSpecRequiresExplicitValidRetentionPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*axis.Spec[int])
+	}{
+		{"unmarked", func(spec *axis.Spec[int]) { spec.Retention = axis.RetentionPolicy[int]{} }},
+		{"immutable-validator", func(spec *axis.Spec[int]) {
+			spec.Retention = axis.RetentionPolicy[int]{Mode: axis.RetentionImmutable, Validate: func(int) bool { return true }}
+		}},
+		{"validated-nil", func(spec *axis.Spec[int]) {
+			spec.Retention = axis.RetentionPolicy[int]{Mode: axis.RetentionValidated}
+		}},
+		{"unknown", func(spec *axis.Spec[int]) {
+			spec.Retention = axis.RetentionPolicy[int]{Mode: axis.RetentionMode(255)}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := registryTestSpec("test.retention-policy."+test.name, nil)
+			test.edit(&spec)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("invalid retention policy did not fail registration")
+				}
+			}()
+			_ = spec.Erase()
+		})
+	}
+}
+
 func TestRegistryRejectsDuplicateErasedIDAcrossSpecTypes(t *testing.T) {
 	reg := axis.NewRegistry()
 	first := registryTestSpec("test.registry.duplicate", nil).Erase()
@@ -304,8 +334,9 @@ func registryTestSpec(id string, reducer axis.Reducer) axis.Spec[int] {
 		Hash: func(v int) uint64 {
 			return uint64(v) + 1
 		},
-		Boundary: axis.PortableIdentity,
-		Reducer:  reducer,
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[int](),
+		Reducer:   reducer,
 	}
 }
 
@@ -336,6 +367,7 @@ func registryStringSpec(id string) axis.Spec[string] {
 		Hash: func(v string) uint64 {
 			return uint64(len(v)) + 1
 		},
-		Boundary: axis.PortableIdentity,
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[string](),
 	}
 }

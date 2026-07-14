@@ -34,6 +34,9 @@ type Spec[T any] struct {
 	Meet     func(a, b T) T
 	Widen    func(prev, next T) T
 	Hash     func(T) uint64
+	// Retention is mandatory for every registered sparse axis. It proves whether
+	// values may cross an immutable artifact boundary.
+	Retention RetentionPolicy[T]
 	// Boundary is mandatory for registered product axes. Projected additionally
 	// requires BoundaryProject; the other policies reject a projector so stale
 	// configuration cannot be ignored accidentally.
@@ -116,6 +119,9 @@ func validate[T any](s Spec[T]) error {
 	if s.Hash == nil {
 		return fmt.Errorf("axis %q: Hash is nil", s.Key.ID())
 	}
+	if err := validateRetentionPolicy(s.Key.ID(), s.Retention); err != nil {
+		return err
+	}
 	switch s.Boundary {
 	case LocalOnly, PortableIdentity:
 		if s.BoundaryProject != nil {
@@ -133,6 +139,11 @@ func validate[T any](s Spec[T]) error {
 
 // ErasedSpec is the type-erased adapter consumed by product operations.
 type ErasedSpec interface {
+	// erasedSpecSeal keeps erased specs provenance-checked: every accepted
+	// implementation must come from a fully validated typed Spec.Erase call.
+	// The private result also lets Registry reject forged implementations from
+	// tests inside this package instead of trusting their metadata methods.
+	erasedSpecSeal() erasedSpecToken
 	ID() string
 	BottomAny() any
 	TopAny() any
@@ -144,6 +155,8 @@ type ErasedSpec interface {
 	MeetAny(a, b any) any
 	WidenAny(prev, next any) any
 	HashAny(any) uint64
+	RetentionMode() RetentionMode
+	RetentionSafeAny(any) bool
 	BoundaryPolicy() BoundaryPolicy
 	ProjectBoundaryAny(any) any
 	ReducerHook() Reducer
@@ -152,6 +165,12 @@ type ErasedSpec interface {
 
 type erasedSpec[T any] struct {
 	spec Spec[T]
+}
+
+type erasedSpecToken struct{ validated bool }
+
+func (erasedSpec[T]) erasedSpecSeal() erasedSpecToken {
+	return erasedSpecToken{validated: true}
 }
 
 func (e erasedSpec[T]) ID() string {
@@ -199,6 +218,23 @@ func (e erasedSpec[T]) WidenAny(prev, next any) any {
 
 func (e erasedSpec[T]) HashAny(v any) uint64 {
 	return e.spec.Hash(e.cast(v))
+}
+
+func (e erasedSpec[T]) RetentionMode() RetentionMode { return e.spec.Retention.Mode }
+
+func (e erasedSpec[T]) RetentionSafeAny(value any) bool {
+	typed, ok := value.(T)
+	if !ok {
+		return false
+	}
+	switch e.spec.Retention.Mode {
+	case RetentionImmutable:
+		return true
+	case RetentionValidated:
+		return e.spec.Retention.Validate(typed)
+	default:
+		return false
+	}
 }
 
 func (e erasedSpec[T]) BoundaryPolicy() BoundaryPolicy {

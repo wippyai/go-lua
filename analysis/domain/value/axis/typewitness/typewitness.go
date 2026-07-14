@@ -27,10 +27,25 @@ func Spec() axis.Spec[Value] {
 		Meet:         Meet,
 		Widen:        Widen,
 		Hash:         Value.Hash,
+		Retention:    axis.ValidatedRetention(retentionSafe),
 		Boundary:     axis.PortableIdentity,
 		Reducer:      reduceByRuntimeKind,
 		ReducerReads: []string{Key.ID(), runtimekind.Key.ID()},
 	}
+}
+
+// retentionSafe admits only exact package-owned singleton identities. Kind is
+// intentionally insufficient: Type is an open interface, so a caller can forge
+// kind.String while retaining mutable state. Every pointer-backed literal,
+// recursive, nominal, and composite remains transaction-local until portable
+// type ownership and sealing provides a mechanical retention proof.
+func retentionSafe(value Value) bool {
+	if value.t == nil {
+		return value.recursive == nil || value.recursive == bottomSignature
+	}
+	return value.t == typ.Nil || value.t == typ.Boolean || value.t == typ.Number ||
+		value.t == typ.Integer || value.t == typ.String || value.t == typ.Any ||
+		value.t == typ.Unknown || value.t == typ.Never
 }
 
 // reduceByRuntimeKind is the typewitness x runtimekind reduced-product rule: a

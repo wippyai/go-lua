@@ -6126,9 +6126,10 @@ func testRegistry(t *testing.T) (*axis.Registry, axis.Key[markValue]) {
 			}
 			return b
 		},
-		Widen:    func(_, next markValue) markValue { return next },
-		Hash:     func(v markValue) uint64 { return uint64(v) },
-		Boundary: axis.PortableIdentity,
+		Widen:     func(_, next markValue) markValue { return next },
+		Hash:      func(v markValue) uint64 { return uint64(v) },
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[markValue](),
 	}.Erase())
 	if err != nil {
 		t.Fatalf("RegistryWithAxes: %v", err)

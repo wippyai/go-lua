@@ -1099,8 +1099,9 @@ func summaryTestSpec() axis.Spec[summaryTestAxis] {
 			}
 			return next
 		},
-		Hash:     func(v summaryTestAxis) uint64 { return uint64(v) },
-		Boundary: axis.PortableIdentity,
+		Hash:      func(v summaryTestAxis) uint64 { return uint64(v) },
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[summaryTestAxis](),
 	}
 }
 

@@ -10,16 +10,17 @@ var Key = axis.NewKey[Value]("variantorigin")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:      Key,
-		Bottom:   Bottom,
-		Top:      Top,
-		Equal:    Equal,
-		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
-		Join:     Join,
-		Meet:     Meet,
-		Widen:    Widen,
-		Hash:     Value.Hash,
-		Boundary: axis.PortableIdentity,
+		Key:       Key,
+		Bottom:    Bottom,
+		Top:       Top,
+		Equal:     Equal,
+		LessOrEq:  func(a, b Value) bool { return b.Covers(a) },
+		Join:      Join,
+		Meet:      Meet,
+		Widen:     Widen,
+		Hash:      Value.Hash,
+		Retention: axis.ImmutableRetention[Value](),
+		Boundary:  axis.PortableIdentity,
 	}
 }
 
@@ -79,10 +80,6 @@ func (v Value) CaseAt(i int) int { return v.cases.At(i) }
 
 // CasesView returns an allocation-free immutable view in canonical order.
 func (v Value) CasesView() caseset.View { return v.cases.View() }
-
-// RetentionSafe reports that no caller can mutate this value's private case
-// storage through the public API.
-func (v Value) RetentionSafe() bool { return true }
 
 func Join(a, b Value) Value {
 	if a.state == bottom {

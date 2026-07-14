@@ -107,7 +107,7 @@ func TestImmutableCasesPreserveInternedProductIdentity(t *testing.T) {
 	if reinterned != stored {
 		t.Fatal("equal immutable origin did not reuse interned product node")
 	}
-	if !origin.RetentionSafe() {
+	if !product.RetentionSafe(reg, stored) {
 		t.Fatal("immutable variant origin was rejected as retention-unsafe")
 	}
 }

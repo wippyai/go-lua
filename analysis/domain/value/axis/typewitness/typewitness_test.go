@@ -4,11 +4,96 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestArtifactRetentionRejectsRecursivePlaceholderBeforeAndAfterSetBody(t *testing.T) {
+	reg := axis.NewRegistry()
+	axis.Register(reg, runtimekind.Spec())
+	axis.Register(reg, Spec())
+	reg.Freeze()
+	placeholder := typ.NewRecursivePlaceholder("Mutable")
+	stored := product.Set(reg, product.Top(), Key, Of(placeholder))
+	if product.RetentionSafe(reg, stored) {
+		t.Fatal("open recursive placeholder was admitted to immutable artifact")
+	}
+	placeholder.SetBody(typ.String)
+	if product.RetentionSafe(reg, stored) {
+		t.Fatal("SetBody-mutated recursive witness was admitted to immutable artifact")
+	}
+}
+
+func TestArtifactRetentionAdmitsExactPrimitiveSingletonWitnesses(t *testing.T) {
+	reg := axis.NewRegistry()
+	axis.Register(reg, runtimekind.Spec())
+	axis.Register(reg, Spec())
+	reg.Freeze()
+	for _, witness := range []Value{Bottom(), Top(), Of(typ.Nil), Of(typ.Boolean), Of(typ.Integer), Of(typ.Number), Of(typ.String), Of(typ.Never)} {
+		stored := product.Set(reg, product.Top(), Key, witness)
+		if !product.RetentionSafe(reg, stored) {
+			t.Fatalf("is_str leaf witness %v was rejected", witness)
+		}
+	}
+}
+
+func TestArtifactRetentionRejectsCompositeAndNominalWitnesses(t *testing.T) {
+	reg := axis.NewRegistry()
+	axis.Register(reg, runtimekind.Spec())
+	axis.Register(reg, Spec())
+	reg.Freeze()
+	param := typ.NewTypeParam("T", nil)
+	for name, valueType := range map[string]typ.Type{
+		"array":   typ.NewArray(typ.String),
+		"record":  typetable.NewRecord().Field("value", typ.String).Build(),
+		"alias":   typ.NewAlias("Name", typ.String),
+		"generic": typ.NewGeneric("Box", []*typ.TypeParam{param}, typ.NewArray(param)),
+		"union":   typ.MaterializeUnion([]typ.Type{typ.Number, typ.String}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			witness := Value{t: valueType}
+			stored := product.Set(reg, product.Top(), Key, witness)
+			if product.RetentionSafe(reg, stored) {
+				t.Fatalf("mutable/composite witness %T crossed immutable artifact boundary", valueType)
+			}
+		})
+	}
+}
+
+type forgedStringType struct{ mutable string }
+
+func (*forgedStringType) Kind() kind.Kind              { return kind.String }
+func (f *forgedStringType) String() string             { return f.mutable }
+func (*forgedStringType) Hash() uint64                 { return 1 }
+func (f *forgedStringType) Equals(other typ.Type) bool { return f == other }
+
+func TestArtifactRetentionRejectsKindForgedPrimitiveAndMutableLiteral(t *testing.T) {
+	reg := axis.NewRegistry()
+	axis.Register(reg, runtimekind.Spec())
+	axis.Register(reg, Spec())
+	reg.Freeze()
+	forged := &forgedStringType{mutable: "before"}
+	if product.RetentionSafe(reg, product.Set(reg, product.Top(), Key, Value{t: forged})) {
+		t.Fatal("custom type forged as kind.String crossed artifact boundary")
+	}
+	forged.mutable = "after"
+
+	literal := &typ.Literal{Base: kind.String, Value: "retention-mutation-fixture"}
+	stored := product.Set(reg, product.Top(), Key, Value{t: literal})
+	if product.RetentionSafe(reg, stored) {
+		t.Fatal("pointer-backed literal crossed artifact boundary before mutation")
+	}
+	literal.Value = "mutated"
+	if product.RetentionSafe(reg, stored) {
+		t.Fatal("post-mutation pointer-backed literal crossed artifact boundary")
+	}
+}
 
 func TestValueStaysSmallAndInternsRecursiveSignatures(t *testing.T) {
 	if got := unsafe.Sizeof(Value{}); got != 24 {

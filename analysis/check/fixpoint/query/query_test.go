@@ -541,8 +541,9 @@ func queryTestSpec() axis.Spec[queryTestAxis] {
 			}
 			return next
 		},
-		Hash:     func(v queryTestAxis) uint64 { return uint64(v) },
-		Boundary: axis.PortableIdentity,
+		Hash:      func(v queryTestAxis) uint64 { return uint64(v) },
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[queryTestAxis](),
 	}
 }
 

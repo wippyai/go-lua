@@ -65,6 +65,27 @@ func TestRegistryBoundaryPolicySchemaIsComplete(t *testing.T) {
 	}
 }
 
+func TestRegistryArtifactRetentionInventoryIsComplete(t *testing.T) {
+	want := []string{"variantorigin", "identity", "runtimekind", "typewitness", "escape", "evidence", "assertion"}
+	wantModes := []axis.RetentionMode{
+		axis.RetentionImmutable, axis.RetentionImmutable, axis.RetentionImmutable, axis.RetentionValidated,
+		axis.RetentionImmutable, axis.RetentionImmutable, axis.RetentionImmutable,
+	}
+	view := Registry().SpecsView()
+	if view.Len() != len(want) {
+		t.Fatalf("retention inventory has %d axes, want %d", view.Len(), len(want))
+	}
+	for index, id := range want {
+		spec := view.At(index)
+		if spec.ID() != id {
+			t.Fatalf("retention inventory axis %d = %q, want %q", index, spec.ID(), id)
+		}
+		if spec.RetentionMode() != wantModes[index] {
+			t.Fatalf("axis %q retention mode = %d, want %d", id, spec.RetentionMode(), wantModes[index])
+		}
+	}
+}
+
 func TestStandardBoundaryProjectionIsAnIdempotentUpperClosure(t *testing.T) {
 	reg := Registry()
 	domain := product.Domain(reg)
@@ -293,7 +314,8 @@ func syntheticSpec() axis.Spec[synthetic] {
 			}
 			return next
 		},
-		Hash:     func(v synthetic) uint64 { return uint64(v) + 1 },
-		Boundary: axis.PortableIdentity,
+		Hash:      func(v synthetic) uint64 { return uint64(v) + 1 },
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[synthetic](),
 	}
 }

@@ -808,7 +808,8 @@ func syntheticSpec() axis.Spec[synthetic] {
 		Hash: func(v synthetic) uint64 {
 			return uint64(v) + 1
 		},
-		Boundary: axis.PortableIdentity,
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[synthetic](),
 	}
 }
 

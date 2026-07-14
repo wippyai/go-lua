@@ -47,6 +47,43 @@ type Value struct {
 	n *node
 }
 
+// BelongsToRegistry reports whether v is valid in reg's product universe.
+// Top is registry-neutral; every interned value is fenced by pointer identity.
+// This non-panicking predicate is intended for artifact admission boundaries.
+func BelongsToRegistry(reg *axis.Registry, v Value) bool {
+	return reg != nil && (v.n == nil || v.n.reg == reg)
+}
+
+// RetentionSafe reports whether v belongs to reg and every sparse axis payload
+// that declares mutable retention risk approves immutable retention.
+func RetentionSafe(reg *axis.Registry, v Value) bool {
+	if !BelongsToRegistry(reg, v) {
+		return false
+	}
+	rt := runtimeFor(reg)
+	if rt.err != nil || !rt.retentionSafe {
+		return false
+	}
+	if v.n == nil {
+		return true
+	}
+	for _, slot := range v.n.slots {
+		if int(slot.ordinal) >= len(rt.canonicalAxes) {
+			return false
+		}
+		spec := rt.axisOrdinal(slot.ordinal).spec
+		switch spec.RetentionMode() {
+		case axis.RetentionImmutable, axis.RetentionValidated:
+		default:
+			return false
+		}
+		if !spec.RetentionSafeAny(slot.value) {
+			return false
+		}
+	}
+	return true
+}
+
 type node struct {
 	reg      *axis.Registry
 	shape    Shape
