@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,9 +173,54 @@ func runFrozenThreads(t testing.TB, stmts []ast.Stmt, bindings *bind.Result, mod
 		t.Fatal(err)
 	}
 	diagnosticBytes, count := frozenDiagnosticBytes(result.RootResult())
-	targetSolves, targetTransfers := frozenBodyWork(stats.BodySolveAttribution(), 16010901263544322178)
+	targetSolves, targetTransfers, targetErr := frozenNamedFunctionWork(bindings, result, stats.BodySolveAttribution(), "is_str")
+	if targetErr != nil {
+		t.Fatalf("resolve frozen is_str attribution: %v", targetErr)
+	}
 	report := frozenThreadsReport{Mode: mode, Wall: wall, AllocatedBytes: after.TotalAlloc - before.TotalAlloc, HeapDeltaBytes: int64(after.HeapAlloc) - int64(before.HeapAlloc), BodySolves: stats.Body.BodySolves, PointTransfers: stats.Body.Transfer.Solver.TransferCalls, PrepassSolves: stats.PrepassBodySolves, SummarySolves: stats.SummaryBodySolves, SummaryTransfers: stats.SummaryPointTransfers, MaterializeSolves: stats.MaterializeBodySolves, Composition: stats.CompositionCostCensus(), Diagnostics: count, DiagnosticsDigest: sha256Hex(diagnosticBytes), SummaryDigest: frozenSummaryDigest(standard.Registry(), result), RelationProducers: stats.RelationProducersEligible, RelationOwners: stats.RelationOwnersActive, RelationCalls: stats.RelationCallsHandled, PlannerScanned: stats.RelationPlannerOwnersScanned, PlannerPrefiltered: stats.RelationPlannerOwnersPrefiltered, PlannerCompiled: stats.RelationPlannerOwnersCompiled, PlannerActivated: stats.RelationPlannerOwnersActivated, ContextsSpecialized: stats.RelationContextsSpecialized, EquationsOmitted: stats.RelationSummaryEquationsOmitted, MaterializationsReused: stats.RelationMaterializationsReused, TargetBodySolves: targetSolves, TargetTransfers: targetTransfers}
 	return frozenThreadsRun{result, report}
+}
+
+func frozenNamedFunctionWork(bindings *bind.Result, result Result, entries []BodySolveAttribution, name string) (solves, transfers int, err error) {
+	if bindings == nil {
+		return 0, 0, fmt.Errorf("resolve lexical function %q: bindings are nil", name)
+	}
+	var candidates []bind.FunctionOrigin
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == name {
+			candidates = append(candidates, origin)
+		}
+	}
+	if len(candidates) != 1 {
+		return 0, 0, fmt.Errorf("resolve lexical function %q: found %d candidates, want exactly one", name, len(candidates))
+	}
+	functionSymbol, ok := bindings.FunctionSymbol(candidates[0].Func)
+	if !ok {
+		return 0, 0, fmt.Errorf("resolve lexical function %q: function symbol is missing", name)
+	}
+	functionKey, ok := result.FunctionKey(functionSymbol)
+	if !ok {
+		return 0, 0, fmt.Errorf("resolve lexical function %q: result function key is missing", name)
+	}
+	matched := 0
+	for _, entry := range entries {
+		// Context specializations have distinct Entry dimensions but retain the
+		// lexical function Ref. Aggregate every phase and specialization for the
+		// resolved owner rather than pinning an unstable prepared-body digest.
+		if entry.Function.Ref != functionKey.Ref {
+			continue
+		}
+		matched++
+		solves += entry.BodySolves
+		transfers += entry.PointTransfers
+	}
+	if matched == 0 {
+		return 0, 0, fmt.Errorf("resolve lexical function %q: no body-solve attribution matched %v", name, functionKey.Ref)
+	}
+	if solves <= 0 || transfers <= 0 {
+		return 0, 0, fmt.Errorf("resolve lexical function %q: matched %d attribution rows with non-positive work %d/%d", name, matched, solves, transfers)
+	}
+	return solves, transfers, nil
 }
 
 func frozenBodyWork(entries []BodySolveAttribution, bodyID uint64) (solves, transfers int) {
@@ -185,6 +231,136 @@ func frozenBodyWork(entries []BodySolveAttribution, bodyID uint64) (solves, tran
 		}
 	}
 	return solves, transfers
+}
+
+func TestFrozenNamedFunctionWorkSurvivesSourceRevisionAndUnrelatedFunctions(t *testing.T) {
+	for name, source := range map[string]string{
+		"original": `
+local function unrelated(value: any): any return value end
+local function is_str(value: any): boolean
+  return type(value) == "string" and value ~= ""
+end
+return is_str("value"), unrelated(1), is_str(2)
+`,
+		"revised and reordered": `
+local function before(value: any): any return value end
+local function is_str(candidate: any): boolean
+  return (type(candidate) == "string") and (candidate ~= "")
+end
+local function unrelated(value: any): any return before(value) end
+return unrelated(1), is_str("value"), is_str(false)
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			bindings, result := runFrozenAttributionFixture(t, source)
+			targetKey := frozenFunctionKeyByName(t, bindings, result, "is_str")
+			unrelatedKey := frozenFunctionKeyByName(t, bindings, result, "unrelated")
+			contextKey := targetKey
+			contextKey.Entry.Values = 17
+			entries := []BodySolveAttribution{
+				{BodyID: 11, Function: targetKey, Phase: SolvePhasePrepass, BodySolves: 2, PointTransfers: 3},
+				{BodyID: 29, Function: contextKey, Phase: SolvePhaseSummary, Context: true, BodySolves: 4, PointTransfers: 5},
+				{BodyID: 11, Function: unrelatedKey, Phase: SolvePhaseSummary, BodySolves: 100, PointTransfers: 200},
+			}
+			solves, transfers, err := frozenNamedFunctionWork(bindings, result, entries, "is_str")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if solves != 6 || transfers != 8 {
+				t.Fatalf("is_str work = %d/%d, want 6/8 across base and specialized context", solves, transfers)
+			}
+		})
+	}
+}
+
+func TestFrozenNamedFunctionWorkRejectsAmbiguousOwner(t *testing.T) {
+	source := `
+local function is_str(value: any): boolean return value ~= nil end
+local function wrapper(): boolean
+  local function is_str(value: any): boolean return value == nil end
+  return is_str(nil)
+end
+return is_str("value"), wrapper()
+`
+	bindings, result := runFrozenAttributionFixture(t, source)
+	_, _, err := frozenNamedFunctionWork(bindings, result, nil, "is_str")
+	if err == nil || !strings.Contains(err.Error(), "found 2 candidates, want exactly one") {
+		t.Fatalf("ambiguous is_str error = %v, want exact-owner rejection", err)
+	}
+}
+
+func TestFrozenNamedFunctionWorkRejectsMissingOwner(t *testing.T) {
+	source := `local function unrelated(value: any): any return value end return unrelated("value")`
+	bindings, result := runFrozenAttributionFixture(t, source)
+	_, _, err := frozenNamedFunctionWork(bindings, result, nil, "is_str")
+	if err == nil || !strings.Contains(err.Error(), "found 0 candidates, want exactly one") {
+		t.Fatalf("missing is_str error = %v, want exact-owner rejection", err)
+	}
+}
+
+func TestFrozenNamedFunctionWorkRejectsMissingAttribution(t *testing.T) {
+	source := `local function is_str(value: any): boolean return value ~= nil end return is_str("value")`
+	bindings, result := runFrozenAttributionFixture(t, source)
+	_, _, err := frozenNamedFunctionWork(bindings, result, nil, "is_str")
+	if err == nil || !strings.Contains(err.Error(), "no body-solve attribution matched") {
+		t.Fatalf("missing attribution error = %v, want fail-closed rejection", err)
+	}
+}
+
+func TestFrozenNamedFunctionWorkRejectsMissingResultKey(t *testing.T) {
+	source := `local function is_str(value: any): boolean return value ~= nil end return is_str("value")`
+	bindings, _ := runFrozenAttributionFixture(t, source)
+	_, _, err := frozenNamedFunctionWork(bindings, Result{}, nil, "is_str")
+	if err == nil || !strings.Contains(err.Error(), "result function key is missing") {
+		t.Fatalf("missing function key error = %v, want fail-closed rejection", err)
+	}
+}
+
+func TestFrozenNamedFunctionWorkRejectsNonPositiveWork(t *testing.T) {
+	source := `local function is_str(value: any): boolean return value ~= nil end return is_str("value")`
+	bindings, result := runFrozenAttributionFixture(t, source)
+	key := frozenFunctionKeyByName(t, bindings, result, "is_str")
+	_, _, err := frozenNamedFunctionWork(bindings, result, []BodySolveAttribution{{Function: key}}, "is_str")
+	if err == nil || !strings.Contains(err.Error(), "non-positive work 0/0") {
+		t.Fatalf("zero-work attribution error = %v, want fail-closed rejection", err)
+	}
+}
+
+func runFrozenAttributionFixture(t testing.TB, source string) (*bind.Result, Result) {
+	t.Helper()
+	stmts, err := parse.ParseString(source, "frozen-attribution-fixture.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := frozenThreadsCheck(standard.Registry())
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: check})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bindings, result
+}
+
+func frozenFunctionKeyByName(t testing.TB, bindings *bind.Result, result Result, name string) summary.SummaryKey {
+	t.Helper()
+	var candidates []bind.FunctionOrigin
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == name {
+			candidates = append(candidates, origin)
+		}
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("function %q candidates = %d, want one", name, len(candidates))
+	}
+	functionSymbol, ok := bindings.FunctionSymbol(candidates[0].Func)
+	if !ok {
+		t.Fatalf("function %q has no symbol", name)
+	}
+	key, ok := result.FunctionKey(functionSymbol)
+	if !ok {
+		t.Fatalf("function %q has no result key", name)
+	}
+	return key
 }
 
 func logFrozenReport(t testing.TB, report frozenThreadsReport) {
