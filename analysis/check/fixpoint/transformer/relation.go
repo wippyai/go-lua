@@ -55,6 +55,8 @@ type Relation struct {
 	contextual              string
 	widened                 bool
 	observationComplete     bool
+	projectionTrace         *sparseProjectionTrace
+	projectionTraceReason   string
 	paramContracts          []product.Value
 	projection              relationProjection
 }
@@ -486,6 +488,8 @@ func JoinRelation(a, b Relation) Relation {
 		a.inferReturnCorrelations = b.inferReturnCorrelations
 		a.observationComplete = b.observationComplete
 		a.paramContracts = append([]product.Value(nil), b.paramContracts...)
+		a.projectionTrace = cloneSparseProjectionTrace(b.projectionTrace)
+		a.projectionTraceReason = b.projectionTraceReason
 	}
 	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
 		b.effects = a.effects
@@ -494,6 +498,8 @@ func JoinRelation(a, b Relation) Relation {
 		b.inferReturnCorrelations = a.inferReturnCorrelations
 		b.observationComplete = a.observationComplete
 		b.paramContracts = append([]product.Value(nil), a.paramContracts...)
+		b.projectionTrace = cloneSparseProjectionTrace(a.projectionTrace)
+		b.projectionTraceReason = a.projectionTraceReason
 	}
 	if a.contextual != "" || b.contextual != "" || a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) {
 		return Relation{shape: a.shape, arena: a.arena, effects: a.effects, contextual: "incompatible or contextual relation"}
@@ -501,7 +507,28 @@ func JoinRelation(a, b Relation) Relation {
 	rows := append(cloneRows(a.rows), b.rows...)
 	sort.Slice(rows, func(i, j int) bool { return rowLess(a.arena, a.effects, rows[i], rows[j]) })
 	rows = dedupRows(a.arena, a.effects, rows)
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: a.observationComplete && b.observationComplete, paramContracts: append([]product.Value(nil), a.paramContracts...), projection: joinRelationProjection(a.arena.reg, a.projection, b.projection)}
+	trace, traceOK := joinSparseProjectionTrace(a.arena, a.projectionTrace, b.projectionTrace)
+	traceReason := ""
+	if !traceOK {
+		trace = nil
+		traceReason = "projection trace: incompatible trace identities"
+	} else if trace == nil {
+		traceReason = joinProjectionTraceReason(a, b)
+	}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: a.observationComplete && b.observationComplete, projectionTrace: trace, projectionTraceReason: traceReason, paramContracts: append([]product.Value(nil), a.paramContracts...), projection: joinRelationProjection(a.arena.reg, a.projection, b.projection)}
+}
+
+func joinProjectionTraceReason(a, b Relation) string {
+	if a.projectionTraceReason != "" {
+		return a.projectionTraceReason
+	}
+	if b.projectionTraceReason != "" {
+		return b.projectionTraceReason
+	}
+	if a.projectionTrace != nil || b.projectionTrace != nil {
+		return "projection trace: incomplete join input"
+	}
+	return ""
 }
 
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
@@ -512,6 +539,8 @@ func WidenRelation(prev, next Relation, maxRows int) Relation {
 		out.rows = nil
 		out.contextual = "row budget"
 		out.widened = true
+		out.projectionTrace = nil
+		out.projectionTraceReason = "projection trace: semantic row budget"
 	}
 	return out
 }

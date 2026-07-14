@@ -150,7 +150,22 @@ func (r ObservationRequirement) descriptor() (projectionDescriptor, bool) {
 }
 func (r ObservationRequirement) Projection() ProjectionID { d, _ := r.descriptor(); return d.id }
 func (r ObservationRequirement) Stage() RequirementStage  { d, _ := r.descriptor(); return d.stage }
-func (r ObservationRequirement) Point() cfg.Point         { return cfg.Point(r.point) }
+
+// FactKind returns the registered boundary fact that owns this selector.
+// Selectors without a fact owner (point, edge, observation, and composite
+// producer selectors) return false rather than manufacturing a sentinel fact.
+func (r ObservationRequirement) FactKind() (Kind, bool) {
+	d, ok := r.descriptor()
+	return d.fact, ok && d.stage == RequirementBoundary && d.fact != 0
+}
+
+// ObservationKind returns the registered evidence family for observation and
+// route selectors. Boundary/point/edge selectors return false.
+func (r ObservationRequirement) ObservationKind() (observation.Kind, bool) {
+	d, ok := r.descriptor()
+	return d.observation, ok && (d.stage == RequirementObservation || d.stage == RequirementRoute) && d.observation != observation.Invalid
+}
+func (r ObservationRequirement) Point() cfg.Point { return cfg.Point(r.point) }
 func (r ObservationRequirement) EdgeTarget() (cfg.Point, bool) {
 	return cfg.Point(r.to), r.Stage() == RequirementEdge
 }

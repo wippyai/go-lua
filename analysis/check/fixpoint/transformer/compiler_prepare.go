@@ -22,16 +22,18 @@ import (
 // certificate for one function. Evaluate allocates row scratch only; term DAGs,
 // descriptors, and operation-plan catalogs remain stable across equation reads.
 type PreparedPlanCompiler struct {
-	compiler            *PlanCompiler
-	registry            *axis.Registry
-	graph               cfg.Graph
-	plan                *operationplan.Plan
-	shape               Shape
-	builder             *Builder
-	base                planCompileContext
-	certificate         SemanticCertificate
-	wtoTape             *symbolicWTOTape
-	observationComplete bool
+	compiler             *PlanCompiler
+	registry             *axis.Registry
+	graph                cfg.Graph
+	plan                 *operationplan.Plan
+	shape                Shape
+	builder              *Builder
+	base                 planCompileContext
+	certificate          SemanticCertificate
+	wtoTape              *symbolicWTOTape
+	observationComplete  bool
+	projectionPlan       *sparseProjectionPlan
+	projectionPlanReason string
 	// cyclic is retained as prepared topology metadata for compatibility and
 	// diagnostics. Evaluation deliberately does not branch on it: DAGs are the
 	// zero-component case of the same exact dense executor.
@@ -157,11 +159,25 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err != nil {
 		return nil, fmt.Errorf("compiler: WTO topology: %w", err)
 	}
+	observationComplete := exactObservationCoverage(plan, shape, len(tape.components) != 0)
+	var projectionPlan *sparseProjectionPlan
+	var projectionPlanReason string
+	if observationComplete {
+		if requirements, sealed := plan.ObservationRequirements(); sealed {
+			projectionPlan, err = compileSparseProjectionPlan(requirements)
+			if err != nil {
+				projectionPlanReason = err.Error()
+			}
+		} else {
+			projectionPlanReason = "projection trace: observation requirements are not sealed"
+		}
+	}
 	return &PreparedPlanCompiler{
 		compiler: c, registry: reg, graph: graph, plan: plan, shape: shape,
 		builder: builder, base: ctx, certificate: certificate, wtoTape: tape,
-		observationComplete: exactObservationCoverage(plan, shape, len(tape.components) != 0),
-		cyclic:              len(tape.components) != 0,
+		observationComplete: observationComplete,
+		projectionPlan:      projectionPlan, projectionPlanReason: projectionPlanReason,
+		cyclic: len(tape.components) != 0,
 	}, nil
 }
 
@@ -220,8 +236,15 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	branch := func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 		return compileBranchEdge(ctx, point, row, cond)
 	}
-	exitRows, err := solveExactWTOCFGExpandedExitRowsWithTape(evalCtx, p.graph, p.wtoTape, p.builder.Arena(), initial,
-		transfer, branch, SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{Shape: p.shape}})
+	var traceBuilder *sparseProjectionTraceBuilder
+	traceReason := p.projectionPlanReason
+	if p.observationComplete {
+		if p.projectionPlan != nil {
+			traceBuilder = p.projectionPlan.newBuilder(p.builder.Arena())
+		}
+	}
+	exitRows, err := solveExactWTOCFGExpandedExitRowsWithTrace(evalCtx, p.graph, p.wtoTape, p.builder.Arena(), initial,
+		transfer, branch, SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{Shape: p.shape}}, traceBuilder)
 	if err != nil {
 		return contextual("compiler: " + err.Error())
 	}
@@ -252,12 +275,26 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 		}
 	}
 	relation.observationComplete = coverageComplete
+	relation.projectionTraceReason = traceReason
 	if direct != nil {
 		for _, cell := range direct.Cells() {
 			dependency, ok := view.Lookup(cell)
 			if !ok || !dependency.ObservationCoverageComplete() {
 				relation.observationComplete = false
 				break
+			}
+		}
+	}
+	if traceBuilder != nil {
+		if !relation.observationComplete {
+			relation.projectionTraceReason = "projection trace: required observation evidence is incomplete"
+		} else {
+			trace, traceErr := traceBuilder.freeze()
+			if traceErr != nil {
+				relation.projectionTraceReason = traceErr.Error()
+			} else {
+				relation.projectionTrace = trace
+				relation.projectionTraceReason = ""
 			}
 		}
 	}
