@@ -266,13 +266,25 @@ func solveMaterializedPreparedAttributed(
 			return nil, false, err
 		}
 		if ok {
-			result, err = body.RebindBoundaryProvidersExact(result, prepared, config.SolveConfig())
+			// Taking a Result transfers both its transient flow and responsibility
+			// for finalizing the retained summary session. Until cache installation
+			// succeeds, every exit (including panic) rolls both owners back.
+			transferred, installed := result, false
+			defer func() {
+				cache.handoff.finishMaterializationHandoff(owner)
+				if !installed {
+					transferred.ReleaseTransient()
+				}
+			}()
+			result, err = body.RebindBoundaryProvidersExact(transferred, prepared, config.SolveConfig())
 			if err != nil {
-				result.ReleaseTransient()
+				if result != nil && result != transferred {
+					result.ReleaseTransient()
+				}
 				return nil, false, err
 			}
 			cache.write(prepared, owner, routing, resolution, entry, summaries, deps, result)
-			cache.handoff.finishMaterializationHandoff(owner)
+			installed = true
 			return result, false, nil
 		}
 	}
