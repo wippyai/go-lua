@@ -20,15 +20,11 @@ func sealPreparedCallSurface(bindings *bind.Result, lowered *wir.Body, facts fac
 	if bindings == nil || lowered == nil || owner == (lexicalidentity.StableLexicalBodyID{}) || namespace == (lexicalidentity.UnitNamespace{}) {
 		return operationplan.CallSurface{}
 	}
-	extracted := make([]cfg.Point, 0)
-	sites := make([]operationplan.CallSurfaceSite, 0)
-	for index := 0; index < lowered.Len(); index++ {
-		instruction := lowered.Instr(index)
-		if instruction.Op != wir.OpCall {
-			continue
-		}
+	var extracted []cfg.Point
+	var sites []operationplan.CallSurfaceSite
+	lowered.ForEachCall(func(instruction wir.Instruction) bool {
 		extracted = append(extracted, instruction.Point)
-		target := operationplan.RejectedCallSurfaceTarget()
+		target := preparedGuardedCallResidue(lowered, instruction)
 		if lexical, exact := exactPreparedLexicalCallTarget(bindings, namespace, lowered, instruction, facts); exact {
 			target, _ = operationplan.NewLexicalCallSurfaceTarget(lexical)
 		} else if external, exact := signatureCalls[instruction.Point]; exact && exactPreparedExternalCallShape(lowered, instruction, facts) {
@@ -37,12 +33,38 @@ func sealPreparedCallSurface(bindings *bind.Result, lowered *wir.Body, facts fac
 			}
 		}
 		sites = append(sites, operationplan.CallSurfaceSite{Point: instruction.Point, Target: target})
-	}
+		return true
+	})
 	surface, err := operationplan.SealCallSurface(owner, pointCount, extracted, sites)
 	if err != nil {
 		return operationplan.CallSurface{}
 	}
 	return surface
+}
+
+func preparedGuardedCallResidue(lowered *wir.Body, instruction wir.Instruction) operationplan.CallSurfaceTarget {
+	if lowered == nil {
+		return operationplan.RejectedCallSurfaceTarget()
+	}
+	if instruction.Call.Method != 0 {
+		method := lowered.Const(instruction.Call.Method)
+		if instruction.Call.Receiver.Kind == wir.OperandPath && method.Kind == wir.ConstString {
+			receiver := lowered.Path(wir.PathRef(instruction.Call.Receiver.Ref))
+			return operationplan.RejectedMethodCallSurfaceTarget(receiver.Key(), method.Str)
+		} else if instruction.Call.Receiver.Kind == wir.OperandTemp {
+			return operationplan.RejectedTemporaryCallSurfaceTarget(instruction.Call.Receiver.Ref)
+		}
+		return operationplan.RejectedCallSurfaceTarget()
+	}
+	switch instruction.Call.Callee.Kind {
+	case wir.OperandPath:
+		callee := lowered.Path(wir.PathRef(instruction.Call.Callee.Ref))
+		return operationplan.RejectedPathCallSurfaceTarget(callee.Key())
+	case wir.OperandTemp:
+		return operationplan.RejectedTemporaryCallSurfaceTarget(instruction.Call.Callee.Ref)
+	default:
+		return operationplan.RejectedCallSurfaceTarget()
+	}
 }
 
 func exactPreparedExternalCallShape(lowered *wir.Body, instruction wir.Instruction, facts factflow.Facts) bool {

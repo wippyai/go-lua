@@ -21,6 +21,7 @@ type Body struct {
 	Name string
 
 	instrs []Instruction
+	calls  []uint32
 	points []pointRange // indexed by cfg.Point
 
 	paths  []path.Path
@@ -379,6 +380,25 @@ func (b *Body) Instr(i int) Instruction { return b.instrs[i] }
 
 // Len returns the number of instructions in the stream.
 func (b *Body) Len() int { return len(b.instrs) }
+
+// ForEachCall visits every OpCall in lowering order without rescanning the
+// complete instruction stream. Lowering is the independent authority for this
+// census: semantic consumers may classify a call, but cannot make one appear
+// or disappear by omitting a derived fact.
+func (b *Body) ForEachCall(fn func(Instruction) bool) {
+	if b == nil || fn == nil {
+		return
+	}
+	for _, raw := range b.calls {
+		if uint64(raw) >= uint64(len(b.instrs)) {
+			return
+		}
+		instruction := b.instrs[raw]
+		if instruction.Op != OpCall || !fn(instruction) {
+			return
+		}
+	}
+}
 
 // PointInstructions returns the instruction window attached to point p.
 func (b *Body) PointInstructions(p cfg.Point) []Instruction {
@@ -953,6 +973,9 @@ func (b *Body) AppendBranchDiffConstraints(diffs []BranchDiffConstraint) BranchD
 func (b *Body) Emit(inst Instruction) int {
 	i := len(b.instrs)
 	b.instrs = append(b.instrs, inst)
+	if inst.Op == OpCall {
+		b.calls = append(b.calls, uint32(i))
+	}
 	return i
 }
 

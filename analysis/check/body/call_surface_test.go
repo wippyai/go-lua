@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -65,6 +66,66 @@ return caller(1)
 	got, lexical := surface.Sites()[0].Target.LexicalBody()
 	if !lexical || got != want || surface.Sites()[0].Target.Kind() != operationplan.CallSurfaceTargetLexical {
 		t.Fatalf("lexical target = %x/%v kind=%v, want %x; closures=%#v", got, lexical, surface.Sites()[0].Target.Kind(), want, bindings.LocalFunctionUseClosures())
+	}
+}
+
+func TestPreparedLexicalTargetsMatchBinderCallClosureOracle(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function leaf(value: number): number
+  return value
+end
+local function recursive(value: number): number
+  return recursive(value)
+end
+local function caller(value: number): number
+  return leaf(value)
+end
+return caller(1), recursive(1)
+`, "call-surface-binder-oracle.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("call-surface-binder-oracle"))
+	reg := standard.Registry()
+	config := Config{Registry: reg, TypeValues: typevalue.NewCache(), UnitNamespace: namespace}
+	type namedOrigin struct {
+		fn       *ast.FunctionExpr
+		function symbol.ID
+		target   symbol.ID
+	}
+	byName := make(map[string]namedOrigin)
+	for _, origin := range bindings.FunctionOrigins() {
+		byName[bindings.Name(origin.TargetSymbol)] = namedOrigin{fn: origin.Func, function: origin.Symbol, target: origin.TargetSymbol}
+	}
+	closures := make(map[symbol.ID]bind.LocalFunctionUseClosure)
+	for _, closure := range bindings.LocalFunctionUseClosures() {
+		closures[closure.TargetSymbol] = closure
+	}
+	for _, pair := range []struct{ caller, callee string }{{caller: "caller", callee: "leaf"}, {caller: "recursive", callee: "recursive"}} {
+		callerName, calleeName := pair.caller, pair.callee
+		caller := byName[callerName]
+		callee := byName[calleeName]
+		if caller.fn == nil || callee.fn == nil {
+			t.Fatalf("%s/%s function missing", callerName, calleeName)
+		}
+		closure, closed := closures[callee.target]
+		if !closed || closure.FunctionSymbol != callee.function || len(closure.DirectCalls) == 0 || !closure.RuntimeUseScanComplete {
+			t.Fatalf("%s binder call-closure oracle = %#v/%v", calleeName, closure, closed)
+		}
+		prepared, err := PrepareBoundFunction(caller.fn, bindings, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		surface, ok := prepared.OperationPlan().CallSurface()
+		if !ok || len(surface.Sites()) != 1 {
+			t.Fatalf("%s lexical surface = %#v/%v", callerName, surface, ok)
+		}
+		target, lexical := surface.Sites()[0].Target.LexicalBody()
+		want := lexicalidentity.FunctionBody(namespace, uint64(closure.FunctionSymbol))
+		if !lexical || target != want {
+			t.Fatalf("%s surface target = %x/%v, binder closure target=%x", callerName, target, lexical, want)
+		}
 	}
 }
 

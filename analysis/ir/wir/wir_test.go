@@ -1,6 +1,7 @@
 package wir
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -206,6 +207,32 @@ func TestInstructionAssignmentSourceOperand(t *testing.T) {
 		if ok != tc.ok || got != tc.want {
 			t.Fatalf("%s: AssignmentSourceOperand = %#v/%v, want %#v/%v", tc.name, got, ok, tc.want, tc.ok)
 		}
+	}
+}
+
+func TestBodyIndexesCallsWithoutRescanningInstructions(t *testing.T) {
+	body := NewBody("call-census")
+	body.Emit(Instruction{Op: OpNoop, Point: 1})
+	body.Emit(Instruction{Op: OpCall, Point: 4})
+	body.Emit(Instruction{Op: OpAssign, Point: 2})
+	body.Emit(Instruction{Op: OpCall, Point: 3})
+	body.Emit(Instruction{Op: OpReturn, Point: 5})
+
+	var points []cfg.Point
+	body.ForEachCall(func(instruction Instruction) bool {
+		points = append(points, instruction.Point)
+		return true
+	})
+	if !reflect.DeepEqual(points, []cfg.Point{4, 3}) {
+		t.Fatalf("call census = %v, want lowering order [4 3]", points)
+	}
+	visits := 0
+	body.ForEachCall(func(Instruction) bool {
+		visits++
+		return false
+	})
+	if visits != 1 {
+		t.Fatalf("early-stop visits = %d, want 1", visits)
 	}
 }
 

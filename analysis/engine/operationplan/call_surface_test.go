@@ -224,6 +224,105 @@ func TestCallSurfaceAcceptsExplicitlyRejectedAndEmptyCompleteCensuses(t *testing
 	}
 }
 
+func TestCallSurfaceKeepsKnownLexicalTargetsSeparateFromUnresolvedSites(t *testing.T) {
+	owner := callSurfaceBody("graph", 1)
+	left := callSurfaceBody("graph", 2)
+	right := callSurfaceBody("graph", 3)
+	leftTarget, _ := NewLexicalCallSurfaceTarget(left)
+	rightTarget, _ := NewLexicalCallSurfaceTarget(right)
+	external := callSurfaceExternal(t, false)
+	surface, err := SealCallSurface(owner, 10, []cfg.Point{8, 2, 6, 4, 1}, []CallSurfaceSite{
+		{Point: 6, Target: RejectedTemporaryCallSurfaceTarget(9)},
+		{Point: 1, Target: rightTarget},
+		{Point: 8, Target: external},
+		{Point: 4, Target: RejectedPathCallSurfaceTarget("sym41.member")},
+		{Point: 2, Target: leftTarget},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites := surface.Sites()
+	if len(sites) != 5 || sites[0].Point != 1 || sites[1].Point != 2 || sites[2].Point != 4 || sites[3].Point != 6 || sites[4].Point != 8 {
+		t.Fatalf("canonical sites = %#v", sites)
+	}
+	if got, _ := sites[0].Target.LexicalBody(); got != right {
+		t.Fatalf("first target = %x, want right %x", got, right)
+	}
+	if got, _ := sites[1].Target.LexicalBody(); got != left {
+		t.Fatalf("second target = %x, want left %x", got, left)
+	}
+	if sites[2].Target.kind != CallSurfaceTargetRejected || sites[2].Target.residue.kind != callSurfaceResidueUnresolved ||
+		sites[2].Target.residue.hint.kind != callSurfaceHintPath || sites[2].Target.residue.hint.path != "sym41.member" {
+		t.Fatalf("path residue = %#v", sites[2].Target)
+	}
+	if sites[3].Target.kind != CallSurfaceTargetRejected || sites[3].Target.residue.hint.kind != callSurfaceHintTemporary || sites[3].Target.residue.hint.temporary != 9 {
+		t.Fatalf("temporary residue = %#v", sites[3].Target)
+	}
+	if sites[4].Target.kind != CallSurfaceTargetExternal || sites[4].Target.residue.kind != callSurfaceResidueExternal ||
+		sites[4].Target.residue.hint.kind != callSurfaceHintExternalContent || !sites[4].Target.residue.hint.externalID.Available() {
+		t.Fatalf("external residue = %#v", sites[4].Target)
+	}
+}
+
+func TestCallSurfaceResidueDigestIsCanonicalAndSeparatesGuardHints(t *testing.T) {
+	owner := callSurfaceBody("residue-digest", 1)
+	method := RejectedMethodCallSurfaceTarget("sym7.field", "run")
+	path := RejectedPathCallSurfaceTarget("sym7.field.run")
+	temporary := RejectedTemporaryCallSurfaceTarget(7)
+	base := mustCallSurface(t, owner, 4, CallSurfaceSite{Point: 2, Target: method})
+	for name, candidate := range map[string]CallSurface{
+		"hint namespace": mustCallSurface(t, owner, 4, CallSurfaceSite{Point: 2, Target: path}),
+		"hint content":   mustCallSurface(t, owner, 4, CallSurfaceSite{Point: 2, Target: temporary}),
+	} {
+		if candidate.Digest() == base.Digest() {
+			t.Fatalf("%s did not change digest", name)
+		}
+	}
+	reordered, err := SealCallSurface(owner, 5, []cfg.Point{3, 1}, []CallSurfaceSite{{Point: 3, Target: method}, {Point: 1, Target: temporary}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := SealCallSurface(owner, 5, []cfg.Point{1, 3}, []CallSurfaceSite{{Point: 1, Target: temporary}, {Point: 3, Target: method}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reordered.Digest() != canonical.Digest() {
+		t.Fatal("source/map input ordering changed residue digest")
+	}
+}
+
+func TestCallSurfaceResiduePreservesZeroBasedTemporaryIdentity(t *testing.T) {
+	target := RejectedTemporaryCallSurfaceTarget(0)
+	if target.kind != CallSurfaceTargetRejected || target.residue.kind != callSurfaceResidueUnresolved ||
+		target.residue.hint.kind != callSurfaceHintTemporary || target.residue.hint.temporary != 0 {
+		t.Fatalf("temporary zero collapsed to absent hint: %#v", target)
+	}
+	owner := callSurfaceBody("zero-temp", 1)
+	zero := mustCallSurface(t, owner, 3, CallSurfaceSite{Point: 1, Target: target})
+	absent := mustCallSurface(t, owner, 3, CallSurfaceSite{Point: 1, Target: RejectedCallSurfaceTarget()})
+	if zero.Digest() == absent.Digest() {
+		t.Fatal("temporary zero and absent hint have the same digest")
+	}
+}
+
+func TestCallSurfaceSitesRepresentSelfAndRecursiveSCCShapes(t *testing.T) {
+	left := callSurfaceBody("recursive", 1)
+	right := callSurfaceBody("recursive", 2)
+	leftTarget, _ := NewLexicalCallSurfaceTarget(left)
+	rightTarget, _ := NewLexicalCallSurfaceTarget(right)
+	self := mustCallSurface(t, left, 3, CallSurfaceSite{Point: 1, Target: leftTarget})
+	leftSurface := mustCallSurface(t, left, 3, CallSurfaceSite{Point: 1, Target: rightTarget})
+	rightSurface := mustCallSurface(t, right, 3, CallSurfaceSite{Point: 1, Target: leftTarget})
+	if target, ok := self.Sites()[0].Target.LexicalBody(); !ok || target != self.Owner() {
+		t.Fatalf("self edge = %x/%v owner=%x", target, ok, self.Owner())
+	}
+	leftEdge, leftOK := leftSurface.Sites()[0].Target.LexicalBody()
+	rightEdge, rightOK := rightSurface.Sites()[0].Target.LexicalBody()
+	if !leftOK || !rightOK || leftEdge != right || rightEdge != left {
+		t.Fatalf("SCC edges = %x/%v %x/%v", leftEdge, leftOK, rightEdge, rightOK)
+	}
+}
+
 func callSurfaceBody(unit string, function uint64) lexicalidentity.StableLexicalBodyID {
 	namespace := lexicalidentity.UnitNamespaceFromContent([]byte(unit))
 	return lexicalidentity.FunctionBody(namespace, function)

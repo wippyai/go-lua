@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -28,6 +29,62 @@ type CallSurfaceTarget struct {
 	kind     CallSurfaceTargetKind
 	lexical  lexicalidentity.StableLexicalBodyID
 	external SignatureCallOperation
+	residue  callSurfaceResidue
+}
+
+// callSurfaceResidueKind is intentionally private until semantic/program owns
+// a consumer. Values are canonical encoding tags, not scheduling authority.
+type callSurfaceResidueKind uint8
+
+const (
+	callSurfaceResidueUnresolved callSurfaceResidueKind = iota + 1
+	callSurfaceResidueExternal
+)
+
+type callSurfaceHintKind uint8
+
+const (
+	callSurfaceHintNone callSurfaceHintKind = iota + 1
+	callSurfaceHintPath
+	callSurfaceHintMethod
+	callSurfaceHintTemporary
+	callSurfaceHintExternalContent
+)
+
+type callSurfaceTargetHint struct {
+	kind       callSurfaceHintKind
+	path       pathdom.PathKey
+	member     string
+	temporary  uint32
+	externalID signature.ContentID
+}
+
+func (h callSurfaceTargetHint) valid() bool {
+	switch h.kind {
+	case callSurfaceHintNone:
+		return h.path == "" && h.member == "" && h.temporary == 0 && !h.externalID.Available()
+	case callSurfaceHintPath:
+		return h.path != "" && h.member == "" && h.temporary == 0 && !h.externalID.Available()
+	case callSurfaceHintMethod:
+		return h.path != "" && h.member != "" && h.temporary == 0 && !h.externalID.Available()
+	case callSurfaceHintTemporary:
+		// WIR temporaries are zero-based. The hint kind, rather than the
+		// numeric payload, distinguishes temporary zero from no hint.
+		return h.path == "" && h.member == "" && !h.externalID.Available()
+	case callSurfaceHintExternalContent:
+		return h.path == "" && h.member == "" && h.temporary == 0 && h.externalID.Available()
+	default:
+		return false
+	}
+}
+
+type callSurfaceResidue struct {
+	kind callSurfaceResidueKind
+	hint callSurfaceTargetHint
+}
+
+func (r callSurfaceResidue) valid() bool {
+	return (r.kind == callSurfaceResidueUnresolved || r.kind == callSurfaceResidueExternal) && r.hint.valid()
 }
 
 // NewLexicalCallSurfaceTarget binds a call to one stable lexical body.
@@ -45,13 +102,42 @@ func NewExternalCallSurfaceTarget(operation SignatureCallOperation) (CallSurface
 	if !operation.valid() {
 		return CallSurfaceTarget{}, false
 	}
-	return CallSurfaceTarget{kind: CallSurfaceTargetExternal, external: operation.clone()}, true
+	content := operation.ContentID()
+	return CallSurfaceTarget{kind: CallSurfaceTargetExternal, external: operation.clone(), residue: callSurfaceResidue{
+		kind: callSurfaceResidueExternal,
+		hint: callSurfaceTargetHint{kind: callSurfaceHintExternalContent, externalID: content},
+	}}, true
+}
+
+func unresolvedCallSurfaceTarget(hint callSurfaceTargetHint) CallSurfaceTarget {
+	residue := callSurfaceResidue{kind: callSurfaceResidueUnresolved, hint: hint}
+	if !residue.valid() {
+		residue = callSurfaceResidue{kind: callSurfaceResidueUnresolved, hint: callSurfaceTargetHint{kind: callSurfaceHintNone}}
+	}
+	return CallSurfaceTarget{kind: CallSurfaceTargetRejected, residue: residue}
 }
 
 // RejectedCallSurfaceTarget explicitly records a call which the resolution
 // authority could not classify. Rejected calls remain in the complete census.
 func RejectedCallSurfaceTarget() CallSurfaceTarget {
-	return CallSurfaceTarget{kind: CallSurfaceTargetRejected}
+	return unresolvedCallSurfaceTarget(callSurfaceTargetHint{kind: callSurfaceHintNone})
+}
+
+// RejectedPathCallSurfaceTarget records a stable lexical path hint without
+// claiming that the runtime value is a known function.
+func RejectedPathCallSurfaceTarget(path pathdom.PathKey) CallSurfaceTarget {
+	return unresolvedCallSurfaceTarget(callSurfaceTargetHint{kind: callSurfaceHintPath, path: path})
+}
+
+// RejectedMethodCallSurfaceTarget records method-call syntax without claiming
+// a lexical or external target.
+func RejectedMethodCallSurfaceTarget(receiver pathdom.PathKey, method string) CallSurfaceTarget {
+	return unresolvedCallSurfaceTarget(callSurfaceTargetHint{kind: callSurfaceHintMethod, path: receiver, member: method})
+}
+
+// RejectedTemporaryCallSurfaceTarget records a WIR-local dynamic callee hint.
+func RejectedTemporaryCallSurfaceTarget(temporary uint32) CallSurfaceTarget {
+	return unresolvedCallSurfaceTarget(callSurfaceTargetHint{kind: callSurfaceHintTemporary, temporary: temporary})
 }
 
 func (t CallSurfaceTarget) Kind() CallSurfaceTargetKind { return t.kind }
@@ -92,11 +178,11 @@ func (t CallSurfaceTarget) MatchesExternalOperation(operation SignatureCallOpera
 func (t CallSurfaceTarget) valid() bool {
 	switch t.kind {
 	case CallSurfaceTargetLexical:
-		return t.lexical != (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid()
+		return t.lexical != (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid() && !t.residue.valid()
 	case CallSurfaceTargetExternal:
-		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && t.external.valid()
+		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && t.external.valid() && t.residue.valid() && t.residue.kind == callSurfaceResidueExternal
 	case CallSurfaceTargetRejected:
-		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid()
+		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid() && t.residue.valid() && t.residue.kind == callSurfaceResidueUnresolved
 	default:
 		return false
 	}
@@ -118,7 +204,9 @@ func (d CallSurfaceDigest) Available() bool { return d != CallSurfaceDigest{} }
 // CallSurface is an immutable, canonically ordered census of every call in one
 // lexical body. Complete means the classified site points matched the
 // independently extracted call point set exactly; rejected targets do not make
-// a census partial.
+// a census partial. This surface deliberately does not claim shared-resource
+// dependencies: capture/global/heap/allocation/effect edges require a separate
+// transaction-owned authority and must never be inferred from call syntax.
 type CallSurface struct {
 	owner      lexicalidentity.StableLexicalBodyID
 	pointCount int
@@ -233,7 +321,7 @@ func (s CallSurface) Site(point cfg.Point) (CallSurfaceSite, bool) {
 
 func digestCallSurface(owner lexicalidentity.StableLexicalBodyID, pointCount int, sites []CallSurfaceSite) CallSurfaceDigest {
 	hash := sha256.New()
-	writeCallSurfaceBytes(hash, []byte("wippy.operationplan.call-surface.v1"))
+	writeCallSurfaceBytes(hash, []byte("wippy.operationplan.call-surface.v2"))
 	writeCallSurfaceBytes(hash, owner[:])
 	writeCallSurfaceUint64(hash, uint64(pointCount))
 	writeCallSurfaceUint64(hash, uint64(len(sites)))
@@ -249,12 +337,30 @@ func digestCallSurface(owner lexicalidentity.StableLexicalBodyID, pointCount int
 			intrinsic, _ := site.Target.external.Intrinsic()
 			_, _ = hash.Write([]byte{byte(intrinsic)})
 		case CallSurfaceTargetRejected:
-			// The kind tag is the complete rejected-target encoding.
+		}
+		if site.Target.residue.valid() {
+			_, _ = hash.Write([]byte{byte(site.Target.residue.kind), byte(site.Target.residue.hint.kind)})
+			digestCallSurfaceHint(hash, site.Target.residue.hint)
 		}
 	}
 	var out CallSurfaceDigest
 	copy(out[:], hash.Sum(nil))
 	return out
+}
+
+func digestCallSurfaceHint(hash callSurfaceWriter, hint callSurfaceTargetHint) {
+	switch hint.kind {
+	case callSurfaceHintPath:
+		writeCallSurfaceBytes(hash, []byte(hint.path))
+	case callSurfaceHintMethod:
+		writeCallSurfaceBytes(hash, []byte(hint.path))
+		writeCallSurfaceBytes(hash, []byte(hint.member))
+	case callSurfaceHintTemporary:
+		writeCallSurfaceUint64(hash, uint64(hint.temporary))
+	case callSurfaceHintExternalContent:
+		writeCallSurfaceBytes(hash, hint.externalID[:])
+	case callSurfaceHintNone:
+	}
 }
 
 type callSurfaceWriter interface{ Write([]byte) (int, error) }
