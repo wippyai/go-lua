@@ -1098,8 +1098,6 @@ analysis/check/fixpoint/transformer,cfg_rows_expand.go,SolveAcyclicCFGExpandedRo
 analysis/check/fixpoint/transformer,cfg_rows_expand.go,SymbolicCFGExpandTransfer,type,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,cfg_wto_exact.go,SolveExactWTOCFGExpandedRows,func,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,cfg_wto_exact.go,SymbolicExactWTOOptions,type,analysis/check/fixpoint/transformer,,unclassified,,,
-analysis/check/fixpoint/transformer,cfg_wto_rows.go,SolveWTOCFGRows,func,analysis/check/fixpoint/transformer,,unclassified,,,
-analysis/check/fixpoint/transformer,cfg_wto_rows.go,SymbolicWTOOptions,type,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,compiler.go,NewPlanCompiler,func,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,compiler.go,PlanCompiler,type,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,compiler.go,branchEdgePlanHandler.Kind,method,analysis/check/fixpoint/transformer,,unclassified,,,
