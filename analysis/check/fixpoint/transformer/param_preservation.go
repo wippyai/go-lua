@@ -152,6 +152,15 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 		// preservation only certifies the formal's post-state identity.
 		return
 	case operationplan.CallSite:
+		// A sealed lexical call is not judged here. Direct relation composition
+		// transfers the callee's must-preservation proof into this ledger, or
+		// invalidates every contributing caller root when that proof is absent.
+		// Keeping the bit pending is what lets that later exact proof speak.
+		if surface, ok := ctx.plan.CallSurface(); ok {
+			if site, found := surface.Site(point); found && site.Target.Kind() == operationplan.CallSurfaceTargetLexical {
+				return
+			}
+		}
 		// Only the exact no-capture string.match slice proves a non-escaping
 		// receiver: its pattern is a literal and it has no callback argument.
 		// Preserve that immutable string boundary root and nothing else. Even
@@ -235,6 +244,13 @@ func (l *paramPreservationLedger) invalidateValueDependencies(arena *Arena, term
 		}
 		visited[current] = true
 		node := arena.values[current]
+		// A composed call result is an explicit provenance boundary. Assigning
+		// that result to a local does not prove that the local directly aliases
+		// any caller parameter hidden in the callee's symbolic value. Mutating or
+		// exposing the local is handled by the closed operation/effect cases.
+		if node.op == valueCallResult {
+			return
+		}
 		if node.op == valueRoot {
 			switch node.root.Kind {
 			case RootParam:

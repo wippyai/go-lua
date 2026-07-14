@@ -87,7 +87,7 @@ func (e *evaluatedTermEvaluator) value(term ValueTerm) (product.Value, error) {
 			}
 			out = product.Join(e.arena.reg, out, value)
 		}
-	case valueRefinement, valueRuntimeValidation, valueLuaTypeName:
+	case valueRefinement, valueRuntimeValidation, valueLuaTypeName, valueCallResult:
 		if len(node.args) != 1 {
 			return product.Value{}, fmt.Errorf("transformer: malformed unary evaluated term")
 		}
@@ -107,6 +107,8 @@ func (e *evaluatedTermEvaluator) value(term ValueTerm) (product.Value, error) {
 			if !ok {
 				return product.Value{}, fmt.Errorf("transformer: Lua type-name evaluation failed")
 			}
+		case valueCallResult:
+			out = value
 		}
 	case valueStringConcat, valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr, valueStaticIndex:
 		if len(node.args) != 2 {

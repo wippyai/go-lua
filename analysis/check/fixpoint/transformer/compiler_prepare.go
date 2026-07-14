@@ -40,6 +40,23 @@ type PreparedPlanCompiler struct {
 	cyclic bool
 }
 
+// Shape returns the immutable packed boundary schema owned by this prepared
+// lexical compiler.
+func (p *PreparedPlanCompiler) Shape() Shape {
+	if p == nil {
+		return Shape{}
+	}
+	return p.shape
+}
+
+// MatchesPreparation proves this compiler was built from the exact run-local
+// registry, CFG, operation plan, and packed boundary shape. Content digests do
+// not substitute for these preparation owners.
+func (p *PreparedPlanCompiler) MatchesPreparation(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape) bool {
+	return p != nil && reg != nil && graph != nil && plan != nil &&
+		p.registry == reg && p.plan == plan && p.graph != nil && p.graph.ID() == graph.ID() && p.shape == shape
+}
+
 // EffectFree reports whether this prepared compiler can emit any structured
 // EffectTerm. It inspects the same preparation-owned allocation terms and
 // point effect catalog used by lowering; compiler admission alone is not an
@@ -240,7 +257,7 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	traceReason := p.projectionPlanReason
 	if p.observationComplete {
 		if p.projectionPlan != nil {
-			traceBuilder = p.projectionPlan.newBuilder(p.builder.Arena())
+			traceBuilder = p.projectionPlan.newBuilder(p.builder.Arena(), p.plan)
 		}
 	}
 	exitRows, err := solveExactWTOCFGExpandedExitRowsWithTrace(evalCtx, p.graph, p.wtoTape, p.builder.Arena(), initial,

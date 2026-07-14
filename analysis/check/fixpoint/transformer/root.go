@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // RootKind gives each boundary namespace a distinct dense address space.
@@ -24,6 +25,18 @@ const (
 type Root struct {
 	Kind  RootKind
 	Index uint32
+}
+
+// ResultRoot identifies one function-local temporary call-result slot. Point
+// is part of the identity: slot zero produced by two call sites is two distinct
+// roots and cannot leak through a later call boundary.
+type ResultRoot struct {
+	Point cfg.Point
+	Slot  uint32
+}
+
+func (r ResultRoot) Valid(pointCount int) bool {
+	return uint64(r.Point) < uint64(pointCount)
 }
 
 // Shape fixes every namespace width for one immutable transformer.

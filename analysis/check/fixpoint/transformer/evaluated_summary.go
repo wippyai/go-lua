@@ -123,6 +123,23 @@ func (r Relation) evaluateOwnerSummary(ctx context.Context, evaluator *evaluated
 				Kind: proof.Kind, Path: proofPath, Presence: proof.Presence,
 			})
 		}
+		for _, refinement := range row.PathRefinements {
+			root, valid := refinement.preservedRoot(r.arena)
+			if !valid || root.Kind != RootParam {
+				return summary.Summary{}, fmt.Errorf("transformer: evaluated summary has unsupported preserved root")
+			}
+			value, err := evaluator.value(refinement.Value)
+			if err != nil {
+				return summary.Summary{}, err
+			}
+			value, keep := callboundary.ProjectPathRefinementValue(reg, value)
+			if !keep {
+				continue
+			}
+			candidate.NormalReturnFacts.PathRefinements = append(candidate.NormalReturnFacts.PathRefinements, callboundary.PathValueFact{
+				Path: pathdom.NewPlaceholder(int(root.Index)), Value: value,
+			})
+		}
 		if !have {
 			accumulated, have = candidate, true
 		} else {

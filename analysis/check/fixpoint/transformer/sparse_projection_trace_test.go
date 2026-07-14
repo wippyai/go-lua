@@ -103,12 +103,12 @@ func TestSparseProjectionTraceRejectsUnsupportedBoundaryBeforeExecution(t *testi
 	lowered.AssignDebugPointOrdinals(graph)
 	var owner lexicalidentity.StableLexicalBodyID
 	owner[0] = 41
-	plan := operationplan.New(graph, factflow.FactsInput{RootAssignments: map[cfg.Point]factflow.RootAssignment{assign: {}}}).WithObservationIdentity(owner, lowered, graph)
+	plan := operationplan.New(graph, factflow.FactsInput{PathAssignments: map[cfg.Point]factflow.PathAssignment{assign: {}}}).WithObservationIdentity(owner, lowered, graph)
 	requirements, sealed := plan.ObservationRequirements()
 	if !sealed {
 		t.Fatal("requirements not sealed")
 	}
-	if builder, err := newSparseProjectionTraceBuilder(NewArena(standard.Registry()), requirements); builder != nil || err == nil || !strings.Contains(err.Error(), "body.boundary.root-assignment.v1") {
+	if builder, err := newSparseProjectionTraceBuilder(NewArena(standard.Registry()), requirements); builder != nil || err == nil || !strings.Contains(err.Error(), "body.boundary.path-assignment.v1") {
 		t.Fatalf("unsupported builder/error = %#v/%v", builder, err)
 	}
 }
@@ -273,7 +273,7 @@ func TestProjectionTraceMetadataCannotChangeRelationLattice(t *testing.T) {
 	}
 }
 
-func TestUnsupportedPreparedSelectorKeepsExactRelationAndRejectsOnlyTrace(t *testing.T) {
+func TestPreparedRootAssignmentSelectorRetainsExactRelationAndTrace(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -299,12 +299,12 @@ func TestUnsupportedPreparedSelectorKeepsExactRelationAndRejectsOnlyTrace(t *tes
 		t.Fatal(err)
 	}
 	relation := prepared.Evaluate()
-	if relation.ContextualReason() != "" || relation.Widened() || relation.projectionTrace != nil || !strings.Contains(relation.projectionTraceReason, "body.boundary.root-assignment.v1") {
-		t.Fatalf("unsupported selector changed relation instead of rejecting trace: reason=%q widened=%v trace=%#v rejection=%q", relation.ContextualReason(), relation.Widened(), relation.projectionTrace, relation.projectionTraceReason)
+	if relation.ContextualReason() != "" || relation.Widened() || relation.projectionTrace == nil || relation.projectionTraceReason != "" {
+		t.Fatalf("root-assignment selector lost exact trace: reason=%q widened=%v trace=%#v rejection=%q", relation.ContextualReason(), relation.Widened(), relation.projectionTrace, relation.projectionTraceReason)
 	}
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
 	if _, exact := relation.Specialize(cursor, nil, nil); !exact {
-		t.Fatal("unsupported trace selector weakened exact specialization")
+		t.Fatal("root-assignment trace selector weakened exact specialization")
 	}
 }
 
@@ -349,7 +349,7 @@ func BenchmarkExactWTOSparseProjectionTrace(b *testing.B) {
 		b.ReportMetric(float64(len(requirements.Entries(false))), "trace_slots")
 		b.ReportAllocs()
 		for index := 0; index < b.N; index++ {
-			trace := projectionPlan.newBuilder(arena)
+			trace := projectionPlan.newBuilder(arena, nil)
 			exit, err := solveExactWTOCFGExpandedExitRowsWithTrace(context.Background(), graph, tape, arena, SymbolicCFGRow{Guard: arena.True()}, transfer, branchTransfer, options, trace)
 			if err != nil || len(exit) != 2 {
 				b.Fatalf("exit/error = %d/%v", len(exit), err)
@@ -367,7 +367,7 @@ func BenchmarkExactWTOSparseProjectionTrace(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			trace := projectionPlan.newBuilder(arena)
+			trace := projectionPlan.newBuilder(arena, nil)
 			exit, err := solveExactWTOCFGExpandedExitRowsWithTrace(context.Background(), graph, tape, arena, SymbolicCFGRow{Guard: arena.True()}, transfer, branchTransfer, options, trace)
 			if err != nil || len(exit) != 2 {
 				b.Fatalf("exit/error = %d/%v", len(exit), err)

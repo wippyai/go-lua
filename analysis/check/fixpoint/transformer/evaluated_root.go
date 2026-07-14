@@ -149,9 +149,18 @@ func validateEvaluatedRootAuthority(r Relation, request EvaluatedRootRequest, cu
 	if !identity.ShadowValid() || identity != request.ExpectedIdentity {
 		return fmt.Errorf("transformer: evaluated root identity mismatch")
 	}
-	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape || !r.observationComplete ||
-		r.projectionTrace == nil || r.projectionTraceReason != "" {
-		return fmt.Errorf("transformer: evaluated root relation is not projection-complete")
+	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
+		return fmt.Errorf("transformer: evaluated root relation identity is not projection-complete")
+	}
+	if !r.observationComplete {
+		return fmt.Errorf("transformer: evaluated root observation coverage is incomplete")
+	}
+	if r.projectionTrace == nil || r.projectionTraceReason != "" {
+		reason := r.projectionTraceReason
+		if reason == "" {
+			reason = "projection trace is absent"
+		}
+		return fmt.Errorf("transformer: evaluated root projection trace is incomplete: %s", reason)
 	}
 	if !r.descriptors.validEvaluatedRootSchema(r.arena.reg) {
 		return fmt.Errorf("transformer: evaluated root descriptor schema is not compiler-sealed")
@@ -513,6 +522,13 @@ func (r Relation) appendEvaluatedExpression(
 		}
 		args[index] = converted
 	}
+	if node.op == valueCallResult {
+		if len(args) != 1 {
+			return 0, fmt.Errorf("transformer: evaluated call-result expression has invalid arity")
+		}
+		memo[term] = args[0]
+		return args[0], nil
+	}
 	expression := evaluated.Expression{Args: args, Root: node.root.Index, Constant: node.value}
 	switch node.op {
 	case valueRoot:
@@ -619,7 +635,9 @@ func (r Relation) evaluateBoundary(
 	guardWorlds map[Guard]evaluated.WorldSet,
 ) (evaluated.Boundary, error) {
 	fact, ok := slot.requirement.FactKind()
-	if !ok || fact != operationplan.Return {
+	callProducer := slot.requirement.IsCallProducerBoundary()
+	valueBoundary := callProducer || ok && fact == operationplan.RootAssignment
+	if !valueBoundary && (!ok || fact != operationplan.Return) {
 		return evaluated.Boundary{}, fmt.Errorf("transformer: evaluated root boundary slot %d is not Return", slotID)
 	}
 	out := evaluated.Boundary{Slot: slotID, Point: slot.requirement.Point()}
@@ -638,6 +656,18 @@ func (r Relation) evaluateBoundary(
 			continue
 		}
 		candidate := fragment.output.Clone()
+		values := make([]evaluated.IndexedValue, 0, len(fragment.values))
+		if valueBoundary {
+			for _, item := range fragment.values {
+				value, err := evaluator.value(item.value)
+				if err != nil {
+					return evaluated.Boundary{}, err
+				}
+				values = append(values, evaluated.IndexedValue{Index: item.index, Value: value})
+			}
+			out.Fragments = append(out.Fragments, evaluated.BoundaryFragment{Worlds: fragmentWorlds, Values: values})
+			continue
+		}
 		operationSlots := make([]uint32, 0, len(fragment.operations))
 		for _, operation := range fragment.operations {
 			if operation.Descriptor != DescriptorReturn {
@@ -664,7 +694,7 @@ func (r Relation) evaluateBoundary(
 		if err != nil {
 			return evaluated.Boundary{}, err
 		}
-		values := make([]evaluated.IndexedValue, len(candidate.Returns))
+		values = make([]evaluated.IndexedValue, len(candidate.Returns))
 		for index, value := range candidate.Returns {
 			values[index] = evaluated.IndexedValue{Index: uint32(index), Value: value}
 		}

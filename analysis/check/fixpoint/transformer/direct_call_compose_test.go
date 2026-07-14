@@ -42,6 +42,31 @@ func TestDirectCallCatalogOwnsPointIdentityAndDependencies(t *testing.T) {
 	}
 }
 
+func TestCallResultValuePreservesExactValueWithoutParameterProvenance(t *testing.T) {
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	root := Root{Kind: RootParam}
+	input := typevalue.String(reg)
+	cursor, err := NewBindingCursor(Shape{Params: 1}, []product.Value{input}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	term := arena.CallResultValue(3, 1, arena.Root(root))
+	got, ok := arena.evalValue(term, cursor, SpecializationContext{})
+	if !ok || !product.Equal(reg, got, input) {
+		t.Fatalf("call result value = %#v/%v, want exact input", got, ok)
+	}
+	if _, direct := arena.directParamRoot(term); direct {
+		t.Fatal("call result fabricated direct-parameter provenance")
+	}
+	if _, refined := arena.refinedParamRoot(term); refined {
+		t.Fatal("call result fabricated refined-parameter provenance")
+	}
+	if term == arena.CallResultValue(4, 1, arena.Root(root)) || term == arena.CallResultValue(3, 2, arena.Root(root)) {
+		t.Fatal("call point or slot drift reused term identity")
+	}
+}
+
 func TestComposeDirectCallRowsPreservesCorrelationAndConsumesCalleeResultMetadata(t *testing.T) {
 	reg := standard.Registry()
 	calleeShape := Shape{Params: 1}
@@ -83,7 +108,7 @@ func TestComposeDirectCallRowsPreservesCorrelationAndConsumesCalleeResultMetadat
 	callerParam := callerBuilder.Arena().Root(Root{Kind: RootParam, Index: 0})
 	targetValue, targetErr := symbol.ID(41), symbol.ID(42)
 	site := factflow.NewCallSite(factflow.CallSiteConfig{
-		Final: true, Expanded: true,
+		Point: 3, HasPoint: true, Final: true, Expanded: true,
 		ResultTargets: []factflow.CallResultTarget{
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, targetValue, pathdom.NewPath(targetValue, "value")),
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, targetErr, pathdom.NewPath(targetErr, "err")),
@@ -102,6 +127,9 @@ func TestComposeDirectCallRowsPreservesCorrelationAndConsumesCalleeResultMetadat
 	}
 	pairs := make(map[string]bool)
 	for _, row := range rows {
+		if len(row.ResultRoots) != 2 {
+			t.Fatalf("point-owned result roots = %#v, want two", row.ResultRoots)
+		}
 		if len(row.Output.ReturnConditionSlotRefinements) != 0 || len(row.Output.ReturnPresenceRelations) != 0 {
 			t.Fatalf("callee result correlation leaked into caller output: %#v", row.Output)
 		}
@@ -186,6 +214,9 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 		}, site, 4)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("forwarded parameter composition = %#v/%v", rows, err)
+		}
+		if len(rows[0].ResultRoots) != 0 || rows[0].Values[target] != caller.Arena().Root(callerRoot1) {
+			t.Fatalf("point-less composition changed legacy value/root behavior: value=%v roots=%#v", rows[0].Values[target], rows[0].ResultRoots)
 		}
 		if !rows[0].paramPreserved.preserves(0) || !rows[0].paramPreserved.preserves(1) {
 			t.Fatalf("forwarded parameter lost preservation ledger: %#v", rows[0].paramPreserved)

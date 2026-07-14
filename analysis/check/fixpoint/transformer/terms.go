@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -35,6 +36,7 @@ const (
 	valueRefinement
 	valueRuntimeValidation
 	valueCellResult
+	valueCallResult
 	valueDynamicRead
 	valueDynamicTableRead
 	valueStringConcat
@@ -68,6 +70,7 @@ type valueNode struct {
 	hasAsserted   bool
 	allocation    AllocationTemplateTerm
 	resultIndex   int
+	point         cfg.Point
 }
 
 type pathNode struct {
@@ -226,6 +229,16 @@ func (a *Arena) JoinValue(terms ...ValueTerm) ValueTerm {
 // Specialization fails closed until the caller supplies a CellResultResolver.
 func (a *Arena) CellResultValue(cell CellRef, args ...ValueTerm) ValueTerm {
 	return a.internValue(valueNode{op: valueCellResult, cell: cell, args: append([]ValueTerm(nil), args...)})
+}
+
+// CallResultValue preserves the exact value produced by one lexical call slot
+// while stopping direct-boundary provenance inference at the call boundary.
+// It is callback-free: evaluation unwraps its single already-composed child.
+func (a *Arena) CallResultValue(point cfg.Point, slot uint32, value ValueTerm) ValueTerm {
+	if a == nil || value == 0 || int(value) >= len(a.values) {
+		return 0
+	}
+	return a.internValue(valueNode{op: valueCallResult, point: point, resultIndex: int(slot), args: []ValueTerm{value}})
 }
 
 // ValueDependsOn reports whether term's immutable DAG contains dependency.
@@ -465,6 +478,7 @@ func (a *Arena) valueFingerprint(n valueNode) uint64 {
 	}
 	h = internalhash.MixHash(h, uint64(n.allocation))
 	h = internalhash.MixHash(h, uint64(int64(n.resultIndex)))
+	h = internalhash.MixHash(h, uint64(n.point))
 	h = hashValueTerms(h, n.args)
 	if (n.op == valueConstant || n.op == valueRefinement || n.op == valueRuntimeValidation) && a.reg != nil {
 		h = internalhash.MixHash(h, product.Hash(a.reg, n.value))
@@ -492,7 +506,7 @@ func guardFingerprint(n guardNode) uint64 {
 	return h
 }
 func (a *Arena) valueEqual(x, y valueNode) bool {
-	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || x.hasAsserted != y.hasAsserted || x.allocation != y.allocation || x.resultIndex != y.resultIndex || len(x.args) != len(y.args) {
+	if x.op != y.op || x.root != y.root || x.cell != y.cell || x.path != y.path || x.iterator != y.iterator || x.variableIndex != y.variableIndex || x.hasAsserted != y.hasAsserted || x.allocation != y.allocation || x.resultIndex != y.resultIndex || x.point != y.point || len(x.args) != len(y.args) {
 		return false
 	}
 	if x.hasAsserted && !typ.TypeEquals(x.assertedType, y.assertedType) {
@@ -605,6 +619,11 @@ func (a *Arena) evalValue(term ValueTerm, cursor BindingCursor, context Speciali
 			args[i] = v
 		}
 		return context.CellResult(n.cell, args)
+	case valueCallResult:
+		if len(n.args) != 1 {
+			return product.Value{}, false
+		}
+		return a.evalValue(n.args[0], cursor, context)
 	case valueDynamicRead:
 		if context.DynamicRead == nil || len(n.args) != 2 {
 			return product.Value{}, false
@@ -755,6 +774,8 @@ func (a *Arena) canonicalValue(term ValueTerm) string {
 			parts[i] = a.canonicalValue(x)
 		}
 		return fmt.Sprintf("c%d.%d(%s)", n.cell.Function, n.cell.Slot, strings.Join(parts, ","))
+	case valueCallResult:
+		return fmt.Sprintf("cr%d.%d(%s)", n.point, n.resultIndex, a.canonicalValue(n.args[0]))
 	case valueDynamicRead:
 		return "d(" + a.canonicalValue(n.args[0]) + "," + a.canonicalPath(n.path) + "," + a.canonicalValue(n.args[1]) + ")"
 	case valueDynamicTableRead:
@@ -800,6 +821,9 @@ func (a *Arena) validValue(term ValueTerm, shape Shape, seen map[ValueTerm]bool)
 		return false
 	}
 	if (n.op == valueRefinement || n.op == valueRuntimeValidation) && len(n.args) != 1 {
+		return false
+	}
+	if n.op == valueCallResult && (len(n.args) != 1 || n.resultIndex < 0) {
 		return false
 	}
 	if n.op == valueDynamicTableRead && ((len(n.args) != 2 && len(n.args) != 3) || !a.validPath(n.path, shape)) {

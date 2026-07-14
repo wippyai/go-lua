@@ -30,17 +30,23 @@ type sparseProjectionSlot struct {
 }
 
 // sparseProjectionFragment is the first exact boundary tranche. Values are
-// intentionally absent: the only admitted boundary selector is Return, whose
-// symbolic payload is already represented by correlated operations and the
-// normalized summary output. Other selectors fail before trace publication.
+// retained only for selectors whose exact symbolic producer is represented by
+// the row; selectors without such a producer fail before trace publication.
 type sparseProjectionFragment struct {
 	guard      Guard
+	values     []sparseProjectionValue
 	operations []Operation
 	output     summary.Summary
 }
 
+type sparseProjectionValue struct {
+	index uint32
+	value ValueTerm
+}
+
 type sparseProjectionTraceBuilder struct {
 	arena  *Arena
+	plan   *operationplan.Plan
 	trace  sparseProjectionTrace
 	points map[cfg.Point][]int
 	edges  map[sparseProjectionEdge][]int
@@ -65,7 +71,7 @@ func newSparseProjectionTraceBuilder(arena *Arena, requirements operationplan.Ob
 	if err != nil {
 		return nil, err
 	}
-	return plan.newBuilder(arena), nil
+	return plan.newBuilder(arena, nil), nil
 }
 
 func compileSparseProjectionPlan(requirements operationplan.ObservationRequirements) (*sparseProjectionPlan, error) {
@@ -106,7 +112,7 @@ func compileSparseProjectionPlan(requirements operationplan.ObservationRequireme
 	return plan, nil
 }
 
-func (p *sparseProjectionPlan) newBuilder(arena *Arena) *sparseProjectionTraceBuilder {
+func (p *sparseProjectionPlan) newBuilder(arena *Arena, plan *operationplan.Plan) *sparseProjectionTraceBuilder {
 	if p == nil || arena == nil {
 		return nil
 	}
@@ -115,7 +121,7 @@ func (p *sparseProjectionPlan) newBuilder(arena *Arena) *sparseProjectionTraceBu
 		slots[index] = sparseProjectionSlot{requirement: requirement, guard: arena.False()}
 	}
 	b := &sparseProjectionTraceBuilder{
-		arena:  arena,
+		arena: arena, plan: plan,
 		trace:  sparseProjectionTrace{schema: p.schema, inventory: p.inventory, slots: slots},
 		points: p.points, edges: p.edges,
 	}
@@ -128,8 +134,11 @@ func supportedSparseProjectionRequirement(requirement operationplan.ObservationR
 		operationplan.RequirementObservation, operationplan.RequirementRoute:
 		return nil
 	case operationplan.RequirementBoundary:
+		if requirement.IsCallProducerBoundary() {
+			return nil
+		}
 		fact, ok := requirement.FactKind()
-		if ok && fact == operationplan.Return {
+		if ok && (fact == operationplan.Return || fact == operationplan.RootAssignment) {
 			return nil
 		}
 	}
@@ -156,13 +165,45 @@ func (b *sparseProjectionTraceBuilder) pointOutput(point cfg.Point, row Symbolic
 		slot := &b.trace.slots[index]
 		switch slot.requirement.Stage() {
 		case operationplan.RequirementBoundary:
-			var operations []Operation
-			for _, operation := range row.Operations {
-				if operation.Descriptor == DescriptorReturn {
-					operations = append(operations, operation)
+			fragment := sparseProjectionFragment{guard: row.Guard}
+			fact, hasFact := slot.requirement.FactKind()
+			if slot.requirement.IsCallProducerBoundary() {
+				for root, value := range row.ResultRoots {
+					if root.Point == point {
+						fragment.values = append(fragment.values, sparseProjectionValue{index: root.Slot, value: value})
+					}
 				}
+				sort.Slice(fragment.values, func(i, j int) bool { return fragment.values[i].index < fragment.values[j].index })
+				for index := 1; index < len(fragment.values); index++ {
+					if fragment.values[index-1].index == fragment.values[index].index {
+						b.failed = fmt.Errorf("projection trace: duplicate call result slot %d at point %d", fragment.values[index].index, point)
+						return
+					}
+				}
+				if len(fragment.values) == 0 {
+					b.failed = fmt.Errorf("projection trace: call producer at point %d has no exact result roots", point)
+					return
+				}
+			} else if hasFact && fact == operationplan.RootAssignment {
+				if b.plan == nil {
+					b.failed = fmt.Errorf("projection trace: root assignment at point %d has no operation-plan authority", point)
+					return
+				}
+				assignment, ok := b.plan.Facts().RootAssignment(point)
+				value, present := row.Values[assignment.TargetSymbol()]
+				if !ok || assignment.TargetSymbol() == 0 || !present {
+					b.failed = fmt.Errorf("projection trace: root assignment at point %d has no exact symbolic value", point)
+					return
+				}
+				fragment.values = []sparseProjectionValue{{value: value}}
+			} else {
+				for _, operation := range row.Operations {
+					if operation.Descriptor == DescriptorReturn {
+						fragment.operations = append(fragment.operations, operation)
+					}
+				}
+				fragment.output = summary.Normalize(b.arena.reg, row.Output)
 			}
-			fragment := sparseProjectionFragment{guard: row.Guard, operations: operations, output: summary.Normalize(b.arena.reg, row.Output)}
 			slot.fragments = recordSparseProjectionFragment(b.arena, slot.fragments, fragment)
 		case operationplan.RequirementObservation:
 			anchor, ok := slot.requirement.Anchor()
@@ -246,8 +287,13 @@ func recordSparseProjectionFragment(arena *Arena, in []sparseProjectionFragment,
 }
 
 func equalSparseProjectionFragment(arena *Arena, left, right sparseProjectionFragment) bool {
-	if left.guard != right.guard || len(left.operations) != len(right.operations) || !summary.EqualNormalized(arena.reg, left.output, right.output) {
+	if left.guard != right.guard || len(left.values) != len(right.values) || len(left.operations) != len(right.operations) || !summary.EqualNormalized(arena.reg, left.output, right.output) {
 		return false
+	}
+	for index := range left.values {
+		if left.values[index] != right.values[index] {
+			return false
+		}
 	}
 	for index := range left.operations {
 		if left.operations[index] != right.operations[index] {
@@ -261,7 +307,22 @@ func lessSparseProjectionFragment(arena *Arena, left, right sparseProjectionFrag
 	if left.guard != right.guard {
 		return left.guard < right.guard
 	}
-	limit := len(left.operations)
+	limit := len(left.values)
+	if len(right.values) < limit {
+		limit = len(right.values)
+	}
+	for index := 0; index < limit; index++ {
+		if left.values[index].index != right.values[index].index {
+			return left.values[index].index < right.values[index].index
+		}
+		if left.values[index].value != right.values[index].value {
+			return left.values[index].value < right.values[index].value
+		}
+	}
+	if len(left.values) != len(right.values) {
+		return len(left.values) < len(right.values)
+	}
+	limit = len(left.operations)
 	if len(right.operations) < limit {
 		limit = len(right.operations)
 	}
@@ -288,6 +349,9 @@ func lessSparseProjectionFragment(arena *Arena, left, right sparseProjectionFrag
 
 func sparseProjectionFragmentKey(arena *Arena, fragment sparseProjectionFragment) string {
 	key := arena.canonicalGuard(fragment.guard)
+	for _, value := range fragment.values {
+		key += fmt.Sprintf("/result:%d:%s", value.index, arena.canonicalValue(value.value))
+	}
 	for _, operation := range fragment.operations {
 		key += fmt.Sprintf("/%d:%s:%d:%s", operation.Kind, operation.Descriptor, operation.Slot, arena.canonicalValue(operation.Value))
 	}
@@ -308,7 +372,8 @@ func cloneSparseProjectionTrace(in *sparseProjectionTrace) *sparseProjectionTrac
 		}
 		for fragmentIndex, fragment := range slot.fragments {
 			out.slots[index].fragments[fragmentIndex] = sparseProjectionFragment{
-				guard: fragment.guard, operations: append([]Operation(nil), fragment.operations...), output: fragment.output.Clone(),
+				guard: fragment.guard, values: append([]sparseProjectionValue(nil), fragment.values...),
+				operations: append([]Operation(nil), fragment.operations...), output: fragment.output.Clone(),
 			}
 		}
 	}

@@ -239,6 +239,13 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		}
 	case valueCellResult:
 		return fmt.Errorf("transformer: scalar CellResult term %d requires relational composition", term)
+	case valueCallResult:
+		if len(n.args) != 1 || n.resultIndex < 0 {
+			return fmt.Errorf("transformer: malformed call-result term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
+		}
 	case valueDynamicRead:
 		if len(n.args) != 2 || n.path == 0 {
 			return fmt.Errorf("transformer: malformed DynamicRead term %d", term)
@@ -406,6 +413,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if !allowCell {
 			return fmt.Errorf("unsupported value operation at term %d", term)
 		}
+	case valueCallResult:
+		if len(n.args) != 1 || n.resultIndex < 0 {
+			return fmt.Errorf("malformed call-result term %d", term)
+		}
 	case valueDynamicRead:
 		if len(n.args) != 2 {
 			return fmt.Errorf("malformed DynamicRead term %d", term)
@@ -504,6 +515,12 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		out = s.caller.runtimeValidationValue(s.value(n.args[0]), n.value)
 		if out == 0 {
 			s.err = fmt.Errorf("transformer: validated runtime validation term %d failed to rebase", term)
+			return 0
+		}
+	case valueCallResult:
+		out = s.caller.CallResultValue(n.point, uint32(n.resultIndex), s.value(n.args[0]))
+		if out == 0 {
+			s.err = fmt.Errorf("transformer: validated call-result term %d failed to rebase", term)
 			return 0
 		}
 	case valueDynamicRead:

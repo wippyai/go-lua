@@ -14,6 +14,7 @@ import (
 type SymbolicCFGRow struct {
 	Guard                  Guard
 	Values                 map[symbol.ID]ValueTerm
+	ResultRoots            map[ResultRoot]ValueTerm
 	Operations             []Operation
 	Effects                []EffectTerm
 	Proofs                 []BranchProofTerm
@@ -106,6 +107,11 @@ func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
 			return false
 		}
 	}
+	for _, value := range row.ResultRoots {
+		if !arena.validValue(value, shape, make(map[ValueTerm]bool)) {
+			return false
+		}
+	}
 	for _, effect := range row.Effects {
 		if effect == 0 {
 			return false
@@ -133,6 +139,7 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 	out := SymbolicCFGRow{
 		Guard:                  row.Guard,
 		Values:                 make(map[symbol.ID]ValueTerm, len(row.Values)),
+		ResultRoots:            make(map[ResultRoot]ValueTerm, len(row.ResultRoots)),
 		Operations:             append([]Operation(nil), row.Operations...),
 		Effects:                append([]EffectTerm(nil), row.Effects...),
 		Proofs:                 append([]BranchProofTerm(nil), row.Proofs...),
@@ -144,6 +151,9 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 	}
 	for key, value := range row.Values {
 		out.Values[key] = value
+	}
+	for key, value := range row.ResultRoots {
+		out.ResultRoots[key] = value
 	}
 	for key, value := range row.genericBindings {
 		out.genericBindings[key] = value
@@ -177,7 +187,7 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 }
 
 func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
+	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.ResultRoots) != len(right.ResultRoots) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
 		return false
 	}
 	if !summary.Equal(arena.reg, left.Output, right.Output) {
@@ -185,6 +195,11 @@ func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
 	}
 	for key, value := range left.Values {
 		if right.Values[key] != value {
+			return false
+		}
+	}
+	for key, value := range left.ResultRoots {
+		if right.ResultRoots[key] != value {
 			return false
 		}
 	}

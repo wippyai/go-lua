@@ -180,21 +180,36 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		}
 		returns[op.Slot] = value
 	}
+	callPoint, hasCallPoint := site.Point()
 	for _, target := range targets {
-		value, exists := returns[uint32(target.slot)]
+		produced, exists := returns[uint32(target.slot)]
 		if !exists {
 			return SymbolicCFGRow{}, fmt.Errorf("result target slot %d has no callee row value", target.slot)
+		}
+		value := produced
+		if hasCallPoint {
+			value = builder.arena.CallResultValue(callPoint, uint32(target.slot), produced)
+			if value == 0 {
+				return SymbolicCFGRow{}, fmt.Errorf("result target slot %d has an invalid composed value", target.slot)
+			}
 		}
 		if prior, exists := next.Values[target.symbol]; exists {
 			// Cyclic exact closure revisits the same lexical call point. An
 			// identical interned result binding is the fixed point; a changed
 			// value is still a contextual multi-write.
-			if prior == value {
-				continue
+			if prior != value {
+				return SymbolicCFGRow{}, fmt.Errorf("result symbol %d already has a row binding", target.symbol)
 			}
-			return SymbolicCFGRow{}, fmt.Errorf("result symbol %d already has a row binding", target.symbol)
+		} else {
+			next.Values[target.symbol] = value
 		}
-		next.Values[target.symbol] = value
+		if hasCallPoint {
+			resultRoot := ResultRoot{Point: callPoint, Slot: uint32(target.slot)}
+			if prior, exists := next.ResultRoots[resultRoot]; exists && prior != value {
+				return SymbolicCFGRow{}, fmt.Errorf("call result root %d:%d already has a different row binding", callPoint, target.slot)
+			}
+			next.ResultRoots[resultRoot] = value
+		}
 	}
 	for i, proof := range row.Proofs {
 		rebased := proof
@@ -209,7 +224,7 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		return SymbolicCFGRow{}, err
 	}
 	next.Proofs = append(next.Proofs, structuredProofs...)
-	point, _ := site.Point()
+	point := callPoint
 	callAnchor, durableCallAnchor := builder.plan.CallInvocationObservationAnchor(point)
 	for i, observation := range row.Observations {
 		rebased := observation

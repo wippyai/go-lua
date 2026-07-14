@@ -177,6 +177,14 @@ func (r ObservationRequirement) RequiresCallOutcome() bool {
 	return r.flags&observationRequirementCallOutcome != 0
 }
 
+// IsCallProducerBoundary reports the structural boundary whose values are the
+// exact temporary return slots produced by one call. The selector remains
+// private; consumers receive only this typed question rather than depending on
+// its schema string.
+func (r ObservationRequirement) IsCallProducerBoundary() bool {
+	return r.selector == selectorBoundaryCallProducer && r.Stage() == RequirementBoundary
+}
+
 type ObservationSchemaID [sha256.Size]byte
 type ObservationConsumerInventoryID [sha256.Size]byte
 
