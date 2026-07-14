@@ -730,7 +730,8 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 }
 
 func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string, returnArity int, declaredReturns []typ.Type) []signature.ReturnAllocationTemplate {
-	if reg == nil || signatureName == "" || returnArity <= 0 || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil {
+	if reg == nil || signatureName == "" || returnArity <= 0 || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 ||
+		!allocationTemplateKeyProvenanceValid(s.HeapKeySpace, s.HeapTableObjects) {
 		return nil
 	}
 	var out []signature.ReturnAllocationTemplate
@@ -789,6 +790,26 @@ func allocationTemplateForReturn(
 		Root:        rootTemplate,
 		Objects:     projector.out,
 	}, true
+}
+
+func allocationTemplateKeyProvenanceValid(ks *keyspace.KeySpace, objects map[identity.ID]heapidentity.TableObject) bool {
+	if ks != nil {
+		if !ks.Valid() {
+			return false
+		}
+		for _, object := range objects {
+			if _, ok := object.Rekey(ks, ks); !ok {
+				return false
+			}
+		}
+		return true
+	}
+	for _, object := range objects {
+		if !object.StructuralKeyFree() {
+			return false
+		}
+	}
+	return true
 }
 
 type allocationTemplateProjector struct {
@@ -967,6 +988,9 @@ type heapStaticMember struct {
 }
 
 func sortedHeapStaticMembers(ks *keyspace.KeySpace, in map[keyspace.Key]product.Value) []heapStaticMember {
+	if len(in) == 0 || ks == nil || !ks.Valid() {
+		return nil
+	}
 	out := make([]heapStaticMember, 0, len(in))
 	for key, value := range in {
 		suffix, ok := ks.SuffixSegmentsView(key)
@@ -988,6 +1012,9 @@ type heapDynamicEntry struct {
 }
 
 func sortedHeapDynamicEntries(ks *keyspace.KeySpace, in map[dynamicindex.Key]dynamicindex.Fact) []heapDynamicEntry {
+	if len(in) == 0 || ks == nil || !ks.Valid() {
+		return nil
+	}
 	out := make([]heapDynamicEntry, 0, len(in))
 	for key, fact := range in {
 		if fact.Admission == dynamicindex.AdmissionRejected {

@@ -1314,6 +1314,133 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsExportsKeyFreeReturnAllocationTemplateWithoutKeySpace(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "key-free-template", Index: 1}
+	rootType := typetable.NewRecord().Field("name", typ.String).Build()
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, rootType), rootType), identity.Key, identity.Singleton(rootID))
+
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns: []product.Value{rootValue},
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root:        rootValue,
+				StableShape: true,
+			}),
+		},
+	}, typ.Func().Returns(rootType).Build(), "builder.key_free")
+	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
+		t.Fatalf("allocation templates = %#v, want one key-free return template", got)
+	}
+	template := got.ReturnAllocationTemplates[0]
+	root := allocationTemplateObject(template.Objects, "builder.key_free:return:0:root")
+	if template.ReturnIndex != 0 || template.Root != "builder.key_free:return:0:root" || root == nil {
+		t.Fatalf("return allocation template = %#v, want exact key-free root", template)
+	}
+	if !root.StableShape || !root.PrefixStable || !typ.TypeEquals(root.Type, rootType) || len(root.StaticMembers) != 0 || len(root.DynamicEntries) != 0 {
+		t.Fatalf("key-free root = %#v, want exact shape/type-only object", root)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsRejectsAllocationTemplateWithoutValidKeyProvenance(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "invalid-key-template", Index: 1}
+	rootType := typetable.NewRecord().Field("name", typ.String).Build()
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, rootType), rootType), identity.Key, identity.Singleton(rootID))
+	valid := keyspace.New()
+	memberKey, ok := heapidentity.StaticMemberSuffixKey(valid, []segment.Segment{{Kind: segment.SegmentField, Name: "name"}})
+	if !ok {
+		t.Fatal("member suffix key failed")
+	}
+	validTableKey, ok := valid.FromStateKey(pathdom.PathKey("root.items"))
+	if !ok {
+		t.Fatal("valid dynamic table key failed")
+	}
+	foreign := keyspace.New()
+	foreignMemberKey, ok := heapidentity.StaticMemberSuffixKey(foreign, []segment.Segment{{Kind: segment.SegmentField, Name: "name"}})
+	if !ok {
+		t.Fatal("foreign member suffix key failed")
+	}
+	foreignTableKey, ok := foreign.FromStateKey(pathdom.PathKey("root.items"))
+	if !ok {
+		t.Fatal("foreign dynamic table key failed")
+	}
+	if memberKey.Segs != foreignMemberKey.Segs || memberKey.Kind != foreignMemberKey.Kind ||
+		validTableKey.Root != foreignTableKey.Root || validTableKey.Segs != foreignTableKey.Segs || validTableKey.Kind != foreignTableKey.Kind {
+		t.Fatal("adversarial keyspaces did not produce colliding dense key ids")
+	}
+	invalid := *valid
+
+	tests := []struct {
+		name   string
+		space  *keyspace.KeySpace
+		object heapidentity.TableObject
+	}{
+		{
+			name:  "keyed object with nil keyspace",
+			space: nil,
+			object: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: rootValue,
+				StaticMembers: map[keyspace.Key]product.Value{
+					memberKey: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				},
+			}),
+		},
+		{
+			name:   "key-free object with invalid keyspace",
+			space:  &invalid,
+			object: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue}),
+		},
+		{
+			name:  "keyed object with invalid keyspace",
+			space: &invalid,
+			object: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: rootValue,
+				StaticMembers: map[keyspace.Key]product.Value{
+					memberKey: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				},
+			}),
+		},
+		{
+			name:  "foreign static key with valid claimed keyspace",
+			space: valid,
+			object: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: rootValue,
+				StaticMembers: map[keyspace.Key]product.Value{
+					foreignMemberKey: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+				},
+			}),
+		},
+		{
+			name:  "foreign dynamic key with valid claimed keyspace",
+			space: valid,
+			object: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: rootValue,
+				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+					{Table: foreignTableKey, Site: "write"}: {
+						KeyPresence: presence.Present(),
+						KeyValue:    typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+						Value:       typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+						Admission:   dynamicindex.AdmissionAdmitted,
+					},
+				},
+			}),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := functionSummaryOperationalEffects(reg, summary.Summary{
+				Returns:          []product.Value{rootValue},
+				HeapKeySpace:     tt.space,
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{rootID: tt.object},
+			}, typ.Func().Returns(rootType).Build(), "builder.invalid_key")
+			if got != nil && len(got.ReturnAllocationTemplates) != 0 {
+				t.Fatalf("allocation templates = %#v, want fail-closed omission", got.ReturnAllocationTemplates)
+			}
+		})
+	}
+}
+
 func TestFunctionSummaryOperationalEffectsDoesNotExportAllocationForDeclaredAnyReturn(t *testing.T) {
 	reg := standard.Registry()
 	rootID := identity.ID{Kind: "lua.table", Site: "declared-any-template", Index: 1}
