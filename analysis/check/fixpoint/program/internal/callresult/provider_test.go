@@ -96,6 +96,50 @@ func TestOutcomeProviderCachesPreparedExactSummary(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderFailsStopOnCorruptNamedSummaryBeforeFallback(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(1901)
+	summaryKey := summary.DefaultSummaryKey(ref.FromSymbol(callee))
+	ownerKeys, foreignKeys, callerKeys := keyspace.New(), keyspace.New(), keyspace.New()
+	foreignMember, ok := foreignKeys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "member"}})
+	if !ok {
+		t.Fatal("foreign member key failed")
+	}
+	tableID := identity.ID{Kind: "table", Site: "corrupt-provider", Index: 1}
+	corrupt := summary.Summary{
+		HeapKeySpace: ownerKeys,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: product.Top(), StaticMembers: map[keyspace.Key]product.Value{foreignMember: product.Top()},
+			}),
+		},
+	}
+	fallbackCalls := 0
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: &countingSummaryReader{entries: map[summary.SummaryKey]summary.Summary{summaryKey: corrupt}},
+		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: summaryKey}),
+		KeySpace:  callerKeys,
+		ReceiverCallable: func(transfer.NodeContext, factflow.CallSiteView) (*typ.Function, bool) {
+			fallbackCalls++
+			return typ.Func().Returns(typ.String).Build(), true
+		},
+	})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}).View()
+	published := false
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_ = provider(transfer.NodeContext{Registry: reg}, site, state.State{}, nil)
+		published = true
+	}()
+	if recovered == nil {
+		t.Fatal("corrupt named summary did not fail stop")
+	}
+	if published || fallbackCalls != 0 {
+		t.Fatalf("corrupt named summary publication/fallback = %v/%d, want false/0", published, fallbackCalls)
+	}
+}
+
 type countingSummaryReader struct {
 	entries map[summary.SummaryKey]summary.Summary
 	reads   int

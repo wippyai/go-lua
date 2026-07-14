@@ -58,7 +58,13 @@ func (c *providerPreparedSummaryCache) read(
 		return summary.Summary{}, nil, false
 	}
 	fn := c.functionTypes[key]
-	got = got.RekeyHeapTableObjects(c.callerKeySpace)
+	got, err := got.RekeyHeapTableObjects(c.callerKeySpace)
+	if err != nil {
+		// A named summary with corrupt heap-key provenance is an internal
+		// publication failure, not an absent candidate. Treating it as a miss can
+		// silently select a weaker provider and erase caller-visible heap facts.
+		panic(err)
+	}
 	got = applyDeclaredSummaryReturns(reg, typeValues, got, fn)
 	if c.entries == nil {
 		c.entries = make(map[providerPreparedSummaryCacheKey]providerPreparedSummary)

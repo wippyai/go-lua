@@ -12,34 +12,45 @@ func refreshExistingCallContextEntriesFromMaterializedResults(
 	root *body.Result,
 	baseResults map[*ast.FunctionExpr]*body.Result,
 	config body.Config,
-) bool {
+) (bool, error) {
 	if keys == nil || keys.contexts.CallRefCount() == 0 {
-		return false
+		return false, nil
 	}
-	changed := refreshExistingCallContextEntriesFromResult(keys, keys.rootKey, root, config)
+	changed, err := refreshExistingCallContextEntriesFromResult(keys, keys.rootKey, root, config)
+	if err != nil {
+		return false, err
+	}
 	for fn, result := range baseResults {
 		owner, ok := keys.summaryKeyForFunction(fn)
 		if !ok {
 			continue
 		}
-		if refreshExistingCallContextEntriesFromResult(keys, owner, result, config) {
+		refreshed, err := refreshExistingCallContextEntriesFromResult(keys, owner, result, config)
+		if err != nil {
+			return false, err
+		}
+		if refreshed {
 			changed = true
 		}
 	}
-	return changed
+	return changed, nil
 }
 
-func refreshExistingCallContextEntriesFromResult(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config) bool {
-	return len(refreshExistingCallContextEntryKeysFromResult(keys, owner, result, config)) != 0
+func refreshExistingCallContextEntriesFromResult(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config) (bool, error) {
+	changed, err := refreshExistingCallContextEntryKeysFromResult(keys, owner, result, config)
+	return len(changed) != 0, err
 }
 
-func refreshExistingCallContextEntryKeysFromResult(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config) map[summary.SummaryKey]struct{} {
+func refreshExistingCallContextEntryKeysFromResult(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config) (map[summary.SummaryKey]struct{}, error) {
 	if keys == nil || result == nil || result.Graph() == nil {
-		return nil
+		return nil, nil
 	}
 	var changed map[summary.SummaryKey]struct{}
 	for _, point := range result.Graph().RPO() {
-		key, ok := refreshExistingCallContextEntryKeyAt(keys, owner, result, config, point)
+		key, ok, err := refreshExistingCallContextEntryKeyAt(keys, owner, result, config, point)
+		if err != nil {
+			return changed, err
+		}
 		if !ok {
 			continue
 		}
@@ -48,33 +59,33 @@ func refreshExistingCallContextEntryKeysFromResult(keys *programKeys, owner summ
 		}
 		changed[key] = struct{}{}
 	}
-	return changed
+	return changed, nil
 }
 
-func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config, point cfg.Point) (summary.SummaryKey, bool) {
+func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.SummaryKey, result *body.Result, config body.Config, point cfg.Point) (summary.SummaryKey, bool, error) {
 	site, ok := result.CallSiteView(point)
 	if !ok {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	expr, ok := site.Expr()
 	if !ok || expr == 0 {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	contextKey, ok := keys.contexts.CallContextKey(owner, expr)
 	if !ok {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	baseKey, ok := prepassCallSummaryKey(config.Registry, result, point, site, keys)
 	if !ok {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	fn := keys.functionByKey[baseKey]
 	if fn == nil {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	in, ok := result.StateAtBoundary(point)
 	if !ok {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	entryKeys := result.KeySpace()
 	entry, hasPathEntry := callerPathEntryState(config.Registry, entryKeys, in)
@@ -90,10 +101,14 @@ func refreshExistingCallContextEntryKeyAt(keys *programKeys, owner summary.Summa
 	contextualFn := instantiateSignatureTypeForContext(config.Registry, result, point, site, keys.functionTypes[baseKey], keys)
 	entry, hasParamEntry := applyCallArgumentParamEntryState(config.Registry, keys.bindings, result, keys, point, site, fn, contextualFn, entry)
 	if !hasPathEntry && !hasCaptureEntry && !hasParamEntry {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
-	if !keys.refreshContextForKey(config.Registry, contextKey, fn, entryKeys, entry) {
-		return summary.SummaryKey{}, false
+	changed, err := keys.refreshContextForKey(config.Registry, contextKey, fn, entryKeys, entry)
+	if err != nil {
+		return summary.SummaryKey{}, false, err
 	}
-	return contextKey, true
+	if !changed {
+		return summary.SummaryKey{}, false, nil
+	}
+	return contextKey, true, nil
 }

@@ -53,7 +53,7 @@ func TestMaterializationHandoffFinalizesTakenResourceExactlyOnce(t *testing.T) {
 
 	got, solved, err := solveMaterializedPreparedAttributed(
 		newMaterializedSolveCache(reg, run), prepared, ownerKey, 19, resolution, materializedSolveEntryState{},
-		reader, build, nil, nil,
+		reader, infallibleMaterializedBuild(build), nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("materialization error = %v", err)
@@ -122,7 +122,7 @@ func TestMaterializationHandoffRebindPanicReleasesRetainedSession(t *testing.T) 
 		defer func() { recovered = recover() }()
 		_, _, _ = solveMaterializedPreparedAttributed(
 			newMaterializedSolveCache(reg, run), prepared, ownerKey, 29, resolution,
-			materializedSolveEntryState{}, readers[1], panicBuild, nil, nil,
+			materializedSolveEntryState{}, readers[1], infallibleMaterializedBuild(panicBuild), nil, nil,
 		)
 	}()
 	if recovered != panicToken {

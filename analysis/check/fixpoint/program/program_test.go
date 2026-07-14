@@ -602,7 +602,7 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 		}
 	}
 
-	first, firstSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, firstSnapshot, build, &solves)
+	first, firstSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, firstSnapshot, infallibleMaterializedBuild(build), &solves)
 	if err != nil {
 		t.Fatalf("first solveMaterializedPrepared: %v", err)
 	}
@@ -611,7 +611,7 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	}
 	// Unrelated materialized call contexts do not change this body's routing;
 	// tracked summary reads and entry state are the complete solve inputs.
-	again, againSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, firstSnapshot, build, &solves)
+	again, againSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, firstSnapshot, infallibleMaterializedBuild(build), &solves)
 	if err != nil {
 		t.Fatalf("second solveMaterializedPrepared: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 		t.Fatalf("summary dependency reads = public:%d owned:%d, want owned-only dependency reads", firstSnapshot.publicReads, firstSnapshot.ownedReads)
 	}
 	resolutionChanged, resolutionChangedSolved, err := solveMaterializedPreparedAttributed(
-		cache, prepared, owner, 7, 9, materializedSolveEntryState{}, firstSnapshot, build, &solves, nil,
+		cache, prepared, owner, 7, 9, materializedSolveEntryState{}, firstSnapshot, infallibleMaterializedBuild(build), &solves, nil,
 	)
 	if err != nil {
 		t.Fatalf("resolution-changed solveMaterializedPreparedAttributed: %v", err)
@@ -630,7 +630,7 @@ func TestMaterializedSolveCacheReusesOnlyWhenTrackedSummaryDepsEqual(t *testing.
 	if resolutionChanged == first || !resolutionChangedSolved || solves != 2 {
 		t.Fatalf("resolution miss = same:%v solved:%v solves:%d, want new result, solve, two solves total", resolutionChanged == first, resolutionChangedSolved, solves)
 	}
-	changed, changedSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, secondSnapshot, build, &solves)
+	changed, changedSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, secondSnapshot, infallibleMaterializedBuild(build), &solves)
 	if err != nil {
 		t.Fatalf("changed solveMaterializedPrepared: %v", err)
 	}
@@ -749,21 +749,21 @@ func TestMaterializedSolveCacheInvalidatesZeroDepSolveWhenSummaryUniverseChanges
 		return body.Config{Registry: reg}
 	}
 
-	first, firstSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, emptySnapshot, build, &solves)
+	first, firstSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, emptySnapshot, infallibleMaterializedBuild(build), &solves)
 	if err != nil {
 		t.Fatalf("first solveMaterializedPrepared: %v", err)
 	}
 	if !firstSolved {
 		t.Fatal("first solveMaterializedPrepared reported cache hit")
 	}
-	again, againSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, emptySnapshot, build, &solves)
+	again, againSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, emptySnapshot, infallibleMaterializedBuild(build), &solves)
 	if err != nil {
 		t.Fatalf("second solveMaterializedPrepared: %v", err)
 	}
 	if again != first || againSolved || solves != 1 {
 		t.Fatalf("same-universe cache hit = same:%v solved:%v solves:%d, want same result, no solve, one solve total", again == first, againSolved, solves)
 	}
-	changed, changedSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, changedSnapshot, build, &solves)
+	changed, changedSolved, err := solveMaterializedPrepared(cache, prepared, owner, 7, materializedSolveEntryState{}, changedSnapshot, infallibleMaterializedBuild(build), &solves)
 	if err != nil {
 		t.Fatalf("changed solveMaterializedPrepared: %v", err)
 	}

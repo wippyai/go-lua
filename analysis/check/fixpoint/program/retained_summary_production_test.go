@@ -227,7 +227,7 @@ func TestOrdinarySummaryMaterializationHandoffSkipsDuplicateBodySolve(t *testing
 	materialSolves := 0
 	handoff, solved, err := solveMaterializedPreparedAttributed(
 		materialCache, prepared, ownerKey, 17, resolution, materializedSolveEntryState{}, reader,
-		retainedProductionConfig(reg, dep, &materialStats), &materialSolves, nil,
+		infallibleMaterializedBuild(retainedProductionConfig(reg, dep, &materialStats)), &materialSolves, nil,
 	)
 	if err != nil {
 		t.Fatalf("ordinary materialization handoff: %v", err)
@@ -313,7 +313,7 @@ func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity
 	materialSolves := 0
 	handoff, solved, err := solveMaterializedPreparedAttributed(
 		materialCache, prepared, ownerKey, 17, resolution, materializedSolveEntryState{}, readers[1],
-		buildMaterial, &materialSolves, nil,
+		infallibleMaterializedBuild(buildMaterial), &materialSolves, nil,
 	)
 	if err != nil {
 		t.Fatalf("materialization handoff: %v", err)

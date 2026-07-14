@@ -37,17 +37,17 @@ func observeCallArguments(
 	site factflow.CallSiteView,
 	baseKey summary.SummaryKey,
 	symbolByKey map[summary.SummaryKey]symbol.ID,
-) {
+) error {
 	if inferred == nil || prepass == nil || len(symbolByKey) == 0 {
-		return
+		return nil
 	}
 	callee, ok := symbolByKey[baseKey]
 	if !ok || !inferred.candidate(callee) {
-		return
+		return nil
 	}
 	expr, ok := site.Expr()
 	if !ok || !inferred.markObserved(owner, expr) {
-		return
+		return nil
 	}
 	argCount := site.ArgumentSourceCount()
 	args := make([]product.Value, argCount)
@@ -61,7 +61,7 @@ func observeCallArguments(
 		present[i] = true
 		return true
 	})
-	inferred.observe(callee, args, present, caller, prepass.KeySpace())
+	return inferred.observe(callee, args, present, caller, prepass.KeySpace())
 }
 
 // applyInferredParamEntryStates attaches the joined call-site parameter seed to
@@ -69,46 +69,63 @@ func observeCallArguments(
 // parameter seeding because seedEntryStateValues only writes a slot that is
 // still Bottom, so an inferred parameter value is preserved while annotated
 // parameters keep their declared type.
-func applyInferredParamEntryStates(keys *programKeys, bindings *bind.Result, inferred *paramInference) {
+func applyInferredParamEntryStates(keys *programKeys, bindings *bind.Result, inferred *paramInference) error {
 	if keys == nil || bindings == nil || inferred == nil {
-		return
+		return nil
 	}
-	applyInferredParamEntryStatesTo(keys, bindings, inferred, keys.functions)
+	if err := applyInferredParamEntryStatesTo(keys, bindings, inferred, keys.functions); err != nil {
+		return err
+	}
+	var transformErr error
 	keys.contexts.TransformEntries(func(fn keyedFunction) keyedFunction {
-		return applyInferredParamEntryState(keys, bindings, inferred, fn)
+		if transformErr != nil {
+			return fn
+		}
+		var out keyedFunction
+		out, transformErr = applyInferredParamEntryState(keys, bindings, inferred, fn)
+		return out
 	})
+	return transformErr
 }
 
-func applyInferredParamEntryStatesTo(keys *programKeys, bindings *bind.Result, inferred *paramInference, functions []keyedFunction) {
+func applyInferredParamEntryStatesTo(keys *programKeys, bindings *bind.Result, inferred *paramInference, functions []keyedFunction) error {
 	for i := range functions {
-		functions[i] = applyInferredParamEntryState(keys, bindings, inferred, functions[i])
+		var err error
+		functions[i], err = applyInferredParamEntryState(keys, bindings, inferred, functions[i])
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func applyInferredParamEntryState(keys *programKeys, bindings *bind.Result, inferred *paramInference, function keyedFunction) keyedFunction {
+func applyInferredParamEntryState(keys *programKeys, bindings *bind.Result, inferred *paramInference, function keyedFunction) (keyedFunction, error) {
 	fn := function.funcExpr
 	if fn == nil {
-		return function
+		return function, nil
 	}
 	callee, ok := keys.functionSymbol(fn)
 	if !ok || callee == 0 {
-		return function
+		return function, nil
 	}
 	seeds := inferred.paramSeeds(bindings, fn, callee)
 	if len(seeds) == 0 {
-		return function
+		return function, nil
 	}
 	if function.entryKeys == nil {
 		function.entryKeys = inferred.seedKeySpace(callee)
 	}
-	source := inferred.seedSource(callee, function.entryKeys)
+	source, err := inferred.seedSource(callee, function.entryKeys)
+	if err != nil {
+		return function, err
+	}
 	function.entryState = applyParamSeeds(inferred.reg, function.entryState, source, seeds)
 	function.hasEntryState = true
 	if keys.inferredParamSeeds == nil {
 		keys.inferredParamSeeds = make(map[*ast.FunctionExpr][]paramSeed)
 	}
 	keys.inferredParamSeeds[fn] = seeds
-	return function
+	return function, nil
 }
 
 func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.Result, config body.Config, stats *Stats, preparedOption ...preparedBodies) (*paramInference, error) {
@@ -139,7 +156,9 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		}
 		rootPrepass = prepass
 		prepassResults[nil] = prepass
-		applyDefinitionCaptureEntryStatesFromResult(keys, nil, prepass, config.Registry)
+		if err := applyDefinitionCaptureEntryStatesFromResult(keys, nil, prepass, config.Registry); err != nil {
+			return nil, err
+		}
 		if prepared.root.HasCallSites() {
 			if _, err := collectCallContextKeysFromResult(keys, keys.rootKey, prepass, config, inferred, symbolByKey, prepared); err != nil {
 				return nil, err
@@ -163,11 +182,19 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		}
 		functionConfig := cloneCheckConfig(config)
 		if fn.hasEntryState {
-			functionConfig.EntryState = fn.entryState.RekeyPathEvidence(fn.entryKeys, static.KeySpace())
+			var err error
+			functionConfig.EntryState, err = fn.entryState.RekeyKeySpace(fn.entryKeys, static.KeySpace())
+			if err != nil {
+				return nil, err
+			}
 		}
 		if callee, ok := keys.functionSymbol(fn.funcExpr); ok && callee != 0 {
 			if seeds := inferred.paramSeeds(bindings, fn.funcExpr, callee); len(seeds) != 0 {
-				functionConfig.EntryState = applyParamSeeds(config.Registry, functionConfig.EntryState, inferred.seedSource(callee, static.KeySpace()), seeds)
+				source, err := inferred.seedSource(callee, static.KeySpace())
+				if err != nil {
+					return nil, err
+				}
+				functionConfig.EntryState = applyParamSeeds(config.Registry, functionConfig.EntryState, source, seeds)
 			}
 		}
 		functionPrepass, err := solvePreparedCountedWithTransfers(static, functionConfig, prepassCounter(stats), nil, solveAttributionFor(stats, static, fn.key, SolvePhasePrepass, false))
@@ -175,7 +202,9 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 			return nil, err
 		}
 		prepassResults[fn.funcExpr] = functionPrepass
-		applyDefinitionCaptureEntryStatesFromResult(keys, fn.funcExpr, functionPrepass, config.Registry)
+		if err := applyDefinitionCaptureEntryStatesFromResult(keys, fn.funcExpr, functionPrepass, config.Registry); err != nil {
+			return nil, err
+		}
 		if static.HasCallSites() {
 			if _, err := collectCallContextKeysFromResult(keys, fn.key, functionPrepass, config, inferred, symbolByKey, prepared); err != nil {
 				return nil, err
@@ -198,11 +227,19 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		}
 		contextConfig := cloneCheckConfig(config)
 		if context.hasEntryState {
-			contextConfig.EntryState = context.entryState.RekeyPathEvidence(context.entryKeys, static.KeySpace())
+			var err error
+			contextConfig.EntryState, err = context.entryState.RekeyKeySpace(context.entryKeys, static.KeySpace())
+			if err != nil {
+				return nil, err
+			}
 		}
 		if callee, ok := keys.functionSymbol(context.funcExpr); ok && callee != 0 {
 			if seeds := inferred.paramSeeds(bindings, context.funcExpr, callee); len(seeds) != 0 {
-				contextConfig.EntryState = applyParamSeeds(config.Registry, contextConfig.EntryState, inferred.seedSource(callee, static.KeySpace()), seeds)
+				source, err := inferred.seedSource(callee, static.KeySpace())
+				if err != nil {
+					return nil, err
+				}
+				contextConfig.EntryState = applyParamSeeds(config.Registry, contextConfig.EntryState, source, seeds)
 			}
 		}
 		contextPrepass, err := solvePreparedCountedWithTransfers(static, contextConfig, prepassCounter(stats), nil, solveAttributionFor(stats, static, context.key, SolvePhasePrepass, true))
@@ -210,7 +247,9 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 			return nil, err
 		}
 		prepassResults[context.funcExpr] = contextPrepass
-		applyDefinitionCaptureEntryStatesFromResult(keys, context.funcExpr, contextPrepass, config.Registry)
+		if err := applyDefinitionCaptureEntryStatesFromResult(keys, context.funcExpr, contextPrepass, config.Registry); err != nil {
+			return nil, err
+		}
 		if static.HasCallSites() {
 			if _, err := collectCallContextKeysFromResult(keys, context.key, contextPrepass, config, inferred, symbolByKey, prepared); err != nil {
 				return nil, err
@@ -253,15 +292,31 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 			phaseTracker.observeRegistration(point, site)
 			var phaseChanged map[summary.SummaryKey]struct{}
 			var controlled bool
-			phaseChanged, controlled = phaseTracker.collectInvocationContext(point, site)
+			var err error
+			phaseChanged, controlled, err = phaseTracker.collectInvocationContext(point, site)
+			if err != nil {
+				return changed, err
+			}
 			changed = mergeChangedContextKeys(changed, phaseChanged)
 			if controlled {
 				continue
 			}
 		}
-		changed = mergeChangedContextKeys(changed, collectSignatureCallbackContextKeys(keys, owner, prepass, config, point, site))
-		changed = mergeChangedContextKeys(changed, collectProtectedCallCallbackContextKeys(keys, owner, prepass, config, point, site))
-		changed = mergeChangedContextKeys(changed, collectInlineFunctionCaptureContextKeys(keys, owner, prepass, config, point, site))
+		callbackChanged, err := collectSignatureCallbackContextKeys(keys, owner, prepass, config, point, site)
+		if err != nil {
+			return changed, err
+		}
+		changed = mergeChangedContextKeys(changed, callbackChanged)
+		callbackChanged, err = collectProtectedCallCallbackContextKeys(keys, owner, prepass, config, point, site)
+		if err != nil {
+			return changed, err
+		}
+		changed = mergeChangedContextKeys(changed, callbackChanged)
+		callbackChanged, err = collectInlineFunctionCaptureContextKeys(keys, owner, prepass, config, point, site)
+		if err != nil {
+			return changed, err
+		}
+		changed = mergeChangedContextKeys(changed, callbackChanged)
 		baseKey, ok := prepassCallSummaryKey(config.Registry, prepass, point, site, keys)
 		if !ok {
 			continue
@@ -274,7 +329,9 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 		if !ok {
 			continue
 		}
-		observeCallArguments(inferred, in, prepass, owner, point, site, baseKey, symbolByKey)
+		if err := observeCallArguments(inferred, in, prepass, owner, point, site, baseKey, symbolByKey); err != nil {
+			return changed, err
+		}
 		callRef := callContextRef{owner: canonicalContextOwner(owner), expr: expr}
 		entryKeys := prepass.KeySpace()
 		entry, hasPathEntry := callerPathEntryState(config.Registry, entryKeys, in)
@@ -297,15 +354,22 @@ func collectCallContextKeysFromResult(keys *programKeys, owner summary.SummaryKe
 		// their local keyspace allocation order.
 		var bodyDigest uint64
 		if static := prepared.function(fn); static != nil {
-			entry = entry.RekeyPathEvidence(entryKeys, static.KeySpace())
-			entryKeys = static.KeySpace()
 			var err error
+			entry, err = entry.RekeyKeySpace(entryKeys, static.KeySpace())
+			if err != nil {
+				return changed, err
+			}
+			entryKeys = static.KeySpace()
 			bodyDigest, err = static.IdentityDigestContext(config.Context)
 			if err != nil {
 				return changed, err
 			}
 		}
-		if contextKey, ok := keys.upsertCallContext(config.Registry, callRef, baseKey, fn, entry, entryKeys, keys.functionTypes[baseKey], bodyDigest); ok {
+		contextKey, ok, err := keys.upsertCallContext(config.Registry, callRef, baseKey, fn, entry, entryKeys, keys.functionTypes[baseKey], bodyDigest)
+		if err != nil {
+			return changed, err
+		}
+		if ok {
 			changed = addChangedContextKey(changed, contextKey)
 		}
 	}
@@ -344,17 +408,17 @@ func collectProtectedCallCallbackContextKeys(
 	config body.Config,
 	point cfg.Point,
 	site factflow.CallSiteView,
-) map[summary.SummaryKey]struct{} {
+) (map[summary.SummaryKey]struct{}, error) {
 	if keys == nil || prepass == nil || config.Registry == nil {
-		return nil
+		return nil, nil
 	}
 	specs := protectedCallCallbackSpecs(prepass, site)
 	if len(specs) == 0 {
-		return nil
+		return nil, nil
 	}
 	callerEntry, hasCallerEntry := prepass.StateAt(point)
 	if !hasCallerEntry {
-		return nil
+		return nil, nil
 	}
 	entryKeys := prepass.KeySpace()
 	var changed map[summary.SummaryKey]struct{}
@@ -399,11 +463,15 @@ func collectProtectedCallCallbackContextKeys(
 			continue
 		}
 		callbackType, _ := lowerFunctionExprType(callbackFn, keys.bindings, config.ModuleTypes)
-		if key, ok := addFunctionExpressionContextKey(config.Registry, keys, owner, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType); ok {
+		key, ok, err := addFunctionExpressionContextKey(config.Registry, keys, owner, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType)
+		if err != nil {
+			return changed, err
+		}
+		if ok {
 			changed = addChangedContextKey(changed, key)
 		}
 	}
-	return changed
+	return changed, nil
 }
 
 func protectedCallCallbackSpecs(result *body.Result, site factflow.CallSiteView) []protectedCallCallbackSpec {
@@ -494,16 +562,20 @@ func collectSignatureCallbackContextKeys(
 	config body.Config,
 	point cfg.Point,
 	site factflow.CallSiteView,
-) map[summary.SummaryKey]struct{} {
+) (map[summary.SummaryKey]struct{}, error) {
 	if keys == nil || prepass == nil || config.Registry == nil {
-		return nil
+		return nil, nil
 	}
 	callable := callbackContextCallableType(config.Registry, prepass, point, site, keys)
 	if callable.fn == nil {
-		return nil
+		return nil, nil
 	}
 	var changed map[summary.SummaryKey]struct{}
+	var collectErr error
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		if collectErr != nil {
+			return false
+		}
 		if !source.HasExpr || source.ExprRef == 0 {
 			return true
 		}
@@ -548,12 +620,17 @@ func collectSignatureCallbackContextKeys(
 			return true
 		}
 		entry = applyParamSeeds(config.Registry, entry, callerEntry, seeds)
-		if key, ok := addFunctionExpressionContextKey(config.Registry, keys, owner, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType); ok {
+		key, ok, err := addFunctionExpressionContextKey(config.Registry, keys, owner, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType)
+		if err != nil {
+			collectErr = err
+			return false
+		}
+		if ok {
 			changed = addChangedContextKey(changed, key)
 		}
 		return true
 	})
-	return changed
+	return changed, collectErr
 }
 
 func collectInlineFunctionCaptureContextKeys(
@@ -563,17 +640,21 @@ func collectInlineFunctionCaptureContextKeys(
 	config body.Config,
 	point cfg.Point,
 	site factflow.CallSiteView,
-) map[summary.SummaryKey]struct{} {
+) (map[summary.SummaryKey]struct{}, error) {
 	if keys == nil || prepass == nil || config.Registry == nil {
-		return nil
+		return nil, nil
 	}
 	callerEntry, hasCallerEntry := prepass.StateAt(point)
 	if !hasCallerEntry {
-		return nil
+		return nil, nil
 	}
 	entryKeys := prepass.KeySpace()
 	var changed map[summary.SummaryKey]struct{}
+	var collectErr error
 	site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
+		if collectErr != nil {
+			return false
+		}
 		if !source.HasExpr || source.ExprRef == 0 {
 			return true
 		}
@@ -607,12 +688,17 @@ func collectInlineFunctionCaptureContextKeys(
 			return true
 		}
 		callbackType, _ := lowerFunctionExprType(callbackFn, keys.bindings, config.ModuleTypes)
-		if key, ok := addFunctionExpressionContextKey(config.Registry, keys, owner, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType); ok {
+		key, ok, err := addFunctionExpressionContextKey(config.Registry, keys, owner, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType)
+		if err != nil {
+			collectErr = err
+			return false
+		}
+		if ok {
 			changed = addChangedContextKey(changed, key)
 		}
 		return true
 	})
-	return changed
+	return changed, collectErr
 }
 
 type callbackContextCallable struct {
@@ -723,7 +809,7 @@ func addFunctionExpressionContextKey(
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
 	fnType *typ.Function,
-) (summary.SummaryKey, bool) {
+) (summary.SummaryKey, bool, error) {
 	return keys.upsertFunctionExpressionContext(reg, owner, expr, callbackSymbol, callbackFn, entry, entryKeys, fnType)
 }
 

@@ -222,12 +222,20 @@ func boundFunction(
 			if runtime.contextSummary != nil {
 				return *runtime.contextSummary, nil
 			}
+			var entry state.State
+			if origin.hasEntryState {
+				var err error
+				entry, err = origin.entryState.Snapshot().RekeyKeySpace(origin.entryKeys, prepared.KeySpace())
+				if err != nil {
+					return summary.Summary{}, err
+				}
+			}
 			return solveSummaryPrepared(runtime.cache, runtime.retained, profile, runtime.resolution, prepared, ctx.Summaries, func(reader summary.Reader) body.Config {
 				reader, observe := relationTrackedSummaryReader(captured.Registry, reader, runtime.active, stats)
 				config := checkConfigWithSummaries(captured, reader, contextKeyFor, keyFor, index, metatableProof, runtime.resolver, observe, runtime.strict, nil, stats)
 				installRelationInputDigests(&config, reader, runtime.active)
 				if origin.hasEntryState {
-					config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
+					config.EntryState = entry
 				}
 				return config
 			}, stats, solveAttributionFor(stats, prepared, origin.key, SolvePhaseSummary, context))

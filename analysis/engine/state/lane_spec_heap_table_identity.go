@@ -1,6 +1,7 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -9,7 +10,16 @@ import (
 const LaneHeapTableIdentity LaneID = "heap-table-identity"
 
 var heapTableIdentityLaneSpec = laneSpec{
-	id:          LaneHeapTableIdentity,
+	id:           LaneHeapTableIdentity,
+	keySpaceMode: laneKeySpaceOwned,
+	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
+		lane, ok := s.heapTableIdentity.rekey(from, to)
+		if !ok {
+			return s, false
+		}
+		s.heapTableIdentity = lane
+		return s, true
+	},
 	fingerprint: fingerprintHeapTableIdentity,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := heapidentity.MapDomain(reg)

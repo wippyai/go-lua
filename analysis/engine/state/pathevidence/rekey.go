@@ -8,85 +8,100 @@ import (
 // RekeyValueLanes re-interns every structural key carried by path evidence from
 // one keyspace into another. It lets a path-evidence lane built in one analysis's
 // keyspace be consumed in another (cross-summary entry-state transfer) without
-// the per-keyspace intern ids diverging. A nil keyspace, or from == to, returns
-// the lane unchanged. The historical name is retained for API compatibility;
-// proofs and implications now carry structural keys too and are rekeyed here.
-func (l Lane) RekeyValueLanes(from, to *keyspace.KeySpace) Lane {
-	if from == nil || to == nil || from == to {
-		return l
+// the per-keyspace intern ids diverging. Same-space imports still validate key
+// ownership; nil provenance succeeds only when the lane carries no structural
+// keys. Proofs and implications carry structural keys and are included.
+func (l Lane) RekeyValueLanes(from, to *keyspace.KeySpace) (Lane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return l, false
+	}
+	if len(l.refinements)+len(l.staticMembers)+len(l.proofs)+len(l.pathPresenceImplications) == 0 {
+		return l, true
+	}
+	if from == nil || to == nil {
+		return l, false
 	}
 	out := l
-	out.refinements = rekeyValueMap(from, to, l.refinements)
-	out.staticMembers = rekeyValueMap(from, to, l.staticMembers)
-	out.proofs = rekeyBranchProofs(from, to, l.proofs)
+	var ok bool
+	if out.refinements, ok = rekeyValueMap(from, to, l.refinements); !ok {
+		return l, false
+	}
+	if out.staticMembers, ok = rekeyValueMap(from, to, l.staticMembers); !ok {
+		return l, false
+	}
+	if out.proofs, ok = rekeyBranchProofs(from, to, l.proofs); !ok {
+		return l, false
+	}
 	out.equalityRootMask = equalityRootMask{}
 	for proof := range out.proofs {
 		out.equalityRootMask.merge(equalityProofRootMask(proof))
 	}
-	out.pathPresenceImplications = rekeyPathPresenceImplications(from, to, l.pathPresenceImplications)
-	return out
+	if out.pathPresenceImplications, ok = rekeyPathPresenceImplications(from, to, l.pathPresenceImplications); !ok {
+		return l, false
+	}
+	return out, true
 }
 
-func rekeyValueMap(from, to *keyspace.KeySpace, in map[keyspace.Key]product.Value) map[keyspace.Key]product.Value {
+func rekeyValueMap(from, to *keyspace.KeySpace, in map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 	if len(in) == 0 {
-		return nil
+		return nil, true
 	}
 	out := make(map[keyspace.Key]product.Value, len(in))
 	for key, value := range in {
 		rekeyed, ok := to.ImportKey(from, key)
 		if !ok {
-			continue
+			return nil, false
 		}
 		out[rekeyed] = value
 	}
-	return out
+	return out, true
 }
 
-func rekeyBranchProofs(from, to *keyspace.KeySpace, in map[BranchProof]struct{}) map[BranchProof]struct{} {
+func rekeyBranchProofs(from, to *keyspace.KeySpace, in map[BranchProof]struct{}) (map[BranchProof]struct{}, bool) {
 	if len(in) == 0 {
-		return nil
+		return nil, true
 	}
 	out := make(map[BranchProof]struct{}, len(in))
 	for proof := range in {
 		path, ok := importRequiredKey(from, to, proof.Path)
 		if !ok {
-			continue
+			return nil, false
 		}
 		other, ok := importOptionalKey(from, to, proof.Other)
 		if !ok {
-			continue
+			return nil, false
 		}
 		proof.Path = path
 		proof.Other = other
 		out[proof] = struct{}{}
 	}
-	return out
+	return out, true
 }
 
-func rekeyPathPresenceImplications(from, to *keyspace.KeySpace, in map[PathPresenceImplication]struct{}) map[PathPresenceImplication]struct{} {
+func rekeyPathPresenceImplications(from, to *keyspace.KeySpace, in map[PathPresenceImplication]struct{}) (map[PathPresenceImplication]struct{}, bool) {
 	if len(in) == 0 {
-		return nil
+		return nil, true
 	}
 	out := make(map[PathPresenceImplication]struct{}, len(in))
 	for implication := range in {
 		trigger, ok := importRequiredKey(from, to, implication.Trigger)
 		if !ok {
-			continue
+			return nil, false
 		}
 		triggerOther, ok := importOptionalKey(from, to, implication.TriggerOther)
 		if !ok {
-			continue
+			return nil, false
 		}
 		target, ok := importRequiredKey(from, to, implication.Target)
 		if !ok {
-			continue
+			return nil, false
 		}
 		implication.Trigger = trigger
 		implication.TriggerOther = triggerOther
 		implication.Target = target
 		out[implication] = struct{}{}
 	}
-	return out
+	return out, true
 }
 
 func importRequiredKey(from, to *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {

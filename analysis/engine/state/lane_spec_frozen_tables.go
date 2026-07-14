@@ -5,8 +5,9 @@ import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 const LaneFrozenTables LaneID = "frozen-tables"
 
 var frozenTablesLaneSpec = laneSpec{
-	id:          LaneFrozenTables,
-	fingerprint: fingerprintFrozenTables,
+	id:           LaneFrozenTables,
+	keySpaceMode: laneKeySpaceFree,
+	fingerprint:  fingerprintFrozenTables,
 	markReachable: func(s State) State {
 		s.frozenTables = s.frozenTables.reachable()
 		return s

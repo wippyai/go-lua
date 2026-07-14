@@ -573,7 +573,11 @@ func heapTableContextHolds(reg *axis.Registry, entryKeys, currentKeys *keyspace.
 	}
 	for id, want := range requiredHeap.Objects {
 		got, ok := currentHeap.Objects[id]
-		if !ok || !heapTableObjectContextHolds(reg, want.Rekey(entryKeys, currentKeys), got) {
+		if !ok {
+			return false
+		}
+		rekeyed, ok := want.Rekey(entryKeys, currentKeys)
+		if !ok || !heapTableObjectContextHolds(reg, rekeyed, got) {
 			return false
 		}
 	}
@@ -740,8 +744,10 @@ func functionValueContextsEqual(reg *axis.Registry, a, b []FunctionValueContext)
 
 func functionValueContextEntryEqual(domain lattice.Lattice[state.State], a, b FunctionValueContext) bool {
 	left := a.Entry
-	if a.EntryKeys != b.EntryKeys {
-		left = left.RekeyPathEvidence(a.EntryKeys, b.EntryKeys)
+	var err error
+	left, err = left.RekeyKeySpace(a.EntryKeys, b.EntryKeys)
+	if err != nil {
+		return false
 	}
 	return domain.Equal(left, b.Entry)
 }

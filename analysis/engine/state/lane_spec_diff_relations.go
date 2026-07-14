@@ -5,8 +5,9 @@ import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 const LaneDiffRelations LaneID = "diff-relations"
 
 var diffRelationsLaneSpec = laneSpec{
-	id:          LaneDiffRelations,
-	fingerprint: fingerprintDiffRelations,
+	id:           LaneDiffRelations,
+	keySpaceMode: laneKeySpaceFree,
+	fingerprint:  fingerprintDiffRelations,
 	markReachable: func(s State) State {
 		s.diffRelations = s.diffRelations.reachable()
 		return s

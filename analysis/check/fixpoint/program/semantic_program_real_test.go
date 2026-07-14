@@ -151,7 +151,11 @@ func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *
 		if wantOK {
 			// Path-evidence keys are local to each independently prepared Result.
 			// Compare semantic paths, not incidental keyspace ordinals.
-			got = got.RekeyPathEvidence(concrete.KeySpace(), oracle.KeySpace())
+			var err error
+			got, err = got.RekeyKeySpace(concrete.KeySpace(), oracle.KeySpace())
+			if err != nil {
+				t.Fatalf("solve %d point %d rekey: %v", solve, point, err)
+			}
 			for _, lane := range state.DefaultLanes() {
 				domain := state.DomainWithLanes(reg, []state.LaneID{lane})
 				if !domain.Equal(want, got) {
@@ -162,13 +166,31 @@ func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *
 		wantBoundary, wantBoundaryOK := oracle.StateAtBoundary(point)
 		gotBoundary, gotBoundaryOK := concrete.StateAtBoundary(point)
 		if gotBoundaryOK {
-			gotBoundary = gotBoundary.RekeyPathEvidence(concrete.KeySpace(), oracle.KeySpace())
+			var err error
+			gotBoundary, err = gotBoundary.RekeyKeySpace(concrete.KeySpace(), oracle.KeySpace())
+			if err != nil {
+				t.Fatalf("solve %d boundary %d rekey: %v", solve, point, err)
+			}
 		}
 		if wantBoundaryOK != gotBoundaryOK || (wantBoundaryOK && !state.Domain(reg).Equal(wantBoundary, gotBoundary)) {
 			t.Fatalf("solve %d boundary observation %d differs", solve, point)
 		}
 		wantOutcome, wantOutcomeOK := oracle.CallOutcomeAt(point)
 		gotOutcome, gotOutcomeOK := concrete.CallOutcomeAt(point)
+		if wantOutcomeOK {
+			var err error
+			wantOutcome, err = wantOutcome.RekeyHeapTableObjects(oracle.KeySpace(), oracle.KeySpace())
+			if err != nil {
+				t.Fatalf("solve %d lowered CallOutcome %d oracle rekey: %v", solve, point, err)
+			}
+		}
+		if gotOutcomeOK {
+			var err error
+			gotOutcome, err = gotOutcome.RekeyHeapTableObjects(concrete.KeySpace(), oracle.KeySpace())
+			if err != nil {
+				t.Fatalf("solve %d lowered CallOutcome %d concrete rekey: %v", solve, point, err)
+			}
+		}
 		if wantOutcomeOK != gotOutcomeOK || (wantOutcomeOK && !reflect.DeepEqual(wantOutcome, gotOutcome)) {
 			t.Fatalf("solve %d lowered CallOutcome %d differs", solve, point)
 		}
@@ -176,7 +198,11 @@ func comparePreparedResults(t *testing.T, reg *axis.Registry, oracle, concrete *
 	wantExit, wantExitOK := oracle.ExitState()
 	gotExit, gotExitOK := concrete.ExitState()
 	if gotExitOK {
-		gotExit = gotExit.RekeyPathEvidence(concrete.KeySpace(), oracle.KeySpace())
+		var err error
+		gotExit, err = gotExit.RekeyKeySpace(concrete.KeySpace(), oracle.KeySpace())
+		if err != nil {
+			t.Fatalf("solve %d exit rekey: %v", solve, err)
+		}
 	}
 	if wantExitOK != gotExitOK || (wantExitOK && !state.Domain(reg).Equal(wantExit, gotExit)) {
 		t.Fatalf("solve %d exit differs", solve)

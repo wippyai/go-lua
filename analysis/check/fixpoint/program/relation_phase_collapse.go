@@ -67,7 +67,14 @@ func prepareStrictRelationOwners(config body.Config, stats *Stats, activation *r
 		ownerConfig := checkConfigWithSummaries(config, tracked, contextKeyFunc(keys, identity.Summary), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, identity.Summary), keys.metatableProof, nil, observe, true, nil, stats)
 		installRelationInputDigests(&ownerConfig, tracked, true)
 		if relation.Shape() != (transformer.Shape{}) {
-			ownerConfig = keyedFunctionMaterializeConfig(identity.Prepared, ownerConfig, keys, tracked, origin)
+			var err error
+			ownerConfig, err = keyedFunctionMaterializeConfig(identity.Prepared, ownerConfig, keys, tracked, origin)
+			if err != nil {
+				for _, retained := range results {
+					retained.result.ReleaseTransient()
+				}
+				return nil, err
+			}
 		}
 		result, err := solvePreparedCountedWithTransfers(identity.Prepared, ownerConfig, prepassCounter(stats), nil, solveAttributionFor(stats, identity.Prepared, identity.Summary, SolvePhasePrepass, false))
 		if err != nil {
@@ -167,7 +174,14 @@ func prepareStrictRelationOwners(config body.Config, stats *Stats, activation *r
 		tracked, observe := relationTrackedSummaryReader(config.Registry, reader, true, stats)
 		ownerConfig := checkConfigWithSummaries(config, tracked, contextKeyFunc(keys, contextual.context), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, contextual.context), keys.metatableProof, nil, observe, true, nil, stats)
 		installRelationInputDigests(&ownerConfig, tracked, true)
-		ownerConfig = keyedFunctionMaterializeConfig(contextual.base.Prepared, ownerConfig, keys, tracked, *origin)
+		var err error
+		ownerConfig, err = keyedFunctionMaterializeConfig(contextual.base.Prepared, ownerConfig, keys, tracked, *origin)
+		if err != nil {
+			for _, retained := range results {
+				retained.result.ReleaseTransient()
+			}
+			return nil, err
+		}
 		result, err := solvePreparedCountedWithTransfers(contextual.base.Prepared, ownerConfig, prepassCounter(stats), nil, solveAttributionFor(stats, contextual.base.Prepared, contextual.context, SolvePhasePrepass, true))
 		if err != nil {
 			if result != nil {

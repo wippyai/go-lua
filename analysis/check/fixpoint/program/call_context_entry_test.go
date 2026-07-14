@@ -128,7 +128,10 @@ func TestParamInferenceRekeysReachableHeapIntoCalleeKeySpace(t *testing.T) {
 	inferred.observe(callee, []product.Value{tableValue}, []bool{true}, callerA, callerAKeys)
 	inferred.observe(callee, []product.Value{tableValue}, []bool{true}, callerC, callerCKeys)
 
-	got := inferred.seedSource(callee, calleeBKeys)
+	got, err := inferred.seedSource(callee, calleeBKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
 	object := got.ReadHeapTableObject(reg, tableID)
 	members := object.StaticMembers()
 	if len(members) != 1 {
@@ -166,7 +169,11 @@ func TestParamInferenceNeverCopiesHeapWithoutKeySpaceProvenance(t *testing.T) {
 	callee := symbol.ID(92)
 	inferred := newParamInference(reg, map[symbol.ID]struct{}{callee: {}})
 	inferred.observe(callee, []product.Value{value}, []bool{true}, caller, nil)
-	if got := inferred.seedSource(callee, keyspace.New()).HeapTableObjectsSnapshot(); len(got.Objects) != 0 || got.Top {
+	seed, err := inferred.seedSource(callee, keyspace.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seed.HeapTableObjectsSnapshot(); len(got.Objects) != 0 || got.Top {
 		t.Fatalf("heap without source provenance escaped inference: %#v", got)
 	}
 }

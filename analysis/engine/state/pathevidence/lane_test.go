@@ -181,7 +181,10 @@ func TestRekeyValueLanesKeepsStableSymbolStaticMembers(t *testing.T) {
 	}
 	l, _ := (Lane{}).WritePathStaticMember(stable, present)
 
-	out := l.RekeyValueLanes(from, to)
+	out, ok := l.RekeyValueLanes(from, to)
+	if !ok {
+		t.Fatal("RekeyValueLanes failed")
+	}
 	toStable, ok := to.FromStableSymbol(7, to.Segments(mustStructKey(t, to, "sym7@1.run")))
 	if !ok {
 		t.Fatal("target stable key failed")
@@ -239,7 +242,10 @@ func TestRekeyValueLanesImportsEveryKeyKindAcrossOppositeInternOrder(t *testing.
 		lane, _ = lane.AddPathPresenceImplication(NewPathPresenceImplication(key, presence.Present(), target, presence.Present()))
 	}
 	lane, _ = lane.AddBranchProof(BranchProof{Kind: BranchProofPathEqual, Path: named, Other: unversioned})
-	rekeyed := lane.RekeyValueLanes(from, to)
+	rekeyed, ok := lane.RekeyValueLanes(from, to)
+	if !ok {
+		t.Fatal("RekeyValueLanes failed")
+	}
 	if len(rekeyed.refinements) != len(keys) || len(rekeyed.staticMembers) != len(keys) {
 		t.Fatalf("rekey dropped key kinds: refinements=%d static=%d want=%d", len(rekeyed.refinements), len(rekeyed.staticMembers), len(keys))
 	}

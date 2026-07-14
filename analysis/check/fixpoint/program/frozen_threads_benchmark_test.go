@@ -488,7 +488,11 @@ func firstFrozenBodyDivergence(reg *axis.Registry, legacy, active *body.Result, 
 			return fmt.Sprintf("%s/point/%d/presence", path, point)
 		}
 		if lok {
-			right = right.RekeyPathEvidence(active.KeySpace(), legacy.KeySpace())
+			var err error
+			right, err = right.RekeyKeySpace(active.KeySpace(), legacy.KeySpace())
+			if err != nil {
+				return fmt.Sprintf("%s/point/%d/rekey: %v", path, point, err)
+			}
 			for _, lane := range state.DefaultLanes() {
 				domain := state.DomainWithLanes(reg, []state.LaneID{lane})
 				if !domain.Equal(left, right) {
@@ -499,7 +503,11 @@ func firstFrozenBodyDivergence(reg *axis.Registry, legacy, active *body.Result, 
 		leftBoundary, lbo := legacy.StateAtBoundary(point)
 		rightBoundary, rbo := active.StateAtBoundary(point)
 		if rbo {
-			rightBoundary = rightBoundary.RekeyPathEvidence(active.KeySpace(), legacy.KeySpace())
+			var err error
+			rightBoundary, err = rightBoundary.RekeyKeySpace(active.KeySpace(), legacy.KeySpace())
+			if err != nil {
+				return fmt.Sprintf("%s/point/%d/boundary-rekey: %v", path, point, err)
+			}
 		}
 		if lbo != rbo || (lbo && !state.Domain(reg).Equal(leftBoundary, rightBoundary)) {
 			return fmt.Sprintf("%s/point/%d/boundary", path, point)
@@ -508,7 +516,11 @@ func firstFrozenBodyDivergence(reg *axis.Registry, legacy, active *body.Result, 
 	leftExit, leo := legacy.ExitState()
 	rightExit, reo := active.ExitState()
 	if reo {
-		rightExit = rightExit.RekeyPathEvidence(active.KeySpace(), legacy.KeySpace())
+		var err error
+		rightExit, err = rightExit.RekeyKeySpace(active.KeySpace(), legacy.KeySpace())
+		if err != nil {
+			return fmt.Sprintf("%s/exit-rekey: %v", path, err)
+		}
 	}
 	if leo != reo || (leo && !state.Domain(reg).Equal(leftExit, rightExit)) {
 		return path + "/exit"

@@ -609,7 +609,10 @@ func TestSummaryJoinRekeysHeapTableObjectsAcrossKeySpaces(t *testing.T) {
 	}
 
 	target := keyspace.New()
-	rekeyed := joined.RekeyHeapTableObjects(target)
+	rekeyed, err := joined.RekeyHeapTableObjects(target)
+	if err != nil {
+		t.Fatal(err)
+	}
 	object, ok = rekeyed.HeapTableObjects[id]
 	if !ok {
 		t.Fatalf("RekeyHeapTableObjects dropped heap object %v", id)
@@ -683,9 +686,12 @@ func TestNormalizeClearsStaleHeapKeySpaceFromNonBottomSummary(t *testing.T) {
 func TestNormalizeRejectsHeapObjectsWithoutProducingKeySpace(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "missing-producing-keyspace", Index: 1}
+	member := mustRootlessSuffix(t, keyspace.New(), "member")
 	assertPanics(t, func() {
 		_ = Normalize(reg, Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
-			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: product.Top(), StaticMembers: map[keyspace.Key]product.Value{member: product.Top()},
+			}),
 		}})
 	})
 }
@@ -693,8 +699,11 @@ func TestNormalizeRejectsHeapObjectsWithoutProducingKeySpace(t *testing.T) {
 func TestJoinAndWidenRejectHeapObjectsWithoutProducingKeySpace(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "missing-join-keyspace", Index: 1}
+	member := mustRootlessSuffix(t, keyspace.New(), "member")
 	malformed := Summary{HeapTableObjects: map[identity.ID]heapidentity.TableObject{
-		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+		id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: product.Top(), StaticMembers: map[keyspace.Key]product.Value{member: product.Top()},
+		}),
 	}}
 	valid := Summary{
 		HeapKeySpace: keyspace.New(),

@@ -24,6 +24,18 @@ func newLaneCatalog(specs []laneSpec) LaneCatalog {
 		if i >= 63 {
 			panic("state: lane catalog supports at most 63 lanes")
 		}
+		switch out[i].keySpaceMode {
+		case laneKeySpaceFree:
+			if out[i].rekey != nil {
+				panic(fmt.Sprintf("state: keyspace-free lane %q has a rekey operation", out[i].id))
+			}
+		case laneKeySpaceOwned:
+			if out[i].rekey == nil {
+				panic(fmt.Sprintf("state: keyspace-owned lane %q has no rekey operation", out[i].id))
+			}
+		default:
+			panic(fmt.Sprintf("state: lane %q has no keyspace ownership declaration", out[i].id))
+		}
 		out[i].bit = laneMask(1) << i
 	}
 	return LaneCatalog{specs: out}

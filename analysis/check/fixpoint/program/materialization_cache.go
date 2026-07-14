@@ -115,6 +115,9 @@ type materializedSolveCacheEntry struct {
 type materializedSolveEntryState struct {
 	state state.State
 	ok    bool
+	// invalid is distinct from an absent entry: it denies cache reuse even
+	// against another failed import rather than making two failures look equal.
+	invalid bool
 }
 
 type trackedSummaryRead struct {
@@ -228,7 +231,7 @@ func solveMaterializedPrepared(
 	routing uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
-	buildConfig func(summary.Reader) body.Config,
+	buildConfig func(summary.Reader) (body.Config, error),
 	counter *int,
 ) (*body.Result, bool, error) {
 	return solveMaterializedPreparedAttributed(cache, prepared, owner, routing, 0, entry, summaries, buildConfig, counter, nil)
@@ -242,7 +245,7 @@ func solveMaterializedPreparedAttributed(
 	resolution uint64,
 	entry materializedSolveEntryState,
 	summaries summary.Reader,
-	buildConfig func(summary.Reader) body.Config,
+	buildConfig func(summary.Reader) (body.Config, error),
 	counter *int,
 	attribution *solveAttribution,
 ) (*body.Result, bool, error) {
@@ -250,16 +253,26 @@ func solveMaterializedPreparedAttributed(
 		return nil, false, nil
 	}
 	if cache == nil {
-		result, err := solvePreparedCountedWithTransfers(prepared, buildConfig(summaries), counter, nil, attribution)
+		config, err := buildConfig(summaries)
+		if err != nil {
+			return nil, false, err
+		}
+		result, err := solvePreparedCountedWithTransfers(prepared, config, counter, nil, attribution)
 		return result, true, err
 	}
 	if cached, ok := cache.read(prepared, owner, routing, resolution, entry, summaries); ok {
-		config := buildConfig(summaries)
+		config, err := buildConfig(summaries)
+		if err != nil {
+			return nil, false, err
+		}
 		result, err := body.RebindBoundaryProvidersExact(cached, prepared, config.SolveConfig())
 		return result, false, err
 	}
 	if cache.handoff != nil {
-		config := buildConfig(summaries)
+		config, err := buildConfig(summaries)
+		if err != nil {
+			return nil, false, err
+		}
 		result, deps, ok, err := cache.handoff.takeMaterializationResult(prepared, owner, resolution, summaries, config.SolveConfig())
 		if err != nil {
 			return nil, false, err
@@ -288,7 +301,10 @@ func solveMaterializedPreparedAttributed(
 		}
 	}
 	tracked := &trackingSummaryReader{reg: cache.reg, base: summaries}
-	config := buildConfig(tracked)
+	config, err := buildConfig(tracked)
+	if err != nil {
+		return nil, false, err
+	}
 	config.SummaryInputs = func() []body.SummaryInput {
 		return trackedSummaryInputs(config.Context, cache.reg, tracked.deps)
 	}
@@ -475,13 +491,17 @@ func materializedSolveEntryFor(prepared *body.Static, fn keyedFunction) material
 	if prepared == nil || !fn.hasEntryState {
 		return materializedSolveEntryState{}
 	}
-	return materializedSolveEntryState{
-		state: fn.entryState.RekeyPathEvidence(fn.entryKeys, prepared.KeySpace()),
-		ok:    true,
+	rekeyed, err := fn.entryState.RekeyKeySpace(fn.entryKeys, prepared.KeySpace())
+	if err != nil {
+		return materializedSolveEntryState{invalid: true}
 	}
+	return materializedSolveEntryState{state: rekeyed, ok: true}
 }
 
 func materializedSolveEntryStatesEqual(reg *axis.Registry, a, b materializedSolveEntryState) bool {
+	if a.invalid || b.invalid {
+		return false
+	}
 	if a.ok != b.ok {
 		return false
 	}

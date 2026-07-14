@@ -29,9 +29,9 @@ func ownerHasCapturedFunctionDefinitions(keys *programKeys, owner *ast.FunctionE
 	return false
 }
 
-func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.FunctionExpr, result *body.Result, reg *axis.Registry) {
+func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.FunctionExpr, result *body.Result, reg *axis.Registry) error {
 	if keys == nil || keys.bindings == nil || result == nil || reg == nil {
-		return
+		return nil
 	}
 	entryKeys := result.KeySpace()
 	for i := range keys.functions {
@@ -55,8 +55,12 @@ func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.F
 			continue
 		}
 		entry := keys.functions[i].entryState
-		if keys.functions[i].hasEntryState && keys.functions[i].entryKeys != nil {
-			entry = entry.RekeyPathEvidence(keys.functions[i].entryKeys, entryKeys)
+		if keys.functions[i].hasEntryState {
+			var err error
+			entry, err = entry.RekeyKeySpace(keys.functions[i].entryKeys, entryKeys)
+			if err != nil {
+				return err
+			}
 		}
 		updated, seen := applyCapturedClosureEntryState(
 			reg,
@@ -74,17 +78,17 @@ func applyDefinitionCaptureEntryStatesFromResult(keys *programKeys, owner *ast.F
 		keys.functions[i].entryKeys = entryKeys
 		keys.functions[i].hasEntryState = true
 	}
-	applyEscapedClosureEntryStatesFromResult(keys, owner, result, reg)
+	return applyEscapedClosureEntryStatesFromResult(keys, owner, result, reg)
 }
 
-func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.FunctionExpr, result *body.Result, reg *axis.Registry) {
+func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.FunctionExpr, result *body.Result, reg *axis.Registry) error {
 	if keys == nil || keys.bindings == nil || result == nil || reg == nil {
-		return
+		return nil
 	}
 	entryKeys := result.KeySpace()
 	graph := result.Graph()
 	if graph == nil {
-		return
+		return nil
 	}
 	dom := dominance.ComputeImmediateDominatorInfo(graph)
 	seenEscape := make(map[int]struct{})
@@ -109,8 +113,12 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 				continue
 			}
 			entry := keys.functions[i].entryState
-			if keys.functions[i].hasEntryState && keys.functions[i].entryKeys != nil {
-				entry = entry.RekeyPathEvidence(keys.functions[i].entryKeys, entryKeys)
+			if keys.functions[i].hasEntryState {
+				var err error
+				entry, err = entry.RekeyKeySpace(keys.functions[i].entryKeys, entryKeys)
+				if err != nil {
+					return err
+				}
 			}
 			updated, _ := applyCapturedClosureEntryState(
 				reg,
@@ -122,7 +130,9 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 				captureSeedSource{result: result, point: point, scope: captureSeedAtEscapedDefinition},
 			)
 			if _, ok := seenEscape[i]; ok {
-				mergeContextEntry(reg, &keys.functions[i], entryKeys, updated)
+				if _, err := mergeContextEntry(reg, &keys.functions[i], entryKeys, updated); err != nil {
+					return err
+				}
 			} else {
 				keys.functions[i].entryState = updated
 				keys.functions[i].entryKeys = entryKeys
@@ -131,6 +141,7 @@ func applyEscapedClosureEntryStatesFromResult(keys *programKeys, owner *ast.Func
 			}
 		}
 	}
+	return nil
 }
 
 func functionEscapesAtReturnPoint(result *body.Result, origin bind.FunctionOrigin, point cfg.Point, dom *dominance.ImmediateDominators) bool {

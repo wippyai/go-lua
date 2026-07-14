@@ -64,7 +64,11 @@ func (t PreparedSummaryTransaction) Apply(ctx transfer.NodeContext, site factflo
 	// transformer/relation callers supply freshly specialized summaries directly.
 	// Keep the ownership conversion at this shared publication boundary so no
 	// adapter can label producer-local heap keys as caller-owned.
-	got = got.RekeyHeapTableObjects(t.callerKeySpace)
+	var err error
+	got, err = got.RekeyHeapTableObjects(t.callerKeySpace)
+	if err != nil {
+		panic(err)
+	}
 	got = materializeReturnRootTypesFromFacts(ctx.Registry, t.typeValues, got)
 	if len(got.ReturnParamPathAliases) != 0 {
 		if summaryOwned {

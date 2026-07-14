@@ -42,3 +42,26 @@ func (l effectDeltaLane) with(key effectdelta.Key, delta effectdelta.Value) effe
 	requireNonBottomLaneValue(delta.Change == effectdelta.ChangeBottom, "effect delta", "delta")
 	return effectDeltaLane{l.mapLane.with(key, delta)}
 }
+
+func (l effectDeltaLane) rekey(from, to *keyspace.KeySpace) (effectDeltaLane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return l, false
+	}
+	if l.top || len(l.values) == 0 {
+		return l, true
+	}
+	if from == nil || to == nil {
+		return l, false
+	}
+	values := make(map[effectdelta.Key]effectdelta.Value, len(l.values))
+	for key, value := range l.values {
+		target, ok := to.ImportKey(from, key.Target)
+		if !ok {
+			return l, false
+		}
+		key.Target = target
+		values[key] = value
+	}
+	l.values = values
+	return l, true
+}

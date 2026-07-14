@@ -58,23 +58,26 @@ func (l lenFloorLane) write(key keyspace.Key, lo int64) (lenFloorLane, bool) {
 	return l, true
 }
 
-func (l lenFloorLane) rekey(from, to *keyspace.KeySpace) lenFloorLane {
-	if from == nil || to == nil || from == to || l.lane.Bottom() {
-		return l
+func (l lenFloorLane) rekey(from, to *keyspace.KeySpace) (lenFloorLane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return l, false
+	}
+	if l.lane.Bottom() || len(l.lane.Values()) == 0 {
+		return l, true
+	}
+	if from == nil || to == nil {
+		return l, false
 	}
 	values := l.lane.Values()
-	if len(values) == 0 {
-		return l
-	}
 	rekeyed := make(map[keyspace.Key]lenbound.Floor, len(values))
 	for key, floor := range values {
-		next, ok := to.FromStateKey(from.Format(key))
+		next, ok := to.ImportKey(from, key)
 		if !ok {
-			continue
+			return l, false
 		}
 		rekeyed[next] = floor
 	}
-	return lenFloorLane{lane: lift.MustMapValues(rekeyed)}
+	return lenFloorLane{lane: lift.MustMapValues(rekeyed)}, true
 }
 
 func (l lenFloorLane) clearPathKeySubtrees(ks *keyspace.KeySpace, prefixes []pathdom.PathKey) (lenFloorLane, bool) {

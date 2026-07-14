@@ -98,23 +98,26 @@ func numBoundSnapshot(lane numBoundLane, ks *keyspace.KeySpace) (bool, map[patha
 	return false, out
 }
 
-func numBoundRekey(lane numBoundLane, from, to *keyspace.KeySpace) numBoundLane {
-	if from == nil || to == nil || from == to || lane.lane.Bottom() {
-		return lane
+func numBoundRekey(lane numBoundLane, from, to *keyspace.KeySpace) (numBoundLane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return lane, false
+	}
+	if lane.lane.Bottom() || len(lane.lane.Values()) == 0 {
+		return lane, true
+	}
+	if from == nil || to == nil {
+		return lane, false
 	}
 	values := lane.lane.Values()
-	if len(values) == 0 {
-		return lane
-	}
 	rekeyed := make(map[keyspace.Key]int64, len(values))
 	for key, value := range values {
-		next, ok := to.FromStateKey(from.Format(key))
+		next, ok := to.ImportKey(from, key)
 		if !ok {
-			continue
+			return lane, false
 		}
 		rekeyed[next] = value
 	}
-	return numBoundLane{lane: lift.MustMapValues(rekeyed)}
+	return numBoundLane{lane: lift.MustMapValues(rekeyed)}, true
 }
 
 const (

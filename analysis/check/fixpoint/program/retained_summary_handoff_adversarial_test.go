@@ -66,7 +66,7 @@ func TestRetainedSummaryHandoffRejectsRevisedProviderWithoutPublishingStaleResul
 	materialSolves := 0
 	got, solved, err := solveMaterializedPreparedAttributed(
 		materialCache, prepared, ownerKey, 21, resolution, materializedSolveEntryState{}, readers[2],
-		retainedProductionConfig(reg, dep, &body.Stats{}), &materialSolves, nil,
+		infallibleMaterializedBuild(retainedProductionConfig(reg, dep, &body.Stats{})), &materialSolves, nil,
 	)
 	if err != nil {
 		t.Fatalf("revised-provider materialization: %v", err)
@@ -128,7 +128,7 @@ func TestRetainedSummaryHandoffCancellationTransfersAndPublishesNothing(t *testi
 	materialSolves := 0
 	result, solved, err := solveMaterializedPreparedAttributed(
 		materialCache, prepared, ownerKey, 22, resolution, materializedSolveEntryState{}, readers[1],
-		canceledBuild, &materialSolves, nil,
+		infallibleMaterializedBuild(canceledBuild), &materialSolves, nil,
 	)
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, solve.ErrCanceled) {
 		t.Fatalf("canceled handoff error=%v, want context and solve cancellation", err)
@@ -193,7 +193,7 @@ func TestRetainedSummaryHandoffFreezesStructuralCallbacksOnce(t *testing.T) {
 	}
 	result, solved, err := solveMaterializedPreparedAttributed(
 		newMaterializedSolveCache(reg, run), prepared, ownerKey, 23, resolution,
-		materializedSolveEntryState{}, readers[1], materialBuild, nil, nil,
+		materializedSolveEntryState{}, readers[1], infallibleMaterializedBuild(materialBuild), nil, nil,
 	)
 	if err != nil || result == nil || solved {
 		t.Fatalf("handoff result=%v solved=%v err=%v", result != nil, solved, err)
@@ -250,7 +250,7 @@ return box
 	}
 	got, solved, err := solveMaterializedPreparedAttributed(
 		newMaterializedSolveCache(reg, run), prepared, ownerKey, 24, resolution,
-		materializedSolveEntryState{}, readers[1], build, nil, nil,
+		materializedSolveEntryState{}, readers[1], infallibleMaterializedBuild(build), nil, nil,
 	)
 	if err != nil || got == nil || solved {
 		t.Fatalf("handoff result=%v solved=%v err=%v", got != nil, solved, err)

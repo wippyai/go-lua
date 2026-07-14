@@ -60,16 +60,23 @@ func (l heapTableIdentityLane) without(id identity.ID) (heapTableIdentityLane, b
 	return l, true
 }
 
-func (l heapTableIdentityLane) rekey(from, to *keyspace.KeySpace) heapTableIdentityLane {
-	if from == nil || to == nil || from == to || l.top || len(l.values) == 0 {
-		return l
+func (l heapTableIdentityLane) rekey(from, to *keyspace.KeySpace) (heapTableIdentityLane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return l, false
+	}
+	if l.top || len(l.values) == 0 {
+		return l, true
 	}
 	values := make(map[identity.ID]heapidentity.TableObject, len(l.values))
 	for id, object := range l.values {
-		values[id] = object.Rekey(from, to)
+		rekeyed, ok := object.Rekey(from, to)
+		if !ok {
+			return l, false
+		}
+		values[id] = rekeyed
 	}
 	l.values = values
-	return l
+	return l, true
 }
 
 func (l heapTableIdentityLane) with(id identity.ID, object heapidentity.TableObject) heapTableIdentityLane {

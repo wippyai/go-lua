@@ -87,14 +87,14 @@ func TestInactiveRelationOwnerCachePolicyFencesMaterializationAndHandoff(t *test
 	var materialSolves int
 	first, solved, err := solveMaterializedPreparedAttributed(
 		materialized, prepared, activeKey, 7, legacyResolution,
-		materializedSolveEntryState{}, reader, build, &materialSolves, nil,
+		materializedSolveEntryState{}, reader, infallibleMaterializedBuild(build), &materialSolves, nil,
 	)
 	if err != nil || !solved || materialSolves != 1 {
 		t.Fatalf("legacy materialization = solved:%v solves:%d err:%v, want true/1/nil", solved, materialSolves, err)
 	}
 	second, solved, err := solveMaterializedPreparedAttributed(
 		materialized, prepared, activeKey, 7, activeResolution,
-		materializedSolveEntryState{}, reader, build, &materialSolves, nil,
+		materializedSolveEntryState{}, reader, infallibleMaterializedBuild(build), &materialSolves, nil,
 	)
 	if err != nil || !solved || materialSolves != 2 || second == first {
 		t.Fatalf("active materialization = solved:%v solves:%d same:%v err:%v, want true/2/false/nil", solved, materialSolves, second == first, err)
@@ -118,7 +118,7 @@ func TestInactiveRelationOwnerCachePolicyFencesMaterializationAndHandoff(t *test
 	handoffSolves := 0
 	_, solved, err = solveMaterializedPreparedAttributed(
 		handoffCache, prepared, activeKey, 7, activeResolution,
-		materializedSolveEntryState{}, reader, build, &handoffSolves, nil,
+		materializedSolveEntryState{}, reader, infallibleMaterializedBuild(build), &handoffSolves, nil,
 	)
 	if err != nil || !solved || handoffSolves != 1 {
 		t.Fatalf("active handoff fence = solved:%v solves:%d err:%v, want true/1/nil", solved, handoffSolves, err)

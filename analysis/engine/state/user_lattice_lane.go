@@ -88,21 +88,27 @@ func (l userLatticeLane) applyCallBoundary(rt userlattice.Runtime) (userLatticeL
 	return l, true
 }
 
-func (l userLatticeLane) rekey(from, to *keyspace.KeySpace) userLatticeLane {
-	if from == nil || to == nil || from == to || l.top || len(l.values) == 0 {
-		return l
+func (l userLatticeLane) rekey(from, to *keyspace.KeySpace) (userLatticeLane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return l, false
+	}
+	if l.top || len(l.values) == 0 {
+		return l, true
+	}
+	if from == nil || to == nil {
+		return l, false
 	}
 	rekeyed := make(map[userLatticeKey]userlattice.Element, len(l.values))
 	for key, value := range l.values {
-		next, ok := to.FromStateKey(from.Format(key.path))
+		next, ok := to.ImportKey(from, key.path)
 		if !ok {
-			continue
+			return l, false
 		}
 		key.path = next
 		rekeyed[key] = value
 	}
 	l.values = rekeyed
-	return l
+	return l, true
 }
 
 func (l userLatticeLane) snapshot(rt userlattice.Runtime, ks *keyspace.KeySpace) UserLatticesSnapshot {

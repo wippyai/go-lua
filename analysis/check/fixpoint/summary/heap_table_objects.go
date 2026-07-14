@@ -10,9 +10,19 @@ import (
 )
 
 func requireHeapKeySpace(s Summary, operation string) {
-	if len(s.HeapTableObjects) != 0 && s.HeapKeySpace == nil {
-		panic(fmt.Sprintf("summary %s: non-empty HeapTableObjects has no producing HeapKeySpace", operation))
+	if len(s.HeapTableObjects) != 0 && s.HeapKeySpace != nil && !s.HeapKeySpace.Valid() ||
+		!heapTableObjectsStructuralKeyFree(s.HeapTableObjects) && s.HeapKeySpace == nil {
+		panic(fmt.Sprintf("summary %s: non-empty HeapTableObjects has no valid producing HeapKeySpace", operation))
 	}
+}
+
+func heapTableObjectsStructuralKeyFree(objects map[identity.ID]heapidentity.TableObject) bool {
+	for _, object := range objects {
+		if !object.StructuralKeyFree() {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeHeapTableObjects(reg *axis.Registry, in map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
@@ -62,24 +72,42 @@ func heapTableObjectsLessOrEq(reg *axis.Registry, a, b map[identity.ID]heapident
 }
 
 func summaryHeapTableObjectsEqual(reg *axis.Registry, a, b Summary) bool {
-	requireHeapKeySpace(a, "equal left operand")
-	requireHeapKeySpace(b, "equal right operand")
+	if len(a.HeapTableObjects) != 0 && a.HeapKeySpace != nil && !a.HeapKeySpace.Valid() ||
+		len(b.HeapTableObjects) != 0 && b.HeapKeySpace != nil && !b.HeapKeySpace.Valid() ||
+		!heapTableObjectsStructuralKeyFree(a.HeapTableObjects) && a.HeapKeySpace == nil ||
+		!heapTableObjectsStructuralKeyFree(b.HeapTableObjects) && b.HeapKeySpace == nil {
+		return false
+	}
 	ks := heapKeySpaceForPair(a, b)
+	left, leftOK := heapTableObjectsInKeySpace(a, ks)
+	right, rightOK := heapTableObjectsInKeySpace(b, ks)
+	if !leftOK || !rightOK {
+		return false
+	}
 	return heapTableObjectsEqual(
 		reg,
-		heapTableObjectsInKeySpace(a, ks),
-		heapTableObjectsInKeySpace(b, ks),
+		left,
+		right,
 	)
 }
 
 func summaryHeapTableObjectsLessOrEq(reg *axis.Registry, a, b Summary) bool {
-	requireHeapKeySpace(a, "less-or-equal left operand")
-	requireHeapKeySpace(b, "less-or-equal right operand")
+	if len(a.HeapTableObjects) != 0 && a.HeapKeySpace != nil && !a.HeapKeySpace.Valid() ||
+		len(b.HeapTableObjects) != 0 && b.HeapKeySpace != nil && !b.HeapKeySpace.Valid() ||
+		!heapTableObjectsStructuralKeyFree(a.HeapTableObjects) && a.HeapKeySpace == nil ||
+		!heapTableObjectsStructuralKeyFree(b.HeapTableObjects) && b.HeapKeySpace == nil {
+		return false
+	}
 	ks := heapKeySpaceForPair(a, b)
+	left, leftOK := heapTableObjectsInKeySpace(a, ks)
+	right, rightOK := heapTableObjectsInKeySpace(b, ks)
+	if !leftOK || !rightOK {
+		return false
+	}
 	return heapTableObjectsLessOrEq(
 		reg,
-		heapTableObjectsInKeySpace(a, ks),
-		heapTableObjectsInKeySpace(b, ks),
+		left,
+		right,
 	)
 }
 
@@ -98,30 +126,39 @@ func widenHeapTableObjects(reg *axis.Registry, prev, next map[identity.ID]heapid
 }
 
 func heapKeySpaceForPair(a, b Summary) *keyspace.KeySpace {
-	if a.HeapKeySpace != nil {
+	if a.HeapKeySpace != nil && a.HeapKeySpace.Valid() {
 		return a.HeapKeySpace
 	}
-	return b.HeapKeySpace
+	if b.HeapKeySpace != nil && b.HeapKeySpace.Valid() {
+		return b.HeapKeySpace
+	}
+	return nil
 }
 
-func heapTableObjectsInKeySpace(s Summary, target *keyspace.KeySpace) map[identity.ID]heapidentity.TableObject {
+func heapTableObjectsInKeySpace(s Summary, target *keyspace.KeySpace) (map[identity.ID]heapidentity.TableObject, bool) {
 	if len(s.HeapTableObjects) == 0 {
-		return nil
+		return nil, true
 	}
-	if target == nil || s.HeapKeySpace == nil || s.HeapKeySpace == target {
-		return s.HeapTableObjects
+	rekeyed, err := s.RekeyHeapTableObjects(target)
+	if err != nil {
+		return nil, false
 	}
-	return s.RekeyHeapTableObjects(target).HeapTableObjects
+	return rekeyed.HeapTableObjects, true
 }
 
 func joinSummaryHeapTableObjects(reg *axis.Registry, a, b Summary) (map[identity.ID]heapidentity.TableObject, *keyspace.KeySpace) {
 	requireHeapKeySpace(a, "join left operand")
 	requireHeapKeySpace(b, "join right operand")
 	ks := heapKeySpaceForPair(a, b)
+	left, leftOK := heapTableObjectsInKeySpace(a, ks)
+	right, rightOK := heapTableObjectsInKeySpace(b, ks)
+	if !leftOK || !rightOK {
+		panic("summary join: cannot import heap table objects into a common keyspace")
+	}
 	return joinHeapTableObjects(
 		reg,
-		heapTableObjectsInKeySpace(a, ks),
-		heapTableObjectsInKeySpace(b, ks),
+		left,
+		right,
 	), ks
 }
 
@@ -129,9 +166,14 @@ func widenSummaryHeapTableObjects(reg *axis.Registry, prev, next Summary) (map[i
 	requireHeapKeySpace(prev, "widen previous operand")
 	requireHeapKeySpace(next, "widen next operand")
 	ks := heapKeySpaceForPair(prev, next)
+	left, leftOK := heapTableObjectsInKeySpace(prev, ks)
+	right, rightOK := heapTableObjectsInKeySpace(next, ks)
+	if !leftOK || !rightOK {
+		panic("summary widen: cannot import heap table objects into a common keyspace")
+	}
 	return widenHeapTableObjects(
 		reg,
-		heapTableObjectsInKeySpace(prev, ks),
-		heapTableObjectsInKeySpace(next, ks),
+		left,
+		right,
 	), ks
 }

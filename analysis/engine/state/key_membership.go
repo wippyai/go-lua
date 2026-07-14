@@ -271,6 +271,81 @@ func (l keyMembershipLane) clone() keyMembershipLane {
 	}
 }
 
+func (l keyMembershipLane) rekey(from, to *keyspace.KeySpace) (keyMembershipLane, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return l, false
+	}
+	if l.bottom || len(l.path)+len(l.dynamic)+len(l.dynamicAll)+len(l.valueOrigins)+len(l.readOrigins)+len(l.pendingRestores) == 0 {
+		return l, true
+	}
+	if from == nil || to == nil {
+		return l, false
+	}
+	out := l
+	var ok bool
+	if out.path, ok = rekeySet(l.path, func(value KeyMembership) (KeyMembership, bool) {
+		return rekeyMembership(from, to, value)
+	}); !ok {
+		return l, false
+	}
+	if out.dynamic, ok = rekeySet(l.dynamic, func(value KeyMembership) (KeyMembership, bool) {
+		return rekeyMembership(from, to, value)
+	}); !ok {
+		return l, false
+	}
+	if out.dynamicAll, ok = rekeySet(l.dynamicAll, func(value KeyMembership) (KeyMembership, bool) {
+		return rekeyMembership(from, to, value)
+	}); !ok {
+		return l, false
+	}
+	if out.valueOrigins, ok = rekeySet(l.valueOrigins, func(value DynamicIndexValueOrigin) (DynamicIndexValueOrigin, bool) {
+		container, ok := to.ImportKey(from, value.Container)
+		value.Container = container
+		return value, ok
+	}); !ok {
+		return l, false
+	}
+	if out.readOrigins, ok = rekeySet(l.readOrigins, func(value DynamicIndexReadOrigin) (DynamicIndexReadOrigin, bool) {
+		container, ok := to.ImportKey(from, value.Container)
+		value.Container = container
+		return value, ok
+	}); !ok {
+		return l, false
+	}
+	if out.pendingRestores, ok = rekeySet(l.pendingRestores, func(value PendingDynamicAllValueRestore) (PendingDynamicAllValueRestore, bool) {
+		container, ok := to.ImportKey(from, value.Container)
+		value.Container = container
+		return value, ok
+	}); !ok {
+		return l, false
+	}
+	return out, true
+}
+
+func rekeyMembership(from, to *keyspace.KeySpace, value KeyMembership) (KeyMembership, bool) {
+	if value.Container.Kind == keyspace.KindInvalid {
+		return value, true
+	}
+	container, ok := to.ImportKey(from, value.Container)
+	value.Container = container
+	return value, ok
+}
+
+func rekeySet[T comparable](in map[T]struct{}, transform func(T) (T, bool)) (map[T]struct{}, bool) {
+	if len(in) == 0 {
+		return nil, true
+	}
+	out := make(map[T]struct{}, len(in))
+	for value := range in {
+		transformed, ok := transform(value)
+		if !ok {
+			return nil, false
+		}
+		out[transformed] = struct{}{}
+	}
+	return out, true
+}
+
 func (l keyMembershipLane) snapshot() KeyMembershipsSnapshot {
 	if l.bottom {
 		return KeyMembershipsSnapshot{Bottom: true}

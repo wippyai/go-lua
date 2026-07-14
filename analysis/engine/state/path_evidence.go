@@ -550,29 +550,3 @@ func (s State) EquivalentStateKeys(ks *keyspace.KeySpace, stateKey pathaddr.Stat
 	}
 	return out
 }
-
-// RekeyPathEvidence re-interns the path-evidence value lane keys from one
-// keyspace into another so a state built under one analysis's keyspace can be
-// consumed as an entry state under another's. It is a no-op when from == to.
-func (s State) RekeyPathEvidence(from, to *keyspace.KeySpace) State {
-	out := s
-	if s.laneEnabled(lanePathEvidenceBit) {
-		out.pathEvidence = s.pathEvidence.RekeyValueLanes(from, to)
-	}
-	if s.laneEnabled(laneNumFloorsBit) {
-		out.numFloors = numBoundRekey(s.numFloors, from, to)
-	}
-	if s.laneEnabled(laneNumCeilsBit) {
-		out.numCeils = numBoundRekey(s.numCeils, from, to)
-	}
-	if s.laneEnabled(laneLenFloorsBit) {
-		out.lenFloors = s.lenFloors.rekey(from, to)
-	}
-	if s.laneEnabled(laneHeapTableIdentityBit) {
-		out.heapTableIdentity = s.heapTableIdentity.rekey(from, to)
-	}
-	if s.laneEnabled(laneUserLatticesBit) {
-		out.userLattices = s.userLattices.rekey(from, to)
-	}
-	return out
-}

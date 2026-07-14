@@ -143,9 +143,16 @@ func assertResolveReferenceProductionComposition(t *testing.T, prepared *body.St
 	// deliberately carries a prebuilt heap across a lexical boundary, so rekey
 	// it exactly as production parameter transport does before comparing the two
 	// summary application paths.
-	callerEntry := base.RekeyPathEvidence(prepared.KeySpace(), callerPrepared.KeySpace())
+	callerEntry, err := base.RekeyKeySpace(prepared.KeySpace(), callerPrepared.KeySpace())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for id, object := range base.HeapTableObjectsSnapshot().Objects {
-		callerEntry = callerEntry.WriteHeapTableObject(reg, id, object.Rekey(prepared.KeySpace(), callerPrepared.KeySpace()))
+		rekeyed, ok := object.Rekey(prepared.KeySpace(), callerPrepared.KeySpace())
+		if !ok {
+			t.Fatal("heap object rekey failed")
+		}
+		callerEntry = callerEntry.WriteHeapTableObject(reg, id, rekeyed)
 	}
 	for i, param := range callerPrepared.OperationPlan().BoundaryParams() {
 		callerEntry = callerEntry.WriteValue(reg, statekey.SymbolValue(param), values[i])

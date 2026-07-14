@@ -2,7 +2,16 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+)
+
+type laneKeySpaceMode uint8
+
+const (
+	laneKeySpaceInvalid laneKeySpaceMode = iota
+	laneKeySpaceFree
+	laneKeySpaceOwned
 )
 
 // laneSpec is the registration unit for one State product-lattice axis.
@@ -14,6 +23,8 @@ type laneSpec struct {
 	build         func(*axis.Registry, DomainOptions) laneOps
 	markReachable func(State) State
 	fingerprint   func(*fingerprintWriter, State)
+	keySpaceMode  laneKeySpaceMode
+	rekey         func(State, *keyspace.KeySpace, *keyspace.KeySpace) (State, bool)
 }
 
 type laneMask uint64

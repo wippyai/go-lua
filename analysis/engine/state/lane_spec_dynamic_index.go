@@ -1,6 +1,7 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
@@ -8,7 +9,16 @@ import (
 const LaneDynamicIndex LaneID = "dynamic-index"
 
 var dynamicIndexLaneSpec = laneSpec{
-	id:          LaneDynamicIndex,
+	id:           LaneDynamicIndex,
+	keySpaceMode: laneKeySpaceOwned,
+	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
+		lane, ok := s.dynamicIndex.rekey(from, to)
+		if !ok {
+			return s, false
+		}
+		s.dynamicIndex = lane
+		return s, true
+	},
 	fingerprint: fingerprintDynamicIndex,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := dynamicindex.MapDomain(reg)

@@ -47,7 +47,7 @@ func TestRelationContextEntryCertificateIdentityPrimitive(t *testing.T) {
 	base := summary.DefaultSummaryKey(ref.FromSymbol(101))
 	keys := programKeys{bindings: bindings, contexts: newContextIndex(), certifyRelationContexts: true}
 
-	contextKey, changed := keys.upsertCallContext(reg, callContextRef{expr: factflow.ExprRef(1)}, base, fn, entry, ks, nil, 0xabc)
+	contextKey, changed := mustUpsertCallContext(t, &keys, reg, callContextRef{expr: factflow.ExprRef(1)}, base, fn, entry, ks, nil, 0xabc)
 	if !changed {
 		t.Fatal("identity context was not created")
 	}
@@ -88,7 +88,7 @@ func TestRelationContextEntryCertificateDoesNotInventRootRefinement(t *testing.T
 func TestRelationContextEntryCertificateLegacyPathDoesNoProofWork(t *testing.T) {
 	reg, bindings, fn, entry, ks, base := relationCertificateFixture(t)
 	keys := programKeys{bindings: bindings, contexts: newContextIndex()}
-	contextKey, changed := keys.upsertCallContext(reg, callContextRef{expr: 99}, base, fn, entry, ks, nil, 0xabc)
+	contextKey, changed := mustUpsertCallContext(t, &keys, reg, callContextRef{expr: 99}, base, fn, entry, ks, nil, 0xabc)
 	if !changed {
 		t.Fatal("legacy context was not created")
 	}
@@ -106,7 +106,7 @@ func TestRelationContextEntryCertificateRejectsHiddenLane(t *testing.T) {
 	hidden := entry.WritePlacement(identity.ID{Kind: "test", Site: "hidden", Index: 1}, placement.OwnedHeap)
 	keys := programKeys{bindings: bindings, contexts: newContextIndex(), certifyRelationContexts: true}
 
-	contextKey, changed := keys.upsertCallContext(reg, callContextRef{expr: 2}, base, fn, hidden, ks, nil, 0xdef)
+	contextKey, changed := mustUpsertCallContext(t, &keys, reg, callContextRef{expr: 2}, base, fn, hidden, ks, nil, 0xdef)
 	if !changed {
 		t.Fatal("context was not created")
 	}
@@ -332,7 +332,7 @@ func TestRelationContextEntryCertificateRefreshCannotStayStale(t *testing.T) {
 	keys := programKeys{bindings: bindings, contexts: newContextIndex(), certifyRelationContexts: true}
 	call := callContextRef{expr: 3}
 
-	contextKey, changed := keys.upsertCallContext(reg, call, base, fn, entry, ks, nil, 0x123)
+	contextKey, changed := mustUpsertCallContext(t, &keys, reg, call, base, fn, entry, ks, nil, 0x123)
 	if !changed {
 		t.Fatal("context was not created")
 	}
@@ -343,7 +343,7 @@ func TestRelationContextEntryCertificateRefreshCannotStayStale(t *testing.T) {
 	}
 	oldGeneration := context.relationContextEntry.discoveryGeneration
 	refreshed := entry.WritePlacement(identity.ID{Kind: "test", Site: "refresh", Index: 1}, placement.OwnedHeap)
-	gotKey, changed := keys.upsertCallContext(reg, call, base, fn, refreshed, ks, nil, 0x123)
+	gotKey, changed := mustUpsertCallContext(t, &keys, reg, call, base, fn, refreshed, ks, nil, 0x123)
 	if !changed || gotKey != contextKey {
 		t.Fatalf("refresh = (%v, %v), want (%v, true)", gotKey, changed, contextKey)
 	}

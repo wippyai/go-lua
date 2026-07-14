@@ -25,6 +25,13 @@ type TableObject struct {
 	prefixStableShape    bool
 }
 
+// StructuralKeyFree reports whether the object carries no keyspace-owned
+// static-member or dynamic-index table key. Root values and top/shape flags are
+// keyspace-independent.
+func (o TableObject) StructuralKeyFree() bool {
+	return len(o.staticMembers) == 0 && len(o.dynamicIndexFacts) == 0
+}
+
 // TableObjectConfig carries finite heap table object facts.
 type TableObjectConfig struct {
 	Root              product.Value
@@ -393,14 +400,19 @@ func dynamicFactSegmentsMatchInvalidation(segments, prefix []segment.Segment, st
 
 // Rekey re-interns the rootless static-member keys and dynamic-index table keys
 // from one keyspace into another so an object built under one analysis's keyspace
-// can be consumed under another's. It is a no-op when from == to or either
-// keyspace is nil.
-func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
-	if from == nil || to == nil || from == to || o.bottom {
-		return o
+// can be consumed under another's. Same-space imports still validate every
+// nested key. Nil provenance succeeds only for structurally key-free objects.
+// Import is transactional: failure returns the original object and false,
+// never an object with silently erased facts.
+func (o TableObject) Rekey(from, to *keyspace.KeySpace) (TableObject, bool) {
+	if from != nil && !from.Valid() || to != nil && !to.Valid() {
+		return o, false
 	}
-	if len(o.staticMembers) == 0 && len(o.dynamicIndexFacts) == 0 {
-		return o
+	if o.bottom || o.StructuralKeyFree() {
+		return o, true
+	}
+	if from == nil || to == nil {
+		return o, false
 	}
 	out := CloneObject(o)
 	if len(o.staticMembers) != 0 {
@@ -408,7 +420,7 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 		for key, value := range o.staticMembers {
 			next, ok := to.ImportKey(from, key)
 			if !ok {
-				continue
+				return o, false
 			}
 			rekeyed[next] = value
 		}
@@ -422,7 +434,7 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 		for key, fact := range o.dynamicIndexFacts {
 			nextTable, ok := to.ImportKey(from, key.Table)
 			if !ok {
-				continue
+				return o, false
 			}
 			rekeyed[dynamicindex.Key{Table: nextTable, Site: key.Site}] = fact
 		}
@@ -431,7 +443,7 @@ func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
 		}
 		out.dynamicIndexFacts = rekeyed
 	}
-	return out
+	return out, true
 }
 
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {

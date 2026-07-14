@@ -1,6 +1,7 @@
 package program
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -134,21 +135,21 @@ func (t *callbackPhaseTracker) observeRegistration(point cfg.Point, site factflo
 	}
 }
 
-func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site factflow.CallSiteView) (map[summary.SummaryKey]struct{}, bool) {
+func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site factflow.CallSiteView) (map[summary.SummaryKey]struct{}, bool, error) {
 	if t == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	name, ok := t.prepass.CallSignatureNameAtPoint(point)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	invocations := t.rules.invocations[name]
 	if len(invocations) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	caller, ok := t.prepass.StateAt(point)
 	if !ok {
-		return nil, true
+		return nil, true, nil
 	}
 	entryKeys := t.prepass.KeySpace()
 	var changed map[summary.SummaryKey]struct{}
@@ -174,7 +175,10 @@ func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site fa
 			entry,
 			captureSeedSource{result: t.prepass, point: point, scope: captureSeedAtContext},
 		)
-		entry, hasPhaseEntry := t.applyBeforePhases(point, invocation.Before, caller, entry, entryKeys)
+		entry, hasPhaseEntry, err := t.applyBeforePhases(point, invocation.Before, caller, entry, entryKeys)
+		if err != nil {
+			return changed, controlled, err
+		}
 		if len(invocation.Before) != 0 && !hasPhaseEntry {
 			continue
 		}
@@ -182,11 +186,15 @@ func (t *callbackPhaseTracker) collectInvocationContext(point cfg.Point, site fa
 			continue
 		}
 		callbackType, _ := lowerFunctionExprType(callbackFn, t.keys.bindings, t.config.ModuleTypes)
-		if key, ok := addFunctionExpressionContextKey(t.config.Registry, t.keys, t.owner, expr, callbackSymbol(t.keys, t.prepass, expr), callbackFn, entry, entryKeys, callbackType); ok {
+		key, ok, err := addFunctionExpressionContextKey(t.config.Registry, t.keys, t.owner, expr, callbackSymbol(t.keys, t.prepass, expr), callbackFn, entry, entryKeys, callbackType)
+		if err != nil {
+			return changed, controlled, err
+		}
+		if ok {
 			changed = addChangedContextKey(changed, key)
 		}
 	}
-	return changed, controlled
+	return changed, controlled, nil
 }
 
 func callbackPhaseFunctionArg(keys *programKeys, result *body.Result, site factflow.CallSiteView, index int) (*ast.FunctionExpr, factflow.ExprRef, bool) {
@@ -216,9 +224,9 @@ func callbackSymbol(keys *programKeys, result *body.Result, expr factflow.ExprRe
 	return sym
 }
 
-func (t *callbackPhaseTracker) applyBeforePhases(point cfg.Point, phases []string, caller state.State, entry state.State, entryKeys *keyspace.KeySpace) (state.State, bool) {
+func (t *callbackPhaseTracker) applyBeforePhases(point cfg.Point, phases []string, caller state.State, entry state.State, entryKeys *keyspace.KeySpace) (state.State, bool, error) {
 	if t == nil || len(phases) == 0 {
-		return entry, false
+		return entry, false, nil
 	}
 	seen := false
 	for _, phase := range phases {
@@ -226,7 +234,10 @@ func (t *callbackPhaseTracker) applyBeforePhases(point cfg.Point, phases []strin
 			if !t.registrationDominates(registration.point, point) {
 				continue
 			}
-			sum, ok := t.phaseCallbackSummary(point, registration, caller, entryKeys)
+			sum, ok, err := t.phaseCallbackSummary(point, registration, caller, entryKeys)
+			if err != nil {
+				return entry, seen, err
+			}
 			if !ok {
 				continue
 			}
@@ -235,26 +246,26 @@ func (t *callbackPhaseTracker) applyBeforePhases(point cfg.Point, phases []strin
 			seen = seen || wrote
 		}
 	}
-	return entry, seen
+	return entry, seen, nil
 }
 
 func (t *callbackPhaseTracker) registrationDominates(registration, invocation cfg.Point) bool {
 	return t != nil && t.dom != nil && t.dom.Dominates(registration, invocation)
 }
 
-func (t *callbackPhaseTracker) phaseCallbackSummary(point cfg.Point, registration registeredPhaseCallback, caller state.State, entryKeys *keyspace.KeySpace) (summary.Summary, bool) {
+func (t *callbackPhaseTracker) phaseCallbackSummary(point cfg.Point, registration registeredPhaseCallback, caller state.State, entryKeys *keyspace.KeySpace) (summary.Summary, bool, error) {
 	if t == nil || registration.fn == nil {
-		return summary.Summary{}, false
+		return summary.Summary{}, false, nil
 	}
 	key := phaseSummaryKey{point: point, fn: registration.fn}
 	if t.summaries != nil {
 		if sum, ok := t.summaries[key]; ok {
-			return sum, true
+			return sum, true, nil
 		}
 	}
 	prepared := t.prepared.function(registration.fn)
 	if prepared == nil {
-		return summary.Summary{}, false
+		return summary.Summary{}, false, nil
 	}
 	entry := state.State{}
 	if pathEntry, ok := callerPathEntryState(t.config.Registry, entryKeys, caller); ok {
@@ -270,17 +281,27 @@ func (t *callbackPhaseTracker) phaseCallbackSummary(point cfg.Point, registratio
 		captureSeedSource{result: t.prepass, point: point, scope: captureSeedAtContext},
 	)
 	callbackConfig := cloneCheckConfig(t.config)
-	callbackConfig.EntryState = entry.RekeyPathEvidence(entryKeys, prepared.KeySpace())
-	result, err := solvePrepared(prepared, callbackConfig)
-	if err != nil || result == nil {
-		return summary.Summary{}, false
+	var err error
+	callbackConfig.EntryState, err = entry.RekeyKeySpace(entryKeys, prepared.KeySpace())
+	if err != nil {
+		return summary.Summary{}, false, err
 	}
-	sum := summaryprojection.FromResult(result).RekeyHeapTableObjects(entryKeys)
+	result, err := solvePrepared(prepared, callbackConfig)
+	if err != nil {
+		return summary.Summary{}, false, err
+	}
+	if result == nil {
+		return summary.Summary{}, false, fmt.Errorf("program: callback phase solve returned no result")
+	}
+	sum, err := summaryprojection.FromResult(result).RekeyHeapTableObjects(entryKeys)
+	if err != nil {
+		return summary.Summary{}, false, err
+	}
 	if t.summaries == nil {
 		t.summaries = make(map[phaseSummaryKey]summary.Summary)
 	}
 	t.summaries[key] = sum
-	return sum, true
+	return sum, true, nil
 }
 
 func applyPersistentPathWritesToEntry(reg *axis.Registry, ks *keyspace.KeySpace, entry state.State, sum summary.Summary) (state.State, bool) {

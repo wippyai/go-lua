@@ -174,7 +174,9 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	recordProgramShape(config.Stats, keys)
 	config.Check.ClosedDynamicAllValues = append([]factapply.ClosedDynamicAllValueInvariant(nil), keys.closedDynamicAllValues...)
 	applyMetatableMethodReceiverEntryStates(&keys, bindings, config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	applyInferredParamEntryStates(&keys, bindings, inferred)
+	if err := applyInferredParamEntryStates(&keys, bindings, inferred); err != nil {
+		return Result{}, err
+	}
 	keys.certifyFinalRelationContextEntries(config.Check.Registry, prepared)
 	var relationActivation *relationRunActivation
 	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {

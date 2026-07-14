@@ -84,6 +84,38 @@ func TestPreparedSummaryTransactionRekeysProducerHeapIntoCallerKeySpace(t *testi
 	}
 }
 
+func TestPreparedSummaryTransactionFailsStopOnCorruptHeapProvenance(t *testing.T) {
+	reg := standard.Registry()
+	ownerKeys, foreignKeys, callerKeys := keyspace.New(), keyspace.New(), keyspace.New()
+	foreignMember, ok := foreignKeys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "member"}})
+	if !ok {
+		t.Fatal("foreign member key failed")
+	}
+	tableID := identity.ID{Kind: "table", Site: "corrupt-transaction", Index: 1}
+	corrupt := summary.Summary{
+		HeapKeySpace: ownerKeys,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: product.Top(), StaticMembers: map[keyspace.Key]product.Value{foreignMember: product.Top()},
+			}),
+		},
+	}
+	tx := NewPreparedSummaryTransaction(ProviderConfig{KeySpace: callerKeys})
+	published := false
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_ = tx.Apply(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil, corrupt, nil, false)
+		published = true
+	}()
+	if recovered == nil {
+		t.Fatal("corrupt transaction did not fail stop")
+	}
+	if published {
+		t.Fatal("corrupt transaction published an outcome")
+	}
+}
+
 func BenchmarkPreparedSummaryTransactionApply(b *testing.B) {
 	reg := standard.Registry()
 	callee := symbol.ID(8802)

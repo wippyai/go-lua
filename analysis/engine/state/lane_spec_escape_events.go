@@ -8,8 +8,9 @@ import (
 const LaneEscapeEvents LaneID = "escape-events"
 
 var escapeEventsLaneSpec = laneSpec{
-	id:          LaneEscapeEvents,
-	fingerprint: fingerprintEscapeEvents,
+	id:           LaneEscapeEvents,
+	keySpaceMode: laneKeySpaceFree,
+	fingerprint:  fingerprintEscapeEvents,
 	markReachable: func(s State) State {
 		s.escapeEvents = s.escapeEvents.Reachable()
 		return s

@@ -51,8 +51,8 @@ func materializeChunkWithResultKeys(
 			rootRuntime.resolution,
 			materializedSolveEntryState{},
 			summaries,
-			func(reader summary.Reader) body.Config {
-				return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats), rootRuntime.strict, nil, stats)
+			func(reader summary.Reader) (body.Config, error) {
+				return checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats), rootRuntime.strict, nil, stats), nil
 			},
 			materializeCounter(stats),
 			solveAttributionFor(stats, prepared.root, keys.rootKey, SolvePhaseMaterialize, false),
@@ -110,9 +110,9 @@ func materializeFunctionWithResultKeys(
 			rootRuntime.resolution,
 			materializedSolveEntryState{},
 			summaries,
-			func(reader summary.Reader) body.Config {
+			func(reader summary.Reader) (body.Config, error) {
 				rootConfig := checkConfigWithSummaries(config, reader, contextKeyFor, keyFor, summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, rootRuntime.resolver, materializedRelationObserver(reader, rootRuntime.active, stats), rootRuntime.strict, nil, stats)
-				return functionMaterializeConfig(rootConfig, keys, reader, fn)
+				return functionMaterializeConfig(rootConfig, keys, reader, fn), nil
 			},
 			materializeCounter(stats),
 			solveAttributionFor(stats, rootPrepared, keys.rootKey, SolvePhaseMaterialize, false),
@@ -346,7 +346,9 @@ func materializeFunctionTree(
 	}
 	cache := newMaterializedSummaryCache(config.Registry, summaries, projections)
 	cache.writeResult(keys.rootKey, root)
-	applyDefinitionCaptureEntryStatesFromResult(&keys, fn, root, config.Registry)
+	if err := applyDefinitionCaptureEntryStatesFromResult(&keys, fn, root, config.Registry); err != nil {
+		return nil, keys, err
+	}
 	funcTypes := functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 	installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, nil, nil)
 	baseResults := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
@@ -374,7 +376,10 @@ func materializeFunctionTree(
 		var err error
 		if result != nil {
 			retainedConfig := checkConfigWithSummaries(config, cache, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, nil, true, nil, stats)
-			retainedConfig = keyedFunctionMaterializeConfig(originPrepared, retainedConfig, keys, cache, origin)
+			retainedConfig, err = keyedFunctionMaterializeConfig(originPrepared, retainedConfig, keys, cache, origin)
+			if err != nil {
+				return nil, keys, err
+			}
 			result, err = rebindStrictRetainedResult(result, originPrepared, ownerRuntime.inputs, retainedConfig)
 			if stats != nil {
 				stats.RelationMaterializationsReused++
@@ -388,7 +393,7 @@ func materializeFunctionTree(
 				ownerRuntime.resolution,
 				materializedSolveEntryFor(originPrepared, origin),
 				cache,
-				func(reader summary.Reader) body.Config {
+				func(reader summary.Reader) (body.Config, error) {
 					ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(keys, origin.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats), ownerRuntime.strict, nil, stats)
 					return keyedFunctionMaterializeConfig(originPrepared, ownerConfig, keys, reader, origin)
 				},
@@ -400,7 +405,9 @@ func materializeFunctionTree(
 			return nil, keys, err
 		}
 		installMaterializedFunctionValueType(cache, origin.key, result, funcTypes)
-		applyDefinitionCaptureEntryStatesFromResult(&keys, origin.funcExpr, result, config.Registry)
+		if err := applyDefinitionCaptureEntryStatesFromResult(&keys, origin.funcExpr, result, config.Registry); err != nil {
+			return nil, keys, err
+		}
 		if resultKeys != nil {
 			resultKeys[result] = origin.key
 		}
@@ -410,7 +417,10 @@ func materializeFunctionTree(
 		funcTypes = functionValueTypesFromSummaries(config.Registry, cache, keys, config.ModuleTypes, projections)
 		installMaterializedFunctionValueTypes(cache, keys, funcTypes, root, baseResults, nil)
 	}
-	refreshedContexts := refreshExistingCallContextEntriesFromMaterializedResults(&keys, root, baseResults, config)
+	refreshedContexts, err := refreshExistingCallContextEntriesFromMaterializedResults(&keys, root, baseResults, config)
+	if err != nil {
+		return nil, keys, err
+	}
 	beforeMaterializedCollection := keys.contexts.Len()
 	addedContexts, err := collectMaterializedCallContextKeys(&keys, root, baseResults, config)
 	if err != nil {
@@ -610,7 +620,10 @@ func materializeDiscoveredContexts(
 		var err error
 		if result != nil {
 			retainedConfig := checkConfigWithSummaries(config, cache, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, nil, true, nil, stats)
-			retainedConfig = keyedFunctionMaterializeConfig(contextPrepared, retainedConfig, *keys, cache, context)
+			retainedConfig, err = keyedFunctionMaterializeConfig(contextPrepared, retainedConfig, *keys, cache, context)
+			if err != nil {
+				return nil, err
+			}
 			result, err = rebindStrictRetainedResult(result, contextPrepared, ownerRuntime.inputs, retainedConfig)
 			if stats != nil {
 				stats.RelationMaterializationsReused++
@@ -624,7 +637,7 @@ func materializeDiscoveredContexts(
 				ownerRuntime.resolution,
 				materializedSolveEntryFor(contextPrepared, context),
 				cache,
-				func(reader summary.Reader) body.Config {
+				func(reader summary.Reader) (body.Config, error) {
 					ownerConfig := checkConfigWithSummaries(config, reader, contextKeyFunc(*keys, context.key), keyFor, ownerIndex, keys.metatableProof, ownerRuntime.resolver, materializedRelationObserver(reader, ownerRuntime.active, stats), ownerRuntime.strict, nil, stats)
 					return keyedFunctionMaterializeConfig(contextPrepared, ownerConfig, *keys, reader, context)
 				},
@@ -641,8 +654,12 @@ func materializeDiscoveredContexts(
 		body.WithCallContextResult(result)
 		results[context.key] = result
 		cache.writeResult(context.key, result)
-		applyDefinitionCaptureEntryStatesFromResult(keys, context.funcExpr, result, config.Registry)
-		_ = refreshExistingCallContextEntryKeysFromResult(keys, context.key, result, config)
+		if err := applyDefinitionCaptureEntryStatesFromResult(keys, context.funcExpr, result, config.Registry); err != nil {
+			return nil, err
+		}
+		if _, err := refreshExistingCallContextEntryKeysFromResult(keys, context.key, result, config); err != nil {
+			return nil, err
+		}
 		before := keys.contexts.Len()
 		if _, err := collectMaterializedCallContextKeysFromResult(keys, context.key, result, config); err != nil {
 			return nil, err
@@ -822,9 +839,13 @@ func containsTopLikeAnnotationTypeDepth(t typ.Type, seen map[typ.Type]bool, dept
 	})
 }
 
-func keyedFunctionMaterializeConfig(prepared *body.Static, config body.Config, keys programKeys, summaries summary.Reader, fn keyedFunction) body.Config {
+func keyedFunctionMaterializeConfig(prepared *body.Static, config body.Config, keys programKeys, summaries summary.Reader, fn keyedFunction) (body.Config, error) {
 	if fn.hasEntryState {
-		config.EntryState = fn.entryState.RekeyPathEvidence(fn.entryKeys, prepared.KeySpace())
+		var err error
+		config.EntryState, err = fn.entryState.RekeyKeySpace(fn.entryKeys, prepared.KeySpace())
+		if err != nil {
+			return body.Config{}, err
+		}
 	}
-	return functionMaterializeConfig(config, keys, summaries, fn.funcExpr)
+	return functionMaterializeConfig(config, keys, summaries, fn.funcExpr), nil
 }

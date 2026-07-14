@@ -159,48 +159,66 @@ func (idx *contextIndex) hasContextKey(key summary.SummaryKey) bool {
 	return ok
 }
 
-func (idx *contextIndex) mergeContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
+func (idx *contextIndex) mergeContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) (bool, error) {
 	context, ok := idx.contextByKey(key)
 	if !ok || context.funcExpr != fn {
-		return false
+		return false, nil
 	}
 	return mergeContextEntry(reg, context, entryKeys, entry)
 }
 
-func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *keyspace.KeySpace, entry state.State) bool {
+func mergeContextEntry(reg *axis.Registry, context *keyedFunction, entryKeys *keyspace.KeySpace, entry state.State) (bool, error) {
 	if context == nil {
-		return false
+		return false, nil
 	}
+	validated, err := entry.RekeyKeySpace(entryKeys, entryKeys)
+	if err != nil {
+		return false, err
+	}
+	entry = validated
 	if !context.hasEntryState || reg == nil {
 		context.entryState = entry
 		context.entryKeys = entryKeys
 		context.hasEntryState = true
 		context.relationContextEntry = nil
-		return true
+		return true, nil
 	}
 	// A variant keeps one canonical callee keyspace. Re-key a refreshed caller
 	// entry into it instead of changing the representation used by its digest.
-	if context.entryKeys == nil {
-		context.entryKeys = entryKeys
+	current, err := context.entryState.RekeyKeySpace(context.entryKeys, context.entryKeys)
+	if err != nil {
+		return false, err
 	}
-	entry = entry.RekeyPathEvidence(entryKeys, context.entryKeys)
-	current := context.entryState.RekeyPathEvidence(context.entryKeys, context.entryKeys)
+	targetKeys := context.entryKeys
+	if targetKeys == nil {
+		targetKeys = entryKeys
+	}
+	entry, err = entry.RekeyKeySpace(entryKeys, targetKeys)
+	if err != nil {
+		return false, err
+	}
 	joined := state.Domain(reg).Join(current, entry)
 	joined = joined.RefreshValueSlotsFrom(reg, entry)
 	if state.Domain(reg).Equal(current, joined) {
-		return false
+		return false, nil
 	}
 	context.entryState = joined
+	context.entryKeys = targetKeys
 	// Keep context.entryKeys: it is the variant's canonical representation.
 	context.hasEntryState = true
 	context.relationContextEntry = nil
-	return true
+	return true, nil
 }
 
-func (idx *contextIndex) semanticContextKey(reg *axis.Registry, baseKey summary.SummaryKey, bodyDigest uint64, fn *ast.FunctionExpr, entry state.State, entryKeys *keyspace.KeySpace) (summary.SummaryKey, bool) {
+func (idx *contextIndex) semanticContextKey(reg *axis.Registry, baseKey summary.SummaryKey, bodyDigest uint64, fn *ast.FunctionExpr, entry state.State, entryKeys *keyspace.KeySpace) (summary.SummaryKey, bool, error) {
 	if idx == nil || fn == nil {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
+	validated, err := entry.RekeyKeySpace(entryKeys, entryKeys)
+	if err != nil {
+		return summary.SummaryKey{}, false, err
+	}
+	entry = validated
 	baseKey.Entry = semanticEntryKey(reg, entry, entryKeys)
 	ref := semanticContextRef{ref: baseKey, bodyDigest: bodyDigest}
 	for _, key := range idx.variants[ref] {
@@ -208,12 +226,19 @@ func (idx *contextIndex) semanticContextKey(reg *axis.Registry, baseKey summary.
 		if !ok || context.funcExpr != fn {
 			continue
 		}
-		candidate := entry.RekeyPathEvidence(entryKeys, context.entryKeys)
-		if reg == nil || state.Domain(reg).Equal(context.entryState, candidate) {
-			return key, true
+		stored, err := context.entryState.RekeyKeySpace(context.entryKeys, context.entryKeys)
+		if err != nil {
+			return summary.SummaryKey{}, false, err
+		}
+		candidate, err := entry.RekeyKeySpace(entryKeys, context.entryKeys)
+		if err != nil {
+			return summary.SummaryKey{}, false, err
+		}
+		if reg == nil || state.Domain(reg).Equal(stored, candidate) {
+			return key, true, nil
 		}
 	}
-	return summary.SummaryKey{}, false
+	return summary.SummaryKey{}, false, nil
 }
 
 type contextKeyIdentity struct {
@@ -297,36 +322,44 @@ func (idx *contextIndex) upsertCallContext(
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
 	bodyDigest uint64,
-) (summary.SummaryKey, bool, bool) {
+) (summary.SummaryKey, bool, bool, error) {
 	if idx == nil || fn == nil {
-		return summary.SummaryKey{}, false, false
+		return summary.SummaryKey{}, false, false, nil
 	}
 	// A previously seen source site is a refresh of its existing equation
 	// input, not a new specialization. Keep its routing stable and merge the
 	// refreshed entry exactly as the old monotone context driver did. Semantic
 	// interning applies when a distinct site first discovers its entry.
 	if existing, seen := idx.callKeys[ref]; seen {
-		if idx.mergeContextForKey(reg, existing, fn, entryKeys, entry) {
-			return existing, true, false
+		changed, err := idx.mergeContextForKey(reg, existing, fn, entryKeys, entry)
+		if err != nil {
+			return summary.SummaryKey{}, false, false, err
+		}
+		if changed {
+			return existing, true, false, nil
 		}
 		if _, ok := idx.contextByKey(existing); ok {
-			return summary.SummaryKey{}, false, false
+			return summary.SummaryKey{}, false, false, nil
 		}
 	}
-	if contextKey, ok := idx.semanticContextKey(reg, baseKey, bodyDigest, fn, entry, entryKeys); ok {
+	contextKey, ok, err := idx.semanticContextKey(reg, baseKey, bodyDigest, fn, entry, entryKeys)
+	if err != nil {
+		return summary.SummaryKey{}, false, false, err
+	}
+	if ok {
 		if idx.callKeys == nil {
 			idx.callKeys = make(map[callContextRef]summary.SummaryKey)
 		}
 		previous, seen := idx.callKeys[ref]
 		idx.callKeys[ref] = contextKey
-		return contextKey, !seen || previous != contextKey, false
+		return contextKey, !seen || previous != contextKey, false, nil
 	}
-	contextKey := idx.appendSemanticContext(reg, baseKey, bodyDigest, fn, entry, entryKeys)
+	contextKey = idx.appendSemanticContext(reg, baseKey, bodyDigest, fn, entry, entryKeys)
 	if idx.callKeys == nil {
 		idx.callKeys = make(map[callContextRef]summary.SummaryKey)
 	}
 	idx.callKeys[ref] = contextKey
-	return contextKey, true, true
+	return contextKey, true, true, nil
 }
 
 func (idx *contextIndex) upsertFunctionExpressionContext(
@@ -337,32 +370,40 @@ func (idx *contextIndex) upsertFunctionExpressionContext(
 	entry state.State,
 	entryKeys *keyspace.KeySpace,
 	bodyDigest uint64,
-) (summary.SummaryKey, bool, bool) {
+) (summary.SummaryKey, bool, bool, error) {
 	if idx == nil || ref.expr == 0 || callbackFn == nil {
-		return summary.SummaryKey{}, false, false
+		return summary.SummaryKey{}, false, false, nil
 	}
 	if existing, seen := idx.functionExpressionKeys[ref]; seen {
-		if idx.mergeContextForKey(reg, existing, callbackFn, entryKeys, entry) {
-			return existing, true, false
+		changed, err := idx.mergeContextForKey(reg, existing, callbackFn, entryKeys, entry)
+		if err != nil {
+			return summary.SummaryKey{}, false, false, err
+		}
+		if changed {
+			return existing, true, false, nil
 		}
 		if _, ok := idx.contextByKey(existing); ok {
-			return summary.SummaryKey{}, false, false
+			return summary.SummaryKey{}, false, false, nil
 		}
 	}
-	if contextKey, ok := idx.semanticContextKey(reg, baseKey, bodyDigest, callbackFn, entry, entryKeys); ok {
+	contextKey, ok, err := idx.semanticContextKey(reg, baseKey, bodyDigest, callbackFn, entry, entryKeys)
+	if err != nil {
+		return summary.SummaryKey{}, false, false, err
+	}
+	if ok {
 		if idx.functionExpressionKeys == nil {
 			idx.functionExpressionKeys = make(map[functionExpressionRef]summary.SummaryKey)
 		}
 		previous, seen := idx.functionExpressionKeys[ref]
 		idx.functionExpressionKeys[ref] = contextKey
-		return contextKey, !seen || previous != contextKey, false
+		return contextKey, !seen || previous != contextKey, false, nil
 	}
-	contextKey := idx.appendSemanticContext(reg, baseKey, bodyDigest, callbackFn, entry, entryKeys)
+	contextKey = idx.appendSemanticContext(reg, baseKey, bodyDigest, callbackFn, entry, entryKeys)
 	if idx.functionExpressionKeys == nil {
 		idx.functionExpressionKeys = make(map[functionExpressionRef]summary.SummaryKey)
 	}
 	idx.functionExpressionKeys[ref] = contextKey
-	return contextKey, true, true
+	return contextKey, true, true, nil
 }
 
 func (idx *contextIndex) CallContextKey(owner summary.SummaryKey, expr factflow.ExprRef) (summary.SummaryKey, bool) {
@@ -411,18 +452,21 @@ func (idx *contextIndex) FunctionExpressionKeysForOwner(owner summary.SummaryKey
 	return out
 }
 
-func (k *programKeys) refreshContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) bool {
+func (k *programKeys) refreshContextForKey(reg *axis.Registry, key summary.SummaryKey, fn *ast.FunctionExpr, entryKeys *keyspace.KeySpace, entry state.State) (bool, error) {
 	if k == nil {
-		return false
+		return false, nil
 	}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, fn, entry, entryKeys)
-	changed := k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
+	changed, err := k.contexts.mergeContextForKey(reg, key, fn, entryKeys, entry)
+	if err != nil {
+		return false, err
+	}
 	if changed {
 		// refreshContextForKey lacks the base/prepared identity required to
 		// rebuild the proof, so the merge above clears it transactionally.
 		k.contexts.nextEntryDiscoveryGeneration()
 	}
-	return changed
+	return changed, nil
 }
 
 func (k *programKeys) upsertCallContext(
@@ -434,23 +478,26 @@ func (k *programKeys) upsertCallContext(
 	entryKeys *keyspace.KeySpace,
 	fnType *typ.Function,
 	bodyDigest ...uint64,
-) (summary.SummaryKey, bool) {
+) (summary.SummaryKey, bool, error) {
 	if k == nil {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, fn, entry, entryKeys)
 	var digest uint64
 	if len(bodyDigest) != 0 {
 		digest = bodyDigest[0]
 	}
-	contextKey, changed, created := k.contexts.upsertCallContext(reg, ref, baseKey, fn, entry, entryKeys, digest)
+	contextKey, changed, created, err := k.contexts.upsertCallContext(reg, ref, baseKey, fn, entry, entryKeys, digest)
+	if err != nil {
+		return summary.SummaryKey{}, false, err
+	}
 	if changed && k.certifyRelationContexts {
 		k.contexts.nextEntryDiscoveryGeneration()
 	}
 	if created && fnType != nil {
 		k.functionTypes[contextKey] = fnType
 	}
-	return contextKey, changed
+	return contextKey, changed, nil
 }
 
 func (k *programKeys) upsertFunctionExpressionContext(
@@ -463,13 +510,13 @@ func (k *programKeys) upsertFunctionExpressionContext(
 	entryKeys *keyspace.KeySpace,
 	fnType *typ.Function,
 	bodyDigest ...uint64,
-) (summary.SummaryKey, bool) {
+) (summary.SummaryKey, bool, error) {
 	if k == nil || expr == 0 || callbackSymbol == 0 || callbackFn == nil {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	baseKey, ok := k.functionKeys[callbackSymbol]
 	if !ok {
-		return summary.SummaryKey{}, false
+		return summary.SummaryKey{}, false, nil
 	}
 	ref := functionExpressionRef{owner: canonicalContextOwner(owner), expr: expr}
 	entry, entryKeys = k.seedMetatableMethodContextEntry(reg, callbackFn, entry, entryKeys)
@@ -477,7 +524,10 @@ func (k *programKeys) upsertFunctionExpressionContext(
 	if len(bodyDigest) != 0 {
 		digest = bodyDigest[0]
 	}
-	contextKey, changed, created := k.contexts.upsertFunctionExpressionContext(reg, ref, baseKey, callbackFn, entry, entryKeys, digest)
+	contextKey, changed, created, err := k.contexts.upsertFunctionExpressionContext(reg, ref, baseKey, callbackFn, entry, entryKeys, digest)
+	if err != nil {
+		return summary.SummaryKey{}, false, err
+	}
 	if changed && k.certifyRelationContexts {
 		k.contexts.nextEntryDiscoveryGeneration()
 	}
@@ -490,7 +540,7 @@ func (k *programKeys) upsertFunctionExpressionContext(
 			changed = true
 		}
 	}
-	return contextKey, changed
+	return contextKey, changed, nil
 }
 
 func (k *programKeys) seedMetatableMethodContextEntry(reg *axis.Registry, fn *ast.FunctionExpr, entry state.State, entryKeys *keyspace.KeySpace) (state.State, *keyspace.KeySpace) {

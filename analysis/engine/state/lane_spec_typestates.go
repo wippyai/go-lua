@@ -8,8 +8,9 @@ import (
 const LaneTypestates LaneID = "typestates"
 
 var typestatesLaneSpec = laneSpec{
-	id:          LaneTypestates,
-	fingerprint: fingerprintTypestates,
+	id:           LaneTypestates,
+	keySpaceMode: laneKeySpaceFree,
+	fingerprint:  fingerprintTypestates,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(typestate.Domain,
 			func(s State) typestate.Store { return s.typestates },

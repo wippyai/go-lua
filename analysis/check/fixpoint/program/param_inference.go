@@ -88,12 +88,12 @@ func (p *paramInference) candidate(callee symbol.ID) bool {
 // join for the callee function symbol. Arguments beyond the recorded length grow
 // the slice; missing arguments at a recorded index are absent for this call and
 // therefore join nil-presence Top, keeping the parameter at least as wide.
-func (p *paramInference) observe(callee symbol.ID, args []product.Value, present []bool, caller state.State, callerKeys *keyspace.KeySpace) {
+func (p *paramInference) observe(callee symbol.ID, args []product.Value, present []bool, caller state.State, callerKeys *keyspace.KeySpace) error {
 	if p == nil || callee == 0 {
-		return
+		return nil
 	}
 	if _, ok := p.enclosed[callee]; !ok {
-		return
+		return nil
 	}
 	acc := p.params[callee]
 	if acc == nil {
@@ -108,8 +108,10 @@ func (p *paramInference) observe(callee symbol.ID, args []product.Value, present
 	if acc.heapKeys == nil {
 		acc.heapKeys = callerKeys
 	}
-	if callerKeys != nil && acc.heapKeys != nil && callerKeys != acc.heapKeys {
-		caller = caller.RekeyPathEvidence(callerKeys, acc.heapKeys)
+	var err error
+	caller, err = caller.RekeyKeySpace(callerKeys, acc.heapKeys)
+	if err != nil {
+		return err
 	}
 	acc.sites++
 	for i := range args {
@@ -125,25 +127,26 @@ func (p *paramInference) observe(callee symbol.ID, args []product.Value, present
 		// Without both sides of the provenance pair there is no legal way to
 		// interpret a dense heap member key. Keep value inference, but do not copy
 		// a raw heap object under guessed ownership.
-		if callerKeys != nil && acc.heapKeys != nil {
-			acc.heap = seedReachableHeapFromValue(p.reg, acc.heap, caller, args[i], map[identity.ID]struct{}{})
-		}
+		acc.heap = seedReachableHeapFromValue(p.reg, acc.heap, caller, args[i], map[identity.ID]struct{}{})
 	}
+	return nil
 }
 
-func (p *paramInference) seedSource(callee symbol.ID, targetKeys *keyspace.KeySpace) state.State {
+func (p *paramInference) seedSource(callee symbol.ID, targetKeys *keyspace.KeySpace) (state.State, error) {
 	if p == nil {
-		return state.State{}
+		return state.State{}, nil
 	}
 	acc := p.params[callee]
-	if acc == nil || acc.heapKeys == nil || targetKeys == nil {
-		return state.State{}
+	if acc == nil {
+		return state.State{}, nil
 	}
 	out := acc.heap.Snapshot()
-	if acc.heapKeys != nil && targetKeys != nil && acc.heapKeys != targetKeys {
-		out = out.RekeyPathEvidence(acc.heapKeys, targetKeys)
+	var err error
+	out, err = out.RekeyKeySpace(acc.heapKeys, targetKeys)
+	if err != nil {
+		return state.State{}, err
 	}
-	return out
+	return out, nil
 }
 
 func (p *paramInference) seedKeySpace(callee symbol.ID) *keyspace.KeySpace {

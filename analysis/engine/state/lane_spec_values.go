@@ -5,8 +5,9 @@ import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 const LaneValues LaneID = "values"
 
 var valuesLaneSpec = laneSpec{
-	id:          LaneValues,
-	fingerprint: fingerprintValues,
+	id:           LaneValues,
+	keySpaceMode: laneKeySpaceFree,
+	fingerprint:  fingerprintValues,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := valueLaneDomain(reg)
 		return stateLane(domain,

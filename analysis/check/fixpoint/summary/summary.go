@@ -2,6 +2,8 @@
 package summary
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -83,25 +85,35 @@ func CallerFreshHeapPlacements(allocations []FreshHeapAllocation) map[identity.I
 // RekeyHeapTableObjects re-interns the rootless static-member keys of every
 // heap table object from this summary's producing keyspace into to, so a
 // consumer reading the summary at a call site can operate on the objects in its
-// own keyspace. It is a no-op when the summary carries no heap objects or to
-// equals the producing keyspace. A non-empty heap without provenance is an
-// invalid summary and fails closed.
-func (s Summary) RekeyHeapTableObjects(to *keyspace.KeySpace) Summary {
+// own keyspace. Same-space imports validate nested ownership. Nil provenance is
+// accepted only when every object is structurally key-free; keyed objects
+// without provenance fail closed.
+func (s Summary) RekeyHeapTableObjects(to *keyspace.KeySpace) (Summary, error) {
+	if to != nil && !to.Valid() || s.HeapKeySpace != nil && !s.HeapKeySpace.Valid() {
+		return s, fmt.Errorf("summary rekey: invalid keyspace authority")
+	}
 	if len(s.HeapTableObjects) == 0 {
 		s.HeapKeySpace = nil
-		return s
+		return s, nil
 	}
-	requireHeapKeySpace(s, "rekey")
-	if to == nil || s.HeapKeySpace == to {
-		return s
+	if heapTableObjectsStructuralKeyFree(s.HeapTableObjects) {
+		s.HeapKeySpace = nil
+		return s, nil
+	}
+	if to == nil || s.HeapKeySpace == nil {
+		return s, fmt.Errorf("summary rekey: nil or invalid keyspace")
 	}
 	rekeyed := make(map[identity.ID]heapidentity.TableObject, len(s.HeapTableObjects))
 	for id, object := range s.HeapTableObjects {
-		rekeyed[id] = object.Rekey(s.HeapKeySpace, to)
+		next, ok := object.Rekey(s.HeapKeySpace, to)
+		if !ok {
+			return s, fmt.Errorf("summary rekey: heap table object %v has a foreign structural key", id)
+		}
+		rekeyed[id] = next
 	}
 	s.HeapTableObjects = rekeyed
 	s.HeapKeySpace = to
-	return s
+	return s, nil
 }
 
 // Clone returns an independent copy of s.
