@@ -8,7 +8,8 @@ import (
 const LaneNumFloors LaneID = "num-floors"
 
 var numFloorsLaneSpec = laneSpec{
-	id: LaneNumFloors,
+	id:          LaneNumFloors,
+	fingerprint: fingerprintNumFloors,
 	markReachable: func(s State) State {
 		s.numFloors = s.numFloors.Reachable()
 		return s

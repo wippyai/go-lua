@@ -112,6 +112,19 @@ func (l Lane) ForEachBranchProof(fn func(BranchProof) bool) {
 	}
 }
 
+// ForEachPathPresenceImplication visits finite implications in their native
+// keyspace form without formatting keys or mutating presentation caches.
+func (l Lane) ForEachPathPresenceImplication(fn func(PathPresenceImplication) bool) {
+	if l.pathPresenceImplicationsBottom || len(l.pathPresenceImplications) == 0 || fn == nil {
+		return
+	}
+	for implication := range l.pathPresenceImplications {
+		if !fn(implication) {
+			return
+		}
+	}
+}
+
 type PathPresenceImplicationsSnapshot struct {
 	Bottom       bool
 	Top          bool

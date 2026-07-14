@@ -44,6 +44,7 @@ var (
 	ErrRegistryRequired = errors.New("check: registry is required")
 	ErrStaticRequired   = errors.New("check: prepared body is required")
 	ErrUnsupportedCFG   = errors.New("check: unsupported cfg")
+	ErrRetainedResume   = errors.New("check: retained solve cannot compose with legacy resume")
 )
 
 type Config struct {
@@ -466,7 +467,9 @@ func SolvePrepared(prepared *Static, config SolveConfig) (*Result, error) {
 // and validate those reads independently before reusing the cached value.
 //
 // This is deliberately the same digest used by ResultVersion, rather than a
-// second, subtly different cache-key serialization.
+// second, subtly different cache-key serialization. The 64-bit digest is a
+// cache index, not reuse authority: callers must validate exact normalized
+// state and dynamic dependency witnesses before adopting a cached solve.
 func InputDigest(prepared *Static, config SolveConfig) uint64 {
 	digest, _ := InputDigestContext(prepared, config)
 	return digest

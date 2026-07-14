@@ -18,6 +18,9 @@ func newLaneCatalog(specs []laneSpec) LaneCatalog {
 	out := make([]laneSpec, len(specs))
 	copy(out, specs)
 	for i := range out {
+		if out[i].fingerprint == nil {
+			panic(fmt.Sprintf("state: lane %q has no semantic fingerprint", out[i].id))
+		}
 		if i >= 63 {
 			panic("state: lane catalog supports at most 63 lanes")
 		}

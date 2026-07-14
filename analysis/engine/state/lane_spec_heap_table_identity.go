@@ -9,7 +9,8 @@ import (
 const LaneHeapTableIdentity LaneID = "heap-table-identity"
 
 var heapTableIdentityLaneSpec = laneSpec{
-	id: LaneHeapTableIdentity,
+	id:          LaneHeapTableIdentity,
+	fingerprint: fingerprintHeapTableIdentity,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := heapidentity.MapDomain(reg)
 		return stateLane(domain,

@@ -13,6 +13,7 @@ type laneSpec struct {
 	bit           laneMask
 	build         func(*axis.Registry, DomainOptions) laneOps
 	markReachable func(State) State
+	fingerprint   func(*fingerprintWriter, State)
 }
 
 type laneMask uint64

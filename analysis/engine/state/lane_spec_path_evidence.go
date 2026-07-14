@@ -8,7 +8,8 @@ import (
 const LanePathEvidence LaneID = "path-evidence"
 
 var pathEvidenceLaneSpec = laneSpec{
-	id: LanePathEvidence,
+	id:          LanePathEvidence,
+	fingerprint: fingerprintPathEvidence,
 	markReachable: func(s State) State {
 		s.pathEvidence = s.pathEvidence.Reachable()
 		return s

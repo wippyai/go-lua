@@ -8,7 +8,8 @@ import (
 const LaneUserLattices LaneID = "user-lattices"
 
 var userLatticesLaneSpec = laneSpec{
-	id: LaneUserLattices,
+	id:          LaneUserLattices,
+	fingerprint: fingerprintUserLattices,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		rt := userlattice.RuntimeFor(reg)
 		return stateLane(userLatticeDomain(rt),

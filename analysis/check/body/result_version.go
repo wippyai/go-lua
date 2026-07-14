@@ -52,14 +52,15 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 		return 0, err
 	}
 	w := &bodyDigestWriter{
-		h:       prefix,
-		static:  s,
-		symbols: make(map[symbol.ID]string),
-		ctx:     config.Context,
+		h:          prefix,
+		static:     s,
+		symbols:    make(map[symbol.ID]string),
+		ctx:        config.Context,
+		stateLanes: state.CloneLanes(config.StateLanes),
 	}
 	w.writeClosedDynamicInvariants(config.ClosedDynamicAllValues)
-	w.writeStateLanes(config.StateLanes)
 	w.writeInt("schedule", int(config.Schedule))
+	w.writeWidening(config)
 	w.writeState("entry", entry)
 	w.writeInitialStates(initial, s.cfg.Graph)
 	w.writeSummaryInputDigests(config.SummaryInputDigests)
@@ -67,6 +68,24 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 		return 0, errors.Join(solve.ErrCanceled, err)
 	}
 	return w.sum64(), nil
+}
+
+func (w *bodyDigestWriter) writeWidening(config SolveConfig) {
+	points := graphRPO(w.static.cfg.Graph)
+	w.writeBool("has-widen-at", config.WidenAt != nil)
+	if config.WidenAt != nil {
+		for ordinal, point := range points {
+			w.writeInt("widen-at-point", ordinal)
+			w.writeBool("widen-at", config.WidenAt(point))
+		}
+	}
+	w.writeBool("has-widen-delay", config.WidenDelay != nil)
+	if config.WidenDelay != nil {
+		for ordinal, point := range points {
+			w.writeInt("widen-delay-point", ordinal)
+			w.writeInt("widen-delay", config.WidenDelay(point))
+		}
+	}
 }
 
 func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Writer, error) {
@@ -88,7 +107,7 @@ func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Wri
 	// Concurrent first solves may duplicate this one-time work, then publish the
 	// same deterministic writer state below.
 	w := newBodyDigestWriter(s, ctx)
-	w.label("body-inputs-v1")
+	w.label("body-inputs-v2")
 	w.writeWIR(s.wir, s.cfg.Graph)
 	w.writeSymbolTypes(s.symbolTypes)
 	w.writeBoundaryEnvironment()
@@ -172,13 +191,14 @@ func (w *bodyDigestWriter) writeBoundaryEnvironment() {
 }
 
 type bodyDigestWriter struct {
-	h       internalhash.Writer
-	wide    hash.Hash
-	static  *Static
-	symbols map[symbol.ID]string
-	ctx     context.Context
-	steps   uint64
-	errVal  error
+	h          internalhash.Writer
+	wide       hash.Hash
+	static     *Static
+	symbols    map[symbol.ID]string
+	ctx        context.Context
+	stateLanes []state.LaneID
+	steps      uint64
+	errVal     error
 }
 
 func newBodyDigestWriter(s *Static, ctx ...context.Context) *bodyDigestWriter {
@@ -871,41 +891,19 @@ func (w *bodyDigestWriter) writeClosedDynamicInvariants(in []factapply.ClosedDyn
 	}
 }
 
-func (w *bodyDigestWriter) writeStateLanes(lanes []state.LaneID) {
-	w.writeInt("lane-count", len(lanes))
-	for _, lane := range lanes {
-		w.writeString("lane", string(lane))
-	}
-}
-
 func (w *bodyDigestWriter) writeState(label string, st state.State) {
 	w.label(label + ":state")
-	values := st.ValuesSnapshot()
-	w.writeBool("values-top", values.Top)
-	valueEntries := make([]string, 0, len(values.Values))
-	for slot, value := range values.Values {
-		valueEntries = append(valueEntries, w.valueSlotString(slot)+"="+fmt.Sprint(w.stableProductHash(value)))
+	digest, err := state.SemanticFingerprint(state.FingerprintConfig{
+		Context:  w.ctx,
+		Registry: w.static.registry,
+		KeySpace: w.static.KeySpace(),
+		Lanes:    w.stateLanes,
+	}, st)
+	if err != nil {
+		w.errVal = err
+		return
 	}
-	sort.Strings(valueEntries)
-	w.writeInt("value-count", len(valueEntries))
-	for _, entry := range valueEntries {
-		w.writeString("value", entry)
-	}
-	w.writePathEvidence("path-refinement", st.ForEachPathRefinement)
-	w.writePathEvidence("path-static-member", st.ForEachPathStaticMember)
-}
-
-func (w *bodyDigestWriter) writePathEvidence(label string, visit func(func(keyspace.Key, product.Value) bool)) {
-	var entries []string
-	visit(func(key keyspace.Key, value product.Value) bool {
-		entries = append(entries, w.keyspaceKeyString(key)+"="+fmt.Sprint(w.stableProductHash(value)))
-		return true
-	})
-	sort.Strings(entries)
-	w.writeInt(label+":count", len(entries))
-	for _, entry := range entries {
-		w.writeString(label, entry)
-	}
+	w.writeUint64("semantic", digest)
 }
 
 func (w *bodyDigestWriter) writeInitialStates(initial transfer.InitialState, graph cfg.Graph) {

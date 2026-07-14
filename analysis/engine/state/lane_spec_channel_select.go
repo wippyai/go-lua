@@ -8,7 +8,8 @@ import (
 const LaneChannelSelect LaneID = "channel-select"
 
 var channelSelectLaneSpec = laneSpec{
-	id: LaneChannelSelect,
+	id:          LaneChannelSelect,
+	fingerprint: fingerprintChannelSelect,
 	markReachable: func(s State) State {
 		s.channelSelect = s.channelSelect.Reachable()
 		return s

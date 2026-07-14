@@ -8,7 +8,8 @@ import (
 const LaneEffectDeltas LaneID = "effect-deltas"
 
 var effectDeltasLaneSpec = laneSpec{
-	id: LaneEffectDeltas,
+	id:          LaneEffectDeltas,
+	fingerprint: fingerprintEffectDeltas,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := effectdelta.MapDomain(reg)
 		return stateLane(domain,

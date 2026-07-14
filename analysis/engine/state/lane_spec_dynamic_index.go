@@ -8,7 +8,8 @@ import (
 const LaneDynamicIndex LaneID = "dynamic-index"
 
 var dynamicIndexLaneSpec = laneSpec{
-	id: LaneDynamicIndex,
+	id:          LaneDynamicIndex,
+	fingerprint: fingerprintDynamicIndex,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := dynamicindex.MapDomain(reg)
 		return stateLane(domain,

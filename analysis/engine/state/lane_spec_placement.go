@@ -11,7 +11,8 @@ import (
 const LanePlacement LaneID = "placement"
 
 var placementLaneSpec = laneSpec{
-	id: LanePlacement,
+	id:          LanePlacement,
+	fingerprint: fingerprintPlacement,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := placementMapDomain()
 		return stateLane(domain,

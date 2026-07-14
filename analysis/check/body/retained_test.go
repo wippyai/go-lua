@@ -265,6 +265,241 @@ func TestRetainedPreparedInitialLateCancellationPublishesNothing(t *testing.T) {
 	}
 }
 
+func TestSolvePreparedRetainedFreezesStructuralCallbacksOnce(t *testing.T) {
+	reg, _ := testRegistry(t)
+	prepared, err := PrepareChunk(parseChunk(t, `local value = 1; return value`), Config{
+		Registry: reg, Schedule: transfer.ScheduleWTO,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialCalls := make(map[cfg.Point]int)
+	widenAtCalls := make(map[cfg.Point]int)
+	widenDelayCalls := make(map[cfg.Point]int)
+	result, retained, err := SolvePreparedRetained(prepared, SolveConfig{
+		Schedule: transfer.ScheduleWTO,
+		Initial: func(point cfg.Point) (state.State, bool) {
+			initialCalls[point]++
+			// A second observation would return the opposite presence and alter
+			// the equation system. Freeze must prevent that observation.
+			return state.State{}, initialCalls[point]%2 == 1 && point == prepared.cfg.Graph.Entry()
+		},
+		WidenAt: func(point cfg.Point) bool {
+			widenAtCalls[point]++
+			return widenAtCalls[point]%2 == 1
+		},
+		WidenDelay: func(point cfg.Point) int {
+			widenDelayCalls[point]++
+			return widenDelayCalls[point] % 2
+		},
+	}, transfer.RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || retained == nil {
+		t.Fatal("retained solve did not publish result and session")
+	}
+	defer retained.Release()
+	assertStructuralCallbackCallsOnce(t, prepared, "initial", initialCalls)
+	assertStructuralCallbackCallsOnce(t, prepared, "widen-at", widenAtCalls)
+	assertStructuralCallbackCallsOnce(t, prepared, "widen-delay", widenDelayCalls)
+}
+
+func TestRetainedBeginUpdateFreezesStructuralCallbacksOnce(t *testing.T) {
+	reg, _ := testRegistry(t)
+	prepared, err := PrepareChunk(parseChunk(t, `local value = 1; return value`), Config{
+		Registry: reg, Schedule: transfer.ScheduleWTO,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configFor := func(initialCalls, widenAtCalls, widenDelayCalls map[cfg.Point]int) SolveConfig {
+		return SolveConfig{
+			Schedule: transfer.ScheduleWTO,
+			Initial: func(point cfg.Point) (state.State, bool) {
+				initialCalls[point]++
+				return state.State{}, point == prepared.cfg.Graph.Entry()
+			},
+			WidenAt: func(point cfg.Point) bool {
+				widenAtCalls[point]++
+				return false
+			},
+			WidenDelay: func(point cfg.Point) int {
+				widenDelayCalls[point]++
+				return 0
+			},
+		}
+	}
+	firstInitial, firstAt, firstDelay := map[cfg.Point]int{}, map[cfg.Point]int{}, map[cfg.Point]int{}
+	_, retained, err := SolvePreparedRetained(prepared, configFor(firstInitial, firstAt, firstDelay), transfer.RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Release()
+	assertStructuralCallbackCallsOnce(t, prepared, "initial-first", firstInitial)
+	assertStructuralCallbackCallsOnce(t, prepared, "widen-at-first", firstAt)
+	assertStructuralCallbackCallsOnce(t, prepared, "widen-delay-first", firstDelay)
+
+	secondInitial, secondAt, secondDelay := map[cfg.Point]int{}, map[cfg.Point]int{}, map[cfg.Point]int{}
+	pending, err := retained.BeginUpdate(prepared, configFor(secondInitial, secondAt, secondDelay), nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil || pending.Result() == nil {
+		t.Fatal("retained update did not produce candidate")
+	}
+	if err := pending.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if !retained.Retained() {
+		t.Fatal("equal frozen inputs fell back and released retention")
+	}
+	assertStructuralCallbackCallsOnce(t, prepared, "initial-update", secondInitial)
+	assertStructuralCallbackCallsOnce(t, prepared, "widen-at-update", secondAt)
+	assertStructuralCallbackCallsOnce(t, prepared, "widen-delay-update", secondDelay)
+}
+
+func TestRetainedStructuralCallbackCancellationPublishesNothing(t *testing.T) {
+	reg, _ := testRegistry(t)
+	prepared, err := PrepareChunk(parseChunk(t, `return 1`), Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(context.CancelFunc) SolveConfig{
+		"initial": func(cancel context.CancelFunc) SolveConfig {
+			return SolveConfig{Initial: func(cfg.Point) (state.State, bool) {
+				cancel()
+				return state.State{}, false
+			}}
+		},
+		"widen-at": func(cancel context.CancelFunc) SolveConfig {
+			return SolveConfig{WidenAt: func(cfg.Point) bool {
+				cancel()
+				return false
+			}}
+		},
+		"widen-delay": func(cancel context.CancelFunc) SolveConfig {
+			return SolveConfig{WidenDelay: func(cfg.Point) int {
+				cancel()
+				return 0
+			}}
+		},
+	}
+	for name, build := range tests {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			config := build(cancel)
+			config.Context = ctx
+			config.Schedule = transfer.ScheduleWTO
+			result, retained, err := SolvePreparedRetained(prepared, config, transfer.RetainedBudget{})
+			if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) || result != nil || retained != nil {
+				t.Fatalf("result=%v retained=%v err=%v", result != nil, retained != nil, err)
+			}
+		})
+	}
+}
+
+func TestRetainedPreCanceledContextInvokesNoStructuralCallbacks(t *testing.T) {
+	reg, _ := testRegistry(t)
+	prepared, err := PrepareChunk(parseChunk(t, `return 1`), Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := 0
+	result, retained, err := SolvePreparedRetained(prepared, SolveConfig{
+		Context: ctx, Schedule: transfer.ScheduleWTO,
+		Initial: func(cfg.Point) (state.State, bool) {
+			called++
+			return state.State{}, false
+		},
+		WidenAt: func(cfg.Point) bool {
+			called++
+			return false
+		},
+		WidenDelay: func(cfg.Point) int {
+			called++
+			return 0
+		},
+	}, transfer.RetainedBudget{})
+	if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) || result != nil || retained != nil {
+		t.Fatalf("result=%v retained=%v err=%v", result != nil, retained != nil, err)
+	}
+	if called != 0 {
+		t.Fatalf("pre-canceled freeze invoked %d structural callbacks", called)
+	}
+}
+
+func TestRetainedBeginUpdateFreezeCancellationKeepsPriorGeneration(t *testing.T) {
+	reg, _ := testRegistry(t)
+	prepared, err := PrepareChunk(parseChunk(t, `return 1`), Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, retained, err := SolvePreparedRetained(prepared, SolveConfig{Schedule: transfer.ScheduleWTO}, transfer.RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Release()
+	ctx, cancel := context.WithCancel(context.Background())
+	pending, err := retained.BeginUpdate(prepared, SolveConfig{
+		Context: ctx, Schedule: transfer.ScheduleWTO,
+		WidenAt: func(cfg.Point) bool {
+			cancel()
+			return false
+		},
+	}, nil, true)
+	if !errors.Is(err, solve.ErrCanceled) || !errors.Is(err, context.Canceled) || pending != nil {
+		t.Fatalf("pending=%v err=%v", pending != nil, err)
+	}
+	if !retained.Retained() {
+		t.Fatal("freeze cancellation released prior retained generation")
+	}
+}
+
+func TestRetainedRejectsLegacyResumeComposition(t *testing.T) {
+	reg, _ := testRegistry(t)
+	prepared, err := PrepareChunk(parseChunk(t, `return 1`), Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, config := range map[string]SolveConfig{
+		"session":       {Resume: transfer.NewSession()},
+		"resume-points": {ResumePoints: []cfg.Point{prepared.cfg.Graph.Entry()}},
+		"empty-points":  {ResumePoints: []cfg.Point{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, retained, err := SolvePreparedRetained(prepared, config, transfer.RetainedBudget{})
+			if !errors.Is(err, ErrRetainedResume) || result != nil || retained != nil {
+				t.Fatalf("result=%v retained=%v err=%v", result != nil, retained != nil, err)
+			}
+		})
+	}
+
+	_, retained, err := SolvePreparedRetained(prepared, SolveConfig{Schedule: transfer.ScheduleWTO}, transfer.RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Release()
+	pending, err := retained.BeginUpdate(prepared, SolveConfig{Resume: transfer.NewSession()}, nil, true)
+	if !errors.Is(err, ErrRetainedResume) || pending != nil {
+		t.Fatalf("pending=%v err=%v", pending != nil, err)
+	}
+	if !retained.Retained() {
+		t.Fatal("rejected legacy resume released retained generation")
+	}
+}
+
+func assertStructuralCallbackCallsOnce(t *testing.T, prepared *Static, label string, calls map[cfg.Point]int) {
+	t.Helper()
+	for _, point := range prepared.cfg.Graph.RPO() {
+		if calls[point] != 1 {
+			t.Fatalf("%s callback calls at point %d = %d, want 1", label, point, calls[point])
+		}
+	}
+}
+
 func retainedCallPoint(t *testing.T, prepared *Static) cfg.Point {
 	t.Helper()
 	var points []cfg.Point

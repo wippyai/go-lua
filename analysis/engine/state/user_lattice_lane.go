@@ -118,7 +118,7 @@ func (l userLatticeLane) snapshot(rt userlattice.Runtime, ks *keyspace.KeySpace)
 		if !ok {
 			continue
 		}
-		stateKey, ok := pathaddr.StateKeyFromPathKey(ks.Format(key.path))
+		stateKey, ok := pathaddr.StateKeyFromPathKey(ks.FormatReadOnly(key.path))
 		if !ok {
 			continue
 		}

@@ -138,7 +138,7 @@ func (r *retainedSummaryApplicationRun) takeMaterializationResult(
 		if !ok || session == nil {
 			return nil, nil, false, nil
 		}
-		compatible, err := session.Compatible(prepared, config)
+		compatible, err := session.StructurallyCompatible(prepared, config)
 		if err != nil || !compatible {
 			return nil, nil, false, err
 		}
