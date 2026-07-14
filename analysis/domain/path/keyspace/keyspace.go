@@ -54,6 +54,13 @@ type SegmentsID uint32
 // rootID is the interned id for a named-root spelling. 0 means none.
 type rootID uint32
 
+// keyUniverse is the unforgeable identity of one KeySpace's dense intern
+// tables. It is deliberately private: callers may copy Keys, but only a
+// KeySpace can mint a Key belonging to its universe.
+type keyUniverse struct {
+	space *KeySpace
+}
+
 // Key is a structural, comparable abstract-state key. It is usable directly as
 // a Go map key. Field meaning depends on Kind:
 //
@@ -73,11 +80,12 @@ type rootID uint32
 // the old string world where a syntax key and its canonicalized address key do
 // not collide. Canon has no effect on non-stable-named kinds.
 type Key struct {
-	Kind  KeyKind
 	Sym   symbol.ID
+	owner *keyUniverse
 	Ver   uint32
 	Root  uint32
 	Segs  SegmentsID
+	Kind  KeyKind
 	Canon bool
 }
 
@@ -107,6 +115,8 @@ type segmentTripleKey struct {
 // KeySpace interns segment lists and named roots per analysis. It is the oracle
 // and structural engine for Key values. It is not safe for concurrent use.
 type KeySpace struct {
+	owner *keyUniverse
+
 	segEntries []segmentsEntry
 	segByKey   map[string]SegmentsID
 	segByOne   map[segment.Segment]SegmentsID
@@ -132,6 +142,7 @@ func New() *KeySpace {
 	}
 	ks.segEntries = append(ks.segEntries, segmentsEntry{})
 	ks.rootEntries = append(ks.rootEntries, rootEntry{})
+	ks.owner = &keyUniverse{space: ks}
 	return ks
 }
 
@@ -247,6 +258,9 @@ func (ks *KeySpace) validRootID(id rootID) bool {
 }
 
 func (ks *KeySpace) validKey(k Key) bool {
+	if !ks.validSpace() || k.owner == nil || k.owner != ks.owner {
+		return false
+	}
 	if !ks.validSegmentsID(k.Segs) {
 		return false
 	}
@@ -254,6 +268,30 @@ func (ks *KeySpace) validKey(k Key) bool {
 		return false
 	}
 	return true
+}
+
+// validSpace reports whether ks is the original KeySpace bound to its dense
+// intern-table universe. A shallow struct copy shares the token but not this
+// self identity and therefore has no authority to mint or interpret keys.
+func (ks *KeySpace) validSpace() bool {
+	return ks != nil && ks.owner != nil && ks.owner.space == ks
+}
+
+// ownKey binds a newly constructed key to this KeySpace's intern-table
+// universe. Derived keys retain provenance naturally when copied.
+func (ks *KeySpace) ownKey(k Key) Key {
+	if !ks.validSpace() {
+		return Key{}
+	}
+	return ks.bindKey(k)
+}
+
+// bindKey binds after the public minting boundary has already proved
+// validSpace. Keeping that proof at the boundary prevents shallow copies from
+// mutating intern tables while avoiding a duplicate check on every hot mint.
+func (ks *KeySpace) bindKey(k Key) Key {
+	k.owner = ks.owner
+	return k
 }
 
 // segments returns the interned, immutable segment list for a key. The slice
@@ -269,6 +307,9 @@ func (ks *KeySpace) segments(id SegmentsID) []segment.Segment {
 // equivalent of reading address.LocalPathFromKey(...).Segments. The copy is
 // owned by the caller and safe to retain or mutate.
 func (ks *KeySpace) Segments(k Key) []segment.Segment {
+	if ks == nil || !ks.validKey(k) {
+		return nil
+	}
 	interned := ks.segments(k.Segs)
 	if len(interned) == 0 {
 		return nil

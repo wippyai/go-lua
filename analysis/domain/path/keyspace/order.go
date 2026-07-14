@@ -8,6 +8,9 @@ package keyspace
 // materializing the full Format string, which keeps lexicographic order exact
 // over the concatenation root+suffix.
 func (ks *KeySpace) Less(a, b Key) bool {
+	if ks == nil || !ks.validKey(a) || !ks.validKey(b) {
+		return false
+	}
 	return ks.compare(a, b) < 0
 }
 

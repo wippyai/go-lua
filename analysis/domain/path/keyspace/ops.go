@@ -58,7 +58,7 @@ func (a Key) sameStableRoot(b Key) bool {
 // HasPrefix reports whether prefix is k or one of its structural ancestors,
 // mirroring address.PathKeyHasPrefix(Format(k), Format(prefix)).
 func (ks *KeySpace) HasPrefix(k, prefix Key) bool {
-	if !k.isStructural() || !prefix.isStructural() {
+	if ks == nil || !ks.validKey(k) || !ks.validKey(prefix) || !k.isStructural() || !prefix.isStructural() {
 		return false
 	}
 	if k.isLocal() || prefix.isLocal() {
@@ -100,7 +100,7 @@ func (ks *KeySpace) ExactRemainderAfterPrefix(k, prefix Key) ([]segment.Segment,
 // remainderAfterPrefix returns the suffix segments of k below prefix, mirroring
 // StructuralKey.RemainderAfterPrefix.
 func (ks *KeySpace) remainderAfterPrefix(k, prefix Key) ([]segment.Segment, bool) {
-	if !k.isStructural() || !prefix.isStructural() {
+	if ks == nil || !ks.validKey(k) || !ks.validKey(prefix) || !k.isStructural() || !prefix.isStructural() {
 		return nil, false
 	}
 	if k.isLocal() || prefix.isLocal() {
@@ -235,7 +235,8 @@ func (ks *KeySpace) AppendSegment(k Key, seg segment.Segment) (Key, bool) {
 // not a prefix of k, when from and to are different kinds, or when the result
 // would be empty or unchanged.
 func (ks *KeySpace) Rebase(k, from, to Key) (Key, bool) {
-	if !k.isStructural() || !from.isStructural() || !to.isStructural() {
+	if ks == nil || !ks.validKey(k) || !ks.validKey(from) || !ks.validKey(to) ||
+		!k.isStructural() || !from.isStructural() || !to.isStructural() {
 		return Key{}, false
 	}
 	if from.isLocal() != to.isLocal() {
@@ -262,7 +263,7 @@ func (ks *KeySpace) Rebase(k, from, to Key) (Key, bool) {
 // when k is not a recognized structural key, when nothing changes, or when the
 // canonical key equals the original.
 func (ks *KeySpace) FieldCanonical(k Key) (Key, bool) {
-	if !k.isStructural() {
+	if ks == nil || !ks.validKey(k) || !k.isStructural() {
 		return Key{}, false
 	}
 	segments, changed := fieldCanonicalSegments(ks.segments(k.Segs))
@@ -313,7 +314,7 @@ func (ks *KeySpace) SuffixSegments(k Key) ([]segment.Segment, bool) {
 // borrowed segment view. The returned slice is owned by the KeySpace and must
 // not be mutated. Use SuffixSegments when the caller needs an owned slice.
 func (ks *KeySpace) SuffixSegmentsView(k Key) ([]segment.Segment, bool) {
-	if ks == nil || k.Kind != KindRootlessSuffix || k.Segs == 0 || !ks.validSegmentsID(k.Segs) {
+	if ks == nil || !ks.validKey(k) || k.Kind != KindRootlessSuffix || k.Segs == 0 {
 		return nil, false
 	}
 	return ks.segments(k.Segs), true
