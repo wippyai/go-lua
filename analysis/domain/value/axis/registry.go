@@ -4,15 +4,16 @@ import "fmt"
 
 // Registry owns the ordered set of axes in one value product.
 type Registry struct {
-	specs              map[string]ErasedSpec
-	order              []ErasedSpec
-	canonicalCore      map[string]ErasedSpec
-	canonicalCoreOrder []ErasedSpec
-	reducers           []Reducer
-	reducerReads       [][]string
-	extensions         map[string]map[string]Extension
-	extensionSeq       map[string][]Extension
-	frozen             bool
+	specs                    map[string]ErasedSpec
+	order                    []ErasedSpec
+	canonicalCore            map[string]ErasedSpec
+	canonicalCoreOrder       []ErasedSpec
+	canonicalInventorySealed bool
+	reducers                 []Reducer
+	reducerReads             [][]string
+	extensions               map[string]map[string]Extension
+	extensionSeq             map[string][]Extension
+	frozen                   bool
 }
 
 // SpecsView is a read-only, allocation-free view of a registry's ordered specs.
@@ -153,6 +154,9 @@ func (r *Registry) validateRegistration(spec ErasedSpec) error {
 	}
 	if r.frozen {
 		return fmt.Errorf("axis: registry is frozen")
+	}
+	if r.canonicalInventorySealed {
+		return fmt.Errorf("axis: canonical inventory is sealed")
 	}
 	id := spec.ID()
 	if id == "" {

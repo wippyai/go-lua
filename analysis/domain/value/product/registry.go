@@ -17,6 +17,9 @@ func RegistryWithAxes(specs ...axis.ErasedSpec) (*axis.Registry, error) {
 			return nil, err
 		}
 	}
+	if err := reg.SealCanonicalInventory(); err != nil {
+		return nil, fmt.Errorf("product: seal canonical inventory: %w", err)
+	}
 	return reg.Freeze(), nil
 }
 

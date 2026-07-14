@@ -110,6 +110,9 @@ func TestRegistryCanonicalPlanPinsPresenceAndWithholdsAuthorityAtTypeWitness(t *
 	if presenceCount != 1 {
 		t.Fatalf("canonical plan contains presence %d times, want exactly once", presenceCount)
 	}
+	if !plan.InventorySealed() {
+		t.Fatal("standard product registry did not seal its complete canonical core inventory")
+	}
 	if got := plan.PendingAxes(); !slices.Equal(got, []string{"typewitness"}) {
 		t.Fatalf("pending canonical axes = %v, want [typewitness]", got)
 	}

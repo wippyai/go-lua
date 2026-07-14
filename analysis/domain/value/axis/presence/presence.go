@@ -5,7 +5,7 @@ import (
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
-var Key = axis.NewKey[Value]("presence")
+var Key = axis.NewKey[Value](axis.CanonicalCorePresenceID)
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{

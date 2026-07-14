@@ -42,11 +42,11 @@ func TestCanonicalDescriptorFailsClosedOnMissingAndStaleMetadata(t *testing.T) {
 }
 
 func TestCanonicalPlanIsRegistrationOrderDeterministic(t *testing.T) {
-	first := frozenCanonicalRegistry(t,
+	first := frozenSealedCanonicalRegistry(t,
 		canonicalPlanTestSpec("test.canonical.b", axis.RetentionImmutable),
 		canonicalPlanTestSpec("test.canonical.a", axis.RetentionImmutable),
 	)
-	second := frozenCanonicalRegistry(t,
+	second := frozenSealedCanonicalRegistry(t,
 		canonicalPlanTestSpec("test.canonical.a", axis.RetentionImmutable),
 		canonicalPlanTestSpec("test.canonical.b", axis.RetentionImmutable),
 	)
@@ -62,12 +62,85 @@ func TestCanonicalPlanIsRegistrationOrderDeterministic(t *testing.T) {
 	if firstPlan.SchemaIdentity() != secondPlan.SchemaIdentity() {
 		t.Fatalf("registration order changed schema identity: %x != %x", firstPlan.SchemaIdentity(), secondPlan.SchemaIdentity())
 	}
-	if got := canonicalPlanIDs(firstPlan); !slices.Equal(got, []string{"test.canonical.a", "test.canonical.b"}) {
+	if got := canonicalPlanIDs(firstPlan); !slices.Equal(got, []string{axis.CanonicalCorePresenceID, "test.canonical.a", "test.canonical.b"}) {
 		t.Fatalf("canonical plan IDs = %v, want canonical order", got)
+	}
+	if !firstPlan.InventorySealed() {
+		t.Fatal("explicitly sealed canonical inventory was reported unsealed")
 	}
 	if identity, ok := firstPlan.AuthorityIdentity(); !ok || identity != firstPlan.SchemaIdentity() {
 		t.Fatal("all-Ready plan did not publish its schema as canonical authority")
 	}
+}
+
+func TestCanonicalPlanUnsealedInventoryNeverPublishesAuthority(t *testing.T) {
+	tests := []struct {
+		name string
+		reg  *axis.Registry
+	}{
+		{name: "empty", reg: axis.NewRegistry().Freeze()},
+		{name: "ready-sparse-only", reg: frozenCanonicalRegistry(t,
+			canonicalPlanTestSpec("test.canonical.ready", axis.RetentionImmutable),
+		)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan, err := test.reg.CanonicalPlan()
+			if err != nil {
+				t.Fatalf("CanonicalPlan error = %v", err)
+			}
+			if plan.InventorySealed() {
+				t.Fatal("unsealed registry reported a complete canonical inventory")
+			}
+			if _, ok := plan.AuthorityIdentity(); ok {
+				t.Fatal("unsealed registry published canonical authority")
+			}
+			// An unsealed plan remains useful for diagnostics and schema diffing.
+			if test.name == "ready-sparse-only" && len(plan.Entries()) != 1 {
+				t.Fatalf("inspectable sparse plan entries = %d, want 1", len(plan.Entries()))
+			}
+		})
+	}
+}
+
+func TestSealCanonicalInventoryRequiresPresenceExactlyOnce(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		reg := axis.NewRegistry()
+		if err := reg.SealCanonicalInventory(); err == nil {
+			t.Fatal("empty core inventory sealed")
+		}
+	})
+
+	t.Run("wrong-core", func(t *testing.T) {
+		reg := axis.NewRegistry()
+		axis.RegisterCanonicalCore(reg, canonicalPlanTestSpec("test.not-presence", axis.RetentionImmutable))
+		if err := reg.SealCanonicalInventory(); err == nil {
+			t.Fatal("non-presence core inventory sealed")
+		}
+	})
+
+	t.Run("presence-plus-extra", func(t *testing.T) {
+		reg := axis.NewRegistry()
+		axis.RegisterCanonicalCore(reg, canonicalPlanTestSpec(axis.CanonicalCorePresenceID, axis.RetentionImmutable))
+		axis.RegisterCanonicalCore(reg, canonicalPlanTestSpec("test.extra-core", axis.RetentionImmutable))
+		if err := reg.SealCanonicalInventory(); err == nil {
+			t.Fatal("core inventory with an undeclared extra entry sealed")
+		}
+	})
+
+	t.Run("sealed-is-registration-boundary", func(t *testing.T) {
+		reg := axis.NewRegistry()
+		axis.RegisterCanonicalCore(reg, canonicalPlanTestSpec(axis.CanonicalCorePresenceID, axis.RetentionImmutable))
+		if err := reg.SealCanonicalInventory(); err != nil {
+			t.Fatalf("SealCanonicalInventory error = %v", err)
+		}
+		if err := reg.RegisterErased(canonicalPlanTestSpec("test.after-seal", axis.RetentionImmutable).Erase()); err == nil {
+			t.Fatal("sparse axis registered after canonical inventory seal")
+		}
+		if err := reg.SealCanonicalInventory(); err == nil {
+			t.Fatal("canonical inventory sealed twice")
+		}
+	})
 }
 
 func TestCanonicalPlanIdentityIncludesRetentionAndAxisInventory(t *testing.T) {
@@ -118,7 +191,7 @@ func TestCanonicalPlanWithPendingAxisCannotPublishAuthority(t *testing.T) {
 	pending := canonicalPlanTestSpec("test.canonical.pending", axis.RetentionImmutable)
 	pending.Canonical = axis.PendingCanonical[int]("portable identity is not implemented")
 
-	reg := frozenCanonicalRegistry(t, ready, pending)
+	reg := frozenSealedCanonicalRegistry(t, ready, pending)
 	plan, err := reg.CanonicalPlan()
 	if err != nil {
 		t.Fatalf("CanonicalPlan error = %v", err)
@@ -168,6 +241,19 @@ func frozenCanonicalRegistry(t *testing.T, specs ...axis.Spec[int]) *axis.Regist
 	reg := axis.NewRegistry()
 	for _, spec := range specs {
 		axis.Register(reg, spec)
+	}
+	return reg.Freeze()
+}
+
+func frozenSealedCanonicalRegistry(t *testing.T, specs ...axis.Spec[int]) *axis.Registry {
+	t.Helper()
+	reg := axis.NewRegistry()
+	axis.RegisterCanonicalCore(reg, canonicalPlanTestSpec(axis.CanonicalCorePresenceID, axis.RetentionImmutable))
+	for _, spec := range specs {
+		axis.Register(reg, spec)
+	}
+	if err := reg.SealCanonicalInventory(); err != nil {
+		t.Fatalf("SealCanonicalInventory error = %v", err)
 	}
 	return reg.Freeze()
 }

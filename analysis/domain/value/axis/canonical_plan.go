@@ -14,6 +14,11 @@ const (
 	canonicalRegistryVersion = 1
 	canonicalPlanRecord      = 1
 	canonicalAxisRecord      = 2
+
+	// CanonicalCorePresenceID is the schema identity of the product's mandatory,
+	// always-present presence lane. Keeping it in axis avoids duplicating the
+	// core-inventory contract between the registry and presence package.
+	CanonicalCorePresenceID = "presence"
 )
 
 // SchemaIdentity is the portable identity of a declared registry schema.
@@ -33,10 +38,41 @@ type CanonicalPlanEntry struct {
 // CanonicalPlan is the deterministic registry-level codec plan. Its schema
 // identity exists for comparison while Pending; canonical authority does not.
 type CanonicalPlan struct {
-	entries  []CanonicalPlanEntry
-	identity SchemaIdentity
-	ready    bool
-	pending  []string
+	entries         []CanonicalPlanEntry
+	identity        SchemaIdentity
+	ready           bool
+	inventorySealed bool
+	pending         []string
+}
+
+// SealCanonicalInventory proves that the registry contains the complete
+// always-present product-axis inventory. Sparse-axis registration remains
+// extensible, but no axis may be added after this completeness boundary.
+//
+// Presence is currently the sole always-present axis and must occur exactly
+// once. Expanding the core inventory is an explicit schema migration here,
+// never an inference from whichever entries happen to be registered.
+func (r *Registry) SealCanonicalInventory() error {
+	if r == nil {
+		return fmt.Errorf("axis: nil registry")
+	}
+	if r.frozen {
+		return fmt.Errorf("axis: cannot seal canonical inventory after registry freeze")
+	}
+	if r.canonicalInventorySealed {
+		return fmt.Errorf("axis: canonical inventory is already sealed")
+	}
+	if len(r.canonicalCore) != 1 || len(r.canonicalCoreOrder) != 1 {
+		return fmt.Errorf("axis: canonical core inventory must contain presence exactly once")
+	}
+	if _, ok := r.canonicalCore[CanonicalCorePresenceID]; !ok {
+		return fmt.Errorf("axis: canonical core inventory is missing presence")
+	}
+	if r.canonicalCoreOrder[0].ID() != CanonicalCorePresenceID {
+		return fmt.Errorf("axis: canonical core inventory contains a non-presence entry")
+	}
+	r.canonicalInventorySealed = true
+	return nil
 }
 
 // CanonicalPlan returns the canonical metadata plan of an immutable registry.
@@ -69,7 +105,10 @@ func (r *Registry) CanonicalPlan() (CanonicalPlan, error) {
 	if err != nil {
 		return CanonicalPlan{}, err
 	}
-	plan := CanonicalPlan{entries: entries, identity: identity, ready: true}
+	plan := CanonicalPlan{
+		entries: entries, identity: identity, ready: true,
+		inventorySealed: r.canonicalInventorySealed,
+	}
 	for _, entry := range entries {
 		if entry.Status != CanonicalReady {
 			plan.ready = false
@@ -134,9 +173,14 @@ func (p CanonicalPlan) Entries() []CanonicalPlanEntry {
 
 func (p CanonicalPlan) SchemaIdentity() SchemaIdentity { return p.identity }
 
-// AuthorityIdentity is available only when every axis is explicitly Ready.
+// InventorySealed reports whether the registry proved its mandatory core
+// inventory complete before freezing.
+func (p CanonicalPlan) InventorySealed() bool { return p.inventorySealed }
+
+// AuthorityIdentity is available only when the mandatory core inventory was
+// explicitly sealed and every declared axis is Ready.
 func (p CanonicalPlan) AuthorityIdentity() (SchemaIdentity, bool) {
-	if !p.ready {
+	if !p.inventorySealed || !p.ready {
 		return SchemaIdentity{}, false
 	}
 	return p.identity, true
