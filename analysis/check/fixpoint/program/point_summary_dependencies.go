@@ -253,30 +253,46 @@ func (d pointSummaryDependencies) tokens() []pointSummaryDependencyToken {
 }
 
 // impact maps changed summary keys to their consumers. forceFull is true for
-// pre-flow unowned reads. reproject is true for post-flow projection reads,
-// which consume a completed Result but do not invalidate any CFG equation.
+// pre-flow reads and for any changed generation dependency which has no owner
+// in this point/projection snapshot. The latter is the conservative contract
+// for a dependency observed on an earlier transfer visit: the latest-visit
+// ledger cannot localize it, so an empty regional seed is not proof that no
+// replay is required. reproject is true for post-flow projection reads, which
+// consume a completed Result but do not invalidate any CFG equation.
 func (d pointSummaryDependencies) impact(changed []summary.SummaryKey) (points []cfg.Point, forceFull, reproject bool) {
 	if len(changed) == 0 {
 		return nil, false, false
 	}
 	changedSet := make(map[summary.SummaryKey]struct{}, len(changed))
+	covered := make(map[summary.SummaryKey]struct{}, len(changed))
 	for _, key := range changed {
 		changedSet[key] = struct{}{}
 		if _, ok := d.preFlow[key]; ok {
 			forceFull = true
+			covered[key] = struct{}{}
 		}
 		if _, ok := d.projection[key]; ok {
 			reproject = true
+			covered[key] = struct{}{}
 		}
 	}
 	seen := make(map[cfg.Point]struct{})
 	for point, reads := range d.byPoint {
+		ownedChanged := false
 		for key := range reads {
 			if _, ok := changedSet[key]; !ok {
 				continue
 			}
+			covered[key] = struct{}{}
+			ownedChanged = true
+		}
+		if ownedChanged {
 			seen[point] = struct{}{}
-			break
+		}
+	}
+	for _, key := range changed {
+		if _, ok := covered[key]; !ok {
+			forceFull = true
 		}
 	}
 	for point := range seen {

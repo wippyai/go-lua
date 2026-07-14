@@ -69,8 +69,47 @@ func TestPointSummaryDependenciesLatestTransferDropsDisappearedRead(t *testing.T
 	tracker.after(9)
 
 	points, fallback := tracker.snapshot().affectedPoints([]summary.SummaryKey{key})
-	if len(points) != 0 || fallback {
-		t.Fatalf("disappeared read affected points/fallback = %v/%v, want none/false", points, fallback)
+	if len(points) != 0 || !fallback {
+		t.Fatalf("disappeared read affected points/fallback = %v/%v, want none/true", points, fallback)
+	}
+}
+
+func TestPointSummaryDependenciesMixedOwnedAndUnownedForcesFull(t *testing.T) {
+	owned, unowned := dependencyTestKey(112), dependencyTestKey(113)
+	dependencies := pointSummaryDependencies{byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{
+		9: {owned: {present: true, digest: 1}},
+	}}
+
+	points, forceFull, reproject := dependencies.impact([]summary.SummaryKey{unowned, owned})
+	if !slices.Equal(points, []cfg.Point{9}) || !forceFull || reproject {
+		t.Fatalf("mixed owned/unowned impact = %v/%v/%v, want [9]/true/false", points, forceFull, reproject)
+	}
+}
+
+func TestPointSummaryDependenciesMixedProjectionAndUnownedForcesFull(t *testing.T) {
+	projection, unowned := dependencyTestKey(114), dependencyTestKey(115)
+	dependencies := pointSummaryDependencies{projection: map[summary.SummaryKey]pointSummaryRead{
+		projection: {present: true, digest: 1},
+	}}
+
+	points, forceFull, reproject := dependencies.impact([]summary.SummaryKey{projection, unowned})
+	if len(points) != 0 || !forceFull || !reproject {
+		t.Fatalf("mixed projection/unowned impact = %v/%v/%v, want none/true/true", points, forceFull, reproject)
+	}
+}
+
+func TestPointSummaryDependenciesMultipleChangedReadsAtOnePointStayRegional(t *testing.T) {
+	first, second := dependencyTestKey(116), dependencyTestKey(117)
+	dependencies := pointSummaryDependencies{byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{
+		9: {
+			first:  {present: true, digest: 1},
+			second: {present: true, digest: 2},
+		},
+	}}
+
+	points, forceFull, reproject := dependencies.impact([]summary.SummaryKey{first, second})
+	if !slices.Equal(points, []cfg.Point{9}) || forceFull || reproject {
+		t.Fatalf("same-owner changed impact = %v/%v/%v, want [9]/false/false", points, forceFull, reproject)
 	}
 }
 
