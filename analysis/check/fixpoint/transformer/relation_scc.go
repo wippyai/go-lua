@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 )
 
 // RelationEquation computes one lexical cell from a read-only snapshot of
@@ -110,7 +112,7 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 		cell := byRef[ref]
 		values[ref] = Relation{shape: cell.Shape, arena: cell.Arena}
 	}
-	components := relationDependencySCCs(ordered, byRef)
+	components := relationComponentsFromWTO(relationDependencyPlan(ordered, byRef).Elements())
 	for _, component := range components {
 		if err := ctx.Err(); err != nil {
 			return RelationSnapshot{}, err
@@ -283,88 +285,45 @@ func hasRelationDependency(cell RelationCell, target CellRef) bool {
 	return i < len(cell.Dependencies) && cell.Dependencies[i] == target
 }
 
-// relationDependencySCCs returns SCCs in dependency-first order. Tarjan's
-// traversal and every component are canonicalized, then the condensation DAG
-// is ordered explicitly rather than relying on incidental DFS completion.
-func relationDependencySCCs(ordered []CellRef, byRef map[CellRef]RelationCell) [][]CellRef {
-	index := 0
-	indices := make(map[CellRef]int, len(ordered))
-	low := make(map[CellRef]int, len(ordered))
-	onStack := make(map[CellRef]bool, len(ordered))
-	stack := make([]CellRef, 0, len(ordered))
-	components := make([][]CellRef, 0)
-	var visit func(CellRef)
-	visit = func(ref CellRef) {
-		index++
-		indices[ref], low[ref] = index, index
-		stack = append(stack, ref)
-		onStack[ref] = true
-		for _, dep := range byRef[ref].Dependencies {
-			if indices[dep] == 0 {
-				visit(dep)
-				if low[dep] < low[ref] {
-					low[ref] = low[dep]
-				}
-			} else if onStack[dep] && indices[dep] < low[ref] {
-				low[ref] = indices[dep]
-			}
-		}
-		if low[ref] != indices[ref] {
-			return
-		}
-		component := make([]CellRef, 0, 1)
-		for {
-			last := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			onStack[last] = false
-			component = append(component, last)
-			if last == ref {
-				break
-			}
-		}
-		sortCellRefs(component)
-		components = append(components, component)
-	}
-	for _, ref := range ordered {
-		if indices[ref] == 0 {
-			visit(ref)
+func relationDependencyPlan(ordered []CellRef, byRef map[CellRef]RelationCell) *solve.WTOPlan[CellRef] {
+	successors := make(map[CellRef][]CellRef, len(ordered))
+	for _, consumer := range ordered {
+		for _, dependency := range byRef[consumer].Dependencies {
+			successors[dependency] = append(successors[dependency], consumer)
 		}
 	}
-	componentOf := make(map[CellRef]int, len(ordered))
-	for i, component := range components {
-		for _, ref := range component {
-			componentOf[ref] = i
-		}
-	}
-	done := make([]bool, len(components))
-	result := make([][]CellRef, 0, len(components))
-	for len(result) < len(components) {
-		chosen := -1
-		for i, component := range components {
-			if done[i] {
-				continue
-			}
-			ready := true
-			for _, ref := range component {
-				for _, dep := range byRef[ref].Dependencies {
-					if j := componentOf[dep]; j != i && !done[j] {
-						ready = false
-					}
-				}
-			}
-			if ready && (chosen < 0 || cellRefLess(component[0], components[chosen][0])) {
-				chosen = i
-			}
-		}
-		if chosen < 0 {
-			panic("transformer: SCC condensation cycle")
-		}
-		done[chosen] = true
-		result = append(result, components[chosen])
-	}
-	return result
+	return solve.NewWTOPlan(ordered, func(ref CellRef) []CellRef { return successors[ref] })
 }
 
-func cellRefLess(a, b CellRef) bool {
-	return a.Function < b.Function || a.Function == b.Function && a.Slot < b.Slot
+// relationComponentsFromWTO projects the generic canonical WTO into the
+// synchronous semantic SCC vectors used by relation evaluation. A top-level
+// component contains its head and all nested WTO body vertices.
+func relationComponentsFromWTO(elements []solve.WTOElement[CellRef]) [][]CellRef {
+	cellCount := 0
+	var count func([]solve.WTOElement[CellRef])
+	count = func(items []solve.WTOElement[CellRef]) {
+		cellCount += len(items)
+		for _, item := range items {
+			count(item.Body)
+		}
+	}
+	count(elements)
+	storage := make([]CellRef, 0, cellCount)
+	components := make([][]CellRef, 0, len(elements))
+	var collect func([]solve.WTOElement[CellRef])
+	collect = func(items []solve.WTOElement[CellRef]) {
+		for _, item := range items {
+			storage = append(storage, item.Vertex)
+			collect(item.Body)
+		}
+	}
+	for _, element := range elements {
+		start := len(storage)
+		storage = append(storage, element.Vertex)
+		collect(element.Body)
+		refs := storage[start:len(storage)]
+		sortCellRefs(refs)
+		components = append(components, refs)
+	}
+	return components
 }

@@ -35,6 +35,132 @@ func TestWTOPlanNestedLoopsVisitsEveryCellOnce(t *testing.T) {
 	}
 }
 
+func TestCondensationWTOPlanDirectEquationsDependencyFirst(t *testing.T) {
+	plan, err := FreezeWTOPlan(
+		[]int{0, 1},
+		[]WTOElement[int]{{Vertex: 0}, {Vertex: 1}},
+		[]WTOInfluence[int]{{From: 0, To: 1}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := [2]int{}
+	sys := EquationSystem[int, int]{
+		Lattice: capLattice{top: 8}.joinOnly(), Cells: []int{0, 1},
+		Evaluate: func(cell int, read func(int) int) int {
+			calls[cell]++
+			if cell == 0 {
+				return 1
+			}
+			return read(0) + 1
+		},
+	}
+	got, err := SolveWTO(sys, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, map[int]int{0: 1, 1: 2}) || calls != [2]int{1, 1} {
+		t.Fatalf("result=%v calls=%v, want map[0:1 1:2] and one call each", got, calls)
+	}
+}
+
+func TestCondensationWTOPlanDirectCyclicEquationStabilizes(t *testing.T) {
+	plan, err := FreezeWTOPlan(
+		[]int{0},
+		[]WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{}}},
+		[]WTOInfluence[int]{{From: 0, To: 0}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	got, err := SolveWTO(EquationSystem[int, int]{
+		Lattice: capLattice{top: 8}.joinOnly(), Cells: []int{0},
+		Evaluate: func(cell int, read func(int) int) int {
+			calls++
+			return min(3, read(cell)+1)
+		},
+	}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != 3 || calls != 4 {
+		t.Fatalf("result=%v calls=%d, want value 3 after four confirmation visits", got, calls)
+	}
+}
+
+func TestCondensationWTOPlanRejectsUnplannedDirectSelfRead(t *testing.T) {
+	plan, err := FreezeWTOPlan([]int{0}, []WTOElement[int]{{Vertex: 0}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := SolveWTO(EquationSystem[int, int]{
+		Lattice: capLattice{top: 8}.joinOnly(), Cells: []int{0},
+		Evaluate: func(cell int, read func(int) int) int {
+			return read(cell) + 1
+		},
+	}, plan)
+	if !errors.Is(err, ErrWTOPlanUncovered) || got != nil {
+		t.Fatalf("result=%v error=%v, want fail-closed uncovered plan", got, err)
+	}
+}
+
+func TestCondensationWTOPlanValidatesCanonicalDAG(t *testing.T) {
+	if _, err := FreezeWTOPlan([]int{0, 0}, []WTOElement[int]{{Vertex: 0}}, nil); !errors.Is(err, ErrWTOInvalidFrozenPlan) {
+		t.Fatalf("duplicate error=%v", err)
+	}
+	if _, err := FreezeWTOPlan(
+		[]int{0, 1},
+		[]WTOElement[int]{{Vertex: 0}, {Vertex: 1}},
+		[]WTOInfluence[int]{{From: 1, To: 0}},
+	); !errors.Is(err, ErrWTOInvalidFrozenPlan) {
+		t.Fatalf("backward-edge error=%v", err)
+	}
+}
+
+func TestFreezeWTOPlanOwnsExactNestedSchedule(t *testing.T) {
+	elements := []WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{{Vertex: 1}}}}
+	influences := []WTOInfluence[int]{{From: 1, To: 0}}
+	plan, err := FreezeWTOPlan([]int{0, 1}, elements, influences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ComponentCount() != 1 || !plan.CoversInfluence(1, 0) {
+		t.Fatalf("components=%d covers-backedge=%v", plan.ComponentCount(), plan.CoversInfluence(1, 0))
+	}
+	// The frozen plan owns both structural and influence inputs.
+	elements[0].Body[0].Vertex = 9
+	influences[0] = WTOInfluence[int]{From: 0, To: 9}
+	got := plan.Elements()
+	if len(got) != 1 || len(got[0].Body) != 1 || got[0].Body[0].Vertex != 1 || !plan.CoversInfluence(1, 0) {
+		t.Fatalf("caller mutation changed frozen plan: %#v", got)
+	}
+}
+
+func TestFreezeWTOPlanRejectsInexactCoverageAndNonHeadBackedge(t *testing.T) {
+	if _, err := FreezeWTOPlan([]int{0, 1}, []WTOElement[int]{{Vertex: 0}}, nil); !errors.Is(err, ErrWTOInvalidFrozenPlan) {
+		t.Fatalf("missing-cell error=%v", err)
+	}
+	if _, err := FreezeWTOPlan(
+		[]int{0, 1, 2},
+		[]WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{{Vertex: 1}, {Vertex: 2}}}},
+		[]WTOInfluence[int]{{From: 2, To: 1}},
+	); !errors.Is(err, ErrWTOInvalidFrozenPlan) {
+		t.Fatalf("non-head backedge error=%v", err)
+	}
+}
+
+func TestBuildRetainedWTORejectsDirectEquations(t *testing.T) {
+	sys := EquationSystem[int, int]{
+		Lattice: capLattice{top: 8}.joinOnly(), Cells: []int{0},
+		Evaluate: func(int, func(int) int) int { return 1 },
+	}
+	values, versions, retained, err := BuildRetainedWTO(context.Background(), sys, NewWTOPlan(sys.Cells, nil), RetainedBudget{})
+	if !errors.Is(err, ErrRetainedEvaluateUnsupported) || values != nil || versions != nil || retained != nil {
+		t.Fatalf("values=%v versions=%v retained=%v error=%v", values, versions, retained, err)
+	}
+}
+
 func TestSolveWTOMatchesFIFOOnFiniteLattice(t *testing.T) {
 	edges := map[int][]int{0: {1}, 1: {2, 3}, 2: {1}, 3: {4}}
 	sys := EquationSystem[int, int]{
@@ -117,6 +243,23 @@ func TestSolveWTORejectsUnplannedBackwardDynamicRead(t *testing.T) {
 	}
 }
 
+func TestSolveWTORejectsDuplicateEquationCellsAgainstExactPlan(t *testing.T) {
+	sys := EquationSystem[int, int]{
+		Lattice:  capLattice{top: 8}.joinOnly(),
+		Cells:    []int{0, 0},
+		Transfer: func(int, func(int) int, func(int, int)) {},
+	}
+	plan := NewWTOPlan([]int{0}, nil)
+	result, versions, err := SolveWTOWithVersions(sys, plan)
+	if !errors.Is(err, ErrWTOPlanUncovered) || result != nil || versions != nil {
+		t.Fatalf("duplicate equations result=%v versions=%v error=%v", result, versions, err)
+	}
+	result, versions, retained, err := BuildRetainedWTO(context.Background(), sys, plan, RetainedBudget{})
+	if !errors.Is(err, ErrWTOPlanUncovered) || result != nil || versions != nil || retained != nil {
+		t.Fatalf("duplicate retained result=%v versions=%v retained=%v error=%v", result, versions, retained, err)
+	}
+}
+
 func TestSolveWTOCanceledPublishesNothing(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -193,7 +336,8 @@ func TestSolveWTOMatchesFIFOAcrossSmallDirectedGraphs(t *testing.T) {
 		sample = sample*1664525 + 1013904223
 		check(4, sample&0xffff, i%17 == 0)
 	}
-	// Duplicate declared cells are normalized by both solvers.
+	// A prepared WTO owns an exact equation sequence; duplicate owners are not
+	// silently normalized against its canonical plan.
 	cells := []int{0, 1, 0, 2, 1}
 	edges := map[int][]int{0: {1, 1}, 1: {2}, 2: {0}}
 	sys := EquationSystem[int, uint16]{Lattice: setDomain, Cells: cells,
@@ -205,8 +349,8 @@ func TestSolveWTOMatchesFIFOAcrossSmallDirectedGraphs(t *testing.T) {
 		},
 	}
 	wto, err := SolveWTO(sys, NewWTOPlan(cells, func(cell int) []int { return edges[cell] }))
-	if err != nil || !reflect.DeepEqual(wto, Solve(sys)) {
-		t.Fatalf("duplicate cells: WTO=%v FIFO=%v err=%v", wto, Solve(sys), err)
+	if !errors.Is(err, ErrWTOPlanUncovered) || wto != nil {
+		t.Fatalf("duplicate cells: WTO=%v err=%v", wto, err)
 	}
 }
 

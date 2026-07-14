@@ -140,6 +140,23 @@ func TestRegionRejectsMismatchedPrebuiltPlan(t *testing.T) {
 	}
 }
 
+func TestPreparedRegionRejectsDuplicateEquationCells(t *testing.T) {
+	equations := solve.EquationSystem[int, int]{
+		Lattice:  finiteIntLattice(2),
+		Cells:    []int{0, 0},
+		Transfer: func(int, func(int) int, func(int, int)) {},
+	}
+	plan := solve.NewWTOPlan([]int{0}, nil)
+	result, err := RunPrepared(nil, equations, plan, Options{})
+	if !errors.Is(err, solve.ErrWTOPlanUncovered) || result.Values != nil || result.Revisions != nil {
+		t.Fatalf("duplicate prepared result/error = %#v/%v", result, err)
+	}
+	values, versions, retained, err := BuildRetainedPrepared(context.Background(), equations, plan, solve.RetainedBudget{})
+	if !errors.Is(err, solve.ErrWTOPlanUncovered) || values != nil || versions != nil || retained != nil {
+		t.Fatalf("duplicate retained prepared values=%v versions=%v retained=%v error=%v", values, versions, retained, err)
+	}
+}
+
 func solveSystem(system graphSystem, domain lattice.Lattice[int]) solve.EquationSystem[int, int] {
 	return solve.EquationSystem[int, int]{
 		Lattice: domain, Cells: system.cells,

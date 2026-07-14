@@ -52,6 +52,8 @@ type System[Cell comparable, State any] struct {
 	InitialSparse     func(Cell) (State, bool)
 	Transfer          func(Cell, func(Cell) State, func(Cell, State))
 	TransferVersioned func(Cell, func(Cell) (State, uint64), func(Cell, State))
+	Evaluate          func(Cell, func(Cell) State) State
+	EvaluateVersioned func(Cell, func(Cell) (State, uint64)) State
 
 	WidenAt    func(Cell) bool
 	WidenDelay func(Cell) int
@@ -76,18 +78,26 @@ func Run[Cell comparable, State any](ctx context.Context, system System[Cell, St
 	if err := validateSystem(system); err != nil {
 		return Result[Cell, State]{}, err
 	}
-	cells, err := uniqueCells(system.Cells)
-	if err != nil {
-		return Result[Cell, State]{}, err
-	}
 	plan := system.Plan
+	var cells []Cell
 	if plan == nil {
+		var err error
+		cells, err = uniqueCells(system.Cells)
+		if err != nil {
+			return Result[Cell, State]{}, err
+		}
 		plan = solve.NewWTOPlan(cells, system.Successors)
+	} else {
+		if !plan.Matches(system.Cells) {
+			return Result[Cell, State]{}, solve.ErrWTOPlanUncovered
+		}
+		cells = system.Cells
 	}
 	equations := solve.EquationSystem[Cell, State]{
 		Lattice: system.Lattice, Cells: cells,
 		Initial: system.Initial, InitialSparse: system.InitialSparse,
 		Transfer: system.Transfer, TransferVersioned: system.TransferVersioned,
+		Evaluate: system.Evaluate, EvaluateVersioned: system.EvaluateVersioned,
 		WidenAt: system.WidenAt, WidenDelay: system.WidenDelay,
 		Abstract: system.Abstract, Stats: system.SolveStats,
 	}
@@ -98,9 +108,6 @@ func Run[Cell comparable, State any](ctx context.Context, system System[Cell, St
 // WTO. This is the production migration seam: callers retain equation
 // construction while region becomes the sole generic WTO execution authority.
 func RunPrepared[Cell comparable, State any](ctx context.Context, equations solve.EquationSystem[Cell, State], plan *solve.WTOPlan[Cell], options Options) (Result[Cell, State], error) {
-	if _, err := uniqueCells(equations.Cells); err != nil {
-		return Result[Cell, State]{}, err
-	}
 	if plan == nil || !plan.Matches(equations.Cells) {
 		return Result[Cell, State]{}, solve.ErrWTOPlanUncovered
 	}
@@ -110,7 +117,7 @@ func RunPrepared[Cell comparable, State any](ctx context.Context, equations solv
 		}
 	}
 
-	stats := Stats{Cells: len(equations.Cells), Components: countComponents(plan.Elements())}
+	stats := Stats{Cells: len(equations.Cells), Components: plan.ComponentCount()}
 	domain := equations.Lattice
 	if domain.Widen != nil {
 		widen := domain.Widen
@@ -170,9 +177,6 @@ func RunPrepared[Cell comparable, State any](ctx context.Context, equations solv
 // RunPrepared. Region validates the execution boundary and delegates retained
 // history ownership to solve; no second retained algorithm exists here.
 func BuildRetainedPrepared[Cell comparable, State any](ctx context.Context, equations solve.EquationSystem[Cell, State], plan *solve.WTOPlan[Cell], budget solve.RetainedBudget) (map[Cell]State, map[Cell]uint64, *solve.RetainedSystem[Cell, State], error) {
-	if _, err := uniqueCells(equations.Cells); err != nil {
-		return nil, nil, nil, err
-	}
 	if plan == nil || !plan.Matches(equations.Cells) {
 		return nil, nil, nil, solve.ErrWTOPlanUncovered
 	}
@@ -186,8 +190,14 @@ func validateSystem[Cell comparable, State any](system System[Cell, State]) erro
 	if system.Lattice.Bottom == nil || system.Lattice.Equal == nil || system.Lattice.LessOrEq == nil || system.Lattice.Join == nil {
 		return errors.New("region: incomplete lattice")
 	}
-	if system.Transfer == nil {
-		return errors.New("region: Transfer is nil")
+	if (system.Transfer == nil) == (system.Evaluate == nil) {
+		return errors.New("region: exactly one of Transfer or Evaluate is required")
+	}
+	if system.TransferVersioned != nil && system.Transfer == nil {
+		return errors.New("region: TransferVersioned requires Transfer")
+	}
+	if system.EvaluateVersioned != nil && system.Evaluate == nil {
+		return errors.New("region: EvaluateVersioned requires Evaluate")
 	}
 	if system.Plan == nil && system.Successors == nil {
 		return errors.New("region: Successors is nil without a prebuilt Plan")
@@ -209,17 +219,6 @@ func uniqueCells[Cell comparable](input []Cell) ([]Cell, error) {
 		out = append(out, cell)
 	}
 	return out, nil
-}
-
-func countComponents[Cell comparable](elements []solve.WTOElement[Cell]) int {
-	count := 0
-	for _, element := range elements {
-		if element.IsComponent() {
-			count++
-		}
-		count += countComponents(element.Body)
-	}
-	return count
 }
 
 func canceled(ctx context.Context) error {

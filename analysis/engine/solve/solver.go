@@ -125,6 +125,17 @@ type EquationSystem[Cell comparable, State any] struct {
 	// against the converged working solution without re-running that transfer.
 	TransferVersioned func(cell Cell, read func(Cell) (State, uint64), emit func(Cell, State))
 
+	// Evaluate is the direct equation form for a cell whose only destination is
+	// itself. The returned candidate is accumulated into cell with the same
+	// Join/Widen/Abstract and revision rules as emit(cell, candidate), and every
+	// declared cell owns exactly one equation. Evaluate and Transfer
+	// are mutually exclusive.
+	Evaluate func(cell Cell, read func(Cell) State) State
+
+	// EvaluateVersioned is the revision-observing spelling of Evaluate. Evaluate
+	// remains the narrowing authority, matching Transfer/TransferVersioned.
+	EvaluateVersioned func(cell Cell, read func(Cell) (State, uint64)) State
+
 	// WidenAt reports whether emit into a cell may apply Widen rather than plain
 	// Join. It is true at feedback-vertex / loop-head cells — enough cells to
 	// cut every cycle in the dependency graph — so that ascending chains there
@@ -254,6 +265,22 @@ func (r *Session[Cell, State]) ReplaceTransfer(transfer func(Cell, func(Cell) St
 	}
 	r.s.transfer = transfer
 	r.s.transferVersioned = versioned
+	r.s.evaluate = nil
+	r.s.evaluateVersioned = nil
+	r.s.stats = stats
+}
+
+// ReplaceEvaluate swaps a session to direct, self-owned equations. It is the
+// direct counterpart of ReplaceTransfer; switching either spelling clears the
+// other so a resumed session never retains an ambiguous stale binding.
+func (r *Session[Cell, State]) ReplaceEvaluate(evaluate func(Cell, func(Cell) State) State, versioned func(Cell, func(Cell) (State, uint64)) State, stats *Stats) {
+	if r == nil || r.s == nil {
+		return
+	}
+	r.s.transfer = nil
+	r.s.transferVersioned = nil
+	r.s.evaluate = evaluate
+	r.s.evaluateVersioned = versioned
 	r.s.stats = stats
 }
 
@@ -344,8 +371,17 @@ func (g *cancellationGuard) err(iteration uint64) error {
 }
 
 func validateEquationSystem[Cell comparable, State any](sys EquationSystem[Cell, State]) {
-	if sys.Transfer == nil {
+	if sys.Transfer == nil && sys.Evaluate == nil {
 		panic("solve: EquationSystem.Transfer is nil")
+	}
+	if sys.Transfer != nil && sys.Evaluate != nil {
+		panic("solve: EquationSystem Transfer and Evaluate are mutually exclusive")
+	}
+	if sys.TransferVersioned != nil && sys.Transfer == nil {
+		panic("solve: EquationSystem.TransferVersioned requires Transfer")
+	}
+	if sys.EvaluateVersioned != nil && sys.Evaluate == nil {
+		panic("solve: EquationSystem.EvaluateVersioned requires Evaluate")
 	}
 	if sys.Lattice.Bottom == nil {
 		panic("solve: EquationSystem.Lattice.Bottom is nil")
@@ -369,6 +405,8 @@ type solveState[Cell comparable, State any] struct {
 	// the struct each visit.
 	transfer          func(cell Cell, read func(Cell) State, emit func(Cell, State))
 	transferVersioned func(cell Cell, read func(Cell) (State, uint64), emit func(Cell, State))
+	evaluate          func(cell Cell, read func(Cell) State) State
+	evaluateVersioned func(cell Cell, read func(Cell) (State, uint64)) State
 	widenAt           func(Cell) bool
 	widenDelay        func(Cell) int
 	abstract          func(Cell, State) State
@@ -432,14 +470,14 @@ type edge[Cell comparable] struct {
 }
 
 func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solveState[Cell, State] {
-	return newStateWithFIFO(sys, true)
+	return newStateWithFIFO(sys, true, true)
 }
 
-func newStructuredState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solveState[Cell, State] {
-	return newStateWithFIFO(sys, false)
+func newStructuredState[Cell comparable, State any](sys EquationSystem[Cell, State], retainInitial bool) *solveState[Cell, State] {
+	return newStateWithFIFO(sys, false, retainInitial)
 }
 
-func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State], fifo bool) *solveState[Cell, State] {
+func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State], fifo, retainInitial bool) *solveState[Cell, State] {
 	widenAt := sys.WidenAt
 	if widenAt == nil {
 		widenAt = func(Cell) bool { return false }
@@ -463,6 +501,8 @@ func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State
 		domain:            sys.Lattice,
 		transfer:          sys.Transfer,
 		transferVersioned: sys.TransferVersioned,
+		evaluate:          sys.Evaluate,
+		evaluateVersioned: sys.EvaluateVersioned,
 		widenAt:           widenAt,
 		widenDelay:        widenDelay,
 		abstract:          abstract,
@@ -471,7 +511,9 @@ func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State
 		cells:             make([]Cell, 0, n),
 		cur:               make(map[Cell]State, n),
 		versions:          make(map[Cell]uint64, n),
-		initial:           make(map[Cell]State, n),
+	}
+	if retainInitial || sys.Lattice.Narrow != nil {
+		s.initial = make(map[Cell]State, n)
 	}
 	if fifo {
 		s.dependents = make(map[Cell][]Cell)
@@ -496,14 +538,18 @@ func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State
 			if value, ok := initialSparse(c); ok {
 				s.cur[c] = value
 				s.bumpVersion(c)
-				s.initial[c] = value
+				if s.initial != nil {
+					s.initial[c] = value
+				}
 				s.declaredCur++
 			}
 		} else {
 			value := initial(c)
 			s.cur[c] = value
 			s.bumpVersion(c)
-			s.initial[c] = value
+			if s.initial != nil {
+				s.initial[c] = value
+			}
 			s.declaredCur++
 		}
 		if fifo {
@@ -721,10 +767,16 @@ func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard)
 		if s.stats != nil {
 			s.stats.TransferCalls++
 		}
-		if s.transferVersioned != nil {
-			s.transferVersioned(c, readVersioned, emit)
+		if s.transfer != nil {
+			if s.transferVersioned != nil {
+				s.transferVersioned(c, readVersioned, emit)
+			} else {
+				s.transfer(c, read, emit)
+			}
+		} else if s.evaluateVersioned != nil {
+			s.emit(c, s.evaluateVersioned(c, readVersioned))
 		} else {
-			s.transfer(c, read, emit)
+			s.emit(c, s.evaluate(c, read))
 		}
 		// Transfer callbacks cannot return errors. Check at their commit boundary
 		// so a callback that noticed cancellation cannot publish its partial work.
@@ -869,7 +921,13 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 		s.active = c
 		s.activeReadSelf = false
 		s.activeSelfChanged = false
-		s.transfer(c, read, emit)
+		if s.transfer != nil {
+			s.transfer(c, read, emit)
+		} else {
+			value := s.evaluate(c, read)
+			prev := candidateOf(c)
+			candidate[c] = s.abstract(c, s.domain.Join(prev, value))
+		}
 		if err := cancel.err(0); err != nil {
 			return nil, nil, err
 		}

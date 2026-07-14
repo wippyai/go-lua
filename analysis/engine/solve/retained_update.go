@@ -506,7 +506,7 @@ func contributionIndex[Cell comparable, State any](owners []retainedOwner[Cell, 
 }
 
 func stateFromRetained[Cell comparable, State any](r *RetainedSystem[Cell, State]) *solveState[Cell, State] {
-	s := newStructuredState(r.system)
+	s := newStructuredState(r.system, true)
 	s.cur, s.versions, s.initial = r.materializeValues(), r.materializeVersions(), cloneMap(r.initial)
 	s.visits, s.widenChanges = cloneMap(r.visits), cloneMap(r.widenChanges)
 	s.nextVersion = r.nextVersion
