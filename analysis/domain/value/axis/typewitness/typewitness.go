@@ -28,7 +28,7 @@ func Spec() axis.Spec[Value] {
 		Widen:        Widen,
 		Hash:         Value.Hash,
 		Retention:    axis.ValidatedRetention(retentionSafe),
-		Canonical:    axis.PendingCanonical[Value]("portable recursive type identity is unresolved"),
+		Canonical:    canonicalDescriptor(),
 		Boundary:     axis.PortableIdentity,
 		Reducer:      reduceByRuntimeKind,
 		ReducerReads: []string{Key.ID(), runtimekind.Key.ID()},

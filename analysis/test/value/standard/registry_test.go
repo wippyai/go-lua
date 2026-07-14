@@ -86,7 +86,7 @@ func TestRegistryArtifactRetentionInventoryIsComplete(t *testing.T) {
 	}
 }
 
-func TestRegistryCanonicalPlanPinsPresenceAndWithholdsAuthorityAtTypeWitness(t *testing.T) {
+func TestRegistryCanonicalPlanPinsPresenceAndPublishesSealedAuthority(t *testing.T) {
 	plan, err := Registry().CanonicalPlan()
 	if err != nil {
 		t.Fatalf("CanonicalPlan error = %v", err)
@@ -113,11 +113,11 @@ func TestRegistryCanonicalPlanPinsPresenceAndWithholdsAuthorityAtTypeWitness(t *
 	if !plan.InventorySealed() {
 		t.Fatal("standard product registry did not seal its complete canonical core inventory")
 	}
-	if got := plan.PendingAxes(); !slices.Equal(got, []string{"typewitness"}) {
-		t.Fatalf("pending canonical axes = %v, want [typewitness]", got)
+	if got := plan.PendingAxes(); len(got) != 0 {
+		t.Fatalf("pending canonical axes = %v, want none", got)
 	}
-	if _, ok := plan.AuthorityIdentity(); ok {
-		t.Fatal("standard registry published authority while typewitness is Pending")
+	if identity, ok := plan.AuthorityIdentity(); !ok || identity != plan.SchemaIdentity() {
+		t.Fatal("sealed all-Ready standard registry withheld canonical authority")
 	}
 }
 
