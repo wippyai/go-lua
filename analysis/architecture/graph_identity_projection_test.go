@@ -29,6 +29,16 @@ var reviewedRunLocalGraphIDCalls = map[graphIDCallSite]string{
 		function:   "ID",
 		expression: "r.g.ID()",
 	}: "preserves opaque graph-instance identity through the reversed adapter",
+	{
+		path:       "analysis/check/fixpoint/transformer/compiler_prepare.go",
+		function:   "MatchesPreparation",
+		expression: "p.graph.ID()",
+	}: "rejects run-local compiler/CFG substitution before an evaluated transaction; the identity is never encoded or published",
+	{
+		path:       "analysis/check/fixpoint/transformer/compiler_prepare.go",
+		function:   "MatchesPreparation",
+		expression: "graph.ID()",
+	}: "rejects run-local compiler/CFG substitution before an evaluated transaction; the identity is never encoded or published",
 }
 
 type graphIDCallSite struct {
