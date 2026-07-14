@@ -103,7 +103,7 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 			_ = outputCaps.SetSummary(kind, lane, CapabilitySupported)
 		}
 	}
-	descriptors, err := NewDescriptorRegistry(returnHandler{declared: plan.BoundaryReturns()}, obligationHandler{})
+	descriptors, err := newCompilerDescriptorRegistry(plan.BoundaryReturns())
 	if err != nil {
 		return nil, fmt.Errorf("compiler: descriptors: %w", err)
 	}

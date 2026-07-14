@@ -15,6 +15,19 @@ type summaryLane struct {
 	lessOrEq       func(reg *axis.Registry, a, b Summary) bool
 	assignJoin     func(reg *axis.Registry, a, b Summary, out *Summary)
 	assignWiden    func(reg *axis.Registry, prev, next Summary, out *Summary)
+	retentionSafe  func(reg *axis.Registry, s Summary) bool
+}
+
+func summaryRetentionSafe(reg *axis.Registry, s Summary) bool {
+	for _, lane := range summaryLanes {
+		if lane.empty(s) {
+			continue
+		}
+		if lane.retentionSafe == nil || !lane.retentionSafe(reg, s) {
+			return false
+		}
+	}
+	return s.HeapKeySpace == nil
 }
 
 var summaryLanes = derivedSummaryLanes()

@@ -25,7 +25,8 @@ type DescriptorHandler interface {
 
 // DescriptorRegistry is the only transformer-to-Summary specialization seam.
 type DescriptorRegistry struct {
-	handlers map[DescriptorKind]DescriptorHandler
+	handlers            map[DescriptorKind]DescriptorHandler
+	evaluatedRootSealed bool
 }
 
 func NewDescriptorRegistry(handlers ...DescriptorHandler) (*DescriptorRegistry, error) {
@@ -51,7 +52,36 @@ func newDefaultDescriptorRegistry() *DescriptorRegistry {
 	if err != nil {
 		panic(err)
 	}
+	r.evaluatedRootSealed = true
 	return r
+}
+
+func newCompilerDescriptorRegistry(declared []product.Value) (*DescriptorRegistry, error) {
+	r, err := NewDescriptorRegistry(returnHandler{declared: append([]product.Value(nil), declared...)}, obligationHandler{})
+	if err != nil {
+		return nil, err
+	}
+	r.evaluatedRootSealed = true
+	return r, nil
+}
+
+func (r *DescriptorRegistry) validEvaluatedRootSchema(reg *axis.Registry) bool {
+	if r == nil || !r.evaluatedRootSealed || len(r.handlers) != 2 {
+		return false
+	}
+	returns, ok := r.handlers[DescriptorReturn].(returnHandler)
+	if !ok {
+		return false
+	}
+	if _, ok := r.handlers[DescriptorObligation].(obligationHandler); !ok {
+		return false
+	}
+	for _, declared := range returns.declared {
+		if !product.BelongsToRegistry(reg, declared) {
+			return false
+		}
+	}
+	return true
 }
 
 var defaultDescriptorRegistry = newDefaultDescriptorRegistry()

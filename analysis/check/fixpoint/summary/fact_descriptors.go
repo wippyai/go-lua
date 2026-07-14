@@ -22,6 +22,7 @@ type SummarySlotOps struct {
 	lessOrEq       func(reg *axis.Registry, a, b Summary) bool
 	assignJoin     func(reg *axis.Registry, a, b Summary, out *Summary)
 	assignWiden    func(reg *axis.Registry, prev, next Summary, out *Summary)
+	retentionSafe  func(reg *axis.Registry, s Summary) bool
 }
 
 // Slot reports whether the lane is an arity-indexed slot lane whose lattice ops
@@ -40,6 +41,7 @@ func deriveSummaryLane(d callboundary.BoundaryFactDescriptor[SummarySlotOps]) su
 		lessOrEq:       d.Ops.lessOrEq,
 		assignJoin:     d.Ops.assignJoin,
 		assignWiden:    d.Ops.assignWiden,
+		retentionSafe:  d.Ops.retentionSafe,
 	}
 }
 
@@ -64,6 +66,7 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			normalizeOwned: func(reg *axis.Registry, s *Summary) {
 				s.Returns = trimTrailingProducts(reg, s.Returns, product.Bottom(reg))
 			},
+			retentionSafe: func(reg *axis.Registry, s Summary) bool { return productsRetentionSafe(reg, s.Returns) },
 		}),
 		summarySlotDescriptor("ParamObligations", nil, SummarySlotOps{
 			slot:        true,
@@ -212,6 +215,7 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			normalizeOwned: func(reg *axis.Registry, s *Summary) {
 				s.NormalReturnParams = trimTrailingProducts(reg, s.NormalReturnParams, product.Bottom(reg))
 			},
+			retentionSafe: func(reg *axis.Registry, s Summary) bool { return productsRetentionSafe(reg, s.NormalReturnParams) },
 		}),
 		summarySlotDescriptor("NormalReturnParamConditions", nil, SummarySlotOps{
 			slot:  true,
@@ -264,6 +268,9 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			},
 			assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
 				out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
+			},
+			retentionSafe: func(reg *axis.Registry, s Summary) bool {
+				return normalReturnFactsRetentionSafe(reg, s.NormalReturnFacts)
 			},
 		}),
 		summarySlotDescriptor("ProtectedCallTypestate", nil, SummarySlotOps{
@@ -364,6 +371,14 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 					prev.ReturnConditionParamRefinements,
 					next.ReturnConditionParamRefinements,
 				)
+			},
+			retentionSafe: func(reg *axis.Registry, s Summary) bool {
+				for _, fact := range s.ReturnConditionParamRefinements {
+					if !product.RetentionSafe(reg, fact.Value) {
+						return false
+					}
+				}
+				return true
 			},
 		}),
 		summarySlotDescriptor("ReturnConditionSlotRefinements", nil, SummarySlotOps{
