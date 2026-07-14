@@ -53,10 +53,12 @@ func TestGeneratedRegistryMatchesStandardCanonicalPlanExactly(t *testing.T) {
 	if generated.SchemaIdentity() != reference.SchemaIdentity() {
 		t.Fatalf("generated/standard schema identities = %x/%x", generated.SchemaIdentity(), reference.SchemaIdentity())
 	}
-	if got := generated.PendingAxes(); !slices.Equal(got, []string{"typewitness"}) {
-		t.Fatalf("generated pending axes = %v, want [typewitness]", got)
+	if got := generated.PendingAxes(); len(got) != 0 {
+		t.Fatalf("generated pending axes = %v, want none", got)
 	}
-	if _, ok := generated.AuthorityIdentity(); ok {
-		t.Fatal("generated registry published authority while typewitness is Pending")
+	generatedAuthority, generatedOK := generated.AuthorityIdentity()
+	referenceAuthority, referenceOK := reference.AuthorityIdentity()
+	if !generatedOK || !referenceOK || generatedAuthority != referenceAuthority {
+		t.Fatalf("generated/standard authority identities = %x/%x (%v/%v)", generatedAuthority, referenceAuthority, generatedOK, referenceOK)
 	}
 }
