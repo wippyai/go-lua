@@ -561,14 +561,15 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		addObservationStats(&config.Stats.Observation, result.observation)
 	}
 	result.finalizeReturnSlotsFromBoundaryValues()
-	resultVersion, err := computeResultVersion(s, config, entryState, initial)
+	resultLineage, err := computeResultVersionLineage(s, config, entryState, initial)
 	if err != nil {
 		if flowTx != nil {
 			flowTx.abort()
 		}
 		return nil, err
 	}
-	result.resultVersion = resultVersion
+	result.resultVersion = resultLineage.ResultVersion()
+	result.resultLineage = resultLineage
 	if flowTx != nil {
 		flowTx.commit()
 	}

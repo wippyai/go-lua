@@ -292,7 +292,7 @@ func retainedCleanSolve(t *testing.T, prepared *body.Static, build func(summary.
 	t.Helper()
 	tracked := &trackingSummaryReader{reg: build(reader).Registry, base: reader}
 	config := build(tracked)
-	config.SummaryInputDigests = func() []uint64 { return trackedSummaryReadDigests(config.Registry, tracked.deps) }
+	config.SummaryInputs = func() []body.SummaryInput { return trackedSummaryInputs(config.Context, config.Registry, tracked.deps) }
 	result, err := body.SolvePrepared(prepared, config.SolveConfig())
 	if err != nil {
 		t.Fatalf("clean SolvePrepared: %v", err)

@@ -293,6 +293,8 @@ func retainedIdentities(prepared *Static, config SolveConfig) (uint64, uint64, r
 	// the provisional equation identity used here.
 	provisional := frozen
 	provisional.SummaryInputDigests = nil
+	provisional.SummaryInputs = nil
+	provisional.SummaryInputsComplete = false
 	typeValues := prepared.solveTypeValues(provisional)
 	entry, initial := prepared.solveEntryState(typeValues, provisional.EntryState, provisional.Initial)
 	witness, capturedInitial, err := captureRetainedInputWitness(prepared, provisional, typeValues, entry, initial)

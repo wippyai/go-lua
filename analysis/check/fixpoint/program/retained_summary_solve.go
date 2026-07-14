@@ -109,20 +109,21 @@ func (c *SummarySolveCache) solveRetainedAttributed(
 	tracked := newPointTrackingSummaryReader(c.registry(), reader)
 	config := build(tracked)
 	completeFlowDeps := true
-	config.SummaryInputDigests = func() []uint64 {
+	config.SummaryInputs = func() []body.SummaryInput {
 		if decision.kind == retainedSummaryApplyRegional {
 			if decision.forceFull {
-				return trackedSummaryReadDigests(c.registry(), tracked.base.deps)
+				return trackedSummaryInputs(config.Context, c.registry(), tracked.base.deps)
 			}
 			deps, ok := completeRetainedFlowDependencies(owner, tracked)
 			if !ok {
 				completeFlowDeps = false
 				return nil
 			}
-			return trackedSummaryReadDigests(c.registry(), deps)
+			return trackedSummaryInputs(config.Context, c.registry(), deps)
 		}
-		return trackedSummaryReadDigests(c.registry(), tracked.base.deps)
+		return trackedSummaryInputs(config.Context, c.registry(), tracked.base.deps)
 	}
+	config.SummaryInputsComplete = true
 	attachPointSummaryTracking(&config, tracked.tracker)
 
 	before := beginRetainedSummarySolve(config, counter)
@@ -316,9 +317,10 @@ func (c *SummarySolveCache) solveRetainedOrdinary(
 ) (summary.Summary, error) {
 	tracked := &trackingSummaryReader{reg: c.registry(), base: reader}
 	config := build(tracked)
-	config.SummaryInputDigests = func() []uint64 {
-		return trackedSummaryReadDigests(c.registry(), tracked.deps)
+	config.SummaryInputs = func() []body.SummaryInput {
+		return trackedSummaryInputs(config.Context, c.registry(), tracked.deps)
 	}
+	config.SummaryInputsComplete = true
 	beforeTransfers := 0
 	if config.Stats != nil {
 		beforeTransfers = config.Stats.Transfer.Solver.TransferCalls

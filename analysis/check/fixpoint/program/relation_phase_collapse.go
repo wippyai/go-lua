@@ -117,7 +117,7 @@ func prepareStrictRelationOwners(config body.Config, stats *Stats, activation *r
 			return rejectStrictRelationOwners(stats, results), nil
 		}
 		published[identity.Summary] = normalized
-		inputs := trackedSummaryReadDigests(config.Registry, trackedReader.deps)
+		inputs := trackedSummaryInputs(config.Context, config.Registry, trackedReader.deps)
 		results = append(results, relationRetainedOwner{identity: identity, result: result, inputs: inputs})
 	}
 	pinned = strictRelationPublishedEntries(published)
@@ -205,7 +205,7 @@ func prepareStrictRelationOwners(config body.Config, stats *Stats, activation *r
 		}
 		identity := contextual.base
 		identity.Summary = contextual.context
-		inputs := trackedSummaryReadDigests(config.Registry, trackedReader.deps)
+		inputs := trackedSummaryInputs(config.Context, config.Registry, trackedReader.deps)
 		results = append(results, relationRetainedOwner{identity: identity, result: result, inputs: inputs})
 	}
 	activation.pinned = pinned

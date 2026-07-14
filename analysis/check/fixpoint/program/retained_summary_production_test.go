@@ -74,7 +74,7 @@ func TestRetainedSummaryProductionRegionalRevisionMatchesCleanWithLessWork(t *te
 	cleanReader := retainedSummaryTestSnapshot(reg, values[2], dep)
 	tracked := &trackingSummaryReader{reg: reg, base: cleanReader}
 	cleanConfig := build(tracked)
-	cleanConfig.SummaryInputDigests = func() []uint64 { return trackedSummaryReadDigests(reg, tracked.deps) }
+	cleanConfig.SummaryInputs = func() []body.SummaryInput { return trackedSummaryInputs(cleanConfig.Context, reg, tracked.deps) }
 	clean, err := body.SolvePrepared(prepared, cleanConfig.SolveConfig())
 	if err != nil {
 		t.Fatalf("clean SolvePrepared: %v", err)
@@ -241,7 +241,7 @@ func TestOrdinarySummaryMaterializationHandoffSkipsDuplicateBodySolve(t *testing
 
 	tracked := &trackingSummaryReader{reg: reg, base: reader}
 	cleanConfig := retainedProductionConfig(reg, dep, &body.Stats{})(tracked)
-	cleanConfig.SummaryInputDigests = func() []uint64 { return trackedSummaryReadDigests(reg, tracked.deps) }
+	cleanConfig.SummaryInputs = func() []body.SummaryInput { return trackedSummaryInputs(cleanConfig.Context, reg, tracked.deps) }
 	clean, err := body.SolvePrepared(prepared, cleanConfig.SolveConfig())
 	if err != nil {
 		t.Fatalf("clean materialization solve: %v", err)
@@ -332,7 +332,7 @@ func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity
 	cleanBuild := retainedProductionConfig(reg, dep, &cleanStats)
 	tracked := &trackingSummaryReader{reg: reg, base: readers[1]}
 	cleanConfig := cleanBuild(tracked)
-	cleanConfig.SummaryInputDigests = func() []uint64 { return trackedSummaryReadDigests(reg, tracked.deps) }
+	cleanConfig.SummaryInputs = func() []body.SummaryInput { return trackedSummaryInputs(cleanConfig.Context, reg, tracked.deps) }
 	clean, err := body.SolvePrepared(prepared, cleanConfig.SolveConfig())
 	if err != nil {
 		t.Fatalf("clean materialization solve: %v", err)

@@ -119,6 +119,31 @@ return caller(true)
 	}
 }
 
+func TestLegacyResultVersionGoldenSurvivesTypedLineage(t *testing.T) {
+	got := resultVersionsByName(t, `
+local function leaf(flag)
+	if flag then
+		return "ok"
+	end
+	return nil
+end
+
+local function caller(flag)
+	return leaf(flag)
+end
+
+return caller(true)
+`)
+	want := map[string]uint64{
+		"caller": 2148273550197998753,
+		"chunk":  12267018107357744344,
+		"leaf":   13734066513507477918,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy ResultVersion golden changed\nwant: %#v\n got: %#v", want, got)
+	}
+}
+
 func TestHighFanoutMaterializedContextsHaveStableKeysBodyOrderAndVersions(t *testing.T) {
 	stmts := parseChunk(t, `
 local function alpha(value: number): number

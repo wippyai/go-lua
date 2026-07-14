@@ -1,8 +1,7 @@
 package program
 
 import (
-	"fmt"
-	"hash/fnv"
+	"context"
 	"slices"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -290,9 +289,10 @@ func solveMaterializedPreparedAttributed(
 	}
 	tracked := &trackingSummaryReader{reg: cache.reg, base: summaries}
 	config := buildConfig(tracked)
-	config.SummaryInputDigests = func() []uint64 {
-		return trackedSummaryReadDigests(cache.reg, tracked.deps)
+	config.SummaryInputs = func() []body.SummaryInput {
+		return trackedSummaryInputs(config.Context, cache.reg, tracked.deps)
 	}
+	config.SummaryInputsComplete = true
 	result, err := solvePreparedCountedWithTransfers(prepared, config, counter, nil, attribution)
 	if err != nil {
 		return nil, true, err
@@ -301,23 +301,34 @@ func solveMaterializedPreparedAttributed(
 	return result, true, nil
 }
 
-func trackedSummaryReadDigests(reg *axis.Registry, deps map[summary.SummaryKey]trackedSummaryRead) []uint64 {
+func trackedSummaryInputs(ctx context.Context, reg *axis.Registry, deps map[summary.SummaryKey]trackedSummaryRead) []body.SummaryInput {
 	if len(deps) == 0 {
 		return nil
 	}
-	out := make([]uint64, 0, len(deps))
-	for _, dep := range deps {
-		h := fnv.New64a()
-		if dep.present {
-			_, _ = h.Write([]byte("present:"))
-			payload := uint64(summary.NormalizedPayloadDigest(reg, dep.sum))
-			fmt.Fprintf(h, "%d;", payload)
-		} else {
-			_, _ = h.Write([]byte("missing"))
+	out := make([]body.SummaryInput, 0, len(deps))
+	for key, dep := range deps {
+		if ctx != nil && ctx.Err() != nil {
+			return nil
 		}
-		out = append(out, h.Sum64())
+		input := body.SummaryInput{
+			Key: body.SummaryInputKey{
+				RefKind:    uint8(key.Ref.Kind),
+				RefID:      key.Ref.ID,
+				Values:     uint64(key.Entry.Values),
+				Facts:      uint64(key.Entry.Facts),
+				References: uint64(key.Entry.References),
+			},
+			Present: dep.present,
+		}
+		if dep.present {
+			digest, err := summary.NormalizedPayloadDigestContext(ctx, reg, dep.sum)
+			if err != nil {
+				return nil
+			}
+			input.PayloadDigest = uint64(digest)
+		}
+		out = append(out, input)
 	}
-	slices.Sort(out)
 	return out
 }
 

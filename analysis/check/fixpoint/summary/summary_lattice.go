@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"context"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -15,6 +16,37 @@ import (
 // mutable lanes before canonicalizing, so callers can continue using s.
 func Normalize(reg *axis.Registry, s Summary) Summary {
 	return NormalizeOwned(reg, s.Clone())
+}
+
+// NormalizeContext is Normalize with cooperative cancellation before cloning
+// and between canonical lane normalizations.
+func NormalizeContext(ctx context.Context, reg *axis.Registry, s Summary) (Summary, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return Summary{}, err
+		}
+	}
+	out := s.Clone()
+	for _, lane := range summaryLanes {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return Summary{}, err
+			}
+		}
+		lane.normalizeOwned(reg, &out)
+	}
+	if len(out.HeapTableObjects) == 0 {
+		out.HeapKeySpace = nil
+	}
+	if summaryBottom(out) {
+		out = Summary{}
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return Summary{}, err
+		}
+	}
+	return out, nil
 }
 
 // NormalizeOwned returns s with trailing bottom slots removed and may reuse or

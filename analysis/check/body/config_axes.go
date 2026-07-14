@@ -67,6 +67,8 @@ var perSolveConfigAxes = func() []configAxisDescriptor {
 		configAxis("SignatureArgumentType"),
 		configAxis("SignatureArgumentTypeFactory"),
 		configAxis("SummaryInputDigests"),
+		configAxis("SummaryInputs"),
+		configAxis("SummaryInputsComplete"),
 		configAxis("WidenAt"),
 		configAxis("WidenDelay"),
 		configAxis("Resume"),

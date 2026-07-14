@@ -46,7 +46,7 @@ type relationRunActivation struct {
 type relationRetainedOwner struct {
 	identity relationCellIdentity
 	result   *body.Result
-	inputs   []uint64
+	inputs   []body.SummaryInput
 }
 
 type relationOwnerRuntime struct {
@@ -85,7 +85,7 @@ type relationMaterializedRuntime struct {
 	resolution uint64
 	active     bool
 	retained   *body.Result
-	inputs     []uint64
+	inputs     []body.SummaryInput
 	strict     bool
 	missing    bool
 }
@@ -107,14 +107,14 @@ func (a *relationRunActivation) pinnedSummaries() []summary.EntrySummary {
 	return a.pinned
 }
 
-func (a *relationRunActivation) retain(identity relationCellIdentity, result *body.Result, inputs []uint64) bool {
+func (a *relationRunActivation) retain(identity relationCellIdentity, result *body.Result, inputs []body.SummaryInput) bool {
 	if a == nil || result == nil || identity.Generation != a.snapshot.generation {
 		return false
 	}
 	if a.retained == nil {
 		a.retained = make(map[summary.SummaryKey]relationRetainedOwner)
 	}
-	a.retained[identity.Summary] = relationRetainedOwner{identity: identity, result: result, inputs: append([]uint64(nil), inputs...)}
+	a.retained[identity.Summary] = relationRetainedOwner{identity: identity, result: result, inputs: append([]body.SummaryInput(nil), inputs...)}
 	a.ownsRetained = true
 	return true
 }

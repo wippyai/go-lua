@@ -29,6 +29,7 @@ analysis/check/body,api.go,ErrStaticRequired,var,analysis/check/body,,unclassifi
 analysis/check/body,api.go,ErrUnsupportedCFG,var,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,InputDigest,func,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,InputDigestContext,func,analysis/check/body,,unclassified,,,
+analysis/check/body,api.go,InputLineageContext,func,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
 analysis/check/body,api.go,ObservationStats,type,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,PathValueFunc,type,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,PrepareBoundChunk,func,analysis/check/body,,unclassified,,,
@@ -50,6 +51,7 @@ analysis/check/body,api.go,Static.IdentityDigest,method,analysis/check/body,,unc
 analysis/check/body,api.go,Static.IdentityDigestContext,method,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,Static.KeySpace,method,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,Static.OperationPlan,method,analysis/check/body,,unclassified,,,
+analysis/check/body,api.go,Static.Registry,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
 analysis/check/body,api.go,Static.StableLexicalBodyID,method,analysis/check/body,,unclassified,,,
 analysis/check/body,api.go,Stats,type,analysis/check/body,,unclassified,,,
 analysis/check/body,assignment_call_invalidation.go,AssignmentCallInvalidation,type,analysis/check/body,,unclassified,,,
@@ -463,6 +465,19 @@ analysis/check/body,result_version.go,BoundaryEnvironmentDigest,type,analysis/ch
 analysis/check/body,result_version.go,Result.ResultVersion,method,analysis/check/body,,unclassified,,,
 analysis/check/body,result_version.go,Static.BoundaryEnvironmentDigest,method,analysis/check/body,,unclassified,,,
 analysis/check/body,result_version.go,Static.BoundaryEnvironmentDigestContext,method,analysis/check/body,,unclassified,,,
+analysis/check/body,result_version_lineage.go,ErrConflictingSummaryInput,var,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ErrConflictingSummaryInputProviders,var,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,Result.ResultVersionDigest,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,Result.ResultVersionLineage,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionDigest,type,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionDigest.String,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionLineage,type,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionLineage.Complete,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionLineage.Digest,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionLineage.ResultVersion,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,ResultVersionLineage.SummaryInputs,method,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,SummaryInput,type,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
+analysis/check/body,result_version_lineage.go,SummaryInputKey,type,analysis/check/body,analysis/check/body,boundary-provider,boundary:result-version-lineage,go-lua.body.result-version-lineage/v1,test:TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs
 analysis/check/body,retained.go,RetainedPreparedSession,type,analysis/check/body,,unclassified,,,
 analysis/check/body,retained.go,RetainedPreparedSession.BeginUpdate,method,analysis/check/body,,unclassified,,,
 analysis/check/body,retained.go,RetainedPreparedSession.Release,method,analysis/check/body,,unclassified,,,
@@ -960,6 +975,7 @@ analysis/check/fixpoint/ref,ref.go,KindSymbol,const,analysis/check/fixpoint/ref,
 analysis/check/fixpoint/ref,ref.go,KindZero,const,analysis/check/fixpoint/ref,,unclassified,,,
 analysis/check/fixpoint/ref,ref.go,Root,func,analysis/check/fixpoint/ref,,unclassified,,,
 analysis/check/fixpoint/summary,digest.go,NormalizedPayloadDigest,func,analysis/check/fixpoint/summary,,unclassified,,,
+analysis/check/fixpoint/summary,digest.go,NormalizedPayloadDigestContext,func,analysis/check/fixpoint/summary,analysis/check/fixpoint/summary,retained-lexical,lexical:summary-normalization,go-lua.summary.normalization/v1,test:TestNormalizedPayloadDigestContextRejectsCanceledNormalization
 analysis/check/fixpoint/summary,fact_descriptors.go,PresentFactKinds,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,fact_descriptors.go,SummaryFactDescriptors,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,fact_descriptors.go,SummarySlotOps,type,analysis/check/fixpoint/summary,,unclassified,,,
@@ -1038,6 +1054,7 @@ analysis/check/fixpoint/summary,summary_lattice.go,Join,func,analysis/check/fixp
 analysis/check/fixpoint/summary,summary_lattice.go,JoinReturnValue,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary_lattice.go,LessOrEq,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary_lattice.go,Normalize,func,analysis/check/fixpoint/summary,,unclassified,,,
+analysis/check/fixpoint/summary,summary_lattice.go,NormalizeContext,func,analysis/check/fixpoint/summary,analysis/check/fixpoint/summary,retained-lexical,lexical:summary-normalization,go-lua.summary.normalization/v1,test:TestNormalizedPayloadDigestContextRejectsCanceledNormalization
 analysis/check/fixpoint/summary,summary_lattice.go,NormalizeOwned,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary_lattice.go,NormalizedDomain,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,summary_lattice.go,Widen,func,analysis/check/fixpoint/summary,,unclassified,,,

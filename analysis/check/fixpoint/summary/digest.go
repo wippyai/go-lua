@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"context"
 	"math"
 	"reflect"
 	"sort"
@@ -18,37 +19,87 @@ import (
 // payload. Its payload is normalized under reg and excludes metadata that
 // summary equality deliberately ignores.
 func NormalizedPayloadDigest(reg *axis.Registry, s Summary) Digest {
-	s = Normalize(reg, s)
+	digest, _ := NormalizedPayloadDigestContext(context.Background(), reg, s)
+	return digest
+}
+
+// NormalizedPayloadDigestContext is NormalizedPayloadDigest with cooperative
+// cancellation during the existing canonical summary traversal.
+func NormalizedPayloadDigestContext(ctx context.Context, reg *axis.Registry, s Summary) (Digest, error) {
+	var err error
+	s, err = NormalizeContext(ctx, reg, s)
+	if err != nil {
+		return 0, err
+	}
 	// HeapKeySpace only re-interns heap facts for consumers. It is metadata and
 	// is intentionally excluded by summary equality. Retain it on the writer so
 	// solve-local dense keys can be encoded by structural spelling.
 	heapKeySpace := s.HeapKeySpace
 	s.HeapKeySpace = nil
-	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg, heapKeySpace: heapKeySpace}
+	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg, heapKeySpace: heapKeySpace, ctx: ctx}
 	w.writeString("summary-payload-v1")
 	w.writeReflect(reflect.ValueOf(s))
-	return Digest(w.h.Sum64())
+	if err := w.err(); err != nil {
+		return 0, err
+	}
+	return Digest(w.h.Sum64()), nil
 }
 
 type summaryDigestWriter struct {
 	h            internalhash.Writer
 	reg          *axis.Registry
 	heapKeySpace *keyspace.KeySpace
+	ctx          context.Context
+	steps        uint64
+	errVal       error
+}
+
+func (w *summaryDigestWriter) checkpoint() bool {
+	if w.errVal != nil {
+		return false
+	}
+	w.steps++
+	if w.steps%64 == 0 && w.ctx != nil {
+		w.errVal = w.ctx.Err()
+	}
+	return w.errVal == nil
+}
+
+func (w *summaryDigestWriter) err() error {
+	if w.errVal != nil {
+		return w.errVal
+	}
+	if w.ctx != nil {
+		return w.ctx.Err()
+	}
+	return nil
 }
 
 func (w *summaryDigestWriter) writeRaw(value string) {
+	if !w.checkpoint() {
+		return
+	}
 	_, _ = w.h.WriteString(value)
 }
 
 func (w *summaryDigestWriter) writeByte(value byte) {
+	if !w.checkpoint() {
+		return
+	}
 	_ = w.h.WriteByte(value)
 }
 
 func (w *summaryDigestWriter) writeRawInt(value int64) {
+	if !w.checkpoint() {
+		return
+	}
 	w.h.WriteIntDecimal(value)
 }
 
 func (w *summaryDigestWriter) writeRawUint(value uint64) {
+	if !w.checkpoint() {
+		return
+	}
 	w.h.WriteUintDecimal(value)
 }
 
@@ -71,6 +122,9 @@ func (w *summaryDigestWriter) writeProduct(value product.Value) {
 }
 
 func (w *summaryDigestWriter) writeReflect(v reflect.Value) {
+	if !w.checkpoint() {
+		return
+	}
 	if !v.IsValid() {
 		w.writeString("<invalid>")
 		return
@@ -180,16 +234,28 @@ func (w *summaryDigestWriter) writeMap(v reflect.Value) {
 	keys := v.MapKeys()
 	entries := make([]entry, 0, len(keys))
 	for _, key := range keys {
-		keyWriter := summaryDigestWriter{h: internalhash.NewWriter(), reg: w.reg, heapKeySpace: w.heapKeySpace}
+		keyWriter := summaryDigestWriter{h: internalhash.NewWriter(), reg: w.reg, heapKeySpace: w.heapKeySpace, ctx: w.ctx}
 		keyWriter.writeReflect(key)
+		if err := keyWriter.err(); err != nil {
+			w.errVal = err
+			return
+		}
 		entries = append(entries, entry{digest: keyWriter.h.Sum64(), key: key, value: v.MapIndex(key)})
 	}
+	var comparisons uint64
 	sort.Slice(entries, func(i, j int) bool {
+		comparisons++
+		if comparisons%64 == 0 && !w.checkpoint() {
+			return false
+		}
 		if entries[i].digest != entries[j].digest {
 			return entries[i].digest < entries[j].digest
 		}
 		return compareDigestMapKeys(entries[i].key, entries[j].key) < 0
 	})
+	if !w.checkpoint() {
+		return
+	}
 	w.writeRaw("len:")
 	w.writeRawInt(int64(len(entries)))
 	w.writeByte(';')

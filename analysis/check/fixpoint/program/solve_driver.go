@@ -252,7 +252,12 @@ func solveSummaryPrepared(
 		}
 		return cache.solveAttributed(prepared, profile, resolution, reader, build, summaryCounter(stats), summaryPointTransferCounter(stats), summaryDependencyChangeCounter(stats), summaryDependencyChangePointTransferCounter(stats), summaryCacheHitCounter(stats), summaryCacheMissCounter(stats), attribution)
 	}
-	config := build(reader)
+	tracked := &trackingSummaryReader{reg: prepared.Registry(), base: reader}
+	config := build(tracked)
+	config.SummaryInputs = func() []body.SummaryInput {
+		return trackedSummaryInputs(config.Context, tracked.reg, tracked.deps)
+	}
+	config.SummaryInputsComplete = true
 	result, err := solvePreparedCountedWithTransfers(prepared, config, summaryCounter(stats), summaryPointTransferCounter(stats), attribution)
 	if err != nil {
 		return summary.Summary{}, err
@@ -418,9 +423,10 @@ func installRelationInputDigests(config *body.Config, reader summary.Reader, act
 	if !ok {
 		return
 	}
-	config.SummaryInputDigests = func() []uint64 {
-		return trackedSummaryReadDigests(tracked.reg, tracked.deps)
+	config.SummaryInputs = func() []body.SummaryInput {
+		return trackedSummaryInputs(config.Context, tracked.reg, tracked.deps)
 	}
+	config.SummaryInputsComplete = true
 }
 
 func cloneCheckConfig(config body.Config) body.Config {

@@ -1,6 +1,8 @@
 package summary
 
 import (
+	"context"
+	"errors"
 	"math/rand"
 	"testing"
 
@@ -20,6 +22,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestNormalizedPayloadDigestContextRejectsCanceledNormalization(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NormalizedPayloadDigestContext(ctx, standard.Registry(), Summary{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("NormalizedPayloadDigestContext error = %v, want cancellation", err)
+	}
+}
 
 func TestNormalizedPayloadDigestSeparatesUnequalSemanticContent(t *testing.T) {
 	reg := standard.Registry()

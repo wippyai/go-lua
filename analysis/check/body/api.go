@@ -66,10 +66,19 @@ type Config struct {
 	SignatureArgumentType        SignatureArgumentTypeFunc
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
 	SummaryInputDigests          func() []uint64
-	Signatures                   signaturelookup.Source
-	ModuleExports                importlookup.Source
-	ModuleTypes                  typelookup.Source
-	MethodReceiverTypes          map[symbol.ID]typ.Type
+	// SummaryInputs is the identity-preserving form of SummaryInputDigests.
+	// New interprocedural owners must use this provider so ResultVersion records
+	// which exact summary key was present or missing, not only an anonymous
+	// payload-digest multiset. SummaryInputDigests remains as a compatibility
+	// seam for callers that cannot yet name their dependencies.
+	SummaryInputs func() []SummaryInput
+	// SummaryInputsComplete asserts that SummaryInputs is the complete dynamic
+	// read set. It is publication metadata and never changes ResultVersion.
+	SummaryInputsComplete bool
+	Signatures            signaturelookup.Source
+	ModuleExports         importlookup.Source
+	ModuleTypes           typelookup.Source
+	MethodReceiverTypes   map[symbol.ID]typ.Type
 
 	Visibility *visibility.Resolver
 
@@ -181,6 +190,7 @@ type Static struct {
 	// computeResultVersion.
 	immutableDigestMu              sync.Mutex
 	resultVersionPrefix            internalhash.Writer
+	resultVersionWidePrefix        []byte
 	resultVersionPrefixReady       bool
 	boundaryEnvironmentDigest      BoundaryEnvironmentDigest
 	boundaryEnvironmentDigestReady bool
@@ -209,6 +219,16 @@ func (s *Static) KeySpace() *keyspace.KeySpace {
 		return nil
 	}
 	return s.visibility.KeySpace()
+}
+
+// Registry returns the immutable value-axis registry owned by this prepared
+// body. Interprocedural adapters use it to install exact read tracking before
+// constructing per-solve providers.
+func (s *Static) Registry() *axis.Registry {
+	if s == nil {
+		return nil
+	}
+	return s.registry
 }
 
 // Graph exposes the immutable CFG identity used by a prepared body.  It is
@@ -266,6 +286,12 @@ type SolveConfig struct {
 	// SummaryInputDigests returns content digests for summaries read during this
 	// solve. It is consulted once at result-publication time.
 	SummaryInputDigests func() []uint64
+	// SummaryInputs returns exact, identity-bearing summary dependencies read by
+	// this solve. It is consulted once at result-publication time.
+	SummaryInputs func() []SummaryInput
+	// SummaryInputsComplete asserts that SummaryInputs is the complete dynamic
+	// read set. It is publication metadata and never changes ResultVersion.
+	SummaryInputsComplete bool
 
 	WidenAt      func(cfg.Point) bool
 	WidenDelay   func(cfg.Point) int
@@ -331,6 +357,7 @@ type Result struct {
 	returnTypesOK    bool
 
 	resultVersion uint64
+	resultLineage ResultVersionLineage
 }
 
 type CallOutcomeContext struct {
@@ -481,6 +508,16 @@ func InputDigestContext(prepared *Static, config SolveConfig) (uint64, error) {
 		return 0, nil
 	}
 	return computeResultVersion(prepared, config, config.EntryState, config.Initial)
+}
+
+// InputLineageContext returns the full immutable input-lineage record produced
+// by the ResultVersion encoder while observing the solve context. It performs
+// no body solve or semantic scan beyond the existing digest traversal.
+func InputLineageContext(prepared *Static, config SolveConfig) (ResultVersionLineage, error) {
+	if prepared == nil {
+		return ResultVersionLineage{}, nil
+	}
+	return computeResultVersionLineage(prepared, config, config.EntryState, config.Initial)
 }
 
 // IdentityDigest is the stable content identity of the prepared body. It

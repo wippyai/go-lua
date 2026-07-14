@@ -655,9 +655,10 @@ func materializeDiscoveredContexts(
 	return results, nil
 }
 
-func rebindStrictRetainedResult(result *body.Result, prepared *body.Static, inputs []uint64, config body.Config) (*body.Result, error) {
-	digests := append([]uint64(nil), inputs...)
-	config.SummaryInputDigests = func() []uint64 { return append([]uint64(nil), digests...) }
+func rebindStrictRetainedResult(result *body.Result, prepared *body.Static, inputs []body.SummaryInput, config body.Config) (*body.Result, error) {
+	lineage := append([]body.SummaryInput(nil), inputs...)
+	config.SummaryInputs = func() []body.SummaryInput { return append([]body.SummaryInput(nil), lineage...) }
+	config.SummaryInputsComplete = true
 	return body.RebindBoundaryProvidersExact(result, prepared, config.SolveConfig())
 }
 

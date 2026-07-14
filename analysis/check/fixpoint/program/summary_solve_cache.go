@@ -113,9 +113,10 @@ func (c *SummarySolveCache) solveAttributed(
 	dependencyChanged := c.dependencyChanged(key, reader)
 	tracked := &trackingSummaryReader{reg: c.registry(), base: reader}
 	config = build(tracked)
-	config.SummaryInputDigests = func() []uint64 {
-		return trackedSummaryReadDigests(c.registry(), tracked.deps)
+	config.SummaryInputs = func() []body.SummaryInput {
+		return trackedSummaryInputs(config.Context, c.registry(), tracked.deps)
 	}
+	config.SummaryInputsComplete = true
 	beforeTransfers := 0
 	if dependencyChanged && config.Stats != nil {
 		beforeTransfers = config.Stats.Transfer.Solver.TransferCalls

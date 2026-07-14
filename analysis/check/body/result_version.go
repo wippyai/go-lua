@@ -3,9 +3,11 @@ package body
 import (
 	"context"
 	"crypto/sha256"
+	"encoding"
 	"errors"
 	"fmt"
 	"hash"
+	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,15 +46,38 @@ func (r *Result) ResultVersion() uint64 {
 }
 
 func computeResultVersion(s *Static, config SolveConfig, entry state.State, initial transfer.InitialState) (uint64, error) {
+	lineage, err := computeResultVersionLineage(s, config, entry, initial)
+	return lineage.ResultVersion(), err
+}
+
+func computeResultVersionLineage(s *Static, config SolveConfig, entry state.State, initial transfer.InitialState) (ResultVersionLineage, error) {
 	if s == nil {
-		return 0, nil
+		return ResultVersionLineage{}, nil
 	}
-	prefix, err := staticResultVersionPrefix(s, config.Context)
+	if config.SummaryInputs != nil && config.SummaryInputDigests != nil {
+		return ResultVersionLineage{}, ErrConflictingSummaryInputProviders
+	}
+	prefix, wide, err := staticResultVersionPrefix(s, config.Context)
 	if err != nil {
-		return 0, err
+		return ResultVersionLineage{}, err
 	}
+	inputs, err := canonicalSummaryInputs(config.Context, config.SummaryInputs)
+	if err != nil {
+		if config.Context != nil && config.Context.Err() != nil {
+			return ResultVersionLineage{}, errors.Join(solve.ErrCanceled, err)
+		}
+		return ResultVersionLineage{}, err
+	}
+	// Summary payloads, product values, entry/initial states, and several type
+	// lanes currently enter the canonical stream through uint64 semantic hashes.
+	// Exact dependency capture is useful lineage, but cannot authorize a
+	// collision-safe full digest until those existing owners expose canonical
+	// bytes/full-width identities. The marker is intentionally outside digest
+	// semantics so enabling that producer later does not change ResultVersion.
+	complete := false
 	w := &bodyDigestWriter{
 		h:          prefix,
+		wide:       wide,
 		static:     s,
 		symbols:    make(map[symbol.ID]string),
 		ctx:        config.Context,
@@ -63,11 +88,22 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 	w.writeWidening(config)
 	w.writeState("entry", entry)
 	w.writeInitialStates(initial, s.cfg.Graph)
-	w.writeSummaryInputDigests(config.SummaryInputDigests)
-	if err := w.err(); err != nil {
-		return 0, errors.Join(solve.ErrCanceled, err)
+	if config.SummaryInputs != nil {
+		w.writeSummaryInputs(inputs)
+	} else {
+		w.writeSummaryInputDigests(config.SummaryInputDigests)
 	}
-	return w.sum64(), nil
+	if err := w.err(); err != nil {
+		return ResultVersionLineage{}, errors.Join(solve.ErrCanceled, err)
+	}
+	var digest ResultVersionDigest
+	_ = w.wide.Sum(digest[:0])
+	return ResultVersionLineage{
+		legacy:   w.sum64(),
+		digest:   digest,
+		inputs:   inputs,
+		complete: complete,
+	}, nil
 }
 
 func (w *bodyDigestWriter) writeWidening(config SolveConfig) {
@@ -88,17 +124,22 @@ func (w *bodyDigestWriter) writeWidening(config SolveConfig) {
 	}
 }
 
-func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Writer, error) {
+func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Writer, hash.Hash, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
-			return internalhash.Writer{}, errors.Join(solve.ErrCanceled, err)
+			return internalhash.Writer{}, nil, errors.Join(solve.ErrCanceled, err)
 		}
 	}
 	s.immutableDigestMu.Lock()
 	if s.resultVersionPrefixReady {
 		prefix := s.resultVersionPrefix
+		wide := sha256.New()
+		if err := wide.(encoding.BinaryUnmarshaler).UnmarshalBinary(s.resultVersionWidePrefix); err != nil {
+			s.immutableDigestMu.Unlock()
+			return internalhash.Writer{}, nil, err
+		}
 		s.immutableDigestMu.Unlock()
-		return prefix, nil
+		return prefix, wide, nil
 	}
 	s.immutableDigestMu.Unlock()
 
@@ -107,21 +148,35 @@ func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Wri
 	// Concurrent first solves may duplicate this one-time work, then publish the
 	// same deterministic writer state below.
 	w := newBodyDigestWriter(s, ctx)
+	w.wide = sha256.New()
 	w.label("body-inputs-v2")
 	w.writeWIR(s.wir, s.cfg.Graph)
 	w.writeSymbolTypes(s.symbolTypes)
 	w.writeBoundaryEnvironment()
 	if err := w.err(); err != nil {
-		return internalhash.Writer{}, errors.Join(solve.ErrCanceled, err)
+		return internalhash.Writer{}, nil, errors.Join(solve.ErrCanceled, err)
+	}
+	wideState, err := w.wide.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		return internalhash.Writer{}, nil, err
 	}
 	s.immutableDigestMu.Lock()
 	defer s.immutableDigestMu.Unlock()
 	if s.resultVersionPrefixReady {
-		return s.resultVersionPrefix, nil
+		wide := sha256.New()
+		if err := wide.(encoding.BinaryUnmarshaler).UnmarshalBinary(s.resultVersionWidePrefix); err != nil {
+			return internalhash.Writer{}, nil, err
+		}
+		return s.resultVersionPrefix, wide, nil
 	}
 	s.resultVersionPrefix = w.h
+	s.resultVersionWidePrefix = append([]byte(nil), wideState...)
 	s.resultVersionPrefixReady = true
-	return s.resultVersionPrefix, nil
+	wide := sha256.New()
+	if err := wide.(encoding.BinaryUnmarshaler).UnmarshalBinary(wideState); err != nil {
+		return internalhash.Writer{}, nil, err
+	}
+	return s.resultVersionPrefix, wide, nil
 }
 
 // BoundaryEnvironmentDigest is the immutable semantic environment consumed at
@@ -191,14 +246,15 @@ func (w *bodyDigestWriter) writeBoundaryEnvironment() {
 }
 
 type bodyDigestWriter struct {
-	h          internalhash.Writer
-	wide       hash.Hash
-	static     *Static
-	symbols    map[symbol.ID]string
-	ctx        context.Context
-	stateLanes []state.LaneID
-	steps      uint64
-	errVal     error
+	h           internalhash.Writer
+	wide        hash.Hash
+	static      *Static
+	symbols     map[symbol.ID]string
+	ctx         context.Context
+	stateLanes  []state.LaneID
+	wideScratch [128]byte
+	steps       uint64
+	errVal      error
 }
 
 func newBodyDigestWriter(s *Static, ctx ...context.Context) *bodyDigestWriter {
@@ -231,7 +287,16 @@ func (w *bodyDigestWriter) writeRaw(value string) {
 	}
 	_, _ = w.h.WriteString(value)
 	if w.wide != nil {
-		_, _ = w.wide.Write([]byte(value))
+		w.writeWideString(value)
+	}
+}
+
+func (w *bodyDigestWriter) writeWideString(value string) {
+	for len(value) != 0 {
+		count := min(len(value), len(w.wideScratch))
+		copy(w.wideScratch[:count], value[:count])
+		_, _ = w.wide.Write(w.wideScratch[:count])
+		value = value[count:]
 	}
 }
 
@@ -241,9 +306,8 @@ func (w *bodyDigestWriter) writeByte(value byte) {
 	}
 	_ = w.h.WriteByte(value)
 	if w.wide != nil {
-		var raw [1]byte
-		raw[0] = value
-		_, _ = w.wide.Write(raw[:])
+		w.wideScratch[0] = value
+		_, _ = w.wide.Write(w.wideScratch[:1])
 	}
 }
 
@@ -278,16 +342,16 @@ func (w *bodyDigestWriter) err() error {
 func (w *bodyDigestWriter) writeRawInt(value int) {
 	w.h.WriteIntDecimal(int64(value))
 	if w.wide != nil {
-		var raw [32]byte
-		_, _ = w.wide.Write(strconv.AppendInt(raw[:0], int64(value), 10))
+		encoded := strconv.AppendInt(w.wideScratch[:0], int64(value), 10)
+		_, _ = w.wide.Write(encoded)
 	}
 }
 
 func (w *bodyDigestWriter) writeRawUint64(value uint64) {
 	w.h.WriteUintDecimal(value)
 	if w.wide != nil {
-		var raw [32]byte
-		_, _ = w.wide.Write(strconv.AppendUint(raw[:0], value, 10))
+		encoded := strconv.AppendUint(w.wideScratch[:0], value, 10)
+		_, _ = w.wide.Write(encoded)
 	}
 }
 
@@ -318,9 +382,9 @@ func (w *bodyDigestWriter) writeBool(label string, value bool) {
 	w.h.WriteBool(value)
 	if w.wide != nil {
 		if value {
-			_, _ = w.wide.Write([]byte("true"))
+			w.writeWideString("true")
 		} else {
-			_, _ = w.wide.Write([]byte("false"))
+			w.writeWideString("false")
 		}
 	}
 	w.writeByte(';')
@@ -937,6 +1001,73 @@ func (w *bodyDigestWriter) writeSummaryInputDigests(provider func() []uint64) {
 	for _, digest := range digests {
 		w.writeUint64("summary-input", digest)
 	}
+}
+
+func (w *bodyDigestWriter) writeSummaryInputs(inputs []SummaryInput) {
+	w.writeSummaryInputDigests(func() []uint64 { return legacySummaryInputDigests(inputs) })
+	// Typed key records are future full-width lineage material only. The legacy
+	// FNV ResultVersion stream above must remain byte-for-byte compatible.
+	w.writeWideInt("summary-input-record-count", len(inputs))
+	for _, input := range inputs {
+		w.writeWideUint64("summary-input-ref-kind", uint64(input.Key.RefKind))
+		w.writeWideUint64("summary-input-ref-id", input.Key.RefID)
+		w.writeWideUint64("summary-input-entry-values", input.Key.Values)
+		w.writeWideUint64("summary-input-entry-facts", input.Key.Facts)
+		w.writeWideUint64("summary-input-entry-references", input.Key.References)
+		w.writeWideBool("summary-input-present", input.Present)
+		if input.Present {
+			w.writeWideUint64("summary-input-payload", input.PayloadDigest)
+		}
+	}
+}
+
+func legacySummaryInputDigests(inputs []SummaryInput) []uint64 {
+	digests := make([]uint64, 0, len(inputs))
+	for _, input := range inputs {
+		h := fnv.New64a()
+		if input.Present {
+			_, _ = h.Write([]byte("present:"))
+			fmt.Fprintf(h, "%d;", input.PayloadDigest)
+		} else {
+			_, _ = h.Write([]byte("missing"))
+		}
+		digests = append(digests, h.Sum64())
+	}
+	return digests
+}
+
+func (w *bodyDigestWriter) writeWideRaw(value string) {
+	if w.wide == nil || !w.checkpoint() {
+		return
+	}
+	w.writeWideString(value)
+}
+
+func (w *bodyDigestWriter) writeWideInt(label string, value int) {
+	w.writeWideRaw(label)
+	w.writeWideRaw(":i:")
+	encoded := strconv.AppendInt(w.wideScratch[:0], int64(value), 10)
+	_, _ = w.wide.Write(encoded)
+	w.writeWideRaw(";")
+}
+
+func (w *bodyDigestWriter) writeWideUint64(label string, value uint64) {
+	w.writeWideRaw(label)
+	w.writeWideRaw(":u:")
+	encoded := strconv.AppendUint(w.wideScratch[:0], value, 10)
+	_, _ = w.wide.Write(encoded)
+	w.writeWideRaw(";")
+}
+
+func (w *bodyDigestWriter) writeWideBool(label string, value bool) {
+	w.writeWideRaw(label)
+	w.writeWideRaw(":b:")
+	if value {
+		w.writeWideRaw("true")
+	} else {
+		w.writeWideRaw("false")
+	}
+	w.writeWideRaw(";")
 }
 
 func (w *bodyDigestWriter) valueSlotString(slot statekey.Value) string {
