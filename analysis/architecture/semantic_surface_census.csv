@@ -974,6 +974,7 @@ analysis/check/fixpoint/ref,ref.go,KindRoot,const,analysis/check/fixpoint/ref,,u
 analysis/check/fixpoint/ref,ref.go,KindSymbol,const,analysis/check/fixpoint/ref,,unclassified,,,
 analysis/check/fixpoint/ref,ref.go,KindZero,const,analysis/check/fixpoint/ref,,unclassified,,,
 analysis/check/fixpoint/ref,ref.go,Root,func,analysis/check/fixpoint/ref,,unclassified,,,
+analysis/check/fixpoint/summary,artifact_safety.go,NormalizeArtifactContext,func,analysis/check/fixpoint/summary,analysis/check/projection,boundary-provider,boundary:artifact-summary-projection,go-lua.summary.artifact-projection/v1,test:TestNormalizeArtifactContextFailsClosedForUnreviewedPopulatedLane
 analysis/check/fixpoint/summary,digest.go,NormalizedPayloadDigest,func,analysis/check/fixpoint/summary,,unclassified,,,
 analysis/check/fixpoint/summary,digest.go,NormalizedPayloadDigestContext,func,analysis/check/fixpoint/summary,analysis/check/fixpoint/summary,retained-lexical,lexical:summary-normalization,go-lua.summary.normalization/v1,test:TestNormalizedPayloadDigestContextRejectsCanceledNormalization
 analysis/check/fixpoint/summary,fact_descriptors.go,PresentFactKinds,func,analysis/check/fixpoint/summary,,unclassified,,,
@@ -1224,6 +1225,8 @@ analysis/check/fixpoint/transformer,effect_terms.go,InvalidationScopeSubtree,con
 analysis/check/fixpoint/transformer,effect_terms.go,NewEffectArena,func,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,effect_terms.go,PathEffectTarget,func,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,effect_terms.go,PreciseDynamicTarget,type,analysis/check/fixpoint/transformer,,unclassified,,,
+analysis/check/fixpoint/transformer,evaluated_root.go,EvaluatedRootRequest,type,analysis/check/fixpoint/transformer,analysis/engine/circuit,observation-compiler,observation:evaluated-root-specialization,go-lua.evaluated-root/v1,test:TestParsedIsStrTransformerMatchesCanonicalConcreteProjection
+analysis/check/fixpoint/transformer,evaluated_root.go,Relation.EvaluateSparseRoot,method,analysis/check/fixpoint/transformer,analysis/engine/circuit,observation-compiler,observation:evaluated-root-specialization,go-lua.evaluated-root/v1,test:TestParsedIsStrTransformerMatchesCanonicalConcreteProjection
 analysis/check/fixpoint/transformer,expression_terms.go,Arena.ScalarBinaryValue,method,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,global_boundary.go,DeriveGlobalContentID,func,analysis/check/fixpoint/transformer,,unclassified,,,
 analysis/check/fixpoint/transformer,global_boundary.go,GlobalBoundary,type,analysis/check/fixpoint/transformer,,unclassified,,,
