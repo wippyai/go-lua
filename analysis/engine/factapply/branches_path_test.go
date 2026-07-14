@@ -628,12 +628,12 @@ func TestApplyPathOriginRelationKeepsSingletonAliasFieldMatch(t *testing.T) {
 	if !ok {
 		t.Fatal("constraint origin missing")
 	}
-	if narrowedCases, ok := variant.NarrowOriginByPath(
+	if narrowedCases, ok := variant.NarrowOriginByPathView(
 		family,
-		[]int{intOriginCase},
+		rootOrigin.CasesView(),
 		[]segment.Segment{{Kind: segment.SegmentField, Name: "channel"}},
 		constraintOrigin.Family(),
-		constraintOrigin.CasesRef(),
+		constraintOrigin.CasesView(),
 		true,
 	); ok {
 		if len(narrowedCases) == 0 {

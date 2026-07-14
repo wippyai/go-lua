@@ -892,9 +892,9 @@ func luaProjectValue(reg *axis.Registry, typeValues *typevalue.Cache) func(produ
 			return product.Value{}, false
 		}
 		if origin := product.Get(reg, root, variantorigin.Key); !origin.IsBottom() && !origin.IsTop() {
-			if rootType, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
+			if rootType, ok := typeValues.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
 				if value, ok := luaProjectValueFromType(reg, typeValues, rootType, segments); ok {
-					if family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), segments); ok {
+					if family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), segments); ok {
 						value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
 					}
 					return value, true

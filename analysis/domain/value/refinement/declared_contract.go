@@ -67,7 +67,7 @@ func declaredOriginForValue(reg *axis.Registry, value, declared product.Value) (
 	}
 	valueOrigin := product.Get(reg, value, variantorigin.Key)
 	if valueType, ok := typevalue.TypeOf(reg, value); ok {
-		if selected, ok := typevalue.OriginCasesForType(declaredOrigin.Family(), declaredOrigin.CasesRef(), valueType); ok {
+		if selected, ok := typevalue.OriginCasesForTypeView(declaredOrigin.Family(), declaredOrigin.CasesView(), valueType); ok {
 			return variantorigin.Of(declaredOrigin.Family(), selected), true
 		}
 	}

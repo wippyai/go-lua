@@ -305,7 +305,8 @@ func currentVariantCasesAdmittedByConstraint(origin variantorigin.Value, constra
 		return nil, false
 	}
 	var selected []int
-	for _, c := range origin.CasesRef() {
+	for i := 0; i < origin.CasesLen(); i++ {
+		c := origin.CaseAt(i)
 		caseType, ok := variant.TypeFromOrigin(origin.Family(), []int{c})
 		if !ok {
 			continue

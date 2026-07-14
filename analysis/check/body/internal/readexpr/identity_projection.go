@@ -162,13 +162,13 @@ func projectFromVariantOrigin(config Config, point cfg.Point, p pathdom.Path, in
 	if origin.IsBottom() || origin.IsTop() {
 		return product.Value{}, false
 	}
-	family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), p.Segments)
+	family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), p.Segments)
 	projectedOrigin := variantorigin.Value{}
 	hasProjectedOrigin := ok
 	if hasProjectedOrigin {
 		projectedOrigin = variantorigin.Of(family, cases)
 	}
-	if rootType, ok := config.TypeValues.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
+	if rootType, ok := config.TypeValues.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
 		if value, ok := projectTypeThroughPath(config, p, rootValue, rootType, projectedOrigin, hasProjectedOrigin); ok {
 			return refineProjectionWithRootType(config, p, rootValue, value), true
 		}

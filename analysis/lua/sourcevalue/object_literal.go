@@ -361,7 +361,7 @@ func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, val
 		}
 		origin := product.Get(reg, value, variantoriginpkg.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
-			if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.CasesRef()); ok {
+			if narrowed, ok := typeValues.NarrowVariantByOriginView(t, origin.Family(), origin.CasesView()); ok {
 				return narrowed, true
 			}
 		}

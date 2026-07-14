@@ -1849,7 +1849,7 @@ func paramObligationTypeFromValue(reg *axis.Registry, value product.Value) (typ.
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.CasesRef()); ok {
+				if narrowed, ok := variant.NarrowByOriginView(t, origin.Family(), origin.CasesView()); ok {
 					return narrowed, true
 				}
 			}
@@ -1857,7 +1857,7 @@ func paramObligationTypeFromValue(reg *axis.Registry, value product.Value) (typ.
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		return variant.TypeFromOrigin(origin.Family(), origin.CasesRef())
+		return variant.TypeFromOriginView(origin.Family(), origin.CasesView())
 	}
 	return nil, false
 }

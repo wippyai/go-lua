@@ -675,17 +675,17 @@ func projectPathOriginValue(typeValues *typevalue.Cache, reg *axis.Registry, out
 		return product.Value{}, false
 	}
 	if projectPath != nil {
-		if rootType, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
+		if rootType, ok := typeValues.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
 			if projected, ok := projectPath(rootType, targetPath); ok {
 				value := projectedPathValue(reg, typeValues, projected)
-				if family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), targetPath.Segments); ok {
+				if family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), targetPath.Segments); ok {
 					value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
 				}
 				return value, true
 			}
 		}
 	}
-	family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), targetPath.Segments)
+	family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), targetPath.Segments)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -749,19 +749,19 @@ func narrowOriginCasesByPathConstraint(
 	equal bool,
 ) ([]int, bool) {
 	if constraintOrigin, ok := typevalue.VariantOriginOfValue(reg, typeValues, constraint); ok {
-		return variant.NarrowOriginByPath(
+		return variant.NarrowOriginByPathView(
 			rootOrigin.Family(),
-			rootOrigin.CasesRef(),
+			rootOrigin.CasesView(),
 			suffix,
 			constraintOrigin.Family(),
-			constraintOrigin.CasesRef(),
+			constraintOrigin.CasesView(),
 			equal,
 		)
 	}
 	if constraintType, ok := typevalue.TypeOf(reg, constraint); ok {
-		return variant.NarrowOriginByPathType(
+		return variant.NarrowOriginByPathTypeView(
 			rootOrigin.Family(),
-			rootOrigin.CasesRef(),
+			rootOrigin.CasesView(),
 			suffix,
 			constraintType,
 			equal,

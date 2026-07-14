@@ -1,9 +1,8 @@
 package variantorigin
 
 import (
-	"slices"
-
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
@@ -39,7 +38,7 @@ const (
 type Value struct {
 	state  state
 	family uint64
-	cases  []int
+	cases  caseset.Set
 }
 
 func Bottom() Value { return Value{state: bottom} }
@@ -49,10 +48,7 @@ func Of(family uint64, cases []int) Value {
 	if family == 0 || len(cases) == 0 {
 		return Bottom()
 	}
-	out := append([]int(nil), cases...)
-	slices.Sort(out)
-	out = slices.Compact(out)
-	return Value{state: concrete, family: family, cases: out}
+	return Value{state: concrete, family: family, cases: caseset.New(cases)}
 }
 
 func Singleton(family uint64, caseIndex int) Value {
@@ -62,18 +58,31 @@ func Singleton(family uint64, caseIndex int) Value {
 func (v Value) IsBottom() bool { return v.state == bottom }
 func (v Value) IsTop() bool    { return v.state == top }
 func (v Value) Family() uint64 { return v.family }
-func (v Value) Cases() []int   { return append([]int(nil), v.cases...) }
+
+// Cases returns an owned copy of the cases in canonical ascending order.
+func (v Value) Cases() []int {
+	if v.cases.Len() == 0 {
+		return nil
+	}
+	out := make([]int, v.cases.Len())
+	for i := 0; i < v.cases.Len(); i++ {
+		out[i] = v.cases.At(i)
+	}
+	return out
+}
 
 // CasesLen reports the number of variant cases without allocating.
-func (v Value) CasesLen() int { return len(v.cases) }
+func (v Value) CasesLen() int { return v.cases.Len() }
 
 // CaseAt returns the i-th variant case without allocating.
-func (v Value) CaseAt(i int) int { return v.cases[i] }
+func (v Value) CaseAt(i int) int { return v.cases.At(i) }
 
-// CasesRef exposes the internal case slice for read-only consumption on hot
-// paths. Callers MUST NOT mutate or retain the returned slice; use Cases for a
-// defensive copy. The cases are sorted and deduplicated.
-func (v Value) CasesRef() []int { return v.cases }
+// CasesView returns an allocation-free immutable view in canonical order.
+func (v Value) CasesView() caseset.View { return v.cases.View() }
+
+// RetentionSafe reports that no caller can mutate this value's private case
+// storage through the public API.
+func (v Value) RetentionSafe() bool { return true }
 
 func Join(a, b Value) Value {
 	if a.state == bottom {
@@ -88,7 +97,13 @@ func Join(a, b Value) Value {
 	if a.family != b.family {
 		return Top()
 	}
-	cases := append(append([]int(nil), a.cases...), b.cases...)
+	cases := make([]int, 0, a.cases.Len()+b.cases.Len())
+	for i := 0; i < a.cases.Len(); i++ {
+		cases = append(cases, a.cases.At(i))
+	}
+	for i := 0; i < b.cases.Len(); i++ {
+		cases = append(cases, b.cases.At(i))
+	}
 	return Of(a.family, cases)
 }
 
@@ -105,15 +120,15 @@ func Meet(a, b Value) Value {
 	if a.family != b.family {
 		return Bottom()
 	}
-	cases := make([]int, 0, min(len(a.cases), len(b.cases)))
+	cases := make([]int, 0, min(a.cases.Len(), b.cases.Len()))
 	i, j := 0, 0
-	for i < len(a.cases) && j < len(b.cases) {
+	for i < a.cases.Len() && j < b.cases.Len() {
 		switch {
-		case a.cases[i] == b.cases[j]:
-			cases = append(cases, a.cases[i])
+		case a.cases.At(i) == b.cases.At(j):
+			cases = append(cases, a.cases.At(i))
 			i++
 			j++
-		case a.cases[i] < b.cases[j]:
+		case a.cases.At(i) < b.cases.At(j):
 			i++
 		default:
 			j++
@@ -127,11 +142,11 @@ func Widen(prev, next Value) Value {
 }
 
 func Equal(a, b Value) bool {
-	if a.state != b.state || a.family != b.family || len(a.cases) != len(b.cases) {
+	if a.state != b.state || a.family != b.family || a.cases.Len() != b.cases.Len() {
 		return false
 	}
-	for i := range a.cases {
-		if a.cases[i] != b.cases[i] {
+	for i := 0; i < a.cases.Len(); i++ {
+		if a.cases.At(i) != b.cases.At(i) {
 			return false
 		}
 	}
@@ -141,8 +156,8 @@ func Equal(a, b Value) bool {
 func (v Value) Hash() uint64 {
 	h := internal.MixHash(internal.FnvString("variantorigin"), uint64(v.state))
 	h = internal.MixHash(h, v.family)
-	for _, c := range v.cases {
-		h = internal.MixHash(h, uint64(c+1))
+	for i := 0; i < v.cases.Len(); i++ {
+		h = internal.MixHash(h, uint64(v.cases.At(i)+1))
 	}
 	return h
 }
@@ -171,13 +186,14 @@ func (v Value) NarrowCase(family uint64, caseIndex int, equal bool) Value {
 			return v
 		}
 		if equal {
-			if slices.Contains(v.cases, caseIndex) {
+			if v.containsCase(caseIndex) {
 				return Singleton(family, caseIndex)
 			}
 			return Bottom()
 		}
-		out := make([]int, 0, len(v.cases))
-		for _, c := range v.cases {
+		out := make([]int, 0, v.cases.Len())
+		for i := 0; i < v.cases.Len(); i++ {
+			c := v.cases.At(i)
 			if c != caseIndex {
 				out = append(out, c)
 			}
@@ -186,4 +202,18 @@ func (v Value) NarrowCase(family uint64, caseIndex int, equal bool) Value {
 	default:
 		return Top()
 	}
+}
+
+func (v Value) containsCase(caseIndex int) bool {
+	low, high := 0, v.cases.Len()
+	for low < high {
+		middle := int(uint(low+high) >> 1)
+		candidate := v.cases.At(middle)
+		if candidate < caseIndex {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	return low < v.cases.Len() && v.cases.At(low) == caseIndex
 }

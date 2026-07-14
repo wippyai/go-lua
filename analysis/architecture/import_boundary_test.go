@@ -1871,6 +1871,9 @@ func diagnosticQueryReceiver(expr ast.Expr) bool {
 func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 	baseAllowed := allowSet(
 		modulePath+"/analysis/domain/value/axis",
+		// Axis leaves may encode their own scalar boundary values through the
+		// neutral framed codec primitive; it carries no axis semantics.
+		modulePath+"/analysis/internal/canonical",
 		modulePath+"/analysis/internal/hash",
 	)
 	// runtimekindof is the bridge leaf between the runtimekind axis and the type
@@ -1902,6 +1905,12 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 	identityAllowed := copyAllowSet(baseAllowed,
 		modulePath+"/analysis/lexicalidentity",
 	)
+	// variantorigin stores its finite case evidence in the neutral immutable
+	// carrier shared with variant reconstruction. The carrier exposes only
+	// allocation-free indexed reads and cannot reveal mutable slice backing.
+	variantOriginAllowed := copyAllowSet(baseAllowed,
+		modulePath+"/analysis/domain/value/variant/caseset",
+	)
 
 	for _, pkg := range productionPackages(t, modulePath+"/analysis/domain/value/axis/...") {
 		if pkg.ImportPath == modulePath+"/analysis/domain/value/axis" {
@@ -1911,6 +1920,8 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 		switch pkg.ImportPath {
 		case modulePath + "/analysis/domain/value/axis/identity":
 			allowed = identityAllowed
+		case modulePath + "/analysis/domain/value/axis/variantorigin":
+			allowed = variantOriginAllowed
 		case modulePath + "/analysis/domain/value/axis/typewitness":
 			allowed = typeWitnessAllowed
 		case modulePath + "/analysis/domain/value/axis/runtimekindof":

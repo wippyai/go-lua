@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -213,6 +214,17 @@ func (c *Cache) NarrowVariantByOrigin(t typ.Type, family uint64, cases []int) (t
 	return c.variants.NarrowByOrigin(t, family, cases)
 }
 
+// NarrowVariantByOriginView narrows using an immutable canonical case view.
+func (c *Cache) NarrowVariantByOriginView(t typ.Type, family uint64, cases caseset.View) (typ.Type, bool) {
+	if c == nil {
+		return variant.NarrowByOriginView(t, family, cases)
+	}
+	if c.variants == nil {
+		c.variants = variant.NewCache()
+	}
+	return c.variants.NarrowByOriginView(t, family, cases)
+}
+
 func (c *Cache) TypeFromVariantOrigin(family uint64, cases []int) (typ.Type, bool) {
 	if c == nil {
 		return variant.TypeFromOrigin(family, cases)
@@ -221,6 +233,17 @@ func (c *Cache) TypeFromVariantOrigin(family uint64, cases []int) (typ.Type, boo
 		c.variants = variant.NewCache()
 	}
 	return c.variants.TypeFromOrigin(family, cases)
+}
+
+// TypeFromVariantOriginView reconstructs using an immutable canonical case view.
+func (c *Cache) TypeFromVariantOriginView(family uint64, cases caseset.View) (typ.Type, bool) {
+	if c == nil {
+		return variant.TypeFromOriginView(family, cases)
+	}
+	if c.variants == nil {
+		c.variants = variant.NewCache()
+	}
+	return c.variants.TypeFromOriginView(family, cases)
 }
 
 func (c *Cache) OriginByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
@@ -254,6 +277,6 @@ func (c *Cache) cachedProductActive(reg *axis.Registry, value product.Value) boo
 	if origin.IsBottom() || origin.IsTop() {
 		return true
 	}
-	_, ok := c.TypeFromVariantOrigin(origin.Family(), origin.CasesRef())
+	_, ok := c.TypeFromVariantOriginView(origin.Family(), origin.CasesView())
 	return ok
 }

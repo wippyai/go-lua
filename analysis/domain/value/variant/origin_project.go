@@ -2,27 +2,35 @@ package variant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // ProjectOrigin projects origin evidence through a static record path.
 func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint64, []int, bool) {
-	if familyID == 0 || len(cases) == 0 || len(suffix) == 0 {
+	return projectOrigin(familyID, sliceCases(cases), suffix)
+}
+
+// ProjectOriginView projects an immutable canonical origin view through suffix.
+func ProjectOriginView(familyID uint64, cases caseset.View, suffix []segment.Segment) (uint64, []int, bool) {
+	return projectOrigin(familyID, viewedCases(cases), suffix)
+}
+
+func projectOrigin(familyID uint64, cases caseSelection, suffix []segment.Segment) (uint64, []int, bool) {
+	if familyID == 0 || cases.len() == 0 || len(suffix) == 0 {
 		return 0, nil, false
 	}
 	family, ok := loadOriginFamily(familyID)
 	if !ok {
 		return 0, nil, false
 	}
-	selected := intSet(cases)
 	var outFamily uint64
 	var outCases []int
 	for _, c := range family.cases {
-		if !selected[c.index] {
+		if !cases.contains(c.index) {
 			continue
 		}
-		delete(selected, c.index)
 		field, ok := fieldAtPath(c.typ, suffix, 0)
 		if !ok {
 			return 0, nil, false
@@ -39,7 +47,7 @@ func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint
 		}
 		outCases = append(outCases, childCases...)
 	}
-	if len(selected) != 0 {
+	if !cases.allKnown(family.cases) {
 		return 0, nil, false
 	}
 	outCases = compactInts(outCases)
@@ -99,21 +107,27 @@ func originByPathLiteralWithCache(cache *Cache, t typ.Type, suffix []segment.Seg
 // NarrowOriginByPath keeps parent cases whose path projection is compatible
 // with constraint. When equal is false it keeps the cases proven incompatible.
 func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraintFamily uint64, constraintCases []int, equal bool) ([]int, bool) {
-	if parentFamily == 0 || len(parentCases) == 0 || len(suffix) == 0 || constraintFamily == 0 || len(constraintCases) == 0 {
+	return narrowOriginByPath(parentFamily, sliceCases(parentCases), suffix, constraintFamily, sliceCases(constraintCases), equal)
+}
+
+// NarrowOriginByPathView narrows immutable canonical parent and constraint views.
+func NarrowOriginByPathView(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraintFamily uint64, constraintCases caseset.View, equal bool) ([]int, bool) {
+	return narrowOriginByPath(parentFamily, viewedCases(parentCases), suffix, constraintFamily, viewedCases(constraintCases), equal)
+}
+
+func narrowOriginByPath(parentFamily uint64, parentCases caseSelection, suffix []segment.Segment, constraintFamily uint64, constraintCases caseSelection, equal bool) ([]int, bool) {
+	if parentFamily == 0 || parentCases.len() == 0 || len(suffix) == 0 || constraintFamily == 0 || constraintCases.len() == 0 {
 		return nil, false
 	}
 	family, ok := loadOriginFamily(parentFamily)
 	if !ok {
 		return nil, false
 	}
-	selected := intSet(parentCases)
-	constraint := intSet(constraintCases)
-	out := make([]int, 0, len(parentCases))
+	out := make([]int, 0, parentCases.len())
 	for _, c := range family.cases {
-		if !selected[c.index] {
+		if !parentCases.contains(c.index) {
 			continue
 		}
-		delete(selected, c.index)
 		field, ok := fieldAtPath(c.typ, suffix, 0)
 		if !ok {
 			if !equal {
@@ -126,16 +140,16 @@ func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment
 			out = append(out, c.index)
 			continue
 		}
-		intersects := casesIntersect(childCases, constraint)
+		intersects := constraintCases.intersects(childCases)
 		if intersects == equal {
 			out = append(out, c.index)
 		}
 	}
-	if len(selected) != 0 {
+	if !parentCases.allKnown(family.cases) {
 		return nil, false
 	}
 	out = compactInts(out)
-	if sameIntSet(parentCases, out) {
+	if parentCases.sameSet(out) {
 		return nil, false
 	}
 	return out, true
@@ -146,20 +160,27 @@ func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment
 // projected union field and the other side is a concrete local value rather than
 // another variant-origin path.
 func NarrowOriginByPathType(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
-	if parentFamily == 0 || len(parentCases) == 0 || len(suffix) == 0 || constraint == nil {
+	return narrowOriginByPathType(parentFamily, sliceCases(parentCases), suffix, constraint, equal)
+}
+
+// NarrowOriginByPathTypeView narrows an immutable canonical parent view.
+func NarrowOriginByPathTypeView(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
+	return narrowOriginByPathType(parentFamily, viewedCases(parentCases), suffix, constraint, equal)
+}
+
+func narrowOriginByPathType(parentFamily uint64, parentCases caseSelection, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
+	if parentFamily == 0 || parentCases.len() == 0 || len(suffix) == 0 || constraint == nil {
 		return nil, false
 	}
 	family, ok := loadOriginFamily(parentFamily)
 	if !ok {
 		return nil, false
 	}
-	selected := intSet(parentCases)
-	out := make([]int, 0, len(parentCases))
+	out := make([]int, 0, parentCases.len())
 	for _, c := range family.cases {
-		if !selected[c.index] {
+		if !parentCases.contains(c.index) {
 			continue
 		}
-		delete(selected, c.index)
 		field, ok := fieldAtPath(c.typ, suffix, 0)
 		if !ok {
 			if !equal {
@@ -172,11 +193,11 @@ func NarrowOriginByPathType(parentFamily uint64, parentCases []int, suffix []seg
 			out = append(out, c.index)
 		}
 	}
-	if len(selected) != 0 {
+	if !parentCases.allKnown(family.cases) {
 		return nil, false
 	}
 	out = compactInts(out)
-	if sameIntSet(parentCases, out) {
+	if parentCases.sameSet(out) {
 		return nil, false
 	}
 	return out, true

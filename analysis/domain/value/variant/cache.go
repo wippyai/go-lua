@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/internal/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -171,10 +172,22 @@ func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Ty
 	if c == nil {
 		return NarrowByOrigin(t, familyID, cases)
 	}
-	if familyID == 0 || len(cases) == 0 {
+	return c.narrowByOrigin(t, familyID, sliceCases(cases), originCaseKey(cases))
+}
+
+// NarrowByOriginView is the allocation-free immutable-view variant.
+func (c *Cache) NarrowByOriginView(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, bool) {
+	if c == nil {
+		return NarrowByOriginView(t, familyID, cases)
+	}
+	return c.narrowByOrigin(t, familyID, viewedCases(cases), originCaseViewKey(cases))
+}
+
+func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseSelection, caseKey originCasesKey) (typ.Type, bool) {
+	if familyID == 0 || cases.len() == 0 {
 		return t, false
 	}
-	key := narrowCacheKey{t: t, family: familyID, cases: originCaseKey(cases)}
+	key := narrowCacheKey{t: t, family: familyID, cases: caseKey}
 	if c.narrows != nil {
 		if cached, ok := c.narrows[key]; ok {
 			revision, active := originFamilyRevision(familyID)
@@ -211,10 +224,22 @@ func (c *Cache) TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
 	if c == nil {
 		return TypeFromOrigin(familyID, cases)
 	}
-	if familyID == 0 || len(cases) == 0 {
+	return c.typeFromOrigin(familyID, sliceCases(cases), originCaseKey(cases))
+}
+
+// TypeFromOriginView is the allocation-free immutable-view variant.
+func (c *Cache) TypeFromOriginView(familyID uint64, cases caseset.View) (typ.Type, bool) {
+	if c == nil {
+		return TypeFromOriginView(familyID, cases)
+	}
+	return c.typeFromOrigin(familyID, viewedCases(cases), originCaseViewKey(cases))
+}
+
+func (c *Cache) typeFromOrigin(familyID uint64, cases caseSelection, caseKey originCasesKey) (typ.Type, bool) {
+	if familyID == 0 || cases.len() == 0 {
 		return nil, false
 	}
-	key := originTypeCacheKey{family: familyID, cases: originCaseKey(cases)}
+	key := originTypeCacheKey{family: familyID, cases: caseKey}
 	if c.types != nil {
 		if cached, ok := c.types[key]; ok {
 			revision, active := originFamilyRevision(familyID)
@@ -252,13 +277,46 @@ func originFamilyActive(id uint64) bool {
 }
 
 func originCaseKey(cases []int) originCasesKey {
-	if len(cases) == 0 {
+	return originSelectionKey(sliceCases(cases))
+}
+
+func originCaseViewKey(cases caseset.View) originCasesKey {
+	if cases.Len() == 0 {
+		return originCasesKey{}
+	}
+	if cases.Len() <= 4 {
+		key := originCasesKey{count: cases.Len()}
+		for i := 0; i < cases.Len(); i++ {
+			key.values[i] = cases.At(i)
+		}
+		return key
+	}
+	key := originCasesKey{count: cases.Len()}
+	for i := range key.values {
+		key.values[i] = cases.At(i)
+	}
+	buf := make([]byte, 0, cases.Len()*4)
+	for i := 0; i < cases.Len(); i++ {
+		buf = strconv.AppendInt(buf, int64(cases.At(i)), 10)
+		buf = append(buf, ',')
+	}
+	key.overflow = string(buf)
+	return key
+}
+
+func originSelectionKey(cases caseSelection) originCasesKey {
+	if cases.len() == 0 {
 		return originCasesKey{}
 	}
 	var key originCasesKey
-	for _, c := range cases {
+	for i := 0; i < cases.len(); i++ {
+		c := cases.at(i)
 		if !insertOriginCase(&key, c) {
-			compact := compactInts(append([]int(nil), cases...))
+			compact := make([]int, cases.len())
+			for index := 0; index < cases.len(); index++ {
+				compact[index] = cases.at(index)
+			}
+			compact = compactInts(compact)
 			return originCaseOverflowKey(compact)
 		}
 	}
