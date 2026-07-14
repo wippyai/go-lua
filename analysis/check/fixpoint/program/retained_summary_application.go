@@ -288,22 +288,32 @@ func (a *retainedSummaryApplicationAttempt) publishResult(
 		a.decision.kind == retainedSummaryApplyRegional ||
 		a.decision.kind == retainedSummaryApplyReproject
 	if a.decision.kind == retainedSummaryApplyBuild {
-		complete, ok := mergeRetainedSummaryDependencies(nil, deps, points)
-		if !ok || len(complete) != len(deps) {
+		// deps is the generation-wide observation fence accumulated by the
+		// tracking reader. Latest-point ownership can be a strict subset when a
+		// read disappears on a later visit; validate that every owned token has
+		// an exact value without discarding the historical observation.
+		if _, ok := mergeRetainedSummaryDependencies(nil, deps, points); !ok {
 			return false
 		}
-		deps = complete
 	}
 	replaceResource := resource != nil
 	if retained && resource == nil && o.published != nil && o.published.key == a.key {
 		resource = o.published.resource
 	}
 	if a.decision.kind == retainedSummaryApplyRegional && o.published != nil && o.published.key == a.key {
-		points = o.published.points.mergeUpdate(points)
-		var complete bool
-		deps, complete = mergeRetainedSummaryDependencies(o.published.deps, deps, points)
-		if !complete {
-			return false
+		if a.decision.forceFull {
+			// A full replay's tracker is a complete new generation. Replace both
+			// ledgers; merging would preserve stale dependencies and ownership.
+			if _, ok := mergeRetainedSummaryDependencies(nil, deps, points); !ok {
+				return false
+			}
+		} else {
+			points = o.published.points.mergeUpdate(points)
+			var complete bool
+			deps, complete = mergeRetainedSummaryDependencies(o.published.deps, deps, points)
+			if !complete {
+				return false
+			}
 		}
 	}
 	if a.decision.kind == retainedSummaryApplyReproject && o.published != nil && o.published.key == a.key {

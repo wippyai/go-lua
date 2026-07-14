@@ -90,6 +90,67 @@ func TestRetainedSummaryApplicationPolicyLifecycle(t *testing.T) {
 	}
 }
 
+func TestRetainedBuildKeepsUnownedDependencyAndForcesFullUpdate(t *testing.T) {
+	reg := standard.Registry()
+	key := retainedSummaryApplicationKey{body: 11, input: 12, profile: "retained-first", resolution: 13}
+	owned := dependencyTestKey(211)
+	historical := dependencyTestKey(212)
+	before := typevalue.FromType(reg, typ.String)
+	after := typevalue.FromType(reg, typ.Number)
+	reader := summary.NewSnapshot(reg,
+		summary.EntrySummary{Key: owned, Summary: summary.Summary{Returns: []product.Value{before}}},
+		summary.EntrySummary{Key: historical, Summary: summary.Summary{Returns: []product.Value{before}}},
+	)
+	owner := newRetainedSummaryApplicationOwner(reg)
+
+	first := owner.begin(key, reader)
+	if got := first.Decision(); got.kind != retainedSummaryApplyOrdinary {
+		t.Fatalf("first decision = %+v, want ordinary", got)
+	}
+	if !first.Publish(map[summary.SummaryKey]trackedSummaryRead{
+		owned:      retainedSummaryTestRead(before),
+		historical: retainedSummaryTestRead(before),
+	}, pointSummaryDependencies{}, nil) {
+		t.Fatal("ordinary publication rejected")
+	}
+	buildReader := summary.NewSnapshot(reg,
+		summary.EntrySummary{Key: owned, Summary: summary.Summary{Returns: []product.Value{after}}},
+		summary.EntrySummary{Key: historical, Summary: summary.Summary{Returns: []product.Value{before}}},
+	)
+	build := owner.begin(key, buildReader)
+	if got := build.Decision(); got.kind != retainedSummaryApplyBuild {
+		t.Fatalf("changed decision = %+v, want retained build", got)
+	}
+	resource := &retainedSummaryTestResource{}
+	if !build.Publish(map[summary.SummaryKey]trackedSummaryRead{
+		owned:      retainedSummaryTestRead(after),
+		historical: retainedSummaryTestRead(before),
+	}, pointSummaryDependencies{
+		byPoint: map[cfg.Point]map[summary.SummaryKey]pointSummaryRead{
+			7: {owned: {present: true, digest: 1}},
+		},
+	}, resource) {
+		t.Fatal("retained build rejected cumulative dependency fence")
+	}
+	if len(owner.published.deps) != 2 {
+		t.Fatalf("published dependencies = %d, want both observed dependencies", len(owner.published.deps))
+	}
+
+	changed := summary.NewSnapshot(reg,
+		summary.EntrySummary{Key: owned, Summary: summary.Summary{Returns: []product.Value{after}}},
+		summary.EntrySummary{Key: historical, Summary: summary.Summary{Returns: []product.Value{after}}},
+	)
+	decision := owner.begin(key, changed).Decision()
+	if decision.kind != retainedSummaryApplyRegional || !decision.forceFull || len(decision.points) != 0 ||
+		!slices.Equal(decision.changed, []summary.SummaryKey{historical}) {
+		t.Fatalf("historical dependency decision = %+v, want full retained update", decision)
+	}
+	owner.Release()
+	if resource.releases != 1 {
+		t.Fatalf("resource releases = %d, want 1", resource.releases)
+	}
+}
+
 func TestRetainedSummaryApplicationPreFlowForcesFull(t *testing.T) {
 	reg := standard.Registry()
 	key := retainedSummaryApplicationKey{body: 1}

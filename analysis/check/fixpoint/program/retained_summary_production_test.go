@@ -106,6 +106,41 @@ func retainedProductionConfig(reg *axis.Registry, dep summary.SummaryKey, stats 
 	}
 }
 
+func TestRetainedSummaryBudgetMissFallsBackToOrdinaryPublication(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, "local x = 1\nx = x + 1\nreturn f(x)")
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
+	prepared, err := body.PrepareBoundChunk(stmts, bindings, body.Config{Registry: reg, Schedule: transfer.ScheduleWTO})
+	if err != nil {
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+	dep := summary.DefaultSummaryKey(ref.FromSymbol(symbol.ID(99713)))
+	values := []product.Value{
+		typevalue.FromType(reg, typ.String),
+		typevalue.FromType(reg, typ.Number),
+	}
+	cache := NewSummarySolveCache(reg)
+	cache.retainedBudgetForTest = func(*body.Static) transfer.RetainedBudget {
+		return transfer.RetainedBudget{MaxOutputs: 1}
+	}
+	owner := newRetainedSummaryApplicationOwner(reg)
+	defer owner.Release()
+	build := retainedProductionConfig(reg, dep, &body.Stats{})
+	for _, value := range values {
+		if _, err := cache.solveRetainedAttributed(
+			prepared, "budget-fallback", 14, retainedSummaryTestSnapshot(reg, value, dep), build, owner,
+			nil, nil, nil, nil, nil, nil, nil,
+		); err != nil {
+			t.Fatalf("budget miss escaped optimization boundary: %v", err)
+		}
+	}
+	if owner.published == nil || owner.published.retained || owner.published.result == nil {
+		t.Fatal("budget miss did not publish the exact ordinary fallback result")
+	}
+	want := retainedCleanSolve(t, prepared, build, retainedSummaryTestSnapshot(reg, values[1], dep))
+	compareResultTrees(t, reg, want, owner.published.result, "retained-budget-ordinary-fallback")
+}
+
 func TestRetainedSummaryProductionCancellationPublishesNothingAndReleases(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, "local x = 1\nreturn f()")
@@ -230,7 +265,8 @@ func TestOrdinarySummaryMaterializationHandoffSkipsDuplicateBodySolve(t *testing
 func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity(t *testing.T) {
 	reg := standard.Registry()
 	// This shape represents the expensive edge we care about: loop work followed
-	// by a call whose outcome changes during the outer summary fixed point.
+	// by a call whose outcome changes during the outer summary fixed point. The
+	// first application stays ordinary; its invalidated successor is retained.
 	stmts := parseChunk(t, "local total = 0\nfor i = 1, 60 do total = total + i end\nreturn f(total)")
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f"}})
 	prepared, err := body.PrepareBoundChunk(stmts, bindings, body.Config{Registry: reg, Schedule: transfer.ScheduleWTO})
@@ -251,10 +287,17 @@ func TestRetainedSummaryMaterializationHandoffSkipsCleanBodySolveWithExactParity
 		retainedSummaryTestSnapshot(reg, typevalue.FromType(reg, typ.String), dep),
 		retainedSummaryTestSnapshot(reg, typevalue.FromType(reg, typ.Number), dep),
 	}
-	for _, reader := range readers {
-		if _, err := summaryCache.solveRetainedAttributed(prepared, "handoff", resolution, reader, buildSummary, owner, nil, nil, nil, nil, nil, nil, nil); err != nil {
+	var summarySolves, summaryTransfers int
+	for index, reader := range readers {
+		if _, err := summaryCache.solveRetainedAttributed(prepared, "handoff", resolution, reader, buildSummary, owner, &summarySolves, &summaryTransfers, nil, nil, nil, nil, nil); err != nil {
 			t.Fatalf("summary solve: %v", err)
 		}
+		if index == 0 && (owner.published == nil || owner.published.retained) {
+			t.Fatal("first summary application did not stay on the ordinary path")
+		}
+	}
+	if summarySolves != 2 || summaryTransfers == 0 {
+		t.Fatalf("summary work = %d solves/%d transfers, want one ordinary and one retained full solve", summarySolves, summaryTransfers)
 	}
 	if owner.published == nil || owner.published.result == nil || !owner.published.retained {
 		t.Fatal("summary solve did not publish a retained result")

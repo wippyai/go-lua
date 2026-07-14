@@ -11,6 +11,34 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 )
 
+func retainedSummaryBudget(prepared *body.Static) transfer.RetainedBudget {
+	if prepared == nil || prepared.OperationPlan() == nil {
+		// Fail closed through the retained budget path. A prepared production
+		// body always owns an operation plan; manually constructed test statics
+		// fall back to the ordinary solver instead of retaining without a bound.
+		return transfer.RetainedBudget{MaxOwners: 1, MaxReads: 1, MaxOutputs: 1, MaxStateRefs: 1}
+	}
+	points := prepared.OperationPlan().PointCount()
+	if points < 1 {
+		points = 1
+	}
+	// CFG equations normally retain one owner and a small predecessor/successor
+	// bag per point. These conservative linear caps bound memory while leaving
+	// unusual high-fanout graphs a safe ordinary-solve fallback.
+	return transfer.RetainedBudget{
+		MaxOwners: points,
+		MaxReads:  points * 16, MaxOutputs: points * 16,
+		MaxStateRefs: points * 32,
+	}
+}
+
+func (c *SummarySolveCache) retainedBudget(prepared *body.Static) transfer.RetainedBudget {
+	if c != nil && c.retainedBudgetForTest != nil {
+		return c.retainedBudgetForTest(prepared)
+	}
+	return retainedSummaryBudget(prepared)
+}
+
 // solveRetainedAttributed is the run-local WTO path behind the existing exact
 // summary cache. Exact cache hits return before any retained machinery is
 // touched. Cache entries remain summary-only; owner owns the body generation.
@@ -83,6 +111,9 @@ func (c *SummarySolveCache) solveRetainedAttributed(
 	completeFlowDeps := true
 	config.SummaryInputDigests = func() []uint64 {
 		if decision.kind == retainedSummaryApplyRegional {
+			if decision.forceFull {
+				return trackedSummaryReadDigests(c.registry(), tracked.base.deps)
+			}
 			deps, ok := completeRetainedFlowDependencies(owner, tracked)
 			if !ok {
 				completeFlowDeps = false
@@ -100,7 +131,7 @@ func (c *SummarySolveCache) solveRetainedAttributed(
 	var pending *body.RetainedPreparedUpdate
 	switch decision.kind {
 	case retainedSummaryApplyBuild:
-		result, session, err = body.SolvePreparedRetained(prepared, config.SolveConfig(), transfer.RetainedBudget{})
+		result, session, err = body.SolvePreparedRetained(prepared, config.SolveConfig(), c.retainedBudget(prepared))
 	case retainedSummaryApplyRegional:
 		if owner.published == nil {
 			err = fmt.Errorf("program: retained update has no published generation")

@@ -7,6 +7,7 @@ import (
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 )
 
 // SummarySolveCache shares exact body-to-summary applications. Unlike the
@@ -21,6 +22,11 @@ type SummarySolveCache struct {
 	mu      sync.RWMutex
 	reg     *axis.Registry
 	entries map[summarySolveCacheKey][]summarySolveCacheEntry
+
+	// retainedBudgetForTest injects a deterministic optimization rejection in
+	// package tests. Production constructors leave it nil and always use the
+	// static linear retainedSummaryBudget.
+	retainedBudgetForTest func(*body.Static) transfer.RetainedBudget
 }
 
 type summarySolveCacheKey struct {

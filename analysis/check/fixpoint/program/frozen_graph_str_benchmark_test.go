@@ -76,6 +76,71 @@ func TestFrozenGraphStrStrictDifferential(t *testing.T) {
 	}
 }
 
+// TestFrozenGraphMBuildRetainedHandoff is the real-source acceptance gate for
+// the summary-to-materialization checkpoint. The first summary application is
+// intentionally ordinary; only its invalidated successor retains provenance.
+// A complete cumulative dependency fence then licenses exact final handoff.
+func TestFrozenGraphMBuildRetainedHandoff(t *testing.T) {
+	if os.Getenv("GO_LUA_FROZEN_GRAPH") != "1" {
+		t.Skip("set GO_LUA_FROZEN_GRAPH=1 to run the frozen graph contract")
+	}
+	source, err := os.ReadFile(frozenGraphPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts, err := parse.ParseString(string(source), frozenGraphPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := standard.Registry()
+	check := frozenThreadsCheck(reg)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(check)})
+
+	cleanStats, retainedStats := &Stats{}, &Stats{}
+	clean, err := RunBoundChunk(stmts, bindings, Config{Check: check, Stats: cleanStats})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := RunBoundChunk(stmts, bindings, Config{
+		Check: check, Stats: retainedStats,
+		SummaryCache: NewSummarySolveCache(reg), CacheProfile: "frozen-mbuild-handoff",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if divergence := firstFrozenProductDivergence(reg, clean, retained); divergence != "" {
+		t.Fatalf("M.build retained handoff product diverged: %s", divergence)
+	}
+	cleanDiagnostics, _ := frozenDiagnosticBytes(clean.RootResult())
+	retainedDiagnostics, _ := frozenDiagnosticBytes(retained.RootResult())
+	if sha256Hex(cleanDiagnostics) != sha256Hex(retainedDiagnostics) {
+		t.Fatal("M.build retained handoff diagnostic digest changed")
+	}
+
+	var mBuildBodyID uint64
+	for _, fn := range bindings.Functions() {
+		if fn.Line() != 238 || fn.LastLine() != 1086 {
+			continue
+		}
+		prepared, prepareErr := body.PrepareBoundFunction(fn, bindings, check)
+		if prepareErr != nil {
+			t.Fatalf("prepare M.build: %v", prepareErr)
+		}
+		mBuildBodyID = prepared.IdentityDigest()
+		break
+	}
+	if mBuildBodyID == 0 {
+		t.Fatal("M.build at lines 238-1086 was not found")
+	}
+	retainedSolves, retainedTransfers := frozenBodyWork(retainedStats.BodySolveAttribution(), mBuildBodyID)
+	t.Logf("FROZEN_GRAPH_MBUILD retained=%d/%d phases=%d/%d/%d aggregate=%d/%d", retainedSolves, retainedTransfers,
+		retainedStats.PrepassBodySolves, retainedStats.SummaryBodySolves, retainedStats.MaterializeBodySolves,
+		retainedStats.Body.BodySolves, retainedStats.Body.Transfer.Solver.TransferCalls)
+	if retainedSolves != 3 || retainedTransfers != 8166 {
+		t.Fatalf("M.build retained work=%d/%d, want 3/8166", retainedSolves, retainedTransfers)
+	}
+}
+
 func frozenFunctionWork(t testing.TB, bindings *bind.Result, result Result, attribution []BodySolveAttribution, line, lastLine int) (int, int) {
 	t.Helper()
 	byKey := make(map[summary.SummaryKey]*ast.FunctionExpr)
