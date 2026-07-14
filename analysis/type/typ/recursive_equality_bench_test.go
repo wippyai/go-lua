@@ -1,6 +1,9 @@
 package typ
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // benchmarkRecursiveFamily is deliberately shaped like exported recursive
 // families: a mutually-recursive record ring, with a union retaining every
@@ -36,6 +39,22 @@ func BenchmarkRecursiveFamilyEquality(b *testing.B) {
 		if !TypeEquals(left, right) {
 			b.Fatal("equivalent recursive families must compare equal")
 		}
+	}
+}
+
+func BenchmarkRecursiveFamilyEqualitySizes(b *testing.B) {
+	for _, size := range []int{8, 32, 48, 96, 256} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			left := benchmarkRecursiveFamily(size)
+			right := benchmarkRecursiveFamily(size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if !TypeEquals(left, right) {
+					b.Fatal("equivalent recursive families must compare equal")
+				}
+			}
+		})
 	}
 }
 

@@ -1,6 +1,9 @@
 package typ
 
-import "reflect"
+import (
+	"reflect"
+	"runtime"
+)
 
 // TypeEquals compares two types for structural equality with cycle detection.
 func TypeEquals(a, b Type) bool {
@@ -20,7 +23,13 @@ func typeEquals(a, b Type) bool {
 	}
 	guard := NewGuard()
 	seen := typePairSet{}
-	return typeEqualsGuard(a, b, guard, &seen)
+	equal := typeEqualsGuard(a, b, guard, &seen)
+	seen.release()
+	// The cycle table stores non-owning pointer identities. Keep both immutable
+	// roots live until every identity has been consumed and the table released.
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(b)
+	return equal
 }
 
 // SameNode reports whether two Type interface values point at the same
