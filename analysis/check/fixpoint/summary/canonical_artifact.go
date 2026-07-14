@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -15,9 +17,9 @@ import (
 
 const (
 	canonicalSummaryDomain        = "analysis.fixpoint.summary.artifact"
-	canonicalSummaryVersion       = 1
+	canonicalSummaryVersion       = 2
 	canonicalSummarySchemaDomain  = "analysis.fixpoint.summary.artifact-schema"
-	canonicalSummarySchemaVersion = 1
+	canonicalSummarySchemaVersion = 2
 
 	canonicalSummaryRecord         uint64 = 1
 	canonicalReturnsRecord         uint64 = 2
@@ -30,6 +32,12 @@ const (
 	canonicalPathRecord            uint64 = 9
 	canonicalPathSegmentRecord     uint64 = 10
 	canonicalSummarySchemaRecord   uint64 = 11
+	canonicalReturnAliasesRecord   uint64 = 12
+	canonicalReturnAliasRecord     uint64 = 13
+	canonicalReturnFlowsRecord     uint64 = 14
+	canonicalReturnFlowRecord      uint64 = 15
+	canonicalPathRefinementsRecord uint64 = 16
+	canonicalPathRefinementRecord  uint64 = 17
 )
 
 // CanonicalSchemaIdentity names the exact accepted summary vocabulary and the
@@ -75,9 +83,8 @@ func (e *NonportableCanonicalError) Error() string {
 }
 
 // EncodeCanonical encodes the exact artifact-safe evaluated-root summary
-// subset. It currently admits Returns, NormalReturnParams,
-// NormalReturnFacts.BranchProofs, and ReturnConditionParamRefinements. Every
-// other populated lane fails closed before a writer session begins.
+// subset. Every other populated lane fails closed before a writer session
+// begins.
 //
 // The returned artifact is zero on cancellation, nonportable product values,
 // registry mismatch, or any encoding failure.
@@ -120,10 +127,19 @@ func EncodeCanonical(ctx context.Context, reg *axis.Registry, in Summary) (Canon
 	if err := encodeCanonicalProducts(ctx, &writer, reg, productAuthority, canonicalNormalParamsRecord, normalized.NormalReturnParams); err != nil {
 		return CanonicalArtifact{}, err
 	}
+	if err := encodeCanonicalPathRefinements(ctx, &writer, reg, productAuthority, normalized.NormalReturnFacts.PathRefinements); err != nil {
+		return CanonicalArtifact{}, err
+	}
 	if err := encodeCanonicalBranchProofs(&writer, normalized.NormalReturnFacts.BranchProofs); err != nil {
 		return CanonicalArtifact{}, err
 	}
 	if err := encodeCanonicalConditionParams(ctx, &writer, reg, productAuthority, normalized.ReturnConditionParamRefinements); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := encodeCanonicalReturnAliases(&writer, normalized.ReturnParamPathAliases); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if err := encodeCanonicalReturnFlows(&writer, normalized.ReturnFlows); err != nil {
 		return CanonicalArtifact{}, err
 	}
 	encoded, err := writer.FinishBytes()
@@ -141,13 +157,13 @@ func validateCanonicalLaneInventory(reg *axis.Registry, in Summary) error {
 			continue
 		}
 		switch string(descriptor.Kind) {
-		case "Returns", "NormalReturnParams", "NormalReturnFacts", "ReturnConditionParamRefinements":
+		case "Returns", "NormalReturnParams", "NormalReturnFacts", "ReturnConditionParamRefinements", "ReturnParamPathAliases", "ReturnFlows":
 		default:
 			return &NonportableCanonicalError{Lane: string(descriptor.Kind), Reason: "outside evaluated-root subset"}
 		}
 	}
 	for _, lane := range callboundary.NormalReturnFactLanes() {
-		if lane.Len(in.NormalReturnFacts) == 0 || lane.ID() == callboundary.LaneBranchProofs {
+		if lane.Len(in.NormalReturnFacts) == 0 || lane.ID() == callboundary.LaneBranchProofs || lane.ID() == callboundary.LanePathRefinements {
 			continue
 		}
 		return &NonportableCanonicalError{
@@ -168,6 +184,16 @@ func validateCanonicalLaneInventory(reg *axis.Registry, in Summary) error {
 			return &NonportableCanonicalError{
 				Lane: "ReturnConditionParamRefinements", Reason: "registry mismatch or unsafe retained value",
 			}
+		}
+	}
+	for _, fact := range in.NormalReturnFacts.PathRefinements {
+		if !fact.Path.IsPlaceholder() || !product.RetentionSafe(reg, fact.Value) {
+			return &NonportableCanonicalError{Lane: "NormalReturnFacts.PathRefinements", Reason: "invalid path or unsafe retained value"}
+		}
+	}
+	for _, flow := range in.ReturnFlows {
+		if _, ok := normalizeReturnFlow(flow, false); !ok {
+			return &NonportableCanonicalError{Lane: "ReturnFlows", Reason: "invalid return-flow identity"}
 		}
 	}
 	return nil
@@ -223,7 +249,7 @@ func buildCanonicalSummarySchema(reg *axis.Registry) canonicalSummarySchemaInfo 
 		return canonicalSummarySchemaInfo{err: err}
 	}
 	accepted := []string{
-		"Returns", "NormalReturnParams", "NormalReturnFacts.BranchProofs", "ReturnConditionParamRefinements",
+		"Returns", "NormalReturnParams", "NormalReturnFacts.PathRefinements", "NormalReturnFacts.BranchProofs", "ReturnConditionParamRefinements", "ReturnParamPathAliases", "ReturnFlows",
 	}
 	if err := writer.Count(uint64(len(accepted))); err != nil {
 		return canonicalSummarySchemaInfo{err: err}
@@ -243,6 +269,97 @@ func buildCanonicalSummarySchema(reg *axis.Registry) canonicalSummarySchemaInfo 
 	}
 }
 
+func encodeCanonicalReturnAliases(writer *canonical.Writer, aliases []ReturnParamPathAlias) error {
+	if err := writer.Record(canonicalReturnAliasesRecord); err != nil {
+		return err
+	}
+	if err := writer.Count(uint64(len(aliases))); err != nil {
+		return err
+	}
+	for _, alias := range aliases {
+		if alias.ReturnIndex < 0 || !alias.Source.Valid() || alias.Member != "" && !alias.Member.Valid() {
+			return &NonportableCanonicalError{Lane: "ReturnParamPathAliases", Reason: "invalid return, member, or source identity"}
+		}
+		if err := writer.Record(canonicalReturnAliasRecord); err != nil {
+			return err
+		}
+		if err := writer.Int(int64(alias.ReturnIndex)); err != nil {
+			return err
+		}
+		memberSegments := []segment.Segment(nil)
+		if alias.Member != "" {
+			var ok bool
+			memberSegments, ok = pathaddr.RelativeStaticMemberSuffixSegments(alias.Member)
+			if !ok {
+				return &NonportableCanonicalError{Lane: "ReturnParamPathAliases", Reason: "invalid member identity"}
+			}
+		}
+		if err := encodeCanonicalSegments(writer, memberSegments); err != nil {
+			return err
+		}
+		source, ok := alias.Source.Path()
+		if !ok {
+			return &NonportableCanonicalError{Lane: "ReturnParamPathAliases", Reason: "invalid source identity"}
+		}
+		if err := encodeCanonicalPath(writer, source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encodeCanonicalReturnFlows(writer *canonical.Writer, flows []ReturnFlow) error {
+	if err := writer.Record(canonicalReturnFlowsRecord); err != nil {
+		return err
+	}
+	if err := writer.Count(uint64(len(flows))); err != nil {
+		return err
+	}
+	for _, flow := range flows {
+		normalized, ok := normalizeReturnFlow(flow, false)
+		if !ok {
+			return &NonportableCanonicalError{Lane: "ReturnFlows", Reason: "invalid return-flow identity"}
+		}
+		if err := writer.Record(canonicalReturnFlowRecord); err != nil {
+			return err
+		}
+		if err := writer.Int(int64(normalized.ReturnIndex)); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(normalized.Kind)); err != nil {
+			return err
+		}
+		if err := writer.Int(int64(normalized.Param)); err != nil {
+			return err
+		}
+		if err := encodeCanonicalSegments(writer, normalized.Path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encodeCanonicalSegments(writer *canonical.Writer, segments []segment.Segment) error {
+	if err := writer.Count(uint64(len(segments))); err != nil {
+		return err
+	}
+	for _, item := range segments {
+		if err := writer.Record(canonicalPathSegmentRecord); err != nil {
+			return err
+		}
+		if err := writer.Uint(uint64(item.Kind)); err != nil {
+			return err
+		}
+		if err := writer.String(item.Name); err != nil {
+			return err
+		}
+		if err := writer.Int(int64(item.Index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func encodeCanonicalProducts(
 	ctx context.Context,
 	writer *canonical.Writer,
@@ -259,6 +376,46 @@ func encodeCanonicalProducts(
 	}
 	for _, value := range values {
 		encoded, schema, err := product.EncodeCanonical(ctx, reg, value)
+		if err != nil {
+			return err
+		}
+		if schema != authority {
+			return fmt.Errorf("summary: product codec returned mismatched schema authority")
+		}
+		if err := writer.Record(canonicalProductPayloadRecord); err != nil {
+			return err
+		}
+		if err := writer.Bytes(encoded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encodeCanonicalPathRefinements(
+	ctx context.Context,
+	writer *canonical.Writer,
+	reg *axis.Registry,
+	authority axis.SchemaIdentity,
+	facts []callboundary.PathValueFact,
+) error {
+	if err := writer.Record(canonicalPathRefinementsRecord); err != nil {
+		return err
+	}
+	if err := writer.Count(uint64(len(facts))); err != nil {
+		return err
+	}
+	for _, fact := range facts {
+		if !fact.Path.IsPlaceholder() || !product.RetentionSafe(reg, fact.Value) {
+			return &NonportableCanonicalError{Lane: "NormalReturnFacts.PathRefinements", Reason: "invalid path or unsafe retained value"}
+		}
+		if err := writer.Record(canonicalPathRefinementRecord); err != nil {
+			return err
+		}
+		if err := encodeCanonicalPath(writer, fact.Path); err != nil {
+			return err
+		}
+		encoded, schema, err := product.EncodeCanonical(ctx, reg, fact.Value)
 		if err != nil {
 			return err
 		}

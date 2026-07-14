@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -30,6 +32,8 @@ func TestCanonicalSummaryBytesMatchEqualAcrossAcceptedCorpus(t *testing.T) {
 	condition := ReturnConditionParamRefinement{
 		ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: stringValue,
 	}
+	aliasSource, _ := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(0))
+	pathRefinement := callboundary.PathValueFact{Path: pathdom.NewPlaceholder(0), Value: stringValue}
 	corpus := []Summary{
 		{},
 		{Returns: []product.Value{stringValue}},
@@ -37,7 +41,11 @@ func TestCanonicalSummaryBytesMatchEqualAcrossAcceptedCorpus(t *testing.T) {
 		{NormalReturnParams: []product.Value{stringValue}},
 		{NormalReturnFacts: callboundary.NormalReturnFacts{BranchProofs: []callboundary.BranchProof{proof}}},
 		{NormalReturnFacts: callboundary.NormalReturnFacts{BranchProofs: []callboundary.BranchProof{proof, proof}}},
+		{NormalReturnFacts: callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{pathRefinement}}},
 		{ReturnConditionParamRefinements: []ReturnConditionParamRefinement{condition}},
+		{ReturnParamPathAliases: []ReturnParamPathAlias{{ReturnIndex: 0, Source: aliasSource}}},
+		{ReturnFlows: []ReturnFlow{{ReturnIndex: 0, Kind: ReturnFlowParam, Param: 0}}},
+		{ReturnFlows: []ReturnFlow{{ReturnIndex: 1, Kind: ReturnFlowParamMember, Param: 0, Path: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}}},
 		{
 			Returns: []product.Value{stringValue}, NormalReturnParams: []product.Value{stringValue},
 			NormalReturnFacts:               callboundary.NormalReturnFacts{BranchProofs: []callboundary.BranchProof{proof}},
@@ -103,7 +111,7 @@ func TestCanonicalSummaryRejectsEveryUnsupportedTopLevelLane(t *testing.T) {
 	for _, descriptor := range summaryFactDescriptors {
 		name := string(descriptor.Kind)
 		switch name {
-		case "Returns", "NormalReturnParams", "NormalReturnFacts", "ReturnConditionParamRefinements":
+		case "Returns", "NormalReturnParams", "NormalReturnFacts", "ReturnConditionParamRefinements", "ReturnParamPathAliases", "ReturnFlows":
 			continue
 		}
 		t.Run(name, func(t *testing.T) {
@@ -120,7 +128,7 @@ func TestCanonicalSummaryRejectsEveryUnsupportedTopLevelLane(t *testing.T) {
 func TestCanonicalSummaryRejectsEveryUnsupportedNormalReturnFactLane(t *testing.T) {
 	reg := standard.Registry()
 	for _, lane := range callboundary.NormalReturnFactLanes() {
-		if lane.ID() == callboundary.LaneBranchProofs {
+		if lane.ID() == callboundary.LaneBranchProofs || lane.ID() == callboundary.LanePathRefinements {
 			continue
 		}
 		t.Run(lane.FieldName(), func(t *testing.T) {
@@ -132,6 +140,73 @@ func TestCanonicalSummaryRejectsEveryUnsupportedNormalReturnFactLane(t *testing.
 				t.Fatalf("EncodeCanonical = %#v, %v; want typed rejection for %s", artifact, err, want)
 			}
 		})
+	}
+}
+
+func TestCanonicalReturnFlowMemberIdentityMatchesSummaryEquality(t *testing.T) {
+	reg := standard.Registry()
+	clean := Summary{ReturnFlows: []ReturnFlow{{
+		ReturnIndex: 0, Kind: ReturnFlowParamMember, Param: 0,
+		Path: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}},
+	}}}
+	phantom := clean.Clone()
+	phantom.ReturnFlows[0].Path[0].Index = 99 // ignored by SegmentField syntax identity
+	if !Equal(reg, clean, phantom) {
+		t.Fatal("canonical-equivalent member paths differ in summary lattice")
+	}
+	left, err := EncodeCanonical(context.Background(), reg, clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := EncodeCanonical(context.Background(), reg, phantom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.Schema != right.Schema || left.Semantic != right.Semantic || !bytes.Equal(left.Bytes, right.Bytes) {
+		t.Fatal("canonical-equivalent member paths produced different authority")
+	}
+
+	mutations := []Summary{
+		{ReturnFlows: []ReturnFlow{{ReturnIndex: 1, Kind: ReturnFlowParamMember, Param: 0, Path: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}}},
+		{ReturnFlows: []ReturnFlow{{ReturnIndex: 0, Kind: ReturnFlowParamMember, Param: 1, Path: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}}},
+		{ReturnFlows: []ReturnFlow{{ReturnIndex: 0, Kind: ReturnFlowParamMember, Param: 0, Path: []segment.Segment{{Kind: segment.SegmentIndexString, Name: "value"}}}}},
+		{ReturnFlows: []ReturnFlow{{ReturnIndex: 0, Kind: ReturnFlowParamMember, Param: 0, Path: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}}}}},
+	}
+	for index, mutation := range mutations {
+		if Equal(reg, clean, mutation) {
+			t.Fatalf("mutation %d compares equal", index)
+		}
+		artifact, err := EncodeCanonical(context.Background(), reg, mutation)
+		if err != nil {
+			t.Fatalf("mutation %d: %v", index, err)
+		}
+		if bytes.Equal(left.Bytes, artifact.Bytes) || left.Semantic == artifact.Semantic {
+			t.Fatalf("mutation %d retained canonical authority", index)
+		}
+	}
+}
+
+func TestCanonicalPathRefinementIdentityIsExact(t *testing.T) {
+	reg := standard.Registry()
+	base := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{{
+		Path: pathdom.NewPlaceholder(0), Value: typevalue.String(reg),
+	}}}}
+	baseArtifact, err := EncodeCanonical(context.Background(), reg, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := []Summary{
+		{NormalReturnFacts: callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(1), Value: typevalue.String(reg)}}}},
+		{NormalReturnFacts: callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(0), Value: typevalue.Nil(reg)}}}},
+	}
+	for index, mutation := range mutations {
+		artifact, err := EncodeCanonical(context.Background(), reg, mutation)
+		if err != nil {
+			t.Fatalf("mutation %d: %v", index, err)
+		}
+		if Equal(reg, base, mutation) || bytes.Equal(baseArtifact.Bytes, artifact.Bytes) || baseArtifact.Semantic == artifact.Semantic {
+			t.Fatalf("path-refinement mutation %d retained semantic authority", index)
+		}
 	}
 }
 

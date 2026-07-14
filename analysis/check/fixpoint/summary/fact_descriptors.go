@@ -140,6 +140,14 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
 				out.ReturnParamPathAliases = returnParamPathAliasLane.Join(prev.ReturnParamPathAliases, next.ReturnParamPathAliases)
 			},
+			retentionSafe: func(_ *axis.Registry, s Summary) bool {
+				for _, alias := range s.ReturnParamPathAliases {
+					if alias.ReturnIndex < 0 || !alias.Source.Valid() || alias.Member != "" && !alias.Member.Valid() {
+						return false
+					}
+				}
+				return true
+			},
 		}),
 		summarySlotDescriptor("ReturnFlows", []string{"ReturnFlows"}, SummarySlotOps{
 			empty: func(s Summary) bool { return len(s.ReturnFlows) == 0 },
@@ -160,6 +168,14 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			},
 			assignWiden: func(_ *axis.Registry, prev, next Summary, out *Summary) {
 				out.ReturnFlows = returnFlowLane.Widen(prev.ReturnFlows, next.ReturnFlows)
+			},
+			retentionSafe: func(_ *axis.Registry, s Summary) bool {
+				for _, flow := range s.ReturnFlows {
+					if _, ok := normalizeReturnFlow(flow, false); !ok {
+						return false
+					}
+				}
+				return true
 			},
 		}),
 		summarySlotDescriptor("ParamSinkExposures", nil, SummarySlotOps{

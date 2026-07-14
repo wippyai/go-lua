@@ -26,7 +26,7 @@ func TestArtifactRetentionCallbacksAreAttachedOnlyToReviewedLanes(t *testing.T) 
 		}
 	}
 	sort.Strings(got)
-	want := []string{"NormalReturnFacts", "NormalReturnParams", "ReturnConditionParamRefinements", "Returns"}
+	want := []string{"NormalReturnFacts", "NormalReturnParams", "ReturnConditionParamRefinements", "ReturnFlows", "ReturnParamPathAliases", "Returns"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("artifact-retention lane inventory = %v, want %v", got, want)
 	}
@@ -41,11 +41,15 @@ func TestNormalizeArtifactContextAdmitsReviewedIsStrLanes(t *testing.T) {
 	condition := []ReturnConditionParamRefinement{{
 		ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: value,
 	}}
+	pathRefinements := callboundary.NormalReturnFacts{PathRefinements: []callboundary.PathValueFact{{
+		Path: pathdom.NewPlaceholder(0), Value: value,
+	}}}
 	tests := map[string]Summary{
-		"Returns":                         {Returns: []product.Value{value}},
-		"NormalReturnParams":              {NormalReturnParams: []product.Value{value}},
-		"NormalReturnFacts":               {NormalReturnFacts: branchProofs},
-		"ReturnConditionParamRefinements": {ReturnConditionParamRefinements: condition},
+		"Returns":                           {Returns: []product.Value{value}},
+		"NormalReturnParams":                {NormalReturnParams: []product.Value{value}},
+		"NormalReturnFacts":                 {NormalReturnFacts: branchProofs},
+		"NormalReturnFacts.PathRefinements": {NormalReturnFacts: pathRefinements},
+		"ReturnConditionParamRefinements":   {ReturnConditionParamRefinements: condition},
 		"combined-is-str": {
 			Returns: valueSlice(value), NormalReturnParams: valueSlice(value), NormalReturnFacts: branchProofs,
 			ReturnConditionParamRefinements: condition,

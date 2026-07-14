@@ -987,6 +987,21 @@ func TestReturnFlowsAreMustFacts(t *testing.T) {
 		t.Fatalf("Normalize kept conflicting ReturnFlows = %#v", conflict.ReturnFlows)
 	}
 
+	memberConflict := Normalize(reg, Summary{ReturnFlows: []ReturnFlow{
+		member,
+		{ReturnIndex: 1, Kind: ReturnFlowParamMember, Param: 0, Path: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}}},
+	}})
+	if len(memberConflict.ReturnFlows) != 0 {
+		t.Fatalf("Normalize collapsed distinct member-path ReturnFlows = %#v", memberConflict.ReturnFlows)
+	}
+	differentMember := Summary{ReturnFlows: []ReturnFlow{{
+		ReturnIndex: 1, Kind: ReturnFlowParamMember, Param: 0,
+		Path: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}},
+	}}}
+	if Equal(reg, Summary{ReturnFlows: []ReturnFlow{member}}, differentMember) {
+		t.Fatal("distinct member-path ReturnFlows compare equal")
+	}
+
 	joined := Join(reg, left, right)
 	if len(joined.ReturnFlows) != 1 || !sameReturnFlowForTest(joined.ReturnFlows[0], direct) {
 		t.Fatalf("Join ReturnFlows = %#v, want only common must flow %#v", joined.ReturnFlows, direct)

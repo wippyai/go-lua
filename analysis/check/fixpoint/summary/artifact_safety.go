@@ -32,11 +32,21 @@ func productsRetentionSafe(reg *axis.Registry, values []product.Value) bool {
 	return true
 }
 
-func normalReturnFactsRetentionSafe(_ *axis.Registry, facts callboundary.NormalReturnFacts) bool {
-	// The first shadow slice admits cloned structural branch proofs only. Every
-	// other nested fact lane remains fail-closed until its owner adds a typed
-	// retention rule.
+func normalReturnFactsRetentionSafe(reg *axis.Registry, facts callboundary.NormalReturnFacts) bool {
+	// The shadow slice admits only cloned structural branch proofs and portable
+	// placeholder refinements. Every other nested fact lane remains fail-closed
+	// until its owner adds a typed retention rule.
 	branchProofs := facts.BranchProofs
+	pathRefinements := facts.PathRefinements
 	facts.BranchProofs = nil
-	return len(branchProofs) != 0 && facts.Empty()
+	facts.PathRefinements = nil
+	if len(branchProofs) == 0 && len(pathRefinements) == 0 || !facts.Empty() {
+		return false
+	}
+	for _, fact := range pathRefinements {
+		if !fact.Path.IsPlaceholder() || !product.RetentionSafe(reg, fact.Value) {
+			return false
+		}
+	}
+	return true
 }

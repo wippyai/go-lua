@@ -3,7 +3,6 @@ package summary
 import (
 	"sort"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
@@ -30,7 +29,7 @@ type returnFlowKey struct {
 	returnIndex int
 	kind        ReturnFlowKind
 	param       int
-	path        pathdom.PathKey
+	path        pathaddr.SuffixKey
 }
 
 func returnFlowParam(returnIndex, param int) ReturnFlow {
@@ -160,7 +159,7 @@ func normalizeReturnFlows(in []ReturnFlow, clone bool) []ReturnFlow {
 	return out
 }
 
-func normalizeReturnFlow(flow ReturnFlow, clone bool) (ReturnFlow, bool) {
+func normalizeReturnFlow(flow ReturnFlow, _ bool) (ReturnFlow, bool) {
 	if flow.ReturnIndex < 0 || flow.Param < 0 {
 		return ReturnFlow{}, false
 	}
@@ -171,12 +170,15 @@ func normalizeReturnFlow(flow ReturnFlow, clone bool) (ReturnFlow, bool) {
 		if len(flow.Path) == 0 {
 			return ReturnFlow{}, false
 		}
-		if _, ok := pathaddr.RelativeStaticMemberSuffixKey(flow.Path); !ok {
+		key, ok := pathaddr.RelativeStaticMemberSuffixKey(flow.Path)
+		if !ok {
 			return ReturnFlow{}, false
 		}
-		if clone {
-			flow.Path = append([]segment.Segment(nil), flow.Path...)
+		canonical, ok := pathaddr.RelativeStaticMemberSuffixSegments(key)
+		if !ok {
+			return ReturnFlow{}, false
 		}
+		flow.Path = canonical
 	default:
 		return ReturnFlow{}, false
 	}
@@ -189,11 +191,15 @@ func cloneReturnFlow(flow ReturnFlow) ReturnFlow {
 }
 
 func returnFlowKeyOf(flow ReturnFlow) returnFlowKey {
+	var path pathaddr.SuffixKey
+	if flow.Kind == ReturnFlowParamMember {
+		path, _ = pathaddr.RelativeStaticMemberSuffixKey(flow.Path)
+	}
 	return returnFlowKey{
 		returnIndex: flow.ReturnIndex,
 		kind:        flow.Kind,
 		param:       flow.Param,
-		path:        pathdom.Path{Segments: flow.Path}.Key(),
+		path:        path,
 	}
 }
 
