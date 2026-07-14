@@ -300,7 +300,7 @@ func (u *Update[Cell, State]) Commit() error {
 	r.contributions, r.contributionBase, r.contributionRemoved = next.contributions, next.contributionBase, next.contributionRemoved
 	r.usage = next.usage
 	r.system, r.plan, r.budget = next.system, next.plan, next.budget
-	r.influenceBase, r.cellsShared = next.influenceBase, next.cellsShared
+	r.influences, r.influenceBase, r.cellsShared = next.influences, next.influenceBase, next.cellsShared
 	r.generation, r.released = next.generation, false
 	r.updateGate.Store(false)
 	u.scratch = nil

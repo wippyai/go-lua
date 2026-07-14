@@ -177,6 +177,153 @@ func TestRetainedUpdateNewForwardEdgeExpandsRegion(t *testing.T) {
 	updateAndCompareInts(t, retained, []int{2}, sys.Transfer, sys, plan)
 }
 
+func TestRetainedUpdateCommittedForwardReadInfluencesNextGeneration(t *testing.T) {
+	cells := []int{0, 1}
+	plan := NewWTOPlan(cells, func(cell int) []int { return []int{cell} })
+	source, reader := cells[0], cells[1]
+	if plan.rank[source] > plan.rank[reader] {
+		source, reader = reader, source
+	}
+	if plan.rank[source] >= plan.rank[reader] {
+		t.Fatalf("setup has no strict-forward pair: ranks=%v", plan.rank)
+	}
+
+	bias, reads := 2, false
+	calls := make(map[int]int)
+	sys := EquationSystem[int, int]{
+		Lattice: capLattice{top: 64}.joinOnly(), Cells: cells,
+		Transfer: func(cell int, read func(int) int, emit func(int, int)) {
+			calls[cell]++
+			switch cell {
+			case source:
+				emit(source, bias)
+			case reader:
+				if reads {
+					emit(reader, read(source))
+				}
+			}
+		},
+	}
+	_, _, retained, err := BuildRetainedWTO(context.Background(), sys, plan, RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Release()
+
+	// Generation two introduces the dynamic strict-forward read source -> reader.
+	reads = true
+	first, err := retained.BeginUpdate([]int{reader}, sys.Transfer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := first.Publish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generation three changes source. Its committed dynamic influence must
+	// select reader before replay starts; unlike an output edge, a read edge
+	// cannot be rediscovered by an update which skipped its reader.
+	bias = 7
+	clear(calls)
+	second, err := retained.BeginUpdate([]int{source}, sys.Transfer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := second.Publish(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls[reader] == 0 {
+		t.Fatal("committed forward read did not replay its reader in the next generation")
+	}
+	if err := second.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	want, err := SolveWTO(sys, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("regional=%v clean=%v", got, want)
+	}
+}
+
+func TestRetainedUpdateCommittedReadRemovalStopsFutureInvalidation(t *testing.T) {
+	cells := []int{0, 1}
+	plan := NewWTOPlan(cells, func(cell int) []int { return []int{cell} })
+	source, reader := cells[0], cells[1]
+	if plan.rank[source] > plan.rank[reader] {
+		source, reader = reader, source
+	}
+
+	bias, reads := 2, false
+	calls := make(map[int]int)
+	sys := EquationSystem[int, int]{
+		Lattice: capLattice{top: 64}.joinOnly(), Cells: cells,
+		Transfer: func(cell int, read func(int) int, emit func(int, int)) {
+			calls[cell]++
+			switch cell {
+			case source:
+				emit(source, bias)
+			case reader:
+				if reads {
+					emit(reader, read(source))
+				}
+			}
+		},
+	}
+	_, _, retained, err := BuildRetainedWTO(context.Background(), sys, plan, RetainedBudget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Release()
+	commit := func(changed int) {
+		t.Helper()
+		u, beginErr := retained.BeginUpdate([]int{changed}, sys.Transfer, nil)
+		if beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		if runErr := u.Run(context.Background()); runErr != nil {
+			t.Fatal(runErr)
+		}
+		if _, _, publishErr := u.Publish(context.Background()); publishErr != nil {
+			t.Fatal(publishErr)
+		}
+		if commitErr := u.Commit(); commitErr != nil {
+			t.Fatal(commitErr)
+		}
+	}
+
+	reads = true
+	commit(reader)
+	reads = false
+	commit(reader)
+
+	bias = 9
+	clear(calls)
+	commit(source)
+	if calls[reader] != 0 {
+		t.Fatalf("removed read retained a future invalidation edge: reader calls=%d", calls[reader])
+	}
+	got, _ := retained.Value(reader)
+	want, err := SolveWTO(sys, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want[reader] {
+		t.Fatalf("regional reader=%d clean=%d", got, want[reader])
+	}
+}
+
 func TestRetainedUpdateNewBackwardEdgeForcesFullFallback(t *testing.T) {
 	edges := map[int][]int{}
 	outputs := map[int]map[int]int{}
