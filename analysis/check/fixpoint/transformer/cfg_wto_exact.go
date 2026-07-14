@@ -370,6 +370,7 @@ func (s *exactWTOSolver) insert(point uint32, row exactWTORow) (bool, error) {
 	for i, candidateHash := range bucket.hashes {
 		if candidateHash == hash && equalExactWTORow(s.arena, bucket.rows[i], row) {
 			bucket.rows[i].row.Observations = unionObservationTerms(s.arena, bucket.rows[i].row.Observations, row.row.Observations)
+			bucket.rows[i].row.observationObligations = unionobservationObligations(bucket.rows[i].row.observationObligations, row.row.observationObligations)
 			return false, nil
 		}
 	}
@@ -421,6 +422,7 @@ func (s *exactWTOSolver) publishBucket(dense uint32) ([]SymbolicCFGRow, error) {
 		for i := range rows {
 			if equalCFGRow(s.arena, rows[i], candidate.row) {
 				rows[i].Observations = unionObservationTerms(s.arena, rows[i].Observations, candidate.row.Observations)
+				rows[i].observationObligations = unionobservationObligations(rows[i].observationObligations, candidate.row.observationObligations)
 				duplicate = true
 				break
 			}

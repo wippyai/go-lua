@@ -36,6 +36,56 @@ type ObservationTerm struct {
 	Expected  ValueTerm
 }
 
+// observationObligation records the exact feasible world in which a local
+// consumer occurrence must be emitted. It is deliberately separate from
+// ObservationTerm: lowering can know that a consumer is owed while failing to
+// construct its value, and that absence must keep whole-owner coverage false.
+type observationObligation struct {
+	BodyOwner lexicalidentity.StableLexicalBodyID
+	Route     engineobservation.InvocationID
+	Anchor    engineobservation.Occurrence
+	Guard     Guard
+}
+
+func (o observationObligation) valid(arena *Arena, shape Shape) bool {
+	return o.BodyOwner != (lexicalidentity.StableLexicalBodyID{}) && o.Anchor.Valid() && arena.validGuard(o.Guard, shape)
+}
+
+func routeobservationObligation(obligation observationObligation, caller lexicalidentity.StableLexicalBodyID, call engineobservation.Occurrence) (observationObligation, bool) {
+	next, ok := engineobservation.ExtendInvocation(obligation.Route, caller, call)
+	if !ok {
+		return observationObligation{}, false
+	}
+	obligation.Route = next
+	return obligation, true
+}
+
+func recordobservationObligation(in []observationObligation, next observationObligation) []observationObligation {
+	for _, prior := range in {
+		if prior == next {
+			return in
+		}
+	}
+	return append(in, next)
+}
+
+func unionobservationObligations(sets ...[]observationObligation) []observationObligation {
+	count := 0
+	for _, set := range sets {
+		count += len(set)
+	}
+	if count == 0 {
+		return nil
+	}
+	out := make([]observationObligation, 0, count)
+	for _, set := range sets {
+		for _, obligation := range set {
+			out = recordobservationObligation(out, obligation)
+		}
+	}
+	return out
+}
+
 func (o ObservationTerm) valid(arena *Arena, shape Shape) bool {
 	return o.Kind > ObservationInvalid && o.Kind <= ObservationCallResult &&
 		o.BodyOwner != (lexicalidentity.StableLexicalBodyID{}) && o.Anchor.Valid() && o.Anchor.Kind == o.Kind && o.Anchor.Slot == o.Slot &&

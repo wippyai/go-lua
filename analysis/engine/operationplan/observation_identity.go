@@ -22,6 +22,7 @@ func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID,
 	out := *p
 	out.observationBody = lexicalidentity.StableLexicalBodyID{}
 	out.observationPoints = nil
+	out.observationRequirements = ObservationRequirements{}
 	out.callSurface = CallSurface{}
 	if body == (lexicalidentity.StableLexicalBodyID{}) || lowered == nil || graph == nil || graph.Size() != p.PointCount() {
 		return &out
@@ -32,6 +33,7 @@ func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID,
 		return &out
 	}
 	points := make([]observationPoint, p.PointCount())
+	requirements := newObservationRequirementBuilder(p.PointCount())
 	for index, point := range reachable {
 		if uint64(point) >= uint64(len(points)) || points[point].after.Valid() {
 			return &out
@@ -52,8 +54,16 @@ func (p *Plan) WithObservationIdentity(body lexicalidentity.StableLexicalBodyID,
 			}
 			points[point].call = call
 		}
+		// Requirement compilation shares this existing canonical RPO/debug
+		// traversal. It must never introduce a second CFG scan.
+		requirements.addPoint(&out, graph, body, point, points[point])
 	}
 	out.observationBody, out.observationPoints = body, points
+	out.observationRequirements = requirements.freezeCanonical(&out, points)
+	if !out.observationRequirements.sealed {
+		out.observationBody = lexicalidentity.StableLexicalBodyID{}
+		out.observationPoints = nil
+	}
 	return &out
 }
 

@@ -27,6 +27,10 @@ func Has(facts factflow.Facts, point cfg.Point) bool {
 	return ok && eligibleView(site)
 }
 
+// HasView reports producer eligibility for an already resolved immutable view.
+// It avoids repeating the fact-map lookup in plan/consumer inventory builders.
+func HasView(site factflow.CallSiteView) bool { return eligibleView(site) }
+
 func eligibleView(site factflow.CallSiteView) bool {
 	switch site.Context() {
 	case factflow.CallSiteContextAssignmentSource, factflow.CallSiteContextReturnSource, factflow.CallSiteContextExpressionProducer:

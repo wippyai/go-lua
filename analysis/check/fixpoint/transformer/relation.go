@@ -32,13 +32,14 @@ type Operation struct {
 // Row is a may-alternative. Its outputs remain correlated under Guard and are
 // never independently widened.
 type Row struct {
-	Guard           Guard
-	Output          summary.Summary
-	Ops             []Operation
-	Effects         []EffectTerm
-	Proofs          []BranchProofTerm
-	PathRefinements []PathRefinementTerm
-	Observations    []ObservationTerm
+	Guard                  Guard
+	Output                 summary.Summary
+	Ops                    []Operation
+	Effects                []EffectTerm
+	Proofs                 []BranchProofTerm
+	PathRefinements        []PathRefinementTerm
+	Observations           []ObservationTerm
+	observationObligations []observationObligation
 }
 
 // Relation is immutable. contextual is lattice Top: callers must use the
@@ -215,13 +216,14 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 			return Relation{}, fmt.Errorf("transformer: row %d has invalid guard", i)
 		}
 		owned[i] = Row{
-			Guard:           row.Guard,
-			Output:          summary.Normalize(b.arena.reg, row.Output),
-			Ops:             append([]Operation(nil), row.Ops...),
-			Effects:         append([]EffectTerm(nil), row.Effects...),
-			Proofs:          append([]BranchProofTerm(nil), row.Proofs...),
-			PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...),
-			Observations:    append([]ObservationTerm(nil), row.Observations...),
+			Guard:                  row.Guard,
+			Output:                 summary.Normalize(b.arena.reg, row.Output),
+			Ops:                    append([]Operation(nil), row.Ops...),
+			Effects:                append([]EffectTerm(nil), row.Effects...),
+			Proofs:                 append([]BranchProofTerm(nil), row.Proofs...),
+			PathRefinements:        append([]PathRefinementTerm(nil), row.PathRefinements...),
+			Observations:           append([]ObservationTerm(nil), row.Observations...),
+			observationObligations: append([]observationObligation(nil), row.observationObligations...),
 		}
 		if !b.arena.validGuard(row.Guard, b.shape) {
 			return Relation{}, fmt.Errorf("transformer: row %d references an invalid boundary root", i)
@@ -299,6 +301,11 @@ func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, 
 		for j, observation := range owned[i].Observations {
 			if !observation.valid(b.arena, b.shape) {
 				return Relation{}, fmt.Errorf("transformer: row %d observation %d is invalid or unsupported", i, j)
+			}
+		}
+		for j, obligation := range owned[i].observationObligations {
+			if !obligation.valid(b.arena, b.shape) {
+				return Relation{}, fmt.Errorf("transformer: row %d observation obligation %d is invalid", i, j)
 			}
 		}
 		sort.Slice(owned[i].Observations, func(x, y int) bool {
@@ -417,6 +424,7 @@ func dedupRows(a *Arena, effects *EffectArena, rows []Row) []Row {
 		for i := len(out) - 1; i >= 0 && rowKey(a, effects, out[i]) == key; i-- {
 			if rowEqual(a, out[i], row) {
 				out[i].Observations = unionObservationTerms(a, out[i].Observations, row.Observations)
+				out[i].observationObligations = unionobservationObligations(out[i].observationObligations, row.observationObligations)
 				duplicate = true
 				break
 			}
@@ -557,7 +565,7 @@ func LessOrEqRelation(a, b Relation) bool {
 func cloneRows(rows []Row) []Row {
 	out := make([]Row, len(rows))
 	for i, row := range rows {
-		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...), PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...), Observations: append([]ObservationTerm(nil), row.Observations...)}
+		out[i] = Row{Guard: row.Guard, Output: row.Output.Clone(), Ops: append([]Operation(nil), row.Ops...), Effects: append([]EffectTerm(nil), row.Effects...), Proofs: append([]BranchProofTerm(nil), row.Proofs...), PathRefinements: append([]PathRefinementTerm(nil), row.PathRefinements...), Observations: append([]ObservationTerm(nil), row.Observations...), observationObligations: append([]observationObligation(nil), row.observationObligations...)}
 	}
 	return out
 }

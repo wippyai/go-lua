@@ -145,6 +145,11 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		observationGuardAt[i] = len(guards)
 		guards = append(guards, observation.Guard)
 	}
+	obligationGuardAt := make([]int, len(row.observationObligations))
+	for i, obligation := range row.observationObligations {
+		obligationGuardAt[i] = len(guards)
+		guards = append(guards, obligation.Guard)
+	}
 	rebasedTerms, err := RebaseTermDAGs(builder.arena, callee.arena, bindings, TermRebaseInput{Values: values, Paths: paths, Guards: guards})
 	if err != nil {
 		return SymbolicCFGRow{}, err
@@ -204,11 +209,11 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		return SymbolicCFGRow{}, err
 	}
 	next.Proofs = append(next.Proofs, structuredProofs...)
+	point, _ := site.Point()
+	callAnchor, durableCallAnchor := builder.plan.CallInvocationObservationAnchor(point)
 	for i, observation := range row.Observations {
 		rebased := observation
-		point, _ := site.Point()
-		callAnchor, durable := builder.plan.CallInvocationObservationAnchor(point)
-		if !durable {
+		if !durableCallAnchor {
 			// Observation authority is independently hard-false. A plan without a
 			// lowering/debug identity may still compose exact semantic rows; it
 			// simply cannot publish the callee's diagnostic annotation.
@@ -225,6 +230,17 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		}
 		rebased.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[observationGuardAt[i]])
 		next.Observations = recordObservationTerm(next.Observations, rebased)
+	}
+	for i, obligation := range row.observationObligations {
+		if !durableCallAnchor {
+			continue
+		}
+		rebased, routed := routeobservationObligation(obligation, builder.plan.ObservationBody(), callAnchor)
+		if !routed {
+			return SymbolicCFGRow{}, fmt.Errorf("direct-call observation obligation route is not durable")
+		}
+		rebased.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[obligationGuardAt[i]])
+		next.observationObligations = recordobservationObligation(next.observationObligations, rebased)
 	}
 	if len(row.Effects) != 0 {
 		if callee.effects == nil {

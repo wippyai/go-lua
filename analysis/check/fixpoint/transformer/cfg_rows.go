@@ -12,15 +12,16 @@ import (
 // SymbolicCFGRow is one correlated control-flow alternative. Values are
 // compiler-local lexical bindings; Guard retains the path condition.
 type SymbolicCFGRow struct {
-	Guard           Guard
-	Values          map[symbol.ID]ValueTerm
-	Operations      []Operation
-	Effects         []EffectTerm
-	Proofs          []BranchProofTerm
-	Observations    []ObservationTerm
-	Output          summary.Summary
-	genericBindings map[symbol.ID]symbolicGenericBinding
-	paramPreserved  paramPreservationLedger
+	Guard                  Guard
+	Values                 map[symbol.ID]ValueTerm
+	Operations             []Operation
+	Effects                []EffectTerm
+	Proofs                 []BranchProofTerm
+	Observations           []ObservationTerm
+	observationObligations []observationObligation
+	Output                 summary.Summary
+	genericBindings        map[symbol.ID]symbolicGenericBinding
+	paramPreserved         paramPreservationLedger
 }
 
 type SymbolicCFGTransfer func(cfg.Point, SymbolicCFGRow) (SymbolicCFGRow, error)
@@ -120,20 +121,26 @@ func validCFGRow(arena *Arena, shape Shape, row SymbolicCFGRow) bool {
 			return false
 		}
 	}
+	for _, obligation := range row.observationObligations {
+		if !obligation.valid(arena, shape) {
+			return false
+		}
+	}
 	return true
 }
 
 func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 	out := SymbolicCFGRow{
-		Guard:           row.Guard,
-		Values:          make(map[symbol.ID]ValueTerm, len(row.Values)),
-		Operations:      append([]Operation(nil), row.Operations...),
-		Effects:         append([]EffectTerm(nil), row.Effects...),
-		Proofs:          append([]BranchProofTerm(nil), row.Proofs...),
-		Observations:    append([]ObservationTerm(nil), row.Observations...),
-		Output:          row.Output.Clone(),
-		genericBindings: make(map[symbol.ID]symbolicGenericBinding, len(row.genericBindings)),
-		paramPreserved:  row.paramPreserved.clone(),
+		Guard:                  row.Guard,
+		Values:                 make(map[symbol.ID]ValueTerm, len(row.Values)),
+		Operations:             append([]Operation(nil), row.Operations...),
+		Effects:                append([]EffectTerm(nil), row.Effects...),
+		Proofs:                 append([]BranchProofTerm(nil), row.Proofs...),
+		Observations:           append([]ObservationTerm(nil), row.Observations...),
+		observationObligations: append([]observationObligation(nil), row.observationObligations...),
+		Output:                 row.Output.Clone(),
+		genericBindings:        make(map[symbol.ID]symbolicGenericBinding, len(row.genericBindings)),
+		paramPreserved:         row.paramPreserved.clone(),
 	}
 	for key, value := range row.Values {
 		out.Values[key] = value
@@ -157,6 +164,7 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 		for i := range out {
 			if equalCFGRow(arena, row, out[i]) {
 				out[i].Observations = unionObservationTerms(arena, out[i].Observations, row.Observations)
+				out[i].observationObligations = unionobservationObligations(out[i].observationObligations, row.observationObligations)
 				duplicate = true
 				break
 			}

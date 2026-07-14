@@ -160,7 +160,7 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	return &PreparedPlanCompiler{
 		compiler: c, registry: reg, graph: graph, plan: plan, shape: shape,
 		builder: builder, base: ctx, certificate: certificate, wtoTape: tape,
-		observationComplete: exactObservationCoverage(plan, shape),
+		observationComplete: exactObservationCoverage(plan, shape, len(tape.components) != 0),
 		cyclic:              len(tape.components) != 0,
 	}, nil
 }
@@ -229,7 +229,7 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 	for i, row := range exitRows {
 		rows[i] = Row{
 			Guard: row.Guard, Output: row.Output, Ops: row.Operations, Effects: row.Effects, Proofs: row.Proofs,
-			Observations:    row.Observations,
+			Observations: row.Observations, observationObligations: row.observationObligations,
 			PathRefinements: row.paramPreserved.certifiedRefinements(p.builder.Arena(), p.builder.EffectArena(), p.shape, row, p.plan.BoundaryParams(), p.plan.BoundaryCaptures()),
 		}
 	}
@@ -242,7 +242,16 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 		return contextual("compiler: relation admission: return parameter alias projection unsupported")
 	}
 	relation.projection = normalizeRelationProjection(p.registry, aliases)
-	relation.observationComplete = p.observationComplete
+	coverageComplete := false
+	if p.observationComplete {
+		scratch := observationCoverageScratchPool.Get().(*observationCoverageScratch)
+		coverageComplete, err = relationRowsCoverObservations(evalCtx, p.builder.Arena(), p.plan, exitRows, scratch)
+		observationCoverageScratchPool.Put(scratch)
+		if err != nil {
+			return contextual("compiler: observation coverage canceled")
+		}
+	}
+	relation.observationComplete = coverageComplete
 	if direct != nil {
 		for _, cell := range direct.Cells() {
 			dependency, ok := view.Lookup(cell)
@@ -284,6 +293,14 @@ func projectedReturnParamAliases(arena *Arena, rows []Row) ([]summary.ReturnPara
 }
 
 func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view RelationView, direct *DirectCallCatalog, point cfg.Point, initial SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+	if site, ok := p.plan.Facts().CallSiteView(point); ok && !p.cyclic {
+		for slot := 0; slot < site.ArgumentSourceCount(); slot++ {
+			anchor, durable := p.plan.CallArgumentObservationAnchor(point, uint32(slot))
+			if durable {
+				initial.observationObligations = recordobservationObligation(initial.observationObligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: initial.Guard})
+			}
+		}
+	}
 	rows := []SymbolicCFGRow{initial}
 	cursor := p.plan.Cursor(point)
 	for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
@@ -352,11 +369,14 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 		rows[index].Values = rowCtx.locals
 		rows[index].genericBindings = rowCtx.genericBindings
 		if assignment, ok := p.plan.Facts().RootAssignment(point); ok && !p.cyclic {
+			anchor, durable := p.plan.AssignmentObservationAnchor(point)
+			if durable {
+				rows[index].observationObligations = recordobservationObligation(rows[index].observationObligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: rows[index].Guard})
+			}
 			value, present := rows[index].Values[assignment.TargetSymbol()]
 			if !present {
 				return nil, fmt.Errorf("observation: assignment target %d has no symbolic value", assignment.TargetSymbol())
 			}
-			anchor, durable := p.plan.AssignmentObservationAnchor(point)
 			if durable {
 				// Facts exposes at most one RootAssignment per CFG point, and the
 				// durable occurrence identifies that point, so no run-local symbol
@@ -370,6 +390,10 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 				if !found || target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 {
 					continue
 				}
+				anchor, durable := p.plan.CallResultObservationAnchor(point, uint32(targetIndex))
+				if durable {
+					rows[index].observationObligations = recordobservationObligation(rows[index].observationObligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: rows[index].Guard})
+				}
 				value, present := rows[index].Values[target.TargetSymbol()]
 				if !present {
 					// Evidence coverage is a separate, fail-closed authority. A
@@ -377,7 +401,6 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 					// exact dormant relation; whole-owner admission remains false.
 					continue
 				}
-				anchor, durable := p.plan.CallResultObservationAnchor(point, uint32(targetIndex))
 				if durable {
 					rows[index].Observations = recordObservationTerm(rows[index].Observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationCallResult, Anchor: anchor, Guard: rows[index].Guard, Slot: uint32(targetIndex), Actual: value})
 				}
@@ -387,31 +410,45 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 	return rows, nil
 }
 
-func exactObservationCoverage(plan *operationplan.Plan, shape Shape) bool {
-	if plan == nil {
+func exactObservationCoverage(plan *operationplan.Plan, shape Shape, cyclic bool) bool {
+	if plan == nil || cyclic {
 		return false
 	}
 	if len(plan.BoundaryParamContracts()) != int(shape.Params) {
 		return false
 	}
-	facts := plan.Facts()
-	for raw := 0; raw < plan.PointCount(); raw++ {
-		site, ok := facts.CallSiteView(cfg.Point(raw))
-		if !ok {
-			continue
-		}
-		for i := 0; i < site.ResultTargetCount(); i++ {
-			target, found := site.ResultTargetAt(i)
-			if !found || target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 || target.TargetPathEmpty() || target.TargetPathSegmentCount() != 0 {
+	requirements, sealed := plan.ObservationRequirements()
+	if !sealed {
+		return false
+	}
+	callArguments := make(map[cfg.Point]struct{})
+	routes := make(map[cfg.Point]struct{})
+	cursor := requirements.Cursor(false)
+	for requirement, ok := cursor.Next(); ok; requirement, ok = cursor.Next() {
+		if requirement.Stage() == operationplan.RequirementRoute {
+			if requirement.Projection() != operationplan.ProjectionObservationCallInvocation {
 				return false
 			}
+			routes[requirement.Point()] = struct{}{}
+			continue
+		}
+		if requirement.Stage() != operationplan.RequirementObservation {
+			continue
+		}
+		switch requirement.Projection() {
+		case operationplan.ProjectionObservationAssignment, operationplan.ProjectionObservationCallResult:
+		case operationplan.ProjectionObservationCallArgument:
+			callArguments[requirement.Point()] = struct{}{}
+		default:
+			return false
 		}
 	}
-	// The term vocabulary currently covers assignment/call occurrences only.
-	// Until operationplan publishes a closed diagnostic-family requirement
-	// certificate (including abnormal terminals), whole-owner completeness must
-	// remain false even when every represented occurrence is exact.
-	return false
+	for point := range callArguments {
+		if _, ok := routes[point]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.CallSiteView) (DirectCallBindings, error) {

@@ -93,6 +93,15 @@ func TestFromFactsKeepsProducerProjectionNarrow(t *testing.T) {
 			}),
 		},
 	})
+	for name, point := range points {
+		site, ok := facts.CallSiteView(point)
+		if !ok {
+			t.Fatalf("%s call site missing", name)
+		}
+		if got, want := HasView(site), Has(facts, point); got != want {
+			t.Fatalf("%s resolved-view eligibility = %v, fact lookup = %v", name, got, want)
+		}
+	}
 
 	for _, name := range []string{"statement", "condition", "iterator"} {
 		if Has(facts, points[name]) {

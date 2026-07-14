@@ -175,6 +175,7 @@ type Plan struct {
 	signatureAllocationTemplates []signature.ReturnAllocationTemplate
 	observationBody              lexicalidentity.StableLexicalBodyID
 	observationPoints            []observationPoint
+	observationRequirements      ObservationRequirements
 	callSurface                  CallSurface
 	structuralExpressionRegions  []structuralExpressionRegionEntry
 }
