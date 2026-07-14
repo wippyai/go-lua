@@ -1,23 +1,33 @@
 package typ
 
+type containmentFlag uint8
+
+const (
+	containmentAny containmentFlag = iota + 1
+	containmentNever
+	containmentTypeParam
+	containmentInstantiated
+	containmentGeneric
+)
+
 func containsAnyDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsAny)
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentAny)
 }
 
 func containsNeverDynamic(t Type, seen map[Type]bool) bool {
-	return containsDynamicFlag(t, seen, 0, -1, knownContainsNever)
+	return containsDynamicFlag(t, seen, 0, -1, containmentNever)
 }
 
 func containsTypeParamDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsTypeParam)
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentTypeParam)
 }
 
 func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsInstantiated)
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentInstantiated)
 }
 
 func containsGenericDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsGeneric)
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentGeneric)
 }
 
 func containsDynamicFlag(
@@ -25,9 +35,9 @@ func containsDynamicFlag(
 	seen map[Type]bool,
 	depth int,
 	maxDepth int,
-	known func(Type) bool,
+	flag containmentFlag,
 ) bool {
-	if t == nil || known == nil || (maxDepth >= 0 && depth > maxDepth) {
+	if t == nil || flag == 0 || (maxDepth >= 0 && depth > maxDepth) {
 		return false
 	}
 	t = unwrapAnnotated(t)
@@ -46,14 +56,22 @@ func containsDynamicFlag(
 			return false
 		}
 		seen[t] = true
-		return containsDynamicFlag(recursive.Body, seen, depth+1, maxDepth, known)
+		return containsDynamicFlag(recursive.Body, seen, depth+1, maxDepth, flag)
+	}
+	// A node can intrinsically satisfy the query while also containing a
+	// recursive back-edge. Preserve that local truth before bypassing stale
+	// transitive construction flags. For example, an Instantiated<Generic>
+	// remains both instantiated and generic even when Generic.Body reaches the
+	// enclosing Recursive.
+	if flag.direct(t) {
+		return true
 	}
 	// Construction-time product flags may include an earlier revision of a
 	// recursive child. For a recursive-containing product, walk its children so
 	// freshness is governed by the recursive generation fence rather than by a
 	// stale conservative positive. Non-recursive products keep the O(1) cache.
 	if !knownContainsRecursive(t) {
-		return known(t)
+		return flag.known(t)
 	}
 	if seen == nil {
 		seen = make(map[Type]bool)
@@ -64,8 +82,46 @@ func containsDynamicFlag(
 	seen[t] = true
 
 	next := func(child Type) bool {
-		return containsDynamicFlag(child, seen, depth+1, maxDepth, known)
+		return containsDynamicFlag(child, seen, depth+1, maxDepth, flag)
 	}
 
 	return WalkChildren(t, next)
+}
+
+func (f containmentFlag) direct(t Type) bool {
+	switch f {
+	case containmentAny:
+		return IsAny(t)
+	case containmentNever:
+		return IsNever(t)
+	case containmentTypeParam:
+		_, ok := t.(*TypeParam)
+		return ok
+	case containmentInstantiated:
+		_, ok := t.(*Instantiated)
+		return ok
+	case containmentGeneric:
+		switch t.(type) {
+		case *Generic, *Instantiated:
+			return true
+		}
+	}
+	return false
+}
+
+func (f containmentFlag) known(t Type) bool {
+	switch f {
+	case containmentAny:
+		return knownContainsAny(t)
+	case containmentNever:
+		return knownContainsNever(t)
+	case containmentTypeParam:
+		return knownContainsTypeParam(t)
+	case containmentInstantiated:
+		return knownContainsInstantiated(t)
+	case containmentGeneric:
+		return knownContainsGeneric(t)
+	default:
+		return false
+	}
 }

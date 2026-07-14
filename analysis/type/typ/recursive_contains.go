@@ -29,15 +29,15 @@ func (r *Recursive) containsFlags() recursiveContainsMemo {
 		return *memo
 	}
 	seen := map[Type]bool{r: true}
-	memo.containsAny = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsAny)
+	memo.containsAny = containsDynamicFlag(r.Body, seen, 1, -1, containmentAny)
 	seen = map[Type]bool{r: true}
 	memo.containsNever = containsNeverDynamic(r.Body, seen)
 	seen = map[Type]bool{r: true}
-	memo.containsTypeParam = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsTypeParam)
+	memo.containsTypeParam = containsDynamicFlag(r.Body, seen, 1, -1, containmentTypeParam)
 	seen = map[Type]bool{r: true}
-	memo.containsInstantiated = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsInstantiated)
+	memo.containsInstantiated = containsDynamicFlag(r.Body, seen, 1, -1, containmentInstantiated)
 	seen = map[Type]bool{r: true}
-	memo.containsGeneric = containsDynamicFlag(r.Body, seen, 1, -1, knownContainsGeneric)
+	memo.containsGeneric = containsDynamicFlag(r.Body, seen, 1, -1, containmentGeneric)
 	// SetBody is a construction operation and must not race with queries. The
 	// revision check still prevents a sequential rewrite from publishing an
 	// obsolete computation.

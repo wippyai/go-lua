@@ -109,8 +109,9 @@ func TestLazyGraphProjectsRecursiveGenericGraph(t *testing.T) {
 
 	left := NewLazySemanticGraph(build("left")).Semantic()
 	right := NewLazySemanticGraph(build("right")).Semantic()
-	if !typ.TypeEquals(left, right) || !typ.ContainsRecursive(left) || !typ.ContainsGeneric(left) {
-		t.Fatal("recursive/generic projection lost closure or retained labels")
+	equal, recursive, generic := typ.TypeEquals(left, right), typ.ContainsRecursive(left), typ.ContainsGeneric(left)
+	if !equal || !recursive || !generic {
+		t.Fatalf("recursive/generic projection lost closure or retained labels: equal=%t recursive=%t generic=%t", equal, recursive, generic)
 	}
 }
 

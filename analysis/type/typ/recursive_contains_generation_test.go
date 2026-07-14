@@ -165,6 +165,32 @@ func TestRecursiveContainsMemoRemovesDeepStalePositive(t *testing.T) {
 	}
 }
 
+func TestRecursiveContainsMemoPreservesIntrinsicMarkersWithRecursiveBodies(t *testing.T) {
+	node := NewRecursivePlaceholder("Node")
+	param := NewTypeParam("T", Func().Param("label", String).Returns(Any).Build())
+	generic := NewGeneric("Box", []*TypeParam{param}, nil)
+	generic.SetBody(RebuildRecord(RecordParts{Fields: []Field{
+		{Name: "next", Type: MaterializeOptional(node)},
+		{Name: "value", Type: param},
+	}}))
+	node.SetBody(RebuildRecord(RecordParts{Fields: []Field{{
+		Name: "box", Type: Instantiate(generic, Func().Param("label", Number).Returns(String).Build()),
+	}}}))
+
+	for name, predicate := range map[string]func(Type) bool{
+		"any":          ContainsAny,
+		"type-param":   ContainsTypeParam,
+		"instantiated": ContainsInstantiated,
+		"generic":      ContainsGeneric,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !predicate(node) {
+				t.Fatalf("recursive generic graph lost intrinsic %s marker", name)
+			}
+		})
+	}
+}
+
 func nestInFunctions(inner Type, depth int) Type {
 	for i := 0; i < depth; i++ {
 		inner = Func().Returns(inner).Build()
