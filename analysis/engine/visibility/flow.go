@@ -77,8 +77,13 @@ func BuildForward(config BuildConfig) *Table {
 		if outChanged {
 			out[point] = nextOut
 		}
+		becameInitialized := !initializedOut[point]
 		initializedOut[point] = true
-		if !outChanged {
+		// Reachability of an exact empty snapshot is itself predecessor
+		// information. Notify successors the first time a row initializes even
+		// when its version state is nil; merge must distinguish an empty incoming
+		// path from an incoming path that has not executed yet.
+		if !outChanged && !becameInitialized {
 			continue
 		}
 		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
