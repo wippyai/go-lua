@@ -274,19 +274,13 @@ func TestSolveExactWTOCFGExpandedRowsPreservesCorrelationUnderHashCollision(t *t
 	}
 }
 
-func TestSolveExactWTOCFGExpandedRowsBudgetsCancellationAndEffectsAreAtomic(t *testing.T) {
+func TestSolveExactWTOCFGExpandedRowsCancellationAndEffectsAreAtomic(t *testing.T) {
 	graph, _, body := exactWTOSimpleLoop()
 	reg := standard.Registry()
 	arena := NewArena(reg)
 	initial := SymbolicCFGRow{Guard: arena.True(), Values: map[symbol.ID]ValueTerm{}}
 
 	for name, run := range map[string]func() (map[cfg.Point][]SymbolicCFGRow, error){
-		"rows": func() (map[cfg.Point][]SymbolicCFGRow, error) {
-			return SolveExactWTOCFGExpandedRows(context.Background(), graph, arena, initial,
-				func(_ cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
-					return []SymbolicCFGRow{row, cloneCFGRow(row)}, nil
-				}, exactWTOAllEdges(arena), SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{MaxRows: 1}})
-		},
 		"iterations": func() (map[cfg.Point][]SymbolicCFGRow, error) {
 			return SolveExactWTOCFGExpandedRows(context.Background(), graph, arena, initial,
 				exactWTOIdentityExpand, exactWTOAllEdges(arena), SymbolicExactWTOOptions{MaxIterations: 1})
@@ -317,6 +311,33 @@ func TestSolveExactWTOCFGExpandedRowsBudgetsCancellationAndEffectsAreAtomic(t *t
 		}, exactWTOAllEdges(arena), SymbolicExactWTOOptions{})
 	if err == nil || !strings.Contains(err.Error(), "canceled") || rows != nil {
 		t.Fatalf("cancellation = %#v, %v", rows, err)
+	}
+}
+
+func TestSolveExactWTOCFGExpandedRowsRetainsMoreThanOldRowLimit(t *testing.T) {
+	graph, _, _ := exactWTOSimpleLoop()
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	local := symbol.ID(9101)
+	initial := SymbolicCFGRow{Guard: arena.True(), Values: map[symbol.ID]ValueTerm{}}
+	rows, err := SolveExactWTOCFGExpandedRows(context.Background(), graph, arena, initial,
+		func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+			if point != graph.Entry() {
+				return []SymbolicCFGRow{row}, nil
+			}
+			out := make([]SymbolicCFGRow, 513)
+			for index := range out {
+				out[index] = cloneCFGRow(row)
+				out[index].Values[local] = arena.Constant(typevalue.LiteralInt(reg, int64(index)))
+			}
+			return out, nil
+		}, exactWTOAllEdges(arena), SymbolicExactWTOOptions{SymbolicCFGOptions: SymbolicCFGOptions{MaxRows: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := rows[graph.Exit()]
+	if len(exit) != 513 {
+		t.Fatalf("exact WTO retained %d alternatives, want 513", len(exit))
 	}
 }
 

@@ -9,9 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// SymbolicExactWTOOptions bounds exact cyclic row closure. MaxIterations is
-// the number of semi-naive component passes; MaxRows remains a per-point cap.
-// No option enables widening: failure to reach finite closure is an error.
+// SymbolicExactWTOOptions temporarily bounds semi-naive component passes while
+// recursive tuple-mu publication is being installed. Row cardinality is not a
+// budget: every distinct finite correlated alternative is retained exactly.
 type SymbolicExactWTOOptions struct {
 	SymbolicCFGOptions
 	MaxIterations int
@@ -272,9 +272,6 @@ func (s *exactWTOSolver) processDelta(dense uint32) error {
 			}
 		}
 		produced = dedupCFGRows(s.arena, produced)
-		if len(produced) > s.options.MaxRows {
-			return fmt.Errorf("transformer: exact WTO row budget at point %d", point)
-		}
 		for _, row := range produced {
 			if !validCFGRow(s.arena, s.options.Shape, row) {
 				return fmt.Errorf("transformer: exact WTO point %d produced an invalid row", point)
@@ -387,9 +384,6 @@ func (s *exactWTOSolver) insert(point uint32, row exactWTORow) (bool, error) {
 			bucket.rows[i].row.observationObligations = unionobservationObligations(bucket.rows[i].row.observationObligations, row.row.observationObligations)
 			return false, nil
 		}
-	}
-	if len(bucket.rows) >= s.options.MaxRows {
-		return false, fmt.Errorf("transformer: exact WTO row budget at point %d", s.tape.points[point].point)
 	}
 	if !s.transientDAG {
 		row = cloneExactWTORow(row)
