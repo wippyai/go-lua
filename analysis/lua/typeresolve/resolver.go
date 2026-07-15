@@ -71,10 +71,27 @@ func (r *Resolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 			return r.resolveDecl(decl)
 		}
 	}
+	if len(path) > 1 {
+		if alias, ok := r.currentQualifiedBinding(path); ok {
+			if alias.Decl.ID != 0 {
+				return r.resolveDecl(alias.Decl)
+			}
+			if r.external != nil && len(alias.Path) != 0 {
+				return r.external.ResolveTypeRef(alias.Path)
+			}
+		}
+	}
 	if r.external != nil {
 		return r.external.ResolveTypeRef(path)
 	}
 	return nil, false
+}
+
+func (r *Resolver) currentQualifiedBinding(path []string) (bind.QualifiedTypeAlias, bool) {
+	if r == nil || r.bindings == nil || len(path) < 2 || len(r.current) == 0 {
+		return bind.QualifiedTypeAlias{}, false
+	}
+	return QualifiedBindingInExpr(r.bindings, r.current[len(r.current)-1], path)
 }
 
 func (r *Resolver) currentBinding(name string) (bind.TypeDecl, bool) {

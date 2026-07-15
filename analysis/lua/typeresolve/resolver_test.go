@@ -107,6 +107,56 @@ func TestResolverDeclBuildsGenericAliasWithBinderBindings(t *testing.T) {
 	}
 }
 
+func TestResolverQualifiedLocalTypeAliasUsesBoundDeclaration(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Boxed = { body: string }
+local M = {}
+M.Boxed = Boxed
+function M.wrap(): M.Boxed
+    return { body = "ok" }
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	fn := stmts[3].(*ast.FuncDefStmt).Func
+	got, ok := New(bindings).Type(fn.ReturnTypes[0])
+	if !ok {
+		t.Fatal("qualified local alias did not resolve")
+	}
+	record, ok := unwrap.Annotations(got).(*typ.Record)
+	if !ok || record.GetField("body") == nil || !typ.TypeEquals(record.GetField("body").Type, typ.String) {
+		t.Fatalf("M.Boxed = %T/%v, want { body: string }", got, got)
+	}
+}
+
+func TestResolverQualifiedReexportUsesBoundModuleType(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local protocol = require("protocol")
+local M = {}
+M.User = protocol.User
+function M.load(): M.User
+    return { id = "u1" }
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	protocol := manifest.New("protocol")
+	protocol.DefineType("User", typetable.NewRecord().Field("id", typ.String).Build())
+	fn := stmts[3].(*ast.FuncDefStmt).Func
+	got, ok := NewWithExternal(bindings, typelookup.Source{Manifests: []*manifest.Manifest{protocol}}).Type(fn.ReturnTypes[0])
+	if !ok {
+		t.Fatal("qualified re-export alias did not resolve")
+	}
+	record, ok := unwrap.Annotations(got).(*typ.Record)
+	if !ok || record.GetField("id") == nil || !typ.TypeEquals(record.GetField("id").Type, typ.String) {
+		t.Fatalf("M.User = %T/%v, want { id: string }", got, got)
+	}
+}
+
 func TestResolverTypeInstantiatesGenericAliasWithFunctionTypeParamArg(t *testing.T) {
 	stmts, err := parse.ParseString(`
 type Collection<T> = { value: T }

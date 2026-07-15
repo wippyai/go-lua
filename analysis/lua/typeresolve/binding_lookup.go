@@ -36,3 +36,41 @@ func BindingInExpr(bindings Bindings, expr ast.TypeExpr, name string) (bind.Type
 	})
 	return found, ok
 }
+
+type qualifiedBindings interface {
+	QualifiedTypeRef(*ast.TypeRefExpr) (bind.QualifiedTypeAlias, bool)
+}
+
+// QualifiedBindingInExpr returns the exact qualified alias binding matching
+// path inside expr, when the binder recorded one.
+func QualifiedBindingInExpr(bindings Bindings, expr ast.TypeExpr, path []string) (bind.QualifiedTypeAlias, bool) {
+	qualified, ok := bindings.(qualifiedBindings)
+	if !ok || expr == nil || len(path) < 2 {
+		return bind.QualifiedTypeAlias{}, false
+	}
+	var found bind.QualifiedTypeAlias
+	WalkTypeNameExpr(expr, func(ref *ast.TypeRefExpr) bool {
+		if ref == nil || !sameTypePath(ref.Path, path) {
+			return true
+		}
+		alias, hasAlias := qualified.QualifiedTypeRef(ref)
+		if !hasAlias {
+			return true
+		}
+		found, ok = alias, true
+		return false
+	}, func(*ast.PrimitiveTypeExpr) bool { return true })
+	return found, ok
+}
+
+func sameTypePath(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -1,6 +1,8 @@
 package bind
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -27,6 +29,19 @@ type TypeDecl struct {
 	Type       *ast.TypeDefStmt
 	Interface  *ast.InterfaceDefStmt
 	Constraint ast.TypeExpr
+}
+
+// QualifiedTypeAlias is the exact type-namespace meaning introduced by a
+// value-level declaration such as M.User = User or M.User = protocol.User.
+// Decl is used for lexical declarations; Path is used for module aliases.
+type QualifiedTypeAlias struct {
+	Decl TypeDecl
+	Path []string
+}
+
+type qualifiedTypeAliasKey struct {
+	root   symbol.ID
+	suffix string
 }
 
 // Stmt returns the declaration statement for alias and interface declarations.
@@ -59,6 +74,45 @@ func (r *Result) TypeRef(ref *ast.TypeRefExpr) (TypeDecl, bool) {
 	}
 	decl, ok := r.typeRefs[ref]
 	return decl, ok && decl.ID != 0
+}
+
+// QualifiedTypeRef returns the alias declaration bound to a qualified type
+// reference. It is separate from TypeRef because an alias may target an
+// imported module type rather than a lexical TypeDecl.
+func (r *Result) QualifiedTypeRef(ref *ast.TypeRefExpr) (QualifiedTypeAlias, bool) {
+	if r == nil || ref == nil {
+		return QualifiedTypeAlias{}, false
+	}
+	alias, ok := r.qualifiedTypeRefs[ref]
+	return alias.copy(), ok && alias.valid()
+}
+
+// QualifiedTypeAliases returns direct aliases declared on root. The returned
+// map is a copy so module publication cannot mutate binder state.
+func (r *Result) QualifiedTypeAliases(root symbol.ID) map[string]QualifiedTypeAlias {
+	if r == nil || root == 0 {
+		return nil
+	}
+	out := make(map[string]QualifiedTypeAlias)
+	for key, alias := range r.qualifiedTypeAliases {
+		if key.root != root || !alias.valid() || strings.Contains(key.suffix, ".") {
+			continue
+		}
+		out[key.suffix] = alias.copy()
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (a QualifiedTypeAlias) valid() bool {
+	return a.Decl.ID != 0 || len(a.Path) != 0
+}
+
+func (a QualifiedTypeAlias) copy() QualifiedTypeAlias {
+	a.Path = append([]string(nil), a.Path...)
+	return a
 }
 
 // PrimitiveTypeRef returns the lexical type declaration bound to a non-built-in
@@ -332,6 +386,10 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 		if fn := b.currentFunction(); fn != nil {
 			if id, _, ok := b.lookup(ref.Path[0]); ok && id != 0 {
 				b.result.recordQualifiedTypeRoot(fn, ref.Path[0], id)
+				key := qualifiedTypeAliasKey{root: id, suffix: strings.Join(ref.Path[1:], ".")}
+				if alias := b.result.qualifiedTypeAliases[key]; alias.valid() {
+					b.result.qualifiedTypeRefs[ref] = alias.copy()
+				}
 			}
 		}
 		return
@@ -341,6 +399,87 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 		return
 	}
 	b.result.typeRefs[ref] = decl
+}
+
+func (b *binder) recordQualifiedTypeAliases(stmt *ast.AssignStmt) {
+	if b == nil || b.result == nil || stmt == nil || len(stmt.Lhs) != len(stmt.Rhs) {
+		return
+	}
+	for i, lhs := range stmt.Lhs {
+		root, suffix, ok := dottedTypeValuePath(lhs)
+		if !ok || len(suffix) == 0 {
+			continue
+		}
+		rootID, ok := b.result.SymbolOf(root)
+		if !ok || rootID == 0 {
+			continue
+		}
+		alias, ok := b.qualifiedTypeAliasSource(stmt.Rhs[i])
+		if !ok {
+			continue
+		}
+		key := qualifiedTypeAliasKey{root: rootID, suffix: strings.Join(suffix, ".")}
+		if previous, exists := b.result.qualifiedTypeAliases[key]; exists && !qualifiedTypeAliasEqual(previous, alias) {
+			b.result.qualifiedTypeAliases[key] = QualifiedTypeAlias{}
+			continue
+		}
+		b.result.qualifiedTypeAliases[key] = alias.copy()
+	}
+}
+
+func (b *binder) qualifiedTypeAliasSource(expr ast.Expr) (QualifiedTypeAlias, bool) {
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		decl, found := b.result.TypeValueRef(ident)
+		return QualifiedTypeAlias{Decl: decl}, found
+	}
+	root, suffix, ok := dottedTypeValuePath(expr)
+	if !ok || len(suffix) == 0 {
+		return QualifiedTypeAlias{}, false
+	}
+	if rootID, found := b.result.SymbolOf(root); found {
+		key := qualifiedTypeAliasKey{root: rootID, suffix: strings.Join(suffix, ".")}
+		if alias := b.result.qualifiedTypeAliases[key]; alias.valid() {
+			return alias.copy(), true
+		}
+	}
+	path := make([]string, 1, len(suffix)+1)
+	path[0] = root.Value
+	path = append(path, suffix...)
+	return QualifiedTypeAlias{Path: path}, true
+}
+
+func dottedTypeValuePath(expr ast.Expr) (*ast.IdentExpr, []string, bool) {
+	switch expr := expr.(type) {
+	case *ast.IdentExpr:
+		return expr, nil, expr.Value != ""
+	case *ast.AttrGetExpr:
+		if expr.KeySyntax != ast.AttrKeyDot {
+			return nil, nil, false
+		}
+		name := ast.KeyName(expr.Key)
+		if name == "" {
+			return nil, nil, false
+		}
+		root, suffix, ok := dottedTypeValuePath(expr.Object)
+		if !ok {
+			return nil, nil, false
+		}
+		return root, append(suffix, name), true
+	default:
+		return nil, nil, false
+	}
+}
+
+func qualifiedTypeAliasEqual(left, right QualifiedTypeAlias) bool {
+	if left.Decl.ID != right.Decl.ID || len(left.Path) != len(right.Path) {
+		return false
+	}
+	for i := range left.Path {
+		if left.Path[i] != right.Path[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Result) recordQualifiedTypeRoot(fn *ast.FunctionExpr, name string, id symbol.ID) {

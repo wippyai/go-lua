@@ -35,6 +35,7 @@ func (b *binder) bindStmt(stmt ast.Stmt) {
 		for _, lhs := range stmt.Lhs {
 			b.bindLValue(lhs)
 		}
+		b.recordQualifiedTypeAliases(stmt)
 	case *ast.LocalAssignStmt:
 		b.bindLocalAssign(stmt)
 	case *ast.FuncCallStmt:

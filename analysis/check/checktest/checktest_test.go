@@ -1479,6 +1479,49 @@ func TestImportedTypeAliasResolvesInNestedFunctionWithoutRuntimeCapture(t *testi
 	}
 }
 
+func TestReturnedModuleQualifiedTypeAliasReexportsTransitively(t *testing.T) {
+	lib := CheckAndExport(`
+		type Boxed = { body: string }
+		local M = {}
+		M.Boxed = Boxed
+		function M.wrap(body: string): M.Boxed
+			return { body = body }
+		end
+		return M
+	`, "lib", WithStdlib())
+	if len(lib.Errors) != 0 {
+		t.Fatalf("lib diagnostics = %#v, want none", lib.Errors)
+	}
+	if _, ok := lib.Manifest.Types["Boxed"]; !ok {
+		t.Fatalf("lib types = %#v, want Boxed", lib.Manifest.Types)
+	}
+
+	mid := CheckAndExport(`
+		local lib = require("lib")
+		local M = {}
+		M.Boxed = lib.Boxed
+		function M.wrap(body: string): M.Boxed
+			return lib.wrap(body)
+		end
+		return M
+	`, "mid", WithStdlib(), WithModule("lib", lib))
+	if len(mid.Errors) != 0 {
+		t.Fatalf("mid diagnostics = %#v, want none", mid.Errors)
+	}
+	if _, ok := mid.Manifest.Types["Boxed"]; !ok {
+		t.Fatalf("mid types = %#v, want re-exported Boxed", mid.Manifest.Types)
+	}
+
+	consumer := Check(`
+		local mid = require("mid")
+		local value: mid.Boxed = mid.wrap("ok")
+		local body: string = value.body
+	`, WithStdlib(), WithModule("mid", mid))
+	if len(consumer.Diagnostics) != 0 {
+		t.Fatalf("consumer diagnostics = %#v, want none", consumer.Diagnostics)
+	}
+}
+
 func TestCheckAndExportPublishesDirectAssignedRHSObjectShape(t *testing.T) {
 	mod := CheckAndExport(`
 		local Widget = {}

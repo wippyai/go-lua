@@ -58,14 +58,16 @@ type Result struct {
 	numForSymbols     map[*ast.NumberForStmt]symbol.ID
 	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
 
-	nextTypeDeclID      TypeDeclID
-	typeRefs            map[*ast.TypeRefExpr]TypeDecl
-	primitiveTypeRefs   map[*ast.PrimitiveTypeExpr]TypeDecl
-	typeDefDecls        map[*ast.TypeDefStmt]TypeDecl
-	interfaceDecls      map[*ast.InterfaceDefStmt]TypeDecl
-	typeDefParams       map[*ast.TypeDefStmt][]TypeDecl
-	functionTypeParams  map[*ast.FunctionExpr][]TypeDecl
-	methodReceiverTypes map[*ast.FunctionExpr]TypeDecl
+	nextTypeDeclID       TypeDeclID
+	typeRefs             map[*ast.TypeRefExpr]TypeDecl
+	primitiveTypeRefs    map[*ast.PrimitiveTypeExpr]TypeDecl
+	typeDefDecls         map[*ast.TypeDefStmt]TypeDecl
+	interfaceDecls       map[*ast.InterfaceDefStmt]TypeDecl
+	typeDefParams        map[*ast.TypeDefStmt][]TypeDecl
+	functionTypeParams   map[*ast.FunctionExpr][]TypeDecl
+	methodReceiverTypes  map[*ast.FunctionExpr]TypeDecl
+	qualifiedTypeRefs    map[*ast.TypeRefExpr]QualifiedTypeAlias
+	qualifiedTypeAliases map[qualifiedTypeAliasKey]QualifiedTypeAlias
 	// qualifiedTypeRoots records value-namespace roots used only by qualified
 	// type references in a function (for example protocol.User where protocol
 	// is an outer local initialized by require("protocol")).
@@ -112,6 +114,8 @@ func newResult(opts Options) *Result {
 		typeDefParams:         make(map[*ast.TypeDefStmt][]TypeDecl),
 		functionTypeParams:    make(map[*ast.FunctionExpr][]TypeDecl),
 		methodReceiverTypes:   make(map[*ast.FunctionExpr]TypeDecl),
+		qualifiedTypeRefs:     make(map[*ast.TypeRefExpr]QualifiedTypeAlias),
+		qualifiedTypeAliases:  make(map[qualifiedTypeAliasKey]QualifiedTypeAlias),
 		qualifiedTypeRoots:    make(map[*ast.FunctionExpr]map[string]symbol.ID),
 	}
 	r.runtimeUseScanComplete = true

@@ -1050,6 +1050,20 @@ func (r *Result) TypeRef(ref *ast.TypeRefExpr) (bind.TypeDecl, bool) {
 	return r.bindings.TypeRef(ref)
 }
 
+func (r *Result) QualifiedTypeRef(ref *ast.TypeRefExpr) (bind.QualifiedTypeAlias, bool) {
+	if r == nil || r.bindings == nil {
+		return bind.QualifiedTypeAlias{}, false
+	}
+	return r.bindings.QualifiedTypeRef(ref)
+}
+
+func (r *Result) QualifiedTypeAliases(root symbol.ID) map[string]bind.QualifiedTypeAlias {
+	if r == nil || r.bindings == nil {
+		return nil
+	}
+	return r.bindings.QualifiedTypeAliases(root)
+}
+
 func (r *Result) TypeValueRef(ident *ast.IdentExpr) (bind.TypeDecl, bool) {
 	if r == nil || r.bindings == nil {
 		return bind.TypeDecl{}, false

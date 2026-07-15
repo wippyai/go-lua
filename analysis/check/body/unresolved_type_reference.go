@@ -201,6 +201,16 @@ func (r *Result) typeRefResolved(ref *ast.TypeRefExpr, scope unresolvedTypeScope
 		return false
 	}
 	if len(ref.Path) != 1 {
+		if alias, ok := r.QualifiedTypeRef(ref); ok {
+			if alias.Decl.ID != 0 {
+				return true
+			}
+			if resolver := r.TypeResolver(); resolver != nil {
+				if _, resolved := resolver.ResolveTypeRef(alias.Path); resolved {
+					return true
+				}
+			}
+		}
 		return r.qualifiedTypeRefResolved(ref.Path)
 	}
 	if _, ok := r.TypeRef(ref); ok {

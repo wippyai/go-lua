@@ -2,15 +2,15 @@ package exportmanifest
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func publishTypeDefinitions(m *manifest.Manifest, result *body.Result) {
 	if m == nil || result == nil || result.Graph() == nil {
 		return
 	}
-	resolver := typeresolve.NewWithExternal(result, result.ModuleTypes())
+	resolver := result.TypeResolver()
 	for _, point := range result.Graph().RPO() {
 		fact, ok := result.TypeDefinition(point)
 		if !ok {
@@ -43,6 +43,20 @@ func publishTypeDefinitions(m *manifest.Manifest, result *body.Result) {
 				continue
 			}
 			m.DefineType(fact.Interface.Name, t)
+		}
+	}
+	for _, exported := range returnedExportSourcePaths(result) {
+		for name, alias := range result.QualifiedTypeAliases(exported.path.Symbol) {
+			var t typ.Type
+			var ok bool
+			if alias.Decl.ID != 0 {
+				t, ok = resolver.Decl(alias.Decl)
+			} else if len(alias.Path) != 0 {
+				t, ok = resolver.ResolveTypeRef(alias.Path)
+			}
+			if ok && t != nil {
+				m.DefineType(name, t)
+			}
 		}
 	}
 }
