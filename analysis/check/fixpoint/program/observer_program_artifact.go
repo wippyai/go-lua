@@ -21,7 +21,20 @@ type observerProgramProofID uint32
 
 type observerProgramBoundaryArtifact struct {
 	values []product.CanonicalArtifact
-	paths  []pathdom.Path
+	paths  []observerProgramPathArtifact
+}
+
+type observerProgramMuPathArtifact struct {
+	mu       lexicalObserverMuRef
+	previous pathdom.PathKey
+	next     pathdom.PathKey
+}
+
+// observerProgramPathArtifact is either one exact concrete path or one finite
+// structural recurrence. Mu never stores an unfolded invocation path.
+type observerProgramPathArtifact struct {
+	concrete pathdom.Path
+	mu       *observerProgramMuPathArtifact
 }
 
 type observerProgramExpressionArtifact struct {
@@ -67,6 +80,34 @@ type observerProgramArtifact struct {
 	proofs    []observerProgramProofArtifact
 }
 
+// observerProgramWorldNamespace is one conjunct in a program path condition.
+// Decision IDs are meaningful only inside Proof. A conjunction is therefore a
+// structural sequence of namespaces, never a Boolean operation on unrelated
+// DecisionID integers.
+type observerProgramWorldNamespace struct {
+	proof  observerProgramProofID
+	worlds evaluated.WorldSet
+}
+
+// observerWorldConjunction validates and ownership-copies an edge-local path
+// condition. Keeping the proof namespace at every step is what makes a cyclic
+// observer graph finite: a mu backedge adds one local conjunct to the shared
+// SCC node instead of unfolding an invocation path or importing its ROBDD.
+func (a observerProgramArtifact) observerWorldConjunction(edges ...observerProgramParentArtifact) ([]observerProgramWorldNamespace, error) {
+	out := make([]observerProgramWorldNamespace, len(edges))
+	for index, edge := range edges {
+		if edge.proof == 0 || int(edge.proof) > len(a.proofs) {
+			return nil, fmt.Errorf("observer program: world conjunct %d has no proof namespace", index)
+		}
+		proof := a.proofs[int(edge.proof)-1]
+		if edge.worlds.Root == evaluated.DecisionFalse || edge.worlds.Root > evaluated.DecisionID(len(proof.decisions)+1) {
+			return nil, fmt.Errorf("observer program: world conjunct %d is false or outside its proof namespace", index)
+		}
+		out[index] = observerProgramWorldNamespace{proof: edge.proof, worlds: edge.worlds}
+	}
+	return out, nil
+}
+
 type observerTransientBinding struct {
 	values []product.Value
 	paths  []pathdom.Path
@@ -94,7 +135,7 @@ func sealObserverBoundary(
 	}
 	out := observerProgramBoundaryArtifact{
 		values: make([]product.CanonicalArtifact, len(values)),
-		paths:  make([]pathdom.Path, len(paths)),
+		paths:  make([]observerProgramPathArtifact, len(paths)),
 	}
 	key := make([]byte, 0, len(values)*24)
 	var raw [8]byte
@@ -113,7 +154,7 @@ func sealObserverBoundary(
 		binary.BigEndian.PutUint64(raw[:], uint64(len(encoded)))
 		key = append(key, raw[:]...)
 		key = append(key, encoded...)
-		out.paths[index] = paths[index].Clone()
+		out.paths[index] = observerProgramPathArtifact{concrete: paths[index].Clone()}
 		pathKey := []byte(paths[index].Key())
 		binary.BigEndian.PutUint64(raw[:], uint64(len(pathKey)))
 		key = append(key, raw[:]...)
@@ -180,10 +221,9 @@ func normalizeObserverPaths(values []product.Value, paths []pathdom.Path) ([]pat
 	return out, nil
 }
 
-// buildObserverProgramArtifact expands only acyclic, concretely specialized
-// call applications. Recursive topology was already sealed by the lexical
-// forest; until recursive boundary environments are exact this function fails
-// closed before publishing an artifact.
+// buildObserverProgramArtifact expands concretely specialized call
+// applications. Recursive calls reuse the lexical forest's mu nodes when their
+// exact correlated boundary already exists; they never unfold invocation paths.
 func buildObserverProgramArtifact(
 	ctx context.Context,
 	reg *axis.Registry,
@@ -196,9 +236,6 @@ func buildObserverProgramArtifact(
 ) (observerProgramArtifact, error) {
 	if ctx == nil || reg == nil || project == nil || plan.root == (lexicalObserverTemplateRef{}) {
 		return observerProgramArtifact{}, fmt.Errorf("observer program: complete build authority is required")
-	}
-	if plan.recursive {
-		return observerProgramArtifact{}, fmt.Errorf("observer program: recursive boundary environments are structurally sealed but not evaluable")
 	}
 	entries := make(map[lexicalObserverTemplateRef]relationCatalogEntry, len(catalog.entries))
 	bodyPlans := make(map[lexicalObserverTemplateRef]observerBodyTemplatePlan, len(plan.bodies))
@@ -225,7 +262,7 @@ func buildObserverProgramArtifact(
 	artifact := observerProgramArtifact{entry: 1}
 	transient := make([]observerTransientInstance, 0, len(plan.bodies))
 	byBoundary := make(map[lexicalObserverTemplateRef]map[string]observerProgramInstanceID)
-	addInstance := func(ref lexicalObserverTemplateRef, values []product.Value, paths []pathdom.Path, parent *observerProgramParentArtifact) (observerProgramInstanceID, error) {
+	addInstance := func(ref lexicalObserverTemplateRef, values []product.Value, paths []pathdom.Path, parent *observerProgramParentArtifact, existingOnly bool) (observerProgramInstanceID, error) {
 		sealed, key, err := sealObserverBoundary(ctx, reg, values, paths)
 		if err != nil {
 			return 0, err
@@ -240,6 +277,9 @@ func buildObserverProgramArtifact(
 				artifact.instances[int(id)-1].parents = append(artifact.instances[int(id)-1].parents, *parent)
 			}
 			return id, nil
+		}
+		if existingOnly {
+			return 0, fmt.Errorf("observer program: recursive boundary requires guarded mu convergence")
 		}
 		id := observerProgramInstanceID(len(artifact.instances) + 1)
 		bucket[key] = id
@@ -266,7 +306,7 @@ func buildObserverProgramArtifact(
 		})
 		return id, nil
 	}
-	if _, err := addInstance(plan.root, root.values, rootPaths, nil); err != nil {
+	if _, err := addInstance(plan.root, root.values, rootPaths, nil, false); err != nil {
 		return observerProgramArtifact{}, err
 	}
 
@@ -275,6 +315,9 @@ func buildObserverProgramArtifact(
 			return observerProgramArtifact{}, err
 		}
 		pending := transient[cursor]
+		if stats != nil {
+			stats.EvaluatedObserverBoundaryRounds++
+		}
 		entry, owned := entries[pending.ref]
 		bodyPlan, bodyPlanned := bodyPlans[pending.ref]
 		relation, solved := relations.Lookup(pending.ref.Cell)
@@ -303,6 +346,7 @@ func buildObserverProgramArtifact(
 			return observerProgramArtifact{}, fmt.Errorf("observer program: specialize calls for %v: %w", pending.ref.Cell, err)
 		}
 		if stats != nil {
+			stats.EvaluatedObserverBoundaryApplications++
 			stats.EvaluatedObserverTermApplications += int(projection.TermApplications())
 		}
 		items := projection.Items()
@@ -333,9 +377,8 @@ func buildObserverProgramArtifact(
 			}
 			if call.edge.Target.Kind == lexicalObserverMuTarget {
 				parent.backedge, parent.mu = true, call.edge.Target.Mu
-				return observerProgramArtifact{}, fmt.Errorf("observer program: recursive call %v point %d reached after acyclic admission", pending.ref.Cell, item.Point)
 			}
-			if _, err := addInstance(targetRef, item.Values, paths, &parent); err != nil {
+			if _, err := addInstance(targetRef, item.Values, paths, &parent, call.edge.Target.Kind == lexicalObserverMuTarget); err != nil {
 				return observerProgramArtifact{}, err
 			}
 		}

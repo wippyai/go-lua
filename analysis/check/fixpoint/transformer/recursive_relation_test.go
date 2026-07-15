@@ -255,9 +255,15 @@ func TestContractedBottomPublishesCallEntrySidecarAndSparseProjectionAtomically(
 	lowered.AssignDebugPointOrdinals(graph)
 	var owner lexicalidentity.StableLexicalBodyID
 	owner[0] = 91
+	var targetOwner lexicalidentity.StableLexicalBodyID
+	targetOwner[0] = 92
+	lexicalTarget, ok := operationplan.NewLexicalCallSurfaceTarget(targetOwner)
+	if !ok {
+		t.Fatal("lexical call target rejected")
+	}
 	contract := typevalue.String(reg)
 	callSurface, err := operationplan.SealCallSurface(owner, graph.Size(), []cfg.Point{call}, []operationplan.CallSurfaceSite{{
-		Point: call, Target: operationplan.RejectedCallSurfaceTarget(),
+		Point: call, Target: lexicalTarget,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -336,12 +342,13 @@ func TestContractedBottomPublishesCallEntrySidecarAndSparseProjectionAtomically(
 		CallSurface: surface.Digest(), Schema: requirements.SchemaID(), Inventory: requirements.ConsumerInventoryID(),
 		PointCount: uint32(graph.Size()),
 	}
-	identity.View, err = evaluated.SealProjectionView(requirements, false)
+	identity.View, err = evaluated.SealProjectionView(requirements, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	root, err := relation.EvaluateSparseRoot(context.Background(), EvaluatedRootRequest{
 		Identity: identity, ExpectedIdentity: identity, Requirements: requirements, CallSurface: surface,
+		Relations: RelationSnapshot{values: map[CellRef]Relation{calleeRef: bottom}},
 	}, cursor, SpecializationContext{})
 	if err != nil || root.Identity() != identity {
 		t.Fatalf("contracted Bottom sparse projection = identity:%v err:%v", root.Identity() == identity, err)

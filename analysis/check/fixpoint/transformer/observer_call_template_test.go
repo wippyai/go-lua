@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/evaluated"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	engineobservation "github.com/wippyai/go-lua/analysis/engine/observation"
@@ -28,12 +29,13 @@ func TestSpecializeObserverCallsPreservesGuardedBindingCorrelationAndNonreturnin
 		}
 	}
 	truthy := makeCall(3, 4, arena.Truthy(param), arena.Constant(typevalue.LiteralString(reg, "truthy")))
+	truthy.paths[0] = arena.Path(Root{Kind: RootParam})
 	falsy := makeCall(3, 4, arena.Falsy(param), arena.Constant(typevalue.LiteralString(reg, "falsy")))
 	unreachable := makeCall(9, 10, arena.False(), arena.Constant(typevalue.LiteralString(reg, "impossible")))
 	relation := Relation{shape: callerShape, arena: arena, annotations: relationAnnotations{
 		calls: unionObserverCallTemplates(arena, []ObserverCallTemplate{unreachable, truthy, falsy}),
 	}}
-	cursor, err := NewBindingCursor(callerShape, []product.Value{product.Top()}, nil)
+	cursor, err := NewBindingCursor(callerShape, []product.Value{product.Top()}, []pathdom.Path{{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestSpecializeObserverCallsPreservesGuardedBindingCorrelationAndNonreturnin
 		t.Fatal(err)
 	}
 	items := projection.Items()
-	if len(items) != 2 || len(projection.Proof().Decisions) == 0 || projection.TermApplications() != 5 {
+	if len(items) != 2 || len(projection.Proof().Decisions) == 0 || projection.TermApplications() != 6 {
 		t.Fatalf("observer projection = items:%#v proof:%#v applications:%d", items, projection.Proof(), projection.TermApplications())
 	}
 	if items[0].Worlds.Root == evaluated.DecisionFalse || items[1].Worlds.Root == evaluated.DecisionFalse || items[0].Worlds == items[1].Worlds ||

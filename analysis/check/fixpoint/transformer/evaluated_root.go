@@ -25,6 +25,7 @@ type EvaluatedRootRequest struct {
 	ExpectedIdentity evaluated.Identity
 	Requirements     operationplan.ObservationRequirements
 	CallSurface      operationplan.CallSurface
+	Relations        RelationSnapshot
 }
 
 // EvaluateSparseRoot specializes the already-reviewed sparse projection trace
@@ -58,7 +59,7 @@ func (r Relation) EvaluateSparseRoot(
 	}
 
 	trace := r.projectionTrace
-	requirements := request.Requirements.Entries(false)
+	requirements := request.Requirements.Entries(true)
 	if len(requirements) != len(trace.slots) {
 		return evaluated.Root{}, fmt.Errorf("transformer: evaluated root slot count mismatch")
 	}
@@ -100,6 +101,14 @@ func (r Relation) EvaluateSparseRoot(
 				Slot: slotID, Point: requirement.Point(), Worlds: guardWorlds[slot.guard],
 			})
 		case operationplan.RequirementBoundary:
+			if requirement.RequiresCallOutcome() {
+				boundary, err := r.evaluateCallOutcomeBoundary(ctx, slotID, requirement.Point(), request, evaluator, guardWorlds)
+				if err != nil {
+					return evaluated.Root{}, err
+				}
+				parts.CallOutcomes = append(parts.CallOutcomes, boundary)
+				break
+			}
 			boundary, err := r.evaluateBoundary(ctx, slotID, slot, evaluator, guardWorlds)
 			if err != nil {
 				return evaluated.Root{}, err
@@ -134,7 +143,7 @@ func (r Relation) EvaluateSparseRoot(
 	if err := ctx.Err(); err != nil {
 		return evaluated.Root{}, err
 	}
-	root, err := evaluated.NewShadowRoot(ctx, r.arena.reg, request.Requirements, false, parts)
+	root, err := evaluated.NewShadowRoot(ctx, r.arena.reg, request.Requirements, true, parts)
 	if err != nil {
 		return evaluated.Root{}, err
 	}
@@ -238,7 +247,7 @@ func emptySpecializationContext(context SpecializationContext) bool {
 }
 
 func (r Relation) validateCallbackFreeEvaluatedRootTerms(ctx context.Context) error {
-	if r.arena == nil {
+	if r.arena == nil || r.projectionTrace == nil {
 		return fmt.Errorf("transformer: evaluated root has no term arena")
 	}
 	seen := make(map[ValueTerm]bool)

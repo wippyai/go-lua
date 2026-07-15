@@ -24,6 +24,7 @@ type RootArtifact struct {
 	proof        artifactWorldProof
 	points       []PointReachability
 	boundaries   []artifactBoundary
+	callOutcomes []artifactCallOutcomeBoundary
 	edges        []EdgeReachability
 	observations []artifactObservationSlot
 	routes       []Route
@@ -63,6 +64,22 @@ type artifactBoundary struct {
 	Slot      uint32
 	Point     cfg.Point
 	Fragments []artifactBoundaryFragment
+}
+
+type artifactCallOutcomeFragment struct {
+	Worlds  WorldSet
+	Results []artifactIndexedValue
+	Summary summary.CanonicalArtifact
+	Roles   []CallOutcomeRole
+}
+
+type artifactCallOutcomeBoundary struct {
+	Slot       uint32
+	Point      cfg.Point
+	Owner      lexicalidentity.StableLexicalBodyID
+	Occurrence engineobservation.Occurrence
+	Target     lexicalidentity.StableLexicalBodyID
+	Fragments  []artifactCallOutcomeFragment
 }
 
 type artifactObservation struct {
@@ -112,6 +129,9 @@ func SealRoot(ctx context.Context, reg *axis.Registry, root Root) (RootArtifact,
 	if out.boundaries, err = sealArtifactBoundaries(ctx, reg, root.boundaries, out.schema); err != nil {
 		return RootArtifact{}, err
 	}
+	if out.callOutcomes, err = sealArtifactCallOutcomes(ctx, reg, root.callOutcomes, out.schema); err != nil {
+		return RootArtifact{}, err
+	}
 	if out.observations, err = sealArtifactObservations(ctx, reg, root.observations, out.schema); err != nil {
 		return RootArtifact{}, err
 	}
@@ -142,6 +162,9 @@ func (a RootArtifact) Materialize(ctx context.Context, reg *axis.Registry) (Root
 		return Root{}, err
 	}
 	if parts.Boundaries, err = materializeArtifactBoundaries(ctx, reg, a.boundaries, a.schema); err != nil {
+		return Root{}, err
+	}
+	if parts.CallOutcomes, err = materializeArtifactCallOutcomes(ctx, reg, a.callOutcomes, a.schema); err != nil {
 		return Root{}, err
 	}
 	if parts.Observations, err = materializeArtifactObservations(ctx, reg, a.observations, a.schema); err != nil {
@@ -236,6 +259,71 @@ func materializeArtifactBoundaries(ctx context.Context, reg *axis.Registry, in [
 					return nil, err
 				}
 				materialized.Values[valueIndex] = IndexedValue{Index: value.Index, Value: decoded}
+			}
+			out[index].Fragments[fragmentIndex] = materialized
+		}
+	}
+	return out, nil
+}
+
+func sealArtifactCallOutcomes(ctx context.Context, reg *axis.Registry, in []CallOutcomeBoundary, schema axis.SchemaIdentity) ([]artifactCallOutcomeBoundary, error) {
+	out := make([]artifactCallOutcomeBoundary, len(in))
+	for index, boundary := range in {
+		out[index] = artifactCallOutcomeBoundary{
+			Slot: boundary.Slot, Point: boundary.Point, Owner: boundary.Owner,
+			Occurrence: boundary.Occurrence, Target: boundary.Target,
+			Fragments: make([]artifactCallOutcomeFragment, len(boundary.Fragments)),
+		}
+		for fragmentIndex, fragment := range boundary.Fragments {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			sealed := artifactCallOutcomeFragment{
+				Worlds: fragment.Worlds, Results: make([]artifactIndexedValue, len(fragment.Results)),
+				Roles: cloneCallOutcomeRoles(fragment.Roles),
+			}
+			var err error
+			sealed.Summary, err = summary.SealCanonical(ctx, reg, fragment.Summary)
+			if err != nil {
+				return nil, err
+			}
+			for resultIndex, result := range fragment.Results {
+				artifact, err := sealArtifactValue(ctx, reg, result.Value, schema)
+				if err != nil {
+					return nil, err
+				}
+				sealed.Results[resultIndex] = artifactIndexedValue{Index: result.Index, Value: artifact}
+			}
+			out[index].Fragments[fragmentIndex] = sealed
+		}
+	}
+	return out, nil
+}
+
+func materializeArtifactCallOutcomes(ctx context.Context, reg *axis.Registry, in []artifactCallOutcomeBoundary, schema axis.SchemaIdentity) ([]CallOutcomeBoundary, error) {
+	out := make([]CallOutcomeBoundary, len(in))
+	for index, boundary := range in {
+		out[index] = CallOutcomeBoundary{
+			Slot: boundary.Slot, Point: boundary.Point, Owner: boundary.Owner,
+			Occurrence: boundary.Occurrence, Target: boundary.Target,
+			Fragments: make([]CallOutcomeFragment, len(boundary.Fragments)),
+		}
+		for fragmentIndex, fragment := range boundary.Fragments {
+			materialized := CallOutcomeFragment{
+				Worlds: fragment.Worlds, Results: make([]IndexedValue, len(fragment.Results)),
+				Roles: cloneCallOutcomeRoles(fragment.Roles),
+			}
+			var err error
+			materialized.Summary, err = summary.DecodeCanonical(ctx, reg, cloneSummaryArtifact(fragment.Summary))
+			if err != nil {
+				return nil, err
+			}
+			for resultIndex, result := range fragment.Results {
+				value, err := materializeArtifactValue(ctx, reg, result.Value, schema)
+				if err != nil {
+					return nil, err
+				}
+				materialized.Results[resultIndex] = IndexedValue{Index: result.Index, Value: value}
 			}
 			out[index].Fragments[fragmentIndex] = materialized
 		}

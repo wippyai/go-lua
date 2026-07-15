@@ -81,7 +81,7 @@ func compileSparseProjectionPlan(requirements operationplan.ObservationRequireme
 		return nil, fmt.Errorf("projection trace: observation requirements are not sealed")
 	}
 	slotCount, edgeCount := 0, 0
-	countCursor := requirements.Cursor(false)
+	countCursor := requirements.Cursor(true)
 	for requirement, ok := countCursor.Next(); ok; requirement, ok = countCursor.Next() {
 		slotCount++
 		if requirement.Stage() == operationplan.RequirementEdge {
@@ -93,7 +93,7 @@ func compileSparseProjectionPlan(requirements operationplan.ObservationRequireme
 		slots:  make([]operationplan.ObservationRequirement, 0, slotCount),
 		points: make(map[cfg.Point][]int, slotCount-edgeCount), edges: make(map[sparseProjectionEdge][]int, edgeCount),
 	}
-	cursor := requirements.Cursor(false)
+	cursor := requirements.Cursor(true)
 	for requirement, ok := cursor.Next(); ok; requirement, ok = cursor.Next() {
 		if err := supportedSparseProjectionRequirement(requirement); err != nil {
 			return nil, err
@@ -139,6 +139,9 @@ func supportedSparseProjectionRequirement(requirement operationplan.ObservationR
 		operationplan.RequirementObservation, operationplan.RequirementRoute:
 		return nil
 	case operationplan.RequirementBoundary:
+		if requirement.RequiresCallOutcome() {
+			return nil
+		}
 		if requirement.IsCallProducerBoundary() {
 			return nil
 		}
@@ -171,6 +174,10 @@ func (b *sparseProjectionTraceBuilder) pointOutput(point cfg.Point, row Symbolic
 		slot := &b.trace.slots[index]
 		switch slot.requirement.Stage() {
 		case operationplan.RequirementBoundary:
+			if slot.requirement.RequiresCallOutcome() {
+				slot.guard = unionSparseProjectionGuard(b.arena, slot.guard, row.Guard)
+				continue
+			}
 			fragment := sparseProjectionFragment{guard: row.Guard}
 			fact, hasFact := slot.requirement.FactKind()
 			if slot.requirement.IsCallProducerBoundary() {

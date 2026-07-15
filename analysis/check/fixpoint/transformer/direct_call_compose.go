@@ -86,14 +86,13 @@ func composeDirectCallRowsCore(builder *Builder, callerShape Shape, caller Symbo
 		return nil, err
 	}
 	if target != nil {
-		if annotations == nil {
-			return nil, fmt.Errorf("transformer: direct-call target requires relation annotation ownership")
-		}
 		if target.Shape != callee.shape {
 			return nil, fmt.Errorf("transformer: observer call target shape differs from callee")
 		}
-		if err := recordObserverCallAnnotation(builder, caller, *target, rootBindings, site, annotations); err != nil {
-			return nil, err
+		if annotations != nil {
+			if err := recordObserverCallAnnotation(builder, caller, *target, rootBindings, site, annotations); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// Prefix evidence belongs to the caller lexical owner and is reached before
@@ -150,7 +149,10 @@ func recordObserverCallAnnotation(builder *Builder, caller SymbolicCFGRow, targe
 	}
 	anchor, durable := builder.plan.CallInvocationObservationAnchor(point)
 	if !durable {
-		return fmt.Errorf("transformer: observer call has no durable invocation occurrence")
+		// Relation solving remains valid without publication identity. The full
+		// evaluated-root transaction will reject the call-outcome slot because no
+		// owner-local template exists; do not poison the semantic relation itself.
+		return nil
 	}
 	template := ObserverCallTemplate{
 		owner: builder.plan.ObservationBody(), occurrence: anchor, point: point,

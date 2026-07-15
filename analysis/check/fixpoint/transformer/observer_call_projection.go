@@ -109,7 +109,7 @@ func (r Relation) SpecializeObserverCalls(ctx context.Context, cursor BindingCur
 			item.Values[slot] = value
 			if template.paths[slot] != 0 {
 				out.applications++
-				path, ok := r.arena.evalPath(template.paths[slot], cursor)
+				path, ok := r.arena.specializeOptionalObserverPath(template.paths[slot], cursor)
 				if !ok {
 					return ObserverCallProjection{}, fmt.Errorf("transformer: observer call path %d cannot be specialized", slot)
 				}
@@ -122,6 +122,33 @@ func (r Relation) SpecializeObserverCalls(ctx context.Context, cursor BindingCur
 		return ObserverCallProjection{}, err
 	}
 	return out, nil
+}
+
+func (a *Arena) specializeOptionalObserverPath(term PathTerm, cursor BindingCursor) (pathdom.Path, bool) {
+	if a == nil || term == 0 || int(term) >= len(a.paths) {
+		return pathdom.Path{}, false
+	}
+	node := a.paths[term]
+	if !cursor.shape.validate(node.root) {
+		return pathdom.Path{}, false
+	}
+	// Paths are optional BindingCursor metadata. A nil path vector certifies
+	// that this specialization has no addressable caller roots; preserve the
+	// value binding and publish an empty optional path rather than rejecting an
+	// otherwise exact summary application.
+	if cursor.paths == nil {
+		return pathdom.Path{}, true
+	}
+	root, ok := cursor.Path(node.root)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	if root.IsEmpty() {
+		return pathdom.Path{}, true
+	}
+	out := root.Clone()
+	out.Segments = append(out.Segments, node.segments...)
+	return out, true
 }
 
 func cloneObserverPaths(in []pathdom.Path) []pathdom.Path {

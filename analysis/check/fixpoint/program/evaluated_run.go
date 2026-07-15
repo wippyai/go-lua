@@ -272,7 +272,7 @@ func solveEvaluatedProgramTransaction(
 	projectedBodies := make([]lexicalidentity.StableLexicalBodyID, 0, len(entries))
 	var programArtifact observerProgramArtifact
 	project := func(entry relationCatalogEntry, relation transformer.Relation, binding evaluatedProgramBindings) (evaluated.RootArtifact, error) {
-		return projectEvaluatedRelationRoot(ctx, catalog, entry, relation, binding, stats)
+		return projectEvaluatedRelationRoot(ctx, catalog, relations, entry, relation, binding, stats)
 	}
 	if forest != nil {
 		rootBinding, bound := bindings[forest.Root.Body]
@@ -343,6 +343,7 @@ func solveEvaluatedProgramTransaction(
 func projectEvaluatedRelationRoot(
 	ctx context.Context,
 	catalog relationRunCatalog,
+	relations transformer.RelationSnapshot,
 	entry relationCatalogEntry,
 	relation transformer.Relation,
 	binding evaluatedProgramBindings,
@@ -375,7 +376,7 @@ func projectEvaluatedRelationRoot(
 	if err != nil {
 		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x binding: %w", bodyID, err)
 	}
-	view, err := evaluated.SealProjectionView(requirements, false)
+	view, err := evaluated.SealProjectionView(requirements, true)
 	if err != nil {
 		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x view: %w", bodyID, err)
 	}
@@ -393,6 +394,7 @@ func projectEvaluatedRelationRoot(
 	}
 	root, err := relation.EvaluateSparseRoot(ctx, transformer.EvaluatedRootRequest{
 		Identity: identity, ExpectedIdentity: identity, Requirements: requirements, CallSurface: surface,
+		Relations: relations,
 	}, cursor, transformer.SpecializationContext{})
 	if err != nil {
 		if specialized, exact := relation.Specialize(cursor, nil, nil); exact {

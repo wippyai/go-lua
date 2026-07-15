@@ -12,6 +12,46 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
+func (r Relation) validateCallbackFreeEvaluatedSummaryTerms(ctx context.Context) error {
+	if r.arena == nil {
+		return fmt.Errorf("transformer: evaluated summary has no term arena")
+	}
+	seen := make(map[ValueTerm]bool)
+	steps := uint64(0)
+	check := func(term ValueTerm) error { return r.arena.validateCallbackFreeValueTerm(ctx, term, seen, &steps) }
+	for rowIndex, row := range r.rows {
+		if rowIndex&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if len(row.Effects) != 0 {
+			return fmt.Errorf("transformer: evaluated summary rejects effects")
+		}
+		if err := r.arena.validateCallbackFreeGuard(ctx, row.Guard, seen, &steps); err != nil {
+			return err
+		}
+		for _, operation := range row.Ops {
+			if err := check(operation.Value); err != nil {
+				return err
+			}
+		}
+		for _, proof := range row.Proofs {
+			if proof.Key != 0 {
+				if err := check(proof.Key); err != nil {
+					return err
+				}
+			}
+		}
+		for _, refinement := range row.PathRefinements {
+			if err := check(refinement.Value); err != nil {
+				return err
+			}
+		}
+	}
+	return ctx.Err()
+}
+
 // evaluateOwnerSummary specializes the owner summary with the same memoized,
 // cancellable evaluator used for every selector and boundary product. It is a
 // deliberately narrow copy of the established specialization semantics: the

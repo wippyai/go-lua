@@ -423,7 +423,7 @@ func evaluatedRootFixture(tb testing.TB) (Relation, EvaluatedRootRequest, Bindin
 		CallSurface: surface.Digest(), Schema: requirements.SchemaID(),
 		Inventory: requirements.ConsumerInventoryID(), PointCount: uint32(graph.Size()),
 	}
-	identity.View, err = evaluated.SealProjectionView(requirements, false)
+	identity.View, err = evaluated.SealProjectionView(requirements, true)
 	if err != nil {
 		tb.Fatal(err)
 	}

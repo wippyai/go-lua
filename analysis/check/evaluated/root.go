@@ -268,13 +268,14 @@ type Coverage struct {
 	Required     uint32
 	Points       uint32
 	Boundaries   uint32
+	CallOutcomes uint32
 	Edges        uint32
 	Observations uint32
 	Routes       uint32
 }
 
 func (c Coverage) Complete() bool {
-	return c.Required != 0 && c.Required == c.Points+c.Boundaries+c.Edges+c.Observations+c.Routes
+	return c.Required != 0 && c.Required == c.Points+c.Boundaries+c.CallOutcomes+c.Edges+c.Observations+c.Routes
 }
 
 // Parts is transient constructor input. NewRoot validates and ownership-copies
@@ -284,6 +285,7 @@ type Parts struct {
 	Proof        WorldProof
 	Points       []PointReachability
 	Boundaries   []Boundary
+	CallOutcomes []CallOutcomeBoundary
 	Edges        []EdgeReachability
 	Observations []ObservationSlot
 	Routes       []Route
@@ -299,6 +301,7 @@ type Root struct {
 	proof        WorldProof
 	points       []PointReachability
 	boundaries   []Boundary
+	callOutcomes []CallOutcomeBoundary
 	edges        []EdgeReachability
 	observations []ObservationSlot
 	routes       []Route
@@ -392,7 +395,7 @@ func NewShadowRoot(ctx context.Context, reg *axis.Registry, requirements operati
 			}
 		}
 		if index != 0 && parts.Boundaries[index-1].Slot >= boundary.Slot || claim(boundary.Slot, operationplan.RequirementBoundary) != nil ||
-			entries[boundary.Slot].Point() != boundary.Point {
+			entries[boundary.Slot].RequiresCallOutcome() || entries[boundary.Slot].Point() != boundary.Point {
 			return Root{}, fmt.Errorf("evaluated: invalid boundary slot %d", boundary.Slot)
 		}
 		for fragmentIndex, fragment := range boundary.Fragments {
@@ -411,6 +414,48 @@ func NewShadowRoot(ctx context.Context, reg *axis.Registry, requirements operati
 			}
 		}
 		coverage.Boundaries++
+	}
+	for index, boundary := range parts.CallOutcomes {
+		if index&63 == 0 {
+			if err := ctx.Err(); err != nil {
+				return Root{}, err
+			}
+		}
+		if index != 0 && parts.CallOutcomes[index-1].Slot >= boundary.Slot || claim(boundary.Slot, operationplan.RequirementBoundary) != nil ||
+			!entries[boundary.Slot].RequiresCallOutcome() || entries[boundary.Slot].Point() != boundary.Point ||
+			boundary.Owner != parts.Identity.Body || boundary.Target == (lexicalidentity.StableLexicalBodyID{}) ||
+			!boundary.Occurrence.Valid() || boundary.Occurrence.Kind != observation.CallInvocation {
+			return Root{}, fmt.Errorf("evaluated: invalid call-outcome slot %d", boundary.Slot)
+		}
+		for fragmentIndex, fragment := range boundary.Fragments {
+			if fragmentIndex&63 == 0 {
+				if err := ctx.Err(); err != nil {
+					return Root{}, err
+				}
+			}
+			if !validWorlds(fragment.Worlds) {
+				return Root{}, fmt.Errorf("evaluated: invalid call-outcome world at slot %d", boundary.Slot)
+			}
+			if err := validCallOutcomeRoles(fragment.Roles); err != nil {
+				return Root{}, err
+			}
+			fragment.Summary, err = normalizeArtifactSafeSummary(ctx, reg, fragment.Summary)
+			if err != nil {
+				return Root{}, err
+			}
+			if len(fragment.Results) != len(fragment.Summary.Returns) {
+				return Root{}, fmt.Errorf("evaluated: call-outcome results do not cover summary returns at slot %d", boundary.Slot)
+			}
+			for resultIndex, result := range fragment.Results {
+				if result.Index != uint32(resultIndex) || !product.Equal(reg, result.Value, fragment.Summary.Returns[resultIndex]) {
+					return Root{}, fmt.Errorf("evaluated: call-outcome result %d is not the specialized summary return", resultIndex)
+				}
+				if err := canonicalArtifactValue(ctx, reg, result.Value); err != nil {
+					return Root{}, fmt.Errorf("evaluated: call-outcome result is not canonically materializable: %w", err)
+				}
+			}
+		}
+		coverage.CallOutcomes++
 	}
 	for index, edge := range parts.Edges {
 		if index&63 == 0 {
@@ -493,7 +538,7 @@ func NewShadowRoot(ctx context.Context, reg *axis.Registry, requirements operati
 		coverage.Routes++
 	}
 	if !coverage.Complete() {
-		return Root{}, fmt.Errorf("evaluated: incomplete typed coverage %d/%d", coverage.Points+coverage.Boundaries+coverage.Edges+coverage.Observations+coverage.Routes, coverage.Required)
+		return Root{}, fmt.Errorf("evaluated: incomplete typed coverage %d/%d", coverage.Points+coverage.Boundaries+coverage.CallOutcomes+coverage.Edges+coverage.Observations+coverage.Routes, coverage.Required)
 	}
 	for slot, present := range seen {
 		if !present {
@@ -513,6 +558,7 @@ func cloneRoot(parts Parts, requirements []operationplan.ObservationRequirement,
 	}
 	out.points = clonePoints(parts.Points)
 	out.boundaries = cloneBoundaries(parts.Boundaries)
+	out.callOutcomes = cloneCallOutcomes(parts.CallOutcomes)
 	out.edges = cloneEdges(parts.Edges)
 	out.observations = cloneObservations(parts.Observations)
 	out.routes = cloneRoutes(parts.Routes)
@@ -564,10 +610,11 @@ func (r Root) Authoritative() bool { return r.identity.Authoritative() }
 func (r Root) Requirements() []operationplan.ObservationRequirement {
 	return append([]operationplan.ObservationRequirement(nil), r.requirements...)
 }
-func (r Root) Proof() WorldProof               { return cloneWorldProof(r.proof) }
-func (r Root) Points() []PointReachability     { return clonePoints(r.points) }
-func (r Root) Boundaries() []Boundary          { return cloneBoundaries(r.boundaries) }
-func (r Root) Edges() []EdgeReachability       { return cloneEdges(r.edges) }
-func (r Root) Observations() []ObservationSlot { return cloneObservations(r.observations) }
-func (r Root) Routes() []Route                 { return cloneRoutes(r.routes) }
-func (r Root) Summary() summary.Summary        { return r.summary.Clone() }
+func (r Root) Proof() WorldProof                   { return cloneWorldProof(r.proof) }
+func (r Root) Points() []PointReachability         { return clonePoints(r.points) }
+func (r Root) Boundaries() []Boundary              { return cloneBoundaries(r.boundaries) }
+func (r Root) CallOutcomes() []CallOutcomeBoundary { return cloneCallOutcomes(r.callOutcomes) }
+func (r Root) Edges() []EdgeReachability           { return cloneEdges(r.edges) }
+func (r Root) Observations() []ObservationSlot     { return cloneObservations(r.observations) }
+func (r Root) Routes() []Route                     { return cloneRoutes(r.routes) }
+func (r Root) Summary() summary.Summary            { return r.summary.Clone() }

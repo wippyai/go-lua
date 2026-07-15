@@ -139,6 +139,11 @@ type Stats struct {
 	// equation applications.
 	EvaluatedObserverCallTemplates    int
 	EvaluatedObserverTermApplications int
+	// EvaluatedObserverBoundaryApplications counts relation-owned call-boundary
+	// transactions. BoundaryRounds counts observer worklist dequeues, including
+	// recurrence revisits; neither counter includes relation equations.
+	EvaluatedObserverBoundaryApplications int
+	EvaluatedObserverBoundaryRounds       int
 	// EvaluatedObserverInstanceProjections counts structurally shared local
 	// instance roots. EntryProjections is its unique chunk-entry subset.
 	EvaluatedObserverInstanceProjections int
