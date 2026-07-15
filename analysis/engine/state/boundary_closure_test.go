@@ -161,20 +161,21 @@ func TestBoundaryClosureFollowsAliasesAndHeapIdentityToFixedPoint(t *testing.T) 
 	}
 }
 
-func TestRebaseBoundaryPathRejectsAmbiguousRootSubstitution(t *testing.T) {
+func TestRebaseBoundaryPathsClonesAliasedRootSubstitutionDeterministically(t *testing.T) {
 	from, to := keyspace.New(), keyspace.New()
 	formalPath := pathdom.Path{Symbol: 70, Version: 1}
 	formal := from.FromPath(formalPath)
 	leaf := from.FromPath(formalPath.Field("leaf"))
 	first := to.FromPath(pathdom.Path{Symbol: 71, Version: 1})
 	second := to.FromPath(pathdom.Path{Symbol: 72, Version: 1})
-	bindings := BoundaryRootMap{
-		{From: formal, To: first},
-		{From: formal, To: second},
+	bindings := boundaryPathMap{
+		{from: formal, to: first},
+		{from: formal, to: second},
 	}
-	for _, roots := range []BoundaryRootMap{bindings, BoundaryRootMap{bindings[1], bindings[0]}} {
-		if got, ok := RebaseBoundaryPath(from, to, roots, leaf); ok || got != (keyspace.Key{}) {
-			t.Fatalf("ambiguous substitution = %#v/%v, want zero/false", got, ok)
+	for _, roots := range []boundaryPathMap{bindings, {bindings[1], bindings[0]}} {
+		got, ok := rebaseBoundaryPaths(from, to, roots, leaf)
+		if !ok || len(got) != 2 || !to.Less(got[0], got[1]) {
+			t.Fatalf("aliased substitution = %#v/%v, want two canonical outputs", got, ok)
 		}
 	}
 }
@@ -216,16 +217,16 @@ func TestRebaseBoundaryPathUsesLongestRootAndPreservesAliasTargets(t *testing.T)
 	actual := to.FromPath(actualPath)
 	alias := to.FromPath(aliasPath)
 
-	rebased, ok := RebaseBoundaryPath(from, to, BoundaryRootMap{
-		{From: outer, To: actual},
-		{From: inner, To: alias},
+	rebased, ok := rebaseBoundaryPaths(from, to, boundaryPathMap{
+		{from: outer, to: actual},
+		{from: inner, to: alias},
 	}, leaf)
 	if !ok {
 		t.Fatal("root substitution failed")
 	}
 	want := to.FromPath(aliasPath.Field("leaf"))
-	if rebased != want {
-		t.Fatalf("rebased path = %q, want %q", to.FormatReadOnly(rebased), to.FormatReadOnly(want))
+	if len(rebased) != 1 || rebased[0] != want {
+		t.Fatalf("rebased path = %#v, want %q", rebased, to.FormatReadOnly(want))
 	}
 }
 

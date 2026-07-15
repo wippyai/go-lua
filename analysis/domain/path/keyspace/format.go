@@ -61,6 +61,8 @@ func (ks *KeySpace) writeRoot(b *strings.Builder, k Key) {
 		} else {
 			b.WriteString(root)
 		}
+	case kindBoundaryExistential:
+		b.WriteString(encodeBoundaryExistentialDescriptor(ks.existentialEntries[k.Root]))
 	case KindRootlessSuffix:
 		// no root
 	}
@@ -75,6 +77,8 @@ func (ks *KeySpace) namedRootString(k Key) string {
 		return "ret[" + strconv.FormatUint(uint64(k.Root), 10) + "]"
 	case KindNamed:
 		return ks.rootName(rootID(k.Root))
+	case kindBoundaryExistential:
+		return encodeBoundaryExistentialDescriptor(ks.existentialEntries[k.Root])
 	default:
 		return ""
 	}
@@ -89,6 +93,9 @@ func encodeNamedRoot(root string) string {
 // resolver, or encoded-named spelling spaces, or fails to parse back to exactly
 // (root, segments) in the plain-named space.
 func (ks *KeySpace) namedRootNeedsEncoding(root string, segs SegmentsID) bool {
+	if strings.HasPrefix(root, boundaryExistentialPrefix) {
+		return true
+	}
 	raw := root + ks.suffix(segs)
 	if keycodec.LooksEncodedNamedRootKey(raw) || keycodec.LooksStableSymbolRootSuffix(raw) || keycodec.LooksResolverRootSuffix(raw) {
 		return true

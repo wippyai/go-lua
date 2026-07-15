@@ -11,7 +11,7 @@ var channelSelectLaneSpec = laneSpec{
 	id:           LaneChannelSelect,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintChannelSelect,
-	boundary:     boundaryLaneOps{expand: expandChannelSelectBoundary},
+	boundary:     boundaryLaneOps{expand: expandChannelSelectBoundary, project: projectChannelSelectBoundary, rebase: rebaseChannelSelectBoundary, apply: applyChannelSelectBoundary, equal: equalChannelSelectBoundary},
 	markReachable: func(s State) State {
 		s.channelSelect = s.channelSelect.Reachable()
 		return s

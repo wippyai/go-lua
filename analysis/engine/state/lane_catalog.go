@@ -24,6 +24,10 @@ func newLaneCatalog(specs []laneSpec) LaneCatalog {
 		if out[i].boundary.expand == nil {
 			panic(fmt.Sprintf("state: lane %q has no boundary expansion", out[i].id))
 		}
+		if out[i].boundary.project == nil || out[i].boundary.rebase == nil ||
+			out[i].boundary.apply == nil || out[i].boundary.equal == nil {
+			panic(fmt.Sprintf("state: lane %q has incomplete boundary transport", out[i].id))
+		}
 		if i >= 63 {
 			panic("state: lane catalog supports at most 63 lanes")
 		}

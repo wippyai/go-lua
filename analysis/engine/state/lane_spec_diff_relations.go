@@ -8,7 +8,7 @@ var diffRelationsLaneSpec = laneSpec{
 	id:           LaneDiffRelations,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintDiffRelations,
-	boundary:     boundaryLaneOps{expand: expandDiffRelationsBoundary},
+	boundary:     boundaryLaneOps{expand: expandDiffRelationsBoundary, project: projectDiffRelationsBoundary, rebase: rebaseDiffRelationsBoundary, apply: applyDiffRelationsBoundary, equal: equalDiffRelationsBoundary},
 	markReachable: func(s State) State {
 		s.diffRelations = s.diffRelations.reachable()
 		return s

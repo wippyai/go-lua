@@ -34,7 +34,11 @@ type laneSpec struct {
 // explicit boundary-design decision instead of silently omitting it from a
 // central inventory.
 type boundaryLaneOps struct {
-	expand func(*boundaryClosureExpansion, State)
+	expand  func(*boundaryClosureExpansion, State)
+	project func(*boundaryProjectContext, State, *State) bool
+	rebase  func(*boundaryRebaseContext, State, *State) bool
+	apply   func(*boundaryApplyContext, State, State, *State) bool
+	equal   func(*axis.Registry, State, State) bool
 }
 
 func expandBoundaryNoop(*boundaryClosureExpansion, State) {}

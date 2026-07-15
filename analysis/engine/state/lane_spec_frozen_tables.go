@@ -8,7 +8,7 @@ var frozenTablesLaneSpec = laneSpec{
 	id:           LaneFrozenTables,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintFrozenTables,
-	boundary:     boundaryLaneOps{expand: expandBoundaryNoop},
+	boundary:     boundaryLaneOps{expand: expandFrozenTablesBoundary, project: projectFrozenBoundary, rebase: rebaseFrozenBoundary, apply: applyFrozenBoundary, equal: equalFrozenBoundary},
 	markReachable: func(s State) State {
 		s.frozenTables = s.frozenTables.reachable()
 		return s
@@ -19,4 +19,13 @@ var frozenTablesLaneSpec = laneSpec{
 			func(out *State, lane frozenTableLane) { out.frozenTables = lane },
 		)
 	},
+}
+
+func expandFrozenTablesBoundary(expansion *boundaryClosureExpansion, source State) {
+	if !expansion.closure.allIdentities {
+		return
+	}
+	for id := range source.frozenTables.values {
+		expansion.addIdentity(id)
+	}
 }

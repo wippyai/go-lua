@@ -12,7 +12,7 @@ const LanePathEvidence LaneID = "path-evidence"
 var pathEvidenceLaneSpec = laneSpec{
 	id:           LanePathEvidence,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandPathEvidenceBoundary},
+	boundary:     boundaryLaneOps{expand: expandPathEvidenceBoundary, project: projectPathEvidenceBoundary, rebase: rebasePathEvidenceBoundary, apply: applyPathEvidenceBoundary, equal: equalPathEvidenceBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.pathEvidence.RekeyValueLanes(from, to)
 		if !ok {

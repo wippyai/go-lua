@@ -11,7 +11,7 @@ const LaneUserLattices LaneID = "user-lattices"
 var userLatticesLaneSpec = laneSpec{
 	id:           LaneUserLattices,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandUserLatticesBoundary},
+	boundary:     boundaryLaneOps{expand: expandUserLatticesBoundary, project: projectUserLatticesBoundary, rebase: rebaseUserLatticesBoundary, apply: applyUserLatticesBoundary, equal: equalUserLatticesBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.userLattices.rekey(from, to)
 		if !ok {

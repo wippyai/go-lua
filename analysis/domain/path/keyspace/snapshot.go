@@ -125,6 +125,12 @@ func freezeSnapshotKey(ctx context.Context, source *KeySpace, key Key) (Snapshot
 			return SnapshotKey{}, fmt.Errorf("keyspace: empty or foreign named snapshot root")
 		}
 		out.root = 0
+	case kindBoundaryExistential:
+		if key.Sym != 0 || key.Ver != 0 || key.Canon || key.Root == 0 {
+			return SnapshotKey{}, fmt.Errorf("keyspace: malformed boundary existential snapshot key")
+		}
+		out.namedRoot = encodeBoundaryExistentialDescriptor(source.existentialEntries[key.Root])
+		out.root = 0
 	case KindRootlessSuffix:
 		if key.Sym != 0 || key.Ver != 0 || key.Root != 0 || key.Canon || len(segments) == 0 {
 			return SnapshotKey{}, fmt.Errorf("keyspace: malformed rootless snapshot key")

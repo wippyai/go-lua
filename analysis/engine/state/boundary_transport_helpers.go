@@ -1,0 +1,83 @@
+package state
+
+import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
+)
+
+func boundaryContainsStateKey(keys *keyspace.KeySpace, closure BoundaryClosure, value pathaddr.StateKey) bool {
+	path, ok := keys.FromStateKey(pathdom.PathKey(value.String()))
+	return ok && closure.ContainsPath(path)
+}
+
+func boundaryRebasePaths(ctx *boundaryRebaseContext, path keyspace.Key) ([]keyspace.Key, bool) {
+	return rebaseBoundaryPaths(ctx.fromKeys, ctx.toKeys, ctx.roots, path)
+}
+
+func projectFiniteMap[K comparable, V any](in map[K]V, keep func(K, V) bool) map[K]V {
+	var out map[K]V
+	for key, value := range in {
+		if !keep(key, value) {
+			continue
+		}
+		if out == nil {
+			out = make(map[K]V)
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func applyFiniteMap[K comparable, V any](destination, fragment map[K]V, remove func(K, V) bool) map[K]V {
+	out := mapedit.Clone(destination)
+	for key, value := range out {
+		if remove(key, value) {
+			delete(out, key)
+		}
+	}
+	if out == nil && len(fragment) != 0 {
+		out = make(map[K]V, len(fragment))
+	}
+	for key, value := range fragment {
+		out[key] = value
+	}
+	return out
+}
+
+func projectFiniteSet[T comparable](in map[T]struct{}, keep func(T) bool) map[T]struct{} {
+	var out map[T]struct{}
+	for value := range in {
+		if keep(value) {
+			if out == nil {
+				out = make(map[T]struct{})
+			}
+			out[value] = struct{}{}
+		}
+	}
+	return out
+}
+
+func applyFiniteSet[T comparable](destination, fragment map[T]struct{}, remove func(T) bool) map[T]struct{} {
+	out := mapedit.Clone(destination)
+	for value := range out {
+		if remove(value) {
+			delete(out, value)
+		}
+	}
+	if out == nil && len(fragment) != 0 {
+		out = make(map[T]struct{}, len(fragment))
+	}
+	for value := range fragment {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+func rebaseBoundaryProduct(ctx *boundaryRebaseContext, value product.Value) (product.Value, bool) {
+	return rebaseBoundaryValue(ctx, value)
+}
+
+// values: only explicitly-bound root slots cross the boundary.

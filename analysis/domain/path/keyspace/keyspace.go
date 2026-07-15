@@ -46,6 +46,9 @@ const (
 	// KindRootlessSuffix is the deliberately rootless static-member heap key:
 	// bare FormatSegments(segments) with no root.
 	KindRootlessSuffix
+	// kindBoundaryExistential is a private, structural lexical root minted only
+	// by boundary transport. It is deliberately disjoint from user named roots.
+	kindBoundaryExistential
 )
 
 // SegmentsID is the interned id for an immutable segment list. 0 means empty.
@@ -71,6 +74,8 @@ type keyUniverse struct {
 //   - KindRetSlot:        Root holds the return-slot index, Segs.
 //   - KindNamed:          Root holds the interned named-root id, Segs.
 //   - KindRootlessSuffix: Segs only (must be non-empty).
+//   - private boundary existential: Root holds an interned structural
+//     descriptor id, Segs.
 //
 // Canon selects the spelling of stable named roots (KindNamed, KindPlaceholder,
 // KindRetSlot). When false, Format spells the root verbatim, matching Path.Key()
@@ -101,6 +106,16 @@ type rootEntry struct {
 	name string
 }
 
+type boundaryExistentialDescriptor struct {
+	namespace  ExistentialNamespace
+	sourceKind KeyKind
+	sym        symbol.ID
+	version    uint32
+	slot       uint32
+	canon      bool
+	namedRoot  string
+}
+
 type segmentPairKey struct {
 	first  segment.Segment
 	second segment.Segment
@@ -126,6 +141,9 @@ type KeySpace struct {
 	rootEntries []rootEntry
 	rootByName  map[string]rootID
 
+	existentialEntries      []boundaryExistentialDescriptor
+	existentialByDescriptor map[boundaryExistentialDescriptor]uint32
+
 	formatByKey map[Key]string
 }
 
@@ -133,15 +151,17 @@ type KeySpace struct {
 // empty/none sentinel.
 func New() *KeySpace {
 	ks := &KeySpace{
-		segByKey:    make(map[string]SegmentsID),
-		segByOne:    make(map[segment.Segment]SegmentsID),
-		segByTwo:    make(map[segmentPairKey]SegmentsID),
-		segByThree:  make(map[segmentTripleKey]SegmentsID),
-		rootByName:  make(map[string]rootID),
-		formatByKey: make(map[Key]string),
+		segByKey:                make(map[string]SegmentsID),
+		segByOne:                make(map[segment.Segment]SegmentsID),
+		segByTwo:                make(map[segmentPairKey]SegmentsID),
+		segByThree:              make(map[segmentTripleKey]SegmentsID),
+		rootByName:              make(map[string]rootID),
+		existentialByDescriptor: make(map[boundaryExistentialDescriptor]uint32),
+		formatByKey:             make(map[Key]string),
 	}
 	ks.segEntries = append(ks.segEntries, segmentsEntry{})
 	ks.rootEntries = append(ks.rootEntries, rootEntry{})
+	ks.existentialEntries = append(ks.existentialEntries, boundaryExistentialDescriptor{})
 	ks.owner = &keyUniverse{space: ks}
 	return ks
 }
@@ -265,6 +285,9 @@ func (ks *KeySpace) validKey(k Key) bool {
 		return false
 	}
 	if k.Kind == KindNamed && !ks.validRootID(rootID(k.Root)) {
+		return false
+	}
+	if k.Kind == kindBoundaryExistential && (k.Root == 0 || int(k.Root) >= len(ks.existentialEntries)) {
 		return false
 	}
 	return true

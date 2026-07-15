@@ -2,10 +2,12 @@ package keyspace
 
 import (
 	"strconv"
+	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -67,6 +69,11 @@ func (ks *KeySpace) ImportKey(from *KeySpace, k Key) (Key, bool) {
 			return Key{}, false
 		}
 		out.Root = uint32(ks.internRoot(name))
+	case kindBoundaryExistential:
+		descriptor := from.existentialEntries[k.Root]
+		existential := ks.existentialKey(descriptor)
+		existential.Segs = segs
+		return existential, true
 	case KindRootlessSuffix:
 		if len(segments) == 0 {
 			return Key{}, false
@@ -88,7 +95,7 @@ func (ks *KeySpace) namedRootKey(root string, segs SegmentsID) Key {
 	if idx, ok := retSlotIndex(root); ok {
 		return ks.bindKey(Key{Kind: KindRetSlot, Root: uint32(idx), Segs: segs})
 	}
-	return ks.bindKey(Key{Kind: KindNamed, Root: uint32(ks.internRoot(root)), Segs: segs})
+	return ks.bindKey(Key{Kind: KindNamed, Root: uint32(ks.internRoot(root)), Segs: segs, Canon: strings.HasPrefix(root, boundaryExistentialPrefix)})
 }
 
 // FromResolverKey produces the structural key for a verbose resolver root, the
@@ -151,11 +158,30 @@ func (ks *KeySpace) FromStateKey(key pathdom.PathKey) (Key, bool) {
 		}
 		return ks.bindKey(Key{Kind: KindUnversionedSym, Sym: sym, Segs: segs}), true
 	}
+	if keycodec.LooksEncodedNamedRootKey(string(key)) {
+		stable, ok := pathaddr.StableFromKey(key)
+		if !ok {
+			return Key{}, false
+		}
+		path, ok := stable.Path()
+		if !ok || path.Symbol != 0 {
+			return Key{}, false
+		}
+		out := ks.namedRootKey(path.Root, ks.internSegments(path.Segments))
+		out.Canon = true
+		return out, true
+	}
 	root, segments, ok := parsePlainNamedRoot(string(key))
 	if !ok {
 		return Key{}, false
 	}
-	return ks.namedRootKey(root, ks.internSegments(segments)), true
+	segs := ks.internSegments(segments)
+	if descriptor, existential := decodeBoundaryExistentialDescriptor(root); existential {
+		out := ks.existentialKey(descriptor)
+		out.Segs = segs
+		return out, true
+	}
+	return ks.namedRootKey(root, segs), true
 }
 
 // InternStateKey interns an already-validated state-key carrier into the hot

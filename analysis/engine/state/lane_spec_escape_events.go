@@ -11,7 +11,7 @@ var escapeEventsLaneSpec = laneSpec{
 	id:           LaneEscapeEvents,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintEscapeEvents,
-	boundary:     boundaryLaneOps{expand: expandEscapeEventsBoundary},
+	boundary:     boundaryLaneOps{expand: expandEscapeEventsBoundary, project: projectEscapeEventsBoundary, rebase: rebaseEscapeEventsBoundary, apply: applyEscapeEventsBoundary, equal: equalEscapeEventsBoundary},
 	markReachable: func(s State) State {
 		s.escapeEvents = s.escapeEvents.Reachable()
 		return s

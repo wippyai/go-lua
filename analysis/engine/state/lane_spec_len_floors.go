@@ -10,7 +10,7 @@ const LaneLenFloors LaneID = "len-floors"
 var lenFloorsLaneSpec = laneSpec{
 	id:           LaneLenFloors,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandLenFloorsBoundary},
+	boundary:     boundaryLaneOps{expand: expandLenFloorsBoundary, project: projectLenFloorsBoundary, rebase: rebaseLenFloorsBoundary, apply: applyLenFloorsBoundary, equal: equalLenFloorsBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.lenFloors.rekey(from, to)
 		if !ok {

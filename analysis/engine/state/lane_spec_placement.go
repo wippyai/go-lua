@@ -14,7 +14,7 @@ var placementLaneSpec = laneSpec{
 	id:           LanePlacement,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintPlacement,
-	boundary:     boundaryLaneOps{expand: expandBoundaryNoop},
+	boundary:     boundaryLaneOps{expand: expandPlacementBoundary, project: projectPlacementBoundary, rebase: rebasePlacementBoundary, apply: applyPlacementBoundary, equal: equalPlacementBoundary},
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := placementMapDomain()
 		return stateLane(domain,
@@ -26,6 +26,15 @@ var placementLaneSpec = laneSpec{
 			},
 		)
 	},
+}
+
+func expandPlacementBoundary(expansion *boundaryClosureExpansion, source State) {
+	if !expansion.closure.allIdentities {
+		return
+	}
+	for id := range source.placement.values {
+		expansion.addIdentity(id)
+	}
 }
 
 func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {

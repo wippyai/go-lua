@@ -11,7 +11,7 @@ const LaneDynamicIndex LaneID = "dynamic-index"
 var dynamicIndexLaneSpec = laneSpec{
 	id:           LaneDynamicIndex,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandDynamicIndexBoundary},
+	boundary:     boundaryLaneOps{expand: expandDynamicIndexBoundary, project: projectDynamicIndexBoundary, rebase: rebaseDynamicIndexBoundary, apply: applyDynamicIndexBoundary, equal: equalDynamicIndexBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.dynamicIndex.rekey(from, to)
 		if !ok {

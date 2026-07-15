@@ -12,7 +12,7 @@ var typestatesLaneSpec = laneSpec{
 	id:           LaneTypestates,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintTypestates,
-	boundary:     boundaryLaneOps{expand: expandTypestatesBoundary},
+	boundary:     boundaryLaneOps{expand: expandTypestatesBoundary, project: projectTypestatesBoundary, rebase: rebaseTypestatesBoundary, apply: applyTypestatesBoundary, equal: equalTypestatesBoundary},
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		return stateLane(typestate.Domain,
 			func(s State) typestate.Store { return s.typestates },

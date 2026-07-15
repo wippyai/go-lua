@@ -11,7 +11,7 @@ const LaneNumFloors LaneID = "num-floors"
 var numFloorsLaneSpec = laneSpec{
 	id:           LaneNumFloors,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandNumFloorsBoundary},
+	boundary:     boundaryLaneOps{expand: expandNumFloorsBoundary, project: projectNumFloorsBoundary, rebase: rebaseNumFloorsBoundary, apply: applyNumFloorsBoundary, equal: equalNumFloorsBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := numBoundRekey(s.numFloors, from, to)
 		if !ok {

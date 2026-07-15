@@ -8,7 +8,7 @@ var storeRelationsLaneSpec = laneSpec{
 	id:           LaneStoreRelations,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintStoreRelations,
-	boundary:     boundaryLaneOps{expand: expandStoreRelationsBoundary},
+	boundary:     boundaryLaneOps{expand: expandStoreRelationsBoundary, project: projectStoreRelationsBoundary, rebase: rebaseStoreRelationsBoundary, apply: applyStoreRelationsBoundary, equal: equalStoreRelationsBoundary},
 	markReachable: func(s State) State {
 		s.storeRelations = s.storeRelations.reachable()
 		return s

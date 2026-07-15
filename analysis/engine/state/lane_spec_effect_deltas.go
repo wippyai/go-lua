@@ -11,7 +11,7 @@ const LaneEffectDeltas LaneID = "effect-deltas"
 var effectDeltasLaneSpec = laneSpec{
 	id:           LaneEffectDeltas,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandEffectDeltasBoundary},
+	boundary:     boundaryLaneOps{expand: expandEffectDeltasBoundary, project: projectEffectDeltasBoundary, rebase: rebaseEffectDeltasBoundary, apply: applyEffectDeltasBoundary, equal: equalEffectDeltasBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.effectDeltas.rekey(from, to)
 		if !ok {

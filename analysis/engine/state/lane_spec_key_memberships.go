@@ -10,7 +10,7 @@ const LaneKeyMemberships LaneID = "key-memberships"
 var keyMembershipsLaneSpec = laneSpec{
 	id:           LaneKeyMemberships,
 	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandKeyMembershipsBoundary},
+	boundary:     boundaryLaneOps{expand: expandKeyMembershipsBoundary, project: projectKeyMembershipsBoundary, rebase: rebaseKeyMembershipsBoundary, apply: applyKeyMembershipsBoundary, equal: equalKeyMembershipsBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.keyMemberships.rekey(from, to)
 		if !ok {

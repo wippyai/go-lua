@@ -16,7 +16,7 @@ func (k Key) isLocal() bool {
 // Unversioned resolver symbols and rootless suffixes are not structural keys.
 func (k Key) isStable() bool {
 	switch k.Kind {
-	case KindStableSym, KindNamed, KindPlaceholder, KindRetSlot:
+	case KindStableSym, KindNamed, KindPlaceholder, KindRetSlot, kindBoundaryExistential:
 		return true
 	default:
 		return false
@@ -48,7 +48,7 @@ func (a Key) sameStableRoot(b Key) bool {
 	switch a.Kind {
 	case KindStableSym:
 		return a.Sym == b.Sym
-	case KindNamed, KindPlaceholder, KindRetSlot:
+	case KindNamed, KindPlaceholder, KindRetSlot, kindBoundaryExistential:
 		return a.Root == b.Root
 	default:
 		return false
