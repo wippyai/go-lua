@@ -12,6 +12,7 @@ const LaneHeapTableIdentity LaneID = "heap-table-identity"
 var heapTableIdentityLaneSpec = laneSpec{
 	id:           LaneHeapTableIdentity,
 	keySpaceMode: laneKeySpaceOwned,
+	boundary:     boundaryLaneOps{expand: expandHeapTableIdentityBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.heapTableIdentity.rekey(from, to)
 		if !ok {
@@ -32,4 +33,26 @@ var heapTableIdentityLaneSpec = laneSpec{
 			},
 		)
 	},
+}
+
+func expandHeapTableIdentityBoundary(expansion *boundaryClosureExpansion, source State) {
+	if source.heapTableIdentity.top {
+		return
+	}
+	for id := range expansion.closure.identities {
+		object, ok := source.heapTableIdentity.values[id]
+		if !ok {
+			continue
+		}
+		expansion.addValue(object.Root())
+		for path, value := range object.StaticMembers() {
+			expansion.addHeapSuffix(id, path)
+			expansion.addValue(value)
+		}
+		for factKey, fact := range object.DynamicIndexFacts() {
+			expansion.addHeapSuffix(id, factKey.Table)
+			expansion.addValue(fact.KeyValue)
+			expansion.addValue(fact.Value)
+		}
+	}
 }

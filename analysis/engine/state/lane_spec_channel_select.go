@@ -11,6 +11,7 @@ var channelSelectLaneSpec = laneSpec{
 	id:           LaneChannelSelect,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintChannelSelect,
+	boundary:     boundaryLaneOps{expand: expandChannelSelectBoundary},
 	markReachable: func(s State) State {
 		s.channelSelect = s.channelSelect.Reachable()
 		return s
@@ -21,4 +22,12 @@ var channelSelectLaneSpec = laneSpec{
 			func(out *State, lane channelselectfact.Lane) { out.channelSelect = lane },
 		)
 	},
+}
+
+func expandChannelSelectBoundary(expansion *boundaryClosureExpansion, source State) {
+	for _, fact := range source.channelSelect.Snapshot().Facts {
+		if expansion.connect(expansion.addStateKey(fact.Result), expansion.addStateKey(fact.Case)) && fact.HasPayload {
+			expansion.addValue(fact.Payload)
+		}
+	}
 }

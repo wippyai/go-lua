@@ -8,6 +8,7 @@ var valuesLaneSpec = laneSpec{
 	id:           LaneValues,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintValues,
+	boundary:     boundaryLaneOps{expand: expandBoundaryNoop},
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := valueLaneDomain(reg)
 		return stateLane(domain,

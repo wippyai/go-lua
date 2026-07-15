@@ -11,6 +11,7 @@ const LaneDynamicIndex LaneID = "dynamic-index"
 var dynamicIndexLaneSpec = laneSpec{
 	id:           LaneDynamicIndex,
 	keySpaceMode: laneKeySpaceOwned,
+	boundary:     boundaryLaneOps{expand: expandDynamicIndexBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.dynamicIndex.rekey(from, to)
 		if !ok {
@@ -31,4 +32,16 @@ var dynamicIndexLaneSpec = laneSpec{
 			},
 		)
 	},
+}
+
+func expandDynamicIndexBoundary(expansion *boundaryClosureExpansion, source State) {
+	if source.dynamicIndex.top {
+		return
+	}
+	for factKey, fact := range source.dynamicIndex.values {
+		if expansion.connect(factKey.Table) {
+			expansion.addValue(fact.KeyValue)
+			expansion.addValue(fact.Value)
+		}
+	}
 }

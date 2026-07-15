@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 // BoundaryRoot is one caller value/path pair bound to a callee root. Slot is
@@ -58,15 +57,23 @@ type boundaryHeapSuffix struct {
 	suffix keyspace.Key
 }
 
-// BuildBoundaryRootClosure computes the finite root seed closure through path
-// equality/implication edges and heap object product identities. Lane boundary
-// projectors must extend this seed with their own path/resource operands before
-// projection; this function is intentionally not an all-lane projection.
-// No iteration budget is involved: every step adds an element from finite
-// State maps.
+// BuildBoundaryRootClosure computes the least root-reachable set by folding
+// every registered State lane. No iteration budget is involved: every
+// expansion is monotone and adds an element from finite State maps.
 func BuildBoundaryRootClosure(reg *axis.Registry, keys *keyspace.KeySpace, source State, roots BoundaryRoots) (BoundaryClosure, error) {
+	return buildBoundaryRootClosure(reg, keys, source, roots, nil)
+}
+
+// buildBoundaryRootClosure accepts an explicit catalog inventory for tests. A
+// nil inventory means the complete default catalog. The source State's sealed
+// lane mask selects contributions; unscoped States use the whole inventory.
+// An intentionally empty, non-nil inventory performs root seeding only.
+func buildBoundaryRootClosure(reg *axis.Registry, keys *keyspace.KeySpace, source State, roots BoundaryRoots, specs []laneSpec) (BoundaryClosure, error) {
 	if reg == nil || keys == nil || !keys.Valid() {
 		return BoundaryClosure{}, fmt.Errorf("state: boundary closure requires registry and valid keyspace")
+	}
+	if specs == nil {
+		specs = defaultLaneCatalog.specs
 	}
 	closure := BoundaryClosure{
 		paths:        make(map[keyspace.Key]struct{}, len(roots)),
@@ -83,180 +90,76 @@ func BuildBoundaryRootClosure(reg *axis.Registry, keys *keyspace.KeySpace, sourc
 		closure.addValueIdentity(reg, root.Value)
 	}
 
-	changed := true
-	for changed {
-		changed = false
-		addPath := func(path keyspace.Key) {
-			if path.Kind == keyspace.KindInvalid || closure.hasPath(path) {
-				return
+	expansion := boundaryClosureExpansion{reg: reg, keys: keys, closure: &closure}
+	for {
+		expansion.changed = false
+		for _, spec := range specs {
+			if !source.laneMask.allows(spec.bit) {
+				continue
 			}
-			closure.paths[path] = struct{}{}
-			changed = true
+			spec.boundary.expand(&expansion, source)
 		}
-		addValue := func(value product.Value) {
-			if id, ok := identityvalue.ExactID(reg, value); ok {
-				if _, seen := closure.identities[id]; !seen {
-					closure.identities[id] = struct{}{}
-					changed = true
-				}
-			}
-		}
-		addStateKey := func(raw interface{ String() string }) keyspace.Key {
-			path, ok := keys.FromStateKey(pathdom.PathKey(raw.String()))
-			if !ok {
-				return keyspace.Key{}
-			}
-			return path
-		}
-		connect := func(paths ...keyspace.Key) bool {
-			touches := false
-			for _, path := range paths {
-				touches = touches || closure.pathTouches(keys, path)
-			}
-			if touches {
-				for _, path := range paths {
-					addPath(path)
-				}
-			}
-			return touches
-		}
-
-		source.ForEachPathRefinement(func(path keyspace.Key, value product.Value) bool {
-			if closure.pathTouches(keys, path) {
-				addPath(path)
-				addValue(value)
-			}
-			return true
-		})
-		source.ForEachPathStaticMember(func(path keyspace.Key, value product.Value) bool {
-			if closure.pathTouches(keys, path) {
-				addPath(path)
-				addValue(value)
-			}
-			return true
-		})
-		source.ForEachBranchProof(func(proof pathevidence.BranchProof) bool {
-			if closure.pathTouches(keys, proof.Path) || closure.pathTouches(keys, proof.Other) {
-				addPath(proof.Path)
-				addPath(proof.Other)
-			}
-			return true
-		})
-		source.pathEvidence.ForEachPathPresenceImplication(func(implication pathevidence.PathPresenceImplication) bool {
-			if closure.pathTouches(keys, implication.Trigger) || closure.pathTouches(keys, implication.TriggerOther) ||
-				closure.pathTouches(keys, implication.Target) {
-				addPath(implication.Trigger)
-				addPath(implication.TriggerOther)
-				addPath(implication.Target)
-				if implication.HasTriggerValue {
-					addValue(implication.TriggerValue)
-				}
-				if implication.HasTargetValue {
-					addValue(implication.TargetValue)
-				}
-			}
-			return true
-		})
-		if !source.dynamicIndex.top {
-			for factKey, fact := range source.dynamicIndex.values {
-				if connect(factKey.Table) {
-					addValue(fact.KeyValue)
-					addValue(fact.Value)
-				}
-			}
-		}
-		if !source.effectDeltas.top {
-			for effectKey, effect := range source.effectDeltas.values {
-				if connect(effectKey.Target) {
-					addValue(effect.Before)
-					addValue(effect.After)
-				}
-			}
-		}
-		if !source.lenFloors.lane.Bottom() {
-			for path := range source.lenFloors.lane.Values() {
-				connect(path)
-			}
-		}
-		for _, bounds := range []numBoundLane{source.numFloors, source.numCeils} {
-			if !bounds.lane.Bottom() {
-				for path := range bounds.lane.Values() {
-					connect(path)
-				}
-			}
-		}
-		if !source.diffRelations.bottom {
-			for relation := range source.diffRelations.values {
-				paths := []keyspace.Key{addStateKey(relation.A.Key), addStateKey(relation.C.Key)}
-				if relation.B.valid() {
-					paths = append(paths, addStateKey(relation.B.Key))
-				}
-				connect(paths...)
-			}
-		}
-		if !source.storeRelations.bottom {
-			for relation := range source.storeRelations.values {
-				connect(addStateKey(relation.Source), addStateKey(relation.Into))
-			}
-		}
-		if !source.keyMemberships.bottom {
-			for membership := range source.keyMemberships.path {
-				connect(addStateKey(membership.Key), addStateKey(membership.Table))
-			}
-			for membership := range source.keyMemberships.dynamic {
-				connect(membership.Container, addStateKey(membership.Table))
-			}
-			for membership := range source.keyMemberships.dynamicAll {
-				connect(membership.Container, addStateKey(membership.Table))
-			}
-			for origin := range source.keyMemberships.valueOrigins {
-				connect(addStateKey(origin.Value), origin.Container)
-			}
-			for origin := range source.keyMemberships.readOrigins {
-				connect(addStateKey(origin.Value), origin.Container, addStateKey(origin.Key))
-			}
-			for restore := range source.keyMemberships.pendingRestores {
-				connect(restore.Container, addStateKey(restore.Table), addStateKey(restore.Key))
-			}
-		}
-		for _, resource := range source.typestates.Resources() {
-			if path, ok := keys.FromStateKey(pathdom.PathKey(resource.ID.String())); ok {
-				connect(path)
-			}
-		}
-		for _, fact := range source.escapeEvents.Snapshot().Facts {
-			connect(addStateKey(fact.Target))
-		}
-		for _, fact := range source.channelSelect.Snapshot().Facts {
-			if connect(addStateKey(fact.Result), addStateKey(fact.Case)) && fact.HasPayload {
-				addValue(fact.Payload)
-			}
-		}
-		if !source.userLattices.top {
-			for userKey := range source.userLattices.values {
-				connect(userKey.path)
-			}
-		}
-		if !source.heapTableIdentity.top {
-			for id := range closure.identities {
-				object, ok := source.heapTableIdentity.values[id]
-				if !ok {
-					continue
-				}
-				addValue(object.Root())
-				for path, value := range object.StaticMembers() {
-					closure.heapSuffixes[boundaryHeapSuffix{owner: id, suffix: path}] = struct{}{}
-					addValue(value)
-				}
-				for factKey, fact := range object.DynamicIndexFacts() {
-					closure.heapSuffixes[boundaryHeapSuffix{owner: id, suffix: factKey.Table}] = struct{}{}
-					addValue(fact.KeyValue)
-					addValue(fact.Value)
-				}
-			}
+		if !expansion.changed {
+			break
 		}
 	}
 	return closure, nil
+}
+
+// boundaryClosureExpansion is the monotone capability exposed to lane-owned
+// expanders. It deliberately owns mutation so lane hooks cannot remove facts
+// or terminate the fixed point early.
+type boundaryClosureExpansion struct {
+	reg     *axis.Registry
+	keys    *keyspace.KeySpace
+	closure *BoundaryClosure
+	changed bool
+}
+
+func (e *boundaryClosureExpansion) addPath(path keyspace.Key) {
+	if path.Kind == keyspace.KindInvalid || e.closure.hasPath(path) {
+		return
+	}
+	e.closure.paths[path] = struct{}{}
+	e.changed = true
+}
+
+func (e *boundaryClosureExpansion) addValue(value product.Value) {
+	if id, ok := identityvalue.ExactID(e.reg, value); ok {
+		if _, seen := e.closure.identities[id]; !seen {
+			e.closure.identities[id] = struct{}{}
+			e.changed = true
+		}
+	}
+}
+
+func (e *boundaryClosureExpansion) addStateKey(raw interface{ String() string }) keyspace.Key {
+	path, ok := e.keys.FromStateKey(pathdom.PathKey(raw.String()))
+	if !ok {
+		return keyspace.Key{}
+	}
+	return path
+}
+
+func (e *boundaryClosureExpansion) connect(paths ...keyspace.Key) bool {
+	touches := false
+	for _, path := range paths {
+		touches = touches || e.closure.pathTouches(e.keys, path)
+	}
+	if touches {
+		for _, path := range paths {
+			e.addPath(path)
+		}
+	}
+	return touches
+}
+
+func (e *boundaryClosureExpansion) addHeapSuffix(owner identity.ID, suffix keyspace.Key) {
+	qualified := boundaryHeapSuffix{owner: owner, suffix: suffix}
+	if _, seen := e.closure.heapSuffixes[qualified]; seen {
+		return
+	}
+	e.closure.heapSuffixes[qualified] = struct{}{}
 }
 
 // ContainsPath reports whether path belongs to the least reachable closure.

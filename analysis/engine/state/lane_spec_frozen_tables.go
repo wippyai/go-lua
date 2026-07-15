@@ -8,6 +8,7 @@ var frozenTablesLaneSpec = laneSpec{
 	id:           LaneFrozenTables,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintFrozenTables,
+	boundary:     boundaryLaneOps{expand: expandBoundaryNoop},
 	markReachable: func(s State) State {
 		s.frozenTables = s.frozenTables.reachable()
 		return s

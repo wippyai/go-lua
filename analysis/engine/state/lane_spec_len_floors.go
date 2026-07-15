@@ -10,6 +10,7 @@ const LaneLenFloors LaneID = "len-floors"
 var lenFloorsLaneSpec = laneSpec{
 	id:           LaneLenFloors,
 	keySpaceMode: laneKeySpaceOwned,
+	boundary:     boundaryLaneOps{expand: expandLenFloorsBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.lenFloors.rekey(from, to)
 		if !ok {
@@ -29,4 +30,13 @@ var lenFloorsLaneSpec = laneSpec{
 			func(out *State, lane lenFloorLane) { out.lenFloors = lane },
 		)
 	},
+}
+
+func expandLenFloorsBoundary(expansion *boundaryClosureExpansion, source State) {
+	if source.lenFloors.lane.Bottom() {
+		return
+	}
+	for path := range source.lenFloors.lane.Values() {
+		expansion.connect(path)
+	}
 }

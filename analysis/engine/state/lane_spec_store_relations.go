@@ -8,6 +8,7 @@ var storeRelationsLaneSpec = laneSpec{
 	id:           LaneStoreRelations,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintStoreRelations,
+	boundary:     boundaryLaneOps{expand: expandStoreRelationsBoundary},
 	markReachable: func(s State) State {
 		s.storeRelations = s.storeRelations.reachable()
 		return s
@@ -18,4 +19,13 @@ var storeRelationsLaneSpec = laneSpec{
 			func(out *State, lane storeRelationLane) { out.storeRelations = lane },
 		)
 	},
+}
+
+func expandStoreRelationsBoundary(expansion *boundaryClosureExpansion, source State) {
+	if source.storeRelations.bottom {
+		return
+	}
+	for relation := range source.storeRelations.values {
+		expansion.connect(expansion.addStateKey(relation.Source), expansion.addStateKey(relation.Into))
+	}
 }

@@ -14,6 +14,7 @@ var placementLaneSpec = laneSpec{
 	id:           LanePlacement,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintPlacement,
+	boundary:     boundaryLaneOps{expand: expandBoundaryNoop},
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		domain := placementMapDomain()
 		return stateLane(domain,

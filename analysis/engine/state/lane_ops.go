@@ -25,7 +25,19 @@ type laneSpec struct {
 	fingerprint   func(*fingerprintWriter, State)
 	keySpaceMode  laneKeySpaceMode
 	rekey         func(State, *keyspace.KeySpace, *keyspace.KeySpace) (State, bool)
+	boundary      boundaryLaneOps
 }
+
+// boundaryLaneOps owns the boundary-reachability contribution of one State
+// lane. Every registered lane supplies an expander, including lanes whose
+// facts do not introduce paths or identities. That makes adding a lane an
+// explicit boundary-design decision instead of silently omitting it from a
+// central inventory.
+type boundaryLaneOps struct {
+	expand func(*boundaryClosureExpansion, State)
+}
+
+func expandBoundaryNoop(*boundaryClosureExpansion, State) {}
 
 type laneMask uint64
 

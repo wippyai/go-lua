@@ -11,6 +11,7 @@ const LaneEffectDeltas LaneID = "effect-deltas"
 var effectDeltasLaneSpec = laneSpec{
 	id:           LaneEffectDeltas,
 	keySpaceMode: laneKeySpaceOwned,
+	boundary:     boundaryLaneOps{expand: expandEffectDeltasBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.effectDeltas.rekey(from, to)
 		if !ok {
@@ -31,4 +32,16 @@ var effectDeltasLaneSpec = laneSpec{
 			},
 		)
 	},
+}
+
+func expandEffectDeltasBoundary(expansion *boundaryClosureExpansion, source State) {
+	if source.effectDeltas.top {
+		return
+	}
+	for effectKey, effect := range source.effectDeltas.values {
+		if expansion.connect(effectKey.Target) {
+			expansion.addValue(effect.Before)
+			expansion.addValue(effect.After)
+		}
+	}
 }

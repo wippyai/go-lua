@@ -11,6 +11,7 @@ var escapeEventsLaneSpec = laneSpec{
 	id:           LaneEscapeEvents,
 	keySpaceMode: laneKeySpaceFree,
 	fingerprint:  fingerprintEscapeEvents,
+	boundary:     boundaryLaneOps{expand: expandEscapeEventsBoundary},
 	markReachable: func(s State) State {
 		s.escapeEvents = s.escapeEvents.Reachable()
 		return s
@@ -21,4 +22,10 @@ var escapeEventsLaneSpec = laneSpec{
 			func(out *State, lane escapeevent.Lane) { out.escapeEvents = lane },
 		)
 	},
+}
+
+func expandEscapeEventsBoundary(expansion *boundaryClosureExpansion, source State) {
+	for _, fact := range source.escapeEvents.Snapshot().Facts {
+		expansion.connect(expansion.addStateKey(fact.Target))
+	}
 }

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -15,6 +16,92 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
+
+func TestLaneCatalogRejectsMissingBoundaryExpansion(t *testing.T) {
+	missing := valuesLaneSpec
+	missing.id = "test.missing-boundary-expansion"
+	missing.boundary = boundaryLaneOps{}
+	defer func() {
+		got := recover()
+		if got == nil || !strings.Contains(got.(string), "has no boundary expansion") {
+			t.Fatalf("newLaneCatalog panic = %v, want missing boundary expansion", got)
+		}
+	}()
+	_ = newLaneCatalog([]laneSpec{missing})
+}
+
+func TestBoundaryClosureDispatchesEveryRegisteredLane(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	source := Domain(reg).Bottom()
+	specs := append([]laneSpec(nil), defaultLaneCatalog.specs...)
+	visits := make(map[LaneID]int, len(specs))
+	for i := range specs {
+		id := specs[i].id
+		expand := specs[i].boundary.expand
+		specs[i].boundary.expand = func(expansion *boundaryClosureExpansion, source State) {
+			visits[id]++
+			expand(expansion, source)
+		}
+	}
+	if _, err := buildBoundaryRootClosure(reg, keys, source, nil, specs); err != nil {
+		t.Fatal(err)
+	}
+	if len(visits) != len(specs) {
+		t.Fatalf("boundary expansion visited %d/%d lanes", len(visits), len(specs))
+	}
+	for _, spec := range specs {
+		if visits[spec.id] == 0 {
+			t.Fatalf("boundary expansion omitted lane %q", spec.id)
+		}
+	}
+}
+
+func TestBoundaryClosureNilInventoryUsesDefaultAndEmptyInventorySeedsOnly(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	root := keys.FromPath(pathdom.Path{Symbol: 31, Version: 1})
+	alias := keys.FromPath(pathdom.Path{Symbol: 32, Version: 1})
+	source := Domain(reg).Bottom().AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  root,
+		Other: alias,
+	})
+	withDefault, err := buildBoundaryRootClosure(reg, keys, source, BoundaryRoots{{Path: root}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !withDefault.ContainsPath(alias) {
+		t.Fatal("nil lane inventory did not select the default catalog")
+	}
+	seedOnly, err := buildBoundaryRootClosure(reg, keys, source, BoundaryRoots{{Path: root}}, []laneSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seedOnly.ContainsPath(alias) {
+		t.Fatal("empty selected inventory unexpectedly expanded path-evidence lane")
+	}
+}
+
+func TestBoundaryClosureUsesSourceLaneSelection(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	root := keys.FromPath(pathdom.Path{Symbol: 33, Version: 1})
+	alias := keys.FromPath(pathdom.Path{Symbol: 34, Version: 1})
+	full := Domain(reg).Bottom().AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  root,
+		Other: alias,
+	})
+	selected := NormalizeForDomain(DomainWithLanes(reg, []LaneID{LaneValues}), full)
+	closure, err := BuildBoundaryRootClosure(reg, keys, selected, BoundaryRoots{{Path: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closure.ContainsPath(alias) {
+		t.Fatal("disabled path-evidence lane contributed to boundary closure")
+	}
+}
 
 func TestBoundaryClosureFollowsAliasesAndHeapIdentityToFixedPoint(t *testing.T) {
 	reg := standard.Registry()

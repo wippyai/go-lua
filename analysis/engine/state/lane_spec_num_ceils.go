@@ -11,6 +11,7 @@ const LaneNumCeils LaneID = "num-ceils"
 var numCeilsLaneSpec = laneSpec{
 	id:           LaneNumCeils,
 	keySpaceMode: laneKeySpaceOwned,
+	boundary:     boundaryLaneOps{expand: expandNumCeilsBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := numBoundRekey(s.numCeils, from, to)
 		if !ok {
@@ -30,4 +31,8 @@ var numCeilsLaneSpec = laneSpec{
 			func(out *State, lane numBoundLane) { out.numCeils = lane },
 		)
 	},
+}
+
+func expandNumCeilsBoundary(expansion *boundaryClosureExpansion, source State) {
+	expandNumBoundBoundary(expansion, source.numCeils)
 }
