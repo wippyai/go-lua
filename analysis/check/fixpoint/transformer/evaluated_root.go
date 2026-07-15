@@ -194,6 +194,12 @@ func collectSparseProjectionGuards(r Relation) []Guard {
 			seen[item.Guard] = struct{}{}
 		}
 	}
+	for _, item := range r.annotations.observations {
+		seen[item.Guard] = struct{}{}
+	}
+	for _, item := range r.annotations.obligations {
+		seen[item.Guard] = struct{}{}
+	}
 	for _, slot := range r.projectionTrace.slots {
 		seen[slot.guard] = struct{}{}
 		for _, fragment := range slot.fragments {
@@ -260,6 +266,16 @@ func (r Relation) validateCallbackFreeEvaluatedRootTerms(ctx context.Context) er
 				if err := check(item.Expected); err != nil {
 					return err
 				}
+			}
+		}
+	}
+	for _, item := range r.annotations.observations {
+		if err := check(item.Actual); err != nil {
+			return err
+		}
+		if item.Expected != 0 {
+			if err := check(item.Expected); err != nil {
+				return err
 			}
 		}
 	}

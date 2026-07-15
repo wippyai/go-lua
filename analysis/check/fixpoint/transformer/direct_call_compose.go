@@ -28,9 +28,17 @@ type DirectCallBindings struct {
 // row, so return correlation, guards, and ordered effects cannot be torn apart.
 // No row is returned on any unsupported output or malformed binding.
 func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int) ([]SymbolicCFGRow, error) {
+	return composeDirectCallRows(builder, callerShape, caller, callee, bindings, site, maxRows, nil)
+}
+
+func composeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
 	if builder == nil || builder.arena == nil || builder.effects == nil || callee.arena == nil {
 		return nil, fmt.Errorf("transformer: direct-call composition requires caller and callee arenas")
 	}
+	if callerShape != builder.shape {
+		return nil, fmt.Errorf("transformer: direct-call caller shape differs from builder ownership")
+	}
+	bottom := callee.IsBottom()
 	if callee.contextual != "" || callee.widened {
 		return nil, fmt.Errorf("transformer: direct-call callee is contextual")
 	}
@@ -43,8 +51,17 @@ func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicC
 	if site.OpenTail() || !site.Final() || !site.Expanded() || site.Adjusted() {
 		return nil, fmt.Errorf("transformer: direct-call result list is not exact fixed arity")
 	}
-	if handler, ok := callee.descriptors.handlers[DescriptorReturn].(returnHandler); ok && len(handler.declared) != 0 {
-		return nil, fmt.Errorf("transformer: direct-call declared result contracts require symbolic projection")
+	if _, hasPoint := site.Point(); !hasPoint {
+		return nil, fmt.Errorf("transformer: direct-call has no exact source point")
+	}
+	if callee.descriptors == nil {
+		if !bottom {
+			return nil, fmt.Errorf("transformer: direct-call callee has no descriptor identity")
+		}
+	} else {
+		if handler, ok := callee.descriptors.handlers[DescriptorReturn].(returnHandler); ok && len(handler.declared) != 0 {
+			return nil, fmt.Errorf("transformer: direct-call declared result contracts require symbolic projection")
+		}
 	}
 	rootBindings, err := NewTermRootBindings(callee.shape, callerShape, bindings.Values, bindings.Paths)
 	if err != nil {
@@ -53,6 +70,36 @@ func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicC
 	targets, err := exactDirectCallTargets(site)
 	if err != nil {
 		return nil, err
+	}
+	// Validate the complete caller binding transaction even when the callee is
+	// Bottom and therefore has no row terms to import. A least element is not a
+	// shortcut around arena ownership or DAG validation.
+	if _, err := rebaseDirectCallTermDAGs(builder.arena, callee.arena, rootBindings, TermRebaseInput{}); err != nil {
+		return nil, err
+	}
+	// Prefix evidence belongs to the caller lexical owner and is reached before
+	// the call can return or diverge. Publish it monotonically for every direct
+	// call, not only Bottom: a callee may have returning rows for one guard
+	// partition and no successor for another. Returning-row duplicates are
+	// canonicalized at freeze time.
+	if annotations == nil && (len(caller.Observations) != 0 || len(caller.observationObligations) != 0 || len(callee.paramContracts) != 0) {
+		return nil, fmt.Errorf("transformer: direct-call caller evidence requires relation annotation ownership")
+	}
+	if annotations != nil {
+		annotations.observations = unionObservationTerms(builder.arena, annotations.observations, caller.Observations)
+		annotations.obligations = unionobservationObligations(annotations.obligations, caller.observationObligations)
+		if len(callee.paramContracts) != 0 {
+			if err := recordCallEntryAnnotations(builder, caller, callee, rootBindings, site, annotations); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// A recursive relation cell starts at its owner-shaped least element. It has
+	// no feasible return alternative yet, so this call contributes no successor
+	// row in the current SCC round. Keep this after all identity, boundary, site,
+	// and binding validation: Bottom is semantic, not an unchecked escape hatch.
+	if bottom {
+		return nil, nil
 	}
 	if maxRows <= 0 {
 		maxRows = 256
@@ -71,6 +118,29 @@ func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicC
 		}
 	}
 	return dedupCFGRows(builder.arena, out), nil
+}
+
+func recordCallEntryAnnotations(builder *Builder, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, site factflow.CallSiteView, annotations *relationAnnotations) error {
+	if builder.plan == nil || len(callee.paramContracts) != int(callee.shape.Params) {
+		return fmt.Errorf("transformer: direct-call parameter contract shape is incomplete")
+	}
+	point, hasPoint := site.Point()
+	if !hasPoint {
+		return fmt.Errorf("transformer: direct-call has no exact source point")
+	}
+	for slot := uint32(0); slot < callee.shape.Params; slot++ {
+		anchor, durable := builder.plan.CallArgumentObservationAnchor(point, slot)
+		if !durable {
+			continue
+		}
+		obligation := observationObligation{BodyOwner: builder.plan.ObservationBody(), Anchor: anchor, Guard: caller.Guard}
+		annotations.obligations = recordobservationObligation(annotations.obligations, obligation)
+		actual := bindings.value(Root{Kind: RootParam, Index: slot})
+		expected := builder.arena.Constant(callee.paramContracts[slot])
+		term := ObservationTerm{BodyOwner: builder.plan.ObservationBody(), Kind: ObservationCallArgument, Anchor: anchor, Guard: caller.Guard, Slot: slot, Actual: actual, Expected: expected}
+		annotations.observations = recordObservationTerm(annotations.observations, term)
+	}
+	return nil
 }
 
 type directCallTarget struct {
@@ -112,7 +182,7 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 	if err := validateDirectCallStructuredOutput(callee.arena.reg, row.Output, callee.shape); err != nil {
 		return SymbolicCFGRow{}, err
 	}
-	values := make([]ValueTerm, 0, len(row.Ops)+len(row.Proofs)+len(row.Observations))
+	values := make([]ValueTerm, 0, len(row.Ops)+len(row.Proofs))
 	guards := []Guard{row.Guard}
 	opValueAt := make([]int, len(row.Ops))
 	for i, op := range row.Ops {
@@ -134,23 +204,7 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 			values = append(values, proof.Key)
 		}
 	}
-	observationValueAt := make([]int, len(row.Observations))
-	observationGuardAt := make([]int, len(row.Observations))
-	for i, observation := range row.Observations {
-		observationValueAt[i] = len(values)
-		values = append(values, observation.Actual)
-		if observation.Expected != 0 {
-			values = append(values, observation.Expected)
-		}
-		observationGuardAt[i] = len(guards)
-		guards = append(guards, observation.Guard)
-	}
-	obligationGuardAt := make([]int, len(row.observationObligations))
-	for i, obligation := range row.observationObligations {
-		obligationGuardAt[i] = len(guards)
-		guards = append(guards, obligation.Guard)
-	}
-	rebasedTerms, err := RebaseTermDAGs(builder.arena, callee.arena, bindings, TermRebaseInput{Values: values, Paths: paths, Guards: guards})
+	rebasedTerms, err := rebaseDirectCallTermDAGs(builder.arena, callee.arena, bindings, TermRebaseInput{Values: values, Paths: paths, Guards: guards})
 	if err != nil {
 		return SymbolicCFGRow{}, err
 	}
@@ -224,44 +278,11 @@ func rebaseDirectCallRow(builder *Builder, callerShape Shape, caller SymbolicCFG
 		return SymbolicCFGRow{}, err
 	}
 	next.Proofs = append(next.Proofs, structuredProofs...)
-	point := callPoint
-	callAnchor, durableCallAnchor := builder.plan.CallInvocationObservationAnchor(point)
-	for i, observation := range row.Observations {
-		rebased := observation
-		if !durableCallAnchor {
-			// Observation authority is independently hard-false. A plan without a
-			// lowering/debug identity may still compose exact semantic rows; it
-			// simply cannot publish the callee's diagnostic annotation.
-			continue
-		}
-		var routed bool
-		rebased, routed = routeObservationTerm(rebased, builder.plan.ObservationBody(), callAnchor)
-		if !routed {
-			return SymbolicCFGRow{}, fmt.Errorf("direct-call observation route is not durable")
-		}
-		rebased.Actual = rebasedTerms.Values[observationValueAt[i]]
-		if observation.Expected != 0 {
-			rebased.Expected = rebasedTerms.Values[observationValueAt[i]+1]
-		}
-		rebased.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[observationGuardAt[i]])
-		next.Observations = recordObservationTerm(next.Observations, rebased)
-	}
-	for i, obligation := range row.observationObligations {
-		if !durableCallAnchor {
-			continue
-		}
-		rebased, routed := routeobservationObligation(obligation, builder.plan.ObservationBody(), callAnchor)
-		if !routed {
-			return SymbolicCFGRow{}, fmt.Errorf("direct-call observation obligation route is not durable")
-		}
-		rebased.Guard = builder.arena.And(caller.Guard, rebasedTerms.Guards[obligationGuardAt[i]])
-		next.observationObligations = recordobservationObligation(next.observationObligations, rebased)
-	}
 	if len(row.Effects) != 0 {
 		if callee.effects == nil {
 			return SymbolicCFGRow{}, fmt.Errorf("callee row effects have no arena")
 		}
-		rebasedEffects, err := RebaseEffectDAGs(builder.effects, callee.effects, bindings, row.Effects)
+		rebasedEffects, err := rebaseDirectCallEffectDAGs(builder.effects, callee.effects, bindings, row.Effects)
 		if err != nil {
 			return SymbolicCFGRow{}, err
 		}

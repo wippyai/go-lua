@@ -285,6 +285,9 @@ func (c *ObservationRequirementCursor) Next() (ObservationRequirement, bool) {
 				for c.cell < c.cellEnd {
 					cell := r.cells[c.cell]
 					c.cell++
+					if cell.Kind() == RootAssignment && !rootAssignmentHasReportableConsumer(r.facts, point) {
+						continue
+					}
 					if selector, ok := boundaryProjectionSelectorForFact(cell.Kind()); ok {
 						return knownObservationRequirementSelector(selector, point, 0, observation.Occurrence{}, false), true
 					}
@@ -323,7 +326,7 @@ func (c *ObservationRequirementCursor) Next() (ObservationRequirement, bool) {
 				ids := r.points[c.point]
 				if c.observationTail == 0 {
 					c.observationTail = 1
-					if _, ok := r.facts.RootAssignment(point); ok {
+					if _, ok := r.facts.RootAssignment(point); ok && rootAssignmentHasReportableConsumer(r.facts, point) {
 						anchor := observation.Occurrence{Point: ids.after, Kind: observation.Assignment}
 						return knownObservationRequirementSelector(selectorObservationAssignment, point, 0, anchor, false), true
 					}
@@ -415,11 +418,14 @@ func (b *observationRequirementBuilder) addPoint(plan *Plan, graph cfg.Graph, bo
 	b.emit(selectorPointReachable, point, 0, observation.Occurrence{}, false)
 	row := plan.rows[point]
 	for index := row.start; index < row.end; index++ {
+		if plan.cells[index].Kind() == RootAssignment && !rootAssignmentHasReportableConsumer(plan.facts, point) {
+			continue
+		}
 		if selector, ok := boundaryProjectionSelectorForFact(plan.cells[index].Kind()); ok {
 			b.emit(selector, point, 0, observation.Occurrence{}, false)
 		}
 	}
-	if rowContainsKind(plan.cells, row, RootAssignment) {
+	if rowContainsKind(plan.cells, row, RootAssignment) && rootAssignmentHasReportableConsumer(plan.facts, point) {
 		b.emit(selectorObservationAssignment, point, 0, observation.Occurrence{Point: ids.after, Kind: observation.Assignment}, false)
 	}
 	if rowContainsKind(plan.cells, row, CallSite) {
@@ -459,6 +465,29 @@ func (b *observationRequirementBuilder) addPoint(plan *Plan, graph cfg.Graph, bo
 			return
 		}
 	}
+}
+
+// rootAssignmentHasReportableConsumer distinguishes semantic assignment work
+// from consumer-visible assignment evidence. A stable local function
+// declaration still executes symbolically and is routed by the sealed lexical
+// call surface, but its composite function type is not retained merely to
+// publish an assignment observation when there is no declared target contract.
+// Ordinary/export writes and annotated declarations remain reportable.
+func rootAssignmentHasReportableConsumer(facts factflow.Facts, point cfg.Point) bool {
+	assignment, ok := facts.RootAssignment(point)
+	if !ok || assignment.Kind() != factflow.RootAssignmentLocalDeclaration {
+		return ok
+	}
+	if _, declared := assignment.DeclaredAnnotationValue(); declared {
+		return true
+	}
+	source := assignment.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || assignment.TargetSymbol() == 0 {
+		return true
+	}
+	functionSymbol, function := facts.ExpressionFunction(source.ExprRef)
+	_, valued := facts.ExpressionValue(source.ExprRef)
+	return !function || functionSymbol == 0 || !valued
 }
 
 func rowContainsKind(cells []Cell, row row, kind Kind) bool {

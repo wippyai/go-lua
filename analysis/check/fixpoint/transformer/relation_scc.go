@@ -20,6 +20,7 @@ type RelationCell struct {
 	Ref          CellRef
 	Arena        *Arena
 	Shape        Shape
+	Bottom       Relation
 	Dependencies []CellRef
 	Equation     RelationEquation
 }
@@ -110,7 +111,7 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 	values := make(map[CellRef]Relation, len(ordered))
 	for _, ref := range ordered {
 		cell := byRef[ref]
-		values[ref] = Relation{shape: cell.Shape, arena: cell.Arena}
+		values[ref] = relationCellBottom(cell)
 	}
 	components := relationComponentsFromWTO(relationDependencyPlan(ordered, byRef).Elements())
 	for _, component := range components {
@@ -123,7 +124,7 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 			if err != nil {
 				return RelationSnapshot{}, err
 			}
-			values[component[0]] = widenRelationCell(values[component[0]], next, options.MaxRows)
+			values[component[0]] = widenRelationCell(ctx, values[component[0]], next, options.MaxRows)
 			continue
 		}
 		converged := false
@@ -139,7 +140,7 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 				if err != nil {
 					return RelationSnapshot{}, err
 				}
-				next = widenRelationCell(values[ref], next, options.MaxRows)
+				next = widenRelationCell(ctx, values[ref], next, options.MaxRows)
 				if next.contextual != "" {
 					failedReason = next.contextual
 					break
@@ -181,7 +182,14 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 	return RelationSnapshot{refs: refs, values: values}, nil
 }
 
-func widenRelationCell(previous, next Relation, maxRows int) Relation {
+func relationCellBottom(cell RelationCell) Relation {
+	if cell.Bottom.IsBottom() && cell.Bottom.arena == cell.Arena && cell.Bottom.shape == cell.Shape {
+		return cell.Bottom
+	}
+	return Relation{shape: cell.Shape, arena: cell.Arena, observationComplete: true}
+}
+
+func widenRelationCell(ctx context.Context, previous, next Relation, maxRows int) Relation {
 	// Contextual is Top. Preserve the original fail-closed reason and owning
 	// identity rather than asking the generic lattice join to synthesize a new
 	// incompatibility reason.
@@ -191,7 +199,7 @@ func widenRelationCell(previous, next Relation, maxRows int) Relation {
 	if next.contextual != "" {
 		return next
 	}
-	return WidenRelation(previous, next, maxRows)
+	return widenRelation(ctx, previous, next, maxRows)
 }
 
 func evaluateRelationCell(ctx context.Context, cell RelationCell, values map[CellRef]Relation) (Relation, error) {
@@ -230,6 +238,9 @@ func validateRelationCells(cells []RelationCell) ([]CellRef, map[CellRef]Relatio
 		}
 		if source.Equation == nil {
 			return nil, nil, fmt.Errorf("transformer: cell %v has no equation", source.Ref)
+		}
+		if source.Bottom.arena != nil && (!source.Bottom.IsBottom() || source.Bottom.arena != source.Arena || source.Bottom.shape != source.Shape) {
+			return nil, nil, fmt.Errorf("transformer: cell %v has a foreign or non-Bottom seed", source.Ref)
 		}
 		if _, duplicate := byRef[source.Ref]; duplicate {
 			return nil, nil, fmt.Errorf("transformer: duplicate cell %v", source.Ref)

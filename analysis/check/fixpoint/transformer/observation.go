@@ -47,17 +47,62 @@ type observationObligation struct {
 	Guard     Guard
 }
 
-func (o observationObligation) valid(arena *Arena, shape Shape) bool {
-	return o.BodyOwner != (lexicalidentity.StableLexicalBodyID{}) && o.Anchor.Valid() && arena.validGuard(o.Guard, shape)
+// relationAnnotations carries reached-before-exit evidence independently of
+// semantic return rows. A non-returning call has no successor Row, but its
+// call-entry obligations and observations are still part of the lexical
+// relation transaction and must publish atomically with it.
+type relationAnnotations struct {
+	observations []ObservationTerm
+	obligations  []observationObligation
 }
 
-func routeobservationObligation(obligation observationObligation, caller lexicalidentity.StableLexicalBodyID, call engineobservation.Occurrence) (observationObligation, bool) {
-	next, ok := engineobservation.ExtendInvocation(obligation.Route, caller, call)
-	if !ok {
-		return observationObligation{}, false
+func unionRelationAnnotations(arena *Arena, sets ...relationAnnotations) relationAnnotations {
+	var observations [][]ObservationTerm
+	var obligations [][]observationObligation
+	for _, set := range sets {
+		observations = append(observations, set.observations)
+		obligations = append(obligations, set.obligations)
 	}
-	obligation.Route = next
-	return obligation, true
+	return relationAnnotations{
+		observations: unionObservationTerms(arena, observations...),
+		obligations:  unionobservationObligations(obligations...),
+	}
+}
+
+func equalRelationAnnotations(left, right relationAnnotations) bool {
+	if len(left.observations) != len(right.observations) || len(left.obligations) != len(right.obligations) {
+		return false
+	}
+	observations := make(map[ObservationTerm]struct{}, len(left.observations))
+	for _, item := range left.observations {
+		observations[item] = struct{}{}
+	}
+	for _, item := range right.observations {
+		if _, ok := observations[item]; !ok {
+			return false
+		}
+	}
+	obligations := make(map[observationObligation]struct{}, len(left.obligations))
+	for _, item := range left.obligations {
+		obligations[item] = struct{}{}
+	}
+	for _, item := range right.obligations {
+		if _, ok := obligations[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func equalRowAnnotations(left, right Row) bool {
+	return equalRelationAnnotations(
+		relationAnnotations{observations: left.Observations, obligations: left.observationObligations},
+		relationAnnotations{observations: right.Observations, obligations: right.observationObligations},
+	)
+}
+
+func (o observationObligation) valid(arena *Arena, shape Shape) bool {
+	return o.BodyOwner != (lexicalidentity.StableLexicalBodyID{}) && o.Anchor.Valid() && arena.validGuard(o.Guard, shape)
 }
 
 func recordobservationObligation(in []observationObligation, next observationObligation) []observationObligation {
@@ -195,13 +240,4 @@ func unionObservationTerms(arena *Arena, sets ...[]ObservationTerm) []Observatio
 		return out[i].canonical(arena) < out[j].canonical(arena)
 	})
 	return out
-}
-
-func routeObservationTerm(term ObservationTerm, caller lexicalidentity.StableLexicalBodyID, call engineobservation.Occurrence) (ObservationTerm, bool) {
-	next, ok := engineobservation.ExtendInvocation(term.Route, caller, call)
-	if !ok {
-		return ObservationTerm{}, false
-	}
-	term.Route = next
-	return term, true
 }

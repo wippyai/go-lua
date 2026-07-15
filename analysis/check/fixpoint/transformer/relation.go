@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -59,6 +60,7 @@ type Relation struct {
 	projectionTraceReason   string
 	paramContracts          []product.Value
 	projection              relationProjection
+	annotations             relationAnnotations
 }
 
 // relationProjection carries source-structural summary metadata whose legacy
@@ -164,6 +166,15 @@ func (r Relation) Widened() bool                     { return r.widened }
 func (r Relation) Rows() int                         { return len(r.rows) }
 func (r Relation) ObservationCoverageComplete() bool { return r.observationComplete }
 
+// IsBottom reports the owned least element of one relation cell. Ownership is
+// essential: the zero Go value has neither an arena nor a boundary identity and
+// must never be accepted as a resolved dependency. Row metadata is deliberately
+// irrelevant because a freshly initialized SCC cell and a compiled relation
+// with no feasible exits denote the same semantic Bottom.
+func (r Relation) IsBottom() bool {
+	return r.arena != nil && r.arena.reg != nil && r.contextual == "" && !r.widened && len(r.rows) == 0
+}
+
 // Builder performs atomic validation before publishing an immutable relation.
 type Builder struct {
 	shape                   Shape
@@ -198,6 +209,24 @@ func NewBuilderWithDescriptors(reg *axis.Registry, shape Shape, caps *OutputCapa
 }
 func (b *Builder) Arena() *Arena             { return b.arena }
 func (b *Builder) EffectArena() *EffectArena { return b.effects }
+
+func (b *Builder) bottomRelation() Relation {
+	if b == nil || b.arena == nil {
+		return Relation{}
+	}
+	var contracts []product.Value
+	if b.plan != nil {
+		contracts = append([]product.Value(nil), b.plan.BoundaryParamContracts()...)
+	}
+	return Relation{
+		shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors,
+		authority: snapshotRelationOutputAuthority(b.effectCatalog, b.caps),
+		inferReturnCorrelations: b.inferReturnCorrelations,
+		observationComplete:     true,
+		paramContracts:          contracts,
+		projection:              normalizeRelationProjection(b.arena.reg, nil),
+	}
+}
 
 func (b *Builder) Build(certificate SemanticCertificate, rows []Row) (Relation, error) {
 	if b == nil || b.arena == nil || b.arena.reg == nil {
@@ -471,17 +500,21 @@ func (a *Arena) canonicalGuard(g Guard) string {
 // JoinRelation is may-union. Relations from distinct arenas are deliberately
 // incompatible: translating DAG ownership implicitly would break identity.
 func JoinRelation(a, b Relation) Relation {
+	return joinRelation(context.Background(), a, b)
+}
+
+func joinRelation(ctx context.Context, a, b Relation) Relation {
 	if a.arena == nil {
 		return b
 	}
 	if b.arena == nil {
 		return a
 	}
-	// Relation SCC cells start at the empty relation with arena/shape ownership
-	// but no row-owned effect arena yet. The first non-empty equation result
-	// establishes that immutable effect identity; this is Bottom adoption, not
-	// cross-arena composition.
-	if a.effects == nil && a.contextual == "" && len(a.rows) == 0 {
+	// The owner-complete SCC seed has static descriptor, contract, authority,
+	// and effect identity but no evaluated projection yet. Its first equation
+	// result establishes only dynamic publication metadata; semantic rows remain
+	// the ordinary least element until a base case appears.
+	if unmaterializedRelationBottom(a) {
 		a.effects = b.effects
 		a.authority = b.authority
 		a.descriptors = b.descriptors
@@ -491,7 +524,7 @@ func JoinRelation(a, b Relation) Relation {
 		a.projectionTrace = cloneSparseProjectionTrace(b.projectionTrace)
 		a.projectionTraceReason = b.projectionTraceReason
 	}
-	if b.effects == nil && b.contextual == "" && len(b.rows) == 0 {
+	if unmaterializedRelationBottom(b) {
 		b.effects = a.effects
 		b.authority = a.authority
 		b.descriptors = a.descriptors
@@ -515,7 +548,23 @@ func JoinRelation(a, b Relation) Relation {
 	} else if trace == nil {
 		traceReason = joinProjectionTraceReason(a, b)
 	}
-	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: a.observationComplete && b.observationComplete, projectionTrace: trace, projectionTraceReason: traceReason, paramContracts: append([]product.Value(nil), a.paramContracts...), projection: joinRelationProjection(a.arena.reg, a.projection, b.projection)}
+	annotations := unionRelationAnnotations(a.arena, a.annotations, b.annotations)
+	observationComplete := a.observationComplete && b.observationComplete
+	if trace != nil && traceReason == "" {
+		var err error
+		observationComplete, err = sparseProjectionTraceCoversObservations(ctx, a.arena, trace, annotations)
+		if err != nil {
+			traceReason = "projection trace: observation coverage recomputation failed"
+		} else if !observationComplete {
+			traceReason = "projection trace: required observation evidence is incomplete"
+		}
+	}
+	return Relation{shape: a.shape, arena: a.arena, effects: a.effects, descriptors: a.descriptors, authority: a.authority, rows: rows, inferReturnCorrelations: a.inferReturnCorrelations, widened: a.widened || b.widened, observationComplete: observationComplete, projectionTrace: trace, projectionTraceReason: traceReason, paramContracts: append([]product.Value(nil), a.paramContracts...), projection: joinRelationProjection(a.arena.reg, a.projection, b.projection), annotations: annotations}
+}
+
+func unmaterializedRelationBottom(r Relation) bool {
+	return r.IsBottom() && r.projectionTrace == nil && r.projectionTraceReason == "" &&
+		len(r.annotations.observations) == 0 && len(r.annotations.obligations) == 0
 }
 
 func joinProjectionTraceReason(a, b Relation) string {
@@ -534,7 +583,11 @@ func joinProjectionTraceReason(a, b Relation) string {
 // WidenRelation preserves correlation. Budget overflow becomes contextual Top
 // instead of independently collapsing guarded outputs.
 func WidenRelation(prev, next Relation, maxRows int) Relation {
-	out := JoinRelation(prev, next)
+	return widenRelation(context.Background(), prev, next, maxRows)
+}
+
+func widenRelation(ctx context.Context, prev, next Relation, maxRows int) Relation {
+	out := joinRelation(ctx, prev, next)
 	if out.contextual == "" && maxRows > 0 && len(out.rows) > maxRows {
 		out.rows = nil
 		out.contextual = "row budget"
@@ -551,14 +604,14 @@ func EqualRelation(a, b Relation) bool {
 	if a.contextual != "" || b.contextual != "" {
 		return a.contextual != "" && b.contextual != ""
 	}
-	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) || !equalRelationProjection(a.arena.reg, a.projection, b.projection) || len(a.rows) != len(b.rows) {
+	if a.arena != b.arena || a.effects != b.effects || a.descriptors != b.descriptors || a.shape != b.shape || a.inferReturnCorrelations != b.inferReturnCorrelations || a.widened != b.widened || a.observationComplete != b.observationComplete || a.projectionTraceReason != b.projectionTraceReason || !equalRelationAnnotations(a.annotations, b.annotations) || !equalSparseProjectionTrace(a.arena, a.projectionTrace, b.projectionTrace) || !equalParamContracts(a.arena.reg, a.paramContracts, b.paramContracts) || !equalRelationOutputAuthority(a.authority, b.authority) || !equalRelationProjection(a.arena.reg, a.projection, b.projection) || len(a.rows) != len(b.rows) {
 		return false
 	}
 	used := make([]bool, len(b.rows))
 	for _, left := range a.rows {
 		found := false
 		for j, right := range b.rows {
-			if !used[j] && rowEqual(a.arena, left, right) {
+			if !used[j] && rowEqual(a.arena, left, right) && equalRowAnnotations(left, right) {
 				used[j] = true
 				found = true
 				break

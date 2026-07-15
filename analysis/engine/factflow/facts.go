@@ -473,6 +473,20 @@ func (f Facts) ExpressionFunction(expr ExprRef) (symbol.ID, bool) {
 	return id, ok && id != 0
 }
 
+// ForEachExpressionFunction visits function-literal identity sidecars without
+// exposing the immutable snapshot's backing map. Returning false stops the
+// traversal.
+func (f Facts) ForEachExpressionFunction(fn func(ExprRef, symbol.ID) bool) {
+	if fn == nil {
+		return
+	}
+	for ref, id := range f.expressionFunctions {
+		if !fn(ref, id) {
+			return
+		}
+	}
+}
+
 // ExpressionRefinement returns the source-value refinement fact for expr, if present.
 func (f Facts) ExpressionRefinement(expr ExprRef) (ExpressionRefinement, bool) {
 	fact, ok := f.expressionRefinements[expr]

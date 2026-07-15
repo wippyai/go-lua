@@ -125,6 +125,17 @@ type Stats struct {
 	// EvaluatedRootProjections counts actual sparse-root projection attempts.
 	// Roots remain transaction-local until every projection succeeds.
 	EvaluatedRootProjections int
+	// EvaluatedObserver* count the single structural observer-forest projection
+	// built from the sealed total catalog. They are graph-size counters, never
+	// relation, body, query, or diagnostic-evaluation work.
+	EvaluatedObserverCatalogTemplates  int
+	EvaluatedObserverCallSitesScanned  int
+	EvaluatedObserverDiagnosticNodes   int
+	EvaluatedObserverDiagnosticEdges   int
+	EvaluatedObserverUncalledTemplates int
+	// EvaluatedObserverProgramPublications counts completed unique chunk-entry
+	// publications. It is zero on every rejected or canceled transaction.
+	EvaluatedObserverProgramPublications int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }

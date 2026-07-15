@@ -10,10 +10,12 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -47,11 +49,17 @@ func runEvaluatedBoundChunk(ctx context.Context, stmts []ast.Stmt, bindings *bin
 	if err != nil {
 		return evaluatedProgram{}, err
 	}
+	// Observer construction is a single structural projection of the sealed
+	// catalog. It neither evaluates relations nor discovers invocation paths.
+	forest, err := buildLexicalObserverForest(ctx, catalog)
+	if err != nil {
+		return evaluatedProgram{}, err
+	}
 	boundary, err := evaluatedCatalogBoundaryBindings(catalog)
 	if err != nil {
 		return evaluatedProgram{}, err
 	}
-	return solveEvaluatedProgram(ctx, catalog, boundary, config.Stats)
+	return solveEvaluatedObserverProgram(ctx, catalog, boundary, forest, config.Stats)
 }
 
 // prepareTotalEvaluatedRelationCatalog independently builds every equation,
@@ -102,7 +110,8 @@ func prepareTotalEvaluatedRelationCatalog(reg *axis.Registry, bindings *bind.Res
 		if stats != nil {
 			stats.EvaluatedRelationCompilerPrepares++
 		}
-		compiler, err := transformer.NewPlanCompiler().Prepare(reg, owner.prepared.Graph(), plan, shape)
+		planCompiler := transformer.NewPlanCompiler()
+		compiler, err := prepareTotalEvaluatedCompiler(planCompiler, reg, owner, bindings, plan, shape)
 		if err != nil {
 			return relationRunCatalog{}, fmt.Errorf("evaluated catalog: owner %v transformer preparation: %w", owner.key, err)
 		}
@@ -164,6 +173,26 @@ func prepareTotalEvaluatedRelationCatalog(reg *axis.Registry, bindings *bind.Res
 		}
 	}
 	return catalog, nil
+}
+
+func prepareTotalEvaluatedCompiler(compiler *transformer.PlanCompiler, reg *axis.Registry, owner relationCatalogOwner, bindings *bind.Result, plan *operationplan.Plan, shape transformer.Shape) (*transformer.PreparedPlanCompiler, error) {
+	if compiler == nil || bindings == nil || plan == nil {
+		return nil, fmt.Errorf("evaluated catalog: compiler, bindings, and plan are required")
+	}
+	hasFunctions := false
+	plan.Facts().ForEachExpressionFunction(func(factflow.ExprRef, symbol.ID) bool {
+		hasFunctions = true
+		return false
+	})
+	if !hasFunctions {
+		return compiler.Prepare(reg, owner.prepared.Graph(), plan, shape)
+	}
+
+	authority, err := transformer.SealDirectLexicalDeclarationAuthority(plan, bindings, owner.fn)
+	if err != nil {
+		return nil, fmt.Errorf("compiler: contextual operations: ExpressionFunctions (%v)", err)
+	}
+	return compiler.PrepareWithDirectLexicalDeclarations(reg, owner.prepared.Graph(), plan, shape, authority)
 }
 
 func validateTotalEvaluatedDirectSurface(entry relationCatalogEntry, catalog relationRunCatalog, bindings *bind.Result, keys programKeys) error {

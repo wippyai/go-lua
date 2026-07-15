@@ -108,6 +108,85 @@ type lexicalObserverForest struct {
 	Work       lexicalObserverWork
 }
 
+// validatePublication proves that the structural forest covers the exact
+// catalog once, with the unique chunk root in the diagnostic closure and every
+// unreachable template reserved for declared-contract validation. It does not
+// inspect relation values or recompute call targets.
+func (f lexicalObserverForest) validatePublication(catalog relationRunCatalog) error {
+	if len(catalog.entries) == 0 || f.Work.CatalogTemplates != len(catalog.entries) ||
+		f.Work.DiagnosticNodes != len(f.Diagnostic) || f.Root == (lexicalObserverTemplateRef{}) {
+		return fmt.Errorf("observer forest: publication cardinality is incomplete")
+	}
+	expected := make(map[lexicalObserverTemplateRef]bool, len(catalog.entries))
+	var root lexicalObserverTemplateRef
+	rootCount := 0
+	for _, entry := range catalog.entries {
+		if entry.identity.Prepared == nil {
+			return fmt.Errorf("observer forest: publication catalog has an incomplete body")
+		}
+		ref := lexicalObserverTemplateRef{Body: entry.identity.Prepared.StableLexicalBodyID(), Cell: entry.identity.Cell}
+		if _, duplicate := expected[ref]; duplicate {
+			return fmt.Errorf("observer forest: publication catalog duplicates template %v", ref.Cell)
+		}
+		expected[ref] = false
+		if entry.function == nil {
+			root, rootCount = ref, rootCount+1
+		}
+	}
+	if rootCount != 1 || f.Root != root {
+		return fmt.Errorf("observer forest: publication does not own the unique chunk root")
+	}
+
+	diagnostic := make(map[lexicalObserverTemplateRef]struct{}, len(f.Diagnostic))
+	edges := 0
+	for _, template := range f.Diagnostic {
+		seen, exists := expected[template.Ref]
+		if !exists || seen {
+			return fmt.Errorf("observer forest: diagnostic template %v is absent or duplicated", template.Ref.Cell)
+		}
+		expected[template.Ref] = true
+		diagnostic[template.Ref] = struct{}{}
+		edges += len(template.Calls)
+	}
+	if _, reachable := diagnostic[root]; !reachable || edges != f.Work.DiagnosticEdges || f.Work.CallSitesScanned < edges ||
+		f.Work.RetainedGraphUnits() != len(f.Diagnostic)+edges {
+		return fmt.Errorf("observer forest: diagnostic closure accounting is incomplete")
+	}
+	for _, template := range f.Diagnostic {
+		for _, edge := range template.Calls {
+			var target lexicalObserverTemplateRef
+			switch edge.Target.Kind {
+			case lexicalObserverTemplateTarget:
+				target = edge.Target.Template
+			case lexicalObserverMuTarget:
+				target = edge.Target.Mu.Target
+			default:
+				return fmt.Errorf("observer forest: template %v has an invalid call target", template.Ref.Cell)
+			}
+			if _, reachable := diagnostic[target]; !reachable {
+				return fmt.Errorf("observer forest: template %v calls outside the diagnostic closure", template.Ref.Cell)
+			}
+		}
+	}
+
+	for _, ref := range f.Uncalled {
+		seen, exists := expected[ref]
+		if !exists || seen || ref == root {
+			return fmt.Errorf("observer forest: uncalled template %v is absent, duplicated, or the chunk root", ref.Cell)
+		}
+		expected[ref] = true
+	}
+	if len(f.Diagnostic)+len(f.Uncalled) != len(expected) {
+		return fmt.Errorf("observer forest: reachable/unreachable policy is partial")
+	}
+	for ref, covered := range expected {
+		if !covered {
+			return fmt.Errorf("observer forest: template %v has no validation policy", ref.Cell)
+		}
+	}
+	return nil
+}
+
 type lexicalObserverCatalogNode struct {
 	ref      lexicalObserverTemplateRef
 	entry    relationCatalogEntry
@@ -204,7 +283,10 @@ func buildLexicalObserverForest(ctx context.Context, catalog relationRunCatalog)
 			occurrence, anchored := plan.CallInvocationObservationAnchor(site.Point)
 			if !lexical || !routed || !ownedCell || nodes[targetByCell].ref.Body != targetBody ||
 				route.Shape != nodes[targetByCell].entry.compiler.Shape() || !anchored || !occurrence.Valid() || occurrence.Kind != observation.CallInvocation {
-				return lexicalObserverForest{}, fmt.Errorf("observer forest: cell %v point %d has no exact sealed lexical target", entry.identity.Cell, site.Point)
+				return lexicalObserverForest{}, fmt.Errorf("observer forest: cell %v point %d has no exact sealed lexical target: lexical=%v routed=%v owned-cell=%v body-match=%v shape-match=%v anchored=%v occurrence=%v",
+					entry.identity.Cell, site.Point, lexical, routed, ownedCell,
+					ownedCell && nodes[targetByCell].ref.Body == targetBody,
+					ownedCell && route.Shape == nodes[targetByCell].entry.compiler.Shape(), anchored, occurrence.Valid() && occurrence.Kind == observation.CallInvocation)
 			}
 			nodes[index].callRefs = append(nodes[index].callRefs, lexicalObserverCatalogEdge{
 				point: site.Point, occurrence: occurrence, target: targetByCell,

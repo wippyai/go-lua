@@ -37,16 +37,27 @@ func evaluatedBindingOrderMatchesPlan(plan *operationplan.Plan, binding evaluate
 	return slices.Equal(binding.order, want)
 }
 
-// evaluatedProgram is the compact transaction-local shadow product of one
-// complete relation evaluation. In particular it does not retain a body.Result,
-// concrete State, solver checkpoint, term Arena, or callback.
+// evaluatedProgram is the compact transaction-local product of one complete
+// relation evaluation. entryBody + observer are its production-shaped program
+// publication: exactly one chunk entry owns the reachable diagnostic closure,
+// while observer.Uncalled owns the separate declared-contract policy.
+//
+// shadowBodies/shadowRoots remain prototype internals for differential and
+// per-body summary validation. They are not a claim that every lexical body is
+// an independently invoked production diagnostic root. The product retains no
+// body.Result, concrete State, solver checkpoint, term Arena, or callback.
 type evaluatedProgram struct {
-	bodies []lexicalidentity.StableLexicalBodyID
-	roots  map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact
+	entryBody    lexicalidentity.StableLexicalBodyID
+	observer     lexicalObserverForest
+	shadowBodies []lexicalidentity.StableLexicalBodyID
+	shadowRoots  map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact
 }
 
+// Root is the package-internal shadow-root accessor retained for differential
+// tests. Production-shaped consumers use Entry and never select an arbitrary
+// body as an invocation root.
 func (p evaluatedProgram) Root(ctx context.Context, reg *axis.Registry, body lexicalidentity.StableLexicalBodyID) (evaluated.Root, bool, error) {
-	artifact, ok := p.roots[body]
+	artifact, ok := p.shadowRoots[body]
 	if !ok {
 		return evaluated.Root{}, false, nil
 	}
@@ -57,15 +68,38 @@ func (p evaluatedProgram) Root(ctx context.Context, reg *axis.Registry, body lex
 	return root, true, nil
 }
 
-func (p evaluatedProgram) Bodies() []lexicalidentity.StableLexicalBodyID {
-	return append([]lexicalidentity.StableLexicalBodyID(nil), p.bodies...)
+// Entry materializes the unique chunk-entry shadow root. Observer attachment
+// is structural in this tranche; this method does not claim diagnostic parity.
+func (p evaluatedProgram) Entry(ctx context.Context, reg *axis.Registry) (evaluated.Root, bool, error) {
+	if p.entryBody == (lexicalidentity.StableLexicalBodyID{}) || p.observer.Root.Body != p.entryBody {
+		return evaluated.Root{}, false, nil
+	}
+	return p.Root(ctx, reg, p.entryBody)
 }
 
-// solveEvaluatedProgram is the first production-shaped one-generation seam.
-// A catalog already owns one PreparedPlanCompiler and one complete direct-call
-// surface per lexical body. This function turns that frozen lexical program
-// into relation cells, solves the complete call transaction, and projects all
-// roots before returning any of them.
+func (p evaluatedProgram) EntryBody() (lexicalidentity.StableLexicalBodyID, bool) {
+	return p.entryBody, p.entryBody != (lexicalidentity.StableLexicalBodyID{}) && p.observer.Root.Body == p.entryBody
+}
+
+// Bodies returns shadow/prototype root identities, not independent production
+// diagnostic invocations.
+func (p evaluatedProgram) Bodies() []lexicalidentity.StableLexicalBodyID {
+	return append([]lexicalidentity.StableLexicalBodyID(nil), p.shadowBodies...)
+}
+
+func (p evaluatedProgram) ObserverWork() (lexicalObserverWork, bool) {
+	return p.observer.Work, p.observer.Root != (lexicalObserverTemplateRef{})
+}
+
+func (p evaluatedProgram) UncalledValidationTemplates() []lexicalObserverTemplateRef {
+	return append([]lexicalObserverTemplateRef(nil), p.observer.Uncalled...)
+}
+
+// solveEvaluatedProgram is the explicit shadow/oracle helper. A catalog already
+// owns one PreparedPlanCompiler and one complete direct-call surface per
+// lexical body. This helper solves the complete relation transaction and
+// projects every body root for differential validation. The production-shaped
+// observer transaction below projects only its unique chunk entry.
 //
 // It deliberately has no legacy fallback. An unsupported equation, contextual
 // relation, incomplete observation projection, identity mismatch, or
@@ -75,6 +109,45 @@ func solveEvaluatedProgram(
 	ctx context.Context,
 	catalog relationRunCatalog,
 	bindings map[lexicalidentity.StableLexicalBodyID]evaluatedProgramBindings,
+	stats *Stats,
+) (evaluatedProgram, error) {
+	return solveEvaluatedProgramTransaction(ctx, catalog, bindings, nil, stats)
+}
+
+// solveEvaluatedObserverProgram is the activation seam used by the non-default
+// total evaluated runner. The forest must have been built once from this exact
+// sealed catalog before relation solving starts.
+func solveEvaluatedObserverProgram(
+	ctx context.Context,
+	catalog relationRunCatalog,
+	bindings map[lexicalidentity.StableLexicalBodyID]evaluatedProgramBindings,
+	forest lexicalObserverForest,
+	stats *Stats,
+) (evaluatedProgram, error) {
+	if ctx == nil {
+		return evaluatedProgram{}, fmt.Errorf("evaluated observer program: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return evaluatedProgram{}, err
+	}
+	if err := forest.validatePublication(catalog); err != nil {
+		return evaluatedProgram{}, err
+	}
+	if stats != nil {
+		stats.EvaluatedObserverCatalogTemplates += forest.Work.CatalogTemplates
+		stats.EvaluatedObserverCallSitesScanned += forest.Work.CallSitesScanned
+		stats.EvaluatedObserverDiagnosticNodes += forest.Work.DiagnosticNodes
+		stats.EvaluatedObserverDiagnosticEdges += forest.Work.DiagnosticEdges
+		stats.EvaluatedObserverUncalledTemplates += len(forest.Uncalled)
+	}
+	return solveEvaluatedProgramTransaction(ctx, catalog, bindings, &forest, stats)
+}
+
+func solveEvaluatedProgramTransaction(
+	ctx context.Context,
+	catalog relationRunCatalog,
+	bindings map[lexicalidentity.StableLexicalBodyID]evaluatedProgramBindings,
+	forest *lexicalObserverForest,
 	stats *Stats,
 ) (evaluatedProgram, error) {
 	if ctx == nil {
@@ -181,15 +254,31 @@ func solveEvaluatedProgram(
 		return evaluatedProgram{}, err
 	}
 
-	// Roots stay transaction-local until every relation and projection passes.
-	// Returning an error below therefore returns neither an SCC prefix nor a
-	// summary-only artifact.
-	roots := make(map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact, len(entries))
-	for index, entry := range entries {
+	// The observer transaction publishes only its unique chunk entry. The
+	// shadow/oracle transaction retains the older all-body projection solely for
+	// differential tests; it is not on the production-shaped activation path.
+	projectionEntries := entries
+	if forest != nil {
+		projectionEntries = nil
+		for _, entry := range entries {
+			if entry.identity.Cell == forest.Root.Cell && lexicalBodyForEvaluatedEntry(entry) == forest.Root.Body {
+				projectionEntries = append(projectionEntries, entry)
+			}
+		}
+		if len(projectionEntries) != 1 {
+			return evaluatedProgram{}, fmt.Errorf("evaluated program: observer root does not select one relation equation")
+		}
+	}
+	// Roots stay transaction-local until every selected projection passes.
+	// Returning an error below therefore publishes neither a partial observer
+	// program nor an SCC prefix.
+	roots := make(map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact, len(projectionEntries))
+	projectedBodies := make([]lexicalidentity.StableLexicalBodyID, 0, len(projectionEntries))
+	for _, entry := range projectionEntries {
 		if err := ctx.Err(); err != nil {
 			return evaluatedProgram{}, err
 		}
-		bodyID := orderedBodies[index]
+		bodyID := lexicalBodyForEvaluatedEntry(entry)
 		relation, ok := relations.Lookup(entry.identity.Cell)
 		if !ok || relation.ContextualReason() != "" || relation.Widened() || relation.Rows() == 0 {
 			reason := relation.ContextualReason()
@@ -253,6 +342,7 @@ func solveEvaluatedProgram(
 			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x artifact seal: %w", bodyID, err)
 		}
 		roots[bodyID] = artifact
+		projectedBodies = append(projectedBodies, bodyID)
 	}
 	if err := ctx.Err(); err != nil {
 		return evaluatedProgram{}, err
@@ -267,8 +357,16 @@ func solveEvaluatedProgram(
 			stats.PrebuiltSemanticLexicalEvaluationsByBody[bodyID]++
 		}
 		stats.EvaluatedShadowRootsProduced += len(roots)
+		if forest != nil {
+			stats.EvaluatedObserverProgramPublications++
+		}
 	}
-	return evaluatedProgram{bodies: orderedBodies, roots: roots}, nil
+	result := evaluatedProgram{shadowBodies: projectedBodies, shadowRoots: roots}
+	if forest != nil {
+		result.entryBody = forest.Root.Body
+		result.observer = *forest
+	}
+	return result, nil
 }
 
 func lexicalBodyForEvaluatedEntry(entry relationCatalogEntry) lexicalidentity.StableLexicalBodyID {

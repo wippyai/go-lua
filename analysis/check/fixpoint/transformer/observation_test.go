@@ -51,7 +51,7 @@ func TestGuardedObservationArtifactPreservesExpectedActualCorrelation(t *testing
 	}
 }
 
-func TestDirectCompositionRetainsSameCalleeObservationAtTwoCallSites(t *testing.T) {
+func TestDirectCompositionRetainsOnlyOwnerLocalObservationsAtTwoCallSites(t *testing.T) {
 	reg := standard.Registry()
 	calleePlan := operationplan.New(cfg.New(), factflow.FactsInput{}).WithBoundaryParams([]symbol.ID{1}).WithBoundaryParamContracts([]product.Value{product.Top()})
 	calleeBuilder := NewBuilder(reg, Shape{Params: 1}, DefaultOutputCapabilityRegistry(), calleePlan)
@@ -78,6 +78,7 @@ func TestDirectCompositionRetainsSameCalleeObservationAtTwoCallSites(t *testing.
 	callerBuilder := NewBuilder(reg, Shape{Params: 2}, DefaultOutputCapabilityRegistry(), callerPlan)
 	callerCertificate, _ := CertifyPlan(callerPlan, DefaultSemanticCapabilityRegistry())
 	row := SymbolicCFGRow{Guard: callerBuilder.Arena().True(), Values: map[symbol.ID]ValueTerm{}}
+	var annotations relationAnnotations
 	makeSite := func(point cfg.Point, result symbol.ID) factflow.CallSiteView {
 		span := factflow.SourceSpan{StartLine: int(point), StartCol: 1, EndLine: int(point), EndCol: 4}
 		site := factflow.NewCallSite(factflow.CallSiteConfig{Point: point, HasPoint: true, Final: true, Expanded: true, CallSpan: span, ArgumentSpans: []factflow.SourceSpan{span}, ResultTargets: []factflow.CallResultTarget{factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result, pathdom.NewPath(result, "result"))}})
@@ -86,7 +87,7 @@ func TestDirectCompositionRetainsSameCalleeObservationAtTwoCallSites(t *testing.
 	}
 	for index, point := range []cfg.Point{2, 3} {
 		root := Root{Kind: RootParam, Index: uint32(index)}
-		rows, composeErr := ComposeDirectCallRows(callerBuilder, Shape{Params: 2}, row, callee, DirectCallBindings{Values: []ValueTerm{callerBuilder.Arena().Root(root)}, Paths: []PathTerm{callerBuilder.Arena().Path(root)}}, makeSite(point, symbol.ID(20+index)), 8)
+		rows, composeErr := composeDirectCallRows(callerBuilder, Shape{Params: 2}, row, callee, DirectCallBindings{Values: []ValueTerm{callerBuilder.Arena().Root(root)}, Paths: []PathTerm{callerBuilder.Arena().Path(root)}}, makeSite(point, symbol.ID(20+index)), 8, &annotations)
 		if composeErr != nil || len(rows) != 1 {
 			t.Fatalf("compose %d = %#v/%v", point, rows, composeErr)
 		}
@@ -96,21 +97,17 @@ func TestDirectCompositionRetainsSameCalleeObservationAtTwoCallSites(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	relation.annotations = annotations
 	cursor, _ := NewBindingCursor(Shape{Params: 2}, []product.Value{typevalue.LiteralString(reg, "a"), typevalue.LiteralString(reg, "b")}, nil)
 	detailed, exact := relation.SpecializeDetailed(cursor, nil, SpecializationContext{})
 	items := detailed.Observations.Items()
-	if !exact || len(items) != 4 {
+	if !exact || len(items) != 2 {
 		t.Fatalf("two-call observations = %#v exact=%v", items, exact)
 	}
-	calleeSeen := map[string]bool{}
 	for _, item := range items {
-		if item.Owner == testObservationBody(77) {
-			value, _ := typevalue.StringLiteralOf(reg, item.Actual)
-			calleeSeen[value] = true
+		if item.Owner != testObservationBody(88) || item.Kind != ObservationCallArgument {
+			t.Fatalf("semantic relation leaked descendant observation template: %#v", items)
 		}
-	}
-	if !calleeSeen["a"] || !calleeSeen["b"] {
-		t.Fatalf("callee invocation evidence collapsed: %#v", items)
 	}
 }
 

@@ -239,7 +239,7 @@ func TestPreparedCompilerPublishesTraceOnlyAfterExactRelationAdmission(t *testin
 	}
 }
 
-func TestProjectionTraceMetadataCannotChangeRelationLattice(t *testing.T) {
+func TestProjectionTraceMetadataParticipatesInPublicationLattice(t *testing.T) {
 	reg := standard.Registry()
 	builder, certificate := emptyBuilder(t, reg, Shape{}, nil)
 	left := mustTestRelation(t, builder, certificate, "left")
@@ -252,18 +252,18 @@ func TestProjectionTraceMetadataCannotChangeRelationLattice(t *testing.T) {
 	tracedRight.projectionTrace = &sparseProjectionTrace{}
 	tracedRight.projectionTrace.schema[0] = 2
 
-	if !EqualRelation(left, tracedLeft) || !LessOrEqRelation(left, tracedLeft) || !LessOrEqRelation(tracedLeft, left) {
-		t.Fatal("trace metadata changed relation equality/order")
+	if EqualRelation(left, tracedLeft) || LessOrEqRelation(left, tracedLeft) || LessOrEqRelation(tracedLeft, left) {
+		t.Fatal("publication equality/order ignored trace metadata")
 	}
 	joined := JoinRelation(tracedLeft, tracedRight)
-	if joined.ContextualReason() != "" || joined.Widened() || joined.projectionTrace != nil || joined.projectionTraceReason == "" || !EqualRelation(joined, baselineJoin) {
+	if joined.ContextualReason() != "" || joined.Widened() || joined.projectionTrace != nil || joined.projectionTraceReason == "" || EqualRelation(joined, baselineJoin) {
 		t.Fatalf("incompatible trace poisoned semantic join: reason=%q widened=%v trace=%#v rejection=%q", joined.ContextualReason(), joined.Widened(), joined.projectionTrace, joined.projectionTraceReason)
 	}
-	if LessOrEqRelation(tracedLeft, tracedRight) != LessOrEqRelation(left, right) || LessOrEqRelation(tracedRight, tracedLeft) != LessOrEqRelation(right, left) {
-		t.Fatal("incompatible trace changed LessOrEq")
+	if LessOrEqRelation(tracedLeft, tracedRight) || LessOrEqRelation(tracedRight, tracedLeft) {
+		t.Fatal("incompatible traces entered publication order")
 	}
 	widened := WidenRelation(tracedLeft, tracedRight, 8)
-	if widened.ContextualReason() != "" || widened.Widened() || !EqualRelation(widened, baselineWiden) || widened.projectionTrace != nil {
+	if widened.ContextualReason() != "" || widened.Widened() || EqualRelation(widened, baselineWiden) || widened.projectionTrace != nil {
 		t.Fatalf("incompatible trace poisoned semantic widen: %#v", widened)
 	}
 	baselineBudget := WidenRelation(left, right, 1)

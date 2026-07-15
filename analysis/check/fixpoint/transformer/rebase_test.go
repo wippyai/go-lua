@@ -129,7 +129,8 @@ func TestRebaseTermDAGsRejectsInvalidAndCyclicSourceDAGs(t *testing.T) {
 
 	guardCallee := NewArena(reg)
 	guardRoot := guardCallee.Root(Root{Kind: RootParam})
-	cyclicGuard := guardCallee.And(guardCallee.Truthy(guardRoot), guardCallee.Falsy(guardRoot))
+	guardOther := guardCallee.Constant(typevalue.LiteralBool(reg, true))
+	cyclicGuard := guardCallee.And(guardCallee.Truthy(guardRoot), guardCallee.Falsy(guardOther))
 	guardCallee.guards[cyclicGuard].args[0] = cyclicGuard
 	if got, err := RebaseTermDAGs(caller, guardCallee, bindings, TermRebaseInput{Guards: []Guard{cyclicGuard}}); err == nil || !reflect.DeepEqual(got, TermRebaseOutput{}) {
 		t.Fatalf("cyclic guard DAG accepted: %#v, %v", got, err)

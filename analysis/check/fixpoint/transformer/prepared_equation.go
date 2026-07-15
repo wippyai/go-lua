@@ -55,7 +55,7 @@ func (p *PreparedEquation) Cell() (RelationCell, error) {
 		return RelationCell{}, fmt.Errorf("transformer: nil prepared equation")
 	}
 	cell := RelationCell{
-		Ref: p.ref, Arena: p.builder.arena, Shape: p.shape,
+		Ref: p.ref, Arena: p.builder.arena, Shape: p.shape, Bottom: p.builder.bottomRelation(),
 		Dependencies: append([]CellRef(nil), p.dependencies...),
 	}
 	cell.Equation = func(ctx context.Context, view RelationView) (Relation, error) {

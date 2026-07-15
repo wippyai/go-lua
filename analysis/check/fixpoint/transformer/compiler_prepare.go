@@ -96,13 +96,26 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 // lexical dependencies are deliberately a later Evaluate concern; this base
 // preparation preserves today's exact no-dependency behavior.
 func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape) (*PreparedPlanCompiler, error) {
+	return c.prepare(reg, graph, plan, shape, operationplan.DirectLexicalDeclarations{})
+}
+
+// PrepareWithDirectLexicalDeclarations admits only a binder-proven complete,
+// stable, non-escaping local-function declaration census sealed to plan.
+func (c *PlanCompiler) PrepareWithDirectLexicalDeclarations(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape, authority DirectLexicalDeclarationAuthority) (*PreparedPlanCompiler, error) {
+	if !authority.matches(plan) {
+		return nil, fmt.Errorf("compiler: direct lexical declaration authority does not match plan")
+	}
+	return c.prepare(reg, graph, plan, shape, authority.declarations)
+}
+
+func (c *PlanCompiler) prepare(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape, declarations operationplan.DirectLexicalDeclarations) (*PreparedPlanCompiler, error) {
 	if c == nil || reg == nil || graph == nil || plan == nil {
 		return nil, fmt.Errorf("compiler: registry, graph, plan, and compiler are required")
 	}
 	if graph.Size() != plan.PointCount() {
 		return nil, fmt.Errorf("compiler: graph points %d != operation rows %d", graph.Size(), plan.PointCount())
 	}
-	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts()}
+	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts(), directDeclarations: declarations}
 	outputCaps := DefaultOutputCapabilityRegistry()
 	summaryKinds := []callboundary.BoundaryFactKind{
 		"NormalReturnParams", "NormalReturnFacts", "ReturnFlows", "ReturnParamPathAliases",
@@ -139,6 +152,9 @@ func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	}
 	if err := preparePredicateExpressions(&ctx); err != nil {
 		return nil, fmt.Errorf("compiler: predicate: %w", err)
+	}
+	if planHasFact(plan, operationplan.ExpressionFunction) && !declarations.Matches(plan) {
+		return nil, fmt.Errorf("compiler: contextual operations: ExpressionFunctions (no complete direct lexical declaration proof)")
 	}
 	if unsupported := c.unsupportedActive(plan); len(unsupported) != 0 {
 		return nil, fmt.Errorf("compiler: contextual operations: %s", strings.Join(unsupported, ", "))
@@ -247,8 +263,9 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 			initial.Output.NormalReturnParams[i] = product.Top()
 		}
 	}
+	annotations := relationAnnotations{}
 	transfer := func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
-		return p.lowerPreparedPoint(ctx, view, direct, point, row)
+		return p.lowerPreparedPointWithAnnotations(ctx, view, direct, point, row, &annotations)
 	}
 	branch := func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 		return compileBranchEdge(ctx, point, row, cond)
@@ -282,37 +299,38 @@ func (p *PreparedPlanCompiler) evaluate(evalCtx context.Context, view RelationVi
 		return contextual("compiler: relation admission: return parameter alias projection unsupported")
 	}
 	relation.projection = normalizeRelationProjection(p.registry, aliases)
-	coverageComplete := false
-	if p.observationComplete {
-		scratch := observationCoverageScratchPool.Get().(*observationCoverageScratch)
-		coverageComplete, err = relationRowsCoverObservations(evalCtx, p.builder.Arena(), p.plan, exitRows, scratch)
-		observationCoverageScratchPool.Put(scratch)
-		if err != nil {
-			return contextual("compiler: observation coverage canceled")
+	relation.annotations = unionRelationAnnotations(p.builder.Arena(), annotations)
+	relation.projectionTraceReason = traceReason
+	if traceBuilder != nil {
+		traceBuilder.mergeRelationAnnotations(annotations)
+		trace, traceErr := traceBuilder.freeze()
+		if traceErr != nil {
+			relation.projectionTraceReason = traceErr.Error()
+		} else {
+			relation.projectionTrace = trace
+			relation.observationComplete, err = sparseProjectionTraceCoversObservations(evalCtx, p.builder.Arena(), trace, relation.annotations)
+			if err != nil {
+				return contextual("compiler: observation coverage canceled")
+			}
 		}
 	}
-	relation.observationComplete = coverageComplete
-	relation.projectionTraceReason = traceReason
 	if direct != nil {
 		for _, cell := range direct.Cells() {
 			dependency, ok := view.Lookup(cell)
-			if !ok || !dependency.ObservationCoverageComplete() {
+			// Bottom has no feasible callee row in this SCC round, so it
+			// contributes no uncovered observation. Treat it as the neutral
+			// element of this must-property until the relation grows.
+			if !ok || !dependency.IsBottom() && !dependency.ObservationCoverageComplete() {
 				relation.observationComplete = false
 				break
 			}
 		}
 	}
-	if traceBuilder != nil {
+	if relation.projectionTrace != nil {
 		if !relation.observationComplete {
 			relation.projectionTraceReason = "projection trace: required observation evidence is incomplete"
 		} else {
-			trace, traceErr := traceBuilder.freeze()
-			if traceErr != nil {
-				relation.projectionTraceReason = traceErr.Error()
-			} else {
-				relation.projectionTrace = trace
-				relation.projectionTraceReason = ""
-			}
+			relation.projectionTraceReason = ""
 		}
 	}
 	return relation
@@ -347,6 +365,10 @@ func projectedReturnParamAliases(arena *Arena, rows []Row) ([]summary.ReturnPara
 }
 
 func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view RelationView, direct *DirectCallCatalog, point cfg.Point, initial SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+	return p.lowerPreparedPointWithAnnotations(base, view, direct, point, initial, nil)
+}
+
+func (p *PreparedPlanCompiler) lowerPreparedPointWithAnnotations(base planCompileContext, view RelationView, direct *DirectCallCatalog, point cfg.Point, initial SymbolicCFGRow, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
 	if site, ok := p.plan.Facts().CallSiteView(point); ok && !p.cyclic {
 		for slot := 0; slot < site.ArgumentSourceCount(); slot++ {
 			anchor, durable := p.plan.CallArgumentObservationAnchor(point, uint32(slot))
@@ -378,15 +400,22 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 			}
 			if isDirect {
 				callee, found := view.Lookup(directTarget.Cell)
-				if !found || callee.ContextualReason() != "" || callee.Widened() || callee.Rows() == 0 || callee.Shape() != directTarget.Shape {
+				if !found || callee.ContextualReason() != "" || callee.Widened() || callee.Shape() != directTarget.Shape {
 					return nil, fmt.Errorf("direct call: dependency %v is unresolved, widened, contextual, or foreign-shaped", directTarget.Cell)
 				}
-				site, _ := rowCtx.facts.CallSiteView(point)
+				site, found := rowCtx.facts.CallSiteView(point)
+				if !found {
+					return nil, fmt.Errorf("direct call: source point %d has no call-site fact", point)
+				}
+				sitePoint, hasPoint := site.Point()
+				if !hasPoint || sitePoint != point {
+					return nil, fmt.Errorf("direct call: call-site identity %d/%v differs from CFG point %d", sitePoint, hasPoint, point)
+				}
 				bindings, err := exactDirectCallBindings(rowCtx, directTarget.Shape, site)
 				if err != nil {
 					return nil, fmt.Errorf("direct call: %w", err)
 				}
-				composed, err := ComposeDirectCallRows(p.builder, p.shape, row, callee, bindings, site, 256)
+				composed, err := composeDirectCallRows(p.builder, p.shape, row, callee, bindings, site, 256, annotations)
 				if err != nil {
 					return nil, err
 				}
@@ -422,7 +451,7 @@ func (p *PreparedPlanCompiler) lowerPreparedPoint(base planCompileContext, view 
 		}
 		rows[index].Values = rowCtx.locals
 		rows[index].genericBindings = rowCtx.genericBindings
-		if assignment, ok := p.plan.Facts().RootAssignment(point); ok && !p.cyclic {
+		if assignment, ok := p.plan.Facts().RootAssignment(point); ok && !p.cyclic && !exactDirectLexicalDeclaration(rowCtx, assignment) {
 			anchor, durable := p.plan.AssignmentObservationAnchor(point)
 			if durable {
 				rows[index].observationObligations = recordobservationObligation(rows[index].observationObligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: rows[index].Guard})
@@ -628,19 +657,14 @@ func (p *PreparedPlanCompiler) Equation(ref CellRef) (*PreparedEquation, error) 
 	})
 }
 
-// DirectEquation publishes an acyclic direct-call equation. A self edge is
-// rejected at preparation; longer cycles encounter unresolved Bottom
-// dependencies during synchronous SCC evaluation and become contextual Top.
+// DirectEquation publishes a direct-call equation. Recursive dependencies read
+// owner-shaped Bottom during the first synchronous SCC round; composition then
+// contributes zero successor rows until a base-case relation grows.
 func (p *PreparedPlanCompiler) DirectEquation(ref CellRef, catalog DirectCallCatalog) (*PreparedEquation, error) {
 	if p == nil || catalog.PointCount() != p.plan.PointCount() {
 		return nil, fmt.Errorf("compiler: direct-call catalog width differs from plan")
 	}
 	dependencies := catalog.Cells()
-	for _, dependency := range dependencies {
-		if dependency == ref {
-			return nil, fmt.Errorf("compiler: recursive direct relation cell %v requires contextual solver", ref)
-		}
-	}
 	return NewPreparedEquation(ref, p.builder, dependencies, func(ctx context.Context, view RelationView, _ *Builder) (Relation, error) {
 		if err := ctx.Err(); err != nil {
 			return Relation{}, err

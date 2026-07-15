@@ -122,7 +122,7 @@ func (program *relationRegionProgram) solve(ctx context.Context, options Relatio
 		}
 		for relationIndex, ref := range component.refs {
 			cell := byRef[ref]
-			bottom := Relation{shape: cell.Shape, arena: cell.Arena}
+			bottom := relationCellBottom(cell)
 			if component.cyclic {
 				runtime.current[relationIndex] = bottom
 			}
@@ -157,7 +157,7 @@ func (program *relationRegionProgram) solve(ctx context.Context, options Relatio
 					equationErr = evaluateErr
 					return relationRegionStamp{component: component.id, revision: runtime.revision}
 				}
-				relation = widenRelationCell(previous, relation, options.MaxRows)
+				relation = widenRelationCell(ctx, previous, relation, options.MaxRows)
 				if !EqualRelation(previous, relation) {
 					values[ref] = relation
 					runtime.revision++
@@ -178,7 +178,7 @@ func (program *relationRegionProgram) solve(ctx context.Context, options Relatio
 					}
 					// This is the one relation widening boundary. The region
 					// lattice below carries stamps, never Relations.
-					relation = widenRelationCell(runtime.current[relationIndex], relation, options.MaxRows)
+					relation = widenRelationCell(ctx, runtime.current[relationIndex], relation, options.MaxRows)
 					if relation.ContextualReason() != "" {
 						failedReason = relation.ContextualReason()
 						break

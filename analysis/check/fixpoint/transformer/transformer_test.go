@@ -58,6 +58,18 @@ func TestArenaHashConsesValuePathAndGuardDAGs(t *testing.T) {
 	}
 }
 
+func TestArenaFoldsExactTruthyFalsyComplements(t *testing.T) {
+	a := NewArena(standard.Registry())
+	value := a.Root(Root{Kind: RootParam})
+	truthy, falsy := a.Truthy(value), a.Falsy(value)
+	if got := a.And(truthy, falsy); got != a.False() {
+		t.Fatalf("Truthy(v) and Falsy(v) = %d, want False", got)
+	}
+	if got := a.Or(truthy, falsy); got != a.True() {
+		t.Fatalf("Truthy(v) or Falsy(v) = %d, want True", got)
+	}
+}
+
 func TestCapabilityMatrixCoversEveryDefaultStateLane(t *testing.T) {
 	r := DefaultOutputCapabilityRegistry()
 	if err := r.Complete(state.DefaultLaneCatalog()); err != nil {

@@ -57,9 +57,14 @@ type LocalFunctionUseClosure struct {
 	TargetSymbol           symbol.ID
 	DirectCalls            []*ast.FuncCallExpr
 	RuntimeUseScanComplete bool
-	BindingStable          bool
-	ValueDoesNotEscape     bool
-	CallSetComplete        bool
+	// DirectCallSetComplete permits a stable function binding to cross a
+	// lexical closure boundary when every read remains the callee of a direct
+	// call. Self-recursive capture remains excluded; recursive relation
+	// ownership is established separately by the interprocedural solver.
+	DirectCallSetComplete bool
+	BindingStable         bool
+	ValueDoesNotEscape    bool
+	CallSetComplete       bool
 }
 
 // LocalFunctionUseClosures reports conservative, whole-unit use evidence in
@@ -107,7 +112,8 @@ func (r *Result) LocalFunctionUseClosures() []LocalFunctionUseClosure {
 				}
 			}
 		}
-		stable := r.runtimeUseScanComplete && targetCounts[origin.TargetSymbol] == 1 && len(r.writeIdents[origin.TargetSymbol]) == 0 && allReadsDirect
+		stableDirect := r.runtimeUseScanComplete && targetCounts[origin.TargetSymbol] == 1 && len(r.writeIdents[origin.TargetSymbol]) == 0 && allReadsDirect
+		selfRecursive := false
 		closed := r.runtimeUseScanComplete && allReadsDirect
 		if closed {
 			for _, candidate := range r.functions {
@@ -119,16 +125,19 @@ func (r *Result) LocalFunctionUseClosures() []LocalFunctionUseClosure {
 					}
 				}
 				if captured {
+					if candidate == fn {
+						selfRecursive = true
+					}
 					closed = false
-					break
 				}
 			}
 		}
-		stable = stable && closed
+		stable := stableDirect && closed
 		out = append(out, LocalFunctionUseClosure{
 			FunctionSymbol: origin.Symbol, TargetSymbol: origin.TargetSymbol,
 			DirectCalls: calls, RuntimeUseScanComplete: r.runtimeUseScanComplete, BindingStable: stable,
-			ValueDoesNotEscape: closed, CallSetComplete: stable && closed,
+			DirectCallSetComplete: stableDirect && !selfRecursive,
+			ValueDoesNotEscape:    closed, CallSetComplete: stable && closed,
 		})
 	}
 	return out

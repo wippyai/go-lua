@@ -379,6 +379,21 @@ func (a *Arena) logical(op guardOp, guards []Guard) Guard {
 	}
 	sort.Slice(flat, func(i, j int) bool { return flat[i] < flat[j] })
 	flat = compactGuards(flat)
+	for index, guard := range flat {
+		node := a.guards[guard]
+		if node.op != guardTruthy && node.op != guardFalsy {
+			continue
+		}
+		for _, priorGuard := range flat[:index] {
+			prior := a.guards[priorGuard]
+			if prior.value == node.value && (prior.op == guardTruthy || prior.op == guardFalsy) && prior.op != node.op {
+				if op == guardAnd {
+					return a.False()
+				}
+				return a.True()
+			}
+		}
+	}
 	if len(flat) == 0 {
 		if op == guardAnd {
 			return a.True()

@@ -87,16 +87,16 @@ func TestPreparedCompilerForwardsPreservedParameterThroughDirectCall(t *testing.
 		t.Fatalf("forwarded chain specialization = %#v/%v, want canonical Summary plus preserved param 0", detailed, exact)
 	}
 	items := detailed.Observations.Items()
-	if caller.ObservationCoverageComplete() || len(items) < 2 {
-		t.Fatalf("direct observation projection complete=%v items=%#v, want evidence but fail-closed whole-owner coverage", caller.ObservationCoverageComplete(), items)
+	if caller.ObservationCoverageComplete() || len(items) != 1 {
+		t.Fatalf("direct observation projection complete=%v items=%#v, want owner-local evidence and fail-closed whole-owner coverage", caller.ObservationCoverageComplete(), items)
 	}
 	var assignmentSeen, callResultSeen bool
 	for _, item := range items {
 		assignmentSeen = assignmentSeen || item.Kind == ObservationAssignment && product.Equal(reg, item.Actual, argumentValue)
 		callResultSeen = callResultSeen || item.Kind == ObservationCallResult && product.Equal(reg, item.Actual, typevalue.LiteralString(reg, "done"))
 	}
-	if !assignmentSeen || !callResultSeen {
-		t.Fatalf("direct observation projection = %#v", items)
+	if assignmentSeen || !callResultSeen {
+		t.Fatalf("semantic relation leaked descendant template or lost owner-local result: %#v", items)
 	}
 }
 

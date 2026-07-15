@@ -42,7 +42,7 @@ func TestCFGRowDedupUnionsObservationsOutsideSemanticBudget(t *testing.T) {
 	}
 }
 
-func TestRelationObservationSidecarIsSemanticallyInvisibleAndACI(t *testing.T) {
+func TestRelationObservationSidecarIsPublicationVisibleAndACI(t *testing.T) {
 	reg := standard.Registry()
 	builder, certificate := emptyBuilder(t, reg, Shape{}, nil)
 	arena := builder.Arena()
@@ -64,9 +64,9 @@ func TestRelationObservationSidecarIsSemanticallyInvisibleAndACI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if base.Rows() != 1 || enriched.Rows() != 1 || !EqualRelation(base, enriched) ||
-		!LessOrEqRelation(base, enriched) || !LessOrEqRelation(enriched, base) {
-		t.Fatalf("annotation changed relation semantics: base=%d enriched=%d equal=%v", base.Rows(), enriched.Rows(), EqualRelation(base, enriched))
+	if base.Rows() != 1 || enriched.Rows() != 1 || EqualRelation(base, enriched) ||
+		!LessOrEqRelation(base, enriched) || LessOrEqRelation(enriched, base) {
+		t.Fatalf("publication order ignored annotation growth: base=%d enriched=%d equal=%v", base.Rows(), enriched.Rows(), EqualRelation(base, enriched))
 	}
 	left := JoinRelation(base, enriched)
 	right := JoinRelation(enriched, base)
@@ -100,7 +100,7 @@ func TestRelationObservationSidecarIsSemanticallyInvisibleAndACI(t *testing.T) {
 	}
 }
 
-func TestObservationCoverageMetadataIsNotRelationSemantics(t *testing.T) {
+func TestObservationCoverageMetadataParticipatesInPublicationOrder(t *testing.T) {
 	reg := standard.Registry()
 	builder, certificate := emptyBuilder(t, reg, Shape{}, nil)
 	base, err := builder.Build(certificate, []Row{{Guard: builder.Arena().True()}})
@@ -109,8 +109,8 @@ func TestObservationCoverageMetadataIsNotRelationSemantics(t *testing.T) {
 	}
 	complete := base
 	complete.observationComplete = true
-	if !EqualRelation(base, complete) || !LessOrEqRelation(base, complete) || !LessOrEqRelation(complete, base) {
-		t.Fatal("observation coverage metadata changed relation semantics")
+	if EqualRelation(base, complete) || LessOrEqRelation(base, complete) || !LessOrEqRelation(complete, base) {
+		t.Fatal("publication order ignored observation coverage metadata")
 	}
 	joined := JoinRelation(complete, base)
 	if joined.ContextualReason() != "" || joined.ObservationCoverageComplete() {
@@ -118,7 +118,7 @@ func TestObservationCoverageMetadataIsNotRelationSemantics(t *testing.T) {
 	}
 }
 
-func TestRelationSCCObservationOnlyGrowthDoesNotRestartSemantics(t *testing.T) {
+func TestRelationSCCObservationOnlyGrowthReachesPublicationFixpoint(t *testing.T) {
 	reg := standard.Registry()
 	builder, certificate := emptyBuilder(t, reg, Shape{}, nil)
 	arena := builder.Arena()
@@ -149,8 +149,8 @@ func TestRelationSCCObservationOnlyGrowthDoesNotRestartSemantics(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := snapshot.Lookup(ref)
-	if !ok || calls != 2 || got.Rows() != 1 || len(got.rows[0].Observations) != 2 {
-		t.Fatalf("evidence-only SCC growth restarted or was lost: ok=%v calls=%d relation=%#v", ok, calls, got)
+	if !ok || calls != 3 || got.Rows() != 1 || len(got.rows[0].Observations) != 2 {
+		t.Fatalf("evidence-only SCC did not reach publication fixpoint: ok=%v calls=%d relation=%#v", ok, calls, got)
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
-const canonicalTransformerIdentityVersion uint64 = 1
+const canonicalTransformerIdentityVersion uint64 = 2
 
 var ErrNonportableCanonicalRelation = errors.New("transformer: relation is not canonically portable")
 
@@ -140,6 +140,9 @@ func (r Relation) canonicalRelationIdentity(ctx context.Context, registry evalua
 			return err
 		}
 		if err := codec.writeProjection(w, r.projection); err != nil {
+			return err
+		}
+		if err := codec.writeRelationAnnotations(w, r.annotations); err != nil {
 			return err
 		}
 		rows := make([][]byte, len(r.rows))
@@ -368,6 +371,34 @@ func (c *relationCanonicalCodec) writeProjection(w *canonical.Writer, projection
 	return nil
 }
 
+func (c *relationCanonicalCodec) writeRelationAnnotations(w *canonical.Writer, annotations relationAnnotations) error {
+	observations := make([][]byte, len(annotations.observations))
+	for i := range annotations.observations {
+		var err error
+		observations[i], err = c.observationBytes(annotations.observations[i])
+		if err != nil {
+			return err
+		}
+	}
+	sortByteSlices(observations)
+	if err := writeByteSlices(w, observations); err != nil {
+		return err
+	}
+	obligations := make([][]byte, len(annotations.obligations))
+	for i := range annotations.obligations {
+		var err error
+		obligations[i], err = c.obligationBytes(annotations.obligations[i])
+		if err != nil {
+			return err
+		}
+	}
+	sortByteSlices(obligations)
+	if err := writeByteSlices(w, obligations); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (c *relationCanonicalCodec) rowBytes(row Row) ([]byte, error) {
 	return canonicalBytes(c.ctx, "analysis.transformer.row", func(w *canonical.Writer) error {
 		if err := w.Record(recordRow); err != nil {
@@ -582,6 +613,9 @@ func (c *relationCanonicalCodec) writeProjectionTrace(w *canonical.Writer, trace
 		return err
 	}
 	if err := w.Bytes(trace.inventory[:]); err != nil {
+		return err
+	}
+	if err := w.Bytes(trace.owner[:]); err != nil {
 		return err
 	}
 	if err := w.Count(uint64(len(trace.slots))); err != nil {

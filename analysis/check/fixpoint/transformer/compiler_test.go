@@ -98,7 +98,7 @@ func TestReturnConditionUsesSourceOrdinalNotTargetSlot(t *testing.T) {
 	}
 }
 
-func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *testing.T) {
+func TestPreparedPlanCompilerDirectEquationComposesRowsAndAcceptsRecursiveBottom(t *testing.T) {
 	reg := standard.Registry()
 	calleeShape := Shape{Params: 2}
 	calleePlan := operationplan.New(cfg.New(), factflow.FactsInput{})
@@ -196,8 +196,21 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *te
 		}
 	}
 	selfCatalog, _ := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{callPoint: {Cell: callerRef, Shape: calleeShape}})
-	if _, err := prepared.DirectEquation(callerRef, selfCatalog); err == nil {
-		t.Fatal("recursive direct equation was not rejected")
+	selfEquation, err := prepared.DirectEquation(callerRef, selfCatalog)
+	if err != nil {
+		t.Fatalf("recursive direct equation rejected: %v", err)
+	}
+	selfCell, err := selfEquation.Cell()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfSnapshot, err := SolveRelationCells(context.Background(), []RelationCell{selfCell}, RelationSolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfRelation, ok := selfSnapshot.Lookup(callerRef)
+	if !ok || !selfRelation.IsBottom() || selfRelation.ContextualReason() != "" || selfRelation.Widened() {
+		t.Fatalf("base-less self recursion = %#v/%v, want owned Bottom", selfRelation, ok)
 	}
 	leftRef, rightRef := CellRef{Function: 401}, CellRef{Function: 402}
 	leftCatalog, _ := NewDirectCallCatalog(graph.Size(), map[cfg.Point]DirectCallTarget{callPoint: {Cell: rightRef, Shape: calleeShape}})
@@ -212,8 +225,8 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndRejectsRecursion(t *te
 	}
 	leftRelation, _ := cycle.Lookup(leftRef)
 	rightRelation, _ := cycle.Lookup(rightRef)
-	if leftRelation.ContextualReason() == "" || rightRelation.ContextualReason() == "" {
-		t.Fatal("mutually recursive direct equations converged to under-approximate Bottom")
+	if !leftRelation.IsBottom() || !rightRelation.IsBottom() || leftRelation.ContextualReason() != "" || rightRelation.ContextualReason() != "" {
+		t.Fatalf("base-less mutual recursion = left:%#v right:%#v, want owned Bottom", leftRelation, rightRelation)
 	}
 	receiverOnly := factflow.NewCallSite(factflow.CallSiteConfig{
 		ReceiverPath: pathdom.NewPath(callerParam0, "a"), HasReceiverPath: true,

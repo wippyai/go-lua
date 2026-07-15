@@ -55,6 +55,7 @@ type planCompileContext struct {
 	rowOutput            *summary.Summary
 	genericBindings      map[symbol.ID]symbolicGenericBinding
 	directCalls          *DirectCallCatalog
+	directDeclarations   operationplan.DirectLexicalDeclarations
 	allowConstantAdd     bool
 	predicateExpressions map[factflow.ExprRef]struct{}
 	predicateRefinements map[factflow.ExprRef]struct{}
@@ -100,6 +101,10 @@ func NewPlanCompiler() *PlanCompiler {
 	// and payload ownership explicit.
 	c.facts[operationplan.ExpressionValue] = expressionValuePlanHandler{}
 	c.facts[operationplan.ExpressionOperation] = expressionOperationPlanHandler{}
+	// Function values are inert only under a plan-sealed proof that every
+	// literal is a stable, non-escaping local declaration whose complete use
+	// set is routed as direct lexical calls.
+	c.facts[operationplan.ExpressionFunction] = expressionFunctionPlanHandler{}
 	// ExpressionRefinement is only a dependency carrier. Preparation admits it
 	// iff every refinement is an exact runtime-cast member of one certified
 	// returned predicate DAG; the point-local handler has no executable effect.
@@ -1044,6 +1049,9 @@ func (rootAssignmentPlanHandler) Preflight(ctx planCompileContext, point cfg.Poi
 	}
 	switch fact.Kind() {
 	case factflow.RootAssignmentLocalDeclaration:
+		if exactDirectLexicalDeclaration(ctx, fact) {
+			return nil
+		}
 		if _, exact := exactNumericForIteratorBinding(ctx, point, fact); exact {
 			return nil
 		}
@@ -1090,6 +1098,12 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 	}
 	term, numericIterator := exactNumericForIteratorBinding(ctx, point, fact)
 	if !numericIterator {
+		if exactDirectLexicalDeclaration(ctx, fact) {
+			// The function value has no observable value use: its complete use set
+			// is represented by the sealed direct-call surface. Do not retain a
+			// synthetic closure value in the symbolic local environment.
+			return nil
+		}
 		var err error
 		ctx.allowConstantAdd = fact.Kind() == factflow.RootAssignmentOrdinaryRootWrite
 		term, err = exactCompilerSourceTerm(ctx, fact.Source())
@@ -1117,6 +1131,29 @@ func (rootAssignmentPlanHandler) Lower(ctx planCompileContext, point cfg.Point, 
 		return fmt.Errorf("symbol %d has multiple writes", fact.TargetSymbol())
 	}
 	ctx.locals[fact.TargetSymbol()] = term
+	return nil
+}
+
+func exactDirectLexicalDeclaration(ctx planCompileContext, fact factflow.RootAssignment) bool {
+	if ctx.plan == nil || fact.Kind() != factflow.RootAssignmentLocalDeclaration || fact.TargetSymbol() == 0 {
+		return false
+	}
+	source := fact.Source()
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 || source.ResultIndex != 0 ||
+		source.Expanded || source.OpenTail {
+		return false
+	}
+	function, ok := ctx.facts.ExpressionFunction(source.ExprRef)
+	return ok && ctx.directDeclarations.Contains(ctx.plan, source.ExprRef, function, fact.TargetSymbol())
+}
+
+type expressionFunctionPlanHandler struct{}
+
+func (expressionFunctionPlanHandler) Kind() operationplan.Kind {
+	return operationplan.ExpressionFunction
+}
+func (expressionFunctionPlanHandler) Preflight(planCompileContext, cfg.Point) error { return nil }
+func (expressionFunctionPlanHandler) Lower(planCompileContext, cfg.Point, *[]Operation) error {
 	return nil
 }
 

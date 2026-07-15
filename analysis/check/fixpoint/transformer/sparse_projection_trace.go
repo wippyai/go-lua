@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/observation"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // sparseProjectionTrace is transaction-owned symbolic projection evidence.
@@ -18,6 +19,7 @@ import (
 type sparseProjectionTrace struct {
 	schema    operationplan.ObservationSchemaID
 	inventory operationplan.ObservationConsumerInventoryID
+	owner     lexicalidentity.StableLexicalBodyID
 	slots     []sparseProjectionSlot
 }
 
@@ -125,6 +127,9 @@ func (p *sparseProjectionPlan) newBuilder(arena *Arena, plan *operationplan.Plan
 		trace:  sparseProjectionTrace{schema: p.schema, inventory: p.inventory, slots: slots},
 		points: p.points, edges: p.edges,
 	}
+	if plan != nil {
+		b.trace.owner = plan.ObservationBody()
+	}
 	return b
 }
 
@@ -151,7 +156,8 @@ func (b *sparseProjectionTraceBuilder) pointInput(point cfg.Point, row SymbolicC
 	}
 	for _, index := range b.points[point] {
 		slot := &b.trace.slots[index]
-		if slot.requirement.Stage() == operationplan.RequirementPoint {
+		kind, observed := slot.requirement.ObservationKind()
+		if slot.requirement.Stage() == operationplan.RequirementPoint || observed && kind == observation.CallArgument {
 			slot.guard = unionSparseProjectionGuard(b.arena, slot.guard, row.Guard)
 		}
 	}
@@ -206,6 +212,7 @@ func (b *sparseProjectionTraceBuilder) pointOutput(point cfg.Point, row Symbolic
 			}
 			slot.fragments = recordSparseProjectionFragment(b.arena, slot.fragments, fragment)
 		case operationplan.RequirementObservation:
+			slot.guard = unionSparseProjectionGuard(b.arena, slot.guard, row.Guard)
 			anchor, ok := slot.requirement.Anchor()
 			if !ok {
 				b.failed = fmt.Errorf("projection trace: observation selector %q has no anchor", slot.requirement.Projection())
@@ -236,6 +243,33 @@ func (b *sparseProjectionTraceBuilder) normalEdge(from, to cfg.Point, guard Guar
 	for _, index := range b.edges[sparseProjectionEdge{from: from, to: to}] {
 		slot := &b.trace.slots[index]
 		slot.guard = unionSparseProjectionGuard(b.arena, slot.guard, guard)
+	}
+}
+
+func (b *sparseProjectionTraceBuilder) mergeRelationAnnotations(annotations relationAnnotations) {
+	if b == nil || b.failed != nil {
+		return
+	}
+	for index := range b.trace.slots {
+		slot := &b.trace.slots[index]
+		if slot.requirement.Stage() != operationplan.RequirementObservation {
+			continue
+		}
+		anchor, ok := slot.requirement.Anchor()
+		if !ok {
+			b.failed = fmt.Errorf("projection trace: observation selector %q has no anchor", slot.requirement.Projection())
+			return
+		}
+		for _, term := range annotations.observations {
+			if observationProjectionMatches(slot.requirement, term) {
+				slot.observed = recordObservationTerm(slot.observed, term)
+			}
+		}
+		for _, obligation := range annotations.obligations {
+			if obligation.Anchor == anchor {
+				slot.owed = recordobservationObligation(slot.owed, obligation)
+			}
+		}
 	}
 }
 
@@ -362,7 +396,7 @@ func cloneSparseProjectionTrace(in *sparseProjectionTrace) *sparseProjectionTrac
 	if in == nil {
 		return nil
 	}
-	out := &sparseProjectionTrace{schema: in.schema, inventory: in.inventory, slots: make([]sparseProjectionSlot, len(in.slots))}
+	out := &sparseProjectionTrace{schema: in.schema, inventory: in.inventory, owner: in.owner, slots: make([]sparseProjectionSlot, len(in.slots))}
 	for index, slot := range in.slots {
 		out.slots[index] = sparseProjectionSlot{
 			requirement: slot.requirement, guard: slot.guard,
@@ -380,11 +414,76 @@ func cloneSparseProjectionTrace(in *sparseProjectionTrace) *sparseProjectionTrac
 	return out
 }
 
+func equalSparseProjectionTrace(arena *Arena, left, right *sparseProjectionTrace) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if left.schema != right.schema || left.inventory != right.inventory || left.owner != right.owner || len(left.slots) != len(right.slots) {
+		return false
+	}
+	for index, a := range left.slots {
+		b := right.slots[index]
+		if a.requirement != b.requirement || a.guard != b.guard ||
+			!equalObservationTermSets(a.observed, b.observed) ||
+			!equalobservationObligationSets(a.owed, b.owed) ||
+			len(a.fragments) != len(b.fragments) {
+			return false
+		}
+		used := make([]bool, len(b.fragments))
+		for _, fragment := range a.fragments {
+			found := false
+			for otherIndex, other := range b.fragments {
+				if !used[otherIndex] && equalSparseProjectionFragment(arena, fragment, other) {
+					used[otherIndex] = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func equalObservationTermSets(left, right []ObservationTerm) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	set := make(map[ObservationTerm]struct{}, len(left))
+	for _, item := range left {
+		set[item] = struct{}{}
+	}
+	for _, item := range right {
+		if _, ok := set[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func equalobservationObligationSets(left, right []observationObligation) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	set := make(map[observationObligation]struct{}, len(left))
+	for _, item := range left {
+		set[item] = struct{}{}
+	}
+	for _, item := range right {
+		if _, ok := set[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func joinSparseProjectionTrace(arena *Arena, left, right *sparseProjectionTrace) (*sparseProjectionTrace, bool) {
 	if left == nil || right == nil {
 		return nil, true
 	}
-	if left.schema != right.schema || left.inventory != right.inventory || len(left.slots) != len(right.slots) {
+	if left.schema != right.schema || left.inventory != right.inventory || left.owner != right.owner || len(left.slots) != len(right.slots) {
 		return nil, false
 	}
 	out := cloneSparseProjectionTrace(left)

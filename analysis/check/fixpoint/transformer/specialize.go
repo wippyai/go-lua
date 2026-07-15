@@ -220,6 +220,28 @@ func (r Relation) specializedObservations(cursor BindingCursor, context Speciali
 			out = append(out, item)
 		}
 	}
+	for _, term := range r.annotations.observations {
+		feasible, valid := r.arena.evalGuard(term.Guard, cursor, context)
+		if !valid {
+			return ObservationProjection{}, false
+		}
+		if !feasible {
+			continue
+		}
+		actual, valid := r.arena.evalValue(term.Actual, cursor, context)
+		if !valid || term.BodyOwner == (lexicalidentity.StableLexicalBodyID{}) || !term.Anchor.Valid() {
+			return ObservationProjection{}, false
+		}
+		item := Observation{Owner: term.BodyOwner, Invocation: term.Route, Kind: term.Kind, Anchor: term.Anchor, Slot: term.Slot, Actual: actual}
+		if term.Expected != 0 {
+			item.Expected, valid = r.arena.evalValue(term.Expected, cursor, context)
+			if !valid {
+				return ObservationProjection{}, false
+			}
+			item.HasExpected = true
+		}
+		out = append(out, item)
+	}
 	return canonicalizeObservations(r.arena.reg, out), true
 }
 

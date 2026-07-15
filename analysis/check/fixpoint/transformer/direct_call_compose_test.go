@@ -13,6 +13,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -156,6 +158,80 @@ func TestComposeDirectCallRowsPreservesCorrelationAndConsumesCalleeResultMetadat
 	}
 }
 
+func TestDirectCallKeepsCallerPrefixEvidenceForMixedReturningCallee(t *testing.T) {
+	reg := standard.Registry()
+	shape := Shape{Params: 1}
+	calleeArena := NewArena(reg)
+	calleeParam := calleeArena.Root(Root{Kind: RootParam})
+	callee := Relation{
+		shape: shape, arena: calleeArena, effects: NewEffectArena(calleeArena), descriptors: DefaultDescriptorRegistry(),
+		rows:           []Row{{Guard: calleeArena.Truthy(calleeParam), Output: summary.Summary{NormalReturnParams: []product.Value{product.Top()}}, Ops: []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Value: calleeParam}}}},
+		paramContracts: []product.Value{typevalue.String(reg)},
+	}
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+	lowered := wir.NewBody("mixed-callee-prefix")
+	start := lowered.Len()
+	lowered.Emit(wir.Instruction{Op: wir.OpCall, Point: call})
+	lowered.SetPointRange(call, start, lowered.Len())
+	lowered.AssignDebugPointOrdinals(graph)
+	var owner lexicalidentity.StableLexicalBodyID
+	copy(owner[:], []byte("mixed-callee-prefix"))
+	plan := operationplan.New(graph, factflow.FactsInput{}).WithObservationIdentity(owner, lowered, graph)
+	caller := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
+	callerParam := caller.Arena().Root(Root{Kind: RootParam})
+	prefixAnchor := testObservationAnchor(ObservationAssignment, 1, 0)
+	prefix := ObservationTerm{BodyOwner: owner, Kind: ObservationAssignment, Anchor: prefixAnchor, Guard: caller.Arena().True(), Actual: callerParam}
+	prefixObligation := observationObligation{BodyOwner: owner, Anchor: prefixAnchor, Guard: caller.Arena().True()}
+	initial := SymbolicCFGRow{
+		Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{},
+		Observations: []ObservationTerm{prefix}, observationObligations: []observationObligation{prefixObligation},
+	}
+	target := symbol.ID(74)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		Point: call, HasPoint: true, Final: true, Expanded: true,
+		ResultTargets: []factflow.CallResultTarget{factflow.NewCallResultTarget(
+			factflow.CallResultTargetLocalAssignment, 0, 0, target, pathdom.NewPath(target, "result"),
+		)},
+	}).View()
+	bindings := DirectCallBindings{Values: []ValueTerm{callerParam}, Paths: []PathTerm{caller.Arena().Path(Root{Kind: RootParam})}}
+	var annotations relationAnnotations
+	rows, err := composeDirectCallRows(caller, shape, initial, callee, bindings, site, 4, &annotations)
+	if err != nil || len(rows) != 1 || rows[0].Guard != caller.Arena().Truthy(callerParam) || len(annotations.observations) != 2 || len(annotations.obligations) != 2 {
+		t.Fatalf("mixed caller evidence = rows:%#v annotations:%#v/%#v err:%v", rows, annotations.observations, annotations.obligations, err)
+	}
+	certificate, err := CertifyPlan(plan, DefaultSemanticCapabilityRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation, err := caller.Build(certificate, []Row{{
+		Guard: rows[0].Guard, Output: rows[0].Output, Ops: rows[0].Operations,
+		Observations: rows[0].Observations, observationObligations: rows[0].observationObligations,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation.annotations = annotations
+	for _, input := range []bool{true, false} {
+		cursor, _ := NewBindingCursor(shape, []product.Value{typevalue.LiteralBool(reg, input)}, nil)
+		detailed, exact := relation.SpecializeDetailed(cursor, nil, SpecializationContext{})
+		items := detailed.Observations.Items()
+		if !exact || len(items) != 2 {
+			t.Fatalf("mixed specialization(%v) = %#v/%v", input, items, exact)
+		}
+		assignment, argument := false, false
+		for _, item := range items {
+			assignment = assignment || item.Kind == ObservationAssignment
+			argument = argument || item.Kind == ObservationCallArgument && item.HasExpected && product.Equal(reg, item.Expected, typevalue.String(reg))
+		}
+		if !assignment || !argument {
+			t.Fatalf("mixed specialization(%v) lost prefix/call-entry evidence: %#v", input, items)
+		}
+	}
+}
+
 func TestComposeDirectCallRowsFailsClosedWithoutCallerBoundaryProofPath(t *testing.T) {
 	reg := standard.Registry()
 	calleeArena := NewArena(reg)
@@ -172,7 +248,7 @@ func TestComposeDirectCallRowsFailsClosedWithoutCallerBoundaryProofPath(t *testi
 	param := caller.Arena().Root(Root{Kind: RootParam, Index: 0})
 	globalPath := caller.Arena().Path(Root{Kind: RootGlobal, Index: 0})
 	target := symbol.ID(50)
-	site := factflow.NewCallSite(factflow.CallSiteConfig{Final: true, Expanded: true, ResultTargets: []factflow.CallResultTarget{
+	site := factflow.NewCallSite(factflow.CallSiteConfig{Point: 3, HasPoint: true, Final: true, Expanded: true, ResultTargets: []factflow.CallResultTarget{
 		factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, pathdom.NewPath(target, "target")),
 	}}).View()
 	if rows, err := ComposeDirectCallRows(caller, Shape{Params: 1, Globals: 1}, SymbolicCFGRow{Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{}}, callee, DirectCallBindings{Values: []ValueTerm{param}, Paths: []PathTerm{globalPath}}, site, 4); err == nil || len(rows) != 0 {
@@ -201,7 +277,7 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 	callerRoot0 := Root{Kind: RootParam, Index: 0}
 	callerRoot1 := Root{Kind: RootParam, Index: 1}
 	target := symbol.ID(61)
-	site := factflow.NewCallSite(factflow.CallSiteConfig{Final: true, Expanded: true, ResultTargets: []factflow.CallResultTarget{
+	site := factflow.NewCallSite(factflow.CallSiteConfig{Point: 3, HasPoint: true, Final: true, Expanded: true, ResultTargets: []factflow.CallResultTarget{
 		factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, pathdom.NewPath(target, "result")),
 	}}).View()
 	initial := func() SymbolicCFGRow {
@@ -215,8 +291,12 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("forwarded parameter composition = %#v/%v", rows, err)
 		}
-		if len(rows[0].ResultRoots) != 0 || rows[0].Values[target] != caller.Arena().Root(callerRoot1) {
-			t.Fatalf("point-less composition changed legacy value/root behavior: value=%v roots=%#v", rows[0].Values[target], rows[0].ResultRoots)
+		if len(rows[0].ResultRoots) != 1 {
+			t.Fatalf("exact-point composition lost result-root ownership: value=%v roots=%#v", rows[0].Values[target], rows[0].ResultRoots)
+		}
+		value, valid := caller.Arena().evalValue(rows[0].Values[target], BindingCursor{shape: callerShape, values: []product.Value{product.Top(), product.Top()}}, SpecializationContext{})
+		if !valid || !product.Equal(reg, value, product.Top()) {
+			t.Fatalf("exact-point composition changed forwarded value semantics: %#v/%v", value, valid)
 		}
 		if !rows[0].paramPreserved.preserves(0) || !rows[0].paramPreserved.preserves(1) {
 			t.Fatalf("forwarded parameter lost preservation ledger: %#v", rows[0].paramPreserved)

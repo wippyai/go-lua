@@ -22,12 +22,21 @@ type observationCoverageKey struct {
 }
 
 type observationCoverageWorlds struct {
-	owed     []observationCoverageGuardWorld
-	evidence []observationCoverageGuardWorld
-	direct   bool
+	owed          []observationCoverageGuardWorld
+	evidence      []observationCoverageGuardWorld
+	requiredGuard Guard
+	required      bool
+	exactRequired bool
+	direct        bool
 }
 
 type observationCoverageGuardWorld struct{ row, local Guard }
+
+type observationCoverageRequirement struct {
+	key   observationCoverageKey
+	guard Guard
+	exact bool
+}
 
 type coverageBDD uint32
 
@@ -98,6 +107,9 @@ func (s *observationCoverageScratch) reset(arena *Arena) {
 	for index := range s.groups {
 		s.groups[index].owed = s.groups[index].owed[:0]
 		s.groups[index].evidence = s.groups[index].evidence[:0]
+		s.groups[index].requiredGuard = 0
+		s.groups[index].required = false
+		s.groups[index].exactRequired = false
 		s.groups[index].direct = false
 	}
 	s.groups = s.groups[:0]
@@ -151,13 +163,13 @@ func relationRowsCoverObservations(ctx context.Context, arena *Arena, plan *oper
 	if ctx.Err() != nil {
 		return false, errObservationCoverageCanceled
 	}
-	scratch.reset(arena)
 	requirements, sealed := plan.ObservationRequirements()
 	if !sealed {
 		return false, nil
 	}
 	owner := plan.ObservationBody()
 	cursor := requirements.Cursor(false)
+	observationRequirements := make([]observationCoverageRequirement, 0)
 	requirementCount := 0
 	for requirement, ok := cursor.Next(); ok; requirement, ok = cursor.Next() {
 		requirementCount++
@@ -171,7 +183,51 @@ func relationRowsCoverObservations(ctx context.Context, arena *Arena, plan *oper
 		if !ok {
 			return false, nil
 		}
-		scratch.world(observationCoverageKey{owner: owner, anchor: anchor})
+		observationRequirements = append(observationRequirements, observationCoverageRequirement{key: observationCoverageKey{owner: owner, anchor: anchor}})
+	}
+	return observationRequirementsCover(ctx, arena, observationRequirements, rows, scratch)
+}
+
+func sparseProjectionTraceCoversObservations(ctx context.Context, arena *Arena, trace *sparseProjectionTrace, annotations relationAnnotations) (bool, error) {
+	if trace == nil || trace.owner == (lexicalidentity.StableLexicalBodyID{}) {
+		return false, nil
+	}
+	requirements := make([]observationCoverageRequirement, 0)
+	row := SymbolicCFGRow{Guard: arena.True()}
+	for _, slot := range trace.slots {
+		if slot.requirement.Stage() != operationplan.RequirementObservation {
+			continue
+		}
+		anchor, ok := slot.requirement.Anchor()
+		if !ok {
+			return false, nil
+		}
+		requirements = append(requirements, observationCoverageRequirement{
+			key: observationCoverageKey{owner: trace.owner, anchor: anchor}, guard: slot.guard, exact: true,
+		})
+		row.Observations = append(row.Observations, slot.observed...)
+		row.observationObligations = append(row.observationObligations, slot.owed...)
+	}
+	return observationRequirementsCover(ctx, arena, requirements, []SymbolicCFGRow{row}, newObservationCoverageScratch())
+}
+
+func observationRequirementsCover(ctx context.Context, arena *Arena, requirements []observationCoverageRequirement, rows []SymbolicCFGRow, scratch *observationCoverageScratch) (bool, error) {
+	if arena == nil || scratch == nil || ctx == nil {
+		return false, nil
+	}
+	if ctx.Err() != nil {
+		return false, errObservationCoverageCanceled
+	}
+	scratch.reset(arena)
+	for _, requirement := range requirements {
+		world := scratch.world(requirement.key)
+		if (world.required && world.exactRequired != requirement.exact) ||
+			(world.exactRequired && world.requiredGuard != requirement.guard) {
+			return false, nil
+		}
+		world.required = true
+		world.exactRequired = requirement.exact
+		world.requiredGuard = requirement.guard
 	}
 	for rowIndex := range rows {
 		if rowIndex&31 == 0 {
@@ -196,8 +252,16 @@ func relationRowsCoverObservations(ctx context.Context, arena *Arena, plan *oper
 	}
 	for index := range scratch.groups {
 		world := &scratch.groups[index]
+		if world.exactRequired {
+			if err := scratch.collectGuardAtoms(ctx, world.requiredGuard); err != nil {
+				return false, err
+			}
+		}
 		if len(world.owed) == 0 {
-			return false, nil
+			if !world.exactRequired {
+				return false, nil
+			}
+			continue
 		}
 		var err error
 		world.direct, err = scratch.observationWorldsDirectlyCovered(ctx, world.owed, world.evidence)
@@ -226,6 +290,30 @@ func relationRowsCoverObservations(ctx context.Context, arena *Arena, plan *oper
 	}
 	for index := range scratch.groups {
 		world := &scratch.groups[index]
+		if world.exactRequired {
+			required, ok := scratch.guard(ctx, world.requiredGuard)
+			if !ok {
+				return false, scratch.coverageError(ctx)
+			}
+			owed, ok := scratch.guardUnion(ctx, world.owed)
+			if !ok {
+				return false, scratch.coverageError(ctx)
+			}
+			notOwed, ok := scratch.negate(ctx, owed)
+			if !ok {
+				return false, scratch.coverageError(ctx)
+			}
+			gap, ok := scratch.apply(ctx, coverageAnd, required, notOwed)
+			if !ok {
+				return false, scratch.coverageError(ctx)
+			}
+			if gap != coverageFalse {
+				return false, nil
+			}
+			if len(world.owed) == 0 {
+				continue
+			}
+		}
 		if world.direct {
 			continue
 		}

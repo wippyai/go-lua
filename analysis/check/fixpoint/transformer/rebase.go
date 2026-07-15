@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
@@ -81,6 +82,21 @@ type TermRebaseOutput struct {
 // hash-consing tables. Scalar CellResult terms require relational composition
 // and therefore fail closed here.
 func RebaseTermDAGs(caller, callee *Arena, bindings TermRootBindings, input TermRebaseInput) (TermRebaseOutput, error) {
+	return rebaseTermDAGs(caller, callee, bindings, input, false)
+}
+
+// rebaseDirectCallTermDAGs imports callee terms across one lexical call
+// boundary. A callee-local CallResult identity is an observation of how the
+// callee obtained a value, not part of that value's caller-visible identity.
+// Strip those wrappers during import; direct-call composition installs exactly
+// one identity for the caller's own source point and result slot afterwards.
+// This also makes recursive call SCCs finite: each round cannot accumulate a
+// fresh nesting of already-crossed lexical call identities.
+func rebaseDirectCallTermDAGs(caller, callee *Arena, bindings TermRootBindings, input TermRebaseInput) (TermRebaseOutput, error) {
+	return rebaseTermDAGs(caller, callee, bindings, input, true)
+}
+
+func rebaseTermDAGs(caller, callee *Arena, bindings TermRootBindings, input TermRebaseInput, dropCallResults bool) (TermRebaseOutput, error) {
 	if caller == nil || callee == nil || caller.reg == nil || callee.reg == nil {
 		return TermRebaseOutput{}, fmt.Errorf("transformer: term rebasing requires two registered arenas")
 	}
@@ -97,12 +113,13 @@ func RebaseTermDAGs(caller, callee *Arena, bindings TermRootBindings, input Term
 	// Validation above proves that these imports cannot fail. Consequently no
 	// destination node is interned until the complete transaction is admissible.
 	state := rebaseState{
-		caller:   caller,
-		callee:   callee,
-		bindings: bindings,
-		values:   make(map[ValueTerm]ValueTerm),
-		paths:    make(map[PathTerm]PathTerm),
-		guards:   make(map[Guard]Guard),
+		caller:          caller,
+		callee:          callee,
+		bindings:        bindings,
+		values:          make(map[ValueTerm]ValueTerm),
+		paths:           make(map[PathTerm]PathTerm),
+		guards:          make(map[Guard]Guard),
+		dropCallResults: dropCallResults,
 	}
 	out := TermRebaseOutput{
 		Values: make([]ValueTerm, len(input.Values)),
@@ -478,13 +495,14 @@ func validatePathTerm(arena *Arena, term PathTerm, shape Shape) error {
 }
 
 type rebaseState struct {
-	caller   *Arena
-	callee   *Arena
-	bindings TermRootBindings
-	values   map[ValueTerm]ValueTerm
-	paths    map[PathTerm]PathTerm
-	guards   map[Guard]Guard
-	err      error
+	caller          *Arena
+	callee          *Arena
+	bindings        TermRootBindings
+	values          map[ValueTerm]ValueTerm
+	paths           map[PathTerm]PathTerm
+	guards          map[Guard]Guard
+	dropCallResults bool
+	err             error
 }
 
 func (s *rebaseState) value(term ValueTerm) ValueTerm {
@@ -518,7 +536,12 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 			return 0
 		}
 	case valueCallResult:
-		out = s.caller.CallResultValue(n.point, uint32(n.resultIndex), s.value(n.args[0]))
+		produced := s.value(n.args[0])
+		if s.dropCallResults {
+			out = produced
+		} else {
+			out = s.caller.CallResultValue(n.point, uint32(n.resultIndex), produced)
+		}
 		if out == 0 {
 			s.err = fmt.Errorf("transformer: validated call-result term %d failed to rebase", term)
 			return 0
@@ -586,9 +609,9 @@ func (s *rebaseState) guard(guard Guard) Guard {
 	case guardFalse:
 		out = s.caller.False()
 	case guardTruthy:
-		out = s.caller.Truthy(s.value(n.value))
+		out = s.rebasedTruthGuard(n.value, true)
 	case guardFalsy:
-		out = s.caller.Falsy(s.value(n.value))
+		out = s.rebasedTruthGuard(n.value, false)
 	case guardAnd, guardOr:
 		args := make([]Guard, len(n.args))
 		for i, arg := range n.args {
@@ -602,4 +625,25 @@ func (s *rebaseState) guard(guard Guard) Guard {
 	}
 	s.guards[guard] = out
 	return out
+}
+
+func (s *rebaseState) rebasedTruthGuard(source ValueTerm, truthy bool) Guard {
+	value := s.value(source)
+	if value != 0 && int(value) < len(s.caller.values) {
+		node := s.caller.values[value]
+		if node.op == valueConstant {
+			canTruthy := valuerefine.CanBeTruthy(s.caller.reg, node.value)
+			canFalsy := valuerefine.CanBeFalsy(s.caller.reg, node.value)
+			if truthy && !canTruthy || !truthy && !canFalsy {
+				return s.caller.False()
+			}
+			if truthy && !canFalsy || !truthy && !canTruthy {
+				return s.caller.True()
+			}
+		}
+	}
+	if truthy {
+		return s.caller.Truthy(value)
+	}
+	return s.caller.Falsy(value)
 }

@@ -38,8 +38,8 @@ local result = outer(true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifact.Bodies()) != 4 || stats.EvaluatedShadowRootsProduced != 4 {
-		t.Fatalf("evaluated bodies/roots = %d/%d, want 4/4", len(artifact.Bodies()), stats.EvaluatedShadowRootsProduced)
+	if len(artifact.Bodies()) != 1 || stats.EvaluatedShadowRootsProduced != 1 {
+		t.Fatalf("evaluated entry roots/shadow roots = %d/%d, want 1/1", len(artifact.Bodies()), stats.EvaluatedShadowRootsProduced)
 	}
 	if stats.Body.StaticChunkPrepares != 1 || stats.Body.StaticFunctionPrepares != 3 {
 		t.Fatalf("static chunk/function prepares = %d/%d, want 1/3", stats.Body.StaticChunkPrepares, stats.Body.StaticFunctionPrepares)
@@ -47,9 +47,27 @@ local result = outer(true)
 	if stats.EvaluatedRelationCompilerPrepares != 4 {
 		t.Fatalf("relation compiler prepares = %d, want 4", stats.EvaluatedRelationCompilerPrepares)
 	}
-	if stats.EvaluatedRelationEquationApplications != 4 || stats.PrebuiltSemanticLexicalEvaluations != 4 || stats.EvaluatedRootProjections != 4 {
-		t.Fatalf("equations/evaluations/projections = %d/%d/%d, want 4/4/4",
+	if stats.EvaluatedRelationEquationApplications != 4 || stats.PrebuiltSemanticLexicalEvaluations != 4 || stats.EvaluatedRootProjections != 1 {
+		t.Fatalf("equations/evaluations/projections = %d/%d/%d, want 4/4/1",
 			stats.EvaluatedRelationEquationApplications, stats.PrebuiltSemanticLexicalEvaluations, stats.EvaluatedRootProjections)
+	}
+	if stats.EvaluatedObserverCatalogTemplates != 4 || stats.EvaluatedObserverCallSitesScanned != 3 ||
+		stats.EvaluatedObserverDiagnosticNodes != 4 || stats.EvaluatedObserverDiagnosticEdges != 3 ||
+		stats.EvaluatedObserverUncalledTemplates != 0 || stats.EvaluatedObserverProgramPublications != 1 {
+		t.Fatalf("observer catalog/sites/nodes/edges/uncalled/publications = %d/%d/%d/%d/%d/%d, want 4/3/4/3/0/1",
+			stats.EvaluatedObserverCatalogTemplates, stats.EvaluatedObserverCallSitesScanned,
+			stats.EvaluatedObserverDiagnosticNodes, stats.EvaluatedObserverDiagnosticEdges,
+			stats.EvaluatedObserverUncalledTemplates, stats.EvaluatedObserverProgramPublications)
+	}
+	entryBody, published := artifact.EntryBody()
+	entry, entryOK, entryErr := artifact.Entry(context.Background(), reg)
+	if !published || !entryOK || entryErr != nil || entry.Identity().Body != entryBody {
+		t.Fatalf("unique entry publication = body:%x published:%v root:%x ok:%v err:%v",
+			entryBody, published, entry.Identity().Body, entryOK, entryErr)
+	}
+	observerWork, observed := artifact.ObserverWork()
+	if !observed || observerWork.RetainedGraphUnits() != 7 {
+		t.Fatalf("observer retained graph = observed:%v units:%d, want true/7", observed, observerWork.RetainedGraphUnits())
 	}
 	if stats.PrepassBodySolves != 0 || stats.SummaryBodySolves != 0 || stats.MaterializeBodySolves != 0 || stats.Body.BodySolves != 0 ||
 		!reflect.DeepEqual(stats.Query, query.Stats{}) {
@@ -86,8 +104,50 @@ local result = outer(true)
 			t.Fatalf("body %x evaluated summary differs from separate legacy oracle", bodyID)
 		}
 	}
-	if stats.EvaluatedRelationEquationApplications != 4 || stats.EvaluatedRootProjections != 4 || !reflect.DeepEqual(stats.Query, query.Stats{}) {
+	if stats.EvaluatedRelationEquationApplications != 4 || stats.EvaluatedRootProjections != 1 || !reflect.DeepEqual(stats.Query, query.Stats{}) {
 		t.Fatal("separate legacy oracle mutated evaluated invocation counters")
+	}
+}
+
+func TestEvaluatedBoundChunkSeparatesUncalledContractValidationFromEntryDiagnostics(t *testing.T) {
+	stmts := parseChunk(t, `
+local function called(value: boolean) return value end
+local function uncalled(value: boolean) return value end
+local result = called(true)
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	stats := &Stats{}
+	artifact, err := runEvaluatedBoundChunk(context.Background(), stmts, bindings, Config{
+		Check: body.Config{
+			Registry: standard.Registry(), Signatures: signaturelookup.Source{IncludeStdlib: true},
+			UnitNamespace: lexicalidentity.UnitNamespaceFromContent([]byte("evaluated-observer-uncalled")),
+		},
+		Stats: stats,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, published := artifact.EntryBody(); !published || len(artifact.UncalledValidationTemplates()) != 1 {
+		t.Fatalf("entry/uncalled publication = %v/%d, want true/1", published, len(artifact.UncalledValidationTemplates()))
+	}
+	if stats.EvaluatedObserverCatalogTemplates != 3 || stats.EvaluatedObserverDiagnosticNodes != 2 ||
+		stats.EvaluatedObserverDiagnosticEdges != 1 || stats.EvaluatedObserverUncalledTemplates != 1 ||
+		stats.EvaluatedObserverProgramPublications != 1 {
+		t.Fatalf("observer templates/nodes/edges/uncalled/publications = %d/%d/%d/%d/%d, want 3/2/1/1/1",
+			stats.EvaluatedObserverCatalogTemplates, stats.EvaluatedObserverDiagnosticNodes,
+			stats.EvaluatedObserverDiagnosticEdges, stats.EvaluatedObserverUncalledTemplates,
+			stats.EvaluatedObserverProgramPublications)
+	}
+	// Observer construction is structural. It must not add a fifth phase or
+	// invoke any legacy solver/query path: there is one equation per catalog body
+	// and exactly one chunk-entry projection for the whole program.
+	if stats.EvaluatedRelationEquationApplications != 3 || stats.EvaluatedRootProjections != 1 ||
+		stats.PrepassBodySolves != 0 || stats.SummaryBodySolves != 0 || stats.MaterializeBodySolves != 0 ||
+		stats.Body.BodySolves != 0 || !reflect.DeepEqual(stats.Query, query.Stats{}) {
+		t.Fatalf("observer activation changed semantic work: equations=%d projections=%d prepass=%d summary=%d materialize=%d body=%d query=%#v",
+			stats.EvaluatedRelationEquationApplications, stats.EvaluatedRootProjections,
+			stats.PrepassBodySolves, stats.SummaryBodySolves, stats.MaterializeBodySolves,
+			stats.Body.BodySolves, stats.Query)
 	}
 }
 
@@ -98,9 +158,11 @@ func TestEvaluatedBoundChunkCancellationAndUnsupportedInputPublishZero(t *testin
 	cancel()
 	stats := &Stats{}
 	artifact, err := runEvaluatedBoundChunk(ctx, stmts, bindings, Config{Check: body.Config{Registry: standard.Registry()}, Stats: stats})
-	if !errors.Is(err, context.Canceled) || len(artifact.Bodies()) != 0 || stats.Body.StaticChunkPrepares != 0 || stats.EvaluatedShadowRootsProduced != 0 {
-		t.Fatalf("canceled evaluated run = bodies:%d prepares:%d roots:%d err:%v",
-			len(artifact.Bodies()), stats.Body.StaticChunkPrepares, stats.EvaluatedShadowRootsProduced, err)
+	if !errors.Is(err, context.Canceled) || len(artifact.Bodies()) != 0 || stats.Body.StaticChunkPrepares != 0 ||
+		stats.EvaluatedShadowRootsProduced != 0 || stats.EvaluatedObserverProgramPublications != 0 {
+		t.Fatalf("canceled evaluated run = bodies:%d prepares:%d roots:%d publications:%d err:%v",
+			len(artifact.Bodies()), stats.Body.StaticChunkPrepares, stats.EvaluatedShadowRootsProduced,
+			stats.EvaluatedObserverProgramPublications, err)
 	}
 
 	unsupported := parseChunk(t, `
@@ -113,9 +175,11 @@ return leaf("value")
 	artifact, err = runEvaluatedBoundChunk(context.Background(), unsupported, unsupportedBindings, Config{
 		Check: body.Config{Registry: standard.Registry()}, Stats: unsupportedStats,
 	})
-	if err == nil || len(artifact.Bodies()) != 0 || unsupportedStats.EvaluatedShadowRootsProduced != 0 {
-		t.Fatalf("unsupported evaluated run published artifact: bodies=%d roots=%d err=%v",
-			len(artifact.Bodies()), unsupportedStats.EvaluatedShadowRootsProduced, err)
+	if err == nil || len(artifact.Bodies()) != 0 || unsupportedStats.EvaluatedShadowRootsProduced != 0 ||
+		unsupportedStats.EvaluatedObserverProgramPublications != 0 {
+		t.Fatalf("unsupported evaluated run published artifact: bodies=%d roots=%d publications=%d err=%v",
+			len(artifact.Bodies()), unsupportedStats.EvaluatedShadowRootsProduced,
+			unsupportedStats.EvaluatedObserverProgramPublications, err)
 	}
 }
 

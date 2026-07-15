@@ -37,6 +37,14 @@ func emptyEffectRebaseLayout() effectRebaseLayout {
 // scalar/path dependencies are validated and rebased in one TermRebaseDAGs
 // transaction before any destination EffectTerm is interned.
 func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, effects []EffectTerm) (EffectRebaseOutput, error) {
+	return rebaseEffectDAGs(caller, callee, bindings, effects, false)
+}
+
+func rebaseDirectCallEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, effects []EffectTerm) (EffectRebaseOutput, error) {
+	return rebaseEffectDAGs(caller, callee, bindings, effects, true)
+}
+
+func rebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, effects []EffectTerm, directCall bool) (EffectRebaseOutput, error) {
 	if caller == nil || callee == nil || caller.terms == nil || callee.terms == nil {
 		return EffectRebaseOutput{}, fmt.Errorf("transformer: effect rebasing requires two effect arenas")
 	}
@@ -70,7 +78,13 @@ func RebaseEffectDAGs(caller, callee *EffectArena, bindings TermRootBindings, ef
 		}
 		layouts[i] = layout
 	}
-	rebased, err := RebaseTermDAGs(caller.terms, callee.terms, bindings, input)
+	var rebased TermRebaseOutput
+	var err error
+	if directCall {
+		rebased, err = rebaseDirectCallTermDAGs(caller.terms, callee.terms, bindings, input)
+	} else {
+		rebased, err = RebaseTermDAGs(caller.terms, callee.terms, bindings, input)
+	}
 	if err != nil {
 		return EffectRebaseOutput{}, err
 	}
