@@ -2,6 +2,7 @@ package typeprojection
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/lua/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/projection"
@@ -68,8 +69,8 @@ func Apply(source typ.Type, p projection.Projection) (typ.Type, bool) {
 func ApplySegments(source typ.Type, segments []segment.Segment) (typ.Type, bool) {
 	current := source
 	for _, seg := range segments {
-		next, ok := readSegmentType(current, seg, 0)
-		if !ok {
+		next, ok, productive := readSegmentTypeSeen(current, seg, &typegraph.Path{})
+		if !ok || !productive {
 			return nil, false
 		}
 		current = next
@@ -77,22 +78,48 @@ func ApplySegments(source typ.Type, segments []segment.Segment) (typ.Type, bool)
 	return current, current != nil
 }
 
-func readSegmentType(current typ.Type, seg segment.Segment, depth int) (typ.Type, bool) {
-	if current == nil || depth > typ.DefaultRecursionDepth {
-		return nil, false
+func readSegmentTypeSeen(current typ.Type, seg segment.Segment, active *typegraph.Path) (typ.Type, bool, bool) {
+	if current == nil {
+		return nil, false, true
 	}
-	if optional, ok := unwrap.Annotated(current).(*typ.Optional); ok {
-		projected, ok := readSegmentType(optional.Inner, seg, depth+1)
-		if !ok {
-			return typ.Nil, true
+	current = unwrap.Annotated(current)
+	if !active.Enter(current, 0) {
+		return nil, true, false
+	}
+	defer active.Leave(current, 0)
+	if alias, ok := current.(*typ.Alias); ok {
+		return readSegmentTypeSeen(alias.UnaliasedTarget(), seg, active)
+	}
+	if rec, ok := current.(*typ.Recursive); ok {
+		if rec.Body == nil || rec.Body == current {
+			return nil, true, false
 		}
-		return normalize.UnionForEvidence(projected, typ.Nil), true
+		return readSegmentTypeSeen(rec.Body, seg, active)
 	}
-	if union, ok := unwrap.Annotated(current).(*typ.Union); ok {
+	if inst, ok := current.(*typ.Instantiated); ok {
+		expanded := subst.ExpandInstantiated(inst)
+		if expanded == nil || expanded == current {
+			return nil, true, false
+		}
+		return readSegmentTypeSeen(expanded, seg, active)
+	}
+	if optional, ok := current.(*typ.Optional); ok {
+		projected, ok, productive := readSegmentTypeSeen(optional.Inner, seg, active)
+		if !ok || !productive {
+			return typ.Nil, true, true
+		}
+		return normalize.UnionForEvidence(projected, typ.Nil), true, true
+	}
+	if union, ok := current.(*typ.Union); ok {
 		members := make([]typ.Type, 0, len(union.Members)+1)
 		missing := false
+		productive := false
 		for _, member := range union.Members {
-			projected, ok := readSegmentType(member, seg, depth+1)
+			projected, ok, memberProductive := readSegmentTypeSeen(member, seg, active)
+			if !memberProductive {
+				continue
+			}
+			productive = true
 			if !ok {
 				missing = true
 				continue
@@ -100,20 +127,22 @@ func readSegmentType(current typ.Type, seg segment.Segment, depth int) (typ.Type
 			members = append(members, projected)
 		}
 		if len(members) == 0 {
-			return nil, false
+			return nil, false, productive
 		}
 		if missing {
 			members = append(members, typ.Nil)
 		}
-		return normalize.UnionForEvidence(members...), true
+		return normalize.UnionForEvidence(members...), true, true
 	}
 	switch seg.Kind {
 	case segment.SegmentField, segment.SegmentIndexString:
-		return access.Field(current, seg.Name)
+		result, ok := access.Field(current, seg.Name)
+		return result, ok, true
 	case segment.SegmentIndexInt:
-		return access.RuntimeIndex(current, typ.LiteralInt(int64(seg.Index)))
+		result, ok := access.RuntimeIndex(current, typ.LiteralInt(int64(seg.Index)))
+		return result, ok, true
 	default:
-		return nil, false
+		return nil, false, true
 	}
 }
 
@@ -124,7 +153,7 @@ func readSegmentType(current typ.Type, seg segment.Segment, depth int) (typ.Type
 func ApplyWriteSegments(source typ.Type, segments []segment.Segment) (typ.Type, bool) {
 	current := source
 	for _, seg := range segments {
-		next, ok := writeSegmentType(current, seg, 0)
+		next, ok := writeSegmentTypeSeen(current, seg, &typegraph.Path{})
 		if !ok {
 			return nil, false
 		}
@@ -133,17 +162,35 @@ func ApplyWriteSegments(source typ.Type, segments []segment.Segment) (typ.Type, 
 	return current, current != nil
 }
 
-func writeSegmentType(source typ.Type, seg segment.Segment, depth int) (typ.Type, bool) {
-	if source == nil || depth > typ.DefaultRecursionDepth {
+func writeSegmentTypeSeen(source typ.Type, seg segment.Segment, active *typegraph.Path) (typ.Type, bool) {
+	if source == nil {
 		return nil, false
 	}
-	switch t := unwrap.Annotated(source).(type) {
+	source = unwrap.Annotated(source)
+	if !active.Enter(source, 0) {
+		return nil, false
+	}
+	defer active.Leave(source, 0)
+	switch t := source.(type) {
+	case *typ.Alias:
+		return writeSegmentTypeSeen(t.UnaliasedTarget(), seg, active)
+	case *typ.Recursive:
+		if t.Body == nil || t.Body == source {
+			return nil, false
+		}
+		return writeSegmentTypeSeen(t.Body, seg, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(t)
+		if expanded == nil || expanded == source {
+			return nil, false
+		}
+		return writeSegmentTypeSeen(expanded, seg, active)
 	case *typ.Optional:
-		return writeSegmentType(t.Inner, seg, depth+1)
+		return writeSegmentTypeSeen(t.Inner, seg, active)
 	case *typ.Union:
 		var members []typ.Type
 		for _, member := range t.Members {
-			next, ok := writeSegmentType(member, seg, depth+1)
+			next, ok := writeSegmentTypeSeen(member, seg, active)
 			if ok {
 				members = append(members, next)
 			}
@@ -152,7 +199,7 @@ func writeSegmentType(source typ.Type, seg segment.Segment, depth int) (typ.Type
 	case *typ.Intersection:
 		var members []typ.Type
 		for _, member := range t.Members {
-			next, ok := writeSegmentType(member, seg, depth+1)
+			next, ok := writeSegmentTypeSeen(member, seg, active)
 			if ok {
 				members = append(members, next)
 			}
@@ -216,38 +263,41 @@ func PresentConstructorRoot(declared typ.Type) typ.Type {
 // such as array/map slots, but preserves declared nilability on record members:
 // `{ nest = nil }` is valid when the field type is `Node?`.
 func ExpectedConstructorEntryType(source typ.Type, segments []segment.Segment) (typ.Type, bool) {
-	return expectedConstructorEntryType(source, segments, 0)
+	return expectedConstructorEntryTypeSeen(source, segments, &typegraph.Path{})
 }
 
-func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, depth int) (typ.Type, bool) {
-	if depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
+func expectedConstructorEntryTypeSeen(source typ.Type, segments []segment.Segment, active *typegraph.Path) (typ.Type, bool) {
 	if len(segments) == 0 {
 		return source, source != nil
 	}
 	current := PresentConstructorRoot(source)
-	current = unwrap.Alias(current)
+	current = unwrap.Annotated(current)
+	if current == nil || !active.Enter(current, len(segments)) {
+		return nil, false
+	}
+	defer active.Leave(current, len(segments))
 	seg := segments[0]
 	leaf := len(segments) == 1
 
 	switch t := current.(type) {
+	case *typ.Alias:
+		return expectedConstructorEntryTypeSeen(t.UnaliasedTarget(), segments, active)
 	case *typ.TypeParam:
 		if t.Constraint == nil || t.Constraint == source {
 			return nil, false
 		}
-		return expectedConstructorEntryType(t.Constraint, segments, depth+1)
+		return expectedConstructorEntryTypeSeen(t.Constraint, segments, active)
 	case *typ.Recursive:
 		if t.Body == nil || t.Body == source {
 			return nil, false
 		}
-		return expectedConstructorEntryType(t.Body, segments, depth+1)
+		return expectedConstructorEntryTypeSeen(t.Body, segments, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(t)
 		if expanded == nil || expanded == source {
 			return nil, false
 		}
-		return expectedConstructorEntryType(expanded, segments, depth+1)
+		return expectedConstructorEntryTypeSeen(expanded, segments, active)
 	case *typ.Record:
 		next, ok := constructorRecordSegment(t, seg)
 		if !ok {
@@ -256,7 +306,7 @@ func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, d
 		if !leaf {
 			next = PresentConstructorRoot(next)
 		}
-		return expectedConstructorEntryType(next, segments[1:], depth+1)
+		return expectedConstructorEntryTypeSeen(next, segments[1:], active)
 	case *typ.Array:
 		if seg.Kind != segment.SegmentIndexInt {
 			return nil, false
@@ -268,7 +318,7 @@ func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, d
 		if !leaf {
 			next = PresentConstructorRoot(next)
 		}
-		return expectedConstructorEntryType(next, segments[1:], depth+1)
+		return expectedConstructorEntryTypeSeen(next, segments[1:], active)
 	case *typ.Map:
 		next, ok := constructorMapSegment(t.Key, t.Value, seg)
 		if !ok {
@@ -277,7 +327,7 @@ func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, d
 		if !leaf {
 			next = PresentConstructorRoot(next)
 		}
-		return expectedConstructorEntryType(next, segments[1:], depth+1)
+		return expectedConstructorEntryTypeSeen(next, segments[1:], active)
 	case *typ.ReadonlyMap:
 		next, ok := constructorMapSegment(t.Key, t.Value, seg)
 		if !ok {
@@ -286,7 +336,7 @@ func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, d
 		if !leaf {
 			next = PresentConstructorRoot(next)
 		}
-		return expectedConstructorEntryType(next, segments[1:], depth+1)
+		return expectedConstructorEntryTypeSeen(next, segments[1:], active)
 	case *typ.Tuple:
 		if seg.Kind != segment.SegmentIndexInt || seg.Index <= 0 || seg.Index > len(t.Elements) {
 			return nil, false
@@ -298,9 +348,9 @@ func expectedConstructorEntryType(source typ.Type, segments []segment.Segment, d
 		if !leaf {
 			next = PresentConstructorRoot(next)
 		}
-		return expectedConstructorEntryType(next, segments[1:], depth+1)
+		return expectedConstructorEntryTypeSeen(next, segments[1:], active)
 	case *typ.Union:
-		return constructorUnionEntryType(t, segments, depth+1)
+		return constructorUnionEntryTypeSeen(t, segments, active)
 	default:
 		return nil, false
 	}
@@ -351,13 +401,13 @@ func constructorMapSegment(keyDomain typ.Type, value typ.Type, seg segment.Segme
 	return value, true
 }
 
-func constructorUnionEntryType(u *typ.Union, segments []segment.Segment, depth int) (typ.Type, bool) {
+func constructorUnionEntryTypeSeen(u *typ.Union, segments []segment.Segment, active *typegraph.Path) (typ.Type, bool) {
 	if u == nil || len(u.Members) == 0 {
 		return nil, false
 	}
 	members := make([]typ.Type, 0, len(u.Members))
 	for _, member := range u.Members {
-		next, ok := expectedConstructorEntryType(member, segments, depth+1)
+		next, ok := expectedConstructorEntryTypeSeen(member, segments, active)
 		if !ok || next == nil {
 			continue
 		}

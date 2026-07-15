@@ -948,7 +948,7 @@ func (l *lowerer) dynamicIndexReadValueType(inst wir.Instruction, container typ.
 			return projected, true
 		}
 	}
-	valueType, ok := dynamicIndexMapValueType(container, 0)
+	valueType, ok := dynamicIndexMapValueType(container)
 	if !ok {
 		return nil, false
 	}

@@ -3,6 +3,7 @@ package typeprojection
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/lua/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -18,23 +19,23 @@ func ExpectedObjectLiteralRecord(expected typ.Type, fieldType func(name string) 
 // ExpectedObjectLiteralRecordCached resolves the contextual record contract
 // through the caller-owned type query cache.
 func ExpectedObjectLiteralRecordCached(typeValues *typevalue.Cache, expected typ.Type, fieldType func(name string) (typ.Type, bool)) (*typ.Record, bool) {
-	if rec, ok := reachRecord(expected, 0); ok {
+	if rec, ok := reachRecordSeen(expected, &typegraph.Path{}); ok {
 		return rec, true
 	}
-	return selectObjectLiteralUnionArm(typeValues, expected, fieldType, 0)
+	return selectObjectLiteralUnionArmSeen(typeValues, expected, fieldType, &typegraph.Path{})
 }
 
 // ReachesRecord reports whether a type expands to a record contract through
 // alias, recursive, or instantiated wrappers.
 func ReachesRecord(t typ.Type) bool {
-	_, ok := reachRecord(t, 0)
+	_, ok := reachRecordSeen(t, &typegraph.Path{})
 	return ok
 }
 
 // ReachesTableContract reports whether a type expands to a table-like
 // constructor contract through wrappers that preserve construction context.
 func ReachesTableContract(t typ.Type) bool {
-	return reachesTableContract(t, 0)
+	return reachesTableContractSeen(t, &typegraph.Path{})
 }
 
 // ExpectedRecordField returns the declared type of a single-segment member on a
@@ -216,17 +217,37 @@ func AdoptExpectedSegmentTypeCached(typeValues *typevalue.Cache, rec *typ.Record
 	return declared, true
 }
 
-func selectObjectLiteralUnionArm(typeValues *typevalue.Cache, expected typ.Type, fieldType func(name string) (typ.Type, bool), depth int) (*typ.Record, bool) {
-	if expected == nil || depth > typ.DefaultRecursionDepth {
+func selectObjectLiteralUnionArmSeen(typeValues *typevalue.Cache, expected typ.Type, fieldType func(name string) (typ.Type, bool), active *typegraph.Path) (*typ.Record, bool) {
+	if expected == nil {
 		return nil, false
 	}
-	union, ok := unwrap.Annotated(expected).(*typ.Union)
+	expected = unwrap.Annotated(expected)
+	if !active.Enter(expected, 0) {
+		return nil, false
+	}
+	defer active.Leave(expected, 0)
+	switch wrapped := expected.(type) {
+	case *typ.Alias:
+		return selectObjectLiteralUnionArmSeen(typeValues, wrapped.UnaliasedTarget(), fieldType, active)
+	case *typ.Recursive:
+		if wrapped.Body == nil || wrapped.Body == expected {
+			return nil, false
+		}
+		return selectObjectLiteralUnionArmSeen(typeValues, wrapped.Body, fieldType, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(wrapped)
+		if expanded == nil || expanded == expected {
+			return nil, false
+		}
+		return selectObjectLiteralUnionArmSeen(typeValues, expanded, fieldType, active)
+	}
+	union, ok := expected.(*typ.Union)
 	if !ok {
 		return nil, false
 	}
 	var match *typ.Record
 	for _, member := range union.Members {
-		rec, ok := reachRecord(member, depth+1)
+		rec, ok := reachRecordSeen(member, active)
 		if !ok {
 			continue
 		}
@@ -256,56 +277,66 @@ func objectLiteralMatchesDiscriminants(typeValues *typevalue.Cache, rec *typ.Rec
 	return discriminants > 0
 }
 
-func reachRecord(t typ.Type, depth int) (*typ.Record, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func reachRecordSeen(t typ.Type, active *typegraph.Path) (*typ.Record, bool) {
+	if t == nil {
 		return nil, false
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return nil, false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Record:
 		return v, true
 	case *typ.Alias:
-		return reachRecord(v.UnaliasedTarget(), depth+1)
+		return reachRecordSeen(v.UnaliasedTarget(), active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return nil, false
 		}
-		return reachRecord(v.Body, depth+1)
+		return reachRecordSeen(v.Body, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
 		if expanded == nil || expanded == t {
 			return nil, false
 		}
-		return reachRecord(expanded, depth+1)
+		return reachRecordSeen(expanded, active)
 	default:
 		return nil, false
 	}
 }
 
-func reachesTableContract(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func reachesTableContractSeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return false
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
 		return true
 	case *typ.Alias:
-		return reachesTableContract(v.UnaliasedTarget(), depth+1)
+		return reachesTableContractSeen(v.UnaliasedTarget(), active)
 	case *typ.Optional:
-		return reachesTableContract(v.Inner, depth+1)
+		return reachesTableContractSeen(v.Inner, active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false
 		}
-		return reachesTableContract(v.Body, depth+1)
+		return reachesTableContractSeen(v.Body, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
 		if expanded == nil || expanded == t {
 			return false
 		}
-		return reachesTableContract(expanded, depth+1)
+		return reachesTableContractSeen(expanded, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if reachesTableContract(member, depth+1) {
+			if reachesTableContractSeen(member, active) {
 				return true
 			}
 		}

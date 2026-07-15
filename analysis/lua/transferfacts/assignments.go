@@ -4,7 +4,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
@@ -145,23 +147,38 @@ func arrayElementType(t typ.Type) (typ.Type, bool) {
 }
 
 func reachesArray(t typ.Type) bool {
-	return reachesArrayDepth(t, 0)
+	return reachesArraySeen(t, &typegraph.Path{})
 }
 
-func reachesArrayDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func reachesArraySeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return false
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Array:
 		return true
 	case *typ.Alias:
-		return reachesArrayDepth(v.UnaliasedTarget(), depth+1)
+		return reachesArraySeen(v.UnaliasedTarget(), active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false
 		}
-		return reachesArrayDepth(v.Body, depth+1)
+		return reachesArraySeen(v.Body, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && reachesArraySeen(expanded, active)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if reachesArraySeen(member, active) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -176,23 +193,38 @@ func (l *lowerer) declaredReturnLocalContractForSymbol(id symbol.ID) (typ.Type, 
 }
 
 func recordWithCallableField(t typ.Type) bool {
-	return recordWithCallableFieldDepth(t, 0)
+	return recordWithCallableFieldSeen(t, &typegraph.Path{})
 }
 
-func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func recordWithCallableFieldSeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return false
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Alias:
-		return recordWithCallableFieldDepth(v.UnaliasedTarget(), depth+1)
+		return recordWithCallableFieldSeen(v.UnaliasedTarget(), active)
 	case *typ.Optional:
-		return recordWithCallableFieldDepth(v.Inner, depth+1)
+		return recordWithCallableFieldSeen(v.Inner, active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false
 		}
-		return recordWithCallableFieldDepth(v.Body, depth+1)
+		return recordWithCallableFieldSeen(v.Body, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && recordWithCallableFieldSeen(expanded, active)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if recordWithCallableFieldSeen(member, active) {
+				return true
+			}
+		}
+		return false
 	case *typ.Record:
 		for i := range v.Fields {
 			if _, ok := typecall.Callable(v.Fields[i].Type); ok {

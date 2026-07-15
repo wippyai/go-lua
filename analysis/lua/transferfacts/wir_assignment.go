@@ -532,7 +532,7 @@ func (l *lowerer) addDynamicIndexObjectLiteralExpectedTypeFromWIR(input *factflo
 	if !ok {
 		return
 	}
-	expected, ok := dynamicIndexMapValueType(container, 0)
+	expected, ok := dynamicIndexMapValueType(container)
 	if !ok {
 		return
 	}

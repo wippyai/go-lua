@@ -4,9 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/lua/internal/typegraph"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -19,7 +21,7 @@ func (l *lowerer) rootPresenceRefinement(target path.Path, cond bool) (factflow.
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	narrowed, ok := narrowTypeByPathPresence(rootType, target.Segments, 0)
+	narrowed, ok := narrowTypeByPathPresenceSeen(rootType, target.Segments, &typegraph.Path{})
 	if !ok || typ.SameNodeOrAcyclicEqual(rootType, narrowed) {
 		return factflow.BranchRefinement{}, false
 	}
@@ -31,20 +33,36 @@ func (l *lowerer) rootPresenceRefinement(target path.Path, cond bool) (factflow.
 	return factflow.NewBranchRefinement(root, factflow.ValueRefinement{}, false, value, true), true
 }
 
-func narrowTypeByPathPresence(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
+func narrowTypeByPathPresenceSeen(t typ.Type, suffix []segment.Segment, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil || len(suffix) == 0 {
 		return nil, false
 	}
-	switch v := unwrap.Annotated(unwrap.NormalizeNil(t)).(type) {
+	t = unwrap.Annotated(unwrap.NormalizeNil(t))
+	if !active.Enter(t, len(suffix)) {
+		return t, false
+	}
+	defer active.Leave(t, len(suffix))
+	switch v := t.(type) {
 	case *typ.Alias:
-		return narrowTypeByPathPresence(v.UnaliasedTarget(), suffix, depth+1)
+		return narrowTypeByPathPresenceSeen(v.UnaliasedTarget(), suffix, active)
 	case *typ.Optional:
-		return narrowTypeByPathPresence(v.Inner, suffix, depth+1)
+		return narrowTypeByPathPresenceSeen(v.Inner, suffix, active)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return t, false
+		}
+		return narrowTypeByPathPresenceSeen(v.Body, suffix, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		if expanded == nil || expanded == t {
+			return t, false
+		}
+		return narrowTypeByPathPresenceSeen(expanded, suffix, active)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		changed := false
 		for _, member := range v.Members {
-			if pathCanBePresent(member, suffix, depth+1) {
+			if pathCanBePresent(member, suffix) {
 				out = append(out, member)
 				continue
 			}
@@ -58,33 +76,50 @@ func narrowTypeByPathPresence(t typ.Type, suffix []segment.Segment, depth int) (
 		}
 		return normalize.UnionForEvidence(out...), true
 	default:
-		if pathCanBePresent(t, suffix, depth+1) {
+		if pathCanBePresent(t, suffix) {
 			return t, false
 		}
 		return typ.Never, true
 	}
 }
 
-func pathCanBePresent(t typ.Type, suffix []segment.Segment, depth int) bool {
+func pathCanBePresent(t typ.Type, suffix []segment.Segment) bool {
 	projected, ok := luatypeprojection.ApplySegments(t, suffix)
 	if !ok {
 		return false
 	}
-	return typeCanBePresent(projected, depth+1)
+	return typeCanBePresent(projected)
 }
 
-func typeCanBePresent(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func typeCanBePresent(t typ.Type) bool {
+	if t == nil {
 		return true
 	}
-	switch v := unwrap.Annotated(unwrap.NormalizeNil(t)).(type) {
+	return typeCanBePresentSeen(t, &typegraph.Path{})
+}
+
+func typeCanBePresentSeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
+		return false
+	}
+	t = unwrap.Annotated(unwrap.NormalizeNil(t))
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Alias:
-		return typeCanBePresent(v.UnaliasedTarget(), depth+1)
+		return typeCanBePresentSeen(v.UnaliasedTarget(), active)
 	case *typ.Optional:
-		return typeCanBePresent(v.Inner, depth+1)
+		return typeCanBePresentSeen(v.Inner, active)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != t && typeCanBePresentSeen(v.Body, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && typeCanBePresentSeen(expanded, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeCanBePresent(member, depth+1) {
+			if typeCanBePresentSeen(member, active) {
 				return true
 			}
 		}

@@ -6,8 +6,10 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/internal/typegraph"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -140,34 +142,65 @@ func (l *lowerer) wirObjectLiteralExpectedType(inst wir.Instruction) (typ.Type, 
 	return expected, true
 }
 
-func dynamicIndexMapValueType(container typ.Type, depth int) (typ.Type, bool) {
-	if container == nil || depth > typ.DefaultRecursionDepth {
-		return nil, false
+func dynamicIndexMapValueType(container typ.Type) (typ.Type, bool) {
+	value, ok, productive := dynamicIndexMapValueTypeSeen(container, &typegraph.Path{})
+	return value, ok && productive
+}
+
+func dynamicIndexMapValueTypeSeen(container typ.Type, active *typegraph.Path) (typ.Type, bool, bool) {
+	if container == nil {
+		return nil, false, true
 	}
-	switch t := unwrap.Alias(container).(type) {
+	container = unwrap.Annotated(container)
+	if !active.Enter(container, 0) {
+		return nil, true, false
+	}
+	defer active.Leave(container, 0)
+	switch t := container.(type) {
+	case *typ.Alias:
+		return dynamicIndexMapValueTypeSeen(t.UnaliasedTarget(), active)
+	case *typ.Recursive:
+		if t.Body == nil || t.Body == container {
+			return nil, true, false
+		}
+		return dynamicIndexMapValueTypeSeen(t.Body, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(t)
+		if expanded == nil || expanded == container {
+			return nil, true, false
+		}
+		return dynamicIndexMapValueTypeSeen(expanded, active)
 	case *typ.Optional:
-		return dynamicIndexMapValueType(t.Inner, depth+1)
+		return dynamicIndexMapValueTypeSeen(t.Inner, active)
 	case *typ.Map:
-		return t.Value, t.Value != nil
+		return t.Value, t.Value != nil, true
 	case *typ.ReadonlyMap:
-		return t.Value, t.Value != nil
+		return t.Value, t.Value != nil, true
 	case *typ.Record:
 		if t.HasMapComponent() {
-			return t.MapValue, t.MapValue != nil
+			return t.MapValue, t.MapValue != nil, true
 		}
-		return nil, false
+		return nil, false, true
 	case *typ.Union:
 		values := make([]typ.Type, 0, len(t.Members))
+		productive := false
 		for _, member := range t.Members {
-			value, ok := dynamicIndexMapValueType(member, depth+1)
+			value, ok, memberProductive := dynamicIndexMapValueTypeSeen(member, active)
+			if !memberProductive {
+				continue
+			}
+			productive = true
 			if !ok {
-				return nil, false
+				return nil, false, true
 			}
 			values = append(values, value)
 		}
-		return normalize.UnionForEvidence(values...), len(values) != 0
+		if !productive {
+			return nil, true, false
+		}
+		return normalize.UnionForEvidence(values...), len(values) != 0, true
 	default:
-		return nil, false
+		return nil, false, true
 	}
 }
 

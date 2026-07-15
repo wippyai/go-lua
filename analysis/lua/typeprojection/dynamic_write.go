@@ -2,6 +2,7 @@ package typeprojection
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/lua/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -14,27 +15,46 @@ import (
 // closed record without a map component, a broad key may hit any declared slot,
 // so the admissible value must satisfy the meet of every possible slot type.
 func DynamicWriteValueType(t typ.Type, key typ.Type) (typ.Type, bool) {
-	return dynamicWriteValueType(t, key, 0)
+	return dynamicWriteValueTypeSeen(t, key, &typegraph.Path{})
 }
 
 // DynamicWriteNilDeletionAllowed reports whether assigning nil through a
 // dynamic index is a deletion operation for every possible matching slot.
 func DynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type) bool {
-	allowed, ok := dynamicWriteNilDeletionAllowed(t, key, 0)
+	allowed, ok := dynamicWriteNilDeletionAllowedSeen(t, key, &typegraph.Path{})
 	return ok && allowed
 }
 
-func dynamicWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func dynamicWriteValueTypeSeen(t typ.Type, key typ.Type, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil {
 		return nil, false
 	}
-	switch tt := transparentWriteType(t).(type) {
+	if !active.Enter(t, 0) {
+		return nil, false
+	}
+	defer active.Leave(t, 0)
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return dynamicWriteValueTypeSeen(tt.Inner, key, active)
+	case *typ.Alias:
+		return dynamicWriteValueTypeSeen(tt.UnaliasedTarget(), key, active)
+	case *typ.Recursive:
+		if tt.Body == nil || tt.Body == t {
+			return nil, false
+		}
+		return dynamicWriteValueTypeSeen(tt.Body, key, active)
+	case *typ.Instantiated:
+		next := shallowExpandWriteInstantiated(tt)
+		if next == nil || next == t {
+			return nil, false
+		}
+		return dynamicWriteValueTypeSeen(next, key, active)
 	case *typ.Optional:
-		return dynamicWriteValueType(tt.Inner, key, depth+1)
+		return dynamicWriteValueTypeSeen(tt.Inner, key, active)
 	case *typ.Union:
 		var members []typ.Type
 		for _, member := range tt.Members {
-			value, ok := dynamicWriteValueType(member, key, depth+1)
+			value, ok := dynamicWriteValueTypeSeen(member, key, active)
 			if ok {
 				members = append(members, value)
 			}
@@ -43,7 +63,7 @@ func dynamicWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool)
 	case *typ.Intersection:
 		var members []typ.Type
 		for _, member := range tt.Members {
-			value, ok := dynamicWriteValueType(member, key, depth+1)
+			value, ok := dynamicWriteValueTypeSeen(member, key, active)
 			if ok {
 				members = append(members, value)
 			}
@@ -53,7 +73,7 @@ func dynamicWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool)
 		if tt.HasMapComponent() && tt.MapValue != nil {
 			return tt.MapValue, true
 		}
-		return closedRecordDynamicWriteValueType(tt, key, depth+1)
+		return closedRecordDynamicWriteValueTypeSeen(tt, key, &typegraph.Path{})
 	case *typ.Map:
 		if tt.Value != nil {
 			return tt.Value, true
@@ -70,17 +90,36 @@ func dynamicWriteValueType(t typ.Type, key typ.Type, depth int) (typ.Type, bool)
 	return nil, false
 }
 
-func dynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type, depth int) (bool, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func dynamicWriteNilDeletionAllowedSeen(t typ.Type, key typ.Type, active *typegraph.Path) (bool, bool) {
+	if t == nil {
 		return false, false
 	}
-	switch tt := transparentWriteType(t).(type) {
+	if !active.Enter(t, 0) {
+		return false, false
+	}
+	defer active.Leave(t, 0)
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return dynamicWriteNilDeletionAllowedSeen(tt.Inner, key, active)
+	case *typ.Alias:
+		return dynamicWriteNilDeletionAllowedSeen(tt.UnaliasedTarget(), key, active)
+	case *typ.Recursive:
+		if tt.Body == nil || tt.Body == t {
+			return false, false
+		}
+		return dynamicWriteNilDeletionAllowedSeen(tt.Body, key, active)
+	case *typ.Instantiated:
+		next := shallowExpandWriteInstantiated(tt)
+		if next == nil || next == t {
+			return false, false
+		}
+		return dynamicWriteNilDeletionAllowedSeen(next, key, active)
 	case *typ.Optional:
-		return dynamicWriteNilDeletionAllowed(tt.Inner, key, depth+1)
+		return dynamicWriteNilDeletionAllowedSeen(tt.Inner, key, active)
 	case *typ.Union:
 		saw := false
 		for _, member := range tt.Members {
-			allowed, ok := dynamicWriteNilDeletionAllowed(member, key, depth+1)
+			allowed, ok := dynamicWriteNilDeletionAllowedSeen(member, key, active)
 			if !ok {
 				continue
 			}
@@ -93,7 +132,7 @@ func dynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type, depth int) (bool, 
 	case *typ.Intersection:
 		saw := false
 		for _, member := range tt.Members {
-			allowed, ok := dynamicWriteNilDeletionAllowed(member, key, depth+1)
+			allowed, ok := dynamicWriteNilDeletionAllowedSeen(member, key, active)
 			if !ok {
 				continue
 			}
@@ -107,7 +146,7 @@ func dynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type, depth int) (bool, 
 		if tt.HasMapComponent() && tt.MapValue != nil {
 			return true, true
 		}
-		value, ok := closedRecordDynamicWriteValueType(tt, key, depth+1)
+		value, ok := closedRecordDynamicWriteValueTypeSeen(tt, key, &typegraph.Path{})
 		return ok && typevalue.TypeIncludesNil(value), ok
 	case *typ.Map:
 		return tt.Value != nil, tt.Value != nil
@@ -119,23 +158,39 @@ func dynamicWriteNilDeletionAllowed(t typ.Type, key typ.Type, depth int) (bool, 
 	return false, false
 }
 
-func closedRecordDynamicWriteValueType(record *typ.Record, key typ.Type, depth int) (typ.Type, bool) {
+func closedRecordDynamicWriteValueTypeSeen(record *typ.Record, key typ.Type, active *typegraph.Path) (typ.Type, bool) {
 	if record == nil || record.Open || (len(record.Fields) == 0 && len(record.StaticMembers) == 0) {
 		return nil, false
 	}
 	if key == nil || typ.IsAny(key) || typ.IsUnknown(key) {
 		return allClosedRecordDynamicWriteTypes(record)
 	}
-	if depth > typ.DefaultRecursionDepth {
+	if !active.Enter(key, 0) {
 		return nil, false
 	}
-	switch kk := transparentWriteType(key).(type) {
+	defer active.Leave(key, 0)
+	switch kk := key.(type) {
+	case *typ.Annotated:
+		return closedRecordDynamicWriteValueTypeSeen(record, kk.Inner, active)
+	case *typ.Alias:
+		return closedRecordDynamicWriteValueTypeSeen(record, kk.UnaliasedTarget(), active)
+	case *typ.Recursive:
+		if kk.Body == nil || kk.Body == key {
+			return nil, false
+		}
+		return closedRecordDynamicWriteValueTypeSeen(record, kk.Body, active)
+	case *typ.Instantiated:
+		next := shallowExpandWriteInstantiated(kk)
+		if next == nil || next == key {
+			return nil, false
+		}
+		return closedRecordDynamicWriteValueTypeSeen(record, next, active)
 	case *typ.Optional:
-		return closedRecordDynamicWriteValueType(record, kk.Inner, depth+1)
+		return closedRecordDynamicWriteValueTypeSeen(record, kk.Inner, active)
 	case *typ.Union:
 		var members []typ.Type
 		for _, member := range kk.Members {
-			value, ok := closedRecordDynamicWriteValueType(record, member, depth+1)
+			value, ok := closedRecordDynamicWriteValueTypeSeen(record, member, active)
 			if ok {
 				members = append(members, value)
 			}
@@ -247,38 +302,6 @@ func dynamicWriteMeet(members []typ.Type) (typ.Type, bool) {
 		return members[0], members[0] != nil
 	}
 	return normalize.IntersectionForMeet(members...), true
-}
-
-func transparentWriteType(t typ.Type) typ.Type {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
-		switch tt := t.(type) {
-		case *typ.Annotated:
-			if tt.Inner == nil || tt.Inner == t {
-				return typ.Unknown
-			}
-			t = tt.Inner
-		case *typ.Alias:
-			next := tt.UnaliasedTarget()
-			if next == nil || next == t {
-				return next
-			}
-			t = next
-		case *typ.Recursive:
-			if tt.Body == nil || tt.Body == t {
-				return t
-			}
-			t = tt.Body
-		case *typ.Instantiated:
-			next := shallowExpandWriteInstantiated(tt)
-			if next == nil || next == t {
-				return t
-			}
-			t = next
-		default:
-			return t
-		}
-	}
-	return t
 }
 
 func shallowExpandWriteInstantiated(inst *typ.Instantiated) typ.Type {
