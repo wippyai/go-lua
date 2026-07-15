@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -100,6 +101,25 @@ func BuildBoundaryRootClosure(reg *axis.Registry, keys *keyspace.KeySpace, sourc
 				}
 			}
 		}
+		addStateKey := func(raw interface{ String() string }) keyspace.Key {
+			path, ok := keys.FromStateKey(pathdom.PathKey(raw.String()))
+			if !ok {
+				return keyspace.Key{}
+			}
+			return path
+		}
+		connect := func(paths ...keyspace.Key) bool {
+			touches := false
+			for _, path := range paths {
+				touches = touches || closure.pathTouches(keys, path)
+			}
+			if touches {
+				for _, path := range paths {
+					addPath(path)
+				}
+			}
+			return touches
+		}
 
 		source.ForEachPathRefinement(func(path keyspace.Key, value product.Value) bool {
 			if closure.pathTouches(keys, path) {
@@ -137,6 +157,86 @@ func BuildBoundaryRootClosure(reg *axis.Registry, keys *keyspace.KeySpace, sourc
 			}
 			return true
 		})
+		if !source.dynamicIndex.top {
+			for factKey, fact := range source.dynamicIndex.values {
+				if connect(factKey.Table) {
+					addValue(fact.KeyValue)
+					addValue(fact.Value)
+				}
+			}
+		}
+		if !source.effectDeltas.top {
+			for effectKey, effect := range source.effectDeltas.values {
+				if connect(effectKey.Target) {
+					addValue(effect.Before)
+					addValue(effect.After)
+				}
+			}
+		}
+		if !source.lenFloors.lane.Bottom() {
+			for path := range source.lenFloors.lane.Values() {
+				connect(path)
+			}
+		}
+		for _, bounds := range []numBoundLane{source.numFloors, source.numCeils} {
+			if !bounds.lane.Bottom() {
+				for path := range bounds.lane.Values() {
+					connect(path)
+				}
+			}
+		}
+		if !source.diffRelations.bottom {
+			for relation := range source.diffRelations.values {
+				paths := []keyspace.Key{addStateKey(relation.A.Key), addStateKey(relation.C.Key)}
+				if relation.B.valid() {
+					paths = append(paths, addStateKey(relation.B.Key))
+				}
+				connect(paths...)
+			}
+		}
+		if !source.storeRelations.bottom {
+			for relation := range source.storeRelations.values {
+				connect(addStateKey(relation.Source), addStateKey(relation.Into))
+			}
+		}
+		if !source.keyMemberships.bottom {
+			for membership := range source.keyMemberships.path {
+				connect(addStateKey(membership.Key), addStateKey(membership.Table))
+			}
+			for membership := range source.keyMemberships.dynamic {
+				connect(membership.Container, addStateKey(membership.Table))
+			}
+			for membership := range source.keyMemberships.dynamicAll {
+				connect(membership.Container, addStateKey(membership.Table))
+			}
+			for origin := range source.keyMemberships.valueOrigins {
+				connect(addStateKey(origin.Value), origin.Container)
+			}
+			for origin := range source.keyMemberships.readOrigins {
+				connect(addStateKey(origin.Value), origin.Container, addStateKey(origin.Key))
+			}
+			for restore := range source.keyMemberships.pendingRestores {
+				connect(restore.Container, addStateKey(restore.Table), addStateKey(restore.Key))
+			}
+		}
+		for _, resource := range source.typestates.Resources() {
+			if path, ok := keys.FromStateKey(pathdom.PathKey(resource.ID.String())); ok {
+				connect(path)
+			}
+		}
+		for _, fact := range source.escapeEvents.Snapshot().Facts {
+			connect(addStateKey(fact.Target))
+		}
+		for _, fact := range source.channelSelect.Snapshot().Facts {
+			if connect(addStateKey(fact.Result), addStateKey(fact.Case)) && fact.HasPayload {
+				addValue(fact.Payload)
+			}
+		}
+		if !source.userLattices.top {
+			for userKey := range source.userLattices.values {
+				connect(userKey.path)
+			}
+		}
 		if !source.heapTableIdentity.top {
 			for id := range closure.identities {
 				object, ok := source.heapTableIdentity.values[id]

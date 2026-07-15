@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -91,6 +92,32 @@ func TestRebaseBoundaryPathRejectsAmbiguousRootSubstitution(t *testing.T) {
 	}
 }
 
+func TestBoundaryRootClosureFollowsRelationalAndStoreOperands(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	firstPath := pathdom.Path{Symbol: 81, Version: 1}
+	secondPath := pathdom.Path{Symbol: 82, Version: 1}
+	thirdPath := pathdom.Path{Symbol: 83, Version: 1}
+	first := keys.FromPath(firstPath)
+	second := keys.FromPath(secondPath)
+	third := keys.FromPath(thirdPath)
+	firstState := mustBoundaryAddress(t, keys.FormatReadOnly(first))
+	secondState := mustBoundaryAddress(t, keys.FormatReadOnly(second))
+	thirdState := mustBoundaryAddress(t, keys.FormatReadOnly(third))
+	world := Domain(reg).Bottom().
+		WriteDiffConstraint(RelValueOperand(firstState), RelValueOperand(secondState), 0).
+		AddStoreRelation(StoreRelation{Source: secondState, Into: thirdState})
+	closure, err := BuildBoundaryRootClosure(reg, keys, world, BoundaryRoots{{Path: first}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []keyspace.Key{first, second, third} {
+		if !closure.ContainsPath(path) {
+			t.Fatalf("closure omitted connected lane operand %q", keys.FormatReadOnly(path))
+		}
+	}
+}
+
 func TestRebaseBoundaryPathUsesLongestRootAndPreservesAliasTargets(t *testing.T) {
 	from, to := keyspace.New(), keyspace.New()
 	formal := pathdom.Path{Symbol: symbol.ID(51), Version: 1}
@@ -124,4 +151,13 @@ func TestRebaseBoundaryIdentityFailsClosedWithoutAtomicMapping(t *testing.T) {
 	if got, ok := RebaseBoundaryIdentity(nil, template); ok || got != (identity.ID{}) {
 		t.Fatalf("unmapped identity = %v/%v, want zero/false", got, ok)
 	}
+}
+
+func mustBoundaryAddress(t *testing.T, path pathdom.PathKey) pathaddr.StateKey {
+	t.Helper()
+	key, ok := pathaddr.StateKeyFromPathKey(path)
+	if !ok {
+		t.Fatalf("StateKeyFromPathKey(%q)", path)
+	}
+	return key
 }
