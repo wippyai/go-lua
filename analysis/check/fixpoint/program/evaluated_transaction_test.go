@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -78,8 +77,8 @@ first(); second(); third()
 	legacySummaries := make(map[lexicalidentity.StableLexicalBodyID]summary.Summary)
 	collectLegacyEvaluatedSummaries(t, legacy.RootResult(), legacySummaries)
 	for _, bodyID := range first.Bodies() {
-		root, ok := first.Root(bodyID)
-		if !ok || !root.Coverage().Complete() {
+		root, ok, err := first.Root(context.Background(), reg, bodyID)
+		if err != nil || !ok || !root.Coverage().Complete() {
 			t.Fatalf("body %x has no complete evaluated root", bodyID)
 		}
 		want, ok := legacySummaries[bodyID]
@@ -211,7 +210,10 @@ return result
 	collectLegacyEvaluatedSummaries(t, legacy.RootResult(), legacySummaries)
 	callProducerBoundaries := 0
 	for _, bodyID := range artifact.Bodies() {
-		root, _ := artifact.Root(bodyID)
+		root, _, err := artifact.Root(context.Background(), reg, bodyID)
+		if err != nil {
+			t.Fatal(err)
+		}
 		want := legacySummaries[bodyID]
 		if !summary.Equal(reg, root.Summary(), want) {
 			t.Fatalf("body %x summary differs from concrete oracle\nevaluated: %#v\nconcrete:  %#v", bodyID, root.Summary(), want)
@@ -345,12 +347,13 @@ return caller(second("value"))
 	})
 }
 
-func TestEvaluatedProgramRejectsStringLaneWithoutArtifactRetentionProof(t *testing.T) {
+func TestEvaluatedProgramSealsStringLaneThroughCanonicalArtifact(t *testing.T) {
 	stmts := parseChunk(t, `local function leaf() return "value" end local value = leaf(); return value`)
 	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
 	var catalog relationRunCatalog
 	_, err := RunBoundChunk(stmts, bindings, Config{
-		Check: body.Config{Registry: standard.Registry()}, forceLegacyRelations: true,
+		Check: body.Config{Registry: reg}, forceLegacyRelations: true,
 		relationCatalogAudit: func(got relationRunCatalog) error { catalog = got; return nil },
 	})
 	if err != nil {
@@ -362,11 +365,17 @@ func TestEvaluatedProgramRejectsStringLaneWithoutArtifactRetentionProof(t *testi
 	}
 	stats := &Stats{}
 	artifact, err := solveEvaluatedProgram(context.Background(), catalog, boundary, stats)
-	if err == nil || !strings.Contains(err.Error(), "populated lane has no artifact-retention proof") {
-		t.Fatalf("string-retention transaction error = %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(artifact.Bodies()) != 0 || stats.EvaluatedShadowRootsProduced != 0 {
-		t.Fatal("string-retention rejection returned a partial artifact")
+	if len(artifact.Bodies()) != len(catalog.entries) || stats.EvaluatedShadowRootsProduced != len(catalog.entries) {
+		t.Fatalf("string artifact bodies/roots = %d/%d, want %d", len(artifact.Bodies()), stats.EvaluatedShadowRootsProduced, len(catalog.entries))
+	}
+	for _, bodyID := range artifact.Bodies() {
+		root, ok, err := artifact.Root(context.Background(), reg, bodyID)
+		if err != nil || !ok || !root.Coverage().Complete() {
+			t.Fatalf("body %x string artifact materialization = ok:%v coverage:%#v err:%v", bodyID, ok, root.Coverage(), err)
+		}
 	}
 }
 

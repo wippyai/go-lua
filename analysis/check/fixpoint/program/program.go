@@ -114,6 +114,17 @@ type Stats struct {
 	// EvaluatedShadowRootsProduced counts complete neutral roots. They are not
 	// authoritative or published until canonical identities are installed.
 	EvaluatedShadowRootsProduced int
+	// EvaluatedRelationCompilerPrepares counts transformer compiler preparation
+	// attempts made by the dedicated total evaluated-catalog builder.
+	EvaluatedRelationCompilerPrepares int
+	// EvaluatedRelationEquationApplications counts actual relation equation
+	// evaluator invocations in the total evaluated transaction. It is distinct
+	// from body solves: an evaluated equation applies a prepared symbolic
+	// program and must never enter body.SolvePrepared.
+	EvaluatedRelationEquationApplications int
+	// EvaluatedRootProjections counts actual sparse-root projection attempts.
+	// Roots remain transaction-local until every projection succeeds.
+	EvaluatedRootProjections int
 
 	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
 }

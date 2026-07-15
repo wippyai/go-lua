@@ -447,6 +447,24 @@ summaries and guarded diagnostic evidence are projected once from stabilized
 evaluated roots. Dense path keys remain structural until evaluated-root
 specialization.
 
+Production publication is rooted at the program entry, not at one
+declared-contract root per lexical body. The stabilized transaction owns a
+structurally shared observer forest whose nodes bind `{callee cell, call
+occurrence, guard, complete boundary environment}`. Reachable diagnostic
+instances are keyed by body owner plus cycle-normalized invocation route;
+declared contracts create validation-only instances according to the existing
+reporting policy and never replace reachable caller worlds. Recursive observer
+backedges are finite mu/closure nodes committed atomically with their relation
+SCC. Final projection evaluates this frozen forest once; it does not solve a
+body or start a second semantic fixpoint.
+
+The compiled projection inventory is the `callOutcome=true` superset. Call
+outcomes carry every registered outcome lane (including suspension, normal
+return facts, heap/placement, obligations/refinements, presence relations and
+exposures); narrower consumers may project the stabilized superset but may not
+change compilation or trigger recomputation. A body-only root lookup is not a
+production API because caller-entry context is part of its semantic identity.
+
 The regional parameter-feedback prototype is retained only as a correctness
 oracle: on the representative scanner family it removed 15 false positives but
 added about 18 percent wall time because three concrete summary rounds were

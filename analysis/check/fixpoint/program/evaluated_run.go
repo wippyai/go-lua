@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
@@ -41,12 +42,19 @@ func evaluatedBindingOrderMatchesPlan(plan *operationplan.Plan, binding evaluate
 // concrete State, solver checkpoint, term Arena, or callback.
 type evaluatedProgram struct {
 	bodies []lexicalidentity.StableLexicalBodyID
-	roots  map[lexicalidentity.StableLexicalBodyID]evaluated.Root
+	roots  map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact
 }
 
-func (p evaluatedProgram) Root(body lexicalidentity.StableLexicalBodyID) (evaluated.Root, bool) {
-	root, ok := p.roots[body]
-	return root, ok
+func (p evaluatedProgram) Root(ctx context.Context, reg *axis.Registry, body lexicalidentity.StableLexicalBodyID) (evaluated.Root, bool, error) {
+	artifact, ok := p.roots[body]
+	if !ok {
+		return evaluated.Root{}, false, nil
+	}
+	root, err := artifact.Materialize(ctx, reg)
+	if err != nil {
+		return evaluated.Root{}, false, err
+	}
+	return root, true, nil
 }
 
 func (p evaluatedProgram) Bodies() []lexicalidentity.StableLexicalBodyID {
@@ -154,6 +162,13 @@ func solveEvaluatedProgram(
 		if err != nil {
 			return evaluatedProgram{}, fmt.Errorf("evaluated program: cell %x: %w", bodyID, err)
 		}
+		if stats != nil {
+			evaluate := cell.Equation
+			cell.Equation = func(ctx context.Context, view transformer.RelationView) (transformer.Relation, error) {
+				stats.EvaluatedRelationEquationApplications++
+				return evaluate(ctx, view)
+			}
+		}
 		cells = append(cells, cell)
 		orderedBodies = append(orderedBodies, bodyID)
 	}
@@ -169,7 +184,7 @@ func solveEvaluatedProgram(
 	// Roots stay transaction-local until every relation and projection passes.
 	// Returning an error below therefore returns neither an SCC prefix nor a
 	// summary-only artifact.
-	roots := make(map[lexicalidentity.StableLexicalBodyID]evaluated.Root, len(entries))
+	roots := make(map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact, len(entries))
 	for index, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return evaluatedProgram{}, err
@@ -216,6 +231,9 @@ func solveEvaluatedProgram(
 		if !relation.ObservationCoverageComplete() {
 			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x cell %v has incomplete relation observation coverage", bodyID, entry.identity.Cell)
 		}
+		if stats != nil {
+			stats.EvaluatedRootProjections++
+		}
 		root, err := relation.EvaluateSparseRoot(ctx, transformer.EvaluatedRootRequest{
 			Identity: identity, ExpectedIdentity: identity, Requirements: requirements, CallSurface: surface,
 		}, cursor, transformer.SpecializationContext{})
@@ -230,7 +248,11 @@ func solveEvaluatedProgram(
 		if !root.Coverage().Complete() {
 			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x projection is incomplete", bodyID)
 		}
-		roots[bodyID] = root
+		artifact, err := evaluated.SealRoot(ctx, catalog.registry, root)
+		if err != nil {
+			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x artifact seal: %w", bodyID, err)
+		}
+		roots[bodyID] = artifact
 	}
 	if err := ctx.Err(); err != nil {
 		return evaluatedProgram{}, err
