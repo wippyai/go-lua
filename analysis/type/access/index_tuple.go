@@ -6,16 +6,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func indexInTuple(tup *typ.Tuple, key typ.Type, depth int, mode indexMode) fieldResult {
+func (q *query) indexInTuple(tup *typ.Tuple, key typ.Type, depth int, mode indexMode) fieldResult {
 	if tup == nil {
 		return fieldResult{}
 	}
-	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
+	return q.indexByKeyVariants(key, depth, mode, true, fieldResult{}, func(key typ.Type) fieldResult {
 		index, ok := literalIntKey(key)
 		if !ok {
 			switch mode {
 			case indexRuntime:
-				if !arrayRuntimeKeyMayBeInteger(key, depth+1) {
+				if !q.arrayRuntimeKeyMayBeInteger(key, depth+1) {
 					return fieldResult{}
 				}
 			default:

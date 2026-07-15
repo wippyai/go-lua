@@ -1,8 +1,6 @@
 package typ
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
-
-func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
+func typeEqualsGuard(a, b Type, seen *typePairSet) bool {
 	a = NormalizeNil(a)
 	b = NormalizeNil(b)
 
@@ -15,8 +13,8 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 	}
 
 	var aOK, bOK bool
-	a, aOK = unwrapAliasForEquals(a, guard)
-	b, bOK = unwrapAliasForEquals(b, guard)
+	a, aOK = unwrapAliasForEquals(a)
+	b, bOK = unwrapAliasForEquals(b)
 	if !aOK || !bOK {
 		return false
 	}
@@ -63,22 +61,20 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 		}
 	}
 
-	next := guard
-
 	a = UnwrapTransparentWrappers(a)
 	b = UnwrapTransparentWrappers(b)
 
 	switch va := a.(type) {
 	case *Optional:
 		vb, ok := b.(*Optional)
-		return ok && typeEqualsGuard(va.Inner, vb.Inner, next, seen)
+		return ok && typeEqualsGuard(va.Inner, vb.Inner, seen)
 	case *Union:
 		vb, ok := b.(*Union)
 		if !ok || len(va.Members) != len(vb.Members) {
 			return false
 		}
 		for i, m := range va.Members {
-			if !typeEqualsGuard(m, vb.Members[i], next, seen) {
+			if !typeEqualsGuard(m, vb.Members[i], seen) {
 				return false
 			}
 		}
@@ -89,7 +85,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			return false
 		}
 		for i, m := range va.Members {
-			if !typeEqualsGuard(m, vb.Members[i], next, seen) {
+			if !typeEqualsGuard(m, vb.Members[i], seen) {
 				return false
 			}
 		}
@@ -100,24 +96,24 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			return false
 		}
 		for i, e := range va.Elements {
-			if !typeEqualsGuard(e, vb.Elements[i], next, seen) {
+			if !typeEqualsGuard(e, vb.Elements[i], seen) {
 				return false
 			}
 		}
 		return true
 	case *Array:
 		vb, ok := b.(*Array)
-		return ok && typeEqualsGuard(va.Element, vb.Element, next, seen)
+		return ok && typeEqualsGuard(va.Element, vb.Element, seen)
 	case *Map:
 		vb, ok := b.(*Map)
 		return ok &&
-			typeEqualsGuard(va.Key, vb.Key, next, seen) &&
-			typeEqualsGuard(va.Value, vb.Value, next, seen)
+			typeEqualsGuard(va.Key, vb.Key, seen) &&
+			typeEqualsGuard(va.Value, vb.Value, seen)
 	case *ReadonlyMap:
 		vb, ok := b.(*ReadonlyMap)
 		return ok &&
-			typeEqualsGuard(va.Key, vb.Key, next, seen) &&
-			typeEqualsGuard(va.Value, vb.Value, next, seen)
+			typeEqualsGuard(va.Key, vb.Key, seen) &&
+			typeEqualsGuard(va.Value, vb.Value, seen)
 	case *Record:
 		vb, ok := b.(*Record)
 		if !ok || va.Open != vb.Open ||
@@ -130,7 +126,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			if f.Name != fb.Name || f.Optional != fb.Optional || f.Readonly != fb.Readonly {
 				return false
 			}
-			if !typeEqualsGuard(f.Type, fb.Type, next, seen) {
+			if !typeEqualsGuard(f.Type, fb.Type, seen) {
 				return false
 			}
 		}
@@ -140,7 +136,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 				m.Optional != mb.Optional || m.Readonly != mb.Readonly {
 				return false
 			}
-			if !typeEqualsGuard(m.Type, mb.Type, next, seen) {
+			if !typeEqualsGuard(m.Type, mb.Type, seen) {
 				return false
 			}
 		}
@@ -148,17 +144,17 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			return false
 		}
 		if va.HasMapComponent() {
-			if !typeEqualsGuard(va.MapKey, vb.MapKey, next, seen) {
+			if !typeEqualsGuard(va.MapKey, vb.MapKey, seen) {
 				return false
 			}
-			if !typeEqualsGuard(va.MapValue, vb.MapValue, next, seen) {
+			if !typeEqualsGuard(va.MapValue, vb.MapValue, seen) {
 				return false
 			}
 		}
 		if (va.Metatable == nil) != (vb.Metatable == nil) {
 			return false
 		}
-		if va.Metatable != nil && !typeEqualsGuard(va.Metatable, vb.Metatable, next, seen) {
+		if va.Metatable != nil && !typeEqualsGuard(va.Metatable, vb.Metatable, seen) {
 			return false
 		}
 		return true
@@ -168,7 +164,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			return false
 		}
 		for i, tp := range va.TypeParams {
-			if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
+			if !typeEqualsGuard(tp, vb.TypeParams[i], seen) {
 				return false
 			}
 		}
@@ -180,18 +176,18 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			if p.Optional != pb.Optional || p.Receiver != pb.Receiver {
 				return false
 			}
-			if !typeEqualsGuard(p.Type, pb.Type, next, seen) {
+			if !typeEqualsGuard(p.Type, pb.Type, seen) {
 				return false
 			}
 		}
 		if (va.Variadic == nil) != (vb.Variadic == nil) {
 			return false
 		}
-		if va.Variadic != nil && !typeEqualsGuard(va.Variadic, vb.Variadic, next, seen) {
+		if va.Variadic != nil && !typeEqualsGuard(va.Variadic, vb.Variadic, seen) {
 			return false
 		}
 		for i, r := range va.Returns {
-			if !typeEqualsGuard(r, vb.Returns[i], next, seen) {
+			if !typeEqualsGuard(r, vb.Returns[i], seen) {
 				return false
 			}
 		}
@@ -202,7 +198,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			return false
 		}
 		for i, tp := range va.TypeParams {
-			if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
+			if !typeEqualsGuard(tp, vb.TypeParams[i], seen) {
 				return false
 			}
 		}
@@ -216,14 +212,14 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 		if (va.Body == nil) != (vb.Body == nil) {
 			return false
 		}
-		return va.Body == nil || typeEqualsGuard(va.Body, vb.Body, next, seen)
+		return va.Body == nil || typeEqualsGuard(va.Body, vb.Body, seen)
 	case *Instantiated:
 		vb, ok := b.(*Instantiated)
-		if !ok || !typeEqualsGuard(va.Generic, vb.Generic, next, seen) || len(va.TypeArgs) != len(vb.TypeArgs) {
+		if !ok || !typeEqualsGuard(va.Generic, vb.Generic, seen) || len(va.TypeArgs) != len(vb.TypeArgs) {
 			return false
 		}
 		for i, arg := range va.TypeArgs {
-			if !typeEqualsGuard(arg, vb.TypeArgs[i], next, seen) {
+			if !typeEqualsGuard(arg, vb.TypeArgs[i], seen) {
 				return false
 			}
 		}
@@ -236,7 +232,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 		if (va.Constraint == nil) != (vb.Constraint == nil) {
 			return false
 		}
-		return va.Constraint == nil || typeEqualsGuard(va.Constraint, vb.Constraint, next, seen)
+		return va.Constraint == nil || typeEqualsGuard(va.Constraint, vb.Constraint, seen)
 	case *Recursive:
 		vb, ok := b.(*Recursive)
 		if !ok {
@@ -248,7 +244,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 		if va.Name != vb.Name {
 			return false
 		}
-		return typeEqualsGuard(va.Body, vb.Body, next, seen)
+		return typeEqualsGuard(va.Body, vb.Body, seen)
 	case *Interface:
 		// Compare structurally while threading seen so a recursion that cycles
 		// through a method signature is caught by the coinductive pair guard.
@@ -264,7 +260,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 			if m.Name != om.Name {
 				return false
 			}
-			if !typeEqualsGuard(m.Type, om.Type, next, seen) {
+			if !typeEqualsGuard(m.Type, om.Type, seen) {
 				return false
 			}
 		}
@@ -272,7 +268,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen *typePairSet) bool {
 	case *Meta:
 		// Thread seen through the wrapped type for the same coinductive reason.
 		vb, ok := b.(*Meta)
-		return ok && typeEqualsGuard(va.Of, vb.Of, next, seen)
+		return ok && typeEqualsGuard(va.Of, vb.Of, seen)
 	default:
 		return a.Equals(b)
 	}

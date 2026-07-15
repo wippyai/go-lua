@@ -7,13 +7,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func indexInArray(a *typ.Array, key typ.Type, depth int, mode indexMode) fieldResult {
+func (q *query) indexInArray(a *typ.Array, key typ.Type, depth int, mode indexMode) fieldResult {
 	if a == nil {
 		return fieldResult{}
 	}
-	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
+	return q.indexByKeyVariants(key, depth, mode, true, fieldResult{}, func(key typ.Type) fieldResult {
 		if mode == indexRuntime {
-			if !arrayRuntimeKeyMayBeInteger(key, depth+1) {
+			if !q.arrayRuntimeKeyMayBeInteger(key, depth+1) {
 				return fieldResult{}
 			}
 		} else if !subtype.IsSubtype(key, typ.Integer) {
@@ -27,14 +27,19 @@ func indexInArray(a *typ.Array, key typ.Type, depth int, mode indexMode) fieldRe
 	})
 }
 
-func arrayRuntimeKeyMayBeInteger(key typ.Type, depth int) bool {
+func (q *query) arrayRuntimeKeyMayBeInteger(key typ.Type, depth int) bool {
 	if stopDepth(key, depth) {
 		return false
 	}
 	if typ.IsAny(key) || typ.IsUnknown(key) {
 		return true
 	}
-	return descendAccessWrappers(key, depth, func(key typ.Type, depth int) bool {
+	visit := queryKey{op: 4, t: key}
+	if !q.enter(visit) {
+		return false
+	}
+	defer q.leave(visit)
+	return descendAccessWrappers(key, depth, nil, func(key typ.Type, depth int) bool {
 		if typ.IsAny(key) || typ.IsUnknown(key) {
 			return true
 		}
@@ -51,7 +56,7 @@ func arrayRuntimeKeyMayBeInteger(key typ.Type, depth int) bool {
 			}
 		case *typ.Union:
 			for _, member := range v.Members {
-				if arrayRuntimeKeyMayBeInteger(member, depth+1) {
+				if q.arrayRuntimeKeyMayBeInteger(member, depth+1) {
 					return true
 				}
 			}

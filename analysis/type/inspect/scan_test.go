@@ -200,7 +200,7 @@ func TestContains_FindsTypeParamInsideRepeatedShape(t *testing.T) {
 
 func TestContains_NoDepthCapFindsDeepNestedPredicate(t *testing.T) {
 	tpe := typ.Never
-	for i := 0; i < typ.DefaultRecursionDepth+8; i++ {
+	for i := 0; i < 257; i++ {
 		tpe = typetable.NewRecord().Field("next", tpe).Build()
 	}
 

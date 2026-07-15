@@ -1,16 +1,15 @@
 package subst
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func expandRecord(v *typ.Record, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
+func expandRecord(v *typ.Record, orig typ.Type, state *expandState, mode expandMode) typ.Type {
 	changed := false
 	var fields []typ.Field
 	for i, f := range v.Fields {
-		newType := expandInstantiatedGuardMode(f.Type, guard, memo, mode)
+		newType := expandInstantiatedGuardMode(f.Type, state, mode)
 		if newType != f.Type {
 			if fields == nil {
 				fields = make([]typ.Field, len(v.Fields))
@@ -25,7 +24,7 @@ func expandRecord(v *typ.Record, orig typ.Type, guard recursion.Guard, memo map[
 
 	var staticMembers []typ.StaticMember
 	for i, m := range v.StaticMembers {
-		newType := expandInstantiatedGuardMode(m.Type, guard, memo, mode)
+		newType := expandInstantiatedGuardMode(m.Type, state, mode)
 		if newType != m.Type {
 			if staticMembers == nil {
 				staticMembers = make([]typ.StaticMember, len(v.StaticMembers))
@@ -47,7 +46,7 @@ func expandRecord(v *typ.Record, orig typ.Type, guard recursion.Guard, memo map[
 
 	metatable := v.Metatable
 	if v.Metatable != nil {
-		newMetatable := expandInstantiatedGuardMode(v.Metatable, guard, memo, mode)
+		newMetatable := expandInstantiatedGuardMode(v.Metatable, state, mode)
 		if newMetatable != v.Metatable {
 			changed = true
 			metatable = newMetatable
@@ -57,11 +56,11 @@ func expandRecord(v *typ.Record, orig typ.Type, guard recursion.Guard, memo map[
 	mapKey := v.MapKey
 	mapValue := v.MapValue
 	if v.HasMapComponent() {
-		mapKey = expandInstantiatedGuardMode(v.MapKey, guard, memo, mode)
+		mapKey = expandInstantiatedGuardMode(v.MapKey, state, mode)
 		if mapKey != v.MapKey {
 			changed = true
 		}
-		mapValue = expandInstantiatedGuardMode(v.MapValue, guard, memo, mode)
+		mapValue = expandInstantiatedGuardMode(v.MapValue, state, mode)
 		if mapValue != v.MapValue {
 			changed = true
 		}
@@ -90,12 +89,12 @@ func expandRecord(v *typ.Record, orig typ.Type, guard recursion.Guard, memo map[
 	})
 }
 
-func expandInterface(v *typ.Interface, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
+func expandInterface(v *typ.Interface, orig typ.Type, state *expandState, mode expandMode) typ.Type {
 	changed := false
 	var methods []typ.Method
 	for idx := range v.Methods {
 		m := v.Methods[idx]
-		newType := expandInstantiatedGuardMode(m.Type, guard, memo, mode)
+		newType := expandInstantiatedGuardMode(m.Type, state, mode)
 		fn, ok := newType.(*typ.Function)
 		if !ok {
 			fn = m.Type

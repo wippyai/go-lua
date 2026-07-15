@@ -5,23 +5,18 @@ import "github.com/wippyai/go-lua/analysis/type/typ"
 // ScanOptions configures a Scanner.
 type ScanOptions struct {
 	Seen ScanSeen
-
-	// MaxEnters limits distinct nodes accepted by Enter after seen pruning.
-	MaxEnters int
 }
 
 // Scanner holds reusable traversal state for recursive type scans.
 type Scanner struct {
-	seen      ScanSeen
-	maxEnters int
-	enters    int
+	seen   ScanSeen
+	enters int
 }
 
 // NewScanner creates a traversal scanner.
 func NewScanner(opts ScanOptions) *Scanner {
 	return &Scanner{
-		seen:      opts.Seen,
-		maxEnters: opts.MaxEnters,
+		seen: opts.Seen,
 	}
 }
 
@@ -34,9 +29,6 @@ func (s *Scanner) Enter(t typ.Type) bool {
 		if s.seen.Contains(t) {
 			return false
 		}
-	}
-	if s.maxEnters > 0 && s.enters >= s.maxEnters {
-		return false
 	}
 	if s.seen != nil {
 		s.seen.Remember(t)

@@ -201,27 +201,28 @@ func TestTypeEqualsFunction(t *testing.T) {
 	}
 }
 
-func TestTypeEqualsDepthLimit(t *testing.T) {
-	nested := Number
-	for i := 0; i < 200; i++ {
-		nested = NewArray(nested)
+func TestTypeEqualsDeepProductsExactly(t *testing.T) {
+	var left Type = Number
+	var right Type = Number
+	for i := 0; i < 257; i++ {
+		left = NewArray(left)
+		right = NewArray(right)
 	}
-
-	if typeEquals(nested, nested) {
-		t.Log("deep types may hit depth limit")
+	if !typeEquals(left, right) {
+		t.Fatal("equal deep products compared unequal")
 	}
 }
 
-func TestTypeEqualsDepthExhaustionFailsClosed(t *testing.T) {
+func TestTypeEqualsDeepAliasDifference(t *testing.T) {
 	var left Type = Number
 	var right Type = String
-	for i := 0; i < DefaultRecursionDepth+2; i++ {
+	for i := 0; i < 257; i++ {
 		left = &Alias{Name: "Left", Target: left}
 		right = &Alias{Name: "Right", Target: right}
 	}
 
 	if TypeEquals(left, right) {
-		t.Fatal("distinct alias chains compared equal after recursion-depth exhaustion")
+		t.Fatal("distinct deep alias chains compared equal")
 	}
 }
 

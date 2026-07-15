@@ -1,17 +1,14 @@
 package subst
 
-import (
-	"github.com/wippyai/go-lua/analysis/internal/recursion"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-)
+import "github.com/wippyai/go-lua/analysis/type/typ"
 
-func expandFunction(v *typ.Function, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
+func expandFunction(v *typ.Function, orig typ.Type, state *expandState, mode expandMode) typ.Type {
 	changed := false
 	var params []typ.Param
 	for i, p := range v.Params {
 		newType := p.Type
 		if !isRecursiveInstantiated(p.Type) {
-			newType = expandInstantiatedGuardMode(p.Type, guard, memo, mode)
+			newType = expandInstantiatedGuardMode(p.Type, state, mode)
 		}
 		if newType != p.Type {
 			if params == nil {
@@ -27,7 +24,7 @@ func expandFunction(v *typ.Function, orig typ.Type, guard recursion.Guard, memo 
 
 	var returns []typ.Type
 	for i, r := range v.Returns {
-		newRet := expandInstantiatedGuardMode(r, guard, memo, mode)
+		newRet := expandInstantiatedGuardMode(r, state, mode)
 		if newRet != r {
 			if returns == nil {
 				returns = make([]typ.Type, len(v.Returns))
@@ -42,7 +39,7 @@ func expandFunction(v *typ.Function, orig typ.Type, guard recursion.Guard, memo 
 
 	variadic := v.Variadic
 	if v.Variadic != nil {
-		newVariadic := expandInstantiatedGuardMode(v.Variadic, guard, memo, mode)
+		newVariadic := expandInstantiatedGuardMode(v.Variadic, state, mode)
 		if newVariadic != v.Variadic {
 			changed = true
 			variadic = newVariadic

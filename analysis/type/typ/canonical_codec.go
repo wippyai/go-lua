@@ -349,7 +349,6 @@ func (e *CanonicalEncoder) leaf(identity Type, tag byte, payload []byte) (int, e
 
 func (e *CanonicalEncoder) unwrapTransparent(t Type) (Type, error) {
 	path := make([]Type, 0, 4)
-	aliasDepth := 0
 	defer func() {
 		for _, wrapper := range path {
 			delete(e.transparent, wrapper)
@@ -383,14 +382,6 @@ func (e *CanonicalEncoder) unwrapTransparent(t Type) (Type, error) {
 			}
 			e.transparent[t] = true
 			path = append(path, t)
-			aliasDepth++
-			// TypeEquals deliberately fails closed when its transparent-alias
-			// guard is exhausted. Encoding such a graph structurally would make
-			// independently-built values compare equal by bytes while
-			// TypeEquals rejects them, so the codec must fail closed too.
-			if aliasDepth > DefaultRecursionDepth {
-				return nil, fmt.Errorf("typ: transparent alias depth exceeds equality authority")
-			}
 			t = value.UnaliasedTarget()
 		default:
 			return t, nil

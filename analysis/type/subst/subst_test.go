@@ -967,15 +967,51 @@ func TestExpandInstantiated(t *testing.T) {
 		if _, ok := field.Type.(*typ.Instantiated); ok {
 			t.Fatalf("node field remained a lazy instantiation: %v", field.Type)
 		}
-		nodeRec, ok := field.Type.(*typ.Record)
+		mu, ok := field.Type.(*typ.Recursive)
 		if !ok {
-			t.Fatalf("node field type = %T %v, want expanded record", field.Type, field.Type)
+			t.Fatalf("node field type = %T %v, want finite recursive expansion", field.Type, field.Type)
+		}
+		nodeRec, ok := mu.Body.(*typ.Record)
+		if !ok {
+			t.Fatalf("recursive body = %T %v, want expanded record", mu.Body, mu.Body)
 		}
 		value := nodeRec.GetField("value")
 		if value == nil || value.Type != typ.String {
 			t.Fatalf("value field = %v, want string field", value)
 		}
+		next := nodeRec.GetField("next")
+		if next == nil {
+			t.Fatal("recursive body is missing next field")
+		}
+		optional, ok := next.Type.(*typ.Optional)
+		if !ok || optional.Inner != mu {
+			t.Fatalf("next field = %v, want μ backedge", next)
+		}
 	})
+}
+
+func TestExpandInstantiatedPreservesGenerativeRecurrenceSymbolically(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	grow := typ.NewGeneric("Grow", []*typ.TypeParam{param}, nil)
+	grow.SetBody(typetable.NewRecord().Field("next", typ.Instantiate(grow, typ.NewArray(param))).Build())
+
+	expanded := ExpandInstantiated(typ.Instantiate(grow, typ.String))
+	record, ok := expanded.(*typ.Record)
+	if !ok {
+		t.Fatalf("Grow<string> expansion = %T, want finite record", expanded)
+	}
+	next := record.GetField("next")
+	if next == nil {
+		t.Fatal("generative expansion is missing next field")
+	}
+	inst, ok := next.Type.(*typ.Instantiated)
+	if !ok || inst.Generic != grow || len(inst.TypeArgs) != 1 {
+		t.Fatalf("generative recurrence = %v, want symbolic Grow<string[]>", next)
+	}
+	array, ok := inst.TypeArgs[0].(*typ.Array)
+	if !ok || array.Element != typ.String {
+		t.Fatalf("generative recurrence argument = %v, want string[]", inst.TypeArgs[0])
+	}
 }
 
 func TestExpandInstantiatedChanged(t *testing.T) {

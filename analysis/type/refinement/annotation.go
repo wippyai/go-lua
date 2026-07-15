@@ -1,7 +1,7 @@
 package refinement
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -21,7 +21,7 @@ func IsRefinableAnnotation(t typ.Type) bool {
 	if t.Kind().IsPlaceholder() {
 		return false
 	}
-	return isRefinableStructuralAnnotation(t, typ.NewGuard())
+	return isRefinableStructuralAnnotation(t, &graph.Path{})
 }
 
 // IsClosedUnionAnnotation reports whether a declared annotation is a multi-member
@@ -100,7 +100,11 @@ func PruneLessPreciseRefinableUnionMembers(t typ.Type, morePrecise MorePreciseFu
 // closedUnionOf unwraps Annotated/Alias/Optional layers to expose an
 // underlying Union for refinement-local pruning.
 func closedUnionOf(t typ.Type) *typ.Union {
+	var seen graph.Path
 	for {
+		if !seen.Enter(t) {
+			return nil
+		}
 		switch v := unwrap.Annotated(t).(type) {
 		case *typ.Union:
 			return v
@@ -114,56 +118,61 @@ func closedUnionOf(t typ.Type) *typ.Union {
 				return nil
 			}
 			t = expanded
+		case *typ.Recursive:
+			if v.Body == nil || v.Body == t {
+				return nil
+			}
+			t = v.Body
 		default:
 			return nil
 		}
 	}
 }
 
-func isRefinableStructuralAnnotation(t typ.Type, guard recursion.Guard) bool {
+func isRefinableStructuralAnnotation(t typ.Type, active *graph.Path) bool {
 	if t == nil {
 		return false
 	}
 	t = unwrap.Annotated(t)
-	next, ok := guard.Enter()
-	if !ok {
+	if !active.Enter(t) {
 		return false
 	}
+	defer active.Leave(t)
 	switch v := t.(type) {
 	case *typ.Alias:
-		return isRefinableStructuralAnnotation(v.UnaliasedTarget(), next)
+		return isRefinableStructuralAnnotation(v.UnaliasedTarget(), active)
 	case *typ.Optional:
-		return annotationSlotRefinable(v.Inner, next)
+		return annotationSlotRefinable(v.Inner, active)
 	case *typ.Array:
-		return annotationSlotRefinable(v.Element, next)
+		return annotationSlotRefinable(v.Element, active)
 	case *typ.Map:
-		return annotationSlotRefinable(v.Key, next) || annotationSlotRefinable(v.Value, next)
+		return annotationSlotRefinable(v.Key, active) || annotationSlotRefinable(v.Value, active)
 	case *typ.ReadonlyMap:
-		return annotationSlotRefinable(v.Key, next) || annotationSlotRefinable(v.Value, next)
+		return annotationSlotRefinable(v.Key, active) || annotationSlotRefinable(v.Value, active)
 	case *typ.Record:
 		if v.Open && len(v.Fields) == 0 && !v.HasMapComponent() {
 			return true
 		}
 		if v.HasMapComponent() &&
-			(annotationSlotRefinable(v.MapKey, next) || annotationSlotRefinable(v.MapValue, next)) {
+			(annotationSlotRefinable(v.MapKey, active) || annotationSlotRefinable(v.MapValue, active)) {
 			return true
 		}
 		for _, field := range v.Fields {
-			if annotationSlotRefinable(field.Type, next) {
+			if annotationSlotRefinable(field.Type, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Tuple:
 		for _, elem := range v.Elements {
-			if annotationSlotRefinable(elem, next) {
+			if annotationSlotRefinable(elem, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Union:
 		for _, member := range v.Members {
-			if annotationSlotRefinable(member, next) {
+			if annotationSlotRefinable(member, active) {
 				return true
 			}
 		}
@@ -173,7 +182,7 @@ func isRefinableStructuralAnnotation(t typ.Type, guard recursion.Guard) bool {
 	}
 }
 
-func annotationSlotRefinable(t typ.Type, guard recursion.Guard) bool {
+func annotationSlotRefinable(t typ.Type, active *graph.Path) bool {
 	if t == nil {
 		return false
 	}
@@ -181,5 +190,5 @@ func annotationSlotRefinable(t typ.Type, guard recursion.Guard) bool {
 	if t.Kind().IsPlaceholder() {
 		return true
 	}
-	return isRefinableStructuralAnnotation(t, guard)
+	return isRefinableStructuralAnnotation(t, active)
 }

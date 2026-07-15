@@ -31,15 +31,10 @@ func TestPrimitiveStrictOrder(t *testing.T) {
 	}
 }
 
-func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
-	exhausted := typ.DefaultRecursionDepth + 1
-	if (&checker{}).check(typ.String, typ.String, exhausted) {
-		t.Fatal("subtype comparison succeeded after recursion-depth exhaustion")
-	}
-
+func TestSubtypeTraversesDeepProductsExactly(t *testing.T) {
 	var sub typ.Type = typ.Number
 	var super typ.Type = typ.String
-	for i := 0; i < typ.DefaultRecursionDepth+2; i++ {
+	for i := 0; i < 257; i++ {
 		sub = typetable.NewRecord().Field("next", sub).Build()
 		super = typetable.NewRecord().Field("next", super).Build()
 	}
@@ -49,12 +44,12 @@ func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
 
 	sub = typ.Number
 	super = typ.String
-	for i := 0; i < typ.DefaultRecursionDepth+2; i++ {
+	for i := 0; i < 257; i++ {
 		sub = &typ.Alias{Name: "Sub", Target: sub}
 		super = &typ.Alias{Name: "Super", Target: super}
 	}
 	if IsSubtype(sub, super) {
-		t.Fatal("distinct alias chains became subtypes after equality depth exhaustion")
+		t.Fatal("distinct deep alias chains became subtypes")
 	}
 }
 
@@ -166,6 +161,30 @@ func TestFreshRecursiveRecordMethodReceiversCanWidenAcrossEquivalentAliases(t *t
 
 	if !IsFreshAssignable(source, target) {
 		t.Fatal("fresh recursive method receiver should satisfy an equivalent declared recursive alias")
+	}
+}
+
+func TestFreshRecursiveWideningUsesExactPairFixedPoint(t *testing.T) {
+	build := func(name string, payload typ.Type) *typ.Recursive {
+		return typ.NewRecursive(name, func(self typ.Type) typ.Type {
+			return typetable.NewRecord().
+				Field("next", self).
+				Field("payload", payload).
+				Build()
+		})
+	}
+	narrow := build("Narrow", typetable.NewRecord().Build())
+	wide := build("Wide", typ.NewArray(typ.String))
+	if !IsFreshAssignable(narrow, wide) {
+		t.Fatal("recursive fresh payload should widen through a coinductive pair proof")
+	}
+
+	mismatch := build("Mismatch", typ.Number)
+	if IsSubtype(narrow, mismatch) {
+		t.Fatal("recursive productive payload mismatch was already accepted as a subtype")
+	}
+	if IsFreshAssignable(narrow, mismatch) {
+		t.Fatal("recursive pair fixed point accepted a productive payload mismatch")
 	}
 }
 

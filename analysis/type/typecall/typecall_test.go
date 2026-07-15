@@ -696,8 +696,8 @@ func TestInstantiateGenericCallReportsConstraintViolation(t *testing.T) {
 
 func TestInstantiateGenericCallRejectsNestedRecordMismatchBeyondRecursionDepth(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
-	formal := nestedRecordType(typ.DefaultRecursionDepth+2, typ.String)
-	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+	formal := nestedRecordType(257, typ.String)
+	actual := nestedRecordType(257, typ.Number)
 	fn := typ.Func().
 		TypeParamRef(param).
 		Param("seed", param).
@@ -714,23 +714,23 @@ func TestInstantiateGenericCallRejectsNestedRecordMismatchBeyondRecursionDepth(t
 }
 
 func TestInstantiatedArgumentAssignableRejectsNestedRecordMismatchBeyondRecursionDepth(t *testing.T) {
-	formal := nestedRecordType(typ.DefaultRecursionDepth+2, typ.String)
-	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+	formal := nestedRecordType(257, typ.String)
+	actual := nestedRecordType(257, typ.Number)
 
 	if InstantiatedArgumentAssignable(actual, formal) {
 		t.Fatal("deeply nested mismatched record was assignable")
 	}
 }
 
-func TestGenericCallValidationDepthExhaustionFailsClosed(t *testing.T) {
+func TestGenericCallValidationIgnoresIncidentalDepthArgument(t *testing.T) {
 	record := typetable.NewRecord().Field("value", typ.String).Build()
-	exhausted := typ.DefaultRecursionDepth + 1
+	deep := 257
 
-	if instantiatedArgumentAssignable(typ.String, typ.String, exhausted) {
-		t.Fatal("argument validation succeeded after recursion-depth exhaustion")
+	if !instantiatedArgumentAssignable(typ.String, typ.String, deep) {
+		t.Fatal("equal arguments should validate at any traversal depth")
 	}
-	if providedRecordFieldsAssignable(record, record, exhausted) {
-		t.Fatal("record validation succeeded after recursion-depth exhaustion")
+	if !providedRecordFieldsAssignable(record, record, deep) {
+		t.Fatal("equal records should validate at any traversal depth")
 	}
 
 	if !InstantiatedArgumentAssignable(nil, typ.String) {
@@ -741,10 +741,10 @@ func TestGenericCallValidationDepthExhaustionFailsClosed(t *testing.T) {
 	}
 }
 
-func TestGenericCallSubstitutionDepthExhaustionFailsClosed(t *testing.T) {
+func TestGenericCallSubstitutionUsesDeepInferenceEvidence(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
-	formal := nestedRecordType(typ.DefaultRecursionDepth+2, param)
-	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
+	formal := nestedRecordType(257, param)
+	actual := nestedRecordType(257, typ.Number)
 	fn := typ.Func().
 		TypeParamRef(param).
 		Param("seed", param).
@@ -752,8 +752,8 @@ func TestGenericCallSubstitutionDepthExhaustionFailsClosed(t *testing.T) {
 		Build()
 
 	_, violations := InstantiateGenericCall(fn, []typ.Type{typ.String, actual})
-	if len(violations) != 1 || violations[0].Index != 1 {
-		t.Fatalf("violations = %#v, want one unresolved deep-substitution violation at argument 1", violations)
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want deep evidence included in inferred union", violations)
 	}
 }
 
@@ -1280,6 +1280,26 @@ func TestInstantiateGenericCallInfersThroughGenericCallbackAlias(t *testing.T) {
 		t.Fatalf("bindings = %#v, want T=%v", bindings, user)
 	}
 	assertType(t, got.Returns[0], typeexpr.Optional(user))
+}
+
+func TestInstantiateGenericCallInfersThroughRecursiveUnionWithoutDepthLimit(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	formal := typ.NewRecursivePlaceholder("RecursiveChoice")
+	formal.SetBody(&typ.Union{Members: []typ.Type{formal, param}})
+	fn := typ.Func().
+		TypeParamRef(param).
+		Param("value", formal).
+		Returns(param).
+		Build()
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.String})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	if len(got.TypeParams) != 0 {
+		t.Fatalf("type params = %d, want fully inferred", len(got.TypeParams))
+	}
+	assertType(t, got.Returns[0], typ.String)
 }
 
 func resultGeneric() *typ.Generic {

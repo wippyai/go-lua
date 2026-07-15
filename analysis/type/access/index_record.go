@@ -7,18 +7,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func indexInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
+func (q *query) indexInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
 	if r == nil {
 		return fieldResult{}
 	}
-	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
+	return q.indexByKeyVariants(key, depth, mode, true, fieldResult{}, func(key typ.Type) fieldResult {
 		if name, ok := literalStringKey(key); ok {
 			return stringKeyInRecord(r, name)
 		}
 		if index, ok := literalIntKey(key); ok {
 			return indexIntInRecord(r, index)
 		}
-		if res := indexDynamicIntMembersInRecord(r, key, depth+1, mode); res.ok {
+		if res := q.indexDynamicIntMembersInRecord(r, key, depth+1, mode); res.ok {
 			if mapRes := indexRecordMapComponent(r, key, depth+1, mode); mapRes.ok {
 				return unionFieldResults(res, mapRes)
 			}
@@ -34,13 +34,13 @@ func indexInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) field
 	})
 }
 
-func indexDynamicIntMembersInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
+func (q *query) indexDynamicIntMembersInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
 	if r == nil || len(r.StaticMembers) == 0 {
 		return fieldResult{}
 	}
 	switch mode {
 	case indexRuntime:
-		if !arrayRuntimeKeyMayBeInteger(key, depth+1) {
+		if !q.arrayRuntimeKeyMayBeInteger(key, depth+1) {
 			return fieldResult{}
 		}
 	default:

@@ -1,18 +1,41 @@
 package subst
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func expandInstantiatedGeneric(v *typ.Instantiated, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type) typ.Type {
+func expandInstantiatedGeneric(v *typ.Instantiated, orig typ.Type, state *expandState) typ.Type {
 	if v.Generic == nil || len(v.TypeArgs) != len(v.Generic.TypeParams) || v.Generic.Body == nil {
 		return orig
 	}
+	if active := state.matchingActive(v); active != nil {
+		active.used = true
+		return active.mu
+	}
+	// A recursive generic that changes its arguments describes a generative
+	// (non-regular) family, so no finite ordinary μ graph can represent its
+	// infinite unfolding. Preserve the exact symbolic instantiation at that
+	// recurrence boundary instead of approximating or unfolding forever.
+	if state.hasActiveGeneric(v.Generic) {
+		return orig
+	}
+	active := &activeInstantiation{
+		generic: v.Generic,
+		args:    append([]typ.Type(nil), v.TypeArgs...),
+		mu:      typ.NewRecursivePlaceholder(v.Generic.Name),
+	}
+	state.active = append(state.active, active)
+	defer func() { state.active = state.active[:len(state.active)-1] }()
+
 	body := Params(v.Generic.Body, v.Generic.TypeParams, v.TypeArgs)
 	body = Self(body, orig)
-	return expandInstantiatedGuardMode(body, guard, memo, expandModeTablePolicy)
+	body = expandInstantiatedGuardMode(body, state, expandModeTablePolicy)
+	if !active.used {
+		return body
+	}
+	active.mu.SetBody(body)
+	return active.mu
 }
 
 func isRecursiveInstantiated(t typ.Type) bool {

@@ -266,6 +266,21 @@ func TestIsOptionalLikeRejectsAnnotationCycle(t *testing.T) {
 	}
 }
 
+func TestShallowWrapperTraversalDoesNotAllocate(t *testing.T) {
+	alias := typ.NewAlias("Text", typ.String)
+	annotated := typ.NewAnnotated(typ.String, []annotation.Annotation{{Name: "tag"}})
+	if got := testing.AllocsPerRun(1000, func() {
+		_ = unwrap.Alias(alias)
+	}); got != 0 {
+		t.Fatalf("Alias shallow allocations = %v, want 0", got)
+	}
+	if got := testing.AllocsPerRun(1000, func() {
+		_ = unwrap.Annotations(annotated)
+	}); got != 0 {
+		t.Fatalf("Annotations shallow allocations = %v, want 0", got)
+	}
+}
+
 func annotationCycle() (*typ.Annotated, *typ.Annotated) {
 	a := &typ.Annotated{}
 	b := &typ.Annotated{}

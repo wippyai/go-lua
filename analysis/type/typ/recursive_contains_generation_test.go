@@ -115,11 +115,11 @@ func TestRecursiveContainsMemoPreservesDeepDefinitivePositives(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			node := NewRecursivePlaceholder("Deep")
-			deepMarker := nestInFunctions(tc.marker(), DefaultRecursionDepth+2)
+			deepMarker := nestInFunctions(tc.marker(), 257)
 			node.SetBody(newRecord().Field("marker", deepMarker).OptField("next", node).Build())
 
 			if !tc.predicate(node) {
-				t.Fatalf("marker nested beyond DefaultRecursionDepth=%d was lost", DefaultRecursionDepth)
+				t.Fatal("marker nested 257 nodes deep was lost")
 			}
 			if node.containsMemo.Load() == nil {
 				t.Fatal("complete deep recursive graph did not publish containment memo")
@@ -148,7 +148,7 @@ func TestRecursiveContainsMemoRemovesDeepStalePositive(t *testing.T) {
 			parent := NewRecursive("Parent", func(Type) Type {
 				return newRecord().Field("child", child).Build()
 			})
-			child.SetBody(newRecord().Field("marker", nestInFunctions(tc.marker(), DefaultRecursionDepth+2)).Build())
+			child.SetBody(newRecord().Field("marker", nestInFunctions(tc.marker(), 257)).Build())
 			if !tc.predicate(parent) {
 				t.Fatal("test setup did not establish deep positive")
 			}
@@ -157,7 +157,7 @@ func TestRecursiveContainsMemoRemovesDeepStalePositive(t *testing.T) {
 			// exist, so every enclosing product may carry a conservative stale
 			// positive. Generation-fresh derivation must still reach the current
 			// String leaf and remove it.
-			child.SetBody(newRecord().Field("value", nestInFunctions(String, DefaultRecursionDepth+2)).Build())
+			child.SetBody(newRecord().Field("value", nestInFunctions(String, 257)).Build())
 			if tc.predicate(parent) {
 				t.Fatal("deep marker removal retained a stale construction-time positive")
 			}

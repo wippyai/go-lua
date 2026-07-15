@@ -3,6 +3,7 @@
 package literal
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -12,19 +13,20 @@ import (
 // This intentionally does not unwrap annotations or any other wrappers. Callers
 // that need annotation-aware behavior should unwrap before calling this helper.
 func ExtractAliasOnly(t typ.Type) (*typ.Literal, bool) {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+	var seen graph.Path
+	for {
 		a, ok := t.(*typ.Alias)
 		if !ok {
 			break
+		}
+		if !seen.Enter(a) {
+			return nil, false
 		}
 		next := a.Target
 		if next == nil || next == t {
 			return nil, false
 		}
 		t = next
-	}
-	if _, ok := t.(*typ.Alias); ok {
-		return nil, false
 	}
 	lit, ok := t.(*typ.Literal)
 	return lit, ok
@@ -67,11 +69,11 @@ func IntegerValue(t typ.Type) (int64, bool) {
 // unions whose members all belong to a mergeable literal family. Annotated
 // wrappers and aliases are unwrapped for this family-level policy.
 func FamilyBase(t typ.Type) (typ.Type, bool) {
-	return familyBase(t, 0)
+	return familyBase(t, &graph.Path{})
 }
 
-func familyBase(t typ.Type, depth int) (typ.Type, bool) {
-	for ; depth <= typ.DefaultRecursionDepth; depth++ {
+func familyBase(t typ.Type, active *graph.Path) (typ.Type, bool) {
+	for {
 		ann, ok := t.(*typ.Annotated)
 		if !ok {
 			break
@@ -79,10 +81,11 @@ func familyBase(t typ.Type, depth int) (typ.Type, bool) {
 		if ann.Inner == nil || ann.Inner == t {
 			return nil, false
 		}
+		if !active.Enter(t) {
+			return nil, false
+		}
+		defer active.Leave(t)
 		t = ann.Inner
-	}
-	if depth > typ.DefaultRecursionDepth {
-		return nil, false
 	}
 	if t == nil {
 		return nil, false
@@ -93,14 +96,18 @@ func familyBase(t typ.Type, depth int) (typ.Type, bool) {
 		if next == nil || next == t {
 			return nil, false
 		}
-		return familyBase(next, depth+1)
+		if !active.Enter(t) {
+			return nil, false
+		}
+		defer active.Leave(t)
+		return familyBase(next, active)
 	case *typ.Literal:
 		base := PrimitiveBase(v)
 		return base, base != nil
 	case *typ.Union:
 		var base typ.Type
 		for _, member := range v.Members {
-			memberBase, ok := familyBase(member, depth+1)
+			memberBase, ok := familyBase(member, active)
 			if !ok {
 				return nil, false
 			}

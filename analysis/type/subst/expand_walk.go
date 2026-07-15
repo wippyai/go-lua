@@ -1,12 +1,11 @@
 package subst
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
+func expandInstantiatedGuardMode(t typ.Type, state *expandState, mode expandMode) typ.Type {
 	if t == nil {
 		return t
 	}
@@ -15,51 +14,46 @@ func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[exp
 	}
 
 	key := expandMemoKey{t: t, mode: mode}
-	if cached, ok := memo[key]; ok {
+	if cached, ok := state.memo[key]; ok {
 		return cached
-	}
-
-	next, ok := guard.Enter()
-	if !ok {
-		return t
 	}
 
 	orig := t
 	t = unwrap.Annotations(t)
 
 	key = expandMemoKey{t: orig, mode: mode}
-	memo[key] = orig
-	result := expandInstantiatedCore(t, orig, next, memo, mode)
-	memo[key] = result
+	state.memo[key] = orig
+	result := expandInstantiatedCore(t, orig, state, mode)
+	state.memo[key] = result
 	return result
 }
 
-func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
+func expandInstantiatedCore(t typ.Type, orig typ.Type, state *expandState, mode expandMode) typ.Type {
 	switch v := t.(type) {
 	case *typ.Instantiated:
-		return expandInstantiatedGeneric(v, orig, guard, memo)
+		return expandInstantiatedGeneric(v, orig, state)
 	case *typ.Optional:
-		return expandOptional(v, orig, guard, memo, mode)
+		return expandOptional(v, orig, state, mode)
 	case *typ.Union:
-		return expandUnion(v, orig, guard, memo, mode)
+		return expandUnion(v, orig, state, mode)
 	case *typ.Intersection:
-		return expandIntersection(v, orig, guard, memo, mode)
+		return expandIntersection(v, orig, state, mode)
 	case *typ.Array:
-		return expandArray(v, orig, guard, memo, mode)
+		return expandArray(v, orig, state, mode)
 	case *typ.Map:
-		return expandMap(v, orig, guard, memo, mode)
+		return expandMap(v, orig, state, mode)
 	case *typ.ReadonlyMap:
-		return expandReadonlyMap(v, orig, guard, memo, mode)
+		return expandReadonlyMap(v, orig, state, mode)
 	case *typ.Tuple:
-		return expandTuple(v, orig, guard, memo, mode)
+		return expandTuple(v, orig, state, mode)
 	case *typ.Function:
-		return expandFunction(v, orig, guard, memo, mode)
+		return expandFunction(v, orig, state, mode)
 	case *typ.Record:
-		return expandRecord(v, orig, guard, memo, mode)
+		return expandRecord(v, orig, state, mode)
 	case *typ.Alias:
-		return expandAlias(v, orig, guard, memo, mode)
+		return expandAlias(v, orig, state, mode)
 	case *typ.Interface:
-		return expandInterface(v, orig, guard, memo, mode)
+		return expandInterface(v, orig, state, mode)
 	case *typ.Ref, *typ.Generic:
 		return orig
 	default:

@@ -10,34 +10,32 @@ const (
 	containmentGeneric
 )
 
-func containsAnyDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentAny)
+func containsAnyDynamic(t Type, seen map[Type]bool, _ int) bool {
+	return containsDynamicFlag(t, seen, containmentAny)
 }
 
 func containsNeverDynamic(t Type, seen map[Type]bool) bool {
-	return containsDynamicFlag(t, seen, 0, -1, containmentNever)
+	return containsDynamicFlag(t, seen, containmentNever)
 }
 
-func containsTypeParamDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentTypeParam)
+func containsTypeParamDynamic(t Type, seen map[Type]bool, _ int) bool {
+	return containsDynamicFlag(t, seen, containmentTypeParam)
 }
 
-func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentInstantiated)
+func containsInstantiatedDynamic(t Type, seen map[Type]bool, _ int) bool {
+	return containsDynamicFlag(t, seen, containmentInstantiated)
 }
 
-func containsGenericDynamic(t Type, seen map[Type]bool, depth int) bool {
-	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, containmentGeneric)
+func containsGenericDynamic(t Type, seen map[Type]bool, _ int) bool {
+	return containsDynamicFlag(t, seen, containmentGeneric)
 }
 
 func containsDynamicFlag(
 	t Type,
 	seen map[Type]bool,
-	depth int,
-	maxDepth int,
 	flag containmentFlag,
 ) bool {
-	if t == nil || flag == 0 || (maxDepth >= 0 && depth > maxDepth) {
+	if t == nil || flag == 0 {
 		return false
 	}
 	t = unwrapAnnotated(t)
@@ -56,7 +54,7 @@ func containsDynamicFlag(
 			return false
 		}
 		seen[t] = true
-		return containsDynamicFlag(recursive.Body, seen, depth+1, maxDepth, flag)
+		return containsDynamicFlag(recursive.Body, seen, flag)
 	}
 	// A node can intrinsically satisfy the query while also containing a
 	// recursive back-edge. Preserve that local truth before bypassing stale
@@ -82,7 +80,7 @@ func containsDynamicFlag(
 	seen[t] = true
 
 	next := func(child Type) bool {
-		return containsDynamicFlag(child, seen, depth+1, maxDepth, flag)
+		return containsDynamicFlag(child, seen, flag)
 	}
 
 	return WalkChildren(t, next)

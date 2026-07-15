@@ -18,8 +18,7 @@ func ExpandInstantiated(t typ.Type) typ.Type {
 	}
 	memo := getExpandMemo()
 	defer putExpandMemo(memo)
-	guard := typ.GuardForDepth(typ.DefaultRecursionDepth)
-	return expandInstantiatedGuardMode(t, guard, memo, expandModeStructural)
+	return expandInstantiatedGuardMode(t, &expandState{memo: memo}, expandModeStructural)
 }
 
 // ExpandInstantiatedChanged expands generic instantiations and reports whether

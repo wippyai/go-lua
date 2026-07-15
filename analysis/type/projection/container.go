@@ -1,6 +1,7 @@
 package projection
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -10,7 +11,7 @@ import (
 
 // ElementOf projects the element/value type read from Lua container shapes.
 func ElementOf(t typ.Type) (typ.Type, bool) {
-	return elementOfDepth(t, 0)
+	return elementOf(t, &graph.Path{}, nil, false)
 }
 
 // KeyOf projects the key type iterated over Lua container shapes. Arrays and
@@ -18,45 +19,48 @@ func ElementOf(t typ.Type) (typ.Type, bool) {
 // their map component plus any statically known closed-record members. A union
 // keys by the union of its members' key types, skipping nil members.
 func KeyOf(t typ.Type) (typ.Type, bool) {
-	return keyOfDepth(t, 0)
+	return keyOf(t, &graph.Path{}, nil, false)
 }
 
-func descendContainerDepth(t typ.Type, depth int, project func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
-	if depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
+type containerProject func(typ.Type, *graph.Path, typ.Type, bool) (typ.Type, bool)
+
+func descendContainer(t typ.Type, active *graph.Path, cycleType typ.Type, cycleOK bool, project containerProject) (typ.Type, bool) {
 	t = unwrap.NormalizeNil(t)
 	if t == nil {
 		return nil, false
 	}
+	if !active.Enter(t) {
+		return cycleType, cycleOK
+	}
+	defer active.Leave(t)
 	switch tt := t.(type) {
 	case *typ.Annotated:
-		return descendContainerDepth(tt.Inner, depth+1, project)
+		return descendContainer(tt.Inner, active, cycleType, cycleOK, project)
 	case *typ.Alias:
-		return descendContainerDepth(tt.UnaliasedTarget(), depth+1, project)
+		return descendContainer(tt.UnaliasedTarget(), active, cycleType, cycleOK, project)
 	case *typ.Optional:
-		return descendContainerDepth(tt.Inner, depth+1, project)
+		return descendContainer(tt.Inner, active, cycleType, cycleOK, project)
 	case *typ.Recursive:
 		if tt.Body == nil || tt.Body == t {
 			return nil, false
 		}
-		return descendContainerDepth(tt.Body, depth+1, project)
+		return descendContainer(tt.Body, active, cycleType, cycleOK, project)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)
 		if expanded == nil || expanded == t {
 			return nil, false
 		}
-		return descendContainerDepth(expanded, depth+1, project)
+		return descendContainer(expanded, active, cycleType, cycleOK, project)
 	default:
-		return project(t, depth)
+		return project(t, active, cycleType, cycleOK)
 	}
 }
 
-func keyOfDepth(t typ.Type, depth int) (typ.Type, bool) {
-	return descendContainerDepth(t, depth, keyOfDepthProject)
+func keyOf(t typ.Type, active *graph.Path, cycleType typ.Type, cycleOK bool) (typ.Type, bool) {
+	return descendContainer(t, active, cycleType, cycleOK, keyOfProject)
 }
 
-func keyOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
+func keyOfProject(t typ.Type, active *graph.Path, _ typ.Type, _ bool) (typ.Type, bool) {
 	switch tt := t.(type) {
 	case *typ.Array:
 		return typ.Integer, true
@@ -75,7 +79,7 @@ func keyOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 	case *typ.Record:
 		return keyOfRecord(tt)
 	case *typ.Union:
-		return projectContainerUnion(tt.Members, depth, keyOfDepth)
+		return projectContainerUnion(tt.Members, active, keyOf)
 	default:
 		return nil, false
 	}
@@ -112,11 +116,11 @@ func keyOfRecord(record *typ.Record) (typ.Type, bool) {
 	return normalize.UnionForEvidence(members...), true
 }
 
-func elementOfDepth(t typ.Type, depth int) (typ.Type, bool) {
-	return descendContainerDepth(t, depth, elementOfDepthProject)
+func elementOf(t typ.Type, active *graph.Path, cycleType typ.Type, cycleOK bool) (typ.Type, bool) {
+	return descendContainer(t, active, cycleType, cycleOK, elementOfProject)
 }
 
-func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
+func elementOfProject(t typ.Type, active *graph.Path, _ typ.Type, _ bool) (typ.Type, bool) {
 	switch tt := t.(type) {
 	case *typ.Array:
 		if unwrap.NormalizeNil(tt.Element) == nil {
@@ -147,7 +151,7 @@ func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 		}
 		return normalize.UnionForEvidence(tt.Elements...), true
 	case *typ.Union:
-		return projectContainerUnion(tt.Members, depth, elementOfDepth)
+		return projectContainerUnion(tt.Members, active, elementOf)
 	default:
 		return nil, false
 	}
@@ -179,18 +183,22 @@ func elementOfRecord(record *typ.Record) (typ.Type, bool) {
 	return normalize.UnionForEvidence(members...), true
 }
 
-func projectContainerUnion(members []typ.Type, depth int, project func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
+func projectContainerUnion(members []typ.Type, active *graph.Path, project containerProject) (typ.Type, bool) {
 	projected := make([]typ.Type, 0, len(members))
 	for _, member := range members {
 		member = unwrap.NormalizeNil(member)
 		if member == nil || member.Kind() == kind.Nil {
 			continue
 		}
-		out, ok := project(member, depth+1)
+		// Union projection is a must equation. A recursive backedge is its
+		// conjunction identity and contributes no projected type by itself.
+		out, ok := project(member, active, nil, true)
 		if !ok {
 			return nil, false
 		}
-		projected = append(projected, out)
+		if out != nil {
+			projected = append(projected, out)
+		}
 	}
 	if len(projected) == 0 {
 		return nil, false

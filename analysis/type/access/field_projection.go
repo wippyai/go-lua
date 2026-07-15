@@ -55,20 +55,25 @@ func fieldInMap(key typ.Type, value typ.Type, name string) fieldResult {
 	return fieldResult{t: value, ok: true, nilable: true}
 }
 
-func fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
+func (q *query) fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
 	if u == nil || len(u.Members) == 0 {
 		return fieldResult{}
 	}
-	return distributeUnion(u.Members, depth, func(member typ.Type, depth int) fieldResult {
-		return fieldDepth(member, name, depth)
+	return q.distributeUnion(u.Members, depth, func(member typ.Type, depth int) fieldResult {
+		// Union field access is a must query. A recursive backedge is the
+		// conjunction identity; it contributes no type by itself, while every
+		// concrete arm must still succeed.
+		return q.field(member, name, depth, fieldResult{ok: true})
 	})
 }
 
-func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResult {
+func (q *query) fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResult {
 	if in == nil {
 		return fieldResult{}
 	}
 	return distributeIntersection(in.Members, depth, func(member typ.Type, depth int) (typ.Type, bool) {
-		return fieldDepth(member, name, depth).materialize()
+		// Intersection field access is a may query, so a backedge is the
+		// disjunction identity (no result).
+		return q.field(member, name, depth, fieldResult{}).materialize()
 	})
 }

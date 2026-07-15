@@ -5,8 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func indexInMap(keyDomain typ.Type, value typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
-	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
+func (q *query) indexInMap(keyDomain typ.Type, value typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
+	return q.indexByKeyVariants(key, depth, mode, true, fieldResult{}, func(key typ.Type) fieldResult {
 		ok := typetable.MapComponentKeyAdmitsType(keyDomain, key)
 		if !ok && mode == indexRuntime {
 			ok = typetable.MapComponentKeyMayOverlapType(keyDomain, key)

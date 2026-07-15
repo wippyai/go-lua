@@ -1,6 +1,7 @@
 package typecall
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -100,7 +101,7 @@ func instantiateGenericCall(fn *typ.Function, args []typ.Type, trace bool) (*typ
 		if !ok || formal == nil {
 			continue
 		}
-		inferTypeParamBindings(formal, arg, i, bindings, nil, trace, 0)
+		inferTypeParamBindingsSeen(formal, arg, i, bindings, nil, trace, 0, &graph.PairPath{})
 	}
 
 	params := make([]*typ.TypeParam, 0, len(fn.TypeParams))
@@ -260,40 +261,45 @@ func InstantiatedArgumentAssignable(actual typ.Type, formal typ.Type) bool {
 }
 
 func instantiatedArgumentAssignable(actual typ.Type, formal typ.Type, depth int) bool {
+	return instantiatedArgumentAssignableSeen(actual, formal, depth, &graph.PairPath{})
+}
+
+func instantiatedArgumentAssignableSeen(actual typ.Type, formal typ.Type, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil {
 		return true
-	}
-	if depth > typ.DefaultRecursionDepth {
-		return false
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
 	if formal == nil || refinement.ContainsFreeTypeParam(formal) {
 		return true
 	}
+	if !active.Enter(actual, formal) {
+		return true
+	}
+	defer active.Leave(actual, formal)
 
 	if actualInst, ok := actual.(*typ.Instantiated); ok {
 		if formalInst, ok := formal.(*typ.Instantiated); ok && sameGeneric(actualInst.Generic, formalInst.Generic) {
-			return instantiatedArgsAssignable(actualInst, formalInst, depth+1)
+			return instantiatedArgsAssignable(actualInst, formalInst, depth+1, active)
 		}
 	}
 
 	switch f := formal.(type) {
 	case *typ.Alias:
-		return instantiatedArgumentAssignable(actual, f.UnaliasedTarget(), depth+1)
+		return instantiatedArgumentAssignableSeen(actual, f.UnaliasedTarget(), depth+1, active)
 	case *typ.Optional:
 		if a, ok := actual.(*typ.Optional); ok {
-			return instantiatedArgumentAssignable(a.Inner, f.Inner, depth+1)
+			return instantiatedArgumentAssignableSeen(a.Inner, f.Inner, depth+1, active)
 		}
-		return instantiatedArgumentAssignable(actual, f.Inner, depth+1)
+		return instantiatedArgumentAssignableSeen(actual, f.Inner, depth+1, active)
 	case *typ.Instantiated:
 		expanded := expandFormalInstantiatedForInference(f)
 		if expanded != nil && expanded != formal {
-			return instantiatedArgumentAssignable(actual, expanded, depth+1)
+			return instantiatedArgumentAssignableSeen(actual, expanded, depth+1, active)
 		}
 	case *typ.Record:
 		if actualRecord, ok := actualRecordForValidation(actual, depth+1); ok {
-			return providedRecordFieldsAssignable(actualRecord, f, depth+1)
+			return providedRecordFieldsAssignableSeen(actualRecord, f, depth+1, active)
 		}
 	}
 	if underSpecifiedFunctionLiteral(actual, formal) {
@@ -312,7 +318,7 @@ func underSpecifiedFunctionLiteral(actual typ.Type, formal typ.Type) bool {
 	return len(actualFn.Returns) == 0 && len(formalFn.Returns) != 0
 }
 
-func instantiatedArgsAssignable(actual *typ.Instantiated, formal *typ.Instantiated, depth int) bool {
+func instantiatedArgsAssignable(actual *typ.Instantiated, formal *typ.Instantiated, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil || len(actual.TypeArgs) != len(formal.TypeArgs) {
 		return false
 	}
@@ -330,26 +336,34 @@ func instantiatedArgsAssignable(actual *typ.Instantiated, formal *typ.Instantiat
 }
 
 func freshPrecisionArgumentAssignable(actual typ.Type, formal typ.Type, depth int) bool {
-	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+	if actual == nil || formal == nil {
 		return false
 	}
 	if !subtype.IsFreshAssignable(actual, formal) {
 		return false
 	}
-	return hasFreshPrecisionShape(actual, formal, depth+1)
+	return hasFreshPrecisionShapeSeen(actual, formal, depth+1, &graph.PairPath{})
 }
 
 func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
-	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+	return hasFreshPrecisionShapeSeen(actual, formal, depth, &graph.PairPath{})
+}
+
+func hasFreshPrecisionShapeSeen(actual typ.Type, formal typ.Type, depth int, active *graph.PairPath) bool {
+	if actual == nil || formal == nil {
 		return false
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
+	if !active.Enter(actual, formal) {
+		return false
+	}
+	defer active.Leave(actual, formal)
 	if alias, ok := actual.(*typ.Alias); ok {
-		return hasFreshPrecisionShape(alias.UnaliasedTarget(), formal, depth+1)
+		return hasFreshPrecisionShapeSeen(alias.UnaliasedTarget(), formal, depth+1, active)
 	}
 	if alias, ok := formal.(*typ.Alias); ok {
-		return hasFreshPrecisionShape(actual, alias.UnaliasedTarget(), depth+1)
+		return hasFreshPrecisionShapeSeen(actual, alias.UnaliasedTarget(), depth+1, active)
 	}
 	if subtype.IsSubtype(actual, formal) && subtype.IsSubtype(formal, actual) {
 		return false
@@ -359,16 +373,16 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 	}
 	if opt, ok := actual.(*typ.Optional); ok {
 		if formalOpt, ok := formal.(*typ.Optional); ok {
-			return hasFreshPrecisionShape(opt.Inner, formalOpt.Inner, depth+1)
+			return hasFreshPrecisionShapeSeen(opt.Inner, formalOpt.Inner, depth+1, active)
 		}
-		return hasFreshPrecisionShape(opt.Inner, formal, depth+1)
+		return hasFreshPrecisionShapeSeen(opt.Inner, formal, depth+1, active)
 	}
 	if opt, ok := formal.(*typ.Optional); ok {
-		return hasFreshPrecisionShape(actual, opt.Inner, depth+1)
+		return hasFreshPrecisionShapeSeen(actual, opt.Inner, depth+1, active)
 	}
 	if union, ok := actual.(*typ.Union); ok {
 		for _, member := range union.Members {
-			if hasFreshPrecisionShape(member, formal, depth+1) {
+			if hasFreshPrecisionShapeSeen(member, formal, depth+1, active) {
 				return true
 			}
 		}
@@ -376,7 +390,7 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 	}
 	if union, ok := formal.(*typ.Union); ok {
 		for _, member := range union.Members {
-			if subtype.IsFreshAssignable(actual, member) && hasFreshPrecisionShape(actual, member, depth+1) {
+			if subtype.IsFreshAssignable(actual, member) && hasFreshPrecisionShapeSeen(actual, member, depth+1, active) {
 				return true
 			}
 		}
@@ -388,7 +402,7 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 				if i >= len(formalInst.TypeArgs) {
 					return false
 				}
-				if hasFreshPrecisionShape(actualArg, formalInst.TypeArgs[i], depth+1) {
+				if hasFreshPrecisionShapeSeen(actualArg, formalInst.TypeArgs[i], depth+1, active) {
 					return true
 				}
 			}
@@ -403,7 +417,7 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 			if formalField == nil || formalField.Type == nil || field.Type == nil {
 				continue
 			}
-			if hasFreshPrecisionShape(field.Type, formalField.Type, depth+1) {
+			if hasFreshPrecisionShapeSeen(field.Type, formalField.Type, depth+1, active) {
 				return true
 			}
 		}
@@ -412,13 +426,13 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 			if formalMember == nil || formalMember.Type == nil || member.Type == nil {
 				continue
 			}
-			if hasFreshPrecisionShape(member.Type, formalMember.Type, depth+1) {
+			if hasFreshPrecisionShapeSeen(member.Type, formalMember.Type, depth+1, active) {
 				return true
 			}
 		}
 		if actualRecord.HasMapComponent() && formalRecord.HasMapComponent() {
-			return hasFreshPrecisionShape(actualRecord.MapKey, formalRecord.MapKey, depth+1) ||
-				hasFreshPrecisionShape(actualRecord.MapValue, formalRecord.MapValue, depth+1)
+			return hasFreshPrecisionShapeSeen(actualRecord.MapKey, formalRecord.MapKey, depth+1, active) ||
+				hasFreshPrecisionShapeSeen(actualRecord.MapValue, formalRecord.MapValue, depth+1, active)
 		}
 		return false
 	}
@@ -429,7 +443,7 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 			if i >= len(formalFn.Returns) {
 				break
 			}
-			if hasFreshPrecisionShape(ret, formalFn.Returns[i], depth+1) {
+			if hasFreshPrecisionShapeSeen(ret, formalFn.Returns[i], depth+1, active) {
 				return true
 			}
 		}
@@ -439,17 +453,29 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 }
 
 func actualRecordForValidation(actual typ.Type, depth int) (*typ.Record, bool) {
-	if actual == nil || depth > typ.DefaultRecursionDepth {
+	return actualRecordForValidationSeen(actual, depth, &graph.Path{})
+}
+
+func actualRecordForValidationSeen(actual typ.Type, depth int, active *graph.Path) (*typ.Record, bool) {
+	if actual == nil {
 		return nil, false
 	}
 	actual = unwrap.Annotated(actual)
+	if !active.Enter(actual) {
+		return nil, false
+	}
+	defer active.Leave(actual)
 	switch a := actual.(type) {
 	case *typ.Alias:
-		return actualRecordForValidation(a.UnaliasedTarget(), depth+1)
+		return actualRecordForValidationSeen(a.UnaliasedTarget(), depth+1, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(a)
 		if expanded != nil && expanded != actual {
-			return actualRecordForValidation(expanded, depth+1)
+			return actualRecordForValidationSeen(expanded, depth+1, active)
+		}
+	case *typ.Recursive:
+		if a.Body != nil && a.Body != actual {
+			return actualRecordForValidationSeen(a.Body, depth+1, active)
 		}
 	case *typ.Record:
 		return a, true
@@ -458,18 +484,19 @@ func actualRecordForValidation(actual typ.Type, depth int) (*typ.Record, bool) {
 }
 
 func providedRecordFieldsAssignable(actual *typ.Record, formal *typ.Record, depth int) bool {
+	return providedRecordFieldsAssignableSeen(actual, formal, depth, &graph.PairPath{})
+}
+
+func providedRecordFieldsAssignableSeen(actual *typ.Record, formal *typ.Record, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil {
 		return true
-	}
-	if depth > typ.DefaultRecursionDepth {
-		return false
 	}
 	for _, field := range actual.Fields {
 		formalField := formal.GetField(field.Name)
 		if formalField == nil || formalField.Type == nil || field.Type == nil {
 			continue
 		}
-		if !instantiatedArgumentAssignable(field.Type, formalField.Type, depth+1) {
+		if !instantiatedArgumentAssignableSeen(field.Type, formalField.Type, depth+1, active) {
 			return false
 		}
 	}
@@ -478,19 +505,19 @@ func providedRecordFieldsAssignable(actual *typ.Record, formal *typ.Record, dept
 		if formalMember == nil || formalMember.Type == nil || member.Type == nil {
 			continue
 		}
-		if !instantiatedArgumentAssignable(member.Type, formalMember.Type, depth+1) {
+		if !instantiatedArgumentAssignableSeen(member.Type, formalMember.Type, depth+1, active) {
 			return false
 		}
 	}
 	if actual.HasMapComponent() && formal.HasMapComponent() {
-		return instantiatedArgumentAssignable(actual.MapKey, formal.MapKey, depth+1) &&
-			instantiatedArgumentAssignable(actual.MapValue, formal.MapValue, depth+1)
+		return instantiatedArgumentAssignableSeen(actual.MapKey, formal.MapKey, depth+1, active) &&
+			instantiatedArgumentAssignableSeen(actual.MapValue, formal.MapValue, depth+1, active)
 	}
 	return true
 }
 
-func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int) {
-	if formal == nil || actual == nil || depth > typ.DefaultRecursionDepth {
+func inferTypeParamBindingsSeen(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int, active *graph.PairPath) {
+	if formal == nil || actual == nil {
 		return
 	}
 
@@ -501,38 +528,54 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 		bindTypeParam(param, actual, index, bindings, path, trace)
 		return
 	}
+	if !active.Enter(formal, actual) {
+		return
+	}
+	defer active.Leave(formal, actual)
+	if f, ok := formal.(*typ.Recursive); ok {
+		if f.Body != nil && f.Body != formal {
+			inferTypeParamBindingsSeen(f.Body, actual, index, bindings, path, trace, depth+1, active)
+		}
+		return
+	}
+	if a, ok := actual.(*typ.Recursive); ok {
+		if a.Body != nil && a.Body != actual {
+			inferTypeParamBindingsSeen(formal, a.Body, index, bindings, path, trace, depth+1, active)
+		}
+		return
+	}
 
 	switch f := formal.(type) {
 	case *typ.Alias:
-		inferTypeParamBindings(f.UnaliasedTarget(), actual, index, bindings, path, trace, depth+1)
+		inferTypeParamBindingsSeen(f.UnaliasedTarget(), actual, index, bindings, path, trace, depth+1, active)
 	case *typ.Optional:
 		if a, ok := actual.(*typ.Optional); ok {
-			inferTypeParamBindings(f.Inner, a.Inner, index, bindings, path, trace, depth+1)
+			inferTypeParamBindingsSeen(f.Inner, a.Inner, index, bindings, path, trace, depth+1, active)
 			return
 		}
-		inferTypeParamBindings(f.Inner, actual, index, bindings, path, trace, depth+1)
+		inferTypeParamBindingsSeen(f.Inner, actual, index, bindings, path, trace, depth+1, active)
 	case *typ.Array:
 		switch a := actual.(type) {
 		case *typ.Array:
-			inferTypeParamBindings(f.Element, a.Element, index, bindings, path, trace, depth+1)
+			inferTypeParamBindingsSeen(f.Element, a.Element, index, bindings, path, trace, depth+1, active)
 		case *typ.Tuple:
 			for _, elem := range a.Elements {
-				inferTypeParamBindings(f.Element, elem, index, bindings, path, trace, depth+1)
+				inferTypeParamBindingsSeen(f.Element, elem, index, bindings, path, trace, depth+1, active)
 			}
 		}
 	case *typ.Map:
 		if a, ok := actual.(*typ.Map); ok {
-			inferTypeParamBindings(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
-			inferTypeParamBindings(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
+			inferTypeParamBindingsSeen(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1, active)
+			inferTypeParamBindingsSeen(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1, active)
 		}
 	case *typ.ReadonlyMap:
 		switch a := actual.(type) {
 		case *typ.ReadonlyMap:
-			inferTypeParamBindings(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
-			inferTypeParamBindings(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
+			inferTypeParamBindingsSeen(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1, active)
+			inferTypeParamBindingsSeen(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1, active)
 		case *typ.Map:
-			inferTypeParamBindings(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
-			inferTypeParamBindings(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
+			inferTypeParamBindingsSeen(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1, active)
+			inferTypeParamBindingsSeen(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1, active)
 		}
 	case *typ.Tuple:
 		if a, ok := actual.(*typ.Tuple); ok {
@@ -540,34 +583,34 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 				if i >= len(a.Elements) {
 					break
 				}
-				inferTypeParamBindings(elem, a.Elements[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticInt, Index: i + 1}), trace, depth+1)
+				inferTypeParamBindingsSeen(elem, a.Elements[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticInt, Index: i + 1}), trace, depth+1, active)
 			}
 		}
 	case *typ.Function:
-		inferFunctionBindings(f, actual, index, bindings, path, trace, depth+1)
+		inferFunctionBindings(f, actual, index, bindings, path, trace, depth+1, active)
 	case *typ.Record:
-		inferRecordBindings(f, actual, index, bindings, path, trace, depth+1)
+		inferRecordBindings(f, actual, index, bindings, path, trace, depth+1, active)
 	case *typ.Instantiated:
 		if a, ok := actual.(*typ.Instantiated); ok && sameGeneric(f.Generic, a.Generic) {
 			for i, arg := range f.TypeArgs {
 				if i >= len(a.TypeArgs) {
 					break
 				}
-				inferTypeParamBindings(arg, a.TypeArgs[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathTypeArgument, Index: i + 1}), trace, depth+1)
+				inferTypeParamBindingsSeen(arg, a.TypeArgs[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathTypeArgument, Index: i + 1}), trace, depth+1, active)
 			}
 			return
 		}
 		expanded := expandFormalInstantiatedForInference(f)
 		if expanded != nil && expanded != formal {
-			inferTypeParamBindings(expanded, actual, index, bindings, path, trace, depth+1)
+			inferTypeParamBindingsSeen(expanded, actual, index, bindings, path, trace, depth+1, active)
 		}
 	case *typ.Union:
 		for _, member := range f.Members {
-			inferTypeParamBindings(member, actual, index, bindings, path, trace, depth+1)
+			inferTypeParamBindingsSeen(member, actual, index, bindings, path, trace, depth+1, active)
 		}
 	case *typ.Intersection:
 		for _, member := range f.Members {
-			inferTypeParamBindings(member, actual, index, bindings, path, trace, depth+1)
+			inferTypeParamBindingsSeen(member, actual, index, bindings, path, trace, depth+1, active)
 		}
 	}
 }
@@ -582,8 +625,8 @@ func expandFormalInstantiatedForInference(inst *typ.Instantiated) typ.Type {
 	return subst.Self(body, inst)
 }
 
-func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int) {
-	if formal == nil || depth > typ.DefaultRecursionDepth {
+func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int, active *graph.PairPath) {
+	if formal == nil {
 		return
 	}
 	actual = unwrap.Annotated(actual)
@@ -604,14 +647,14 @@ func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bin
 		if i >= len(actualFn.Params) {
 			break
 		}
-		inferTypeParamBindings(param.Type, actualFn.Params[i].Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Name: param.Name, Index: i + 1}), trace, depth+1)
+		inferTypeParamBindingsSeen(param.Type, actualFn.Params[i].Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Name: param.Name, Index: i + 1}), trace, depth+1, active)
 	}
 	if formal.Variadic != nil {
 		if actualFn.Variadic != nil {
-			inferTypeParamBindings(formal.Variadic, actualFn.Variadic, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Index: len(formal.Params) + 1}), trace, depth+1)
+			inferTypeParamBindingsSeen(formal.Variadic, actualFn.Variadic, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Index: len(formal.Params) + 1}), trace, depth+1, active)
 		} else {
 			for i := len(formal.Params); i < len(actualFn.Params); i++ {
-				inferTypeParamBindings(formal.Variadic, actualFn.Params[i].Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Index: i + 1}), trace, depth+1)
+				inferTypeParamBindingsSeen(formal.Variadic, actualFn.Params[i].Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Index: i + 1}), trace, depth+1, active)
 			}
 		}
 	}
@@ -619,11 +662,11 @@ func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bin
 		if i >= len(actualFn.Returns) {
 			break
 		}
-		inferTypeParamBindings(ret, actualFn.Returns[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionReturn, Index: i + 1}), trace, depth+1)
+		inferTypeParamBindingsSeen(ret, actualFn.Returns[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionReturn, Index: i + 1}), trace, depth+1, active)
 	}
 }
 
-func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int) {
+func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int, active *graph.PairPath) {
 	if formal == nil {
 		return
 	}
@@ -639,7 +682,7 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 	}
 	if union, ok := actual.(*typ.Union); ok {
 		for _, member := range union.Members {
-			inferRecordBindings(formal, member, index, bindings, path, trace, depth+1)
+			inferRecordBindings(formal, member, index, bindings, path, trace, depth+1, active)
 		}
 		return
 	}
@@ -652,11 +695,11 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 		if actualField == nil {
 			continue
 		}
-		inferTypeParamBindings(field.Type, actualField.Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathField, Name: field.Name}), trace, depth+1)
+		inferTypeParamBindingsSeen(field.Type, actualField.Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathField, Name: field.Name}), trace, depth+1, active)
 	}
 	if formal.HasMapComponent() && record.HasMapComponent() {
-		inferTypeParamBindings(formal.MapKey, record.MapKey, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
-		inferTypeParamBindings(formal.MapValue, record.MapValue, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
+		inferTypeParamBindingsSeen(formal.MapKey, record.MapKey, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1, active)
+		inferTypeParamBindingsSeen(formal.MapValue, record.MapValue, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1, active)
 	}
 	for _, member := range formal.StaticMembers {
 		var actualMember *typ.StaticMember
@@ -670,7 +713,7 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 			step = InferencePathStep{Kind: InferencePathStaticInt, Index: int(member.Index)}
 		}
 		if actualMember != nil {
-			inferTypeParamBindings(member.Type, actualMember.Type, index, bindings, appendInferencePath(path, step), trace, depth+1)
+			inferTypeParamBindingsSeen(member.Type, actualMember.Type, index, bindings, appendInferencePath(path, step), trace, depth+1, active)
 		}
 	}
 }

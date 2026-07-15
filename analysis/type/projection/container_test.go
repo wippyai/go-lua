@@ -74,14 +74,14 @@ func TestElementOfRejectsEmptyTuple(t *testing.T) {
 	}
 }
 
-func TestElementOfRejectsPastRecursionDepth(t *testing.T) {
+func TestElementOfTraversesDeepWrappersExactly(t *testing.T) {
 	var source typ.Type = typ.NewArray(typ.String)
-	for i := 0; i <= typ.DefaultRecursionDepth; i++ {
+	for i := 0; i < 257; i++ {
 		source = typ.NewAnnotated(source, []annotation.Annotation{{Name: "depth"}})
 	}
 
-	if got, ok := ElementOf(source); ok || got != nil {
-		t.Fatalf("ElementOf succeeded: %v", got)
+	if got, ok := ElementOf(source); !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("ElementOf deep wrapper = (%v, %v), want string", got, ok)
 	}
 }
 
@@ -95,6 +95,32 @@ func TestElementOfRecursiveContainer(t *testing.T) {
 		t.Fatal("ElementOf recursive array failed")
 	}
 	assertProjectionType(t, got, typ.String)
+}
+
+func TestElementOfTerminatesOnMutualRecursiveWrapperCycle(t *testing.T) {
+	left := typ.NewRecursivePlaceholder("Left")
+	right := typ.NewRecursivePlaceholder("Right")
+	left.SetBody(right)
+	right.SetBody(left)
+	if got, ok := ElementOf(left); ok || got != nil {
+		t.Fatalf("ElementOf(mutual cycle) = (%v, %v), want no container", got, ok)
+	}
+}
+
+func TestElementOfRecursiveUnionUsesExactMustFixedPoint(t *testing.T) {
+	node := typ.NewRecursivePlaceholder("Items")
+	node.SetBody(typeexpr.Union(node, typ.NewArray(typ.String)))
+	got, ok := ElementOf(node)
+	if !ok {
+		t.Fatal("ElementOf(recursive union) failed")
+	}
+	assertProjectionType(t, got, typ.String)
+
+	bad := typ.NewRecursivePlaceholder("BadItems")
+	bad.SetBody(typeexpr.Union(bad, typ.Boolean))
+	if got, ok := ElementOf(bad); ok || got != nil {
+		t.Fatalf("ElementOf(recursive union with non-container) = (%v, %v)", got, ok)
+	}
 }
 
 func TestElementOfInstantiatedContainer(t *testing.T) {

@@ -3,8 +3,13 @@ package format
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+// formatterSafetyDepth bounds presentation only when a caller disables every
+// explicit output budget. It does not participate in semantic type reasoning.
+const formatterSafetyDepth = 64
 
 // Options controls budgeted type rendering for diagnostics.
 // Limits are best-effort; rendering may truncate with "..." when exceeded.
@@ -43,7 +48,14 @@ func Type(t typ.Type, opts Options) string {
 	f := formatter{
 		opts: opts,
 	}
-	f.formatType(t, 0, typ.NewGuard())
+	guardDepth := opts.MaxDepth
+	if guardDepth <= 0 {
+		guardDepth = opts.MaxNodes
+	}
+	if guardDepth <= 0 {
+		guardDepth = formatterSafetyDepth
+	}
+	f.formatType(t, 0, recursion.NewGuard(guardDepth))
 	return f.string()
 }
 

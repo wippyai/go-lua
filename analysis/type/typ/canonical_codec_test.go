@@ -185,14 +185,19 @@ func TestCanonicalCodecRejectsUnsupportedImplementation(t *testing.T) {
 	}
 }
 
-func TestCanonicalCodecRejectsEqualityAuthorityGaps(t *testing.T) {
+func TestCanonicalCodecEncodesDeepTransparentAliasesExactly(t *testing.T) {
 	var deep Type = Number
-	for range DefaultRecursionDepth + 1 {
+	for range 257 {
 		deep = &Alias{Name: "transparent", Target: deep}
 	}
-	if encoded, err := EncodeCanonical(context.Background(), deep); err == nil || encoded != nil {
-		t.Fatalf("over-depth alias encoded as %x, err=%v", encoded, err)
+	if encoded, err := EncodeCanonical(context.Background(), deep); err != nil || len(encoded) == 0 {
+		t.Fatalf("deep alias was not encoded exactly: %x, err=%v", encoded, err)
 	}
+	if !TypeEquals(deep, Number) {
+		t.Fatal("deep transparent alias is not equal to its target")
+	}
+
+	// Non-reflexive scalars remain outside the canonical equality authority.
 	if encoded, err := EncodeCanonical(context.Background(), LiteralNumber(math.NaN())); err == nil || encoded != nil {
 		t.Fatalf("non-reflexive number literal encoded as %x, err=%v", encoded, err)
 	}

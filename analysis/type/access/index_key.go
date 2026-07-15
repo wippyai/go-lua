@@ -6,11 +6,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func indexByKeyVariants(key typ.Type, depth int, mode indexMode, missingNil bool, project func(typ.Type) fieldResult) fieldResult {
-	return descendAccessWrappers(key, depth, func(key typ.Type, depth int) fieldResult {
+func (q *query) indexByKeyVariants(key typ.Type, depth int, mode indexMode, missingNil bool, cycle fieldResult, project func(typ.Type) fieldResult) fieldResult {
+	visit := queryKey{op: 5, t: key, mode: mode}
+	if !q.enter(visit) {
+		return cycle
+	}
+	defer q.leave(visit)
+	return descendAccessWrappers(key, depth, nil, func(key typ.Type, depth int) fieldResult {
 		switch v := unwrap.Annotated(key).(type) {
 		case *typ.Union:
-			return indexKeyUnion(v, depth+1, mode, missingNil, project)
+			return q.indexKeyUnion(v, depth+1, mode, missingNil, project)
 		default:
 			res := project(key)
 			if !res.ok && mode == indexRuntime && missingNil {
@@ -26,12 +31,12 @@ func indexByKeyVariants(key typ.Type, depth int, mode indexMode, missingNil bool
 	})
 }
 
-func indexKeyUnion(u *typ.Union, depth int, mode indexMode, missingNil bool, project func(typ.Type) fieldResult) fieldResult {
+func (q *query) indexKeyUnion(u *typ.Union, depth int, mode indexMode, missingNil bool, project func(typ.Type) fieldResult) fieldResult {
 	if u == nil || len(u.Members) == 0 {
 		return fieldResult{}
 	}
 	return distributeUnionResults(u.Members, depth, func(member typ.Type, depth int) fieldResult {
-		return indexByKeyVariants(member, depth, mode, missingNil, project)
+		return q.indexByKeyVariants(member, depth, mode, missingNil, fieldResult{ok: true}, project)
 	}, func(typ.Type, int) bool {
 		return mode == indexRuntime && missingNil
 	})

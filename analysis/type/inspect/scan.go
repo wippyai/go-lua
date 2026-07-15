@@ -1,6 +1,7 @@
 package inspect
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -21,23 +22,27 @@ func ContainsUnknown(t typ.Type) bool {
 // IsMultiArmUnion reports whether t resolves through transparent wrappers to a
 // union with at least two members.
 func IsMultiArmUnion(t typ.Type) bool {
-	return isMultiArmUnionDepth(t, 0)
+	return isMultiArmUnion(t, &graph.Path{})
 }
 
-func isMultiArmUnionDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func isMultiArmUnion(t typ.Type, active *graph.Path) bool {
+	if t == nil {
 		return false
 	}
+	if !active.Enter(t) {
+		return false
+	}
+	defer active.Leave(t)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
 		return len(v.Members) >= 2
 	case *typ.Alias:
-		return isMultiArmUnionDepth(v.UnaliasedTarget(), depth+1)
+		return isMultiArmUnion(v.UnaliasedTarget(), active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false
 		}
-		return isMultiArmUnionDepth(v.Body, depth+1)
+		return isMultiArmUnion(v.Body, active)
 	default:
 		return false
 	}

@@ -247,46 +247,31 @@ func TestOverlayRecordMembersKeepsDeclaredContainerForEmptyTableWitness(t *testi
 	}
 }
 
-func TestOverlayRecordMembersHonorsRecursionDepthBoundary(t *testing.T) {
-	existingChild := NewRecord().
-		Field("preserved_when_depth_allows", typ.Number).
-		Build()
-	overlayChild := NewRecord().
-		Field("replacement", typ.String).
-		Build()
-	existing := NewRecord().
-		Field("id", typ.String).
-		Field("state", existingChild).
-		Build()
-	overlay := NewRecord().
-		Field("state", overlayChild).
-		Field("extra", typ.Boolean).
-		Build()
+func TestOverlayRecordMembersTraversesDeepRecordsExactly(t *testing.T) {
+	var existing typ.Type = NewRecord().Field("preserved", typ.Number).Build()
+	var overlay typ.Type = NewRecord().Field("replacement", typ.String).Build()
+	for range 257 {
+		existing = NewRecord().Field("next", existing).Build()
+		overlay = NewRecord().Field("next", overlay).Build()
+	}
 
-	merged := overlayRecordMembers(existing, overlay, typ.DefaultRecursionDepth)
+	merged := overlayRecordMembers(existing.(*typ.Record), overlay.(*typ.Record))
 	mergedRecord, ok := merged.(*typ.Record)
 	if !ok {
-		t.Fatalf("overlay at recursion depth boundary = %T, want record", merged)
+		t.Fatalf("deep overlay = %T, want record", merged)
 	}
-	if mergedRecord.GetField("id") == nil {
-		t.Fatalf("overlay at boundary lost current-level existing sibling: %v", mergedRecord)
+	for i := 0; i < 257; i++ {
+		next := mergedRecord.GetField("next")
+		if next == nil {
+			t.Fatalf("deep overlay lost next at level %d", i)
+		}
+		mergedRecord, ok = next.Type.(*typ.Record)
+		if !ok {
+			t.Fatalf("next at level %d = %T, want record", i, next.Type)
+		}
 	}
-	if mergedRecord.GetField("extra") == nil {
-		t.Fatalf("overlay at boundary lost current-level overlay sibling: %v", mergedRecord)
-	}
-	state := mergedRecord.GetField("state")
-	if state == nil {
-		t.Fatalf("overlay at boundary lost overlapping state field: %v", mergedRecord)
-	}
-	stateRecord, ok := state.Type.(*typ.Record)
-	if !ok {
-		t.Fatalf("state type at boundary = %T, want record", state.Type)
-	}
-	if stateRecord.GetField("replacement") == nil {
-		t.Fatalf("overlay at boundary did not keep replacement child: %v", stateRecord)
-	}
-	if stateRecord.GetField("preserved_when_depth_allows") != nil {
-		t.Fatalf("overlay at boundary recursed past depth guard and kept child sibling: %v", stateRecord)
+	if mergedRecord.GetField("preserved") == nil || mergedRecord.GetField("replacement") == nil {
+		t.Fatalf("deep overlay did not merge both leaf siblings: %v", mergedRecord)
 	}
 }
 

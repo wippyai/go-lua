@@ -367,6 +367,53 @@ func TestFieldIntersectionAllowsDisjointRecordAndInterfaceMembers(t *testing.T) 
 	assertType(t, got, typ.String)
 }
 
+func TestFieldTerminatesOnMutualRecursiveWrapperCycle(t *testing.T) {
+	left := typ.NewRecursivePlaceholder("Left")
+	right := typ.NewRecursivePlaceholder("Right")
+	left.SetBody(right)
+	right.SetBody(left)
+	if got, ok := Field(left, "missing"); ok || got != nil {
+		t.Fatalf("Field(mutual cycle) = (%v, %v), want no field", got, ok)
+	}
+}
+
+func TestFieldRecursiveUnionUsesExactMustFixedPoint(t *testing.T) {
+	node := typ.NewRecursivePlaceholder("Node")
+	record := typetable.NewRecord().Field("value", typ.String).Build()
+	node.SetBody(typeexpr.Union(node, record))
+
+	got, ok := Field(node, "value")
+	if !ok {
+		t.Fatal("Field(recursive union, value) failed")
+	}
+	assertType(t, got, typ.String)
+	if !MissingFieldReadsNil(node) {
+		t.Fatal("recursive union of table arms lost missing-read nil semantics")
+	}
+
+	bad := typ.NewRecursivePlaceholder("Bad")
+	bad.SetBody(typeexpr.Union(bad, typ.Boolean))
+	if got, ok := Field(bad, "value"); ok || got != nil {
+		t.Fatalf("Field(recursive union with non-table arm) = (%v, %v)", got, ok)
+	}
+}
+
+func TestShallowAccessTraversalDoesNotAllocate(t *testing.T) {
+	record := typetable.NewRecord().Field("value", typ.String).Build()
+	array := typ.NewArray(typ.String)
+	key := typ.Integer
+	if got := testing.AllocsPerRun(1000, func() {
+		_, _ = Field(record, "value")
+	}); got != 0 {
+		t.Fatalf("Field shallow allocations = %v, want 0", got)
+	}
+	if got := testing.AllocsPerRun(1000, func() {
+		_, _ = Index(array, key)
+	}); got > 1 {
+		t.Fatalf("Index shallow allocations = %v, want at most the existing projector closure", got)
+	}
+}
+
 func assertType(t *testing.T, got typ.Type, want typ.Type) {
 	t.Helper()
 	if !typ.TypeEquals(got, want) {

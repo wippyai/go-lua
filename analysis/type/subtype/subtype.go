@@ -18,8 +18,12 @@ func IsSubtype(sub, super typ.Type) bool {
 // nested literal fields take their declared contract rather than their narrow
 // constructed type.
 func IsFreshAssignable(sub, super typ.Type) bool {
-	c := &checker{}
-	return c.check(sub, super, 0) || c.canWidenTo(sub, super, 0)
+	if (&checker{}).check(sub, super, 0) {
+		return true
+	}
+	// Widening is a distinct recursive relation. Its coinductive assumptions
+	// must not observe false memo entries from the preceding subtype proof.
+	return (&checker{}).canWidenTo(sub, super, 0)
 }
 
 func isOptionalTop(t typ.Type) bool {
@@ -32,6 +36,8 @@ func isOptionalTop(t typ.Type) bool {
 }
 
 type checker struct {
-	inProgress map[typePair]bool
-	memo       map[typePair]bool
+	inProgress      map[typePair]bool
+	memo            map[typePair]bool
+	widenInProgress map[typePair]bool
+	widenMemo       map[typePair]bool
 }

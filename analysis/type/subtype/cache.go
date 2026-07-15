@@ -46,8 +46,10 @@ func (c *Cache) IsFreshAssignable(sub, super typ.Type) bool {
 			return result
 		}
 	}
-	check := &checker{}
-	result := check.check(sub, super, 0) || check.canWidenTo(sub, super, 0)
+	result := (&checker{}).check(sub, super, 0)
+	if !result {
+		result = (&checker{}).canWidenTo(sub, super, 0)
+	}
 	if cacheable {
 		if c.freshAssignable == nil {
 			c.freshAssignable = make(map[typePair]bool)

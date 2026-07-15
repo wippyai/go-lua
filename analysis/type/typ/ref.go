@@ -102,9 +102,13 @@ func (a *Alias) Equals(other Type) bool {
 
 func flattenAliasTarget(target Type) Type {
 	current := target
-	for depth := 0; depth < DefaultRecursionDepth; depth++ {
+	var seen typePath
+	for {
 		alias, ok := current.(*Alias)
 		if !ok || alias == nil {
+			return current
+		}
+		if !seen.enter(alias) {
 			return current
 		}
 		next := alias.Target
@@ -116,7 +120,6 @@ func flattenAliasTarget(target Type) Type {
 		}
 		current = next
 	}
-	return current
 }
 
 // Meta represents a metatype (the type of a type value).

@@ -6,7 +6,7 @@ import (
 )
 
 func stopDepth(t typ.Type, depth int) bool {
-	return t == nil || depth > typ.DefaultRecursionDepth
+	return t == nil
 }
 
 func isNilType(t typ.Type) bool {

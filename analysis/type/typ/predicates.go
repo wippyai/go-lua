@@ -32,13 +32,10 @@ func AbsentOrTopLike(t Type) bool {
 
 // AdmitsFalse reports whether t's value set can contain the literal false.
 func AdmitsFalse(t Type) bool {
-	return admitsFalse(t, 0)
+	return admitsFalse(t, &typePath{})
 }
 
-func admitsFalse(t Type, depth int) bool {
-	if depth > DefaultRecursionDepth {
-		return false
-	}
+func admitsFalse(t Type, active *typePath) bool {
 	switch tt := t.(type) {
 	case nil:
 		return false
@@ -48,7 +45,11 @@ func admitsFalse(t Type, depth int) bool {
 		if tt == nil || tt.Inner == nil || tt.Inner == t {
 			return false
 		}
-		return admitsFalse(tt.Inner, depth+1)
+		if !active.enter(t) {
+			return false
+		}
+		defer active.leave(t)
+		return admitsFalse(tt.Inner, active)
 	case *Alias:
 		if tt == nil {
 			return false
@@ -57,12 +58,16 @@ func admitsFalse(t Type, depth int) bool {
 		if next == nil || next == t {
 			return false
 		}
-		return admitsFalse(next, depth+1)
+		if !active.enter(t) {
+			return false
+		}
+		defer active.leave(t)
+		return admitsFalse(next, active)
 	case *Optional:
-		return tt != nil && admitsFalse(tt.Inner, depth+1)
+		return tt != nil && admitsFalse(tt.Inner, active)
 	case *Union:
 		for _, member := range tt.Members {
-			if admitsFalse(member, depth+1) {
+			if admitsFalse(member, active) {
 				return true
 			}
 		}
@@ -72,7 +77,7 @@ func admitsFalse(t Type, depth int) bool {
 			return false
 		}
 		for _, member := range tt.Members {
-			if !admitsFalse(member, depth+1) {
+			if !admitsFalse(member, active) {
 				return false
 			}
 		}
@@ -84,18 +89,20 @@ func admitsFalse(t Type, depth int) bool {
 
 // IsBooleanType reports whether t is definitely contained in boolean.
 func IsBooleanType(t Type) bool {
-	return isBooleanType(t, 0)
+	return isBooleanType(t, &typePath{})
 }
 
-func isBooleanType(t Type, depth int) bool {
-	if depth > DefaultRecursionDepth {
-		return false
-	}
+func isBooleanType(t Type, active *typePath) bool {
 	t = NormalizeNil(t)
 	if t == nil {
 		return false
 	}
-	switch tt := stripIndexTransparentWrappers(t, depth).(type) {
+	t = stripIndexTransparentWrappers(t)
+	if t == nil || !active.enter(t) {
+		return false
+	}
+	defer active.leave(t)
+	switch tt := t.(type) {
 	case nil:
 		return false
 	case *Literal:
@@ -107,14 +114,14 @@ func isBooleanType(t Type, depth int) bool {
 			return false
 		}
 		for _, member := range tt.Members {
-			if !isBooleanType(member, depth+1) {
+			if !isBooleanType(member, active) {
 				return false
 			}
 		}
 		return true
 	case *Intersection:
 		for _, member := range tt.Members {
-			if isBooleanType(member, depth+1) {
+			if isBooleanType(member, active) {
 				return true
 			}
 		}
@@ -129,18 +136,20 @@ func isBooleanType(t Type, depth int) bool {
 // dynamic key ranges over integer slots, such as ipairs-style generic-for
 // transfer.
 func IsIntegerIndexType(t Type) bool {
-	return isIntegerIndexType(t, 0)
+	return isIntegerIndexType(t, &typePath{})
 }
 
-func isIntegerIndexType(t Type, depth int) bool {
-	if depth > DefaultRecursionDepth {
-		return false
-	}
+func isIntegerIndexType(t Type, active *typePath) bool {
 	t = NormalizeNil(t)
 	if t == nil {
 		return false
 	}
-	switch tt := stripIndexTransparentWrappers(t, depth).(type) {
+	t = stripIndexTransparentWrappers(t)
+	if t == nil || !active.enter(t) {
+		return false
+	}
+	defer active.leave(t)
+	switch tt := t.(type) {
 	case nil:
 		return false
 	case *Literal:
@@ -152,14 +161,14 @@ func isIntegerIndexType(t Type, depth int) bool {
 			return false
 		}
 		for _, member := range tt.Members {
-			if !isIntegerIndexType(member, depth+1) {
+			if !isIntegerIndexType(member, active) {
 				return false
 			}
 		}
 		return true
 	case *Intersection:
 		for _, member := range tt.Members {
-			if isIntegerIndexType(member, depth+1) {
+			if isIntegerIndexType(member, active) {
 				return true
 			}
 		}
@@ -169,8 +178,12 @@ func isIntegerIndexType(t Type, depth int) bool {
 	}
 }
 
-func stripIndexTransparentWrappers(t Type, depth int) Type {
-	for ; depth <= DefaultRecursionDepth; depth++ {
+func stripIndexTransparentWrappers(t Type) Type {
+	var seen typePath
+	for {
+		if !seen.enter(t) {
+			return nil
+		}
 		switch tt := t.(type) {
 		case *Annotated:
 			if tt == nil || tt.Inner == nil || tt.Inner == t {
@@ -190,7 +203,6 @@ func stripIndexTransparentWrappers(t Type, depth int) Type {
 			return t
 		}
 	}
-	return nil
 }
 
 // AbsentOrUnknown reports whether t is missing (nil) or unknown.

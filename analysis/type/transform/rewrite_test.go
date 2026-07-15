@@ -1074,14 +1074,45 @@ func TestRewrite_NoOpReturnsSamePointer(t *testing.T) {
 	}
 }
 
-func TestRewrite_DepthLimit(t *testing.T) {
-	deep := typ.Number
-	for i := 0; i < 100; i++ {
-		deep = typeexpr.Optional(deep)
+func TestRewrite_TraversesDeepProductsExactly(t *testing.T) {
+	var deep typ.Type = typ.Number
+	for i := 0; i < 257; i++ {
+		deep = typ.NewArray(deep)
 	}
 	result := Rewrite(deep, replaceNumber(typ.String))
-	if result == nil {
-		t.Fatal("expected non-nil result")
+	for i := 0; i < 257; i++ {
+		array, ok := result.(*typ.Array)
+		if !ok {
+			t.Fatalf("rewritten node %d = %T, want array", i, result)
+		}
+		result = array.Element
+	}
+	if result != typ.String {
+		t.Fatalf("deep rewritten leaf = %v, want string", result)
+	}
+}
+
+func TestRewrite_MutualRecursiveGraphPreservesBackedges(t *testing.T) {
+	left := typ.NewRecursivePlaceholder("Left")
+	right := typ.NewRecursivePlaceholder("Right")
+	left.SetBody(newRecord().Field("right", right).Build())
+	right.SetBody(newRecord().Field("left", left).Field("value", typ.Number).Build())
+
+	gotLeft, ok := Rewrite(left, replaceNumber(typ.String)).(*typ.Recursive)
+	if !ok || gotLeft == left {
+		t.Fatalf("rewritten left = %T %v", gotLeft, gotLeft)
+	}
+	leftBody := gotLeft.Body.(*typ.Record)
+	gotRight, ok := leftBody.GetField("right").Type.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("rewritten right = %T", leftBody.GetField("right").Type)
+	}
+	rightBody := gotRight.Body.(*typ.Record)
+	if rightBody.GetField("left").Type != gotLeft {
+		t.Fatal("mutual recursive rewrite lost the μ backedge")
+	}
+	if rightBody.GetField("value").Type != typ.String {
+		t.Fatal("mutual recursive rewrite missed the transformed leaf")
 	}
 }
 

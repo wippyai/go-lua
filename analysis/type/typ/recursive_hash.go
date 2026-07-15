@@ -8,7 +8,7 @@ import "context"
 // stale construction-time hashes in the type algebra.
 func EqualityHash(t Type) uint64 {
 	var ok bool
-	t, ok = unwrapAliasForEquals(t, NewGuard())
+	t, ok = unwrapAliasForEquals(t)
 	if !ok || t == nil {
 		return 0
 	}
@@ -36,7 +36,7 @@ func EqualityHashContext(ctx context.Context, t Type) (uint64, error) {
 		}
 	}
 	var ok bool
-	t, ok = unwrapAliasForEquals(t, NewGuard())
+	t, ok = unwrapAliasForEquals(t)
 	if !ok || t == nil {
 		return 0, nil
 	}

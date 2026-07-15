@@ -18,11 +18,11 @@ func OverlayRecordMembers(existing, overlay typ.Type) (typ.Type, bool) {
 	if !ok || overlayRecord == nil {
 		return nil, false
 	}
-	return overlayRecordMembers(existingRecord, overlayRecord, 0), true
+	return overlayRecordMembers(existingRecord, overlayRecord), true
 }
 
-func overlayRecordMemberType(existing, replacement typ.Type, depth int) typ.Type {
-	if existing == nil || replacement == nil || depth > typ.DefaultRecursionDepth {
+func overlayRecordMemberType(existing, replacement typ.Type) typ.Type {
+	if existing == nil || replacement == nil {
 		return replacement
 	}
 	if typ.SameNodeOrRecursiveIdentityEqual(existing, replacement) {
@@ -36,7 +36,7 @@ func overlayRecordMemberType(existing, replacement typ.Type, depth int) typ.Type
 	if !existingOK || existingRecord == nil || !replacementOK || replacementRecord == nil {
 		return replacement
 	}
-	return overlayRecordMembers(existingRecord, replacementRecord, depth+1)
+	return overlayRecordMembers(existingRecord, replacementRecord)
 }
 
 func declaredContainerType(t typ.Type) bool {
@@ -61,7 +61,7 @@ func emptyRecordWitness(t typ.Type) bool {
 		!rec.Open
 }
 
-func overlayRecordMembers(existingRecord, overlayRecord *typ.Record, depth int) typ.Type {
+func overlayRecordMembers(existingRecord, overlayRecord *typ.Record) typ.Type {
 	fields := make([]typ.Field, 0, len(existingRecord.Fields)+len(overlayRecord.Fields))
 	overlayFields := make(map[string]typ.Field, len(overlayRecord.Fields))
 	for _, field := range overlayRecord.Fields {
@@ -77,10 +77,10 @@ func overlayRecordMembers(existingRecord, overlayRecord *typ.Record, depth int) 
 	seenFields := make(map[string]struct{}, len(existingRecord.Fields)+len(overlayRecord.Fields))
 	for _, field := range existingRecord.Fields {
 		if replacement, ok := overlayFields[field.Name]; ok {
-			replacement.Type = overlayRecordMemberType(field.Type, replacement.Type, depth+1)
+			replacement.Type = overlayRecordMemberType(field.Type, replacement.Type)
 			fields = append(fields, replacement)
 		} else if replacement, ok := overlayStringMembers[field.Name]; ok {
-			field.Type = overlayRecordMemberType(field.Type, replacement.Type, depth+1)
+			field.Type = overlayRecordMemberType(field.Type, replacement.Type)
 			fields = append(fields, field)
 			consumedStringMembers[field.Name] = struct{}{}
 		} else {
@@ -94,7 +94,7 @@ func overlayRecordMembers(existingRecord, overlayRecord *typ.Record, depth int) 
 		}
 	}
 
-	members := overlayStaticMembers(existingRecord.StaticMembers, overlayRecord.StaticMembers, consumedStringMembers, depth+1)
+	members := overlayStaticMembers(existingRecord.StaticMembers, overlayRecord.StaticMembers, consumedStringMembers)
 	metatable := existingRecord.Metatable
 	if overlayRecord.Metatable != nil {
 		metatable = overlayRecord.Metatable
@@ -119,7 +119,7 @@ func overlayRecordMembers(existingRecord, overlayRecord *typ.Record, depth int) 
 	return rebuilt
 }
 
-func overlayStaticMembers(existing []typ.StaticMember, overlay []typ.StaticMember, consumedStringMembers map[string]struct{}, depth int) []typ.StaticMember {
+func overlayStaticMembers(existing []typ.StaticMember, overlay []typ.StaticMember, consumedStringMembers map[string]struct{}) []typ.StaticMember {
 	out := make([]typ.StaticMember, 0, len(existing)+len(overlay))
 	replacements := make(map[staticMemberKey]typ.StaticMember, len(overlay))
 	for _, member := range overlay {
@@ -134,7 +134,7 @@ func overlayStaticMembers(existing []typ.StaticMember, overlay []typ.StaticMembe
 	for _, member := range existing {
 		key := staticMemberKeyOf(member)
 		if replacement, ok := replacements[key]; ok {
-			replacement.Type = overlayRecordMemberType(member.Type, replacement.Type, depth+1)
+			replacement.Type = overlayRecordMemberType(member.Type, replacement.Type)
 			out = append(out, replacement)
 		} else {
 			out = append(out, member)

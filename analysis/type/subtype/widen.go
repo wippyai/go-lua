@@ -14,6 +14,32 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	}
 	wide = unwrap.Alias(wide)
 	narrow = unwrap.Alias(narrow)
+	if pair, ok := newTypePair(narrow, wide); ok {
+		if result, ok := c.widenMemo[pair]; ok {
+			return result
+		}
+		if c.widenInProgress[pair] {
+			// Widening is a structural relation over regular type graphs. Reaching
+			// the same obligation again closes the current coinductive proof; the
+			// enclosing conjunctions still have to establish every productive arm.
+			return true
+		}
+		if c.widenInProgress == nil {
+			c.widenInProgress = make(map[typePair]bool)
+		}
+		c.widenInProgress[pair] = true
+		result := c.canWidenToUncached(narrow, wide, depth)
+		delete(c.widenInProgress, pair)
+		if c.widenMemo == nil {
+			c.widenMemo = make(map[typePair]bool)
+		}
+		c.widenMemo[pair] = result
+		return result
+	}
+	return c.canWidenToUncached(narrow, wide, depth)
+}
+
+func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 
 	if inst, ok := narrow.(*typ.Instantiated); ok {
 		expanded := subst.ExpandInstantiated(inst)
@@ -28,6 +54,16 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 			return c.check(subst.Self(narrow, inst), expanded, depth+1) ||
 				c.canWidenTo(subst.Self(narrow, inst), expanded, depth+1)
 		}
+	}
+	if subRec, ok := narrow.(*typ.Recursive); ok && subRec.Body != nil && subRec.Body != narrow {
+		if supRec, ok := wide.(*typ.Recursive); ok && supRec.Body != nil && supRec.Body != wide {
+			return c.check(subRec.Body, supRec.Body, depth+1) ||
+				c.canWidenTo(subRec.Body, supRec.Body, depth+1)
+		}
+		return c.check(subRec.Body, wide, depth+1) || c.canWidenTo(subRec.Body, wide, depth+1)
+	}
+	if supRec, ok := wide.(*typ.Recursive); ok && supRec.Body != nil && supRec.Body != wide {
+		return c.check(narrow, supRec.Body, depth+1) || c.canWidenTo(narrow, supRec.Body, depth+1)
 	}
 
 	if typ.IsAny(wide) {
@@ -128,9 +164,6 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 				(c.check(subArray.Element, supMap.Value, depth+1) ||
 					c.canWidenTo(subArray.Element, supMap.Value, depth+1))
 		}
-	}
-	if rec, ok := narrow.(*typ.Recursive); ok && rec.Body != nil && rec.Body != rec {
-		return c.check(rec.Body, wide, depth+1) || c.canWidenTo(rec.Body, wide, depth+1)
 	}
 	if subTuple, ok := narrow.(*typ.Tuple); ok {
 		if supTuple, ok := wide.(*typ.Tuple); ok {

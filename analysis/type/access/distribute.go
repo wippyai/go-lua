@@ -9,9 +9,9 @@ import (
 // as evidence: any member that fails non-nilably fails the whole access, a
 // member that is merely missing-reads-nil contributes nil, and the surviving
 // field types union together. It is the canonical union access-distribution.
-func distributeUnion(members []typ.Type, depth int, query func(member typ.Type, depth int) fieldResult) fieldResult {
-	return distributeUnionResults(members, depth, query, func(member typ.Type, depth int) bool {
-		return missingFieldReadsNilDepth(member, depth)
+func (q *query) distributeUnion(members []typ.Type, depth int, project func(member typ.Type, depth int) fieldResult) fieldResult {
+	return distributeUnionResults(members, depth, project, func(member typ.Type, depth int) bool {
+		return q.missingFieldReadsNil(member, depth, true)
 	})
 }
 

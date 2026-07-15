@@ -10,6 +10,7 @@
 package unwrap
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -40,7 +41,8 @@ func AnnotatedOrNil(t typ.Type) typ.Type {
 
 // Annotations strips every Annotated wrapper and returns the first non-annotated type.
 func Annotations(t typ.Type) typ.Type {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+	var seen graph.Path
+	for {
 		ann, ok := t.(*typ.Annotated)
 		if !ok {
 			return t
@@ -48,15 +50,18 @@ func Annotations(t typ.Type) typ.Type {
 		if ann.Inner == nil || ann.Inner == t {
 			return t
 		}
+		if !seen.Enter(ann) {
+			return t
+		}
 		t = ann.Inner
 	}
-	return t
 }
 
 // Alias unwraps Alias wrappers, first through transparent annotations, and
 // preserves Optional wrappers.
 func Alias(t typ.Type) typ.Type {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+	var seen graph.Path
+	for {
 		t = transparent(t)
 		alias, ok := t.(*typ.Alias)
 		if !ok {
@@ -66,16 +71,22 @@ func Alias(t typ.Type) typ.Type {
 		if next == nil || next == t {
 			return next
 		}
+		if !seen.Enter(t) {
+			return nil
+		}
 		t = next
 	}
-	return nil
 }
 
 // Optional unwraps Alias and Optional wrappers to get the first non-optional type.
 // It returns nil for nil inputs; typ.Nil remains typ.Nil as the nil-like sentinel.
 func Optional(t typ.Type) typ.Type {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+	var seen graph.Path
+	for {
 		t = transparent(t)
+		if !seen.Enter(t) {
+			return nil
+		}
 		switch tt := t.(type) {
 		case nil:
 			return nil
@@ -95,7 +106,6 @@ func Optional(t typ.Type) typ.Type {
 			return t
 		}
 	}
-	return nil
 }
 
 // RecordAliasPolicy selects how record unwrapping follows Alias nodes.
@@ -116,10 +126,14 @@ const (
 // RecordWithAliasPolicy follows Alias nodes according to policy and returns
 // the final record. It intentionally does not unwrap annotations.
 func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+	var seen graph.Path
+	for {
 		a, ok := t.(*typ.Alias)
 		if !ok {
 			break
+		}
+		if !seen.Enter(a) {
+			return nil
 		}
 		var next typ.Type
 		switch policy {
@@ -133,9 +147,6 @@ func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
 		}
 		t = next
 	}
-	if _, ok := t.(*typ.Alias); ok {
-		return nil
-	}
 	rec, _ := t.(*typ.Record)
 	return rec
 }
@@ -143,16 +154,17 @@ func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
 // IsOptionalLike returns true when t is nil-like, optional, or a union that
 // contains a nil-like member. Aliases are resolved before the check.
 func IsOptionalLike(t typ.Type) bool {
-	return isOptionalLike(t, 0, nil)
+	return isOptionalLike(t, &graph.Path{})
 }
 
-func isOptionalLike(t typ.Type, depth int, active map[*typ.Union]bool) bool {
-	if depth > typ.DefaultRecursionDepth {
-		return false
-	}
+func isOptionalLike(t typ.Type, active *graph.Path) bool {
 	if t == nil {
 		return true
 	}
+	if !active.Enter(t) {
+		return false
+	}
+	defer active.Leave(t)
 
 	switch tt := t.(type) {
 	case *typ.Annotated:
@@ -162,7 +174,7 @@ func isOptionalLike(t typ.Type, depth int, active map[*typ.Union]bool) bool {
 		if tt.Inner == t {
 			return false
 		}
-		return isOptionalLike(tt.Inner, depth+1, active)
+		return isOptionalLike(tt.Inner, active)
 	case *typ.Alias:
 		next := tt.UnaliasedTarget()
 		if next == nil {
@@ -171,20 +183,12 @@ func isOptionalLike(t typ.Type, depth int, active map[*typ.Union]bool) bool {
 		if next == t {
 			return false
 		}
-		return isOptionalLike(next, depth+1, active)
+		return isOptionalLike(next, active)
 	case *typ.Optional:
 		return true
 	case *typ.Union:
-		if active == nil {
-			active = make(map[*typ.Union]bool)
-		}
-		if active[tt] {
-			return false
-		}
-		active[tt] = true
-		defer delete(active, tt)
 		for _, m := range tt.Members {
-			if isOptionalLike(m, depth+1, active) {
+			if isOptionalLike(m, active) {
 				return true
 			}
 		}
