@@ -14,183 +14,154 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-// ResolvedSourceValue is one provider-independent ValueSource result. The
-// source remains as provenance for the canonical path/equality rules, while
-// Value is the already resolved product observed at the mutation boundary.
-type ResolvedSourceValue struct {
-	Source factflow.ValueSource
-	Value  product.Value
+// ResolvedIndexMutationFreezeRequest is transient discovery input. Resolver,
+// Facts, and source roles are consumed here and never retained by the artifact.
+type ResolvedIndexMutationFreezeRequest struct {
+	Context               transfer.NodeContext
+	Resolver              *visibility.Resolver
+	Facts                 factflow.Facts
+	Input, Output         state.State
+	Invalidation          factflow.PathDescendantInvalidation
+	Write                 factflow.DynamicIndexWrite
+	KeyValue              product.Value
+	Value                 product.Value
+	HasKeyValue, HasValue bool
 }
 
-// ResolvedIndexMutationRequest is the atomic concrete N3+N4 transaction for a
-// dynamic index write. Sources contains only already-resolved values: applying
-// the request never calls a call-result, expression, or vararg provider.
-//
-// Facts remains the immutable structural fact snapshot used by the canonical
-// append, path-membership, and equality proof gates. Input is the immutable
-// source snapshot; Output is the point-local state onto which this transaction
-// publishes. Cancellation rolls publication back to Output, never Input.
-type ResolvedIndexMutationRequest struct {
-	Context      transfer.NodeContext
-	Resolver     *visibility.Resolver
-	Facts        factflow.Facts
-	Input        state.State
-	Output       state.State
-	Invalidation factflow.PathDescendantInvalidation
-	Write        factflow.DynamicIndexWrite
-	Sources      []ResolvedSourceValue
-	Token        *cancellation.Token
+// ResolvedIndexMutation is an opaque closed N3+N4 transaction.
+type ResolvedIndexMutation struct{ data *resolvedIndexMutationData }
+
+type resolvedIndexMutationData struct {
+	output     state.State
+	candidate  state.State
+	laneDeltas []ResolvedIndexMutationLaneDelta
+	executions uint8
 }
 
-// ResolvedIndexMutationLaneDelta records the exact before/after verdict for
-// one registered State lane. Results contain one entry for every LaneCatalog
-// lane, including unchanged lanes, so catalog growth cannot be missed.
 type ResolvedIndexMutationLaneDelta struct {
 	Lane    state.LaneID
 	Changed bool
 }
-
-// ResolvedIndexMutationResult is published only after the complete N3+N4
-// transaction succeeds. Canceled and invalid transactions never expose a
-// prefix. LaneDeltas is exhaustive when Applied is true.
 type ResolvedIndexMutationResult struct {
-	Output     state.State
-	LaneDeltas []ResolvedIndexMutationLaneDelta
-	Applied    bool
-	Canceled   bool
+	Output            state.State
+	LaneDeltas        []ResolvedIndexMutationLaneDelta
+	Applied, Canceled bool
 }
 
-// ApplyConcreteResolvedIndexMutation executes the same authoritative
-// invalidation-then-write functions as the ordinary node executor, but from a
-// closed set of resolved source products. This is the shared-kernel parity seam
-// for future transformer effect resolvers; it does not activate them.
-func ApplyConcreteResolvedIndexMutation(request ResolvedIndexMutationRequest) (ResolvedIndexMutationResult, error) {
-	rollback := ResolvedIndexMutationResult{Output: request.Output}
-	if request.Context.Registry == nil {
-		return rollback, fmt.Errorf("factapply: resolved index mutation requires registry")
+// FreezeResolvedIndexMutation performs all provider/fact/visibility discovery,
+// including the precise invalidation member, and owns the complete result.
+func FreezeResolvedIndexMutation(request ResolvedIndexMutationFreezeRequest) (ResolvedIndexMutation, error) {
+	if request.Context.Registry == nil || request.Resolver == nil {
+		return ResolvedIndexMutation{}, fmt.Errorf("factapply: resolved index mutation requires registry and resolver")
 	}
-	if request.Resolver == nil {
-		return rollback, fmt.Errorf("factapply: resolved index mutation requires visibility resolver")
+	container, table := request.Invalidation.ContainerPathRef(), request.Write.TablePathRef()
+	if container.IsEmpty() || table.IsEmpty() || !container.Equal(table) || request.Write.Admission() == 0 {
+		return ResolvedIndexMutation{}, fmt.Errorf("factapply: invalid resolved index mutation shape")
 	}
-	container := request.Invalidation.ContainerPathRef()
-	table := request.Write.TablePathRef()
-	if container.IsEmpty() || table.IsEmpty() || !container.Equal(table) {
-		return rollback, fmt.Errorf("factapply: resolved index mutation requires one shared invalidation/write table path")
-	}
-	if request.Write.Admission() == 0 {
-		return rollback, fmt.Errorf("factapply: resolved index mutation cannot publish bottom admission")
-	}
-	sources, err := newResolvedMutationSources(request.Context.Registry, request.Sources)
-	if err != nil {
-		return rollback, err
-	}
-	if err := validateResolvedMutationSources(request.Invalidation, request.Write, sources); err != nil {
-		return rollback, err
-	}
-	token := request.Token
-	if token == nil && request.Context.Session != nil {
-		token = request.Context.Session.Token()
-	}
-	if token != nil && token.Canceled() {
-		rollback.Canceled = true
-		return rollback, nil
-	}
-	read := func(cfg.Point) state.State { return request.Input }
-	out := applyPathDescendantInvalidation(
-		request.Context, request.Resolver, request.Facts, sources, read,
-		request.Input, request.Output, request.Invalidation, false,
-	)
-	if token != nil && token.Canceled() {
-		rollback.Canceled = true
-		return rollback, nil
-	}
-	out = applyDynamicIndexWrite(
-		request.Context, request.Resolver, request.Facts, sources, read,
-		request.Input, out, request.Write,
-	)
-	if token != nil && token.Canceled() {
-		rollback.Canceled = true
-		return rollback, nil
-	}
-	deltas, err := resolvedIndexMutationLaneDeltas(request.Context.Registry, request.Output, out)
-	if err != nil {
-		return rollback, err
-	}
-	return ResolvedIndexMutationResult{Output: out, LaneDeltas: deltas, Applied: true}, nil
-}
-
-type resolvedMutationSources struct {
-	reg    *axis.Registry
-	values map[factflow.ValueSource]product.Value
-}
-
-func newResolvedMutationSources(registry *axis.Registry, entries []ResolvedSourceValue) (*resolvedMutationSources, error) {
-	out := &resolvedMutationSources{reg: registry, values: make(map[factflow.ValueSource]product.Value, len(entries))}
-	for i, entry := range entries {
-		if !entry.Source.Valid() {
-			return nil, fmt.Errorf("factapply: resolved index mutation source %d is invalid", i)
+	sources := &frozenMutationSources{values: make(map[factflow.ValueSource]product.Value, 2)}
+	putSource := func(source factflow.ValueSource, value product.Value) error {
+		if !source.Valid() {
+			return fmt.Errorf("factapply: invalid resolved source role")
 		}
-		if prior, duplicate := out.values[entry.Source]; duplicate {
-			if !product.Equal(registry, prior, entry.Value) {
-				return nil, fmt.Errorf("factapply: resolved index mutation source %d has conflicting products", i)
-			}
-			continue
+		if prior, exists := sources.values[source]; exists && !product.Equal(request.Context.Registry, prior, value) {
+			return fmt.Errorf("factapply: conflicting resolved products for one source role")
 		}
-		out.values[entry.Source] = entry.Value
-	}
-	return out, nil
-}
-
-func validateResolvedMutationSources(
-	invalidation factflow.PathDescendantInvalidation,
-	write factflow.DynamicIndexWrite,
-	sources *resolvedMutationSources,
-) error {
-	if sources == nil {
-		return fmt.Errorf("factapply: resolved index mutation has no source set")
-	}
-	require := func(source factflow.ValueSource, label string) error {
-		if _, ok := sources.values[source]; !ok {
-			return fmt.Errorf("factapply: resolved index mutation missing %s source", label)
-		}
+		sources.values[source] = value
 		return nil
 	}
-	readKey, readValue := dynamicIndexReadback(write.ReadbackIntent())
+	readKey, readValue := dynamicIndexReadback(request.Write.ReadbackIntent())
 	if readKey {
-		if err := require(write.KeySource(), "key"); err != nil {
-			return err
+		if !request.HasKeyValue {
+			return ResolvedIndexMutation{}, fmt.Errorf("factapply: missing resolved key product")
+		}
+		if err := putSource(request.Write.KeySource(), request.KeyValue); err != nil {
+			return ResolvedIndexMutation{}, err
 		}
 	}
 	if readValue {
-		if err := require(write.Source(), "value"); err != nil {
-			return err
+		if !request.HasValue {
+			return ResolvedIndexMutation{}, fmt.Errorf("factapply: missing resolved value product")
+		}
+		if err := putSource(request.Write.Source(), request.Value); err != nil {
+			return ResolvedIndexMutation{}, err
 		}
 	}
-	if _, keySource, _, ok := invalidation.DynamicTargetRef(); ok {
-		if err := require(keySource, "precise invalidation key"); err != nil {
-			return err
+	if _, keySource, _, ok := request.Invalidation.DynamicTargetRef(); ok {
+		if !request.HasKeyValue {
+			return ResolvedIndexMutation{}, fmt.Errorf("factapply: missing precise invalidation key product")
+		}
+		if err := putSource(keySource, request.KeyValue); err != nil {
+			return ResolvedIndexMutation{}, err
 		}
 	}
-	return nil
+	address, err := FreezeResolvedPathAddress(request.Resolver, request.Context.Point, container)
+	if err != nil {
+		return ResolvedIndexMutation{}, err
+	}
+	invData := &resolvedPathDescendantInvalidationData{Container: address}
+	read := func(cfg.Point) state.State { return request.Input }
+	if precise, ok := freezePreciseDynamicDescendantAddress(request.Context, request.Resolver, sources, read, request.Input, request.Output, request.Invalidation); ok {
+		invData.Precise, invData.HasPrecise = precise, true
+	}
+	inv := ResolvedPathDescendantInvalidation{data: invData}
+	intermediate, ok := ApplyResolvedPathDescendantInvalidation(request.Context.Registry, request.Resolver.KeySpace(), request.Output, inv)
+	if !ok {
+		return ResolvedIndexMutation{}, fmt.Errorf("factapply: invalid frozen invalidation")
+	}
+	write, ok := freezeResolvedDynamicIndexWrite(request.Context, request.Resolver, request.Facts, sources, read, request.Input, intermediate, request.Write)
+	if !ok {
+		return ResolvedIndexMutation{}, fmt.Errorf("factapply: invalid frozen dynamic write")
+	}
+	candidate, ok := ApplyResolvedDynamicIndexWrite(request.Context.Registry, request.Resolver.KeySpace(), intermediate, write)
+	if !ok {
+		return ResolvedIndexMutation{}, fmt.Errorf("factapply: invalid closed dynamic write")
+	}
+	deltas, err := resolvedIndexMutationLaneDeltas(request.Context.Registry, request.Output, candidate)
+	if err != nil {
+		return ResolvedIndexMutation{}, err
+	}
+	return ResolvedIndexMutation{data: &resolvedIndexMutationData{
+		output: request.Output, candidate: candidate,
+		laneDeltas: append([]ResolvedIndexMutationLaneDelta(nil), deltas...), executions: 1,
+	}}, nil
 }
 
-func (s *resolvedMutationSources) ValueOfSource(_ cfg.Point, source factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (product.Value, bool) {
-	if s == nil {
-		return product.Value{}, false
+// ApplyResolvedIndexMutation atomically publishes both closed phases or none.
+func ApplyResolvedIndexMutation(artifact ResolvedIndexMutation, token *cancellation.Token) (ResolvedIndexMutationResult, error) {
+	if artifact.data == nil || artifact.data.executions != 1 {
+		return ResolvedIndexMutationResult{}, fmt.Errorf("factapply: invalid resolved index mutation")
 	}
+	d := artifact.data
+	rollback := ResolvedIndexMutationResult{Output: d.output}
+	if token != nil && token.Canceled() {
+		rollback.Canceled = true
+		return rollback, nil
+	}
+	return ResolvedIndexMutationResult{
+		Output:     d.candidate,
+		LaneDeltas: append([]ResolvedIndexMutationLaneDelta(nil), d.laneDeltas...),
+		Applied:    true,
+	}, nil
+}
+
+type frozenMutationSources struct {
+	values map[factflow.ValueSource]product.Value
+}
+
+func (s *frozenMutationSources) ValueOfSource(_ cfg.Point, source factflow.ValueSource, _ state.State, _ func(cfg.Point) state.State) (product.Value, bool) {
 	value, ok := s.values[source]
 	return value, ok
 }
 
-var _ sourcevalue.SourceValues = (*resolvedMutationSources)(nil)
+var _ sourcevalue.SourceValues = (*frozenMutationSources)(nil)
 
-func resolvedIndexMutationLaneDeltas(registry *axis.Registry, before, after state.State) ([]ResolvedIndexMutationLaneDelta, error) {
+func resolvedIndexMutationLaneDeltas(reg *axis.Registry, before, after state.State) ([]ResolvedIndexMutationLaneDelta, error) {
 	lanes := state.DefaultLaneCatalog().LaneSet().IDs()
 	out := make([]ResolvedIndexMutationLaneDelta, len(lanes))
 	for i, lane := range lanes {
-		domain, err := state.TryDomainWithLanes(registry, []state.LaneID{lane})
+		domain, err := state.TryDomainWithLanes(reg, []state.LaneID{lane})
 		if err != nil {
-			return nil, fmt.Errorf("factapply: resolved index mutation lane %q: %w", lane, err)
+			return nil, err
 		}
 		out[i] = ResolvedIndexMutationLaneDelta{Lane: lane, Changed: !domain.Equal(before, after)}
 	}

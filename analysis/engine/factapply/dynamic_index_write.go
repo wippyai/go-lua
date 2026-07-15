@@ -5,7 +5,6 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -32,60 +31,85 @@ func applyDynamicIndexWrite(
 	out state.State,
 	fact factflow.DynamicIndexWrite,
 ) state.State {
-	tablePath := fact.TablePathRef()
-	tableKey, ok := dynamicIndexWriteContainerKeyAt(resolver, ctx.Point, tablePath)
+	request, ok := freezeResolvedDynamicIndexWrite(ctx, resolver, facts, sources, read, in, out, fact)
 	if !ok {
 		return out
 	}
-	key := dynamicindex.Key{
-		Table: tableKey,
-		Site:  dynamicindex.SiteForPoint(int(ctx.Point)),
+	written, ok := ApplyResolvedDynamicIndexWrite(ctx.Registry, resolver.KeySpace(), out, request)
+	if !ok {
+		return out
 	}
-	value := dynamicIndexFact(ctx, sources, read, in, out, fact)
-	allValueTables := out.DynamicIndexAllValuesKeyMembershipTables(tableKey)
-	pendingRestores := pendingDynamicAllValueRestoresFromPrimaryDelete(ctx, resolver, facts, out, fact, value)
-	out = out.ClearDynamicIndexValueKeyMembershipsForContainer(tableKey)
-	out = clearKeyMembershipsForMaybeAbsentDynamicWrite(ctx, resolver, out, fact, value)
-	for _, restore := range pendingRestores {
-		out = out.AddPendingDynamicAllValueRestore(restore.Container, restore.Table, restore.Key)
-	}
-	out = out.WriteDynamicIndexFact(ctx.Registry, key, value)
-	out = addPathKeyMembershipFromDynamicWrite(ctx, resolver, facts, out, fact, value)
-	out = addDynamicIndexValueKeyMembershipsFromWrite(ctx, resolver, facts, in, out, fact, value, tableKey, key.Site)
-	out = preserveDynamicIndexAllValueKeyMemberships(ctx, resolver, facts, in, out, fact, value, tableKey, allValueTables)
-	out = restorePendingDynamicAllValuesFromReverseDelete(ctx, resolver, facts, out, fact, value, tableKey)
-	out = addKnownDynamicIndexWriteEquality(ctx, resolver, facts, out, fact, value)
-	out = addKnownDynamicIndexWriteStaticMember(ctx, resolver, out, fact, value)
-	out = applyStoredDynamicIndexPlacement(ctx, resolver, out, tablePath, value.Value)
-	out = applyDynamicIndexAppendLengthFloor(ctx, resolver, facts, in, out, fact, value)
-	return writeHeapTableDynamicIndexFact(ctx, resolver, out, tablePath, key, value)
+	return written
 }
 
-func applyDynamicIndexAppendLengthFloor(
+func freezeResolvedDynamicIndexWrite(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
 	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
 	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-) state.State {
-	if resolver == nil || !dynamicIndexFactDefinitelyPresent(ctx.Registry, value) {
-		return out
-	}
+) (ResolvedDynamicIndexWrite, bool) {
 	tablePath := fact.TablePathRef()
-	if !dynamicIndexWriteKeyIsLengthAppend(ctx.Registry, resolver, facts, fact.KeySource(), tablePath) {
-		return out
+	table, err := FreezeResolvedPathAddress(resolver, ctx.Point, tablePath)
+	if err != nil {
+		return ResolvedDynamicIndexWrite{}, false
 	}
-	tableKey, ok := visibility.AddressAt(resolver, ctx.Point, tablePath).VisibleStateKey()
-	if !ok {
-		return out
+	value := dynamicIndexFact(ctx, sources, read, in, out, fact)
+	tableStateKeys := visibility.AddressAt(resolver, ctx.Point, tablePath).StateKeys(
+		visibility.StateKeyVisible, visibility.StateKeyRootOrVisible, visibility.StateKeyStructural,
+	)
+	resolved := &resolvedDynamicIndexWriteData{
+		Table:               table,
+		Key:                 dynamicindex.Key{Table: table.rootOrVisibleLocal, Site: dynamicindex.SiteForPoint(int(ctx.Point))},
+		Fact:                value,
+		TableStateKeys:      append([]pathaddr.StateKey(nil), tableStateKeys...),
+		AllValueTables:      append([]pathaddr.StateKey(nil), out.DynamicIndexAllValuesKeyMembershipTables(table.rootOrVisibleLocal)...),
+		TableSymbol:         tablePath.Symbol,
+		DefinitelyPresent:   dynamicIndexFactDefinitelyPresent(ctx.Registry, value),
+		DefinitelyAbsent:    dynamicIndexFactDefinitelyAbsent(ctx.Registry, value),
+		MayBeAbsent:         !dynamicIndexFactDefinitelyPresent(ctx.Registry, value),
+		TableOwnerPlacement: placement.Bottom,
 	}
-	base, ok := in.ReadLenFloor(resolver.KeySpace(), tableKey)
-	if !ok || base == math.MaxInt64 {
-		return out
+	resolved.PendingRestores = append(resolved.PendingRestores, pendingDynamicAllValueRestoresFromPrimaryDelete(ctx, resolver, facts, out, fact, value)...)
+	if keyStateKey, ok := dynamicIndexWriteKeyStateKeyAt(resolver, ctx.Point, facts, fact); ok {
+		resolved.KeyStateKey, resolved.HasKeyStateKey = keyStateKey, true
 	}
-	return out.WriteLenFloor(resolver.KeySpace(), tableKey, base+1)
+	if sourcePath, ok := dynamicIndexWriteSourcePath(resolver, facts, fact); ok {
+		resolved.SourceMemberships = append(resolved.SourceMemberships, pathMembershipSourceTablesAt(in, resolver, ctx.Point, sourcePath)...)
+	}
+	if name, ok := staticStringKey(ctx.Registry, value.KeyValue); ok {
+		targetPath := tablePath.IndexStr(name)
+		if !product.Equal(ctx.Registry, value.Value, product.Bottom(ctx.Registry)) {
+			if target, err := FreezeResolvedPathAddress(resolver, ctx.Point, targetPath); err == nil {
+				resolved.StaticTarget, resolved.HasStaticTarget = target, true
+			}
+		}
+		if sourcePath, ok := sourcePathFromValueSource(resolver, facts, fact.Source()); ok &&
+			!covariantExposureSuppressesPathProof(facts, resolver, ctx.Point, fact.Source()) {
+			target, targetErr := FreezeResolvedPathAddress(resolver, ctx.Point, targetPath)
+			source, sourceErr := FreezeResolvedPathAddress(resolver, ctx.Point, sourcePath)
+			if targetErr == nil && sourceErr == nil {
+				resolved.EqualityTarget, resolved.EqualitySource, resolved.HasEquality = target, source, true
+			}
+		}
+	}
+	if resolved.DefinitelyPresent && dynamicIndexWriteKeyIsLengthAppend(ctx.Registry, resolver, facts, fact.KeySource(), tablePath) {
+		if tableKey, ok := visibility.AddressAt(resolver, ctx.Point, tablePath).VisibleStateKey(); ok {
+			if base, ok := in.ReadLenFloor(resolver.KeySpace(), tableKey); ok && base < math.MaxInt64 {
+				resolved.AppendStateKey, resolved.AppendFloor, resolved.HasAppend = tableKey, base+1, true
+			}
+		}
+	}
+	if tableValue, ok := ResolvePathAddressValue(ctx.Registry, resolver.KeySpace(), out, table); ok {
+		if tableID, ok := product.Get(ctx.Registry, tableValue, identity.Key).ID(); ok {
+			resolved.TableID, resolved.HasTableID = tableID, true
+			resolved.TableOwnerPlacement = out.ReadPlacement(tableID)
+		}
+	}
+	return ResolvedDynamicIndexWrite{data: resolved}, true
 }
 
 func dynamicIndexWriteKeyIsLengthAppend(reg *axis.Registry, resolver *visibility.Resolver, facts factflow.Facts, source factflow.ValueSource, tablePath pathdom.Path) bool {
@@ -154,27 +178,6 @@ func pendingDynamicAllValueRestoresFromPrimaryDelete(
 	return out
 }
 
-func clearKeyMembershipsForMaybeAbsentDynamicWrite(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-) state.State {
-	if dynamicIndexFactDefinitelyPresent(ctx.Registry, value) {
-		return out
-	}
-	tablePath := fact.TablePathRef()
-	forEachDynamicWriteTableStateKeyAt(resolver, ctx.Point, tablePath, func(tableStateKey pathaddr.StateKey) bool {
-		out = out.ClearKeyMembershipsForPath(tableStateKey)
-		return true
-	})
-	if resolver != nil && tablePath.Symbol != 0 {
-		out = out.ClearKeyMembershipsForTableSymbol(resolver.KeySpace(), tablePath.Symbol)
-	}
-	return out
-}
-
 func forEachDynamicWriteTableStateKeyAt(resolver *visibility.Resolver, point cfg.Point, tablePath pathdom.Path, fn func(pathaddr.StateKey) bool) bool {
 	if resolver == nil || tablePath.IsEmpty() || tablePath.Symbol == 0 {
 		return true
@@ -203,72 +206,6 @@ func dynamicIndexWriteKeyPath(resolver *visibility.Resolver, facts factflow.Fact
 		return pathdom.Path{}, false
 	}
 	return sourcePath, true
-}
-
-func dynamicIndexWriteContainerKeyAt(resolver *visibility.Resolver, point cfg.Point, tablePath pathdom.Path) (keyspace.Key, bool) {
-	return visibility.AddressAt(resolver, point, tablePath).RootOrVisibleKeyspaceKey()
-}
-
-func restorePendingDynamicAllValuesFromReverseDelete(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-	container keyspace.Key,
-) state.State {
-	if resolver == nil || !dynamicIndexFactDefinitelyAbsent(ctx.Registry, value) {
-		return out
-	}
-	keyStateKey, ok := dynamicIndexWriteKeyStateKeyAt(resolver, ctx.Point, facts, fact)
-	if !ok {
-		return out
-	}
-	keys := append([]pathaddr.StateKey{keyStateKey}, out.EquivalentStateKeys(resolver.KeySpace(), keyStateKey)...)
-	for _, key := range keys {
-		for _, restore := range out.PendingDynamicAllValueRestores(container, key) {
-			out = out.AddDynamicIndexAllValuesKeyMembership(restore.Container, restore.Table)
-			out = out.ClearPendingDynamicAllValueRestore(restore)
-		}
-	}
-	return out
-}
-
-func preserveDynamicIndexAllValueKeyMemberships(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	in state.State,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-	container keyspace.Key,
-	tables []pathaddr.StateKey,
-) state.State {
-	if len(tables) == 0 {
-		return out
-	}
-	if dynamicIndexFactDefinitelyAbsent(ctx.Registry, value) {
-		for _, table := range tables {
-			out = out.AddDynamicIndexAllValuesKeyMembership(container, table)
-		}
-		return out
-	}
-	if resolver == nil {
-		return out
-	}
-	sourcePath, ok := dynamicIndexWriteSourcePath(resolver, facts, fact)
-	if !ok {
-		return out
-	}
-	sourceTables := pathMembershipSourceTablesAt(in, resolver, ctx.Point, sourcePath)
-	for _, table := range tables {
-		if stateKeyIn(sourceTables, table) {
-			out = out.AddDynamicIndexAllValuesKeyMembership(container, table)
-		}
-	}
-	return out
 }
 
 func dynamicIndexFactDefinitelyAbsent(reg *axis.Registry, fact dynamicindex.Fact) bool {
@@ -300,56 +237,6 @@ func stateKeyIn(keys []pathaddr.StateKey, want pathaddr.StateKey) bool {
 	return false
 }
 
-func addPathKeyMembershipFromDynamicWrite(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-) state.State {
-	if resolver == nil || !dynamicIndexFactDefinitelyPresent(ctx.Registry, value) {
-		return out
-	}
-	tableKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, ctx.Point, fact.TablePathRef())
-	if !ok {
-		return out
-	}
-	keyPath, ok := dynamicIndexWriteKeyPath(resolver, facts, fact)
-	if !ok || keyPath.IsEmpty() || keyPath.Symbol == 0 {
-		return out
-	}
-	keyStateKey, ok := visibility.AddressAt(resolver, ctx.Point, keyPath).VisibleStateKey()
-	if !ok {
-		return out
-	}
-	return out.AddPathKeyMembership(keyStateKey, tableKey)
-}
-
-func addDynamicIndexValueKeyMembershipsFromWrite(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	in state.State,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-	container keyspace.Key,
-	site dynamicindex.Site,
-) state.State {
-	if resolver == nil || !dynamicIndexFactDefinitelyPresent(ctx.Registry, value) {
-		return out
-	}
-	sourcePath, ok := dynamicIndexWriteSourcePath(resolver, facts, fact)
-	if !ok {
-		return out
-	}
-	for _, table := range pathMembershipSourceTablesAt(in, resolver, ctx.Point, sourcePath) {
-		out = out.AddDynamicIndexValueKeyMembership(container, site, table)
-	}
-	return out
-}
-
 func dynamicIndexWriteSourcePath(resolver *visibility.Resolver, facts factflow.Facts, fact factflow.DynamicIndexWrite) (pathdom.Path, bool) {
 	if valuePath, ok := fact.ValuePathRef(); ok && !valuePath.IsEmpty() && valuePath.Symbol != 0 {
 		return valuePath, true
@@ -359,53 +246,6 @@ func dynamicIndexWriteSourcePath(resolver *visibility.Resolver, facts factflow.F
 		return pathdom.Path{}, false
 	}
 	return sourcePath, true
-}
-
-func addKnownDynamicIndexWriteEquality(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-) state.State {
-	name, ok := staticStringKey(ctx.Registry, value.KeyValue)
-	if !ok {
-		return out
-	}
-	return addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TablePathRef().IndexStr(name), fact.Source())
-}
-
-func addKnownDynamicIndexWriteStaticMember(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	fact factflow.DynamicIndexWrite,
-	value dynamicindex.Fact,
-) state.State {
-	if resolver == nil || product.Equal(ctx.Registry, value.Value, product.Bottom(ctx.Registry)) {
-		return out
-	}
-	name, ok := staticStringKey(ctx.Registry, value.KeyValue)
-	if !ok {
-		return out
-	}
-	targetPath := fact.TablePathRef().IndexStr(name)
-	targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
-	if targetKey == "" {
-		return out
-	}
-	ks := resolver.KeySpace()
-	localKey, ok := ks.FromPathKey(targetKey)
-	if !ok {
-		return out
-	}
-	edit := out.Edit(ctx.Registry)
-	edit.WriteLocalPathStaticMember(localKey, value.Value)
-	if canonical, ok := ks.FieldCanonical(localKey); ok {
-		edit.WriteLocalPathStaticMember(canonical, value.Value)
-	}
-	return edit.Done()
 }
 
 func writeHeapTableDynamicIndexFact(

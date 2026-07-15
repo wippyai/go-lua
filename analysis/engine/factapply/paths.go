@@ -158,81 +158,50 @@ func applyPathDescendantInvalidation(
 	if containerPath.IsEmpty() {
 		return out
 	}
-	out = applyPreciseDynamicDescendantInvalidation(ctx, resolver, facts, sources, read, in, out, fact)
-	preservedStatic := preserveExactStaticMemberWitness(resolver, ctx.Point, out, containerPath, !clearStructuralWitness)
-	invalidated := out
-	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath, true); ok {
-		invalidated = withOrigins
+	container, err := FreezeResolvedPathAddress(resolver, ctx.Point, containerPath)
+	if err != nil {
+		return out
 	}
-	if clearStructuralWitness {
-		if withWitness, ok := invalidateRootStructuralWitnessForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
-			invalidated = withWitness
-		}
+	resolved := &resolvedPathDescendantInvalidationData{
+		Container:              container,
+		ClearStructuralWitness: clearStructuralWitness,
 	}
-	if withHeap, ok := invalidateHeapStaticMemberDescendantsAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
-		invalidated = withHeap
+	if precise, ok := freezePreciseDynamicDescendantAddress(ctx, resolver, sources, read, in, out, fact); ok {
+		resolved.Precise = precise
+		resolved.HasPrecise = true
 	}
-	invalidateDescendants := invalidatePathDescendantsAt
-	if !clearStructuralWitness {
-		invalidateDescendants = invalidatePathDescendantsPreservingDynamicValueKeyMembershipsAt
+	invalidated, ok := ApplyResolvedPathDescendantInvalidation(ctx.Registry, resolver.KeySpace(), out, ResolvedPathDescendantInvalidation{data: resolved})
+	if !ok {
+		return out
 	}
-	if withDescendants, ok := invalidateDescendants(invalidated, resolver, ctx.Point, containerPath); ok {
-		invalidated = withDescendants
-	}
-	// A write into the container can change its length, so drop difference
-	// relations over that length (and the container value) regardless of whether
-	// the container carried any tracked descendant refinements.
-	if containerKey, ok := visibility.AddressAt(resolver, ctx.Point, containerPath).RootOrVisibleStateKey(); ok {
-		invalidated = invalidated.ClearDiffConstraintsFor(containerKey)
-		if clearStructuralWitness {
-			if localKey, ok := resolver.KeySpace().InternStateKey(containerKey); ok {
-				invalidated = invalidated.ClearDynamicIndexValueKeyMembershipsForContainer(localKey)
-			}
-			invalidated = invalidated.ClearKeyMembershipsForPath(containerKey)
-		}
-	}
-	invalidated = restoreExactStaticMemberWitness(resolver, invalidated, preservedStatic)
+	_ = facts
 	return invalidated
 }
 
-func applyPreciseDynamicDescendantInvalidation(
+func freezePreciseDynamicDescendantAddress(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
 	fact factflow.PathDescendantInvalidation,
-) state.State {
+) (ResolvedPathAddress, bool) {
 	tablePath, keySource, suffix, ok := fact.DynamicTargetRef()
 	if !ok || resolver == nil || sources == nil {
-		return out
+		return ResolvedPathAddress{}, false
 	}
 	keyValue, ok := sources.ValueOfSource(ctx.Point, keySource, in, readWithCurrentPointState(ctx.Point, read, out))
 	if !ok {
-		return out
+		return ResolvedPathAddress{}, false
 	}
 	member, ok := staticSegmentFromValue(ctx.Registry, keyValue)
 	if !ok {
-		return out
+		return ResolvedPathAddress{}, false
 	}
 	targetPath := tablePath.Append(member).AppendSegments(suffix)
-	invalidated := out
-	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath, true); ok {
-		invalidated = withOrigins
-	}
-	if withWitness, ok := invalidateRootStructuralWitnessForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
-		invalidated = withWitness
-	}
-	if withHeap, ok := invalidateHeapStaticMemberSubtreeAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
-		invalidated = withHeap
-	}
-	if withPath, ok := invalidatePathSubtreeAt(invalidated, resolver, ctx.Point, targetPath); ok {
-		invalidated = withPath
-	}
-	_ = facts
-	return invalidated
+	address, err := FreezeResolvedPathAddress(resolver, ctx.Point, targetPath)
+	return address, err == nil
 }
 
 func staticSegmentFromValue(reg *axis.Registry, value product.Value) (segment.Segment, bool) {
@@ -241,41 +210,4 @@ func staticSegmentFromValue(reg *axis.Registry, value product.Value) (segment.Se
 		return segment.Segment{Kind: segment.SegmentField, Name: name}, true
 	}
 	return segment.Segment{}, false
-}
-
-type exactStaticMemberWitness struct {
-	key   pathdom.PathKey
-	value product.Value
-}
-
-func preserveExactStaticMemberWitness(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	target pathdom.Path,
-	enabled bool,
-) []exactStaticMemberWitness {
-	if !enabled || resolver == nil {
-		return nil
-	}
-	targetKey := factPathKeyAt(resolver, point, target)
-	if targetKey == "" {
-		return nil
-	}
-	value, ok := out.ReadPathStaticMember(resolver.KeySpace(), targetKey)
-	if !ok {
-		return nil
-	}
-	return []exactStaticMemberWitness{{key: targetKey, value: value}}
-}
-
-func restoreExactStaticMemberWitness(resolver *visibility.Resolver, out state.State, witnesses []exactStaticMemberWitness) state.State {
-	if resolver == nil || len(witnesses) == 0 {
-		return out
-	}
-	ks := resolver.KeySpace()
-	for _, witness := range witnesses {
-		out = out.WritePathStaticMember(ks, witness.key, witness.value)
-	}
-	return out
 }

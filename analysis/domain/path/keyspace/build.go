@@ -115,6 +115,34 @@ func (ks *KeySpace) FromResolverKey(sym symbol.ID, version int, segments []segme
 	return ks.bindKey(Key{Kind: KindUnversionedSym, Sym: sym, Segs: segs}), true
 }
 
+// LookupResolverKey returns an already-interned resolver key without changing
+// the KeySpace. It is the Apply-side counterpart of FromResolverKey for frozen
+// artifacts that must never grow solve-local intern tables.
+func (ks *KeySpace) LookupResolverKey(sym symbol.ID, version int, segments []segment.Segment) (Key, bool) {
+	if !ks.validSpace() || sym == 0 || version < 0 {
+		return Key{}, false
+	}
+	var segs SegmentsID
+	switch len(segments) {
+	case 0:
+	case 1:
+		segs = ks.segByOne[segments[0]]
+	case 2:
+		segs = ks.segByTwo[segmentPairKey{first: segments[0], second: segments[1]}]
+	case 3:
+		segs = ks.segByThree[segmentTripleKey{first: segments[0], second: segments[1], third: segments[2]}]
+	default:
+		segs = ks.segByKey[structuralSegmentsKey(segments)]
+	}
+	if len(segments) != 0 && segs == 0 {
+		return Key{}, false
+	}
+	if version > 0 {
+		return ks.bindKey(Key{Kind: KindResolverSym, Sym: sym, Ver: uint32(version), Segs: segs}), true
+	}
+	return ks.bindKey(Key{Kind: KindUnversionedSym, Sym: sym, Segs: segs}), true
+}
+
 // FromPathKey parses a point-local resolver key string (sym<id>@<ver><segs>)
 // into the interned local key, mirroring address.LocalKeyFromPathKey. Only
 // versioned resolver keys participate in the point-local value lane; every other

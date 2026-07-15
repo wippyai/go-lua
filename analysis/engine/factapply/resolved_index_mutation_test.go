@@ -2,6 +2,7 @@ package factapply
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -44,13 +45,34 @@ func TestResolvedIndexMutationMatchesAuthoritativeN3N4OnEveryLane(t *testing.T) 
 		keySource: keyValue, valueSource: valueValue,
 	}}
 	read := func(cfg.Point) state.State { return in }
-	want := applyPathDescendantInvalidation(ctx, resolver, facts, legacySources, read, in, in, invalidation, false)
-	want = applyDynamicIndexWrite(ctx, resolver, facts, legacySources, read, in, want, write)
+	invalidated := applyPathDescendantInvalidation(ctx, resolver, facts, legacySources, read, in, in, invalidation, false)
+	want := applyDynamicIndexWrite(ctx, resolver, facts, legacySources, read, in, invalidated, write)
+	closed, ok := freezeResolvedDynamicIndexWrite(ctx, resolver, facts, legacySources, read, in, invalidated, write)
+	if !ok {
+		t.Fatal("failed to freeze closed dynamic-index write")
+	}
+	internsBefore := resolver.KeySpace().InternSize()
+	closedOut, ok := ApplyResolvedDynamicIndexWrite(reg, resolver.KeySpace(), invalidated, closed)
+	if !ok {
+		t.Fatal("closed dynamic-index write rejected")
+	}
+	if internsAfter := resolver.KeySpace().InternSize(); internsAfter != internsBefore {
+		t.Fatalf("closed dynamic-index Apply grew keyspace: %d -> %d", internsBefore, internsAfter)
+	}
+	// Freeze owns all caller-variable storage and resolved products. Mutating
+	// the source provider and syntax path after Freeze cannot alter Apply.
+	legacySources.values[keySource] = absentValue(reg)
+	legacySources.values[valueSource] = presentValue(reg)
+	tablePath.Root = "mutated-after-freeze"
+	closedAfterMutation, ok := ApplyResolvedDynamicIndexWrite(reg, resolver.KeySpace(), invalidated, closed)
+	if !ok {
+		t.Fatal("closed dynamic-index write rejected after producer mutation")
+	}
 
-	got, err := ApplyConcreteResolvedIndexMutation(ResolvedIndexMutationRequest{
+	got, err := runResolvedIndexMutation(ResolvedIndexMutationFreezeRequest{
 		Context: ctx, Resolver: resolver, Facts: facts, Input: in, Output: in,
 		Invalidation: invalidation, Write: write,
-		Sources: []ResolvedSourceValue{{Source: keySource, Value: keyValue}, {Source: valueSource, Value: valueValue}},
+		KeyValue: keyValue, Value: valueValue, HasKeyValue: true, HasValue: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +91,12 @@ func TestResolvedIndexMutationMatchesAuthoritativeN3N4OnEveryLane(t *testing.T) 
 		}
 		if !domain.Equal(want, got.Output) {
 			t.Fatalf("resolved transaction differs from N3+N4 on lane %q", lane)
+		}
+		if !domain.Equal(want, closedOut) {
+			t.Fatalf("closed dynamic-index write differs from authoritative path on lane %q", lane)
+		}
+		if !domain.Equal(closedOut, closedAfterMutation) {
+			t.Fatalf("producer mutation changed frozen dynamic-index write on lane %q", lane)
 		}
 		wantChanged := !domain.Equal(in, want)
 		if got.LaneDeltas[i].Lane != lane || got.LaneDeltas[i].Changed != wantChanged {
@@ -93,24 +121,23 @@ func TestResolvedIndexMutationCancellationAndMissingResolutionPublishNothing(t *
 	before := state.State{}.WriteValue(reg, key.SymbolValue(tableSymbol), presentValue(reg))
 	ctx, session := cancellation.Attach(context.Background())
 	session.Token().Cancel(context.Canceled)
-	request := ResolvedIndexMutationRequest{
+	request := ResolvedIndexMutationFreezeRequest{
 		Context:  transfer.NodeContext{Context: ctx, Session: session, Registry: reg, Point: point},
 		Resolver: resolver, Input: before, Output: before,
 		Invalidation: invalidation, Write: write,
-		Sources: []ResolvedSourceValue{{Source: keySource, Value: presentValue(reg)}, {Source: valueSource, Value: presentValue(reg)}},
+		KeyValue: presentValue(reg), Value: presentValue(reg), HasKeyValue: true, HasValue: true,
 	}
-	got, err := ApplyConcreteResolvedIndexMutation(request)
+	got, err := runResolvedIndexMutation(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !got.Canceled || got.Applied || len(got.LaneDeltas) != 0 || !state.Domain(reg).Equal(got.Output, before) {
 		t.Fatalf("canceled transaction published: %#v", got)
 	}
-	request.Token = nil
 	request.Context.Session = nil
 	request.Context.Context = nil
-	request.Sources = request.Sources[:1]
-	got, err = ApplyConcreteResolvedIndexMutation(request)
+	request.HasValue = false
+	got, err = runResolvedIndexMutation(request)
 	if err == nil || got.Applied || !state.Domain(reg).Equal(got.Output, before) {
 		t.Fatalf("partial resolution published: result=%#v err=%v", got, err)
 	}
@@ -155,12 +182,12 @@ func TestResolvedIndexMutationRetainsCanonicalAppendAndPlacementProofGates(t *te
 		WritePlacement(tableID, placement.SharedHeap).
 		WritePlacement(valueID, placement.Stack).
 		WriteLenFloor(resolver.KeySpace(), tableKey, 2)
-	request := ResolvedIndexMutationRequest{
+	request := ResolvedIndexMutationFreezeRequest{
 		Context: transfer.NodeContext{Registry: reg, Point: point}, Resolver: resolver,
 		Facts: facts, Input: in, Output: in, Invalidation: invalidation, Write: write,
-		Sources: []ResolvedSourceValue{{Source: valueSource, Value: valueValue}},
+		Value: valueValue, HasValue: true,
 	}
-	proved, err := ApplyConcreteResolvedIndexMutation(request)
+	proved, err := runResolvedIndexMutation(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +204,7 @@ func TestResolvedIndexMutationRetainsCanonicalAppendAndPlacementProofGates(t *te
 	unprovedIn := in.WritePlacement(tableID, placement.Stack)
 	request.Facts = factflow.NewFacts(factflow.FactsInput{})
 	request.Input, request.Output = unprovedIn, unprovedIn
-	unproved, err := ApplyConcreteResolvedIndexMutation(request)
+	unproved, err := runResolvedIndexMutation(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,4 +214,23 @@ func TestResolvedIndexMutationRetainsCanonicalAppendAndPlacementProofGates(t *te
 	if got := unproved.Output.ReadPlacement(valueID); got != placement.Stack {
 		t.Fatalf("stack-owned table escaped stored value: %v", got)
 	}
+}
+
+func runResolvedIndexMutation(request ResolvedIndexMutationFreezeRequest) (ResolvedIndexMutationResult, error) {
+	artifact, err := FreezeResolvedIndexMutation(request)
+	if err != nil {
+		return ResolvedIndexMutationResult{Output: request.Output}, err
+	}
+	if artifact.data == nil || artifact.data.executions != 1 {
+		return ResolvedIndexMutationResult{Output: request.Output}, fmt.Errorf("freeze execution count = %v", artifact.data)
+	}
+	var token *cancellation.Token
+	if request.Context.Session != nil {
+		token = request.Context.Session.Token()
+	}
+	result, err := ApplyResolvedIndexMutation(artifact, token)
+	if artifact.data.executions != 1 {
+		return ResolvedIndexMutationResult{Output: request.Output}, fmt.Errorf("Apply repeated concrete execution")
+	}
+	return result, err
 }

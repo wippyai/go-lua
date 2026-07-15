@@ -7,3 +7,12 @@ package keyspace
 func (ks *KeySpace) Valid() bool {
 	return ks != nil && ks.validSpace()
 }
+
+// InternSize reports the total number of retained non-sentinel intern entries.
+// It is a read-only growth invariant for Freeze/Apply boundaries.
+func (ks *KeySpace) InternSize() int {
+	if !ks.Valid() {
+		return 0
+	}
+	return len(ks.segEntries) + len(ks.rootEntries) + len(ks.existentialEntries) - 3
+}
