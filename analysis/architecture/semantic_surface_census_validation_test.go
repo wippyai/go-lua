@@ -54,7 +54,7 @@ func TestCensusBudgetRatchetsEachFamilyIndependently(t *testing.T) {
 func TestCensusDispositionRequiresTypedOwnershipEvidence(t *testing.T) {
 	valid := censusRow{
 		Classification: "moved-primitive",
-		FinalOwner:     "analysis/semantic/primitive",
+		FinalOwner:     "analysis/engine/operationplan",
 		SemanticID:     "primitive:call",
 		Schema:         "primitive/v1",
 		Differential:   "fixture:call",
@@ -71,7 +71,7 @@ func TestCensusDispositionRequiresTypedOwnershipEvidence(t *testing.T) {
 
 	deleted := censusRow{
 		Classification: "deleted",
-		FinalOwner:     "analysis/semantic/primitive",
+		FinalOwner:     "analysis/engine/operationplan",
 		SemanticID:     "deleted:old-call",
 		Differential:   "fixture:no-regrowth",
 	}

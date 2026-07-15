@@ -1,7 +1,8 @@
 package architecture
 
 import (
-	"sort"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,46 +42,23 @@ func TestV2LayerImportManifest(t *testing.T) {
 	}
 }
 
-func TestV2ExclusiveLoweringBridges(t *testing.T) {
+func TestRetiredParallelEnginePackagesStayDeleted(t *testing.T) {
 	packages := productionPackages(t,
 		modulePath+"/analysis/...",
-		modulePath+"/compiler/...",
 	)
-	for _, seam := range v2ExclusiveBridges {
-		seam := seam
-		t.Run(seam.name, func(t *testing.T) {
-			validateV2Bridge(t, seam)
-			if !seam.authorityRequired {
-				t.Log("semantic-program authority milestone has not flipped")
-				return
+	for _, retired := range retiredParallelPackagePrefixes {
+		for _, pkg := range packages {
+			if v2PrefixMatches(pkg.ImportPath, retired) {
+				t.Errorf("retired parallel engine package %s regrew as %s", retired, pkg.ImportPath)
 			}
-			if !v2PackageTreeExists(packages, seam.activatedBy) {
-				return
-			}
+		}
+	}
 
-			bridgeImportsDestination := false
-			bridgeImportsSource := false
-			var illicit []string
-			for _, pkg := range packages {
-				hasSource := matchesAnyV2PrefixInStrings(pkg.Imports, []v2PackagePrefix{seam.source})
-				hasDestination := matchesAnyV2PrefixInStrings(pkg.Imports, []v2PackagePrefix{seam.destination})
-				if v2PrefixMatches(pkg.ImportPath, seam.bridge) {
-					bridgeImportsSource = bridgeImportsSource || hasSource
-					bridgeImportsDestination = bridgeImportsDestination || hasDestination
-					continue
-				}
-				if hasSource && hasDestination {
-					illicit = append(illicit, pkg.ImportPath)
-				}
-			}
-			sort.Strings(illicit)
-			if len(illicit) != 0 {
-				t.Fatalf("packages outside %s directly bridge %s to %s: %s", seam.bridge, seam.source, seam.destination, strings.Join(illicit, ", "))
-			}
-			if !bridgeImportsSource || !bridgeImportsDestination {
-				t.Fatalf("activated bridge %s must import source=%v and destination=%v", seam.bridge, bridgeImportsSource, bridgeImportsDestination)
-			}
-		})
+	root := repoRoot(t)
+	for _, retired := range retiredParallelSourcePaths {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(retired))); !os.IsNotExist(err) {
+			t.Errorf("retired parallel engine source %s exists (stat error: %v)", retired, err)
+		}
 	}
 }
 
@@ -107,13 +85,6 @@ func validateV2Boundary(t *testing.T, boundary v2ImportBoundary) {
 	}
 }
 
-func validateV2Bridge(t *testing.T, seam v2ExclusiveBridge) {
-	t.Helper()
-	if seam.name == "" || !validV2Prefix(seam.activatedBy) || !validV2Prefix(seam.bridge) || !validV2Prefix(seam.source) || !validV2Prefix(seam.destination) {
-		t.Fatal("v2 exclusive bridge requires a name and exact repository package prefixes")
-	}
-}
-
 func validV2Prefix(prefix v2PackagePrefix) bool {
 	value := string(prefix)
 	return value != "" && !strings.HasSuffix(value, "/") && v2RepositoryImport(value)
@@ -131,24 +102,6 @@ func v2PrefixMatches(importPath string, prefix v2PackagePrefix) bool {
 func matchesAnyV2Prefix(importPath string, prefixes []v2PackagePrefix) bool {
 	for _, prefix := range prefixes {
 		if v2PrefixMatches(importPath, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchesAnyV2PrefixInStrings(imports []string, prefixes []v2PackagePrefix) bool {
-	for _, imported := range imports {
-		if matchesAnyV2Prefix(imported, prefixes) {
-			return true
-		}
-	}
-	return false
-}
-
-func v2PackageTreeExists(packages []listedPackage, prefix v2PackagePrefix) bool {
-	for _, pkg := range packages {
-		if v2PrefixMatches(pkg.ImportPath, prefix) {
 			return true
 		}
 	}

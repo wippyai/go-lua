@@ -29,47 +29,7 @@ type v2ImportBoundary struct {
 	delegatedTo string
 }
 
-type v2ExclusiveBridge struct {
-	name string
-
-	// authorityRequired is a checked-in migration milestone, never a runtime
-	// option. The commit that makes the destination authoritative flips it and
-	// may not flip it back.
-	authorityRequired bool
-
-	// activatedBy keeps a future seam optional until the destination package is
-	// introduced. Once present, the bridge owner must import the destination.
-	activatedBy v2PackagePrefix
-	bridge      v2PackagePrefix
-	source      v2PackagePrefix
-	destination v2PackagePrefix
-}
-
 var v2LayerImportBoundaries = []v2ImportBoundary{
-	{
-		name:     "only transferfacts lowers Lua into the neutral semantic program",
-		subjects: []v2PackagePrefix{"github.com/wippyai/go-lua/analysis/lua"},
-		forbidden: []v2PackagePrefix{
-			"github.com/wippyai/go-lua/analysis/semantic/program",
-		},
-		exceptSubjects: []v2PackagePrefix{
-			"github.com/wippyai/go-lua/analysis/lua/transferfacts",
-		},
-	},
-	{
-		name: "semantic schema and program stay backend neutral",
-		subjects: []v2PackagePrefix{
-			"github.com/wippyai/go-lua/analysis/semantic/schema",
-			"github.com/wippyai/go-lua/analysis/semantic/program",
-		},
-		forbidden: []v2PackagePrefix{
-			"github.com/wippyai/go-lua/analysis/check",
-			"github.com/wippyai/go-lua/analysis/engine",
-			"github.com/wippyai/go-lua/analysis/lsp",
-			"github.com/wippyai/go-lua/analysis/lua",
-			"github.com/wippyai/go-lua/compiler",
-		},
-	},
 	{
 		name:     "low-level artifact storage is product neutral",
 		subjects: []v2PackagePrefix{"github.com/wippyai/go-lua/analysis/artifact"},
@@ -102,15 +62,17 @@ var v2LayerImportBoundaries = []v2ImportBoundary{
 	},
 }
 
-var v2ExclusiveBridges = []v2ExclusiveBridge{
-	{
-		name:              "transferfacts is the sole WIR to semantic-program bridge",
-		authorityRequired: true,
-		activatedBy:       "github.com/wippyai/go-lua/analysis/semantic/program",
-		bridge:            "github.com/wippyai/go-lua/analysis/lua/transferfacts",
-		source:            "github.com/wippyai/go-lua/analysis/ir/wir",
-		destination:       "github.com/wippyai/go-lua/analysis/semantic/program",
-	},
+var retiredParallelPackagePrefixes = []v2PackagePrefix{
+	"github.com/wippyai/go-lua/analysis/semantic/program",
+	"github.com/wippyai/go-lua/analysis/semantic/primitive",
+	"github.com/wippyai/go-lua/analysis/semantic/transaction",
+	"github.com/wippyai/go-lua/analysis/engine/circuit",
+	"github.com/wippyai/go-lua/analysis/engine/concrete",
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/poc",
+}
+
+var retiredParallelSourcePaths = []string{
+	"analysis/lua/transferfacts/semantic_program.go",
 }
 
 // v2DelegatedImportGates is a compile-time link to the established owner of a
