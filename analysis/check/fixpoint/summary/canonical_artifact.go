@@ -3,6 +3,7 @@ package summary
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -89,13 +90,32 @@ func (e *NonportableCanonicalError) Error() string {
 // The returned artifact is zero on cancellation, nonportable product values,
 // registry mismatch, or any encoding failure.
 func EncodeCanonical(ctx context.Context, reg *axis.Registry, in Summary) (CanonicalArtifact, error) {
+	return encodeCanonical(ctx, reg, in, false)
+}
+
+// SealCanonical proves that every embedded product can be independently
+// materialized, in addition to producing the canonical summary bytes. Unlike
+// EncodeCanonical it may admit pointer-backed values whose canonical decoder
+// reconstructs an owned graph; encode-only axis descriptors still fail.
+func SealCanonical(ctx context.Context, reg *axis.Registry, in Summary) (CanonicalArtifact, error) {
+	artifact, err := encodeCanonical(ctx, reg, in, true)
+	if err != nil {
+		return CanonicalArtifact{}, err
+	}
+	if _, err := DecodeCanonical(ctx, reg, artifact); err != nil {
+		return CanonicalArtifact{}, err
+	}
+	return artifact, nil
+}
+
+func encodeCanonical(ctx context.Context, reg *axis.Registry, in Summary, materializable bool) (CanonicalArtifact, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
 		return CanonicalArtifact{}, err
 	}
-	if err := validateCanonicalLaneInventory(reg, in); err != nil {
+	if err := validateCanonicalLaneInventory(ctx, reg, in, materializable); err != nil {
 		return CanonicalArtifact{}, err
 	}
 
@@ -103,7 +123,7 @@ func EncodeCanonical(ctx context.Context, reg *axis.Registry, in Summary) (Canon
 	if err != nil {
 		return CanonicalArtifact{}, err
 	}
-	if err := validateCanonicalLaneInventory(reg, normalized); err != nil {
+	if err := validateCanonicalLaneInventory(ctx, reg, normalized, materializable); err != nil {
 		return CanonicalArtifact{}, err
 	}
 	productAuthority, schema, err := canonicalSummarySchema(ctx, reg)
@@ -151,7 +171,7 @@ func EncodeCanonical(ctx context.Context, reg *axis.Registry, in Summary) (Canon
 	}, nil
 }
 
-func validateCanonicalLaneInventory(reg *axis.Registry, in Summary) error {
+func validateCanonicalLaneInventory(ctx context.Context, reg *axis.Registry, in Summary, materializable bool) error {
 	for _, descriptor := range summaryFactDescriptors {
 		if descriptor.Ops.empty(in) {
 			continue
@@ -173,22 +193,23 @@ func validateCanonicalLaneInventory(reg *axis.Registry, in Summary) error {
 	if in.HeapKeySpace != nil {
 		return &NonportableCanonicalError{Lane: "HeapKeySpace", Reason: "keyspace provenance is unsupported without the heap lane"}
 	}
-	if !canonicalProductsSafe(reg, in.Returns) {
-		return &NonportableCanonicalError{Lane: "Returns", Reason: "registry mismatch or unsafe retained value"}
+	if err := validateCanonicalProducts(ctx, reg, in.Returns, materializable); err != nil {
+		return canonicalProductLaneError("Returns", err)
 	}
-	if !canonicalProductsSafe(reg, in.NormalReturnParams) {
-		return &NonportableCanonicalError{Lane: "NormalReturnParams", Reason: "registry mismatch or unsafe retained value"}
+	if err := validateCanonicalProducts(ctx, reg, in.NormalReturnParams, materializable); err != nil {
+		return canonicalProductLaneError("NormalReturnParams", err)
 	}
 	for _, fact := range in.ReturnConditionParamRefinements {
-		if !product.RetentionSafe(reg, fact.Value) {
-			return &NonportableCanonicalError{
-				Lane: "ReturnConditionParamRefinements", Reason: "registry mismatch or unsafe retained value",
-			}
+		if err := validateCanonicalProducts(ctx, reg, []product.Value{fact.Value}, materializable); err != nil {
+			return canonicalProductLaneError("ReturnConditionParamRefinements", err)
 		}
 	}
 	for _, fact := range in.NormalReturnFacts.PathRefinements {
-		if !fact.Path.IsPlaceholder() || !product.RetentionSafe(reg, fact.Value) {
-			return &NonportableCanonicalError{Lane: "NormalReturnFacts.PathRefinements", Reason: "invalid path or unsafe retained value"}
+		if !fact.Path.IsPlaceholder() {
+			return &NonportableCanonicalError{Lane: "NormalReturnFacts.PathRefinements", Reason: "invalid placeholder path"}
+		}
+		if err := validateCanonicalProducts(ctx, reg, []product.Value{fact.Value}, materializable); err != nil {
+			return canonicalProductLaneError("NormalReturnFacts.PathRefinements", err)
 		}
 	}
 	for _, flow := range in.ReturnFlows {
@@ -199,13 +220,30 @@ func validateCanonicalLaneInventory(reg *axis.Registry, in Summary) error {
 	return nil
 }
 
-func canonicalProductsSafe(reg *axis.Registry, values []product.Value) bool {
+func validateCanonicalProducts(ctx context.Context, reg *axis.Registry, values []product.Value, materializable bool) error {
 	for _, value := range values {
-		if !product.RetentionSafe(reg, value) {
-			return false
+		if !materializable {
+			if !product.RetentionSafe(reg, value) {
+				return fmt.Errorf("registry mismatch or unsafe retained value")
+			}
+			continue
+		}
+		artifact, err := product.SealCanonical(ctx, reg, value)
+		if err != nil {
+			return err
+		}
+		if !artifact.Valid() {
+			return fmt.Errorf("canonical materialization returned no artifact")
 		}
 	}
-	return true
+	return nil
+}
+
+func canonicalProductLaneError(lane string, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &NonportableCanonicalError{Lane: lane, Reason: err.Error()}
 }
 
 func canonicalSummarySchema(ctx context.Context, reg *axis.Registry) (axis.SchemaIdentity, CanonicalSchemaIdentity, error) {
@@ -406,7 +444,7 @@ func encodeCanonicalPathRefinements(
 		return err
 	}
 	for _, fact := range facts {
-		if !fact.Path.IsPlaceholder() || !product.RetentionSafe(reg, fact.Value) {
+		if !fact.Path.IsPlaceholder() || !product.BelongsToRegistry(reg, fact.Value) {
 			return &NonportableCanonicalError{Lane: "NormalReturnFacts.PathRefinements", Reason: "invalid path or unsafe retained value"}
 		}
 		if err := writer.Record(canonicalPathRefinementRecord); err != nil {

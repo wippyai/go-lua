@@ -354,8 +354,8 @@ func NewShadowRoot(ctx context.Context, reg *axis.Registry, requirements operati
 						return Root{}, err
 					}
 				}
-				if !artifactSafeValue(reg, value.Value) {
-					return Root{}, fmt.Errorf("evaluated: boundary value is not artifact-safe")
+				if err := canonicalArtifactValue(ctx, reg, value.Value); err != nil {
+					return Root{}, fmt.Errorf("evaluated: boundary value is not canonically materializable: %w", err)
 				}
 			}
 		}
@@ -452,8 +452,16 @@ func NewShadowRoot(ctx context.Context, reg *axis.Registry, requirements operati
 			}
 			if !validWorlds(item.Worlds) || item.Owner == (lexicalidentity.StableLexicalBodyID{}) ||
 				!item.Anchor.Valid() || item.Anchor != anchor || item.Kind != kind || item.Anchor.Kind != item.Kind || item.Anchor.Slot != item.Slot ||
-				!artifactSafeValue(reg, item.Actual) || item.HasExpected && !artifactSafeValue(reg, item.Expected) {
+				item.HasExpected && item.Expected == (product.Value{}) {
 				return Root{}, fmt.Errorf("evaluated: invalid observation at slot %d", observed.Slot)
+			}
+			if err := canonicalArtifactValue(ctx, reg, item.Actual); err != nil {
+				return Root{}, fmt.Errorf("evaluated: observation actual at slot %d is not canonically materializable: %w", observed.Slot, err)
+			}
+			if item.HasExpected {
+				if err := canonicalArtifactValue(ctx, reg, item.Expected); err != nil {
+					return Root{}, fmt.Errorf("evaluated: observation expected at slot %d is not canonically materializable: %w", observed.Slot, err)
+				}
 			}
 		}
 		for itemIndex, item := range observed.Obligations {
