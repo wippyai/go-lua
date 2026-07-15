@@ -118,9 +118,15 @@ type checker struct {
 type Stats struct {
 	StaticChunkPrepares    int
 	StaticFunctionPrepares int
-	BodySolves             int
-	Transfer               transfer.Stats
-	Observation            ObservationStats
+	// LexicalCFGBuilds and LexicalWIRLowerings count source-owned forest
+	// construction. They exclude pointer attachment of an already prepared child
+	// into its parent proto, making accidental triangular subtree rebuilding
+	// directly observable.
+	LexicalCFGBuilds    int
+	LexicalWIRLowerings int
+	BodySolves          int
+	Transfer            transfer.Stats
+	Observation         ObservationStats
 }
 
 // ObservationStats reports deterministic seal work. Captured outputs are

@@ -2,6 +2,7 @@ package program
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -63,55 +64,45 @@ func (p preparedBodies) function(fn *ast.FunctionExpr) *body.Static {
 }
 
 func prepareBoundChunkBodies(stmts []ast.Stmt, bindings *bind.Result, config body.Config, keys programKeys) (preparedBodies, error) {
-	root, err := body.PrepareBoundChunk(stmts, bindings, staticPrepareConfig(config, keys))
+	forest, err := body.PrepareBoundChunkForest(stmts, bindings, staticPrepareConfig(config, keys))
 	if err != nil {
 		return preparedBodies{}, err
 	}
 	prepared := preparedBodies{
-		root:      root,
+		root:      forest.Root(),
 		functions: make(map[*ast.FunctionExpr]*body.Static, len(keys.functions)),
 	}
-	if err := prepareFunctionStatics(prepared.functions, keys.functions, bindings, config, keys); err != nil {
-		return preparedBodies{}, err
+	for _, fn := range keys.functions {
+		static := forest.Function(fn.funcExpr)
+		if static == nil {
+			return preparedBodies{}, fmt.Errorf("prepare program bodies: lexical function is absent from source forest")
+		}
+		prepared.functions[fn.funcExpr] = static
 	}
 	return prepared, nil
 }
 
 func prepareBoundFunctionBodies(rootFn *ast.FunctionExpr, bindings *bind.Result, config body.Config, keys programKeys) (preparedBodies, error) {
+	forest, err := body.PrepareBoundFunctionForest(rootFn, bindings, staticPrepareConfig(config, keys))
+	if err != nil {
+		return preparedBodies{}, err
+	}
 	prepared := preparedBodies{
 		functions: make(map[*ast.FunctionExpr]*body.Static, 1+len(keys.functions)),
 	}
-	if err := prepareFunctionStatic(prepared.functions, rootFn, bindings, config, keys); err != nil {
-		return preparedBodies{}, err
+	root := forest.Function(rootFn)
+	if root == nil {
+		return preparedBodies{}, fmt.Errorf("prepare program bodies: root function is absent from source forest")
 	}
-	if err := prepareFunctionStatics(prepared.functions, keys.functions, bindings, config, keys); err != nil {
-		return preparedBodies{}, err
+	prepared.functions[rootFn] = root
+	for _, fn := range keys.functions {
+		static := forest.Function(fn.funcExpr)
+		if static == nil {
+			return preparedBodies{}, fmt.Errorf("prepare program bodies: lexical function is absent from source forest")
+		}
+		prepared.functions[fn.funcExpr] = static
 	}
 	return prepared, nil
-}
-
-func prepareFunctionStatics(out map[*ast.FunctionExpr]*body.Static, functions []keyedFunction, bindings *bind.Result, config body.Config, keys programKeys) error {
-	for _, fn := range functions {
-		if err := prepareFunctionStatic(out, fn.funcExpr, bindings, config, keys); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func prepareFunctionStatic(out map[*ast.FunctionExpr]*body.Static, fn *ast.FunctionExpr, bindings *bind.Result, config body.Config, keys programKeys) error {
-	if fn == nil {
-		return nil
-	}
-	if _, ok := out[fn]; ok {
-		return nil
-	}
-	prepared, err := body.PrepareBoundFunction(fn, bindings, staticPrepareConfig(config, keys))
-	if err != nil {
-		return err
-	}
-	out[fn] = prepared
-	return nil
 }
 
 func staticPrepareConfig(config body.Config, keys programKeys) body.Config {

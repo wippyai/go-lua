@@ -51,6 +51,30 @@ import (
 // read these sidecars.
 type Options struct {
 	MethodReceiverTypes map[symbol.ID]typ.Type
+
+	// PreparedChild returns the already-lowered artifact for a direct lexical
+	// child. A source-owned preparation forest supplies this hook while lowering
+	// parents bottom-up, so each lexical body and CFG is constructed exactly
+	// once. The ordinary standalone lowering entry points leave it nil and retain
+	// their self-contained recursive result. A non-nil provider is authoritative:
+	// a missing child is emitted without a FuncRef and is never recursively
+	// rebuilt. Production forest construction prevalidates total coverage and
+	// returns an error before lowering.
+	PreparedChild func(*ast.FunctionExpr) (PreparedFunction, bool)
+
+	// ObserveBodyLowered is test/benchmark instrumentation. It is invoked once
+	// for every actual lowerInto construction, including recursively lowered
+	// bodies. It is never retained by the returned WIR.
+	ObserveBodyLowered func(*ast.FunctionExpr)
+}
+
+// PreparedFunction is an immutable child WIR/CFG pair owned by a lexical
+// preparation forest. The child Body keeps its owner-local debug identity;
+// emitClosure independently retains the parent's legacy hierarchical proto
+// name.
+type PreparedFunction struct {
+	Body  *wir.Body
+	Graph *cfg.CFG
 }
 
 // Lower lowers a bound statement chunk onto the CFG cfgbuild already built for
@@ -194,6 +218,9 @@ func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindi
 // resolver, threaded through nested protos so type identities and their caches
 // stay consistent across the whole chunk.
 func lowerInto(name string, stmts []ast.Stmt, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
+	if options.ObserveBodyLowered != nil {
+		options.ObserveBodyLowered(fn)
+	}
 	b := &builder{
 		body:                wir.NewBody(name),
 		graph:               built.Graph,
@@ -1351,14 +1378,27 @@ func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
 func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 	name := b.body.Name + ".fn" + strconv.Itoa(b.protoSeq)
 	b.protoSeq++
-	childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
 	var ref wir.FuncRef
-	if childBuilt != nil && childBuilt.Graph != nil {
-		childBody := lowerInto(name, fn.Stmts, fn, b.bindings, childBuilt, b.resolver, b.options)
-		recordFunctionBodyMetadata(childBody, fn, b.bindings, b.resolver, b.options)
+	var childBody *wir.Body
+	var childGraph *cfg.CFG
+	if b.options.PreparedChild != nil {
+		prepared, ok := b.options.PreparedChild(fn)
+		if ok && prepared.Body != nil && prepared.Graph != nil {
+			childBody = prepared.Body
+			childGraph = prepared.Graph
+		}
+	} else {
+		childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
+		if childBuilt != nil && childBuilt.Graph != nil {
+			childBody = lowerInto(name, fn.Stmts, fn, b.bindings, childBuilt, b.resolver, b.options)
+			recordFunctionBodyMetadata(childBody, fn, b.bindings, b.resolver, b.options)
+			childGraph = childBuilt.Graph
+		}
+	}
+	if childBody != nil && childGraph != nil {
 		sym, _ := b.bindings.FunctionSymbol(fn)
 		fnType, _ := functiontype.ValueExpression(fn, b.bindings, b.resolver)
-		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childBuilt.Graph, Symbol: wir.FunctionSymbolID(sym), Type: fnType})
+		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childGraph, Symbol: wir.FunctionSymbolID(sym), Type: fnType})
 	}
 
 	caps := b.bindings.DirectCaptures(fn)
