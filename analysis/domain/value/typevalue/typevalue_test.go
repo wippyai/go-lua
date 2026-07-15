@@ -143,6 +143,33 @@ func TestDefinitelyNonEmptyIndexContainer(t *testing.T) {
 	}
 }
 
+func TestDefinitelyNonEmptyIndexContainerUsesProductiveRecursiveProof(t *testing.T) {
+	nonEmpty := typ.NewRecursivePlaceholder("NonEmpty")
+	nonEmpty.SetBody(&typ.Union{Members: []typ.Type{nonEmpty, typ.NewTuple(typ.String)}})
+	if !DefinitelyNonEmptyIndexContainer(nonEmpty) {
+		t.Fatal("productive recursive tuple union lost its non-empty proof")
+	}
+
+	bad := typ.NewRecursivePlaceholder("Bad")
+	bad.SetBody(&typ.Union{Members: []typ.Type{bad, typ.NewTuple()}})
+	if DefinitelyNonEmptyIndexContainer(bad) {
+		t.Fatal("recursive union accepted a productive empty-tuple mismatch")
+	}
+
+	loop := typ.NewRecursive("Loop", func(self typ.Type) typ.Type { return self })
+	if DefinitelyNonEmptyIndexContainer(loop) {
+		t.Fatal("cycle-only type manufactured a non-empty proof")
+	}
+
+	var deep typ.Type = typ.NewTuple(typ.String)
+	for range 257 {
+		deep = typ.NewAlias("Deep", deep)
+	}
+	if !DefinitelyNonEmptyIndexContainer(deep) {
+		t.Fatal("deep acyclic alias graph lost its non-empty proof")
+	}
+}
+
 func TestTypeOfMaterializedTaggedAliasReturnsCompatibleType(t *testing.T) {
 	reg := standard.Registry()
 	target := typetable.NewRecord().
@@ -959,6 +986,28 @@ func TestProjectionHasNilHandlesRecursiveBodies(t *testing.T) {
 				t.Fatalf("ProjectionHasNil(%v) = %v, want %v", tt.typ, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProjectionHasNilUsesExactRecursivePolarity(t *testing.T) {
+	maybe := typ.NewRecursivePlaceholder("Maybe")
+	maybe.SetBody(&typ.Union{Members: []typ.Type{maybe, typ.Nil}})
+	if !ProjectionHasNil(maybe) {
+		t.Fatal("recursive union lost productive nil evidence")
+	}
+
+	nonNil := typ.NewRecursivePlaceholder("NonNil")
+	nonNil.SetBody(&typ.Union{Members: []typ.Type{nonNil, typ.String}})
+	if ProjectionHasNil(nonNil) {
+		t.Fatal("recursive union manufactured nil evidence")
+	}
+
+	var deep typ.Type = typ.Nil
+	for range 257 {
+		deep = typ.NewAlias("DeepNil", deep)
+	}
+	if !ProjectionHasNil(deep) {
+		t.Fatal("deep acyclic nil projection was truncated")
 	}
 }
 

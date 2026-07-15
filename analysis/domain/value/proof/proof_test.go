@@ -54,6 +54,30 @@ func TestValueProofAdmissibleAcceptsAnyClaimForTopLikeContract(t *testing.T) {
 	}
 }
 
+func TestTopLikeAndRuntimeKindRefinementTraverseDeepGraphsExactly(t *testing.T) {
+	var top typ.Type = typ.Any
+	var concrete typ.Type = typ.String
+	for range 257 {
+		top = typ.NewArray(top)
+		concrete = typ.NewArray(concrete)
+	}
+	if !topLikeContract(top) {
+		t.Fatal("deep top-like contract was truncated")
+	}
+	if topLikeContract(concrete) {
+		t.Fatal("deep concrete contract became top-like")
+	}
+
+	var candidate typ.Type = &typ.Union{Members: []typ.Type{typ.String, typ.Number}}
+	for range 257 {
+		candidate = typ.NewAlias("DeepCandidate", candidate)
+	}
+	got, ok := RefineTypeByRuntimeKindSet(candidate, runtimekind.Singleton(runtimekind.String), presence.Present())
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("deep runtime-kind refinement = %v/%v, want string", got, ok)
+	}
+}
+
 func TestValueProofAdmissibleRejectsAnyClaimForRecordWithConcreteField(t *testing.T) {
 	reg := registry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typetable.NewRecord().
@@ -115,8 +139,8 @@ func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
 func TestValueProofAdmissibleRuntimeCastDepthExhaustionFailsClosed(t *testing.T) {
 	reg := registry()
 	cache := typevalue.NewCache()
-	actual := nestedRecordType(typ.DefaultRecursionDepth+2, typ.Number)
-	want := nestedRecordType(typ.DefaultRecursionDepth+2, typ.String)
+	actual := nestedRecordType(257, typ.Number)
+	want := nestedRecordType(257, typ.String)
 	value := cache.FromTypeWithWitness(reg, actual)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.RuntimeClaim))

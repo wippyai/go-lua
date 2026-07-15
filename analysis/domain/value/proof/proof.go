@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -354,26 +355,35 @@ func explicitTopRecordWithTopLikeMember(t typ.Type) bool {
 }
 
 func topLikeContract(t typ.Type) bool {
-	return topLikeContractAt(t, 0)
+	return topLikeContractSeen(t, &typegraph.Path{})
 }
 
-func topLikeContractAt(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func topLikeContractSeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return false
 	}
 	t = unwrap.Alias(t)
+	if t == nil || !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
 	if typ.IsAny(t) || typ.IsUnknown(t) {
 		return true
 	}
 	switch tt := t.(type) {
 	case *typ.Optional:
-		return tt != nil && topLikeContractAt(tt.Inner, depth+1)
+		return tt != nil && topLikeContractSeen(tt.Inner, active)
 	case *typ.Array:
-		return tt != nil && topLikeContractAt(tt.Element, depth+1)
+		return tt != nil && topLikeContractSeen(tt.Element, active)
 	case *typ.Map:
-		return tt != nil && topLikeContractAt(tt.Value, depth+1)
+		return tt != nil && topLikeContractSeen(tt.Value, active)
 	case *typ.ReadonlyMap:
-		return tt != nil && topLikeContractAt(tt.Value, depth+1)
+		return tt != nil && topLikeContractSeen(tt.Value, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(tt)
+		return expanded != nil && expanded != t && topLikeContractSeen(expanded, active)
+	case *typ.Recursive:
+		return tt.Body != nil && tt.Body != t && topLikeContractSeen(tt.Body, active)
 	}
 	return false
 }
@@ -587,25 +597,30 @@ func RefineTypeByRuntimeKindSet(t typ.Type, kinds runtimekind.Value, p presence.
 		return nil, false
 	}
 	keepNil := presence.Equal(p, presence.Maybe()) && typevalue.ProjectionHasNil(t)
-	return refineTypeByRuntimeKindSetDepth(t, kinds, keepNil, 0)
+	return refineTypeByRuntimeKindSetSeen(t, kinds, keepNil, &typegraph.Path{})
 }
 
-func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNil bool, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) {
+func refineTypeByRuntimeKindSetSeen(t typ.Type, kinds runtimekind.Value, keepNil bool, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
 		return nil, false
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return t, true
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Alias:
-		return refineTypeByRuntimeKindSetDepth(v.UnaliasedTarget(), kinds, keepNil, depth+1)
+		return refineTypeByRuntimeKindSetSeen(v.UnaliasedTarget(), kinds, keepNil, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
 		if expanded == nil || expanded == t {
 			return nil, false
 		}
-		return refineTypeByRuntimeKindSetDepth(expanded, kinds, keepNil, depth+1)
+		return refineTypeByRuntimeKindSetSeen(expanded, kinds, keepNil, active)
 	case *typ.Optional:
 		innerKinds := kinds.Without(runtimekind.Nil)
-		inner, ok := refineTypeByRuntimeKindSetDepth(v.Inner, innerKinds, false, depth+1)
+		inner, ok := refineTypeByRuntimeKindSetSeen(v.Inner, innerKinds, false, active)
 		includeNil := keepNil || kinds.Contains(runtimekind.Nil)
 		if !ok {
 			if includeNil {
@@ -627,7 +642,7 @@ func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNi
 		out := make([]typ.Type, 0, len(v.Members))
 		changed := false
 		for _, member := range v.Members {
-			refined, ok := refineTypeByRuntimeKindSetDepth(member, kinds, keepNil, depth+1)
+			refined, ok := refineTypeByRuntimeKindSetSeen(member, kinds, keepNil, active)
 			if !ok {
 				out = append(out, member)
 				continue

@@ -35,6 +35,27 @@ func TestCanBeFalseUsesTypeWitness(t *testing.T) {
 	}
 }
 
+func TestTruthinessQueriesTraverseDeepAndRecursiveTypesExactly(t *testing.T) {
+	var deep typ.Type = typ.False
+	for range 257 {
+		deep = typ.NewAlias("DeepFalse", deep)
+	}
+	if !typeAdmitsFalse(deep) || !typeAdmitsFalsy(deep) || typeAdmitsTruthy(deep) {
+		t.Fatal("deep false evidence was truncated or changed")
+	}
+
+	falsy := typ.NewRecursivePlaceholder("Falsy")
+	falsy.SetBody(&typ.Union{Members: []typ.Type{falsy, typ.False}})
+	if !typeAdmitsFalse(falsy) || !typeAdmitsFalsy(falsy) {
+		t.Fatal("productive recursive false arm was lost")
+	}
+	truthy := typ.NewRecursivePlaceholder("Truthy")
+	truthy.SetBody(&typ.Union{Members: []typ.Type{truthy, typ.String}})
+	if !typeAdmitsTruthy(truthy) || typeAdmitsFalsy(truthy) {
+		t.Fatal("recursive truthy union acquired a false cyclic witness")
+	}
+}
+
 func TestCanBeTruthyUsesLuaTruthiness(t *testing.T) {
 	reg := standard.Registry()
 	record := typetable.NewRecord().Field("kind", typ.String).Build()
@@ -405,7 +426,7 @@ func TestMeetConstraintPreservesConcreteVariantOriginForOpenGenericConstraint(t 
 			product.Get(reg, constraint, variantorigin.Key),
 			valueType, valueTypeOK,
 			constraintType, constraintTypeOK,
-			openVariantConstraintAdmitsValue(valueType, constraintType, 0),
+			openVariantConstraintAdmitsValue(valueType, constraintType),
 		)
 	}
 	gotType, ok := typevalue.TypeOf(reg, got)
@@ -459,14 +480,14 @@ func TestMeetConstraintAdoptsOpenGenericOriginForInstantiatedUnion(t *testing.T)
 		valueType, valueTypeOK := typevalue.TypeOf(reg, value)
 		constraintType, constraintTypeOK := typevalue.TypeOf(reg, constraint)
 		directType, directTypeOK := typevalue.TypeOf(reg, got)
-		narrowed, narrowedOK := compatibleValueWitnessType(valueType, constraintType, 0)
+		narrowed, narrowedOK := compatibleValueWitnessType(valueType, constraintType)
 		t.Fatalf("structural type = %v/%v direct=%v/%v, want %v (valueType=%v/%v constraintType=%v/%v admits=%v narrowed=%v/%v origin=%v)",
 			gotType, ok,
 			directType, directTypeOK,
 			want,
 			valueType, valueTypeOK,
 			constraintType, constraintTypeOK,
-			openVariantConstraintAdmitsValue(valueType, constraintType, 0),
+			openVariantConstraintAdmitsValue(valueType, constraintType),
 			narrowed, narrowedOK,
 			product.Get(reg, got, variantorigin.Key),
 		)

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -23,25 +24,39 @@ func CanBeFalse(reg *axis.Registry, value product.Value) bool {
 	if !ok || t == nil {
 		return true
 	}
-	return typeAdmitsFalse(t, 0)
+	return typeAdmitsFalse(t)
 }
 
-func typeAdmitsFalse(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func typeAdmitsFalse(t typ.Type) bool {
+	return typeAdmitsFalseSeen(t, &typegraph.Path{})
+}
+
+func typeAdmitsFalseSeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return true
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Optional:
-		return typeAdmitsFalse(v.Inner, depth+1)
+		return typeAdmitsFalseSeen(v.Inner, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeAdmitsFalse(member, depth+1) {
+			if typeAdmitsFalseSeen(member, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return typeAdmitsFalse(v.UnaliasedTarget(), depth+1)
+		return typeAdmitsFalseSeen(v.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && typeAdmitsFalseSeen(expanded, active)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != t && typeAdmitsFalseSeen(v.Body, active)
 	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Function:
 		return false
 	default:
@@ -60,7 +75,7 @@ func CanBeTruthy(reg *axis.Registry, value product.Value) bool {
 	if !ok || t == nil {
 		return true
 	}
-	return typeAdmitsTruthy(t, 0)
+	return typeAdmitsTruthy(t)
 }
 
 // CanBeFalsy reports whether value may evaluate falsy under Lua truthiness.
@@ -71,25 +86,39 @@ func CanBeFalsy(reg *axis.Registry, value product.Value) bool {
 	if !ok || t == nil {
 		return true
 	}
-	return typeAdmitsFalsy(t, 0)
+	return typeAdmitsFalsy(t)
 }
 
-func typeAdmitsTruthy(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func typeAdmitsTruthy(t typ.Type) bool {
+	return typeAdmitsTruthySeen(t, &typegraph.Path{})
+}
+
+func typeAdmitsTruthySeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return true
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Optional:
-		return typeAdmitsTruthy(v.Inner, depth+1)
+		return typeAdmitsTruthySeen(v.Inner, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeAdmitsTruthy(member, depth+1) {
+			if typeAdmitsTruthySeen(member, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return typeAdmitsTruthy(v.UnaliasedTarget(), depth+1)
+		return typeAdmitsTruthySeen(v.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && typeAdmitsTruthySeen(expanded, active)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != t && typeAdmitsTruthySeen(v.Body, active)
 	default:
 		if typ.IsNever(t) {
 			return false
@@ -98,22 +127,36 @@ func typeAdmitsTruthy(t typ.Type, depth int) bool {
 	}
 }
 
-func typeAdmitsFalsy(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func typeAdmitsFalsy(t typ.Type) bool {
+	return typeAdmitsFalsySeen(t, &typegraph.Path{})
+}
+
+func typeAdmitsFalsySeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return true
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Optional:
 		return true
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeAdmitsFalsy(member, depth+1) {
+			if typeAdmitsFalsySeen(member, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return typeAdmitsFalsy(v.UnaliasedTarget(), depth+1)
+		return typeAdmitsFalsySeen(v.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && typeAdmitsFalsySeen(expanded, active)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != t && typeAdmitsFalsySeen(v.Body, active)
 	default:
 		if typ.IsNever(t) {
 			return false
@@ -233,7 +276,7 @@ func recoverCompatibleWitnessMeet(reg *axis.Registry, value, constraint product.
 	case subtype.IsSubtype(valueType, constraintType):
 		narrower = valueWitness
 	default:
-		narrowed, ok := compatibleValueWitnessType(valueType, constraintType, 0)
+		narrowed, ok := compatibleValueWitnessType(valueType, constraintType)
 		if !ok {
 			return product.Value{}, false
 		}
@@ -272,7 +315,7 @@ func recoverCompatibleVariantOriginMeet(reg *axis.Registry, value, constraint pr
 		return product.Value{}, false
 	}
 	if !subtype.IsSubtype(valueType, constraintType) && !subtype.IsSubtype(constraintType, valueType) {
-		if openVariantConstraintAdmitsValue(valueType, constraintType, 0) {
+		if openVariantConstraintAdmitsValue(valueType, constraintType) {
 			if selected, ok := currentVariantCasesAdmittedByConstraint(valueOrigin, constraintType); ok {
 				return recoverCompatibleConcreteVariantOriginMeet(reg, value, constraint, variantorigin.Of(valueOrigin.Family(), selected))
 			}
@@ -311,7 +354,7 @@ func currentVariantCasesAdmittedByConstraint(origin variantorigin.Value, constra
 		if !ok {
 			continue
 		}
-		if openVariantConstraintAdmitsValue(caseType, constraintType, 0) {
+		if openVariantConstraintAdmitsValue(caseType, constraintType) {
 			selected = append(selected, c)
 		}
 	}
@@ -324,7 +367,7 @@ func recoverCompatibleConcreteVariantOriginMeet(reg *axis.Registry, value, const
 		return product.Value{}, false
 	}
 	constraintType, ok := typevalue.TypeOf(reg, constraint)
-	if !ok || !openVariantConstraintAdmitsValue(valueType, constraintType, 0) {
+	if !ok || !openVariantConstraintAdmitsValue(valueType, constraintType) {
 		return product.Value{}, false
 	}
 	constraintWithoutOrigin := product.Set(reg, constraint, variantorigin.Key, variantorigin.Top())
@@ -332,17 +375,25 @@ func recoverCompatibleConcreteVariantOriginMeet(reg *axis.Registry, value, const
 	if product.Equal(reg, refined, product.Bottom(reg)) {
 		refined = value
 	}
-	if narrowed, ok := compatibleValueWitnessType(valueType, constraintType, 0); ok {
+	if narrowed, ok := compatibleValueWitnessType(valueType, constraintType); ok {
 		refined = product.Set(reg, refined, typewitness.Key, typewitness.Top())
 		refined = typevalue.WithWitness(reg, refined, narrowed)
 	}
 	return product.Set(reg, refined, variantorigin.Key, origin), true
 }
 
-func compatibleValueWitnessType(valueType, constraintType typ.Type, depth int) (typ.Type, bool) {
-	if valueType == nil || constraintType == nil || depth > typ.DefaultRecursionDepth {
+func compatibleValueWitnessType(valueType, constraintType typ.Type) (typ.Type, bool) {
+	return compatibleValueWitnessTypeSeen(valueType, constraintType, &typegraph.PairPath{})
+}
+
+func compatibleValueWitnessTypeSeen(valueType, constraintType typ.Type, active *typegraph.PairPath) (typ.Type, bool) {
+	if valueType == nil || constraintType == nil {
 		return nil, false
 	}
+	if !active.Enter(valueType, constraintType) {
+		return nil, false
+	}
+	defer active.Leave(valueType, constraintType)
 	valueType = subst.ExpandInstantiated(unwrap.Alias(valueType))
 	constraintType = subst.ExpandInstantiated(unwrap.Alias(constraintType))
 	switch v := unwrap.Alias(valueType).(type) {
@@ -350,11 +401,11 @@ func compatibleValueWitnessType(valueType, constraintType typ.Type, depth int) (
 		if subtype.IsSubtype(typ.Nil, constraintType) {
 			return typ.Nil, true
 		}
-		return compatibleValueWitnessType(v.Inner, constraintType, depth+1)
+		return compatibleValueWitnessTypeSeen(v.Inner, constraintType, active)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
-			if narrowed, ok := compatibleValueWitnessType(member, constraintType, depth+1); ok {
+			if narrowed, ok := compatibleValueWitnessTypeSeen(member, constraintType, active); ok {
 				out = append(out, narrowed)
 			}
 		}
@@ -364,23 +415,31 @@ func compatibleValueWitnessType(valueType, constraintType typ.Type, depth int) (
 		return typenormalize.UnionForEvidence(out...), true
 	case *typ.Intersection:
 		for _, member := range v.Members {
-			if narrowed, ok := compatibleValueWitnessType(member, constraintType, depth+1); ok {
+			if narrowed, ok := compatibleValueWitnessTypeSeen(member, constraintType, active); ok {
 				return narrowed, true
 			}
 		}
 		return nil, false
 	default:
-		if openVariantConstraintAdmitsValue(valueType, constraintType, depth+1) {
+		if openVariantConstraintAdmitsValue(valueType, constraintType) {
 			return valueType, true
 		}
 		return nil, false
 	}
 }
 
-func openVariantConstraintAdmitsValue(valueType, constraintType typ.Type, depth int) bool {
-	if valueType == nil || constraintType == nil || depth > typ.DefaultRecursionDepth {
+func openVariantConstraintAdmitsValue(valueType, constraintType typ.Type) bool {
+	return openVariantConstraintAdmitsValueSeen(valueType, constraintType, &typegraph.PairPath{})
+}
+
+func openVariantConstraintAdmitsValueSeen(valueType, constraintType typ.Type, active *typegraph.PairPath) bool {
+	if valueType == nil || constraintType == nil {
 		return false
 	}
+	if !active.Enter(valueType, constraintType) {
+		return true
+	}
+	defer active.Leave(valueType, constraintType)
 	if typerefine.ContainsFreeTypeParam(constraintType) {
 		switch unwrap.Alias(constraintType).(type) {
 		case *typ.TypeParam, *typ.Ref:
@@ -394,17 +453,17 @@ func openVariantConstraintAdmitsValue(valueType, constraintType typ.Type, depth 
 		if subtype.IsSubtype(typ.Nil, constraintType) {
 			return true
 		}
-		return openVariantConstraintAdmitsValue(v.Inner, constraintType, depth+1)
+		return openVariantConstraintAdmitsValueSeen(v.Inner, constraintType, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if openVariantConstraintAdmitsValue(member, constraintType, depth+1) {
+			if openVariantConstraintAdmitsValueSeen(member, constraintType, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Intersection:
 		for _, member := range v.Members {
-			if openVariantConstraintAdmitsValue(member, constraintType, depth+1) {
+			if openVariantConstraintAdmitsValueSeen(member, constraintType, active) {
 				return true
 			}
 		}
@@ -414,22 +473,22 @@ func openVariantConstraintAdmitsValue(valueType, constraintType typ.Type, depth 
 	case *typ.TypeParam, *typ.Ref:
 		return true
 	case *typ.Annotated:
-		return openVariantConstraintAdmitsValue(valueType, c.Inner, depth+1)
+		return openVariantConstraintAdmitsValueSeen(valueType, c.Inner, active)
 	case *typ.Optional:
 		if subtype.IsSubtype(typ.Nil, valueType) {
 			return true
 		}
-		return openVariantConstraintAdmitsValue(valueType, c.Inner, depth+1)
+		return openVariantConstraintAdmitsValueSeen(valueType, c.Inner, active)
 	case *typ.Union:
 		for _, member := range c.Members {
-			if openVariantConstraintAdmitsValue(valueType, member, depth+1) {
+			if openVariantConstraintAdmitsValueSeen(valueType, member, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Intersection:
 		for _, member := range c.Members {
-			if !openVariantConstraintAdmitsValue(valueType, member, depth+1) {
+			if !openVariantConstraintAdmitsValueSeen(valueType, member, active) {
 				return false
 			}
 		}
@@ -450,7 +509,7 @@ func openVariantConstraintAdmitsValue(valueType, constraintType typ.Type, depth 
 			if !wantField.Optional && gotField.Optional {
 				return false
 			}
-			if !openVariantConstraintAdmitsValue(gotField.Type, wantField.Type, depth+1) {
+			if !openVariantConstraintAdmitsValueSeen(gotField.Type, wantField.Type, active) {
 				return false
 			}
 		}

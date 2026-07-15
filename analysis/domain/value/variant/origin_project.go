@@ -31,7 +31,7 @@ func projectOrigin(familyID uint64, cases caseSelection, suffix []segment.Segmen
 		if !cases.contains(c.index) {
 			continue
 		}
-		field, ok := fieldAtPath(c.typ, suffix, 0)
+		field, ok := fieldAtPath(c.typ, suffix)
 		if !ok {
 			return 0, nil, false
 		}
@@ -85,10 +85,10 @@ func originByPathLiteralWithCache(cache *Cache, t typ.Type, suffix []segment.Seg
 			// truthiness directly; the presence and truthiness axes are not
 			// symmetric the way literal admission is, so each edge consults its
 			// own predicate rather than negating the other.
-			keep = armAdmitsTruthiness(c.typ, suffix, !negate, 0)
+			keep = armAdmitsTruthiness(c.typ, suffix, !negate)
 		} else if negate {
-			keep = !pathForcesLiteral(c.typ, suffix, lit, 0)
-		} else if pathAdmitsLiteral(c.typ, suffix, lit, 0) {
+			keep = !pathForcesLiteral(c.typ, suffix, lit)
+		} else if pathAdmitsLiteral(c.typ, suffix, lit) {
 			keep = true
 		}
 		if keep {
@@ -128,7 +128,7 @@ func narrowOriginByPath(parentFamily uint64, parentCases caseSelection, suffix [
 		if !parentCases.contains(c.index) {
 			continue
 		}
-		field, ok := fieldAtPath(c.typ, suffix, 0)
+		field, ok := fieldAtPath(c.typ, suffix)
 		if !ok {
 			if !equal {
 				out = append(out, c.index)
@@ -181,7 +181,7 @@ func narrowOriginByPathType(parentFamily uint64, parentCases caseSelection, suff
 		if !parentCases.contains(c.index) {
 			continue
 		}
-		field, ok := fieldAtPath(c.typ, suffix, 0)
+		field, ok := fieldAtPath(c.typ, suffix)
 		if !ok {
 			if !equal {
 				out = append(out, c.index)

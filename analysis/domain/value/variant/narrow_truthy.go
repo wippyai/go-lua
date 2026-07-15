@@ -2,6 +2,7 @@ package variant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -35,34 +36,39 @@ func narrowByPathTruthinessEntry(t typ.Type, suffix []segment.Segment, wantTruth
 	if t == nil || len(suffix) == 0 {
 		return nil, false
 	}
-	narrowed, ok := narrowByPathTruthiness(t, suffix, wantTruthy, 0)
+	narrowed, ok := narrowByPathTruthinessSeen(t, suffix, wantTruthy, &typegraph.Path{})
 	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
 		return narrowed, false
 	}
 	return narrowed, true
 }
 
-func narrowByPathTruthiness(t typ.Type, suffix []segment.Segment, wantTruthy bool, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func narrowByPathTruthinessSeen(t typ.Type, suffix []segment.Segment, wantTruthy bool, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil {
 		return nil, false
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, len(suffix)) {
+		return t, false
+	}
+	defer active.Leave(t, len(suffix))
+	switch v := t.(type) {
 	case *typ.Alias:
-		return narrowByPathTruthiness(v.UnaliasedTarget(), suffix, wantTruthy, depth+1)
+		return narrowByPathTruthinessSeen(v.UnaliasedTarget(), suffix, wantTruthy, active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return nil, false
 		}
-		return narrowByPathTruthiness(v.Body, suffix, wantTruthy, depth+1)
+		return narrowByPathTruthinessSeen(v.Body, suffix, wantTruthy, active)
 	case *typ.Optional:
 		if wantTruthy {
-			narrowed, ok := narrowByPathTruthiness(v.Inner, suffix, true, depth+1)
+			narrowed, ok := narrowByPathTruthinessSeen(v.Inner, suffix, true, active)
 			if !ok {
 				return v.Inner, true
 			}
 			return narrowed, true
 		}
-		if armAdmitsTruthiness(v.Inner, suffix, false, depth+1) {
+		if armAdmitsTruthiness(v.Inner, suffix, false) {
 			return t, false
 		}
 		return typ.Nil, true
@@ -71,11 +77,11 @@ func narrowByPathTruthiness(t typ.Type, suffix []segment.Segment, wantTruthy boo
 		if !ok {
 			return t, false
 		}
-		return narrowByPathTruthiness(expanded, suffix, wantTruthy, depth+1)
+		return narrowByPathTruthinessSeen(expanded, suffix, wantTruthy, active)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
-			if armAdmitsTruthiness(member, suffix, wantTruthy, depth+1) {
+			if armAdmitsTruthiness(member, suffix, wantTruthy) {
 				out = append(out, member)
 			}
 		}
@@ -87,7 +93,7 @@ func narrowByPathTruthiness(t typ.Type, suffix []segment.Segment, wantTruthy boo
 		}
 		return normalize.UnionForEvidence(out...), true
 	default:
-		if armAdmitsTruthiness(t, suffix, wantTruthy, depth+1) {
+		if armAdmitsTruthiness(t, suffix, wantTruthy) {
 			return t, false
 		}
 		return typ.Never, true
@@ -97,44 +103,53 @@ func narrowByPathTruthiness(t typ.Type, suffix []segment.Segment, wantTruthy boo
 // armAdmitsTruthiness reports whether a single union arm can hold the requested
 // truthiness at suffix. A field that is absent reads as nil: it can be falsy but
 // never truthy.
-func armAdmitsTruthiness(arm typ.Type, suffix []segment.Segment, wantTruthy bool, depth int) bool {
-	field, ok := fieldAtPath(arm, suffix, depth+1)
+func armAdmitsTruthiness(arm typ.Type, suffix []segment.Segment, wantTruthy bool) bool {
+	field, ok := fieldAtPath(arm, suffix)
 	if !ok {
 		return !wantTruthy
 	}
 	if wantTruthy {
-		return typeCanBeTruthy(field, 0)
+		return typeCanBeTruthy(field)
 	}
-	return typeCanBeFalsy(field, 0)
+	return typeCanBeFalsy(field)
 }
 
 // typeCanBeTruthy reports whether t has a non-nil, non-false inhabitant.
-func typeCanBeTruthy(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func typeCanBeTruthy(t typ.Type) bool {
+	return typeCanBeTruthySeen(t, &typegraph.Path{})
+}
+
+func typeCanBeTruthySeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return false
 	}
 	if typ.IsAny(t) || typ.IsUnknown(t) {
 		return true
 	}
-	switch v := unwrap.Annotated(unwrap.NormalizeNil(t)).(type) {
+	t = unwrap.Annotated(unwrap.NormalizeNil(t))
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Alias:
-		return typeCanBeTruthy(v.UnaliasedTarget(), depth+1)
+		return typeCanBeTruthySeen(v.UnaliasedTarget(), active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false
 		}
-		return typeCanBeTruthy(v.Body, depth+1)
+		return typeCanBeTruthySeen(v.Body, active)
 	case *typ.Optional:
-		return typeCanBeTruthy(v.Inner, depth+1)
+		return typeCanBeTruthySeen(v.Inner, active)
 	case *typ.Instantiated:
 		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return true
 		}
-		return typeCanBeTruthy(expanded, depth+1)
+		return typeCanBeTruthySeen(expanded, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeCanBeTruthy(member, depth+1) {
+			if typeCanBeTruthySeen(member, active) {
 				return true
 			}
 		}
@@ -150,21 +165,30 @@ func typeCanBeTruthy(t typ.Type, depth int) bool {
 }
 
 // typeCanBeFalsy reports whether t admits nil or false.
-func typeCanBeFalsy(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func typeCanBeFalsy(t typ.Type) bool {
+	return typeCanBeFalsySeen(t, &typegraph.Path{})
+}
+
+func typeCanBeFalsySeen(t typ.Type, active *typegraph.Path) bool {
+	if t == nil {
 		return false
 	}
 	if typ.IsAny(t) || typ.IsUnknown(t) {
 		return true
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Alias:
-		return typeCanBeFalsy(v.UnaliasedTarget(), depth+1)
+		return typeCanBeFalsySeen(v.UnaliasedTarget(), active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return false
 		}
-		return typeCanBeFalsy(v.Body, depth+1)
+		return typeCanBeFalsySeen(v.Body, active)
 	case *typ.Optional:
 		return true
 	case *typ.Instantiated:
@@ -172,10 +196,10 @@ func typeCanBeFalsy(t typ.Type, depth int) bool {
 		if !ok {
 			return true
 		}
-		return typeCanBeFalsy(expanded, depth+1)
+		return typeCanBeFalsySeen(expanded, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeCanBeFalsy(member, depth+1) {
+			if typeCanBeFalsySeen(member, active) {
 				return true
 			}
 		}

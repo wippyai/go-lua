@@ -31,6 +31,37 @@ func TestNarrowByPathLiteralKeepsMatchingVariant(t *testing.T) {
 	}
 }
 
+func TestFieldAtPathUsesProductiveRecursiveMustProof(t *testing.T) {
+	path := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
+	node := typ.NewRecursivePlaceholder("Node")
+	record := typetable.NewRecord().Field("value", typ.String).Build()
+	node.SetBody(&typ.Union{Members: []typ.Type{node, record}})
+	got, ok := FieldAtPath(node, path)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("FieldAtPath(recursive union) = %v/%v, want string", got, ok)
+	}
+
+	bad := typ.NewRecursivePlaceholder("Bad")
+	bad.SetBody(&typ.Union{Members: []typ.Type{bad, typ.Boolean}})
+	if got, ok := FieldAtPath(bad, path); ok || got != nil {
+		t.Fatalf("FieldAtPath(productive mismatch) = %v/%v, want failure", got, ok)
+	}
+}
+
+func TestFieldAtPathTraversesDeepAcyclicGraphExactly(t *testing.T) {
+	var value typ.Type = typ.String
+	path := make([]segment.Segment, 257)
+	for i := len(path) - 1; i >= 0; i-- {
+		name := "next"
+		path[i] = segment.Segment{Kind: segment.SegmentField, Name: name}
+		value = typetable.NewRecord().Field(name, value).Build()
+	}
+	got, ok := FieldAtPath(value, path)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("deep FieldAtPath = %v/%v, want string", got, ok)
+	}
+}
+
 func TestNarrowByPathTruthyDoesNotTreatStringLiteralAsBooleanTrue(t *testing.T) {
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).

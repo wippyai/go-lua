@@ -2,23 +2,25 @@ package typevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func presenceFromType(t typ.Type) (presence.Value, bool) {
-	return presenceFromTypeDepth(t, 0)
+	return presenceFromTypeSeen(t, &typegraph.Path{})
 }
 
-func presenceFromTypeDepth(t typ.Type, depth int) (presence.Value, bool) {
-	if depth > typ.DefaultRecursionDepth {
-		return presence.Bottom(), false
-	}
+func presenceFromTypeSeen(t typ.Type, active *typegraph.Path) (presence.Value, bool) {
 	t = normalize(t)
 	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
 		return presence.Bottom(), false
 	}
+	if !active.Enter(t, 0) {
+		return presence.Bottom(), false
+	}
+	defer active.Leave(t, 0)
 	switch tt := t.(type) {
 	case *typ.Optional:
 		return presence.Maybe(), true
@@ -45,7 +47,7 @@ func presenceFromTypeDepth(t typ.Type, depth int) (presence.Value, bool) {
 		out := presence.Bottom()
 		seen := false
 		for _, member := range tt.Members {
-			memberPresence, ok := presenceFromTypeDepth(member, depth+1)
+			memberPresence, ok := presenceFromTypeSeen(member, active)
 			if !ok || presence.Equal(memberPresence, presence.Bottom()) {
 				continue
 			}
@@ -65,18 +67,18 @@ func presenceFromTypeDepth(t typ.Type, depth int) (presence.Value, bool) {
 		if expanded == nil || expanded == t {
 			return presence.Bottom(), false
 		}
-		return presenceFromTypeDepth(expanded, depth+1)
+		return presenceFromTypeSeen(expanded, active)
 	case *typ.Alias:
 		target := tt.UnaliasedTarget()
 		if target == nil || target == t {
 			return presence.Bottom(), false
 		}
-		return presenceFromTypeDepth(target, depth+1)
+		return presenceFromTypeSeen(target, active)
 	case *typ.Recursive:
 		if tt.Body == nil || tt.Body == t {
 			return presence.Bottom(), false
 		}
-		return presenceFromTypeDepth(tt.Body, depth+1)
+		return presenceFromTypeSeen(tt.Body, active)
 	default:
 		if t.Kind() == kind.Nil {
 			return presence.Absent(), true

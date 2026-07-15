@@ -2,6 +2,7 @@ package typevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -44,46 +45,67 @@ func TypeIncludesNil(t typ.Type) bool {
 
 // ProjectionHasNil reports whether a projected type can include nil.
 func ProjectionHasNil(t typ.Type) bool {
-	return projectionHasNilDepth(t, 0)
+	hasNil, productive := projectionHasNilSeen(t, &typegraph.Path{})
+	return hasNil && productive
 }
 
-func projectionHasNilDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
-		return false
+func projectionHasNilSeen(t typ.Type, active *typegraph.Path) (bool, bool) {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false, true
 	}
 	t = unwrap.NormalizeNil(unwrap.Annotated(t))
 	if t == nil {
-		return false
+		return false, true
 	}
+	if !active.Enter(t, 0) {
+		return false, false
+	}
+	defer active.Leave(t, 0)
 	if t.Kind() == kind.Nil {
-		return true
+		return true, true
 	}
 	switch tt := t.(type) {
 	case *typ.Optional:
-		return true
+		return true, true
 	case *typ.Union:
+		productive := false
 		for _, member := range tt.Members {
-			if projectionHasNilDepth(member, depth+1) {
-				return true
+			hasNil, memberProductive := projectionHasNilSeen(member, active)
+			productive = productive || memberProductive
+			if hasNil && memberProductive {
+				return true, true
 			}
 		}
+		return false, productive
 	case *typ.Intersection:
 		if len(tt.Members) == 0 {
-			return false
+			return false, true
 		}
+		productive := false
 		for _, member := range tt.Members {
-			if !projectionHasNilDepth(member, depth+1) {
-				return false
+			hasNil, memberProductive := projectionHasNilSeen(member, active)
+			if !memberProductive {
+				continue
+			}
+			productive = true
+			if !hasNil {
+				return false, true
 			}
 		}
-		return true
+		return productive, productive
 	case *typ.Alias:
-		return projectionHasNilDepth(tt.UnaliasedTarget(), depth+1)
+		return projectionHasNilSeen(tt.UnaliasedTarget(), active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)
-		return expanded != nil && expanded != t && projectionHasNilDepth(expanded, depth+1)
+		if expanded == nil || expanded == t {
+			return false, false
+		}
+		return projectionHasNilSeen(expanded, active)
 	case *typ.Recursive:
-		return tt.Body != nil && tt.Body != t && projectionHasNilDepth(tt.Body, depth+1)
+		if tt.Body == nil || tt.Body == t {
+			return false, false
+		}
+		return projectionHasNilSeen(tt.Body, active)
 	}
-	return false
+	return false, true
 }

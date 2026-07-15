@@ -2,6 +2,7 @@ package variant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -13,50 +14,69 @@ import (
 // the access pointwise over union members. It reports false when any segment is
 // not a static member of the type reached at that step.
 func FieldAtPath(t typ.Type, suffix []segment.Segment) (typ.Type, bool) {
-	return fieldAtPath(t, suffix, 0)
+	field, ok, productive := fieldAtPathSeen(t, suffix, &typegraph.Path{})
+	return field, ok && productive
 }
 
-func fieldAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
-		return nil, false
+func fieldAtPath(t typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+	field, ok, productive := fieldAtPathSeen(t, suffix, &typegraph.Path{})
+	return field, ok && productive
+}
+
+func fieldAtPathSeen(t typ.Type, suffix []segment.Segment, active *typegraph.Path) (typ.Type, bool, bool) {
+	if t == nil || len(suffix) == 0 {
+		return nil, false, true
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, len(suffix)) {
+		return nil, true, false
+	}
+	defer active.Leave(t, len(suffix))
+	switch v := t.(type) {
 	case *typ.Alias:
-		return fieldAtPath(v.UnaliasedTarget(), suffix, depth+1)
+		return fieldAtPathSeen(v.UnaliasedTarget(), suffix, active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
-			return nil, false
+			return nil, true, false
 		}
-		return fieldAtPath(v.Body, suffix, depth+1)
+		return fieldAtPathSeen(v.Body, suffix, active)
 	case *typ.Optional:
-		return fieldAtPath(v.Inner, suffix, depth+1)
+		return fieldAtPathSeen(v.Inner, suffix, active)
 	case *typ.Instantiated:
 		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
-			return nil, false
+			return nil, true, false
 		}
-		return fieldAtPath(expanded, suffix, depth+1)
+		return fieldAtPathSeen(expanded, suffix, active)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
+		productive := false
 		for _, member := range v.Members {
-			field, ok := fieldAtPath(member, suffix, depth+1)
+			field, ok, memberProductive := fieldAtPathSeen(member, suffix, active)
 			if !ok {
-				return nil, false
+				return nil, false, true
 			}
+			if !memberProductive {
+				continue
+			}
+			productive = true
 			out = append(out, field)
 		}
-		return normalize.UnionForEvidence(out...), true
+		if !productive {
+			return nil, true, false
+		}
+		return normalize.UnionForEvidence(out...), true, true
 	case *typ.Record:
 		field, ok := directRecordMember(v, suffix[0])
 		if !ok {
-			return nil, false
+			return nil, false, true
 		}
 		if len(suffix) == 1 {
-			return field, true
+			return field, true, true
 		}
-		return fieldAtPath(field, suffix[1:], depth+1)
+		return fieldAtPathSeen(field, suffix[1:], active)
 	default:
-		return nil, false
+		return nil, false, true
 	}
 }
 

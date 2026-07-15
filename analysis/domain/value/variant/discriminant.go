@@ -2,6 +2,7 @@ package variant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -30,7 +31,7 @@ func LiteralDiscriminantDomainsForCases(cases []OriginCase) ([]LiteralDiscrimina
 		return nil, false
 	}
 	var out []LiteralDiscriminantDomain
-	for _, suffix := range literalDiscriminantSuffixes(cases[0].Type, nil, 0) {
+	for _, suffix := range literalDiscriminantSuffixesSeen(cases[0].Type, nil, &typegraph.Path{}) {
 		domain := LiteralDiscriminantDomain{Suffix: cloneSegments(suffix)}
 		for _, c := range cases {
 			lit, ok := literalAtPath(c.Type, suffix)
@@ -47,28 +48,33 @@ func LiteralDiscriminantDomainsForCases(cases []OriginCase) ([]LiteralDiscrimina
 	return out, len(out) != 0
 }
 
-func literalDiscriminantSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func literalDiscriminantSuffixesSeen(t typ.Type, prefix []segment.Segment, active *typegraph.Path) [][]segment.Segment {
+	if t == nil {
 		return nil
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return nil
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
 	case *typ.Literal:
 		if literalCanDiscriminate(v) && len(prefix) != 0 {
 			return [][]segment.Segment{cloneSegments(prefix)}
 		}
 	case *typ.Alias:
-		return literalDiscriminantSuffixes(v.UnaliasedTarget(), prefix, depth+1)
+		return literalDiscriminantSuffixesSeen(v.UnaliasedTarget(), prefix, active)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return nil
 		}
-		return literalDiscriminantSuffixes(v.Body, prefix, depth+1)
+		return literalDiscriminantSuffixesSeen(v.Body, prefix, active)
 	case *typ.Instantiated:
 		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return nil
 		}
-		return literalDiscriminantSuffixes(expanded, prefix, depth+1)
+		return literalDiscriminantSuffixesSeen(expanded, prefix, active)
 	case *typ.Record:
 		var out [][]segment.Segment
 		for _, field := range v.Fields {
@@ -76,14 +82,14 @@ func literalDiscriminantSuffixes(t typ.Type, prefix []segment.Segment, depth int
 				continue
 			}
 			next := append(cloneSegments(prefix), segment.Segment{Kind: segment.SegmentField, Name: field.Name})
-			out = append(out, literalDiscriminantSuffixes(field.Type, next, depth+1)...)
+			out = append(out, literalDiscriminantSuffixesSeen(field.Type, next, active)...)
 		}
 		for _, member := range v.StaticMembers {
 			if member.Optional || member.Kind != typ.StaticMemberStringIndex {
 				continue
 			}
 			next := append(cloneSegments(prefix), segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name})
-			out = append(out, literalDiscriminantSuffixes(member.Type, next, depth+1)...)
+			out = append(out, literalDiscriminantSuffixesSeen(member.Type, next, active)...)
 		}
 		return out
 	}
@@ -91,7 +97,7 @@ func literalDiscriminantSuffixes(t typ.Type, prefix []segment.Segment, depth int
 }
 
 func literalAtPath(t typ.Type, suffix []segment.Segment) (*typ.Literal, bool) {
-	field, ok := fieldAtPath(t, suffix, 0)
+	field, ok := fieldAtPath(t, suffix)
 	if !ok {
 		return nil, false
 	}
