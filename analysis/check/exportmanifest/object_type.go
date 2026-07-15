@@ -267,7 +267,7 @@ func addObjectLiteralViewEntries(
 		if !ok {
 			return true
 		}
-		t, ok := sourceTypeFromValueSourceDepth(result, point, entry.Source(), 0)
+		t, ok := sourceTypeFromValueSource(result, point, entry.Source())
 		if !ok {
 			t = typ.Unknown
 		}

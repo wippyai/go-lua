@@ -810,11 +810,11 @@ func NumericForDefinitelyNotNumber(t typ.Type) bool {
 	if subtype.IsSubtype(t, typ.Number) {
 		return false
 	}
-	return !numericForMayContainNumber(t, 0)
+	return !numericForMayContainNumber(t, nil)
 }
 
-func numericForMayContainNumber(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func numericForMayContainNumber(t typ.Type, active map[typ.Type]struct{}) bool {
+	if t == nil {
 		return true
 	}
 	if typ.IsNever(t) {
@@ -826,30 +826,54 @@ func numericForMayContainNumber(t typ.Type, depth int) bool {
 	if subtype.IsSubtype(t, typ.Number) {
 		return true
 	}
-	switch v := unwrap.Annotated(t).(type) {
+	t = unwrap.Annotated(t)
+	switch t.(type) {
+	case *typ.Alias, *typ.Optional, *typ.Union, *typ.Instantiated:
+	default:
+		return numericForLeafMayContainNumber(t)
+	}
+	if active == nil {
+		active = make(map[typ.Type]struct{})
+	}
+	if _, cyclic := active[t]; cyclic {
+		// This query is existential. A regular-graph backedge contributes no
+		// new witness to the least fixed point; a numeric leaf elsewhere in the
+		// same component will still be visited and make the result true.
+		return false
+	}
+	active[t] = struct{}{}
+	defer delete(active, t)
+	switch v := t.(type) {
 	case *typ.Alias:
-		return numericForMayContainNumber(v.UnaliasedTarget(), depth+1)
+		return numericForMayContainNumber(v.UnaliasedTarget(), active)
 	case *typ.Optional:
-		return numericForMayContainNumber(v.Inner, depth+1)
+		return numericForMayContainNumber(v.Inner, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if numericForMayContainNumber(member, depth+1) {
+			if numericForMayContainNumber(member, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded == nil || expanded == t || numericForMayContainNumber(expanded, depth+1)
+		return expanded == nil || expanded == t || numericForMayContainNumber(expanded, active)
 	default:
-		switch v.Kind() {
-		case kind.Nil, kind.Boolean, kind.String, kind.Function, kind.Array, kind.Map, kind.Record, kind.Tuple, kind.ReadonlyMap:
-			return false
-		case kind.Literal:
-			return subtype.IsSubtype(v, typ.Number)
-		default:
-			return true
-		}
+		return numericForLeafMayContainNumber(v)
+	}
+}
+
+func numericForLeafMayContainNumber(t typ.Type) bool {
+	if t == nil {
+		return true
+	}
+	switch t.Kind() {
+	case kind.Nil, kind.Boolean, kind.String, kind.Function, kind.Array, kind.Map, kind.Record, kind.Tuple, kind.ReadonlyMap:
+		return false
+	case kind.Literal:
+		return subtype.IsSubtype(t, typ.Number)
+	default:
+		return true
 	}
 }
 

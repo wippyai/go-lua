@@ -5,8 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func logicalBinaryOp(left typ.Type, op string, right typ.Type, depth int) (typ.Type, bool) {
-	variants, ok := logicalLeftVariants(left, depth+1)
+func logicalBinaryOp(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
+	variants, ok := logicalLeftVariants(left)
 	if !ok {
 		return nil, false
 	}
@@ -21,31 +21,54 @@ func logicalBinaryOp(left typ.Type, op string, right typ.Type, depth int) (typ.T
 	return normalizeOperatorResults(out...), true
 }
 
-func logicalLeftVariants(t typ.Type, depth int) ([]typ.Type, bool) {
-	if stopDepth(t, depth) {
+func logicalLeftVariants(t typ.Type) ([]typ.Type, bool) {
+	t = operatorSurface(t)
+	if t == nil {
 		return nil, false
 	}
-	t = operatorSurface(t, depth+1)
-	switch v := t.(type) {
-	case *typ.Optional:
-		inner, ok := logicalLeftVariants(v.Inner, depth+1)
-		if !ok {
-			return nil, false
-		}
-		return append([]typ.Type{typ.Nil}, inner...), true
-	case *typ.Union:
-		out := make([]typ.Type, 0, len(v.Members))
-		for _, member := range v.Members {
-			variants, ok := logicalLeftVariants(member, depth+1)
-			if !ok {
-				return nil, false
-			}
-			out = append(out, variants...)
-		}
-		return out, true
+	switch t.(type) {
+	case *typ.Optional, *typ.Union:
 	default:
 		return []typ.Type{t}, true
 	}
+	out := make([]typ.Type, 0, 1)
+	active := make(map[typ.Type]struct{})
+	var visit func(typ.Type) bool
+	visit = func(current typ.Type) bool {
+		current = operatorSurface(current)
+		if current == nil {
+			return false
+		}
+		switch v := current.(type) {
+		case *typ.Optional:
+			if _, cyclic := active[v]; cyclic {
+				return true
+			}
+			active[v] = struct{}{}
+			defer delete(active, v)
+			out = append(out, typ.Nil)
+			return visit(v.Inner)
+		case *typ.Union:
+			if _, cyclic := active[v]; cyclic {
+				return true
+			}
+			active[v] = struct{}{}
+			defer delete(active, v)
+			if len(v.Members) == 0 {
+				return false
+			}
+			for _, member := range v.Members {
+				if !visit(member) {
+					return false
+				}
+			}
+			return true
+		default:
+			out = append(out, current)
+			return true
+		}
+	}
+	return out, visit(t) && len(out) != 0
 }
 
 func logicalVariantResult(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
@@ -95,7 +118,7 @@ const (
 )
 
 func truthinessOf(t typ.Type) truthiness {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	if t == nil {
 		return truthUnknown
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 func isNilOrOptional(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	if t == nil {
 		return false
 	}
@@ -19,12 +19,12 @@ func isNilOrOptional(t typ.Type) bool {
 }
 
 func isIntegerish(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	return t != nil && subtype.IsSubtype(t, typ.Integer)
 }
 
 func isNumericType(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	return t != nil && subtype.IsSubtype(t, typ.Number)
 }
 
@@ -33,7 +33,7 @@ func isArithmeticNumeric(t typ.Type) bool {
 }
 
 func isIntegerConvertible(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	if t == nil {
 		return false
 	}
@@ -54,7 +54,7 @@ func isIntegerConvertible(t typ.Type) bool {
 }
 
 func isStringLike(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	return t != nil && subtype.IsSubtype(t, typ.String)
 }
 
@@ -63,7 +63,7 @@ func isConcatOperand(t typ.Type) bool {
 }
 
 func isTableLike(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	if t == nil {
 		return false
 	}

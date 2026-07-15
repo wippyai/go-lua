@@ -78,6 +78,38 @@ func TestNumericForDefinitelyNotNumberClassifiesSolvedOperandTypes(t *testing.T)
 	}
 }
 
+func TestNumericForDefinitelyNotNumberHasNoSemanticDepthLimit(t *testing.T) {
+	deepString := typ.Type(typ.String)
+	deepNumber := typ.Type(typ.Number)
+	const aliases = 300
+	for i := 0; i < aliases; i++ {
+		deepString = &typ.Alias{Name: "DeepString", Target: deepString}
+		deepNumber = &typ.Alias{Name: "DeepNumber", Target: deepNumber}
+	}
+	if !NumericForDefinitelyNotNumber(deepString) {
+		t.Fatalf("%d-alias string chain was not proven non-numeric", aliases)
+	}
+	if NumericForDefinitelyNotNumber(deepNumber) {
+		t.Fatalf("%d-alias number chain was incorrectly proven non-numeric", aliases)
+	}
+}
+
+func TestNumericForDefinitelyNotNumberSolvesRecursiveMayEquation(t *testing.T) {
+	stringLoop := &typ.Alias{Name: "StringLoop"}
+	stringUnion := &typ.Union{Members: []typ.Type{typ.String, stringLoop}}
+	stringLoop.Target = stringUnion
+	if !NumericForDefinitelyNotNumber(stringUnion) {
+		t.Fatal("productive string-only recursive union was not proven non-numeric")
+	}
+
+	numberLoop := &typ.Alias{Name: "NumberLoop"}
+	numberUnion := &typ.Union{Members: []typ.Type{typ.String, typ.Number, numberLoop}}
+	numberLoop.Target = numberUnion
+	if NumericForDefinitelyNotNumber(numberUnion) {
+		t.Fatal("numeric leaf in recursive union was ignored")
+	}
+}
+
 func TestCallArgumentExpectedTypeHasObjectEntries(t *testing.T) {
 	reader := typ.NewInterface("Reader", []typ.Method{
 		{Name: "read", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},

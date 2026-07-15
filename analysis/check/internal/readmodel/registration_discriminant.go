@@ -3,13 +3,14 @@ package readmodel
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func (r Reader) registrationStringDiscriminantCasesForArgument(point cfg.Point, argPath path.Path) (path.Path, []registrationDiscriminantCase, bool) {
@@ -33,24 +34,58 @@ func (r Reader) registrationStringDiscriminantDomainsForRoot(point cfg.Point, ro
 	if !ok {
 		return nil
 	}
-	out := r.registrationStringDiscriminantDomainsForType(root, nil, rootType, 0)
+	out := r.registrationStringDiscriminantDomainsForType(root, nil, rootType, make(map[typ.Type]struct{}))
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].target.String() < out[j].target.String()
 	})
 	return out
 }
 
-func (r Reader) registrationStringDiscriminantDomainsForType(root path.Path, prefix []segment.Segment, t typ.Type, depth int) []registrationStringDiscriminantDomain {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func (r Reader) registrationStringDiscriminantDomainsForType(root path.Path, prefix []segment.Segment, t typ.Type, active map[typ.Type]struct{}) []registrationStringDiscriminantDomain {
+	if t == nil {
 		return nil
 	}
+	t = unwrap.Annotated(t)
+	if _, cyclic := active[t]; cyclic {
+		// Paths through a recursive edge repeat the same regular type equation.
+		// The first unfolding is its finite canonical basis; revisiting the node
+		// would only manufacture infinitely many longer spellings of that basis.
+		return nil
+	}
+	active[t] = struct{}{}
+	defer delete(active, t)
 	if _, cases, ok := variant.OriginCasesOfType(t); ok && len(cases) >= 2 {
 		return registrationStringDiscriminantDomainsForCases(root, prefix, cases)
 	}
+	switch v := t.(type) {
+	case *typ.Alias:
+		return r.registrationStringDiscriminantDomainsForType(root, prefix, v.UnaliasedTarget(), active)
+	case *typ.Optional:
+		return r.registrationStringDiscriminantDomainsForType(root, prefix, v.Inner, active)
+	case *typ.Recursive:
+		return r.registrationStringDiscriminantDomainsForType(root, prefix, v.Body, active)
+	case *typ.Instantiated:
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
+		if !ok {
+			return nil
+		}
+		return r.registrationStringDiscriminantDomainsForType(root, prefix, expanded, active)
+	}
 	var out []registrationStringDiscriminantDomain
-	for _, child := range body.StaticTypeChildren(t) {
-		nextPrefix := appendSegment(prefix, child.Segment)
-		out = append(out, r.registrationStringDiscriminantDomainsForType(root, nextPrefix, child.Type, depth+1)...)
+	record, ok := t.(*typ.Record)
+	if !ok {
+		return nil
+	}
+	for _, field := range record.Fields {
+		nextPrefix := appendSegment(prefix, segment.Segment{Kind: segment.SegmentField, Name: field.Name})
+		out = append(out, r.registrationStringDiscriminantDomainsForType(root, nextPrefix, field.Type, active)...)
+	}
+	for _, member := range record.StaticMembers {
+		if member.Kind != typ.StaticMemberStringIndex {
+			continue
+		}
+		nextPrefix := appendSegment(prefix, segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name})
+		out = append(out, r.registrationStringDiscriminantDomainsForType(root, nextPrefix, member.Type, active)...)
 	}
 	return out
 }

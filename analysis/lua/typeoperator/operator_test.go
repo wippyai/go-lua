@@ -176,6 +176,49 @@ func TestOperatorUnionDistributionRequiresEveryVariant(t *testing.T) {
 	}
 }
 
+func TestOperatorTraversalHasNoSemanticDepthLimit(t *testing.T) {
+	deep := typ.Type(typ.Integer)
+	const aliases = 300
+	for i := 0; i < aliases; i++ {
+		deep = &typ.Alias{Name: "Deep", Target: deep}
+	}
+	got, ok := BinaryOp(deep, "+", typ.Integer)
+	if !ok {
+		t.Fatalf("BinaryOp rejected a finite %d-alias chain", aliases)
+	}
+	assertType(t, got, typ.Integer)
+	got, ok = UnaryOp("-", deep)
+	if !ok {
+		t.Fatalf("UnaryOp rejected a finite %d-alias chain", aliases)
+	}
+	assertType(t, got, typ.Integer)
+}
+
+func TestOperatorUnionUsesExactRegularGraphBasis(t *testing.T) {
+	loop := &typ.Alias{Name: "Loop"}
+	union := &typ.Union{Members: []typ.Type{typ.Integer, loop}}
+	loop.Target = union
+
+	got, ok := BinaryOp(union, "+", typ.Integer)
+	if !ok {
+		t.Fatal("BinaryOp rejected a productive recursive numeric union")
+	}
+	assertType(t, got, typ.Integer)
+
+	badLoop := &typ.Alias{Name: "BadLoop"}
+	badUnion := &typ.Union{Members: []typ.Type{typ.Integer, typ.String, badLoop}}
+	badLoop.Target = badUnion
+	if _, ok := BinaryOp(badUnion, "+", typ.Integer); ok {
+		t.Fatal("BinaryOp accepted a recursive union with a non-numeric leaf")
+	}
+
+	unproductive := &typ.Alias{Name: "Unproductive"}
+	unproductive.Target = unproductive
+	if _, ok := UnaryOp("-", unproductive); ok {
+		t.Fatal("UnaryOp accepted an unproductive alias cycle")
+	}
+}
+
 func TestBinaryOpLogicalTruthiness(t *testing.T) {
 	tests := []struct {
 		name  string

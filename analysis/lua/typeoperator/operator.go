@@ -10,30 +10,20 @@ import (
 
 // BinaryOp projects the result type for a Lua binary operator.
 func BinaryOp(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
-	return binaryOpDepth(left, op, right, 0)
-}
-
-// UnaryOp projects the result type for a Lua unary operator.
-func UnaryOp(op string, operand typ.Type) (typ.Type, bool) {
-	return unaryOpDepth(op, operand, 0)
-}
-
-func binaryOpDepth(left typ.Type, op string, right typ.Type, depth int) (typ.Type, bool) {
-	if stopDepth(left, depth) || stopDepth(right, depth) {
+	if left == nil || right == nil {
 		return nil, false
 	}
 	if op == "==" || op == "~=" {
 		return typ.Boolean, true
 	}
 
-	left = operatorSurface(left, depth+1)
-	right = operatorSurface(right, depth+1)
-	if stopDepth(left, depth) || stopDepth(right, depth) {
+	left = operatorSurface(left)
+	right = operatorSurface(right)
+	if left == nil || right == nil {
 		return nil, false
 	}
-
 	if isLogicalOp(op) {
-		return logicalBinaryOp(left, op, right, depth+1)
+		return logicalBinaryOp(left, op, right)
 	}
 
 	// Concatenation result type does not depend on operand presence: `a .. b`
@@ -48,12 +38,55 @@ func binaryOpDepth(left typ.Type, op string, right typ.Type, depth int) (typ.Typ
 		right = dropNilForConcat(right)
 	}
 
-	if u, ok := left.(*typ.Union); ok {
-		return binaryLeftUnion(u, op, right, depth+1)
+	leftVariants, ok := operatorUnionVariants(left)
+	if !ok {
+		return nil, false
 	}
-	if u, ok := right.(*typ.Union); ok {
-		return binaryRightUnion(left, op, u, depth+1)
+	rightVariants, ok := operatorUnionVariants(right)
+	if !ok {
+		return nil, false
 	}
+	results := make([]typ.Type, 0, len(leftVariants)*len(rightVariants))
+	for _, leftVariant := range leftVariants {
+		for _, rightVariant := range rightVariants {
+			result, ok := binaryLeafOp(leftVariant, op, rightVariant)
+			if !ok {
+				return nil, false
+			}
+			results = append(results, result)
+		}
+	}
+	return normalizeOperatorResults(results...), true
+}
+
+// UnaryOp projects the result type for a Lua unary operator.
+func UnaryOp(op string, operand typ.Type) (typ.Type, bool) {
+	if operand == nil {
+		return nil, false
+	}
+	if op == "not" {
+		return typ.Boolean, true
+	}
+	operand = operatorSurface(operand)
+	if operand == nil {
+		return nil, false
+	}
+	variants, ok := operatorUnionVariants(operand)
+	if !ok {
+		return nil, false
+	}
+	results := make([]typ.Type, 0, len(variants))
+	for _, variant := range variants {
+		result, ok := unaryLeafOp(op, variant)
+		if !ok {
+			return nil, false
+		}
+		results = append(results, result)
+	}
+	return normalizeOperatorResults(results...), true
+}
+
+func binaryLeafOp(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
 	if op != ".." && (isNilOrOptional(left) || isNilOrOptional(right)) {
 		return nil, false
 	}
@@ -73,22 +106,7 @@ func binaryOpDepth(left typ.Type, op string, right typ.Type, depth int) (typ.Typ
 	return nil, false
 }
 
-func unaryOpDepth(op string, operand typ.Type, depth int) (typ.Type, bool) {
-	if stopDepth(operand, depth) {
-		return nil, false
-	}
-	if op == "not" {
-		return typ.Boolean, true
-	}
-
-	operand = operatorSurface(operand, depth+1)
-	if stopDepth(operand, depth) {
-		return nil, false
-	}
-
-	if u, ok := operand.(*typ.Union); ok {
-		return unaryUnion(op, u, depth+1)
-	}
+func unaryLeafOp(op string, operand typ.Type) (typ.Type, bool) {
 	if isNilOrOptional(operand) {
 		return nil, false
 	}
@@ -135,14 +153,14 @@ func unaryOpDepth(op string, operand typ.Type, depth int) (typ.Type, bool) {
 // unchanged so concat of a definitely-nil operand still fails as a genuine
 // error.
 func dropNilForConcat(t typ.Type) typ.Type {
-	surface := operatorSurface(t, 0)
+	surface := operatorSurface(t)
 	switch v := surface.(type) {
 	case *typ.Optional:
 		return v.Inner
 	case *typ.Union:
 		members := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
-			surfaceMember := operatorSurface(member, 0)
+			surfaceMember := operatorSurface(member)
 			if surfaceMember == nil || surfaceMember.Kind() == kind.Nil {
 				continue
 			}
@@ -157,70 +175,102 @@ func dropNilForConcat(t typ.Type) typ.Type {
 	}
 }
 
-func operatorSurface(t typ.Type, depth int) typ.Type {
-	for !stopDepth(t, depth) {
+func operatorSurface(t typ.Type) typ.Type {
+	var inline [8]typ.Type
+	inlineN := 0
+	var overflow map[typ.Type]struct{}
+	for t != nil {
+		seen := false
+		for i := 0; i < inlineN; i++ {
+			if inline[i] == t {
+				seen = true
+				break
+			}
+		}
+		if !seen && overflow != nil {
+			_, seen = overflow[t]
+		}
+		if seen {
+			return nil
+		}
+		if inlineN < len(inline) {
+			inline[inlineN] = t
+			inlineN++
+		} else {
+			if overflow == nil {
+				overflow = make(map[typ.Type]struct{})
+			}
+			overflow[t] = struct{}{}
+		}
 		t = unwrap.Annotated(t)
 		switch v := t.(type) {
 		case *typ.Alias:
 			next := v.UnaliasedTarget()
 			if next == nil || next == t {
-				return next
+				return nil
 			}
 			t = next
 		case *typ.Instantiated:
 			expanded := subst.ExpandInstantiated(v)
 			if expanded == nil || expanded == t {
-				return t
+				return nil
 			}
 			t = expanded
 		default:
 			return t
 		}
-		depth++
 	}
 	return nil
 }
 
-func binaryLeftUnion(u *typ.Union, op string, right typ.Type, depth int) (typ.Type, bool) {
-	return operatorOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
-		return binaryOpDepth(member, op, right, depth)
-	})
-}
-
-func binaryRightUnion(left typ.Type, op string, u *typ.Union, depth int) (typ.Type, bool) {
-	return operatorOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
-		return binaryOpDepth(left, op, member, depth)
-	})
-}
-
-// operatorOverUnion applies a binary-operator query to each union member; every
-// member must succeed, and the per-member results are normalized into one.
-func operatorOverUnion(u *typ.Union, depth int, query func(member typ.Type, depth int) (typ.Type, bool)) (typ.Type, bool) {
-	if u == nil || len(u.Members) == 0 {
+// operatorUnionVariants computes the finite regular-graph basis of a union.
+// A recursive backedge contributes no new member; success requires at least
+// one productive leaf. This is the exact least solution of union expansion,
+// rather than an arbitrary unfolding-depth approximation.
+func operatorUnionVariants(t typ.Type) ([]typ.Type, bool) {
+	t = operatorSurface(t)
+	if t == nil {
 		return nil, false
 	}
-	out := make([]typ.Type, 0, len(u.Members))
-	for _, member := range u.Members {
-		result, ok := query(member, depth+1)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, result)
+	if _, union := t.(*typ.Union); !union {
+		return []typ.Type{t}, true
 	}
-	return normalizeOperatorResults(out...), true
-}
-
-func unaryUnion(op string, u *typ.Union, depth int) (typ.Type, bool) {
-	return operatorOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
-		return unaryOpDepth(op, member, depth)
-	})
+	out := make([]typ.Type, 0, 1)
+	active := make(map[typ.Type]struct{})
+	var visit func(typ.Type) bool
+	visit = func(current typ.Type) bool {
+		current = operatorSurface(current)
+		if current == nil {
+			return false
+		}
+		union, ok := current.(*typ.Union)
+		if !ok {
+			out = append(out, current)
+			return true
+		}
+		if _, cyclic := active[union]; cyclic {
+			return true
+		}
+		active[union] = struct{}{}
+		defer delete(active, union)
+		if len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !visit(member) {
+				return false
+			}
+		}
+		return true
+	}
+	return out, visit(t) && len(out) != 0
 }
 
 func normalizeOperatorResults(results ...typ.Type) typ.Type {
 	hasAny := false
 	hasUnknown := false
 	for _, result := range results {
-		result = operatorSurface(result, 0)
+		result = operatorSurface(result)
 		switch {
 		case typ.IsAny(result):
 			hasAny = true
@@ -274,8 +324,4 @@ func dynamicUnaryResult(op string, operand typ.Type) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
-}
-
-func stopDepth(t typ.Type, depth int) bool {
-	return t == nil || depth > typ.DefaultRecursionDepth
 }

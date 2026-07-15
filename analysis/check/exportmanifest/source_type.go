@@ -55,44 +55,106 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 }
 
 func sourceTypeFromValueSource(result *body.Result, point cfg.Point, source factflow.ValueSource) (typ.Type, bool) {
-	return sourceTypeFromValueSourceDepth(result, point, source, 0)
+	return newSourceTypeResolver(result, point).source(source)
 }
 
-func sourceTypeFromValueSourceDepth(result *body.Result, point cfg.Point, source factflow.ValueSource, depth int) (typ.Type, bool) {
-	if result == nil || depth > typ.DefaultRecursionDepth {
+type sourceTypeNodeState uint8
+
+const (
+	sourceTypeNodeActive sourceTypeNodeState = iota + 1
+	sourceTypeNodeComplete
+)
+
+type sourceTypeNode struct {
+	state     sourceTypeNodeState
+	recursive *typ.Recursive
+	result    typ.Type
+	ok        bool
+}
+
+type sourceTypeResolver struct {
+	result *body.Result
+	point  cfg.Point
+	nodes  map[factflow.ExprRef]*sourceTypeNode
+}
+
+func newSourceTypeResolver(result *body.Result, point cfg.Point) *sourceTypeResolver {
+	return &sourceTypeResolver{result: result, point: point}
+}
+
+func (r *sourceTypeResolver) source(source factflow.ValueSource) (typ.Type, bool) {
+	if r == nil || r.result == nil {
 		return nil, false
 	}
-	if literal, ok := result.ObjectLiteralViewForSource(source); ok {
-		if t, ok := objectLiteralViewType(result, point, literal, depth+1); ok {
+	if literal, ok := r.result.ObjectLiteralViewForSource(source); ok {
+		if t, ok := r.objectSource(source.ExprRef, literal); ok {
 			return t, true
 		}
 	}
-	if p, ok := result.ValueSourcePath(source); ok {
-		if t, ok := pathExportRecordType(result, point, p); ok {
+	if p, ok := r.result.ValueSourcePath(source); ok {
+		if t, ok := pathExportRecordType(r.result, r.point, p); ok {
 			return t, true
 		}
 	}
-	value, ok := result.SourceValueForExplanationAtBoundary(point, source)
+	value, ok := r.result.SourceValueForExplanationAtBoundary(r.point, source)
 	if !ok {
 		return nil, false
 	}
-	return exportValueType(result, value)
+	return exportValueType(r.result, value)
 }
 
-func objectLiteralViewType(result *body.Result, point cfg.Point, literal factflow.ObjectLiteralView, depth int) (typ.Type, bool) {
-	if result == nil || literal.EntryCount() == 0 || depth > typ.DefaultRecursionDepth {
+func (r *sourceTypeResolver) objectSource(ref factflow.ExprRef, literal factflow.ObjectLiteralView) (typ.Type, bool) {
+	if ref == 0 {
+		return r.object(literal)
+	}
+	if r.nodes == nil {
+		r.nodes = make(map[factflow.ExprRef]*sourceTypeNode)
+	}
+	if node, ok := r.nodes[ref]; ok {
+		if node.state == sourceTypeNodeComplete {
+			return node.result, node.ok
+		}
+		if node.recursive == nil {
+			node.recursive = typ.NewRecursivePlaceholder("object")
+		}
+		return node.recursive, true
+	}
+	node := &sourceTypeNode{state: sourceTypeNodeActive}
+	r.nodes[ref] = node
+	t, ok := r.object(literal)
+	if node.recursive != nil {
+		body := t
+		if !ok || body == nil {
+			// Keep the recursive binder structurally total even if the literal
+			// itself was malformed; the ordinary source fallbacks below remain
+			// authoritative for the outer query.
+			body = typ.Unknown
+		}
+		node.recursive.SetBody(body)
+		if ok {
+			t = node.recursive
+		}
+	}
+	node.state = sourceTypeNodeComplete
+	node.result = t
+	node.ok = ok
+	return t, ok
+}
+
+func (r *sourceTypeResolver) object(literal factflow.ObjectLiteralView) (typ.Type, bool) {
+	if r == nil || r.result == nil || literal.EntryCount() == 0 {
 		return nil, false
 	}
 	projected := make([]objectEntry, 0, literal.EntryCount())
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		t, ok := sourceTypeFromValueSourceDepth(result, point, entry.Source(), depth+1)
+		t, ok := r.source(entry.Source())
 		if !ok {
 			t = typ.Unknown
 		}
 		projected = append(projected, objectEntry{suffix: entry.SuffixSegments(), t: t})
 		return true
 	})
-	return objectEntriesType(result, point, nil, projected)
+	return objectEntriesType(r.result, r.point, nil, projected)
 }
 
 func exprType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {

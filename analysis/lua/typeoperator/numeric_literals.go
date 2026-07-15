@@ -10,7 +10,7 @@ import (
 )
 
 func isNumericStringLiteral(t typ.Type) bool {
-	t = operatorSurface(t, 0)
+	t = operatorSurface(t)
 	lit, ok := t.(*typ.Literal)
 	if !ok || lit.Base != kind.String {
 		return false
