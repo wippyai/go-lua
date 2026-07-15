@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/internal/typegraph"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -21,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -536,79 +538,93 @@ func dynamicIndexFactDefinitelyMatchesSegment(reg *axis.Registry, fact dynamicin
 	if !ok {
 		return false
 	}
-	exact, _ := keyTypeDefinitelyMatchesSegment(keyType, seg, 0)
+	exact, _ := keyTypeDefinitelyMatchesSegment(keyType, seg)
 	return exact
 }
 
-func keyTypeDefinitelyMatchesSegment(t typ.Type, seg segment.Segment, depth int) (exact bool, definitelyNot bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func keyTypeDefinitelyMatchesSegment(t typ.Type, seg segment.Segment) (exact bool, definitelyNot bool) {
+	exact, definitelyNot, productive := keyTypeDefinitelyMatchesSegmentSeen(t, seg, &typegraph.Path{})
+	if !productive {
 		return false, false
 	}
-	t = keyProofTransparentType(t, depth)
+	return exact, definitelyNot
+}
+
+func keyTypeDefinitelyMatchesSegmentSeen(t typ.Type, seg segment.Segment, active *typegraph.Path) (exact bool, definitelyNot bool, productive bool) {
+	if t == nil {
+		return false, false, true
+	}
+	if !active.Enter(t) {
+		return false, false, false
+	}
+	defer active.Leave(t)
 	switch tt := t.(type) {
-	case nil:
-		return false, false
+	case *typ.Annotated:
+		return keyTypeDefinitelyMatchesSegmentSeen(tt.Inner, seg, active)
+	case *typ.Alias:
+		return keyTypeDefinitelyMatchesSegmentSeen(tt.UnaliasedTarget(), seg, active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(tt)
+		if expanded == nil || expanded == t {
+			return false, false, false
+		}
+		return keyTypeDefinitelyMatchesSegmentSeen(expanded, seg, active)
+	case *typ.Recursive:
+		if tt.Body == nil || tt.Body == t {
+			return false, false, false
+		}
+		return keyTypeDefinitelyMatchesSegmentSeen(tt.Body, seg, active)
 	case *typ.Literal:
-		return literalKeyDefinitelyMatchesSegment(tt, seg)
+		exact, definitelyNot := literalKeyDefinitelyMatchesSegment(tt, seg)
+		return exact, definitelyNot, true
 	case *typ.Optional:
 		// Optional keys include nil, so the key cannot definitely address a
 		// concrete string/int slot even if the payload is exact.
-		return false, false
+		return false, false, true
 	case *typ.Union:
 		if len(tt.Members) == 0 {
-			return false, false
+			return false, false, true
 		}
 		allExact := true
 		allNot := true
+		productive := false
 		for _, member := range tt.Members {
-			memberExact, memberNot := keyTypeDefinitelyMatchesSegment(member, seg, depth+1)
+			memberExact, memberNot, memberProductive := keyTypeDefinitelyMatchesSegmentSeen(member, seg, active)
+			if !memberProductive {
+				continue
+			}
+			productive = true
 			allExact = allExact && memberExact
 			allNot = allNot && memberNot
 		}
-		return allExact, allNot
+		return allExact, allNot, productive
 	case *typ.Intersection:
 		foundExact := false
+		productive := false
 		for _, member := range tt.Members {
-			memberExact, memberNot := keyTypeDefinitelyMatchesSegment(member, seg, depth+1)
+			memberExact, memberNot, memberProductive := keyTypeDefinitelyMatchesSegmentSeen(member, seg, active)
+			if !memberProductive {
+				continue
+			}
+			productive = true
 			if memberNot {
-				return false, true
+				return false, true, true
 			}
 			foundExact = foundExact || memberExact
 		}
-		return foundExact, false
+		return foundExact, false, productive
 	default:
 		switch tt.Kind() {
 		case kind.String:
-			return false, seg.Kind == segment.SegmentIndexInt
+			return false, seg.Kind == segment.SegmentIndexInt, true
 		case kind.Integer, kind.Number:
-			return false, seg.Kind == segment.SegmentField || seg.Kind == segment.SegmentIndexString
+			return false, seg.Kind == segment.SegmentField || seg.Kind == segment.SegmentIndexString, true
 		case kind.Any, kind.Unknown, kind.Never:
-			return false, false
+			return false, false, true
 		default:
-			return false, true
+			return false, true, true
 		}
 	}
-}
-
-func keyProofTransparentType(t typ.Type, depth int) typ.Type {
-	for i := depth; i <= typ.DefaultRecursionDepth; i++ {
-		switch tt := t.(type) {
-		case *typ.Annotated:
-			if tt.Inner == nil || tt.Inner == t {
-				return t
-			}
-			t = tt.Inner
-		case *typ.Alias:
-			next := tt.UnaliasedTarget()
-			if next == nil || next == t {
-				return next
-			}
-			t = next
-		default:
-			return t
-		}
-	}
-	return nil
 }
 
 func literalKeyDefinitelyMatchesSegment(lit *typ.Literal, seg segment.Segment) (exact bool, definitelyNot bool) {

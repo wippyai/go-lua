@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/internal/typegraph"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -22,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -745,77 +747,130 @@ func applyRootAssignmentLenFloorFromValue(
 	if !ok {
 		return out
 	}
-	if floor := staticSequenceLengthFloor(t, 0); floor > 0 {
+	if floor := staticSequenceLengthFloor(t); floor > 0 {
 		return out.WriteLenFloor(resolver.KeySpace(), targetKey, floor)
 	}
 	return out
 }
 
-func staticSequenceLengthFloor(t typ.Type, depth int) int64 {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func staticSequenceLengthFloor(t typ.Type) int64 {
+	floor, productive := staticSequenceLengthFloorSeen(t, &typegraph.Path{})
+	if !productive {
 		return 0
 	}
+	return floor
+}
+
+func staticSequenceLengthFloorSeen(t typ.Type, active *typegraph.Path) (int64, bool) {
+	if t == nil {
+		return 0, true
+	}
+	if !active.Enter(t) {
+		return 0, false
+	}
+	defer active.Leave(t)
 	switch tt := t.(type) {
 	case *typ.Annotated:
-		return staticSequenceLengthFloor(tt.Inner, depth+1)
+		return staticSequenceLengthFloorSeen(tt.Inner, active)
 	case *typ.Alias:
-		return staticSequenceLengthFloor(tt.UnaliasedTarget(), depth+1)
+		return staticSequenceLengthFloorSeen(tt.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(tt)
+		if expanded == nil || expanded == t {
+			return 0, false
+		}
+		return staticSequenceLengthFloorSeen(expanded, active)
+	case *typ.Recursive:
+		if tt.Body == nil || tt.Body == t {
+			return 0, false
+		}
+		return staticSequenceLengthFloorSeen(tt.Body, active)
 	case *typ.Tuple:
-		return int64(len(tt.Elements))
+		return int64(len(tt.Elements)), true
 	case *typ.Record:
 		var floor int64
 		for i := int64(1); ; i++ {
 			member := tt.GetStaticIntIndex(i)
 			if member == nil || member.Optional {
-				return floor
+				return floor, true
 			}
 			floor = i
 		}
 	case *typ.Union:
 		if len(tt.Members) == 0 {
-			return 0
+			return 0, true
 		}
 		var min int64
+		productive := false
 		for _, member := range tt.Members {
-			floor := staticSequenceLengthFloor(member, depth+1)
+			floor, memberProductive := staticSequenceLengthFloorSeen(member, active)
+			if !memberProductive {
+				continue
+			}
+			productive = true
 			if floor == 0 {
-				return 0
+				return 0, true
 			}
 			if min == 0 || floor < min {
 				min = floor
 			}
 		}
-		return min
+		return min, productive
 	default:
-		return 0
+		return 0, true
 	}
 }
 
-func staticSequenceExactLength(t typ.Type, depth int) (int64, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return 0, false
+func staticSequenceExactLength(t typ.Type) (int64, bool) {
+	length, exact, productive := staticSequenceExactLengthSeen(t, &typegraph.Path{})
+	return length, exact && productive
+}
+
+func staticSequenceExactLengthSeen(t typ.Type, active *typegraph.Path) (int64, bool, bool) {
+	if t == nil {
+		return 0, false, true
 	}
+	if !active.Enter(t) {
+		return 0, true, false
+	}
+	defer active.Leave(t)
 	switch tt := t.(type) {
 	case *typ.Annotated:
-		return staticSequenceExactLength(tt.Inner, depth+1)
+		return staticSequenceExactLengthSeen(tt.Inner, active)
 	case *typ.Alias:
-		return staticSequenceExactLength(tt.UnaliasedTarget(), depth+1)
+		return staticSequenceExactLengthSeen(tt.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(tt)
+		if expanded == nil || expanded == t {
+			return 0, true, false
+		}
+		return staticSequenceExactLengthSeen(expanded, active)
+	case *typ.Recursive:
+		if tt.Body == nil || tt.Body == t {
+			return 0, true, false
+		}
+		return staticSequenceExactLengthSeen(tt.Body, active)
 	case *typ.Tuple:
-		return int64(len(tt.Elements)), true
+		return int64(len(tt.Elements)), true, true
 	case *typ.Union:
 		if len(tt.Members) == 0 {
-			return 0, false
+			return 0, false, true
 		}
 		var length int64
-		for i, member := range tt.Members {
-			memberLength, ok := staticSequenceExactLength(member, depth+1)
-			if !ok || (i > 0 && memberLength != length) {
-				return 0, false
+		productive := false
+		for _, member := range tt.Members {
+			memberLength, ok, memberProductive := staticSequenceExactLengthSeen(member, active)
+			if !memberProductive {
+				continue
+			}
+			if !ok || (productive && memberLength != length) {
+				return 0, false, true
 			}
 			length = memberLength
+			productive = true
 		}
-		return length, true
+		return length, true, productive
 	default:
-		return 0, false
+		return 0, false, true
 	}
 }

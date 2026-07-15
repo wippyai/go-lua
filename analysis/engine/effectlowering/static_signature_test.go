@@ -92,6 +92,33 @@ func TestStaticScalarStringMethodReturnsAcceptsOnlySiteExactFiniteScalarUnions(t
 	}
 }
 
+func TestStaticFiniteScalarReturnTypeUsesProductiveRecursiveProof(t *testing.T) {
+	scalar := typ.NewRecursivePlaceholder("Scalar")
+	scalar.SetBody(&typ.Union{Members: []typ.Type{scalar, typ.String}})
+	if !staticFiniteScalarReturnType(scalar) {
+		t.Fatal("productive recursive scalar union was rejected")
+	}
+
+	composite := typ.NewRecursivePlaceholder("Composite")
+	composite.SetBody(&typ.Union{Members: []typ.Type{composite, typ.NewArray(typ.String)}})
+	if staticFiniteScalarReturnType(composite) {
+		t.Fatal("productive recursive composite union was accepted")
+	}
+
+	loop := typ.NewRecursive("Loop", func(self typ.Type) typ.Type { return self })
+	if staticFiniteScalarReturnType(loop) {
+		t.Fatal("cycle-only type manufactured a scalar proof")
+	}
+
+	var deep typ.Type = typ.String
+	for range 257 {
+		deep = &typ.Alias{Name: "Deep", Target: deep}
+	}
+	if !staticFiniteScalarReturnType(deep) {
+		t.Fatal("deep acyclic scalar graph was truncated")
+	}
+}
+
 func sameStaticSignatureTypes(left, right []typ.Type) bool {
 	if len(left) != len(right) {
 		return false

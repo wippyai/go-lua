@@ -182,7 +182,7 @@ func applyBranchIndexStaticLengthCeil(
 	if !ok {
 		return out
 	}
-	length, ok := staticSequenceExactLength(arrayType, 0)
+	length, ok := staticSequenceExactLength(arrayType)
 	if !ok {
 		return out
 	}
