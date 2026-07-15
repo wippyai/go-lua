@@ -6,9 +6,47 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
+
+func TestLocalPredicateAssignmentIsLoweredAtRowExecution(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `function f(value)
+		local copy = value
+		return copy or false
+	end`)
+	prepared, err := PrepareFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("PrepareFunction: %v", err)
+	}
+	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams()))}
+	relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, shape)
+	if reason := relation.ContextualReason(); reason != "" {
+		t.Fatalf("local predicate relation contextual: %s", reason)
+	}
+	for _, test := range []struct {
+		input product.Value
+		name  string
+		want  product.Value
+	}{
+		{input: typevalue.LiteralString(reg, "yes"), name: "truthy", want: typevalue.LiteralString(reg, "yes")},
+		{input: typevalue.LiteralBool(reg, false), name: "falsy", want: typevalue.LiteralBool(reg, false)},
+	} {
+		cursor, cursorErr := transformer.NewBindingCursor(shape, []product.Value{test.input}, nil)
+		if cursorErr != nil {
+			t.Fatal(cursorErr)
+		}
+		got, exact := relation.Specialize(cursor, nil, nil)
+		if !exact || len(got.Returns) != 1 {
+			t.Fatalf("specialize(%s) = %#v/%v", test.name, got, exact)
+		}
+		if !product.Equal(reg, got.Returns[0], test.want) {
+			t.Fatalf("specialize(%s) return differs: got=%#v want=%#v", test.name, got.Returns[0], test.want)
+		}
+	}
+}
 
 func TestScalarLocalAssignmentTransformerMatchesConcreteReturnBoundary(t *testing.T) {
 	reg := standard.Registry()

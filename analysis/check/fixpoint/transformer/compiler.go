@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -996,15 +997,7 @@ func exactReturnSourceTerm(ctx planCompileContext, source factflow.ValueSource) 
 		}
 	}
 	if source.Kind == factflow.ValueSourcePath {
-		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
-		if !ok || version != 0 || suffix != "" || sym == 0 {
-			return 0, fmt.Errorf("non-root or non-canonical return path")
-		}
-		term, ok := ctx.locals[sym]
-		if !ok {
-			return 0, fmt.Errorf("return path symbol %d has no exact local binding", sym)
-		}
-		return term, nil
+		return exactCompilerSourceTerm(ctx, source)
 	}
 	value, err := exactReturnSourceValue(ctx.registry, ctx.facts, source)
 	if err != nil {
@@ -1063,8 +1056,8 @@ func (rootAssignmentPlanHandler) Preflight(ctx planCompileContext, point cfg.Poi
 			return fmt.Errorf("annotated roots require contextual declaration semantics")
 		}
 		if fact.Source().Kind == factflow.ValueSourcePath {
-			if _, version, suffix, ok := pathaddr.ParseResolverPath(fact.Source().PathKey); !ok || version != 0 || suffix != "" {
-				return fmt.Errorf("assignment source path is not a canonical root symbol")
+			if sym, version, _, ok := pathaddr.ParseResolverPath(fact.Source().PathKey); !ok || sym == 0 || version != 0 {
+				return fmt.Errorf("assignment source path is not a canonical lexical path")
 			}
 			return nil
 		}
@@ -1345,7 +1338,7 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 			_, certifiedPredicate := ctx.predicateExpressions[source.ExprRef]
 			exactScalarComparison := operation.Kind() == factflow.ExpressionOperationBinary &&
 				(operation.Op() == "==" || operation.Op() == "~=")
-			if exactScalarComparison || certifiedPredicate && operation.Kind() == factflow.ExpressionOperationBinary && operation.Op() == "and" {
+			if exactScalarComparison || certifiedPredicate && operation.Kind() == factflow.ExpressionOperationBinary && (operation.Op() == "and" || operation.Op() == "or") {
 				if active == nil {
 					active = make(map[factflow.ExprRef]bool, 1)
 				}
@@ -1422,41 +1415,21 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 			return term, nil
 		}
 		if p, ok := ctx.facts.ExpressionPathRef(source.ExprRef); ok {
-			if p.Symbol == 0 || p.Version != 0 {
-				return 0, fmt.Errorf("source expression path is not canonical")
-			}
-			if len(p.Segments) == 0 {
-				term, ok := ctx.locals[p.Symbol]
-				if !ok {
-					return 0, fmt.Errorf("source expression symbol %d has no exact binding", p.Symbol)
-				}
-				return term, nil
-			}
-			if owner, ok := ctx.locals[p.Symbol]; ok && iteratorProjectionDerived(ctx.builder.Arena(), owner) {
-				for _, member := range p.Segments {
-					owner = ctx.builder.Arena().StaticIndexValue(owner, member)
-					if owner == 0 {
-						return 0, fmt.Errorf("source expression iterator member is not a static scalar key")
-					}
-				}
-				return owner, nil
-			}
-			binding, err := exactBoundaryPathBinding(ctx, p)
+			term, err := exactCompilerStaticPathTerm(ctx, p)
 			if err != nil {
-				return 0, fmt.Errorf("source expression descendant: %w", err)
+				return 0, fmt.Errorf("source expression path: %w", err)
 			}
-			term, _, err := ctx.builder.Arena().LowerBoundaryPathValue(p, binding)
-			return term, err
+			return term, nil
 		}
 	}
 	if source.Kind == factflow.ValueSourcePath {
-		sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey)
-		if !ok || sym == 0 || version != 0 || suffix != "" {
-			return 0, fmt.Errorf("source path is not a canonical root symbol")
+		p, ok := compilerResolverPath(source.PathKey)
+		if !ok || p.Version != 0 {
+			return 0, fmt.Errorf("source path is not a canonical lexical path")
 		}
-		term, ok := ctx.locals[sym]
-		if !ok {
-			return 0, fmt.Errorf("source path symbol %d has no exact local binding", sym)
+		term, err := exactCompilerStaticPathTerm(ctx, p)
+		if err != nil {
+			return 0, fmt.Errorf("source path: %w", err)
 		}
 		return term, nil
 	}
@@ -1465,6 +1438,47 @@ func exactCompilerSourceTermActive(ctx planCompileContext, source factflow.Value
 		return 0, fmt.Errorf("assignment source is not a context-independent scalar")
 	}
 	return ctx.builder.Arena().Constant(value), nil
+}
+
+func compilerResolverPath(key pathdom.PathKey) (pathdom.Path, bool) {
+	sym, version, suffix, ok := pathaddr.ParseResolverPath(key)
+	if !ok || sym == 0 {
+		return pathdom.Path{}, false
+	}
+	segments, ok := segment.InternFormattedSegments(suffix)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	return pathdom.Path{Symbol: sym, Version: version, Segments: segments}, true
+}
+
+// exactCompilerStaticPathTerm keeps the value producer and its path
+// provenance together. Boundary descendants retain a DynamicRead term so
+// specialization consults the caller's exact path/heap evidence. Descendants
+// of row-local values use the pure static-index relation; evaluation still
+// fails the whole transaction when the abstract value cannot answer exactly.
+func exactCompilerStaticPathTerm(ctx planCompileContext, p pathdom.Path) (ValueTerm, error) {
+	if p.Symbol == 0 || p.Version != 0 {
+		return 0, fmt.Errorf("path is not canonical")
+	}
+	owner, ok := ctx.locals[p.Symbol]
+	if !ok || owner == 0 {
+		return 0, fmt.Errorf("symbol %d has no exact local binding", p.Symbol)
+	}
+	if len(p.Segments) == 0 {
+		return owner, nil
+	}
+	if binding, err := exactBoundaryPathBinding(ctx, p); err == nil {
+		term, _, lowerErr := ctx.builder.Arena().LowerBoundaryPathValue(p, binding)
+		return term, lowerErr
+	}
+	for _, member := range p.Segments {
+		owner = ctx.builder.Arena().StaticIndexValue(owner, member)
+		if owner == 0 {
+			return 0, fmt.Errorf("descendant has a non-scalar static key")
+		}
+	}
+	return owner, nil
 }
 
 func compilerConstantScalarValue(arena *Arena, term ValueTerm) bool {

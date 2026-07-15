@@ -98,7 +98,7 @@ func TestStructuralLuaTypePredicateCastCertificateFailsClosed(t *testing.T) {
 	}
 }
 
-func TestStructuralLuaTypePredicateRejectsWrongShortCircuitPolarity(t *testing.T) {
+func TestStructuralLuaTypePredicateAcceptsExactOrPolarity(t *testing.T) {
 	reg := standard.Registry()
 	prepared, err := PrepareFunction(parseFunction(t, `function f(value)
 		return type(value) == "string" or value ~= ""
@@ -107,7 +107,7 @@ func TestStructuralLuaTypePredicateRejectsWrongShortCircuitPolarity(t *testing.T
 		t.Fatal(err)
 	}
 	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams())), Globals: uint32(len(prepared.operationPlan.BoundaryGlobals()))}
-	if relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, shape); relation.ContextualReason() == "" {
-		t.Fatal("logical or predicate compiled through and-only structural slice")
+	if relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, shape); relation.ContextualReason() != "" {
+		t.Fatalf("logical or predicate is contextual: %s", relation.ContextualReason())
 	}
 }
