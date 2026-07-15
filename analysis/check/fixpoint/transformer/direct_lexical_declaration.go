@@ -46,6 +46,9 @@ func SealDirectLexicalDeclarationAuthority(plan *operationplan.Plan, bindings *b
 		capturesClosed := found
 		if capturesClosed {
 			for _, capture := range bindings.DirectCaptures(fn) {
+				if capture.Captured != 0 && capture.CapturedName != "" && !bindings.HasWrite(capture.Captured) {
+					continue
+				}
 				captured, certified := closuresByTarget[capture.Captured]
 				identity, identityOK := bindings.StableLocalFunctionIdentity(capture.Captured)
 				if !certified || !captured.DirectCallSetComplete || !identityOK || identity != captured.FunctionSymbol {

@@ -165,7 +165,16 @@ func (r Relation) evaluateOwnerSummary(ctx context.Context, evaluator *evaluated
 		}
 		for _, refinement := range row.PathRefinements {
 			root, valid := refinement.preservedRoot(r.arena)
-			if !valid || root.Kind != RootParam {
+			if !valid {
+				return summary.Summary{}, fmt.Errorf("transformer: evaluated summary has unsupported preserved root")
+			}
+			if root.Kind == RootCapture {
+				// Capture preservation is consumed while composing the lexical call.
+				// A concrete observer instance has no public capture-placeholder
+				// namespace, so republishing it as a parameter fact would alias roots.
+				continue
+			}
+			if root.Kind != RootParam {
 				return summary.Summary{}, fmt.Errorf("transformer: evaluated summary has unsupported preserved root")
 			}
 			value, err := evaluator.value(refinement.Value)

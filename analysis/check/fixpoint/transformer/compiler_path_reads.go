@@ -11,14 +11,25 @@ func exactBoundaryPathBinding(ctx planCompileContext, p pathdom.Path) (BoundaryP
 	if p.Symbol == 0 || p.Version != 0 {
 		return BoundaryPathBinding{}, fmt.Errorf("path is not a canonical lexical root")
 	}
-	index, ok := ctx.plan.BoundaryParamIndex(p.Symbol)
-	if !ok {
-		return BoundaryPathBinding{}, fmt.Errorf("symbol %d is not a boundary parameter", p.Symbol)
+	var root Root
+	if index, ok := ctx.plan.BoundaryParamIndex(p.Symbol); ok {
+		root = Root{Kind: RootParam, Index: uint32(index)}
+	} else if index, ok := ctx.plan.BoundaryCaptureIndex(p.Symbol); ok {
+		if !ctx.allowLexicalBoundaryRoots {
+			return BoundaryPathBinding{}, fmt.Errorf("symbol %d is not a boundary parameter", p.Symbol)
+		}
+		root = Root{Kind: RootCapture, Index: uint32(index)}
+	} else if index, ok := ctx.plan.BoundaryGlobalIndex(p.Symbol); ok {
+		if !ctx.allowLexicalBoundaryRoots {
+			return BoundaryPathBinding{}, fmt.Errorf("symbol %d is not a boundary parameter", p.Symbol)
+		}
+		root = Root{Kind: RootGlobal, Index: uint32(index)}
+	} else {
+		return BoundaryPathBinding{}, fmt.Errorf("symbol %d is not a lexical boundary root", p.Symbol)
 	}
-	root := Root{Kind: RootParam, Index: uint32(index)}
 	owner, ok := ctx.locals[p.Symbol]
 	if !ok || owner == 0 {
-		return BoundaryPathBinding{}, fmt.Errorf("boundary parameter %d has no exact current value", p.Symbol)
+		return BoundaryPathBinding{}, fmt.Errorf("boundary root %d has no exact current value", p.Symbol)
 	}
 	return BoundaryPathBinding{Symbol: p.Symbol, Root: root, Owner: owner}, nil
 }

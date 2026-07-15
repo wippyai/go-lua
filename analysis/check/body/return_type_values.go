@@ -4,9 +4,26 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
+
+func materializeBoundaryGlobalTypeValues(reg *axis.Registry, values *typevalue.Cache, bindings *bind.Result, globals []symbol.ID, globalTypes map[string]typ.Type) []product.Value {
+	if reg == nil || values == nil || bindings == nil {
+		return nil
+	}
+	out := make([]product.Value, len(globals))
+	for index, global := range globals {
+		out[index] = product.Top()
+		if declared := globalTypes[bindings.Name(global)]; declared != nil {
+			out[index] = values.FromTypeWithWitness(reg, declared)
+		}
+	}
+	return out
+}
 
 // ReturnTypeValues materializes declared return-type evidence for summary
 // projection at call boundaries.

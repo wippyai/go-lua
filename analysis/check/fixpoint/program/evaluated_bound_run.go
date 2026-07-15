@@ -55,7 +55,7 @@ func runEvaluatedBoundChunk(ctx context.Context, stmts []ast.Stmt, bindings *bin
 	if err != nil {
 		return evaluatedProgram{}, err
 	}
-	boundary, err := evaluatedCatalogBoundaryBindings(catalog)
+	boundary, err := evaluatedCatalogBoundaryBindings(catalog, bindings)
 	if err != nil {
 		return evaluatedProgram{}, err
 	}
@@ -93,18 +93,15 @@ func prepareTotalEvaluatedRelationCatalog(reg *axis.Registry, bindings *bind.Res
 			return relationRunCatalog{}, fmt.Errorf("evaluated catalog: owner %v has no exact boundary", owner.key)
 		}
 		shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures())), Globals: uint32(len(plan.BoundaryGlobals()))}
-		if shape.Captures != 0 || shape.Globals != 0 {
-			return relationRunCatalog{}, fmt.Errorf("evaluated catalog: owner %v is outside the params-only slice", owner.key)
-		}
 		if owner.fn == nil {
-			if owner.key != keys.rootKey || owner.prepared != prepared.root || shape != (transformer.Shape{}) {
-				return relationRunCatalog{}, fmt.Errorf("evaluated catalog: nil function owner is not the exact zero-boundary chunk root")
+			if owner.key != keys.rootKey || owner.prepared != prepared.root || shape.Params != 0 || shape.Captures != 0 || shape.Results != 0 || shape.HeapTemplates != 0 {
+				return relationRunCatalog{}, fmt.Errorf("evaluated catalog: nil function owner is not the exact chunk root")
 			}
 		} else {
 			origin, ok := bindings.FunctionOrigin(owner.fn)
-			if !ok || origin.Kind == bind.FunctionOriginMethod || !owner.prepared.CompositionEligibility().Eligible() ||
-				!relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures(), plan.BoundaryGlobals()) {
-				return relationRunCatalog{}, fmt.Errorf("evaluated catalog: lexical owner %v is outside the exact params-only slice", owner.key)
+			boundaryMatches := relationBoundaryMatchesBindings(bindings, owner.fn, plan.BoundaryParams(), plan.BoundaryCaptures(), plan.BoundaryGlobals())
+			if !ok || origin.Kind == bind.FunctionOriginMethod || !boundaryMatches {
+				return relationRunCatalog{}, fmt.Errorf("evaluated catalog: lexical owner %v is outside the exact boundary slice: origin=%v/%v boundary=%v", owner.key, origin.Kind, ok, boundaryMatches)
 			}
 		}
 		if stats != nil {
@@ -145,6 +142,7 @@ func prepareTotalEvaluatedRelationCatalog(reg *axis.Registry, bindings *bind.Res
 	for _, owner := range owners {
 		candidate := candidates[owner.key]
 		routes := make(map[cfg.Point]transformer.DirectCallTarget, len(candidate.direct))
+		boundaries := make(map[cfg.Point]transformer.DirectCallBoundary, len(candidate.direct))
 		for point, targetKey := range candidate.direct {
 			target, admitted := candidates[targetKey]
 			targetIdentity, identified := identities[targetKey]
@@ -152,8 +150,10 @@ func prepareTotalEvaluatedRelationCatalog(reg *axis.Registry, bindings *bind.Res
 				return relationRunCatalog{}, fmt.Errorf("evaluated catalog: owner %v point %d targets an unowned relation", owner.key, point)
 			}
 			routes[point] = transformer.DirectCallTarget{Cell: targetIdentity.Cell, Shape: target.shape}
+			targetPlan := target.prepared.OperationPlan()
+			boundaries[point] = transformer.DirectCallBoundary{Captures: targetPlan.BoundaryCaptures(), Globals: targetPlan.BoundaryGlobals()}
 		}
-		direct, err := transformer.NewDirectCallCatalog(candidate.prepared.OperationPlan().PointCount(), routes)
+		direct, err := transformer.NewDirectCallCatalogWithBoundaries(candidate.prepared.OperationPlan().PointCount(), routes, boundaries)
 		if err != nil {
 			return relationRunCatalog{}, fmt.Errorf("evaluated catalog: owner %v direct-call surface: %w", owner.key, err)
 		}
@@ -185,14 +185,14 @@ func prepareTotalEvaluatedCompiler(compiler *transformer.PlanCompiler, reg *axis
 		return false
 	})
 	if !hasFunctions {
-		return compiler.Prepare(reg, owner.prepared.Graph(), plan, shape)
+		return compiler.PrepareWithLexicalBoundaryRoots(reg, owner.prepared.Graph(), plan, shape)
 	}
 
 	authority, err := transformer.SealDirectLexicalDeclarationAuthority(plan, bindings, owner.fn)
 	if err != nil {
 		return nil, fmt.Errorf("compiler: contextual operations: ExpressionFunctions (%v)", err)
 	}
-	return compiler.PrepareWithDirectLexicalDeclarations(reg, owner.prepared.Graph(), plan, shape, authority)
+	return compiler.PrepareWithDirectLexicalDeclarationsAndBoundaryRoots(reg, owner.prepared.Graph(), plan, shape, authority)
 }
 
 func validateTotalEvaluatedDirectSurface(entry relationCatalogEntry, catalog relationRunCatalog, bindings *bind.Result, keys programKeys) error {
@@ -227,7 +227,10 @@ func validateTotalEvaluatedDirectSurface(entry relationCatalogEntry, catalog rel
 	return nil
 }
 
-func evaluatedCatalogBoundaryBindings(catalog relationRunCatalog) (map[lexicalidentity.StableLexicalBodyID]evaluatedProgramBindings, error) {
+func evaluatedCatalogBoundaryBindings(catalog relationRunCatalog, bindings *bind.Result) (map[lexicalidentity.StableLexicalBodyID]evaluatedProgramBindings, error) {
+	if bindings == nil {
+		return nil, fmt.Errorf("evaluated catalog: lexical bindings are required")
+	}
 	out := make(map[lexicalidentity.StableLexicalBodyID]evaluatedProgramBindings, len(catalog.entries))
 	for _, entry := range catalog.entries {
 		if entry.identity.Prepared == nil || entry.compiler == nil {
@@ -235,18 +238,35 @@ func evaluatedCatalogBoundaryBindings(catalog relationRunCatalog) (map[lexicalid
 		}
 		plan := entry.identity.Prepared.OperationPlan()
 		shape := entry.compiler.Shape()
-		if plan == nil || shape.Captures != 0 || shape.Globals != 0 || shape.Results != 0 || shape.HeapTemplates != 0 ||
-			shape.Params != uint32(len(plan.BoundaryParams())) {
-			return nil, fmt.Errorf("evaluated catalog: cell %v boundary is not params-only", entry.identity.Cell)
+		if plan == nil || shape.Results != 0 || shape.HeapTemplates != 0 ||
+			shape.Params != uint32(len(plan.BoundaryParams())) || shape.Captures != uint32(len(plan.BoundaryCaptures())) ||
+			shape.Globals != uint32(len(plan.BoundaryGlobals())) {
+			return nil, fmt.Errorf("evaluated catalog: cell %v boundary shape is incomplete", entry.identity.Cell)
 		}
 		contracts := plan.BoundaryParamContracts()
 		if len(contracts) != int(shape.Params) {
 			return nil, fmt.Errorf("evaluated catalog: cell %v parameter contracts are incomplete", entry.identity.Cell)
 		}
-		values := append([]product.Value(nil), contracts...)
+		globalContracts := plan.BoundaryGlobalContracts()
+		if len(globalContracts) != int(shape.Globals) {
+			return nil, fmt.Errorf("evaluated catalog: cell %v global contracts are incomplete", entry.identity.Cell)
+		}
+		values := make([]product.Value, 0, shape.ValueCount())
+		values = append(values, contracts...)
+		for range plan.BoundaryCaptures() {
+			// Non-entry lexical bodies receive their exact capture values through
+			// caller-owned observer templates. This placeholder is never used as a
+			// production invocation binding.
+			values = append(values, product.Top())
+		}
+		values = append(values, globalContracts...)
 		paths := make([]pathdom.Path, len(values))
-		for index := range paths {
+		for index := range contracts {
 			paths[index] = pathdom.NewPlaceholder(index)
+		}
+		globalOffset := len(contracts) + len(plan.BoundaryCaptures())
+		for index, global := range plan.BoundaryGlobals() {
+			paths[globalOffset+index] = pathdom.NewPath(global, bindings.Name(global))
 		}
 		bodyID := entry.identity.Prepared.StableLexicalBodyID()
 		if bodyID == (lexicalidentity.StableLexicalBodyID{}) {
@@ -255,7 +275,10 @@ func evaluatedCatalogBoundaryBindings(catalog relationRunCatalog) (map[lexicalid
 		if _, duplicate := out[bodyID]; duplicate {
 			return nil, fmt.Errorf("evaluated catalog: duplicate boundary body %x", bodyID)
 		}
-		out[bodyID] = evaluatedProgramBindings{values: values, paths: paths, order: plan.BoundaryParams()}
+		order := append([]symbol.ID(nil), plan.BoundaryParams()...)
+		order = append(order, plan.BoundaryCaptures()...)
+		order = append(order, plan.BoundaryGlobals()...)
+		out[bodyID] = evaluatedProgramBindings{values: values, paths: paths, order: order}
 	}
 	return out, nil
 }

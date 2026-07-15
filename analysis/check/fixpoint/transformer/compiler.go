@@ -43,23 +43,24 @@ type PlanCompiler struct {
 }
 
 type planCompileContext struct {
-	registry             *axis.Registry
-	graph                cfg.Graph
-	plan                 *operationplan.Plan
-	facts                factflow.Facts
-	builder              *Builder
-	locals               map[symbol.ID]ValueTerm
-	expressions          map[factflow.ExprRef][]ValueTerm
-	allocationEffects    map[cfg.Point]EffectTerm
-	rowEffects           *[]EffectTerm
-	rowOutput            *summary.Summary
-	genericBindings      map[symbol.ID]symbolicGenericBinding
-	directCalls          *DirectCallCatalog
-	directDeclarations   operationplan.DirectLexicalDeclarations
-	allowConstantAdd     bool
-	predicateExpressions map[factflow.ExprRef]struct{}
-	predicateRefinements map[factflow.ExprRef]struct{}
-	structuralPredicates map[factflow.ExprRef]factflow.StructuralExpressionRegion
+	registry                  *axis.Registry
+	graph                     cfg.Graph
+	plan                      *operationplan.Plan
+	facts                     factflow.Facts
+	builder                   *Builder
+	locals                    map[symbol.ID]ValueTerm
+	expressions               map[factflow.ExprRef][]ValueTerm
+	allocationEffects         map[cfg.Point]EffectTerm
+	rowEffects                *[]EffectTerm
+	rowOutput                 *summary.Summary
+	genericBindings           map[symbol.ID]symbolicGenericBinding
+	directCalls               *DirectCallCatalog
+	directDeclarations        operationplan.DirectLexicalDeclarations
+	allowLexicalBoundaryRoots bool
+	allowConstantAdd          bool
+	predicateExpressions      map[factflow.ExprRef]struct{}
+	predicateRefinements      map[factflow.ExprRef]struct{}
+	structuralPredicates      map[factflow.ExprRef]factflow.StructuralExpressionRegion
 }
 
 type symbolicGenericBinding struct {

@@ -166,6 +166,7 @@ type Plan struct {
 	boundaryCapturesValid        bool
 	boundaryGlobals              []symbol.ID
 	boundaryGlobalsValid         bool
+	boundaryGlobalContracts      []product.Value
 	boundaryReturns              []product.Value
 	signatureRefs                []uint32
 	signatures                   []SignatureCallOperation

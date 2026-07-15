@@ -176,6 +176,7 @@ func (p *Plan) WithBoundaryGlobals(globals []symbol.ID) *Plan {
 	out := *p
 	out.boundaryGlobals = nil
 	out.boundaryGlobalsValid = false
+	out.boundaryGlobalContracts = nil
 	if !p.boundaryParamsValid || !p.boundaryCapturesValid {
 		return &out
 	}
@@ -202,6 +203,30 @@ func (p *Plan) WithBoundaryGlobals(globals []symbol.ID) *Plan {
 	return &out
 }
 
+// WithBoundaryGlobalContracts binds each ordered RootGlobal to the exact
+// abstract value supplied by the prepared body's immutable type environment.
+// A width mismatch clears the complete vector fail-closed.
+func (p *Plan) WithBoundaryGlobalContracts(values []product.Value) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.boundaryGlobalContracts = nil
+	if !p.boundaryGlobalsValid || len(values) != len(p.boundaryGlobals) {
+		return &out
+	}
+	out.boundaryGlobalContracts = append([]product.Value(nil), values...)
+	return &out
+}
+
+// BoundaryGlobalContracts returns the immutable dense RootGlobal value vector.
+func (p *Plan) BoundaryGlobalContracts() []product.Value {
+	if p == nil {
+		return nil
+	}
+	return append([]product.Value(nil), p.boundaryGlobalContracts...)
+}
+
 // BoundaryGlobalsValid distinguishes an exact empty global-read census from
 // one rejected because its namespaces were malformed.
 func (p *Plan) BoundaryGlobalsValid() bool {
@@ -215,4 +240,12 @@ func (p *Plan) BoundaryGlobals() []symbol.ID {
 		return nil
 	}
 	return append([]symbol.ID(nil), p.boundaryGlobals...)
+}
+
+func (p *Plan) BoundaryGlobalIndex(target symbol.ID) (int, bool) {
+	if p == nil || target == 0 {
+		return 0, false
+	}
+	index, ok := slices.BinarySearch(p.boundaryGlobals, target)
+	return index, ok
 }

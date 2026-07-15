@@ -94,7 +94,7 @@ func matchObserverCallTemplates(
 		_, cataloged := entries[bodyTemplate.Ref]
 		relation, solved := relations.Lookup(bodyTemplate.Ref.Cell)
 		if !cataloged || !solved || relation.ContextualReason() != "" || relation.Widened() {
-			return observerProgramTemplatePlan{}, fmt.Errorf("observer program: template %v has no exact solved relation", bodyTemplate.Ref.Cell)
+			return observerProgramTemplatePlan{}, fmt.Errorf("observer program: template %v has no exact solved relation: cataloged=%v solved=%v contextual=%q widened=%v", bodyTemplate.Ref.Cell, cataloged, solved, relation.ContextualReason(), relation.Widened())
 		}
 		bodyPlan := observerBodyTemplatePlan{ref: bodyTemplate.Ref, calls: make([]observerCallTemplatePlan, len(bodyTemplate.Calls))}
 		edgeIndex := make(map[observerCallEdgeIdentity]int, len(bodyTemplate.Calls))

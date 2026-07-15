@@ -96,7 +96,14 @@ func (c *PlanCompiler) Compile(reg *axis.Registry, graph cfg.Graph, plan *operat
 // lexical dependencies are deliberately a later Evaluate concern; this base
 // preparation preserves today's exact no-dependency behavior.
 func (c *PlanCompiler) Prepare(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape) (*PreparedPlanCompiler, error) {
-	return c.prepare(reg, graph, plan, shape, operationplan.DirectLexicalDeclarations{})
+	return c.prepare(reg, graph, plan, shape, operationplan.DirectLexicalDeclarations{}, false)
+}
+
+// PrepareWithLexicalBoundaryRoots explicitly admits RootCapture and RootGlobal
+// terms owned by the plan's exact boundary schema. The ordinary Prepare API
+// retains its historical parameter-only admission policy.
+func (c *PlanCompiler) PrepareWithLexicalBoundaryRoots(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape) (*PreparedPlanCompiler, error) {
+	return c.prepare(reg, graph, plan, shape, operationplan.DirectLexicalDeclarations{}, true)
 }
 
 // PrepareWithDirectLexicalDeclarations admits only a binder-proven complete,
@@ -105,17 +112,26 @@ func (c *PlanCompiler) PrepareWithDirectLexicalDeclarations(reg *axis.Registry, 
 	if !authority.matches(plan) {
 		return nil, fmt.Errorf("compiler: direct lexical declaration authority does not match plan")
 	}
-	return c.prepare(reg, graph, plan, shape, authority.declarations)
+	return c.prepare(reg, graph, plan, shape, authority.declarations, false)
 }
 
-func (c *PlanCompiler) prepare(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape, declarations operationplan.DirectLexicalDeclarations) (*PreparedPlanCompiler, error) {
+// PrepareWithDirectLexicalDeclarationsAndBoundaryRoots combines the two
+// independently sealed capabilities used by total evaluated programs.
+func (c *PlanCompiler) PrepareWithDirectLexicalDeclarationsAndBoundaryRoots(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape, authority DirectLexicalDeclarationAuthority) (*PreparedPlanCompiler, error) {
+	if !authority.matches(plan) {
+		return nil, fmt.Errorf("compiler: direct lexical declaration authority does not match plan")
+	}
+	return c.prepare(reg, graph, plan, shape, authority.declarations, true)
+}
+
+func (c *PlanCompiler) prepare(reg *axis.Registry, graph cfg.Graph, plan *operationplan.Plan, shape Shape, declarations operationplan.DirectLexicalDeclarations, allowLexicalBoundaryRoots bool) (*PreparedPlanCompiler, error) {
 	if c == nil || reg == nil || graph == nil || plan == nil {
 		return nil, fmt.Errorf("compiler: registry, graph, plan, and compiler are required")
 	}
 	if graph.Size() != plan.PointCount() {
 		return nil, fmt.Errorf("compiler: graph points %d != operation rows %d", graph.Size(), plan.PointCount())
 	}
-	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts(), directDeclarations: declarations}
+	ctx := planCompileContext{registry: reg, graph: graph, plan: plan, facts: plan.Facts(), directDeclarations: declarations, allowLexicalBoundaryRoots: allowLexicalBoundaryRoots}
 	outputCaps := DefaultOutputCapabilityRegistry()
 	summaryKinds := []callboundary.BoundaryFactKind{
 		"NormalReturnParams", "NormalReturnFacts", "ReturnFlows", "ReturnParamPathAliases",
@@ -411,7 +427,11 @@ func (p *PreparedPlanCompiler) lowerPreparedPointWithAnnotations(base planCompil
 				if !hasPoint || sitePoint != point {
 					return nil, fmt.Errorf("direct call: call-site identity %d/%v differs from CFG point %d", sitePoint, hasPoint, point)
 				}
-				bindings, err := exactDirectCallBindings(rowCtx, directTarget.Shape, site)
+				boundary, boundaryOwned := direct.Boundary(point)
+				if !boundaryOwned {
+					return nil, fmt.Errorf("direct call: dependency %v has no exact boundary order", directTarget.Cell)
+				}
+				bindings, err := exactDirectCallBindings(rowCtx, directTarget.Shape, boundary, site)
 				if err != nil {
 					return nil, fmt.Errorf("direct call: %w", err)
 				}
@@ -534,11 +554,14 @@ func exactObservationCoverage(plan *operationplan.Plan, shape Shape, cyclic bool
 	return true
 }
 
-func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.CallSiteView) (DirectCallBindings, error) {
-	if shape.Captures != 0 || shape.Globals != 0 || shape.Results != 0 || shape.HeapTemplates != 0 {
-		return DirectCallBindings{}, fmt.Errorf("non-parameter callee boundary")
+func exactDirectCallBindings(ctx planCompileContext, shape Shape, boundary DirectCallBoundary, site factflow.CallSiteView) (DirectCallBindings, error) {
+	if shape.Results != 0 || shape.HeapTemplates != 0 {
+		return DirectCallBindings{}, fmt.Errorf("callee result or heap-template boundary is contextual")
 	}
-	out := DirectCallBindings{Values: make([]ValueTerm, 0, shape.Params), Paths: make([]PathTerm, 0, shape.Params)}
+	if len(boundary.Captures) != int(shape.Captures) || len(boundary.Globals) != int(shape.Globals) {
+		return DirectCallBindings{}, fmt.Errorf("callee capture/global boundary order differs from shape")
+	}
+	out := DirectCallBindings{Values: make([]ValueTerm, 0, shape.ValueCount()), Paths: make([]PathTerm, 0, shape.ValueCount())}
 	if receiver, ok := site.ReceiverSource(); ok {
 		value, path, err := exactDirectCallSourceBinding(ctx, receiver)
 		if err != nil {
@@ -571,7 +594,36 @@ func exactDirectCallBindings(ctx planCompileContext, shape Shape, site factflow.
 		}
 		out.Values, out.Paths = append(out.Values, value), append(out.Paths, path)
 	}
+	for _, capture := range boundary.Captures {
+		value, path, err := exactDirectCallLexicalBinding(ctx, capture)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("capture %d: %w", capture, err)
+		}
+		out.Values, out.Paths = append(out.Values, value), append(out.Paths, path)
+	}
+	for _, global := range boundary.Globals {
+		value, path, err := exactDirectCallLexicalBinding(ctx, global)
+		if err != nil {
+			return DirectCallBindings{}, fmt.Errorf("global %d: %w", global, err)
+		}
+		out.Values, out.Paths = append(out.Values, value), append(out.Paths, path)
+	}
 	return out, nil
+}
+
+func exactDirectCallLexicalBinding(ctx planCompileContext, target symbol.ID) (ValueTerm, PathTerm, error) {
+	value, ok := ctx.locals[target]
+	if !ok || value == 0 {
+		return 0, 0, fmt.Errorf("caller has no exact lexical value term")
+	}
+	binding, err := exactBoundaryPathBinding(ctx, pathdom.NewPath(target, ""))
+	if err != nil {
+		// A caller-local immutable capture has an exact value term without being a
+		// caller boundary root. Value-only child use remains compositional; a child
+		// path term will reject transactionally during DAG rebasing.
+		return value, 0, nil
+	}
+	return value, ctx.builder.Arena().Path(binding.Root), nil
 }
 
 func exactDirectCallSourceBinding(ctx planCompileContext, source factflow.ValueSource) (ValueTerm, PathTerm, error) {

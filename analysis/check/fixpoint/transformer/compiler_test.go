@@ -235,7 +235,7 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndAcceptsRecursiveBottom
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result0, pathdom.NewPath(result0, "value")),
 		},
 	}).View()
-	if binding, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, receiverOnly); err != nil || len(binding.Values) != 1 || len(binding.Paths) != 1 {
+	if binding, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, DirectCallBoundary{}, receiverOnly); err != nil || len(binding.Values) != 1 || len(binding.Paths) != 1 {
 		t.Fatalf("canonical boundary receiver path binding = %#v/%v", binding, err)
 	}
 	adjustedArg := arg0
@@ -246,7 +246,7 @@ func TestPreparedPlanCompilerDirectEquationComposesRowsAndAcceptsRecursiveBottom
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result0, pathdom.NewPath(result0, "value")),
 		},
 	}).View()
-	if _, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, adjustedSite); err == nil {
+	if _, err := exactDirectCallBindings(prepared.base, Shape{Params: 1}, DirectCallBoundary{}, adjustedSite); err == nil {
 		t.Fatal("adjusted direct argument was silently treated as unadjusted")
 	}
 }

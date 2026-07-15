@@ -235,6 +235,7 @@ func (c *checker) prepare(
 		WithBoundaryParamContracts(materializeDeclaredParamTypeValues(config.Registry, typevalue.NewCache(), typeResolver, fn)).
 		WithBoundaryCaptures(boundaryCaptures).
 		WithBoundaryGlobals(boundaryGlobals).
+		WithBoundaryGlobalContracts(materializeBoundaryGlobalTypeValues(config.Registry, typevalue.NewCache(), bindings, boundaryGlobals, config.GlobalTypes)).
 		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn))
 	signatureCalls := signatureCallOperations(config.Registry, bindings, built.Graph, facts, operationPlan, signatureProducer)
 	operationPlan = operationPlan.

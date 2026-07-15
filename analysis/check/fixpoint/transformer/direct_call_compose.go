@@ -15,9 +15,8 @@ import (
 )
 
 // DirectCallBindings is one exact fixed-arity lexical application. Values and
-// Paths use the callee Shape's packed namespace order. The first tranche admits
-// only parameter roots; captures, globals, result roots, and heap templates
-// remain contextual until their ownership rules are explicit.
+// Paths use the callee Shape's packed namespace order. Parameter, capture, and
+// global roots are namespace-distinct even when their dense indices coincide.
 type DirectCallBindings struct {
 	Values []ValueTerm
 	Paths  []PathTerm
@@ -53,8 +52,8 @@ func composeDirectCallRowsCore(builder *Builder, callerShape Shape, caller Symbo
 	if callee.arena.reg != builder.arena.reg {
 		return nil, fmt.Errorf("transformer: direct-call registry ownership differs")
 	}
-	if callee.shape.Captures != 0 || callee.shape.Globals != 0 || callee.shape.Results != 0 || callee.shape.HeapTemplates != 0 {
-		return nil, fmt.Errorf("transformer: direct-call non-parameter boundary requires contextual composition")
+	if callee.shape.Results != 0 || callee.shape.HeapTemplates != 0 {
+		return nil, fmt.Errorf("transformer: direct-call result or heap-template boundary requires contextual composition")
 	}
 	if site.OpenTail() || !site.Final() || !site.Expanded() || site.Adjusted() {
 		return nil, fmt.Errorf("transformer: direct-call result list is not exact fixed arity")
@@ -353,32 +352,38 @@ func rebaseDirectCallParamRefinements(arena, calleeArena *Arena, callerShape Sha
 		return paramPreservationLedger{}, fmt.Errorf("symbolic path refinements have foreign root bindings")
 	}
 	for index, refinement := range refinements {
-		if !refinement.validPreservedBoundaryRoot(calleeArena, calleeShape) || calleeArena.paths[refinement.Path].root.Kind != RootParam {
+		if !refinement.validPreservedBoundaryRoot(calleeArena, calleeShape) {
 			// The relation builder already enforces this invariant. Keep the
 			// composition boundary independently fail-closed for forged relations.
-			return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d is not a preserved parameter root", index)
+			return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d is not a preserved parameter or capture root", index)
 		}
 		root := calleeArena.paths[refinement.Path].root
 		for prior := 0; prior < index; prior++ {
 			if calleeArena.paths[refinements[prior].Path].root == root {
-				return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d duplicates parameter %d", index, root.Index)
+				return paramPreservationLedger{}, fmt.Errorf("symbolic path refinement %d duplicates boundary root %#v", index, root)
 			}
 		}
 	}
 
 	next := caller.clone()
+	calleeRoots := make([]Root, 0, calleeShape.Params+calleeShape.Captures)
 	for index := uint32(0); index < calleeShape.Params; index++ {
-		root := Root{Kind: RootParam, Index: index}
+		calleeRoots = append(calleeRoots, Root{Kind: RootParam, Index: index})
+	}
+	for index := uint32(0); index < calleeShape.Captures; index++ {
+		calleeRoots = append(calleeRoots, Root{Kind: RootCapture, Index: index})
+	}
+	for _, root := range calleeRoots {
 		value := bindings.value(root)
 		path := bindings.path(root)
 		preserved := false
 		for _, refinement := range refinements {
-			if calleeArena.paths[refinement.Path].root.Index == index {
+			if calleeArena.paths[refinement.Path].root == root {
 				preserved = true
 				break
 			}
 		}
-		callerParam, exact := callerParamIdentityBinding(arena, callerShape, value, path)
+		callerParam, exact := callerPreservedRootIdentityBinding(arena, callerShape, value, path)
 		if exact {
 			if !preserved {
 				next.invalidate(callerParam)
@@ -387,11 +392,11 @@ func rebaseDirectCallParamRefinements(arena, calleeArena *Arena, callerShape Sha
 		}
 		addressable, params, valid := callerBoundaryDependencies(arena, callerShape, value, path)
 		if !valid {
-			return paramPreservationLedger{}, fmt.Errorf("symbolic parameter %d has malformed caller bindings", index)
+			return paramPreservationLedger{}, fmt.Errorf("symbolic boundary root %#v has malformed caller bindings", root)
 		}
 		if preserved {
 			if addressable {
-				return paramPreservationLedger{}, fmt.Errorf("symbolic parameter %d does not map to one caller parameter identity", index)
+				return paramPreservationLedger{}, fmt.Errorf("symbolic boundary root %#v does not map to one caller boundary identity", root)
 			}
 			// A constant or other root-free term with no PathTerm has no caller
 			// boundary location to refine. Its callee-local proof is consumed.
@@ -408,15 +413,18 @@ func rebaseDirectCallParamRefinements(arena, calleeArena *Arena, callerShape Sha
 	return next, nil
 }
 
-func callerParamIdentityBinding(arena *Arena, shape Shape, value ValueTerm, path PathTerm) (uint32, bool) {
+func callerPreservedRootIdentityBinding(arena *Arena, shape Shape, value ValueTerm, path PathTerm) (uint32, bool) {
 	if arena == nil || value == 0 || path == 0 || int(value) >= len(arena.values) || int(path) >= len(arena.paths) {
 		return 0, false
 	}
 	v := arena.values[value]
 	p := arena.paths[path]
-	if v.op != valueRoot || v.root.Kind != RootParam || !shape.validate(v.root) ||
+	if v.op != valueRoot || (v.root.Kind != RootParam && v.root.Kind != RootCapture) || !shape.validate(v.root) ||
 		p.root != v.root || len(p.segments) != 0 {
 		return 0, false
+	}
+	if v.root.Kind == RootCapture {
+		return shape.Params + v.root.Index, true
 	}
 	return v.root.Index, true
 }
@@ -430,8 +438,12 @@ func callerBoundaryDependencies(arena *Arena, shape Shape, value ValueTerm, path
 		if int(path) >= len(arena.paths) || !arena.validPath(path, shape) {
 			return false, nil, false
 		}
-		if root := arena.paths[path].root; root.Kind == RootParam {
-			params = append(params, root.Index)
+		if root := arena.paths[path].root; root.Kind == RootParam || root.Kind == RootCapture {
+			index := root.Index
+			if root.Kind == RootCapture {
+				index += shape.Params
+			}
+			params = append(params, index)
 		}
 	}
 	addressable := path != 0
@@ -446,16 +458,20 @@ func callerBoundaryDependencies(arena *Arena, shape Shape, value ValueTerm, path
 				return false
 			}
 			addressable = true
-			if node.root.Kind == RootParam {
+			if node.root.Kind == RootParam || node.root.Kind == RootCapture {
+				index := node.root.Index
+				if node.root.Kind == RootCapture {
+					index += shape.Params
+				}
 				seen := false
 				for _, param := range params {
-					if param == node.root.Index {
+					if param == index {
 						seen = true
 						break
 					}
 				}
 				if !seen {
-					params = append(params, node.root.Index)
+					params = append(params, index)
 				}
 			}
 			return true
