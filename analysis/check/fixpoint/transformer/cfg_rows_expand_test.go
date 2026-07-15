@@ -1,7 +1,6 @@
 package transformer
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -39,7 +38,7 @@ func TestSolveAcyclicCFGExpandedRowsCrossProductsAtPoint(t *testing.T) {
 	}
 }
 
-func TestSolveAcyclicCFGExpandedRowsFailsAtomicallyAtExpansionBudget(t *testing.T) {
+func TestSolveAcyclicCFGExpandedRowsRetainsAlternativesBeyondFormerCap(t *testing.T) {
 	graph := cfg.New()
 	graph.AddEdge(graph.Entry(), graph.Exit(), false)
 	reg := standard.Registry()
@@ -49,15 +48,21 @@ func TestSolveAcyclicCFGExpandedRowsFailsAtomicallyAtExpansionBudget(t *testing.
 	result := symbol.ID(88)
 	rows, err := SolveAcyclicCFGExpandedRows(graph, arena, SymbolicCFGRow{
 		Guard: arena.True(), Values: map[symbol.ID]ValueTerm{1: param},
-	}, func(_ cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
-		produced := make([]SymbolicCFGRow, 64)
+	}, func(point cfg.Point, row SymbolicCFGRow) ([]SymbolicCFGRow, error) {
+		if point != graph.Entry() {
+			return []SymbolicCFGRow{row}, nil
+		}
+		produced := make([]SymbolicCFGRow, 513)
 		for i := range produced {
 			produced[i] = cloneCFGRow(row)
 			produced[i].Values[result] = arena.Constant(typevalue.LiteralInt(reg, int64(i)))
 		}
 		return produced, nil
-	}, nil, SymbolicCFGOptions{Shape: shape, MaxRows: 1})
-	if err == nil || !strings.Contains(err.Error(), "row budget") || rows != nil {
-		t.Fatalf("expanded budget result = %#v/%v", rows, err)
+	}, nil, SymbolicCFGOptions{Shape: shape})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(rows[graph.Exit()]); got != 513 {
+		t.Fatalf("expanded alternatives = %d, want all 513", got)
 	}
 }

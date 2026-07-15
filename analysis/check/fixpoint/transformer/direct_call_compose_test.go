@@ -120,7 +120,7 @@ func TestComposeDirectCallRowsPreservesCorrelationAndConsumesCalleeResultMetadat
 		Guard: callerBuilder.Arena().True(), Values: map[symbol.ID]ValueTerm{1: callerParam},
 	}, callee, DirectCallBindings{
 		Values: []ValueTerm{callerParam}, Paths: []PathTerm{callerBuilder.Arena().Path(Root{Kind: RootParam, Index: 0})},
-	}, site, 8)
+	}, site)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +155,39 @@ func TestComposeDirectCallRowsPreservesCorrelationAndConsumesCalleeResultMetadat
 	}
 	if len(pairs) != 2 {
 		t.Fatalf("return pairs lost row correlation: %#v", pairs)
+	}
+}
+
+func TestComposeDirectCallRowsRetainsAlternativesBeyondFormerCap(t *testing.T) {
+	reg := standard.Registry()
+	callee, certificate := emptyBuilder(t, reg, Shape{}, nil)
+	relationRows := make([]Row, 513)
+	for i := range relationRows {
+		relationRows[i] = Row{Guard: callee.Arena().True(), Ops: []Operation{{
+			Kind: OutputReturn, Descriptor: DescriptorReturn,
+			Value: callee.Arena().Constant(typevalue.LiteralInt(reg, int64(i))),
+		}}}
+	}
+	relation, err := callee.Build(certificate, relationRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, _ := emptyBuilder(t, reg, Shape{}, nil)
+	result := symbol.ID(513)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		Point: 1, HasPoint: true, Final: true, Expanded: true,
+		ResultTargets: []factflow.CallResultTarget{factflow.NewCallResultTarget(
+			factflow.CallResultTargetLocalAssignment, 0, 0, result, pathdom.NewPath(result, "result"),
+		)},
+	}).View()
+	rows, err := ComposeDirectCallRows(caller, Shape{}, SymbolicCFGRow{
+		Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{},
+	}, relation, DirectCallBindings{}, site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 513 {
+		t.Fatalf("composed alternatives = %d, want all 513", len(rows))
 	}
 }
 
@@ -198,7 +231,7 @@ func TestDirectCallKeepsCallerPrefixEvidenceForMixedReturningCallee(t *testing.T
 	}).View()
 	bindings := DirectCallBindings{Values: []ValueTerm{callerParam}, Paths: []PathTerm{caller.Arena().Path(Root{Kind: RootParam})}}
 	var annotations relationAnnotations
-	rows, err := composeDirectCallRows(caller, shape, initial, callee, bindings, site, 4, &annotations)
+	rows, err := composeDirectCallRows(caller, shape, initial, callee, bindings, site, &annotations)
 	if err != nil || len(rows) != 1 || rows[0].Guard != caller.Arena().Truthy(callerParam) || len(annotations.observations) != 2 || len(annotations.obligations) != 2 {
 		t.Fatalf("mixed caller evidence = rows:%#v annotations:%#v/%#v err:%v", rows, annotations.observations, annotations.obligations, err)
 	}
@@ -251,7 +284,7 @@ func TestComposeDirectCallRowsFailsClosedWithoutCallerBoundaryProofPath(t *testi
 	site := factflow.NewCallSite(factflow.CallSiteConfig{Point: 3, HasPoint: true, Final: true, Expanded: true, ResultTargets: []factflow.CallResultTarget{
 		factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, pathdom.NewPath(target, "target")),
 	}}).View()
-	if rows, err := ComposeDirectCallRows(caller, Shape{Params: 1, Globals: 1}, SymbolicCFGRow{Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{}}, callee, DirectCallBindings{Values: []ValueTerm{param}, Paths: []PathTerm{globalPath}}, site, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, Shape{Params: 1, Globals: 1}, SymbolicCFGRow{Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{}}, callee, DirectCallBindings{Values: []ValueTerm{param}, Paths: []PathTerm{globalPath}}, site); err == nil || len(rows) != 0 {
 		t.Fatalf("non-boundary proof path composed: rows=%#v err=%v", rows, err)
 	}
 }
@@ -287,7 +320,7 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 	t.Run("forwarded-root", func(t *testing.T) {
 		rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), DirectCallBindings{
 			Values: []ValueTerm{caller.Arena().Root(callerRoot1)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)},
-		}, site, 4)
+		}, site)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("forwarded parameter composition = %#v/%v", rows, err)
 		}
@@ -307,7 +340,7 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 		before.paramPreserved.invalidate(1)
 		rows, err = ComposeDirectCallRows(caller, callerShape, before, newRelation(row), DirectCallBindings{
 			Values: []ValueTerm{caller.Arena().Root(callerRoot1)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)},
-		}, site, 4)
+		}, site)
 		if err != nil || rows[0].paramPreserved.preserves(1) {
 			t.Fatalf("forwarded parameter resurrected invalidation: %#v/%v", rows, err)
 		}
@@ -317,7 +350,7 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 		literal := caller.Arena().Constant(typevalue.LiteralString(reg, "local"))
 		rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), DirectCallBindings{
 			Values: []ValueTerm{literal}, Paths: []PathTerm{0},
-		}, site, 4)
+		}, site)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("root-free refinement was not consumed: %#v/%v", rows, err)
 		}
@@ -332,7 +365,7 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 			{Values: []ValueTerm{caller.Arena().Root(callerRoot0)}, Paths: []PathTerm{0}},
 		}
 		for _, bindings := range tests {
-			if rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), bindings, site, 4); err == nil || len(rows) != 0 {
+			if rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(row), bindings, site); err == nil || len(rows) != 0 {
 				t.Fatalf("non-identity boundary refinement composed: %#v/%v", rows, err)
 			}
 		}
@@ -343,7 +376,7 @@ func TestComposeDirectCallRowsRebasesPreservedParameterIdentity(t *testing.T) {
 		mutated.PathRefinements = nil
 		rows, err := ComposeDirectCallRows(caller, callerShape, initial(), newRelation(mutated), DirectCallBindings{
 			Values: []ValueTerm{caller.Arena().Root(callerRoot1)}, Paths: []PathTerm{caller.Arena().Path(callerRoot1)},
-		}, site, 4)
+		}, site)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("uncertified direct call did not compose conservatively: %#v/%v", rows, err)
 		}

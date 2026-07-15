@@ -87,7 +87,7 @@ func TestDirectCompositionRetainsOnlyOwnerLocalObservationsAtTwoCallSites(t *tes
 	}
 	for index, point := range []cfg.Point{2, 3} {
 		root := Root{Kind: RootParam, Index: uint32(index)}
-		rows, composeErr := composeDirectCallRows(callerBuilder, Shape{Params: 2}, row, callee, DirectCallBindings{Values: []ValueTerm{callerBuilder.Arena().Root(root)}, Paths: []PathTerm{callerBuilder.Arena().Path(root)}}, makeSite(point, symbol.ID(20+index)), 8, &annotations)
+		rows, composeErr := composeDirectCallRows(callerBuilder, Shape{Params: 2}, row, callee, DirectCallBindings{Values: []ValueTerm{callerBuilder.Arena().Root(root)}, Paths: []PathTerm{callerBuilder.Arena().Path(root)}}, makeSite(point, symbol.ID(20+index)), &annotations)
 		if composeErr != nil || len(rows) != 1 {
 			t.Fatalf("compose %d = %#v/%v", point, rows, composeErr)
 		}

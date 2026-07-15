@@ -253,7 +253,7 @@ func TestResolveReferenceRowsComposeAtAllFourRealValidateCalls(t *testing.T) {
 				builder.Arena().Path(transformer.Root{Kind: transformer.RootParam, Index: 0}),
 				builder.Arena().Path(transformer.Root{Kind: transformer.RootParam, Index: 1}),
 			},
-		}, site, 16)
+		}, site)
 		if composeErr != nil {
 			t.Fatalf("line %d direct row composition: %v", site.CallSpan().StartLine, composeErr)
 		}

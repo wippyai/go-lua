@@ -33,7 +33,9 @@ type SymbolicCFGTransfer func(cfg.Point, SymbolicCFGRow) (SymbolicCFGRow, error)
 type SymbolicCFGBranch func(cfg.Point, SymbolicCFGRow, bool) (row SymbolicCFGRow, edgeGuard Guard, err error)
 
 type SymbolicCFGOptions struct {
-	Shape   Shape
+	Shape Shape
+	// MaxRows is retained for the quarantined WTO-row prototype. Committed
+	// acyclic propagation does not consult it: topology proves termination.
 	MaxRows int
 }
 
@@ -161,9 +163,38 @@ func cloneCFGRow(row SymbolicCFGRow) SymbolicCFGRow {
 	return out
 }
 
-// dedupCFGRows compares interned term handles directly. It deliberately avoids
-// canonical strings and sorting: rows from one Arena have structural identity,
-// so exact duplicate elimination is allocation-free.
+// canonicalizeAcyclicCFGRows compares interned term handles directly. Rows with the same
+// semantic payload differ only in reachability, so their ROBDD guards are
+// disjoined instead of retaining one row per control-flow path. This is exact:
+// values, results, ordered operations/effects, proofs, summaries, generic
+// bindings, and preservation evidence must all match before guards are merged.
+// The result therefore depends on semantic alternatives, not path count.
+func canonicalizeAcyclicCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
+	if len(rows) < 2 {
+		return rows
+	}
+	out := rows[:0]
+	for _, row := range rows {
+		duplicate := false
+		for i := range out {
+			if equalCFGRowPayload(arena, row, out[i]) {
+				out[i].Guard = arena.Or(out[i].Guard, row.Guard)
+				out[i].Observations = unionObservationTerms(arena, out[i].Observations, row.Observations)
+				out[i].observationObligations = unionobservationObligations(out[i].observationObligations, row.observationObligations)
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// dedupCFGRows retains distinct guards. Cyclic solvers use it because their
+// phase/widening algebra owns guard convergence; acyclic propagation uses the
+// stronger exact canonicalization above.
 func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 	if len(rows) < 2 {
 		return rows
@@ -187,7 +218,11 @@ func dedupCFGRows(arena *Arena, rows []SymbolicCFGRow) []SymbolicCFGRow {
 }
 
 func equalCFGRow(arena *Arena, left, right SymbolicCFGRow) bool {
-	if left.Guard != right.Guard || len(left.Values) != len(right.Values) || len(left.ResultRoots) != len(right.ResultRoots) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
+	return left.Guard == right.Guard && equalCFGRowPayload(arena, left, right)
+}
+
+func equalCFGRowPayload(arena *Arena, left, right SymbolicCFGRow) bool {
+	if len(left.Values) != len(right.Values) || len(left.ResultRoots) != len(right.ResultRoots) || len(left.Operations) != len(right.Operations) || len(left.Effects) != len(right.Effects) || len(left.Proofs) != len(right.Proofs) || len(left.genericBindings) != len(right.genericBindings) || !left.paramPreserved.equal(right.paramPreserved) {
 		return false
 	}
 	if !summary.Equal(arena.reg, left.Output, right.Output) {

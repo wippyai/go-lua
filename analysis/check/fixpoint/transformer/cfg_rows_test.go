@@ -74,8 +74,8 @@ func TestSolveAcyclicCFGRowsPreservesDiamondReturnCorrelation(t *testing.T) {
 		typevalue.LiteralBool(reg, false), wantFalsy)
 }
 
-func TestSolveAcyclicCFGRowsFailsAtomicallyAtRowBudget(t *testing.T) {
-	graph, branchPoint, left, right, _ := testDiamondCFG()
+func TestSolveAcyclicCFGRowsMergesEquivalentPayloadGuardsExactly(t *testing.T) {
+	graph, branchPoint, _, _, _ := testDiamondCFG()
 	reg := standard.Registry()
 	arena := NewArena(reg)
 	shape := Shape{Params: 1}
@@ -85,12 +85,7 @@ func TestSolveAcyclicCFGRowsFailsAtomicallyAtRowBudget(t *testing.T) {
 		graph,
 		arena,
 		SymbolicCFGRow{Guard: arena.True(), Values: map[symbol.ID]ValueTerm{1: param}},
-		func(point cfg.Point, row SymbolicCFGRow) (SymbolicCFGRow, error) {
-			if point == left || point == right {
-				row.Values[cfgRowResult] = arena.Constant(typevalue.LiteralInt(reg, int64(point)))
-			}
-			return row, nil
-		},
+		nil,
 		func(point cfg.Point, row SymbolicCFGRow, cond bool) (SymbolicCFGRow, Guard, error) {
 			if point != branchPoint {
 				t.Fatalf("branch callback point = %d, want %d", point, branchPoint)
@@ -100,13 +95,13 @@ func TestSolveAcyclicCFGRowsFailsAtomicallyAtRowBudget(t *testing.T) {
 			}
 			return row, arena.Falsy(row.Values[1]), nil
 		},
-		SymbolicCFGOptions{Shape: shape, MaxRows: 1},
+		SymbolicCFGOptions{Shape: shape},
 	)
-	if err == nil || !strings.Contains(err.Error(), "symbolic CFG row budget") {
-		t.Fatalf("error = %v, want row budget failure", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rows != nil {
-		t.Fatalf("rows = %#v, want atomic nil result", rows)
+	if got := rows[graph.Exit()]; len(got) != 1 || got[0].Guard != arena.True() {
+		t.Fatalf("merged exit rows = %#v, want one true-guard payload", got)
 	}
 }
 

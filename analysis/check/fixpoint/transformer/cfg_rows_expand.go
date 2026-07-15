@@ -13,12 +13,13 @@ type SymbolicCFGExpandTransfer func(cfg.Point, SymbolicCFGRow) ([]SymbolicCFGRow
 
 // SolveAcyclicCFGExpandedRows is the row-expanding counterpart of
 // SolveAcyclicCFGRows. It preserves the same deterministic topology, branch,
-// and budget rules while deduplicating only after the complete point transfer.
+// rules while canonicalizing equivalent payloads after the complete point
+// transfer. Acyclic propagation terminates by graph topology; it has no
+// semantic row cap.
 func SolveAcyclicCFGExpandedRows(graph cfg.Graph, arena *Arena, initial SymbolicCFGRow, transfer SymbolicCFGExpandTransfer, branch SymbolicCFGBranch, options SymbolicCFGOptions) (map[cfg.Point][]SymbolicCFGRow, error) {
 	if graph == nil || arena == nil {
 		return nil, fmt.Errorf("transformer: symbolic CFG requires graph and arena")
 	}
-	options = options.normalized()
 	if !validCFGRow(arena, options.Shape, initial) {
 		return nil, fmt.Errorf("transformer: symbolic CFG initial row is invalid for boundary shape")
 	}
@@ -49,10 +50,7 @@ func SolveAcyclicCFGExpandedRows(graph cfg.Graph, arena *Arena, initial Symbolic
 				transferred = append(transferred, out)
 			}
 		}
-		transferred = dedupCFGRows(arena, transferred)
-		if len(transferred) > options.MaxRows {
-			return nil, fmt.Errorf("transformer: symbolic CFG row budget at point %d", point)
-		}
+		transferred = canonicalizeAcyclicCFGRows(arena, transferred)
 		for _, out := range transferred {
 			successors := cfg.SuccessorsReadOnly(graph, point)
 			if len(successors) == 0 {
@@ -90,10 +88,7 @@ func SolveAcyclicCFGExpandedRows(graph cfg.Graph, arena *Arena, initial Symbolic
 			}
 		}
 		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
-			rows[successor] = dedupCFGRows(arena, rows[successor])
-			if len(rows[successor]) > options.MaxRows {
-				return nil, fmt.Errorf("transformer: symbolic CFG row budget at point %d", successor)
-			}
+			rows[successor] = canonicalizeAcyclicCFGRows(arena, rows[successor])
 		}
 	}
 	return rows, nil

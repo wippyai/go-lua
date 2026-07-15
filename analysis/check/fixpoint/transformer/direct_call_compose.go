@@ -26,19 +26,19 @@ type DirectCallBindings struct {
 // substitution. Every feasible caller/callee alternative remains a distinct
 // row, so return correlation, guards, and ordered effects cannot be torn apart.
 // No row is returned on any unsupported output or malformed binding.
-func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int) ([]SymbolicCFGRow, error) {
-	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, maxRows, nil, nil)
+func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView) ([]SymbolicCFGRow, error) {
+	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, nil, nil)
 }
 
-func composeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
-	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, maxRows, nil, annotations)
+func composeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
+	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, nil, annotations)
 }
 
-func composeDirectCallRowsTargeted(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, target DirectCallTarget, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
-	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, maxRows, &target, annotations)
+func composeDirectCallRowsTargeted(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, target DirectCallTarget, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
+	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, &target, annotations)
 }
 
-func composeDirectCallRowsCore(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, target *DirectCallTarget, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
+func composeDirectCallRowsCore(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, target *DirectCallTarget, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
 	if builder == nil || builder.arena == nil || builder.effects == nil || callee.arena == nil {
 		return nil, fmt.Errorf("transformer: direct-call composition requires caller and callee arenas")
 	}
@@ -117,12 +117,6 @@ func composeDirectCallRowsCore(builder *Builder, callerShape Shape, caller Symbo
 	// and binding validation: Bottom is semantic, not an unchecked escape hatch.
 	if bottom {
 		return nil, nil
-	}
-	if maxRows <= 0 {
-		maxRows = 256
-	}
-	if len(callee.rows) > maxRows {
-		return nil, fmt.Errorf("transformer: direct-call row budget %d exceeds %d", len(callee.rows), maxRows)
 	}
 	out := make([]SymbolicCFGRow, 0, len(callee.rows))
 	for rowIndex, calleeRow := range callee.rows {

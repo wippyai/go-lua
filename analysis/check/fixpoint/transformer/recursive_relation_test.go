@@ -58,7 +58,7 @@ func TestComposeDirectCallRowsBottomValidatesBeforeZeroSuccessors(t *testing.T) 
 	bottom := Relation{shape: shape, arena: NewArena(reg)}
 	rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{
 		Guard: caller.Arena().True(), Values: map[symbol.ID]ValueTerm{1: value},
-	}, bottom, bindings, validSite, 4)
+	}, bottom, bindings, validSite)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("Bottom composition = %d rows, %v; want zero successors", len(rows), err)
 	}
@@ -69,20 +69,20 @@ func TestComposeDirectCallRowsBottomValidatesBeforeZeroSuccessors(t *testing.T) 
 			factflow.CallResultTargetLocalAssignment, 0, 0, result, path.NewPath(result, "result"),
 		)},
 	}).View()
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, bindings, invalidSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, bindings, invalidSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed malformed-site validation: rows=%d err=%v", len(rows), err)
 	}
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, DirectCallBindings{}, validSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, DirectCallBindings{}, validSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed binding validation: rows=%d err=%v", len(rows), err)
 	}
 	malformed := bindings
 	malformed.Values = []ValueTerm{ValueTerm(1 << 30)}
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, malformed, validSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, malformed, validSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed caller binding DAG validation: rows=%d err=%v", len(rows), err)
 	}
 	malformed = bindings
 	malformed.Paths = []PathTerm{PathTerm(1 << 30)}
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, malformed, validSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, malformed, validSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed caller path binding validation: rows=%d err=%v", len(rows), err)
 	}
 	missingPoint := factflow.NewCallSite(factflow.CallSiteConfig{
@@ -91,15 +91,15 @@ func TestComposeDirectCallRowsBottomValidatesBeforeZeroSuccessors(t *testing.T) 
 			factflow.CallResultTargetLocalAssignment, 0, 0, result, path.NewPath(result, "result"),
 		)},
 	}).View()
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, bindings, missingPoint, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, bindings, missingPoint); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed exact source-point validation: rows=%d err=%v", len(rows), err)
 	}
-	if rows, err := ComposeDirectCallRows(caller, Shape{}, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, bindings, validSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, Shape{}, SymbolicCFGRow{Guard: caller.Arena().True()}, bottom, bindings, validSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed caller shape ownership: rows=%d err=%v", len(rows), err)
 	}
 	contractedBottom := bottom
 	contractedBottom.paramContracts = []product.Value{product.Top()}
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, contractedBottom, bindings, validSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, contractedBottom, bindings, validSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom silently discarded parameter contracts: rows=%d err=%v", len(rows), err)
 	}
 	foreignReg, err := standard.RegistryWithAxes()
@@ -107,7 +107,7 @@ func TestComposeDirectCallRowsBottomValidatesBeforeZeroSuccessors(t *testing.T) 
 		t.Fatal(err)
 	}
 	foreign := Relation{shape: shape, arena: NewArena(foreignReg)}
-	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, foreign, bindings, validSite, 4); err == nil || len(rows) != 0 {
+	if rows, err := ComposeDirectCallRows(caller, shape, SymbolicCFGRow{Guard: caller.Arena().True()}, foreign, bindings, validSite); err == nil || len(rows) != 0 {
 		t.Fatalf("Bottom bypassed registry identity validation: rows=%d err=%v", len(rows), err)
 	}
 }

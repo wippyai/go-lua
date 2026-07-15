@@ -435,7 +435,7 @@ func (p *PreparedPlanCompiler) lowerPreparedPointWithAnnotations(base planCompil
 				if err != nil {
 					return nil, fmt.Errorf("direct call: %w", err)
 				}
-				composed, err := composeDirectCallRowsTargeted(p.builder, p.shape, row, callee, bindings, site, 256, directTarget, annotations)
+				composed, err := composeDirectCallRowsTargeted(p.builder, p.shape, row, callee, bindings, site, directTarget, annotations)
 				if err != nil {
 					return nil, err
 				}
