@@ -36,7 +36,11 @@
 // chain is eventually stationary. A domain whose Widen is not a true widening
 // (does not satisfy ACC) can make Solve run forever; that is a domain-law bug,
 // not a concern the solver papers over with a cap. The optional narrowing phase
-// is deliberately bounded by defaultNarrowIterations.
+// also has no artificial iteration cap. Each accepted replacement must be a
+// strict decrease in the lattice order, and the domain's Narrow operator must
+// make every such decreasing sequence eventually stationary. Narrowing stops
+// only at equality; failure to stabilize is a domain-law bug rather than a
+// condition the solver hides with a cap.
 package solve
 
 import (
@@ -61,12 +65,6 @@ const cancellationCheckInterval = cancellation.EveryCheap
 type Stats struct {
 	TransferCalls int
 }
-
-// defaultNarrowIterations bounds the decreasing pass after a widened fixpoint
-// stabilizes. Two passes is the standard practical compromise: it recovers
-// bounds lost to widening at loop heads while preserving unconditional
-// termination independent of the domain's descending-chain height.
-const defaultNarrowIterations = 2
 
 // EquationSystem describes a monotone equation system to be solved.
 //
@@ -796,8 +794,8 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 	if s.domain.Narrow == nil || !s.hasWiden || len(s.cells) == 0 {
 		return nil
 	}
-	for i := 0; i < defaultNarrowIterations; i++ {
-		if err := cancel.err(uint64(i * cancellationCheckInterval)); err != nil {
+	for iteration := uint64(0); ; iteration++ {
+		if err := cancel.err(iteration * uint64(cancellationCheckInterval)); err != nil {
 			return err
 		}
 		candidate, candidateOnlyOrder, err := s.narrowingCandidate(cancel)
@@ -839,7 +837,6 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 			return nil
 		}
 	}
-	return cancel.err(0)
 }
 
 func cloneMap[K comparable, V any](in map[K]V) map[K]V {

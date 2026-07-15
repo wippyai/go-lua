@@ -647,6 +647,38 @@ func TestSolve_NarrowingCoversEmittedAndCandidateOnlyCellsInSameIteration(t *tes
 	}
 }
 
+func TestSolve_NarrowingRunsToEqualityBeyondHistoricalCaps(t *testing.T) {
+	const depth = 96
+	l := capLattice{top: depth}.lattice()
+	l.Narrow = func(previous, candidate int) int {
+		if candidate < previous {
+			return previous - 1
+		}
+		return previous
+	}
+	narrowCalls := 0
+	sys := EquationSystem[string, int]{
+		Lattice: l,
+		Cells:   []string{"loop"},
+		Transfer: func(cell string, _ func(string) int, emit func(string, int)) {
+			narrowCalls++
+			emit(cell, 0)
+		},
+		TransferVersioned: func(cell string, _ func(string) (int, uint64), emit func(string, int)) {
+			emit(cell, depth)
+		},
+		WidenAt: func(string) bool { return true },
+	}
+
+	got := Solve(sys)
+	if got["loop"] != 0 {
+		t.Fatalf("narrowed value = %d, want equality fixed point 0", got["loop"])
+	}
+	if narrowCalls != depth+1 {
+		t.Fatalf("narrowing transfer calls = %d, want %d strict rounds plus equality round", narrowCalls, depth+1)
+	}
+}
+
 func TestSolve_InitialSparseMaterializesUntouchedDeclaredCellsAsBottom(t *testing.T) {
 	cl := capLattice{top: 100}
 	sys := EquationSystem[string, int]{

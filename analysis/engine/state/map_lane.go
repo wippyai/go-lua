@@ -88,7 +88,7 @@ func wrapDomain[E any, L any](
 	wrap func(E) L,
 	unwrap func(L) E,
 ) lattice.Lattice[L] {
-	return lattice.Lattice[L]{
+	out := lattice.Lattice[L]{
 		Bottom:   func() L { return wrap(elem.Bottom()) },
 		Top:      func() L { return wrap(elem.Top()) },
 		Equal:    func(a, b L) bool { return elem.Equal(unwrap(a), unwrap(b)) },
@@ -96,6 +96,10 @@ func wrapDomain[E any, L any](
 		Join:     func(a, b L) L { return wrap(elem.Join(unwrap(a), unwrap(b))) },
 		Widen:    func(prev, next L) L { return wrap(elem.Widen(unwrap(prev), unwrap(next))) },
 	}
+	if elem.Narrow != nil {
+		out.Narrow = func(prev, next L) L { return wrap(elem.Narrow(unwrap(prev), unwrap(next))) }
+	}
+	return out
 }
 
 // mapLane is the canonical state-side storage adapter for a finite map of facts

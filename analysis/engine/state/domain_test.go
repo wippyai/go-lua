@@ -112,6 +112,27 @@ func TestDomainWidenReusesPreviousWhenNextSubsumed(t *testing.T) {
 	}
 }
 
+func TestNumCeilLanePreservesNarrowThroughWrapper(t *testing.T) {
+	reg := standard.Registry()
+	domain := DomainWithLanes(reg, []LaneID{LaneNumCeils})
+	ks := keyspace.New()
+	root := pathdom.NewPath(symbol.ID(1), "n")
+	root.Version = 1
+	stateKey, ok := pathaddr.StateKeyFromPathKey(root.Key())
+	if !ok {
+		t.Fatal("failed to construct numeric state key")
+	}
+	exact := domain.Bottom().WriteNumCeil(ks, stateKey, 7)
+
+	got := domain.Narrow(domain.Top(), exact)
+	if !domain.LessOrEq(got, domain.Top()) || domain.Equal(got, domain.Top()) {
+		t.Fatalf("narrow(top, exact) did not strictly descend: %#v", got.NumCeilsSnapshot(ks))
+	}
+	if ceil, ok := got.ReadNumCeil(ks, stateKey); !ok || ceil != 7 {
+		t.Fatalf("narrowed ceiling = %d/%v, want 7", ceil, ok)
+	}
+}
+
 func TestNormalizeForDomainDropsDisabledLanes(t *testing.T) {
 	reg := standard.Registry()
 	slot := key.SymbolValue(symbol.ID(13))

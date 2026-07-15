@@ -247,8 +247,11 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 		}
 	}
 
-	// Match solve's two bounded decreasing passes exactly. Candidate equations
-	// read the converged state and accumulate from immutable initial values.
+	// Match solve's decreasing fixed point exactly. Candidate equations read the
+	// converged state and accumulate from immutable initial values. Every
+	// accepted replacement is a strict lattice decrease, and the Narrow domain
+	// contract requires repeated application to become stationary. Equality is
+	// the mathematical termination condition.
 	hasWiden := false
 	for _, point := range sys.Cells {
 		if widenAt(point) {
@@ -259,7 +262,7 @@ func Run(config RunConfig, sys solve.EquationSystem[cfg.Point, state.State], pla
 	if domain.Narrow != nil && hasWiden {
 		candidate := make([]state.State, n)
 		candidateSet := make([]bool, n)
-		for pass := 0; pass < 2; pass++ {
+		for pass := 0; ; pass++ {
 			for point := 0; point < n; point++ {
 				candidate[point] = bottom
 				candidateSet[point] = false
