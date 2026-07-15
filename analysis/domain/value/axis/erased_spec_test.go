@@ -1,6 +1,7 @@
 package axis
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
@@ -29,10 +30,14 @@ func (forgedErasedSpec) CanonicalCodecID() string                        { retur
 func (forgedErasedSpec) CanonicalCodecVersion() uint64                   { return 1 }
 func (forgedErasedSpec) CanonicalPendingReason() string                  { return "" }
 func (forgedErasedSpec) EncodeCanonicalAny(*canonical.Writer, any) error { return nil }
-func (forgedErasedSpec) BoundaryPolicy() BoundaryPolicy                  { return PortableIdentity }
-func (forgedErasedSpec) ProjectBoundaryAny(v any) any                    { return v }
-func (forgedErasedSpec) ReducerHook() Reducer                            { return nil }
-func (forgedErasedSpec) ReducerReadsHook() []string                      { return nil }
+func (forgedErasedSpec) CanonicalDecodeReady() bool                      { return false }
+func (forgedErasedSpec) DecodeCanonicalAny(context.Context, *canonical.Reader) (any, error) {
+	return nil, nil
+}
+func (forgedErasedSpec) BoundaryPolicy() BoundaryPolicy { return PortableIdentity }
+func (forgedErasedSpec) ProjectBoundaryAny(v any) any   { return v }
+func (forgedErasedSpec) ReducerHook() Reducer           { return nil }
+func (forgedErasedSpec) ReducerReadsHook() []string     { return nil }
 
 // staleReadyErasedSpec models descriptor metadata that passed an older typed
 // boundary but arrives at Registry without a usable schema version.

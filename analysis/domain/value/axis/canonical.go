@@ -1,6 +1,7 @@
 package axis
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
@@ -25,7 +26,24 @@ type CanonicalDescriptor[T any] struct {
 	codecID       string
 	version       uint64
 	encode        func(*canonical.Writer, T) error
+	decode        func(context.Context, *canonical.Reader) (T, error)
 	pendingReason string
+}
+
+// ReadyCanonicalBidirectional declares the same canonical identity authority
+// as ReadyCanonical and additionally supplies its exact materializer. Decode
+// capability does not change the wire schema identity; it is a local ability
+// to reconstruct that already-versioned semantic value.
+func ReadyCanonicalBidirectional[T any](
+	codecID string,
+	version uint64,
+	encode func(*canonical.Writer, T) error,
+	decode func(context.Context, *canonical.Reader) (T, error),
+) CanonicalDescriptor[T] {
+	return CanonicalDescriptor[T]{
+		status: CanonicalReady, codecID: codecID, version: version,
+		encode: encode, decode: decode,
+	}
 }
 
 // ReadyCanonical declares a complete portable codec. codecID identifies the
@@ -64,7 +82,7 @@ func validateCanonicalDescriptor[T any](axisID string, descriptor CanonicalDescr
 		if descriptor.pendingReason == "" {
 			return fmt.Errorf("axis %q: pending canonical descriptor has empty reason", axisID)
 		}
-		if descriptor.codecID != "" || descriptor.version != 0 || descriptor.encode != nil {
+		if descriptor.codecID != "" || descriptor.version != 0 || descriptor.encode != nil || descriptor.decode != nil {
 			return fmt.Errorf("axis %q: pending canonical descriptor carries ready codec authority", axisID)
 		}
 	default:

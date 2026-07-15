@@ -1,6 +1,9 @@
 package identity
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
@@ -8,7 +11,46 @@ import (
 const canonicalValueRecord uint64 = 1
 
 func canonicalDescriptor() axis.CanonicalDescriptor[Value] {
-	return axis.ReadyCanonical("value.axis.identity", 1, encodeCanonical)
+	return axis.ReadyCanonicalBidirectional("value.axis.identity", 1, encodeCanonical, decodeCanonical)
+}
+
+func decodeCanonical(_ context.Context, reader *canonical.Reader) (Value, error) {
+	record, err := reader.Record()
+	if err != nil {
+		return Bottom(), err
+	}
+	if record != canonicalValueRecord {
+		return Bottom(), fmt.Errorf("identity: invalid canonical record %d", record)
+	}
+	rawState, err := reader.Uint()
+	if err != nil {
+		return Bottom(), err
+	}
+	if rawState > uint64(top) {
+		return Bottom(), fmt.Errorf("identity: invalid canonical state")
+	}
+	decodedState := state(rawState)
+	if decodedState == singleton {
+		kind, err := reader.String()
+		if err != nil {
+			return Bottom(), err
+		}
+		site, err := reader.String()
+		if err != nil {
+			return Bottom(), err
+		}
+		index, err := reader.Uint()
+		if err != nil {
+			return Bottom(), err
+		}
+		id := ID{Kind: kind, Site: site, Index: index}
+		if id == (ID{}) {
+			return Bottom(), fmt.Errorf("identity: canonical singleton has zero identity")
+		}
+		return Value{state: decodedState, id: id}, nil
+	}
+	// Bottom and Top have no payload in the constructor-reachable carrier.
+	return Value{state: decodedState}, nil
 }
 
 // encodeCanonical writes exactly the state observed by Equal. Only singleton

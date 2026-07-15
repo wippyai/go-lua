@@ -19,7 +19,50 @@ const canonicalValueRecord uint64 = 1
 var ErrNonportableRecursiveIdentity = errors.New("typewitness: recursive identity is not portable")
 
 func canonicalDescriptor() axis.CanonicalDescriptor[Value] {
-	return axis.ReadyCanonical("value.axis.typewitness", 1, encodeCanonical)
+	return axis.ReadyCanonicalBidirectional("value.axis.typewitness", 1, encodeCanonical, decodeCanonical)
+}
+
+func decodeCanonical(ctx context.Context, reader *canonical.Reader) (Value, error) {
+	record, err := reader.Record()
+	if err != nil {
+		return Bottom(), err
+	}
+	if record != canonicalValueRecord {
+		return Bottom(), fmt.Errorf("typewitness: invalid canonical record %d", record)
+	}
+	rawState, err := reader.Uint()
+	if err != nil {
+		return Bottom(), err
+	}
+	if rawState > uint64(top) {
+		return Bottom(), fmt.Errorf("typewitness: invalid canonical state")
+	}
+	switch state(rawState) {
+	case bottom:
+		return Bottom(), nil
+	case top:
+		return Top(), nil
+	case concrete:
+		structural, err := reader.Bytes()
+		if err != nil {
+			return Bottom(), err
+		}
+		decoded, err := typ.DecodeCanonical(ctx, structural)
+		if errors.Is(err, typ.ErrCanonicalRecursiveIdentityUnavailable) {
+			return Bottom(), ErrNonportableRecursiveIdentity
+		}
+		if err != nil {
+			return Bottom(), fmt.Errorf("typewitness: decode structural type: %w", err)
+		}
+		value := Of(decoded)
+		decodedState, stateErr := canonicalState(value)
+		if stateErr != nil || decodedState != concrete || typ.ContainsRecursive(decoded) {
+			return Bottom(), fmt.Errorf("typewitness: decoded structural type is not a concrete portable witness")
+		}
+		return value, nil
+	default:
+		return Bottom(), fmt.Errorf("typewitness: invalid canonical state")
+	}
 }
 
 // encodeCanonical is complete for Bottom, Top, and concrete nonrecursive

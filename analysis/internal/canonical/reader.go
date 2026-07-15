@@ -159,6 +159,16 @@ func (r *Reader) Err() error {
 	return r.err
 }
 
+// RemainingBytes reports the unread structural storage. Decoders use it only
+// to prove allocation counts against the input that must contain them; it is
+// not a semantic size budget.
+func (r *Reader) RemainingBytes() int {
+	if r == nil || !r.started || r.at > len(r.raw) {
+		return 0
+	}
+	return len(r.raw) - r.at
+}
+
 func (r *Reader) uvarintEvent(tag byte) (uint64, error) {
 	payload, err := r.event(tag)
 	if err != nil {

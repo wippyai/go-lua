@@ -1,6 +1,7 @@
 package axis
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
@@ -170,6 +171,8 @@ type ErasedSpec interface {
 	CanonicalCodecVersion() uint64
 	CanonicalPendingReason() string
 	EncodeCanonicalAny(*canonical.Writer, any) error
+	CanonicalDecodeReady() bool
+	DecodeCanonicalAny(context.Context, *canonical.Reader) (any, error)
 	BoundaryPolicy() BoundaryPolicy
 	ProjectBoundaryAny(any) any
 	ReducerHook() Reducer
@@ -248,6 +251,17 @@ func (e erasedSpec[T]) EncodeCanonicalAny(writer *canonical.Writer, value any) e
 		return fmt.Errorf("axis %q: canonical codec is not ready", e.ID())
 	}
 	return e.spec.Canonical.encode(writer, e.cast(value))
+}
+
+func (e erasedSpec[T]) CanonicalDecodeReady() bool {
+	return e.spec.Canonical.status == CanonicalReady && e.spec.Canonical.decode != nil
+}
+
+func (e erasedSpec[T]) DecodeCanonicalAny(ctx context.Context, reader *canonical.Reader) (any, error) {
+	if !e.CanonicalDecodeReady() {
+		return nil, fmt.Errorf("axis %q: canonical decoder is unavailable", e.ID())
+	}
+	return e.spec.Canonical.decode(ctx, reader)
 }
 
 func (e erasedSpec[T]) RetentionSafeAny(value any) bool {
