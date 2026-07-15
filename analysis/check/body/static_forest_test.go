@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -76,7 +77,10 @@ func TestPreparedStaticForestBuildsEachLexicalBodyExactlyOnce(t *testing.T) {
 func TestPreparedStaticForestPreservesPerBodySemanticIdentity(t *testing.T) {
 	stmts := parseChunk(t, nestedFunctionSource(3))
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	config := Config{Registry: standard.Registry()}
+	config := Config{
+		Registry:      standard.Registry(),
+		UnitNamespace: lexicalidentity.UnitNamespaceFromContent([]byte("nested-forest-production-unit")),
+	}
 	forest, err := PrepareBoundChunkForest(stmts, bindings, config)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +115,10 @@ func assertStaticIdentityEqual(t *testing.T, legacy, forest *Static, label strin
 func BenchmarkPreparedStaticForestNestedPathology(b *testing.B) {
 	stmts := parseChunk(b, nestedFunctionSource(64))
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	config := Config{Registry: standard.Registry()}
+	config := Config{
+		Registry:      standard.Registry(),
+		UnitNamespace: lexicalidentity.UnitNamespaceFromContent([]byte("nested-forest-production-unit")),
+	}
 	b.Run("recursive-per-owner", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
