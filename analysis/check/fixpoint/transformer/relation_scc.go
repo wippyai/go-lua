@@ -25,17 +25,15 @@ type RelationCell struct {
 	Equation     RelationEquation
 }
 
-// RelationSolveOptions bound cyclic growth. Exceeding either budget fails the
-// complete SCC closed to contextual Top; rows are never independently cut.
+// RelationSolveOptions bounds the temporary synchronous implementation while
+// recursive tuple-mu publication is being installed. Row count is deliberately
+// absent: a finite set of distinct correlated alternatives is semantic data,
+// never a resource budget.
 type RelationSolveOptions struct {
-	MaxRows       int
 	MaxIterations int
 }
 
 func (o RelationSolveOptions) normalized() RelationSolveOptions {
-	if o.MaxRows <= 0 {
-		o.MaxRows = 4096
-	}
 	if o.MaxIterations <= 0 {
 		o.MaxIterations = 256
 	}
@@ -124,7 +122,7 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 			if err != nil {
 				return RelationSnapshot{}, err
 			}
-			values[component[0]] = widenRelationCell(ctx, values[component[0]], next, options.MaxRows)
+			values[component[0]] = widenRelationCell(ctx, values[component[0]], next)
 			continue
 		}
 		converged := false
@@ -140,7 +138,7 @@ func SolveRelationCells(ctx context.Context, cells []RelationCell, options Relat
 				if err != nil {
 					return RelationSnapshot{}, err
 				}
-				next = widenRelationCell(ctx, values[ref], next, options.MaxRows)
+				next = widenRelationCell(ctx, values[ref], next)
 				if next.contextual != "" {
 					failedReason = next.contextual
 					break
@@ -189,7 +187,7 @@ func relationCellBottom(cell RelationCell) Relation {
 	return Relation{shape: cell.Shape, arena: cell.Arena, observationComplete: true}
 }
 
-func widenRelationCell(ctx context.Context, previous, next Relation, maxRows int) Relation {
+func widenRelationCell(ctx context.Context, previous, next Relation) Relation {
 	// Contextual is Top. Preserve the original fail-closed reason and owning
 	// identity rather than asking the generic lattice join to synthesize a new
 	// incompatibility reason.
@@ -199,7 +197,7 @@ func widenRelationCell(ctx context.Context, previous, next Relation, maxRows int
 	if next.contextual != "" {
 		return next
 	}
-	return widenRelation(ctx, previous, next, maxRows)
+	return joinRelation(ctx, previous, next)
 }
 
 func evaluateRelationCell(ctx context.Context, cell RelationCell, values map[CellRef]Relation) (Relation, error) {

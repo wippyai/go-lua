@@ -157,7 +157,7 @@ func (program *relationRegionProgram) solve(ctx context.Context, options Relatio
 					equationErr = evaluateErr
 					return relationRegionStamp{component: component.id, revision: runtime.revision}
 				}
-				relation = widenRelationCell(ctx, previous, relation, options.MaxRows)
+				relation = widenRelationCell(ctx, previous, relation)
 				if !EqualRelation(previous, relation) {
 					values[ref] = relation
 					runtime.revision++
@@ -178,7 +178,7 @@ func (program *relationRegionProgram) solve(ctx context.Context, options Relatio
 					}
 					// This is the one relation widening boundary. The region
 					// lattice below carries stamps, never Relations.
-					relation = widenRelationCell(ctx, runtime.current[relationIndex], relation, options.MaxRows)
+					relation = widenRelationCell(ctx, runtime.current[relationIndex], relation)
 					if relation.ContextualReason() != "" {
 						failedReason = relation.ContextualReason()
 						break

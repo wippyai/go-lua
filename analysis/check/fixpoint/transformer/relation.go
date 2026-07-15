@@ -580,22 +580,11 @@ func joinProjectionTraceReason(a, b Relation) string {
 	return ""
 }
 
-// WidenRelation preserves correlation. Budget overflow becomes contextual Top
-// instead of independently collapsing guarded outputs.
-func WidenRelation(prev, next Relation, maxRows int) Relation {
-	return widenRelation(context.Background(), prev, next, maxRows)
-}
-
-func widenRelation(ctx context.Context, prev, next Relation, maxRows int) Relation {
-	out := joinRelation(ctx, prev, next)
-	if out.contextual == "" && maxRows > 0 && len(out.rows) > maxRows {
-		out.rows = nil
-		out.contextual = "row budget"
-		out.widened = true
-		out.projectionTrace = nil
-		out.projectionTraceReason = "projection trace: semantic row budget"
-	}
-	return out
+// WidenRelation preserves every distinct correlated alternative. The relation
+// representation does not turn a row count into contextual Top: convergence
+// belongs to the recursive tuple algebra, not an arbitrary cardinality limit.
+func WidenRelation(prev, next Relation) Relation {
+	return joinRelation(context.Background(), prev, next)
 }
 func EqualRelation(a, b Relation) bool {
 	if a.arena == nil || b.arena == nil {

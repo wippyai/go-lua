@@ -245,7 +245,7 @@ func TestProjectionTraceMetadataParticipatesInPublicationLattice(t *testing.T) {
 	left := mustTestRelation(t, builder, certificate, "left")
 	right := mustTestRelation(t, builder, certificate, "right")
 	baselineJoin := JoinRelation(left, right)
-	baselineWiden := WidenRelation(left, right, 8)
+	baselineWiden := WidenRelation(left, right)
 	tracedLeft, tracedRight := left, right
 	tracedLeft.projectionTrace = &sparseProjectionTrace{}
 	tracedLeft.projectionTrace.schema[0] = 1
@@ -262,14 +262,14 @@ func TestProjectionTraceMetadataParticipatesInPublicationLattice(t *testing.T) {
 	if LessOrEqRelation(tracedLeft, tracedRight) || LessOrEqRelation(tracedRight, tracedLeft) {
 		t.Fatal("incompatible traces entered publication order")
 	}
-	widened := WidenRelation(tracedLeft, tracedRight, 8)
+	widened := WidenRelation(tracedLeft, tracedRight)
 	if widened.ContextualReason() != "" || widened.Widened() || EqualRelation(widened, baselineWiden) || widened.projectionTrace != nil {
 		t.Fatalf("incompatible trace poisoned semantic widen: %#v", widened)
 	}
-	baselineBudget := WidenRelation(left, right, 1)
-	traceBudget := WidenRelation(tracedLeft, tracedRight, 1)
-	if baselineBudget.ContextualReason() != traceBudget.ContextualReason() || baselineBudget.Widened() != traceBudget.Widened() || baselineBudget.Rows() != traceBudget.Rows() {
-		t.Fatal("trace metadata changed semantic row-budget widening")
+	baselineExact := WidenRelation(left, right)
+	traceExact := WidenRelation(tracedLeft, tracedRight)
+	if baselineExact.ContextualReason() != traceExact.ContextualReason() || baselineExact.Widened() != traceExact.Widened() || baselineExact.Rows() != traceExact.Rows() {
+		t.Fatal("trace metadata changed exact relation widening")
 	}
 }
 

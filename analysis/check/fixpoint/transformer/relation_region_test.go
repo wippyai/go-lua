@@ -185,7 +185,7 @@ func TestRelationRegionDifferentialWidening(t *testing.T) {
 			}
 		},
 	}}
-	options := RelationSolveOptions{MaxRows: 2, MaxIterations: 16}
+	options := RelationSolveOptions{MaxIterations: 16}
 	want, err := SolveRelationCells(context.Background(), cells, options)
 	if err != nil {
 		t.Fatal(err)
@@ -196,8 +196,8 @@ func TestRelationRegionDifferentialWidening(t *testing.T) {
 	}
 	assertRelationSnapshotsEqual(t, want, got)
 	widened, ok := got.Lookup(ref)
-	if !ok || widened.ContextualReason() != "row budget" || !widened.Widened() || widened.Rows() != 0 || widened.arena != builder.Arena() || widened.Shape() != one.Shape() {
-		t.Fatalf("widened relation identity/flags differ: ok=%v relation=%#v", ok, widened)
+	if !ok || widened.ContextualReason() != "" || widened.Widened() || widened.Rows() != 3 || widened.arena != builder.Arena() || widened.Shape() != one.Shape() {
+		t.Fatalf("exact relation identity/flags differ: ok=%v relation=%#v", ok, widened)
 	}
 }
 

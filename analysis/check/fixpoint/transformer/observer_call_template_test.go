@@ -78,7 +78,7 @@ func TestObserverCallTemplatesConvergeInRecursiveSCCWithoutPathGrowth(t *testing
 			current, _ := view.Lookup(ref)
 			return JoinRelation(current, contribution), nil
 		},
-	}}, RelationSolveOptions{MaxRows: 8, MaxIterations: 8})
+	}}, RelationSolveOptions{MaxIterations: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

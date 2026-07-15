@@ -192,7 +192,7 @@ func TestJoinAndWidenPreserveDeclaredReturnDescriptor(t *testing.T) {
 	}
 	for name, composed := range map[string]Relation{
 		"join":  JoinRelation(bottom, relation),
-		"widen": WidenRelation(bottom, relation, 8),
+		"widen": WidenRelation(bottom, relation),
 	} {
 		got, exact := composed.Specialize(cursor, nil, nil)
 		if !exact || len(got.Returns) != 1 {

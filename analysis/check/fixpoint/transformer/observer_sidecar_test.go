@@ -70,8 +70,8 @@ func TestRelationObservationSidecarIsPublicationVisibleAndACI(t *testing.T) {
 	}
 	left := JoinRelation(base, enriched)
 	right := JoinRelation(enriched, base)
-	if got := WidenRelation(base, enriched, 1); got.ContextualReason() != "" || got.Rows() != 1 {
-		t.Fatalf("annotation consumed row budget: reason=%q rows=%d", got.ContextualReason(), got.Rows())
+	if got := WidenRelation(base, enriched); got.ContextualReason() != "" || got.Rows() != 1 {
+		t.Fatalf("annotation changed semantic row cardinality: reason=%q rows=%d", got.ContextualReason(), got.Rows())
 	}
 	for name, relation := range map[string]Relation{"left": left, "right": right} {
 		if len(relation.rows) != 1 || len(relation.rows[0].Observations) != 2 ||
@@ -144,7 +144,7 @@ func TestRelationSCCObservationOnlyGrowthReachesPublicationFixpoint(t *testing.T
 			}
 			return enriched, nil
 		},
-	}}, RelationSolveOptions{MaxRows: 1, MaxIterations: 8})
+	}}, RelationSolveOptions{MaxIterations: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

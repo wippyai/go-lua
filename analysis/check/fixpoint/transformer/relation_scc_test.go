@@ -49,7 +49,7 @@ func TestRelationSCCAcyclicFreezesCalleeBeforeCaller(t *testing.T) {
 	}
 }
 
-func TestRelationSCCRecursiveGrowthWidensWholeRelation(t *testing.T) {
+func TestRelationSCCRecursiveGrowthKeepsEveryCorrelatedAlternative(t *testing.T) {
 	reg := standard.Registry()
 	b, certificate := emptyBuilder(t, reg, Shape{Params: 1}, nil)
 	one := mustTestRelation(t, b, certificate, "one")
@@ -77,15 +77,15 @@ func TestRelationSCCRecursiveGrowthWidensWholeRelation(t *testing.T) {
 				return three, nil
 			}
 		},
-	}}, RelationSolveOptions{MaxRows: 2, MaxIterations: 16})
+	}}, RelationSolveOptions{MaxIterations: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, ok := snapshot.Lookup(ref)
-	if !ok || got.ContextualReason() != "row budget" || !got.Widened() || got.Rows() != 0 {
-		t.Fatalf("recursive growth did not widen atomically: ok=%v reason=%q widened=%v rows=%d", ok, got.ContextualReason(), got.Widened(), got.Rows())
+	if !ok || got.ContextualReason() != "" || got.Widened() || got.Rows() != 3 || !EqualRelation(got, three) {
+		t.Fatalf("recursive growth lost a correlated alternative: ok=%v reason=%q widened=%v rows=%d", ok, got.ContextualReason(), got.Widened(), got.Rows())
 	}
-	if calls != 3 {
+	if calls != 4 {
 		t.Fatalf("unexpected convergence rounds: %d", calls)
 	}
 }

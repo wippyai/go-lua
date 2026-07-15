@@ -420,9 +420,9 @@ func TestRelationJoinAndWidenLaws(t *testing.T) {
 	if !LessOrEqRelation(x, JoinRelation(x, y)) {
 		t.Fatal("join upper bound")
 	}
-	top := WidenRelation(JoinRelation(x, y), z, 2)
-	if top.ContextualReason() == "" || !top.Widened() || !LessOrEqRelation(x, top) {
-		t.Fatal("widen must fail closed to top")
+	all := WidenRelation(JoinRelation(x, y), z)
+	if all.ContextualReason() != "" || all.Widened() || all.Rows() != 3 || !LessOrEqRelation(x, all) {
+		t.Fatal("widen lost a finite correlated alternative")
 	}
 }
 
