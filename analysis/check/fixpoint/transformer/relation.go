@@ -220,7 +220,7 @@ func (b *Builder) bottomRelation() Relation {
 	}
 	return Relation{
 		shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors,
-		authority: snapshotRelationOutputAuthority(b.effectCatalog, b.caps),
+		authority:               snapshotRelationOutputAuthority(b.effectCatalog, b.caps),
 		inferReturnCorrelations: b.inferReturnCorrelations,
 		observationComplete:     true,
 		paramContracts:          contracts,
@@ -564,7 +564,7 @@ func joinRelation(ctx context.Context, a, b Relation) Relation {
 
 func unmaterializedRelationBottom(r Relation) bool {
 	return r.IsBottom() && r.projectionTrace == nil && r.projectionTraceReason == "" &&
-		len(r.annotations.observations) == 0 && len(r.annotations.obligations) == 0
+		len(r.annotations.observations) == 0 && len(r.annotations.obligations) == 0 && len(r.annotations.calls) == 0
 }
 
 func joinProjectionTraceReason(a, b Relation) string {

@@ -28,10 +28,18 @@ type DirectCallBindings struct {
 // row, so return correlation, guards, and ordered effects cannot be torn apart.
 // No row is returned on any unsupported output or malformed binding.
 func ComposeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int) ([]SymbolicCFGRow, error) {
-	return composeDirectCallRows(builder, callerShape, caller, callee, bindings, site, maxRows, nil)
+	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, maxRows, nil, nil)
 }
 
 func composeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
+	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, maxRows, nil, annotations)
+}
+
+func composeDirectCallRowsTargeted(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, target DirectCallTarget, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
+	return composeDirectCallRowsCore(builder, callerShape, caller, callee, bindings, site, maxRows, &target, annotations)
+}
+
+func composeDirectCallRowsCore(builder *Builder, callerShape Shape, caller SymbolicCFGRow, callee Relation, bindings DirectCallBindings, site factflow.CallSiteView, maxRows int, target *DirectCallTarget, annotations *relationAnnotations) ([]SymbolicCFGRow, error) {
 	if builder == nil || builder.arena == nil || builder.effects == nil || callee.arena == nil {
 		return nil, fmt.Errorf("transformer: direct-call composition requires caller and callee arenas")
 	}
@@ -77,6 +85,17 @@ func composeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicC
 	if _, err := rebaseDirectCallTermDAGs(builder.arena, callee.arena, rootBindings, TermRebaseInput{}); err != nil {
 		return nil, err
 	}
+	if target != nil {
+		if annotations == nil {
+			return nil, fmt.Errorf("transformer: direct-call target requires relation annotation ownership")
+		}
+		if target.Shape != callee.shape {
+			return nil, fmt.Errorf("transformer: observer call target shape differs from callee")
+		}
+		if err := recordObserverCallAnnotation(builder, caller, *target, rootBindings, site, annotations); err != nil {
+			return nil, err
+		}
+	}
 	// Prefix evidence belongs to the caller lexical owner and is reached before
 	// the call can return or diverge. Publish it monotonically for every direct
 	// call, not only Bottom: a callee may have returning rows for one guard
@@ -118,6 +137,31 @@ func composeDirectCallRows(builder *Builder, callerShape Shape, caller SymbolicC
 		}
 	}
 	return dedupCFGRows(builder.arena, out), nil
+}
+
+func recordObserverCallAnnotation(builder *Builder, caller SymbolicCFGRow, target DirectCallTarget, bindings TermRootBindings, site factflow.CallSiteView, annotations *relationAnnotations) error {
+	if builder == nil || builder.plan == nil || annotations == nil || target.Cell == (CellRef{}) || bindings.callee != target.Shape ||
+		len(bindings.values) != target.Shape.ValueCount() || len(bindings.paths) != len(bindings.values) {
+		return fmt.Errorf("transformer: observer call has incomplete boundary ownership")
+	}
+	point, exact := site.Point()
+	if !exact {
+		return fmt.Errorf("transformer: observer call has no exact CFG point")
+	}
+	anchor, durable := builder.plan.CallInvocationObservationAnchor(point)
+	if !durable {
+		return fmt.Errorf("transformer: observer call has no durable invocation occurrence")
+	}
+	template := ObserverCallTemplate{
+		owner: builder.plan.ObservationBody(), occurrence: anchor, point: point,
+		target: target, guard: caller.Guard,
+		values: append([]ValueTerm(nil), bindings.values...), paths: append([]PathTerm(nil), bindings.paths...),
+	}
+	if !template.valid(builder.arena, builder.shape) {
+		return fmt.Errorf("transformer: observer call template is malformed")
+	}
+	annotations.calls = recordObserverCallTemplate(annotations.calls, template)
+	return nil
 }
 
 func recordCallEntryAnnotations(builder *Builder, caller SymbolicCFGRow, callee Relation, bindings TermRootBindings, site factflow.CallSiteView, annotations *relationAnnotations) error {

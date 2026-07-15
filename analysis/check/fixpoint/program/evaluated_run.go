@@ -49,6 +49,7 @@ func evaluatedBindingOrderMatchesPlan(plan *operationplan.Plan, binding evaluate
 type evaluatedProgram struct {
 	entryBody    lexicalidentity.StableLexicalBodyID
 	observer     lexicalObserverForest
+	program      observerProgramArtifact
 	shadowBodies []lexicalidentity.StableLexicalBodyID
 	shadowRoots  map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact
 }
@@ -253,96 +254,65 @@ func solveEvaluatedProgramTransaction(
 	if err := ctx.Err(); err != nil {
 		return evaluatedProgram{}, err
 	}
-
-	// The observer transaction publishes only its unique chunk entry. The
-	// shadow/oracle transaction retains the older all-body projection solely for
-	// differential tests; it is not on the production-shaped activation path.
-	projectionEntries := entries
+	var observerPlan observerProgramTemplatePlan
 	if forest != nil {
-		projectionEntries = nil
-		for _, entry := range entries {
-			if entry.identity.Cell == forest.Root.Cell && lexicalBodyForEvaluatedEntry(entry) == forest.Root.Body {
-				projectionEntries = append(projectionEntries, entry)
-			}
-		}
-		if len(projectionEntries) != 1 {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: observer root does not select one relation equation")
-		}
-	}
-	// Roots stay transaction-local until every selected projection passes.
-	// Returning an error below therefore publishes neither a partial observer
-	// program nor an SCC prefix.
-	roots := make(map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact, len(projectionEntries))
-	projectedBodies := make([]lexicalidentity.StableLexicalBodyID, 0, len(projectionEntries))
-	for _, entry := range projectionEntries {
-		if err := ctx.Err(); err != nil {
+		observerPlan, err = matchObserverCallTemplates(ctx, *forest, catalog, relations)
+		if err != nil {
 			return evaluatedProgram{}, err
 		}
-		bodyID := lexicalBodyForEvaluatedEntry(entry)
-		relation, ok := relations.Lookup(entry.identity.Cell)
-		if !ok || relation.ContextualReason() != "" || relation.Widened() || relation.Rows() == 0 {
-			reason := relation.ContextualReason()
-			if reason == "" {
-				reason = "empty, widened, or missing relation"
-			}
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: relation %x rejected: %s", bodyID, reason)
-		}
-		plan := entry.identity.Prepared.OperationPlan()
-		if plan == nil {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x has no operation plan", bodyID)
-		}
-		requirements, requirementsOK := plan.ObservationRequirements()
-		surface, surfaceOK := plan.CallSurface()
-		if !requirementsOK || !surfaceOK || !surface.Complete() || surface.Owner() != bodyID {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x has incomplete projection authority", bodyID)
-		}
-		binding, ok := bindings[bodyID]
-		if !ok {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x has no boundary binding", bodyID)
-		}
-		if !evaluatedBindingOrderMatchesPlan(plan, binding) {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x boundary binding order differs from sealed plan", bodyID)
-		}
-		cursor, err := transformer.NewBindingCursor(relation.Shape(), binding.values, binding.paths)
-		if err != nil {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x binding: %w", bodyID, err)
-		}
-		view, err := evaluated.SealProjectionView(requirements, false)
-		if err != nil {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x view: %w", bodyID, err)
-		}
-		unavailable := evaluated.AuthorityDigest{Status: evaluated.AuthorityUnavailable}
-		identity := evaluated.Identity{
-			Body: bodyID, Relation: unavailable, Entry: unavailable, Lineage: unavailable, Registry: unavailable,
-			CallSurface: surface.Digest(), Schema: requirements.SchemaID(), Inventory: requirements.ConsumerInventoryID(),
-			View: view, PointCount: uint32(entry.identity.Prepared.Graph().Size()),
-		}
-		if !relation.ObservationCoverageComplete() {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x cell %v has incomplete relation observation coverage", bodyID, entry.identity.Cell)
-		}
 		if stats != nil {
-			stats.EvaluatedRootProjections++
+			stats.EvaluatedObserverCallTemplates += observerPlan.templates
 		}
-		root, err := relation.EvaluateSparseRoot(ctx, transformer.EvaluatedRootRequest{
-			Identity: identity, ExpectedIdentity: identity, Requirements: requirements, CallSurface: surface,
-		}, cursor, transformer.SpecializationContext{})
+	}
+
+	// The shadow/oracle transaction projects every lexical body once. The
+	// observer transaction instead projects structurally shared boundary
+	// instances into one program artifact and exposes only its chunk entry.
+	roots := make(map[lexicalidentity.StableLexicalBodyID]evaluated.RootArtifact)
+	projectedBodies := make([]lexicalidentity.StableLexicalBodyID, 0, len(entries))
+	var programArtifact observerProgramArtifact
+	project := func(entry relationCatalogEntry, relation transformer.Relation, binding evaluatedProgramBindings) (evaluated.RootArtifact, error) {
+		return projectEvaluatedRelationRoot(ctx, catalog, entry, relation, binding, stats)
+	}
+	if forest != nil {
+		rootBinding, bound := bindings[forest.Root.Body]
+		if !bound {
+			return evaluatedProgram{}, fmt.Errorf("evaluated program: observer root has no boundary binding")
+		}
+		programArtifact, err = buildObserverProgramArtifact(ctx, catalog.registry, observerPlan, catalog, relations, rootBinding, project, stats)
 		if err != nil {
-			if specialized, exact := relation.Specialize(cursor, nil, nil); exact {
-				if _, canonicalErr := summary.EncodeCanonical(ctx, entry.identity.Prepared.Registry(), specialized); canonicalErr != nil {
-					return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x projection: %w (canonical summary: %v)", bodyID, err, canonicalErr)
-				}
+			return evaluatedProgram{}, err
+		}
+		if programArtifact.entry == 0 || int(programArtifact.entry) > len(programArtifact.instances) {
+			return evaluatedProgram{}, fmt.Errorf("evaluated program: observer artifact has no unique entry instance")
+		}
+		entryArtifact := programArtifact.instances[int(programArtifact.entry)-1]
+		if entryArtifact.template != forest.Root {
+			return evaluatedProgram{}, fmt.Errorf("evaluated program: observer artifact entry identity drifted")
+		}
+		roots[forest.Root.Body] = entryArtifact.local
+		projectedBodies = append(projectedBodies, forest.Root.Body)
+	} else {
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return evaluatedProgram{}, err
 			}
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x projection: %w", bodyID, err)
+			bodyID := lexicalBodyForEvaluatedEntry(entry)
+			relation, ok := relations.Lookup(entry.identity.Cell)
+			if !ok {
+				return evaluatedProgram{}, fmt.Errorf("evaluated program: relation %x is missing", bodyID)
+			}
+			binding, ok := bindings[bodyID]
+			if !ok {
+				return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x has no boundary binding", bodyID)
+			}
+			artifact, err := project(entry, relation, binding)
+			if err != nil {
+				return evaluatedProgram{}, err
+			}
+			roots[bodyID] = artifact
+			projectedBodies = append(projectedBodies, bodyID)
 		}
-		if !root.Coverage().Complete() {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x projection is incomplete", bodyID)
-		}
-		artifact, err := evaluated.SealRoot(ctx, catalog.registry, root)
-		if err != nil {
-			return evaluatedProgram{}, fmt.Errorf("evaluated program: body %x artifact seal: %w", bodyID, err)
-		}
-		roots[bodyID] = artifact
-		projectedBodies = append(projectedBodies, bodyID)
 	}
 	if err := ctx.Err(); err != nil {
 		return evaluatedProgram{}, err
@@ -365,8 +335,81 @@ func solveEvaluatedProgramTransaction(
 	if forest != nil {
 		result.entryBody = forest.Root.Body
 		result.observer = *forest
+		result.program = programArtifact
 	}
 	return result, nil
+}
+
+func projectEvaluatedRelationRoot(
+	ctx context.Context,
+	catalog relationRunCatalog,
+	entry relationCatalogEntry,
+	relation transformer.Relation,
+	binding evaluatedProgramBindings,
+	stats *Stats,
+) (evaluated.RootArtifact, error) {
+	bodyID := lexicalBodyForEvaluatedEntry(entry)
+	if relation.ContextualReason() != "" || relation.Widened() {
+		reason := relation.ContextualReason()
+		if reason == "" {
+			reason = "widened relation"
+		}
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: relation %x rejected: %s", bodyID, reason)
+	}
+	if entry.identity.Prepared == nil {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x has no preparation", bodyID)
+	}
+	plan := entry.identity.Prepared.OperationPlan()
+	if plan == nil {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x has no operation plan", bodyID)
+	}
+	requirements, requirementsOK := plan.ObservationRequirements()
+	surface, surfaceOK := plan.CallSurface()
+	if !requirementsOK || !surfaceOK || !surface.Complete() || surface.Owner() != bodyID {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x has incomplete projection authority", bodyID)
+	}
+	if !evaluatedBindingOrderMatchesPlan(plan, binding) {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x boundary binding order differs from sealed plan", bodyID)
+	}
+	cursor, err := transformer.NewBindingCursor(relation.Shape(), binding.values, binding.paths)
+	if err != nil {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x binding: %w", bodyID, err)
+	}
+	view, err := evaluated.SealProjectionView(requirements, false)
+	if err != nil {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x view: %w", bodyID, err)
+	}
+	unavailable := evaluated.AuthorityDigest{Status: evaluated.AuthorityUnavailable}
+	identity := evaluated.Identity{
+		Body: bodyID, Relation: unavailable, Entry: unavailable, Lineage: unavailable, Registry: unavailable,
+		CallSurface: surface.Digest(), Schema: requirements.SchemaID(), Inventory: requirements.ConsumerInventoryID(),
+		View: view, PointCount: uint32(entry.identity.Prepared.Graph().Size()),
+	}
+	if !relation.ObservationCoverageComplete() {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x cell %v has incomplete relation observation coverage", bodyID, entry.identity.Cell)
+	}
+	if stats != nil {
+		stats.EvaluatedRootProjections++
+	}
+	root, err := relation.EvaluateSparseRoot(ctx, transformer.EvaluatedRootRequest{
+		Identity: identity, ExpectedIdentity: identity, Requirements: requirements, CallSurface: surface,
+	}, cursor, transformer.SpecializationContext{})
+	if err != nil {
+		if specialized, exact := relation.Specialize(cursor, nil, nil); exact {
+			if _, canonicalErr := summary.EncodeCanonical(ctx, entry.identity.Prepared.Registry(), specialized); canonicalErr != nil {
+				return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x projection: %w (canonical summary: %v)", bodyID, err, canonicalErr)
+			}
+		}
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x projection: %w", bodyID, err)
+	}
+	if !root.Coverage().Complete() {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x projection is incomplete", bodyID)
+	}
+	artifact, err := evaluated.SealRoot(ctx, catalog.registry, root)
+	if err != nil {
+		return evaluated.RootArtifact{}, fmt.Errorf("evaluated program: body %x artifact seal: %w", bodyID, err)
+	}
+	return artifact, nil
 }
 
 func lexicalBodyForEvaluatedEntry(entry relationCatalogEntry) lexicalidentity.StableLexicalBodyID {

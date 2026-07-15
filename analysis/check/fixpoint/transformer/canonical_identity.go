@@ -260,6 +260,7 @@ const (
 	recordRefinement
 	recordObservation
 	recordObligation
+	recordObserverCall
 	recordTraceSlot
 	recordTraceFragment
 	recordTraceValue
@@ -396,7 +397,90 @@ func (c *relationCanonicalCodec) writeRelationAnnotations(w *canonical.Writer, a
 	if err := writeByteSlices(w, obligations); err != nil {
 		return err
 	}
-	return nil
+	calls := make([][]byte, len(annotations.calls))
+	for i := range annotations.calls {
+		var err error
+		calls[i], err = c.observerCallBytes(annotations.calls[i])
+		if err != nil {
+			return err
+		}
+	}
+	sortByteSlices(calls)
+	return writeByteSlices(w, calls)
+}
+
+func (c *relationCanonicalCodec) observerCallBytes(call ObserverCallTemplate) ([]byte, error) {
+	if !call.valid(c.relation.arena, c.relation.shape) {
+		return nil, &NonportableCanonicalRelationError{Feature: "malformed observer call template"}
+	}
+	return canonicalBytes(c.ctx, "analysis.transformer.observer-call", func(w *canonical.Writer) error {
+		if err := w.Record(recordObserverCall); err != nil {
+			return err
+		}
+		if err := w.Bytes(call.owner[:]); err != nil {
+			return err
+		}
+		if err := writeObserverCallOccurrence(w, call.occurrence); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(call.point)); err != nil {
+			return err
+		}
+		if err := w.Uint(call.target.Cell.Function); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(call.target.Cell.Slot)); err != nil {
+			return err
+		}
+		if err := c.writeShape(w, call.target.Shape); err != nil {
+			return err
+		}
+		guard, err := c.guardBytes(call.guard)
+		if err != nil {
+			return err
+		}
+		if err := w.Bytes(guard); err != nil {
+			return err
+		}
+		if err := w.Count(uint64(len(call.values))); err != nil {
+			return err
+		}
+		for i, value := range call.values {
+			encoded, err := c.valueBytes(value)
+			if err != nil {
+				return err
+			}
+			if err := w.Bytes(encoded); err != nil {
+				return err
+			}
+			if err := w.Bool(call.paths[i] != 0); err != nil {
+				return err
+			}
+			if call.paths[i] != 0 {
+				encodedPath, err := c.pathBytes(call.paths[i])
+				if err != nil {
+					return err
+				}
+				if err := w.Bytes(encodedPath); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func writeObserverCallOccurrence(w *canonical.Writer, occurrence observation.Occurrence) error {
+	if err := w.Uint(uint64(occurrence.Point.Ordinal)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(occurrence.Point.Phase)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(occurrence.Kind)); err != nil {
+		return err
+	}
+	return w.Uint(uint64(occurrence.Slot))
 }
 
 func (c *relationCanonicalCodec) rowBytes(row Row) ([]byte, error) {

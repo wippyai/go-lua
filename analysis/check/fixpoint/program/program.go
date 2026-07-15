@@ -133,6 +133,16 @@ type Stats struct {
 	EvaluatedObserverDiagnosticNodes   int
 	EvaluatedObserverDiagnosticEdges   int
 	EvaluatedObserverUncalledTemplates int
+	// EvaluatedObserverCallTemplates counts exact owner-local correlated call
+	// worlds matched to lexical forest edges. EvaluatedObserverTermApplications
+	// counts later relation-owned batch specializations independently of relation
+	// equation applications.
+	EvaluatedObserverCallTemplates    int
+	EvaluatedObserverTermApplications int
+	// EvaluatedObserverInstanceProjections counts structurally shared local
+	// instance roots. EntryProjections is its unique chunk-entry subset.
+	EvaluatedObserverInstanceProjections int
+	EvaluatedObserverEntryProjections    int
 	// EvaluatedObserverProgramPublications counts completed unique chunk-entry
 	// publications. It is zero on every rejected or canceled transaction.
 	EvaluatedObserverProgramPublications int

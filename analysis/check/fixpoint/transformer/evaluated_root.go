@@ -200,7 +200,14 @@ func collectSparseProjectionGuards(r Relation) []Guard {
 	for _, item := range r.annotations.obligations {
 		seen[item.Guard] = struct{}{}
 	}
-	for _, slot := range r.projectionTrace.slots {
+	for _, item := range r.annotations.calls {
+		seen[item.guard] = struct{}{}
+	}
+	var slots []sparseProjectionSlot
+	if r.projectionTrace != nil {
+		slots = r.projectionTrace.slots
+	}
+	for _, slot := range slots {
 		seen[slot.guard] = struct{}{}
 		for _, fragment := range slot.fragments {
 			seen[fragment.guard] = struct{}{}
@@ -275,6 +282,13 @@ func (r Relation) validateCallbackFreeEvaluatedRootTerms(ctx context.Context) er
 		}
 		if item.Expected != 0 {
 			if err := check(item.Expected); err != nil {
+				return err
+			}
+		}
+	}
+	for _, call := range r.annotations.calls {
+		for _, value := range call.values {
+			if err := check(value); err != nil {
 				return err
 			}
 		}
@@ -365,7 +379,10 @@ func (a *Arena) validateCallbackFreeValueTerm(ctx context.Context, term ValueTer
 }
 
 func (r Relation) evaluateGuardWorldProof(ctx context.Context, evaluator *evaluatedTermEvaluator) (evaluated.WorldProof, map[Guard]evaluated.WorldSet, error) {
-	guards := collectSparseProjectionGuards(r)
+	return r.evaluateGuardWorldProofFor(ctx, evaluator, collectSparseProjectionGuards(r))
+}
+
+func (r Relation) evaluateGuardWorldProofFor(ctx context.Context, evaluator *evaluatedTermEvaluator, guards []Guard) (evaluated.WorldProof, map[Guard]evaluated.WorldSet, error) {
 	scratch := newObservationCoverageScratch()
 	scratch.reset(r.arena)
 	for _, guard := range guards {
@@ -512,6 +529,16 @@ func (r Relation) evaluateGuardWorldProof(ctx context.Context, evaluator *evalua
 		worlds[guard] = evaluated.WorldSet{Root: oldToNew[compactRoots[guard]]}
 	}
 	return proof, worlds, nil
+}
+
+func sortGuardsCanonical(arena *Arena, guards []Guard) {
+	sort.Slice(guards, func(i, j int) bool {
+		left, right := arena.canonicalGuard(guards[i]), arena.canonicalGuard(guards[j])
+		if left != right {
+			return left < right
+		}
+		return guards[i] < guards[j]
+	})
 }
 
 func (r Relation) appendEvaluatedExpression(

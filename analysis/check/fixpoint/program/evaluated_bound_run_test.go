@@ -47,9 +47,15 @@ local result = outer(true)
 	if stats.EvaluatedRelationCompilerPrepares != 4 {
 		t.Fatalf("relation compiler prepares = %d, want 4", stats.EvaluatedRelationCompilerPrepares)
 	}
-	if stats.EvaluatedRelationEquationApplications != 4 || stats.PrebuiltSemanticLexicalEvaluations != 4 || stats.EvaluatedRootProjections != 1 {
-		t.Fatalf("equations/evaluations/projections = %d/%d/%d, want 4/4/1",
+	if stats.EvaluatedRelationEquationApplications != 4 || stats.PrebuiltSemanticLexicalEvaluations != 4 || stats.EvaluatedRootProjections != 4 {
+		t.Fatalf("equations/evaluations/projections = %d/%d/%d, want 4/4/4",
 			stats.EvaluatedRelationEquationApplications, stats.PrebuiltSemanticLexicalEvaluations, stats.EvaluatedRootProjections)
+	}
+	if stats.EvaluatedObserverInstanceProjections != 4 || stats.EvaluatedObserverEntryProjections != 1 ||
+		stats.EvaluatedObserverCallTemplates != 3 || stats.EvaluatedObserverTermApplications == 0 {
+		t.Fatalf("observer instance/entry/templates/term-applications = %d/%d/%d/%d, want 4/1/3/>0",
+			stats.EvaluatedObserverInstanceProjections, stats.EvaluatedObserverEntryProjections,
+			stats.EvaluatedObserverCallTemplates, stats.EvaluatedObserverTermApplications)
 	}
 	if stats.EvaluatedObserverCatalogTemplates != 4 || stats.EvaluatedObserverCallSitesScanned != 3 ||
 		stats.EvaluatedObserverDiagnosticNodes != 4 || stats.EvaluatedObserverDiagnosticEdges != 3 ||
@@ -104,7 +110,7 @@ local result = outer(true)
 			t.Fatalf("body %x evaluated summary differs from separate legacy oracle", bodyID)
 		}
 	}
-	if stats.EvaluatedRelationEquationApplications != 4 || stats.EvaluatedRootProjections != 1 || !reflect.DeepEqual(stats.Query, query.Stats{}) {
+	if stats.EvaluatedRelationEquationApplications != 4 || stats.EvaluatedRootProjections != 4 || !reflect.DeepEqual(stats.Query, query.Stats{}) {
 		t.Fatal("separate legacy oracle mutated evaluated invocation counters")
 	}
 }
@@ -140,8 +146,9 @@ local result = called(true)
 	}
 	// Observer construction is structural. It must not add a fifth phase or
 	// invoke any legacy solver/query path: there is one equation per catalog body
-	// and exactly one chunk-entry projection for the whole program.
-	if stats.EvaluatedRelationEquationApplications != 3 || stats.EvaluatedRootProjections != 1 ||
+	// and one local projection per reached boundary instance; exactly one of
+	// those projections is the chunk entry.
+	if stats.EvaluatedRelationEquationApplications != 3 || stats.EvaluatedRootProjections != 2 ||
 		stats.PrepassBodySolves != 0 || stats.SummaryBodySolves != 0 || stats.MaterializeBodySolves != 0 ||
 		stats.Body.BodySolves != 0 || !reflect.DeepEqual(stats.Query, query.Stats{}) {
 		t.Fatalf("observer activation changed semantic work: equations=%d projections=%d prepass=%d summary=%d materialize=%d body=%d query=%#v",
