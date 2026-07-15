@@ -2127,55 +2127,55 @@ yydefault:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:852
 		{
-			yyVAL.fieldname = "type"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 140:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:855
 		{
-			yyVAL.fieldname = "interface"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 141:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:858
 		{
-			yyVAL.fieldname = "readonly"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 142:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:861
 		{
-			yyVAL.fieldname = "as"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 143:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:864
 		{
-			yyVAL.fieldname = "asserts"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 144:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:867
 		{
-			yyVAL.fieldname = "is"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 145:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:870
 		{
-			yyVAL.fieldname = "keyof"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 146:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:873
 		{
-			yyVAL.fieldname = "extends"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 147:
 		yyDollar = yyS[yypt-1 : yypt+1]
 //line parser.go.y:876
 		{
-			yyVAL.fieldname = "typeof"
+			yyVAL.token = yyDollar[1].token
 		}
 	case 148:
 		yyDollar = yyS[yypt-1 : yypt+1]
@@ -2683,49 +2683,49 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:1189
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, Type: yyDollar[3].typeexpr, Optional: false}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: false}
 		}
 	case 220:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:1192
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, Type: yyDollar[3].typeexpr, Optional: false, Annotations: yyDollar[4].annotations}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: false, Annotations: yyDollar[4].annotations}
 		}
 	case 221:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:1195
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, Type: yyDollar[3].typeexpr, Optional: true}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: true}
 		}
 	case 222:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:1198
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, Type: yyDollar[3].typeexpr, Optional: true, Annotations: yyDollar[4].annotations}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: true, Annotations: yyDollar[4].annotations}
 		}
 	case 223:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:1201
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].fieldname, Type: yyDollar[3].typeexpr, Optional: false}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: false}
 		}
 	case 224:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:1204
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].fieldname, Type: yyDollar[3].typeexpr, Optional: false, Annotations: yyDollar[4].annotations}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: false, Annotations: yyDollar[4].annotations}
 		}
 	case 225:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:1207
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].fieldname, Type: yyDollar[3].typeexpr, Optional: true}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: true}
 		}
 	case 226:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:1210
 		{
-			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].fieldname, Type: yyDollar[3].typeexpr, Optional: true, Annotations: yyDollar[4].annotations}
+			yyVAL.recordfield = ast.RecordFieldExpr{Name: yyDollar[1].token.Str, NamePosition: yyDollar[1].token.Pos, Type: yyDollar[3].typeexpr, Optional: true, Annotations: yyDollar[4].annotations}
 		}
 	case 227:
 		yyDollar = yyS[yypt-1 : yypt+1]

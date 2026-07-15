@@ -279,6 +279,12 @@ func diagnosticCauseFromJudgmentCause(cause judgment.EvidenceCause) diagnostic.E
 		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseGuard}
 	case judgment.EvidenceCauseWiden:
 		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseWiden}
+	case judgment.EvidenceCauseJoin:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseJoin}
+	case judgment.EvidenceCauseUse:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseUse}
+	case judgment.EvidenceCauseDeclaration:
+		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseDeclaration}
 	case judgment.EvidenceCauseMissingProof:
 		return diagnostic.EvidenceCause{Kind: diagnostic.EvidenceCauseMissingProof}
 	default:

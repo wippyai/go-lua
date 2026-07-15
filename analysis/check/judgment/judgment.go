@@ -245,6 +245,9 @@ const (
 	EvidenceCauseClaim
 	EvidenceCauseGuard
 	EvidenceCauseWiden
+	EvidenceCauseJoin
+	EvidenceCauseUse
+	EvidenceCauseDeclaration
 	EvidenceCauseMissingProof
 )
 
@@ -380,6 +383,7 @@ type EvidenceDetail struct {
 	FunctionName   string
 	SubjectLabel   string
 	ProviderLabel  string
+	TypeLabel      string
 	MemberParam    int
 	ResultIndex    int
 	UnderSupplied  bool
@@ -1107,6 +1111,12 @@ func (k EvidenceCauseKind) String() string {
 		return "guard"
 	case EvidenceCauseWiden:
 		return "widen"
+	case EvidenceCauseJoin:
+		return "join"
+	case EvidenceCauseUse:
+		return "use"
+	case EvidenceCauseDeclaration:
+		return "declaration"
 	case EvidenceCauseMissingProof:
 		return "missing-proof"
 	case EvidenceCauseUnknown:

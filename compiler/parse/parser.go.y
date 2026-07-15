@@ -45,7 +45,7 @@ func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast
 %type<field> field
 %type<fieldsep> fieldsep
 %type<fieldname> fieldname
-%type<fieldname> typefieldname
+%type<token> typefieldname
 
 %type<typeexpr> typeexpr
 %type<typeexpr> simpletypeexpr
@@ -836,31 +836,31 @@ fieldname:
 
 typefieldname:
         TType {
-            $$ = "type"
+            $$ = $1
         } |
         TInterface {
-            $$ = "interface"
+            $$ = $1
         } |
         TReadonly {
-            $$ = "readonly"
+            $$ = $1
         } |
         TAs {
-            $$ = "as"
+            $$ = $1
         } |
         TAsserts {
-            $$ = "asserts"
+            $$ = $1
         } |
         TIs {
-            $$ = "is"
+            $$ = $1
         } |
         TKeyof {
-            $$ = "keyof"
+            $$ = $1
         } |
         TExtends {
-            $$ = "extends"
+            $$ = $1
         } |
         TTypeof {
-            $$ = "typeof"
+            $$ = $1
         }
 
 fieldsep:
@@ -1178,28 +1178,28 @@ typefieldlist:
 
 typefield:
         TIdent ':' typeexpr {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, Type: $3, Optional: false}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false}
         } |
         TIdent ':' typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, Type: $3, Optional: false, Annotations: $4}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false, Annotations: $4}
         } |
         TIdent TQuestionColon typeexpr {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, Type: $3, Optional: true}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true}
         } |
         TIdent TQuestionColon typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, Type: $3, Optional: true, Annotations: $4}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true, Annotations: $4}
         } |
         typefieldname ':' typeexpr {
-            $$ = ast.RecordFieldExpr{Name: $1, Type: $3, Optional: false}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false}
         } |
         typefieldname ':' typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1, Type: $3, Optional: false, Annotations: $4}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false, Annotations: $4}
         } |
         typefieldname TQuestionColon typeexpr {
-            $$ = ast.RecordFieldExpr{Name: $1, Type: $3, Optional: true}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true}
         } |
         typefieldname TQuestionColon typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1, Type: $3, Optional: true, Annotations: $4}
+            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true, Annotations: $4}
         }
 
 annotations:

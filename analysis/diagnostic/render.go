@@ -487,12 +487,18 @@ func evidenceCauseRank(kind EvidenceCauseKind) int {
 		return 10
 	case EvidenceCauseFlowAssign, EvidenceCauseFlowCall:
 		return 20
+	case EvidenceCauseJoin:
+		return 20
 	case EvidenceCauseGuard:
 		return 25
 	case EvidenceCauseClaim:
 		return 30
 	case EvidenceCauseWiden:
 		return 40
+	case EvidenceCauseUse:
+		return 45
+	case EvidenceCauseDeclaration:
+		return 46
 	case EvidenceCauseMissingProof:
 		return 50
 	default:

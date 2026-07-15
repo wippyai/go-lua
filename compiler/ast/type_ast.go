@@ -65,10 +65,11 @@ type MapTypeExpr struct {
 
 // RecordFieldExpr represents a field in a record type.
 type RecordFieldExpr struct {
-	Name        string
-	Type        TypeExpr
-	Optional    bool
-	Annotations []AnnotationExpr // runtime validation annotations on field
+	Name         string
+	NamePosition Position // Exact parser-owned field-name token position.
+	Type         TypeExpr
+	Optional     bool
+	Annotations  []AnnotationExpr // runtime validation annotations on field
 }
 
 // RecordTypeExpr represents a record/table type: {name: string, age: number}

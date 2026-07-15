@@ -15,6 +15,7 @@ const (
 	CodeAssignmentType               diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeAssignmentType)
 	CodeMissingMember                diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeMissingMember)
 	CodeOptionalMethodCall           diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeOptionalMethodCall)
+	CodeNilUnsafeUse                 diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNilUnsafeUse)
 	CodeNotCallable                  diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeNotCallable)
 	CodeDirectCallNotCallable        diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallNotCallable)
 	CodeDirectCallTooFewArgs         diagnostic.Code = diagnostic.Code(judgment.DiagnosticCodeDirectCallTooFewArgs)
@@ -49,9 +50,10 @@ const (
 )
 
 type producerContext struct {
-	parent     *body.Result
-	parents    []*body.Result
-	sourceFile string
+	parent      *body.Result
+	parents     []*body.Result
+	sourceFile  string
+	displayFile string
 
 	judgmentPolicy judgment.PolicyConfig
 
@@ -247,6 +249,9 @@ func diagnosticProducers() []diagnosticProducer {
 // Config controls post-solve diagnostic production.
 type Config struct {
 	Policy diagnostic.Policy
+	// SourceFile is the display label carried by source-backed judgment and
+	// evidence spans. It does not participate in semantic identity.
+	SourceFile string
 
 	// Judgment maps post-solve semantic judgment verdicts to diagnostic levels.
 	// The zero value uses judgment.DefaultPolicy in StrictnessDefault mode.
@@ -354,8 +359,9 @@ func produceWithParents(
 	parentResults ...*body.Result,
 ) []diagnostic.Diagnostic {
 	context := producerContext{
-		parent:  parentResult,
-		parents: append([]*body.Result(nil), parentResults...),
+		parent:      parentResult,
+		parents:     append([]*body.Result(nil), parentResults...),
+		displayFile: config.SourceFile,
 
 		judgmentPolicy: config.Judgment.Normalized(),
 

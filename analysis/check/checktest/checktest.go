@@ -320,7 +320,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		return Result{Diagnostics: diags}
 	}
 	structural = cfg.diagnosticPolicy.Apply(structural)
-	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{Policy: cfg.diagnosticPolicy})...)
+	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{Policy: cfg.diagnosticPolicy, SourceFile: filename})...)
 	setDefaultFile(diags, filename)
 	diagnostic.Sort(diags)
 	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}

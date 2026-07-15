@@ -26,6 +26,22 @@ func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.
 	if name == "" {
 		name = "call target"
 	}
+	if exact, fieldUse := exactNilabilityUse(item); exact != "" {
+		name = exact
+		help := fmt.Sprintf("Guard %s against nil before the method call, or assign it on every branch.", name)
+		label := "possibly-nil value"
+		if fieldUse {
+			help = fmt.Sprintf("Guard %s against nil before the method call.", name)
+			label = "possibly-nil field"
+		}
+		return callCalleePresentation{
+			Code:     CodeNilUnsafeUse,
+			Message:  fmt.Sprintf("%s may be nil at method call", name),
+			Help:     help,
+			Evidence: nilabilityProvenanceEvidence(item, name, item.Actual.ProjectedType, primary),
+			Label:    label,
+		}, true
+	}
 	message := display.DirectNotCallableMessage(name, item.Actual.ProjectedType)
 	help := display.DirectNotCallableHelp(name)
 	if detail.Kind == judgment.EvidenceDetailMemberMissing {
@@ -66,6 +82,18 @@ func (ProofContext) DirectCallCallee(item judgment.Judgment, primary diagnostic.
 		Evidence: evidence,
 		Label:    label,
 	}, true
+}
+
+func exactNilabilityUse(item judgment.Judgment) (string, bool) {
+	for _, evidence := range item.Evidence {
+		detail := evidence.Detail
+		if detail.Kind == judgment.EvidenceDetailMayBeNil &&
+			detail.Cause.Kind == judgment.EvidenceCauseUse &&
+			detail.SubjectLabel != "" {
+			return detail.SubjectLabel, detail.MemberAccess
+		}
+	}
+	return "", false
 }
 
 func callCalleeJudgmentEvidence(item judgment.Judgment, detail judgment.EvidenceDetail, name string, primary diagnostic.Span) []diagnostic.Evidence {

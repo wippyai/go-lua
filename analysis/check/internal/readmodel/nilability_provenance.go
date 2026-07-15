@@ -1,6 +1,7 @@
 package readmodel
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/body"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -20,10 +21,31 @@ func (r Reader) nilabilityProvenance(point cfg.Point, expr any, value product.Va
 	}
 	info := r.result.NilabilitySourceInfoFor(expr)
 	provenance.OptionalField = info.OptionalField
+	provenance.OriginsExact = info.OriginsExact
+	provenance.Origins = nilabilityOriginsFromBody(info.Origins)
 	if info.HasCallPoint {
 		provenance.CallResult = r.nilabilityCallResult(info.CallPoint)
 	}
 	return provenance
+}
+
+func nilabilityOriginsFromBody(origins []body.NilabilityOrigin) []readapi.NilabilityOrigin {
+	if len(origins) == 0 {
+		return nil
+	}
+	out := make([]readapi.NilabilityOrigin, 0, len(origins))
+	for _, origin := range origins {
+		out = append(out, readapi.NilabilityOrigin{
+			Kind:          readapi.NilabilityOriginKind(origin.Kind),
+			Span:          sourceSpanFromBody(origin.Span),
+			Subject:       origin.Subject,
+			Field:         origin.Field,
+			TypeLabel:     origin.TypeLabel,
+			FieldUse:      origin.FieldUse,
+			MissingBranch: origin.MissingBranch,
+		})
+	}
+	return out
 }
 
 func (r Reader) nilabilityCallResult(point cfg.Point) readapi.CallResultAssignmentSource {

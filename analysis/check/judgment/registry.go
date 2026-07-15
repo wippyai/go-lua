@@ -82,6 +82,7 @@ const (
 	DiagnosticCodeAssignmentType               DiagnosticCode = "type.assignment"
 	DiagnosticCodeMissingMember                DiagnosticCode = "type.member.missing"
 	DiagnosticCodeOptionalMethodCall           DiagnosticCode = "type.call.optional_receiver"
+	DiagnosticCodeNilUnsafeUse                 DiagnosticCode = "type.nil.unsafe_use"
 	DiagnosticCodeNotCallable                  DiagnosticCode = "type.call.not_callable"
 	DiagnosticCodeDirectCallNotCallable        DiagnosticCode = "type.call.direct.not_callable"
 	DiagnosticCodeDirectCallTooFewArgs         DiagnosticCode = "type.call.direct.too_few_args"
@@ -162,7 +163,7 @@ type Registry struct {
 var defaultRegistry = NewRegistry([]CodeSpec{
 	codeSpecWithRepairs(CodeCallArgType, FamilyCall, SubjectCallArgument, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderDirectCallArgument, diag(DiagnosticCodeDirectCallArgType), repairs(RepairAddAnnotation), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
 	codeSpec(CodeCallArity, FamilyCall, SubjectCallExpression, VerdictRefuted, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderCallArity, diag(DiagnosticCodeDirectCallTooFewArgs, DiagnosticCodeDirectCallTooManyArgs), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
-	codeSpecWithRepairs(CodeCallCallee, FamilyCall, SubjectCallExpression, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderCallCallee, diag(DiagnosticCodeDirectCallNotCallable, DiagnosticCodeOptionalMethodCall, DiagnosticCodeMissingMember, DiagnosticCodeNotCallable), repairs(RepairAddNilGuard), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
+	codeSpecWithRepairs(CodeCallCallee, FamilyCall, SubjectCallExpression, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderCallCallee, diag(DiagnosticCodeDirectCallNotCallable, DiagnosticCodeOptionalMethodCall, DiagnosticCodeNilUnsafeUse, DiagnosticCodeMissingMember, DiagnosticCodeNotCallable), repairs(RepairAddNilGuard), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
 	codeSpecWithRepairs(CodeAssignment, FamilyAssignment, SubjectPath, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderAssignment, diag(DiagnosticCodeAssignmentType, DiagnosticCodeDirectCallResultAssignment), repairs(RepairAddAnnotation), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),
 	codeSpecWithRepairs(CodeAssignmentTarget, FamilyAssignment, SubjectPath, VerdictRefuted, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderOptionalAssignmentTarget, diag(DiagnosticCodeOptionalAssignmentTarget), repairs(RepairAddNilGuard), EvidenceAbstractFact, EvidenceMissingProof),
 	codeSpecWithRepairs(CodeReturn, FamilyReturn, SubjectReturnValue, VerdictUnknown, PolicyStrictnessTunableTypeError, DiagnosticDefaultEnabled, RenderReturn, diag(DiagnosticCodeReturnContractType), repairs(RepairAddAnnotation), EvidenceAbstractFact, EvidenceUserAssertion, EvidenceMissingProof),

@@ -700,6 +700,30 @@ type NilabilityProvenance struct {
 	OptionalField      bool
 	ExplicitTopOrigin  bool
 	UntrustedTopOrigin bool
+	Origins            []NilabilityOrigin
+	OriginsExact       bool
+}
+
+// NilabilityOriginKind classifies an exact, source-backed provenance step.
+type NilabilityOriginKind uint8
+
+const (
+	NilabilityOriginLocalNilBirth NilabilityOriginKind = iota + 1
+	NilabilityOriginJoin
+	NilabilityOriginOptionalDeclaration
+	NilabilityOriginUse
+)
+
+// NilabilityOrigin is the syntax-free public projection of a body-owned
+// nilability provenance step.
+type NilabilityOrigin struct {
+	Kind          NilabilityOriginKind
+	Span          SourceSpan
+	Subject       string
+	Field         string
+	TypeLabel     string
+	FieldUse      bool
+	MissingBranch string
 }
 
 // NilRisk reports whether the operand projection can include nil and should be

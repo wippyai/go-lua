@@ -91,7 +91,7 @@ func (c *Checker) checkChunk(chunk []ast.Stmt, entryID string, imports map[strin
 		}
 	}
 
-	produced := diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{Policy: c.diagnosticPolicy})
+	produced := diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{Policy: c.diagnosticPolicy, SourceFile: entryID})
 	legacy := make([]diag.Diagnostic, 0, len(produced))
 	for _, d := range produced {
 		legacy = append(legacy, fromAnalysisDiagnostic(entryID, d))

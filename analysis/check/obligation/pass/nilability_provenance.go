@@ -20,6 +20,43 @@ func appendNilabilityProvenance(
 	primary readmodel.SourceSpan,
 	provenance readmodel.NilabilityProvenance,
 ) judgment.EvidenceChain {
+	if provenance.OriginsExact {
+		for i, origin := range provenance.Origins {
+			kind := judgment.EvidenceAbstractFact
+			trust := judgment.EvidenceTrustProven
+			cause := judgment.EvidenceCauseUse
+			switch origin.Kind {
+			case readmodel.NilabilityOriginLocalNilBirth:
+				cause = judgment.EvidenceCauseBirth
+			case readmodel.NilabilityOriginJoin:
+				cause = judgment.EvidenceCauseJoin
+			case readmodel.NilabilityOriginOptionalDeclaration:
+				cause = judgment.EvidenceCauseClaim
+				if !origin.FieldUse {
+					cause = judgment.EvidenceCauseDeclaration
+				}
+				kind = judgment.EvidenceUserAssertion
+				trust = judgment.EvidenceTrustClaimed
+			case readmodel.NilabilityOriginUse:
+				cause = judgment.EvidenceCauseUse
+			}
+			evidence = append(evidence, judgment.Evidence{
+				Kind:  kind,
+				Trust: trust,
+				Detail: judgment.EvidenceDetail{
+					Kind:         judgment.EvidenceDetailMayBeNil,
+					Cause:        judgment.EvidenceCause{Kind: cause, Params: judgment.EvidenceCauseParams{Provider: origin.MissingBranch}},
+					SubjectLabel: origin.Subject,
+					Field:        origin.Field,
+					TypeLabel:    origin.TypeLabel,
+					MemberAccess: origin.FieldUse,
+				},
+				Origin: judgment.OriginRef{Point: point, Key: fmt.Sprintf("nilability:origin:%d", i)},
+				Span:   spanFromReadModel(file, origin.Span),
+			})
+		}
+		return evidence
+	}
 	if provenance.CallResult.Present {
 		detail := judgment.CallResultAssignmentEvidenceDetail(provenance.CallResult.CallableName, provenance.CallResult.ResultIndex)
 		if provenance.CallResult.UnderSupplied {

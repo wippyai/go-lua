@@ -18,7 +18,53 @@ func nilabilityProvenanceEvidence(item judgment.Judgment, subject string, got ty
 	var out []diagnostic.Evidence
 	for _, evidence := range item.Evidence {
 		detail := evidence.Detail
+		span := diagnosticJudgmentEvidenceSpanOr(evidence, primary)
+		file := evidence.Span.DisplayFile()
+		if file == "" {
+			file = "source"
+		}
 		switch {
+		case detail.Kind == judgment.EvidenceDetailMayBeNil && detail.Cause.Kind == judgment.EvidenceCauseBirth && detail.SubjectLabel != "" && detail.TypeLabel == "":
+			missing := detail.Cause.Params.Provider
+			if missing == "" {
+				missing = "branch"
+			}
+			out = append(out, diagnostic.Evidence{
+				Kind: diagnostic.EvidenceAbstractFact, Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+				Cause: diagnosticCauseFromJudgmentEvidence(evidence), Span: span,
+				Message: fmt.Sprintf("%s born nil at %s:%d (%s branch had no assignment)", detail.SubjectLabel, file, span.StartLine, missing),
+			})
+		case detail.Kind == judgment.EvidenceDetailMayBeNil && detail.Cause.Kind == judgment.EvidenceCauseJoin && detail.SubjectLabel != "":
+			missing := detail.Cause.Params.Provider
+			if missing == "" {
+				missing = "branch"
+			}
+			out = append(out, diagnostic.Evidence{
+				Kind: diagnostic.EvidenceAbstractFact, Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+				Cause: diagnosticCauseFromJudgmentEvidence(evidence), Span: span,
+				Message: fmt.Sprintf("%s survives the if/else join at %s:%d (no %s assignment)", detail.SubjectLabel, file, span.StartLine, missing),
+			})
+		case detail.Kind == judgment.EvidenceDetailMayBeNil &&
+			(detail.Cause.Kind == judgment.EvidenceCauseClaim || detail.Cause.Kind == judgment.EvidenceCauseDeclaration) &&
+			detail.TypeLabel != "":
+			message := fmt.Sprintf("%s declared with optional type %s", detail.SubjectLabel, detail.TypeLabel)
+			if detail.Field != "" {
+				message = fmt.Sprintf("field %s declared optional at %s:%d (type %s)", detail.Field, file, span.StartLine, detail.TypeLabel)
+			}
+			out = append(out, diagnostic.Evidence{
+				Kind: diagnostic.EvidenceUserAssertion, Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustClaimed),
+				Cause: diagnosticCauseFromJudgmentEvidence(evidence), Span: span, Message: message,
+			})
+		case detail.Kind == judgment.EvidenceDetailMayBeNil && detail.Cause.Kind == judgment.EvidenceCauseUse && detail.SubjectLabel != "":
+			useKind := "value"
+			if detail.MemberAccess {
+				useKind = "field"
+			}
+			out = append(out, diagnostic.Evidence{
+				Kind: diagnostic.EvidenceAbstractFact, Trust: diagnosticTrustFromJudgmentTrust(evidence.Trust, diagnostic.TrustProven),
+				Cause: diagnosticCauseFromJudgmentEvidence(evidence), Span: span,
+				Message: fmt.Sprintf("%s reaches use at %s:%d (method call on possibly-nil %s)", detail.SubjectLabel, file, span.StartLine, useKind),
+			})
 		case detail.Kind == judgment.EvidenceDetailCallResultAssignment:
 			name := detail.FunctionName
 			if name == "" {
