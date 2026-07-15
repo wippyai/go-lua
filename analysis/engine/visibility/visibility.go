@@ -18,6 +18,15 @@ type lookup struct {
 type Table struct {
 	visible map[lookup]ssa.Version
 	input   map[lookup]ssa.Version
+
+	// Flow-built tables retain the immutable point snapshots produced by the
+	// dataflow construction instead of expanding them into a second
+	// point×symbol hash table. Straight-line points share their predecessor's
+	// snapshot, while definition and join points own only the changed snapshot.
+	// Snapshot pages are never mutated after construction.
+	visibleAt []*versionState
+	inputAt   []*versionState
+	flowInput bool
 }
 
 // NewTable returns a visibility table cloned from a point/symbol map.
@@ -55,6 +64,9 @@ func (t *Table) VisibleVersion(point cfg.Point, sym symbol.ID) ssa.Version {
 	if t == nil || sym == 0 {
 		return ssa.Version{}
 	}
+	if int(point) < len(t.visibleAt) {
+		return t.visibleAt[point].lookup(sym)
+	}
 	return t.visible[lookup{point: point, symbol: sym}]
 }
 
@@ -63,6 +75,12 @@ func (t *Table) VisibleVersion(point cfg.Point, sym symbol.ID) ssa.Version {
 // VisibleVersion, matching explicit test builders and compatibility tables.
 func (t *Table) VisibleVersionBefore(point cfg.Point, sym symbol.ID) ssa.Version {
 	if t == nil || sym == 0 {
+		return ssa.Version{}
+	}
+	if t.flowInput {
+		if int(point) < len(t.inputAt) {
+			return t.inputAt[point].lookup(sym)
+		}
 		return ssa.Version{}
 	}
 	if t.input != nil {

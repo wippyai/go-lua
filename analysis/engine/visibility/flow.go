@@ -48,48 +48,67 @@ func BuildForward(config BuildConfig) *Table {
 		defsAt[def.Point] = append(defsAt[def.Point], version)
 	}
 
-	in := make(map[cfg.Point]map[symbol.ID]ssa.Version, len(rpo))
-	out := make(map[cfg.Point]map[symbol.ID]ssa.Version, len(rpo))
-	initializedOut := make(map[cfg.Point]struct{}, len(rpo))
+	stateLen := pointStateLen(rpo)
+	in := make([]*versionState, stateLen)
+	out := make([]*versionState, stateLen)
+	initializedOut := make([]bool, stateLen)
 	phis := make(map[lookup]ssa.Version)
 
-	changed := true
-	for changed {
-		changed = false
-		for _, point := range rpo {
-			nextIn := mergePredecessors(graph, point, out, initializedOut, phis, next)
-			if !versionMapsEqual(in[point], nextIn) {
-				in[point] = nextIn
-				changed = true
-			}
-
-			nextOut := versionMapWithDefinitions(nextIn, defsAt[point])
-			if !versionMapsEqual(out[point], nextOut) {
-				out[point] = nextOut
-				changed = true
-			}
-			initializedOut[point] = struct{}{}
-		}
-	}
-
-	table := newTableWithCapacity(visibleVersionCount(rpo, out) + visibleVersionCount(rpo, in))
+	// Seed once in RPO, then revisit only successors whose predecessor output
+	// actually changed. This is the same finite monotone equation system as the
+	// former whole-graph retry loop, without re-executing settled acyclic rows.
+	queue := append([]cfg.Point(nil), rpo...)
+	queued := make([]bool, stateLen)
 	for _, point := range rpo {
-		for sym, version := range in[point] {
-			table.setInput(point, sym, version)
+		queued[point] = true
+	}
+	for head := 0; head < len(queue); head++ {
+		point := queue[head]
+		queued[point] = false
+		nextIn := mergePredecessors(graph, point, out, initializedOut, phis, next)
+		if versionStatesEqual(in[point], nextIn) {
+			nextIn = in[point]
+		} else {
+			in[point] = nextIn
 		}
-		for sym, version := range out[point] {
-			table.set(point, sym, version)
+
+		nextOut := versionStateWithDefinitions(nextIn, defsAt[point])
+		outChanged := !versionStatesEqual(out[point], nextOut)
+		if outChanged {
+			out[point] = nextOut
+		}
+		initializedOut[point] = true
+		if !outChanged {
+			continue
+		}
+		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
+			if int(successor) >= len(queued) || queued[successor] {
+				continue
+			}
+			queued[successor] = true
+			queue = append(queue, successor)
 		}
 	}
-	return table
+
+	// in/out are immutable snapshots at this point. Retaining them directly is
+	// both the exact lookup relation and the compact representation: unchanged
+	// straight-line points share maps, and we avoid rematerializing every
+	// point×symbol pair into two additional hash tables.
+	return &Table{
+		visibleAt: out,
+		inputAt:   in,
+		flowInput: true,
+	}
 }
 
-func visibleVersionCount(points []cfg.Point, visible map[cfg.Point]map[symbol.ID]ssa.Version) int {
-	total := 0
+func pointStateLen(points []cfg.Point) int {
+	max := cfg.Point(0)
 	for _, point := range points {
-		total += len(visible[point])
+		if point > max {
+			max = point
+		}
 	}
-	return total
+	return int(max) + 1
 }
 
 func normalizeDefinitions(definitions []Definition, rpoIndex map[cfg.Point]int) []Definition {
@@ -120,18 +139,18 @@ func normalizeDefinitions(definitions []Definition, rpoIndex map[cfg.Point]int) 
 func mergePredecessors(
 	graph cfg.Graph,
 	point cfg.Point,
-	out map[cfg.Point]map[symbol.ID]ssa.Version,
-	initializedOut map[cfg.Point]struct{},
+	out []*versionState,
+	initializedOut []bool,
 	phis map[lookup]ssa.Version,
 	next map[symbol.ID]int,
-) map[symbol.ID]ssa.Version {
+) *versionState {
 	preds := cfg.PredecessorsReadOnly(graph, point)
 	if len(preds) == 0 {
 		return nil
 	}
 	knownPreds := make([]cfg.Point, 0, len(preds))
 	for _, pred := range preds {
-		if _, ok := initializedOut[pred]; ok {
+		if int(pred) < len(initializedOut) && initializedOut[pred] {
 			knownPreds = append(knownPreds, pred)
 		}
 	}
@@ -142,23 +161,37 @@ func mergePredecessors(
 		return out[knownPreds[0]]
 	}
 
-	symbols := make(map[symbol.ID]struct{})
-	for _, pred := range knownPreds {
-		for sym := range out[pred] {
-			symbols[sym] = struct{}{}
+	allSame := true
+	firstState := out[knownPreds[0]]
+	for _, pred := range knownPreds[1:] {
+		if out[pred] != firstState {
+			allSame = false
+			break
 		}
+	}
+	if allSame {
+		return firstState
+	}
+
+	symbols := make([]symbol.ID, 0)
+	for _, pred := range knownPreds {
+		out[pred].forEach(func(sym symbol.ID, _ ssa.Version) { symbols = append(symbols, sym) })
 	}
 	if len(symbols) == 0 {
 		return nil
 	}
+	sort.Slice(symbols, func(i, j int) bool { return symbols[i] < symbols[j] })
 
-	merged := make(map[symbol.ID]ssa.Version, len(symbols))
-	for sym := range symbols {
+	builder := versionStateBuilder{}
+	for i, sym := range symbols {
+		if i != 0 && symbols[i-1] == sym {
+			continue
+		}
 		first := ssa.Version{}
 		same := true
 		root := ""
 		for i, pred := range knownPreds {
-			version := out[pred][sym]
+			version := out[pred].lookup(sym)
 			if root == "" {
 				root = version.Root
 			}
@@ -172,7 +205,7 @@ func mergePredecessors(
 		}
 		if same {
 			if !first.IsZero() {
-				merged[sym] = first
+				builder.append(sym, first)
 			}
 			continue
 		}
@@ -183,41 +216,27 @@ func mergePredecessors(
 			phi = ssa.Version{Root: root, Symbol: sym, ID: next[sym]}
 			phis[key] = phi
 		}
-		merged[sym] = phi
+		builder.append(sym, phi)
 	}
-	return merged
+	return builder.build()
 }
 
-func versionMapWithDefinitions(
-	base map[symbol.ID]ssa.Version,
+func versionStateWithDefinitions(
+	base *versionState,
 	defs []ssa.Version,
-) map[symbol.ID]ssa.Version {
+) *versionState {
 	if len(defs) == 0 {
 		return base
 	}
-	next := cloneVersionMap(base)
-	if next == nil {
-		next = make(map[symbol.ID]ssa.Version, len(defs))
-	}
+	next := base
 	for _, version := range defs {
-		next[version.Symbol] = version
+		next = next.with(version)
 	}
 	return next
 }
 
 func versionSemanticallyEqual(left, right ssa.Version) bool {
 	return left.Symbol == right.Symbol && left.ID == right.ID
-}
-
-func cloneVersionMap(in map[symbol.ID]ssa.Version) map[symbol.ID]ssa.Version {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[symbol.ID]ssa.Version, len(in))
-	for sym, version := range in {
-		out[sym] = version
-	}
-	return out
 }
 
 func versionMapsEqual(left, right map[symbol.ID]ssa.Version) bool {

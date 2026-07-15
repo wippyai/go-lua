@@ -48,7 +48,7 @@ type Body struct {
 	globalSymbols        map[string]SymbolID
 	debugPointOrdinals   map[cfg.Point]uint32
 	debugPointOrder      []cfg.Point
-	debugLocalVisibility map[debugVisibilityKey][]SymbolID
+	debugLocalVisibility []debugVisibilityAtPoint
 
 	pathIndex     map[path.PathKey]PathRef
 	constIndex    map[Const]ConstRef

@@ -22,6 +22,7 @@
 package wirlower
 
 import (
+	"sort"
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -238,6 +239,7 @@ func lowerInto(name string, stmts []ast.Stmt, fn *ast.FunctionExpr, bindings *bi
 		debugScopes:         [][]symbol.ID{{}},
 		debugBefore:         make(map[cfg.Point][]symbol.ID),
 		debugAfter:          make(map[cfg.Point][]symbol.ID),
+		debugDirty:          true,
 	}
 	b.debugSeedFunctionParams(fn)
 	b.indexShortCircuits()
@@ -308,9 +310,11 @@ type builder struct {
 	// debugScopes mirrors lexical value visibility while lowering. It stores
 	// only source symbol identities; WIR SymbolInfo and codegen still own names
 	// and slots respectively.
-	debugScopes [][]symbol.ID
-	debugBefore map[cfg.Point][]symbol.ID
-	debugAfter  map[cfg.Point][]symbol.ID
+	debugScopes  [][]symbol.ID
+	debugBefore  map[cfg.Point][]symbol.ID
+	debugAfter   map[cfg.Point][]symbol.ID
+	debugVisible []symbol.ID
+	debugDirty   bool
 }
 
 // callResult records the result temps a pre-lowered call binds together with the
@@ -355,6 +359,7 @@ func (b *builder) debugSeedFunctionParams(fn *ast.FunctionExpr) {
 	for _, param := range b.bindings.ParamSlots(fn) {
 		if param.Symbol != 0 {
 			b.debugScopes[0] = append(b.debugScopes[0], param.Symbol)
+			b.debugDirty = true
 		}
 	}
 }
@@ -368,12 +373,16 @@ func (b *builder) debugPushScope() {
 func (b *builder) debugPopScope() {
 	if b != nil && len(b.debugScopes) > 1 {
 		b.debugScopes = b.debugScopes[:len(b.debugScopes)-1]
+		b.debugDirty = true
 	}
 }
 
 func (b *builder) debugVisibleSymbols() []symbol.ID {
 	if b == nil || b.bindings == nil {
 		return nil
+	}
+	if !b.debugDirty {
+		return b.debugVisible
 	}
 	byName := make(map[string]symbol.ID)
 	for _, scope := range b.debugScopes {
@@ -389,7 +398,10 @@ func (b *builder) debugVisibleSymbols() []symbol.ID {
 	for _, id := range byName {
 		out = append(out, id)
 	}
-	return out
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	b.debugVisible = out
+	b.debugDirty = false
+	return b.debugVisible
 }
 
 func (b *builder) debugRecordBefore(point cfg.Point) {
@@ -409,6 +421,7 @@ func (b *builder) debugDeclareAt(point cfg.Point, id symbol.ID) {
 		return
 	}
 	b.debugScopes[len(b.debugScopes)-1] = append(b.debugScopes[len(b.debugScopes)-1], id)
+	b.debugDirty = true
 	b.debugAfter[point] = b.debugVisibleSymbols()
 }
 
@@ -417,12 +430,12 @@ func (b *builder) finishDebugLocalVisibility() {
 		return
 	}
 	for point, before := range b.debugBefore {
-		b.body.SetDebugLocalVisibility(point, wir.DebugPhaseBefore, before)
+		b.body.SetDebugLocalVisibilitySnapshot(point, wir.DebugPhaseBefore, before)
 		after, ok := b.debugAfter[point]
 		if !ok {
 			after = before
 		}
-		b.body.SetDebugLocalVisibility(point, wir.DebugPhaseAfter, after)
+		b.body.SetDebugLocalVisibilitySnapshot(point, wir.DebugPhaseAfter, after)
 	}
 }
 

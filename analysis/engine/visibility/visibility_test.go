@@ -694,23 +694,23 @@ func TestVersionMergeIgnoresRootTextWhenIdentityMatches(t *testing.T) {
 	graph.AddEdge(rightNode, joinNode, false)
 	graph.AddEdge(joinNode, graph.Exit(), false)
 
+	out := make([]*versionState, int(joinNode)+1)
+	out[leftNode] = versionStateWithDefinitions(nil, []ssa.Version{left[sym]})
+	out[rightNode] = versionStateWithDefinitions(nil, []ssa.Version{right[sym]})
+	initialized := make([]bool, int(joinNode)+1)
+	initialized[leftNode] = true
+	initialized[rightNode] = true
 	merged := mergePredecessors(
 		graph,
 		joinNode,
-		map[cfg.Point]map[symbol.ID]ssa.Version{
-			leftNode:  left,
-			rightNode: right,
-		},
-		map[cfg.Point]struct{}{
-			leftNode:  {},
-			rightNode: {},
-		},
+		out,
+		initialized,
 		map[lookup]ssa.Version{},
 		map[symbol.ID]int{sym: 7},
 	)
 
-	got, ok := merged[sym]
-	if !ok {
+	got := merged.lookup(sym)
+	if got.IsZero() {
 		t.Fatal("mergePredecessors dropped semantically identical incoming version")
 	}
 	if got.Symbol != sym || got.ID != 7 {
@@ -719,8 +719,8 @@ func TestVersionMergeIgnoresRootTextWhenIdentityMatches(t *testing.T) {
 	if got.Root != left[sym].Root && got.Root != right[sym].Root {
 		t.Fatalf("merged root = %q, want one of the incoming display roots", got.Root)
 	}
-	if len(merged) != 1 {
-		t.Fatalf("merged symbol count = %d, want 1", len(merged))
+	if merged.count != 1 {
+		t.Fatalf("merged symbol count = %d, want 1", merged.count)
 	}
 }
 
