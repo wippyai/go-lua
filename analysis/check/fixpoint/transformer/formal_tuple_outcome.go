@@ -355,7 +355,7 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 			}
 			var container state.CoordinateFamilyFactor
 			if plan.hasContainer {
-				container, err = a.materializeFormalPresenceCoordinateFamily(view, plan.container, nil)
+				container, err = a.materializeFormalCoordinateFamily(view, plan.container, nil)
 				if err != nil {
 					return nil, fmt.Errorf("transformer: formal Outcome container: %w", err)
 				}
@@ -399,7 +399,7 @@ func (a *formalTupleAlgebra) applyFormalOutcomePresence(plan *formalOutcomeStep,
 			if err != nil {
 				return nil, err
 			}
-			factor, err := a.materializeFormalPresenceCoordinateFamily(view, plan.presence, nil)
+			factor, err := a.materializeFormalCoordinateFamily(view, plan.presence, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -410,7 +410,7 @@ func (a *formalTupleAlgebra) applyFormalOutcomePresence(plan *formalOutcomeStep,
 			if err != nil {
 				return nil, fmt.Errorf("transformer: formal Outcome presence: %w", err)
 			}
-			published, err := a.factorFormalPresenceCoordinateFamily(view.authority, view.span, plan.presence, factor)
+			published, err := a.factorFormalCoordinateFamily(view.authority, view.span, plan.presence, factor)
 			if err != nil {
 				return nil, err
 			}

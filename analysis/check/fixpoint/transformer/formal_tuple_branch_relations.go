@@ -1153,7 +1153,7 @@ func (a *formalTupleAlgebra) publishFormalBranchCoordinatePatch(factors factappl
 	if plan.publication == factapply.BranchRelationCoordinatePublicationReconcile {
 		bindings = nil
 	}
-	base, err := a.materializeFormalPresenceCoordinateFamily(*next, plan.family, bindings)
+	base, err := a.materializeFormalCoordinateFamily(*next, plan.family, bindings)
 	if err != nil {
 		return fmt.Errorf("coordinate base family materialization: %w", err)
 	}
@@ -1161,7 +1161,7 @@ func (a *formalTupleAlgebra) publishFormalBranchCoordinatePatch(factors factappl
 	if err != nil {
 		return err
 	}
-	complete, err := a.factorFormalPresenceCoordinateFamily(evaluator.authority, evaluator.span, plan.family, patched)
+	complete, err := a.factorFormalCoordinateFamily(evaluator.authority, evaluator.span, plan.family, patched)
 	if err != nil {
 		return fmt.Errorf("coordinate patched family factoring: %w", err)
 	}

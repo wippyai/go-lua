@@ -308,7 +308,7 @@ type formalPresenceLeafWrite struct {
 	leaf    decisionLeaf
 }
 
-func (a *formalTupleAlgebra) materializeFormalPresenceCoordinateFamily(
+func (a *formalTupleAlgebra) materializeFormalCoordinateFamily(
 	view formalSparseLeafView,
 	family formalCoordinateFamilyFiberGroup,
 	selected []formalPresenceCoordinateSlot,
@@ -365,7 +365,7 @@ func (a *formalTupleAlgebra) materializeFormalPresenceCoordinateFamily(
 	return view.authority.product.SealCoordinateFamilyFactor(skeleton, scalars)
 }
 
-func (a *formalTupleAlgebra) factorFormalPresenceCoordinateFamily(
+func (a *formalTupleAlgebra) factorFormalCoordinateFamily(
 	authority *formalComponentTerminalAuthority,
 	span formalFiberDescriptorSpan,
 	family formalCoordinateFamilyFiberGroup,
@@ -575,7 +575,7 @@ func (a *formalTupleAlgebra) applyFormalPresenceImplicationsLeaf(
 			values.Values[binding.root] = terminal.ground
 		}
 	}
-	pathFactor, err := a.materializeFormalPresenceCoordinateFamily(view, plan.pathFamily, plan.pathSlots)
+	pathFactor, err := a.materializeFormalCoordinateFamily(view, plan.pathFamily, plan.pathSlots)
 	if err != nil {
 		return nil, false, err
 	}
@@ -588,7 +588,7 @@ func (a *formalTupleAlgebra) applyFormalPresenceImplicationsLeaf(
 	}
 	mutationCoordinates := make([]state.CoordinateFamilyFactor, len(plan.mutationFamilies))
 	for index, family := range plan.mutationFamilies {
-		mutationCoordinates[index], err = a.materializeFormalPresenceCoordinateFamily(view, family, nil)
+		mutationCoordinates[index], err = a.materializeFormalCoordinateFamily(view, family, nil)
 		if err != nil {
 			return nil, false, err
 		}
@@ -804,7 +804,7 @@ stageLoop:
 		}
 	}
 	for index, family := range plan.mutationFamilies {
-		leaves, factorErr := a.factorFormalPresenceCoordinateFamily(view.authority, span, family, mutation.CoordinateFactors()[index])
+		leaves, factorErr := a.factorFormalCoordinateFamily(view.authority, span, family, mutation.CoordinateFactors()[index])
 		if factorErr != nil {
 			return nil, false, factorErr
 		}
