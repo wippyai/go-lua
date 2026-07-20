@@ -449,7 +449,7 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 	applyLeaf func(formalFiberDescriptorSpan, formalTupleLeafEvaluator, state.ValueFactor[FormalSlot], []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error),
 ) (formalRelationTuple, error) {
 	if a == nil || applyLeaf == nil || operator.kind != formalRelationCellStep || operator.code == nil ||
-		!operator.effectAccess.Valid() || len(operator.effectReadOrdinals) == 0 || len(operator.effectWriteOrdinals) == 0 {
+		!operator.effectAccess.Valid() || !operator.effectLift.sealed {
 		return formalRelationTuple{}, fmt.Errorf("transformer: invalid formal Effect step")
 	}
 	if err := a.validateTuple(predecessor); err != nil {
@@ -458,7 +458,7 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 	if predecessor.bottom() {
 		return predecessor, nil
 	}
-	span, directory, authority, ok := a.span(predecessor.variable)
+	_, directory, authority, ok := a.span(predecessor.variable)
 	if !ok || authority.code != operator.code || predecessor.root.owner != directory {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal Effect predecessor has foreign ownership")
 	}
@@ -477,54 +477,33 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 		seenDemands[key] = struct{}{}
 		uniqueDemands = append(uniqueDemands, demand)
 	}
-	regions, err := a.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
-		tuple: predecessor, ordinals: operator.effectReadOrdinals,
-	}}, uniqueDemands)
-	if err != nil {
-		return fail(err)
-	}
 	step := operator.code.nodes[operator.root].steps[operator.step-1]
-	guardDecision := decisionTrue
+	execute := decisionTrue
 	if step.guard != 0 {
 		if a.program.formalGuards == nil || !a.program.formalGuards.valid() {
 			return fail(fmt.Errorf("transformer: formal Effect guard has no frozen vocabulary"))
 		}
-		guardDecision, err = a.decisionForGuard(predecessor.variable, operator.scope, operator.code.terms, step.guard)
+		var err error
+		execute, err = a.decisionForGuard(predecessor.variable, operator.scope, operator.code.terms, step.guard)
 		if err != nil {
 			return fail(err)
 		}
 	}
-	writeOrdinals := operator.effectWriteOrdinals
 	writeLanes := operator.effectAccess.LaneWrites()
-	type affectedRoot struct {
-		ordinal formalFiberOrdinal
-		prior   formalFiberValue
-		root    decisionRef
-	}
-	affected := make([]affectedRoot, len(writeOrdinals))
-	for index, ordinal := range writeOrdinals {
-		if index != 0 && writeOrdinals[index-1] >= ordinal {
-			return fail(fmt.Errorf("transformer: formal Effect write footprint is not sealed"))
-		}
-		prior, readErr := directory.valueAt(predecessor.root, ordinal)
-		if readErr != nil {
-			return fail(readErr)
-		}
-		affected[index] = affectedRoot{ordinal: ordinal, prior: prior, root: decisionRef(prior)}
-	}
-	for _, region := range regions {
-		if len(region.views) != 1 {
-			return fail(errFormalComponentMalformed)
-		}
-		evaluator, evaluatorErr := a.newSparseTupleLeafEvaluator(region.views[0])
-		if evaluatorErr != nil {
-			return fail(evaluatorErr)
-		}
-		trueCare, careErr := a.decisions.apply(a.ctx, uint8(decisionAnd), true, region.guard, guardDecision, decisionLeafAnd)
-		if careErr != nil {
-			return fail(careErr)
-		}
-		if trueCare != decisionFalse {
+	result, err := a.applyFormalClosedFactorLift(
+		operator.effectLift,
+		[]formalRelationTuple{predecessor},
+		uniqueDemands,
+		execute,
+		func(_ decisionRef, views []formalSparseLeafView) ([]formalClosedFactorLeafWrite, error) {
+			if len(views) != 1 {
+				return nil, errFormalComponentMalformed
+			}
+			view := views[0]
+			evaluator, evaluatorErr := a.newSparseTupleLeafEvaluator(view)
+			if evaluatorErr != nil {
+				return nil, evaluatorErr
+			}
 			values := state.ValueFactor[FormalSlot]{}
 			factors := make([]state.LaneFactor, 0, len(operator.effectGroups))
 			for _, group := range operator.effectGroups {
@@ -538,87 +517,63 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 					}
 				}
 				if evaluatorErr != nil {
-					return fail(evaluatorErr)
+					return nil, evaluatorErr
 				}
 			}
-			nextValues, nextFactors, effectErr := applyLeaf(span, evaluator, values, factors)
+			nextValues, nextFactors, effectErr := applyLeaf(view.span, evaluator, values, factors)
 			if effectErr != nil {
-				return fail(effectErr)
+				return nil, effectErr
 			}
 			if len(nextFactors) != len(factors) {
-				return fail(errFormalComponentMalformed)
+				return nil, errFormalComponentMalformed
 			}
-			leaves := append([]decisionLeaf(nil), evaluator.leaves.leaves...)
+			leaves := append([]decisionLeaf(nil), view.leaves...)
 			factorIndex := 0
 			for _, group := range operator.effectGroups {
 				if group.kind == formalFiberGroupValues {
 					if writeLanes.Has(group.lane.ID()) {
 						if effectErr = a.factorFormalSelectedEffectGroup(evaluator, group, nextValues, state.LaneFactor{}, leaves); effectErr != nil {
-							return fail(effectErr)
+							return nil, effectErr
 						}
 					}
 					continue
 				}
 				if factorIndex >= len(nextFactors) || nextFactors[factorIndex].Lane() != group.lane {
-					return fail(errFormalComponentMalformed)
+					return nil, errFormalComponentMalformed
 				}
 				if writeLanes.Has(group.lane.ID()) {
 					if effectErr = a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, nextFactors[factorIndex], leaves); effectErr != nil {
-						return fail(effectErr)
+						return nil, effectErr
 					}
 				}
 				factorIndex++
 			}
 			if factorIndex != len(nextFactors) || len(leaves) != len(operator.effectReadOrdinals) {
-				return fail(errFormalComponentMalformed)
+				return nil, errFormalComponentMalformed
 			}
-			for index := range affected {
-				ordinal := affected[index].ordinal
-				position, present := evaluator.leaves.position(ordinal)
-				if !present || position >= len(leaves) {
-					return fail(errFormalComponentMalformed)
+			writes := make([]formalClosedFactorLeafWrite, 0, len(operator.effectWriteOrdinals))
+			for _, ordinal := range operator.effectWriteOrdinals {
+				position, present := view.positions.position(ordinal)
+				prior, selected := view.leaf(ordinal)
+				if !present || !selected || position >= len(leaves) {
+					return nil, errFormalComponentMalformed
 				}
-				leaf := leaves[position]
-				priorLeaf, present := evaluator.leaves.leaf(ordinal)
-				if !present {
-					return fail(errFormalComponentMalformed)
-				}
-				if leaf == priorLeaf {
-					continue
-				}
-				affected[index].root, effectErr = a.decisions.condition(
-					a.ctx, trueCare, a.decisions.terminal(leaf), affected[index].root,
-				)
-				if effectErr != nil {
-					return fail(effectErr)
+				if leaves[position] != prior {
+					writes = append(writes, formalClosedFactorLeafWrite{ordinal: ordinal, leaf: leaves[position]})
 				}
 			}
-		}
+			return writes, nil
+		},
+	)
+	if err != nil {
+		return fail(err)
 	}
-	writes := make([]formalFiberWrite, 0, len(affected))
-	for _, candidate := range affected {
-		descriptor := span.forest.descriptors[span.first+int(candidate.ordinal)]
-		if err := a.validateDescriptorRoot(authority, descriptor, candidate.root); err != nil {
-			return fail(err)
-		}
-		if candidate.prior != formalFiberValue(candidate.root) {
-			writes = append(writes, formalFiberWrite{ordinal: candidate.ordinal, value: formalFiberValue(candidate.root)})
-		}
-	}
-	if len(writes) == 0 {
+	if result.root == predecessor.root {
+		a.decisions.rollback(mark)
 		return predecessor, nil
 	}
-	delta, err := directory.sealDelta(writes)
-	if err != nil {
-		return fail(err)
-	}
-	root, _, err := directory.applyDelta(predecessor.root, delta)
-	if err != nil {
-		return fail(err)
-	}
-	return a.normalize(formalRelationTuple{variable: predecessor.variable, root: root}), nil
+	return result, nil
 }
-
 func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelationOperatorRef, span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, plan *formalPathReplacementStep, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
 	if !evaluator.valid() || evaluator.variable != span.variable || plan == nil || !plan.values.valid() ||
 		plan.values.variable != span.variable {

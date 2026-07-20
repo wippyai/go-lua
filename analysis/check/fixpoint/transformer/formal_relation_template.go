@@ -127,6 +127,7 @@ type formalRelationOperatorRef struct {
 	effectGroups        []formalFiberGroupDescriptor
 	effectReadOrdinals  []formalFiberOrdinal
 	effectWriteOrdinals []formalFiberOrdinal
+	effectLift          formalClosedFactorLift
 	// objectMaterialization binds EffectObjectMaterialization directly to the
 	// registered object-graph factor law.
 	objectMaterialization *formalObjectMaterializationStep
@@ -442,6 +443,14 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 				}
 				operator.effectAccess, operator.effectGroups = access, groups
 				operator.effectReadOrdinals, operator.effectWriteOrdinals = reads, writes
+				span, owned := program.formalFibers.span(cell.Variable)
+				if !owned {
+					return nil, fmt.Errorf("transformer: formal Effect lift has no frozen product span")
+				}
+				operator.effectLift, accessErr = sealFormalClosedFactorLift(span, [][]formalFiberOrdinal{reads}, writes)
+				if accessErr != nil {
+					return nil, fmt.Errorf("transformer: formal Effect lift: %w", accessErr)
+				}
 			}
 		}
 		template.equations[index] = formalRelationEquation{Cell: cellRef, Operator: operator}
