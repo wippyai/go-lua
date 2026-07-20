@@ -65,16 +65,25 @@ func CloseReturnIdentities[C any](
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	sealedSources, err := sealReturnIdentityConditions(algebra, sources)
+	sealedSources, err := sealReturnIdentityConditions(ctx, algebra, sources)
 	if err != nil {
 		return nil, err
 	}
-	sealedAdmissions, err := sealReturnIdentityConditions(algebra, admissions)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sealedAdmissions, err := sealReturnIdentityConditions(ctx, algebra, admissions)
 	if err != nil {
 		return nil, err
 	}
-	sealedEdges, err := sealReturnIdentityEdges(algebra, edges)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sealedEdges, err := sealReturnIdentityEdges(ctx, algebra, edges)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -169,6 +178,9 @@ func CloseReturnIdentities[C any](
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	result := make([]ReturnIdentityCondition[C], 0, len(total))
 	for root, condition := range total {
 		if !algebra.Equal(condition, algebra.False) {
@@ -176,19 +188,38 @@ func CloseReturnIdentities[C any](
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return identity.Less(result[i].Root, result[j].Root) })
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
-func sealReturnIdentityConditions[C any](algebra ReturnBooleanAlgebra[C], input []ReturnIdentityCondition[C]) ([]ReturnIdentityCondition[C], error) {
+func sealReturnIdentityConditions[C any](ctx context.Context, algebra ReturnBooleanAlgebra[C], input []ReturnIdentityCondition[C]) ([]ReturnIdentityCondition[C], error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	out := append([]ReturnIdentityCondition[C](nil), input...)
-	for _, condition := range out {
+	for index, condition := range out {
+		if index&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if !condition.Root.Valid() {
 			return nil, fmt.Errorf("factapply: return-identity condition has invalid root")
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return identity.Less(out[i].Root, out[j].Root) })
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sealed := out[:0]
-	for _, condition := range out {
+	for index, condition := range out {
+		if index&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if len(sealed) == 0 || sealed[len(sealed)-1].Root != condition.Root {
 			sealed = append(sealed, condition)
 			continue
@@ -199,12 +230,23 @@ func sealReturnIdentityConditions[C any](algebra ReturnBooleanAlgebra[C], input 
 		}
 		sealed[len(sealed)-1].Condition = joined
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return sealed, nil
 }
 
-func sealReturnIdentityEdges[C any](algebra ReturnBooleanAlgebra[C], input []ReturnIdentityEdgeCondition[C]) ([]sealedReturnIdentityEdge[C], error) {
+func sealReturnIdentityEdges[C any](ctx context.Context, algebra ReturnBooleanAlgebra[C], input []ReturnIdentityEdgeCondition[C]) ([]sealedReturnIdentityEdge[C], error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	out := make([]sealedReturnIdentityEdge[C], len(input))
 	for index, edge := range input {
+		if index&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if !edge.From.Valid() || !edge.To.Valid() {
 			return nil, fmt.Errorf("factapply: return-identity edge has invalid endpoint")
 		}
@@ -216,8 +258,16 @@ func sealReturnIdentityEdges[C any](algebra ReturnBooleanAlgebra[C], input []Ret
 		}
 		return identity.Less(out[i].to, out[j].to)
 	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sealed := out[:0]
-	for _, edge := range out {
+	for index, edge := range out {
+		if index&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if len(sealed) == 0 || sealed[len(sealed)-1].from != edge.from || sealed[len(sealed)-1].to != edge.to {
 			sealed = append(sealed, edge)
 			continue
@@ -227,6 +277,9 @@ func sealReturnIdentityEdges[C any](algebra ReturnBooleanAlgebra[C], input []Ret
 			return nil, err
 		}
 		sealed[len(sealed)-1].condition = joined
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return sealed, nil
 }

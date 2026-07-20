@@ -131,3 +131,70 @@ func TestCloseReturnIdentitiesCancellation(t *testing.T) {
 		t.Fatalf("CloseReturnIdentities() error = %v, want context.Canceled", err)
 	}
 }
+
+func TestCloseReturnIdentitiesCancellationDuringSealWithEmptyQueue(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	algebra := returnBoolAlgebra()
+	algebra.Or = func(left, right bool) (bool, error) {
+		cancel()
+		return left || right, nil
+	}
+	root := returnClosureTerm(1)
+	_, err := CloseReturnIdentities(ctx, algebra, nil,
+		[]ReturnIdentityCondition[bool]{
+			{Root: root, Condition: true},
+			{Root: root, Condition: false},
+		}, nil,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CloseReturnIdentities() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestCloseReturnIdentitiesCancellationAfterFinalWorkItem(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	algebra := returnBoolAlgebra()
+	andCalls := 0
+	algebra.And = func(left, right bool) (bool, error) {
+		andCalls++
+		if andCalls == 2 {
+			cancel()
+		}
+		return left && right, nil
+	}
+	root := returnClosureTerm(1)
+	_, err := CloseReturnIdentities(ctx, algebra,
+		[]ReturnIdentityCondition[bool]{{Root: root, Condition: true}},
+		[]ReturnIdentityCondition[bool]{{Root: root, Condition: true}},
+		[]ReturnIdentityEdgeCondition[bool]{{From: root, To: root, Condition: true}},
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CloseReturnIdentities() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestCloseReturnIdentitiesConditionalCycleRequeuesFreshGuards(t *testing.T) {
+	a, b := returnClosureTerm(1), returnClosureTerm(2)
+	const all, x, y uint8 = 0b1111, 0b1100, 0b1010
+	got, err := CloseReturnIdentities(context.Background(), returnMaskAlgebra(all),
+		[]ReturnIdentityCondition[uint8]{
+			{Root: a, Condition: x},
+			{Root: b, Condition: y},
+		},
+		[]ReturnIdentityCondition[uint8]{
+			{Root: a, Condition: all},
+			{Root: b, Condition: all},
+		},
+		[]ReturnIdentityEdgeCondition[uint8]{
+			{From: a, To: b, Condition: all},
+			{From: b, To: a, Condition: all},
+		},
+	)
+	want := []ReturnIdentityCondition[uint8]{
+		{Root: a, Condition: x | y},
+		{Root: b, Condition: x | y},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("conditional cyclic closure = %#v, %v; want %#v", got, err, want)
+	}
+}
