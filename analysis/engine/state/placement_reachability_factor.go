@@ -45,6 +45,17 @@ func (d ProductDomain) PlacementReachabilityLanes(plan PlacementReachabilityPlan
 	if !plan.Valid() || plan.seal != d.seal {
 		return nil, fmt.Errorf("%w: foreign placement reachability", ErrInvalidLaneFactor)
 	}
+	return d.PlacementReachabilityPotentialLanes(), nil
+}
+
+// PlacementReachabilityPotentialLanes returns the registration-owned carrier
+// envelope before a concrete reachability problem exists. Exact plans retain
+// the same envelope: reachability is data dependent, while participation is a
+// property of each coordinate family's registered return-identity roles.
+func (d ProductDomain) PlacementReachabilityPotentialLanes() []ProductLane {
+	if !d.Valid() {
+		return nil
+	}
 	out := make([]ProductLane, 0, 2)
 	for laneIndex := range d.factorLanes {
 		runtime := &d.factorLanes[laneIndex]
@@ -56,7 +67,7 @@ func (d ProductDomain) PlacementReachabilityLanes(plan PlacementReachabilityPlan
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 type placementReachabilityLane struct {

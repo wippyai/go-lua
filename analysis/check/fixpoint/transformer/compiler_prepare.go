@@ -233,11 +233,7 @@ func (c *PlanCompiler) prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 		}
 		for _, lane := range state.DefaultLanes() {
 			capability := CapabilityUnaffected
-			if dynamicCapability, handled := dynamicIndexEffectCapability(fact, lane); handled {
-				capability = dynamicCapability
-			} else if pathStoreCapability, handled := pathStoreEffectCapability(fact, lane); handled {
-				capability = pathStoreCapability
-			} else if fact == operationplan.RootAssignment || isBranchEdgeOwnedKind(fact) {
+			if DefaultEffectCatalog().OwnsSource(fact) || fact == operationplan.RootAssignment || isBranchEdgeOwnedKind(fact) {
 				capability = CapabilitySupported
 			}
 			_ = semantic.SetFact(fact, lane, capability)

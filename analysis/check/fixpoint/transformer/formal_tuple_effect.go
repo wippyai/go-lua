@@ -11,43 +11,111 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
-func sealFormalEffectTransferAccess(domain state.ProductDomain, descriptor EffectDescriptor, extraReads state.LaneSet) (state.TransferAccess, error) {
-	if !domain.Valid() || descriptor.Kind() == EffectInvalid {
+func productLaneSet(lanes ...[]state.ProductLane) state.LaneSet {
+	ids := make([]state.LaneID, 0)
+	for _, group := range lanes {
+		for _, lane := range group {
+			ids = append(ids, lane.ID())
+		}
+	}
+	return state.NewLaneSet(ids...)
+}
+
+func formalGroupLaneSet(groups []formalFiberGroupDescriptor) state.LaneSet {
+	ids := make([]state.LaneID, 0, len(groups))
+	for _, group := range groups {
+		ids = append(ids, group.lane.ID())
+	}
+	return state.NewLaneSet(ids...)
+}
+
+func sealFormalEffectTransferAccess(domain state.ProductDomain, kind EffectKind, reads, writes state.LaneSet) (state.TransferAccess, error) {
+	if !domain.Valid() || kind == EffectInvalid {
 		return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect access is unowned")
 	}
-	var reads, carries, writes []state.LaneID
-	for _, lane := range domain.Lanes().IDs() {
-		use := descriptor.LaneUse(lane)
-		if extraReads.Has(lane) {
-			switch use {
-			case LaneUseUnaffected:
-				use = LaneUseRead
-			case LaneUseWrite:
-				use = LaneUseReadWrite
-			}
-		}
-		switch use {
-		case LaneUseRead:
-			reads, carries = append(reads, lane), append(carries, lane)
-		case LaneUseWrite:
-			carries, writes = append(carries, lane), append(writes, lane)
-		case LaneUseReadWrite:
-			reads, carries, writes = append(reads, lane), append(carries, lane), append(writes, lane)
-		case LaneUseUnaffected:
-		case LaneUseUnsupported:
-			return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d does not support enabled lane %q", descriptor.Kind(), lane)
-		default:
-			return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d has no lane-use decision for %q", descriptor.Kind(), lane)
-		}
+	if writes.Len() == 0 {
+		return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d has no registered write lane", kind)
 	}
-	if len(writes) == 0 {
-		return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d has no registered write lane", descriptor.Kind())
-	}
+	carries := reads.With(writes.IDs()...)
 	return state.SealTransferAccess(domain, state.TransferAccessConfig{
-		ProviderInputs: []state.TransferInputAccess{{Lanes: state.NewLaneSet(reads...)}},
-		LaneCarryReads: state.NewLaneSet(carries...), LaneWrites: state.NewLaneSet(writes...),
+		ProviderInputs: []state.TransferInputAccess{{Lanes: reads}},
+		LaneCarryReads: carries, LaneWrites: writes,
 		ValueCarry: 0, LaneCarry: 0, DiagnosticCarry: 0, ReachableCarry: 0,
 	})
+}
+
+func formalEffectTransferLaneSets(domain state.ProductDomain, operator formalRelationOperatorRef, kind EffectKind) (state.LaneSet, state.LaneSet, error) {
+	reads, writes := state.NewLaneSet(), state.NewLaneSet()
+	addProduct := func(target state.LaneSet, lanes ...[]state.ProductLane) state.LaneSet {
+		return target.With(productLaneSet(lanes...).IDs()...)
+	}
+	switch kind {
+	case EffectInvalidatePath:
+		if operator.pathInvalidation == nil {
+			return reads, writes, errFormalComponentMalformed
+		}
+		writes = addProduct(writes, operator.pathInvalidation.lanes)
+		reads = reads.With(writes.IDs()...)
+	case EffectAllocationTemplate:
+		if operator.allocationTemplate == nil {
+			return reads, writes, errFormalComponentMalformed
+		}
+		lanes, err := domain.ObjectGraphMutationLanes(operator.allocationTemplate.graph)
+		if err != nil {
+			return reads, writes, err
+		}
+		writes = addProduct(writes, lanes)
+		reads = reads.With(writes.IDs()...)
+	case EffectObjectMaterialization:
+		if operator.objectMaterialization == nil {
+			return reads, writes, errFormalComponentMalformed
+		}
+		writes = addProduct(writes, domain.ObjectMutationParticipantLanes())
+		reads = reads.With(writes.IDs()...).With(state.LaneValues)
+		reads = reads.With(operator.objectMaterialization.valueAccess.Lanes.IDs()...)
+	case EffectPathStore:
+		plan := operator.pathReplacement
+		if plan == nil {
+			return reads, writes, errFormalComponentMalformed
+		}
+		reads = reads.With(formalGroupLaneSet(plan.reads).IDs()...).With(plan.valueAccess.Lanes.IDs()...).With(state.LaneValues)
+		writes = writes.With(formalGroupLaneSet(plan.writes).IDs()...)
+		if plan.hasStatic {
+			reads = reads.With(plan.staticGroup.lane.ID())
+			writes = writes.With(plan.staticGroup.lane.ID())
+		}
+		if plan.hasAssignment {
+			writes = writes.With(state.LaneValues)
+		}
+		reads = reads.With(writes.IDs()...)
+	case EffectIndexMutation:
+		plan := operator.indexMutation
+		if plan == nil {
+			return reads, writes, errFormalComponentMalformed
+		}
+		writes = addProduct(writes,
+			domain.PathDescendantMutationParticipantLanes(),
+			domain.DynamicIndexMembershipFactorLanes(),
+			domain.PlacementReachabilityPotentialLanes(),
+			domain.ObjectMutationParticipantLanes(),
+			domain.EffectDeltaFactorLanes(),
+		)
+		if plan.appendMode {
+			family, ok := domain.LenFloorCoordinateFamily()
+			if !ok {
+				return reads, writes, errFormalComponentMalformed
+			}
+			writes = writes.With(family.Lane().ID())
+		}
+		potential, err := domain.DynamicReadPotentialLanes()
+		if err != nil {
+			return reads, writes, err
+		}
+		reads = reads.With(writes.IDs()...).With(potential.IDs()...).With(plan.valueAccess.Lanes.IDs()...).With(state.LaneValues)
+	default:
+		return reads, writes, fmt.Errorf("transformer: formal Effect kind %d has no registered operation adapter", kind)
+	}
+	return reads, writes, nil
 }
 
 func freezeFormalEffectTransferAccess(
@@ -61,22 +129,16 @@ func freezeFormalEffectTransferAccess(
 		return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect has no sealed syntax owner")
 	}
 	kind := operator.code.effects.Kind(step.effect)
-	descriptor, ok := DefaultEffectCatalog().Descriptor(kind)
+	_, ok = DefaultEffectCatalog().Descriptor(kind)
 	if !ok {
 		return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect kind %d has no registered descriptor", kind)
 	}
 	body := &program.bodies[variable-1]
-	extraReads := state.NewLaneSet()
-	if operator.indexMutation != nil {
-		extraReads = extraReads.With(operator.indexMutation.valueAccess.Lanes.IDs()...)
+	reads, writes, err := formalEffectTransferLaneSets(body.productDomain, operator, kind)
+	if err != nil {
+		return state.TransferAccess{}, nil, nil, nil, err
 	}
-	if operator.objectMaterialization != nil {
-		extraReads = extraReads.With(operator.objectMaterialization.valueAccess.Lanes.IDs()...)
-	}
-	if operator.pathReplacement != nil {
-		extraReads = extraReads.With(operator.pathReplacement.valueAccess.Lanes.IDs()...)
-	}
-	access, err := sealFormalEffectTransferAccess(body.productDomain, descriptor, extraReads)
+	access, err := sealFormalEffectTransferAccess(body.productDomain, kind, reads, writes)
 	if err != nil {
 		return state.TransferAccess{}, nil, nil, nil, err
 	}

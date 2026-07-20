@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -73,86 +72,43 @@ func TestEffectArenaIndexMutationRequiresAtomicInvalidation(t *testing.T) {
 	}
 }
 
-func TestDefaultEffectCatalogCoversExactlyAllSeventeenStateLanes(t *testing.T) {
+func TestDefaultEffectCatalogOwnsExactAtomicSources(t *testing.T) {
 	catalog := DefaultEffectCatalog()
-	lanes := state.DefaultLaneCatalog().LaneSet().IDs()
-	if len(lanes) != 17 {
-		t.Fatalf("test assumption: got %d State lanes", len(lanes))
+	expected := map[EffectKind][]operationplan.Kind{
+		EffectInvalidatePath:        {operationplan.PathDescendantInvalidation},
+		EffectIndexMutation:         {operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite},
+		EffectAllocationTemplate:    {operationplan.CallSite},
+		EffectObjectMaterialization: {operationplan.ObjectLiteral},
+		EffectPathStore:             {operationplan.PathAssignment, operationplan.PathStaticMemberWrite},
 	}
-	if got := catalog.Lanes(); len(got) != len(lanes) {
-		t.Fatalf("effect lanes = %d, want %d", len(got), len(lanes))
-	}
-	for kind := EffectInvalidatePath; kind < effectKindCount; kind++ {
+	for kind, sources := range expected {
 		descriptor, ok := catalog.Descriptor(kind)
 		if !ok {
 			t.Fatalf("effect descriptor %d missing", kind)
 		}
-		for _, lane := range lanes {
-			if use := descriptor.LaneUse(lane); use == LaneUseInvalid {
-				t.Fatalf("effect %d lane %q has no verdict", kind, lane)
+		got := descriptor.Sources()
+		if len(got) != len(sources) {
+			t.Fatalf("effect %d source count = %d, want %d", kind, len(got), len(sources))
+		}
+		for index, source := range sources {
+			if got[index] != source || !catalog.OwnsSource(source) {
+				t.Fatalf("effect %d source %d = %d, want %d", kind, index, got[index], source)
 			}
 		}
 	}
-	expected := map[EffectKind]map[state.LaneID]LaneUse{
-		EffectInvalidatePath: {
-			state.LaneValues: LaneUseReadWrite, state.LanePathEvidence: LaneUseReadWrite,
-			state.LaneDynamicIndex: LaneUseReadWrite, state.LaneHeapTableIdentity: LaneUseReadWrite,
-			state.LaneKeyMemberships: LaneUseReadWrite, state.LaneLenFloors: LaneUseReadWrite,
-			state.LaneDiffRelations: LaneUseReadWrite,
-		},
-		EffectIndexMutation: {
-			state.LaneValues: LaneUseReadWrite, state.LanePathEvidence: LaneUseReadWrite,
-			state.LaneDynamicIndex: LaneUseReadWrite, state.LaneHeapTableIdentity: LaneUseReadWrite,
-			state.LaneEffectDeltas: LaneUseReadWrite, state.LaneKeyMemberships: LaneUseReadWrite,
-			state.LaneTypestates: LaneUseReadWrite, state.LanePlacement: LaneUseReadWrite,
-			state.LaneLenFloors: LaneUseReadWrite, state.LaneDiffRelations: LaneUseReadWrite,
-		},
-		EffectAllocationTemplate: {
-			state.LaneHeapTableIdentity: LaneUseReadWrite, state.LanePlacement: LaneUseReadWrite,
-		},
-		EffectObjectMaterialization: {
-			state.LaneValues: LaneUseRead, state.LaneHeapTableIdentity: LaneUseWrite,
-			state.LanePlacement: LaneUseReadWrite,
-		},
-		EffectPathStore: {
-			state.LaneValues: LaneUseReadWrite, state.LanePathEvidence: LaneUseReadWrite,
-			state.LaneDynamicIndex: LaneUseReadWrite, state.LaneHeapTableIdentity: LaneUseReadWrite,
-			state.LaneKeyMemberships: LaneUseReadWrite, state.LaneTypestates: LaneUseReadWrite,
-			state.LanePlacement: LaneUseReadWrite, state.LaneLenFloors: LaneUseReadWrite,
-			state.LaneUserLattices: LaneUseReadWrite,
-		},
-	}
-	for kind := EffectInvalidatePath; kind < effectKindCount; kind++ {
-		descriptor, _ := catalog.Descriptor(kind)
-		for _, lane := range lanes {
-			want := LaneUseUnaffected
-			if use, ok := expected[kind][lane]; ok {
-				want = use
-			}
-			if got := descriptor.LaneUse(lane); got != want {
-				t.Errorf("effect %d lane %q = %d, want %d", kind, lane, got, want)
-			}
-		}
+	if catalog.OwnsSource(operationplan.Return) {
+		t.Fatal("catalog claimed unrelated Return source")
 	}
 }
 
-func TestEffectCatalogFailsClosedOnLaneCatalogGrowthMissingAndOrphanCells(t *testing.T) {
+func TestEffectCatalogFailsClosedOnMissingAndDuplicateEffectKinds(t *testing.T) {
 	descriptors := defaultEffectDescriptors()
-	grown := append(state.DefaultLaneCatalog().LaneSet().IDs(), state.LaneID("future-axis"))
-	if _, err := bindEffectCatalog(grown, descriptors); err == nil || !strings.Contains(err.Error(), "future-axis") {
-		t.Fatalf("catalog growth error = %v", err)
+	if _, err := NewEffectCatalog(descriptors[:len(descriptors)-1]); err == nil || !strings.Contains(err.Error(), "missing effect kind") {
+		t.Fatalf("missing effect error = %v", err)
 	}
-
-	missing := defaultEffectDescriptors()
-	delete(missing[0].lanes, state.LaneValues)
-	if _, err := NewEffectCatalog(state.DefaultLaneCatalog(), missing); err == nil || !strings.Contains(err.Error(), "values") {
-		t.Fatalf("missing lane error = %v", err)
-	}
-
-	orphan := defaultEffectDescriptors()
-	orphan[0].lanes[state.LaneID("orphan")] = LaneUseUnaffected
-	if _, err := NewEffectCatalog(state.DefaultLaneCatalog(), orphan); err == nil || !strings.Contains(err.Error(), "orphan") {
-		t.Fatalf("orphan lane error = %v", err)
+	descriptors = append(descriptors, descriptors[0])
+	if _, err := NewEffectCatalog(descriptors); err == nil || !strings.Contains(err.Error(), "duplicate effect kind") {
+		t.Fatalf("duplicate effect error = %v", err)
 	}
 }
 
@@ -189,7 +145,7 @@ func TestEffectCatalogAdmitsIndexMutationPairAtomically(t *testing.T) {
 func TestEffectCatalogRejectsNonAtomicDescriptorSources(t *testing.T) {
 	descriptors := defaultEffectDescriptors()
 	descriptors[1].sources = []operationplan.Kind{operationplan.DynamicIndexWrite}
-	if _, err := NewEffectCatalog(state.DefaultLaneCatalog(), descriptors); err == nil || !strings.Contains(err.Error(), "atomic") {
+	if _, err := NewEffectCatalog(descriptors); err == nil || !strings.Contains(err.Error(), "atomic") {
 		t.Fatalf("non-atomic descriptor error = %v", err)
 	}
 }

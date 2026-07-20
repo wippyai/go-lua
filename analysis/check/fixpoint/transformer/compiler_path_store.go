@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -296,22 +295,4 @@ func boundaryMemberPathTerm(ctx planCompileContext, path pathdom.Path) (PathTerm
 		return 0, fmt.Errorf("path term construction failed")
 	}
 	return term, nil
-}
-
-func pathStoreEffectCapability(kind operationplan.Kind, lane state.LaneID) (Capability, bool) {
-	if kind != operationplan.PathAssignment && kind != operationplan.PathStaticMemberWrite {
-		return CapabilityUnsupported, false
-	}
-	descriptor, ok := DefaultEffectCatalog().Descriptor(EffectPathStore)
-	if !ok {
-		return CapabilityUnsupported, false
-	}
-	switch descriptor.LaneUse(lane) {
-	case LaneUseUnaffected:
-		return CapabilityUnaffected, true
-	case LaneUseRead, LaneUseWrite, LaneUseReadWrite:
-		return CapabilitySupported, true
-	default:
-		return CapabilityUnsupported, true
-	}
 }

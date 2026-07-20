@@ -5,39 +5,22 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-)
-
-// LaneUse is an effect's explicit relationship with one State axis. Read and
-// write are separate because a lane can influence an effect without appearing
-// in its output. Missing cells are invalid, never implicit Unaffected.
-type LaneUse uint8
-
-const (
-	LaneUseInvalid LaneUse = iota
-	LaneUseUnaffected
-	LaneUseRead
-	LaneUseWrite
-	LaneUseReadWrite
-	LaneUseUnsupported
 )
 
 type EffectDescriptor struct {
 	kind          EffectKind
 	sources       []operationplan.Kind
-	lanes         map[state.LaneID]LaneUse
 	boundaryKinds []callboundary.BoundaryFactKind
 }
 
 func NewEffectDescriptor(
 	kind EffectKind,
 	sources []operationplan.Kind,
-	lanes map[state.LaneID]LaneUse,
 	boundaryKinds []callboundary.BoundaryFactKind,
 ) EffectDescriptor {
 	return EffectDescriptor{
 		kind: kind, sources: append([]operationplan.Kind(nil), sources...),
-		lanes: cloneLaneUses(lanes), boundaryKinds: append([]callboundary.BoundaryFactKind(nil), boundaryKinds...),
+		boundaryKinds: append([]callboundary.BoundaryFactKind(nil), boundaryKinds...),
 	}
 }
 
@@ -48,23 +31,20 @@ func (d EffectDescriptor) Sources() []operationplan.Kind {
 func (d EffectDescriptor) BoundaryKinds() []callboundary.BoundaryFactKind {
 	return append([]callboundary.BoundaryFactKind(nil), d.boundaryKinds...)
 }
-func (d EffectDescriptor) LaneUse(lane state.LaneID) LaneUse { return d.lanes[lane] }
 
-// EffectCatalog is the exhaustive EffectKind x LaneCatalog binding plus point
-// admission. The compiler uses it for effect capability admission and the
-// coordinate evaluator uses the same descriptors as its exact axis footprint;
-// neither side maintains an independent operation-to-lane switch.
+// EffectCatalog owns only the structured Effect syntax: atomic source
+// admission and boundary fact authority. ProductDomain transaction programs
+// own State-axis access; syntax must not redeclare that product matrix.
 type EffectCatalog struct {
-	lanes       []state.LaneID
 	descriptors map[EffectKind]EffectDescriptor
 }
 
-func NewEffectCatalog(catalog state.LaneCatalog, descriptors []EffectDescriptor) (*EffectCatalog, error) {
-	return bindEffectCatalog(catalog.LaneSet().IDs(), descriptors)
+func NewEffectCatalog(descriptors []EffectDescriptor) (*EffectCatalog, error) {
+	return bindEffectCatalog(descriptors)
 }
 
 func newDefaultEffectCatalog() *EffectCatalog {
-	catalog, err := NewEffectCatalog(state.DefaultLaneCatalog(), defaultEffectDescriptors())
+	catalog, err := NewEffectCatalog(defaultEffectDescriptors())
 	if err != nil {
 		panic(err)
 	}
@@ -78,15 +58,8 @@ var defaultEffectCatalog = newDefaultEffectCatalog()
 // cannot mutate this shared registry.
 func DefaultEffectCatalog() *EffectCatalog { return defaultEffectCatalog }
 
-func bindEffectCatalog(lanes []state.LaneID, descriptors []EffectDescriptor) (*EffectCatalog, error) {
-	out := &EffectCatalog{lanes: append([]state.LaneID(nil), lanes...), descriptors: make(map[EffectKind]EffectDescriptor, int(effectKindCount)-1)}
-	seenLanes := make(map[state.LaneID]struct{}, len(lanes))
-	for _, lane := range lanes {
-		if _, duplicate := seenLanes[lane]; duplicate {
-			return nil, fmt.Errorf("transformer: effect catalog duplicate state lane %q", lane)
-		}
-		seenLanes[lane] = struct{}{}
-	}
+func bindEffectCatalog(descriptors []EffectDescriptor) (*EffectCatalog, error) {
+	out := &EffectCatalog{descriptors: make(map[EffectKind]EffectDescriptor, int(effectKindCount)-1)}
 	for _, descriptor := range descriptors {
 		if descriptor.kind <= EffectInvalid || descriptor.kind >= effectKindCount {
 			return nil, fmt.Errorf("transformer: effect catalog invalid effect kind %d", descriptor.kind)
@@ -94,21 +67,10 @@ func bindEffectCatalog(lanes []state.LaneID, descriptors []EffectDescriptor) (*E
 		if _, duplicate := out.descriptors[descriptor.kind]; duplicate {
 			return nil, fmt.Errorf("transformer: effect catalog duplicate effect kind %d", descriptor.kind)
 		}
-		for _, lane := range lanes {
-			use := descriptor.lanes[lane]
-			if use < LaneUseUnaffected || use > LaneUseUnsupported {
-				return nil, fmt.Errorf("transformer: effect %d missing state lane %q", descriptor.kind, lane)
-			}
-		}
-		for lane := range descriptor.lanes {
-			if _, known := seenLanes[lane]; !known {
-				return nil, fmt.Errorf("transformer: effect %d has orphan state lane %q", descriptor.kind, lane)
-			}
-		}
 		if err := validateEffectSources(descriptor); err != nil {
 			return nil, err
 		}
-		out.descriptors[descriptor.kind] = NewEffectDescriptor(descriptor.kind, descriptor.sources, descriptor.lanes, descriptor.boundaryKinds)
+		out.descriptors[descriptor.kind] = NewEffectDescriptor(descriptor.kind, descriptor.sources, descriptor.boundaryKinds)
 	}
 	for kind := EffectInvalidatePath; kind < effectKindCount; kind++ {
 		if _, ok := out.descriptors[kind]; !ok {
@@ -169,14 +131,23 @@ func (c *EffectCatalog) Descriptor(kind EffectKind) (EffectDescriptor, bool) {
 	if !ok {
 		return EffectDescriptor{}, false
 	}
-	return NewEffectDescriptor(descriptor.kind, descriptor.sources, descriptor.lanes, descriptor.boundaryKinds), true
+	return NewEffectDescriptor(descriptor.kind, descriptor.sources, descriptor.boundaryKinds), true
 }
 
-func (c *EffectCatalog) Lanes() []state.LaneID {
+// OwnsSource reports whether kind is part of any registered atomic Effect.
+// State-axis support is deliberately not answered here.
+func (c *EffectCatalog) OwnsSource(kind operationplan.Kind) bool {
 	if c == nil {
-		return nil
+		return false
 	}
-	return append([]state.LaneID(nil), c.lanes...)
+	for _, descriptor := range c.descriptors {
+		for _, source := range descriptor.sources {
+			if source == kind {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type EffectAdmission struct {
@@ -228,38 +199,12 @@ func (c *EffectCatalog) AdmitPoint(active []operationplan.Kind) (EffectAdmission
 }
 
 func defaultEffectDescriptors() []EffectDescriptor {
-	invalidates := baseEffectLaneUses()
-	for _, lane := range []state.LaneID{
-		state.LaneValues, state.LanePathEvidence, state.LaneDynamicIndex, state.LaneHeapTableIdentity,
-		state.LaneKeyMemberships, state.LaneLenFloors, state.LaneDiffRelations,
-	} {
-		invalidates[lane] = LaneUseReadWrite
-	}
-	mutation := cloneLaneUses(invalidates)
-	mutation[state.LanePlacement] = LaneUseReadWrite
-	mutation[state.LaneTypestates] = LaneUseReadWrite
-	mutation[state.LaneEffectDeltas] = LaneUseReadWrite
-	allocation := baseEffectLaneUses()
-	allocation[state.LaneHeapTableIdentity] = LaneUseReadWrite
-	allocation[state.LanePlacement] = LaneUseReadWrite
-	objectMaterialization := baseEffectLaneUses()
-	objectMaterialization[state.LaneValues] = LaneUseRead
-	objectMaterialization[state.LaneHeapTableIdentity] = LaneUseWrite
-	objectMaterialization[state.LanePlacement] = LaneUseReadWrite
-	pathStore := baseEffectLaneUses()
-	for _, lane := range []state.LaneID{
-		state.LaneValues, state.LanePathEvidence, state.LaneDynamicIndex,
-		state.LaneHeapTableIdentity, state.LaneKeyMemberships, state.LaneTypestates,
-		state.LanePlacement, state.LaneLenFloors, state.LaneUserLattices,
-	} {
-		pathStore[lane] = LaneUseReadWrite
-	}
 	return []EffectDescriptor{
 		NewEffectDescriptor(EffectInvalidatePath,
-			[]operationplan.Kind{operationplan.PathDescendantInvalidation}, invalidates,
+			[]operationplan.Kind{operationplan.PathDescendantInvalidation},
 			[]callboundary.BoundaryFactKind{callboundary.BoundaryFactKind(callboundary.LanePathInvalidations)}),
 		NewEffectDescriptor(EffectIndexMutation,
-			[]operationplan.Kind{operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite}, mutation,
+			[]operationplan.Kind{operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite},
 			[]callboundary.BoundaryFactKind{
 				callboundary.BoundaryFactKind(callboundary.LanePathInvalidations),
 				callboundary.BoundaryFactKind(callboundary.LanePathStaticMembers),
@@ -272,7 +217,7 @@ func defaultEffectDescriptors() []EffectDescriptor {
 				callboundary.BoundaryFactKind("FreshHeapAllocations"),
 			}),
 		NewEffectDescriptor(EffectAllocationTemplate,
-			[]operationplan.Kind{operationplan.CallSite}, allocation,
+			[]operationplan.Kind{operationplan.CallSite},
 			[]callboundary.BoundaryFactKind{
 				callboundary.BoundaryFactKind("Returns"),
 				callboundary.BoundaryFactKind("HeapTableObjects"),
@@ -280,38 +225,14 @@ func defaultEffectDescriptors() []EffectDescriptor {
 				callboundary.BoundaryFactKind("HeapKeySpace"),
 			}),
 		NewEffectDescriptor(EffectObjectMaterialization,
-			[]operationplan.Kind{operationplan.ObjectLiteral}, objectMaterialization,
+			[]operationplan.Kind{operationplan.ObjectLiteral},
 			[]callboundary.BoundaryFactKind{callboundary.BoundaryFactKind("HeapTableObjects")}),
 		NewEffectDescriptor(EffectPathStore,
-			[]operationplan.Kind{operationplan.PathAssignment, operationplan.PathStaticMemberWrite}, pathStore,
+			[]operationplan.Kind{operationplan.PathAssignment, operationplan.PathStaticMemberWrite},
 			[]callboundary.BoundaryFactKind{
 				callboundary.BoundaryFactKind(callboundary.LanePathStaticMembers),
 				callboundary.BoundaryFactKind(callboundary.LaneBranchProofs),
 				callboundary.BoundaryFactKind("HeapTableObjects"),
 			}),
 	}
-}
-
-// baseEffectLaneUses spells every current lane explicitly. A LaneCatalog growth
-// therefore fails binding until this architecture decision is updated.
-func baseEffectLaneUses() map[state.LaneID]LaneUse {
-	return map[state.LaneID]LaneUse{
-		state.LaneValues: LaneUseUnaffected, state.LanePathEvidence: LaneUseUnaffected,
-		state.LaneDynamicIndex: LaneUseUnaffected, state.LaneHeapTableIdentity: LaneUseUnaffected,
-		state.LaneFrozenTables: LaneUseUnaffected, state.LaneEffectDeltas: LaneUseUnaffected,
-		state.LaneEscapeEvents: LaneUseUnaffected, state.LaneChannelSelect: LaneUseUnaffected,
-		state.LaneStoreRelations: LaneUseUnaffected, state.LaneKeyMemberships: LaneUseUnaffected,
-		state.LaneTypestates: LaneUseUnaffected, state.LanePlacement: LaneUseUnaffected,
-		state.LaneLenFloors: LaneUseUnaffected, state.LaneNumFloors: LaneUseUnaffected,
-		state.LaneNumCeils: LaneUseUnaffected, state.LaneDiffRelations: LaneUseUnaffected,
-		state.LaneUserLattices: LaneUseUnaffected,
-	}
-}
-
-func cloneLaneUses(in map[state.LaneID]LaneUse) map[state.LaneID]LaneUse {
-	out := make(map[state.LaneID]LaneUse, len(in))
-	for lane, use := range in {
-		out[lane] = use
-	}
-	return out
 }

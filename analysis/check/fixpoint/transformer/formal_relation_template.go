@@ -119,9 +119,10 @@ type formalRelationOperatorRef struct {
 	// allocationTemplate binds EffectAllocationTemplate directly to the shared
 	// symbolic object-graph join transaction.
 	allocationTemplate *formalAllocationTemplateStep
-	// effectAccess is the EffectCatalog-derived, ProductDomain-sealed read/write
-	// authority. Groups retain complete registered lane correlation; ordinals
-	// are only the already-lowered sparse DD projection.
+	// effectAccess is the canonical ProductDomain operation's sealed read/write
+	// authority. EffectCatalog owns syntax admission only. Groups retain complete
+	// registered lane correlation; ordinals are only the already-lowered sparse
+	// DD projection.
 	effectAccess        state.TransferAccess
 	effectGroups        []formalFiberGroupDescriptor
 	effectReadOrdinals  []formalFiberOrdinal
@@ -429,6 +430,11 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 				return nil, fmt.Errorf("transformer: formal Contribution operator: %w", freezeErr)
 			}
 			operator.contribution = contribution
+			if step.kind != boundaryStepExternalCall {
+				if capabilityErr := bindFormalRelationStepCapability(&operator, step); capabilityErr != nil {
+					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)
+				}
+			}
 			if step.kind == boundaryStepEffect {
 				access, groups, reads, writes, accessErr := freezeFormalEffectTransferAccess(program, cell.Variable, operator)
 				if accessErr != nil {
@@ -436,11 +442,6 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 				}
 				operator.effectAccess, operator.effectGroups = access, groups
 				operator.effectReadOrdinals, operator.effectWriteOrdinals = reads, writes
-			}
-			if step.kind != boundaryStepExternalCall {
-				if capabilityErr := bindFormalRelationStepCapability(&operator, step); capabilityErr != nil {
-					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)
-				}
 			}
 		}
 		template.equations[index] = formalRelationEquation{Cell: cellRef, Operator: operator}

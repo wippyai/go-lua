@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -208,10 +207,7 @@ func TestDynamicIndexPlanHandlerFailsClosedOutsideBoundaryPair(t *testing.T) {
 	if _, err := buildBoundaryDynamicIndexEffect(ctx, point); err == nil {
 		t.Fatal("unpaired dynamic write was admitted")
 	}
-	for _, lane := range state.DefaultLaneCatalog().LaneSet().IDs() {
-		capability, handled := dynamicIndexEffectCapability(operationplan.DynamicIndexWrite, lane)
-		if !handled || capability == CapabilityUnsupported {
-			t.Fatalf("dynamic index lane %q has no catalog-derived compiler verdict", lane)
-		}
+	if !DefaultEffectCatalog().OwnsSource(operationplan.DynamicIndexWrite) {
+		t.Fatal("dynamic index source has no catalog-owned atomic admission")
 	}
 }

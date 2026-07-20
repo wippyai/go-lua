@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -149,22 +148,4 @@ func boundaryLexicalSourceTerms(ctx planCompileContext, source factflow.ValueSou
 		return 0, 0, lowerErr
 	}
 	return valueTerm, pathTerm, nil
-}
-
-func dynamicIndexEffectCapability(kind operationplan.Kind, lane state.LaneID) (Capability, bool) {
-	if kind != operationplan.PathDescendantInvalidation && kind != operationplan.DynamicIndexWrite {
-		return CapabilityUnsupported, false
-	}
-	descriptor, ok := DefaultEffectCatalog().Descriptor(EffectIndexMutation)
-	if !ok {
-		return CapabilityUnsupported, false
-	}
-	switch descriptor.LaneUse(lane) {
-	case LaneUseUnaffected:
-		return CapabilityUnaffected, true
-	case LaneUseRead, LaneUseWrite, LaneUseReadWrite:
-		return CapabilitySupported, true
-	default:
-		return CapabilityUnsupported, true
-	}
 }

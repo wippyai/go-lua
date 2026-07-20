@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -21,37 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
-
-func assertEffectChangedLanesDeclared(t *testing.T, reg *axis.Registry, kind EffectKind, before, after state.State) {
-	t.Helper()
-	descriptor, ok := DefaultEffectCatalog().Descriptor(kind)
-	if !ok {
-		t.Fatalf("effect %d has no descriptor", kind)
-	}
-	domain := state.RegisteredProductDomain(reg)
-	left, err := domain.Decompose(before)
-	if err != nil {
-		t.Fatal(err)
-	}
-	right, err := domain.Decompose(after)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for index := range left {
-		equal, err := domain.LaneEqual(left[index], right[index])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if equal {
-			continue
-		}
-		lane := left[index].Lane().ID()
-		use := descriptor.LaneUse(lane)
-		if use != LaneUseWrite && use != LaneUseReadWrite {
-			t.Errorf("effect %d changed lane %q declared as %d", kind, lane, use)
-		}
-	}
-}
 
 func TestEffectCatalogAllocationMatchesConcreteLaneExecution(t *testing.T) {
 	reg := standard.Registry()
@@ -74,7 +42,6 @@ func TestEffectCatalogAllocationMatchesConcreteLaneExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEffectChangedLanesDeclared(t, reg, EffectAllocationTemplate, before, after)
 	if !product.Equal(reg, before.ReadValue(reg, marker), after.ReadValue(reg, marker)) {
 		t.Fatal("allocation heap/fresh effect mutated the Values lane")
 	}
@@ -98,7 +65,6 @@ func TestEffectCatalogObjectMaterializationMatchesConcreteLaneExecution(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEffectChangedLanesDeclared(t, reg, EffectObjectMaterialization, before, after)
 	if !product.Equal(reg, before.ReadValue(reg, marker), after.ReadValue(reg, marker)) {
 		t.Fatal("object materialization mutated its term-source Values lane")
 	}
@@ -136,7 +102,6 @@ func TestEffectCatalogBoundaryIndexIncludesEffectDeltaExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEffectChangedLanesDeclared(t, reg, EffectIndexMutation, before, after)
 	domain := state.DomainWithLanes(reg, []state.LaneID{state.LaneEffectDeltas})
 	if domain.Equal(before, after) {
 		t.Fatal("boundary index mutation did not exercise its EffectDeltas lane")
