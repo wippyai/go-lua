@@ -40,6 +40,7 @@ type formalBranchRelationFactorPlan struct {
 	consequence               *formalPresenceImplicationStep
 	currentProjectionOrdinals []formalFiberOrdinal
 	originalReadOrdinals      []formalFiberOrdinal
+	semanticWriteOrdinals     []formalFiberOrdinal
 	writeOrdinals             []formalFiberOrdinal
 }
 
@@ -65,8 +66,19 @@ type formalBranchRelationCoordinatePlan struct {
 	slots          []state.CoordinateSlot
 	positions      []int
 	writePositions []int
+	carriers       []formalBranchRelationCoordinateCarrier
 	writes         bool
 	publication    factapply.BranchRelationCoordinatePublicationLaw
+}
+
+// formalBranchRelationCoordinateCarrier is one preservation-only scalar in a
+// reconciliation family. It is absent from the semantic factor projection;
+// the registered family law lifts it rootwise after the selected transaction
+// has produced the new skeleton.
+type formalBranchRelationCoordinateCarrier struct {
+	slot    state.CoordinateSlot
+	ordinal formalFiberOrdinal
+	lift    formalClosedFactorLift
 }
 
 func freezeFormalBranchRelationsStep(program *RelationProgram, variable relationVar, operator formalRelationOperatorRef) (*formalBranchRelationsStep, error) {
@@ -156,11 +168,6 @@ func freezeFormalBranchRelationsStep(program *RelationProgram, variable relation
 			}
 			for _, coordinate := range role.coordinates {
 				ordinals = append(ordinals, coordinate.family.skeleton)
-				if coordinate.publication == factapply.BranchRelationCoordinatePublicationReconcile {
-					// Only topology reconciliation observes prior sibling scalars.
-					ordinals = append(ordinals, coordinate.family.scalars...)
-					continue
-				}
 				for _, position := range coordinate.positions {
 					if position < 0 || position >= len(coordinate.family.scalars) {
 						return nil, errFormalComponentMalformed
@@ -178,21 +185,28 @@ func freezeFormalBranchRelationsStep(program *RelationProgram, variable relation
 		if err != nil {
 			return nil, fmt.Errorf("BranchRelations atom %d original read footprint: %w", index, err)
 		}
+		semanticWriteOrdinals := []formalFiberOrdinal{0}
 		writeOrdinals := []formalFiberOrdinal{0}
 		for _, write := range layout.CurrentValueWriteOrdinals() {
 			if write < 0 || write >= len(plans[index].current.values) {
 				return nil, fmt.Errorf("BranchRelations Values-write ordinal is outside its factor layout")
 			}
-			writeOrdinals = append(writeOrdinals, formalFiberOrdinal(plans[index].current.values[write].position))
+			ordinal := formalFiberOrdinal(plans[index].current.values[write].position)
+			semanticWriteOrdinals = append(semanticWriteOrdinals, ordinal)
+			writeOrdinals = append(writeOrdinals, ordinal)
 		}
 		if layout.WritesValuesTop() {
 			if plans[index].current.valueTop < 0 {
 				return nil, fmt.Errorf("BranchRelations Values-top write has no formal fiber")
 			}
-			writeOrdinals = append(writeOrdinals, formalFiberOrdinal(plans[index].current.valueTop))
+			ordinal := formalFiberOrdinal(plans[index].current.valueTop)
+			semanticWriteOrdinals = append(semanticWriteOrdinals, ordinal)
+			writeOrdinals = append(writeOrdinals, ordinal)
 		}
 		for _, write := range plans[index].current.laneWrites {
-			writeOrdinals = append(writeOrdinals, plans[index].current.lanes[write].members...)
+			members := plans[index].current.lanes[write].members
+			semanticWriteOrdinals = append(semanticWriteOrdinals, members...)
+			writeOrdinals = append(writeOrdinals, members...)
 		}
 		coordinateWrites := layout.CurrentCoordinateWriteOrdinals()
 		skeletonWrites := layout.CurrentCoordinateSkeletonWrites()
@@ -202,10 +216,45 @@ func freezeFormalBranchRelationsStep(program *RelationProgram, variable relation
 		for coordinateIndex, coordinate := range plans[index].current.coordinates {
 			plans[index].current.coordinates[coordinateIndex].writes = skeletonWrites[coordinateIndex] || len(coordinateWrites[coordinateIndex]) != 0
 			if skeletonWrites[coordinateIndex] {
-				// Replace and reconcile own the complete family image. Patch laws
-				// below retain exact scalar authority only.
+				if coordinate.publication != factapply.BranchRelationCoordinatePublicationReconcile {
+					return nil, fmt.Errorf("BranchRelations skeleton-writing coordinate has no reconciliation law")
+				}
+				// Reconciliation owns the complete physical image, but unselected
+				// siblings are structural carriers, not semantic operands.
+				semanticWriteOrdinals = append(semanticWriteOrdinals, coordinate.family.skeleton)
 				writeOrdinals = append(writeOrdinals, coordinate.family.skeleton)
 				writeOrdinals = append(writeOrdinals, coordinate.family.scalars...)
+				selected := make(map[int]struct{}, len(coordinate.positions))
+				for _, position := range coordinate.positions {
+					if position < 0 || position >= len(coordinate.family.scalars) {
+						return nil, fmt.Errorf("BranchRelations coordinate position is outside its formal family")
+					}
+					selected[position] = struct{}{}
+					semanticWriteOrdinals = append(semanticWriteOrdinals, coordinate.family.scalars[position])
+					plans[index].current.coordinates[coordinateIndex].writePositions = append(
+						plans[index].current.coordinates[coordinateIndex].writePositions, position,
+					)
+				}
+				if coordinate.publication == factapply.BranchRelationCoordinatePublicationReconcile {
+					for position, ordinal := range coordinate.family.scalars {
+						if _, semantic := selected[position]; semantic {
+							continue
+						}
+						lift, liftErr := sealFormalClosedFactorLift(
+							span,
+							[][]formalFiberOrdinal{{coordinate.family.skeleton, ordinal}},
+							[]formalFiberOrdinal{ordinal},
+						)
+						if liftErr != nil {
+							return nil, fmt.Errorf("BranchRelations coordinate carrier %d: %w", position, liftErr)
+						}
+						descriptor := span.forest.descriptors[span.first+int(ordinal)]
+						plans[index].current.coordinates[coordinateIndex].carriers = append(
+							plans[index].current.coordinates[coordinateIndex].carriers,
+							formalBranchRelationCoordinateCarrier{slot: descriptor.coordinate, ordinal: ordinal, lift: lift},
+						)
+					}
+				}
 				continue
 			}
 			for _, write := range coordinateWrites[coordinateIndex] {
@@ -216,17 +265,23 @@ func freezeFormalBranchRelationsStep(program *RelationProgram, variable relation
 				if position < 0 || position >= len(coordinate.family.scalars) {
 					return nil, fmt.Errorf("BranchRelations coordinate-write position is outside its formal family")
 				}
-				writeOrdinals = append(writeOrdinals, coordinate.family.scalars[position])
+				ordinal := coordinate.family.scalars[position]
+				semanticWriteOrdinals = append(semanticWriteOrdinals, ordinal)
+				writeOrdinals = append(writeOrdinals, ordinal)
 				plans[index].current.coordinates[coordinateIndex].writePositions = append(
 					plans[index].current.coordinates[coordinateIndex].writePositions, position,
 				)
 			}
 		}
+		plans[index].semanticWriteOrdinals, err = sealFormalPresenceOrdinals(span, semanticWriteOrdinals)
+		if err != nil {
+			return nil, err
+		}
 		plans[index].writeOrdinals, err = sealFormalPresenceOrdinals(span, writeOrdinals)
 		if err != nil {
 			return nil, err
 		}
-		plans[index].currentProjectionOrdinals = append(plans[index].currentProjectionOrdinals, plans[index].writeOrdinals...)
+		plans[index].currentProjectionOrdinals = append(plans[index].currentProjectionOrdinals, plans[index].semanticWriteOrdinals...)
 		plans[index].currentProjectionOrdinals, err = sealFormalPresenceOrdinals(span, plans[index].currentProjectionOrdinals)
 		if err != nil {
 			return nil, err
@@ -748,8 +803,8 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 	if err != nil {
 		return formalBranchRelationFactorResult{}, err
 	}
-	affected := make([]formalBranchRelationAffectedRoot, 0, len(plan.writeOrdinals))
-	for _, ordinal := range plan.writeOrdinals {
+	affected := make([]formalBranchRelationAffectedRoot, 0, len(plan.semanticWriteOrdinals))
+	for _, ordinal := range plan.semanticWriteOrdinals {
 		if ordinal == 0 {
 			continue
 		}
@@ -761,7 +816,7 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 	}
 	edge := step.edge
 	edge.Context = a.ctx
-	regionWrites := make([]formalBranchRelationLeafWrite, 0, len(plan.writeOrdinals))
+	regionWrites := make([]formalBranchRelationLeafWrite, 0, len(plan.semanticWriteOrdinals))
 	var writeErr error
 	for _, region := range regions {
 		leafStarted := time.Time{}
@@ -816,7 +871,7 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 		if publishErr := a.publishFormalBranchRelationPatch(step.factors, factorIndex, currentEvaluator, plan.current, patch, &nextEvaluator); publishErr != nil {
 			return formalBranchRelationFactorResult{}, fmt.Errorf("publication: %w", publishErr)
 		}
-		regionWrites, writeErr = sparseFormalBranchRelationLeafWrites(regionWrites[:0], currentEvaluator, nextEvaluator, plan.writeOrdinals)
+		regionWrites, writeErr = sparseFormalBranchRelationLeafWrites(regionWrites[:0], currentEvaluator, nextEvaluator, plan.semanticWriteOrdinals)
 		if writeErr != nil {
 			return formalBranchRelationFactorResult{}, writeErr
 		}
@@ -837,7 +892,79 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 		}
 	}
 	writes, err := a.sealFormalBranchRelationAffectedRoots(current, span, authority, affected)
-	return formalBranchRelationFactorResult{care: care, writes: writes}, err
+	if err != nil {
+		return formalBranchRelationFactorResult{}, err
+	}
+	semantic := formalBranchRelationFactorResult{care: care, writes: writes}
+	hasCarriers := false
+	for _, coordinate := range plan.current.coordinates {
+		hasCarriers = hasCarriers || len(coordinate.carriers) != 0
+	}
+	if !hasCarriers {
+		return semantic, nil
+	}
+	completed, err := a.applyFormalBranchRelationFactorResult(current, semantic)
+	if err != nil || completed.bottom() {
+		return semantic, err
+	}
+	for coordinateIndex, coordinate := range plan.current.coordinates {
+		for _, carrier := range coordinate.carriers {
+			completed, err = a.applyFormalBranchRelationCarrier(
+				completed, step.factors, factorIndex, coordinateIndex, coordinate, carrier,
+			)
+			if err != nil {
+				return formalBranchRelationFactorResult{}, err
+			}
+		}
+	}
+	completedCare, err := a.care(completed)
+	if err != nil {
+		return formalBranchRelationFactorResult{}, err
+	}
+	completedWrites, err := a.diffFormalBranchRelationGroup(current, completed, []int{factorIndex}, step.plans)
+	return formalBranchRelationFactorResult{care: completedCare, writes: completedWrites}, err
+}
+
+func (a *formalTupleAlgebra) applyFormalBranchRelationCarrier(
+	current formalRelationTuple,
+	factors factapply.BranchRelationFactors,
+	factorIndex int,
+	coordinateIndex int,
+	coordinate formalBranchRelationCoordinatePlan,
+	carrier formalBranchRelationCoordinateCarrier,
+) (formalRelationTuple, error) {
+	return a.applyFormalClosedFactorLift(
+		carrier.lift, []formalRelationTuple{current}, nil, decisionTrue,
+		func(_ decisionRef, views []formalSparseLeafView) ([]formalClosedFactorLeafWrite, error) {
+			if len(views) != 1 {
+				return nil, errFormalComponentMalformed
+			}
+			view := views[0]
+			base, err := a.materializeFormalCoordinateFamily(view, coordinate.family, []formalPresenceCoordinateSlot{{
+				slot: carrier.slot, ordinal: carrier.ordinal,
+			}})
+			if err != nil {
+				return nil, err
+			}
+			patched, err := factors.ApplyFactorCoordinateFamilyPatch(
+				factorIndex, coordinateIndex, base,
+				factapply.BranchRelationCoordinateOperands{Skeleton: base.Skeleton()},
+			)
+			if err != nil {
+				return nil, err
+			}
+			published, err := a.factorFormalCoordinateFamily(view.authority, view.span, coordinate.family, patched)
+			if err != nil {
+				return nil, err
+			}
+			for _, write := range published {
+				if write.ordinal == carrier.ordinal {
+					return []formalClosedFactorLeafWrite{{ordinal: carrier.ordinal, leaf: write.leaf}}, nil
+				}
+			}
+			return nil, errFormalComponentMalformed
+		},
+	)
 }
 
 type formalBranchRelationAffectedRoot struct {
@@ -1220,11 +1347,7 @@ func (a *formalTupleAlgebra) publishFormalBranchCoordinatePatch(factors factappl
 		}
 		selected[index] = formalPresenceCoordinateSlot{slot: plan.slots[index], ordinal: plan.family.scalars[position]}
 	}
-	bindings := selected
-	if plan.publication == factapply.BranchRelationCoordinatePublicationReconcile {
-		bindings = nil
-	}
-	base, err := a.materializeFormalCoordinateFamily(*next, plan.family, bindings)
+	base, err := a.materializeFormalCoordinateFamily(*next, plan.family, selected)
 	if err != nil {
 		return fmt.Errorf("coordinate base family materialization: %w", err)
 	}
@@ -1237,14 +1360,12 @@ func (a *formalTupleAlgebra) publishFormalBranchCoordinatePatch(factors factappl
 		return fmt.Errorf("coordinate patched family factoring: %w", err)
 	}
 	for _, write := range complete {
-		if plan.publication == factapply.BranchRelationCoordinatePublicationPatch {
-			owned := false
-			for _, position := range plan.writePositions {
-				owned = owned || write.ordinal == plan.family.scalars[position]
-			}
-			if !owned {
-				continue
-			}
+		owned := write.ordinal == plan.family.skeleton
+		for _, position := range plan.writePositions {
+			owned = owned || write.ordinal == plan.family.scalars[position]
+		}
+		if !owned {
+			continue
 		}
 		if !next.setLeaf(write.ordinal, write.leaf) {
 			return errFormalComponentMalformed

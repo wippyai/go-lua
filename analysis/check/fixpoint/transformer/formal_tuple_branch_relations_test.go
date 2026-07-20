@@ -251,10 +251,24 @@ func TestFormalBranchRelationsPathProofDeclaresFamilyReconciliation(t *testing.T
 		!contains(factorPlan.writeOrdinals, proofCoordinate.family.skeleton) {
 		t.Fatal("path-proof factor omitted its family skeleton authority")
 	}
-	for _, ordinal := range proofCoordinate.family.scalars {
-		if !contains(factorPlan.currentProjectionOrdinals, ordinal) || !contains(factorPlan.writeOrdinals, ordinal) {
-			t.Fatalf("path-proof reconciliation omitted family scalar %d", ordinal)
+	selected := make(map[int]struct{}, len(proofCoordinate.positions))
+	for _, position := range proofCoordinate.positions {
+		selected[position] = struct{}{}
+		ordinal := proofCoordinate.family.scalars[position]
+		if !contains(factorPlan.currentProjectionOrdinals, ordinal) || !contains(factorPlan.semanticWriteOrdinals, ordinal) {
+			t.Fatalf("path-proof reconciliation omitted selected semantic scalar %d", ordinal)
 		}
+	}
+	for position, ordinal := range proofCoordinate.family.scalars {
+		if !contains(factorPlan.writeOrdinals, ordinal) {
+			t.Fatalf("path-proof reconciliation omitted physical family scalar %d", ordinal)
+		}
+		if _, semantic := selected[position]; !semantic && contains(factorPlan.currentProjectionOrdinals, ordinal) {
+			t.Fatalf("path-proof preservation scalar %d entered semantic projection", ordinal)
+		}
+	}
+	if len(proofCoordinate.carriers) != len(proofCoordinate.family.scalars)-len(selected) {
+		t.Fatalf("path-proof carriers = %d, want %d", len(proofCoordinate.carriers), len(proofCoordinate.family.scalars)-len(selected))
 	}
 
 	execution, err := executeFormalRelation(context.Background(), program)

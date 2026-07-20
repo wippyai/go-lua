@@ -104,6 +104,58 @@ func TestFormalBranchRelationsSerializedFamilyReconciliationsAccumulate(t *testi
 			t.Fatalf("serialized family factor %d was erased by its sibling: equal=%t err=%v", factorIndex, equal, equalErr)
 		}
 	}
+	// A guard attached only to an unselected sibling must not multiply the
+	// semantic factor regions. The sibling remains an exact structural carrier
+	// through canonical rootwise reconciliation.
+	guardedPlan := step.plans[factorIndexes[0]]
+	guardedCoordinate := guardedPlan.current.coordinates[0]
+	_, directory, _, ok := execution.algebra.span(after.variable)
+	if !ok {
+		t.Fatal("family reconciliation span")
+	}
+	carrier := formalBranchRelationCoordinateCarrier{}
+	prior := formalFiberValue(0)
+	for _, candidate := range guardedCoordinate.carriers {
+		value, valueErr := directory.valueAt(after.root, candidate.ordinal)
+		if valueErr != nil {
+			t.Fatal(valueErr)
+		}
+		if value != 0 {
+			carrier, prior = candidate, value
+			break
+		}
+	}
+	if carrier.ordinal == 0 {
+		t.Fatal("family reconciliation fixture has no explicit preservation sibling")
+	}
+	binary := execution.algebra.decisions.branch(0, decisionFalse, decisionRef(prior))
+	delta, err := directory.sealDelta([]formalFiberWrite{{ordinal: carrier.ordinal, value: formalFiberValue(binary)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardedRoot, _, err := directory.applyDelta(after.root, delta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guarded := execution.algebra.normalize(formalRelationTuple{variable: after.variable, root: guardedRoot})
+	regions, err := execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
+		tuple: guarded, ordinals: guardedPlan.currentProjectionOrdinals,
+	}}, nil)
+	if err != nil || len(regions) != 1 {
+		t.Fatalf("family reconciliation semantic regions = %d, %v; unrelated sibling guard entered correlation", len(regions), err)
+	}
+	result, err := execution.algebra.applyFormalBranchRelationFactor(guarded, guarded, step, factorIndexes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := execution.algebra.applyFormalBranchRelationFactorResult(guarded, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	carried, err := directory.valueAt(completed.root, carrier.ordinal)
+	if err != nil || carried != formalFiberValue(binary) {
+		t.Fatalf("family reconciliation sibling carrier = %d, %v; want exact root %d", carried, err, binary)
+	}
 	group := step.plans[factorIndexes[0]].current.coordinates[0].group
 	if _, err := afterRegions[0].evaluator.laneFactor(group); err != nil {
 		t.Fatalf("final accumulated factor spelling is not producer-registered: %v", err)
