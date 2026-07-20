@@ -57,6 +57,19 @@ type formalRelationEvalTraceDetail struct {
 	guardComposeValidate, guardComposePublish                formalRelationEvalTracePhase
 	guardComposeCloseStates, guardComposeCloseJoins          int
 	guardComposeGroupRegions                                 int
+	branchRelationsPlan                                      *formalBranchRelationsStep
+	branchRelationFactors                                    []formalBranchRelationEvalTraceFactor
+}
+
+type formalBranchRelationEvalTraceFactor struct {
+	factor, source                          int
+	consequence                             bool
+	currentRoots, originalRoots, writeRoots int
+	currentSupport, originalSupport         []uint32
+	regions, leafWrites                     int
+	total, partition                        formalRelationEvalTracePhase
+	leafTime                                time.Duration
+	leafApplyOps                            uint64
 }
 
 type formalRelationEvalTracePhase struct {
@@ -270,6 +283,20 @@ func (t *formalRelationEvalTrace) evaluate(
 			detail.guardComposeCloseJoins,
 			detail.guardComposeGroupRegions,
 		)
+	}
+	if detail.branchRelationsPlan != nil {
+		fmt.Fprintf(os.Stderr, "FORMAL_BRANCH_RELATIONS seq=%d stages=%d factors=%d\n",
+			sequence, len(detail.branchRelationsPlan.stages), len(detail.branchRelationFactors))
+		for _, factor := range detail.branchRelationFactors {
+			fmt.Fprintf(os.Stderr,
+				"FORMAL_BRANCH_FACTOR seq=%d factor=%d source=%d consequence=%t current_roots=%d original_roots=%d write_roots=%d current_support=%v original_support=%v regions=%d leaf_writes=%d total=%s partition=%s leaf_time=%s leaf_apply_ops=%d\n",
+				sequence, factor.factor, factor.source, factor.consequence,
+				factor.currentRoots, factor.originalRoots, factor.writeRoots,
+				factor.currentSupport, factor.originalSupport, factor.regions, factor.leafWrites,
+				formatFormalRelationEvalTracePhase(factor.total), formatFormalRelationEvalTracePhase(factor.partition),
+				factor.leafTime.Round(time.Microsecond), factor.leafApplyOps,
+			)
+		}
 	}
 	return result
 }

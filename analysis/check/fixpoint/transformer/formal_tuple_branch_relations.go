@@ -3,6 +3,7 @@ package transformer
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -483,6 +484,17 @@ func (a *formalTupleAlgebra) applyFormalBranchRelations(operator formalRelationO
 		return formalRelationTuple{}, errFormalComponentForeignOwner
 	}
 	mark := a.decisions.checkpoint()
+	if a.evalTrace != nil && a.evalTrace.active != nil {
+		detail := a.evalTrace.active
+		detail.branchRelationsPlan = operator.branchRelations
+		detail.branchRelationFactors = make([]formalBranchRelationEvalTraceFactor, len(operator.branchRelations.plans))
+		for index, plan := range operator.branchRelations.plans {
+			detail.branchRelationFactors[index] = formalBranchRelationEvalTraceFactor{
+				factor: index, source: int(operator.branchRelations.factors.FactorSource(index)), consequence: plan.consequence != nil,
+				currentRoots: len(plan.currentProjectionOrdinals), originalRoots: len(plan.originalReadOrdinals), writeRoots: len(plan.writeOrdinals),
+			}
+		}
+	}
 	fail := func(err error) (formalRelationTuple, error) {
 		a.decisions.rollback(mark)
 		return formalRelationTuple{}, err
@@ -682,20 +694,49 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 	current formalRelationTuple,
 	step *formalBranchRelationsStep,
 	factorIndex int,
-) (formalBranchRelationFactorResult, error) {
+) (result formalBranchRelationFactorResult, resultErr error) {
 	if a == nil || step == nil || factorIndex < 0 || factorIndex >= len(step.plans) {
 		return formalBranchRelationFactorResult{}, errFormalComponentForeignOwner
 	}
 	plan := step.plans[factorIndex]
+	var trace *formalBranchRelationEvalTraceFactor
+	var totalMark formalRelationEvalTracePhaseMark
+	if a.evalTrace != nil && a.evalTrace.active != nil && factorIndex < len(a.evalTrace.active.branchRelationFactors) {
+		trace = &a.evalTrace.active.branchRelationFactors[factorIndex]
+		totalMark = beginFormalRelationEvalTracePhase(a)
+		_, directory, _, ok := a.span(current.variable)
+		if ok {
+			roots := func(tuple formalRelationTuple, ordinals []formalFiberOrdinal) []decisionRef {
+				out := make([]decisionRef, 0, len(ordinals))
+				for _, ordinal := range ordinals {
+					if value, err := directory.valueAt(tuple.root, ordinal); err == nil {
+						out = append(out, decisionRef(value))
+					}
+				}
+				return out
+			}
+			trace.currentSupport = formalRelationTraceSupportRanks(&a.decisions, roots(current, plan.currentProjectionOrdinals)...)
+			trace.originalSupport = formalRelationTraceSupportRanks(&a.decisions, roots(original, plan.originalReadOrdinals)...)
+		}
+		defer func() { finishFormalRelationEvalTracePhase(a, &trace.total, totalMark) }()
+	}
 	if plan.consequence != nil {
-		return a.applyFormalBranchConsequenceFactor(current, plan.consequence)
+		return a.applyFormalBranchConsequenceFactor(current, plan.consequence, trace)
 	}
 	projections := make([]formalSparseTupleProjection, 0, 2)
 	if len(plan.originalReadOrdinals) != 0 {
 		projections = append(projections, formalSparseTupleProjection{tuple: original, ordinals: plan.originalReadOrdinals})
 	}
 	projections = append(projections, formalSparseTupleProjection{tuple: current, ordinals: plan.currentProjectionOrdinals})
+	var partitionMark formalRelationEvalTracePhaseMark
+	if trace != nil {
+		partitionMark = beginFormalRelationEvalTracePhase(a)
+	}
 	regions, err := a.partitionSparseLeafViewsUnderCare(projections, nil)
+	if trace != nil {
+		finishFormalRelationEvalTracePhase(a, &trace.partition, partitionMark)
+		trace.regions = len(regions)
+	}
 	if err != nil {
 		return formalBranchRelationFactorResult{}, err
 	}
@@ -723,6 +764,12 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 	regionWrites := make([]formalBranchRelationLeafWrite, 0, len(plan.writeOrdinals))
 	var writeErr error
 	for _, region := range regions {
+		leafStarted := time.Time{}
+		leafApplyOps := uint64(0)
+		if trace != nil {
+			leafStarted = time.Now()
+			leafApplyOps = a.decisions.applyOps
+		}
 		currentIndex := 0
 		var originalEvaluator formalSparseLeafView
 		if len(plan.originalReadOrdinals) != 0 {
@@ -773,6 +820,11 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 		if writeErr != nil {
 			return formalBranchRelationFactorResult{}, writeErr
 		}
+		if trace != nil {
+			trace.leafTime += time.Since(leafStarted)
+			trace.leafApplyOps += a.decisions.applyOps - leafApplyOps
+			trace.leafWrites += len(regionWrites)
+		}
 		for _, write := range regionWrites {
 			index := sort.Search(len(affected), func(index int) bool { return affected[index].ordinal >= write.ordinal })
 			if index >= len(affected) || affected[index].ordinal != write.ordinal {
@@ -820,8 +872,16 @@ func (a *formalTupleAlgebra) sealFormalBranchRelationAffectedRoots(
 	return writes, nil
 }
 
-func (a *formalTupleAlgebra) applyFormalBranchConsequenceFactor(current formalRelationTuple, plan *formalPresenceImplicationStep) (formalBranchRelationFactorResult, error) {
+func (a *formalTupleAlgebra) applyFormalBranchConsequenceFactor(current formalRelationTuple, plan *formalPresenceImplicationStep, trace *formalBranchRelationEvalTraceFactor) (formalBranchRelationFactorResult, error) {
+	var partitionMark formalRelationEvalTracePhaseMark
+	if trace != nil {
+		partitionMark = beginFormalRelationEvalTracePhase(a)
+	}
 	regions, err := a.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: current, ordinals: plan.projectionOrdinals}}, plan.demands)
+	if trace != nil {
+		finishFormalRelationEvalTracePhase(a, &trace.partition, partitionMark)
+		trace.regions = len(regions)
+	}
 	if err != nil {
 		return formalBranchRelationFactorResult{}, err
 	}
@@ -845,12 +905,23 @@ func (a *formalTupleAlgebra) applyFormalBranchConsequenceFactor(current formalRe
 		affected = append(affected, formalBranchRelationAffectedRoot{ordinal: ordinal, root: decisionRef(root)})
 	}
 	for _, region := range regions {
+		leafStarted := time.Time{}
+		leafApplyOps := uint64(0)
+		if trace != nil {
+			leafStarted = time.Now()
+			leafApplyOps = a.decisions.applyOps
+		}
 		if len(region.views) != 1 {
 			return formalBranchRelationFactorResult{}, errDecisionMalformed
 		}
 		leaves, reachable, leafErr := a.applyFormalPresenceImplicationsLeaf(region.views[0], plan)
 		if leafErr != nil {
 			return formalBranchRelationFactorResult{}, leafErr
+		}
+		if trace != nil {
+			trace.leafTime += time.Since(leafStarted)
+			trace.leafApplyOps += a.decisions.applyOps - leafApplyOps
+			trace.leafWrites += len(leaves)
 		}
 		if !reachable {
 			care, err = a.decisions.condition(a.ctx, region.guard, decisionFalse, care)
