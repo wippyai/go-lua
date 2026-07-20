@@ -198,13 +198,12 @@ func (a *formalTupleAlgebra) applyFormalObjectMaterializationLeaf(
 	if err != nil {
 		return nil, err
 	}
-	complete, err := evaluator.completeLeaves()
+	out, err := cloneFormalSelectedEffectLeaves(evaluator)
 	if err != nil {
 		return nil, err
 	}
-	out := append([]decisionLeaf(nil), complete...)
 	for _, group := range plan.groups {
-		current, materializeErr := a.materializeFormalEffectLane(evaluator.authority, span, group, complete)
+		current, materializeErr := a.materializeFormalSelectedEffectLane(evaluator, group, out)
 		if materializeErr != nil {
 			return nil, materializeErr
 		}
@@ -212,7 +211,7 @@ func (a *formalTupleAlgebra) applyFormalObjectMaterializationLeaf(
 		if applyErr != nil {
 			return nil, applyErr
 		}
-		if factorErr := a.factorFormalEffectGroup(evaluator.authority, span, group, state.ValueFactor[FormalSlot]{}, next, out); factorErr != nil {
+		if factorErr := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, next, out); factorErr != nil {
 			return nil, factorErr
 		}
 	}

@@ -122,13 +122,13 @@ func (a *formalTupleAlgebra) applyFormalPathInvalidationLeaf(span formalFiberDes
 		return nil, errFormalComponentForeignOwner
 	}
 	domain := evaluator.authority.product
-	complete, err := evaluator.completeLeaves()
+	out, err := cloneFormalSelectedEffectLeaves(evaluator)
 	if err != nil {
 		return nil, err
 	}
 	current := make(map[state.LaneOrdinal]state.LaneFactor, len(plan.lanes))
 	for _, lane := range plan.lanes {
-		factor, err := a.materializeFormalEffectLane(evaluator.authority, span, lane.group, complete)
+		factor, err := a.materializeFormalSelectedEffectLane(evaluator, lane.group, out)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +142,6 @@ func (a *formalTupleAlgebra) applyFormalPathInvalidationLeaf(span formalFiberDes
 	if err != nil {
 		return nil, err
 	}
-	out := append([]decisionLeaf(nil), complete...)
 	switch plan.scope {
 	case InvalidationScopeSubtree:
 		transaction, prepareErr := domain.PrepareCoordinatePathSubtreeMutation(ownerSkeleton, ownerScalars, plan.target)
@@ -180,7 +179,7 @@ func (a *formalTupleAlgebra) applyFormalPathInvalidationLeaf(span formalFiberDes
 			if !present || next.Lane() != lane.group.lane {
 				return nil, errFormalComponentMalformed
 			}
-			if factorErr := a.factorFormalEffectGroup(evaluator.authority, span, lane.group, state.ValueFactor[FormalSlot]{}, next, out); factorErr != nil {
+			if factorErr := a.factorFormalSelectedEffectGroup(evaluator, lane.group, state.ValueFactor[FormalSlot]{}, next, out); factorErr != nil {
 				return nil, factorErr
 			}
 		}
@@ -198,7 +197,7 @@ func (a *formalTupleAlgebra) applyFormalPathInvalidationLeaf(span formalFiberDes
 			if applyErr != nil {
 				return nil, applyErr
 			}
-			if err := a.factorFormalEffectGroup(evaluator.authority, span, lane.group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
+			if err := a.factorFormalSelectedEffectGroup(evaluator, lane.group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
 				return nil, err
 			}
 		}

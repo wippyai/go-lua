@@ -2,7 +2,6 @@ package transformer
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
@@ -13,11 +12,10 @@ import (
 // formalAllocationTemplateStep binds one relationCode allocation occurrence
 // directly to the shared identity.Term object-graph join law.
 type formalAllocationTemplateStep struct {
-	graph         state.ObjectGraphMutationPlan
-	demands       []formalQualifiedGuardDemand
-	groups        []formalFiberGroupDescriptor
-	writeOrdinals []formalFiberOrdinal
-	variable      relationVar
+	graph    state.ObjectGraphMutationPlan
+	demands  []formalQualifiedGuardDemand
+	groups   []formalFiberGroupDescriptor
+	variable relationVar
 }
 
 func freezeFormalAllocationGraph(body *relationProgramBody, keys *keyspace.KeySpace, allocation AllocationTemplateTerm) (state.ObjectGraphMutationPlan, error) {
@@ -68,28 +66,19 @@ func freezeFormalAllocationTemplateStep(program *RelationProgram, variable relat
 	}
 	lanes := body.productDomain.ObjectMutationParticipantLanes()
 	groups := make([]formalFiberGroupDescriptor, len(lanes))
-	var writeOrdinals []formalFiberOrdinal
 	for index, lane := range lanes {
 		group, present := groupsByLane[lane]
 		if !present {
 			return nil, fmt.Errorf("transformer: formal allocation lane %s is outside the frozen product", lane.ID())
 		}
 		groups[index] = group
-		writeOrdinals = append(writeOrdinals, group.members...)
-	}
-	sort.Slice(writeOrdinals, func(i, j int) bool { return writeOrdinals[i] < writeOrdinals[j] })
-	for index := 1; index < len(writeOrdinals); index++ {
-		if writeOrdinals[index-1] == writeOrdinals[index] {
-			return nil, fmt.Errorf("transformer: formal allocation write footprint overlaps at fiber %d", writeOrdinals[index])
-		}
 	}
 	demands := make([]formalQualifiedGuardDemand, 0, 1)
 	if step.guard != 0 {
 		demands = append(demands, formalQualifiedGuardDemand{owner: variable, scope: operator.scope, arena: operator.code.terms, guard: step.guard})
 	}
 	return &formalAllocationTemplateStep{
-		graph: graph, demands: demands, groups: groups,
-		writeOrdinals: writeOrdinals, variable: variable,
+		graph: graph, demands: demands, groups: groups, variable: variable,
 	}, nil
 }
 
@@ -100,13 +89,12 @@ func (a *formalTupleAlgebra) applyFormalAllocationTemplate(operator formalRelati
 	}
 	return a.applyFormalEffectStep(operator, predecessor, plan.demands,
 		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator) ([]decisionLeaf, error) {
-			complete, err := evaluator.completeLeaves()
+			out, err := cloneFormalSelectedEffectLeaves(evaluator)
 			if err != nil {
 				return nil, err
 			}
-			out := append([]decisionLeaf(nil), complete...)
 			for _, group := range plan.groups {
-				current, err := a.materializeFormalEffectLane(evaluator.authority, span, group, complete)
+				current, err := a.materializeFormalSelectedEffectLane(evaluator, group, out)
 				if err != nil {
 					return nil, err
 				}
@@ -114,10 +102,10 @@ func (a *formalTupleAlgebra) applyFormalAllocationTemplate(operator formalRelati
 				if err != nil {
 					return nil, err
 				}
-				if err := a.factorFormalEffectGroup(evaluator.authority, span, group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
+				if err := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
 					return nil, err
 				}
 			}
 			return out, nil
-		}, plan.writeOrdinals...)
+		})
 }

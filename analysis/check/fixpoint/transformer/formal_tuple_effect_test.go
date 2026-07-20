@@ -688,8 +688,8 @@ func assertFormalAllocationTemplateDifferential(t *testing.T, program *RelationP
 	for _, group := range plan.groups {
 		wantWrites += len(group.members)
 	}
-	if len(plan.writeOrdinals) != wantWrites || len(plan.writeOrdinals) == 0 || len(plan.writeOrdinals) >= span.count {
-		t.Fatalf("formal AllocationTemplate write footprint=%d, want exact participant width %d below span %d", len(plan.writeOrdinals), wantWrites, span.count)
+	if len(equation.Operator.effectWriteOrdinals) != wantWrites || len(equation.Operator.effectWriteOrdinals) == 0 || len(equation.Operator.effectWriteOrdinals) >= span.count {
+		t.Fatalf("formal AllocationTemplate write footprint=%d, want exact participant width %d below span %d", len(equation.Operator.effectWriteOrdinals), wantWrites, span.count)
 	}
 	operands, err := partitionFormalRelationStepOperands(equation)
 	if err != nil {

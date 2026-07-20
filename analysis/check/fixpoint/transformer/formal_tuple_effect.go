@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"fmt"
+	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -9,6 +10,128 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
+
+func sealFormalEffectTransferAccess(domain state.ProductDomain, descriptor EffectDescriptor, extraReads state.LaneSet) (state.TransferAccess, error) {
+	if !domain.Valid() || descriptor.Kind() == EffectInvalid {
+		return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect access is unowned")
+	}
+	var reads, carries, writes []state.LaneID
+	for _, lane := range domain.Lanes().IDs() {
+		use := descriptor.LaneUse(lane)
+		if extraReads.Has(lane) {
+			switch use {
+			case LaneUseUnaffected:
+				use = LaneUseRead
+			case LaneUseWrite:
+				use = LaneUseReadWrite
+			}
+		}
+		switch use {
+		case LaneUseRead:
+			reads, carries = append(reads, lane), append(carries, lane)
+		case LaneUseWrite:
+			carries, writes = append(carries, lane), append(writes, lane)
+		case LaneUseReadWrite:
+			reads, carries, writes = append(reads, lane), append(carries, lane), append(writes, lane)
+		case LaneUseUnaffected:
+		case LaneUseUnsupported:
+			return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d does not support enabled lane %q", descriptor.Kind(), lane)
+		default:
+			return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d has no lane-use decision for %q", descriptor.Kind(), lane)
+		}
+	}
+	if len(writes) == 0 {
+		return state.TransferAccess{}, fmt.Errorf("transformer: formal Effect %d has no registered write lane", descriptor.Kind())
+	}
+	return state.SealTransferAccess(domain, state.TransferAccessConfig{
+		ProviderInputs: []state.TransferInputAccess{{Lanes: state.NewLaneSet(reads...)}},
+		LaneCarryReads: state.NewLaneSet(carries...), LaneWrites: state.NewLaneSet(writes...),
+		ValueCarry: 0, LaneCarry: 0, DiagnosticCarry: 0, ReachableCarry: 0,
+	})
+}
+
+func freezeFormalEffectTransferAccess(
+	program *RelationProgram,
+	variable relationVar,
+	operator formalRelationOperatorRef,
+) (state.TransferAccess, []formalFiberGroupDescriptor, []formalFiberOrdinal, []formalFiberOrdinal, error) {
+	step, ok := formalRelationStepOperator(operator)
+	if !ok || step.kind != boundaryStepEffect || program == nil || variable == 0 || int(variable) > len(program.bodies) ||
+		operator.code == nil || operator.code.effects == nil {
+		return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect has no sealed syntax owner")
+	}
+	kind := operator.code.effects.Kind(step.effect)
+	descriptor, ok := DefaultEffectCatalog().Descriptor(kind)
+	if !ok {
+		return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect kind %d has no registered descriptor", kind)
+	}
+	body := &program.bodies[variable-1]
+	extraReads := state.NewLaneSet()
+	if operator.indexMutation != nil {
+		extraReads = extraReads.With(operator.indexMutation.valueAccess.Lanes.IDs()...)
+	}
+	if operator.objectMaterialization != nil {
+		extraReads = extraReads.With(operator.objectMaterialization.valueAccess.Lanes.IDs()...)
+	}
+	if operator.pathReplacement != nil {
+		extraReads = extraReads.With(operator.pathReplacement.valueAccess.Lanes.IDs()...)
+	}
+	access, err := sealFormalEffectTransferAccess(body.productDomain, descriptor, extraReads)
+	if err != nil {
+		return state.TransferAccess{}, nil, nil, nil, err
+	}
+	span, ok := program.formalFibers.span(variable)
+	if !ok {
+		return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect has no frozen product span")
+	}
+	byID := make(map[state.LaneID]formalFiberGroupDescriptor)
+	for _, group := range span.groupDescriptors() {
+		if !group.valid() {
+			return state.TransferAccess{}, nil, nil, nil, errFormalComponentMalformed
+		}
+		byID[group.lane.ID()] = group
+	}
+	carry := access.LaneCarryReads()
+	groups := make([]formalFiberGroupDescriptor, 0, carry.Len())
+	readOrdinals := make([]formalFiberOrdinal, 0)
+	for _, lane := range carry.IDs() {
+		group, present := byID[lane]
+		if !present {
+			return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect lane %q is outside frozen product groups", lane)
+		}
+		groups = append(groups, group)
+		readOrdinals = append(readOrdinals, group.members...)
+	}
+	writeOrdinals := make([]formalFiberOrdinal, 0)
+	for _, lane := range access.LaneWrites().IDs() {
+		group, present := byID[lane]
+		if !present {
+			return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect write lane %q is outside frozen product groups", lane)
+		}
+		writeOrdinals = append(writeOrdinals, group.members...)
+	}
+	seal := func(ordinals []formalFiberOrdinal) ([]formalFiberOrdinal, error) {
+		sort.Slice(ordinals, func(i, j int) bool { return ordinals[i] < ordinals[j] })
+		for index := 1; index < len(ordinals); index++ {
+			if ordinals[index-1] == ordinals[index] {
+				return nil, fmt.Errorf("formal Effect access overlaps at fiber %d", ordinals[index])
+			}
+		}
+		return ordinals, nil
+	}
+	readOrdinals, err = seal(readOrdinals)
+	if err != nil {
+		return state.TransferAccess{}, nil, nil, nil, err
+	}
+	writeOrdinals, err = seal(writeOrdinals)
+	if err != nil {
+		return state.TransferAccess{}, nil, nil, nil, err
+	}
+	if len(readOrdinals) == 0 || len(writeOrdinals) == 0 {
+		return state.TransferAccess{}, nil, nil, nil, fmt.Errorf("formal Effect access has an empty physical cone")
+	}
+	return access, groups, readOrdinals, writeOrdinals, nil
+}
 
 // formalPathReplacementStep is only a frozen edge adapter into
 // state.PathReplacementTransaction. It is not an effect language: relationCode
@@ -25,6 +148,8 @@ type formalPathReplacementStep struct {
 	staticValue   ValueTerm
 	staticPlan    state.StaticMemberFactorPlan
 	staticGroup   formalFiberGroupDescriptor
+	valueAccess   state.TransferInputAccess
+	valueGroups   []formalFiberGroupDescriptor
 	demands       []formalQualifiedGuardDemand
 	values        formalFiberGroupDescriptor
 	reads         []formalFiberGroupDescriptor
@@ -149,6 +274,17 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 		writeGroups[index] = group
 	}
 	plan.demands, plan.values, plan.reads, plan.writes = demands, values, readGroups, writeGroups
+	valueTerms := make([]ValueTerm, 0, 2)
+	if plan.hasAssignment {
+		valueTerms = append(valueTerms, plan.value)
+	}
+	if plan.hasStatic {
+		valueTerms = append(valueTerms, plan.staticValue)
+	}
+	plan.valueAccess, plan.valueGroups, err = freezeFormalValueFactorAccess(program, variable, valueTerms...)
+	if err != nil {
+		return nil, err
+	}
 	if plan.hasStatic {
 		staticLane, laneErr := body.productDomain.StaticMemberFactorLane(plan.staticPlan)
 		if laneErr != nil {
@@ -249,9 +385,9 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 	predecessor formalRelationTuple,
 	demands []formalQualifiedGuardDemand,
 	applyLeaf func(formalFiberDescriptorSpan, formalTupleLeafEvaluator) ([]decisionLeaf, error),
-	declaredWrites ...formalFiberOrdinal,
 ) (formalRelationTuple, error) {
-	if a == nil || applyLeaf == nil || operator.kind != formalRelationCellStep || operator.code == nil {
+	if a == nil || applyLeaf == nil || operator.kind != formalRelationCellStep || operator.code == nil ||
+		!operator.effectAccess.Valid() || len(operator.effectReadOrdinals) == 0 || len(operator.effectWriteOrdinals) == 0 {
 		return formalRelationTuple{}, fmt.Errorf("transformer: invalid formal Effect step")
 	}
 	if err := a.validateTuple(predecessor); err != nil {
@@ -269,7 +405,19 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 		a.decisions.rollback(mark)
 		return formalRelationTuple{}, err
 	}
-	regions, err := a.tupleLeafRegionsWithGuardDemands(predecessor, demands)
+	uniqueDemands := make([]formalQualifiedGuardDemand, 0, len(demands))
+	seenDemands := make(map[formalScopedGuardKey]struct{}, len(demands))
+	for _, demand := range demands {
+		key := formalScopedGuardKey{variable: demand.owner, scope: demand.scope, arena: demand.arena, guard: demand.guard}
+		if _, duplicate := seenDemands[key]; duplicate {
+			continue
+		}
+		seenDemands[key] = struct{}{}
+		uniqueDemands = append(uniqueDemands, demand)
+	}
+	regions, err := a.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
+		tuple: predecessor, ordinals: operator.effectReadOrdinals,
+	}}, uniqueDemands)
 	if err != nil {
 		return fail(err)
 	}
@@ -284,13 +432,7 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 			return fail(err)
 		}
 	}
-	writeOrdinals := declaredWrites
-	if len(writeOrdinals) == 0 {
-		writeOrdinals = make([]formalFiberOrdinal, span.count)
-		for ordinal := range writeOrdinals {
-			writeOrdinals[ordinal] = formalFiberOrdinal(ordinal)
-		}
-	}
+	writeOrdinals := operator.effectWriteOrdinals
 	type affectedRoot struct {
 		ordinal formalFiberOrdinal
 		prior   formalFiberValue
@@ -308,22 +450,33 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 		affected[index] = affectedRoot{ordinal: ordinal, prior: prior, root: decisionRef(prior)}
 	}
 	for _, region := range regions {
+		if len(region.views) != 1 {
+			return fail(errFormalComponentMalformed)
+		}
+		evaluator, evaluatorErr := a.newSparseTupleLeafEvaluator(region.views[0])
+		if evaluatorErr != nil {
+			return fail(evaluatorErr)
+		}
 		trueCare, careErr := a.decisions.apply(a.ctx, uint8(decisionAnd), true, region.guard, guardDecision, decisionLeafAnd)
 		if careErr != nil {
 			return fail(careErr)
 		}
 		if trueCare != decisionFalse {
-			leaves, effectErr := applyLeaf(span, region.evaluator)
+			leaves, effectErr := applyLeaf(span, evaluator)
 			if effectErr != nil {
 				return fail(effectErr)
 			}
-			if len(leaves) != span.count {
+			if len(leaves) != len(operator.effectReadOrdinals) {
 				return fail(errFormalComponentMalformed)
 			}
 			for index := range affected {
 				ordinal := affected[index].ordinal
-				leaf := leaves[int(ordinal)]
-				priorLeaf, present := region.evaluator.leaves.leaf(ordinal)
+				position, present := evaluator.leaves.position(ordinal)
+				if !present || position >= len(leaves) {
+					return fail(errFormalComponentMalformed)
+				}
+				leaf := leaves[position]
+				priorLeaf, present := evaluator.leaves.leaf(ordinal)
 				if !present {
 					return fail(errFormalComponentMalformed)
 				}
@@ -368,22 +521,21 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 		plan.values.variable != span.variable {
 		return nil, errFormalComponentForeignOwner
 	}
-	valueLeaves, err := evaluator.leaves.group(plan.values)
-	if err != nil {
-		return nil, err
-	}
-	values, err := a.materializeValuesGroup(evaluator.authority, plan.values, valueLeaves)
+	values, err := evaluator.valuesFactor()
 	if err != nil {
 		return nil, err
 	}
 	domain := evaluator.authority.product
-	complete, err := evaluator.completeLeaves()
+	capability, err := evaluator.materializeValueFactorAccess(plan.valueAccess, plan.valueGroups)
 	if err != nil {
 		return nil, err
 	}
-	out := append([]decisionLeaf(nil), complete...)
+	out, err := cloneFormalSelectedEffectLeaves(evaluator)
+	if err != nil {
+		return nil, err
+	}
 	if plan.hasAssignment {
-		value, exact := evaluator.evalArenaValue(span.variable, operator.code.terms, plan.value, operator.scope, formalApplyTermView{})
+		value, exact := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, plan.value, operator.scope, formalApplyTermView{}, capability)
 		if !exact {
 			return nil, fmt.Errorf("transformer: formal Effect assignment value source is unsupported")
 		}
@@ -394,7 +546,7 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 		readFactors := make([]state.LaneFactor, len(readLanes))
 		for index := range readLanes {
 			group := plan.reads[index]
-			readFactors[index], err = a.materializeFormalEffectLane(evaluator.authority, span, group, complete)
+			readFactors[index], err = a.materializeFormalSelectedEffectLane(evaluator, group, out)
 			if err != nil {
 				return nil, err
 			}
@@ -410,11 +562,11 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 		if valuesErr != nil {
 			return nil, valuesErr
 		}
-		if err := a.factorFormalEffectGroup(evaluator.authority, span, plan.values, nextValues, state.LaneFactor{}, out); err != nil {
+		if err := a.factorFormalSelectedEffectGroup(evaluator, plan.values, nextValues, state.LaneFactor{}, out); err != nil {
 			return nil, err
 		}
 		for _, group := range plan.writes {
-			current, laneErr := a.materializeFormalEffectLane(evaluator.authority, span, group, out)
+			current, laneErr := a.materializeFormalSelectedEffectLane(evaluator, group, out)
 			if laneErr != nil {
 				return nil, laneErr
 			}
@@ -422,13 +574,13 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 			if laneErr != nil {
 				return nil, laneErr
 			}
-			if err := a.factorFormalEffectGroup(evaluator.authority, span, group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
+			if err := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
 				return nil, err
 			}
 		}
 	}
 	if plan.hasStatic {
-		value, exact := evaluator.evalArenaValue(span.variable, operator.code.terms, plan.staticValue, operator.scope, formalApplyTermView{})
+		value, exact := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, plan.staticValue, operator.scope, formalApplyTermView{}, capability)
 		if !exact {
 			return nil, fmt.Errorf("transformer: formal Effect static-member value source is unsupported")
 		}
@@ -436,7 +588,7 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 		if bindErr != nil {
 			return nil, bindErr
 		}
-		current, laneErr := a.materializeFormalEffectLane(evaluator.authority, span, plan.staticGroup, out)
+		current, laneErr := a.materializeFormalSelectedEffectLane(evaluator, plan.staticGroup, out)
 		if laneErr != nil {
 			return nil, laneErr
 		}
@@ -444,7 +596,7 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 		if laneErr != nil {
 			return nil, laneErr
 		}
-		if err := a.factorFormalEffectGroup(evaluator.authority, span, plan.staticGroup, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
+		if err := a.factorFormalSelectedEffectGroup(evaluator, plan.staticGroup, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
 			return nil, err
 		}
 	}
@@ -460,6 +612,82 @@ func formalEffectGroupLeaves(group formalFiberGroupDescriptor, all []decisionLea
 		out[index] = all[ordinal]
 	}
 	return out, nil
+}
+
+func formalSelectedEffectGroupLeaves(selection formalFiberLeafSelection, group formalFiberGroupDescriptor, selected []decisionLeaf) ([]decisionLeaf, error) {
+	if !group.valid() || group.variable != selection.span.variable {
+		return nil, errFormalComponentForeignOwner
+	}
+	out := make([]decisionLeaf, len(group.members))
+	for index, ordinal := range group.members {
+		position, present := selection.position(ordinal)
+		if !present || position < 0 || position >= len(selected) {
+			return nil, fmt.Errorf("transformer: formal effect selection is missing group ordinal %d", ordinal)
+		}
+		out[index] = selected[position]
+	}
+	return out, nil
+}
+
+func cloneFormalSelectedEffectLeaves(evaluator formalTupleLeafEvaluator) ([]decisionLeaf, error) {
+	if !evaluator.valid() || evaluator.leaves.dense != nil || len(evaluator.leaves.leaves) == 0 {
+		return nil, errFormalComponentMalformed
+	}
+	return append([]decisionLeaf(nil), evaluator.leaves.leaves...), nil
+}
+
+func (a *formalTupleAlgebra) materializeFormalSelectedEffectLane(
+	evaluator formalTupleLeafEvaluator,
+	group formalFiberGroupDescriptor,
+	selected []decisionLeaf,
+) (state.LaneFactor, error) {
+	leaves, err := formalSelectedEffectGroupLeaves(evaluator.leaves, group, selected)
+	if err != nil {
+		return state.LaneFactor{}, err
+	}
+	switch group.kind {
+	case formalFiberGroupOrdinaryLane:
+		return a.materializeOrdinaryGroup(evaluator.authority, group, leaves)
+	case formalFiberGroupCoordinateLane:
+		return a.materializeCoordinateGroup(evaluator.authority, evaluator.span, group, leaves)
+	default:
+		return state.LaneFactor{}, errFormalComponentMalformed
+	}
+}
+
+func (a *formalTupleAlgebra) factorFormalSelectedEffectGroup(
+	evaluator formalTupleLeafEvaluator,
+	group formalFiberGroupDescriptor,
+	values state.ValueFactor[FormalSlot],
+	lane state.LaneFactor,
+	out []decisionLeaf,
+) error {
+	var leaves []decisionLeaf
+	var err error
+	switch group.kind {
+	case formalFiberGroupValues:
+		leaves, err = a.factorValuesGroup(evaluator.authority, group, values)
+	case formalFiberGroupOrdinaryLane:
+		leaves, err = a.factorOrdinaryGroup(evaluator.authority, group, lane)
+	case formalFiberGroupCoordinateLane:
+		leaves, err = a.factorCoordinateGroup(evaluator.authority, evaluator.span, group, lane)
+	default:
+		err = errFormalComponentMalformed
+	}
+	if err != nil || len(leaves) != len(group.members) {
+		if err == nil {
+			err = errFormalComponentMalformed
+		}
+		return err
+	}
+	for index, ordinal := range group.members {
+		position, present := evaluator.leaves.position(ordinal)
+		if !present || position < 0 || position >= len(out) {
+			return errFormalComponentMalformed
+		}
+		out[position] = leaves[index]
+	}
+	return nil
 }
 
 func (a *formalTupleAlgebra) materializeFormalEffectLane(authority *formalComponentTerminalAuthority, span formalFiberDescriptorSpan, group formalFiberGroupDescriptor, all []decisionLeaf) (state.LaneFactor, error) {

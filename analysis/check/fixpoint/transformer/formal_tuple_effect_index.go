@@ -33,6 +33,7 @@ type formalIndexMutationStep struct {
 	point                     cfg.Point
 	demands                   []formalQualifiedGuardDemand
 	valueAccess               state.TransferInputAccess
+	valueGroups               []formalFiberGroupDescriptor
 	effectDelta               state.EffectDeltaFactorPlan
 	variable                  relationVar
 }
@@ -73,7 +74,7 @@ func freezeFormalIndexMutationStep(program *RelationProgram, variable relationVa
 		tableSymbol: tablePath.Symbol, key: node.key, value: node.value, admission: node.admission,
 		appendMode: node.appendMode, point: step.point, variable: variable,
 	}
-	plan.valueAccess, err = body.valueTermFactorAccess(node.key, node.value)
+	plan.valueAccess, plan.valueGroups, err = freezeFormalValueFactorAccess(program, variable, node.key, node.value)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +170,30 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 		return nil, errFormalComponentForeignOwner
 	}
 	domain := evaluator.authority.product
-	_, original, err := evaluator.productFactors()
+	lanes := domain.NonValuesLaneInventory()
+	original := make([]state.LaneFactor, len(lanes))
+	positions := make(map[state.ProductLane]int, len(lanes))
+	for index, lane := range lanes {
+		positions[lane] = index
+	}
+	for _, group := range operator.effectGroups {
+		if group.kind == formalFiberGroupValues {
+			continue
+		}
+		index, present := positions[group.lane]
+		if !present {
+			return nil, errFormalComponentMalformed
+		}
+		factor, err := evaluator.laneFactor(group)
+		if err != nil {
+			return nil, err
+		}
+		original[index] = factor
+	}
+	capability, err := evaluator.materializeValueFactorAccess(plan.valueAccess, plan.valueGroups)
 	if err != nil {
 		return nil, err
 	}
-	capability := &formalValueFactorAccess{access: plan.valueAccess, factors: original}
 	keyValue, ok := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, plan.key, operator.scope, formalApplyTermView{}, capability)
 	if !ok {
 		return nil, fmt.Errorf("transformer: formal IndexMutation key is unresolved")
@@ -182,12 +202,7 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 	if !ok {
 		return nil, fmt.Errorf("transformer: formal IndexMutation value is unresolved")
 	}
-	lanes := domain.NonValuesLaneInventory()
 	current := append([]state.LaneFactor(nil), original...)
-	positions := make(map[state.ProductLane]int, len(lanes))
-	for index, lane := range lanes {
-		positions[lane] = index
-	}
 	pathFamily, ok := domain.PathValueFamily()
 	if !ok {
 		return nil, errFormalComponentMalformed
@@ -360,14 +375,13 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 		changed[index] = true
 	}
 
-	complete, err := evaluator.completeLeaves()
+	out, err := cloneFormalSelectedEffectLeaves(evaluator)
 	if err != nil {
 		return nil, err
 	}
-	out := append([]decisionLeaf(nil), complete...)
 	for index := range changed {
 		group := evaluator.layout.nonValues[index]
-		if err := a.factorFormalEffectGroup(evaluator.authority, span, group, state.ValueFactor[FormalSlot]{}, current[index], out); err != nil {
+		if err := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, current[index], out); err != nil {
 			return nil, err
 		}
 	}

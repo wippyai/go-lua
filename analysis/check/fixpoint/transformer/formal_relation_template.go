@@ -3,6 +3,7 @@ package transformer
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -118,6 +119,13 @@ type formalRelationOperatorRef struct {
 	// allocationTemplate binds EffectAllocationTemplate directly to the shared
 	// symbolic object-graph join transaction.
 	allocationTemplate *formalAllocationTemplateStep
+	// effectAccess is the EffectCatalog-derived, ProductDomain-sealed read/write
+	// authority. Groups retain complete registered lane correlation; ordinals
+	// are only the already-lowered sparse DD projection.
+	effectAccess        state.TransferAccess
+	effectGroups        []formalFiberGroupDescriptor
+	effectReadOrdinals  []formalFiberOrdinal
+	effectWriteOrdinals []formalFiberOrdinal
 	// objectMaterialization binds EffectObjectMaterialization directly to the
 	// registered object-graph factor law.
 	objectMaterialization *formalObjectMaterializationStep
@@ -421,6 +429,14 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 				return nil, fmt.Errorf("transformer: formal Contribution operator: %w", freezeErr)
 			}
 			operator.contribution = contribution
+			if step.kind == boundaryStepEffect {
+				access, groups, reads, writes, accessErr := freezeFormalEffectTransferAccess(program, cell.Variable, operator)
+				if accessErr != nil {
+					return nil, fmt.Errorf("transformer: formal Effect access: %w", accessErr)
+				}
+				operator.effectAccess, operator.effectGroups = access, groups
+				operator.effectReadOrdinals, operator.effectWriteOrdinals = reads, writes
+			}
 			if step.kind != boundaryStepExternalCall {
 				if capabilityErr := bindFormalRelationStepCapability(&operator, step); capabilityErr != nil {
 					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)

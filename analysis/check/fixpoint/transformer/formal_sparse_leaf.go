@@ -153,6 +153,16 @@ func (s formalFiberLeafSelection) leaf(ordinal formalFiberOrdinal) (decisionLeaf
 	return s.leaves[index], true
 }
 
+func (s formalFiberLeafSelection) position(ordinal formalFiberOrdinal) (int, bool) {
+	if ordinal < 0 || int(ordinal) >= s.span.count {
+		return 0, false
+	}
+	if s.dense != nil {
+		return int(ordinal), true
+	}
+	return s.positions.position(ordinal)
+}
+
 func (s formalFiberLeafSelection) group(group formalFiberGroupDescriptor) ([]decisionLeaf, error) {
 	if !group.valid() || group.variable != s.span.variable {
 		return nil, errFormalComponentForeignOwner
