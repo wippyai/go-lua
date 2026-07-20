@@ -17,32 +17,35 @@ import (
 // outcome remains the syntax owner; this plan binds its already-sealed sources
 // and Output roots to the complete registered product layout exactly once.
 type formalOutcomeStep struct {
-	variable           relationVar
-	code               *relationCode
-	root               relationRootRef
-	scope              loopMuTerm
-	outcome            boundaryOutcomeRef
-	transaction        factapply.ReturnTransaction
-	sources            []formalQualifiedBinding
-	valueAccess        state.TransferInputAccess
-	valueFactorGroups  []formalFiberGroupDescriptor
-	valuePlan          formalValueAccessPlan
-	readOrdinals       []formalFiberOrdinal
-	writeOrdinals      []formalFiberOrdinal
-	writePositions     formalOrdinalPositions
-	laneWriteOrdinals  []formalFiberOrdinal
-	laneWritePositions formalOrdinalPositions
-	targets            []factapply.ReturnFactorTarget[FormalSlot]
-	demands            []formalQualifiedGuardDemand
-	lanes              []formalSelectedFactorLane
-	returnLanes        []int
-	returnTopology     state.ReturnFactorTopology
-	covariant          factapply.CovariantExposureTransaction
-	covariantBindings  []factapply.CovariantFactorBinding[FormalSlot]
-	covariantLanes     []int
-	covariantTopology  state.CovariantFactorTopology
-	terminal           formalFiberDescriptor
-	sealed             bool
+	variable            relationVar
+	code                *relationCode
+	root                relationRootRef
+	scope               loopMuTerm
+	outcome             boundaryOutcomeRef
+	transaction         factapply.ReturnTransaction
+	sources             []formalQualifiedBinding
+	valueAccess         state.TransferInputAccess
+	valueFactorGroups   []formalFiberGroupDescriptor
+	valuePlan           formalValueAccessPlan
+	readOrdinals        []formalFiberOrdinal
+	readPositions       formalOrdinalPositions
+	projectionOrdinals  []formalFiberOrdinal
+	projectionPositions formalOrdinalPositions
+	writeOrdinals       []formalFiberOrdinal
+	writePositions      formalOrdinalPositions
+	laneWriteOrdinals   []formalFiberOrdinal
+	laneWritePositions  formalOrdinalPositions
+	targets             []factapply.ReturnFactorTarget[FormalSlot]
+	demands             []formalQualifiedGuardDemand
+	lanes               []formalSelectedFactorLane
+	returnLanes         []int
+	returnTopology      state.ReturnFactorTopology
+	covariant           factapply.CovariantExposureTransaction
+	covariantBindings   []factapply.CovariantFactorBinding[FormalSlot]
+	covariantLanes      []int
+	covariantTopology   state.CovariantFactorTopology
+	terminal            formalFiberDescriptor
+	sealed              bool
 }
 
 type formalOutcomeLeafWrite struct {
@@ -401,11 +404,26 @@ func freezeFormalOutcomeStep(program *RelationProgram, variable relationVar, ope
 	}
 	readOrdinals = append(readOrdinals, laneWriteOrdinals...)
 	readOrdinals = sealOrdinals(readOrdinals)
+	readPositions, err := sealFormalOrdinalPositions(span.count, readOrdinals)
+	if err != nil {
+		return nil, fmt.Errorf("Outcome read positions: %w", err)
+	}
+	// Write-only Values coordinates are physical outputs, not semantic inputs.
+	// Give the DAG-native transaction a fixed output address for them without
+	// adding their predecessor roots to the correlated input cone.
+	projectionOrdinals := append(append([]formalFiberOrdinal(nil), readOrdinals...), writeOrdinals...)
+	projectionOrdinals = sealOrdinals(projectionOrdinals)
+	projectionPositions, err := sealFormalOrdinalPositions(span.count, projectionOrdinals)
+	if err != nil {
+		return nil, fmt.Errorf("Outcome projection positions: %w", err)
+	}
 	return &formalOutcomeStep{
 		variable: variable, code: operator.code, root: operator.root, scope: operator.scope, outcome: operator.outcome,
 		transaction: outcome.returnTransaction.transaction.Clone(), sources: sources,
 		valueAccess: valueAccess, valueFactorGroups: valueFactorGroups, valuePlan: valuePlan, targets: targets, demands: demands,
-		readOrdinals: readOrdinals, writeOrdinals: writeOrdinals, writePositions: writePositions,
+		readOrdinals: readOrdinals, readPositions: readPositions,
+		projectionOrdinals: projectionOrdinals, projectionPositions: projectionPositions,
+		writeOrdinals: writeOrdinals, writePositions: writePositions,
 		laneWriteOrdinals: laneWriteOrdinals, laneWritePositions: laneWritePositions,
 		lanes: lanes, returnLanes: returnLanes, returnTopology: returnTopology,
 		covariant: outcome.covariant.Clone(), covariantBindings: covariantBindings,
@@ -507,71 +525,130 @@ func (a *formalTupleAlgebra) projectOutcome(operator formalRelationOperatorRef, 
 		}
 		sort.Slice(detail.outcomeSupportRanks, func(i, j int) bool { return detail.outcomeSupportRanks[i] < detail.outcomeSupportRanks[j] })
 	}
-	regions, err := a.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
-		tuple: predecessor, ordinals: plan.readOrdinals,
-	}}, plan.demands)
-	if err != nil {
-		return formalRelationTuple{}, err
-	}
-	if a.evalTrace != nil && a.evalTrace.active != nil {
-		a.evalTrace.active.outcomeRegions += len(regions)
-	}
 	mark := a.decisions.checkpoint()
 	fail := func(err error) (formalRelationTuple, error) {
 		a.decisions.rollback(mark)
 		return formalRelationTuple{}, err
 	}
-	type affectedRoot struct {
-		ordinal formalFiberOrdinal
-		root    decisionRef
-	}
-	affected := make([]affectedRoot, len(plan.writeOrdinals))
-	for index, ordinal := range plan.writeOrdinals {
+	projectionRoots := make([]decisionRef, len(plan.projectionOrdinals))
+	for index, ordinal := range plan.projectionOrdinals {
+		// A write-only coordinate is deliberately represented by a constant in
+		// the input vector. Its actual predecessor root remains structural carry
+		// and is restored once below. It therefore cannot enlarge the semantic
+		// product traversal merely because the old physical value varies.
+		if _, read := plan.readPositions.position(ordinal); !read {
+			projectionRoots[index] = decisionFalse
+			continue
+		}
 		prior, readErr := directory.valueAt(predecessor.root, ordinal)
 		if readErr != nil {
 			return fail(readErr)
 		}
-		affected[index] = affectedRoot{ordinal: ordinal, root: decisionRef(prior)}
+		projectionRoots[index] = decisionRef(prior)
 	}
-	condition := func(care decisionRef, write formalOutcomeLeafWrite) error {
-		index, present := plan.writePositions.position(write.ordinal)
-		if !present || index >= len(affected) || affected[index].ordinal != write.ordinal {
-			return errFormalComponentMalformed
-		}
-		var conditionErr error
-		affected[index].root, conditionErr = a.decisions.condition(a.ctx, care, a.decisions.terminal(write.leaf), affected[index].root)
-		return conditionErr
-	}
-	for _, region := range regions {
-		if len(region.views) != 1 {
-			return fail(errFormalComponentMalformed)
-		}
-		view := region.views[0]
-		writes, leafErr := a.applyFormalOutcomeLeaf(plan, view)
-		if leafErr != nil {
-			return fail(leafErr)
-		}
-		if a.evalTrace != nil && a.evalTrace.active != nil {
-			a.evalTrace.active.outcomeWrites += len(writes)
-		}
-		for _, write := range writes {
-			if conditionErr := condition(region.guard, write); conditionErr != nil {
-				return fail(conditionErr)
-			}
-		}
-	}
-	publication := make([]formalFiberWrite, 0, len(affected))
-	for _, candidate := range affected {
-		descriptor := span.forest.descriptors[span.first+int(candidate.ordinal)]
-		if err := a.validateDescriptorRoot(authority, descriptor, candidate.root); err != nil {
+	demandRoots := make([]decisionRef, len(plan.demands))
+	for index, demand := range plan.demands {
+		demandRoots[index], err = a.decisionForGuard(demand.owner, demand.scope, demand.arena, demand.guard)
+		if err != nil {
 			return fail(err)
 		}
-		prior, readErr := directory.valueAt(predecessor.root, candidate.ordinal)
+	}
+	transactionRoots := make([]decisionRef, 0, len(projectionRoots)+len(demandRoots)+len(plan.writeOrdinals))
+	transactionRoots = append(transactionRoots, projectionRoots...)
+	transactionRoots = append(transactionRoots, demandRoots...)
+	assignmentOffset := len(transactionRoots)
+	transactionRoots = append(transactionRoots, make([]decisionRef, len(plan.writeOrdinals))...)
+	transformedRoots, err := a.decisions.applyVectorUnderCare(
+		a.ctx, care, care, decisionFalse, transactionRoots, transactionRoots,
+		func(input, unreachable []decisionLeaf) ([]decisionLeaf, error) {
+			if len(input) != len(transactionRoots) || len(unreachable) != 0 {
+				return nil, errDecisionMalformed
+			}
+			regionGuard := decisionTrue
+			for index, root := range demandRoots {
+				leaf := input[len(plan.projectionOrdinals)+index]
+				if leaf > 1 {
+					return nil, errDecisionMalformed
+				}
+				literal := root
+				if leaf == 0 {
+					var literalErr error
+					literal, literalErr = formalDecisionBooleanNot(a, root)
+					if literalErr != nil {
+						return nil, literalErr
+					}
+				}
+				var guardErr error
+				regionGuard, guardErr = a.decisions.apply(a.ctx, uint8(decisionAnd), true, regionGuard, literal, decisionLeafAnd)
+				if guardErr != nil {
+					return nil, guardErr
+				}
+			}
+			readLeaves := make([]decisionLeaf, len(plan.readOrdinals))
+			for index, ordinal := range plan.readOrdinals {
+				position, present := plan.projectionPositions.position(ordinal)
+				if !present || position >= len(input) {
+					return nil, errFormalComponentMalformed
+				}
+				readLeaves[index] = input[position]
+			}
+			view := formalSparseLeafView{
+				algebra: a, variable: predecessor.variable, span: span, authority: authority,
+				body: &a.program.bodies[predecessor.variable-1], guard: regionGuard,
+				ordinals: plan.readOrdinals, positions: plan.readPositions, leaves: readLeaves,
+				derived: input[len(plan.projectionOrdinals):assignmentOffset],
+			}
+			writes, leafErr := a.applyFormalOutcomeLeaf(plan, view)
+			if leafErr != nil {
+				return nil, leafErr
+			}
+			if a.evalTrace != nil && a.evalTrace.active != nil {
+				a.evalTrace.active.outcomeRegions++
+				a.evalTrace.active.outcomeWrites += len(writes)
+			}
+			output := append([]decisionLeaf(nil), input...)
+			for _, write := range writes {
+				position, present := plan.projectionPositions.position(write.ordinal)
+				if !present || position >= len(output) {
+					return nil, errFormalComponentMalformed
+				}
+				writePosition, writable := plan.writePositions.position(write.ordinal)
+				if !writable || assignmentOffset+writePosition >= len(output) {
+					return nil, errFormalComponentMalformed
+				}
+				output[position] = write.leaf
+				output[assignmentOffset+writePosition] = decisionLeaf(decisionTrue)
+			}
+			return output, nil
+		},
+	)
+	if err != nil || len(transformedRoots) != len(transactionRoots) {
+		if err == nil {
+			err = errDecisionMalformed
+		}
+		return fail(err)
+	}
+	publication := make([]formalFiberWrite, 0, len(plan.writeOrdinals))
+	for writeIndex, ordinal := range plan.writeOrdinals {
+		position, present := plan.projectionPositions.position(ordinal)
+		if !present || position >= len(transformedRoots) {
+			return fail(errFormalComponentMalformed)
+		}
+		prior, readErr := directory.valueAt(predecessor.root, ordinal)
 		if readErr != nil {
 			return fail(readErr)
 		}
-		if prior != formalFiberValue(candidate.root) {
-			publication = append(publication, formalFiberWrite{ordinal: candidate.ordinal, value: formalFiberValue(candidate.root)})
+		assignment := transformedRoots[assignmentOffset+writeIndex]
+		root, conditionErr := a.decisions.condition(a.ctx, assignment, transformedRoots[position], decisionRef(prior))
+		if conditionErr != nil {
+			return fail(conditionErr)
+		}
+		descriptor := span.forest.descriptors[span.first+int(ordinal)]
+		if err := a.validateDescriptorRoot(authority, descriptor, root); err != nil {
+			return fail(err)
+		}
+		if formalFiberValue(root) != prior {
+			publication = append(publication, formalFiberWrite{ordinal: ordinal, value: formalFiberValue(root)})
 		}
 	}
 	completed := predecessor
