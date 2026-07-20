@@ -20,28 +20,26 @@ import (
 // PreparedPlanCompiler owns the persistent Builder, static semantic
 // certificate, and one frozen WorldProgram for a lexical function.
 type PreparedPlanCompiler struct {
-	compiler             *PlanCompiler
-	registry             *axis.Registry
-	graph                cfg.Graph
-	plan                 *operationplan.Plan
-	shape                Shape
-	builder              *Builder
-	base                 planCompileContext
-	certificate          SemanticCertificate
-	wtoTape              *symbolicWTOTape
-	worldBase            WorldProgram
-	codeBase             *relationCode
-	rootBase             relationRootRef
-	freezeCount          uint32
-	reductionCount       uint32
-	freezeMu             sync.Mutex
-	frozen               bool
-	frozenDirect         bool
-	freezeErr            error
-	observationComplete  bool
-	projectionPlan       *sparseProjectionPlan
-	projectionPlanReason string
-	effectFree           bool
+	compiler            *PlanCompiler
+	registry            *axis.Registry
+	graph               cfg.Graph
+	plan                *operationplan.Plan
+	shape               Shape
+	builder             *Builder
+	base                planCompileContext
+	certificate         SemanticCertificate
+	wtoTape             *symbolicWTOTape
+	worldBase           WorldProgram
+	codeBase            *relationCode
+	rootBase            relationRootRef
+	freezeCount         uint32
+	reductionCount      uint32
+	freezeMu            sync.Mutex
+	frozen              bool
+	frozenDirect        bool
+	freezeErr           error
+	observationComplete bool
+	effectFree          bool
 	// cyclic is retained as prepared topology metadata for compatibility and
 	// diagnostics. Evaluation deliberately does not branch on it: DAGs are the
 	// zero-component case of the same exact dense executor.
@@ -265,25 +263,12 @@ func (c *PlanCompiler) prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 		return nil, fmt.Errorf("compiler: WTO topology: %w", err)
 	}
 	observationComplete := exactObservationCoverage(plan, shape, len(tape.components) != 0)
-	var projectionPlan *sparseProjectionPlan
-	var projectionPlanReason string
-	if observationComplete {
-		if requirements, sealed := plan.ObservationRequirements(); sealed {
-			projectionPlan, err = compileSparseProjectionPlan(requirements)
-			if err != nil {
-				projectionPlanReason = err.Error()
-			}
-		} else {
-			projectionPlanReason = "projection trace: observation requirements are not sealed"
-		}
-	}
 	prepared := &PreparedPlanCompiler{
 		compiler: c, registry: reg, graph: graph, plan: plan, shape: shape,
 		builder: builder, base: ctx, certificate: certificate, wtoTape: tape,
 		observationComplete: observationComplete,
-		projectionPlan:      projectionPlan, projectionPlanReason: projectionPlanReason,
-		cyclic:             len(tape.components) != 0,
-		environmentSymbols: environmentSymbols,
+		cyclic:              len(tape.components) != 0,
+		environmentSymbols:  environmentSymbols,
 	}
 	prepared.effectFree = prepared.computeEffectFree()
 	return prepared, nil

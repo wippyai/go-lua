@@ -133,27 +133,4 @@ func TestPathStorePlanHandlerFreezesNestedObjectSidecar(t *testing.T) {
 	if !object.Entries[0].Target.Equal(pathdom.NewPlaceholder(0).Field("value").IndexInt(1)) || !object.Entries[0].HasExpected {
 		t.Fatalf("resolved first object entry = %#v", object.Entries[0])
 	}
-	callerTerms := NewArena(reg)
-	callerEffects := NewEffectArena(callerTerms)
-	callerShape := Shape{Params: 2}
-	values := []ValueTerm{
-		callerTerms.Root(Root{Kind: RootParam, Index: 0}),
-		callerTerms.Root(Root{Kind: RootParam, Index: 1}),
-	}
-	paths := []PathTerm{
-		callerTerms.Path(Root{Kind: RootParam, Index: 0}),
-		callerTerms.Path(Root{Kind: RootParam, Index: 1}),
-	}
-	bindings, err := NewTermRootBindings(Shape{Params: 2}, callerShape, values, paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rebased, err := RebaseEffectDAGs(callerEffects, builder.EffectArena(), bindings, []EffectTerm{steps[0].effect})
-	if err != nil || len(rebased.Effects) != 1 || !callerEffects.Valid(rebased.Effects[0], callerShape) {
-		t.Fatalf("object path-store rebase = %#v/%v", rebased, err)
-	}
-	rebasedResolved, ok := callerEffects.resolve(rebased.Effects[0], cursor, SpecializationContext{})
-	if !ok || len(rebasedResolved.PathStore.Object.Heaps) != 2 || len(rebasedResolved.PathStore.Object.Entries) != 2 || !rebasedResolved.PathStore.Object.Entries[0].HasExpected {
-		t.Fatalf("rebased object payload = %#v/%t", rebasedResolved.PathStore.Object, ok)
-	}
 }

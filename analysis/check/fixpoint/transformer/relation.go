@@ -43,8 +43,6 @@ type Relation struct {
 	contextual              string
 	widened                 bool
 	observationComplete     bool
-	projectionTrace         *sparseProjectionTrace
-	projectionTraceReason   string
 	paramContracts          []product.Value
 	projection              relationProjection
 	annotations             relationAnnotations

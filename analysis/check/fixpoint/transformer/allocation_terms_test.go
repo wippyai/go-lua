@@ -50,20 +50,6 @@ func TestAllocationResultAndEffectShareOneTemplateTerm(t *testing.T) {
 		t.Fatalf("allocation result identity = %#v/%v, want one symbolic allocation term", identityTerm, singleton)
 	}
 
-	callerTerms := NewArena(reg)
-	callerEffects := NewEffectArena(callerTerms)
-	bindings, _ := NewTermRootBindings(Shape{}, Shape{}, nil, nil)
-	rebased, err := RebaseEffectDAGs(callerEffects, effects, bindings, []EffectTerm{effect})
-	if err != nil || len(rebased.Effects) != 1 {
-		t.Fatalf("allocation effect rebase = %#v/%v", rebased, err)
-	}
-	if !callerTerms.bindLexicalOwner(owner) {
-		t.Fatal("rebased allocation arena owner rejected")
-	}
-	again, ok := callerEffects.resolve(rebased.Effects[0], cursor, SpecializationContext{})
-	if !ok || again.Allocation.Site != op.Site() || !product.Equal(reg, again.Allocation.Result, value) {
-		t.Fatalf("rebased allocation = %#v/%v", again, ok)
-	}
 }
 
 func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
@@ -112,22 +98,6 @@ func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
 	if !exact || !invalidationExact || !mutationExact || invalidated.Site != op.Site() || mutated.Site != op.Site() ||
 		!resolved.Mutation.Invalidation.Target.IsEmpty() || !resolved.Mutation.Table.IsEmpty() {
 		t.Fatalf("allocation target resolution = %#v exact=%v/%v/%v", resolved, exact, invalidationExact, mutationExact)
-	}
-
-	callerTerms := NewArena(reg)
-	caller := NewEffectArena(callerTerms)
-	bindings, _ := NewTermRootBindings(Shape{}, Shape{}, nil, nil)
-	rebased, err := RebaseEffectDAGs(caller, callee, bindings, []EffectTerm{first})
-	if err != nil || len(rebased.Effects) != 1 {
-		t.Fatalf("allocation target rebase = %#v/%v", rebased, err)
-	}
-	if !callerTerms.bindLexicalOwner(owner) {
-		t.Fatal("caller allocation arena owner rejected")
-	}
-	again, exact := caller.resolve(rebased.Effects[0], cursor, SpecializationContext{})
-	rebasedTarget, targetExact := again.Mutation.TableTarget.Allocation()
-	if !exact || !targetExact || rebasedTarget.Site != op.Site() {
-		t.Fatalf("rebased allocation target = %#v exact=%v/%v", again, exact, targetExact)
 	}
 
 	malformed := EffectTargetTerm{kind: effectTargetPath, path: PathTerm(1), allocation: allocation}

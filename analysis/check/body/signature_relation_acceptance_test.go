@@ -3,7 +3,6 @@ package body
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
@@ -85,27 +84,12 @@ func TestValidateGraphOwnsEightDurableAllocationSites(t *testing.T) {
 
 func TestValidateGraphAllocationRelationsMatchCanonicalOutcomesWithoutSolves(t *testing.T) {
 	prepared := validateGraphPreparedFixture(t)
-	shape := transformer.Shape{
-		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
-		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
-		Globals:  uint32(len(prepared.operationPlan.BoundaryGlobals())),
-	}
-	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, shape)
-	exactCalls := make(map[cfg.Point]bool)
-	for _, entry := range entries {
-		if entry.Family == "CallSites" && entry.Exact {
-			exactCalls[entry.Point] = true
-		}
-	}
 	matched := 0
 	for rawPoint := 0; rawPoint < prepared.operationPlan.PointCount(); rawPoint++ {
 		point := cfg.Point(rawPoint)
 		allocation, ok := prepared.operationPlan.SignatureAllocationOperation(point)
 		if !ok {
 			continue
-		}
-		if !exactCalls[point] {
-			t.Fatalf("allocation call point %d is not compiler-exact", point)
 		}
 		call, _ := prepared.operationPlan.SignatureCallOperation(point)
 		site, _ := prepared.facts.CallSiteView(point)

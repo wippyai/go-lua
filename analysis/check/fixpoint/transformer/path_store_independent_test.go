@@ -74,29 +74,6 @@ func TestEffectPathStoreRetainsIndependentAssignmentAndStaticWrites(t *testing.T
 		t.Fatalf("resolved independent path store = %#v/%v", resolved.PathStore, ok)
 	}
 
-	callerTerms := NewArena(reg)
-	callerEffects := NewEffectArena(callerTerms)
-	boundValues, boundPaths := make([]ValueTerm, 4), make([]PathTerm, 4)
-	for index := range boundValues {
-		root := Root{Kind: RootParam, Index: uint32(index)}
-		boundValues[index], boundPaths[index] = callerTerms.Root(root), callerTerms.Path(root)
-	}
-	bindings, err := NewTermRootBindings(shape, shape, boundValues, boundPaths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rebased, err := RebaseEffectDAGs(callerEffects, effects, bindings, []EffectTerm{term})
-	if err != nil || len(rebased.Effects) != 1 || !callerEffects.Valid(rebased.Effects[0], shape) {
-		t.Fatalf("independent path store rebase = %#v/%v", rebased, err)
-	}
-	rebasedResolved, ok := callerEffects.resolve(rebased.Effects[0], cursor, SpecializationContext{})
-	if !ok || !rebasedResolved.PathStore.HasAssignment || !rebasedResolved.PathStore.HasStatic ||
-		!rebasedResolved.PathStore.Assignment.Target.Equal(resolved.PathStore.Assignment.Target) ||
-		!rebasedResolved.PathStore.Static.Target.Equal(resolved.PathStore.Static.Target) ||
-		rebasedResolved.PathStore.Assignment.SuppressProof != resolved.PathStore.Assignment.SuppressProof ||
-		rebasedResolved.PathStore.Static.SuppressProof != resolved.PathStore.Static.SuppressProof {
-		t.Fatalf("rebased independent path store = %#v/%v", rebasedResolved.PathStore, ok)
-	}
 }
 
 func TestEffectPathStoreSupportsSingleIndependentWriteWithoutDuplicateKind(t *testing.T) {

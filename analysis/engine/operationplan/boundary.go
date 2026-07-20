@@ -176,11 +176,9 @@ type BoundaryGlobal struct {
 
 // WithBoundaryGlobals returns a plan owning the exact global symbols read
 // directly by the body, together with each symbol's declared abstract
-// contract, stored from one canonical symbol-sorted sequence. GlobalBoundary
-// remains the authority which may later certify those roots immutable and
-// instantiate them; this plan field is only its canonical symbol-sorted dense
-// order. Zero, duplicate, parameter, and capture overlaps fail closed rather
-// than publishing an ambiguous namespace.
+// contract, stored from one canonical symbol-sorted sequence. The plan is the
+// canonical RootGlobal authority. Zero, duplicate, parameter, and capture
+// overlaps fail closed rather than publishing an ambiguous namespace.
 func (p *Plan) WithBoundaryGlobals(globals []BoundaryGlobal) *Plan {
 	if p == nil {
 		return nil
@@ -207,8 +205,8 @@ func (p *Plan) WithBoundaryGlobals(globals []BoundaryGlobal) *Plan {
 		seen[global.Symbol] = true
 		owned = append(owned, global)
 	}
-	// GlobalBoundary seals descriptors by Symbol. Use the same dense order here
-	// so RootGlobal indices have one canonical meaning from plan to artifact.
+	// Seal descriptors by Symbol so RootGlobal indices have one canonical
+	// meaning from plan to artifact.
 	// Symbol and contract sort as one unit, so alignment cannot be lost here.
 	slices.SortFunc(owned, func(a, b BoundaryGlobal) int { return cmp.Compare(a.Symbol, b.Symbol) })
 	symbols := make([]symbol.ID, len(owned))
@@ -237,8 +235,7 @@ func (p *Plan) BoundaryGlobalsValid() bool {
 	return p != nil && p.boundaryGlobalsValid
 }
 
-// BoundaryGlobals returns an immutable snapshot in canonical symbol order,
-// matching GlobalBoundary's dense RootGlobal authority.
+// BoundaryGlobals returns an immutable snapshot in canonical RootGlobal order.
 func (p *Plan) BoundaryGlobals() []symbol.ID {
 	if p == nil {
 		return nil
