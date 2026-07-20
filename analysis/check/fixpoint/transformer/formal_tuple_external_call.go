@@ -1304,10 +1304,20 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 	if !ok || predecessor.root.owner != directory {
 		return formalRelationTuple{}, errFormalComponentForeignOwner
 	}
+	var traceDetail *formalRelationEvalTraceDetail
+	if a.evalTrace != nil && a.evalTrace.active != nil {
+		traceDetail = a.evalTrace.active
+		traceDetail.externalCallPlan = plan
+		traceDetail.externalCallProviderInputs = len(plan.wires)
+	}
 	mark := a.decisions.checkpoint()
 	fail := func(err error) (formalRelationTuple, error) {
 		a.decisions.rollback(mark)
 		return formalRelationTuple{}, err
+	}
+	var inputMark formalRelationEvalTracePhaseMark
+	if traceDetail != nil {
+		inputMark = beginFormalRelationEvalTracePhase(a)
 	}
 	projections := make([]formalSparseTupleProjection, len(plan.wires))
 	projections[0] = formalSparseTupleProjection{tuple: predecessor, ordinals: plan.wires[0].ordinals}
@@ -1329,6 +1339,21 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		}
 	}
 	inputRegions, err := a.partitionSparseLeafViewsUnderCare(projections, plan.guardDemands)
+	if traceDetail != nil {
+		providerRoots := make([]decisionRef, 0)
+		for _, projection := range projections {
+			for _, ordinal := range projection.ordinals {
+				if value, readErr := directory.valueAt(projection.tuple.root, ordinal); readErr == nil {
+					providerRoots = append(providerRoots, decisionRef(value))
+				}
+			}
+			providerRoots = append(providerRoots, projection.derived...)
+		}
+		traceDetail.externalCallProviderRoots = len(providerRoots)
+		traceDetail.externalCallProviderSupport = formalRelationTraceSupportRanks(&a.decisions, providerRoots...)
+		traceDetail.externalCallProviderRegions = len(inputRegions)
+		finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallInput, inputMark)
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -1341,9 +1366,21 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		if len(region.views) != len(plan.wires) || region.guard == decisionFalse {
 			return fail(errDecisionMalformed)
 		}
+		var providerMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			providerMark = beginFormalRelationEvalTracePhase(a)
+			traceDetail.externalCallProviderEvals++
+		}
 		outcome, providerErr := a.evaluateFormalExternalCallProvider(plan, region.views)
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallProvider, providerMark)
+		}
 		if providerErr != nil {
 			return fail(providerErr)
+		}
+		var outcomeMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			outcomeMark = beginFormalRelationEvalTracePhase(a)
 		}
 		leaf, providerErr := authority.internCallOutcomes(callpayload.NewCallOutcomeAlternativeSet(plan.program.registry, outcome))
 		if providerErr != nil {
@@ -1356,6 +1393,9 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		providerCare, providerErr = a.decisions.apply(a.ctx, uint8(decisionOr), true, providerCare, region.guard, decisionLeafOr)
 		if providerErr != nil {
 			return fail(providerErr)
+		}
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallProviderOutcome, outcomeMark)
 		}
 	}
 	if providerCare == decisionFalse {
@@ -1374,7 +1414,18 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		commitRoots = append(commitRoots, decisionRef(value))
 	}
 	commitRoots = append(commitRoots, providerOutcome)
+	var commitMark formalRelationEvalTracePhaseMark
+	if traceDetail != nil {
+		traceDetail.externalCallOutcomeSupport = formalRelationTraceSupportRanks(&a.decisions, providerOutcome)
+		traceDetail.externalCallCommitRoots = len(commitRoots)
+		traceDetail.externalCallCommitSupport = formalRelationTraceSupportRanks(&a.decisions, commitRoots...)
+		commitMark = beginFormalRelationEvalTracePhase(a)
+	}
 	commitRegions, err := a.decisions.partitionLeafTuplesUnderCare(a.ctx, providerCare, commitRoots)
+	if traceDetail != nil {
+		traceDetail.externalCallCommitRegions = len(commitRegions)
+		finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallCommitPartition, commitMark)
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -1392,9 +1443,17 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 			return errFormalComponentMalformed
 		}
 		var publishErr error
+		var publishMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			publishMark = beginFormalRelationEvalTracePhase(a)
+			traceDetail.externalCallPublicationConditions++
+		}
 		affected[index].root, publishErr = a.decisions.condition(
 			a.ctx, guard, a.decisions.terminal(leaf), affected[index].root,
 		)
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallPublication, publishMark)
+		}
 		return publishErr
 	}
 	liveCare := decisionFalse
@@ -1425,9 +1484,20 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 			return fail(errFormalComponentMalformed)
 		}
 		outcome := outcomes[0]
+		var outerMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			outerMark = beginFormalRelationEvalTracePhase(a)
+		}
 		outer, leafErr := a.applyFormalExternalCallOuter(plan, primary, outcome)
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallOuter, outerMark)
+		}
 		if leafErr != nil {
 			return fail(leafErr)
+		}
+		var normalMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			normalMark = beginFormalRelationEvalTracePhase(a)
 		}
 		topOrdinal, exact := plan.valuesTop.address(plan.valuesTop.group)
 		topLeaf, present := primary.leaf(topOrdinal)
@@ -1462,6 +1532,9 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		next, leafErr := plan.normal.Decode(a.ctx, nil, factapply.NormalReturnFactorFrame[FormalSlot]{
 			Values: values, Factors: outer.Factors, Reachable: true,
 		}, outcome.NormalReturnFacts)
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallNormal, normalMark)
+		}
 		if leafErr != nil {
 			return fail(leafErr)
 		}
@@ -1469,10 +1542,17 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 			continue
 		}
 		if plan.hasCorrelations {
+			var correlationMark formalRelationEvalTracePhaseMark
+			if traceDetail != nil {
+				correlationMark = beginFormalRelationEvalTracePhase(a)
+			}
 			if plan.correlationLane < 0 || plan.correlationLane >= len(next.Factors) {
 				return fail(errFormalComponentMalformed)
 			}
 			next.Factors[plan.correlationLane], leafErr = plan.correlation.Apply(next.Factors[plan.correlationLane], outcome)
+			if traceDetail != nil {
+				finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallCorrelation, correlationMark)
+			}
 			if leafErr != nil {
 				return fail(leafErr)
 			}
@@ -1536,6 +1616,10 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 				}
 			}
 		}
+		var diagnosticsMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			diagnosticsMark = beginFormalRelationEvalTracePhase(a)
+		}
 		diagnosticOrdinal, diagnosticExact := span.ordinal(plan.diagnostics)
 		diagnosticLeaf, diagnosticPresent := primary.leaf(diagnosticOrdinal)
 		if !diagnosticExact || !diagnosticPresent {
@@ -1558,8 +1642,15 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		if leafErr != nil {
 			return fail(leafErr)
 		}
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallDiagnostics, diagnosticsMark)
+		}
 		if leafErr = publish(region.care, diagnosticOrdinal, diagnosticLeaf); leafErr != nil {
 			return fail(leafErr)
+		}
+		var ledgerMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			ledgerMark = beginFormalRelationEvalTracePhase(a)
 		}
 		priorOutcome, priorPresent := primary.leaf(plan.outcome.ordinal)
 		if !priorPresent {
@@ -1584,6 +1675,9 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		if leafErr != nil {
 			return fail(leafErr)
 		}
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallLedger, ledgerMark)
+		}
 		if leafErr = publish(region.care, plan.outcome.ordinal, outcomeLeaf); leafErr != nil {
 			return fail(leafErr)
 		}
@@ -1607,6 +1701,11 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 	}
 	result := predecessor
 	if len(writes) != 0 {
+		var publishMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			publishMark = beginFormalRelationEvalTracePhase(a)
+			traceDetail.externalCallDeltaWrites = len(writes)
+		}
 		delta, sealErr := directory.sealDelta(writes)
 		if sealErr != nil {
 			return fail(sealErr)
@@ -1616,6 +1715,9 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 			return fail(applyErr)
 		}
 		result = formalRelationTuple{variable: predecessor.variable, root: root}
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallPublication, publishMark)
+		}
 	}
 	result, err = a.writeCare(result, liveCare)
 	if err != nil {

@@ -22,43 +22,56 @@ type formalRelationEvalTrace struct {
 }
 
 type formalRelationEvalTraceDetail struct {
-	rootAssignmentCurrentRoots, rootAssignmentPointRoots     int
-	rootAssignmentWriteRoots, rootAssignmentRegions          int
-	rootAssignmentLeafWrites                                 int
-	rootAssignmentLeafTime                                   time.Duration
-	rootAssignmentStageTime                                  [10]time.Duration
-	rootAssignmentCurrentSupport, rootAssignmentPointSupport []uint32
-	outcomeRegions, outcomeWrites                            int
-	outcomeReadRoots, outcomeNonterminalRoots                int
-	outcomeDistinctRoots, outcomeDistinctTopVariables        int
-	outcomeSupportNodes, outcomeSupportVariables             int
-	outcomeSupportRanks                                      []uint32
-	outcomeSupportOrdinals                                   map[uint32][]formalFiberOrdinal
-	outcomePlan                                              *formalOutcomeStep
-	definitionCalls, definitionCallerRoots                   int
-	definitionTargetRoots, definitionRows                    int
-	definitionCapabilityCount                                int
-	definitionSupportRanks                                   []uint32
-	definitionPartitionApplyOps                              uint64
-	definitionCapabilityApplyOps                             uint64
-	definitionPartitionTime                                  time.Duration
-	definitionCapabilityTime                                 time.Duration
-	definitionEquationCalls                                  int
-	definitionInputs, definitionLiveOutcomes                 int
-	definitionRead, definitionSeedJoin                       formalRelationEvalTracePhase
-	definitionSeedValidate, definitionTargetValidate         formalRelationEvalTracePhase
-	definitionCompose, definitionTargetJoin                  formalRelationEvalTracePhase
-	definitionCorrelation, definitionCorrelationSetup        formalRelationEvalTracePhase
-	definitionExecute, definitionPublish                     formalRelationEvalTracePhase
-	guardComposeRead, guardComposeSubstitute                 formalRelationEvalTracePhase
-	guardComposeGroups, guardComposeClose                    formalRelationEvalTracePhase
-	guardComposeJoin, guardComposeGroupPartition             formalRelationEvalTracePhase
-	guardComposeGroupLeaves, guardComposeScalarJoin          formalRelationEvalTracePhase
-	guardComposeValidate, guardComposePublish                formalRelationEvalTracePhase
-	guardComposeCloseStates, guardComposeCloseJoins          int
-	guardComposeGroupRegions                                 int
-	branchRelationsPlan                                      *formalBranchRelationsStep
-	branchRelationFactors                                    []formalBranchRelationEvalTraceFactor
+	rootAssignmentCurrentRoots, rootAssignmentPointRoots       int
+	rootAssignmentWriteRoots, rootAssignmentRegions            int
+	rootAssignmentLeafWrites                                   int
+	rootAssignmentLeafTime                                     time.Duration
+	rootAssignmentStageTime                                    [10]time.Duration
+	rootAssignmentCurrentSupport, rootAssignmentPointSupport   []uint32
+	outcomeRegions, outcomeWrites                              int
+	outcomeReadRoots, outcomeNonterminalRoots                  int
+	outcomeDistinctRoots, outcomeDistinctTopVariables          int
+	outcomeSupportNodes, outcomeSupportVariables               int
+	outcomeSupportRanks                                        []uint32
+	outcomeSupportOrdinals                                     map[uint32][]formalFiberOrdinal
+	outcomePlan                                                *formalOutcomeStep
+	definitionCalls, definitionCallerRoots                     int
+	definitionTargetRoots, definitionRows                      int
+	definitionCapabilityCount                                  int
+	definitionSupportRanks                                     []uint32
+	definitionPartitionApplyOps                                uint64
+	definitionCapabilityApplyOps                               uint64
+	definitionPartitionTime                                    time.Duration
+	definitionCapabilityTime                                   time.Duration
+	definitionEquationCalls                                    int
+	definitionInputs, definitionLiveOutcomes                   int
+	definitionRead, definitionSeedJoin                         formalRelationEvalTracePhase
+	definitionSeedValidate, definitionTargetValidate           formalRelationEvalTracePhase
+	definitionCompose, definitionTargetJoin                    formalRelationEvalTracePhase
+	definitionCorrelation, definitionCorrelationSetup          formalRelationEvalTracePhase
+	definitionExecute, definitionPublish                       formalRelationEvalTracePhase
+	guardComposeRead, guardComposeSubstitute                   formalRelationEvalTracePhase
+	guardComposeGroups, guardComposeClose                      formalRelationEvalTracePhase
+	guardComposeJoin, guardComposeGroupPartition               formalRelationEvalTracePhase
+	guardComposeGroupLeaves, guardComposeScalarJoin            formalRelationEvalTracePhase
+	guardComposeValidate, guardComposePublish                  formalRelationEvalTracePhase
+	guardComposeCloseStates, guardComposeCloseJoins            int
+	guardComposeGroupRegions                                   int
+	branchRelationsPlan                                        *formalBranchRelationsStep
+	branchRelationFactors                                      []formalBranchRelationEvalTraceFactor
+	externalCallPlan                                           *formalExternalCallStep
+	externalCallProviderInputs, externalCallProviderRoots      int
+	externalCallProviderRegions, externalCallProviderEvals     int
+	externalCallCommitRoots, externalCallCommitRegions         int
+	externalCallPublicationConditions, externalCallDeltaWrites int
+	externalCallProviderSupport, externalCallOutcomeSupport    []uint32
+	externalCallCommitSupport                                  []uint32
+	externalCallInput, externalCallProvider                    formalRelationEvalTracePhase
+	externalCallProviderOutcome                                formalRelationEvalTracePhase
+	externalCallCommitPartition, externalCallOuter             formalRelationEvalTracePhase
+	externalCallNormal, externalCallCorrelation                formalRelationEvalTracePhase
+	externalCallDiagnostics, externalCallLedger                formalRelationEvalTracePhase
+	externalCallPublication                                    formalRelationEvalTracePhase
 }
 
 type formalBranchRelationEvalTraceFactor struct {
@@ -244,6 +257,28 @@ func (t *formalRelationEvalTrace) evaluate(
 			detail.definitionCapabilityCount,
 			detail.definitionCapabilityApplyOps,
 			detail.definitionCapabilityTime.Round(time.Microsecond),
+		)
+	}
+	if detail.externalCallPlan != nil {
+		fmt.Fprintf(os.Stderr,
+			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_support=%v provider_regions=%d provider_evals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
+			sequence, detail.externalCallPlan.point,
+			detail.externalCallProviderInputs, detail.externalCallProviderRoots,
+			detail.externalCallProviderSupport, detail.externalCallProviderRegions,
+			detail.externalCallProviderEvals, detail.externalCallOutcomeSupport,
+			detail.externalCallCommitRoots, detail.externalCallCommitSupport,
+			detail.externalCallCommitRegions, detail.externalCallPublicationConditions,
+			detail.externalCallDeltaWrites,
+			formatFormalRelationEvalTracePhase(detail.externalCallInput),
+			formatFormalRelationEvalTracePhase(detail.externalCallProvider),
+			formatFormalRelationEvalTracePhase(detail.externalCallProviderOutcome),
+			formatFormalRelationEvalTracePhase(detail.externalCallCommitPartition),
+			formatFormalRelationEvalTracePhase(detail.externalCallOuter),
+			formatFormalRelationEvalTracePhase(detail.externalCallNormal),
+			formatFormalRelationEvalTracePhase(detail.externalCallCorrelation),
+			formatFormalRelationEvalTracePhase(detail.externalCallDiagnostics),
+			formatFormalRelationEvalTracePhase(detail.externalCallLedger),
+			formatFormalRelationEvalTracePhase(detail.externalCallPublication),
 		)
 	}
 	if detail.definitionEquationCalls != 0 {
