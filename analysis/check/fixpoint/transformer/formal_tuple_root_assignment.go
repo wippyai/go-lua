@@ -3,6 +3,7 @@ package transformer
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -413,6 +414,33 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 		return formalRelationTuple{}, err
 	}
 	execute := decisionTrue
+	var traceDetail *formalRelationEvalTraceDetail
+	if a.evalTrace != nil {
+		traceDetail = a.evalTrace.active
+	}
+	if traceDetail != nil {
+		traceDetail.rootAssignmentCurrentRoots = len(plan.currentOrdinals)
+		traceDetail.rootAssignmentPointRoots = len(plan.pointOrdinals)
+		traceDetail.rootAssignmentWriteRoots = len(plan.affectedOrdinals)
+		currentRoots := make([]decisionRef, 0, len(plan.currentOrdinals))
+		for _, ordinal := range plan.currentOrdinals {
+			value, rootErr := directory.valueAt(predecessor.root, ordinal)
+			if rootErr != nil {
+				return fail(rootErr)
+			}
+			currentRoots = append(currentRoots, decisionRef(value))
+		}
+		pointRoots := make([]decisionRef, 0, len(plan.pointOrdinals))
+		for _, ordinal := range plan.pointOrdinals {
+			value, rootErr := directory.valueAt(pointEntry.root, ordinal)
+			if rootErr != nil {
+				return fail(rootErr)
+			}
+			pointRoots = append(pointRoots, decisionRef(value))
+		}
+		traceDetail.rootAssignmentCurrentSupport = formalRelationTraceSupportRanks(&a.decisions, currentRoots...)
+		traceDetail.rootAssignmentPointSupport = formalRelationTraceSupportRanks(&a.decisions, pointRoots...)
+	}
 	if plan.guard != 0 {
 		var err error
 		execute, err = a.decisionForGuard(plan.variable, plan.scope, plan.code.terms, plan.guard)
@@ -429,7 +457,15 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 			if len(views) != 2 {
 				return nil, errFormalComponentMalformed
 			}
+			var leafStarted time.Time
+			if traceDetail != nil {
+				leafStarted = time.Now()
+			}
 			leaves, leafErr := a.applyFormalRootAssignmentLeaf(plan, views[0], views[1])
+			if traceDetail != nil {
+				traceDetail.rootAssignmentRegions++
+				traceDetail.rootAssignmentLeafTime += time.Since(leafStarted)
+			}
 			if leafErr != nil || len(leaves) != len(plan.affectedOrdinals) {
 				if leafErr == nil {
 					leafErr = errFormalComponentMalformed
@@ -445,6 +481,9 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 				if prior != leaves[index] {
 					writes = append(writes, formalClosedFactorLeafWrite{ordinal: ordinal, leaf: leaves[index]})
 				}
+			}
+			if traceDetail != nil {
+				traceDetail.rootAssignmentLeafWrites += len(writes)
 			}
 			return writes, nil
 		},
@@ -497,6 +536,10 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentLeaf(plan *formalRootAssig
 		return nil, errFormalComponentMalformed
 	}
 	for _, stage := range plan.factor.Stages() {
+		var stageStarted time.Time
+		if a.evalTrace != nil && a.evalTrace.active != nil {
+			stageStarted = time.Now()
+		}
 		switch stage {
 		case factapply.RootAssignmentFactorStageObjectMaterialization:
 			primary, err = a.applyFormalRootAssignmentObject(plan, currentView, sources, &current)
@@ -551,6 +594,9 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentLeaf(plan *formalRootAssig
 			}
 		default:
 			err = errFormalComponentMalformed
+		}
+		if !stageStarted.IsZero() && int(stage) < len(a.evalTrace.active.rootAssignmentStageTime) {
+			a.evalTrace.active.rootAssignmentStageTime[stage] += time.Since(stageStarted)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("transformer: formal RootAssignment stage %d: %w", stage, err)

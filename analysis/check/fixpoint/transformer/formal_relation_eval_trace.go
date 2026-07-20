@@ -22,35 +22,41 @@ type formalRelationEvalTrace struct {
 }
 
 type formalRelationEvalTraceDetail struct {
-	outcomeRegions, outcomeWrites                     int
-	outcomeReadRoots, outcomeNonterminalRoots         int
-	outcomeDistinctRoots, outcomeDistinctTopVariables int
-	outcomeSupportNodes, outcomeSupportVariables      int
-	outcomeSupportRanks                               []uint32
-	outcomeSupportOrdinals                            map[uint32][]formalFiberOrdinal
-	outcomePlan                                       *formalOutcomeStep
-	definitionCalls, definitionCallerRoots            int
-	definitionTargetRoots, definitionRows             int
-	definitionCapabilityCount                         int
-	definitionSupportRanks                            []uint32
-	definitionPartitionApplyOps                       uint64
-	definitionCapabilityApplyOps                      uint64
-	definitionPartitionTime                           time.Duration
-	definitionCapabilityTime                          time.Duration
-	definitionEquationCalls                           int
-	definitionInputs, definitionLiveOutcomes          int
-	definitionRead, definitionSeedJoin                formalRelationEvalTracePhase
-	definitionSeedValidate, definitionTargetValidate  formalRelationEvalTracePhase
-	definitionCompose, definitionTargetJoin           formalRelationEvalTracePhase
-	definitionCorrelation, definitionCorrelationSetup formalRelationEvalTracePhase
-	definitionExecute, definitionPublish              formalRelationEvalTracePhase
-	guardComposeRead, guardComposeSubstitute          formalRelationEvalTracePhase
-	guardComposeGroups, guardComposeClose             formalRelationEvalTracePhase
-	guardComposeJoin, guardComposeGroupPartition      formalRelationEvalTracePhase
-	guardComposeGroupLeaves, guardComposeScalarJoin   formalRelationEvalTracePhase
-	guardComposeValidate, guardComposePublish         formalRelationEvalTracePhase
-	guardComposeCloseStates, guardComposeCloseJoins   int
-	guardComposeGroupRegions                          int
+	rootAssignmentCurrentRoots, rootAssignmentPointRoots     int
+	rootAssignmentWriteRoots, rootAssignmentRegions          int
+	rootAssignmentLeafWrites                                 int
+	rootAssignmentLeafTime                                   time.Duration
+	rootAssignmentStageTime                                  [10]time.Duration
+	rootAssignmentCurrentSupport, rootAssignmentPointSupport []uint32
+	outcomeRegions, outcomeWrites                            int
+	outcomeReadRoots, outcomeNonterminalRoots                int
+	outcomeDistinctRoots, outcomeDistinctTopVariables        int
+	outcomeSupportNodes, outcomeSupportVariables             int
+	outcomeSupportRanks                                      []uint32
+	outcomeSupportOrdinals                                   map[uint32][]formalFiberOrdinal
+	outcomePlan                                              *formalOutcomeStep
+	definitionCalls, definitionCallerRoots                   int
+	definitionTargetRoots, definitionRows                    int
+	definitionCapabilityCount                                int
+	definitionSupportRanks                                   []uint32
+	definitionPartitionApplyOps                              uint64
+	definitionCapabilityApplyOps                             uint64
+	definitionPartitionTime                                  time.Duration
+	definitionCapabilityTime                                 time.Duration
+	definitionEquationCalls                                  int
+	definitionInputs, definitionLiveOutcomes                 int
+	definitionRead, definitionSeedJoin                       formalRelationEvalTracePhase
+	definitionSeedValidate, definitionTargetValidate         formalRelationEvalTracePhase
+	definitionCompose, definitionTargetJoin                  formalRelationEvalTracePhase
+	definitionCorrelation, definitionCorrelationSetup        formalRelationEvalTracePhase
+	definitionExecute, definitionPublish                     formalRelationEvalTracePhase
+	guardComposeRead, guardComposeSubstitute                 formalRelationEvalTracePhase
+	guardComposeGroups, guardComposeClose                    formalRelationEvalTracePhase
+	guardComposeJoin, guardComposeGroupPartition             formalRelationEvalTracePhase
+	guardComposeGroupLeaves, guardComposeScalarJoin          formalRelationEvalTracePhase
+	guardComposeValidate, guardComposePublish                formalRelationEvalTracePhase
+	guardComposeCloseStates, guardComposeCloseJoins          int
+	guardComposeGroupRegions                                 int
 }
 
 type formalRelationEvalTracePhase struct {
@@ -99,6 +105,7 @@ type formalRelationEvalTraceSnapshot struct {
 	decisionCareApply                                int
 	decisionApplyOps                                 uint64
 	componentTerminals, directoryNodes               int
+	mallocs, bytes                                   uint64
 }
 
 func newFormalRelationEvalTrace() *formalRelationEvalTrace {
@@ -118,6 +125,8 @@ func snapshotFormalRelationEvaluation(algebra *formalTupleAlgebra) formalRelatio
 	if algebra == nil {
 		return formalRelationEvalTraceSnapshot{}
 	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
 	snapshot := formalRelationEvalTraceSnapshot{
 		decisionNodes:      len(algebra.decisions.nodes),
 		decisionTerminals:  len(algebra.decisions.terminals),
@@ -128,6 +137,8 @@ func snapshotFormalRelationEvaluation(algebra *formalTupleAlgebra) formalRelatio
 		decisionCareApply:  len(algebra.decisions.careApplyMemo),
 		decisionApplyOps:   algebra.decisions.applyOps,
 		componentTerminals: len(algebra.components.terminals),
+		mallocs:            memory.Mallocs,
+		bytes:              memory.TotalAlloc,
 	}
 	for _, directory := range algebra.directories {
 		if directory != nil {
@@ -166,7 +177,7 @@ func (t *formalRelationEvalTrace) evaluate(
 	}
 	after := snapshotFormalRelationEvaluation(algebra)
 	fmt.Fprintf(os.Stderr,
-		"FORMAL_EQUATION_SLOW seq=%d elapsed=%s %s dd_nodes=%+d dd_terminals=%+d dd_unique=%+d dd_apply_memo=%+d dd_ite_memo=%+d dd_care_memo=%+d dd_care_apply_memo=%+d dd_apply_ops=%+d component_terminals=%+d directory_nodes=%+d outcome_read_roots=%d outcome_nonterminal_roots=%d outcome_distinct_roots=%d outcome_distinct_top_variables=%d outcome_support_nodes=%d outcome_support_variables=%d outcome_regions=%d outcome_writes=%d\n",
+		"FORMAL_EQUATION_SLOW seq=%d elapsed=%s %s dd_nodes=%+d dd_terminals=%+d dd_unique=%+d dd_apply_memo=%+d dd_ite_memo=%+d dd_care_memo=%+d dd_care_apply_memo=%+d dd_apply_ops=%+d component_terminals=%+d directory_nodes=%+d mallocs=%+d bytes=%+d outcome_read_roots=%d outcome_nonterminal_roots=%d outcome_distinct_roots=%d outcome_distinct_top_variables=%d outcome_support_nodes=%d outcome_support_variables=%d outcome_regions=%d outcome_writes=%d\n",
 		sequence, elapsed.Round(time.Millisecond), formatFormalRelationEquationTrace(algebra, equation),
 		after.decisionNodes-before.decisionNodes,
 		after.decisionTerminals-before.decisionTerminals,
@@ -178,6 +189,8 @@ func (t *formalRelationEvalTrace) evaluate(
 		after.decisionApplyOps-before.decisionApplyOps,
 		after.componentTerminals-before.componentTerminals,
 		after.directoryNodes-before.directoryNodes,
+		after.mallocs-before.mallocs,
+		after.bytes-before.bytes,
 		detail.outcomeReadRoots,
 		detail.outcomeNonterminalRoots,
 		detail.outcomeDistinctRoots,
@@ -187,6 +200,16 @@ func (t *formalRelationEvalTrace) evaluate(
 		detail.outcomeRegions,
 		detail.outcomeWrites,
 	)
+	if detail.rootAssignmentRegions != 0 {
+		fmt.Fprintf(os.Stderr,
+			"FORMAL_ROOT_ASSIGNMENT seq=%d current_roots=%d point_roots=%d write_roots=%d current_support=%v point_support=%v regions=%d leaf_writes=%d leaf_time=%s stage_time=%v\n",
+			sequence, detail.rootAssignmentCurrentRoots, detail.rootAssignmentPointRoots,
+			detail.rootAssignmentWriteRoots, detail.rootAssignmentCurrentSupport,
+			detail.rootAssignmentPointSupport, detail.rootAssignmentRegions,
+			detail.rootAssignmentLeafWrites, detail.rootAssignmentLeafTime.Round(time.Microsecond),
+			detail.rootAssignmentStageTime,
+		)
+	}
 	if detail.outcomePlan != nil {
 		fmt.Fprintf(os.Stderr, "FORMAL_OUTCOME_PLAN seq=%d %s\n", sequence, formatFormalOutcomePlanTrace(detail.outcomePlan))
 		for _, rank := range detail.outcomeSupportRanks {
