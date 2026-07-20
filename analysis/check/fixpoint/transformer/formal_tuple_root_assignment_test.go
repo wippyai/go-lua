@@ -96,30 +96,6 @@ func TestFormalRootAssignmentExecutesCanonicalSparseN4(t *testing.T) {
 	}
 }
 
-func TestSparseFormalRootAssignmentLeafWritesOmitUnchangedAffectedSibling(t *testing.T) {
-	ordinals := []formalFiberOrdinal{3, 7, 11}
-	positions, err := sealFormalOrdinalPositions(12, ordinals)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := formalSparseLeafView{
-		ordinals:  ordinals,
-		positions: positions,
-		leaves:    []decisionLeaf{13, 17, 19},
-	}
-	writes, err := sparseFormalRootAssignmentLeafWrites(
-		current,
-		ordinals,
-		[]decisionLeaf{13, 23, 19},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(writes) != 1 || writes[0].ordinal != 7 || writes[0].leaf != 23 {
-		t.Fatalf("sparse RootAssignment writes = %#v, want only changed fiber 7", writes)
-	}
-}
-
 // freezeFormalRootAssignmentTestProgram freezes the same immutable unit used
 // by production: Plan -> RelationProgram -> one formal WTO equation system.
 // It intentionally exposes no typed-semantic or concrete scheduler facade.

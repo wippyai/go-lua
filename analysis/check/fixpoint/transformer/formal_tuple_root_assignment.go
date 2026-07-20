@@ -42,8 +42,11 @@ type formalRootAssignmentStep struct {
 	writes  []formalRootAssignmentLaneBinding
 
 	currentOrdinals    []formalFiberOrdinal
+	currentPositions   formalOrdinalPositions
 	pointOrdinals      []formalFiberOrdinal
+	pointPositions     formalOrdinalPositions
 	affectedOrdinals   []formalFiberOrdinal
+	affectedPositions  formalOrdinalPositions
 	pathReadAuthority  state.CoordinatePathEvidenceAuthority[statekey.Value]
 	pathWriteAuthority state.CoordinatePathEvidenceAuthority[statekey.Value]
 	sealed             bool
@@ -274,6 +277,23 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 	if err != nil {
 		return nil, err
 	}
+	currentPositions, err := sealFormalOrdinalPositions(span.count, currentOrdinals)
+	if err != nil {
+		return nil, fmt.Errorf("RootAssignment current positions: %w", err)
+	}
+	pointPositions, err := sealFormalOrdinalPositions(span.count, pointOrdinals)
+	if err != nil {
+		return nil, fmt.Errorf("RootAssignment point positions: %w", err)
+	}
+	affectedPositions, err := sealFormalOrdinalPositions(span.count, affectedOrdinals)
+	if err != nil {
+		return nil, fmt.Errorf("RootAssignment affected positions: %w", err)
+	}
+	for _, ordinal := range affectedOrdinals {
+		if _, present := currentPositions.position(ordinal); !present {
+			return nil, fmt.Errorf("RootAssignment output ordinal %d is outside its current input cone", ordinal)
+		}
+	}
 	emptyCoordinates, err := body.productDomain.SealCoordinateFactorInventory(span.keys, nil)
 	if err != nil {
 		return nil, err
@@ -298,60 +318,12 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 		sourceMembers: sourceMembers, demands: demands, values: values.descriptor, valuesTop: valuesTop,
 		target: target, targetMember: targetMember, fresh: fresh,
 		current: current, point: point, writes: writes,
-		currentOrdinals: currentOrdinals, pointOrdinals: pointOrdinals, affectedOrdinals: affectedOrdinals,
+		currentOrdinals: currentOrdinals, currentPositions: currentPositions,
+		pointOrdinals: pointOrdinals, pointPositions: pointPositions,
+		affectedOrdinals: affectedOrdinals, affectedPositions: affectedPositions,
 		pathReadAuthority: pathReadAuthority, pathWriteAuthority: pathWriteAuthority,
 		sealed: true,
 	}, nil
-}
-
-type formalRootAssignmentLeafRegion struct {
-	guard   decisionRef
-	current formalSparseLeafView
-	point   formalSparseLeafView
-}
-
-type formalRootAssignmentLeafWrite struct {
-	ordinal formalFiberOrdinal
-	leaf    decisionLeaf
-}
-
-// sparseFormalRootAssignmentLeafWrites returns only the physical fibers whose
-// valuation changed in one already-correlated region. The predecessor DD is
-// the structural carry for every omitted fiber; rebuilding unchanged siblings
-// would merely reconstruct the same function through another ITE chain.
-func sparseFormalRootAssignmentLeafWrites(current formalSparseLeafView, ordinals []formalFiberOrdinal, leaves []decisionLeaf) ([]formalRootAssignmentLeafWrite, error) {
-	if len(ordinals) != len(leaves) {
-		return nil, errFormalComponentMalformed
-	}
-	writes := make([]formalRootAssignmentLeafWrite, 0, len(leaves))
-	for index, ordinal := range ordinals {
-		prior, present := current.leaf(ordinal)
-		if !present {
-			return nil, errFormalComponentMalformed
-		}
-		if prior != leaves[index] {
-			writes = append(writes, formalRootAssignmentLeafWrite{ordinal: ordinal, leaf: leaves[index]})
-		}
-	}
-	return writes, nil
-}
-
-func (a *formalTupleAlgebra) formalRootAssignmentLeafRegions(current, point formalRelationTuple, plan *formalRootAssignmentStep) ([]formalRootAssignmentLeafRegion, error) {
-	rows, err := a.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{
-		{tuple: current, ordinals: plan.currentOrdinals},
-		{tuple: point, ordinals: plan.pointOrdinals},
-	}, plan.demands)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]formalRootAssignmentLeafRegion, len(rows))
-	for index, row := range rows {
-		if len(row.views) != 2 {
-			return nil, errDecisionMalformed
-		}
-		out[index] = formalRootAssignmentLeafRegion{guard: row.guard, current: row.views[0], point: row.views[1]}
-	}
-	return out, nil
 }
 
 func (l formalSparseLeafView) evaluateRootAssignment(plan *formalRootAssignmentStep, binding formalQualifiedBinding, factors *formalRootAssignmentFactors) (product.Value, error) {
@@ -438,12 +410,17 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 	if a == nil || !plan.valid(operator) {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal RootAssignment has no complete factor transaction")
 	}
-	regions, err := a.formalRootAssignmentLeafRegions(predecessor, pointEntry, plan)
-	if err != nil {
+	if err := a.validateTuple(predecessor); err != nil {
 		return formalRelationTuple{}, err
 	}
+	if err := a.validateTuple(pointEntry); err != nil {
+		return formalRelationTuple{}, err
+	}
+	if predecessor.bottom() || pointEntry.bottom() || predecessor.variable != pointEntry.variable {
+		return formalRelationTuple{}, errFormalComponentForeignOwner
+	}
 	span, directory, authority, ok := a.span(predecessor.variable)
-	if !ok || authority.code != operator.code {
+	if !ok || predecessor.root.owner != directory || pointEntry.root.owner != directory || authority.code != operator.code {
 		return formalRelationTuple{}, errFormalComponentForeignOwner
 	}
 	mark := a.decisions.checkpoint()
@@ -451,72 +428,159 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 		a.decisions.rollback(mark)
 		return formalRelationTuple{}, err
 	}
-	type affectedRoot struct {
-		ordinal formalFiberOrdinal
-		root    decisionRef
+	predecessorCare, err := a.care(predecessor)
+	if err != nil {
+		return fail(err)
 	}
-	affected := make([]affectedRoot, len(plan.affectedOrdinals))
-	for index, ordinal := range plan.affectedOrdinals {
-		prior, readErr := directory.valueAt(predecessor.root, ordinal)
-		if readErr != nil {
-			return fail(readErr)
-		}
-		affected[index] = affectedRoot{ordinal: ordinal, root: decisionRef(prior)}
+	pointCare, err := a.care(pointEntry)
+	if err != nil {
+		return fail(err)
 	}
-	execute := decisionTrue
+	transformCare, err := a.decisions.apply(a.ctx, uint8(decisionAnd), true, predecessorCare, pointCare, decisionLeafAnd)
+	if err != nil {
+		return fail(err)
+	}
 	if plan.guard != 0 {
-		execute, err = a.decisionForGuard(plan.variable, plan.scope, plan.code.terms, plan.guard)
+		execute, guardErr := a.decisionForGuard(plan.variable, plan.scope, plan.code.terms, plan.guard)
+		if guardErr != nil {
+			return fail(guardErr)
+		}
+		transformCare, err = a.decisions.apply(a.ctx, uint8(decisionAnd), true, transformCare, execute, decisionLeafAnd)
 		if err != nil {
 			return fail(err)
 		}
 	}
-	condition := func(care decisionRef, ordinal formalFiberOrdinal, leaf decisionLeaf) error {
-		if care == decisionFalse {
-			return nil
-		}
-		index := sort.Search(len(affected), func(index int) bool { return affected[index].ordinal >= ordinal })
-		if index >= len(affected) || affected[index].ordinal != ordinal {
-			return errFormalComponentMalformed
-		}
-		affected[index].root, err = a.decisions.condition(a.ctx, care, a.decisions.terminal(leaf), affected[index].root)
-		return err
+	if transformCare == decisionFalse {
+		a.decisions.rollback(mark)
+		return predecessor, nil
 	}
-	for _, region := range regions {
-		runCare, careErr := a.decisions.apply(a.ctx, uint8(decisionAnd), true, region.guard, execute, decisionLeafAnd)
-		if careErr != nil {
-			return fail(careErr)
-		}
-		if runCare != decisionFalse {
-			leaves, leafErr := a.applyFormalRootAssignmentLeaf(plan, region.current, region.point)
-			if leafErr != nil {
-				return fail(leafErr)
-			}
-			writes, writeErr := sparseFormalRootAssignmentLeafWrites(region.current, plan.affectedOrdinals, leaves)
-			if writeErr != nil {
-				return fail(writeErr)
-			}
-			for _, write := range writes {
-				if leafErr = condition(runCare, write.ordinal, write.leaf); leafErr != nil {
-					return fail(leafErr)
-				}
-			}
-		}
-	}
-	publication := make([]formalFiberWrite, 0, len(affected))
-	for _, candidate := range affected {
-		descriptor := span.forest.descriptors[span.first+int(candidate.ordinal)]
-		if err := a.validateDescriptorRoot(authority, descriptor, candidate.root); err != nil {
-			return fail(err)
-		}
-		prior, readErr := directory.valueAt(predecessor.root, candidate.ordinal)
+
+	currentRoots := make([]decisionRef, len(plan.currentOrdinals))
+	for index, ordinal := range plan.currentOrdinals {
+		value, readErr := directory.valueAt(predecessor.root, ordinal)
 		if readErr != nil {
 			return fail(readErr)
 		}
-		if prior != formalFiberValue(candidate.root) {
-			publication = append(publication, formalFiberWrite{ordinal: candidate.ordinal, value: formalFiberValue(candidate.root)})
+		currentRoots[index] = decisionRef(value)
+	}
+	pointRoots := make([]decisionRef, len(plan.pointOrdinals))
+	for index, ordinal := range plan.pointOrdinals {
+		value, readErr := directory.valueAt(pointEntry.root, ordinal)
+		if readErr != nil {
+			return fail(readErr)
+		}
+		pointRoots[index] = decisionRef(value)
+	}
+	demandRoots := make([]decisionRef, len(plan.demands))
+	for index, demand := range plan.demands {
+		demandRoots[index], err = a.decisionForGuard(demand.owner, demand.scope, demand.arena, demand.guard)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	transactionRoots := make([]decisionRef, 0, len(currentRoots)+len(pointRoots)+len(demandRoots)+len(plan.affectedOrdinals))
+	transactionRoots = append(transactionRoots, currentRoots...)
+	pointOffset := len(transactionRoots)
+	transactionRoots = append(transactionRoots, pointRoots...)
+	demandOffset := len(transactionRoots)
+	transactionRoots = append(transactionRoots, demandRoots...)
+	assignmentOffset := len(transactionRoots)
+	transactionRoots = append(transactionRoots, make([]decisionRef, len(plan.affectedOrdinals))...)
+
+	transformedRoots, err := a.decisions.applyVectorUnderCare(
+		a.ctx, transformCare, transformCare, decisionFalse, transactionRoots, transactionRoots,
+		func(input, unreachable []decisionLeaf) ([]decisionLeaf, error) {
+			if len(input) != len(transactionRoots) || len(unreachable) != 0 {
+				return nil, errDecisionMalformed
+			}
+			regionGuard := decisionTrue
+			for index, root := range demandRoots {
+				leaf := input[demandOffset+index]
+				if leaf > 1 {
+					return nil, errDecisionMalformed
+				}
+				literal := root
+				if leaf == 0 {
+					var literalErr error
+					literal, literalErr = formalDecisionBooleanNot(a, root)
+					if literalErr != nil {
+						return nil, literalErr
+					}
+				}
+				var guardErr error
+				regionGuard, guardErr = a.decisions.apply(a.ctx, uint8(decisionAnd), true, regionGuard, literal, decisionLeafAnd)
+				if guardErr != nil {
+					return nil, guardErr
+				}
+			}
+			currentView := formalSparseLeafView{
+				algebra: a, variable: predecessor.variable, span: span, authority: authority,
+				body: &a.program.bodies[predecessor.variable-1], guard: regionGuard,
+				ordinals: plan.currentOrdinals, positions: plan.currentPositions,
+				leaves:  input[:len(plan.currentOrdinals)],
+				derived: input[demandOffset:assignmentOffset],
+			}
+			pointView := formalSparseLeafView{
+				algebra: a, variable: predecessor.variable, span: span, authority: authority,
+				body: &a.program.bodies[predecessor.variable-1], guard: regionGuard,
+				ordinals: plan.pointOrdinals, positions: plan.pointPositions,
+				leaves:  input[pointOffset:demandOffset],
+				derived: input[demandOffset:assignmentOffset],
+			}
+			leaves, leafErr := a.applyFormalRootAssignmentLeaf(plan, currentView, pointView)
+			if leafErr != nil || len(leaves) != len(plan.affectedOrdinals) {
+				if leafErr == nil {
+					leafErr = errFormalComponentMalformed
+				}
+				return nil, leafErr
+			}
+			output := append([]decisionLeaf(nil), input...)
+			for index, ordinal := range plan.affectedOrdinals {
+				currentPosition, present := plan.currentPositions.position(ordinal)
+				if !present || currentPosition >= len(plan.currentOrdinals) {
+					return nil, errFormalComponentMalformed
+				}
+				if input[currentPosition] == leaves[index] {
+					continue
+				}
+				output[currentPosition] = leaves[index]
+				output[assignmentOffset+index] = decisionLeaf(decisionTrue)
+			}
+			return output, nil
+		},
+	)
+	if err != nil || len(transformedRoots) != len(transactionRoots) {
+		if err == nil {
+			err = errDecisionMalformed
+		}
+		return fail(err)
+	}
+	publication := make([]formalFiberWrite, 0, len(plan.affectedOrdinals))
+	for index, ordinal := range plan.affectedOrdinals {
+		currentPosition, present := plan.currentPositions.position(ordinal)
+		if !present || currentPosition >= len(transformedRoots) || assignmentOffset+index >= len(transformedRoots) {
+			return fail(errFormalComponentMalformed)
+		}
+		prior, readErr := directory.valueAt(predecessor.root, ordinal)
+		if readErr != nil {
+			return fail(readErr)
+		}
+		root, conditionErr := a.decisions.condition(
+			a.ctx, transformedRoots[assignmentOffset+index], transformedRoots[currentPosition], decisionRef(prior),
+		)
+		if conditionErr != nil {
+			return fail(conditionErr)
+		}
+		descriptor := span.forest.descriptors[span.first+int(ordinal)]
+		if err := a.validateDescriptorRoot(authority, descriptor, root); err != nil {
+			return fail(err)
+		}
+		if formalFiberValue(root) != prior {
+			publication = append(publication, formalFiberWrite{ordinal: ordinal, value: formalFiberValue(root)})
 		}
 	}
 	if len(publication) == 0 {
+		a.decisions.rollback(mark)
 		return predecessor, nil
 	}
 	delta, err := directory.sealDelta(publication)
