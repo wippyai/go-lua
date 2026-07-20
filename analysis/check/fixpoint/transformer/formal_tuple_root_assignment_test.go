@@ -96,6 +96,33 @@ func TestFormalRootAssignmentExecutesCanonicalSparseN4(t *testing.T) {
 	}
 }
 
+func TestFormalRootAssignmentOmitsPersistentUnchangedLane(t *testing.T) {
+	domain := state.RegisteredProductDomain(standard.Registry())
+	lane, ok := domain.ProductLane(state.LaneNumFloors)
+	if !ok {
+		t.Fatal("num-floors lane")
+	}
+	original, err := domain.LaneBottom(lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factors := formalRootAssignmentFactors{
+		bindings: []formalRootAssignmentLaneBinding{{lane: lane}},
+		values:   []state.LaneFactor{original},
+		original: []state.LaneFactor{original},
+	}
+	got, changed, err := factors.changed(domain, lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("persistent operand identity was marked changed")
+	}
+	if same, err := domain.LaneSame(got, original); err != nil || !same {
+		t.Fatalf("unchanged factor identity same=%t err=%v", same, err)
+	}
+}
+
 // freezeFormalRootAssignmentTestProgram freezes the same immutable unit used
 // by production: Plan -> RelationProgram -> one formal WTO equation system.
 // It intentionally exposes no typed-semantic or concrete scheduler facade.

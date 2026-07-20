@@ -359,16 +359,22 @@ func (l formalSparseLeafView) evaluateRootAssignment(plan *formalRootAssignmentS
 type formalRootAssignmentFactors struct {
 	bindings []formalRootAssignmentLaneBinding
 	values   []state.LaneFactor
+	original []state.LaneFactor
 }
 
 func materializeFormalRootAssignmentFactors(view formalSparseLeafView, bindings []formalRootAssignmentLaneBinding) (formalRootAssignmentFactors, error) {
-	out := formalRootAssignmentFactors{bindings: bindings, values: make([]state.LaneFactor, len(bindings))}
+	out := formalRootAssignmentFactors{
+		bindings: bindings,
+		values:   make([]state.LaneFactor, len(bindings)),
+		original: make([]state.LaneFactor, len(bindings)),
+	}
 	for index, binding := range bindings {
 		factor, err := view.laneFactor(binding.group)
 		if err != nil {
 			return formalRootAssignmentFactors{}, err
 		}
 		out.values[index] = factor
+		out.original[index] = factor
 	}
 	return out, nil
 }
@@ -388,6 +394,17 @@ func (f formalRootAssignmentFactors) value(lane state.ProductLane) (state.LaneFa
 		return state.LaneFactor{}, false
 	}
 	return *value, true
+}
+
+func (f formalRootAssignmentFactors) changed(domain state.ProductDomain, lane state.ProductLane) (state.LaneFactor, bool, error) {
+	for index := range f.bindings {
+		if f.bindings[index].lane.Ordinal() != lane.Ordinal() || index >= len(f.values) || index >= len(f.original) {
+			continue
+		}
+		same, err := domain.LaneSame(f.original[index], f.values[index])
+		return f.values[index], !same, err
+	}
+	return state.LaneFactor{}, false, errFormalComponentMalformed
 }
 
 func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelationOperatorRef, predecessor, pointEntry formalRelationTuple) (formalRelationTuple, error) {
@@ -635,9 +652,12 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentLeaf(plan *formalRootAssig
 	}
 	span := currentView.span
 	for _, binding := range plan.writes {
-		factor, found := current.value(binding.lane)
-		if !found {
-			return nil, errFormalComponentMalformed
+		factor, changed, sameErr := current.changed(plan.domain, binding.lane)
+		if sameErr != nil {
+			return nil, sameErr
+		}
+		if !changed {
+			continue
 		}
 		groupLeaves, factorErr := a.factorFormalSparseLane(currentView.authority, span, binding.group, factor)
 		if factorErr != nil || len(groupLeaves) != len(binding.group.members) {
