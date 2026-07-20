@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -126,6 +127,42 @@ func TestFormalExternalCallPreparesOnceAndPublishesOneAtomicProviderOutcome(t *t
 	})
 	if err != nil || !alternatives.Equal(program.registry, want) {
 		t.Fatalf("provider alternatives = %#v, want %#v, err=%v", alternatives, want, err)
+	}
+}
+
+func TestFormalExternalCallComposesRawProviderResultsBeforeNormalization(t *testing.T) {
+	first := callpayload.SealCallOutcomeProgram(
+		"raw composition first", []string{"ParamObligations"}, state.NewLaneSet(), state.NewLaneSet(), nil, nil,
+		func(ctx transfer.NodeContext, _ factflow.CallSiteView, _ callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+			value := product.Absent(ctx.Registry)
+			obligation := callpayload.CallParamObligation{ParamIndex: 0, Value: value}
+			return callpayload.CallOutcome{ParamObligations: []callpayload.CallParamObligation{obligation, obligation}}, nil
+		},
+	)
+	second := callpayload.SealCallOutcomeProgram(
+		"raw composition second", []string{"SuspensionKnown", "MaySuspend"}, state.NewLaneSet(), state.NewLaneSet(), nil, nil,
+		func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+			return callpayload.CallOutcome{}, nil
+		},
+	)
+	provider := callpayload.ComposeCallOutcomePrograms(
+		[]callpayload.CallOutcomeProgram{first, second},
+		func(_ transfer.NodeContext, left, _ callpayload.CallOutcome) callpayload.CallOutcome {
+			if len(left.ParamObligations) == 2 {
+				left.SuspensionKnown = true
+				left.MaySuspend = true
+			}
+			return left
+		},
+	)
+	program, _, site, _ := formalCallOutcomeFiberFixtureWithProvider(t, provider)
+	execution, err := executeFormalRelation(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, reachable, err := execution.algebra.formalDiagnosticOutput(context.Background(), execution.values[site])
+	if err != nil || !reachable || !diagnostics.SuspensionKnown || !diagnostics.MaySuspend {
+		t.Fatalf("raw composition diagnostics = %#v reachable=%v err=%v", diagnostics, reachable, err)
 	}
 }
 

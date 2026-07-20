@@ -63,6 +63,7 @@ type formalRelationEvalTraceDetail struct {
 	externalCallProviderInputs, externalCallProviderRoots      int
 	externalCallProviderRegions, externalCallProviderEvals     int
 	externalCallDistinctProviderInputs                         int
+	externalCallRawProviderTerminals                           int
 	externalCallCommitRoots, externalCallCommitRegions         int
 	externalCallPublicationConditions, externalCallDeltaWrites int
 	externalCallProviderSupport, externalCallOutcomeSupport    []uint32
@@ -73,6 +74,14 @@ type formalRelationEvalTraceDetail struct {
 	externalCallNormal, externalCallCorrelation                formalRelationEvalTracePhase
 	externalCallDiagnostics, externalCallLedger                formalRelationEvalTracePhase
 	externalCallPublication                                    formalRelationEvalTracePhase
+	externalCallProviderComponents                             []formalExternalCallProviderEvalTrace
+}
+
+type formalExternalCallProviderEvalTrace struct {
+	path, capability              string
+	inputs, roots, regions, evals int
+	distinct                      int
+	support                       []uint32
 }
 
 type formalBranchRelationEvalTraceFactor struct {
@@ -262,11 +271,12 @@ func (t *formalRelationEvalTrace) evaluate(
 	}
 	if detail.externalCallPlan != nil {
 		fmt.Fprintf(os.Stderr,
-			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_support=%v provider_regions=%d distinct_provider_inputs=%d provider_evals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
+			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_support=%v provider_regions=%d distinct_provider_inputs=%d provider_evals=%d raw_provider_terminals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
 			sequence, detail.externalCallPlan.point,
 			detail.externalCallProviderInputs, detail.externalCallProviderRoots,
 			detail.externalCallProviderSupport, detail.externalCallProviderRegions,
 			detail.externalCallDistinctProviderInputs, detail.externalCallProviderEvals,
+			detail.externalCallRawProviderTerminals,
 			detail.externalCallOutcomeSupport,
 			detail.externalCallCommitRoots, detail.externalCallCommitSupport,
 			detail.externalCallCommitRegions, detail.externalCallPublicationConditions,
@@ -282,6 +292,13 @@ func (t *formalRelationEvalTrace) evaluate(
 			formatFormalRelationEvalTracePhase(detail.externalCallLedger),
 			formatFormalRelationEvalTracePhase(detail.externalCallPublication),
 		)
+		for _, component := range detail.externalCallProviderComponents {
+			fmt.Fprintf(os.Stderr,
+				"FORMAL_EXTERNAL_CALL_PROVIDER_COMPONENT seq=%d path=%s capability=%s inputs=%d roots=%d support=%v regions=%d distinct_inputs=%d evals=%d\n",
+				sequence, component.path, component.capability, component.inputs, component.roots,
+				component.support, component.regions, component.distinct, component.evals,
+			)
+		}
 	}
 	if detail.definitionEquationCalls != 0 {
 		fmt.Fprintf(os.Stderr,

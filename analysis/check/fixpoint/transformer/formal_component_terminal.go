@@ -34,6 +34,7 @@ const (
 	formalComponentOutcomeOccurrence
 	formalComponentDiagnostics
 	formalComponentCallOutcomes
+	formalComponentRawCallOutcome
 	formalComponentOrdinaryLane
 	formalComponentCoordinateSkeleton
 	formalComponentCoordinateScalar
@@ -95,6 +96,7 @@ type formalComponentTerminal struct {
 	outcome                      formalQualifiedOutcomeOccurrence
 	diagnostics                  callpayload.DiagnosticOutput
 	callOutcomes                 callpayload.CallOutcomeAlternativeSet
+	rawCallOutcome               callpayload.CallOutcome
 	lane                         state.LaneFactor
 	skeleton                     state.CoordinateFamilySkeleton
 	scalar                       state.CoordinateScalarFactor
@@ -599,6 +601,40 @@ func (a *formalComponentTerminalAuthority) internCallOutcomes(value callpayload.
 	return a.arena.append(a, formalComponentTerminal{
 		kind: formalComponentCallOutcomes, callOutcomes: value.Normalize(a.product.Registry()), fingerprint: fingerprint,
 	}, bucket)
+}
+
+// internRawCallOutcome retains provider syntax only until its enclosing
+// composition tree has completed. Raw outcomes are never directory payloads
+// or lattice values; normalization begins only after the complete root exists,
+// at the canonical CallOutcomeAlternativeSet interning boundary.
+func (a *formalComponentTerminalAuthority) internRawCallOutcome(value callpayload.CallOutcome) (decisionLeaf, error) {
+	if a == nil || a.product.Registry() == nil {
+		return 0, errFormalComponentForeignOwner
+	}
+	fingerprint := callpayload.FingerprintCallOutcomeRepresentation(a.product.Registry(), value)
+	bucket := formalComponentBucket{owner: a.body, kind: formalComponentRawCallOutcome, fingerprint: fingerprint}
+	for _, leaf := range a.arena.buckets[bucket] {
+		prior := a.arena.terminals[leaf].terminal
+		if callpayload.CallOutcomeRepresentationEqual(prior.rawCallOutcome, value) {
+			return leaf, nil
+		}
+	}
+	return a.arena.append(a, formalComponentTerminal{
+		kind: formalComponentRawCallOutcome, rawCallOutcome: value.Clone(), fingerprint: fingerprint,
+	}, bucket)
+}
+
+func (a *formalComponentTerminalAuthority) rawCallOutcomeTerminalCount() int {
+	if a == nil || a.arena == nil {
+		return 0
+	}
+	count := 0
+	for _, owned := range a.arena.terminals {
+		if owned.owner == a.body && owned.terminal.kind == formalComponentRawCallOutcome {
+			count++
+		}
+	}
+	return count
 }
 
 func (a *formalComponentTerminalAuthority) internTypestateResourceObservation(value state.TypestateResourceObservation) (decisionLeaf, error) {

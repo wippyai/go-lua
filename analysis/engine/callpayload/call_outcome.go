@@ -2,11 +2,14 @@
 package callpayload
 
 import (
+	"reflect"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -14,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	engineregistry "github.com/wippyai/go-lua/analysis/engine/registry"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 // CallResult is one indexed abstract result produced by a call.
@@ -80,6 +84,36 @@ func (o CallOutcome) HasPostReturnEvidence() bool {
 		}
 	}
 	return false
+}
+
+// CallOutcomeRepresentationEqual reports exact pre-normalization syntax
+// equality. It exists for the transient composition carrier: directional
+// provider merge laws must see the exact child results before the completed
+// composition is normalized into the semantic CallOutcome lattice.
+func CallOutcomeRepresentationEqual(left, right CallOutcome) bool {
+	return reflect.DeepEqual(left, right)
+}
+
+// FingerprintCallOutcomeRepresentation is a collision-tolerant accelerator
+// for CallOutcomeRepresentationEqual. It deliberately hashes only stable raw
+// shape and result identities; exact representation equality remains the
+// authority inside buckets. Unlike FingerprintCallOutcome it performs no
+// normalization and allocates no canonical fact collections.
+func FingerprintCallOutcomeRepresentation(reg *axis.Registry, outcome CallOutcome) uint64 {
+	w := internalhash.NewWriter()
+	_, _ = w.WriteString("callpayload.CallOutcome/raw/v1")
+	for _, lane := range callOutcomeLanes {
+		_, _ = w.WriteString(lane.fieldName)
+		w.WriteBool(lane.has(outcome))
+	}
+	w.WriteIntDecimal(int64(len(outcome.Results)))
+	for _, result := range outcome.Results {
+		w.WriteIntDecimal(int64(result.Index))
+		if reg != nil {
+			w.WriteUintHex(product.Hash(reg, result.Value))
+		}
+	}
+	return w.Sum64()
 }
 
 type callOutcomeLane struct {

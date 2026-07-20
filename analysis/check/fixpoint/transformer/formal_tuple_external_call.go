@@ -234,15 +234,13 @@ type formalExternalCallStep struct {
 	variable          relationVar
 	point             cfg.Point
 	site              factflow.CallSiteView
-	provider          callpayload.CallOutcomeSiteProgram
-	input             callpayload.ExternalCallInputProgram[statekey.Value]
+	provider          formalExternalCallProvider
 	factor            factapply.ExternalCallFactorProgram[FormalSlot]
 	normal            factapply.NormalReturnFactorCodec[FormalSlot]
 	normalValues      []formalFiberGroupMember
 	correlation       factapply.CallOutcomeCorrelationFactorProgram
 	correlationLane   int
 	hasCorrelations   bool
-	wires             []formalExternalCallWire
 	valuesTop         formalFiberGroupMember
 	results           []formalFiberGroupMember
 	valueOutputs      []formalExternalCallValueOutput
@@ -253,32 +251,65 @@ type formalExternalCallStep struct {
 	diagnostics       formalFiberDescriptor
 	operands          callOutcomeOperandTerms
 	access            []valueAccessTerm
-	guardDemands      []formalQualifiedGuardDemand
 	sealed            bool
 }
 
 type formalExternalCallProvider struct {
+	site         callpayload.CallOutcomeSiteProgram
 	input        callpayload.ExternalCallInputProgram[statekey.Value]
 	wires        []formalExternalCallWire
 	guardDemands []formalQualifiedGuardDemand
+	children     []formalExternalCallProvider
 }
 
 func (p *formalExternalCallStep) valid(operator formalRelationOperatorRef) bool {
 	if p == nil || !p.sealed || p.program == nil || p.body == nil || p.variable == 0 ||
 		p.body.variable != p.variable || p.body.relation.code != operator.code ||
-		p.point == 0 || !p.input.Valid() || len(p.wires) != p.input.InputCount() ||
+		p.point == 0 || !p.provider.valid() ||
 		p.hasCorrelations != (p.correlationLane >= 0) ||
 		len(p.results) != p.factor.ResultCount() || !p.outcome.valid() ||
 		len(p.valueOutputs) != len(p.valueOutputByRoot) ||
 		len(p.outputLanes) != p.factor.LaneCount() {
 		return false
 	}
-	for _, wire := range p.wires {
-		if wire.point == 0 || !p.body.productDomain.OwnsCoordinateFormalPublicationProjection(wire.projection) {
+	return true
+}
+
+func (p *formalExternalCallProvider) valid() bool {
+	if p == nil {
+		return false
+	}
+	componentCount := p.site.ComponentCount()
+	if componentCount == 0 {
+		if !p.input.Valid() || len(p.wires) != p.input.InputCount() || len(p.children) != 0 {
+			return false
+		}
+		for _, wire := range p.wires {
+			if wire.point == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	if componentCount != len(p.children) || p.input.Valid() || len(p.wires) != 0 || len(p.guardDemands) != 0 {
+		return false
+	}
+	for index := range p.children {
+		if !p.children[index].valid() {
 			return false
 		}
 	}
 	return true
+}
+
+func (p *formalExternalCallProvider) inputCount() int {
+	if p == nil {
+		return 0
+	}
+	if len(p.children) == 0 {
+		return len(p.wires)
+	}
+	return p.children[0].inputCount()
 }
 
 // freezeFormalExternalCallStep closes the complete equation operand row after
@@ -400,7 +431,7 @@ func freezeFormalExternalCallStep(
 		normalValues[index] = member
 	}
 	providerInput, err := freezeFormalExternalCallProvider(
-		program, body, variable, operator, prefix, inputPoints, contract,
+		program, body, variable, operator, prefix, inputPoints, provider,
 		span, values, valuesTop, groups, diagnostic,
 	)
 	if err != nil {
@@ -516,14 +547,15 @@ func freezeFormalExternalCallStep(
 	// including them here would re-run the provider once for every irrelevant
 	// spelling of its mutable destination.
 	plan := &formalExternalCallStep{
-		program: program, body: body, variable: variable, point: step.point, site: site, provider: provider,
-		input: providerInput.input, wires: providerInput.wires, factor: factorProgram, normal: normal, normalValues: normalValues,
+		program: program, body: body, variable: variable, point: step.point, site: site,
+		factor: factorProgram, normal: normal, normalValues: normalValues,
 		correlation: preparedSite.correlation, correlationLane: correlationLane, hasCorrelations: hasCorrelations,
 		valuesTop: valuesTop, results: resultMembers, outputLanes: outputLanes, outputReads: outputReads,
 		valueOutputs: valueOutputs, valueOutputByRoot: valueOutputByRoot,
 		outcome: outcome, diagnostics: diagnostic, operands: prefix.operands.clone(), access: cloneValueAccessTerms(prefix.access),
-		guardDemands: providerInput.guardDemands, sealed: true,
+		sealed: true,
 	}
+	plan.provider = providerInput
 	if !plan.valid(operator) {
 		return nil, fmt.Errorf("transformer: formal ExternalCall transaction did not seal")
 	}
@@ -537,13 +569,36 @@ func freezeFormalExternalCallProvider(
 	operator formalRelationOperatorRef,
 	step boundaryPrefixStep,
 	inputPoints []cfg.Point,
-	contract state.TransferAccess,
+	provider callpayload.CallOutcomeSiteProgram,
 	span formalFiberDescriptorSpan,
 	values formalValuesFiberGroup,
 	valuesTop formalFiberGroupMember,
 	groups map[state.LaneID]formalFiberGroupDescriptor,
 	diagnostic formalFiberDescriptor,
 ) (formalExternalCallProvider, error) {
+	componentCount := provider.ComponentCount()
+	if componentCount != 0 {
+		children := make([]formalExternalCallProvider, componentCount)
+		for index := 0; index < componentCount; index++ {
+			component, exact := provider.Component(index)
+			if !exact {
+				return formalExternalCallProvider{}, fmt.Errorf("component %d is absent", index)
+			}
+			child, err := freezeFormalExternalCallProvider(
+				program, body, variable, operator, step, inputPoints, component,
+				span, values, valuesTop, groups, diagnostic,
+			)
+			if err != nil {
+				return formalExternalCallProvider{}, fmt.Errorf("component %d: %w", index, err)
+			}
+			children[index] = child
+		}
+		return formalExternalCallProvider{site: provider, children: children}, nil
+	}
+	contract, err := externalCallTransferAccess(body, step, inputPoints, len(inputPoints), 0, provider.Capability())
+	if err != nil {
+		return formalExternalCallProvider{}, err
+	}
 	input, err := callpayload.PrepareExternalCallInputProgram(
 		body.productDomain, contract, inputPoints, 0,
 		func(slot statekey.Value) (statekey.Value, bool) { return slot, slot != 0 },
@@ -715,7 +770,7 @@ func freezeFormalExternalCallProvider(
 	if err != nil {
 		return formalExternalCallProvider{}, err
 	}
-	return formalExternalCallProvider{input: input, wires: wires, guardDemands: guardDemands}, nil
+	return formalExternalCallProvider{site: provider, input: input, wires: wires, guardDemands: guardDemands}, nil
 }
 
 func (a *formalTupleAlgebra) observeFormalTypestateResourceQuery(
@@ -808,14 +863,16 @@ func (a *formalTupleAlgebra) compileFormalTypestateResourceQuery(
 // a second reachability component.
 func (a *formalTupleAlgebra) bindFormalExternalCallInput(
 	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
 	views []formalSparseLeafView,
 ) (callpayload.ExternalCallInputFrame[statekey.Value], error) {
-	if a == nil || plan == nil || !plan.sealed || len(views) != len(plan.wires) {
+	if a == nil || plan == nil || !plan.sealed || provider == nil || len(provider.children) != 0 ||
+		len(views) != len(provider.wires) {
 		return callpayload.ExternalCallInputFrame[statekey.Value]{}, errFormalComponentMalformed
 	}
 	operands := make([]callpayload.ExternalCallInputWireOperands, len(views))
 	for index, view := range views {
-		wire := plan.wires[index]
+		wire := provider.wires[index]
 		if view.variable != plan.variable || view.authority == nil {
 			return callpayload.ExternalCallInputFrame[statekey.Value]{}, errFormalComponentForeignOwner
 		}
@@ -940,7 +997,7 @@ func (a *formalTupleAlgebra) bindFormalExternalCallInput(
 		}
 		operands[index] = input
 	}
-	return plan.input.BindFrame(operands)
+	return provider.input.BindFrame(operands)
 }
 
 // evaluateFormalExternalCallProvider is the sole formal provider invocation.
@@ -948,9 +1005,10 @@ func (a *formalTupleAlgebra) bindFormalExternalCallInput(
 // syntax; publication happens only after the complete factor transaction.
 func (a *formalTupleAlgebra) evaluateFormalExternalCallProvider(
 	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
 	views []formalSparseLeafView,
 ) (callpayload.CallOutcome, error) {
-	frame, err := a.bindFormalExternalCallInput(plan, views)
+	frame, err := a.bindFormalExternalCallInput(plan, provider, views)
 	if err != nil {
 		return callpayload.CallOutcome{}, err
 	}
@@ -975,11 +1033,11 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProvider(
 		Context: a.ctx, Registry: plan.program.registry, Graph: plan.body.graph,
 		Node: plan.body.graph.Node(plan.point), Point: plan.point,
 	}
-	outcome, err := plan.provider.Evaluate(node, input)
+	outcome, err := provider.site.Evaluate(node, input)
 	if err != nil {
 		return callpayload.CallOutcome{}, err
 	}
-	return callpayload.NormalizeCallOutcome(plan.program.registry, outcome), nil
+	return outcome, nil
 }
 
 // countDistinctFormalExternalCallInputs is trace-only cardinality accounting
@@ -990,18 +1048,19 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProvider(
 // equality, so the count never relies on a probabilistic identity.
 func (a *formalTupleAlgebra) countDistinctFormalExternalCallInputs(
 	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
 	regions []formalSparseLeafPartition,
 ) (int, error) {
-	if a == nil || plan == nil || !plan.sealed {
+	if a == nil || plan == nil || !plan.sealed || provider == nil || len(provider.children) != 0 {
 		return 0, errFormalComponentForeignOwner
 	}
 	buckets := make(map[uint64][][]decisionLeaf)
 	distinct := 0
 	for _, region := range regions {
-		if len(region.views) != len(plan.wires) || len(region.views) == 0 {
+		if len(region.views) != len(provider.wires) || len(region.views) == 0 {
 			return 0, errFormalComponentMalformed
 		}
-		width := len(plan.guardDemands)
+		width := len(provider.guardDemands)
 		for _, view := range region.views {
 			width += len(view.leaves) + len(view.derived)
 		}
@@ -1010,7 +1069,7 @@ func (a *formalTupleAlgebra) countDistinctFormalExternalCallInputs(
 			vector = append(vector, view.leaves...)
 			vector = append(vector, view.derived...)
 		}
-		for _, demand := range plan.guardDemands {
+		for _, demand := range provider.guardDemands {
 			truth, falsity, exact := region.views[0].exactGuard(
 				demand.owner, demand.arena, demand.scope, demand.guard,
 			)
@@ -1038,6 +1097,216 @@ func (a *formalTupleAlgebra) countDistinctFormalExternalCallInputs(
 		distinct++
 	}
 	return distinct, nil
+}
+
+type formalExternalCallProviderRelation struct {
+	care    decisionRef
+	outcome decisionRef
+}
+
+// evaluateFormalExternalCallProviderRelation lifts the retained provider
+// composition tree. Leaves observe only their own site capability; composed
+// nodes combine the resulting guarded relations through the exact same
+// directional merge law used by CallOutcomeSiteProgram.Evaluate.
+func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
+	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
+	predecessor formalRelationTuple,
+	published []formalRelationTuple,
+	authority *formalComponentTerminalAuthority,
+	directory *formalFiberDirectoryArena,
+	trace *formalRelationEvalTraceDetail,
+	path string,
+) (formalExternalCallProviderRelation, error) {
+	if a == nil || plan == nil || provider == nil || !provider.valid() || authority == nil || directory == nil {
+		return formalExternalCallProviderRelation{}, errFormalComponentMalformed
+	}
+	if len(provider.children) != 0 {
+		children := make([]formalExternalCallProviderRelation, len(provider.children))
+		for index := range provider.children {
+			child, err := a.evaluateFormalExternalCallProviderRelation(
+				plan, &provider.children[index], predecessor, published, authority, directory, trace,
+				fmt.Sprintf("%s.%d", path, index),
+			)
+			if err != nil {
+				return formalExternalCallProviderRelation{}, err
+			}
+			children[index] = child
+		}
+		care, outcome := children[0].care, children[0].outcome
+		node := transfer.NodeContext{
+			Context: a.ctx, Registry: plan.program.registry, Graph: plan.body.graph,
+			Node: plan.body.graph.Node(plan.point), Point: plan.point,
+		}
+		for index := 1; index < len(children); index++ {
+			var err error
+			jointCare, err := a.decisions.apply(a.ctx, uint8(decisionAnd), true, care, children[index].care, decisionLeafAnd)
+			if err != nil {
+				return formalExternalCallProviderRelation{}, err
+			}
+			if jointCare == decisionFalse {
+				return formalExternalCallProviderRelation{care: decisionFalse, outcome: decisionFalse}, nil
+			}
+			prefixCount := index + 1
+			merged, err := a.decisions.applyVectorUnderCare(
+				a.ctx, jointCare, care, children[index].care,
+				[]decisionRef{outcome}, []decisionRef{children[index].outcome},
+				func(left, right []decisionLeaf) ([]decisionLeaf, error) {
+					if len(left) != 1 || len(right) != 1 {
+						return nil, errDecisionMalformed
+					}
+					leftTerminal, terminalErr := authority.terminal(left[0])
+					if terminalErr != nil || leftTerminal.kind != formalComponentRawCallOutcome {
+						return nil, errFormalComponentMalformed
+					}
+					rightTerminal, terminalErr := authority.terminal(right[0])
+					if terminalErr != nil || rightTerminal.kind != formalComponentRawCallOutcome {
+						return nil, errFormalComponentMalformed
+					}
+					merged, mergeErr := provider.site.MergeComponentPrefix(
+						node, prefixCount, leftTerminal.rawCallOutcome, rightTerminal.rawCallOutcome,
+					)
+					if mergeErr != nil {
+						return nil, mergeErr
+					}
+					leaf, internErr := authority.internRawCallOutcome(merged)
+					if internErr != nil {
+						return nil, internErr
+					}
+					return []decisionLeaf{leaf}, nil
+				},
+			)
+			if err != nil || len(merged) != 1 {
+				if err == nil {
+					err = errDecisionMalformed
+				}
+				return formalExternalCallProviderRelation{}, err
+			}
+			care, outcome = jointCare, merged[0]
+		}
+		return formalExternalCallProviderRelation{care: care, outcome: outcome}, nil
+	}
+
+	var componentTrace *formalExternalCallProviderEvalTrace
+	if trace != nil {
+		roles := provider.site.Capability().FieldRoles()
+		names := make([]string, len(roles))
+		for index, role := range roles {
+			names[index] = role.FieldName
+		}
+		trace.externalCallProviderComponents = append(trace.externalCallProviderComponents, formalExternalCallProviderEvalTrace{
+			path: path, capability: fmt.Sprintf("%q", names), inputs: len(provider.wires),
+		})
+		componentTrace = &trace.externalCallProviderComponents[len(trace.externalCallProviderComponents)-1]
+	}
+	var inputMark formalRelationEvalTracePhaseMark
+	if trace != nil {
+		inputMark = beginFormalRelationEvalTracePhase(a)
+		trace.externalCallProviderInputs += len(provider.wires)
+	}
+	projections := make([]formalSparseTupleProjection, len(provider.wires))
+	projections[0] = formalSparseTupleProjection{tuple: predecessor, ordinals: provider.wires[0].ordinals}
+	for _, query := range provider.wires[0].typestateQueries {
+		root, err := a.compileFormalTypestateResourceQuery(predecessor, query)
+		if err != nil {
+			return formalExternalCallProviderRelation{}, err
+		}
+		projections[0].derived = append(projections[0].derived, root)
+	}
+	for index, tuple := range published {
+		projections[index+1] = formalSparseTupleProjection{tuple: tuple, ordinals: provider.wires[index+1].ordinals}
+		for _, query := range provider.wires[index+1].typestateQueries {
+			root, err := a.compileFormalTypestateResourceQuery(tuple, query)
+			if err != nil {
+				return formalExternalCallProviderRelation{}, err
+			}
+			projections[index+1].derived = append(projections[index+1].derived, root)
+		}
+	}
+	regions, err := a.partitionSparseLeafViewsUnderCare(projections, provider.guardDemands)
+	if trace != nil {
+		var roots []decisionRef
+		for _, projection := range projections {
+			for _, ordinal := range projection.ordinals {
+				if value, readErr := directory.valueAt(projection.tuple.root, ordinal); readErr == nil {
+					roots = append(roots, decisionRef(value))
+				}
+			}
+			roots = append(roots, projection.derived...)
+		}
+		trace.externalCallProviderRoots += len(roots)
+		trace.externalCallProviderSupport = mergeFormalRelationTraceSupportRanks(
+			trace.externalCallProviderSupport, formalRelationTraceSupportRanks(&a.decisions, roots...),
+		)
+		trace.externalCallProviderRegions += len(regions)
+		componentTrace.roots = len(roots)
+		componentTrace.support = formalRelationTraceSupportRanks(&a.decisions, roots...)
+		componentTrace.regions = len(regions)
+		if err == nil {
+			distinct, distinctErr := a.countDistinctFormalExternalCallInputs(plan, provider, regions)
+			if distinctErr != nil {
+				err = distinctErr
+			} else {
+				trace.externalCallDistinctProviderInputs += distinct
+				componentTrace.distinct = distinct
+			}
+		}
+		finishFormalRelationEvalTracePhase(a, &trace.externalCallInput, inputMark)
+	}
+	if err != nil {
+		return formalExternalCallProviderRelation{}, err
+	}
+	care, outcomeRoot := decisionFalse, decisionFalse
+	for _, region := range regions {
+		if len(region.views) != len(provider.wires) || region.guard == decisionFalse {
+			return formalExternalCallProviderRelation{}, errDecisionMalformed
+		}
+		var providerMark formalRelationEvalTracePhaseMark
+		if trace != nil {
+			providerMark = beginFormalRelationEvalTracePhase(a)
+			trace.externalCallProviderEvals++
+			componentTrace.evals++
+		}
+		outcome, providerErr := a.evaluateFormalExternalCallProvider(plan, provider, region.views)
+		if trace != nil {
+			finishFormalRelationEvalTracePhase(a, &trace.externalCallProvider, providerMark)
+		}
+		if providerErr != nil {
+			return formalExternalCallProviderRelation{}, providerErr
+		}
+		var outcomeMark formalRelationEvalTracePhaseMark
+		if trace != nil {
+			outcomeMark = beginFormalRelationEvalTracePhase(a)
+		}
+		leaf, providerErr := authority.internRawCallOutcome(outcome)
+		if providerErr != nil {
+			return formalExternalCallProviderRelation{}, providerErr
+		}
+		outcomeRoot, providerErr = a.decisions.condition(a.ctx, region.guard, a.decisions.terminal(leaf), outcomeRoot)
+		if providerErr != nil {
+			return formalExternalCallProviderRelation{}, providerErr
+		}
+		care, providerErr = a.decisions.apply(a.ctx, uint8(decisionOr), true, care, region.guard, decisionLeafOr)
+		if providerErr != nil {
+			return formalExternalCallProviderRelation{}, providerErr
+		}
+		if trace != nil {
+			finishFormalRelationEvalTracePhase(a, &trace.externalCallProviderOutcome, outcomeMark)
+		}
+	}
+	return formalExternalCallProviderRelation{care: care, outcome: outcomeRoot}, nil
+}
+
+func mergeFormalRelationTraceSupportRanks(left, right []uint32) []uint32 {
+	out := append(append([]uint32(nil), left...), right...)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	write := 0
+	for _, rank := range out {
+		if write == 0 || out[write-1] != rank {
+			out[write], write = rank, write+1
+		}
+	}
+	return out[:write]
 }
 
 // applyFormalExternalCallOuter executes the carrier-neutral outer fragment on
@@ -1088,7 +1357,7 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 ) (formalRelationTuple, error) {
 	plan := operator.externalCall
 	if a == nil || plan == nil || !plan.valid(operator) || predecessor.variable != plan.variable ||
-		len(published)+1 != len(plan.wires) {
+		len(published)+1 != plan.provider.inputCount() {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal ExternalCall execution is unowned")
 	}
 	if err := a.validateTuple(predecessor); err != nil || predecessor.bottom() {
@@ -1107,101 +1376,58 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 	if a.evalTrace != nil && a.evalTrace.active != nil {
 		traceDetail = a.evalTrace.active
 		traceDetail.externalCallPlan = plan
-		traceDetail.externalCallProviderInputs = len(plan.wires)
+	}
+	rawProviderTerminalsBefore := 0
+	if traceDetail != nil {
+		rawProviderTerminalsBefore = authority.rawCallOutcomeTerminalCount()
 	}
 	mark := a.decisions.checkpoint()
 	fail := func(err error) (formalRelationTuple, error) {
 		a.decisions.rollback(mark)
 		return formalRelationTuple{}, err
 	}
-	var inputMark formalRelationEvalTracePhaseMark
-	if traceDetail != nil {
-		inputMark = beginFormalRelationEvalTracePhase(a)
-	}
-	projections := make([]formalSparseTupleProjection, len(plan.wires))
-	projections[0] = formalSparseTupleProjection{tuple: predecessor, ordinals: plan.wires[0].ordinals}
-	for _, query := range plan.wires[0].typestateQueries {
-		root, queryErr := a.compileFormalTypestateResourceQuery(predecessor, query)
-		if queryErr != nil {
-			return fail(queryErr)
-		}
-		projections[0].derived = append(projections[0].derived, root)
-	}
-	for index, tuple := range published {
-		projections[index+1] = formalSparseTupleProjection{tuple: tuple, ordinals: plan.wires[index+1].ordinals}
-		for _, query := range plan.wires[index+1].typestateQueries {
-			root, queryErr := a.compileFormalTypestateResourceQuery(tuple, query)
-			if queryErr != nil {
-				return fail(queryErr)
-			}
-			projections[index+1].derived = append(projections[index+1].derived, root)
-		}
-	}
-	inputRegions, err := a.partitionSparseLeafViewsUnderCare(projections, plan.guardDemands)
-	if traceDetail != nil {
-		providerRoots := make([]decisionRef, 0)
-		for _, projection := range projections {
-			for _, ordinal := range projection.ordinals {
-				if value, readErr := directory.valueAt(projection.tuple.root, ordinal); readErr == nil {
-					providerRoots = append(providerRoots, decisionRef(value))
-				}
-			}
-			providerRoots = append(providerRoots, projection.derived...)
-		}
-		traceDetail.externalCallProviderRoots = len(providerRoots)
-		traceDetail.externalCallProviderSupport = formalRelationTraceSupportRanks(&a.decisions, providerRoots...)
-		traceDetail.externalCallProviderRegions = len(inputRegions)
-		if err == nil {
-			traceDetail.externalCallDistinctProviderInputs, err = a.countDistinctFormalExternalCallInputs(plan, inputRegions)
-		}
-		finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallInput, inputMark)
-	}
+	providerRelation, err := a.evaluateFormalExternalCallProviderRelation(
+		plan, &plan.provider, predecessor, published, authority, directory, traceDetail, "0",
+	)
 	if err != nil {
 		return fail(err)
 	}
-	// First evaluate the provider over exactly its declared input product. The
-	// resulting decision diagram is an immutable semantic relation from input
-	// guards to normalized outcomes. Mutable destination fibers are deliberately
-	// absent from this phase: they cannot change the provider result.
-	providerCare, providerOutcome := decisionFalse, decisionFalse
-	for _, region := range inputRegions {
-		if len(region.views) != len(plan.wires) || region.guard == decisionFalse {
-			return fail(errDecisionMalformed)
-		}
-		var providerMark formalRelationEvalTracePhaseMark
-		if traceDetail != nil {
-			providerMark = beginFormalRelationEvalTracePhase(a)
-			traceDetail.externalCallProviderEvals++
-		}
-		outcome, providerErr := a.evaluateFormalExternalCallProvider(plan, region.views)
-		if traceDetail != nil {
-			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallProvider, providerMark)
-		}
-		if providerErr != nil {
-			return fail(providerErr)
-		}
-		var outcomeMark formalRelationEvalTracePhaseMark
-		if traceDetail != nil {
-			outcomeMark = beginFormalRelationEvalTracePhase(a)
-		}
-		leaf, providerErr := authority.internCallOutcomes(callpayload.NewCallOutcomeAlternativeSet(plan.program.registry, outcome))
-		if providerErr != nil {
-			return fail(providerErr)
-		}
-		providerOutcome, providerErr = a.decisions.condition(a.ctx, region.guard, a.decisions.terminal(leaf), providerOutcome)
-		if providerErr != nil {
-			return fail(providerErr)
-		}
-		providerCare, providerErr = a.decisions.apply(a.ctx, uint8(decisionOr), true, providerCare, region.guard, decisionLeafOr)
-		if providerErr != nil {
-			return fail(providerErr)
-		}
-		if traceDetail != nil {
-			finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallProviderOutcome, outcomeMark)
-		}
-	}
+	providerCare := providerRelation.care
 	if providerCare == decisionFalse {
 		return formalRelationTuple{}, nil
+	}
+	// Provider syntax remains raw through every ordered composition edge. Only
+	// the completed root is converted to the canonical semantic outcome set,
+	// exactly matching concrete Evaluate followed by boundary normalization.
+	normalized, err := a.decisions.applyVectorUnderCare(
+		a.ctx, providerCare, providerCare, decisionFalse,
+		[]decisionRef{providerRelation.outcome}, []decisionRef{providerRelation.outcome},
+		func(left, right []decisionLeaf) ([]decisionLeaf, error) {
+			if len(left) != 1 || len(right) != 0 {
+				return nil, errDecisionMalformed
+			}
+			terminal, terminalErr := authority.terminal(left[0])
+			if terminalErr != nil || terminal.kind != formalComponentRawCallOutcome {
+				return nil, errFormalComponentMalformed
+			}
+			leaf, terminalErr := authority.internCallOutcomes(callpayload.NewCallOutcomeAlternativeSet(
+				plan.program.registry, terminal.rawCallOutcome,
+			))
+			if terminalErr != nil {
+				return nil, terminalErr
+			}
+			return []decisionLeaf{leaf}, nil
+		},
+	)
+	if err != nil || len(normalized) != 1 {
+		if err == nil {
+			err = errDecisionMalformed
+		}
+		return fail(err)
+	}
+	providerOutcome := normalized[0]
+	if traceDetail != nil {
+		traceDetail.externalCallRawProviderTerminals = authority.rawCallOutcomeTerminalCount() - rawProviderTerminalsBefore
 	}
 	// Then correlate the compact outcome relation with exactly the prior fibers
 	// required by the atomic destination transaction. This preserves every

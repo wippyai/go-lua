@@ -59,7 +59,17 @@ func TestComposeCallOutcomeProgramsUnionsCapabilitiesInCatalogOrder(t *testing.T
 	composed := ComposeCallOutcomePrograms([]CallOutcomeProgram{first, {}, second}, func(_ transfer.NodeContext, left, _ CallOutcome) CallOutcome {
 		return left
 	})
-	got := testPrepareCallOutcome(t, composed, transfer.NodeContext{}, factflow.CallSiteView{}).Capability().FieldRoles()
+	prepared := testPrepareCallOutcome(t, composed, transfer.NodeContext{}, factflow.CallSiteView{})
+	if prepared.ComponentCount() != 2 {
+		t.Fatalf("composed component count = %d, want 2", prepared.ComponentCount())
+	}
+	for index := 0; index < prepared.ComponentCount(); index++ {
+		component, exact := prepared.Component(index)
+		if !exact || component.ComponentCount() != 0 {
+			t.Fatalf("component %d = exact:%v children:%d, want leaf", index, exact, component.ComponentCount())
+		}
+	}
+	got := prepared.Capability().FieldRoles()
 	var names []string
 	for _, role := range got {
 		names = append(names, role.FieldName)
@@ -68,7 +78,7 @@ func TestComposeCallOutcomeProgramsUnionsCapabilitiesInCatalogOrder(t *testing.T
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("composed roles = %v, want %v", names, want)
 	}
-	inputs := testPrepareCallOutcome(t, composed, transfer.NodeContext{}, factflow.CallSiteView{}).Capability().PrimaryInputLanes()
+	inputs := prepared.Capability().PrimaryInputLanes()
 	if !inputs.Has(state.LanePathEvidence) || !inputs.Has(state.LaneTypestates) || inputs.Len() != 2 {
 		t.Fatalf("composed input lanes = %v", inputs.IDs())
 	}

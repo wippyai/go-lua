@@ -58,6 +58,8 @@ type CallOutcomeProgram struct {
 type CallOutcomeSiteProgram struct {
 	capability CallOutcomeCapability
 	evaluate   func(transfer.NodeContext, CallOutcomeInput) (CallOutcome, error)
+	children   []CallOutcomeSiteProgram
+	merge      func(transfer.NodeContext, CallOutcome, CallOutcome) CallOutcome
 }
 
 // CallOutcomeCapability is one program's immutable, site-specialized output
@@ -215,20 +217,8 @@ func ComposeCallOutcomePrograms(programs []CallOutcomeProgram, merge func(transf
 		}
 		return CallOutcomeSiteProgram{
 			capability: capability,
-			evaluate: func(evalCtx transfer.NodeContext, input CallOutcomeInput) (CallOutcome, error) {
-				out, err := children[0].Evaluate(evalCtx, input)
-				if err != nil {
-					return CallOutcome{}, err
-				}
-				for _, child := range children[1:] {
-					next, err := child.Evaluate(evalCtx, input)
-					if err != nil {
-						return CallOutcome{}, err
-					}
-					out = merge(evalCtx, out, next)
-				}
-				return out, nil
-			},
+			children:   children,
+			merge:      merge,
 		}, nil
 	}
 	return CallOutcomeProgram{
@@ -266,9 +256,54 @@ func (p CallOutcomeProgram) PrepareSite(ctx transfer.NodeContext, site factflow.
 // Capability returns the already-validated immutable site capability.
 func (p CallOutcomeSiteProgram) Capability() CallOutcomeCapability { return p.capability }
 
+// ComponentCount reports the number of ordered immediate children. A leaf has
+// zero children. The indexed surface preserves nested composition without
+// allocating or exposing the retained merge callback.
+func (p CallOutcomeSiteProgram) ComponentCount() int { return len(p.children) }
+
+// Component returns one immutable immediate child.
+func (p CallOutcomeSiteProgram) Component(index int) (CallOutcomeSiteProgram, bool) {
+	if index < 0 || index >= len(p.children) {
+		return CallOutcomeSiteProgram{}, false
+	}
+	return p.children[index], true
+}
+
+// MergeComponentPrefix applies one ordered edge of this node's retained merge
+// law. prefixCount is the number of children represented after the merge.
+// The complete prefix is validated against the node capability; intermediate
+// prefixes stay internal to the closed fold and cannot be published.
+func (p CallOutcomeSiteProgram) MergeComponentPrefix(ctx transfer.NodeContext, prefixCount int, left, next CallOutcome) (CallOutcome, error) {
+	if len(p.children) < 2 || p.merge == nil || prefixCount < 2 || prefixCount > len(p.children) {
+		return CallOutcome{}, fmt.Errorf("callpayload: invalid call-outcome component prefix")
+	}
+	out := p.merge(ctx, left, next)
+	if prefixCount == len(p.children) {
+		return p.validate(ctx, out)
+	}
+	return out, nil
+}
+
 // Owner returns the immutable provider identity retained through site preparation.
 // Evaluate executes the bound provider and validates its runtime output.
 func (p CallOutcomeSiteProgram) Evaluate(ctx transfer.NodeContext, input CallOutcomeInput) (CallOutcome, error) {
+	if len(p.children) != 0 {
+		out, err := p.children[0].Evaluate(ctx, input)
+		if err != nil {
+			return CallOutcome{}, err
+		}
+		for index, child := range p.children[1:] {
+			next, childErr := child.Evaluate(ctx, input)
+			if childErr != nil {
+				return CallOutcome{}, childErr
+			}
+			out, err = p.MergeComponentPrefix(ctx, index+2, out, next)
+			if err != nil {
+				return CallOutcome{}, err
+			}
+		}
+		return out, nil
+	}
 	if p.evaluate == nil {
 		return CallOutcome{}, nil
 	}
@@ -276,6 +311,10 @@ func (p CallOutcomeSiteProgram) Evaluate(ctx transfer.NodeContext, input CallOut
 	if err != nil {
 		return CallOutcome{}, err
 	}
+	return p.validate(ctx, out)
+}
+
+func (p CallOutcomeSiteProgram) validate(_ transfer.NodeContext, out CallOutcome) (CallOutcome, error) {
 	for _, lane := range callOutcomeLanes {
 		if lane.has(out) && !p.capability.HasField(lane.fieldName) {
 			return CallOutcome{}, fmt.Errorf("callpayload: evaluator emitted undeclared CallOutcome field %q", lane.fieldName)
