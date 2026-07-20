@@ -368,7 +368,7 @@ func evaluateFormalRelationStepEquation(
 		result, err = algebra.applyFormalExternalCall(equation.Operator, predecessor, published)
 	default:
 		step, _ := formalRelationStepOperator(equation.Operator)
-		err = fmt.Errorf("transformer: formal Step capability %d for boundary kind %d at cell %+v is not implemented", equation.Operator.stepCapability, step.kind, equation.Cell.cell)
+		err = fmt.Errorf("transformer: sealed formal Step has invalid capability %d for boundary kind %d at cell %+v", equation.Operator.stepCapability, step.kind, equation.Cell.cell)
 	}
 	if err != nil {
 		step, _ := formalRelationStepOperator(equation.Operator)

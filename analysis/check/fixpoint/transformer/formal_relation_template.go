@@ -104,8 +104,9 @@ type formalRelationOperatorRef struct {
 	// relationCode Apply step.
 	apply *formalApplyStep
 	// pathReplacement is the frozen edge adapter for the one already-owned
-	// ProductDomain transaction. Nil is deliberate for every other Step kind
-	// and for effect shapes whose factor transaction is not yet complete.
+	// ProductDomain transaction. Nil is legal only for every other Step kind;
+	// an EffectPathStore without this exact transaction is rejected while the
+	// template is frozen.
 	pathReplacement *formalPathReplacementStep
 	// pathInvalidation binds EffectInvalidatePath directly to the registered
 	// path-subtree/descendant factor laws.
@@ -190,8 +191,89 @@ const (
 	formalRelationStepCapabilityCovariantExposure
 	formalRelationStepCapabilityContribution
 	formalRelationStepCapabilityExternalCall
-	formalRelationStepCapabilityUnsupported
 )
+
+// bindFormalRelationStepCapability closes the finite relationCode Step
+// vocabulary over the already-frozen factor adapters. A missing adapter is a
+// freeze error: incomplete semantics never become executable relation IR.
+func bindFormalRelationStepCapability(operator *formalRelationOperatorRef, step boundaryStep) error {
+	if operator == nil || operator.kind != formalRelationCellStep {
+		return fmt.Errorf("boundary kind %d has no owned formal operator", step.kind)
+	}
+	operator.stepCapability = formalRelationStepCapabilityInvalid
+	require := func(present bool, capability formalRelationStepCapability, name string) error {
+		if !present {
+			return fmt.Errorf("boundary kind %d has no complete %s factor transaction", step.kind, name)
+		}
+		operator.stepCapability = capability
+		return nil
+	}
+	switch step.kind {
+	case boundaryStepEffect:
+		if operator.code == nil || operator.code.effects == nil {
+			return fmt.Errorf("Effect boundary has no effect arena")
+		}
+		kind := operator.code.effects.Kind(step.effect)
+		descriptor, registered := DefaultEffectCatalog().Descriptor(kind)
+		if !registered || descriptor.Kind() != kind {
+			return fmt.Errorf("Effect boundary kind %d has no registered descriptor", kind)
+		}
+		switch kind {
+		case EffectInvalidatePath:
+			return require(operator.pathInvalidation != nil, formalRelationStepCapabilityPathInvalidation, "path invalidation")
+		case EffectIndexMutation:
+			return require(operator.indexMutation != nil, formalRelationStepCapabilityIndexMutation, "index mutation")
+		case EffectAllocationTemplate:
+			return require(operator.allocationTemplate != nil, formalRelationStepCapabilityAllocationTemplate, "allocation template")
+		case EffectObjectMaterialization:
+			return require(operator.objectMaterialization != nil, formalRelationStepCapabilityObjectMaterialization, "object materialization")
+		case EffectPathStore:
+			if operator.pathReplacement == nil {
+				node := operator.code.effects.nodes[step.effect]
+				return fmt.Errorf(
+					"EffectPathStore shape assignment=%t static=%t heaps=%d entries=%d list-floor=%d has no complete formal factor transaction",
+					node.pathStoreHasAssignment, node.pathStoreHasStatic, len(node.pathStoreObject.Heaps), len(node.pathStoreObject.Entries), node.pathStoreObject.ListFloor,
+				)
+			}
+			operator.stepCapability = formalRelationStepCapabilityPathReplacement
+			return nil
+		default:
+			return fmt.Errorf("Effect boundary kind %d has no formal capability", kind)
+		}
+	case boundaryStepApply:
+		return require(operator.apply != nil, formalRelationStepCapabilityApply, "Apply")
+	case boundaryStepExternalCall:
+		return require(operator.externalCall != nil, formalRelationStepCapabilityExternalCall, "ExternalCall")
+	case boundaryStepRootAssignment:
+		return require(operator.rootAssignment != nil, formalRelationStepCapabilityRootAssignment, "RootAssignment")
+	case boundaryStepEnvironmentWrite:
+		return require(operator.environmentWrite != nil, formalRelationStepCapabilityEnvironmentWrite, "EnvironmentWrite")
+	case boundaryStepGenericFor:
+		return require(operator.genericFor != nil, formalRelationStepCapabilityGenericFor, "GenericFor")
+	case boundaryStepContribution:
+		return require(operator.contribution != nil, formalRelationStepCapabilityContribution, "Contribution")
+	case boundaryStepLoopFeedback, boundaryStepLoopExit:
+		// The Step is the exact identity source consumed by the typed control
+		// influence. Feedback closure and exit preservation remain solely owned
+		// by evaluateFormalControlInput.
+		operator.stepCapability = formalRelationStepCapabilityLoopControl
+		return nil
+	case boundaryStepBranchRelations:
+		return require(operator.branchRelations != nil, formalRelationStepCapabilityBranchRelations, "BranchRelations")
+	case boundaryStepCallResults:
+		return require(operator.callResults != nil, formalRelationStepCapabilityCallResults, "CallResults")
+	case boundaryStepPresenceImplications:
+		return require(operator.presenceImplications != nil, formalRelationStepCapabilityPresenceImplications, "PresenceImplications")
+	case boundaryStepChannelSelect:
+		return require(operator.channelSelect != nil, formalRelationStepCapabilityChannelSelect, "ChannelSelect")
+	case boundaryStepCovariantExposure:
+		return require(operator.covariantExposure != nil, formalRelationStepCapabilityCovariantExposure, "CovariantExposure")
+	case boundaryStepInvalid:
+		return fmt.Errorf("invalid boundary Step has no formal capability")
+	default:
+		return fmt.Errorf("boundary kind %d is outside the sealed Step vocabulary", step.kind)
+	}
+}
 
 func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemplate, error) {
 	if program == nil || program.formalRegion == nil || program.formalRegion.plan == nil ||
@@ -339,89 +421,10 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 				return nil, fmt.Errorf("transformer: formal Contribution operator: %w", freezeErr)
 			}
 			operator.contribution = contribution
-			switch step.kind {
-			case boundaryStepApply:
-				if apply == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityApply
+			if step.kind != boundaryStepExternalCall {
+				if capabilityErr := bindFormalRelationStepCapability(&operator, step); capabilityErr != nil {
+					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)
 				}
-			case boundaryStepEffect:
-				switch {
-				case pathReplacement != nil:
-					operator.stepCapability = formalRelationStepCapabilityPathReplacement
-				case pathInvalidation != nil:
-					operator.stepCapability = formalRelationStepCapabilityPathInvalidation
-				case indexMutation != nil:
-					operator.stepCapability = formalRelationStepCapabilityIndexMutation
-				case allocationTemplate != nil:
-					operator.stepCapability = formalRelationStepCapabilityAllocationTemplate
-				case objectMaterialization != nil:
-					operator.stepCapability = formalRelationStepCapabilityObjectMaterialization
-				default:
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				}
-			case boundaryStepEnvironmentWrite:
-				if environmentWrite == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityEnvironmentWrite
-				}
-			case boundaryStepChannelSelect:
-				if channelSelect == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityChannelSelect
-				}
-			case boundaryStepBranchRelations:
-				if branchRelations == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityBranchRelations
-				}
-			case boundaryStepCallResults:
-				if callResults == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityCallResults
-				}
-			case boundaryStepPresenceImplications:
-				if presenceImplications == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityPresenceImplications
-				}
-			case boundaryStepLoopFeedback, boundaryStepLoopExit:
-				// The Step is the exact identity source consumed by the typed
-				// control influence. Feedback closure and exit preservation remain
-				// solely owned by evaluateFormalControlInput.
-				operator.stepCapability = formalRelationStepCapabilityLoopControl
-			case boundaryStepGenericFor:
-				if genericFor == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityGenericFor
-				}
-			case boundaryStepRootAssignment:
-				if rootAssignment == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityRootAssignment
-				}
-			case boundaryStepCovariantExposure:
-				if covariantExposure == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityCovariantExposure
-				}
-			case boundaryStepContribution:
-				if contribution == nil {
-					operator.stepCapability = formalRelationStepCapabilityUnsupported
-				} else {
-					operator.stepCapability = formalRelationStepCapabilityContribution
-				}
-			default:
-				operator.stepCapability = formalRelationStepCapabilityUnsupported
 			}
 		}
 		template.equations[index] = formalRelationEquation{Cell: cellRef, Operator: operator}
@@ -464,9 +467,6 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 			inputs[inputIndex] = input
 		}
 		template.equations[index].Inputs = inputs
-		if !formalRelationEquationComplete(template, template.equations[index]) {
-			return nil, fmt.Errorf("transformer: formal relation template equation is incomplete or duplicated")
-		}
 		// ExternalCall is the only Step whose frozen semantic program depends on
 		// the complete influence row: each published read is a distinct provider
 		// input wire. Freeze it here, never in the earlier operator-only pass.
@@ -478,7 +478,20 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 		}
 		if externalCall != nil {
 			template.equations[index].Operator.externalCall = externalCall
-			template.equations[index].Operator.stepCapability = formalRelationStepCapabilityExternalCall
+		}
+		if template.equations[index].Cell.cell.Kind == formalRelationCellStep {
+			step, stepOK := formalRelationStepOperator(template.equations[index].Operator)
+			if !stepOK {
+				return nil, fmt.Errorf("transformer: formal relation Step operator is malformed after input freeze")
+			}
+			if step.kind == boundaryStepExternalCall {
+				if capabilityErr := bindFormalRelationStepCapability(&template.equations[index].Operator, step); capabilityErr != nil {
+					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)
+				}
+			}
+		}
+		if !formalRelationEquationComplete(template, template.equations[index]) {
+			return nil, fmt.Errorf("transformer: formal relation template equation is incomplete or duplicated")
 		}
 		transactions, transactionErr := freezeFormalApplyNonreturningTransactions(template, template.equations[index])
 		if transactionErr != nil {
@@ -801,6 +814,9 @@ type formalRelationInfluenceCounts [formalRelationInfluenceClosureDefinition + 1
 // inputs are operator-legal and duplicate identities are forbidden.
 func formalRelationEquationComplete(template *formalRelationTemplate, equation formalRelationEquation) bool {
 	if template == nil || template.region == nil || !equation.Cell.valid() {
+		return false
+	}
+	if equation.Cell.cell.Kind == formalRelationCellStep && equation.Operator.stepCapability == formalRelationStepCapabilityInvalid {
 		return false
 	}
 	var actual formalRelationInfluenceCounts
