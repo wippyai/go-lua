@@ -289,22 +289,25 @@ func formalRelationTraceSupportRanks(kernel *decisionKernel, roots ...decisionRe
 }
 
 func formatFormalOutcomePlanTrace(plan *formalOutcomeStep) string {
-	lanes := make([]string, 0, len(plan.lanes))
-	for _, lane := range plan.lanes {
-		lanes = append(lanes, fmt.Sprintf("%s[%d]", lane.group.lane.ID(), len(lane.group.members)))
-	}
 	bindings := make([]string, 0, plan.transaction.ResultBindingCount())
 	for index := 0; index < plan.transaction.ResultBindingCount(); index++ {
 		source, target, ok := plan.transaction.ResultBinding(index)
 		projects, projectsOK := plan.transaction.ResultBindingProjectsHeap(index)
 		bindings = append(bindings, fmt.Sprintf("%d>%d:%t:%t:%t", source, target, ok, projectsOK, projects))
 	}
-	topology := make([]string, 0, plan.returnTopology.Len())
-	for _, lane := range plan.returnTopology.Lanes() {
-		topology = append(topology, string(lane.ID()))
+	reads, writes, components := 0, 0, 0
+	for _, lift := range []formalClosedFactorLift{plan.bindingLift, plan.presenceLift, plan.covariantLift} {
+		if !lift.sealed {
+			continue
+		}
+		components++
+		for _, role := range lift.roles {
+			reads += len(role.reads)
+		}
+		writes += len(lift.writes)
 	}
-	return fmt.Sprintf("reads=%d writes=%d value_groups=%d lanes=%v result_bindings=%v targets=%v return_topology=%v return_topology_edges=not_exposed covariant_steps=%d covariant_bindings=%d covariant_topology=%d",
-		len(plan.readOrdinals), len(plan.writeOrdinals), len(plan.valueFactorGroups), lanes, bindings, plan.targets, topology,
+	return fmt.Sprintf("reads=%d writes=%d components=%d value_groups=%d result_bindings=%v targets=%v covariant_steps=%d covariant_bindings=%d covariant_topology=%d",
+		reads, writes, components, len(plan.valueFactorGroups), bindings, plan.targets,
 		plan.covariant.Len(), len(plan.covariantBindings), plan.covariantTopology.Len())
 }
 
@@ -345,8 +348,19 @@ func formatFormalRelationEquationTrace(algebra *formalTupleAlgebra, equation for
 	}
 	shape := ""
 	if plan := equation.Operator.outcomeTransaction; plan != nil {
-		shape = fmt.Sprintf(" outcome_reads=%d outcome_writes=%d outcome_demands=%d outcome_sources=%d outcome_lanes=%d",
-			len(plan.readOrdinals), len(plan.writeOrdinals), len(plan.demands), len(plan.sources), len(plan.lanes))
+		reads, writes, components := 0, 0, 0
+		for _, lift := range []formalClosedFactorLift{plan.bindingLift, plan.presenceLift, plan.covariantLift} {
+			if !lift.sealed {
+				continue
+			}
+			components++
+			for _, role := range lift.roles {
+				reads += len(role.reads)
+			}
+			writes += len(lift.writes)
+		}
+		shape = fmt.Sprintf(" outcome_reads=%d outcome_writes=%d outcome_demands=%d outcome_sources=%d outcome_components=%d",
+			reads, writes, len(plan.demands), len(plan.sources), components)
 	}
 	return fmt.Sprintf("body=%s cell=%+v capability=%d boundary=%d point=%d inputs=%d seeds=%d nonreturning=%d%s",
 		body, cell, equation.Operator.stepCapability, boundary, point, len(equation.Inputs), len(equation.Seeds), len(equation.ApplyNonreturning), shape)

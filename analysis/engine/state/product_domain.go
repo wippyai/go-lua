@@ -113,6 +113,9 @@ func newProductDomain(reg *axis.Registry, lanes LaneSet, options DomainOptions, 
 			if roles.has(CoordinateReturnIdentitySeed) || roles.has(CoordinateReturnIdentitySkeletonEdge) || roles.has(CoordinateReturnIdentityScalarEdge) {
 				hasReturnIdentityClosure = true
 			}
+			if roles.has(CoordinateReturnIdentityPublisher) && familyOps.reachableDefault == nil {
+				panic("state: return-identity publisher " + string(familySpec.id) + " has no root-local default")
+			}
 			if roles.has(CoordinateReturnIdentityContainer) {
 				if out.hasReturnIdentityContainerFamily {
 					panic("state: product has more than one return-identity container family")

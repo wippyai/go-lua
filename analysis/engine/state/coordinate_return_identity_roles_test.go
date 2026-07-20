@@ -82,3 +82,22 @@ func TestProductDomainRejectsMalformedReturnIdentityRoleInventory(t *testing.T) 
 		})
 	}
 }
+
+func TestProductDomainRejectsReturnIdentityPublisherWithoutRootLocalDefault(t *testing.T) {
+	baseBuild := placementCoordinateFamilySpec.build
+	family := placementCoordinateFamilySpec
+	family.build = func(reg *axis.Registry, options DomainOptions) coordinateFamilyOps {
+		ops := baseBuild(reg, options)
+		ops.reachableDefault = nil
+		return ops
+	}
+	spec := placementLaneSpec
+	spec.coordinateFamilies = []coordinateFamilySpec{family}
+	catalog := newLaneCatalog([]laneSpec{spec})
+	defer func() {
+		if recover() == nil {
+			t.Fatal("ProductDomain admitted a return-identity publisher without a root-local default")
+		}
+	}()
+	_ = catalog.ProductDomain(standard.Registry())
+}

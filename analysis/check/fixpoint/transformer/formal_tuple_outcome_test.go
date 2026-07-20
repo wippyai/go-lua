@@ -66,9 +66,10 @@ func TestFormalOutcomeN5PublishesOutputOnceBeforeOccurrenceDeterministically(t *
 		}
 		return false
 	}
-	if !containsOrdinal(plan.readOrdinals, plan.valuePlan.top.ordinal) || !containsOrdinal(plan.readOrdinals, paramMember.ordinal) ||
-		containsOrdinal(plan.readOrdinals, resultMember.ordinal) || !containsOrdinal(plan.writeOrdinals, resultMember.ordinal) {
-		t.Fatalf("formal N5 sparse Values read/write = %v/%v", plan.readOrdinals, plan.writeOrdinals)
+	bindingReads := plan.bindingLift.roles[0].reads
+	if !containsOrdinal(bindingReads, plan.bindingValues.top.ordinal) || !containsOrdinal(bindingReads, paramMember.ordinal) ||
+		containsOrdinal(bindingReads, resultMember.ordinal) || !containsOrdinal(plan.bindingLift.writes, resultMember.ordinal) {
+		t.Fatalf("formal N5 binding Values read/write = %v/%v", bindingReads, plan.bindingLift.writes)
 	}
 	beforeUnrelated, err := directory.valueAt(predecessor.root, values.descriptor.valueSlots[values.descriptor.valueSlotPosition[unrelatedSlot]].ordinal)
 	if err != nil {
@@ -116,7 +117,7 @@ func TestFormalOutcomeValuesTopSuppressesResultSlotPublication(t *testing.T) {
 	body.relation.code.outcomes[1].returnTransaction = testReturnTransactionTerm(t, 41, source)
 	program := formalRelationExecutorTestProgramFromBase(t, base, []relationNode{{}, {kind: relationNodeOutcome, outcome: 1}})
 	algebra := formalTupleTestAlgebra(t, program)
-	span, _, _, ok := algebra.span(1)
+	span, directory, _, ok := algebra.span(1)
 	if !ok {
 		t.Fatal("formal N5 Top span")
 	}
@@ -126,23 +127,13 @@ func TestFormalOutcomeValuesTopSuppressesResultSlotPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	equation, _ := program.formalTemplate.equation(program.formalRegion.outcomes[0][0])
-	plan := equation.Operator.outcomeTransaction
-	regions, err := algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: predecessor, ordinals: plan.readOrdinals}}, plan.demands)
-	if err != nil || len(regions) != 1 {
-		t.Fatalf("formal N5 Top regions=%d err=%v", len(regions), err)
-	}
-	writes, err := algebra.applyFormalOutcomeLeaf(plan, regions[0].views[0])
-	if err != nil {
-		t.Fatal(err)
-	}
 	resultMember, ok := values.slot(mustFormalOutcomeResultSlot(t, program, body))
 	if !ok {
 		t.Fatal("formal N5 Top result member")
 	}
-	for _, write := range writes {
-		if write.ordinal == resultMember.ordinal {
-			t.Fatalf("Values Top published dormant result fiber %d", write.ordinal)
-		}
+	before, err := directory.valueAt(predecessor.root, resultMember.ordinal)
+	if err != nil {
+		t.Fatal(err)
 	}
 	projected, err := algebra.projectOutcome(equation.Operator, predecessor)
 	if err != nil {
@@ -156,6 +147,10 @@ func TestFormalOutcomeValuesTopSuppressesResultSlotPublication(t *testing.T) {
 	if err != nil || !factor.Top {
 		t.Fatalf("formal N5 changed Values Top: %#v, %v", factor, err)
 	}
+	after, err := directory.valueAt(projected.root, resultMember.ordinal)
+	if err != nil || before != after {
+		t.Fatalf("Values Top changed dormant result root: %d -> %d, %v", before, after, err)
+	}
 }
 
 func mustFormalOutcomeResultSlot(t *testing.T, program *RelationProgram, body *relationProgramBody) FormalSlot {
@@ -165,36 +160,6 @@ func mustFormalOutcomeResultSlot(t *testing.T, program *RelationProgram, body *r
 		t.Fatal("formal N5 result slot")
 	}
 	return slot
-}
-
-func TestFormalOutcomeSparseWritesRequireEveryDeclaredOrdinal(t *testing.T) {
-	ordinals := []formalFiberOrdinal{3, 7}
-	positions, err := sealFormalOrdinalPositions(8, ordinals)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := newFormalOutcomeLeafOutput(ordinals, positions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := out.set(3, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := out.complete(); err == nil {
-		t.Fatal("incomplete sparse Outcome publication was accepted")
-	}
-	if err := out.set(3, 0); err == nil {
-		t.Fatal("duplicate sparse Outcome publication was accepted")
-	}
-	if err := out.set(5, 0); err == nil {
-		t.Fatal("undeclared sparse Outcome publication was accepted")
-	}
-	if err := out.set(7, 0); err != nil {
-		t.Fatal(err)
-	}
-	if leaves, err := out.complete(); err != nil || len(leaves) != 2 || leaves[0] != 0 || leaves[1] != 0 {
-		t.Fatalf("complete sparse Bottom publication = %v, %v", leaves, err)
-	}
 }
 
 func TestFormalSparseLeafDirectPositionsDistinguishBottomAbsenceAndShareProjection(t *testing.T) {
@@ -419,25 +384,6 @@ func TestFormalOutcomePreservesEveryRegisteredAxisByStructuralSharing(t *testing
 	if !ok || equation.Operator.outcomeTransaction == nil {
 		t.Fatal("formal Outcome fixture has no frozen N5 operator")
 	}
-	plan := equation.Operator.outcomeTransaction
-	regions, err := algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
-		tuple: predecessor, ordinals: plan.readOrdinals,
-	}}, plan.demands)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, region := range regions {
-		if len(region.views) != 1 {
-			t.Fatalf("formal Outcome sparse views = %d, want 1", len(region.views))
-		}
-		writes, leafErr := algebra.applyFormalOutcomeLeaf(plan, region.views[0])
-		if leafErr != nil {
-			t.Fatal(leafErr)
-		}
-		if len(writes) != 0 {
-			t.Fatalf("identity N5/N6 region would condition %d unchanged physical roots", len(writes))
-		}
-	}
 	projected, err := algebra.projectOutcome(equation.Operator, predecessor)
 	if err != nil {
 		t.Fatal(err)
@@ -461,31 +407,31 @@ func TestFormalOutcomeEmptyN6ContributesNoCovariantCarrier(t *testing.T) {
 		t.Fatal("formal Outcome equation")
 	}
 	plan := equation.Operator.outcomeTransaction
-	if plan.covariant.HasStateSteps() || len(plan.covariantBindings) != 0 || len(plan.covariantLanes) != 0 || plan.covariantTopology.Len() != 0 {
+	if plan.covariant.HasStateSteps() || len(plan.covariantBindings) != 0 || len(plan.covariantGroups) != 0 || plan.covariantTopology.Len() != 0 {
 		t.Fatalf("empty N6 retained carrier: steps=%t bindings=%d lanes=%d topology=%d",
-			plan.covariant.HasStateSteps(), len(plan.covariantBindings), len(plan.covariantLanes), plan.covariantTopology.Len())
+			plan.covariant.HasStateSteps(), len(plan.covariantBindings), len(plan.covariantGroups), plan.covariantTopology.Len())
 	}
 }
 
-func TestFormalOutcomeCompleteN5CarrierIncludesSkeletonOnlyFamily(t *testing.T) {
+func TestFormalOutcomeIdentityPlanExcludesUnregisteredSkeletonOnlyFamily(t *testing.T) {
 	program := formalRelationExecutorTestProgram(t, []relationNode{{}, {kind: relationNodeOutcome, outcome: 1}})
 	equation, ok := program.formalTemplate.equation(program.formalRegion.outcomes[0][0])
 	if !ok || equation.Operator.outcomeTransaction == nil {
 		t.Fatal("formal Outcome equation")
 	}
+	plan := equation.Operator.outcomeTransaction
 	found := false
-	for _, lane := range equation.Operator.outcomeTransaction.lanes {
-		for _, family := range lane.group.coordinateFamilies {
+	span, _ := program.formalFibers.span(1)
+	for _, group := range span.groupDescriptors() {
+		for _, family := range group.coordinateFamilies {
 			if len(family.scalars) != 0 {
 				continue
 			}
 			found = true
-			included := false
-			for _, ordinal := range lane.ordinals {
-				included = included || ordinal == family.skeleton
-			}
-			if !included {
-				t.Fatalf("N5 carrier omitted skeleton-only family %q", family.family.ID())
+			for _, observer := range plan.identity.observers {
+				if observer.ordinal == family.skeleton && !coordinateFamilySame(observer.family, family.family) {
+					t.Fatalf("identity observer aliased skeleton-only family %q", family.family.ID())
+				}
 			}
 		}
 	}
@@ -529,9 +475,21 @@ func TestFormalOutcomeSparseProjectionIgnoresAndCarriesUnrelatedBinaryFiber(t *t
 		t.Fatal("formal Outcome fixture has no frozen N5 operator")
 	}
 	plan := equation.Operator.outcomeTransaction
-	for _, ordinal := range append(append([]formalFiberOrdinal(nil), plan.readOrdinals...), plan.writeOrdinals...) {
-		if ordinal == unrelatedOrdinal {
-			t.Fatalf("unrelated fiber %d entered frozen N5 projection/publication", ordinal)
+	for _, lift := range []formalClosedFactorLift{plan.bindingLift, plan.presenceLift, plan.covariantLift} {
+		if !lift.sealed {
+			continue
+		}
+		for _, role := range lift.roles {
+			for _, ordinal := range role.reads {
+				if ordinal == unrelatedOrdinal {
+					t.Fatalf("unrelated fiber %d entered an active N5 read projection", ordinal)
+				}
+			}
+		}
+		for _, ordinal := range lift.writes {
+			if ordinal == unrelatedOrdinal {
+				t.Fatalf("unrelated fiber %d entered an active N5 publication", ordinal)
+			}
 		}
 	}
 
@@ -558,15 +516,6 @@ func TestFormalOutcomeSparseProjectionIgnoresAndCarriesUnrelatedBinaryFiber(t *t
 	predecessor, err := algebra.writeScalar(formalTupleTestLive(t, algebra, 1), unrelated, binary)
 	if err != nil {
 		t.Fatal(err)
-	}
-	partitions, err := algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
-		tuple: predecessor, ordinals: plan.readOrdinals,
-	}}, plan.demands)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := len(partitions)*len(plan.writeOrdinals), len(plan.writeOrdinals); got != want {
-		t.Fatalf("unrelated binary fiber expanded N5 condition work to %d, want %d", got, want)
 	}
 	before, err := directory.valueAt(predecessor.root, unrelatedOrdinal)
 	if err != nil {

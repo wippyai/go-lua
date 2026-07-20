@@ -219,6 +219,13 @@ func buildPlacementCoordinateFamily(_ *axis.Registry, _ DomainOptions) coordinat
 			}
 			return wrapPlacementCoordinateScalar(placement.Bottom), nil
 		},
+		// A returned-identity publication establishes reachability for its
+		// exact key without consulting global placement topology. The omitted
+		// reachable scalar is therefore the lattice Bottom; declaring it here
+		// lets formal D update each publisher root independently.
+		reachableDefault: func(coordinateKeyPayload) (coordinateScalarPayload, bool) {
+			return wrapPlacementCoordinateScalar(placement.Bottom), true
+		},
 		scalarSupport: func(skeleton coordinateSkeletonPayload, _ coordinateKeyPayload) CoordinateScalarSupport {
 			if !placementCoordinateSkeletonValue(skeleton).top {
 				return CoordinateScalarOptional
