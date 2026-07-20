@@ -498,7 +498,7 @@ func freezeFormalBranchRelationRolePlan(
 		slots := layout.Slots()
 		positions := make([]int, len(slots))
 		for slotIndex, slot := range slots {
-			position, ok := freezeFormalBranchCoordinatePosition(body.productDomain, span, family, slot)
+			position, ok := formalCoordinatePosition(body.productDomain, span, family, slot)
 			if !ok {
 				hash, hashErr := body.productDomain.CoordinateSlotHash(slot)
 				return formalBranchRelationRolePlan{}, fmt.Errorf(
@@ -511,20 +511,6 @@ func freezeFormalBranchRelationRolePlan(
 		out.coordinates[index] = formalBranchRelationCoordinatePlan{group: group.descriptor, family: family, slots: slots, positions: positions}
 	}
 	return out, nil
-}
-
-func freezeFormalBranchCoordinatePosition(domain state.ProductDomain, span formalFiberDescriptorSpan, family formalCoordinateFamilyFiberGroup, slot state.CoordinateSlot) (int, bool) {
-	for index, ordinal := range family.scalars {
-		descriptor := span.forest.descriptors[span.first+int(ordinal)]
-		equal, err := domain.CoordinateSlotEqual(descriptor.coordinate, slot)
-		if err != nil {
-			return 0, false
-		}
-		if equal {
-			return index, true
-		}
-	}
-	return 0, false
 }
 
 func (a *formalTupleAlgebra) applyFormalBranchRelations(operator formalRelationOperatorRef, predecessor formalRelationTuple) (formalRelationTuple, error) {

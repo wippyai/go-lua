@@ -166,7 +166,7 @@ func freezeFormalPresenceImplicationDependency(
 		return nil
 	}
 	bindCoordinate := func(slot state.CoordinateSlot, write bool) error {
-		position, present := freezeFormalBranchCoordinatePosition(body.productDomain, span, pathFamily, slot)
+		position, present := formalCoordinatePosition(body.productDomain, span, pathFamily, slot)
 		if !present || position < 0 || position >= len(pathFamily.scalars) {
 			return fmt.Errorf("transformer: formal N2 coordinate is outside the path family")
 		}

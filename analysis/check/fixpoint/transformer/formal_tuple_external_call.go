@@ -61,29 +61,6 @@ type formalExternalCallValueOutput struct {
 	member formalFiberGroupMember
 }
 
-// formalSelectedFactorLane is the exact non-Values carrier slice owned by
-// one footprint-certified operator. Ordinary lanes have one indivisible member.
-// Coordinate lanes retain only family skeletons and scalar coordinates named
-// by the operator footprint; every other tuple member remains structural carry.
-type formalSelectedFactorLane struct {
-	group    formalFiberGroupDescriptor
-	ordinary bool
-	families []formalSelectedCoordinateFamily
-	ordinals []formalFiberOrdinal
-}
-
-type formalSelectedCoordinateFamily struct {
-	family    formalCoordinateFamilyFiberGroup
-	selected  bool
-	slots     []state.CoordinateSlot
-	positions []int
-}
-
-type formalSelectedFactorOutput struct {
-	ordinal formalFiberOrdinal
-	leaf    decisionLeaf
-}
-
 // formalPreparedExternalCallSite is the one forest-owned specialization of a
 // provider site. It is created before the product inventory seals so every
 // capability-declared correlation coordinate is part of the fixed tuple, and
@@ -270,7 +247,7 @@ type formalExternalCallStep struct {
 	results           []formalFiberGroupMember
 	valueOutputs      []formalExternalCallValueOutput
 	valueOutputByRoot map[FormalSlot]int
-	outputLanes       []formalSelectedFactorLane
+	outputLanes       []formalClosedSelectedFactor
 	outputReads       []formalFiberOrdinal
 	outcome           formalCallOutcomeFiber
 	diagnostics       formalFiberDescriptor
@@ -431,7 +408,7 @@ func freezeFormalExternalCallStep(
 	}
 	factorLanes := factorProgram.Lanes()
 	resultBindings := factorProgram.ResultBindings()
-	outputLanes := make([]formalSelectedFactorLane, len(factorLanes))
+	outputLanes := make([]formalClosedSelectedFactor, len(factorLanes))
 	var outputReads []formalFiberOrdinal
 	valuesTopOrdinal, exact := valuesTop.address(values.descriptor)
 	if !exact {
@@ -478,7 +455,7 @@ func freezeFormalExternalCallStep(
 		if !exact || group.lane != lane {
 			return nil, fmt.Errorf("transformer: formal ExternalCall output lane %q is absent", lane.ID())
 		}
-		outputLanes[index], err = freezeFormalSelectedFactorLane(
+		outputLanes[index], err = sealFormalClosedSelectedFactor(
 			body.productDomain, span, group, operator.footprint.inventory,
 		)
 		if err != nil {
@@ -625,7 +602,7 @@ func freezeFormalExternalCallProvider(
 					}
 					positions := make([]int, len(familyLayout.Slots()))
 					for slotIndex, slot := range familyLayout.Slots() {
-						position, exact := freezeFormalBranchCoordinatePosition(body.productDomain, span, family, slot)
+						position, exact := formalCoordinatePosition(body.productDomain, span, family, slot)
 						if !exact {
 							return formalExternalCallProvider{}, fmt.Errorf("input coordinate is outside frozen family")
 						}
@@ -671,7 +648,7 @@ func freezeFormalExternalCallProvider(
 				}
 				positions := make([]int, len(familyLayout.Slots()))
 				for slotIndex, slot := range familyLayout.Slots() {
-					position, positionExact := freezeFormalBranchCoordinatePosition(body.productDomain, span, family, slot)
+					position, positionExact := formalCoordinatePosition(body.productDomain, span, family, slot)
 					if !positionExact {
 						return formalExternalCallProvider{}, fmt.Errorf("keyed typestate query coordinate is outside frozen family")
 					}
@@ -739,65 +716,6 @@ func freezeFormalExternalCallProvider(
 		return formalExternalCallProvider{}, err
 	}
 	return formalExternalCallProvider{input: input, wires: wires, guardDemands: guardDemands}, nil
-}
-
-func freezeFormalSelectedFactorLane(
-	domain state.ProductDomain,
-	span formalFiberDescriptorSpan,
-	group formalFiberGroupDescriptor,
-	footprint state.CoordinateFactorInventory,
-) (formalSelectedFactorLane, error) {
-	if !domain.Valid() || !group.valid() || group.variable != span.variable ||
-		!footprint.ValidFor(domain, span.keys) || group.kind == formalFiberGroupValues {
-		return formalSelectedFactorLane{}, errFormalComponentForeignOwner
-	}
-	plan := formalSelectedFactorLane{group: group}
-	switch group.kind {
-	case formalFiberGroupOrdinaryLane:
-		plan.ordinary = true
-		plan.ordinals = append(plan.ordinals, group.members...)
-	case formalFiberGroupCoordinateLane:
-		consumed := 0
-		for _, family := range (formalCoordinateLaneFiberGroup{descriptor: group}).families() {
-			slots, err := footprint.FamilySlots(family.family)
-			if err != nil {
-				return formalSelectedFactorLane{}, err
-			}
-			entry := formalSelectedCoordinateFamily{family: family, selected: len(slots) != 0, slots: slots}
-			if entry.selected {
-				entry.positions = make([]int, len(slots))
-				plan.ordinals = append(plan.ordinals, family.skeleton)
-				for index, slot := range slots {
-					position, exact := freezeFormalBranchCoordinatePosition(domain, span, family, slot)
-					if !exact || position < 0 || position >= len(family.scalars) {
-						return formalSelectedFactorLane{}, fmt.Errorf("coordinate footprint slot is outside the frozen family")
-					}
-					entry.positions[index] = position
-					plan.ordinals = append(plan.ordinals, family.scalars[position])
-				}
-				consumed += len(slots)
-			}
-			plan.families = append(plan.families, entry)
-		}
-		laneSlots := 0
-		for _, slot := range footprint.Slots() {
-			if slot.Family().Lane() == group.lane {
-				laneSlots++
-			}
-		}
-		if consumed != laneSlots {
-			return formalSelectedFactorLane{}, fmt.Errorf("coordinate footprint is outside the lane family inventory")
-		}
-	default:
-		return formalSelectedFactorLane{}, errFormalComponentMalformed
-	}
-	sort.Slice(plan.ordinals, func(i, j int) bool { return plan.ordinals[i] < plan.ordinals[j] })
-	for index := 1; index < len(plan.ordinals); index++ {
-		if plan.ordinals[index-1] == plan.ordinals[index] {
-			return formalSelectedFactorLane{}, fmt.Errorf("coordinate footprint repeats a physical fiber")
-		}
-	}
-	return plan, nil
 }
 
 func (a *formalTupleAlgebra) observeFormalTypestateResourceQuery(
@@ -1122,183 +1040,6 @@ func (a *formalTupleAlgebra) countDistinctFormalExternalCallInputs(
 	return distinct, nil
 }
 
-func (a *formalTupleAlgebra) materializeFormalSelectedLane(
-	view formalSparseLeafView,
-	plan formalSelectedFactorLane,
-) (state.LaneFactor, error) {
-	if a == nil || view.algebra != a || view.authority == nil || !plan.group.valid() ||
-		plan.group.variable != view.variable {
-		return state.LaneFactor{}, errFormalComponentForeignOwner
-	}
-	if plan.ordinary {
-		return view.laneFactor(plan.group)
-	}
-	if plan.group.kind != formalFiberGroupCoordinateLane || len(plan.families) != len(plan.group.coordinateFamilies) {
-		return state.LaneFactor{}, errFormalComponentMalformed
-	}
-	skeletons := make([]state.CoordinateFamilySkeleton, len(plan.families))
-	scalars := make([][]state.CoordinateScalarFactor, len(plan.families))
-	for familyIndex, family := range plan.families {
-		var err error
-		if !family.selected {
-			skeletons[familyIndex], err = view.authority.product.CoordinateSkeletonBottom(family.family.family, view.span.keys)
-			if err != nil {
-				return state.LaneFactor{}, err
-			}
-			continue
-		}
-		leaf, present := view.leaf(family.family.skeleton)
-		if !present {
-			return state.LaneFactor{}, errFormalComponentMalformed
-		}
-		if leaf == 0 {
-			skeletons[familyIndex], err = view.authority.product.CoordinateSkeletonBottom(family.family.family, view.span.keys)
-		} else {
-			terminal, terminalErr := view.authority.terminal(leaf)
-			if terminalErr != nil || terminal.kind != formalComponentCoordinateSkeleton ||
-				!coordinateFamilySame(terminal.skeleton.Family(), family.family.family) {
-				if terminalErr != nil {
-					return state.LaneFactor{}, terminalErr
-				}
-				return state.LaneFactor{}, errFormalComponentMalformed
-			}
-			skeletons[familyIndex] = terminal.skeleton
-		}
-		if err != nil {
-			return state.LaneFactor{}, err
-		}
-		for slotIndex, position := range family.positions {
-			if position < 0 || position >= len(family.family.scalars) || slotIndex >= len(family.slots) {
-				return state.LaneFactor{}, errFormalComponentMalformed
-			}
-			leaf, present := view.leaf(family.family.scalars[position])
-			if !present {
-				return state.LaneFactor{}, errFormalComponentMalformed
-			}
-			if leaf == 0 {
-				continue
-			}
-			terminal, terminalErr := view.authority.terminal(leaf)
-			if terminalErr != nil || terminal.kind != formalComponentCoordinateScalar {
-				if terminalErr != nil {
-					return state.LaneFactor{}, terminalErr
-				}
-				return state.LaneFactor{}, errFormalComponentMalformed
-			}
-			equal, equalErr := view.authority.product.CoordinateSlotEqual(terminal.scalar.Slot(), family.slots[slotIndex])
-			if equalErr != nil || !equal {
-				if equalErr != nil {
-					return state.LaneFactor{}, equalErr
-				}
-				return state.LaneFactor{}, errFormalComponentMalformed
-			}
-			omitted, omitErr := view.authority.product.CoordinateScalarIsOmitted(skeletons[familyIndex], terminal.scalar)
-			if omitErr != nil {
-				return state.LaneFactor{}, omitErr
-			}
-			if !omitted {
-				scalars[familyIndex] = append(scalars[familyIndex], terminal.scalar)
-			}
-		}
-	}
-	return view.authority.product.ComposeCoordinateFamilies(plan.group.lane, view.span.keys, skeletons, scalars)
-}
-
-func (a *formalTupleAlgebra) factorFormalSelectedLane(
-	authority *formalComponentTerminalAuthority,
-	span formalFiberDescriptorSpan,
-	plan formalSelectedFactorLane,
-	factor state.LaneFactor,
-) ([]formalSelectedFactorOutput, error) {
-	if a == nil || authority == nil || !plan.group.valid() || plan.group.variable != span.variable ||
-		factor.Lane() != plan.group.lane {
-		return nil, errFormalComponentForeignOwner
-	}
-	if plan.ordinary {
-		leaves, err := a.factorFormalSparseLane(authority, span, plan.group, factor)
-		if err != nil || len(leaves) != len(plan.ordinals) {
-			if err != nil {
-				return nil, err
-			}
-			return nil, errFormalComponentMalformed
-		}
-		out := make([]formalSelectedFactorOutput, len(leaves))
-		for index := range leaves {
-			out[index] = formalSelectedFactorOutput{ordinal: plan.ordinals[index], leaf: leaves[index]}
-		}
-		return out, nil
-	}
-	byOrdinal := make(map[formalFiberOrdinal]decisionLeaf, len(plan.ordinals))
-	for _, ordinal := range plan.ordinals {
-		byOrdinal[ordinal] = 0
-	}
-	for _, family := range plan.families {
-		skeleton, scalars, err := authority.product.DecomposeCoordinateFamily(factor, family.family.family, span.keys)
-		if err != nil {
-			return nil, err
-		}
-		bottom, err := authority.product.CoordinateSkeletonBottom(family.family.family, span.keys)
-		if err != nil {
-			return nil, err
-		}
-		sameBottom, err := authority.product.CoordinateSkeletonRepresentationEqual(skeleton, bottom)
-		if err != nil {
-			return nil, err
-		}
-		if !family.selected {
-			if !sameBottom || len(scalars) != 0 {
-				return nil, fmt.Errorf("transformer: formal selected factor escaped its coordinate footprint")
-			}
-			continue
-		}
-		if !sameBottom {
-			leaf, internErr := authority.internCoordinateSkeleton(skeleton)
-			if internErr != nil {
-				return nil, internErr
-			}
-			byOrdinal[family.family.skeleton] = leaf
-		}
-		scalarIndex := 0
-		for slotIndex, slot := range family.slots {
-			if scalarIndex >= len(scalars) {
-				break
-			}
-			scalar := scalars[scalarIndex]
-			equal, equalErr := authority.product.CoordinateSlotEqual(slot, scalar.Slot())
-			if equalErr != nil {
-				return nil, equalErr
-			}
-			if !equal {
-				less, lessErr := authority.product.CoordinateSlotLess(scalar.Slot(), slot)
-				if lessErr != nil {
-					return nil, lessErr
-				}
-				if less {
-					return nil, fmt.Errorf("transformer: formal selected factor escaped its coordinate footprint")
-				}
-				continue
-			}
-			if slotIndex >= len(family.positions) || family.positions[slotIndex] < 0 || family.positions[slotIndex] >= len(family.family.scalars) {
-				return nil, errFormalComponentMalformed
-			}
-			leaf, internErr := authority.internCoordinateScalar(scalar)
-			if internErr != nil {
-				return nil, internErr
-			}
-			byOrdinal[family.family.scalars[family.positions[slotIndex]]] = leaf
-			scalarIndex++
-		}
-		if scalarIndex != len(scalars) {
-			return nil, fmt.Errorf("transformer: formal selected factor escaped its coordinate footprint")
-		}
-	}
-	out := make([]formalSelectedFactorOutput, len(plan.ordinals))
-	for index, ordinal := range plan.ordinals {
-		out[index] = formalSelectedFactorOutput{ordinal: ordinal, leaf: byOrdinal[ordinal]}
-	}
-	return out, nil
-}
-
 // applyFormalExternalCallOuter executes the carrier-neutral outer fragment on
 // one primary correlated leaf. Result mutations are retained as exact root
 // updates and are not published here: the caller commits them together with
@@ -1313,7 +1054,7 @@ func (a *formalTupleAlgebra) applyFormalExternalCallOuter(
 	}
 	factors := make([]state.LaneFactor, len(plan.outputLanes))
 	for index, lane := range plan.outputLanes {
-		factor, err := a.materializeFormalSelectedLane(primary, lane)
+		factor, err := a.materializeFormalClosedSelectedFactor(primary, lane)
 		if err != nil {
 			return factapply.ExternalCallFactorFrame[FormalSlot]{}, err
 		}
@@ -1667,7 +1408,7 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 			}
 		}
 		for index, lane := range plan.outputLanes {
-			outputs, factorErr := a.factorFormalSelectedLane(authority, span, lane, next.Factors[index])
+			outputs, factorErr := a.factorFormalClosedSelectedFactor(authority, span, lane, next.Factors[index])
 			if factorErr != nil {
 				return fail(factorErr)
 			}
