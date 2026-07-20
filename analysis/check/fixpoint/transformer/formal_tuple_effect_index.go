@@ -160,70 +160,56 @@ func (a *formalTupleAlgebra) applyFormalIndexMutation(operator formalRelationOpe
 	if plan == nil || plan.variable != predecessor.variable {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal IndexMutation is unbound")
 	}
-	return a.applyFormalEffectStep(operator, predecessor, plan.demands, func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator) ([]decisionLeaf, error) {
-		return a.applyFormalIndexMutationLeaf(operator, span, evaluator, plan)
+	return a.applyFormalEffectStep(operator, predecessor, plan.demands, func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
+		return a.applyFormalIndexMutationLeaf(operator, span, evaluator, plan, values, factors)
 	})
 }
 
-func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelationOperatorRef, span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, plan *formalIndexMutationStep) ([]decisionLeaf, error) {
+func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelationOperatorRef, span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, plan *formalIndexMutationStep, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
 	if plan == nil || !evaluator.valid() || plan.variable != span.variable {
-		return nil, errFormalComponentForeignOwner
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentForeignOwner
 	}
 	domain := evaluator.authority.product
-	lanes := domain.NonValuesLaneInventory()
-	original := make([]state.LaneFactor, len(lanes))
-	positions := make(map[state.ProductLane]int, len(lanes))
-	for index, lane := range lanes {
-		positions[lane] = index
-	}
-	for _, group := range operator.effectGroups {
-		if group.kind == formalFiberGroupValues {
-			continue
-		}
-		index, present := positions[group.lane]
-		if !present {
-			return nil, errFormalComponentMalformed
-		}
-		factor, err := evaluator.laneFactor(group)
-		if err != nil {
-			return nil, err
-		}
-		original[index] = factor
+	original := append([]state.LaneFactor(nil), factors...)
+	positions := make(map[state.ProductLane]int, len(factors))
+	for index, factor := range factors {
+		positions[factor.Lane()] = index
 	}
 	capability, err := evaluator.materializeValueFactorAccess(plan.valueAccess, plan.valueGroups)
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
 	keyValue, ok := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, plan.key, operator.scope, formalApplyTermView{}, capability)
 	if !ok {
-		return nil, fmt.Errorf("transformer: formal IndexMutation key is unresolved")
+		return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal IndexMutation key is unresolved")
 	}
 	storedValue, ok := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, plan.value, operator.scope, formalApplyTermView{}, capability)
 	if !ok {
-		return nil, fmt.Errorf("transformer: formal IndexMutation value is unresolved")
+		return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal IndexMutation value is unresolved")
 	}
-	current := append([]state.LaneFactor(nil), original...)
+	current := factors
 	pathFamily, ok := domain.PathValueFamily()
 	if !ok {
-		return nil, errFormalComponentMalformed
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 	}
 	pathIndex := positions[pathFamily.Lane()]
 	pathSkeleton, pathScalars, err := domain.DecomposeCoordinateFamily(current[pathIndex], pathFamily, span.keys)
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
 	invalidation, err := domain.PrepareCoordinatePathDescendantMutation(pathSkeleton, pathScalars, pathdom.PathKey(span.keys.FormatReadOnly(plan.table)))
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
-	changed := make(map[int]bool)
 	for _, lane := range domain.PathDescendantMutationParticipantLanes() {
-		index := positions[lane]
+		index, present := positions[lane]
+		if !present {
+			return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
+		}
 		current[index], err = domain.ApplyPathDescendantMutationLane(invalidation, current[index])
 		if err != nil {
-			return nil, err
+			return state.ValueFactor[FormalSlot]{}, nil, err
 		}
-		changed[index] = true
 	}
 
 	fact := dynamicindex.NewFact(domain.Registry(), dynamicindex.FactConfig{
@@ -233,7 +219,7 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 	definitelyAbsent := factapply.DynamicIndexFactDefinitelyAbsent(domain.Registry(), fact)
 	membershipLane, ok := domain.ProductLane(state.LaneKeyMemberships)
 	if !ok {
-		return nil, errFormalComponentMalformed
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 	}
 	membershipIndex := positions[membershipLane]
 	query := state.DynamicIndexMembershipEvidenceQuery{Container: plan.table, TableStateKeys: []pathaddr.StateKey{pathaddr.StateKey(span.keys.FormatReadOnly(plan.table))}}
@@ -245,14 +231,14 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 	}
 	evidence, err := domain.ObserveDynamicIndexMutationEvidence(original[membershipIndex], current[membershipIndex], query)
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
 	restoreKeys := []pathaddr.StateKey(nil)
 	if query.KeyStateKey != "" {
 		restoreKeys = append(restoreKeys, query.KeyStateKey)
 		equivalent, queryErr := domain.EquivalentPathStateKeysFactor(current[pathIndex], span.keys, plan.keyPath)
 		if queryErr != nil {
-			return nil, queryErr
+			return state.ValueFactor[FormalSlot]{}, nil, queryErr
 		}
 		restoreKeys = append(restoreKeys, equivalent...)
 	}
@@ -266,20 +252,22 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 		DefinitelyAbsent: definitelyAbsent, MayBeAbsent: !definitelyPresent,
 	})
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
 	for _, lane := range domain.DynamicIndexMembershipFactorLanes() {
-		index := positions[lane]
+		index, present := positions[lane]
+		if !present {
+			return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
+		}
 		current[index], err = domain.ApplyDynamicIndexMembershipFactor(membershipPlan, current[index])
 		if err != nil {
-			return nil, err
+			return state.ValueFactor[FormalSlot]{}, nil, err
 		}
-		changed[index] = true
 	}
 
-	factorMap := make(map[state.ProductLane]state.LaneFactor, len(lanes))
-	for index, lane := range lanes {
-		factorMap[lane] = current[index]
+	factorMap := make(map[state.ProductLane]state.LaneFactor, len(current))
+	for _, factor := range current {
+		factorMap[factor.Lane()] = factor
 	}
 	reader := formalIndexPathReader{domain: domain, keys: span.keys, evaluator: evaluator, root: plan.tableRoot, symbol: plan.tableSymbol, factors: factorMap}
 	tableValue, resolved := factapply.ResolveStructuralPathFactorValue(domain.Registry(), reader, plan.structural)
@@ -288,16 +276,16 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 			placementLane, _ := domain.ProductLane(state.LanePlacement)
 			owner, readErr := domain.ReadPlacementTermFactor(current[positions[placementLane]], tableTerm)
 			if readErr != nil {
-				return nil, readErr
+				return state.ValueFactor[FormalSlot]{}, nil, readErr
 			}
 			if owner == placement.OwnedHeap || owner == placement.SharedHeap || owner == placement.Unknown {
 				reachability, prepareErr := domain.PreparePlacementReachabilityPlan(span.keys, []product.Value{storedValue}, owner)
 				if prepareErr != nil {
-					return nil, prepareErr
+					return state.ValueFactor[FormalSlot]{}, nil, prepareErr
 				}
 				reachabilityLanes, lanesErr := domain.PlacementReachabilityLanes(reachability)
 				if lanesErr != nil {
-					return nil, lanesErr
+					return state.ValueFactor[FormalSlot]{}, nil, lanesErr
 				}
 				selected := make([]state.LaneFactor, len(reachabilityLanes))
 				for index, lane := range reachabilityLanes {
@@ -305,19 +293,18 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 				}
 				selected, err = domain.ApplyPlacementReachabilityFactors(a.ctx, reachability, selected)
 				if err != nil {
-					return nil, err
+					return state.ValueFactor[FormalSlot]{}, nil, err
 				}
 				for index, lane := range reachabilityLanes {
 					position := positions[lane]
 					current[position] = selected[index]
-					changed[position] = true
 				}
 			}
 			heapLane, _ := domain.ProductLane(state.LaneHeapTableIdentity)
 			heapIndex := positions[heapLane]
 			object, readErr := domain.ReadHeapTableObjectTermFactor(current[heapIndex], tableTerm)
 			if readErr != nil {
-				return nil, readErr
+				return state.ValueFactor[FormalSlot]{}, nil, readErr
 			}
 			if !heapidentity.ObjectDomain(domain.Registry()).Equal(object, heapidentity.BottomObject(domain.Registry())) {
 				dynamic := object.DynamicIndexFacts()
@@ -333,15 +320,14 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 				replacement := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: object.Root(), StaticMembers: object.StaticMembers(), DynamicIndexFacts: dynamic})
 				graph, prepareErr := domain.PrepareObjectGraphReplacePlan(span.keys, []state.ObjectGraphMutation{{Identity: tableTerm, Object: replacement}})
 				if prepareErr != nil {
-					return nil, prepareErr
+					return state.ValueFactor[FormalSlot]{}, nil, prepareErr
 				}
 				for _, lane := range domain.ObjectMutationParticipantLanes() {
 					index := positions[lane]
 					current[index], err = domain.ApplyObjectGraphMutationFactor(graph, current[index])
 					if err != nil {
-						return nil, err
+						return state.ValueFactor[FormalSlot]{}, nil, err
 					}
-					changed[index] = true
 				}
 			}
 		}
@@ -349,41 +335,31 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 	if plan.appendMode {
 		lengthFamily, ok := domain.LenFloorCoordinateFamily()
 		if !ok {
-			return nil, errFormalComponentMalformed
+			return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 		}
 		lengthIndex := positions[lengthFamily.Lane()]
 		if floor, present, readErr := domain.ReadLengthFloorFactor(original[lengthIndex], span.keys, plan.table); readErr != nil {
-			return nil, readErr
+			return state.ValueFactor[FormalSlot]{}, nil, readErr
 		} else if present && floor < math.MaxInt64 {
 			lengthPlan, prepareErr := domain.PrepareLengthFloorFactorPlan(span.keys, plan.table, floor+1)
 			if prepareErr != nil {
-				return nil, prepareErr
+				return state.ValueFactor[FormalSlot]{}, nil, prepareErr
 			}
 			current[lengthIndex], err = domain.ApplyLengthFloorFactor(lengthPlan, current[lengthIndex])
 			if err != nil {
-				return nil, err
+				return state.ValueFactor[FormalSlot]{}, nil, err
 			}
-			changed[lengthIndex] = true
 		}
 	}
 	for _, lane := range domain.EffectDeltaFactorLanes() {
-		index := positions[lane]
+		index, present := positions[lane]
+		if !present {
+			return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
+		}
 		current[index], err = domain.ApplyEffectDeltaFactor(plan.effectDelta, current[index])
 		if err != nil {
-			return nil, err
-		}
-		changed[index] = true
-	}
-
-	out, err := cloneFormalSelectedEffectLeaves(evaluator)
-	if err != nil {
-		return nil, err
-	}
-	for index := range changed {
-		group := evaluator.layout.nonValues[index]
-		if err := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, current[index], out); err != nil {
-			return nil, err
+			return state.ValueFactor[FormalSlot]{}, nil, err
 		}
 	}
-	return out, nil
+	return values, current, nil
 }

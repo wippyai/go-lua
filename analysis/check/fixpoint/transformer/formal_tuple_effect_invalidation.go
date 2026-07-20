@@ -7,10 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
-type formalPathInvalidationLane struct {
-	group formalFiberGroupDescriptor
-}
-
 // formalPathInvalidationStep is the checked binding from one existing
 // relationCode EffectInvalidatePath node to the ProductDomain path-mutation
 // laws. It owns no mutation semantics and no alternate Effect ordering.
@@ -18,7 +14,7 @@ type formalPathInvalidationStep struct {
 	target   pathdom.PathKey
 	scope    InvalidationScope
 	demands  []formalQualifiedGuardDemand
-	lanes    []formalPathInvalidationLane
+	lanes    []state.ProductLane
 	owner    state.CoordinateFamily
 	variable relationVar
 }
@@ -79,7 +75,7 @@ func freezeFormalPathInvalidationStep(program *RelationProgram, variable relatio
 	for _, lane := range participants {
 		participantSet[lane] = true
 	}
-	lanes := make([]formalPathInvalidationLane, 0, len(participants))
+	lanes := make([]state.ProductLane, 0, len(participants))
 	seen := make(map[state.ProductLane]bool)
 	for _, group := range span.groupDescriptors() {
 		if group.kind == formalFiberGroupValues {
@@ -88,7 +84,7 @@ func freezeFormalPathInvalidationStep(program *RelationProgram, variable relatio
 		if !participantSet[group.lane] {
 			continue
 		}
-		lanes = append(lanes, formalPathInvalidationLane{group: group})
+		lanes = append(lanes, group.lane)
 		seen[group.lane] = true
 	}
 	for lane := range participantSet {
@@ -112,97 +108,92 @@ func (a *formalTupleAlgebra) applyFormalPathInvalidation(operator formalRelation
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal path invalidation is unbound")
 	}
 	return a.applyFormalEffectStep(operator, predecessor, plan.demands,
-		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator) ([]decisionLeaf, error) {
-			return a.applyFormalPathInvalidationLeaf(span, evaluator, plan)
+		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
+			return a.applyFormalPathInvalidationLeaf(span, evaluator, plan, values, factors)
 		})
 }
 
-func (a *formalTupleAlgebra) applyFormalPathInvalidationLeaf(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, plan *formalPathInvalidationStep) ([]decisionLeaf, error) {
+func (a *formalTupleAlgebra) applyFormalPathInvalidationLeaf(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, plan *formalPathInvalidationStep, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
 	if plan == nil || plan.variable != span.variable || !evaluator.valid() || evaluator.variable != span.variable || plan.target == "" {
-		return nil, errFormalComponentForeignOwner
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentForeignOwner
 	}
 	domain := evaluator.authority.product
-	out, err := cloneFormalSelectedEffectLeaves(evaluator)
-	if err != nil {
-		return nil, err
-	}
-	current := make(map[state.LaneOrdinal]state.LaneFactor, len(plan.lanes))
-	for _, lane := range plan.lanes {
-		factor, err := a.materializeFormalSelectedEffectLane(evaluator, lane.group, out)
-		if err != nil {
-			return nil, err
+	position := func(lane state.ProductLane) (int, bool) {
+		for index := range factors {
+			if factors[index].Lane() == lane {
+				return index, true
+			}
 		}
-		current[lane.group.lane.Ordinal()] = factor
+		return 0, false
 	}
-	ownerFactor, foundOwner := current[plan.owner.Lane().Ordinal()]
-	if !foundOwner || ownerFactor.Lane() != plan.owner.Lane() {
-		return nil, errFormalComponentMalformed
+	ownerIndex, foundOwner := position(plan.owner.Lane())
+	if !foundOwner {
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 	}
+	ownerFactor := factors[ownerIndex]
 	ownerSkeleton, ownerScalars, err := domain.DecomposeCoordinateFamily(ownerFactor, plan.owner, span.keys)
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
 	switch plan.scope {
 	case InvalidationScopeSubtree:
 		transaction, prepareErr := domain.PrepareCoordinatePathSubtreeMutation(ownerSkeleton, ownerScalars, plan.target)
 		if prepareErr != nil {
-			return nil, prepareErr
+			return state.ValueFactor[FormalSlot]{}, nil, prepareErr
 		}
-		factors, bindErr := domain.BindPathSubtreeMutationFactors(span.keys, func(lane state.ProductLane) (state.LaneFactor, bool) {
-			factor, present := current[lane.Ordinal()]
-			return factor, present && factor.Lane() == lane
+		bound, bindErr := domain.BindPathSubtreeMutationFactors(span.keys, func(lane state.ProductLane) (state.LaneFactor, bool) {
+			index, present := position(lane)
+			if !present {
+				return state.LaneFactor{}, false
+			}
+			return factors[index], true
 		})
 		if bindErr != nil {
-			return nil, bindErr
+			return state.ValueFactor[FormalSlot]{}, nil, bindErr
 		}
-		factors, applyErr := domain.ApplyPathSubtreeMutationFactors(transaction, factors)
+		mutated, applyErr := domain.ApplyPathSubtreeMutationFactors(transaction, bound)
 		if applyErr != nil {
-			return nil, applyErr
+			return state.ValueFactor[FormalSlot]{}, nil, applyErr
 		}
-		for _, factor := range factors.LaneFactors() {
-			current[factor.Lane().Ordinal()] = factor
-		}
-		for _, factor := range factors.CoordinateFactors() {
-			lane := factor.Family().Lane()
-			base, present := current[lane.Ordinal()]
-			if !present || base.Lane() != lane {
-				return nil, errFormalComponentMalformed
+		for _, factor := range mutated.LaneFactors() {
+			index, present := position(factor.Lane())
+			if !present {
+				return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 			}
+			factors[index] = factor
+		}
+		for _, factor := range mutated.CoordinateFactors() {
+			lane := factor.Family().Lane()
+			index, present := position(lane)
+			if !present {
+				return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
+			}
+			base := factors[index]
 			base, applyErr = domain.ReplaceCoordinateFamily(base, factor.Skeleton(), factor.Scalars())
 			if applyErr != nil {
-				return nil, applyErr
+				return state.ValueFactor[FormalSlot]{}, nil, applyErr
 			}
-			current[lane.Ordinal()] = base
-		}
-		for _, lane := range plan.lanes {
-			next, present := current[lane.group.lane.Ordinal()]
-			if !present || next.Lane() != lane.group.lane {
-				return nil, errFormalComponentMalformed
-			}
-			if factorErr := a.factorFormalSelectedEffectGroup(evaluator, lane.group, state.ValueFactor[FormalSlot]{}, next, out); factorErr != nil {
-				return nil, factorErr
-			}
+			factors[index] = base
 		}
 	case InvalidationScopeDescendants:
 		transaction, prepareErr := domain.PrepareCoordinatePathDescendantMutation(ownerSkeleton, ownerScalars, plan.target)
 		if prepareErr != nil {
-			return nil, prepareErr
+			return state.ValueFactor[FormalSlot]{}, nil, prepareErr
 		}
 		for _, lane := range plan.lanes {
-			before, present := current[lane.group.lane.Ordinal()]
-			if !present || before.Lane() != lane.group.lane {
-				return nil, errFormalComponentMalformed
+			index, present := position(lane)
+			if !present {
+				return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 			}
+			before := factors[index]
 			next, applyErr := domain.ApplyPathDescendantMutationLane(transaction, before)
 			if applyErr != nil {
-				return nil, applyErr
+				return state.ValueFactor[FormalSlot]{}, nil, applyErr
 			}
-			if err := a.factorFormalSelectedEffectGroup(evaluator, lane.group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
-				return nil, err
-			}
+			factors[index] = next
 		}
 	default:
-		return nil, errFormalComponentMalformed
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
 	}
-	return out, nil
+	return values, factors, nil
 }

@@ -14,7 +14,6 @@ import (
 type formalAllocationTemplateStep struct {
 	graph    state.ObjectGraphMutationPlan
 	demands  []formalQualifiedGuardDemand
-	groups   []formalFiberGroupDescriptor
 	variable relationVar
 }
 
@@ -58,27 +57,12 @@ func freezeFormalAllocationTemplateStep(program *RelationProgram, variable relat
 	if err != nil {
 		return nil, err
 	}
-	groupsByLane := make(map[state.ProductLane]formalFiberGroupDescriptor)
-	for _, group := range span.groupDescriptors() {
-		if group.kind != formalFiberGroupValues {
-			groupsByLane[group.lane] = group
-		}
-	}
-	lanes := body.productDomain.ObjectMutationParticipantLanes()
-	groups := make([]formalFiberGroupDescriptor, len(lanes))
-	for index, lane := range lanes {
-		group, present := groupsByLane[lane]
-		if !present {
-			return nil, fmt.Errorf("transformer: formal allocation lane %s is outside the frozen product", lane.ID())
-		}
-		groups[index] = group
-	}
 	demands := make([]formalQualifiedGuardDemand, 0, 1)
 	if step.guard != 0 {
 		demands = append(demands, formalQualifiedGuardDemand{owner: variable, scope: operator.scope, arena: operator.code.terms, guard: step.guard})
 	}
 	return &formalAllocationTemplateStep{
-		graph: graph, demands: demands, groups: groups, variable: variable,
+		graph: graph, demands: demands, variable: variable,
 	}, nil
 }
 
@@ -88,24 +72,14 @@ func (a *formalTupleAlgebra) applyFormalAllocationTemplate(operator formalRelati
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal allocation template is unbound")
 	}
 	return a.applyFormalEffectStep(operator, predecessor, plan.demands,
-		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator) ([]decisionLeaf, error) {
-			out, err := cloneFormalSelectedEffectLeaves(evaluator)
-			if err != nil {
-				return nil, err
-			}
-			for _, group := range plan.groups {
-				current, err := a.materializeFormalSelectedEffectLane(evaluator, group, out)
-				if err != nil {
-					return nil, err
-				}
+		func(_ formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
+			for index, current := range factors {
 				next, err := evaluator.authority.product.ApplyObjectGraphMutationFactor(plan.graph, current)
 				if err != nil {
-					return nil, err
+					return state.ValueFactor[FormalSlot]{}, nil, err
 				}
-				if err := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, next, out); err != nil {
-					return nil, err
-				}
+				factors[index] = next
 			}
-			return out, nil
+			return values, factors, nil
 		})
 }

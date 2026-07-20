@@ -25,7 +25,6 @@ type formalObjectMaterializationObject struct {
 type formalObjectMaterializationStep struct {
 	objects     []formalObjectMaterializationObject
 	demands     []formalQualifiedGuardDemand
-	groups      []formalFiberGroupDescriptor
 	valueAccess state.TransferInputAccess
 	valueGroups []formalFiberGroupDescriptor
 	variable    relationVar
@@ -53,21 +52,6 @@ func freezeFormalObjectMaterializationStep(program *RelationProgram, variable re
 	span, ok := program.formalFibers.span(variable)
 	if !ok || span.keys == nil || !span.keys.Valid() || body.relation.code != operator.code {
 		return nil, fmt.Errorf("transformer: object materialization has no formal owner")
-	}
-	groupsByLane := make(map[state.ProductLane]formalFiberGroupDescriptor)
-	for _, group := range span.groupDescriptors() {
-		if group.kind != formalFiberGroupValues {
-			groupsByLane[group.lane] = group
-		}
-	}
-	lanes := body.productDomain.ObjectMutationParticipantLanes()
-	groups := make([]formalFiberGroupDescriptor, len(lanes))
-	for index, lane := range lanes {
-		group, present := groupsByLane[lane]
-		if !present {
-			return nil, fmt.Errorf("transformer: object mutation lane %s is outside the frozen product", lane.ID())
-		}
-		groups[index] = group
 	}
 	objects := make([]formalObjectMaterializationObject, len(node.pathStoreObject.Heaps))
 	templates, err := formalObjectMaterializationTemplates(body.relation, step.effect)
@@ -134,7 +118,7 @@ func freezeFormalObjectMaterializationStep(program *RelationProgram, variable re
 		demands[index] = formalQualifiedGuardDemand{owner: variable, scope: operator.scope, arena: operator.code.terms, guard: guard}
 	}
 	return &formalObjectMaterializationStep{
-		objects: objects, demands: demands, groups: groups,
+		objects: objects, demands: demands,
 		valueAccess: valueAccess, valueGroups: valueGroups, variable: variable,
 	}, nil
 }
@@ -145,8 +129,8 @@ func (a *formalTupleAlgebra) applyFormalObjectMaterialization(operator formalRel
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal object materialization is unbound")
 	}
 	return a.applyFormalEffectStep(operator, predecessor, plan.demands,
-		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator) ([]decisionLeaf, error) {
-			return a.applyFormalObjectMaterializationLeaf(operator, span, evaluator, plan)
+		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
+			return a.applyFormalObjectMaterializationLeaf(operator, span, evaluator, plan, values, factors)
 		})
 }
 
@@ -155,20 +139,22 @@ func (a *formalTupleAlgebra) applyFormalObjectMaterializationLeaf(
 	span formalFiberDescriptorSpan,
 	evaluator formalTupleLeafEvaluator,
 	plan *formalObjectMaterializationStep,
-) ([]decisionLeaf, error) {
+	formalValues state.ValueFactor[FormalSlot],
+	factors []state.LaneFactor,
+) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
 	if plan == nil || plan.variable != span.variable || !evaluator.valid() || evaluator.variable != span.variable {
-		return nil, errFormalComponentForeignOwner
+		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentForeignOwner
 	}
 	shapes := make([]state.ObjectConstructorShape, len(plan.objects))
 	values := make([]state.ObjectConstructorValues, len(plan.objects))
 	capability, err := evaluator.materializeValueFactorAccess(plan.valueAccess, plan.valueGroups)
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
 	for objectIndex, object := range plan.objects {
 		root, exact := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, object.root, operator.scope, formalApplyTermView{}, capability)
 		if !exact {
-			return nil, fmt.Errorf("transformer: formal object root is unresolved")
+			return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal object root is unresolved")
 		}
 		root = identityvalue.WithExactTerm(a.program.registry, root, object.identity)
 		term := object.identity
@@ -181,14 +167,14 @@ func (a *formalTupleAlgebra) applyFormalObjectMaterializationLeaf(
 		for memberIndex, member := range object.members {
 			if sourceObject := object.memberRoots[memberIndex]; sourceObject >= 0 {
 				if sourceObject >= len(values) {
-					return nil, fmt.Errorf("transformer: formal object member root is outside allocation schema")
+					return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal object member root is outside allocation schema")
 				}
 				values[objectIndex].Members[memberIndex] = values[sourceObject].Root
 				continue
 			}
 			value, resolved := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, member, operator.scope, formalApplyTermView{}, capability)
 			if !resolved {
-				return nil, fmt.Errorf("transformer: formal object member is unresolved")
+				return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal object member is unresolved")
 			}
 			values[objectIndex].Members[memberIndex] = value
 		}
@@ -196,24 +182,14 @@ func (a *formalTupleAlgebra) applyFormalObjectMaterializationLeaf(
 	domain := evaluator.authority.product
 	transaction, err := domain.PrepareObjectConstructorPlan(span.keys, shapes)
 	if err != nil {
-		return nil, err
+		return state.ValueFactor[FormalSlot]{}, nil, err
 	}
-	out, err := cloneFormalSelectedEffectLeaves(evaluator)
-	if err != nil {
-		return nil, err
-	}
-	for _, group := range plan.groups {
-		current, materializeErr := a.materializeFormalSelectedEffectLane(evaluator, group, out)
-		if materializeErr != nil {
-			return nil, materializeErr
-		}
+	for index, current := range factors {
 		next, applyErr := domain.ApplyObjectConstructorFactor(transaction, values, current)
 		if applyErr != nil {
-			return nil, applyErr
+			return state.ValueFactor[FormalSlot]{}, nil, applyErr
 		}
-		if factorErr := a.factorFormalSelectedEffectGroup(evaluator, group, state.ValueFactor[FormalSlot]{}, next, out); factorErr != nil {
-			return nil, factorErr
-		}
+		factors[index] = next
 	}
-	return out, nil
+	return formalValues, factors, nil
 }

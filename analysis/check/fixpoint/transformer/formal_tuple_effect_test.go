@@ -258,7 +258,16 @@ func TestFormalEffectObjectMaterializationUsesRegisteredSparseGraphLaw(t *testin
 	if !ok {
 		t.Fatal("formal object span")
 	}
-	if got := len(equation.Operator.objectMaterialization.groups); got != len(body.productDomain.ObjectMutationParticipantLanes()) || got != 2 {
+	objectGroups := make([]formalFiberGroupDescriptor, 0)
+	participants := body.productDomain.ObjectMutationParticipantLanes()
+	for _, group := range span.groupDescriptors() {
+		for _, lane := range participants {
+			if group.lane == lane {
+				objectGroups = append(objectGroups, group)
+			}
+		}
+	}
+	if got := len(objectGroups); got != len(participants) || got != 2 {
 		t.Fatalf("object materialization sparse width=%d, want exact 2", got)
 	}
 	objectTerm := equation.Operator.objectMaterialization.objects[0].identity
@@ -278,13 +287,13 @@ func TestFormalEffectObjectMaterializationUsesRegisteredSparseGraphLaw(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectLanes := make(map[state.ProductLane]struct{}, len(equation.Operator.objectMaterialization.groups))
+	objectLanes := make(map[state.ProductLane]struct{}, len(objectGroups))
 	sawHeap := false
 	complete, err := regions[0].evaluator.completeLeaves()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for groupIndex, group := range equation.Operator.objectMaterialization.groups {
+	for groupIndex, group := range objectGroups {
 		objectLanes[group.lane] = struct{}{}
 		factor, err := execution.algebra.materializeFormalEffectLane(regions[0].evaluator.authority, span, group, complete)
 		if err != nil {
@@ -394,6 +403,10 @@ func TestFormalEffectPathInvalidationMatchesConcreteSparseTransaction(t *testing
 			if !ok {
 				t.Fatal("formal invalidation span")
 			}
+			groups := make(map[state.ProductLane]formalFiberGroupDescriptor, len(plan.lanes))
+			for _, group := range span.groupDescriptors() {
+				groups[group.lane] = group
+			}
 			operands, err := partitionFormalRelationStepOperands(equation)
 			if err != nil {
 				t.Fatal(err)
@@ -408,8 +421,8 @@ func TestFormalEffectPathInvalidationMatchesConcreteSparseTransaction(t *testing
 			}
 			var ownerFactor state.LaneFactor
 			for _, lane := range plan.lanes {
-				if lane.group.lane == plan.owner.Lane() {
-					ownerFactor, err = inputRegions[0].evaluator.laneFactor(lane.group)
+				if lane == plan.owner.Lane() {
+					ownerFactor, err = inputRegions[0].evaluator.laneFactor(groups[lane])
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -433,11 +446,11 @@ func TestFormalEffectPathInvalidationMatchesConcreteSparseTransaction(t *testing
 			if test.scope == InvalidationScopeSubtree {
 				subtreeWant = make(map[state.LaneOrdinal]state.LaneFactor, len(plan.lanes))
 				for _, lane := range plan.lanes {
-					factor, materializeErr := inputRegions[0].evaluator.laneFactor(lane.group)
+					factor, materializeErr := inputRegions[0].evaluator.laneFactor(groups[lane])
 					if materializeErr != nil {
 						t.Fatal(materializeErr)
 					}
-					subtreeWant[lane.group.lane.Ordinal()] = factor
+					subtreeWant[lane.Ordinal()] = factor
 				}
 				bound, bindErr := program.bodies[0].productDomain.BindPathSubtreeMutationFactors(span.keys, func(lane state.ProductLane) (state.LaneFactor, bool) {
 					factor, present := subtreeWant[lane.Ordinal()]
@@ -465,27 +478,28 @@ func TestFormalEffectPathInvalidationMatchesConcreteSparseTransaction(t *testing
 			}
 			written := make(map[state.ProductLane]bool, len(plan.lanes))
 			for _, lane := range plan.lanes {
-				written[lane.group.lane] = true
-				before, materializeErr := inputRegions[0].evaluator.laneFactor(lane.group)
+				written[lane] = true
+				group := groups[lane]
+				before, materializeErr := inputRegions[0].evaluator.laneFactor(group)
 				if materializeErr != nil {
 					t.Fatal(materializeErr)
 				}
 				var want state.LaneFactor
 				if test.scope == InvalidationScopeSubtree {
-					want = subtreeWant[lane.group.lane.Ordinal()]
+					want = subtreeWant[lane.Ordinal()]
 				} else {
 					want, err = program.bodies[0].productDomain.ApplyPathDescendantMutationLane(descendants, before)
 				}
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, materializeErr := outputRegions[0].evaluator.laneFactor(lane.group)
+				got, materializeErr := outputRegions[0].evaluator.laneFactor(group)
 				if materializeErr != nil {
 					t.Fatal(materializeErr)
 				}
 				equal, equalErr := program.bodies[0].productDomain.LaneEqual(got, want)
 				if equalErr != nil || !equal {
-					t.Fatalf("formal path invalidation lane %s differs from concrete: equal=%t err=%v", lane.group.lane.ID(), equal, equalErr)
+					t.Fatalf("formal path invalidation lane %s differs from concrete: equal=%t err=%v", lane.ID(), equal, equalErr)
 				}
 			}
 			for _, group := range span.groupDescriptors() {
@@ -677,15 +691,21 @@ func assertFormalAllocationTemplateDifferential(t *testing.T, program *RelationP
 		t.Fatal("formal AllocationTemplate adapter absent")
 	}
 	plan := equation.Operator.allocationTemplate
-	if len(plan.groups) != 2 {
-		t.Fatalf("formal AllocationTemplate sparse width=%d, want exact 2", len(plan.groups))
+	groups := make([]formalFiberGroupDescriptor, 0, len(equation.Operator.effectGroups))
+	for _, group := range equation.Operator.effectGroups {
+		if group.kind != formalFiberGroupValues {
+			groups = append(groups, group)
+		}
+	}
+	if len(groups) != 2 {
+		t.Fatalf("formal AllocationTemplate sparse width=%d, want exact 2", len(groups))
 	}
 	span, _, _, ok := execution.algebra.span(1)
 	if !ok {
 		t.Fatal("formal AllocationTemplate span")
 	}
 	wantWrites := 0
-	for _, group := range plan.groups {
+	for _, group := range groups {
 		wantWrites += len(group.members)
 	}
 	if len(equation.Operator.effectWriteOrdinals) != wantWrites || len(equation.Operator.effectWriteOrdinals) == 0 || len(equation.Operator.effectWriteOrdinals) >= span.count {
@@ -710,8 +730,8 @@ func assertFormalAllocationTemplateDifferential(t *testing.T, program *RelationP
 	if after := execution.values[cell]; reapplied.variable != after.variable || reapplied.root.owner != after.root.owner || reapplied.root.ref != after.root.ref {
 		t.Fatalf("idempotent AllocationTemplate rebuilt its physical root: before=%#v after=%#v", after, reapplied)
 	}
-	written := make(map[state.ProductLane]bool, len(plan.groups))
-	for _, group := range plan.groups {
+	written := make(map[state.ProductLane]bool, len(groups))
+	for _, group := range groups {
 		written[group.lane] = true
 		before, materializeErr := inputRegions[0].evaluator.laneFactor(group)
 		if materializeErr != nil {
