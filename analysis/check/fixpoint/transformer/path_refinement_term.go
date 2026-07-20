@@ -60,13 +60,20 @@ func (p PathRefinementTerm) canonical(arena *Arena) string {
 // escape, or aliasing. Until those families carry an explicit non-interference
 // proof, a preserved-root refinement cannot coexist with them. Allocation-only
 // effects are disjoint and remain admissible.
-func rowPreservesRefinementRoots(arena *EffectArena, row Row) bool {
-	for _, effect := range row.Effects {
+func preservesRefinementRoots(arena *EffectArena, output summary.Summary, steps []rowStep) bool {
+	for _, step := range steps {
+		if step.kind == rowStepCall {
+			return false
+		}
+		if step.kind != rowStepEffect {
+			continue
+		}
+		effect := step.effect
 		if arena == nil || arena.Kind(effect) != EffectAllocationTemplate {
 			return false
 		}
 	}
-	facts := row.Output.NormalReturnFacts
+	facts := output.NormalReturnFacts
 	facts.BranchProofs = nil
 	if !facts.Empty() {
 		return false
@@ -75,7 +82,7 @@ func rowPreservesRefinementRoots(arena *EffectArena, row Row) bool {
 	// not mutate or expose a parameter path. Every other Summary family is
 	// rejected, including return aliases/flows, sink exposure, captured paths,
 	// post-state parameter payloads, heap identity, and typestate.
-	residual := row.Output.Clone()
+	residual := output.Clone()
 	residual.Returns = nil
 	residual.ParamObligations = nil
 	residual.NormalReturnParams = nil

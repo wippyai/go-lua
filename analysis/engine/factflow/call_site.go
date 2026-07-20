@@ -29,6 +29,8 @@ type CallSiteConfig struct {
 	CalleeSymbol       symbol.ID
 	CalleePath         path.Path
 	CalleeMemberAccess bool
+	CalleeSource       ValueSource
+	HasCalleeSource    bool
 
 	ReceiverPath    path.Path
 	HasReceiverPath bool
@@ -103,6 +105,8 @@ type CallSite struct {
 	calleePath         path.Path
 	calleeKey          CalleePathKey
 	calleeMemberAccess bool
+	calleeSource       ValueSource
+	hasCalleeSource    bool
 
 	receiverPath    path.Path
 	hasReceiverPath bool
@@ -154,6 +158,8 @@ func NewCallSite(config CallSiteConfig) CallSite {
 		calleePath:         calleePath,
 		calleeKey:          calleeKey,
 		calleeMemberAccess: config.CalleeMemberAccess,
+		calleeSource:       config.CalleeSource,
+		hasCalleeSource:    config.HasCalleeSource,
 		receiverPath:       config.ReceiverPath.Clone(),
 		hasReceiverPath:    config.HasReceiverPath,
 		methodPath:         config.MethodPath.Clone(),
@@ -207,6 +213,13 @@ func (v CallSiteView) CalleePathEqual(p path.Path) bool { return v.site.calleePa
 // CalleeMemberAccess reports whether this call's callee was written through
 // member-access syntax or resolved to a member path.
 func (v CallSiteView) CalleeMemberAccess() bool { return v.site.calleeMemberAccess }
+
+// CalleeSource returns the canonical value source for a non-method direct
+// call's callee operand. Method calls instead carry ReceiverSource and
+// MethodName as separate evidence.
+func (v CallSiteView) CalleeSource() (ValueSource, bool) {
+	return v.site.calleeSource, v.site.hasCalleeSource
+}
 
 // CalleeMemberAccessPath returns the receiver path and member segment for a
 // member-access callee.

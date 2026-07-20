@@ -1,60 +1,80 @@
 package state
 
 import (
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeevent"
 )
 
 func projectEscapeEventsBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if source.escapeEvents.Snapshot().Bottom {
-		out.escapeEvents = source.escapeEvents
-		return true
+	out.escapeEvents, _ = projectEscapeEventsBoundaryFactor(ctx, source.escapeEvents)
+	return true
+}
+func projectEscapeEventsBoundaryFactor(ctx *boundaryProjectContext, source escapeevent.Lane) (escapeevent.Lane, bool) {
+	if source.Snapshot().Bottom {
+		return source, true
 	}
 	lane := escapeevent.Top()
-	for _, fact := range source.escapeEvents.Snapshot().Facts {
+	for _, fact := range source.Snapshot().Facts {
 		if boundaryContainsStateKey(ctx.keys, ctx.closure, fact.Target) {
 			lane, _ = lane.Add(fact)
 		}
 	}
-	out.escapeEvents = lane
-	return true
+	return lane, true
 }
 func rebaseEscapeEventsBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if source.escapeEvents.Snapshot().Bottom {
-		out.escapeEvents = source.escapeEvents
-		return true
+	var ok bool
+	out.escapeEvents, ok = rebaseEscapeEventsBoundaryFactor(ctx, source.escapeEvents)
+	return ok
+}
+func rebaseEscapeEventsBoundaryFactor(ctx *boundaryRebaseContext, source escapeevent.Lane) (escapeevent.Lane, bool) {
+	snapshot := source.Snapshot()
+	if snapshot.Bottom {
+		return source, true
 	}
-	lane := escapeevent.Top()
-	for _, fact := range source.escapeEvents.Snapshot().Facts {
+	facts := make(map[escapeevent.Fact]struct{}, len(snapshot.Facts))
+	for _, fact := range snapshot.Facts {
+		facts[fact] = struct{}{}
+	}
+	values, ok := rebaseBoundaryMustSet(facts, func(fact escapeevent.Fact) ([]escapeevent.Fact, bool) {
 		targets, ok := rebaseBoundaryStateKeys(ctx, fact.Target)
 		if !ok {
-			return false
+			return nil, false
 		}
-		for _, target := range targets {
-			next := fact
-			next.Target = target
-			lane, _ = lane.Add(next)
+		next := make([]escapeevent.Fact, len(targets))
+		for i, target := range targets {
+			next[i] = fact
+			next[i].Target = target
 		}
-	}
-	out.escapeEvents = lane
-	return true
-}
-func applyEscapeEventsBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if destination.escapeEvents.Snapshot().Bottom || fragment.escapeEvents.Snapshot().Bottom {
-		out.escapeEvents = escapeevent.Bottom()
-		return true
+		return next, true
+	}, func(fact escapeevent.Fact) pathaddr.StateKey {
+		return fact.Target
+	}, func(fact escapeevent.Fact) ([]pathaddr.StateKey, bool) {
+		return ctx.quotient.stateKeyPreimages(fact.Target)
+	})
+	if !ok {
+		return escapeevent.Lane{}, false
 	}
 	lane := escapeevent.Top()
-	for _, fact := range destination.escapeEvents.Snapshot().Facts {
+	for fact := range values {
+		lane, _ = lane.Add(fact)
+	}
+	return lane, true
+}
+func applyEscapeEventsBoundaryLane(ctx *boundaryApplyContext, destination, fragment escapeevent.Lane) (escapeevent.Lane, bool) {
+	if destination.Snapshot().Bottom || fragment.Snapshot().Bottom {
+		return escapeevent.Bottom(), true
+	}
+	lane := escapeevent.Top()
+	for _, fact := range destination.Snapshot().Facts {
 		if !boundaryContainsStateKey(ctx.keys, ctx.closure, fact.Target) {
 			lane, _ = lane.Add(fact)
 		}
 	}
-	for _, fact := range fragment.escapeEvents.Snapshot().Facts {
+	for _, fact := range fragment.Snapshot().Facts {
 		lane, _ = lane.Add(fact)
 	}
-	out.escapeEvents = lane
-	return true
+	return lane, true
 }
 func equalEscapeEventsBoundary(_ *axis.Registry, a, b State) bool {
 	return escapeevent.Domain().Equal(a.escapeEvents, b.escapeEvents)

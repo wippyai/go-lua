@@ -5,14 +5,17 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -27,16 +30,26 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 		Container: pathdom.NewPath(1, "container"),
 		Table:     pathdom.NewPath(2, "table"),
 	}
-	callOutcome := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{PostReturnAuthority: true}
+	callOutcomeEval := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{PostReturnAuthority: true}, nil
 	}
-	callOutcomeFactory := func(CallOutcomeContext) callpayload.CallOutcomeProvider {
+	callOutcome := callpayload.SealCallOutcomeProgram(
+		"config test outcome", []string{"PostReturnAuthority"}, state.LaneSet{}, state.LaneSet{}, nil, nil, callOutcomeEval,
+	)
+	callOutcomeFactory := func(CallOutcomeContext) callpayload.CallOutcomeProgram {
 		return callOutcome
 	}
-	signatureArgumentType := func(transfer.NodeContext, factflow.ValueSource, state.State, func(cfg.Point) state.State) (typ.Type, bool) {
-		return typ.String, true
+	inputProgram, err := effectlowering.SealSignatureOutcomeOperands(state.RegisteredProductDomain(standard.Registry()), keyspace.New())
+	if err != nil {
+		t.Fatal(err)
 	}
-	signatureArgumentTypeFactory := func(CallOutcomeContext) SignatureArgumentTypeFunc {
+	signatureArgumentType, err := effectlowering.SealSignatureArgumentTypeProgram(inputProgram, func(effectlowering.SignatureArgumentTypeContext) (typ.Type, bool) {
+		return typ.String, true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signatureArgumentTypeFactory := func(CallOutcomeContext, effectlowering.SignatureOutcomeInputProgram) effectlowering.SignatureArgumentTypeProgram {
 		return signatureArgumentType
 	}
 	config := Config{
@@ -73,7 +86,7 @@ func TestConfigSolveConfigOwnsPerSolveAxes(t *testing.T) {
 	if solve.TypeValues != typeValues {
 		t.Fatal("SolveConfig did not carry TypeValues")
 	}
-	if solve.CallOutcome == nil || solve.CallOutcomeFactory == nil || solve.SignatureArgumentType == nil || solve.SignatureArgumentTypeFactory == nil {
+	if solve.CallOutcome.Empty() || solve.CallOutcomeFactory == nil || solve.SignatureArgumentType.Empty() || solve.SignatureArgumentTypeFactory == nil {
 		t.Fatal("SolveConfig dropped a provider axis")
 	}
 	if solve.WidenAt == nil || !solve.WidenAt(0) {

@@ -810,10 +810,19 @@ func NumericForDefinitelyNotNumber(t typ.Type) bool {
 	if subtype.IsSubtype(t, typ.Number) {
 		return false
 	}
-	return !numericForMayContainNumber(t, nil)
+	return !numericForMayContainNumber(t, 0, nil)
 }
 
-func numericForMayContainNumber(t typ.Type, active map[typ.Type]struct{}) bool {
+// numericForMayContainNumber is existential over t's type graph, so a
+// repeated node on a genuine cycle contributes no new witness (active memo).
+// A non-cyclic chain of distinct nodes never repeats in active, so depth is
+// the independent termination backstop for that case (typ.DefaultRecursionDepth);
+// exhaustion resolves to true, the may-contain-number dual, so a pathological
+// chain fails closed instead of falsely proving the operand cannot be a number.
+func numericForMayContainNumber(t typ.Type, depth int, active map[typ.Type]struct{}) bool {
+	if depth > typ.DefaultRecursionDepth {
+		return true
+	}
 	if t == nil {
 		return true
 	}
@@ -845,19 +854,19 @@ func numericForMayContainNumber(t typ.Type, active map[typ.Type]struct{}) bool {
 	defer delete(active, t)
 	switch v := t.(type) {
 	case *typ.Alias:
-		return numericForMayContainNumber(v.UnaliasedTarget(), active)
+		return numericForMayContainNumber(v.UnaliasedTarget(), depth+1, active)
 	case *typ.Optional:
-		return numericForMayContainNumber(v.Inner, active)
+		return numericForMayContainNumber(v.Inner, depth+1, active)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if numericForMayContainNumber(member, active) {
+			if numericForMayContainNumber(member, depth+1, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded == nil || expanded == t || numericForMayContainNumber(expanded, active)
+		return expanded == nil || expanded == t || numericForMayContainNumber(expanded, depth+1, active)
 	default:
 		return numericForLeafMayContainNumber(v)
 	}

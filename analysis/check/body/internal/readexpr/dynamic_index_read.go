@@ -1,11 +1,12 @@
 package readexpr
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
@@ -16,41 +17,56 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func staticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (segment.Segment, bool) {
-	t, ok := typeValues.TypeOf(reg, value)
-	if !ok {
-		return segment.Segment{}, false
-	}
-	lit, ok := unwrap.Alias(t).(*typ.Literal)
-	if !ok {
-		return segment.Segment{}, false
-	}
-	switch lit.Base {
-	case kind.String:
-		name, ok := lit.Value.(string)
-		if !ok {
-			return segment.Segment{}, false
-		}
-		return segment.Segment{Kind: segment.SegmentIndexString, Name: name}, true
-	case kind.Integer:
-		index, ok := lit.Value.(int64)
-		if !ok || int64(int(index)) != index {
-			return segment.Segment{}, false
-		}
-		return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(index)}, true
-	default:
-		return segment.Segment{}, false
-	}
-}
-
 func dynamicIndexExpressionKeyValue(config Config, point cfg.Point, source factflow.ValueSource, in state.State) (product.Value, bool) {
 	return dynamicIndexExpressionKeyValueActive(config, point, source, in, nil)
+}
+
+func dynamicIndexProofVisibility(config Config) *visibility.Resolver {
+	if config.ProofVisibility != nil {
+		return config.ProofVisibility
+	}
+	return config.Visibility
+}
+
+func dynamicIndexModuloDividendHasIntegerSource(config Config, point cfg.Point, source factflow.ValueSource, in state.State) bool {
+	value, ok := dynamicIndexExpressionKeyValue(config, point, source, in)
+	return ok && typevalue.HasIntegerType(config.Registry, value)
+}
+
+func dynamicIndexSourcePath(config Config, source factflow.ValueSource) (pathdom.Path, bool) {
+	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
+		return pathdom.Path{}, false
+	}
+	if p, ok := pathaddr.LocalPathFromKey(source.PathKey); ok {
+		return p, true
+	}
+	if sym, version, suffix, ok := pathaddr.ParseResolverPath(source.PathKey); ok {
+		segments, segmentsOK := segment.ParseFormattedSegments(suffix)
+		if !segmentsOK {
+			return pathdom.Path{}, false
+		}
+		return pathdom.Path{Symbol: sym, Version: version, Segments: segments}, true
+	}
+	if stable, ok := pathaddr.StableFromKey(source.PathKey); ok {
+		return stable.Path()
+	}
+	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
+		return pathdom.Path{Symbol: sym, Segments: segments}, true
+	}
+	if config.Visibility != nil && config.Visibility.KeySpace() != nil {
+		key, ok := config.Visibility.KeySpace().FromStateKey(source.PathKey)
+		if ok && key.Sym != 0 {
+			return pathdom.Path{Symbol: key.Sym, Segments: config.Visibility.KeySpace().Segments(key)}, true
+		}
+	}
+	return pathdom.Path{}, false
 }
 
 func dynamicIndexExpressionKeyValueActive(
@@ -166,6 +182,39 @@ func dynamicIndexExpressionValue(config Config, point cfg.Point, dyn factflow.Dy
 	return dynamicIndexExpressionValueActive(config, point, 0, dyn, in, nil)
 }
 
+// staticIntegerIndexValue lowers a statically spelled integer path segment to
+// the same normalized dynamic-read request used by computed indices. Static
+// and dynamic Lua indexing therefore share path, heap, type and range laws;
+// no post-projection nil refiner is needed.
+func staticIntegerIndexValue(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
+	if config.Registry == nil || config.Visibility == nil || len(p.Segments) == 0 {
+		return product.Value{}, false
+	}
+	last := p.Segments[len(p.Segments)-1]
+	if last.Kind != segment.SegmentIndexInt {
+		return product.Value{}, false
+	}
+	parent := p.ParentView()
+	tableValue, ok := project(config, point, parent, in, false)
+	if !ok {
+		return product.Value{}, false
+	}
+	proofInput := in
+	hasProofInput := false
+	if config.ProofState != nil {
+		if proof, proofOK := config.ProofState(point); proofOK {
+			proofInput, hasProofInput = proof, true
+		}
+	}
+	return sourcevalue.ReadBoundDynamicValue(sourcevalue.BoundDynamicRead{
+		Registry: config.Registry, TypeValues: config.TypeValues, KeySpace: config.Visibility.KeySpace(),
+		Visibility: config.Visibility, ProofVisibility: dynamicIndexProofVisibility(config), Point: point,
+		TablePath: parent, TableValue: tableValue, KeyValue: typevalue.LiteralInt(config.Registry, int64(last.Index)),
+		ValueInput: in, ProofInput: proofInput, HasProofInput: hasProofInput,
+		IndexForm: indexform.NewConstantIndex(int64(last.Index)),
+	})
+}
+
 func dynamicIndexExpressionValueActive(
 	config Config,
 	point cfg.Point,
@@ -188,143 +237,79 @@ func dynamicIndexExpressionValueActive(
 		active[expr] = true
 		defer delete(active, expr)
 	}
-	if value, ok := dynamicIndexExpressionProvenMemberValue(config, point, dyn, in); ok {
-		return value, true
-	}
 	tableValue, tableValueOK := Project(config, point, dyn.TablePathRef(), in)
 	if !tableValueOK {
 		if tableSource, ok := dyn.TableSource(); ok {
 			tableValue, tableValueOK = dynamicIndexExpressionKeyValueActive(config, point, tableSource, in, active)
 		}
 	}
-	if tableValueOK {
-		keyValue, keyValueOK := dynamicIndexExpressionKeyValueActive(config, point, dyn.KeySource(), in, active)
-		if keyValueOK {
-			var value product.Value
-			var ok bool
-			if config.Visibility != nil && !dyn.TablePathRef().IsEmpty() {
-				value, ok = sourcevalue.ReadBoundDynamicTableValue(
-					reg,
-					config.TypeValues,
-					config.Visibility.KeySpace(),
-					config.Visibility,
-					point,
-					dyn.TablePathRef(),
-					tableValue,
-					keyValue,
-					in,
-				)
-			} else {
-				value, ok = config.TypeValues.RuntimeIndex(reg, tableValue, keyValue)
-			}
-			if ok {
-				value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
-				if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
-					dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
-					value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
-				}
-				return value, true
-			}
-			if typevalue.HasIntegerType(reg, keyValue) {
-				keyValue := config.TypeValues.FromTypeWithWitness(reg, typ.Integer)
-				if value, ok := config.TypeValues.RuntimeIndex(reg, tableValue, keyValue); ok {
-					value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
-					if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
-						dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
-						value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
-					}
-					return value, true
-				}
-			}
+	if !tableValueOK {
+		if dyn.TablePathRef().IsEmpty() {
+			return product.Value{}, false
 		}
-		if dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
-			keyValue := config.TypeValues.FromTypeWithWitness(reg, typ.Integer)
-			if value, ok := config.TypeValues.RuntimeIndex(reg, tableValue, keyValue); ok {
-				value = sourcevalue.InheritTopOriginEvidence(reg, value, tableValue)
-				value = sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, value, presence.Present()))
-				return value, true
-			}
-		}
+		// A structurally addressed operand may execute without contributing a
+		// scalar-axis payload. Preserve that distinction for the canonical
+		// sparse binder; its path/heap factors remain the semantic authority.
+		tableValue, tableValueOK = product.Bottom(reg), true
 	}
-	return product.Value{}, false
-}
-
-func dynamicIndexExpressionProvenMemberValue(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) (product.Value, bool) {
-	reg := config.Registry
-	if reg == nil || config.Visibility == nil {
-		return product.Value{}, false
+	var keyPath pathdom.Path
+	keySource := dyn.KeySource()
+	if keySource.Kind == factflow.ValueSourceExpression && keySource.HasExpr {
+		keyPath, _ = config.Facts.ExpressionPathRef(keySource.ExprRef)
 	}
-	pathMembershipProof := dynamicIndexKeyMembershipProvesRead(config, point, dyn, in)
-	readKeyValue, hasReadKeyValue := dynamicIndexExpressionKeyValue(config, point, dyn.KeySource(), in)
-	domain := product.Domain(reg)
-	joined := domain.Bottom()
-	found := false
-	aborted := false
-	poll := cancellation.NewPoller(config.Cancel, cancellation.EveryExpensive)
-	forEachDynamicIndexPathStateKey(config, point, dyn.TablePathRef(), func(tableStateKey pathaddr.StateKey) bool {
-		if poll.Poll() {
-			aborted = true
-			return false
+	keyValue, keyValueOK := dynamicIndexExpressionKeyValueActive(config, point, dyn.KeySource(), in, active)
+	if !keyValueOK {
+		if keyPath.IsEmpty() {
+			return product.Value{}, false
 		}
-		tableKey, ok := config.Visibility.KeySpace().InternStateKey(tableStateKey)
+		keyValue = product.Bottom(reg)
+	}
+	keys := keyspace.New()
+	var resolver *visibility.Resolver
+	if config.Visibility != nil {
+		keys, resolver = config.Visibility.KeySpace(), config.Visibility
+	}
+	normalized, normalizedOK := config.Facts.NormalizeDynamicReadIndexForm(dyn, func(source factflow.ValueSource) (int64, bool) {
+		if source.Kind == factflow.ValueSourceLiteral && source.LiteralKind == factflow.ValueSourceLiteralInteger {
+			return source.Int, true
+		}
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			return 0, false
+		}
+		value, ok := config.Facts.ExpressionValue(source.ExprRef)
 		if !ok {
-			return true
+			return 0, false
 		}
-		if in.ForEachDynamicIndexFact(func(key dynamicindex.Key, fact dynamicindex.Fact) bool {
-			if poll.Poll() {
-				aborted = true
-				return false
-			}
-			if key.Table != tableKey || fact.Admission == dynamicindex.AdmissionRejected {
-				return true
-			}
-			if domain.Equal(fact.Value, domain.Bottom()) {
-				return true
-			}
-			if !pathMembershipProof {
-				if !hasReadKeyValue || !dynamicIndexFactHasExactReadKey(config, fact, readKeyValue) || !dynamicIndexFactDefinitelyPresent(reg, fact) {
-					return true
-				}
-			}
-			if !found {
-				joined = fact.Value
-				found = true
-				return true
-			}
-			joined = domain.Join(joined, fact.Value)
-			return true
-		}) {
-			aborted = true
-			return false
-		}
-		return true
+		return typevalue.IntegerLiteralValue(config.Registry, value)
 	})
-	if aborted {
-		return product.Value{}, false
+	form := indexform.IndexForm{}
+	moduloInteger := false
+	proofInput := in
+	hasProofInput := false
+	if config.ProofState != nil {
+		if proof, proofOK := config.ProofState(point); proofOK {
+			proofInput, hasProofInput = proof, true
+		}
 	}
-	if !found {
-		return product.Value{}, false
+	if normalizedOK {
+		form, normalizedOK = normalized.Form()
+		if normalizedOK && form.Kind() == indexform.IndexFormModuloLength {
+			if dividend, dividendOK := normalized.IntegerCertificateSource(); dividendOK {
+				moduloInteger = dynamicIndexModuloDividendHasIntegerSource(config, point, dividend, proofInput)
+			}
+		}
 	}
-	return sourcevalue.WithoutNilRuntimeKind(reg, product.WithPresence(reg, joined, presence.Present())), true
-}
-
-func dynamicIndexFactDefinitelyPresent(reg *axis.Registry, fact dynamicindex.Fact) bool {
-	if reg == nil || product.Equal(reg, fact.Value, product.Bottom(reg)) {
-		return false
-	}
-	if typevalue.HasOnlyNilType(reg, fact.Value) {
-		return false
-	}
-	return presence.Equal(product.PresenceOf(fact.Value), presence.Present())
-}
-
-func dynamicIndexFactHasExactReadKey(config Config, fact dynamicindex.Fact, readKeyValue product.Value) bool {
-	readSeg, ok := staticScalarKeySegment(config.Registry, config.TypeValues, readKeyValue)
+	value, ok := sourcevalue.ReadBoundDynamicValue(sourcevalue.BoundDynamicRead{
+		Registry: reg, TypeValues: config.TypeValues, KeySpace: keys,
+		Visibility: resolver, ProofVisibility: dynamicIndexProofVisibility(config), Point: point,
+		TablePath: dyn.TablePathRef(), KeyPath: keyPath, TableValue: tableValue, KeyValue: keyValue,
+		ValueInput: in, ProofInput: proofInput, HasProofInput: hasProofInput,
+		IndexForm: form, ModuloInteger: moduloInteger,
+	})
 	if !ok {
-		return false
+		return product.Value{}, false
 	}
-	factSeg, ok := staticScalarKeySegment(config.Registry, config.TypeValues, fact.KeyValue)
-	return ok && factSeg == readSeg
+	return value, true
 }
 
 func forEachDynamicIndexPathStateKey(config Config, point cfg.Point, p pathdom.Path, fn func(pathaddr.StateKey) bool) bool {
@@ -399,7 +384,7 @@ func dynamicIndexFactDefinitelyMatchesSegment(reg *axis.Registry, typeValues *ty
 	if !ok {
 		return false
 	}
-	return dynamicIndexKeyDefinitelyMatchesSegment(keyType, seg, 0)
+	return dynamicIndexKeyDefinitelyMatchesSegment(keyType, seg)
 }
 
 func dynamicIndexFactMayMatchSegment(reg *axis.Registry, typeValues *typevalue.Cache, fact dynamicindex.Fact, seg segment.Segment) bool {
@@ -417,36 +402,54 @@ func dynamicIndexFactMayMatchSegment(reg *axis.Registry, typeValues *typevalue.C
 	}
 }
 
-func dynamicIndexKeyDefinitelyMatchesSegment(t typ.Type, seg segment.Segment, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func dynamicIndexKeyDefinitelyMatchesSegment(t typ.Type, seg segment.Segment) bool {
+	if !inspect.LeastBoolFixedPoint(t, dynamicIndexKeyProductivityEquation) {
 		return false
 	}
-	switch tt := unwrap.Alias(t).(type) {
+	return inspect.GreatestBoolFixedPoint(t, func(current typ.Type) inspect.BoolEquation {
+		switch tt := unwrap.Alias(current).(type) {
+		case *typ.Literal:
+			return inspect.Constant(literalDynamicIndexKeyMatchesSegment(tt, seg))
+		case *typ.Optional:
+			return inspect.Constant(false)
+		case *typ.Union:
+			if len(tt.Members) == 0 {
+				return inspect.Constant(false)
+			}
+			return inspect.All(tt.Members...)
+		case *typ.Intersection:
+			if len(tt.Members) == 0 {
+				return inspect.Constant(false)
+			}
+			return inspect.Any(tt.Members...)
+		case *typ.Recursive:
+			return inspect.All(tt.Body)
+		default:
+			return inspect.Constant(false)
+		}
+	})
+}
+
+func dynamicIndexKeyProductivityEquation(current typ.Type) inspect.BoolEquation {
+	switch tt := unwrap.Alias(current).(type) {
 	case nil:
-		return false
-	case *typ.Literal:
-		return literalDynamicIndexKeyMatchesSegment(tt, seg)
-	case *typ.Optional:
-		return false
-	case *typ.Union:
-		if len(tt.Members) == 0 {
-			return false
+		return inspect.Constant(false)
+	case *typ.Union, *typ.Intersection:
+		var members []typ.Type
+		switch value := tt.(type) {
+		case *typ.Union:
+			members = value.Members
+		case *typ.Intersection:
+			members = value.Members
 		}
-		for _, member := range tt.Members {
-			if !dynamicIndexKeyDefinitelyMatchesSegment(member, seg, depth+1) {
-				return false
-			}
+		if len(members) == 0 {
+			return inspect.Constant(false)
 		}
-		return true
-	case *typ.Intersection:
-		for _, member := range tt.Members {
-			if dynamicIndexKeyDefinitelyMatchesSegment(member, seg, depth+1) {
-				return true
-			}
-		}
-		return false
+		return inspect.Any(members...)
+	case *typ.Recursive:
+		return inspect.Any(tt.Body)
 	default:
-		return false
+		return inspect.Constant(true)
 	}
 }
 

@@ -1,235 +1,229 @@
 package sourcevalue
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-// ReadBoundDynamicIndexValue performs the flow-sensitive part of a dynamic
-// table read after its path-root owner and key operands have been resolved.
-// It is a syntax-free read kernel available to concrete and symbolic call
-// boundaries. Missing concrete evidence uses the same sound type-index
-// projection as the concrete reader and never claims membership/presence.
-//
-// tableValue is the owner at tablePath's root when tablePath has suffixes. For
-// a root-only tablePath it is the table itself. Suffix projection uses exact
-// path/heap evidence first and the concrete reader's sound RuntimeIndex type
-// fallback second.
-func ReadBoundDynamicIndexValue(
-	reg *axis.Registry,
-	typeValues *typevalue.Cache,
-	ks *keyspace.KeySpace,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	tablePath pathdom.Path,
-	tableValue product.Value,
-	keyValue product.Value,
-	in state.State,
-) (product.Value, bool) {
-	return readBoundDynamicIndexValue(reg, typeValues, ks, resolver, point, tablePath, tableValue, keyValue, in, true)
+// BoundDynamicRead is the single syntax-free request for concrete dynamic
+// indexing. ValueInput/Visibility own the read value. When HasProofInput is
+// set, ProofInput/ProofVisibility own every range coordinate in the same
+// registered binder transaction. Form is the normalized index algebra from
+// the factflow edge; no syntax is reconstructed from its abstract value.
+type BoundDynamicRead struct {
+	Registry        *axis.Registry
+	TypeValues      *typevalue.Cache
+	KeySpace        *keyspace.KeySpace
+	Visibility      *visibility.Resolver
+	ProofVisibility *visibility.Resolver
+	Point           cfg.Point
+	TablePath       pathdom.Path
+	KeyPath         pathdom.Path
+	TableValue      product.Value
+	KeyValue        product.Value
+	ValueInput      state.State
+	ProofInput      state.State
+	HasProofInput   bool
+	ProjectPath     bool
+	IndexForm       indexform.IndexForm
+	ModuloInteger   bool
 }
 
-// ReadBoundDynamicTableValue performs a dynamic read when tableValue is
-// already the value at tablePath. The path remains authoritative for exact
-// flow evidence, but is never projected from tableValue a second time.
-func ReadBoundDynamicTableValue(
-	reg *axis.Registry,
-	typeValues *typevalue.Cache,
-	ks *keyspace.KeySpace,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	tablePath pathdom.Path,
-	tableValue product.Value,
-	keyValue product.Value,
-	in state.State,
-) (product.Value, bool) {
-	return readBoundDynamicIndexValue(reg, typeValues, ks, resolver, point, tablePath, tableValue, keyValue, in, false)
-}
-
-func readBoundDynamicIndexValue(
-	reg *axis.Registry,
-	typeValues *typevalue.Cache,
-	ks *keyspace.KeySpace,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	tablePath pathdom.Path,
-	tableValue product.Value,
-	keyValue product.Value,
-	in state.State,
-	projectPath bool,
-) (product.Value, bool) {
-	if reg == nil || ks == nil || tablePath.IsEmpty() {
-		return product.Value{}, false
-	}
-	if projectPath && len(tablePath.Segments) != 0 {
-		ownerPath := tablePath
-		ownerPath = tablePath.ParentView()
-		if resolver != nil {
-			if owner, ok := ReadPathValue(reg, resolver, point, ownerPath, in); ok &&
-				product.Equal(reg, product.Meet(reg, owner, tableValue), product.Bottom(reg)) {
-				return product.Value{}, false
-			}
-		}
-		if resolver != nil {
-			if projectedTable, ok := ReadPathValue(reg, resolver, point, tablePath, in); ok {
-				tableValue = projectedTable
-			} else if projectedTable, ok := projectBoundTablePath(reg, typeValues, ks, in, tableValue, tablePath.Segments); ok {
-				tableValue = projectedTable
-			} else {
-				return product.Value{}, false
-			}
-		} else if projectedTable, ok := projectBoundTablePath(reg, typeValues, ks, in, tableValue, tablePath.Segments); ok {
-			tableValue = projectedTable
-		} else {
-			return product.Value{}, false
-		}
-	} else if projectPath && resolver != nil {
-		projectedTable, ok := ReadPathValue(reg, resolver, point, tablePath, in)
-		if !ok || product.Equal(reg, product.Meet(reg, projectedTable, tableValue), product.Bottom(reg)) {
-			return product.Value{}, false
-		}
-		tableValue = projectedTable
-	}
-	seg, hasExactSegment := typevalue.ExactScalarKeySegment(reg, typeValues, keyValue)
-
-	// Prefer the visibility-scoped path fact. It carries branch refinements
-	// which may be newer than the identity-owned heap snapshot.
-	if hasExactSegment && resolver != nil {
-		if value, ok := ReadPathValue(reg, resolver, point, tablePath.Append(seg), in); ok {
-			return value, true
-		}
-	}
-	if hasExactSegment {
-		if value, ok := HeapMemberFromValue(reg, ks, in, tableValue, []segment.Segment{seg}); ok {
-			return value, true
-		}
-	}
-
-	id, ok := product.Get(reg, tableValue, identity.Key).ID()
+// ReadBoundDynamicValue resolves one BoundDynamicRead through the canonical
+// registered factor binder and source-value algebra.
+func ReadBoundDynamicValue(request BoundDynamicRead) (product.Value, bool) {
+	query, evidence, ok := projectBoundDynamicReadEvidence(request)
 	if !ok {
-		return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
-	}
-	object := in.ReadHeapTableObject(reg, id)
-	if object.IsBottom() || object.DynamicIndexFactsTop() {
-		return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
-	}
-	rootID, rootOK := product.Get(reg, object.Root(), identity.Key).ID()
-	if !rootOK || rootID != id || product.Equal(reg, product.Meet(reg, object.Root(), tableValue), product.Bottom(reg)) {
 		return product.Value{}, false
 	}
-
-	valueDomain := product.Domain(reg)
-	joined := product.Bottom(reg)
-	found := false
-	if !hasExactSegment {
-		// A broad key may name any finite static member. Enumerate in canonical
-		// keyspace order and retain nil because it may also name no member.
-		if !object.StableShape() {
-			return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
-		}
-		members := object.StaticMembers()
-		memberKeys := make([]keyspace.Key, 0, len(members))
-		for memberKey := range members {
-			memberKeys = append(memberKeys, memberKey)
-		}
-		sort.Slice(memberKeys, func(i, j int) bool { return ks.Less(memberKeys[i], memberKeys[j]) })
-		for _, memberKey := range memberKeys {
-			segments, ok := ks.SuffixSegmentsView(memberKey)
-			if !ok || len(segments) != 1 {
-				continue
-			}
-			candidateKey, ok := scalarSegmentValue(reg, segments[0])
-			if !ok || valueDomain.Equal(valueDomain.Meet(candidateKey, keyValue), valueDomain.Bottom()) {
-				continue
-			}
-			value := members[memberKey]
-			if valueDomain.Equal(value, valueDomain.Bottom()) {
-				continue
-			}
-			if !found {
-				joined = value
-				found = true
-			} else {
-				joined = valueDomain.Join(joined, value)
-			}
-		}
-	}
-	facts := object.DynamicIndexFacts()
-	keys := make([]dynamicindex.Key, 0, len(facts))
-	for key := range facts {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Table != keys[j].Table {
-			return ks.Less(keys[i].Table, keys[j].Table)
-		}
-		return keys[i].Site < keys[j].Site
-	})
-	for _, factKey := range keys {
-		fact := facts[factKey]
-		if fact.Admission == dynamicindex.AdmissionRejected ||
-			valueDomain.Equal(fact.KeyValue, valueDomain.Bottom()) ||
-			valueDomain.Equal(fact.Value, valueDomain.Bottom()) ||
-			valueDomain.Equal(valueDomain.Meet(fact.KeyValue, keyValue), valueDomain.Bottom()) {
-			continue
-		}
-		if !found {
-			joined = fact.Value
-			found = true
-		} else {
-			joined = valueDomain.Join(joined, fact.Value)
-		}
-	}
-	if found {
-		if !hasExactSegment {
-			joined = valueDomain.Join(joined, typevalue.Nil(reg))
-		}
-		return joined, true
-	}
-	if !hasExactSegment && object.StableShape() {
-		return typevalue.Nil(reg), true
-	}
-	// Absence is only exact for a final-shape object whose finite dynamic fact
-	// map is known complete. A prefix-stable or mutable object cannot prove it.
-	if hasExactSegment && object.StableShape() {
-		return typevalue.Nil(reg), true
-	}
-	return runtimeDynamicIndexValue(reg, typeValues, tableValue, keyValue)
+	return ResolveDynamicRead(query, evidence)
 }
 
-func projectBoundTablePath(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, in state.State, root product.Value, suffix []segment.Segment) (product.Value, bool) {
-	if projected, ok := HeapMemberFromValue(reg, ks, in, root, suffix); ok {
-		return projected, true
+// BoundDynamicReadInRange reports the canonical binder's exact range proof
+// for request. It is an observation of the same evidence transaction consumed
+// by ReadBoundDynamicValue, not a second range solver.
+func BoundDynamicReadInRange(request BoundDynamicRead) (bool, bool) {
+	_, evidence, ok := projectBoundDynamicReadEvidence(request)
+	if !ok {
+		return false, false
 	}
-	value := root
-	for _, seg := range suffix {
-		keyValue, ok := scalarSegmentValue(reg, seg)
+	return evidence.InRangeIndexEvidence(), true
+}
+
+func projectBoundDynamicReadEvidence(request BoundDynamicRead) (state.DynamicReadQuery, state.DynamicReadEvidence, bool) {
+	reg, typeValues, ks := request.Registry, request.TypeValues, request.KeySpace
+	resolver, point := request.Visibility, request.Point
+	tablePath, keyPath := request.TablePath, request.KeyPath
+	tableValue, keyValue, in := request.TableValue, request.KeyValue, request.ValueInput
+	projectPath := request.ProjectPath
+	if reg == nil || ks == nil || projectPath && tablePath.IsEmpty() {
+		return state.DynamicReadQuery{}, state.DynamicReadEvidence{}, false
+	}
+	domain := state.RegisteredProductDomain(reg)
+	pathKey := keyspace.Key{}
+	ownerKey := keyspace.Key{}
+	var tableKeys []pathaddr.StateKey
+	var tableAddress visibility.DynamicReadAddress
+	var hasTableAddress bool
+	if !tablePath.IsEmpty() {
+		tableAddress, hasTableAddress = visibility.FreezeDynamicReadAddress(ks, resolver, point, tablePath)
+		if hasTableAddress {
+			pathKey = tableAddress.Coordinate
+			tableKeys = append([]pathaddr.StateKey(nil), tableAddress.StateKeys...)
+		}
+		if ownerAddress, ok := visibility.FreezeDynamicReadAddress(ks, resolver, point, tablePath.RootOnly()); ok {
+			ownerKey = ownerAddress.Coordinate
+		}
+	}
+	var keyKeys []pathaddr.StateKey
+	var keyAddress visibility.DynamicReadAddress
+	var hasKeyAddress bool
+	if !keyPath.IsEmpty() {
+		keyAddress, hasKeyAddress = visibility.FreezeDynamicReadAddress(ks, resolver, point, keyPath)
+		if hasKeyAddress {
+			keyKeys = append([]pathaddr.StateKey(nil), keyAddress.StateKeys...)
+		}
+	}
+	ownerValue, hasOwnerValue := product.Value{}, false
+	if projectPath {
+		ownerValue = in.ReadValue(reg, statekey.SymbolValue(tablePath.Symbol))
+		hasOwnerValue = !product.Equal(reg, ownerValue, product.Bottom(reg))
+		if !hasOwnerValue && !product.Equal(reg, tableValue, product.Bottom(reg)) {
+			// A ProjectPath request's table operand is, by contract, the
+			// lexical root owner. Carry it when point-local State legitimately
+			// omits the equivalent root storage spelling; Top is a valid abstract
+			// owner and yields a conservative result rather than a closed hole.
+			ownerValue, hasOwnerValue = tableValue, true
+		}
+	}
+	query := state.DynamicReadQuery{
+		KeySpace: ks, TypeValues: typeValues,
+		TableValue: tableValue, KeyValue: keyValue, TablePath: pathKey, OwnerPath: ownerKey,
+		OwnerValue: ownerValue, HasOwnerValue: hasOwnerValue,
+		TableKeys: tableKeys, KeyKeys: keyKeys, ProjectPath: projectPath,
+	}
+	if !projectPath {
+		query.RangeContainer, query.HasRangeContainer = tableValue, true
+	} else if projected, ok := ProjectDynamicTableTypePath(reg, typeValues, tableValue, tablePath.Segments); ok {
+		query.RangeContainer, query.HasRangeContainer = projected, true
+	}
+	proofResolver := request.ProofVisibility
+	if proofResolver == nil {
+		proofResolver = resolver
+	}
+	if request.IndexForm.Valid() && proofResolver != nil {
+		shape, shapeOK := request.IndexForm.Shape()
+		proofTableAddress, tableOK := visibility.FreezeDynamicReadAddress(ks, proofResolver, point, tablePath)
+		if shapeOK && tableOK && proofTableAddress.HasVisible {
+			rangeQuery := state.DynamicReadRangeQuery{
+				Shape: shape, ArrayStateKey: proofTableAddress.Visible, ModuloInteger: request.ModuloInteger,
+			}
+			if affine, affineOK := request.IndexForm.Affine(); affineOK {
+				if affinePath, pathOK := affine.Path(); pathOK {
+					proofKeyAddress, keyOK := visibility.FreezeDynamicReadAddress(ks, proofResolver, point, affinePath)
+					if keyOK && proofKeyAddress.HasRootOrVisible {
+						rangeQuery.IndexStateKey = proofKeyAddress.RootOrVisible
+						if proofKeyAddress.HasVisible {
+							rangeQuery.IndexProofStateKey = proofKeyAddress.Visible
+							rangeQuery.ArrayProofStateKey = proofTableAddress.Visible
+						}
+					}
+				}
+			}
+			if request.IndexForm.Kind() != indexform.IndexFormAffine || rangeQuery.IndexStateKey != "" {
+				query.Range, query.HasRange = rangeQuery, true
+			}
+		}
+	}
+	var evidence state.DynamicReadEvidence
+	var err error
+	if request.HasProofInput {
+		evidence, err = domain.ProjectDynamicReadEvidenceWithProof(query, in, request.ProofInput)
+	} else {
+		evidence, err = domain.ProjectDynamicReadEvidence(query, in)
+	}
+	if err != nil {
+		return state.DynamicReadQuery{}, state.DynamicReadEvidence{}, false
+	}
+	return query, evidence, true
+}
+
+// ProjectDynamicTableTypePath applies the canonical runtime index relation to
+// a statically named suffix. It is used only to obtain a sound container type
+// witness for range proofs; flow-sensitive path/heap values remain owned by
+// the registered binder.
+func ProjectDynamicTableTypePath(reg *axis.Registry, typeValues *typevalue.Cache, owner product.Value, segments []segment.Segment) (product.Value, bool) {
+	current := owner
+	for _, suffix := range segments {
+		keyValue, ok := scalarSegmentValue(reg, suffix)
 		if !ok {
 			return product.Value{}, false
 		}
-		value, ok = runtimeDynamicIndexValue(reg, typeValues, value, keyValue)
+		current, ok = runtimeDynamicIndexValue(reg, typeValues, current, keyValue, true)
 		if !ok {
 			return product.Value{}, false
 		}
 	}
-	return value, true
+	return current, true
 }
 
-func runtimeDynamicIndexValue(reg *axis.Registry, typeValues *typevalue.Cache, tableValue, keyValue product.Value) (product.Value, bool) {
-	value, ok := typeValues.RuntimeIndex(reg, tableValue, keyValue)
-	if !ok {
+func runtimeDynamicIndexValue(reg *axis.Registry, typeValues *typevalue.Cache, tableValue, keyValue product.Value, allowUnconstrained bool) (product.Value, bool) {
+	if reg == nil || product.Equal(reg, tableValue, product.Bottom(reg)) {
 		return product.Value{}, false
+	}
+	var value product.Value
+	var ok bool
+	if typeValues != nil {
+		value, ok = typeValues.RuntimeIndex(reg, tableValue, keyValue)
+	} else {
+		value, ok = typevalue.RuntimeIndex(reg, tableValue, keyValue)
+	}
+	if !ok {
+		// An exact table identity is not completed from type information: its
+		// heap object is the authoritative finite producer. Missing or
+		// incompatible heap state must remain fail-closed even when operand
+		// types alone would prove a nonreturning index.
+		if _, identified := product.Get(reg, tableValue, identity.Key).ID(); identified {
+			return product.Value{}, false
+		}
+		if !allowUnconstrained {
+			return product.Value{}, false
+		}
+		var tableTyped, keyTyped bool
+		if typeValues != nil {
+			_, tableTyped = typeValues.TypeOf(reg, tableValue)
+			_, keyTyped = typeValues.TypeOf(reg, keyValue)
+		} else {
+			_, tableTyped = typevalue.TypeOf(reg, tableValue)
+			_, keyTyped = typevalue.TypeOf(reg, keyValue)
+		}
+		if tableTyped && keyTyped {
+			// Both operands are exact enough for the canonical type index
+			// relation, and that relation has no normal result. Bottom is the
+			// complete normal-flow answer; the operation boundary separately
+			// retains the invalid-index diagnostic.
+			return product.Bottom(reg), true
+		}
+		// Registered product axes are sparse: an omitted type witness and
+		// omitted runtime-kind lane denote Top, not missing semantic authority.
+		// Indexing such an unconstrained Lua value has the exact abstract result
+		// Top. A concrete non-indexable type still fails above as a nonreturning
+		// operation; only the genuinely unconstrained table reaches this case.
+		if tableTyped {
+			return product.Value{}, false
+		}
+		return InheritTopOriginEvidence(reg, product.Top(), tableValue), true
 	}
 	return InheritTopOriginEvidence(reg, value, tableValue), true
 }
@@ -254,4 +248,44 @@ func StaticPathSegmentValue(reg *axis.Registry, seg segment.Segment) (product.Va
 		return product.Value{}, false
 	}
 	return scalarSegmentValue(reg, seg)
+}
+
+// BindStaticPathRead freezes one descendant path read into the same registered
+// factor query used by dynamic indexing. The target's final segment is the key
+// operand; its parent is projected from the lexical root through exact path,
+// heap and dynamic-index evidence. No State is needed to build the query, so
+// concrete and formal carriers cannot diverge in path-resolution semantics.
+func BindStaticPathRead(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	ks *keyspace.KeySpace,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	target pathdom.Path,
+	root product.Value,
+) (state.DynamicReadQuery, bool) {
+	if reg == nil || ks == nil || !ks.Valid() || resolver == nil || target.Symbol == 0 || len(target.Segments) == 0 ||
+		!product.BelongsToRegistry(reg, root) {
+		return state.DynamicReadQuery{}, false
+	}
+	parent := target.ParentView()
+	parentAddress, ok := visibility.FreezeDynamicReadAddress(ks, resolver, point, parent)
+	if !ok || parentAddress.Coordinate.Kind == keyspace.KindInvalid {
+		return state.DynamicReadQuery{}, false
+	}
+	ownerAddress, ok := visibility.FreezeDynamicReadAddress(ks, resolver, point, target.RootOnly())
+	if !ok || ownerAddress.Coordinate.Kind == keyspace.KindInvalid {
+		return state.DynamicReadQuery{}, false
+	}
+	keyValue, ok := StaticPathSegmentValue(reg, target.Segments[len(target.Segments)-1])
+	if !ok {
+		return state.DynamicReadQuery{}, false
+	}
+	return state.DynamicReadQuery{
+		KeySpace: ks, TypeValues: typeValues,
+		TableKeys:  append([]pathaddr.StateKey(nil), parentAddress.StateKeys...),
+		TableValue: root, TablePath: parentAddress.Coordinate,
+		OwnerPath: ownerAddress.Coordinate, OwnerValue: root, HasOwnerValue: true,
+		KeyValue: keyValue, ProjectPath: true,
+	}, true
 }

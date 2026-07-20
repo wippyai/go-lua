@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -129,6 +131,17 @@ func ExactPathValue(
 // HeapMemberFromValue reads a static heap-table member from a table identity
 // value.
 func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, value product.Value, suffix []segment.Segment) (product.Value, bool) {
+	id, ok := identityvalue.ExactID(reg, value)
+	if !ok {
+		return product.Value{}, false
+	}
+	return HeapMemberFromObject(reg, ks, in.ReadHeapTableObject(reg, id), value, suffix)
+}
+
+// HeapMemberFromObject is the carrier-neutral static-member projection law.
+// Concrete State and formal factor readers supply the same registered object;
+// compatibility, aliasing, and presence semantics live only here.
+func HeapMemberFromObject(reg *axis.Registry, ks *keyspace.KeySpace, object heapidentity.TableObject, value product.Value, suffix []segment.Segment) (product.Value, bool) {
 	ownerPresence := product.PresenceOf(value)
 	id, ok := identityvalue.ExactID(reg, value)
 	if !ok {
@@ -138,13 +151,12 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 	if !ok {
 		return product.Value{}, false
 	}
-	object := in.ReadHeapTableObject(reg, id)
 	root := object.Root()
 	rootID, ok := identityvalue.ExactID(reg, root)
 	if !ok || rootID != id {
 		return product.Value{}, false
 	}
-	if product.Equal(reg, product.Meet(reg, root, value), product.Bottom(reg)) {
+	if !heapRootValueCompatible(reg, root, value) {
 		return product.Value{}, false
 	}
 	member, ok := readStaticMemberWithFieldCanonicalAlias(ks, object, key, suffix)
@@ -155,6 +167,25 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 		member = product.WithPresence(reg, member, presence.Join(product.PresenceOf(member), ownerPresence))
 	}
 	return member, true
+}
+
+// heapRootValueCompatible compares the object-invariant part of two exact
+// identity views. Type witness and variant origin are presentation
+// coordinates: generic specialization can lawfully give one object different
+// declared type/origin families at two call boundaries. Keep both views
+// intact, while still rejecting contradictions in runtime kind, presence, and
+// every other object-invariant axis.
+func heapRootValueCompatible(reg *axis.Registry, root, value product.Value) bool {
+	rootID, rootExact := identityvalue.ExactID(reg, root)
+	valueID, valueExact := identityvalue.ExactID(reg, value)
+	if !rootExact || !valueExact || rootID != valueID {
+		return false
+	}
+	root = product.Set(reg, root, typewitness.Key, typewitness.Top())
+	root = product.Set(reg, root, variantorigin.Key, variantorigin.Top())
+	value = product.Set(reg, value, typewitness.Key, typewitness.Top())
+	value = product.Set(reg, value, variantorigin.Key, variantorigin.Top())
+	return !product.Equal(reg, product.Meet(reg, root, value), product.Bottom(reg))
 }
 
 func readLocalPathKeyWithFieldCanonicalAlias(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, pathKey keyspace.Key) (product.Value, bool) {

@@ -1,7 +1,6 @@
 package effectlowering
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -9,10 +8,10 @@ import (
 )
 
 // SignatureProducer is an immutable prepared view over canonical signature and
-// effect lowering. OutcomeProvider and iterator projection share the same name
-// resolution and signature lookup; neither re-encodes stdlib names or effects.
+// effect lowering. It resolves one signature descriptor; operation-plan
+// consumers derive every result/effect protocol from that sealed descriptor.
 type SignatureProducer struct {
-	outcome          callpayload.CallOutcomeProvider
+	outcome          callpayload.CallOutcomeProgram
 	lookup           func(string) (signature.Function, bool)
 	nameFor          SignatureNameFunc
 	nameForSite      SignatureSiteNameFunc
@@ -45,9 +44,9 @@ func (p *SignatureProducer) IntrinsicForSite(ctx transfer.NodeContext, site fact
 	return intrinsic, ok && intrinsic.Valid()
 }
 
-func (p *SignatureProducer) OutcomeProvider() callpayload.CallOutcomeProvider {
+func (p *SignatureProducer) OutcomeProvider() callpayload.CallOutcomeProgram {
 	if p == nil {
-		return nil
+		return callpayload.CallOutcomeProgram{}
 	}
 	return p.outcome
 }
@@ -82,12 +81,4 @@ func (p *SignatureProducer) LookupStringMethodSignature(method string) (signatur
 		return signature.Function{}, false
 	}
 	return got.Clone(), true
-}
-
-func (p *SignatureProducer) IteratorForSite(ctx transfer.NodeContext, site factflow.CallSiteView) (iteration.Iterator, bool) {
-	sig, ok := p.SignatureForSite(ctx, site)
-	if !ok {
-		return iteration.Iterator{}, false
-	}
-	return iteration.ActiveIterator(sig.Effect.Labels)
 }

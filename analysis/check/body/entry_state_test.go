@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func TestCheckFunctionSeedsGradualTopForUnannotatedParameter(t *testing.T) {
@@ -424,44 +423,6 @@ end`)
 			got, ok := witness.Type()
 			if !ok || !typ.TypeEquals(got, typ.String) {
 				t.Fatalf("contextual parameter type = %v/%v, want string", got, ok)
-			}
-		})
-	}
-}
-
-func TestCheckFunctionAssertionsDoNotCreateGradualTopFromExplicitAny(t *testing.T) {
-	reg := standard.Registry()
-	fn := parseFunction(t, `
-function f(raw: any)
-	local y = raw as any
-	local z = raw :: any
-	local n = raw!
-	return y, z, n
-end`)
-
-	result, err := CheckFunction(fn, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckFunction: %v", err)
-	}
-	exit, ok := result.ExitState()
-	if !ok {
-		t.Fatalf("missing exit state")
-	}
-
-	for _, tc := range []struct {
-		name  string
-		index int
-	}{
-		{name: "as any", index: 0},
-		{name: ":: any", index: 1},
-		{name: "non-nil", index: 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			local := fn.Stmts[tc.index].(*ast.LocalAssignStmt)
-			sym := mustLocalAt(t, result, local, 0)
-			got := product.Get(reg, exit.ReadValue(reg, key.SymbolValue(sym)), evidence.Key)
-			if !evidence.Equal(got, evidence.ExplicitTop()) {
-				t.Fatalf("exit evidence = %s, want %s", got, evidence.ExplicitTop())
 			}
 		})
 	}

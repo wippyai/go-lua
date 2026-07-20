@@ -290,10 +290,53 @@ func TestRegistryViewsPreserveOrderAndLength(t *testing.T) {
 	if got, want := reducers.Len(), 2; got != want {
 		t.Fatalf("ReducersView.Len() = %d, want %d", got, want)
 	}
+	if got, want := reducers.OwnerAt(0), first.ID(); got != want {
+		t.Fatalf("ReducersView.OwnerAt(0) = %q, want %q", got, want)
+	}
+	if got, want := fmt.Sprint(reducers.ReadsAt(0)), fmt.Sprint([]string{first.ID()}); got != want {
+		t.Fatalf("ReducersView.ReadsAt(0) = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(reducers.WritesAt(0)), fmt.Sprint([]string{first.ID()}); got != want {
+		t.Fatalf("ReducersView.WritesAt(0) = %s, want %s", got, want)
+	}
 	reducers.At(0)(nil)
 	reducers.At(1)(nil)
 	if got, want := fmt.Sprint(calls), "[first second]"; got != want {
 		t.Fatalf("ReducersView order calls = %s, want %s", got, want)
+	}
+}
+
+func TestAxisSpecRejectsMalformedReducerDeclarations(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*axis.Spec[int])
+	}{
+		{"reads-without-reducer", func(spec *axis.Spec[int]) {
+			spec.ReducerReads = []string{"other"}
+		}},
+		{"writes-without-reducer", func(spec *axis.Spec[int]) {
+			spec.ReducerWrites = []string{"other"}
+		}},
+		{"empty-read", func(spec *axis.Spec[int]) {
+			spec.Reducer = func(axis.Writer) bool { return false }
+			spec.ReducerReads = []string{""}
+		}},
+		{"empty-write", func(spec *axis.Spec[int]) {
+			spec.Reducer = func(axis.Writer) bool { return false }
+			spec.ReducerWrites = []string{""}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := registryTestSpec("test.reducer-declaration."+test.name, nil)
+			test.edit(&spec)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("malformed reducer declaration did not fail closed")
+				}
+			}()
+			_ = spec.Erase()
+		})
 	}
 }
 

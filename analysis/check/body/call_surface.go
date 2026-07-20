@@ -16,7 +16,7 @@ import (
 // classifies their stable lexical targets. Facts are consulted only to bind an
 // enumerated call to its semantic site; a missing fact remains an explicit
 // rejected site rather than disappearing from the census.
-func sealPreparedCallSurface(bindings *bind.Result, lowered *wir.Body, facts factflow.Facts, signatureCalls map[cfg.Point]operationplan.SignatureCallOperation, owner lexicalidentity.StableLexicalBodyID, namespace lexicalidentity.UnitNamespace, pointCount int) operationplan.CallSurface {
+func sealPreparedCallSurface(bindings *bind.Result, lowered *wir.Body, facts factflow.Facts, signatureCalls map[cfg.Point]operationplan.SignatureCallOperation, moduleLoads map[cfg.Point]operationplan.ModuleLoadOperation, owner lexicalidentity.StableLexicalBodyID, namespace lexicalidentity.UnitNamespace, pointCount int) operationplan.CallSurface {
 	if bindings == nil || lowered == nil || owner == (lexicalidentity.StableLexicalBodyID{}) || namespace == (lexicalidentity.UnitNamespace{}) {
 		return operationplan.CallSurface{}
 	}
@@ -27,8 +27,20 @@ func sealPreparedCallSurface(bindings *bind.Result, lowered *wir.Body, facts fac
 		target := preparedGuardedCallResidue(lowered, instruction)
 		if lexical, exact := exactPreparedLexicalCallTarget(bindings, namespace, lowered, instruction, facts); exact {
 			target, _ = operationplan.NewLexicalCallSurfaceTarget(lexical)
-		} else if external, exact := signatureCalls[instruction.Point]; exact && exactPreparedExternalCallShape(lowered, instruction, facts) {
-			if sealed, ok := operationplan.NewExternalCallSurfaceTarget(external); ok {
+		} else if exactPreparedExternalCallShape(lowered, instruction, facts) {
+			signatureOperation, hasSignature := signatureCalls[instruction.Point]
+			moduleOperation, hasModule := moduleLoads[instruction.Point]
+			var sealed operationplan.CallSurfaceTarget
+			var ok bool
+			switch {
+			case hasSignature && hasModule:
+				sealed, ok = operationplan.NewCompositeExternalCallSurfaceTarget(signatureOperation, moduleOperation)
+			case hasSignature:
+				sealed, ok = operationplan.NewExternalCallSurfaceTarget(signatureOperation)
+			case hasModule:
+				sealed, ok = operationplan.NewModuleLoadCallSurfaceTarget(moduleOperation)
+			}
+			if ok {
 				target = sealed
 			}
 		}

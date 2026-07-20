@@ -16,7 +16,7 @@ func (k Key) isLocal() bool {
 // Unversioned resolver symbols and rootless suffixes are not structural keys.
 func (k Key) isStable() bool {
 	switch k.Kind {
-	case KindStableSym, KindNamed, KindPlaceholder, KindRetSlot, kindBoundaryExistential:
+	case KindStableSym, KindNamed, KindPlaceholder, KindRetSlot, kindFormalRoot, kindBoundaryExistential:
 		return true
 	default:
 		return false
@@ -26,6 +26,29 @@ func (k Key) isStable() bool {
 // isStructural reports whether a key is comparable in either address space.
 func (k Key) isStructural() bool {
 	return k.isLocal() || k.isStable()
+}
+
+// HasPathPrefix compares keys in the path-evidence namespace. Unlike
+// HasPrefix, whose contract is intentionally limited to resolver/stable
+// address keys, this law also admits unversioned lexical paths: those are the
+// canonical keys stored by local path evidence and must participate in
+// subtree/descendant invalidation. Root identity remains exact and static
+// field/index-string segments retain their Lua equivalence.
+func (ks *KeySpace) HasPathPrefix(candidate, prefix Key) bool {
+	if ks == nil || !ks.validKey(candidate) || !ks.validKey(prefix) || candidate.Kind != prefix.Kind ||
+		candidate.Sym != prefix.Sym || candidate.Ver != prefix.Ver || candidate.Root != prefix.Root || candidate.Canon != prefix.Canon {
+		return false
+	}
+	candidateSegments, prefixSegments := ks.segments(candidate.Segs), ks.segments(prefix.Segs)
+	if len(prefixSegments) > len(candidateSegments) {
+		return false
+	}
+	for index := range prefixSegments {
+		if !segmentsEquivalent(candidateSegments[index], prefixSegments[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 // isStableNamed reports whether a key is a stable named root whose canonical
@@ -48,7 +71,7 @@ func (a Key) sameStableRoot(b Key) bool {
 	switch a.Kind {
 	case KindStableSym:
 		return a.Sym == b.Sym
-	case KindNamed, KindPlaceholder, KindRetSlot, kindBoundaryExistential:
+	case KindNamed, KindPlaceholder, KindRetSlot, kindFormalRoot, kindBoundaryExistential:
 		return a.Root == b.Root
 	default:
 		return false
@@ -74,6 +97,20 @@ func (ks *KeySpace) HasPrefix(k, prefix Key) bool {
 func (ks *KeySpace) HasStrictPrefix(k, prefix Key) bool {
 	remainder, ok := ks.remainderAfterPrefix(k, prefix)
 	return ok && len(remainder) > 0
+}
+
+// StructuralRoot returns k with its complete suffix removed through the same
+// sealed mint boundary as every other derived Key. Rootless suffix keys have no
+// structural root and fail closed.
+func (ks *KeySpace) StructuralRoot(k Key) (Key, bool) {
+	if ks == nil || !ks.validKey(k) || k.Kind == KindRootlessSuffix {
+		return Key{}, false
+	}
+	if k.Segs == 0 {
+		return k, true
+	}
+	k.Segs = 0
+	return ks.bindKey(k), true
 }
 
 // ExactRemainderAfterPrefix returns the suffix segments of k below prefix using
@@ -199,7 +236,7 @@ func (ks *KeySpace) appendSegments(k Key, suffix []segment.Segment) (Key, bool) 
 	copy(next[len(base):], suffix)
 	out := k
 	out.Segs = ks.internSegments(next)
-	return out, true
+	return ks.bindKey(out), true
 }
 
 // AppendSegment returns the key reached by appending one segment, preserving
@@ -227,7 +264,7 @@ func (ks *KeySpace) AppendSegment(k Key, seg segment.Segment) (Key, bool) {
 	}
 	out := k
 	out.Segs = next
-	return out, true
+	return ks.bindKey(out), true
 }
 
 // Rebase rewrites k from structural prefix from to prefix to, in the same
@@ -251,8 +288,29 @@ func (ks *KeySpace) Rebase(k, from, to Key) (Key, bool) {
 		return Key{}, false
 	}
 	rebased.Canon = rebased.isStableNamed()
+	rebased = ks.bindKey(rebased)
 	out := ks.Format(rebased)
 	if out == "" || out == ks.Format(k) {
+		return Key{}, false
+	}
+	return rebased, true
+}
+
+// RebaseToExistential preserves k's exact suffix while substituting a local
+// or stable structural root with a boundary existential root. Ordinary Rebase
+// keeps local and stable address spaces disjoint; boundary transport is the
+// sole authority allowed to cross that seam.
+func (ks *KeySpace) RebaseToExistential(k, from, to Key) (Key, bool) {
+	if ks == nil || !ks.validKey(k) || !ks.validKey(from) || !ks.validKey(to) ||
+		!k.isStructural() || !from.isStructural() || to.Kind != kindBoundaryExistential {
+		return Key{}, false
+	}
+	remainder, ok := ks.remainderAfterPrefix(k, from)
+	if !ok {
+		return Key{}, false
+	}
+	rebased, ok := ks.appendSegments(to, remainder)
+	if !ok || rebased.Kind == KindInvalid || ks.Format(rebased) == "" || ks.Format(rebased) == ks.Format(k) {
 		return Key{}, false
 	}
 	return rebased, true
@@ -273,6 +331,7 @@ func (ks *KeySpace) FieldCanonical(k Key) (Key, bool) {
 	out := k
 	out.Segs = ks.internSegments(segments)
 	out.Canon = out.isStableNamed()
+	out = ks.bindKey(out)
 	formatted := ks.Format(out)
 	if formatted == "" || formatted == ks.Format(k) {
 		return Key{}, false

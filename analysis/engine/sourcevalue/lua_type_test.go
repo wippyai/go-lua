@@ -12,6 +12,9 @@ import (
 
 func TestLuaTypeNameValueRuntimeKindMatrix(t *testing.T) {
 	reg := standard.Registry()
+	if got, ok := LuaTypeNameValue(reg, typevalue.NewCache(), product.Bottom(reg)); !ok || !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("LuaTypeNameValue(Bottom) = %#v/%v, want exact Bottom", got, ok)
+	}
 	for _, tag := range []runtimekind.Tag{
 		runtimekind.Nil, runtimekind.Boolean, runtimekind.Number, runtimekind.String,
 		runtimekind.Table, runtimekind.Function, runtimekind.Thread, runtimekind.Userdata,

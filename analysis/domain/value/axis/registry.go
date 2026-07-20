@@ -10,7 +10,9 @@ type Registry struct {
 	canonicalCoreOrder       []ErasedSpec
 	canonicalInventorySealed bool
 	reducers                 []Reducer
+	reducerOwners            []string
 	reducerReads             [][]string
+	reducerWrites            [][]string
 	extensions               map[string]map[string]Extension
 	extensionSeq             map[string][]Extension
 	frozen                   bool
@@ -32,7 +34,9 @@ func (v SpecsView) At(i int) ErasedSpec {
 // ReducersView is a read-only, allocation-free view of a registry's reducers.
 type ReducersView struct {
 	reducers []Reducer
+	owners   []string
 	reads    [][]string
+	writes   [][]string
 }
 
 func (v ReducersView) Len() int {
@@ -43,9 +47,19 @@ func (v ReducersView) At(i int) Reducer {
 	return v.reducers[i]
 }
 
+// OwnerAt returns the axis id whose spec registered the i-th reducer.
+func (v ReducersView) OwnerAt(i int) string {
+	return v.owners[i]
+}
+
 // ReadsAt returns the axis ids the i-th reducer depends on.
 func (v ReducersView) ReadsAt(i int) []string {
 	return v.reads[i]
+}
+
+// WritesAt returns the axis ids the i-th reducer may restrict.
+func (v ReducersView) WritesAt(i int) []string {
+	return v.writes[i]
 }
 
 // Extension is an immutable descriptor registered alongside value-product axes.
@@ -137,7 +151,9 @@ func (r *Registry) RegisterErased(spec ErasedSpec) error {
 	r.order = append(r.order, spec)
 	if reducer := spec.ReducerHook(); reducer != nil {
 		r.reducers = append(r.reducers, reducer)
-		r.reducerReads = append(r.reducerReads, spec.ReducerReadsHook())
+		r.reducerOwners = append(r.reducerOwners, id)
+		r.reducerReads = append(r.reducerReads, reducerAxes(spec.ReducerReadsHook(), id))
+		r.reducerWrites = append(r.reducerWrites, reducerAxes(spec.ReducerWritesHook(), id))
 	}
 	return nil
 }
@@ -293,5 +309,19 @@ func (r *Registry) ReducersView() ReducersView {
 	if r == nil {
 		return ReducersView{}
 	}
-	return ReducersView{reducers: r.reducers, reads: r.reducerReads}
+	return ReducersView{
+		reducers: r.reducers,
+		owners:   r.reducerOwners,
+		reads:    r.reducerReads,
+		writes:   r.reducerWrites,
+	}
+}
+
+func reducerAxes(configured []string, owner string) []string {
+	if configured == nil {
+		return []string{owner}
+	}
+	result := make([]string, len(configured))
+	copy(result, configured)
+	return result
 }

@@ -1,6 +1,7 @@
 package pathevidence
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -47,71 +48,137 @@ func (l Lane) ProjectBoundary(touches func(keyspace.Key) bool, projectValue func
 }
 
 // RebaseBoundary atomically maps every retained path and product identity.
-func (l Lane) RebaseBoundary(mapPath func(keyspace.Key) ([]keyspace.Key, bool), mapValue func(product.Value) (product.Value, bool), joinValue func(product.Value, product.Value) product.Value) (Lane, bool) {
+func (l Lane) RebaseBoundary(
+	mapPath func(keyspace.Key) ([]keyspace.Key, bool),
+	pathPreimages func(keyspace.Key) ([]keyspace.Key, bool),
+	mapValue func(product.Value) (product.Value, bool),
+	joinValue func(product.Value, product.Value) product.Value,
+) (Lane, bool) {
 	out := Lane{
 		refinementsBottom: l.refinementsBottom, staticMembersBottom: l.staticMembersBottom,
 		proofsBottom: l.proofsBottom, pathPresenceImplicationsBottom: l.pathPresenceImplicationsBottom,
 	}
 	var ok bool
-	if out.refinements, ok = mapValueMap(l.refinements, mapPath, mapValue, joinValue); !ok {
+	if out.refinements, ok = mapValueMap(l.refinements, mapPath, pathPreimages, mapValue, joinValue); !ok {
 		return Lane{}, false
 	}
-	if out.staticMembers, ok = mapValueMap(l.staticMembers, mapPath, mapValue, joinValue); !ok {
+	if out.staticMembers, ok = mapValueMap(l.staticMembers, mapPath, pathPreimages, mapValue, joinValue); !ok {
 		return Lane{}, false
 	}
-	for proof := range l.proofs {
+	proofs, ok := lift.QuotientMustSet(l.proofs, func(proof BranchProof) ([]BranchProof, bool) {
 		paths, valid := mapOptionalPaths(proof.Path, mapPath)
 		if !valid {
-			return Lane{}, false
+			return nil, false
 		}
 		others, valid := mapOptionalPaths(proof.Other, mapPath)
 		if !valid {
-			return Lane{}, false
+			return nil, false
 		}
-		if out.proofs == nil {
-			out.proofs = make(map[BranchProof]struct{}, len(l.proofs))
-		}
+		mapped := make([]BranchProof, 0, len(paths)*len(others))
 		for _, path := range paths {
 			for _, other := range others {
 				next := proof
 				next.Path, next.Other = path, other
-				out.proofs[next] = struct{}{}
-				out.equalityRootMask.merge(equalityProofRootMask(next))
+				mapped = append(mapped, next)
 			}
 		}
+		return mapped, true
+	}, func(proof BranchProof) BranchProof { return proof }, func(proof BranchProof) ([]BranchProof, bool) {
+		paths, valid := mapOptionalPaths(proof.Path, pathPreimages)
+		if !valid {
+			return nil, false
+		}
+		others, valid := mapOptionalPaths(proof.Other, pathPreimages)
+		if !valid {
+			return nil, false
+		}
+		preimages := make([]BranchProof, 0, len(paths)*len(others))
+		for _, path := range paths {
+			for _, other := range others {
+				next := proof
+				next.Path, next.Other = path, other
+				preimages = append(preimages, next)
+			}
+		}
+		return preimages, true
+	})
+	if !ok {
+		return Lane{}, false
 	}
-	for value := range l.pathPresenceImplications {
+	out.proofs = proofs
+	for proof := range proofs {
+		out.equalityRootMask.merge(equalityProofRootMask(proof))
+	}
+	type implicationFiber struct {
+		trigger      keyspace.Key
+		triggerOther keyspace.Key
+		target       keyspace.Key
+	}
+	implications, ok := lift.QuotientMustSet(l.pathPresenceImplications, func(value PathPresenceImplication) ([]PathPresenceImplication, bool) {
 		triggers, valid := mapOptionalPaths(value.Trigger, mapPath)
 		if !valid {
-			return Lane{}, false
+			return nil, false
 		}
 		triggerOthers, valid := mapOptionalPaths(value.TriggerOther, mapPath)
 		if !valid {
-			return Lane{}, false
+			return nil, false
 		}
 		targets, valid := mapOptionalPaths(value.Target, mapPath)
 		if !valid {
-			return Lane{}, false
+			return nil, false
 		}
 		if value.TriggerValue, ok = mapValue(value.TriggerValue); !ok {
-			return Lane{}, false
+			return nil, false
 		}
 		if value.TargetValue, ok = mapValue(value.TargetValue); !ok {
-			return Lane{}, false
+			return nil, false
 		}
-		if out.pathPresenceImplications == nil {
-			out.pathPresenceImplications = make(map[PathPresenceImplication]struct{}, len(l.pathPresenceImplications))
-		}
+		mapped := make([]PathPresenceImplication, 0, len(triggers)*len(triggerOthers)*len(targets))
 		for _, trigger := range triggers {
 			for _, other := range triggerOthers {
 				for _, target := range targets {
 					next := value
 					next.Trigger, next.TriggerOther, next.Target = trigger, other, target
-					out.pathPresenceImplications[next] = struct{}{}
+					if validPathPresenceImplication(next) {
+						mapped = append(mapped, next)
+					}
 				}
 			}
 		}
+		return mapped, true
+	}, func(value PathPresenceImplication) implicationFiber {
+		return implicationFiber{trigger: value.Trigger, triggerOther: value.TriggerOther, target: value.Target}
+	}, func(value PathPresenceImplication) ([]implicationFiber, bool) {
+		triggers, valid := mapOptionalPaths(value.Trigger, pathPreimages)
+		if !valid {
+			return nil, false
+		}
+		triggerOthers, valid := mapOptionalPaths(value.TriggerOther, pathPreimages)
+		if !valid {
+			return nil, false
+		}
+		targets, valid := mapOptionalPaths(value.Target, pathPreimages)
+		if !valid {
+			return nil, false
+		}
+		preimages := make([]implicationFiber, 0, len(triggers)*len(triggerOthers)*len(targets))
+		for _, trigger := range triggers {
+			for _, other := range triggerOthers {
+				for _, target := range targets {
+					next := value
+					next.Trigger, next.TriggerOther, next.Target = trigger, other, target
+					if validPathPresenceImplication(next) {
+						preimages = append(preimages, implicationFiber{trigger: trigger, triggerOther: other, target: target})
+					}
+				}
+			}
+		}
+		return preimages, true
+	})
+	if !ok {
+		return Lane{}, false
 	}
+	out.pathPresenceImplications = implications
 	return out, true
 }
 
@@ -142,29 +209,14 @@ func filterValueMap(in map[keyspace.Key]product.Value, keep func(keyspace.Key) b
 	return out
 }
 
-func mapValueMap(in map[keyspace.Key]product.Value, mapPath func(keyspace.Key) ([]keyspace.Key, bool), mapValue func(product.Value) (product.Value, bool), joinValue func(product.Value, product.Value) product.Value) (map[keyspace.Key]product.Value, bool) {
-	var out map[keyspace.Key]product.Value
-	for key, value := range in {
-		nextKeys, ok := mapPath(key)
-		if !ok {
-			return nil, false
-		}
-		nextValue, ok := mapValue(value)
-		if !ok {
-			return nil, false
-		}
-		if out == nil {
-			out = make(map[keyspace.Key]product.Value)
-		}
-		for _, nextKey := range nextKeys {
-			candidate := nextValue
-			if existing, exists := out[nextKey]; exists {
-				candidate = joinValue(existing, candidate)
-			}
-			out[nextKey] = candidate
-		}
-	}
-	return out, true
+func mapValueMap(
+	in map[keyspace.Key]product.Value,
+	mapPath func(keyspace.Key) ([]keyspace.Key, bool),
+	pathPreimages func(keyspace.Key) ([]keyspace.Key, bool),
+	mapValue func(product.Value) (product.Value, bool),
+	joinValue func(product.Value, product.Value) product.Value,
+) (map[keyspace.Key]product.Value, bool) {
+	return lift.QuotientMustMap(in, mapPath, mapValue, func(path keyspace.Key) keyspace.Key { return path }, pathPreimages, joinValue)
 }
 func mapOptionalPaths(path keyspace.Key, mapPath func(keyspace.Key) ([]keyspace.Key, bool)) ([]keyspace.Key, bool) {
 	if path.Kind == keyspace.KindInvalid {

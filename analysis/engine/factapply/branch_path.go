@@ -13,12 +13,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/internal/typegraph"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/engine/typenarrow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -59,163 +56,6 @@ func (v pathValue) write(reg *axis.Registry, out state.State, value product.Valu
 	default:
 		return out, false
 	}
-}
-
-func applyBranchPathRelation(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	relation factflow.BranchPathRelation,
-) state.State {
-	return applyConcreteBranchPathRelation(typeValues, ctx, resolver, projectPath, out, relation.Kind(), relation.LeftPath(), relation.RightPath())
-}
-
-func applyConcreteBranchPathRelation(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	kind factflow.BranchPathRelationKind,
-	leftPath pathdom.Path,
-	rightPath pathdom.Path,
-) state.State {
-	switch kind {
-	case factflow.BranchPathRelationEqual:
-		return applyBranchPathEquality(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath)
-	case factflow.BranchPathRelationNotEqual:
-		return applyBranchPathInequality(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath)
-	case factflow.BranchPathRelationTypeMatch:
-		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath, true)
-	case factflow.BranchPathRelationTypeUnmatch:
-		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, leftPath, rightPath, false)
-	default:
-		return out
-	}
-}
-
-// applyBranchTypeComparison narrows subjectPath by the runtime type named by
-// namePath's value, resolved at the branch point. When namePath resolves to a
-// single string-literal type its value names the runtime kind to match (or
-// exclude). A non-literal type name (general string, a union of names, or an
-// unresolved value) leaves the subject unchanged, preserving soundness.
-func applyBranchTypeComparison(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	subjectPath pathdom.Path,
-	namePath pathdom.Path,
-	match bool,
-) state.State {
-	resolved, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Edge.From, out, namePath, projectPath)
-	if !ok {
-		return out
-	}
-	nameType, ok := typevalue.TypeOf(ctx.Registry, resolved.value)
-	if !ok {
-		return out
-	}
-	tag, ok := typenarrow.RuntimeKindTagForType(nameType)
-	if !ok {
-		return out
-	}
-	refinement := typenarrow.UnmatchRefinement(ctx.Registry, tag)
-	if match {
-		refinement = typenarrow.MatchRefinement(ctx.Registry, tag)
-	}
-	return applyBranchRefinementCached(typeValues, ctx, resolver, projectPath, out, subjectPath, refinement)
-}
-
-func applyBranchPathEquality(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	leftPath pathdom.Path,
-	rightPath pathdom.Path,
-) state.State {
-	if selected, ok := applyChannelSelectCaseEquality(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
-		return selected
-	}
-	return applyPathEqualityAtCached(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath)
-}
-
-func applyPathEqualityAt(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	leftPath pathdom.Path,
-	rightPath pathdom.Path,
-) state.State {
-	return applyPathEqualityAtCached(nil, reg, resolver, projectPath, point, out, leftPath, rightPath)
-}
-
-func applyPathEqualityAtCached(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	leftPath pathdom.Path,
-	rightPath pathdom.Path,
-) state.State {
-	if leftKey, leftOK := factKeyspaceKeyAt(resolver, point, leftPath); leftOK {
-		if rightKey, rightOK := factKeyspaceKeyAt(resolver, point, rightPath); rightOK {
-			out = closeBranchProofsAcrossEquality(resolver.KeySpace(), out, leftKey, rightKey)
-		}
-	}
-	out = applyPathOriginRelation(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath, true)
-	if stateIsBottom(reg, out) {
-		return out
-	}
-	out = applyPathOriginRelation(typeValues, reg, resolver, projectPath, point, out, rightPath, leftPath, true)
-	if stateIsBottom(reg, out) {
-		return out
-	}
-	left, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, leftPath, projectPath)
-	if !ok {
-		return out
-	}
-	right, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, rightPath, projectPath)
-	if !ok {
-		return out
-	}
-	meet := product.Meet(reg, left.value, right.value)
-	if product.Equal(reg, meet, product.Bottom(reg)) {
-		return unreachableState(reg)
-	}
-	if written, ok := left.write(reg, out, meet); ok {
-		out = written
-	}
-	if written, ok := right.write(reg, out, meet); ok {
-		out = written
-	}
-	return out
-}
-
-func applyBranchPathInequality(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	leftPath pathdom.Path,
-	rightPath pathdom.Path,
-) state.State {
-	if selected, ok := applyChannelSelectCaseInequality(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
-		return selected
-	}
-	out = applyPathOriginRelation(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath, false)
-	out = applyPathOriginRelation(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, rightPath, leftPath, false)
-	return out
 }
 
 func resolvePathValueAt(
@@ -287,11 +127,16 @@ func projectPathFallbackValue(
 	targetPath pathdom.Path,
 	projectPath PathTypeProjector,
 ) (product.Value, bool) {
-	if projected, ok := projectPathDynamicIndexValue(reg, resolver, point, out, targetPath); ok {
-		return projected, true
-	}
-	if projected, ok := projectPathHeapStaticMemberValue(reg, resolver, point, out, targetPath); ok {
-		return projected, true
+	if resolver != nil && targetPath.Symbol != 0 && len(targetPath.Segments) != 0 {
+		root := out.ReadValue(reg, key.SymbolValue(targetPath.Symbol))
+		if query, ok := sourcevalue.BindStaticPathRead(reg, typeValues, resolver.KeySpace(), resolver, point, targetPath, root); ok {
+			if evidence, err := state.RegisteredProductDomain(reg).ProjectDynamicReadEvidence(query, out); err == nil {
+				if projected, resolved := sourcevalue.ResolveDynamicRead(query, evidence); resolved &&
+					!product.Equal(reg, projected, product.Bottom(reg)) {
+					return projected, true
+				}
+			}
+		}
 	}
 	if projected, ok := projectPathStructuralValueCached(typeValues, reg, out, targetPath, projectPath); ok {
 		return projected, true
@@ -683,6 +528,37 @@ func projectPathOriginValue(typeValues *typevalue.Cache, reg *axis.Registry, out
 		return product.Value{}, false
 	}
 	root := out.ReadValue(reg, key.SymbolValue(targetPath.Symbol))
+	return projectPathOriginFromRoot(typeValues, reg, root, targetPath, projectPath)
+}
+
+func projectPathOriginFromRoot(typeValues *typevalue.Cache, reg *axis.Registry, root product.Value, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {
+	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return product.Value{}, false
+	}
+	return projectPathOriginFromRootSegments(typeValues, reg, root, targetPath.Segments, projectPath)
+}
+
+// projectStructuralSegments is the single language-projection boundary for
+// keyspace-native structural suffixes. Root identity is intentionally absent:
+// type projection depends only on the sealed member sequence, so formal and
+// concrete roots execute the same law without decoding either root spelling.
+func projectStructuralSegments(projectPath PathTypeProjector, root typ.Type, segments []segment.Segment) (typ.Type, bool) {
+	if projectPath == nil || len(segments) == 0 {
+		return nil, false
+	}
+	return projectPath(root, pathdom.Path{Segments: segments})
+}
+
+func projectPathOriginFromRootSegments(
+	typeValues *typevalue.Cache,
+	reg *axis.Registry,
+	root product.Value,
+	segments []segment.Segment,
+	projectPath PathTypeProjector,
+) (product.Value, bool) {
+	if len(segments) == 0 {
+		return product.Value{}, false
+	}
 	if product.Equal(reg, root, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
@@ -692,16 +568,16 @@ func projectPathOriginValue(typeValues *typevalue.Cache, reg *axis.Registry, out
 	}
 	if projectPath != nil {
 		if rootType, ok := typeValues.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
-			if projected, ok := projectPath(rootType, targetPath); ok {
+			if projected, ok := projectStructuralSegments(projectPath, rootType, segments); ok {
 				value := projectedPathValue(reg, typeValues, projected)
-				if family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), targetPath.Segments); ok {
+				if family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), segments); ok {
 					value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
 				}
 				return value, true
 			}
 		}
 	}
-	family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), targetPath.Segments)
+	family, cases, ok := variant.ProjectOriginView(origin.Family(), origin.CasesView(), segments)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -714,76 +590,6 @@ func projectedPathValue(reg *axis.Registry, typeValues *typevalue.Cache, t typ.T
 		value = product.WithPresence(reg, value, presence.Present())
 	}
 	return value
-}
-
-func applyPathOriginRelation(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	parentPath pathdom.Path,
-	constraintPath pathdom.Path,
-	equal bool,
-) state.State {
-	if parentPath.Symbol == 0 || len(parentPath.Segments) == 0 {
-		return out
-	}
-	constraint, ok := resolvePathValueAt(reg, resolver, point, out, constraintPath, projectPath)
-	if !ok {
-		return out
-	}
-	slot := key.SymbolValue(parentPath.Symbol)
-	root := out.ReadValue(reg, slot)
-	if product.Equal(reg, root, product.Bottom(reg)) {
-		return out
-	}
-	rootOrigin, ok := typevalue.VariantOriginOfValue(reg, typeValues, root)
-	if !ok {
-		return out
-	}
-	cases, ok := narrowOriginCasesByPathConstraint(typeValues, reg, rootOrigin, parentPath.Segments, constraint.value, equal)
-	if !ok {
-		return out
-	}
-	if len(cases) == 0 {
-		return unreachableState(reg)
-	}
-	narrowed := variantorigin.Of(rootOrigin.Family(), cases)
-	rootPath := parentPath.RootOnly()
-	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
-	return out.WriteValue(reg, slot, product.Set(reg, root, variantorigin.Key, narrowed))
-}
-
-func narrowOriginCasesByPathConstraint(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	rootOrigin variantorigin.Value,
-	suffix []segment.Segment,
-	constraint product.Value,
-	equal bool,
-) ([]int, bool) {
-	if constraintOrigin, ok := typevalue.VariantOriginOfValue(reg, typeValues, constraint); ok {
-		return variant.NarrowOriginByPathView(
-			rootOrigin.Family(),
-			rootOrigin.CasesView(),
-			suffix,
-			constraintOrigin.Family(),
-			constraintOrigin.CasesView(),
-			equal,
-		)
-	}
-	if constraintType, ok := typevalue.TypeOf(reg, constraint); ok {
-		return variant.NarrowOriginByPathTypeView(
-			rootOrigin.Family(),
-			rootOrigin.CasesView(),
-			suffix,
-			constraintType,
-			equal,
-		)
-	}
-	return nil, false
 }
 
 func invalidateRootDescendantsAt(

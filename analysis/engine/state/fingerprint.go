@@ -23,6 +23,12 @@ var ErrFingerprintCoverage = errors.New("state: incomplete semantic fingerprint 
 // prepared body's structural keyspace.
 var ErrFingerprintKeySpace = errors.New("state: semantic fingerprint keyspace mismatch")
 
+// ErrUncanonicalizedAllocationTemplate reports that a lexical allocation
+// template reached a semantic lattice boundary. Templates are relation-local
+// syntax and must be substituted by their linked call-frame lens before any
+// Join/Widen can observe them.
+var ErrUncanonicalizedAllocationTemplate = errors.New("state: uncanonicalized allocation template")
+
 // FingerprintConfig supplies the semantic environment needed to fingerprint a
 // State. Nil Lanes selects the default inventory; a non-nil empty slice selects
 // no lanes, matching DomainWithOptionalLanes.
@@ -34,6 +40,35 @@ type FingerprintConfig struct {
 	// matching the solver's existing state/keyspace ownership precondition.
 	KeySpace *keyspace.KeySpace
 	Lanes    []LaneID
+	// Workspace reuses only structural key encodings and typed ordering
+	// scratch across a serial solve. It never caches a semantic digest or an
+	// equality decision; every fingerprint still traverses and hashes its
+	// complete registered lane inventory.
+	Workspace *FingerprintWorkspace
+	// keyEncodings is shared only by one solve-scoped product fingerprint
+	// session. Ordinary callers retain an isolated per-call cache.
+	keyEncodings map[keyspace.Key]string
+	// scratch is shared only by a serial, solve-scoped fingerprint session. It
+	// changes allocation behavior, never ordering or the encoded byte stream.
+	scratch *fingerprintScratch
+}
+
+// FingerprintWorkspace is a serial, solve-scoped allocation workspace bound
+// to exactly one structural KeySpace. It is safe to retain across transaction
+// rollback because its contents are pure encodings and scratch buffers, not
+// published semantic results.
+type FingerprintWorkspace struct {
+	keys         *keyspace.KeySpace
+	keyEncodings map[keyspace.Key]string
+	scratch      fingerprintScratch
+}
+
+// NewFingerprintWorkspace seals one solve-local fingerprint workspace.
+func NewFingerprintWorkspace(keys *keyspace.KeySpace) (*FingerprintWorkspace, error) {
+	if keys == nil || !keys.Valid() {
+		return nil, fmt.Errorf("%w: workspace requires a valid keyspace", ErrFingerprintKeySpace)
+	}
+	return &FingerprintWorkspace{keys: keys, keyEncodings: make(map[keyspace.Key]string)}, nil
 }
 
 // SemanticFingerprint returns a deterministic digest of every selected State
@@ -62,17 +97,8 @@ func SemanticFingerprint(config FingerprintConfig, st State) (uint64, error) {
 			return 0, err
 		}
 	}
-	var bits laneMask
-	for _, spec := range specs {
-		bits |= spec.bit
-	}
-	scope := scopedLaneMask(bits)
-	if !st.canonical || !stateHasLaneMask(st, scope) {
-		domain := domainFromLaneSpecs(config.Registry, specs, defaultLaneCatalog.specs)
-		st = domain.Join(domain.Bottom(), st)
-	}
 	w := newFingerprintWriter(config)
-	w.string("schema", "go-lua.state-semantic-fingerprint/v1")
+	w.string("schema", "go-lua.state-semantic-fingerprint/v2")
 	for _, spec := range specs {
 		if spec.fingerprint == nil {
 			return 0, fmt.Errorf("%w: lane %q", ErrFingerprintCoverage, spec.id)
@@ -98,16 +124,33 @@ type fingerprintWriter struct {
 	keyEncodings map[keyspace.Key]string
 	steps        uint64
 	errVal       error
+	scratch      *fingerprintScratch
 }
 
 func newFingerprintWriter(config FingerprintConfig) *fingerprintWriter {
-	return &fingerprintWriter{
-		h:            internalhash.NewWriter(),
-		ctx:          config.Context,
-		reg:          config.Registry,
-		keys:         config.KeySpace,
-		keyEncodings: make(map[keyspace.Key]string),
+	keyEncodings := config.keyEncodings
+	scratch := config.scratch
+	workspaceErr := error(nil)
+	if config.Workspace != nil {
+		if config.KeySpace == nil || config.Workspace.keys != config.KeySpace {
+			workspaceErr = fmt.Errorf("%w: workspace belongs to another keyspace", ErrFingerprintKeySpace)
+		} else {
+			keyEncodings = config.Workspace.keyEncodings
+			scratch = &config.Workspace.scratch
+		}
 	}
+	if keyEncodings == nil {
+		keyEncodings = make(map[keyspace.Key]string)
+	}
+	if scratch == nil {
+		scratch = &fingerprintScratch{}
+	}
+	out := &fingerprintWriter{
+		h: internalhash.NewWriter(), ctx: config.Context, reg: config.Registry,
+		keys: config.KeySpace, keyEncodings: keyEncodings, scratch: scratch,
+	}
+	out.errVal = workspaceErr
+	return out
 }
 
 func (w *fingerprintWriter) sum64() uint64 { return w.h.Sum64() }
@@ -175,9 +218,30 @@ func (w *fingerprintWriter) uint64(label string, value uint64) {
 }
 
 func (w *fingerprintWriter) identity(label string, id identity.ID) {
-	w.string(label+":kind", id.Kind)
-	w.string(label+":site", id.Site)
-	w.uint64(label+":index", id.Index)
+	w.identityTerm(label, identity.ConcreteTerm(id))
+}
+
+func (w *fingerprintWriter) identityTerm(label string, term identity.Term) {
+	w.uint64(label+":term-kind", uint64(term.Kind()))
+	if id, ok := term.Concrete(); ok {
+		w.string(label+":kind", id.Kind)
+		w.string(label+":site", id.Site)
+		w.uint64(label+":index", id.Index)
+		return
+	}
+	if formal, ok := term.Formal(); ok {
+		owner := formal.Schema().Owner()
+		w.string(label+":formal-owner", string(owner[:]))
+		w.uint64(label+":formal-ordinal", uint64(formal.Schema().Ordinal()))
+		w.uint64(label+":formal-vocabulary", uint64(formal.Vocabulary()))
+		return
+	}
+	if allocation, ok := term.Allocation(); ok {
+		owner := allocation.Owner()
+		w.string(label+":allocation-owner", string(owner[:]))
+		w.uint64(label+":allocation", uint64(allocation.AllocationOrdinal()))
+		w.uint64(label+":allocation-object", uint64(allocation.ObjectOrdinal()))
+	}
 }
 
 func (w *fingerprintWriter) pathKey(label string, key keyspace.Key) {
@@ -189,10 +253,10 @@ func (w *fingerprintWriter) product(label string, value product.Value) {
 	w.int64(label+":shape", int64(product.ShapeOf(value)))
 }
 
-// keyspaceEncoding is a lossless structural encoding of a key. Display path
-// strings are deliberately unsuitable here: a field named "a.b" and the two
-// fields "a", "b" have the same display spelling. Dense root/segment IDs are
-// also unsuitable because they are local to one KeySpace.
+// keyspaceEncoding is a lossless structural encoding of a key. All namespace
+// interpretation, including private boundary roots, belongs to KeySpace's
+// FreezeKey decoder. This consumer records only the solve-independent scalar
+// snapshot and therefore cannot drift when KeySpace adds an internal kind.
 func keyspaceEncoding(w *fingerprintWriter, key keyspace.Key) string {
 	if encoded, ok := w.keyEncodings[key]; ok {
 		return encoded
@@ -204,75 +268,51 @@ func keyspaceEncoding(w *fingerprintWriter, key keyspace.Key) string {
 		w.errVal = fmt.Errorf("%w: missing keyspace", ErrFingerprintKeySpace)
 		return ""
 	}
-	if key.Kind == keyspace.KindInvalid {
-		w.errVal = fmt.Errorf("%w: invalid key", ErrFingerprintKeySpace)
-		return ""
-	}
-	segments, ok := w.keys.SegmentsView(key)
-	if !ok {
-		w.errVal = fmt.Errorf("%w: key does not decode in supplied keyspace", ErrFingerprintKeySpace)
-		return ""
-	}
-
-	root := ""
-	switch key.Kind {
-	case keyspace.KindResolverSym:
-		if key.Sym == 0 || key.Ver == 0 || key.Root != 0 || key.Canon {
-			w.errVal = fmt.Errorf("%w: malformed resolver key", ErrFingerprintKeySpace)
-			return ""
-		}
-	case keyspace.KindUnversionedSym, keyspace.KindStableSym:
-		if key.Sym == 0 || key.Ver != 0 || key.Root != 0 || key.Canon {
-			w.errVal = fmt.Errorf("%w: malformed symbol key", ErrFingerprintKeySpace)
-			return ""
-		}
-	case keyspace.KindPlaceholder, keyspace.KindRetSlot:
-		if key.Sym != 0 || key.Ver != 0 {
-			w.errVal = fmt.Errorf("%w: malformed indexed-root key", ErrFingerprintKeySpace)
-			return ""
-		}
-		root = strconv.FormatUint(uint64(key.Root), 10)
-	case keyspace.KindNamed:
-		if key.Sym != 0 || key.Ver != 0 || key.Root == 0 {
-			w.errVal = fmt.Errorf("%w: malformed named-root key", ErrFingerprintKeySpace)
-			return ""
-		}
-		path, pathOK := w.keys.StatePath(key)
-		if !pathOK || path.Root == "" {
-			w.errVal = fmt.Errorf("%w: named root does not decode", ErrFingerprintKeySpace)
-			return ""
-		}
-		root = path.Root
-	case keyspace.KindRootlessSuffix:
-		if key.Sym != 0 || key.Ver != 0 || key.Root != 0 || key.Canon || len(segments) == 0 {
-			w.errVal = fmt.Errorf("%w: malformed rootless key", ErrFingerprintKeySpace)
-			return ""
-		}
-	default:
-		w.errVal = fmt.Errorf("%w: unknown key kind %d", ErrFingerprintKeySpace, key.Kind)
+	frozen, err := keyspace.FreezeKey(w.ctx, w.keys, key)
+	if err != nil {
+		w.errVal = fmt.Errorf("%w: %v", ErrFingerprintKeySpace, err)
 		return ""
 	}
 
 	var encoded strings.Builder
-	encodedSize := 96 + len(root)
-	for _, segment := range segments {
+	encodedSize := 128 + len(frozen.NamedRoot())
+	for index := 0; index < frozen.SegmentLen(); index++ {
+		segment := frozen.SegmentAt(index)
 		encodedSize += 40 + len(segment.Name)
 	}
 	encoded.Grow(encodedSize)
-	appendFingerprintField(&encoded, strconv.FormatUint(uint64(key.Kind), 10))
-	appendFingerprintField(&encoded, strconv.FormatUint(uint64(key.Sym), 10))
-	appendFingerprintField(&encoded, strconv.FormatUint(uint64(key.Ver), 10))
-	appendFingerprintField(&encoded, root)
-	appendFingerprintField(&encoded, strconv.FormatBool(key.Canon))
-	appendFingerprintField(&encoded, strconv.Itoa(len(segments)))
-	for _, segment := range segments {
-		appendFingerprintField(&encoded, strconv.FormatUint(uint64(segment.Kind), 10))
+	appendFingerprintUint(&encoded, uint64(frozen.Kind()))
+	appendFingerprintUint(&encoded, uint64(frozen.Symbol()))
+	appendFingerprintUint(&encoded, uint64(frozen.Version()))
+	appendFingerprintUint(&encoded, uint64(frozen.RootIndex()))
+	appendFingerprintField(&encoded, frozen.NamedRoot())
+	appendFingerprintBool(&encoded, frozen.Canonical())
+	appendFingerprintUint(&encoded, uint64(frozen.SegmentLen()))
+	for index := 0; index < frozen.SegmentLen(); index++ {
+		segment := frozen.SegmentAt(index)
+		appendFingerprintUint(&encoded, uint64(segment.Kind))
 		appendFingerprintField(&encoded, segment.Name)
-		appendFingerprintField(&encoded, strconv.Itoa(segment.Index))
+		appendFingerprintInt(&encoded, int64(segment.Index))
 	}
 	out := encoded.String()
 	w.keyEncodings[key] = out
 	return out
+}
+
+func appendFingerprintUint(out *strings.Builder, value uint64) {
+	appendFingerprintField(out, strconv.FormatUint(value, 10))
+}
+
+func appendFingerprintInt(out *strings.Builder, value int64) {
+	appendFingerprintField(out, strconv.FormatInt(value, 10))
+}
+
+func appendFingerprintBool(out *strings.Builder, value bool) {
+	if value {
+		appendFingerprintField(out, "1")
+		return
+	}
+	appendFingerprintField(out, "0")
 }
 
 func appendFingerprintField(out *strings.Builder, value string) {

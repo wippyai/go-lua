@@ -165,6 +165,21 @@ func TestValueProofAdmissibleRejectsAbsentRuntimeProofForNonNilContract(t *testi
 	}
 }
 
+func TestValueProofAdmissiblePresentValueUsesNonNilWitness(t *testing.T) {
+	reg := registry()
+	cache := typevalue.NewCache()
+	for _, want := range []typ.Type{
+		typ.String,
+		typetable.NewRecord().Field("name", typ.String).Build(),
+	} {
+		value := cache.FromTypeWithWitness(reg, typ.MaterializeOptional(want))
+		value = product.WithPresence(reg, value, presence.Present())
+		if !New(reg, cache).ValueProofAdmissible(value, want) {
+			t.Fatalf("present value with optional %v witness did not satisfy non-nil contract", want)
+		}
+	}
+}
+
 func TestValueProofAdmissibleFreshRecordWitnessUsesConstructorWidening(t *testing.T) {
 	reg := registry()
 	cache := typevalue.NewCache()

@@ -14,7 +14,7 @@ func (q *query) missingFieldReadsNil(t typ.Type, depth int, cycle bool) bool {
 		return cycle
 	}
 	defer q.leave(visit)
-	return descendAccessWrappers(t, depth, nil, func(t typ.Type, depth int) bool {
+	return descendAccessWrappers(t, depth, nil, falseThunk, func(t typ.Type, depth int) bool {
 		switch v := unwrap.Annotated(t).(type) {
 		case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface:
 			return true

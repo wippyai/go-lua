@@ -26,11 +26,21 @@ func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.Pa
 	return l.InvalidatePathKeySubtreePrefixes(ks, prefixes), true
 }
 
-// InvalidateStableSymbol removes path evidence whose root is a versionless or
-// stable spelling of sym. Point-visible resolver-version evidence is invalidated
-// by the caller's normal path-subtree invalidation; this cleanup covers
-// root-level implications stored outside that versioned address space.
-func (l Lane) InvalidateStableSymbol(sym symbol.ID) Lane {
+// InvalidateStableSymbolPreservingImplications atomically invalidates stable
+// evidence rooted at sym while retaining implications independently proven
+// valid by preserve. The implication must-set is traversed and rebuilt once.
+func (l Lane) InvalidateStableSymbolPreservingImplications(sym symbol.ID, preserve func(PathPresenceImplication) bool) Lane {
+	return l.invalidateStableSymbol(sym, preserve, false)
+}
+
+// InvalidateStableSymbolPreservingAllImplications invalidates non-implication
+// evidence for an idempotent root write. Because no implication proposition
+// changes, the persistent must-set is retained without traversal or copying.
+func (l Lane) InvalidateStableSymbolPreservingAllImplications(sym symbol.ID) Lane {
+	return l.invalidateStableSymbol(sym, nil, true)
+}
+
+func (l Lane) invalidateStableSymbol(sym symbol.ID, preserve func(PathPresenceImplication) bool, preserveAll bool) Lane {
 	if sym == 0 {
 		return l
 	}
@@ -43,6 +53,8 @@ func (l Lane) InvalidateStableSymbol(sym symbol.ID) Lane {
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
+		preserve,
+		preserveAll,
 	)
 }
 
@@ -70,7 +82,21 @@ func (l Lane) InvalidatePathKeySubtreePrefixes(ks *keyspace.KeySpace, prefixes [
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
+		nil,
+		false,
 	)
+}
+
+// InvalidatePathKeySubtreePrefixesChanged is the factor-native form. Subtree
+// invalidation only deletes finite facts, so cardinality and Bottom markers
+// decide semantic change without a whole-lane lattice comparison.
+func (l Lane) InvalidatePathKeySubtreePrefixesChanged(ks *keyspace.KeySpace, prefixes []pathdom.PathKey) (Lane, bool) {
+	next := l.InvalidatePathKeySubtreePrefixes(ks, prefixes)
+	changed := l.refinementsBottom != next.refinementsBottom || len(l.refinements) != len(next.refinements) ||
+		l.staticMembersBottom != next.staticMembersBottom || len(l.staticMembers) != len(next.staticMembers) ||
+		l.proofsBottom != next.proofsBottom || len(l.proofs) != len(next.proofs) ||
+		l.pathPresenceImplicationsBottom != next.pathPresenceImplicationsBottom || len(l.pathPresenceImplications) != len(next.pathPresenceImplications)
+	return next, changed
 }
 
 // invalidatePathKeyEvidence drops refinement and static-member entries via
@@ -82,11 +108,20 @@ func (l Lane) invalidatePathKeyEvidence(
 	deleteFromMap func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
 	match func(candidate keyspace.Key) bool,
 	proofMatch func(proof BranchProof) bool,
+	preserveImplication func(PathPresenceImplication) bool,
+	preserveAllImplications bool,
 ) Lane {
 	refinements, changed := deleteFromMap(l.refinements)
 	staticMembers, staticChanged := deleteFromMap(l.staticMembers)
 	proofs, proofChanged := deleteBranchProofsWhere(l.proofs, proofMatch)
-	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, match)
+	implications, implicationChanged := l.pathPresenceImplications, false
+	if !preserveAllImplications {
+		if preserveImplication == nil {
+			implications, implicationChanged = deletePathPresenceImplicationsMatching(l.pathPresenceImplications, match)
+		} else {
+			implications, implicationChanged = deletePathPresenceImplicationsMatchingExcept(l.pathPresenceImplications, match, preserveImplication)
+		}
+	}
 	if !changed && !staticChanged && !proofChanged && !implicationChanged {
 		return l
 	}
@@ -139,7 +174,22 @@ func (l Lane) InvalidatePathKeyDescendantPrefixes(ks *keyspace.KeySpace, prefixe
 			}
 			return false
 		},
+		nil,
+		false,
 	)
+}
+
+// InvalidatePathKeyDescendantPrefixesChanged is the exact mutation form used
+// by registered factor executors.  The operation only deletes finite facts;
+// cardinality and Bottom-marker changes therefore decide semantic change
+// without a whole-lane equality pass.
+func (l Lane) InvalidatePathKeyDescendantPrefixesChanged(ks *keyspace.KeySpace, prefixes PathKeyDescendantInvalidationPrefixes) (Lane, bool) {
+	next := l.InvalidatePathKeyDescendantPrefixes(ks, prefixes)
+	changed := l.refinementsBottom != next.refinementsBottom || len(l.refinements) != len(next.refinements) ||
+		l.staticMembersBottom != next.staticMembersBottom || len(l.staticMembers) != len(next.staticMembers) ||
+		l.proofsBottom != next.proofsBottom || len(l.proofs) != len(next.proofs) ||
+		l.pathPresenceImplicationsBottom != next.pathPresenceImplicationsBottom || len(l.pathPresenceImplications) != len(next.pathPresenceImplications)
+	return next, changed
 }
 
 // pathKeyInDescendantInvalidationOrRoot reports whether candidate is the
@@ -263,7 +313,7 @@ func addSubtreeAliases(
 	if rebased, ok := rebaseAcyclicAliasPathKey(ks, prefixKey, from, to); ok {
 		addPathKeyToQueue(ks.Format(rebased), seen, queue)
 	}
-	if ks.HasPrefix(from, prefixKey) {
+	if ks.HasPathPrefix(from, prefixKey) {
 		addPathKeyToQueue(ks.Format(to), seen, queue)
 	}
 }
@@ -320,7 +370,7 @@ func sortedPathKeySet(in map[pathdom.PathKey]struct{}) []pathdom.PathKey {
 
 func pathKeyInAnyPrefix(ks *keyspace.KeySpace, candidate keyspace.Key, prefixes []keyspace.Key) bool {
 	for _, prefix := range prefixes {
-		if ks.HasPrefix(candidate, prefix) {
+		if ks.HasPathPrefix(candidate, prefix) {
 			return true
 		}
 	}
@@ -336,16 +386,17 @@ func pathKeyInAnyStrictPrefix(ks *keyspace.KeySpace, candidate keyspace.Key, pre
 	return false
 }
 
-// structuralPrefixKeys interns the recognized structural path-key spellings in
-// prefixes into comparable keyspace keys, dropping spellings that are not
-// point-local value-lane keys.
+// structuralPrefixKeys restores the exact typed structural identities emitted
+// by KeySpace.FormatReadOnly. Prefix plans are shared by concrete resolver
+// roots, formal roots, and other sealed State-key vocabularies; narrowing this
+// round trip to resolver-only FromPathKey silently erases formal subtrees.
 func structuralPrefixKeys(ks *keyspace.KeySpace, prefixes []pathdom.PathKey) []keyspace.Key {
 	if len(prefixes) == 0 {
 		return nil
 	}
 	out := make([]keyspace.Key, 0, len(prefixes))
 	for _, prefix := range prefixes {
-		if key, ok := ks.FromPathKey(prefix); ok {
+		if key, ok := ks.FromStateKey(prefix); ok {
 			out = append(out, key)
 			if stable, ok := localStableCounterpart(ks, key); ok {
 				out = append(out, stable)

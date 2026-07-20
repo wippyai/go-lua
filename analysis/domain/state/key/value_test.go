@@ -15,6 +15,12 @@ func TestValueConstructorsRoundTrip(t *testing.T) {
 	if idx, ok := ParseReturnSlot(ReturnSlot(3)); !ok || idx != 3 {
 		t.Fatalf("ReturnSlot/ParseReturnSlot round-trip = %d/%v, want 3/true", idx, ok)
 	}
+	if ref, ok := ParseExpressionValue(ExpressionValue(7)); !ok || ref != 7 {
+		t.Fatalf("ExpressionValue/ParseExpressionValue round-trip = %d/%v, want 7/true", ref, ok)
+	}
+	if point, slot, ok := ParseCallResult(CallResult(17, 3)); !ok || point != 17 || slot != 3 {
+		t.Fatalf("CallResult/ParseCallResult round-trip = %d/%d/%v, want 17/3/true", point, slot, ok)
+	}
 	if SymbolValue(0) != 0 {
 		t.Fatalf("SymbolValue(0) = %d, want the zero/empty cell", uint64(SymbolValue(0)))
 	}
@@ -27,15 +33,19 @@ func TestValueConstructorsRoundTrip(t *testing.T) {
 }
 
 func TestValueKindsAreDisjoint(t *testing.T) {
-	// A symbol cell and a return-slot cell with the same number must never alias.
-	if SymbolValue(5) == ReturnSlot(5) {
-		t.Fatal("symbol and return-slot cells with the same number collided")
+	// Distinct state-cell vocabularies with the same payload must never alias.
+	if SymbolValue(5) == ReturnSlot(5) || SymbolValue(5) == ExpressionValue(5) || ReturnSlot(5) == ExpressionValue(5) ||
+		CallResult(5, 0) == ReturnSlot(0) || CallResult(5, 0) == ExpressionValue(5) {
+		t.Fatal("symbol, return-slot, expression, and call-result cells collided")
 	}
 	if sym, ok := ParseSymbolValue(ReturnSlot(0)); ok || sym != 0 {
 		t.Fatalf("ParseSymbolValue(return slot) = %d/%v, want 0/false", sym, ok)
 	}
 	if idx, ok := ParseReturnSlot(SymbolValue(1)); ok || idx != 0 {
 		t.Fatalf("ParseReturnSlot(symbol value) = %d/%v, want 0/false", idx, ok)
+	}
+	if ref, ok := ParseExpressionValue(ReturnSlot(1)); ok || ref != 0 {
+		t.Fatalf("ParseExpressionValue(return slot) = %d/%v, want 0/false", ref, ok)
 	}
 	if sym, ok := ParseSymbolValue(0); ok || sym != 0 {
 		t.Fatalf("ParseSymbolValue(empty) = %d/%v, want 0/false", sym, ok)

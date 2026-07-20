@@ -36,6 +36,13 @@ func (r *Result) ValueHasReadableConcreteWitness(value product.Value) bool {
 	return r != nil && r.proofReader().ValueHasReadableConcreteWitness(value)
 }
 
+// TypeEvidenceUsableForInference reports whether value's type evidence is
+// trustworthy enough to drive generic-call inference, rejecting witnesses that
+// originated from an any/unknown boundary without a runtime-validated claim.
+func (r *Result) TypeEvidenceUsableForInference(value product.Value) bool {
+	return r != nil && r.proofReader().TypeEvidenceUsableForInference(value)
+}
+
 // RuntimeKindReducedType narrows declared by value's runtime-kind axis: the
 // alternatives whose runtime kind the axis excludes are dropped. This reports
 // the type a value actually holds on a path that a type() guard has narrowed.

@@ -60,8 +60,6 @@ var perSolveConfigAxes = func() []configAxisDescriptor {
 		clonedConfigAxis("ClosedDynamicAllValues", cloneClosedDynamicAllValuesAxis),
 		configAxis("Context"),
 		clonedConfigAxis("StateLanes", cloneStateLanesAxis),
-		configAxis("Schedule"),
-		configAxis("CompareWTO"),
 		configAxis("CallOutcome"),
 		configAxis("CallOutcomeFactory"),
 		configAxis("SignatureArgumentType"),
@@ -71,10 +69,6 @@ var perSolveConfigAxes = func() []configAxisDescriptor {
 		configAxis("SummaryInputsComplete"),
 		configAxis("WidenAt"),
 		configAxis("WidenDelay"),
-		configAxis("Resume"),
-		configAxis("ResumePoints"),
-		configAxis("BeforePoint"),
-		configAxis("AfterPoint"),
 		configAxis("Stats"),
 	}
 	validatePerSolveConfigAxes(axes)

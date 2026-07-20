@@ -14,31 +14,30 @@ import (
 // identities hold for the resolver, stable-symbol, rootless, and canonical
 // stable-named spellings.
 func (ks *KeySpace) Format(k Key) pathdom.PathKey {
-	if k.Kind == KindInvalid || !ks.validKey(k) {
+	if ks == nil || k.Kind == KindInvalid || !ks.validKey(k) {
 		return ""
 	}
-	if cached, ok := ks.formatByKey[k]; ok {
-		return pathdom.PathKey(cached)
-	}
-	var b strings.Builder
-	ks.writeRoot(&b, k)
-	b.WriteString(ks.suffix(k.Segs))
-	out := b.String()
-	ks.formatByKey[k] = out
-	return pathdom.PathKey(out)
+	return pathdom.PathKey(ks.formatByKey[k])
 }
 
-// FormatReadOnly reproduces Format without populating the formatting cache.
-// It is intended for immutable artifact/digest readers that may run in
-// parallel. The caller must still ensure no goroutine is mutating ks.
+// FormatReadOnly reads the same owner-sealed spelling as Format. Neither method
+// mutates the KeySpace; key minting is the only operation that seals spellings.
 func (ks *KeySpace) FormatReadOnly(k Key) pathdom.PathKey {
 	if ks == nil || k.Kind == KindInvalid || !ks.validKey(k) {
 		return ""
 	}
-	var b strings.Builder
-	ks.writeRoot(&b, k)
-	b.WriteString(ks.suffix(k.Segs))
-	return pathdom.PathKey(b.String())
+	return pathdom.PathKey(ks.formatByKey[k])
+}
+
+// PathKey returns this key's canonical spelling from the KeySpace that minted
+// it. It is the read-only bridge used by cross-lane semantic invariants whose
+// structural keys already carry their unforgeable owner but not a separate
+// KeySpace parameter.
+func (k Key) PathKey() (pathdom.PathKey, bool) {
+	if k.Kind == KindInvalid || k.owner == nil || k.owner.space == nil || !k.owner.space.Valid() {
+		return "", false
+	}
+	return k.owner.space.FormatReadOnly(k), true
 }
 
 func (ks *KeySpace) writeRoot(b *strings.Builder, k Key) {
@@ -61,6 +60,8 @@ func (ks *KeySpace) writeRoot(b *strings.Builder, k Key) {
 		} else {
 			b.WriteString(root)
 		}
+	case kindFormalRoot:
+		b.WriteString(encodeFormalRootDescriptor(ks.formalRootEntries[k.Root]))
 	case kindBoundaryExistential:
 		b.WriteString(encodeBoundaryExistentialDescriptor(ks.existentialEntries[k.Root]))
 	case KindRootlessSuffix:
@@ -93,7 +94,7 @@ func encodeNamedRoot(root string) string {
 // resolver, or encoded-named spelling spaces, or fails to parse back to exactly
 // (root, segments) in the plain-named space.
 func (ks *KeySpace) namedRootNeedsEncoding(root string, segs SegmentsID) bool {
-	if strings.HasPrefix(root, boundaryExistentialPrefix) {
+	if strings.HasPrefix(root, boundaryExistentialPrefix) || strings.HasPrefix(root, formalRootPrefix) {
 		return true
 	}
 	raw := root + ks.suffix(segs)
@@ -111,13 +112,6 @@ func (ks *KeySpace) namedRootNeedsEncoding(root string, segs SegmentsID) bool {
 		return true
 	}
 	return !sameSegments(parsedSegs, ks.segments(segs))
-}
-
-// rootSpelling returns the root prefix string used by Less, honoring Canon.
-func (ks *KeySpace) rootSpelling(k Key) string {
-	var b strings.Builder
-	ks.writeRoot(&b, k)
-	return b.String()
 }
 
 func sameSegments(a, b []segment.Segment) bool {

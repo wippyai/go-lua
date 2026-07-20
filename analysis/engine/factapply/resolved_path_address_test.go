@@ -112,6 +112,26 @@ func TestResolvedPathAddressProjectionMatchesResolverFallbacks(t *testing.T) {
 	})
 }
 
+func TestBoundaryPathAddressIsStructuralNotManufacturedSSA(t *testing.T) {
+	id := symbol.ID(9911)
+	path := pathdom.NewPath(id, "capture").Field("member")
+	resolver := visibility.NewResolver(visibility.NewBuilder().Build())
+	if _, err := FreezeResolvedPathAddress(resolver, cfg.Point(1), path); err == nil {
+		t.Fatal("ordinary local address resolved without an SSA version")
+	}
+	root := resolver.KeySpace().FromPath(path.RootOnly())
+	address, err := FreezeBoundaryPathAddress(resolver.KeySpace(), root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, local := address.LocalKey(); local {
+		t.Fatal("structural boundary address masquerades as a resolver-local address")
+	}
+	if !address.belongsTo(resolver.KeySpace()) || address.local.Kind != keyspace.KindUnversionedSym {
+		t.Fatalf("boundary address = %#v, want owned unversioned namespace", address)
+	}
+}
+
 func TestResolvedPathAddressOwnsSuffixAndRejectsForeignKeyspace(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(9310)

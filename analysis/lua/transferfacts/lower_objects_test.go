@@ -191,6 +191,26 @@ local t = { child = { leaf = 1 } }
 	if !ok || gotID != wantID {
 		t.Fatalf("WIR table source identity = %v/%v, want object literal identity %v", gotID, ok, wantID)
 	}
+	checked := 0
+	facts.ForEachObjectLiteral(func(ref factflow.ExprRef, lowered factflow.ObjectLiteralView) bool {
+		literalID, identified := lowered.Identity()
+		if !identified {
+			t.Fatalf("WIR object literal %d missing allocation identity", ref)
+		}
+		exact, present := facts.ExpressionValue(ref)
+		if !present {
+			t.Fatalf("WIR object literal %d missing exact expression value", ref)
+		}
+		exactID, exactIdentified := product.Get(reg, exact, identity.Key).ID()
+		if !exactIdentified || exactID != literalID {
+			t.Fatalf("WIR object literal %d identity = %v, expression identity = %v/%v", ref, literalID, exactID, exactIdentified)
+		}
+		checked++
+		return true
+	})
+	if checked < 2 {
+		t.Fatalf("checked %d WIR object literal identities, want root and nested literal", checked)
+	}
 }
 
 func TestLowerWithWIRObjectLiteralPublishesWithoutSemanticSidecars(t *testing.T) {

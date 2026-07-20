@@ -49,7 +49,10 @@ func (r ActiveBranchRefinement) Refinement() factflow.ValueRefinement { return r
 // ActiveRefinements centralizes edge polarity and the shallow-before-deep
 // application order required by the concrete engine.
 func (a BranchAlgebra) ActiveRefinements(cond bool) []ActiveBranchRefinement {
-	refinements := a.Refinements()
+	return selectActiveBranchRefinements(a.Refinements(), cond)
+}
+
+func selectActiveBranchRefinements(refinements []factflow.BranchRefinement, cond bool) []ActiveBranchRefinement {
 	if len(refinements) == 0 {
 		return nil
 	}
@@ -69,6 +72,10 @@ func (a BranchAlgebra) ActiveRefinements(cond bool) []ActiveBranchRefinement {
 
 func (a BranchAlgebra) PathRelations() []factflow.BranchPathRelation {
 	return a.facts.BranchPathRelations(a.point)
+}
+
+func (a BranchAlgebra) PresenceRelations() []factflow.BranchPresenceRelation {
+	return a.facts.BranchPresenceRelations(a.point)
 }
 
 func (a BranchAlgebra) ActivePathRelations(cond bool) []factflow.BranchPathRelation {
@@ -111,6 +118,9 @@ func (a BranchAlgebra) GuardOnlyBlockers() []string {
 	}
 	if len(a.Refinements()) != 0 {
 		out = append(out, "branch:refinement")
+	}
+	if len(a.PresenceRelations()) != 0 {
+		out = append(out, "branch:presence-relation")
 	}
 	if len(a.PathRelations()) != 0 {
 		out = append(out, "branch:path-relation")

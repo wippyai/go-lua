@@ -3,6 +3,7 @@ package typecall
 import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -321,6 +322,22 @@ func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 		return nil, nil, false
 	}
 	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Union:
+		payloads := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			if isNilType(member) || typ.IsNever(member) {
+				continue
+			}
+			_, payload, ok := channelPayloadType(member, depth+1)
+			if !ok {
+				return nil, nil, false
+			}
+			payloads = append(payloads, payload)
+		}
+		if len(payloads) == 0 {
+			return nil, nil, false
+		}
+		return v, normalize.UnionForEvidence(payloads...), true
 	case *typ.Optional:
 		return channelPayloadType(v.Inner, depth+1)
 	case *typ.Alias:
@@ -341,7 +358,12 @@ func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 
 func containsNil(t typ.Type, depth int) bool {
 	if stopDepth(t, depth) {
-		return false
+		// May-contain query (invariants.md Rule 1 dual): stopping without a
+		// definitive answer must assume nil is still reachable. callableValue
+		// requires !containsNil before it grants a definite "is callable"
+		// proof, so defaulting false here would let an unexplored nilable
+		// call target through as trusted callable.
+		return true
 	}
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Optional:

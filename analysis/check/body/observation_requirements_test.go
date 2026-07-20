@@ -3,10 +3,8 @@ package body
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -47,65 +45,9 @@ func TestPreparedObservationRequirementsMatchCurrentConsumerPlan(t *testing.T) {
 	}
 }
 
-func TestPreparedObservationCoverageAdmitsExactIsStrAndRejectsRecursiveOwner(t *testing.T) {
-	tests := []struct {
-		name, source string
-		complete     bool
-	}{
-		{"is_str", `function is_str(value: any): boolean return type(value) == "string" and (value :: string) ~= "" end`, true},
-		{"plain_normal", `function plain(value: string): string return value end`, true},
-		{"recursive", `function recurse(value: number): number if value <= 0 then return 0 end return recurse(value - 1) end`, false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			fn := parseFunction(t, test.source)
-			reg := standard.Registry()
-			prepared, err := PrepareFunction(fn, Config{Registry: reg, TypeValues: typevalue.NewCache(), Signatures: signaturelookup.Source{IncludeStdlib: true}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			plan := prepared.OperationPlan()
-			shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures())), Globals: uint32(len(plan.BoundaryGlobals()))}
-			compiled, err := transformer.NewPlanCompiler().Prepare(reg, prepared.Graph(), plan, shape)
-			if err != nil {
-				t.Fatal(err)
-			}
-			relation := compiled.Evaluate()
-			if reason := relation.ContextualReason(); reason != "" && test.complete {
-				t.Fatalf("relation contextual: %s", reason)
-			}
-			if got := relation.ObservationCoverageComplete(); got != test.complete {
-				t.Fatalf("ObservationCoverageComplete=%v, want %v", got, test.complete)
-			}
-		})
-	}
-}
-
-func TestPreparedObservationCoverageKeepsNoNormalReturnOwnersContextual(t *testing.T) {
-	for _, test := range []struct{ name, source string }{
-		{"abnormal", `function checked(value: any): any if value == nil then error("missing") end return value end`},
-		{"unconditional_no_return", `function stop(): never error("stop") end`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fn := parseFunction(t, test.source)
-			reg := standard.Registry()
-			prepared, err := PrepareFunction(fn, Config{Registry: reg, TypeValues: typevalue.NewCache(), Signatures: signaturelookup.Source{IncludeStdlib: true}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			plan := prepared.OperationPlan()
-			shape := transformer.Shape{Params: uint32(len(plan.BoundaryParams())), Captures: uint32(len(plan.BoundaryCaptures())), Globals: uint32(len(plan.BoundaryGlobals()))}
-			_, err = transformer.NewPlanCompiler().Prepare(reg, prepared.Graph(), plan, shape)
-			if err == nil || !strings.Contains(err.Error(), "NoNormalReturns") {
-				t.Fatalf("PlanCompiler.Prepare error=%v, want existing NoNormalReturns contextual rejection", err)
-			}
-		})
-	}
-}
-
 func assertObservationRequirementCensus(t *testing.T, prepared *Static, requirements operationplan.ObservationRequirements) {
 	t.Helper()
-	legacy := compileObservationPlan(prepared.cfg.Graph, prepared.facts, true)
+	legacy := compileObservationPlan(prepared.cfg.Graph, prepared.facts)
 	pointSet := make(map[cfg.Point]struct{})
 	boundarySet := make(map[cfg.Point]struct{})
 	edgeSet := make(map[observationEdge]struct{})

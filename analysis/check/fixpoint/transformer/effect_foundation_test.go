@@ -93,17 +93,46 @@ func TestDefaultEffectCatalogCoversExactlyAllSeventeenStateLanes(t *testing.T) {
 			}
 		}
 	}
-	index, _ := catalog.Descriptor(EffectIndexMutation)
-	for _, lane := range []state.LaneID{
-		state.LaneValues, state.LanePathEvidence, state.LaneDynamicIndex, state.LaneHeapTableIdentity,
-		state.LaneKeyMemberships, state.LanePlacement, state.LaneLenFloors, state.LaneDiffRelations,
-	} {
-		if got := index.LaneUse(lane); got != LaneUseReadWrite {
-			t.Fatalf("index mutation lane %q = %d, want read-write", lane, got)
-		}
+	expected := map[EffectKind]map[state.LaneID]LaneUse{
+		EffectInvalidatePath: {
+			state.LaneValues: LaneUseReadWrite, state.LanePathEvidence: LaneUseReadWrite,
+			state.LaneDynamicIndex: LaneUseReadWrite, state.LaneHeapTableIdentity: LaneUseReadWrite,
+			state.LaneKeyMemberships: LaneUseReadWrite, state.LaneLenFloors: LaneUseReadWrite,
+			state.LaneDiffRelations: LaneUseReadWrite,
+		},
+		EffectIndexMutation: {
+			state.LaneValues: LaneUseReadWrite, state.LanePathEvidence: LaneUseReadWrite,
+			state.LaneDynamicIndex: LaneUseReadWrite, state.LaneHeapTableIdentity: LaneUseReadWrite,
+			state.LaneEffectDeltas: LaneUseReadWrite, state.LaneKeyMemberships: LaneUseReadWrite,
+			state.LaneTypestates: LaneUseReadWrite, state.LanePlacement: LaneUseReadWrite,
+			state.LaneLenFloors: LaneUseReadWrite, state.LaneDiffRelations: LaneUseReadWrite,
+		},
+		EffectAllocationTemplate: {
+			state.LaneHeapTableIdentity: LaneUseReadWrite, state.LanePlacement: LaneUseReadWrite,
+		},
+		EffectObjectMaterialization: {
+			state.LaneValues: LaneUseRead, state.LaneHeapTableIdentity: LaneUseWrite,
+			state.LanePlacement: LaneUseReadWrite,
+		},
+		EffectPathStore: {
+			state.LaneValues: LaneUseReadWrite, state.LanePathEvidence: LaneUseReadWrite,
+			state.LaneDynamicIndex: LaneUseReadWrite, state.LaneHeapTableIdentity: LaneUseReadWrite,
+			state.LaneKeyMemberships: LaneUseReadWrite, state.LaneTypestates: LaneUseReadWrite,
+			state.LanePlacement: LaneUseReadWrite, state.LaneLenFloors: LaneUseReadWrite,
+			state.LaneUserLattices: LaneUseReadWrite,
+		},
 	}
-	if got := index.LaneUse(state.LaneTypestates); got != LaneUseUnaffected {
-		t.Fatalf("index mutation typestate = %d, want unaffected", got)
+	for kind := EffectInvalidatePath; kind < effectKindCount; kind++ {
+		descriptor, _ := catalog.Descriptor(kind)
+		for _, lane := range lanes {
+			want := LaneUseUnaffected
+			if use, ok := expected[kind][lane]; ok {
+				want = use
+			}
+			if got := descriptor.LaneUse(lane); got != want {
+				t.Errorf("effect %d lane %q = %d, want %d", kind, lane, got, want)
+			}
+		}
 	}
 }
 

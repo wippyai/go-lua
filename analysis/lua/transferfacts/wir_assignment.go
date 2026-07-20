@@ -78,6 +78,14 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	if !ok {
 		return
 	}
+	var annotationInst wir.Instruction
+	var hasAnnotation bool
+	if kind == factflow.RootAssignmentLocalDeclaration {
+		annotationInst, hasAnnotation = l.wirSiblingClaimAnnotation(point, inst.Dst)
+		if hasAnnotation {
+			l.applyDeclaredAnnotationClaimRefinement(&source, annotationInst)
+		}
+	}
 	assignment := factflow.NewRootAssignment(kind, target.Symbol, target, source)
 	if kind == factflow.RootAssignmentLocalDeclaration {
 		if declared, ok := l.wirExplicitTopDeclaredContract(inst); ok {
@@ -99,10 +107,20 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 		} else if declared, ok := l.wirAssignmentDeclaredObjectType(inst, target.Symbol); ok {
 			assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		}
-		if declared, ok := l.wirAssignmentAnnotationType(inst); ok {
+		if declared, ok := l.wirAssignmentAnnotationType(inst, annotationInst, hasAnnotation); ok {
 			assignment = assignment.WithDeclaredAnnotationValue(l.declaredTypeClaimValue(declared))
 		} else if declaredValue, ok := assignment.DeclaredValue(); ok {
 			assignment = assignment.WithDeclaredAnnotationValue(declaredValue)
+		}
+	} else if kind == factflow.RootAssignmentOrdinaryRootWrite {
+		// A rebind's own instruction carries the assigned value's natural type,
+		// not the target's prior declaration, so the any/unknown contract can
+		// only be recovered from the symbol table. Overlaying it here is the one
+		// producer transaction that keeps the target's explicit-top evidence
+		// alive across every subsequent write, the same authority a declaration
+		// gets from wirExplicitTopDeclaredContract above.
+		if declared, ok := l.wirSymbolExplicitTopDeclaredContract(target.Symbol); ok {
+			assignment = factflow.NewRootAssignmentWithDeclaredOverlayValue(kind, target.Symbol, target, source, l.declaredTypeClaimValue(declared))
 		}
 	}
 	if inst.TargetSpan.Valid() {
@@ -118,12 +136,86 @@ func (l *lowerer) addRootAssignmentFromWIR(input *factflow.FactsInput, point cfg
 	}
 }
 
-func (l *lowerer) wirAssignmentAnnotationType(inst wir.Instruction) (typ.Type, bool) {
-	if l == nil || inst.Type == 0 {
+// wirAssignmentAnnotationType returns the declared type carried by inst's own
+// context type, falling back to the sibling ClaimAnnotation instruction when
+// inst carries none. A local declaration with no initializer (or another
+// producer shape that never receives a context type at lowering time) has no
+// type on inst itself; the ClaimAnnotation instruction lowerLocalAssign emits
+// alongside it is then the only surviving carrier of `local x: T`.
+func (l *lowerer) wirAssignmentAnnotationType(inst, annotationInst wir.Instruction, hasAnnotation bool) (typ.Type, bool) {
+	if l == nil {
 		return nil, false
 	}
-	declared := l.wir.Type(inst.Type)
+	if inst.Type != 0 {
+		declared := l.wir.Type(inst.Type)
+		return declared, declared != nil
+	}
+	if !hasAnnotation {
+		return nil, false
+	}
+	declared := l.wir.Type(annotationInst.Type)
 	return declared, declared != nil
+}
+
+// wirSiblingClaimAnnotation finds the ClaimAnnotation instruction lowered
+// alongside a local declaration's value-producing instruction: lowerLocalAssign
+// emits `local x: T` as a value-producing instruction for x followed by a
+// self-referencing OpClaim{Claim: ClaimAnnotation, Dst: x, A: x} instruction at
+// the same point that carries the declared type but never participates in
+// assignment-source derivation on its own.
+func (l *lowerer) wirSiblingClaimAnnotation(point cfg.Point, dst wir.Operand) (wir.Instruction, bool) {
+	if l == nil || l.wir == nil || dst.Kind != wir.OperandPath {
+		return wir.Instruction{}, false
+	}
+	for _, sibling := range l.wir.PointInstructions(point) {
+		if sibling.Op == wir.OpClaim && sibling.Claim == wir.ClaimAnnotation && sibling.Type != 0 && sibling.Dst == dst {
+			return sibling, true
+		}
+	}
+	return wir.Instruction{}, false
+}
+
+// applyDeclaredAnnotationClaimRefinement wraps a local declaration's source in
+// the checked-cast refinement carried by its sibling ClaimAnnotation
+// instruction, the same ExpressionRefinement mechanism a direct cast/assert
+// claim produces. It applies only when the source carries no evidence at all
+// (an uninitialized declaration): a literal, path-alias, or call source is
+// strictly more precise than the bare declared type, and other consumers
+// (literal narrowing, alias exposure) read that precision directly off the
+// unwrapped source, so wrapping it would discard evidence instead of adding
+// any. It also never touches a source that already carries an expression
+// identity, so it never displaces an existing (and semantically unrelated)
+// claim recorded against that identity.
+func (l *lowerer) applyDeclaredAnnotationClaimRefinement(source *factflow.ValueSource, annotationInst wir.Instruction) {
+	if l == nil || source == nil || source.HasExpr {
+		return
+	}
+	if source.Kind != factflow.ValueSourceUnknown && source.Kind != factflow.ValueSourceNil {
+		return
+	}
+	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
+	if !ok {
+		return
+	}
+	exprRef, ok := l.exprRef(wirLocalAnnotationExprRefKey{point: annotationInst.Point, dst: annotationInst.Dst})
+	if !ok {
+		return
+	}
+	outer, ok := factflow.NewExpressionValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape)
+	if !ok {
+		return
+	}
+	inner := *source
+	if !l.recordExpressionRefinementFromWIRClaim(outer, inner, annotationInst) {
+		return
+	}
+	l.addWIRClaimExpressionValue(exprRef, annotationInst)
+	*source = outer
+}
+
+type wirLocalAnnotationExprRefKey struct {
+	point cfg.Point
+	dst   wir.Operand
 }
 
 func (l *lowerer) addCastExposureFromWIR(input *factflow.FactsInput, point cfg.Point, inst wir.Instruction) {
@@ -264,6 +356,22 @@ func (l *lowerer) wirExplicitTopDeclaredContract(inst wir.Instruction) (typ.Type
 	return declared, true
 }
 
+// wirSymbolExplicitTopDeclaredContract reports target's declared contract when
+// it is any/unknown, read from the symbol table rather than the assigning
+// instruction. A root rebind's instruction carries the assigned value's own
+// type, never the target's declaration, so this is the only surviving carrier
+// of `local a: any` by the time a later `a = ...` rebind is lowered.
+func (l *lowerer) wirSymbolExplicitTopDeclaredContract(target symbol.ID) (typ.Type, bool) {
+	if l == nil || target == 0 {
+		return nil, false
+	}
+	declared, ok := l.symbolTypes[target]
+	if !ok || declared == nil || (!typ.IsAny(declared) && !typ.IsUnknown(declared)) {
+		return nil, false
+	}
+	return declared, true
+}
+
 func (l *lowerer) rootAssignmentValueSourceFromWIR(point cfg.Point, inst wir.Instruction) (factflow.ValueSource, bool) {
 	if source, ok := l.wirAssignmentExpressionValueSource(
 		inst,
@@ -276,8 +384,16 @@ func (l *lowerer) rootAssignmentValueSourceFromWIR(point cfg.Point, inst wir.Ins
 	); ok {
 		return source, true
 	}
-	if sourceOp, ok := inst.AssignmentSourceOperand(); ok {
-		return l.assignmentValueSourceFromWIROperand(point, sourceOp)
+	// A claim's AssignmentSourceOperand is the claimed value itself: routing it
+	// through the generic operand resolver below would produce the exact same
+	// source a plain move produces, silently dropping the claim (its refinement
+	// and, for a cast/annotation, its evidence-bearing type). OpClaim keeps its
+	// own arm in the switch below, which builds the ExpressionRefinement this
+	// producer transaction owns.
+	if inst.Op != wir.OpClaim {
+		if sourceOp, ok := inst.AssignmentSourceOperand(); ok {
+			return l.assignmentValueSourceFromWIROperand(point, sourceOp)
+		}
 	}
 	switch inst.Op {
 	case wir.OpAssign:
@@ -482,9 +598,9 @@ func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point 
 	if !readKey {
 		keySource = factflow.NewUnknownValueSource(factflow.NoValueSourceIndex)
 	}
+	target := factflow.NewDynamicIndexTarget(tablePath, keySource, l.wir.Segments(inst.DynamicSuffix))
 	write := factflow.NewDynamicIndexWrite(
-		tablePath,
-		keySource,
+		target,
 		source,
 		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, true),
@@ -504,7 +620,7 @@ func (l *lowerer) addDynamicIndexWriteFromWIR(input *factflow.FactsInput, point 
 	input.DynamicIndexWrites[point] = write
 	l.addDynamicIndexObjectLiteralExpectedTypeFromWIR(input, write)
 	input.PathDescendantInvalidations[point] = factflow.NewPathDescendantInvalidation(tablePath).
-		WithDynamicTarget(tablePath, keySource, l.wir.Segments(inst.DynamicSuffix))
+		WithDynamicTarget(target)
 }
 
 func (l *lowerer) wirAssignmentSourcePath(op wir.Operand) (path.Path, bool) {

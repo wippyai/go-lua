@@ -1,11 +1,12 @@
 package factapply
 
 import (
+	"context"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -18,7 +19,6 @@ func writeHeapTableStaticMember(
 	out state.State,
 	targetPath pathdom.Path,
 	value product.Value,
-	joinExisting bool,
 ) state.State {
 	if resolver == nil || len(targetPath.Segments) == 0 {
 		return out
@@ -38,37 +38,20 @@ func writeHeapTableStaticMember(
 	if heapidentity.ObjectDomain(ctx.Registry).Equal(object, heapidentity.BottomObject(ctx.Registry)) {
 		return out
 	}
-	if joinExisting {
-		object, ok = object.WithJoinedStaticMember(ctx.Registry, resolver.KeySpace(), suffix, value)
-	} else {
-		object, ok = object.WithStaticMember(ctx.Registry, resolver.KeySpace(), suffix, value)
-	}
+	object, ok = object.WithStaticMember(ctx.Registry, resolver.KeySpace(), suffix, value)
 	if !ok {
 		return out
 	}
-	return out.WriteHeapTableObject(ctx.Registry, id, object)
-}
-
-func heapStaticMemberWriteShouldJoinSlot(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	targetPath pathdom.Path,
-) bool {
-	if resolver == nil || len(targetPath.Segments) == 0 {
-		return false
+	domain := state.RegisteredProductDomain(ctx.Registry)
+	plan, err := domain.PrepareObjectGraphReplacePlan(resolver.KeySpace(), []state.ObjectGraphMutation{{Identity: identity.ConcreteTerm(id), Object: object}})
+	if err != nil {
+		return out
 	}
-	if assignment, ok := facts.OrdinaryAssignment(ctx.Point); ok {
-		_, hasAnnotation := assignment.DeclaredAnnotationValue()
-		if assignment.DeclaredValueContracts() || assignment.DeclaredValueOverlays() || hasAnnotation {
-			return false
-		}
+	written, err := domain.ApplyObjectGraphMutation(plan, out)
+	if err != nil {
+		return out
 	}
-	ownerPath := targetPath.Clone()
-	ownerPath.Segments = ownerPath.Segments[:len(ownerPath.Segments)-1]
-	owner, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, ownerPath, nil)
-	return ok && out.ValueHasStackLocalExactIdentity(ctx.Registry, owner.value)
+	return written
 }
 
 func applyStoredStaticMemberPlacement(
@@ -94,7 +77,20 @@ func applyStoredStaticMemberPlacement(
 	ownerPlacement := out.ReadPlacement(ownerID)
 	switch ownerPlacement {
 	case placement.OwnedHeap, placement.SharedHeap, placement.Unknown:
-		return markReachableHeapValuePlacement(ctx.Registry, out, value, ownerPlacement, map[identity.ID]struct{}{})
+		domain := state.RegisteredProductDomain(ctx.Registry)
+		plan, err := domain.PreparePlacementReachabilityPlan(resolver.KeySpace(), []product.Value{value}, ownerPlacement)
+		if err != nil {
+			return out
+		}
+		applyContext := ctx.Context
+		if applyContext == nil {
+			applyContext = context.Background()
+		}
+		written, err := domain.ApplyPlacementReachability(applyContext, plan, out)
+		if err != nil {
+			return out
+		}
+		return written
 	default:
 		return out
 	}

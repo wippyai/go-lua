@@ -50,7 +50,7 @@ type fixtureBaselineLabel struct {
 }
 
 // TestWriteFixtureDiagnosticBaseline is an opt-in migration oracle. It records
-// current fixture diagnostics and curated-expectation verdicts in stable JSONL
+// current fixture diagnostics and full-oracle verdicts in stable JSONL
 // so producer migrations can shadow-diff semantic output before deleting code.
 func TestWriteFixtureDiagnosticBaseline(t *testing.T) {
 	outPath := os.Getenv("FIXTURE_BASELINE_OUT")
@@ -70,21 +70,11 @@ func TestWriteFixtureDiagnosticBaseline(t *testing.T) {
 	defer w.Flush()
 
 	for _, s := range suites {
-		skip, _ := shouldSkipOracleSuite(s)
-		if skip {
-			writeFixtureBaselineRecord(t, w, fixtureBaselineRecord{
-				Kind:   "suite",
-				Suite:  s.Name,
-				Status: "skipped",
-				Detail: s.Suite.Skip,
-			})
-			continue
-		}
 		diags, entry := fixtureDiagnostics(s)
 		sort.SliceStable(diags, func(i, j int) bool {
 			return fixtureBaselineDiagnosticLess(diags[i], diags[j])
 		})
-		verdict := judgeAgainstCuratedExpectations(s, diags, entry)
+		verdict := judgeAgainstFixtureExpectations(s, diags, entry)
 		status := "fail"
 		if verdict.passed {
 			status = "pass"

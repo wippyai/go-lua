@@ -34,6 +34,37 @@ func TestExpressionOperationLogicalPreservesTopOriginEvidence(t *testing.T) {
 	}
 }
 
+func TestBinaryLogicalSelectorLatticeArms(t *testing.T) {
+	reg := standard.Registry()
+	objectType := typetable.BuiltinTopMarker()
+	object := typevalue.WithWitness(reg, typevalue.FromType(reg, objectType), objectType)
+	truthy := typevalue.LiteralString(reg, "kept")
+	falsy := typevalue.Nil(reg)
+
+	got, ok := BinaryOperationValue(reg, nil, "or", truthy, object)
+	if !ok || !product.Equal(reg, got, truthy) {
+		t.Fatalf("truthy or object = %#v/%t, want left arm", got, ok)
+	}
+	got, ok = BinaryOperationValue(reg, nil, "or", falsy, object)
+	if !ok || !product.Equal(reg, got, object) {
+		t.Fatalf("falsy or object = %#v/%t, want right arm", got, ok)
+	}
+	got, ok = BinaryOperationValue(reg, nil, "or", product.Top(), object)
+	if !ok {
+		t.Fatal("mixed or object was not an exact lattice transfer")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("mixed or object presence = %s, want present", gotPresence)
+	}
+	if gotKinds := product.Get(reg, got, runtimekind.Key); gotKinds.Contains(runtimekind.Nil) {
+		t.Fatalf("mixed or object runtime kinds = %s, want truthy-left/right projection without nil", gotKinds)
+	}
+	got, ok = BinaryOperationValue(reg, nil, "and", product.Bottom(reg), object)
+	if !ok || !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("bottom and object = %#v/%t, want bottom", got, ok)
+	}
+}
+
 func TestExpressionOperationEqualityOfExactLiteralsReturnsBooleanLiteral(t *testing.T) {
 	reg := standard.Registry()
 	source := factflow.NewNilValueSource(0)
@@ -106,6 +137,18 @@ func TestExpressionOperationNotWithUnreadableOperandStillReturnsBoolean(t *testi
 	gotType, typeOK := typevalue.TypeOf(reg, got)
 	if !typeOK || !typ.TypeEquals(gotType, typ.Boolean) {
 		t.Fatalf("not type = %v/%v, want boolean", gotType, typeOK)
+	}
+}
+
+func TestUnaryLengthOfUnconstrainedOperandHasExactNormalResult(t *testing.T) {
+	reg := standard.Registry()
+	got, ok := UnaryOperationValue(reg, nil, "#", product.Top())
+	if !ok {
+		t.Fatal("UnaryOperationValue(# Top) returned false")
+	}
+	gotType, typeOK := typevalue.TypeOf(reg, got)
+	if !typeOK || !typ.TypeEquals(gotType, typ.Integer) {
+		t.Fatalf("# Top type = %v/%v, want integer normal result", gotType, typeOK)
 	}
 }
 
@@ -430,5 +473,23 @@ func TestExpressionOperationLengthOfRuntimeKindTableOverridesAnyOrigin(t *testin
 	lengthType, ok := typevalue.TypeOf(reg, lengthValue)
 	if !ok || !typ.TypeEquals(lengthType, typ.Integer) {
 		t.Fatalf("#runtime-table-any type = %v/%v, want integer", lengthType, ok)
+	}
+}
+
+func TestExpressionOperationLengthPreservesSparseTopPresencePolarity(t *testing.T) {
+	reg := standard.Registry()
+	presentAny := product.WithPresence(reg, product.Top(), presence.Present())
+	length, exact := UnaryOperationValue(reg, nil, "#", presentAny)
+	if !exact {
+		t.Fatal("# present(Top) lost its normal-result algebra")
+	}
+	lengthType, typed := typevalue.TypeOf(reg, length)
+	if !typed || !typ.TypeEquals(lengthType, typ.Integer) {
+		t.Fatalf("# present(Top) type = %v/%v, want integer", lengthType, typed)
+	}
+
+	absent := product.WithPresence(reg, product.Top(), presence.Absent())
+	if _, exact := UnaryOperationValue(reg, nil, "#", absent); exact {
+		t.Fatal("# absent(Top) was treated as a normal unknown result")
 	}
 }

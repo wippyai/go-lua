@@ -49,11 +49,15 @@ type Spec[T any] struct {
 	Boundary        BoundaryPolicy
 	BoundaryProject func(T) T
 	Reducer         Reducer
-	// ReducerReads lists the axis ids the Reducer depends on. Product reduction
-	// uses it as a cheap gate: when a value's slots do not carry every listed
-	// axis, the reducer cannot fire, so the whole reduce pass is skipped without
-	// allocating a reduce editor. Empty means the reducer is always considered.
+	// ReducerReads lists every axis the Reducer inspects. Product reduction uses
+	// this declaration both to gate reducers whose sparse inputs are Top and to
+	// schedule only reducers affected by an exact axis change. Nil derives the
+	// reducer's own axis; a non-nil empty slice declares no sparse inputs.
 	ReducerReads []string
+	// ReducerWrites lists every axis the Reducer may restrict. Nil derives the
+	// reducer's own axis. A reducer may only move a declared output downward in
+	// its lattice; product reduction rejects undeclared or upward writes.
+	ReducerWrites []string
 }
 
 // Lattice adapts this axis spec to the generic lattice contract.
@@ -125,6 +129,25 @@ func validate[T any](s Spec[T]) error {
 	if s.Hash == nil {
 		return fmt.Errorf("axis %q: Hash is nil", s.Key.ID())
 	}
+	if s.Reducer == nil {
+		if len(s.ReducerReads) != 0 || len(s.ReducerWrites) != 0 {
+			return fmt.Errorf("axis %q: reducer dependencies require a Reducer", s.Key.ID())
+		}
+	} else {
+		for _, declaration := range []struct {
+			name string
+			ids  []string
+		}{
+			{name: "ReducerReads", ids: s.ReducerReads},
+			{name: "ReducerWrites", ids: s.ReducerWrites},
+		} {
+			for _, id := range declaration.ids {
+				if id == "" {
+					return fmt.Errorf("axis %q: %s contains an empty axis id", s.Key.ID(), declaration.name)
+				}
+			}
+		}
+	}
 	if err := validateRetentionPolicy(s.Key.ID(), s.Retention); err != nil {
 		return err
 	}
@@ -177,6 +200,7 @@ type ErasedSpec interface {
 	ProjectBoundaryAny(any) any
 	ReducerHook() Reducer
 	ReducerReadsHook() []string
+	ReducerWritesHook() []string
 }
 
 type erasedSpec[T any] struct {
@@ -303,6 +327,10 @@ func (e erasedSpec[T]) ReducerHook() Reducer {
 
 func (e erasedSpec[T]) ReducerReadsHook() []string {
 	return e.spec.ReducerReads
+}
+
+func (e erasedSpec[T]) ReducerWritesHook() []string {
+	return e.spec.ReducerWrites
 }
 
 func (e erasedSpec[T]) cast(v any) T {

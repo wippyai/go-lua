@@ -450,3 +450,29 @@ func TestRuntimeIndexArrayWrappedDynamicKeyMayBeInteger(t *testing.T) {
 	}
 	assertType(t, got, typeexpr.Optional(typ.String))
 }
+
+// TestRuntimeIndexArrayDeepAliasKeyDepthExhaustionMayContainInteger proves
+// arrayRuntimeKeyMayBeInteger's invariants.md Rule 1 dual polarity:
+// depth exhaustion on a may-contain query must return true, not false. The
+// alias chain is built with raw struct literals (not typ.NewAlias, which
+// pre-flattens the whole chain to O(1)), so each level costs one real
+// stopDepth iteration inside descendAccessWrappers' O(1)-stack loop. If the
+// leaf were reached honestly it would prove the key is not an integer
+// (typ.String), but the chain is far deeper than the recursion budget. A
+// false-at-exhaustion bug would collapse the read to a bare Nil, silently
+// dropping the array's element type from the result.
+func TestRuntimeIndexArrayDeepAliasKeyDepthExhaustionMayContainInteger(t *testing.T) {
+	var key typ.Type = typ.String
+	for i := 0; i < 10000; i++ {
+		key = &typ.Alias{Name: "K", Target: key}
+	}
+
+	got, ok := RuntimeIndex(typ.NewArray(typ.String), key)
+	if !ok {
+		t.Fatal("RuntimeIndex(array, depth-exhausted alias key) failed to resolve")
+	}
+	if typ.TypeEquals(got, typ.Nil) {
+		t.Fatal("depth-exhausted array runtime key excluded the element type: may-contain query failed closed instead of open")
+	}
+	assertType(t, got, typeexpr.Optional(typ.String))
+}

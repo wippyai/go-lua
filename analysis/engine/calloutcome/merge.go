@@ -10,11 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	typerefinement "github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -23,27 +20,17 @@ import (
 // non-nil provider in order and merges their outcomes with the same authority
 // law. It is the preferred assembly point for production
 // call-boundary providers because it avoids nested wrapper chains.
-func ComposeSupplemental(providers ...callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
+func ComposeSupplemental(providers ...callpayload.CallOutcomeProgram) callpayload.CallOutcomeProgram {
 	providers = compactProviders(providers)
-	switch len(providers) {
-	case 0:
-		return nil
-	case 1:
-		return providers[0]
-	}
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-		out := providers[0](ctx, site, in, read)
-		for _, provider := range providers[1:] {
-			out = MergeSupplemental(ctx.Registry, out, provider(ctx, site, in, read))
-		}
-		return out
-	}
+	return callpayload.ComposeCallOutcomePrograms(providers, func(ctx transfer.NodeContext, primary, supplemental callpayload.CallOutcome) callpayload.CallOutcome {
+		return MergeSupplemental(ctx.Registry, primary, supplemental)
+	})
 }
 
-func compactProviders(providers []callpayload.CallOutcomeProvider) []callpayload.CallOutcomeProvider {
+func compactProviders(providers []callpayload.CallOutcomeProgram) []callpayload.CallOutcomeProgram {
 	out := providers[:0]
 	for _, provider := range providers {
-		if provider != nil {
+		if !provider.Empty() {
 			out = append(out, provider)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
@@ -13,17 +14,34 @@ import (
 // facts: when Trigger has either TriggerPresence or TriggerValue, Target has
 // TargetPresence or TargetValue.
 type PathPresenceImplication struct {
-	Trigger             keyspace.Key
-	TriggerOther        keyspace.Key
-	TriggerPresence     presence.Value
-	TriggerValue        product.Value
-	HasTriggerValue     bool
-	HasTriggerPresence  bool
-	HasTriggerPathEqual bool
-	Target              keyspace.Key
-	TargetPresence      presence.Value
-	TargetValue         product.Value
-	HasTargetValue      bool
+	Trigger              keyspace.Key
+	TriggerOther         keyspace.Key
+	TriggerPresence      presence.Value
+	TriggerValue         product.Value
+	HasTriggerValue      bool
+	HasTriggerPresence   bool
+	HasTriggerPathEqual  bool
+	HasTriggerTruthiness bool
+	TriggerTruthy        bool
+	Target               keyspace.Key
+	TargetPresence       presence.Value
+	TargetValue          product.Value
+	HasTargetValue       bool
+}
+
+// NewPathTruthinessValueRefinementImplication creates a Lua-truthiness
+// triggered implication. Truthy and falsy are exact complements over the
+// product value; they are not aliases for boolean literals.
+func NewPathTruthinessValueRefinementImplication(
+	trigger keyspace.Key,
+	truthy bool,
+	target keyspace.Key,
+	targetValue product.Value,
+) PathPresenceImplication {
+	return PathPresenceImplication{
+		Trigger: trigger, HasTriggerTruthiness: true, TriggerTruthy: truthy,
+		Target: target, TargetValue: targetValue, HasTargetValue: true,
+	}
 }
 
 // NewPathPresenceImplication creates a presence-triggered implication.
@@ -115,22 +133,76 @@ func NewPathEqualValueRefinementImplication(
 
 // AddPathPresenceImplication records a persistent must implication.
 func (l Lane) AddPathPresenceImplication(implication PathPresenceImplication) (Lane, bool) {
-	if !validPathPresenceImplication(implication) {
+	_, present := l.pathPresenceImplications[implication]
+	insert, establishesReachability := pathPresenceImplicationPublication(implication, present, l.pathPresenceImplicationsBottom)
+	if !insert {
 		return l, false
-	}
-	if !l.pathPresenceImplicationsBottom {
-		if _, ok := l.pathPresenceImplications[implication]; ok {
-			return l, false
-		}
 	}
 	implications := clonePathPresenceImplicationSet(l.pathPresenceImplications)
 	if implications == nil {
 		implications = make(map[PathPresenceImplication]struct{}, 1)
 	}
 	implications[implication] = struct{}{}
-	out := l.Reachable()
+	out := l
+	if establishesReachability {
+		out = out.Reachable()
+	}
 	out.pathPresenceImplications = implications
 	return out, true
+}
+
+// pathPresenceImplicationPublication is the sole semantic insertion law for
+// the persistent must set. Lane and coordinate storage adapters both call it.
+func pathPresenceImplicationPublication(implication PathPresenceImplication, present, bottom bool) (insert, establishesReachability bool) {
+	if !validPathPresenceImplication(implication) || present && !bottom {
+		return false, false
+	}
+	return true, true
+}
+
+// CanonicalPathPresenceImplications returns the strict semantic order consumed
+// by factorwise publication. Sorting happens once when an immutable operation
+// plan is prepared, never once per guarded decision leaf.
+func CanonicalPathPresenceImplications(reg *axis.Registry, ks *keyspace.KeySpace, in []PathPresenceImplication) ([]PathPresenceImplication, bool) {
+	if reg == nil || ks == nil || !ks.Valid() {
+		return nil, false
+	}
+	out := append([]PathPresenceImplication(nil), in...)
+	for _, implication := range out {
+		key, scalar := implicationCoordinateParts(implication)
+		if !CoordinateKeyValid(key, ks, reg) || !CoordinateScalarValid(key, scalar, reg) {
+			return nil, false
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return pathPresenceImplicationLess(ks, out[i], out[j]) })
+	write := 0
+	for _, implication := range out {
+		if write != 0 && out[write-1] == implication {
+			continue
+		}
+		out[write] = implication
+		write++
+	}
+	return out[:write], true
+}
+
+// PathPresenceImplicationsCanonical reports whether in is already the strict
+// semantic order produced by snapshots. It performs one linear validation and
+// never copies or re-sorts the input.
+func PathPresenceImplicationsCanonical(reg *axis.Registry, ks *keyspace.KeySpace, in []PathPresenceImplication) bool {
+	if reg == nil || ks == nil || !ks.Valid() {
+		return false
+	}
+	for index, implication := range in {
+		key, scalar := implicationCoordinateParts(implication)
+		if !CoordinateKeyValid(key, ks, reg) || !CoordinateScalarValid(key, scalar, reg) {
+			return false
+		}
+		if index != 0 && !pathPresenceImplicationLess(ks, in[index-1], implication) {
+			return false
+		}
+	}
+	return true
 }
 
 func (l Lane) HasPathPresenceImplication(implication PathPresenceImplication) bool {
@@ -142,7 +214,40 @@ func (l Lane) HasPathPresenceImplication(implication PathPresenceImplication) bo
 }
 
 func validPathPresenceImplication(implication PathPresenceImplication) bool {
+	if !validPathPresenceImplicationShape(implication) {
+		return false
+	}
+	if implication.HasTriggerValue && implication.TriggerValue == product.Top() {
+		return false
+	}
+	if implication.HasTargetValue {
+		return implication.TargetValue != product.Top()
+	}
+	return true
+}
+
+// validPathPresenceImplicationShape validates the address portion of an
+// implication independently of its product-valued clause payload. Coordinate
+// factorization uses this form so provider-created values remain DD terminal
+// data rather than becoming new coordinate identities at execution time.
+func validPathPresenceImplicationShape(implication PathPresenceImplication) bool {
 	if implication.Trigger == (keyspace.Key{}) || implication.Target == (keyspace.Key{}) {
+		return false
+	}
+	triggerKinds := 0
+	if implication.HasTriggerPathEqual {
+		triggerKinds++
+	}
+	if implication.HasTriggerValue {
+		triggerKinds++
+	}
+	if implication.HasTriggerTruthiness {
+		triggerKinds++
+	}
+	if !implication.HasTriggerPathEqual && !implication.HasTriggerValue && !implication.HasTriggerTruthiness {
+		triggerKinds++ // ordinary presence trigger
+	}
+	if triggerKinds != 1 || implication.HasTriggerTruthiness && implication.HasTriggerPresence {
 		return false
 	}
 	switch {
@@ -150,10 +255,9 @@ func validPathPresenceImplication(implication PathPresenceImplication) bool {
 		if implication.TriggerOther == (keyspace.Key{}) || implication.TriggerOther == implication.Trigger {
 			return false
 		}
+	case implication.HasTriggerTruthiness:
+		// The bool selects one half of the exact Lua truthiness partition.
 	case implication.HasTriggerValue:
-		if implication.TriggerValue == product.Top() {
-			return false
-		}
 		if implication.HasTriggerPresence && !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
 			return false
 		}
@@ -162,10 +266,7 @@ func validPathPresenceImplication(implication PathPresenceImplication) bool {
 			return false
 		}
 	}
-	if implication.HasTargetValue {
-		return implication.TargetValue != product.Top()
-	}
-	return pathPresenceImplicationPresenceValid(implication.TargetPresence)
+	return implication.HasTargetValue || pathPresenceImplicationPresenceValid(implication.TargetPresence)
 }
 
 func pathPresenceImplicationPresenceValid(value presence.Value) bool {
@@ -192,6 +293,37 @@ func deletePathPresenceImplicationsMatching(
 	return mapedit.DeleteMatching(in, func(implication PathPresenceImplication, _ struct{}) bool {
 		return pathPresenceImplicationMatchesPath(implication, matches)
 	})
+}
+
+// deletePathPresenceImplicationsMatchingExcept performs one native set
+// rewrite. It removes implications touching matches unless preserve proves the
+// complete implication remains valid. No presentation snapshot, key formatting,
+// ordering, or per-preserved-element clone participates.
+func deletePathPresenceImplicationsMatchingExcept(
+	in map[PathPresenceImplication]struct{},
+	matches func(keyspace.Key) bool,
+	preserve func(PathPresenceImplication) bool,
+) (map[PathPresenceImplication]struct{}, bool) {
+	if len(in) == 0 {
+		return nil, false
+	}
+	out := make(map[PathPresenceImplication]struct{}, len(in))
+	changed := false
+	for implication := range in {
+		remove := pathPresenceImplicationMatchesPath(implication, matches) && (preserve == nil || !preserve(implication))
+		if remove {
+			changed = true
+			continue
+		}
+		out[implication] = struct{}{}
+	}
+	if !changed {
+		return in, false
+	}
+	if len(out) == 0 {
+		return nil, true
+	}
+	return out, true
 }
 
 func pathPresenceImplicationMatchesPath(
@@ -230,6 +362,12 @@ func pathPresenceImplicationLess(ks *keyspace.KeySpace, a, b PathPresenceImplica
 	}
 	if a.HasTriggerPathEqual && a.TriggerOther != b.TriggerOther {
 		return ks.Less(a.TriggerOther, b.TriggerOther)
+	}
+	if a.HasTriggerTruthiness != b.HasTriggerTruthiness {
+		return !a.HasTriggerTruthiness
+	}
+	if a.HasTriggerTruthiness && a.TriggerTruthy != b.TriggerTruthy {
+		return !a.TriggerTruthy
 	}
 	if a.HasTriggerValue != b.HasTriggerValue {
 		return !a.HasTriggerValue

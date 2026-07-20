@@ -1,275 +1,78 @@
 package program
 
 import (
-	"sort"
+	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
-// SolvePhase identifies the fixed-point phase which solved a body.
-type SolvePhase string
-
-const (
-	SolvePhasePrepass     SolvePhase = "prepass"
-	SolvePhaseSummary     SolvePhase = "summary"
-	SolvePhaseMaterialize SolvePhase = "materialize"
-)
-
-// BodySolveAttribution reports work for one body/function/context/phase tuple.
-// BodyID is the stable function-body identity. Context is false for the base
-// function summary and true for a call-context specialization.
-type BodySolveAttribution struct {
-	BodyID                         uint64
-	Function                       summary.SummaryKey
-	Phase                          SolvePhase
-	Context                        bool
-	BodySolves                     int
-	PointTransfers                 int
-	DependencyChangeResolves       int
-	DependencyChangePointTransfers int
-	// CompositionEligible and CompositionReason are the behavior-neutral
-	// Stage-0 census verdict for this prepared body. They never select a solve
-	// path; unknown shapes fail closed with a stable reason.
-	CompositionEligible bool
-	CompositionReason   string
-	CompositionReasons  []string
+// FunctionalSummaryBodyStats measures the semantic work owned by one lexical
+// function transformer. Cells and equations describe the body-owned fixed
+// equation system; Evaluations counts executions of those equations. None of
+// these counters may be multiplied by the number of callers.
+type FunctionalSummaryBodyStats struct {
+	Cells     int
+	Equations int
 }
 
-// CompositionCost aggregates existing solve work by the Stage-0 symbolic-call
-// eligibility verdict. Eligible work has an empty Reason.
-type CompositionCost struct {
-	Eligible       bool
-	Reason         string
-	BodySolves     int
-	PointTransfers int
+// FunctionalSummaryStats is the caller-owned observation surface for the
+// functional interprocedural solver. ApplyInstantiations is deliberately
+// separate from body work: instantiation may scale with call sites, while a
+// lexical body's cells, equations, and evaluations must not.
+type FunctionalSummaryStats struct {
+	ApplyInstantiations int
+	LexicalBodies       int
+	FormalEquations     int
+	Bodies              map[lexicalidentity.StableLexicalBodyID]FunctionalSummaryBodyStats
 }
 
-type bodySolveAttributionKey struct {
-	bodyID   uint64
-	function summary.SummaryKey
-	phase    SolvePhase
-	context  bool
+// functionalSummaryWorkView is the minimal observation contract exported by
+// the sole stabilized transformer solve.  It deliberately exposes no route,
+// eligibility, fallback, or alternate executor: program knows the complete
+// lexical forest and asks only how much body-owned work each member performed
+// and how many cheap Apply substitutions were instantiated.
+type functionalSummaryWorkView interface {
+	FunctionalApplyInstantiations() int
+	FunctionalSummaryBodyWork(lexicalidentity.StableLexicalBodyID) (cells int, equations int, ok bool)
+	FormalEquationCount() int
 }
 
-type solveAttribution struct {
-	stats            *Stats
-	key              bodySolveAttributionKey
-	dependencyChange bool
-	composition      body.CompositionEligibility
-}
-
-func newSolveAttribution(stats *Stats, bodyID uint64, function summary.SummaryKey, phase SolvePhase, context bool) *solveAttribution {
+func recordFunctionalSummaryStats(stats *Stats, prepared preparedBodies, view any) error {
 	if stats == nil {
 		return nil
 	}
-	return &solveAttribution{stats: stats, key: bodySolveAttributionKey{bodyID: bodyID, function: function, phase: phase, context: context}}
-}
-
-func solveAttributionFor(stats *Stats, prepared *body.Static, function summary.SummaryKey, phase SolvePhase, context bool) *solveAttribution {
-	if stats == nil || prepared == nil {
-		return nil
+	work, ok := view.(functionalSummaryWorkView)
+	if !ok {
+		return fmt.Errorf("program: stabilized relation view has no functional-summary work authority")
 	}
-	attribution := newSolveAttribution(stats, prepared.IdentityDigest(), function, phase, context)
-	attribution.composition = prepared.CompositionEligibility()
-	return attribution
-}
-
-func (a *solveAttribution) afterDependencyChange() *solveAttribution {
-	if a == nil {
-		return nil
-	}
-	copy := *a
-	copy.dependencyChange = true
-	return &copy
-}
-
-func (s *Stats) recordBodySolve(a *solveAttribution, pointTransfers int) {
-	if s == nil || a == nil {
-		return
-	}
-	if s.bodySolveAttribution == nil {
-		s.bodySolveAttribution = make(map[bodySolveAttributionKey]BodySolveAttribution)
-	}
-	entry := s.bodySolveAttribution[a.key]
-	if entry.BodyID == 0 {
-		entry.BodyID = a.key.bodyID
-		entry.Function = a.key.function
-		entry.Phase = a.key.phase
-		entry.Context = a.key.context
-		entry.CompositionEligible = a.composition.Eligible()
-		entry.CompositionReason = a.composition.Reason
-		entry.CompositionReasons = a.composition.RejectionReasons()
-	}
-	entry.BodySolves++
-	entry.PointTransfers += pointTransfers
-	if a.dependencyChange {
-		entry.DependencyChangeResolves++
-		entry.DependencyChangePointTransfers += pointTransfers
-	}
-	s.bodySolveAttribution[a.key] = entry
-}
-
-// CompositionCostCensus returns a stable eligible-versus-rejection aggregation
-// of the body solves and point transfers already recorded by Stats.
-func (s *Stats) CompositionCostCensus() []CompositionCost {
-	return s.CompositionCostCensusAllowing()
-}
-
-// CompositionCostCensusAllowing simulates cumulative capability without
-// changing analysis. Allowed blockers are removed from each body's complete
-// canonical reason set; cost moves to the next blocker or becomes eligible.
-func (s *Stats) CompositionCostCensusAllowing(allowed ...string) []CompositionCost {
-	if s == nil || len(s.bodySolveAttribution) == 0 {
-		return nil
-	}
-	accepted := make(map[string]struct{}, len(allowed))
-	for _, reason := range allowed {
-		accepted[reason] = struct{}{}
-	}
-	byReason := make(map[string]CompositionCost)
-	for _, entry := range s.bodySolveAttribution {
-		reasons := entry.CompositionReasons
-		if len(reasons) == 0 && entry.CompositionReason != "" {
-			reasons = []string{entry.CompositionReason}
+	bodyIDs := factoriesBodyIDs(prepared)
+	bodies := make(map[lexicalidentity.StableLexicalBodyID]FunctionalSummaryBodyStats, len(bodyIDs))
+	for bodyID := range bodyIDs {
+		cells, equations, present := work.FunctionalSummaryBodyWork(bodyID)
+		if !present {
+			return fmt.Errorf("program: functional-summary work is absent for lexical body %s", bodyID)
 		}
-		reason := ""
-		for _, candidate := range reasons {
-			if _, ok := accepted[candidate]; !ok {
-				reason = candidate
-				break
-			}
+		if cells <= 0 || equations <= 0 {
+			return fmt.Errorf("program: lexical body %s reported vacuous formal work %d/%d", bodyID, cells, equations)
 		}
-		cost := byReason[reason]
-		cost.Eligible = reason == ""
-		cost.Reason = reason
-		cost.BodySolves += entry.BodySolves
-		cost.PointTransfers += entry.PointTransfers
-		byReason[reason] = cost
+		bodies[bodyID] = FunctionalSummaryBodyStats{Cells: cells, Equations: equations}
 	}
-	out := make([]CompositionCost, 0, len(byReason))
-	for _, cost := range byReason {
-		out = append(out, cost)
+	instantiations := work.FunctionalApplyInstantiations()
+	if instantiations < 0 {
+		return fmt.Errorf("program: functional-summary Apply count is negative")
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Eligible != out[j].Eligible {
-			return out[i].Eligible
-		}
-		return out[i].Reason < out[j].Reason
-	})
-	return out
-}
-
-// BodySolveAttribution returns a stable snapshot of per-body solve work.
-func (s *Stats) BodySolveAttribution() []BodySolveAttribution {
-	if s == nil || len(s.bodySolveAttribution) == 0 {
-		return nil
+	formalEquations := work.FormalEquationCount()
+	if formalEquations <= 0 {
+		return fmt.Errorf("program: formal equation inventory is empty")
 	}
-	out := make([]BodySolveAttribution, 0, len(s.bodySolveAttribution))
-	for _, entry := range s.bodySolveAttribution {
-		entry.CompositionReasons = append([]string(nil), entry.CompositionReasons...)
-		out = append(out, entry)
+	stats.FunctionalSummary = FunctionalSummaryStats{
+		ApplyInstantiations: instantiations, LexicalBodies: len(bodyIDs), FormalEquations: formalEquations, Bodies: bodies,
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Function != out[j].Function {
-			return out[i].Function.Less(out[j].Function)
-		}
-		if out[i].Context != out[j].Context {
-			return !out[i].Context
-		}
-		if out[i].Phase != out[j].Phase {
-			return out[i].Phase < out[j].Phase
-		}
-		return out[i].BodyID < out[j].BodyID
-	})
-	return out
-}
-
-func queryStats(stats *Stats) *query.Stats {
-	if stats == nil {
-		return nil
-	}
-	return &stats.Query
-}
-
-func prepassCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.PrepassBodySolves
-}
-
-func summaryCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryBodySolves
-}
-
-func summaryPointTransferCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryPointTransfers
-}
-
-func summaryDependencyChangeCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryBodySolvesAfterDependencyChange
-}
-
-func summaryDependencyChangePointTransferCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryPointTransfersAfterDependencyChange
-}
-
-func materializeCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.MaterializeBodySolves
-}
-
-func summaryCacheHitCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryCacheHits
-}
-
-func summaryCacheMissCounter(stats *Stats) *int {
-	if stats == nil {
-		return nil
-	}
-	return &stats.SummaryCacheMisses
+	return nil
 }
 
 func recordProgramShape(stats *Stats, keys programKeys) {
-	if stats == nil {
-		return
-	}
-	recordMaxInt(&stats.MaxFunctionCount, len(keys.functions))
-	recordMaxInt(&stats.MaxContextCount, keys.contexts.Len())
-	recordMaxInt(&stats.MaxCallContextRefCount, keys.contexts.CallRefCount())
-	recordMaxInt(&stats.MaxSemanticCallContextCount, keys.contexts.SemanticCallContextCount())
-	for sites, variants := range keys.contexts.CallSiteHistogram() {
-		recordMaxInt(&stats.MaxSitesPerSemanticEntry, sites)
-		if stats.CallSitesPerSemanticEntry == nil {
-			stats.CallSitesPerSemanticEntry = make(map[int]int)
-		}
-		if variants > stats.CallSitesPerSemanticEntry[sites] {
-			stats.CallSitesPerSemanticEntry[sites] = variants
-		}
-	}
-}
-
-func recordMaxInt(dst *int, value int) {
-	if dst != nil && value > *dst {
-		*dst = value
+	if stats != nil && len(keys.functions) > stats.MaxFunctionCount {
+		stats.MaxFunctionCount = len(keys.functions)
 	}
 }

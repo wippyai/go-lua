@@ -883,6 +883,10 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	if site.Context() != factflow.CallSiteContextCondition || !site.ConditionNegated() {
 		t.Fatalf("condition call site = context %v negated=%v, want negated condition", site.Context(), site.ConditionNegated())
 	}
+	targets := callSiteResultTargets(site)
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].ResultIndex() != 0 {
+		t.Fatalf("condition call targets = %#v, want exact scalar expression carrier", targets)
+	}
 
 	wirFacts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
 	wirSite, ok := wirFacts.CallSiteView(points[0])
@@ -891,6 +895,10 @@ func TestLowerNegatedConditionCallSiteCarriesPolarity(t *testing.T) {
 	}
 	if wirSite.Context() != factflow.CallSiteContextCondition || !wirSite.ConditionNegated() {
 		t.Fatalf("WIR condition call site = context %v negated=%v, want negated condition", wirSite.Context(), wirSite.ConditionNegated())
+	}
+	wirTargets := callSiteResultTargets(wirSite)
+	if len(wirTargets) != 1 || wirTargets[0].Kind() != factflow.CallResultTargetExpression || wirTargets[0].ResultIndex() != 0 {
+		t.Fatalf("WIR condition call targets = %#v, want exact scalar expression carrier", wirTargets)
 	}
 }
 
@@ -1209,6 +1217,7 @@ end
 	calleePath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[0].(*ast.LocalAssignStmt), 0), "callee")
 	otherPath := path.NewPath(mustLocalAt(t, bindings, fn.Stmts[1].(*ast.LocalAssignStmt), 0), "other")
 	body := wir.NewBody("synthetic-direct-callee")
+	stampSyntheticWIRPathSymbols(t, body, bindings, otherPath)
 	start := body.Emit(wir.Instruction{
 		Op:    wir.OpCall,
 		Point: points[0],
@@ -1231,6 +1240,65 @@ end
 	}
 	if site.CalleeMemberAccess() {
 		t.Fatalf("direct root call unexpectedly marked as member access")
+	}
+	calleeSource, ok := site.CalleeSource()
+	if !ok || calleeSource.Kind != factflow.ValueSourcePath || calleeSource.PathKey != otherPath.Key() {
+		t.Fatalf("callee source = %#v/%v, want WIR path source %v", calleeSource, ok, otherPath)
+	}
+}
+
+func TestLowerDirectClosureCalleeSourceComesFromWIR(t *testing.T) {
+	fn, bindings, built := parseSemanticFunction(t, `
+function f(): ()
+    local other = function() end
+    other()
+end
+`)
+	stmt, ok := fn.Stmts[1].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[1])
+	}
+	otherAssign, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want local assignment", fn.Stmts[0])
+	}
+	otherFn, ok := otherAssign.Exprs[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("other expr = %T, want function expression", otherAssign.Exprs[0])
+	}
+	otherSymbol, ok := bindings.FunctionSymbol(otherFn)
+	if !ok || otherSymbol == 0 {
+		t.Fatalf("other function symbol = %d/%v", otherSymbol, ok)
+	}
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	body := wir.NewBody("synthetic-direct-closure-callee")
+	closureTemp := wir.Operand{Kind: wir.OperandTemp, Ref: 1}
+	proto := body.AddProto(wir.FuncProto{Name: "other", Symbol: wir.FunctionSymbolID(otherSymbol)})
+	start := body.Emit(wir.Instruction{
+		Op:    wir.OpClosure,
+		Point: point,
+		Dst:   closureTemp,
+		Func:  proto,
+	})
+	body.Emit(wir.Instruction{
+		Op:    wir.OpCall,
+		Point: point,
+		Call:  wir.CallInfo{Callee: closureTemp},
+	})
+	body.SetPointRange(point, start, body.Len())
+
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	site, ok := facts.CallSiteView(point)
+	if !ok {
+		t.Fatalf("missing call site at point %d", point)
+	}
+	calleeSource, ok := site.CalleeSource()
+	if !ok || calleeSource.Kind != factflow.ValueSourceExpression || !calleeSource.HasExpr {
+		t.Fatalf("callee source = %#v/%v, want WIR closure expression source", calleeSource, ok)
+	}
+	gotSymbol, ok := facts.ExpressionFunction(calleeSource.ExprRef)
+	if !ok || gotSymbol != otherSymbol {
+		t.Fatalf("callee function = %d/%v, want WIR proto symbol %d", gotSymbol, ok, otherSymbol)
 	}
 }
 
@@ -1311,6 +1379,9 @@ end
 	receiverSource, ok := site.ReceiverSource()
 	if !ok || receiverSource.Kind != factflow.ValueSourcePath || receiverSource.PathKey != otherPath.Key() {
 		t.Fatalf("receiver source = %#v/%v, want WIR path source %v", receiverSource, ok, otherPath)
+	}
+	if calleeSource, ok := site.CalleeSource(); ok || calleeSource != (factflow.ValueSource{}) {
+		t.Fatalf("method callee source = %#v/%v, want zero/false", calleeSource, ok)
 	}
 	receiverPath, ok := site.ReceiverPath()
 	if !ok || !receiverPath.Equal(otherPath) || receiverPath.Equal(objPath) {
@@ -1812,6 +1883,10 @@ end
 	}
 	if site.CalleeSymbol() != 0 || !site.CalleePath().IsEmpty() || site.CalleeMemberAccess() {
 		t.Fatalf("WIR unsupported callee kept cfgbuild callee identity: symbol=%d path=%s member=%v", site.CalleeSymbol(), site.CalleePath(), site.CalleeMemberAccess())
+	}
+	calleeSource, ok := site.CalleeSource()
+	if !ok || calleeSource.Kind != factflow.ValueSourceUnknown {
+		t.Fatalf("unsupported direct callee source = %#v/%v, want explicit unknown", calleeSource, ok)
 	}
 }
 

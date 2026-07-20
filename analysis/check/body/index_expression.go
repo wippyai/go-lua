@@ -1,9 +1,11 @@
 package body
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -38,23 +40,76 @@ func (r *Result) NumericIndexExpressionTypeAtBoundary(point cfg.Point, expr ast.
 // expressions like i, i+1, 2*i, and 2*i+1, plus Lua modulo-by-length terms of
 // the form (integer_expr % #container) + 1.
 func (r *Result) IndexReadSafeForExpressionAtBoundary(point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
-	proof := r.arrayIndexProofAtBoundary(point, containerPath)
-	if r.indexModuloLengthMatches(point, index, containerPath) {
-		proof.IsModuloArrayLength = true
-		return readexpr.ProveArrayIndexInBounds(proof)
-	}
-	if constant, ok := indexConstOperand(index); ok {
-		proof.HasConstant = true
-		proof.Constant = constant
-		return readexpr.ProveArrayIndexInBounds(proof)
-	}
-	basePath, coeff, offset, ok := r.indexLinearTerm(index)
-	if !ok || basePath.IsEmpty() {
+	request, ok := r.boundIndexReadForExpressionAtBoundary(point, index, containerPath)
+	if !ok {
 		return false
 	}
-	proof.HasTerm = true
-	proof.Term = readexpr.ArrayIndexTerm{Path: basePath, Coeff: coeff, Offset: offset}
-	return readexpr.ProveArrayIndexInBounds(proof)
+	proved, projected := enginesourcevalue.BoundDynamicReadInRange(request)
+	return projected && proved
+}
+
+func (r *Result) indexReadValueForExpressionAtBoundary(point cfg.Point, index ast.Expr, containerPath pathdom.Path) (product.Value, bool) {
+	request, ok := r.boundIndexReadForExpressionAtBoundary(point, index, containerPath)
+	if !ok {
+		return product.Value{}, false
+	}
+	return enginesourcevalue.ReadBoundDynamicValue(request)
+}
+
+func (r *Result) boundIndexReadForExpressionAtBoundary(point cfg.Point, index ast.Expr, containerPath pathdom.Path) (enginesourcevalue.BoundDynamicRead, bool) {
+	if r == nil || index == nil || r.registry == nil || r.visibility == nil || containerPath.IsEmpty() {
+		return enginesourcevalue.BoundDynamicRead{}, false
+	}
+	form := indexform.IndexForm{}
+	moduloInteger := false
+	if length, ok := index.(*ast.UnaryLenOpExpr); ok && length.Expr != nil {
+		if lengthPath, pathOK := r.ExpressionPath(length.Expr); pathOK && lengthPath.Equal(containerPath) {
+			form, _ = indexform.NewArrayLengthIndex(containerPath)
+		}
+	}
+	if !form.Valid() && r.indexModuloLengthMatches(point, index, containerPath) {
+		form, _ = indexform.NewModuloLengthIndex(containerPath)
+		moduloInteger = true
+	}
+	if !form.Valid() {
+		if constant, constantOK := indexConstOperand(index); constantOK {
+			form = indexform.NewConstantIndex(constant)
+		}
+	}
+	if !form.Valid() {
+		basePath, coeff, offset, affineOK := r.indexLinearTerm(index)
+		if affineOK && !basePath.IsEmpty() {
+			form, _ = indexform.NewAffineIndex(basePath, coeff, offset)
+		}
+	}
+	if !form.Valid() {
+		return enginesourcevalue.BoundDynamicRead{}, false
+	}
+	keyValue, ok := r.ExpressionValueAtBoundary(point, index)
+	if !ok {
+		keyValue = product.Top()
+	}
+	return r.boundIndexReadAtBoundary(point, containerPath, keyValue, form, moduloInteger)
+}
+
+func (r *Result) boundIndexReadAtBoundary(point cfg.Point, containerPath pathdom.Path, keyValue product.Value, form indexform.IndexForm, moduloInteger bool) (enginesourcevalue.BoundDynamicRead, bool) {
+	if r == nil || r.registry == nil || r.visibility == nil || !form.Valid() || containerPath.IsEmpty() {
+		return enginesourcevalue.BoundDynamicRead{}, false
+	}
+	tableValue, ok := r.PathValueAtBoundary(point, containerPath)
+	if !ok {
+		return enginesourcevalue.BoundDynamicRead{}, false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return enginesourcevalue.BoundDynamicRead{}, false
+	}
+	return enginesourcevalue.BoundDynamicRead{
+		Registry: r.registry, TypeValues: r.typeValues, KeySpace: r.visibility.KeySpace(),
+		Visibility: r.visibility, ProofVisibility: r.visibility, Point: point,
+		TablePath: containerPath, TableValue: tableValue, KeyValue: keyValue,
+		ValueInput: in, IndexForm: form, ModuloInteger: moduloInteger,
+	}, true
 }
 
 func (r *Result) indexModuloLengthMatches(point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
@@ -71,68 +126,6 @@ func (r *Result) indexModuloLengthMatches(point cfg.Point, index ast.Expr, conta
 		return false
 	}
 	return r.indexExpressionHasIntegerType(point, mod.Lhs)
-}
-
-func (r *Result) arrayIndexProofAtBoundary(point cfg.Point, containerPath pathdom.Path) readexpr.ArrayIndexProof {
-	return readexpr.ArrayIndexProof{
-		LengthKnownAtLeastOne: func() bool {
-			return r.indexContainerLengthKnownAtLeastOne(point, containerPath)
-		},
-		LengthAtLeast: func(floor int64) bool {
-			if known, ok := r.LengthFloorAtBoundary(point, containerPath); ok && known >= floor {
-				return true
-			}
-			return r.indexContainerStaticLengthAtLeast(point, containerPath, floor)
-		},
-		UpperBoundLengthAtLeast: func(floor int64) bool {
-			return r.indexContainerStaticLengthAtLeast(point, containerPath, floor)
-		},
-		NumericFloor: func(path pathdom.Path) (int64, bool) {
-			return r.NumericFloorAtBoundary(point, path)
-		},
-		NumericCeil: func(path pathdom.Path) (int64, bool) {
-			return r.NumericCeilAtBoundary(point, path)
-		},
-		DiffProvesLELength: func(term readexpr.ArrayIndexTerm) bool {
-			return r.DiffProvesIndexLELength(point, term.Path, term.Coeff, term.Offset, containerPath)
-		},
-		IndexInRange: func(path pathdom.Path) bool {
-			return r.IndexInRangeAtBoundary(point, path, containerPath)
-		},
-	}
-}
-
-func (r *Result) indexContainerLengthKnownAtLeastOne(point cfg.Point, containerPath pathdom.Path) bool {
-	if floor, ok := r.LengthFloorAtBoundary(point, containerPath); ok && floor >= 1 {
-		return true
-	}
-	value, ok := r.PathValueBeforeBoundary(point, containerPath)
-	if !ok {
-		return false
-	}
-	t, ok := typevalue.TypeOf(r.registry, value)
-	return ok && readexpr.SequenceKnownNonEmpty(t)
-}
-
-func (r *Result) indexContainerStaticLengthAtLeast(point cfg.Point, containerPath pathdom.Path, floor int64) bool {
-	if floor <= 0 {
-		return true
-	}
-	value, ok := r.PathValueBeforeBoundary(point, containerPath)
-	if !ok {
-		return false
-	}
-	t, ok := typevalue.TypeOf(r.registry, value)
-	return ok && readexpr.SequenceLengthKnownAtLeast(t, floor)
-}
-
-func (r *Result) indexContainerInRangeElementsNonNil(point cfg.Point, containerPath pathdom.Path) bool {
-	value, ok := r.PathValueBeforeBoundary(point, containerPath)
-	if !ok {
-		return false
-	}
-	t, ok := typevalue.TypeOf(r.registry, value)
-	return ok && readexpr.ArrayIndexElementsNonNil(t)
 }
 
 func (r *Result) indexExpressionHasIntegerType(point cfg.Point, expr ast.Expr) bool {

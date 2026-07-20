@@ -3,6 +3,7 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // BranchPathEvidenceKind identifies branch/postcondition path evidence that may be
@@ -36,6 +37,12 @@ type BranchPathEvidence struct {
 	activeOnTrue             bool
 	activeOnFalse            bool
 	oppositeEdgeImpliesFalsy bool
+
+	// producerPoint is the exact call whose Boolean result established a
+	// non-scalar path relation. It is intentionally absent for scalar evidence:
+	// those kinds derive provenance from the condition term itself.
+	producerPoint    cfg.Point
+	hasProducerPoint bool
 }
 
 // BranchPathEvidenceSet groups branch path evidence emitted at the same CFG point.
@@ -117,13 +124,18 @@ func NewBranchIndexInRangeEvidenceOnEdge(indexPath path.Path, arrayPath path.Pat
 }
 
 // NewBranchFrozenTableEvidenceOnEdge records that targetPath resolves to a
-// frozen table identity on one branch edge.
-func NewBranchFrozenTableEvidenceOnEdge(targetPath path.Path, cond bool) BranchPathEvidence {
+// frozen table identity on one branch edge. producerPoint is the exact
+// binding-certified table.isfrozen call whose Boolean result owns the proof;
+// retaining it makes call/path provenance structural instead of inferred from
+// the proof kind later.
+func NewBranchFrozenTableEvidenceOnEdge(targetPath path.Path, producerPoint cfg.Point, cond bool) BranchPathEvidence {
 	return BranchPathEvidence{
-		kind:          BranchPathEvidenceFrozenTable,
-		path:          targetPath.Clone(),
-		activeOnTrue:  cond,
-		activeOnFalse: !cond,
+		kind:             BranchPathEvidenceFrozenTable,
+		path:             targetPath.Clone(),
+		activeOnTrue:     cond,
+		activeOnFalse:    !cond,
+		producerPoint:    producerPoint,
+		hasProducerPoint: producerPoint != 0,
 	}
 }
 
@@ -178,6 +190,12 @@ func (p BranchPathEvidence) OtherPathRef() (path.Path, bool) {
 		return path.Path{}, false
 	}
 	return p.otherPath, true
+}
+
+// ProducerPoint returns the exact contextual producer for evidence kinds
+// whose semantics are not recoverable from a scalar condition term.
+func (p BranchPathEvidence) ProducerPoint() (cfg.Point, bool) {
+	return p.producerPoint, p.hasProducerPoint && p.producerPoint != 0
 }
 
 func (p BranchPathEvidence) copy() BranchPathEvidence {

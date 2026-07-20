@@ -53,7 +53,7 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 	sameMapValue := func(a, b map[K]V) bool {
 		return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 	}
-	return lattice.Lattice[MustMapLane[K, V]]{
+	l := lattice.Lattice[MustMapLane[K, V]]{
 		Bottom: func() MustMapLane[K, V] {
 			return MustMapBottom[K, V]()
 		},
@@ -68,6 +68,9 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 				return true
 			}
 			return finiteMapEqual(a.values, b.values, elem.Equal)
+		},
+		Same: func(a, b MustMapLane[K, V]) bool {
+			return a.bottom == b.bottom && sameMapValue(a.values, b.values)
 		},
 		LessOrEq: func(a, b MustMapLane[K, V]) bool {
 			if a.bottom == b.bottom && sameMapValue(a.values, b.values) {
@@ -139,6 +142,18 @@ func MustMap[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[MustM
 			return MustMapLane[K, V]{values: out}
 		},
 	}
+	if elem.Meet != nil {
+		l.Meet = func(a, b MustMapLane[K, V]) MustMapLane[K, V] {
+			if a.bottom || b.bottom {
+				return MustMapBottom[K, V]()
+			}
+			if sameMapValue(a.values, b.values) {
+				return a
+			}
+			return MustMapLane[K, V]{values: finiteMustMapMeet(a.values, b.values, elem.Meet)}
+		}
+	}
+	return l
 }
 
 // MustSetLane is a finite must-fact set carrier.
@@ -202,6 +217,9 @@ func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
 			}
 			return finiteSetEqual(a.values, b.values)
 		},
+		Same: func(a, b MustSetLane[T]) bool {
+			return a.bottom == b.bottom && sameSetValue(a.values, b.values)
+		},
 		LessOrEq: func(a, b MustSetLane[T]) bool {
 			if a.bottom == b.bottom && sameSetValue(a.values, b.values) {
 				return true
@@ -238,6 +256,15 @@ func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
 				return prev
 			}
 			return MustSetLane[T]{values: finiteSetIntersection(prev.values, next.values)}
+		},
+		Meet: func(a, b MustSetLane[T]) MustSetLane[T] {
+			if a.bottom || b.bottom {
+				return MustSetBottom[T]()
+			}
+			if sameSetValue(a.values, b.values) {
+				return a
+			}
+			return MustSetLane[T]{values: finiteSetUnion(a.values, b.values)}
 		},
 		Narrow: func(prev, next MustSetLane[T]) MustSetLane[T] {
 			return prev
@@ -312,6 +339,33 @@ func finiteMustMapJoin[K comparable, V any](
 	return out
 }
 
+func finiteMustMapMeet[K comparable, V any](
+	a map[K]V,
+	b map[K]V,
+	meet func(V, V) V,
+) map[K]V {
+	if len(a) == 0 {
+		return cloneMap(b)
+	}
+	if len(b) == 0 {
+		return cloneMap(a)
+	}
+	out := make(map[K]V, len(a)+len(b))
+	for k, av := range a {
+		if bv, ok := b[k]; ok {
+			out[k] = meet(av, bv)
+		} else {
+			out[k] = av
+		}
+	}
+	for k, bv := range b {
+		if _, ok := a[k]; !ok {
+			out[k] = bv
+		}
+	}
+	return out
+}
+
 func cloneSet[T comparable](in map[T]struct{}) map[T]struct{} {
 	if len(in) == 0 {
 		return nil
@@ -359,6 +413,23 @@ func finiteSetIntersection[T comparable](a, b map[T]struct{}) map[T]struct{} {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func finiteSetUnion[T comparable](a, b map[T]struct{}) map[T]struct{} {
+	if len(a) == 0 {
+		return cloneSet(b)
+	}
+	if len(b) == 0 {
+		return cloneSet(a)
+	}
+	out := make(map[T]struct{}, len(a)+len(b))
+	for v := range a {
+		out[v] = struct{}{}
+	}
+	for v := range b {
+		out[v] = struct{}{}
 	}
 	return out
 }

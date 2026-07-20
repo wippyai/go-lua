@@ -21,6 +21,17 @@ var defaultReachableStateOps = defaultLaneCatalog.reachableOps()
 type State struct {
 	laneMask  laneMask
 	canonical bool
+	// numericConsistency is a derived product invariant certificate. It is not
+	// a semantic lane and is ignored by equality/fingerprints; numeric writers
+	// invalidate it and ProductDomain publication certifies it exactly.
+	numericConsistency numericConsistencyStatus
+	// numericConsistencyMutation is the exact variable support of one affine
+	// assertion added to a previously certified state. The registered affine
+	// vocabulary has arity at most three, so this is a representation bound,
+	// not a solver budget. Batched/arbitrary lane replacement remains Unknown
+	// and takes the same exact whole-conjunction path. Certified states retain
+	// no mutation object, keeping the hot State carrier small.
+	numericConsistencyMutation *numericConsistencyMutation
 
 	values       valueLane
 	pathEvidence pathevidence.Lane
@@ -49,7 +60,7 @@ func (s State) Snapshot() State {
 	return s
 }
 
-func (s State) laneEnabled(bit laneMask) bool {
+func (s State) laneEnabled(bit laneBit) bool {
 	return s.laneMask.allows(bit)
 }
 
@@ -75,7 +86,11 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 	if slot == 0 || !s.laneEnabled(laneValuesBit) {
 		return s
 	}
-	requireFiniteLaneForWrite(s.values.top, "finite-write", "value slot", "value")
+	// Values is a lifted finite map. Its Top spelling carries no per-slot
+	// exceptions, so every finite point update is absorbed by Top.
+	if s.values.top {
+		return s
+	}
 	values, changed := s.values.write(reg, slot, value)
 	if !changed {
 		return s
@@ -143,7 +158,9 @@ func (e *ValueEdit) Write(slot key.Value, value product.Value) {
 	if slot == 0 || !e.enabled {
 		return
 	}
-	requireFiniteLaneForWrite(e.state.values.top, "finite-write", "value slot", "value")
+	if e.state.values.top {
+		return
+	}
 	bottom := e.valueDomain.Bottom()
 	current := e.Read(slot)
 	if e.valueDomain.Equal(current, value) {
@@ -181,7 +198,7 @@ func (e *ValueEdit) ensureValuesFor(slot key.Value) map[key.Value]product.Value 
 
 // Update reads the current staged value, applies fn, and stages the result.
 func (e *ValueEdit) Update(slot key.Value, fn func(product.Value) product.Value) {
-	if slot == 0 || fn == nil {
+	if slot == 0 || fn == nil || !e.enabled || e.state.values.top {
 		return
 	}
 	e.Write(slot, fn(e.Read(slot)))
@@ -241,7 +258,9 @@ func (s State) SeedValues(reg *axis.Registry, seeds []ValueSeed) State {
 	if reg == nil || len(seeds) == 0 || !s.laneEnabled(laneValuesBit) {
 		return s
 	}
-	requireFiniteLaneForWrite(s.values.top, "seed", "value slots", "value")
+	if s.values.top {
+		return s
+	}
 	values, changed := s.values.seed(reg, seeds)
 	if !changed {
 		return s
@@ -273,7 +292,7 @@ func (s State) RefreshValueSlotsFrom(reg *axis.Registry, refreshed State) State 
 // UpdateValue reads slot, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
 func (s State) UpdateValue(reg *axis.Registry, slot key.Value, fn func(product.Value) product.Value) State {
-	if slot == 0 {
+	if slot == 0 || !s.laneEnabled(laneValuesBit) || s.values.top {
 		return s
 	}
 	return s.WriteValue(reg, slot, fn(s.ReadValue(reg, slot)))

@@ -1,6 +1,7 @@
 package operationplan
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -163,13 +164,24 @@ func (p *Plan) BoundaryCaptureIndex(target symbol.ID) (int, bool) {
 	return 0, false
 }
 
-// WithBoundaryGlobals returns a plan owning the exact ordered global symbols
-// read directly by the body. GlobalBoundary remains the authority which may
-// later certify those roots immutable and instantiate them; this plan field is
-// only its canonical symbol-sorted dense order. Zero, duplicate, parameter,
-// and capture overlaps fail closed rather than publishing an ambiguous
-// namespace.
-func (p *Plan) WithBoundaryGlobals(globals []symbol.ID) *Plan {
+// BoundaryGlobal pairs a global symbol read directly by a body with its
+// declared abstract contract as one caller-supplied unit. WithBoundaryGlobals
+// sorts this unit by Symbol, so the contract for a symbol travels with it:
+// the symbol and contract vectors it derives can never be permuted relative
+// to each other, regardless of the order the caller supplies them in.
+type BoundaryGlobal struct {
+	Symbol   symbol.ID
+	Contract product.Value
+}
+
+// WithBoundaryGlobals returns a plan owning the exact global symbols read
+// directly by the body, together with each symbol's declared abstract
+// contract, stored from one canonical symbol-sorted sequence. GlobalBoundary
+// remains the authority which may later certify those roots immutable and
+// instantiate them; this plan field is only its canonical symbol-sorted dense
+// order. Zero, duplicate, parameter, and capture overlaps fail closed rather
+// than publishing an ambiguous namespace.
+func (p *Plan) WithBoundaryGlobals(globals []BoundaryGlobal) *Plan {
 	if p == nil {
 		return nil
 	}
@@ -187,35 +199,27 @@ func (p *Plan) WithBoundaryGlobals(globals []symbol.ID) *Plan {
 	for _, capture := range p.boundaryCaptures {
 		seen[capture] = true
 	}
-	owned := make([]symbol.ID, 0, len(globals))
+	owned := make([]BoundaryGlobal, 0, len(globals))
 	for _, global := range globals {
-		if global == 0 || seen[global] {
+		if global.Symbol == 0 || seen[global.Symbol] {
 			return &out
 		}
-		seen[global] = true
+		seen[global.Symbol] = true
 		owned = append(owned, global)
 	}
 	// GlobalBoundary seals descriptors by Symbol. Use the same dense order here
 	// so RootGlobal indices have one canonical meaning from plan to artifact.
-	slices.Sort(owned)
-	out.boundaryGlobals = owned
+	// Symbol and contract sort as one unit, so alignment cannot be lost here.
+	slices.SortFunc(owned, func(a, b BoundaryGlobal) int { return cmp.Compare(a.Symbol, b.Symbol) })
+	symbols := make([]symbol.ID, len(owned))
+	contracts := make([]product.Value, len(owned))
+	for index, global := range owned {
+		symbols[index] = global.Symbol
+		contracts[index] = global.Contract
+	}
+	out.boundaryGlobals = symbols
 	out.boundaryGlobalsValid = true
-	return &out
-}
-
-// WithBoundaryGlobalContracts binds each ordered RootGlobal to the exact
-// abstract value supplied by the prepared body's immutable type environment.
-// A width mismatch clears the complete vector fail-closed.
-func (p *Plan) WithBoundaryGlobalContracts(values []product.Value) *Plan {
-	if p == nil {
-		return nil
-	}
-	out := *p
-	out.boundaryGlobalContracts = nil
-	if !p.boundaryGlobalsValid || len(values) != len(p.boundaryGlobals) {
-		return &out
-	}
-	out.boundaryGlobalContracts = append([]product.Value(nil), values...)
+	out.boundaryGlobalContracts = contracts
 	return &out
 }
 

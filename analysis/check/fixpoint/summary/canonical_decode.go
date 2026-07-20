@@ -104,7 +104,7 @@ func validateCanonicalDecodedSummary(reg *axis.Registry, in Summary) error {
 		}
 	}
 	for _, proof := range in.NormalReturnFacts.BranchProofs {
-		admitted, ok := admitBranchProof(proof)
+		admitted, ok := callboundary.AdmitBranchProof(proof)
 		if !ok || admitted.Kind != proof.Kind || admitted.Presence != proof.Presence ||
 			admitted.Path.Key() != proof.Path.Key() || admitted.Other.Key() != proof.Other.Key() {
 			return canonicalSummaryDecodeError("branch proof enum or payload", nil)

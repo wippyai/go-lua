@@ -32,6 +32,7 @@ func richNormalReturnFactsCorpus() (facts NormalReturnFacts, match, other pathdo
 		StoreRelations:           []StoreRelationFact{{Source: other, Into: match}, {Source: other, Into: other}},
 		LifecycleFacts:           []LifecycleFact{{Target: match}, {Target: other}},
 		NumFloors:                []NumFloorFact{{Path: match}, {Path: other}},
+		NumCeils:                 []NumCeilFact{{Path: match}, {Path: other}},
 		RelConstraints: []RelConstraintFact{
 			{A: RelOperand{Path: other}, B: RelOperand{Path: match}, C: RelOperand{Path: other}},
 			{A: RelOperand{Path: other}, C: RelOperand{Path: other}},
@@ -184,6 +185,7 @@ func TestNormalReturnFactDescriptorsWireRefsMatchLowering(t *testing.T) {
 		LaneStoreRelations:           {"StoreRelations", "ParamRelations"},
 		LaneLifecycleFacts:           {"LifecycleEffects"},
 		LaneNumFloors:                nil,
+		LaneNumCeils:                 nil,
 		LaneRelConstraints:           nil,
 	}
 	descriptors := NormalReturnFactDescriptors()

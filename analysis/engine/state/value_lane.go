@@ -54,6 +54,19 @@ func valueLaneDomain(reg *axis.Registry) lattice.Lattice[valueLane] {
 				returns: domain.Join(a.returns, b.returns),
 			}
 		},
+		Meet: func(a, b valueLane) valueLane {
+			switch {
+			case a.top:
+				return b
+			case b.top:
+				return a
+			default:
+				return valueLane{
+					symbols: domain.Meet(a.symbols, b.symbols),
+					returns: domain.Meet(a.returns, b.returns),
+				}
+			}
+		},
 		Widen: func(prev, next valueLane) valueLane {
 			if prev.top || next.top {
 				return valueLane{top: true}

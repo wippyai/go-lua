@@ -6,28 +6,36 @@ import (
 )
 
 func projectUserLatticesBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if source.userLattices.top {
-		out.userLattices = source.userLattices
-		return true
-	}
-	out.userLattices.values = projectFiniteMap(source.userLattices.values, func(key userLatticeKey, _ userlattice.Element) bool { return ctx.closure.ContainsPath(key.path) })
+	out.userLattices, _ = projectUserLatticesBoundaryFactor(ctx, source.userLattices)
 	return true
 }
-func rebaseUserLatticesBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if source.userLattices.top {
-		out.userLattices = source.userLattices
-		return true
+func projectUserLatticesBoundaryFactor(ctx *boundaryProjectContext, source userLatticeLane) (userLatticeLane, bool) {
+	if source.top {
+		return source, true
 	}
-	values := make(map[userLatticeKey]userlattice.Element, len(source.userLattices.values))
+	out := userLatticeLane{}
+	out.values = projectFiniteMap(source.values, func(key userLatticeKey, _ userlattice.Element) bool { return ctx.closure.ContainsPath(key.path) })
+	return out, true
+}
+func rebaseUserLatticesBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
+	var ok bool
+	out.userLattices, ok = rebaseUserLatticesBoundaryFactor(ctx, source.userLattices)
+	return ok
+}
+func rebaseUserLatticesBoundaryFactor(ctx *boundaryRebaseContext, source userLatticeLane) (userLatticeLane, bool) {
+	if source.top {
+		return source, true
+	}
+	values := make(map[userLatticeKey]userlattice.Element, len(source.values))
 	runtime := userlattice.RuntimeFor(ctx.reg)
-	for key, value := range source.userLattices.values {
+	for key, value := range source.values {
 		paths, ok := boundaryRebasePaths(ctx, key.path)
 		if !ok {
-			return false
+			return userLatticeLane{}, false
 		}
 		axis, ok := runtime.AxisBySlot(key.axis)
 		if !ok {
-			return false
+			return userLatticeLane{}, false
 		}
 		for _, path := range paths {
 			nextKey := key
@@ -39,16 +47,14 @@ func rebaseUserLatticesBoundary(ctx *boundaryRebaseContext, source State, out *S
 			values[nextKey] = candidate
 		}
 	}
-	out.userLattices.values = values
-	return true
+	return userLatticeLane{values: values}, true
 }
-func applyUserLatticesBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if destination.userLattices.top || fragment.userLattices.top {
-		out.userLattices = userLatticeLane{top: true}
-		return true
+func applyUserLatticesBoundaryLane(ctx *boundaryApplyContext, destination, fragment userLatticeLane) (userLatticeLane, bool) {
+	if destination.top || fragment.top {
+		return userLatticeLane{top: true}, true
 	}
-	out.userLattices.values = applyFiniteMap(destination.userLattices.values, fragment.userLattices.values, func(key userLatticeKey, _ userlattice.Element) bool { return ctx.closure.ContainsPath(key.path) })
-	return true
+	destination.values = applyFiniteMap(destination.values, fragment.values, func(key userLatticeKey, _ userlattice.Element) bool { return ctx.closure.ContainsPath(key.path) })
+	return destination, true
 }
 func equalUserLatticesBoundary(reg *axis.Registry, a, b State) bool {
 	return userLatticeDomain(userlattice.RuntimeFor(reg)).Equal(a.userLattices, b.userLattices)

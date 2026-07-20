@@ -141,7 +141,10 @@ func (l *lowerer) pathTypeIsBooleanLike(target path.Path) bool {
 			return false
 		}
 	}
-	booleanLike := typeexpr.Union(typ.True, typ.False, typ.Nil)
+	// typ.Boolean itself is boolean-like: it is a closed two-valued primitive,
+	// not a literal union node, so it must be named directly alongside its
+	// true/false/nil members for the subtype check below to admit it.
+	booleanLike := typeexpr.Union(typ.Boolean, typ.Nil)
 	return subtype.IsSubtype(typ.True, targetType) && subtype.IsSubtype(targetType, booleanLike)
 }
 

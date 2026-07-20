@@ -3,6 +3,8 @@ package branchcond
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -12,25 +14,30 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
-type CheckKind uint8
+// CheckKind aliases wir.CheckKind: wir is the upstream IR and owns the
+// single authoritative enum, branchcond only recognizes syntax shapes that
+// project onto it. Aliasing (rather than redeclaring) makes the two
+// enumerations impossible to drift apart; CheckKindExhaustivenessTest still
+// pins the name mapping so a wir-side rename is caught here too.
+type CheckKind = wir.CheckKind
 
 const (
-	CheckNone CheckKind = iota
-	CheckTruthy
-	CheckFalsy
-	CheckNil
-	CheckNotNil
-	CheckTypeEqual
-	CheckTypeNot
-	CheckLiteralEqual
-	CheckLiteralNot
-	CheckPathEqual
-	CheckPathNot
-	CheckLenGe
-	CheckIndexInRange
-	CheckNumGe
-	CheckNumLe
-	CheckFrozenTable
+	CheckNone         = wir.CheckNone
+	CheckTruthy       = wir.CheckTruthy
+	CheckFalsy        = wir.CheckFalsy
+	CheckNil          = wir.CheckNil
+	CheckNotNil       = wir.CheckNotNil
+	CheckTypeEqual    = wir.CheckTypeEqual
+	CheckTypeNot      = wir.CheckTypeNot
+	CheckLiteralEqual = wir.CheckLiteralEqual
+	CheckLiteralNot   = wir.CheckLiteralNot
+	CheckPathEqual    = wir.CheckPathEqual
+	CheckPathNot      = wir.CheckPathNot
+	CheckLenGe        = wir.CheckLenGe
+	CheckIndexInRange = wir.CheckIndexInRange
+	CheckNumGe        = wir.CheckNumGe
+	CheckNumLe        = wir.CheckNumLe
+	CheckFrozenTable  = wir.CheckFrozenTable
 )
 
 type Check struct {
@@ -50,6 +57,20 @@ type Check struct {
 	// on its false edge, the standard `if oob then error end` guard form. Only the
 	// bound checks (CheckIndexInRange, CheckNumGe, CheckNumLe, CheckLenGe) use it.
 	Negated bool
+	// ProducerPoint is filled by WIR after it maps producerCall to the exact CFG
+	// occurrence. Syntax normalization leaves it absent.
+	ProducerPoint    cfg.Point
+	HasProducerPoint bool
+	// producerCall is the exact syntax occurrence for contextual checks whose
+	// proof is not reconstructible from scalar operands. It is projected to a
+	// cfg.Point by WIR lowering and never leaves this syntax-facing package.
+	producerCall *ast.FuncCallExpr
+}
+
+// ProducerCall returns the exact contextual producer occurrence, when this
+// check requires one.
+func (c Check) ProducerCall() (*ast.FuncCallExpr, bool) {
+	return c.producerCall, c.producerCall != nil
 }
 
 // ImpliedCheck is a normalized leaf check proven by taking a particular branch
@@ -144,7 +165,7 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 		}
 	case *ast.FuncCallExpr:
 		if p, ok := normalizeFrozenTableCall(expr, bindings); ok {
-			return Check{Kind: CheckFrozenTable, Path: p}
+			return Check{Kind: CheckFrozenTable, Path: p, producerCall: expr}
 		}
 	case *ast.RelationalOpExpr:
 		if !isSupportedRelop(expr.Operator) {
@@ -268,6 +289,48 @@ func ImpliedRelationalOpsOnEdge(expr ast.Expr, edge bool) []ImpliedRelationalOp 
 // disjunct held.
 func SufficientChecksOnEdge(expr ast.Expr, bindings *bind.Result, edge bool) []ImpliedCheck {
 	return sufficientChecks(expr, bindings, edge, edge)
+}
+
+// SufficientCheckArms recognizes the same top-level shape as
+// SufficientChecksOnEdge (a disjunction for edge=true, a conjunction for
+// edge=false) but keeps each arm's leaf checks separate instead of flattening
+// them into one list. An arm that resolves no leaf check is still reported, as
+// an empty slice, rather than being silently absorbed into a sibling arm's
+// result. This lets a caller that needs a conclusion sound across every arm
+// (for example, joining each arm's narrowing into one narrowing that holds no
+// matter which arm made the edge true) require every arm to be non-empty
+// before trusting the join: an opaque arm means the edge could have been
+// forced by something the caller knows nothing about, so no path-specific
+// conclusion follows. ok is false when expr is not, at this edge, a top-level
+// composition of the matching shape, mirroring SufficientChecksOnEdge.
+func SufficientCheckArms(expr ast.Expr, bindings *bind.Result, edge bool) (arms [][]ImpliedCheck, ok bool) {
+	return sufficientCheckArms(expr, bindings, edge, edge)
+}
+
+func sufficientCheckArms(expr ast.Expr, bindings *bind.Result, polarity bool, edge bool) ([][]ImpliedCheck, bool) {
+	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
+		return sufficientCheckArms(unary.Expr, bindings, !polarity, edge)
+	}
+	splitOp := "or"
+	if !polarity {
+		splitOp = "and"
+	}
+	logical, ok := expr.(*ast.LogicalOpExpr)
+	if !ok || logical.Operator != splitOp {
+		return nil, false
+	}
+	left, leftOk := sufficientCheckArms(logical.Lhs, bindings, polarity, edge)
+	if !leftOk {
+		left = [][]ImpliedCheck{impliedChecks(logical.Lhs, bindings, polarity, edge)}
+	}
+	right, rightOk := sufficientCheckArms(logical.Rhs, bindings, polarity, edge)
+	if !rightOk {
+		right = [][]ImpliedCheck{impliedChecks(logical.Rhs, bindings, polarity, edge)}
+	}
+	out := make([][]ImpliedCheck, 0, len(left)+len(right))
+	out = append(out, left...)
+	out = append(out, right...)
+	return out, true
 }
 
 // polarityChecks collects the narrowing checks implied when expr holds the given

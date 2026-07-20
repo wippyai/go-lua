@@ -268,22 +268,27 @@ var summaryFactDescriptors = func() callboundary.BoundaryFactTable[SummarySlotOp
 			},
 		}),
 		summarySlotDescriptor("NormalReturnFacts", nil, SummarySlotOps{
-			empty:       func(s Summary) bool { return s.NormalReturnFacts.Empty() },
-			assignClone: func(src Summary, dst *Summary) { dst.NormalReturnFacts = CloneNormalReturnFacts(src.NormalReturnFacts) },
+			empty: func(s Summary) bool { return s.NormalReturnFacts.Empty() },
+			assignClone: func(src Summary, dst *Summary) {
+				dst.NormalReturnFacts = callboundary.CloneNormalReturnFacts(src.NormalReturnFacts)
+			},
 			normalizeOwned: func(reg *axis.Registry, s *Summary) {
-				s.NormalReturnFacts = normalizeOwnedNormalReturnFacts(reg, s.NormalReturnFacts)
+				s.NormalReturnFacts = callboundary.NormalizeOwnedNormalReturnFacts(reg, s.NormalReturnFacts)
 			},
 			equal: func(reg *axis.Registry, a, b Summary, normalized bool) bool {
-				return normalReturnFactsEqualFor(reg, a.NormalReturnFacts, b.NormalReturnFacts, normalized)
+				if normalized {
+					return callboundary.NormalReturnFactsEqualNormalized(reg, a.NormalReturnFacts, b.NormalReturnFacts)
+				}
+				return callboundary.NormalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts)
 			},
 			lessOrEq: func(reg *axis.Registry, a, b Summary) bool {
-				return normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts)
+				return callboundary.NormalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts)
 			},
 			assignJoin: func(reg *axis.Registry, a, b Summary, out *Summary) {
-				out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
+				out.NormalReturnFacts = callboundary.JoinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
 			},
 			assignWiden: func(reg *axis.Registry, prev, next Summary, out *Summary) {
-				out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
+				out.NormalReturnFacts = callboundary.WidenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
 			},
 			retentionSafe: func(reg *axis.Registry, s Summary) bool {
 				return normalReturnFactsRetentionSafe(reg, s.NormalReturnFacts)

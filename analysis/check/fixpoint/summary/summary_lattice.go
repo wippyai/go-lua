@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -131,13 +130,6 @@ func equal(reg *axis.Registry, a, b Summary, normalized bool) bool {
 		}
 	}
 	return summaryNonSlotLanesEqual(reg, a, b, normalized)
-}
-
-func normalReturnFactsEqualFor(reg *axis.Registry, a, b callboundary.NormalReturnFacts, normalized bool) bool {
-	if normalized {
-		return normalReturnFactsEqualNormalized(reg, a, b)
-	}
-	return normalReturnFactsEqual(reg, a, b)
 }
 
 // LessOrEq reports whether a is less than or equal to b componentwise. Missing

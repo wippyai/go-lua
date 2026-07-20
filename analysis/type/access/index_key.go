@@ -12,16 +12,26 @@ func (q *query) indexByKeyVariants(key typ.Type, depth int, mode indexMode, miss
 		return cycle
 	}
 	defer q.leave(visit)
-	return descendAccessWrappers(key, depth, nil, func(key typ.Type, depth int) fieldResult {
+	projectLeaf := func(leaf typ.Type) fieldResult {
+		res := project(leaf)
+		if !res.ok && mode == indexRuntime && missingNil {
+			return fieldResult{t: typ.Nil, ok: true}
+		}
+		return res
+	}
+	return descendAccessWrappers(key, depth, nil, func() fieldResult {
+		// Depth exhaustion must not silently deny what project would grant
+		// (invariants.md Rule 1): hand the still-wrapped key to the leaf
+		// projection so its own, independently depth-bounded logic (e.g. an
+		// array runtime read's may-be-integer check) decides the outcome,
+		// instead of collapsing an inconclusive key into "unresolved".
+		return projectLeaf(key)
+	}, func(key typ.Type, depth int) fieldResult {
 		switch v := unwrap.Annotated(key).(type) {
 		case *typ.Union:
 			return q.indexKeyUnion(v, depth+1, mode, missingNil, project)
 		default:
-			res := project(key)
-			if !res.ok && mode == indexRuntime && missingNil {
-				return fieldResult{t: typ.Nil, ok: true}
-			}
-			return res
+			return projectLeaf(key)
 		}
 	}, func(res fieldResult) fieldResult {
 		if res.ok {

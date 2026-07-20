@@ -29,6 +29,20 @@ func applyNormalReturnNumFloor(
 	return out.WriteNumFloor(ctx.resolver.KeySpace(), pathKey, fact.Floor)
 }
 
+func applyNormalReturnNumCeils(ctx normalReturnApplyContext, out state.State) state.State {
+	for _, fact := range ctx.normalFacts.NumCeils {
+		targetPath, ok := ctx.substitute(fact.Path)
+		if !ok || targetPath.Symbol == 0 {
+			continue
+		}
+		pathKey, ok := visibility.AddressAt(ctx.resolver, ctx.point, targetPath).RootOrVisibleStateKey()
+		if ok {
+			out = out.WriteNumCeil(ctx.resolver.KeySpace(), pathKey, fact.Ceil)
+		}
+	}
+	return out
+}
+
 func applyNormalReturnRelConstraints(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.RelConstraints {
 		out = applyNormalReturnRelConstraint(ctx, out, fact)

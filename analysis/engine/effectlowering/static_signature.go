@@ -1,6 +1,8 @@
 package effectlowering
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -13,6 +15,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+// ExactSameAsReturnArgument projects the canonical dependent return equation
+// for one signature result. The first operational return transform is the
+// provider's precedence law; only an exact SameAs transform can be represented
+// as a pure symbolic value term without executing the provider.
+func ExactSameAsReturnArgument(sig signature.Function, returnIndex, argumentCount int) (int, bool) {
+	transforms := activeReturnTransforms(sig, returnIndex)
+	if len(transforms) == 0 {
+		return 0, false
+	}
+	same, ok := returns.AsSameAs(transforms[0])
+	if !ok {
+		return 0, false
+	}
+	return effect.ResolveParamIndex(same.Source, argumentCount)
+}
 
 // StaticScalarSignatureReturns projects the first exact signature-Relation
 // slice through the same return materializer used by SignatureOutcomeProvider.

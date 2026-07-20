@@ -54,27 +54,23 @@ type observationObligation struct {
 type relationAnnotations struct {
 	observations []ObservationTerm
 	obligations  []observationObligation
-	calls        []ObserverCallTemplate
 }
 
 func unionRelationAnnotations(arena *Arena, sets ...relationAnnotations) relationAnnotations {
 	var observations [][]ObservationTerm
 	var obligations [][]observationObligation
-	var calls [][]ObserverCallTemplate
 	for _, set := range sets {
 		observations = append(observations, set.observations)
 		obligations = append(obligations, set.obligations)
-		calls = append(calls, set.calls)
 	}
 	return relationAnnotations{
 		observations: unionObservationTerms(arena, observations...),
 		obligations:  unionobservationObligations(obligations...),
-		calls:        unionObserverCallTemplates(arena, calls...),
 	}
 }
 
 func equalRelationAnnotations(left, right relationAnnotations) bool {
-	if len(left.observations) != len(right.observations) || len(left.obligations) != len(right.obligations) || !equalObserverCallTemplates(left.calls, right.calls) {
+	if len(left.observations) != len(right.observations) || len(left.obligations) != len(right.obligations) {
 		return false
 	}
 	observations := make(map[ObservationTerm]struct{}, len(left.observations))
@@ -96,13 +92,6 @@ func equalRelationAnnotations(left, right relationAnnotations) bool {
 		}
 	}
 	return true
-}
-
-func equalRowAnnotations(left, right Row) bool {
-	return equalRelationAnnotations(
-		relationAnnotations{observations: left.Observations, obligations: left.observationObligations},
-		relationAnnotations{observations: right.Observations, obligations: right.observationObligations},
-	)
 }
 
 func (o observationObligation) valid(arena *Arena, shape Shape) bool {

@@ -53,6 +53,12 @@ import (
 type Options struct {
 	MethodReceiverTypes map[symbol.ID]typ.Type
 
+	// SealedLuaTypeChecks proves that the unit's global type binding retains
+	// canonical intrinsic identity. Only then may lowering replace the ordinary
+	// call and comparison with a closed CheckType descriptor. The zero value
+	// retains the dynamic call and comparison.
+	SealedLuaTypeChecks bool
+
 	// PreparedChild returns the already-lowered artifact for a direct lexical
 	// child. A source-owned preparation forest supplies this hook while lowering
 	// parents bottom-up, so each lexical body and CFG is constructed exactly
@@ -219,6 +225,9 @@ func recordExternalFunctionRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindi
 // resolver, threaded through nested protos so type identities and their caches
 // stay consistent across the whole chunk.
 func lowerInto(name string, stmts []ast.Stmt, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
+	if built != nil && built.SealedLuaTypeChecks() {
+		options.SealedLuaTypeChecks = true
+	}
 	if options.ObserveBodyLowered != nil {
 		options.ObserveBodyLowered(fn)
 	}
@@ -464,8 +473,20 @@ func (b *builder) newTemp() wir.Operand {
 
 func (b *builder) callOrderOptions() callorder.Options {
 	options := callorder.LuaOptions(b.bindings)
+	if b.options.SealedLuaTypeChecks {
+		options = callorder.SealedLuaTypeOptions(b.bindings)
+	}
 	options.AllowShortCircuitCalls = true
 	return options
+}
+
+func (b *builder) normalizeBranchCondition(expr ast.Expr) branchcond.Check {
+	check := branchcond.Normalize(expr, b.bindings)
+	if !b.options.SealedLuaTypeChecks &&
+		(check.Kind == branchcond.CheckTypeEqual || check.Kind == branchcond.CheckTypeNot) {
+		return branchcond.Check{}
+	}
+	return check
 }
 
 // stmtPoints returns the CFG points cfgbuild recorded for stmt, in creation
@@ -1136,7 +1157,7 @@ func (b *builder) emitCallAt(point cfg.Point, call *ast.FuncCallExpr, resultCoun
 		}
 	}
 	if check, ok := b.assertCallCheck(call, meta); ok {
-		inst.Check = b.body.InternCheck(lowerCheck(check))
+		inst.Check = b.body.InternCheck(b.lowerCheck(check))
 	}
 	cr.index = len(b.pointInstrs[point])
 	b.emit(inst)
@@ -1152,7 +1173,7 @@ func (b *builder) assertCallCheck(call *ast.FuncCallExpr, meta callMetadata) (br
 	if !ok || !b.bindings.ResolvesToGlobal(callee, "assert") {
 		return branchcond.Check{}, false
 	}
-	check := branchcond.Normalize(call.Args[0], b.bindings)
+	check := b.normalizeBranchCondition(call.Args[0])
 	if check.Kind == branchcond.CheckNone {
 		return branchcond.Check{}, false
 	}
@@ -1170,7 +1191,11 @@ func (b *builder) recordContextCallResultTarget(point cfg.Point, resultCount int
 	switch meta.context {
 	case wir.CallContextReturnSource:
 		target.Kind = wir.CallResultTargetReturn
-	case wir.CallContextExpressionProducer:
+	case wir.CallContextCondition, wir.CallContextExpressionProducer:
+		// A top-level condition consumes the same exact scalar result
+		// coordinate as any other enclosing expression.  The branch relation
+		// remains separate metadata; this target only gives the call result an
+		// explicit carrier for the condition evaluator.
 		target.Kind = wir.CallResultTargetExpression
 	default:
 		return
@@ -1278,16 +1303,25 @@ func (b *builder) condCallCount(cond ast.Expr) int {
 }
 
 func (b *builder) emitBranch(cond ast.Expr) {
-	check := branchcond.Normalize(cond, b.bindings)
+	check := b.normalizeBranchCondition(cond)
 	inst := wir.Instruction{
-		Op:               wir.OpBranch,
-		Check:            b.body.InternCheck(lowerCheck(check)),
-		ImpliedChecks:    b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
-		SufficientChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchSufficientChecksOnBothEdges(cond, b.bindings))),
-		DiffConstraints:  b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
-		ExprSpan:         tableEntryValueSpan(cond),
+		Op:                       wir.OpBranch,
+		Check:                    b.body.InternCheck(b.lowerCheck(check)),
+		ImpliedChecks:            b.body.AppendImpliedChecks(b.lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(cond, b.bindings))),
+		SufficientChecks:         b.body.AppendImpliedChecks(b.lowerImpliedChecks(branchSufficientChecksOnBothEdges(cond, b.bindings))),
+		SufficientCheckArmsTrue:  b.body.AppendSufficientCheckArms(b.branchSufficientCheckArmsOnEdge(cond, b.bindings, true)),
+		SufficientCheckArmsFalse: b.body.AppendSufficientCheckArms(b.branchSufficientCheckArmsOnEdge(cond, b.bindings, false)),
+		DiffConstraints:          b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
+		ExprSpan:                 tableEntryValueSpan(cond),
 	}
-	if check.Kind == branchcond.CheckNone {
+	// A normalized descriptor owns edge refinements, but it does not replace
+	// the Boolean value produced by a call. Preserve that call result on the
+	// branch so transfer lowering can publish the canonical ValueSourceCall.
+	// Pure normalized predicates are reconstructed from their closed descriptor;
+	// calls stay single-source and are never re-evaluated by a second semantic
+	// implementation.
+	_, _, predicateCall := branchcond.PredicateCall(cond)
+	if check.Kind == branchcond.CheckNone || predicateCall {
 		inst.A = b.lowerExpr(cond)
 	}
 	b.emit(inst)
@@ -1717,13 +1751,15 @@ func (b *builder) emitLogicalGuardAtOperand(e *ast.LogicalOpExpr, guard cfg.Poin
 		return
 	}
 	b.logicalGuardEmitted[e] = true
-	check := branchcond.Normalize(e.Lhs, b.bindings)
+	check := b.normalizeBranchCondition(e.Lhs)
 	guardInst := wir.Instruction{
-		Op:               wir.OpBranch,
-		Check:            b.body.InternCheck(lowerCheck(check)),
-		ImpliedChecks:    b.body.AppendImpliedChecks(lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
-		SufficientChecks: b.body.AppendImpliedChecks(lowerImpliedChecks(branchSufficientChecksOnBothEdges(e.Lhs, b.bindings))),
-		DiffConstraints:  b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
+		Op:                       wir.OpBranch,
+		Check:                    b.body.InternCheck(b.lowerCheck(check)),
+		ImpliedChecks:            b.body.AppendImpliedChecks(b.lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
+		SufficientChecks:         b.body.AppendImpliedChecks(b.lowerImpliedChecks(branchSufficientChecksOnBothEdges(e.Lhs, b.bindings))),
+		SufficientCheckArmsTrue:  b.body.AppendSufficientCheckArms(b.branchSufficientCheckArmsOnEdge(e.Lhs, b.bindings, true)),
+		SufficientCheckArmsFalse: b.body.AppendSufficientCheckArms(b.branchSufficientCheckArmsOnEdge(e.Lhs, b.bindings, false)),
+		DiffConstraints:          b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
 	}
 	if check.Kind == branchcond.CheckNone {
 		if operand.Kind != wir.OperandNone {
@@ -2075,8 +2111,8 @@ func (b *builder) emitRelOp(dst wir.Operand, expr *ast.RelationalOpExpr) {
 	a := b.lowerExpr(expr.Lhs)
 	c := b.lowerExpr(expr.Rhs)
 	inst := wir.Instruction{Op: wir.OpBinOp, Dst: dst, A: a, B: c, Operator: relOperator(expr.Operator)}
-	if check := branchcond.Normalize(expr, b.bindings); check.Kind != branchcond.CheckNone {
-		inst.Check = b.body.InternCheck(lowerCheck(check))
+	if check := b.normalizeBranchCondition(expr); check.Kind != branchcond.CheckNone {
+		inst.Check = b.body.InternCheck(b.lowerCheck(check))
 	}
 	b.emit(inst)
 }
@@ -2446,31 +2482,40 @@ func relOperator(op string) wir.Operator {
 // descriptor the IR stores. branchcond owns the syntax-facing normalization; the
 // IR keeps only the resolved path and type identities. The kind enumerations are
 // defined in lockstep, so the kind maps by position.
-func lowerCheck(c branchcond.Check) wir.Check {
-	return wir.Check{
-		Kind:           wir.CheckKind(c.Kind),
-		Path:           c.Path,
-		OtherPath:      c.OtherPath,
-		TypeName:       c.TypeName,
-		Literal:        c.Literal,
-		LiteralString:  c.LiteralString,
-		LenFloor:       c.LenFloor,
-		NumFloor:       c.NumFloor,
-		NumCeil:        c.NumCeil,
-		HasNumCeil:     c.HasNumCeil,
-		NumCeilNegated: c.NumCeilNegated,
-		Negated:        c.Negated,
+func (b *builder) lowerCheck(c branchcond.Check) wir.Check {
+	out := wir.Check{
+		Kind:             wir.CheckKind(c.Kind),
+		Path:             c.Path,
+		OtherPath:        c.OtherPath,
+		TypeName:         c.TypeName,
+		Literal:          c.Literal,
+		LiteralString:    c.LiteralString,
+		LenFloor:         c.LenFloor,
+		NumFloor:         c.NumFloor,
+		NumCeil:          c.NumCeil,
+		HasNumCeil:       c.HasNumCeil,
+		NumCeilNegated:   c.NumCeilNegated,
+		Negated:          c.Negated,
+		ProducerPoint:    c.ProducerPoint,
+		HasProducerPoint: c.HasProducerPoint,
 	}
+	if producer, contextual := c.ProducerCall(); contextual {
+		if result := b.callTemps[producer]; result != nil && result.point != 0 {
+			out.ProducerPoint = result.point
+			out.HasProducerPoint = true
+		}
+	}
+	return out
 }
 
-func lowerImpliedChecks(in []branchcond.ImpliedCheck) []wir.ImpliedCheck {
+func (b *builder) lowerImpliedChecks(in []branchcond.ImpliedCheck) []wir.ImpliedCheck {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]wir.ImpliedCheck, 0, len(in))
 	for _, check := range in {
 		out = append(out, wir.ImpliedCheck{
-			Check:    lowerCheck(check.Check),
+			Check:    b.lowerCheck(check.Check),
 			Edge:     check.Edge,
 			Polarity: check.Polarity,
 		})
@@ -2487,6 +2532,23 @@ func branchSufficientChecksOnBothEdges(expr ast.Expr, bindings *bind.Result) []b
 	out := make([]branchcond.ImpliedCheck, 0, len(trueEdge)+len(falseEdge))
 	out = append(out, trueEdge...)
 	out = append(out, falseEdge...)
+	return out
+}
+
+// branchSufficientCheckArmsOnEdge recognizes expr as a top-level disjunction
+// (edge=true) or conjunction (edge=false) and lowers each arm's leaf checks
+// separately, preserving arm boundaries that branchSufficientChecksOnBothEdges
+// flattens away. It returns nil when expr is not, at this edge, a top-level
+// composition of the matching shape.
+func (b *builder) branchSufficientCheckArmsOnEdge(expr ast.Expr, bindings *bind.Result, edge bool) [][]wir.ImpliedCheck {
+	arms, ok := branchcond.SufficientCheckArms(expr, bindings, edge)
+	if !ok {
+		return nil
+	}
+	out := make([][]wir.ImpliedCheck, len(arms))
+	for i, arm := range arms {
+		out[i] = b.lowerImpliedChecks(arm)
+	}
 	return out
 }
 

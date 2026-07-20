@@ -51,7 +51,7 @@ func (r *Result) ReturnPresenceRelations(point cfg.Point) []factflow.ReturnPrese
 }
 
 func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.ReturnPresenceRelation {
-	if r == nil || r.callOutcome == nil {
+	if r == nil {
 		return nil
 	}
 	ret, ok := r.facts.Return(point)

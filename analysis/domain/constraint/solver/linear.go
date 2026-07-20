@@ -1,75 +1,114 @@
 package solver
 
 import (
-	"maps"
-	"math/bits"
+	"math/big"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 )
 
-// linearBackend is a partial linear-arithmetic Solver over the rational numbers.
-// It collects the affine constraints it understands (Le, SumLe, GeConst, LeConst)
-// as normalized rows sum(coeff[var]*var) <= bound, then decides a single Le goal
-// by Fourier-Motzkin elimination: it negates the goal as an integer-strict row
-// and reports decision.Valid only when the combined system derives a numeric
-// contradiction. It is a sound but incomplete procedure and never returns
-// decision.Invalid: when in doubt, including any int64 overflow or a size cap,
-// it returns decision.Unknown.
+// linearBackend decides the supported affine fragment over exact rationals. It
+// stores Le, SumLe, GeConst, and LeConst assertions as rows
+//
+//	sum(coeff[var] * var) <= bound
+//
+// and proves a Le or SumLe goal by checking whether the assertions plus the
+// integer-strict negation of that goal are infeasible. Pure difference goals are
+// attempted by the portfolio's graph backend first; this backend is the one
+// exact general-linear path for scaled and bounded-sum residue.
 type linearBackend struct {
-	rows []linearRow
+	rows []exactLinearRow
 }
 
-// linearRow is sum(coeffs[v]*v) <= bound, with int64 coefficients keyed by
-// variable. A row with no variables and a negative bound is a contradiction.
-type linearRow struct {
-	coeffs map[pathdom.PathKey]int64
-	bound  int64
+// exactLinearRow is the arbitrary-precision form used by the simplex. The
+// negated bound can lie one beyond int64, so conversion happens before strict
+// goal normalization and no arithmetic overflow becomes semantic Unknown.
+type exactLinearRow struct {
+	coeffs map[pathdom.PathKey]*big.Int
+	bound  *big.Int
 }
 
-const (
-	maxLinearRows = 1024
-	maxLinearVars = 32
-)
+// exactZero is an immutable shared coefficient used only as a read operand.
+var exactZero big.Int
 
-// NewLinearBackend creates a fresh linear-arithmetic Solver backend.
+// NewLinearBackend creates a fresh exact linear-arithmetic Solver backend.
 func NewLinearBackend() Solver {
 	return &linearBackend{}
+}
+
+// AffineSatisfiable reports whether asserted has a model in the exact affine
+// theory implemented by the linear backend. Unlike Entails, this is a direct
+// consistency query: an infeasible assertion set returns false instead of
+// proving every goal by explosion. The accepted vocabulary is deliberately
+// the same closed affine subset consumed by linearBackend.Assert.
+func AffineSatisfiable(asserted []numeric.NumericConstraint) bool {
+	backend := &linearBackend{}
+	for _, constraint := range asserted {
+		switch constraint.(type) {
+		case numeric.Le, numeric.SumLe, numeric.GeConst, numeric.LeConst:
+		default:
+			return false
+		}
+		backend.Assert(constraint)
+	}
+	return linearFeasible(backend.rows)
 }
 
 func (b *linearBackend) Assert(c numeric.NumericConstraint) {
 	switch v := c.(type) {
 	case numeric.Le:
-		b.addRow(map[pathdom.PathKey]int64{v.X: 1, v.Y: -1}, v.C)
+		coeffs := make(map[pathdom.PathKey]*big.Int, 2)
+		addInt64Coefficient(coeffs, v.X, 1)
+		addInt64Coefficient(coeffs, v.Y, -1)
+		b.addRow(coeffs, big.NewInt(v.C))
 	case numeric.SumLe:
-		b.addRow(sumCoeffs(v), v.C)
+		b.addRow(sumCoeffs(v), big.NewInt(v.C))
 	case numeric.GeConst:
-		b.addRow(map[pathdom.PathKey]int64{v.X: -1}, -v.C)
+		coeffs := make(map[pathdom.PathKey]*big.Int, 1)
+		addInt64Coefficient(coeffs, v.X, -1)
+		bound := new(big.Int).Neg(big.NewInt(v.C))
+		b.addRow(coeffs, bound)
 	case numeric.LeConst:
-		b.addRow(map[pathdom.PathKey]int64{v.X: 1}, v.C)
+		coeffs := make(map[pathdom.PathKey]*big.Int, 1)
+		addInt64Coefficient(coeffs, v.X, 1)
+		b.addRow(coeffs, big.NewInt(v.C))
 	}
 }
 
-// sumCoeffs builds the coefficient map for coX*x + coY*y - z, merging
-// coefficients when operands coincide. An empty Y drops the second positive term.
-func sumCoeffs(v numeric.SumLe) map[pathdom.PathKey]int64 {
-	coeffs := make(map[pathdom.PathKey]int64, 3)
-	coeffs[v.X] += v.CoX
+// sumCoeffs builds coX*x + coY*y - z, merging coincident operands. An
+// empty Y drops the second positive term.
+func sumCoeffs(v numeric.SumLe) map[pathdom.PathKey]*big.Int {
+	coeffs := make(map[pathdom.PathKey]*big.Int, 3)
+	addInt64Coefficient(coeffs, v.X, v.CoX)
 	if v.Y != "" {
-		coeffs[v.Y] += v.CoY
+		addInt64Coefficient(coeffs, v.Y, v.CoY)
 	}
-	coeffs[v.Z] += -1
+	addInt64Coefficient(coeffs, v.Z, -1)
 	return coeffs
 }
 
-func (b *linearBackend) addRow(coeffs map[pathdom.PathKey]int64, bound int64) {
-	for v, c := range coeffs {
-		if c == 0 {
-			delete(coeffs, v)
-		}
+func addInt64Coefficient(coeffs map[pathdom.PathKey]*big.Int, variable pathdom.PathKey, coefficient int64) {
+	if coefficient == 0 {
+		return
 	}
-	b.rows = append(b.rows, linearRow{coeffs: coeffs, bound: bound})
+	addCoefficient(coeffs, variable, big.NewInt(coefficient))
+}
+
+func addCoefficient(coeffs map[pathdom.PathKey]*big.Int, variable pathdom.PathKey, coefficient *big.Int) {
+	if current := coeffs[variable]; current != nil {
+		current.Add(current, coefficient)
+		if current.Sign() == 0 {
+			delete(coeffs, variable)
+		}
+		return
+	}
+	coeffs[variable] = new(big.Int).Set(coefficient)
+}
+
+func (b *linearBackend) addRow(coeffs map[pathdom.PathKey]*big.Int, bound *big.Int) {
+	b.rows = append(b.rows, exactLinearRow{coeffs: coeffs, bound: new(big.Int).Set(bound)})
 }
 
 func (b *linearBackend) Entails(goal numeric.NumericConstraint) decision.Result {
@@ -77,254 +116,260 @@ func (b *linearBackend) Entails(goal numeric.NumericConstraint) decision.Result 
 	if !ok {
 		return decision.Unknown
 	}
-	rows := make([]linearRow, 0, len(b.rows)+1)
-	for _, r := range b.rows {
-		rows = append(rows, r.clone())
-	}
-	// The goal is the affine inequality sum(coeffs[v]*v) <= bound. Negate it as the
-	// integer-strict row -(sum(coeffs[v]*v)) <= -(bound+1): a contradiction with the
-	// asserted rows proves the goal.
-	negBound, ok := negStrictBound(bound)
-	if !ok {
-		return decision.Unknown
-	}
-	neg := make(map[pathdom.PathKey]int64, len(coeffs))
-	for v, c := range coeffs {
-		n, ok := negInt64(c)
-		if !ok {
-			return decision.Unknown
-		}
-		if n != 0 {
-			neg[v] = n
-		}
-	}
-	rows = append(rows, linearRow{coeffs: neg, bound: negBound})
-	if refutable(rows) {
+	rows := make([]exactLinearRow, 0, len(b.rows)+1)
+	rows = append(rows, b.rows...)
+	rows = append(rows, negatedStrictRow(coeffs, bound))
+	if !linearFeasible(rows) {
 		return decision.Valid
 	}
 	return decision.Unknown
 }
 
-// goalAffine reduces an entailment goal to its affine form sum(coeffs[v]*v) <= bound.
-// It accepts a two-term Le goal and a scaled SumLe goal; other shapes are not
-// understood by this backend.
-func goalAffine(goal numeric.NumericConstraint) (map[pathdom.PathKey]int64, int64, bool) {
+// goalAffine reduces an entailment goal to sum(coeff[var]*var) <= bound.
+func goalAffine(goal numeric.NumericConstraint) (map[pathdom.PathKey]*big.Int, *big.Int, bool) {
 	switch g := goal.(type) {
 	case numeric.Le:
-		coeffs := map[pathdom.PathKey]int64{g.X: 1}
-		coeffs[g.Y] += -1
-		for v, c := range coeffs {
-			if c == 0 {
-				delete(coeffs, v)
-			}
-		}
-		return coeffs, g.C, true
+		coeffs := make(map[pathdom.PathKey]*big.Int, 2)
+		addInt64Coefficient(coeffs, g.X, 1)
+		addInt64Coefficient(coeffs, g.Y, -1)
+		return coeffs, big.NewInt(g.C), true
 	case numeric.SumLe:
-		coeffs := sumCoeffs(g)
-		for v, c := range coeffs {
-			if c == 0 {
-				delete(coeffs, v)
+		return sumCoeffs(g), big.NewInt(g.C), true
+	}
+	return nil, nil, false
+}
+
+// negatedStrictRow encodes the integer negation of expr <= bound as
+// -expr <= -(bound+1), entirely in arbitrary precision.
+func negatedStrictRow(coeffs map[pathdom.PathKey]*big.Int, bound *big.Int) exactLinearRow {
+	strictBound := new(big.Int).Set(bound)
+	strictBound.Add(strictBound, big.NewInt(1))
+	strictBound.Neg(strictBound)
+	row := exactLinearRow{
+		coeffs: make(map[pathdom.PathKey]*big.Int, len(coeffs)),
+		bound:  strictBound,
+	}
+	for variable, coefficient := range coeffs {
+		row.coeffs[variable] = new(big.Int).Neg(coefficient)
+	}
+	return row
+}
+
+// linearFeasible decides feasibility of exact affine rows. Variables are free;
+// each x is represented as x+ - x- before entering the non-negative simplex.
+func linearFeasible(rows []exactLinearRow) bool {
+	variables := linearVariables(rows)
+	sortExactRows(rows, variables)
+	if len(variables) == 0 {
+		for _, row := range rows {
+			if row.bound.Sign() < 0 {
+				return false
 			}
 		}
-		return coeffs, g.C, true
+		return true
 	}
-	return nil, 0, false
+	simplex := newRationalSimplex(rows, variables)
+	return simplex.feasible()
 }
 
-// negStrictBound returns -(c+1) with overflow check.
-func negStrictBound(c int64) (int64, bool) {
-	cPlus, ok := addInt64(c, 1)
-	if !ok {
-		return 0, false
+func linearVariables(rows []exactLinearRow) []pathdom.PathKey {
+	set := make(map[pathdom.PathKey]struct{})
+	for _, row := range rows {
+		for variable, coefficient := range row.coeffs {
+			if coefficient.Sign() != 0 {
+				set[variable] = struct{}{}
+			}
+		}
 	}
-	return negInt64(cPlus)
+	variables := make([]pathdom.PathKey, 0, len(set))
+	for variable := range set {
+		variables = append(variables, variable)
+	}
+	sort.Slice(variables, func(i, j int) bool { return variables[i] < variables[j] })
+	return variables
 }
 
-// refutable runs Fourier-Motzkin elimination over rows and reports whether a
-// numeric contradiction 0 <= negative is derivable. Any overflow or size-cap
-// breach abandons the search and reports false, keeping the procedure sound.
-func refutable(rows []linearRow) bool {
+func sortExactRows(rows []exactLinearRow, variables []pathdom.PathKey) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		for _, variable := range variables {
+			cmp := exactCoefficient(rows[i], variable).Cmp(exactCoefficient(rows[j], variable))
+			if cmp != 0 {
+				return cmp < 0
+			}
+		}
+		return rows[i].bound.Cmp(rows[j].bound) < 0
+	})
+}
+
+func exactCoefficient(row exactLinearRow, variable pathdom.PathKey) *big.Int {
+	if coefficient := row.coeffs[variable]; coefficient != nil {
+		return coefficient
+	}
+	return &exactZero
+}
+
+// rationalSimplex is a deterministic two-phase tableau simplex. It uses exact
+// rationals throughout and Bland's lowest-label entering/leaving rules, so
+// degeneracy cannot cycle and neither row nor variable count needs a cap.
+type rationalSimplex struct {
+	m        int
+	n        int
+	basis    []int
+	nonbasis []int
+	tableau  [][]big.Rat
+}
+
+func newRationalSimplex(rows []exactLinearRow, variables []pathdom.PathKey) *rationalSimplex {
+	m := len(rows)
+	n := 2 * len(variables)
+	tableau := make([][]big.Rat, m+2)
+	for i := range tableau {
+		tableau[i] = make([]big.Rat, n+2)
+	}
+	basis := make([]int, m)
+	nonbasis := make([]int, n+1)
+	for i, row := range rows {
+		for variableIndex, variable := range variables {
+			coefficient := exactCoefficient(row, variable)
+			tableau[i][2*variableIndex].SetInt(coefficient)
+			var negative big.Int
+			negative.Neg(coefficient)
+			tableau[i][2*variableIndex+1].SetInt(&negative)
+		}
+		basis[i] = n + i
+		tableau[i][n].SetInt64(-1)
+		tableau[i][n+1].SetInt(row.bound)
+	}
+	for j := 0; j < n; j++ {
+		nonbasis[j] = j
+	}
+	nonbasis[n] = -1
+	tableau[m+1][n].SetInt64(1)
+	return &rationalSimplex{
+		m:        m,
+		n:        n,
+		basis:    basis,
+		nonbasis: nonbasis,
+		tableau:  tableau,
+	}
+}
+
+func (s *rationalSimplex) feasible() bool {
+	leaving := 0
+	for i := 1; i < s.m; i++ {
+		cmp := s.tableau[i][s.n+1].Cmp(&s.tableau[leaving][s.n+1])
+		if cmp < 0 || (cmp == 0 && s.basis[i] < s.basis[leaving]) {
+			leaving = i
+		}
+	}
+	if s.m > 0 && s.tableau[leaving][s.n+1].Sign() < 0 {
+		s.pivot(leaving, s.n)
+		if !s.runSimplex(1) || s.tableau[s.m+1][s.n+1].Sign() < 0 {
+			return false
+		}
+		if s.tableau[s.m+1][s.n+1].Sign() != 0 {
+			return false
+		}
+		for i := 0; i < s.m; i++ {
+			if s.basis[i] != -1 {
+				continue
+			}
+			entering := -1
+			for j := 0; j <= s.n; j++ {
+				if s.nonbasis[j] == -1 || s.tableau[i][j].Sign() == 0 {
+					continue
+				}
+				if entering < 0 || s.nonbasis[j] < s.nonbasis[entering] {
+					entering = j
+				}
+			}
+			if entering >= 0 {
+				s.pivot(i, entering)
+			}
+		}
+	}
+	// Phase two has the zero objective because callers ask feasibility. Running
+	// the same deterministic kernel keeps the tableau contract complete while
+	// normally returning immediately.
+	return s.runSimplex(2)
+}
+
+func (s *rationalSimplex) runSimplex(phase int) bool {
+	objective := s.m
+	if phase == 1 {
+		objective = s.m + 1
+	}
 	for {
-		if contradiction(rows) {
+		entering := -1
+		for j := 0; j <= s.n; j++ {
+			if phase == 2 && s.nonbasis[j] == -1 {
+				continue
+			}
+			if s.tableau[objective][j].Sign() >= 0 {
+				continue
+			}
+			if entering < 0 || s.nonbasis[j] < s.nonbasis[entering] {
+				entering = j
+			}
+		}
+		if entering < 0 {
 			return true
 		}
-		v, ok := pickVar(rows)
-		if !ok {
+
+		leaving := -1
+		for i := 0; i < s.m; i++ {
+			if s.tableau[i][entering].Sign() <= 0 {
+				continue
+			}
+			if leaving < 0 {
+				leaving = i
+				continue
+			}
+			var left, right big.Rat
+			left.Quo(&s.tableau[i][s.n+1], &s.tableau[i][entering])
+			right.Quo(&s.tableau[leaving][s.n+1], &s.tableau[leaving][entering])
+			cmp := left.Cmp(&right)
+			if cmp < 0 || (cmp == 0 && s.basis[i] < s.basis[leaving]) {
+				leaving = i
+			}
+		}
+		if leaving < 0 {
 			return false
 		}
-		next, ok := eliminate(rows, v)
-		if !ok {
-			return false
-		}
-		rows = next
-		if len(rows) > maxLinearRows {
-			return false
-		}
+		s.pivot(leaving, entering)
 	}
 }
 
-// pickVar returns a variable still present in some row, and false when none
-// remain (the system is variable-free). It also enforces the distinct-variable
-// cap.
-func pickVar(rows []linearRow) (pathdom.PathKey, bool) {
-	seen := make(map[pathdom.PathKey]struct{}, maxLinearVars+1)
-	var pick pathdom.PathKey
-	have := false
-	for _, r := range rows {
-		for v := range r.coeffs {
-			if _, ok := seen[v]; !ok {
-				seen[v] = struct{}{}
-			}
-			if !have {
-				pick = v
-				have = true
-			}
-		}
-	}
-	if len(seen) > maxLinearVars {
-		return "", false
-	}
-	return pick, have
-}
-
-// eliminate removes variable v by pairing each row with a positive v-coefficient
-// against each row with a negative v-coefficient (Fourier-Motzkin). Rows without
-// v pass through unchanged. It returns false on any int64 overflow.
-func eliminate(rows []linearRow, v pathdom.PathKey) ([]linearRow, bool) {
-	var pos, neg, rest []linearRow
-	for _, r := range rows {
-		switch {
-		case r.coeffs[v] > 0:
-			pos = append(pos, r)
-		case r.coeffs[v] < 0:
-			neg = append(neg, r)
-		default:
-			rest = append(rest, r)
-		}
-	}
-	out := rest
-	for _, p := range pos {
-		for _, n := range neg {
-			combined, ok := combine(p, n, v)
-			if !ok {
-				return nil, false
-			}
-			out = append(out, combined)
-			if len(out) > maxLinearRows {
-				return nil, false
-			}
-		}
-	}
-	return out, true
-}
-
-// combine eliminates v from a positive row p (coeff a>0) and a negative row n
-// (coeff -d, d>0) using non-negative multipliers: d*p + a*n cancels v. The
-// result keeps int64 coefficients; it returns false on overflow.
-func combine(p, n linearRow, v pathdom.PathKey) (linearRow, bool) {
-	a := p.coeffs[v]  // > 0
-	d := -n.coeffs[v] // > 0
-	coeffs := make(map[pathdom.PathKey]int64, len(p.coeffs)+len(n.coeffs))
-	for w, c := range p.coeffs {
-		if w == v {
+func (s *rationalSimplex) pivot(row, column int) {
+	var inverse big.Rat
+	inverse.Inv(&s.tableau[row][column])
+	for i := 0; i < s.m+2; i++ {
+		if i == row {
 			continue
 		}
-		scaled, ok := mulInt64(c, d)
-		if !ok {
-			return linearRow{}, false
+		for j := 0; j < s.n+2; j++ {
+			if j == column {
+				continue
+			}
+			var term big.Rat
+			term.Mul(&s.tableau[row][j], &s.tableau[i][column])
+			term.Mul(&term, &inverse)
+			s.tableau[i][j].Sub(&s.tableau[i][j], &term)
 		}
-		coeffs[w] = scaled
 	}
-	for w, c := range n.coeffs {
-		if w == v {
+	for j := 0; j < s.n+2; j++ {
+		if j != column {
+			s.tableau[row][j].Mul(&s.tableau[row][j], &inverse)
+		}
+	}
+	for i := 0; i < s.m+2; i++ {
+		if i == row {
 			continue
 		}
-		scaled, ok := mulInt64(c, a)
-		if !ok {
-			return linearRow{}, false
-		}
-		sum, ok := addInt64(coeffs[w], scaled)
-		if !ok {
-			return linearRow{}, false
-		}
-		if sum == 0 {
-			delete(coeffs, w)
-		} else {
-			coeffs[w] = sum
-		}
+		var scaled big.Rat
+		scaled.Mul(&s.tableau[i][column], &inverse)
+		s.tableau[i][column].Neg(&scaled)
 	}
-	pBound, ok := mulInt64(p.bound, d)
-	if !ok {
-		return linearRow{}, false
-	}
-	nBound, ok := mulInt64(n.bound, a)
-	if !ok {
-		return linearRow{}, false
-	}
-	bound, ok := addInt64(pBound, nBound)
-	if !ok {
-		return linearRow{}, false
-	}
-	return linearRow{coeffs: coeffs, bound: bound}, true
-}
-
-// contradiction reports whether any row has no variables and a negative bound,
-// i.e. 0 <= negative.
-func contradiction(rows []linearRow) bool {
-	for _, r := range rows {
-		if len(r.coeffs) == 0 && r.bound < 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func (r linearRow) clone() linearRow {
-	return linearRow{coeffs: maps.Clone(r.coeffs), bound: r.bound}
-}
-
-func addInt64(a, b int64) (int64, bool) {
-	sum := a + b
-	if (a > 0 && b > 0 && sum < 0) || (a < 0 && b < 0 && sum >= 0) {
-		return 0, false
-	}
-	return sum, true
-}
-
-func negInt64(a int64) (int64, bool) {
-	if a == minInt64 {
-		return 0, false
-	}
-	return -a, true
-}
-
-const minInt64 = -1 << 63
-
-func mulInt64(a, b int64) (int64, bool) {
-	if a == 0 || b == 0 {
-		return 0, true
-	}
-	hi, lo := bits.Mul64(magnitude(a), magnitude(b))
-	if hi != 0 {
-		return 0, false
-	}
-	negative := (a < 0) != (b < 0)
-	if negative {
-		if lo > 1<<63 {
-			return 0, false
-		}
-		return -int64(lo), true
-	}
-	if lo > (1<<63)-1 {
-		return 0, false
-	}
-	return int64(lo), true
-}
-
-// magnitude returns the absolute value of a as a uint64, correct for minInt64.
-func magnitude(a int64) uint64 {
-	if a < 0 {
-		return uint64(-(a + 1)) + 1
-	}
-	return uint64(a)
+	s.tableau[row][column].Set(&inverse)
+	s.basis[row], s.nonbasis[column] = s.nonbasis[column], s.basis[row]
 }

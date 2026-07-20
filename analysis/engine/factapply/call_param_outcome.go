@@ -16,11 +16,8 @@ import (
 // Contract, into a slot the callee returns, stores into another argument, or
 // retains in a captured sink; a write through that wider view can launder a wider
 // value back into the argument object, so a later narrow read of the argument is
-// no longer trustworthy. It reuses the single covariant widening routine
-// (applyCovariantExposure) by rebasing the exposure's callee-relative Source
-// placeholder onto the concrete argument path, so the widen and per-field fact
-// invalidation match every other mutable-exposure site. The widen no-ops when the
-// argument's current type is not strictly narrower than the contract.
+// no longer trustworthy. The rebased exposures enter the same factor-native N6
+// transaction used by terminal concrete and formal execution.
 func applyCallParamExposures(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
@@ -32,14 +29,24 @@ func applyCallParamExposures(
 	if widen == nil || len(exposures) == 0 {
 		return out
 	}
+	transaction := CovariantExposureTransaction{point: ctx.Point}
 	for _, exposure := range exposures {
 		argPath, ok := exposure.Source.Substitute(paramBindings)
 		if !ok || argPath.Symbol == 0 {
 			continue
 		}
-		out = applyCovariantExposure(ctx, resolver, widen, out, factflow.NewCovariantExposure(argPath, exposure.Contract, exposure.Kind))
+		transaction.steps = append(transaction.steps, CovariantExposureStep{exposure: factflow.NewCovariantExposure(argPath, exposure.Contract, exposure.Kind)})
 	}
-	return out
+	if transaction.Len() == 0 {
+		return out
+	}
+	result := ApplyConcreteCovariantExposureTransaction(ConcreteCovariantExposureRequest{
+		Context: ctx, Resolver: resolver, CovariantWiden: widen, Transaction: transaction, Input: out, Output: out,
+	})
+	if result.Err != nil || result.Canceled {
+		return out
+	}
+	return result.Output
 }
 
 type resolvedCallParamLengthFloor struct {
@@ -151,7 +158,13 @@ func applyCallParamPathRelation(
 		if !ok || left.Equal(right) {
 			return out
 		}
-		return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Point, out, left, right)
+		next, _, err := applyPathEqualityFactorState(
+			state.RegisteredProductDomain(ctx.Registry), nil, resolver, ctx.Point, out, left, right,
+		)
+		if err == nil {
+			return next
+		}
+		return out
 	default:
 		return out
 	}

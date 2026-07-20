@@ -109,8 +109,15 @@ func FromBindings(
 	return builder.Build(), true
 }
 
+// hasUntypedRegularParam reports whether any fixed (non-vararg) parameter
+// lacks a type annotation. The trailing `...` slot is excluded: an untyped
+// variadic tail widens only to Variadic(Any) and must not force the fixed
+// typed prefix to collapse.
 func hasUntypedRegularParam(slots []bind.ParamSlot) bool {
 	for _, slot := range slots {
+		if slot.Vararg {
+			continue
+		}
 		if slot.Type == nil && !slot.ImplicitSelf {
 			return true
 		}

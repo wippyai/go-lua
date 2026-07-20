@@ -19,7 +19,7 @@ as a tested fact.
 | # | Rule | Primary enforcement |
 | --- | --- | --- |
 | 1 | Positive proofs fail closed at depth limits | [`analysis/type/subtype/subtype_test.go`](../type/subtype/subtype_test.go), [`analysis/check/readmodel/api.go`](../check/readmodel/api.go) |
-| 2 | Returned fresh graphs leave the stack | [`analysis/engine/factapply/objects_test.go`](../engine/factapply/objects_test.go), [`analysis/domain/placement/policy.go`](../domain/placement/policy.go) |
+| 2 | Returned fresh graphs leave the stack | [`analysis/engine/factapply/return_escape_deep_graph_test.go`](../engine/factapply/return_escape_deep_graph_test.go), [`analysis/domain/placement/policy.go`](../domain/placement/policy.go) |
 | 3 | Optimization opcode policy is exhaustive and closed | [`analysis/check/body/decomposable_allocation_opcode_exhaustiveness_test.go`](../check/body/decomposable_allocation_opcode_exhaustiveness_test.go) |
 | 4 | Suspension and every other license need a witness | [`analysis/check/body/suspension.go`](../check/body/suspension.go), [`analysis/check/checktest/suspension_lifetime_test.go`](../check/checktest/suspension_lifetime_test.go), [`analysis/domain/placement/license_test.go`](../domain/placement/license_test.go) |
 | 5 | Claims are runtime checkcasts, not trusted proof | [`analysis/domain/value/proof/proof_test.go`](../domain/value/proof/proof_test.go), [`analysis/check/body/advice_claim.go`](../check/body/advice_claim.go) |
@@ -28,7 +28,7 @@ as a tested fact.
 | 8 | Ordering, keys, and digests use canonical identity | [`analysis/domain/path/keyspace/order.go`](../domain/path/keyspace/order.go), [`analysis/ir/wir/print.go`](../ir/wir/print.go) |
 | 9 | Digest equality coverage is exact | [`analysis/check/fixpoint/summary/digest.go`](../check/fixpoint/summary/digest.go), [`analysis/check/fixpoint/summary/digest_test.go`](../check/fixpoint/summary/digest_test.go) |
 | 10 | Adapters are projections, never checker owners | [`service_surfaces_design.md`](service_surfaces_design.md), [`analysis/architecture/import_boundary_test.go`](import_boundary_test.go) |
-| 11 | Capture precision is tiered and centrally selected | [`analysis/check/fixpoint/program/capture_seeding_test.go`](../check/fixpoint/program/capture_seeding_test.go) |
+| 11 | Capture precision is tiered and centrally selected | [`analysis/check/body/closure_capture_policy_law_test.go`](../check/body/closure_capture_policy_law_test.go), [`analysis/check/body/closure_capture.go`](../check/body/closure_capture.go) |
 | 12 | Shape IDs are artifacts, never live bindings | [`analysis/ir/wir/design.md`](../ir/wir/design.md) (deferred design lock) |
 | 13 | Solve-local intern IDs never cross a boundary | [`analysis/domain/path/keyspace/keyspace.go`](../domain/path/keyspace/keyspace.go), [`analysis/engine/state/pathevidence/rekey.go`](../engine/state/pathevidence/rekey.go) |
 | 14 | Manifest growth is additive and codec-complete | [`analysis/module/manifest/operational_effects_codec_oracle_test.go`](../module/manifest/operational_effects_codec_oracle_test.go) |
@@ -61,9 +61,13 @@ the complete reachable fresh graph; the result is owned heap, never stack.
 the VM/codegen contract, including when the returned table contains nested
 fresh tables.
 
-**Where enforced.** `TestReturnedFreshObjectGraphNeverContainsStack` exercises
-the nested graph. `EscapeTransitionReturn` is owned-heap policy, and
-`applyReturn` applies that policy at the return boundary.
+**Where enforced.** `TestReturnEscapeAppliesOwnedHeapToDeeplyNestedFreshGraph`
+drives a three-level-deep fresh literal graph through `PlanReturnTransaction`
+and `ReturnAuthority.Apply` and asserts every reachable identity reads
+`OwnedHeap`, never `Stack`. `EscapeTransitionReturn` is owned-heap policy;
+`ApplyReturnFactorTransaction` walks the exact reachable-identity graph across
+every registered coordinate family and publishes it through
+`ProductDomain.PublishCoordinateReturnIdentity`, which targets `OwnedHeap`.
 
 ### 3. Optimization opcode policy is exhaustive and fails closed
 
@@ -189,18 +193,23 @@ The wall runs those audits as a gate.
 
 ### 11. Capture policy has explicit precision tiers
 
-**Rule.** Capture seeding selects exactly one central policy: full fact graph
-when unwritten and safe, write-invariant facts after structural writes, or
-escaped-invariant facts for opaque mutable captures; exact identity is retained
-only where the matrix permits it.
+**Rule.** Closure capture selects exactly one central policy per captured
+symbol: the full fact graph when the symbol is never reassigned in the body,
+or a write-invariant declared/structural type once ordinary assignment syntax
+writes it anywhere. Every capture routes through this one selector; nothing
+downstream re-decides the tier.
 
 **Why load-bearing.** Captures cross function boundaries and callbacks. Keeping
-path proofs after a write/opaque reachability would make a callee rely on a
-caller-local fact that no longer holds.
+a live-value fact for a symbol that can be reassigned before the closure runs
+would let a callee rely on a caller-local fact that no longer holds.
 
-**Where enforced.** `TestCapturePolicyLawMatrix` exhausts write, reachability,
-and asset combinations. `capture_seeding.go` computes the policy once and
-`seedCapture` consumes it without re-deciding it.
+**Where enforced.**
+`TestClosureCapturePolicyTierIsCentrallySelectedByWriteStatus` captures both
+an unwritten and a later-written local from the same closure and asserts the
+exported `ClosureCaptureFact.Policy` for each. `closureCapturePolicy` in
+[`analysis/check/body/closure_capture.go`](../check/body/closure_capture.go)
+is the sole selector: `ClosureCaptureFacts`/`closureCaptureFact` compute the
+policy once per capture and consume it without re-deciding it.
 
 ### 12. ShapeID is an artifact, not a live binding
 

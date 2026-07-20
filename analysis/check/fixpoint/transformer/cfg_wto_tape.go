@@ -50,17 +50,24 @@ type symbolicWTOTapeComponent struct {
 	parent int32
 	begin  uint32
 	end    uint32
-	depth  uint16
+	// depth is bounded by the number of components in this frozen tape, not by
+	// an unrelated wire-sized integer. Using int also makes subtraction below
+	// exact for every topology that can be represented by the owning slices.
+	depth int
 }
 
 type symbolicWTOTapeEdge struct {
-	from      uint32
-	to        uint32
+	from uint32
+	to   uint32
+	// cond is the polarity of this exact CFG edge occurrence. It cannot be
+	// reconstructed from (from,to): valid CFGs may contain the truthy and
+	// falsy branch edges between the same two points.
+	cond      bool
 	kind      symbolicWTOEdgeKind
 	component int32 // component relevant to kind, or -1 for outside
 	// exitCount and enterCount preserve both sides of a sibling transition.
-	exitCount  uint16
-	enterCount uint16
+	exitCount  int
+	enterCount int
 }
 
 // compileSymbolicWTOTape compiles the canonical reachable RPO into a dense WTO
@@ -112,12 +119,9 @@ func compileSymbolicWTOTape(graph cfg.Graph) (*symbolicWTOTape, error) {
 				return fmt.Errorf("transformer: symbolic WTO component count overflows dense index")
 			}
 			component := int32(len(tape.components))
-			depth := uint16(1)
+			depth := 1
 			if parent >= 0 {
 				parentDepth := tape.components[parent].depth
-				if parentDepth == ^uint16(0) {
-					return fmt.Errorf("transformer: symbolic WTO nesting exceeds dense depth")
-				}
 				depth = parentDepth + 1
 			}
 			begin := uint32(len(tape.points))
@@ -140,15 +144,34 @@ func compileSymbolicWTOTape(graph cfg.Graph) (*symbolicWTOTape, error) {
 		return nil, fmt.Errorf("transformer: symbolic WTO tape covers %d of %d reachable points", len(tape.points), len(reachable))
 	}
 
+	// Graph.Edges, rather than a later EdgeCond(from,to) lookup, is the
+	// authoritative edge inventory. The latter is intentionally pair-shaped
+	// and therefore cannot distinguish parallel truthy/falsy edges.
+	edgesByFrom := make([][]cfg.Edge, len(tape.points))
+	graphEdges := graph.Edges()
+	seenEdges := make(map[cfg.Edge]struct{}, len(graphEdges))
+	for _, edge := range graphEdges {
+		from, to := tape.denseIndex(edge.From), tape.denseIndex(edge.To)
+		if from < 0 || to < 0 {
+			continue
+		}
+		if !graph.IsBranch(edge.From) {
+			edge.Cond = false
+		}
+		// An exact duplicate carries no additional control-flow meaning. Keep
+		// the equation inventory idempotent while retaining opposite branch
+		// polarities as distinct cfg.Edge values.
+		if _, duplicate := seenEdges[edge]; duplicate {
+			continue
+		}
+		seenEdges[edge] = struct{}{}
+		edgesByFrom[from] = append(edgesByFrom[from], edge)
+	}
 	for from := range tape.points {
-		point := tape.points[from].point
 		tape.points[from].edgeBegin = uint32(len(tape.edges))
-		for _, successor := range cfg.SuccessorsReadOnly(graph, point) {
-			to := tape.denseIndex(successor)
-			if to < 0 { // unreachable successors are outside the executable tape
-				continue
-			}
-			tape.edges = append(tape.edges, tape.classifyEdge(uint32(from), uint32(to)))
+		for _, edge := range edgesByFrom[from] {
+			to := tape.denseIndex(edge.To)
+			tape.edges = append(tape.edges, tape.classifyEdge(uint32(from), uint32(to), edge.Cond))
 		}
 		tape.points[from].edgeEnd = uint32(len(tape.edges))
 	}
@@ -171,7 +194,7 @@ func (t *symbolicWTOTape) denseIndex(point cfg.Point) int32 {
 	return t.pointIndex[point]
 }
 
-func (t *symbolicWTOTape) classifyEdge(from, to uint32) symbolicWTOTapeEdge {
+func (t *symbolicWTOTape) classifyEdge(from, to uint32, cond bool) symbolicWTOTapeEdge {
 	fromComponent := t.points[from].component
 	toComponent := t.points[to].component
 	fromDepth := t.componentDepth(fromComponent)
@@ -182,7 +205,7 @@ func (t *symbolicWTOTape) classifyEdge(from, to uint32) symbolicWTOTapeEdge {
 	enters := toDepth - commonDepth
 
 	edge := symbolicWTOTapeEdge{
-		from: from, to: to, component: -1,
+		from: from, to: to, cond: cond, component: -1,
 		exitCount: exits, enterCount: enters,
 	}
 	if headed := t.points[to].headComponent; headed >= 0 && t.componentContains(headed, from) {
@@ -209,7 +232,7 @@ func (t *symbolicWTOTape) classifyEdge(from, to uint32) symbolicWTOTapeEdge {
 	return edge
 }
 
-func (t *symbolicWTOTape) componentDepth(component int32) uint16 {
+func (t *symbolicWTOTape) componentDepth(component int32) int {
 	if component < 0 {
 		return 0
 	}

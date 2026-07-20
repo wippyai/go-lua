@@ -108,8 +108,8 @@ func branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Check, polarity b
 		}
 		return []factflow.BranchPathEvidence{factflow.NewBranchIndexInRangeEvidenceOnEdge(target, other, edge)}
 	case branchcond.CheckFrozenTable:
-		if polarity {
-			return []factflow.BranchPathEvidence{factflow.NewBranchFrozenTableEvidenceOnEdge(target, edge)}
+		if polarity && check.HasProducerPoint && check.ProducerPoint != 0 {
+			return []factflow.BranchPathEvidence{factflow.NewBranchFrozenTableEvidenceOnEdge(target, check.ProducerPoint, edge)}
 		}
 	}
 	return nil

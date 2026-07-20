@@ -47,6 +47,9 @@ func firstNewCallPoint(graph cfg.Graph, before []cfg.Point) cfg.Point {
 
 func (b *builder) callOrderOptions() callorder.Options {
 	options := callorder.LuaOptions(b.bindings)
+	if b.options.SealedLuaTypeChecks {
+		options = callorder.SealedLuaTypeOptions(b.bindings)
+	}
 	options.AllowShortCircuitCalls = true
 	return options
 }

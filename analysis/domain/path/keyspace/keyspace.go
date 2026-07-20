@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -46,9 +47,16 @@ const (
 	// KindRootlessSuffix is the deliberately rootless static-member heap key:
 	// bare FormatSegments(segments) with no root.
 	KindRootlessSuffix
+	// kindFormalRoot is a private typed relational root. Root holds an
+	// authority-local dense index into exact formal.Root storage.
+	kindFormalRoot
 	// kindBoundaryExistential is a private, structural lexical root minted only
 	// by boundary transport. It is deliberately disjoint from user named roots.
 	kindBoundaryExistential
+	// keyKindCount is the owner-side inventory fence. Canonical key codecs pin
+	// this cardinality at compile time, so adding a key namespace requires an
+	// explicit codec update rather than silently falling through downstream.
+	keyKindCount
 )
 
 // SegmentsID is the interned id for an immutable segment list. 0 means empty.
@@ -74,6 +82,8 @@ type keyUniverse struct {
 //   - KindRetSlot:        Root holds the return-slot index, Segs.
 //   - KindNamed:          Root holds the interned named-root id, Segs.
 //   - KindRootlessSuffix: Segs only (must be non-empty).
+//   - private formal root: Root holds an interned typed formal descriptor id,
+//     Segs.
 //   - private boundary existential: Root holds an interned structural
 //     descriptor id, Segs.
 //
@@ -141,9 +151,15 @@ type KeySpace struct {
 	rootEntries []rootEntry
 	rootByName  map[string]rootID
 
+	formalRootEntries []formal.Root
+	formalRootByValue map[formal.Root]uint32
+
 	existentialEntries      []boundaryExistentialDescriptor
 	existentialByDescriptor map[boundaryExistentialDescriptor]uint32
 
+	// formatByKey is the single owner-sealed spelling table. Every valid key has
+	// exactly one entry, installed only after all structural fields are final.
+	// Format and Less are pure readers of this same representation.
 	formatByKey map[Key]string
 }
 
@@ -156,11 +172,13 @@ func New() *KeySpace {
 		segByTwo:                make(map[segmentPairKey]SegmentsID),
 		segByThree:              make(map[segmentTripleKey]SegmentsID),
 		rootByName:              make(map[string]rootID),
+		formalRootByValue:       make(map[formal.Root]uint32),
 		existentialByDescriptor: make(map[boundaryExistentialDescriptor]uint32),
 		formatByKey:             make(map[Key]string),
 	}
 	ks.segEntries = append(ks.segEntries, segmentsEntry{})
 	ks.rootEntries = append(ks.rootEntries, rootEntry{})
+	ks.formalRootEntries = append(ks.formalRootEntries, formal.Root{})
 	ks.existentialEntries = append(ks.existentialEntries, boundaryExistentialDescriptor{})
 	ks.owner = &keyUniverse{space: ks}
 	return ks
@@ -287,10 +305,14 @@ func (ks *KeySpace) validKey(k Key) bool {
 	if k.Kind == KindNamed && !ks.validRootID(rootID(k.Root)) {
 		return false
 	}
+	if k.Kind == kindFormalRoot && (k.Root == 0 || int(k.Root) >= len(ks.formalRootEntries)) {
+		return false
+	}
 	if k.Kind == kindBoundaryExistential && (k.Root == 0 || int(k.Root) >= len(ks.existentialEntries)) {
 		return false
 	}
-	return true
+	_, sealed := ks.formatByKey[k]
+	return sealed
 }
 
 // validSpace reports whether ks is the original KeySpace bound to its dense
@@ -314,7 +336,24 @@ func (ks *KeySpace) ownKey(k Key) Key {
 // mutating intern tables while avoiding a duplicate check on every hot mint.
 func (ks *KeySpace) bindKey(k Key) Key {
 	k.owner = ks.owner
+	if k.Kind != KindInvalid {
+		ks.sealSpelling(k)
+	}
 	return k
+}
+
+// sealSpelling records the one canonical byte spelling of a fully constructed
+// key. It is a minting operation, never a formatting or comparison operation.
+func (ks *KeySpace) sealSpelling(k Key) string {
+	if existing, ok := ks.formatByKey[k]; ok {
+		return existing
+	}
+	var b strings.Builder
+	ks.writeRoot(&b, k)
+	b.WriteString(ks.suffix(k.Segs))
+	spelling := b.String()
+	ks.formatByKey[k] = spelling
+	return spelling
 }
 
 // segments returns the interned, immutable segment list for a key. The slice

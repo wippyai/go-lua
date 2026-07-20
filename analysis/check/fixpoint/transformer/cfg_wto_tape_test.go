@@ -195,7 +195,7 @@ func mustCompileSymbolicWTOTape(t *testing.T, graph cfg.Graph) *symbolicWTOTape 
 	return tape
 }
 
-func assertSymbolicWTOEdge(t *testing.T, tape *symbolicWTOTape, from, to cfg.Point, kind symbolicWTOEdgeKind, component int32, exits, enters uint16) {
+func assertSymbolicWTOEdge(t *testing.T, tape *symbolicWTOTape, from, to cfg.Point, kind symbolicWTOEdgeKind, component int32, exits, enters int) {
 	t.Helper()
 	fromIndex := tape.denseIndex(from)
 	toIndex := tape.denseIndex(to)

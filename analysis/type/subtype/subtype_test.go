@@ -31,6 +31,35 @@ func TestPrimitiveStrictOrder(t *testing.T) {
 	}
 }
 
+func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
+	exhausted := typ.DefaultRecursionDepth + 1
+	if (&checker{}).check(typ.String, typ.String, exhausted) {
+		t.Fatal("subtype comparison succeeded after recursion-depth exhaustion")
+	}
+	if (&checker{}).canWidenTo(typ.String, typ.String, exhausted) {
+		t.Fatal("widen comparison succeeded after recursion-depth exhaustion")
+	}
+
+	// A non-cyclic width-subtyping chain deeper than any sane budget: every
+	// level allocates a fresh *typ.Record pair, so cycle-pair memoization
+	// never collapses the walk (no pair ever repeats) and only a live depth
+	// budget can terminate it early. sub carries one extra field beyond what
+	// super requires at every level, which is valid structural width
+	// subtyping; the honest, unbounded answer is "yes, subtype" all the way
+	// to the shared Number leaf. Depth exhaustion must still fail closed and
+	// report false rather than let the walk run to completion.
+	const chainDepth = 10000
+	var sub typ.Type = typ.Number
+	var super typ.Type = typ.Number
+	for i := 0; i < chainDepth; i++ {
+		sub = typetable.NewRecord().Field("extra", typ.Number).Field("next", sub).Build()
+		super = typetable.NewRecord().Field("next", super).Build()
+	}
+	if IsSubtype(sub, super) {
+		t.Fatal("width-subtyping chain deeper than the recursion budget was accepted as a subtype: depth exhaustion did not fail closed")
+	}
+}
+
 func TestSubtypeTraversesDeepProductsExactly(t *testing.T) {
 	var sub typ.Type = typ.Number
 	var super typ.Type = typ.String

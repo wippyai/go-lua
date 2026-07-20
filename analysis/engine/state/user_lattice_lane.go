@@ -151,10 +151,53 @@ func userLatticeDomain(rt userlattice.Runtime) lattice.Lattice[userLatticeLane] 
 		Join: func(a, b userLatticeLane) userLatticeLane {
 			return userLatticeJoin(rt, a, b)
 		},
+		Meet: func(a, b userLatticeLane) userLatticeLane {
+			return userLatticeMeet(rt, a, b)
+		},
 		Widen: func(prev, next userLatticeLane) userLatticeLane {
 			return userLatticeJoin(rt, prev, next)
 		},
 	}
+}
+
+func userLatticeMeet(rt userlattice.Runtime, a, b userLatticeLane) userLatticeLane {
+	switch {
+	case a.top:
+		return b
+	case b.top:
+		return a
+	case sameUserLatticeMap(a.values, b.values):
+		return a
+	case len(a.values) == 0 || len(b.values) == 0:
+		return userLatticeLane{}
+	case userLatticeLessOrEq(rt, a, b):
+		return a
+	case userLatticeLessOrEq(rt, b, a):
+		return b
+	}
+	left, right := a.values, b.values
+	if len(left) > len(right) {
+		left, right = right, left
+	}
+	out := make(map[userLatticeKey]userlattice.Element, len(left))
+	for key, leftValue := range left {
+		rightValue, ok := right[key]
+		if !ok {
+			continue
+		}
+		axis, ok := rt.AxisBySlot(key.axis)
+		if !ok {
+			continue
+		}
+		met := axis.Meet(leftValue, rightValue)
+		if !axis.LessOrEq(met, axis.Bottom()) || !axis.LessOrEq(axis.Bottom(), met) {
+			out[key] = met
+		}
+	}
+	if len(out) == 0 {
+		out = nil
+	}
+	return userLatticeLane{values: out}
 }
 
 func userLatticeEqual(a, b userLatticeLane) bool {

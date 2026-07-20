@@ -10,31 +10,18 @@
 // their Lattice value and transfer functions rather than re-deriving a worklist
 // loop each time.
 //
-// The algorithm is Kildall's worklist iteration (Gary A. Kildall, "A unified
-// approach to global program optimization", POPL 1973) with join-accumulation
-// at every cell and Cousot/Cousot widening (Patrick Cousot & Radhia Cousot,
-// "Abstract interpretation: a unified lattice model …", POPL 1977) applied at
-// the cells the caller marks as widening points (loop heads / feedback-vertex
-// cells). The caller may delay widening for the first few strict updates after a
-// widening cell's first transfer visit, the standard precision-preserving
-// strategy used by practical chaotic solvers: initial predecessor fan-in and
-// early feedback iterations use exact Join, then Widen guarantees convergence if
-// the chain keeps growing. The accumulate-and-widen update is the iterate the
-// lattice laws (monotonicity of Join, ACC of Widen at WidenAt cells) are
-// designed to make terminate with a sound over-approximation of the collecting
-// semantics.
+// The algorithm is the deterministic Bourdoncle weak-topological iteration in
+// wto.go with join accumulation and Cousot/Cousot widening at caller-declared
+// feedback cells. The caller may delay widening for the first few strict
+// updates; after that, the domain widening guarantees convergence.
 //
-// Determinism: the worklist is a FIFO seeded in Cells order; re-queued
-// dependents are sorted by their Cells index before being appended, and the
-// queue never holds a cell twice. Two Solve runs over the same system therefore
-// visit cells in the same order and return identical maps. There is no use of
-// maps for ordering, no randomness, and no wall-clock dependence.
+// Determinism comes from the immutable WTO plan and canonical Cells order.
 //
 // Termination: the widening phase imposes no numeric iteration cap. It relies
 // entirely on the lattice contract — Join is monotone and a cell's value only
 // ever moves up the order, and Widen at WidenAt cells guarantees every ascending
 // chain is eventually stationary. A domain whose Widen is not a true widening
-// (does not satisfy ACC) can make Solve run forever; that is a domain-law bug,
+// (does not satisfy ACC) can make the solver run forever; that is a domain-law bug,
 // not a concern the solver papers over with a cap. The optional narrowing phase
 // also has no artificial iteration cap. Each accepted replacement must be a
 // strict decrease in the lattice order, and the domain's Narrow operator must
@@ -44,9 +31,7 @@
 package solve
 
 import (
-	"context"
 	"errors"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
@@ -60,8 +45,8 @@ var ErrCanceled = errors.New("solve: canceled")
 
 const cancellationCheckInterval = cancellation.EveryCheap
 
-// Stats holds caller-owned observational counters for one or more Solve runs.
-// Solve never retains ownership beyond the call and does not synchronize access.
+// Stats holds caller-owned observational counters for one or more solver runs.
+// The solver never retains ownership beyond the call or synchronizes access.
 type Stats struct {
 	TransferCalls int
 }
@@ -118,7 +103,7 @@ type EquationSystem[Cell comparable, State any] struct {
 	// candidate is not a final observation, and a final narrowing update can
 	// change cur without another transfer evaluation.
 	//
-	// Revisions are solve-local and have no semantic meaning outside this Solve
+	// Revisions are solve-local and have no semantic meaning outside this solver
 	// call. They exist so a consumer can validate a captured transfer artifact
 	// against the converged working solution without re-running that transfer.
 	TransferVersioned func(cell Cell, read func(Cell) (State, uint64), emit func(Cell, State))
@@ -158,190 +143,6 @@ type EquationSystem[Cell comparable, State any] struct {
 
 	// Stats, when non-nil, receives observational counters for this solve run.
 	Stats *Stats
-}
-
-// Solve computes the converged solution of sys by Kildall worklist iteration and
-// returns the value of every cell in sys.Cells.
-//
-// If WidenAt is nil, or every domain Widen equals Join, this is the least fixed
-// point for finite-height systems. If WidenAt marks infinite-height cycles, the
-// result is a sound widened post-fixpoint.
-//
-// The returned map has one entry per cell in sys.Cells (the value it held when
-// the worklist drained). Cells that were only ever emitted into but are absent
-// from sys.Cells do not appear in the result.
-//
-// Solve panics with deterministic "solve: ..." messages if sys omits a
-// function hook required by the solver contract.
-func Solve[Cell comparable, State any](sys EquationSystem[Cell, State]) map[Cell]State {
-	validateEquationSystem(sys)
-	s := newState(sys)
-	s.run()
-	s.runNarrowingWithoutCancellation()
-	return s.materialize()
-}
-
-// SolveWithVersions computes the same solution as Solve and additionally
-// returns the final solve-local revision for each declared cell. The revision
-// changes whenever the solver replaces a cell, including during narrowing.
-// It is intended only for validating ephemeral observations before a result is
-// published; callers must never serialize or cache it across solves.
-func SolveWithVersions[Cell comparable, State any](sys EquationSystem[Cell, State]) (map[Cell]State, map[Cell]uint64) {
-	validateEquationSystem(sys)
-	s := newState(sys)
-	s.run()
-	s.runNarrowingWithoutCancellation()
-	return s.materialize(), s.materializeVersions()
-}
-
-// SolveContext computes the converged solution of sys, stopping cleanly when
-// ctx is canceled. A canceled solve returns no result map, so callers cannot
-// accidentally treat a partially converged worklist as a solution.
-func SolveContext[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State]) (map[Cell]State, error) {
-	validateEquationSystem(sys)
-	cancel := newCancellationGuard(cancellation.FromContext(ctx))
-	if err := cancel.err(0); err != nil {
-		return nil, err
-	}
-	s := newState(sys)
-	if err := s.runWithCancellation(cancel); err != nil {
-		return nil, err
-	}
-	if err := s.runNarrowing(cancel); err != nil {
-		return nil, err
-	}
-	if err := cancel.err(0); err != nil {
-		return nil, err
-	}
-	return s.materialize(), nil
-}
-
-// SolveContextWithVersions is the cancelable counterpart of SolveWithVersions.
-func SolveContextWithVersions[Cell comparable, State any](ctx context.Context, sys EquationSystem[Cell, State]) (map[Cell]State, map[Cell]uint64, error) {
-	validateEquationSystem(sys)
-	cancel := newCancellationGuard(cancellation.FromContext(ctx))
-	if err := cancel.err(0); err != nil {
-		return nil, nil, err
-	}
-	s := newState(sys)
-	if err := s.runWithCancellation(cancel); err != nil {
-		return nil, nil, err
-	}
-	if err := s.runNarrowing(cancel); err != nil {
-		return nil, nil, err
-	}
-	if err := cancel.err(0); err != nil {
-		return nil, nil, err
-	}
-	return s.materialize(), s.materializeVersions(), nil
-}
-
-// Session owns an ascending, queue-empty checkpoint for one stable equation
-// system.  It is deliberately local to its caller: it retains mutable solver
-// history (cells, widening counters, revisions, and discovered dependencies),
-// and must never be placed in a value cache.
-//
-// Publish narrows a scratch clone.  Consequently neither publishing nor a
-// canceled publish can mutate the checkpoint used by Resume.
-type Session[Cell comparable, State any] struct {
-	s *solveState[Cell, State]
-}
-
-// NewSession creates a session with the ordinary initial FIFO.  Call Ascend to
-// establish its first checkpoint before calling Publish or Resume.
-func NewSession[Cell comparable, State any](sys EquationSystem[Cell, State]) *Session[Cell, State] {
-	validateEquationSystem(sys)
-	return &Session[Cell, State]{s: newState(sys)}
-}
-
-// ReplaceTransfer swaps the dynamic equation layer for a subsequent outer
-// iteration.  Static shape, initials, lattice, and widening policy belong to
-// the session identity and are intentionally not replaceable here.
-func (r *Session[Cell, State]) ReplaceTransfer(transfer func(Cell, func(Cell) State, func(Cell, State)), versioned func(Cell, func(Cell) (State, uint64), func(Cell, State)), stats *Stats) {
-	if r == nil || r.s == nil {
-		return
-	}
-	r.s.transfer = transfer
-	r.s.transferVersioned = versioned
-	r.s.evaluate = nil
-	r.s.evaluateVersioned = nil
-	r.s.stats = stats
-}
-
-// ReplaceEvaluate swaps a session to direct, self-owned equations. It is the
-// direct counterpart of ReplaceTransfer; switching either spelling clears the
-// other so a resumed session never retains an ambiguous stale binding.
-func (r *Session[Cell, State]) ReplaceEvaluate(evaluate func(Cell, func(Cell) State) State, versioned func(Cell, func(Cell) (State, uint64)) State, stats *Stats) {
-	if r == nil || r.s == nil {
-		return
-	}
-	r.s.transfer = nil
-	r.s.transferVersioned = nil
-	r.s.evaluate = evaluate
-	r.s.evaluateVersioned = versioned
-	r.s.stats = stats
-}
-
-// Ascend drains the normal worklist and leaves a pre-narrowing checkpoint.
-func (r *Session[Cell, State]) Ascend(ctx context.Context) error {
-	if r == nil || r.s == nil {
-		return nil
-	}
-	cancel := newCancellationGuard(cancellation.FromContext(ctx))
-	if err := cancel.err(0); err != nil {
-		return err
-	}
-	return r.s.runWithCancellation(cancel)
-}
-
-// Resume forces the supplied declared cells through the ordinary FIFO, then
-// drains it.  Duplicate and out-of-order callers are normalized to Cells order
-// so the persisted schedule remains deterministic.
-func (r *Session[Cell, State]) Resume(ctx context.Context, cells []Cell) error {
-	if r == nil || r.s == nil {
-		return nil
-	}
-	seen := make(map[Cell]struct{}, len(cells))
-	for _, c := range cells {
-		if _, declared := r.s.order[c]; declared {
-			seen[c] = struct{}{}
-		}
-	}
-	for _, c := range r.s.cells {
-		if _, ok := seen[c]; ok {
-			r.s.enqueue(c)
-		}
-	}
-	return r.Ascend(ctx)
-}
-
-// Publish returns a narrowed materialization of the current checkpoint.  The
-// returned maps are scratch-owned and may be changed by the caller.
-func (r *Session[Cell, State]) Publish(ctx context.Context) (map[Cell]State, map[Cell]uint64, error) {
-	if r == nil || r.s == nil {
-		return nil, nil, nil
-	}
-	cancel := newCancellationGuard(cancellation.FromContext(ctx))
-	if err := cancel.err(0); err != nil {
-		return nil, nil, err
-	}
-	scratch := r.s.cloneForPublish()
-	if err := scratch.runNarrowing(cancel); err != nil {
-		return nil, nil, err
-	}
-	if err := cancel.err(0); err != nil {
-		return nil, nil, err
-	}
-	return scratch.materialize(), scratch.materializeVersions(), nil
-}
-
-// CheckpointCells returns a copy of the exact pre-narrowing declared cells.
-// It is primarily useful for differential tests and diagnostics.
-func (r *Session[Cell, State]) CheckpointCells() map[Cell]State {
-	if r == nil || r.s == nil {
-		return nil
-	}
-	return r.s.materializeCopy()
 }
 
 type cancellationGuard struct {
@@ -395,7 +196,7 @@ func validateEquationSystem[Cell comparable, State any](sys EquationSystem[Cell,
 	}
 }
 
-// solveState is the mutable scratch of one Solve run.
+// solveState is the mutable scratch of one WTO solve.
 type solveState[Cell comparable, State any] struct {
 	domain lattice.Lattice[State]
 
@@ -442,17 +243,6 @@ type solveState[Cell comparable, State any] struct {
 	visits       map[Cell]int
 	widenChanges map[Cell]int
 
-	// dependents[d] is the set of cells whose Transfer has read d. When d's
-	// value changes, every dependent is re-queued. Stored as a canonical-order
-	// slice plus a membership set so the edge set dedups and the hot requeue path
-	// iterates without allocating or sorting.
-	dependents map[Cell][]Cell
-	dependEdge map[edge[Cell]]struct{}
-
-	// queue is the FIFO worklist; inQueue dedups membership.
-	queue   []Cell
-	inQueue map[Cell]struct{}
-
 	// active is the cell currently in Transfer; read attributes dependency
 	// edges to it. activeReadSelf tracks whether the current Transfer has read
 	// its own cell in this visit, and activeSelfChanged remembers whether a
@@ -467,15 +257,7 @@ type edge[Cell comparable] struct {
 	to   Cell // the reader
 }
 
-func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solveState[Cell, State] {
-	return newStateWithFIFO(sys, true, true)
-}
-
 func newStructuredState[Cell comparable, State any](sys EquationSystem[Cell, State], retainInitial bool) *solveState[Cell, State] {
-	return newStateWithFIFO(sys, false, retainInitial)
-}
-
-func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State], fifo, retainInitial bool) *solveState[Cell, State] {
 	widenAt := sys.WidenAt
 	if widenAt == nil {
 		widenAt = func(Cell) bool { return false }
@@ -513,13 +295,6 @@ func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State
 	if retainInitial || sys.Lattice.Narrow != nil {
 		s.initial = make(map[Cell]State, n)
 	}
-	if fifo {
-		s.dependents = make(map[Cell][]Cell)
-		s.dependEdge = make(map[edge[Cell]]struct{})
-		s.queue = make([]Cell, 0, n)
-		s.inQueue = make(map[Cell]struct{}, n)
-	}
-
 	// Seed initial values and the worklist in Cells order. Deduplicate so a
 	// repeated cell does not appear twice in the queue or shadow its own
 	// initial value.
@@ -549,9 +324,6 @@ func newStateWithFIFO[Cell comparable, State any](sys EquationSystem[Cell, State
 				s.initial[c] = value
 			}
 			s.declaredCur++
-		}
-		if fifo {
-			s.enqueue(c)
 		}
 	}
 	return s
@@ -585,58 +357,19 @@ func (s *solveState[Cell, State]) versionOf(c Cell) uint64 {
 	return s.versions[c]
 }
 
-// enqueue appends a cell to the FIFO unless it is already pending.
-func (s *solveState[Cell, State]) enqueue(c Cell) {
-	if _, pending := s.inQueue[c]; pending {
-		return
-	}
-	s.inQueue[c] = struct{}{}
-	s.queue = append(s.queue, c)
-}
-
-// recordDependency notes that the active cell read d, so a later change to d
-// re-queues the active cell. The edge set dedups; dependents stays sorted by
-// canonical Cells index so requeueChanged can run on every value change without
-// building a transient sorted copy.
-func (s *solveState[Cell, State]) recordDependency(d Cell) {
-	e := edge[Cell]{from: d, to: s.active}
-	if e.from == e.to {
-		// Self-reads are tracked separately from the dependency graph so the
-		// solver can distinguish a real self-read from a no-op self-emit.
-		return
-	}
-	if _, ok := s.dependEdge[e]; ok {
-		return
-	}
-	s.dependEdge[e] = struct{}{}
-	deps := s.dependents[d]
-	activeIndex := s.indexOf(s.active)
-	insertAt := sort.Search(len(deps), func(i int) bool {
-		return s.indexOf(deps[i]) > activeIndex
-	})
-	deps = append(deps, s.active)
-	copy(deps[insertAt+1:], deps[insertAt:])
-	deps[insertAt] = s.active
-	s.dependents[d] = deps
-}
-
 // emit accumulates v into cell d via Join. Contributions that arrive before d's
 // own transfer has run are always exact joins; this preserves high-fan-in facts
 // from being widened during the initial wave. At WidenAt cells, the first
 // WidenDelay(d) strict post-visit changes are kept exact; subsequent changes
 // apply Widen to the previous iterate and the joined candidate. If d changed, d
 // and its readers are re-queued.
-func (s *solveState[Cell, State]) emit(d Cell, v State) {
-	s.emitWithRequeue(d, v, true)
-}
-
 // emitStructured is the WTO ascent update. The nested schedule owns revisits,
 // so it performs the identical lattice/widening update without FIFO work.
 func (s *solveState[Cell, State]) emitStructured(d Cell, v State) {
-	s.emitWithRequeue(d, v, false)
+	s.emitWithRequeue(d, v)
 }
 
-func (s *solveState[Cell, State]) emitWithRequeue(d Cell, v State, requeue bool) {
+func (s *solveState[Cell, State]) emitWithRequeue(d Cell, v State) {
 	prev := s.curOf(d)
 	next := s.domain.Join(prev, v)
 	delayConsumed := false
@@ -655,9 +388,6 @@ func (s *solveState[Cell, State]) emitWithRequeue(d Cell, v State, requeue bool)
 	s.bumpVersion(d)
 	if delayConsumed {
 		s.recordWidenChange(d)
-	}
-	if requeue {
-		s.requeueChanged(d)
 	}
 }
 
@@ -690,104 +420,6 @@ func (s *solveState[Cell, State]) recordWidenChange(c Cell) {
 		s.widenChanges = make(map[Cell]int, 1)
 	}
 	s.widenChanges[c]++
-}
-
-// requeueChanged re-queues a cell whose value moved and every cell that read
-// it, in deterministic order. A changed cell is re-queued only when it is a
-// system cell (present in Cells) or when it is the active cell and that active
-// transfer has actually read itself in this visit. A cell that is merely
-// emitted into and has no equation of its own is never visited, per the
-// EquationSystem contract.
-func (s *solveState[Cell, State]) requeueChanged(d Cell) {
-	if d == s.active {
-		if s.activeReadSelf {
-			s.enqueue(d)
-		} else {
-			s.activeSelfChanged = true
-		}
-	} else if _, isCell := s.order[d]; isCell {
-		s.enqueue(d)
-	}
-	deps := s.dependents[d]
-	if len(deps) == 0 {
-		return
-	}
-	for _, dep := range deps {
-		s.enqueue(dep)
-	}
-}
-
-// indexOf returns a cell's canonical order, or a sentinel past all real
-// indices for cells absent from Cells.
-func (s *solveState[Cell, State]) indexOf(c Cell) int {
-	if i, ok := s.order[c]; ok {
-		return i
-	}
-	return len(s.order)
-}
-
-func (s *solveState[Cell, State]) run() {
-	_ = s.runWithCancellation(nil)
-}
-
-func (s *solveState[Cell, State]) runWithCancellation(cancel *cancellationGuard) error {
-	read := func(d Cell) State {
-		if d == s.active {
-			s.activeReadSelf = true
-			if s.activeSelfChanged {
-				s.enqueue(d)
-			}
-		}
-		s.recordDependency(d)
-		return s.curOf(d)
-	}
-	emit := func(d Cell, v State) {
-		s.emit(d, v)
-	}
-	readVersioned := func(d Cell) (State, uint64) {
-		value := read(d)
-		return value, s.versionOf(d)
-	}
-
-	var iteration uint64
-	for len(s.queue) > 0 {
-		if err := cancel.err(iteration); err != nil {
-			return err
-		}
-		iteration++
-		c := s.queue[0]
-		s.queue = s.queue[1:]
-		delete(s.inQueue, c)
-
-		s.active = c
-		s.activeReadSelf = false
-		s.activeSelfChanged = false
-		if s.stats != nil {
-			s.stats.TransferCalls++
-		}
-		if s.transfer != nil {
-			if s.transferVersioned != nil {
-				s.transferVersioned(c, readVersioned, emit)
-			} else {
-				s.transfer(c, read, emit)
-			}
-		} else if s.evaluateVersioned != nil {
-			s.emit(c, s.evaluateVersioned(c, readVersioned))
-		} else {
-			s.emit(c, s.evaluate(c, read))
-		}
-		// Transfer callbacks cannot return errors. Check at their commit boundary
-		// so a callback that noticed cancellation cannot publish its partial work.
-		if err := cancel.err(0); err != nil {
-			return err
-		}
-		s.recordVisit(c)
-	}
-	return cancel.err(iteration)
-}
-
-func (s *solveState[Cell, State]) runNarrowingWithoutCancellation() {
-	s.runNarrowing(nil)
 }
 
 func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error {
@@ -837,40 +469,6 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 			return nil
 		}
 	}
-}
-
-func cloneMap[K comparable, V any](in map[K]V) map[K]V {
-	if in == nil {
-		return nil
-	}
-	out := make(map[K]V, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-// cloneForPublish copies all mutable maps, including versions.  State values
-// themselves are conventionally persistent snapshots, so shallow map copies
-// are the required ownership boundary here.
-func (s *solveState[Cell, State]) cloneForPublish() *solveState[Cell, State] {
-	copy := *s
-	copy.cells = append([]Cell(nil), s.cells...)
-	copy.emittedOrder = append([]Cell(nil), s.emittedOrder...)
-	copy.order = cloneMap(s.order)
-	copy.cur = cloneMap(s.cur)
-	copy.versions = cloneMap(s.versions)
-	copy.initial = cloneMap(s.initial)
-	copy.visits = cloneMap(s.visits)
-	copy.widenChanges = cloneMap(s.widenChanges)
-	copy.dependents = make(map[Cell][]Cell, len(s.dependents))
-	for k, v := range s.dependents {
-		copy.dependents[k] = append([]Cell(nil), v...)
-	}
-	copy.dependEdge = cloneMap(s.dependEdge)
-	copy.queue = nil
-	copy.inQueue = make(map[Cell]struct{})
-	return &copy
 }
 
 func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) (map[Cell]State, []Cell, error) {
@@ -962,14 +560,6 @@ func (s *solveState[Cell, State]) materialize() map[Cell]State {
 		} else {
 			out[c] = s.domain.Bottom()
 		}
-	}
-	return out
-}
-
-func (s *solveState[Cell, State]) materializeCopy() map[Cell]State {
-	out := make(map[Cell]State, len(s.order))
-	for _, c := range s.cells {
-		out[c] = s.curOf(c)
 	}
 	return out
 }

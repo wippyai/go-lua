@@ -3,10 +3,6 @@ package body
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -179,39 +175,5 @@ func TestLuaTypeIntrinsicGlobalTableReadsRejectRegardlessOfTraversalOrder(t *tes
 				}
 			}
 		})
-	}
-}
-
-func TestLuaTypeIntrinsicRelationRetainsParamUntilSpecialization(t *testing.T) {
-	reg := standard.Registry()
-	prepared, err := PrepareFunction(parseFunction(t, `function f(value) return type(value) end`), Config{
-		Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	shape := transformer.Shape{Params: uint32(len(prepared.operationPlan.BoundaryParams())), Globals: uint32(len(prepared.operationPlan.BoundaryGlobals()))}
-	relation := transformer.NewPlanCompiler().Compile(reg, prepared.cfg.Graph, prepared.operationPlan, shape)
-	if reason := relation.ContextualReason(); reason != "" {
-		t.Fatalf("relation contextual: %s", reason)
-	}
-	for _, tag := range []runtimekind.Tag{runtimekind.Nil, runtimekind.Boolean, runtimekind.Number, runtimekind.String, runtimekind.Table, runtimekind.Function, runtimekind.Thread, runtimekind.Userdata} {
-		bindings := make([]product.Value, shape.ValueCount())
-		for i := range bindings {
-			bindings[i] = product.Top()
-		}
-		bindings[0] = product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(tag))
-		cursor, cursorErr := transformer.NewBindingCursor(shape, bindings, nil)
-		if cursorErr != nil {
-			t.Fatal(cursorErr)
-		}
-		got, exact := relation.Specialize(cursor, nil, nil)
-		if !exact || len(got.Returns) != 1 {
-			t.Fatalf("specialize(%s) = %#v/%v", tag, got, exact)
-		}
-		literal, literalExact := typevalue.StringLiteralOf(reg, got.Returns[0])
-		if !literalExact || literal != tag.String() {
-			t.Fatalf("specialize(%s) return = %q/%v", tag, literal, literalExact)
-		}
 	}
 }

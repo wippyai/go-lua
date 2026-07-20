@@ -30,9 +30,6 @@ func (CallArguments) Produce(ctx Context) []judgment.Judgment {
 			case readmodel.CallArgumentReportGenericConflict:
 				out = append(out, genericInferenceConflictJudgment(ctx, functionKey, point, report.Argument, report.Conflict))
 			case readmodel.CallArgumentReportObligation:
-				if ctx.SuppressCallerOwnedParameters && report.Argument.CallerOwnedParameter && !report.Check.Argument.UntrustedTopOrigin {
-					continue
-				}
 				obligation := report.Obligation
 				if obligation.Type == nil {
 					continue

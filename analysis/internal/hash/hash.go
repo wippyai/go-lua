@@ -46,6 +46,16 @@ func (w *Writer) Sum64() uint64 {
 	return w.h
 }
 
+// RestoreSum64 restores a previously observed Sum64 state. It is intended for
+// exact prefix memoization: callers may skip a deterministic byte subsequence
+// only when they have independently proved both the input sum and subsequence
+// semantics equal to the computation that produced sum.
+func (w *Writer) RestoreSum64(sum uint64) {
+	if w != nil {
+		w.h = sum
+	}
+}
+
 // Write implements io.Writer.
 func (w *Writer) Write(p []byte) (int, error) {
 	for _, b := range p {

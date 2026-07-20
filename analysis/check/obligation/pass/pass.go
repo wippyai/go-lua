@@ -12,12 +12,11 @@ import (
 
 // Context is the only semantic input an obligation producer receives.
 type Context struct {
-	FunctionKey                   string
-	SourceFile                    string
-	BodyInputDigest               embedding.BodyInputDigest
-	Reader                        readmodel.Reader
-	SuppressCallerOwnedParameters bool
-	PointReachable                func(cfg.Point) bool
+	FunctionKey     string
+	SourceFile      string
+	BodyInputDigest embedding.BodyInputDigest
+	Reader          readmodel.Reader
+	PointReachable  func(cfg.Point) bool
 	// Canceled lets post-solve producers stop a potentially large read-model
 	// traversal without owning a concrete context package dependency.
 	Canceled func() bool

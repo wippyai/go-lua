@@ -102,6 +102,10 @@ type readOnlySuccessorGraph interface {
 	SuccessorsReadOnly(Point) []Point
 }
 
+type readOnlySuccessorConditionGraph interface {
+	SuccessorConditionsReadOnly(Point) []bool
+}
+
 type readOnlyPredecessorGraph interface {
 	PredecessorsReadOnly(Point) []Point
 }
@@ -302,6 +306,19 @@ func (c *CFG) SuccessorsReadOnly(p Point) []Point {
 	return edgesReadOnly(c.succs, p)
 }
 
+// SuccessorConditionsReadOnly returns the branch polarities aligned by
+// occurrence with SuccessorsReadOnly. Unlike EdgeCond(from, to), this view is
+// exact when the truthy and falsy edges have the same endpoints.
+//
+// The returned slice must be treated as read-only by callers.
+func (c *CFG) SuccessorConditionsReadOnly(p Point) []bool {
+	idx := int(p)
+	if idx < 0 || idx >= len(c.succConds) {
+		return nil
+	}
+	return c.succConds[idx]
+}
+
 // SuccessorsReadOnly returns graph's successor slice without copying when the
 // implementation exposes an immutable adjacency view. Generic Graph
 // implementations fall back to the copy-preserving Successors contract.
@@ -313,6 +330,41 @@ func SuccessorsReadOnly(graph Graph, p Point) []Point {
 		return ro.SuccessorsReadOnly(p)
 	}
 	return graph.Successors(p)
+}
+
+// SuccessorConditionsReadOnly returns branch polarities aligned by occurrence
+// with SuccessorsReadOnly. Generic Graph implementations are reconstructed
+// from their complete edge inventory, preserving parallel opposite-polarity
+// edges that cannot be represented by pair-shaped EdgeCond.
+func SuccessorConditionsReadOnly(graph Graph, p Point) []bool {
+	if graph == nil {
+		return nil
+	}
+	if ro, ok := graph.(readOnlySuccessorConditionGraph); ok {
+		return ro.SuccessorConditionsReadOnly(p)
+	}
+	successors := graph.Successors(p)
+	if len(successors) == 0 {
+		return nil
+	}
+	byTarget := make(map[Point][]bool, len(successors))
+	for _, edge := range graph.Edges() {
+		if edge.From == p {
+			byTarget[edge.To] = append(byTarget[edge.To], edge.Cond)
+		}
+	}
+	used := make(map[Point]int, len(byTarget))
+	conditions := make([]bool, len(successors))
+	for index, successor := range successors {
+		offset := used[successor]
+		values := byTarget[successor]
+		if offset >= len(values) {
+			return nil
+		}
+		conditions[index] = values[offset]
+		used[successor] = offset + 1
+	}
+	return conditions
 }
 
 // PredecessorsReadOnly returns graph's predecessor slice without copying when

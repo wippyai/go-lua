@@ -8,8 +8,37 @@ import (
 	"math"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
+
+func TestCanonicalFormalOrdinalPreservesFullUint64(t *testing.T) {
+	body := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-formal-wide-ordinal")), 1)
+	wide := uint64(math.MaxUint32) + 17
+	value := SingletonTerm(FormalTerm(NewFormalVar(NewFormalSchemaID(body, wide), formal.Output)))
+	narrow := SingletonTerm(FormalTerm(NewFormalVar(NewFormalSchemaID(body, 17), formal.Output)))
+	encoded := canonicalBytes(t, value)
+	if bytes.Equal(encoded, canonicalBytes(t, narrow)) {
+		t.Fatal("formal ordinal was truncated to uint32")
+	}
+	var reader canonical.Reader
+	if err := reader.Reset(context.Background(), encoded, Key.ID(), 1); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeCanonical(context.Background(), &reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	term, exact := decoded.Term()
+	variable, isFormal := term.Formal()
+	if !exact || !isFormal || variable.Schema().Ordinal() != wide || variable.Vocabulary() != formal.Output {
+		t.Fatalf("wide formal round trip = %#v", decoded)
+	}
+}
 
 func TestCanonicalEncodingMatchesEqualAcrossAdversarialCorpus(t *testing.T) {
 	ids := []ID{
@@ -30,7 +59,7 @@ func TestCanonicalEncodingMatchesEqualAcrossAdversarialCorpus(t *testing.T) {
 	// future equality change cannot drift away from the codec unnoticed.
 	for rawState := 0; rawState <= int(^uint8(0)); rawState++ {
 		for _, id := range ids {
-			values = append(values, Value{state: state(rawState), id: id})
+			values = append(values, Value{state: state(rawState), term: ConcreteTerm(id)})
 		}
 	}
 	assertEqualBytePartition(t, values)

@@ -204,7 +204,7 @@ func functionForStableLocalSymbol(result *body.Result, symbolID symbol.ID) (*ast
 }
 
 func functionForStableLocalSymbolInResult(root, current *body.Result, symbolID symbol.ID) (*ast.FunctionExpr, bool) {
-	if current == nil || current.IsCallContextResult() {
+	if current == nil {
 		return nil, false
 	}
 	fn := current.Function()
@@ -303,7 +303,7 @@ func materializedFunctionResult(result *body.Result, fn *ast.FunctionExpr) *body
 		if child == nil {
 			continue
 		}
-		if child.Function() == fn && !child.IsCallContextResult() {
+		if child.Function() == fn {
 			return child
 		}
 		if found := materializedFunctionResult(child, fn); found != nil {

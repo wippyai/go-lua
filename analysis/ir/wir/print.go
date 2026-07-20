@@ -324,6 +324,8 @@ func (b *Body) spellCheck(inst Instruction) string {
 		return "num_ge " + subject + " " + strconv.FormatInt(c.NumFloor, 10) + neg
 	case CheckNumLe:
 		return "num_le " + subject + " " + strconv.FormatInt(c.NumCeil, 10) + neg
+	case CheckFrozenTable:
+		return "frozen " + subject
 	default:
 		return "cond?"
 	}

@@ -16,7 +16,7 @@ func TestPlanCompilerBindsParamCaptureGlobalNamespacesDistinctly(t *testing.T) {
 	plan := operationplan.New(cfg.New(), factflow.FactsInput{}).
 		WithBoundaryParams([]symbol.ID{param}).
 		WithBoundaryCaptures([]symbol.ID{capture}).
-		WithBoundaryGlobals([]symbol.ID{global})
+		WithBoundaryGlobals([]operationplan.BoundaryGlobal{{Symbol: global}})
 	prepared, err := NewPlanCompiler().Prepare(standard.Registry(), cfg.New(), plan, Shape{Params: 1, Captures: 1, Globals: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -47,19 +47,19 @@ func TestPlanCompilerRejectsMalformedOrWidthMismatchedGlobalBoundary(t *testing.
 		{
 			name: "parameter overlap",
 			plan: operationplan.New(cfg.New(), factflow.FactsInput{}).
-				WithBoundaryParams([]symbol.ID{7}).WithBoundaryCaptures(nil).WithBoundaryGlobals([]symbol.ID{7}),
+				WithBoundaryParams([]symbol.ID{7}).WithBoundaryCaptures(nil).WithBoundaryGlobals([]operationplan.BoundaryGlobal{{Symbol: 7}}),
 			shape: Shape{Params: 1}, want: "global boundary is malformed",
 		},
 		{
 			name: "capture overlap",
 			plan: operationplan.New(cfg.New(), factflow.FactsInput{}).
-				WithBoundaryParams(nil).WithBoundaryCaptures([]symbol.ID{11}).WithBoundaryGlobals([]symbol.ID{11}),
+				WithBoundaryParams(nil).WithBoundaryCaptures([]symbol.ID{11}).WithBoundaryGlobals([]operationplan.BoundaryGlobal{{Symbol: 11}}),
 			shape: Shape{Captures: 1}, want: "global boundary is malformed",
 		},
 		{
 			name: "shape width",
 			plan: operationplan.New(cfg.New(), factflow.FactsInput{}).
-				WithBoundaryParams(nil).WithBoundaryCaptures(nil).WithBoundaryGlobals([]symbol.ID{17}),
+				WithBoundaryParams(nil).WithBoundaryCaptures(nil).WithBoundaryGlobals([]operationplan.BoundaryGlobal{{Symbol: 17}}),
 			shape: Shape{}, want: "global symbols 1 != shape globals 0",
 		},
 	}

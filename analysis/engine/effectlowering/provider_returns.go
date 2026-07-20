@@ -9,16 +9,13 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -48,18 +45,15 @@ type GenericCallInstantiation struct {
 
 func signatureReturnValue(
 	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
 	sig signature.Function,
 	index int,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
 	returnTypeOps ReturnTypeOps,
 	typeValues *typevalue.Cache,
 ) (product.Value, bool) {
 	for _, transform := range activeReturnTransforms(sig, index) {
-		if value, ok := signatureReturnTransformValue(ctx, sources, expressionRefinements, sig, transform, argSources, in, read, returnTypeOps, typeValues); ok {
+		if value, ok := signatureReturnTransformValue(ctx, sig, transform, argSources, input, returnTypeOps, typeValues); ok {
 			return value, true
 		}
 	}
@@ -69,14 +63,12 @@ func signatureReturnValue(
 func operationalReturnFlowValue(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
 	providerKeySpace *keyspace.KeySpace,
 	sig signature.Function,
 	index int,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
+	memberInput SignatureOutcomeInput,
 	typeValues *typevalue.Cache,
 ) (product.Value, bool) {
 	effects := sig.OperationalEffects
@@ -90,16 +82,14 @@ func operationalReturnFlowValue(
 	if !operationalReturnFlowCanPreserve(effects, flow.Param) {
 		return operationalDeclaredReturnValue(ctx, typeValues, sig, index)
 	}
-	source, ok := argSources.ArgumentSourceAt(flow.Param)
-	if !ok || sources == nil {
+	if _, ok := argSources.ArgumentSourceAt(flow.Param); !ok {
 		return product.Value{}, false
 	}
-	resolver := expressionRefinements.Bind(ctx.Registry, sources)
 	switch flow.Kind {
 	case signature.ReturnFlowParam:
-		return resolver.ValueOfSource(ctx.Point, source, in, read)
+		return argSources.ArgumentValueAt(input, flow.Param)
 	case signature.ReturnFlowParamMember:
-		return operationalReturnParamMemberValue(ctx, facts, resolver, providerKeySpace, flow, source, in, read)
+		return operationalReturnParamMemberValue(argSources, memberInput, flow)
 	default:
 		return product.Value{}, false
 	}
@@ -139,50 +129,22 @@ func operationalReturnFlowCanPreserve(effects *signature.OperationalEffects, par
 }
 
 func operationalReturnParamMemberValue(
-	ctx transfer.NodeContext,
-	facts factflow.Facts,
-	resolver sourcevalue.SourceValues,
-	providerKeySpace *keyspace.KeySpace,
+	args signatureArgumentReader,
+	input SignatureOutcomeInput,
 	flow signature.ReturnFlow,
-	source factflow.ValueSource,
-	in state.State,
-	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	if len(flow.Path) == 0 {
 		return product.Value{}, false
 	}
-	argValue, argOK := resolver.ValueOfSource(ctx.Point, source, in, read)
-	if argOK {
-		if value, ok := sourcevalue.HeapMemberFromValue(ctx.Registry, providerKeySpace, in, argValue, flow.Path); ok {
-			return value, true
-		}
-	}
-	argPath, ok := operationalReturnFlowSourcePath(facts, providerKeySpace, source)
+	argValue, ok := args.ArgumentValueAt(input.input, flow.Param)
 	if !ok {
 		return product.Value{}, false
 	}
-	if argPath.Symbol != 0 {
-		rootValue := in.ReadValue(ctx.Registry, statekey.SymbolValue(argPath.Symbol))
-		if value, ok := sourcevalue.HeapMemberFromValue(ctx.Registry, providerKeySpace, in, rootValue, appendReturnFlowPath(argPath.Segments, flow.Path)); ok {
-			return value, true
-		}
+	value, present, err := input.HeapMember(argValue, flow.Path)
+	if err != nil {
+		panic(err)
 	}
-	memberPath := argPath.AppendSegments(flow.Path)
-	memberSource, ok := factflow.NewPathValueSource(
-		pathaddr.SymbolPathKey(memberPath.Symbol, memberPath.Segments),
-		factflow.NoValueSourceIndex,
-		factflow.NoValueSourceIndex,
-		factflow.NoValueSourceIndex,
-		factflow.ValueSourceShape{},
-	)
-	if !ok {
-		return product.Value{}, false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Point, memberSource, in, read)
-	if !ok && argOK {
-		return product.Value{}, false
-	}
-	return value, ok
+	return value, present
 }
 
 func appendReturnFlowPath(prefix, suffix []segment.Segment) []segment.Segment {
@@ -241,18 +203,15 @@ func operationalDeclaredReturnValue(
 
 func signatureReturnTransformValue(
 	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
 	sig signature.Function,
 	transform returns.ReturnType,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
 	returnTypeOps ReturnTypeOps,
 	typeValues *typevalue.Cache,
 ) (product.Value, bool) {
 	if transform, ok := returns.AsSameAs(transform); ok {
-		return sameAsReturnValue(ctx, sources, expressionRefinements, transform.Source, argSources, in, read)
+		return sameAsReturnValue(transform.Source, argSources, input)
 	}
 	if transform, ok := returns.AsElementOf(transform); ok {
 		return elementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps, typeValues)
@@ -270,32 +229,21 @@ func signatureReturnTransformValue(
 		return typeProjectionReturnValue(ctx, sig, transform, argSources, returnTypeOps, typeValues)
 	}
 	if transform, ok := returns.AsConditionalType(transform); ok {
-		return conditionalTypeReturnValue(ctx, sources, expressionRefinements, sig, transform, argSources, in, read, returnTypeOps, typeValues)
+		return conditionalTypeReturnValue(ctx, sig, transform, argSources, input, returnTypeOps, typeValues)
 	}
 	return product.Value{}, false
 }
 
 func sameAsReturnValue(
-	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
 	ref effect.ParamRef,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
 ) (product.Value, bool) {
-	if sources == nil {
-		return product.Value{}, false
-	}
 	argIndex, ok := effect.ResolveParamIndex(ref, argSources.ArgumentSourceCount())
 	if !ok {
 		return product.Value{}, false
 	}
-	source, ok := argSources.ArgumentSourceAt(argIndex)
-	if !ok {
-		return product.Value{}, false
-	}
-	return expressionRefinements.Bind(ctx.Registry, sources).ValueOfSource(ctx.Point, source, in, read)
+	return argSources.ArgumentValueAt(input, argIndex)
 }
 
 func elementOfReturnValue(
@@ -385,28 +333,21 @@ func typeProjectionReturnValue(
 
 func conditionalTypeReturnValue(
 	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
 	sig signature.Function,
 	transform returns.ConditionalType,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
 	returnTypeOps ReturnTypeOps,
 	typeValues *typevalue.Cache,
 ) (product.Value, bool) {
-	if returnTypeOps.TypeProjection == nil || sources == nil || transform.When == nil || transform.Then == nil {
+	if returnTypeOps.TypeProjection == nil || transform.When == nil || transform.Then == nil {
 		return product.Value{}, false
 	}
 	argIndex, ok := effect.ResolveParamIndex(transform.Source, argSources.ArgumentSourceCount())
 	if !ok {
 		return product.Value{}, false
 	}
-	source, ok := argSources.ArgumentSourceAt(argIndex)
-	if !ok {
-		return product.Value{}, false
-	}
-	value, ok := expressionRefinements.Bind(ctx.Registry, sources).ValueOfSource(ctx.Point, source, in, read)
+	value, ok := argSources.ArgumentValueAt(input, argIndex)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -461,20 +402,16 @@ func closeUninferredSignatureTypeParams(fn *typ.Function, t typ.Type) typ.Type {
 
 func instantiateSignatureForCall(
 	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
-	argumentType SignatureArgumentTypeFunc,
+	input callpayload.CallOutcomeInput,
+	argumentTypes PreparedSignatureArgumentTypeProgram,
 	sig signature.Function,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
 	returnTypeOps ReturnTypeOps,
 ) signature.Function {
-	if sig.Type == nil || len(sig.Type.TypeParams) == 0 || returnTypeOps.InstantiateGenericCall == nil ||
-		(sources == nil && argumentType == nil) {
+	if sig.Type == nil || len(sig.Type.TypeParams) == 0 || returnTypeOps.InstantiateGenericCall == nil {
 		return sig
 	}
-	args, ok := signatureCallArgumentTypes(ctx, sources, expressionRefinements, argumentType, sig.Type, argSources, in, read)
+	args, ok := signatureCallArgumentTypes(ctx, input, argumentTypes, sig.Type, argSources)
 	if !ok {
 		return sig
 	}
@@ -490,24 +427,21 @@ func instantiateSignatureForCall(
 
 func signatureCallArgumentTypes(
 	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	expressionRefinements sourcevalue.ExpressionRefinements,
-	argumentType SignatureArgumentTypeFunc,
+	input callpayload.CallOutcomeInput,
+	argumentTypes PreparedSignatureArgumentTypeProgram,
 	fn *typ.Function,
 	argSources signatureArgumentReader,
-	in state.State,
-	read func(cfg.Point) state.State,
 ) ([]typ.Type, bool) {
 	count := argSources.ArgumentSourceCount()
 	if count == 0 {
 		return nil, false
 	}
-	resolver := expressionRefinements.Bind(ctx.Registry, sources)
 	args := make([]typ.Type, count)
 	seen := false
 	argSources.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		formal, _ := callParamType(fn, i)
-		t, ok := signatureCallArgumentType(ctx, source, formal, in, read, argumentType, resolver)
+		value, valueOK := argSources.ArgumentValueAt(input, i)
+		t, ok := signatureCallArgumentType(ctx, input, source, i, formal, value, valueOK, argumentTypes)
 		if !ok {
 			return true
 		}
@@ -520,26 +454,25 @@ func signatureCallArgumentTypes(
 
 func signatureCallArgumentType(
 	ctx transfer.NodeContext,
+	input callpayload.CallOutcomeInput,
 	source factflow.ValueSource,
+	index int,
 	formal typ.Type,
-	in state.State,
-	read func(cfg.Point) state.State,
-	argumentType SignatureArgumentTypeFunc,
-	resolver sourcevalue.SourceValues,
+	value product.Value,
+	valueOK bool,
+	argumentTypes PreparedSignatureArgumentTypeProgram,
 ) (typ.Type, bool) {
-	if argumentType != nil {
-		if t, ok := argumentType(ctx, source, in, read); ok {
+	if !argumentTypes.Empty() {
+		if t, ok, err := argumentTypes.evaluate(input, SignatureArgumentTypeContext{Node: ctx, Source: source, Index: index, Formal: formal, Value: value}); err != nil {
+			panic(err)
+		} else if ok {
 			if source.HasExpr {
 				t = contextualFunctionExpressionSignatureType(t, formal)
 			}
 			return t, true
 		}
 	}
-	if resolver == nil {
-		return nil, false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Point, source, in, read)
-	if !ok {
+	if !valueOK {
 		return nil, false
 	}
 	return typevalue.TypeOf(ctx.Registry, value)

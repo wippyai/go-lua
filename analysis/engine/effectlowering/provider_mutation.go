@@ -15,10 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -35,17 +32,27 @@ type signatureParamMutationEffects struct {
 	DynamicIndexFacts []callboundary.DynamicIndexFact
 }
 
+func signatureNeedsContextualArgumentTypes(sig signature.Function) bool {
+	if sig.Type != nil && len(sig.Type.TypeParams) != 0 {
+		return true
+	}
+	for _, label := range sig.Effect.Labels {
+		if _, ok := effect.NormalizeLabel(label).(mutation.TableMutator); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func signatureParamMutationEffectsForReader(
 	ctx transfer.NodeContext,
 	sig signature.Function,
 	args signatureArgumentReader,
-	sources sourcevalue.SourceValues,
-	argumentType SignatureArgumentTypeFunc,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
+	argumentTypes PreparedSignatureArgumentTypeProgram,
 	typeValues *typevalue.Cache,
 ) signatureParamMutationEffects {
-	if ctx.Registry == nil || len(sig.Effect.Labels) == 0 || sources == nil {
+	if ctx.Registry == nil || len(sig.Effect.Labels) == 0 {
 		return signatureParamMutationEffects{}
 	}
 	var out signatureParamMutationEffects
@@ -54,7 +61,7 @@ func signatureParamMutationEffectsForReader(
 		if !ok {
 			continue
 		}
-		evidence, ok := readTableMutatorEvidence(ctx, mutator, args, sources, argumentType, in, read, typeValues)
+		evidence, ok := readTableMutatorEvidence(ctx, mutator, args, input, argumentTypes, typeValues)
 		if !ok {
 			continue
 		}
@@ -71,10 +78,16 @@ func signatureParamMutationEffectsForReader(
 	return out
 }
 
-func tableMutatorDynamicIndexSite(mutator mutation.TableMutator) dynamicindex.Site {
+// TableMutatorDynamicIndexSite is the canonical State/call-boundary site for
+// one immutable table-mutator effect descriptor.
+func TableMutatorDynamicIndexSite(mutator mutation.TableMutator) dynamicindex.Site {
 	return dynamicindex.Site("signature.table_mutator:" +
 		strconv.Itoa(mutator.Target.Index) + ":" +
 		strconv.Itoa(mutator.Value.Index))
+}
+
+func tableMutatorDynamicIndexSite(mutator mutation.TableMutator) dynamicindex.Site {
+	return TableMutatorDynamicIndexSite(mutator)
 }
 
 func tableMutatorParamWrite(ctx transfer.NodeContext, typeValues *typevalue.Cache, evidence tableMutatorEvidence) (callpayload.CallParamPathWrite, bool) {
@@ -160,10 +173,8 @@ func readTableMutatorEvidence(
 	ctx transfer.NodeContext,
 	mutator mutation.TableMutator,
 	args signatureArgumentReader,
-	sources sourcevalue.SourceValues,
-	argumentType SignatureArgumentTypeFunc,
-	in state.State,
-	read func(cfg.Point) state.State,
+	input callpayload.CallOutcomeInput,
+	argumentTypes PreparedSignatureArgumentTypeProgram,
 	typeValues *typevalue.Cache,
 ) (tableMutatorEvidence, bool) {
 	targetIndex, ok := effect.ResolveParamIndex(mutator.Target, args.ArgumentSourceCount())
@@ -182,13 +193,13 @@ func readTableMutatorEvidence(
 	if !ok {
 		return tableMutatorEvidence{}, false
 	}
-	target, ok := sources.ValueOfSource(ctx.Point, targetSource, in, read)
+	target, ok := args.ArgumentValueAt(input, targetIndex)
 	if !ok {
 		return tableMutatorEvidence{}, false
 	}
 	targetType, ok := typevalue.TypeOf(ctx.Registry, target)
 	if !tableMutatorConcreteType(targetType, ok) {
-		if t, tok := tableMutatorArgumentType(ctx, argumentType, targetSource, in, read); tok {
+		if t, tok := tableMutatorArgumentType(ctx, input, argumentTypes, targetSource, targetIndex, target); tok {
 			targetType = t
 			target = tableMutatorValueWithType(ctx.Registry, typeValues, target, true, targetType)
 		}
@@ -196,10 +207,10 @@ func readTableMutatorEvidence(
 	if !tableMutatorConcreteType(targetType, true) {
 		return tableMutatorEvidence{}, false
 	}
-	value, valueOK := sources.ValueOfSource(ctx.Point, valueSource, in, read)
+	value, valueOK := args.ArgumentValueAt(input, valueIndex)
 	valueType, valueTypeOK := typevalue.TypeOf(ctx.Registry, value)
 	if !valueOK || !tableMutatorConcreteType(valueType, valueTypeOK) {
-		if t, tok := tableMutatorArgumentType(ctx, argumentType, valueSource, in, read); tok {
+		if t, tok := tableMutatorArgumentType(ctx, input, argumentTypes, valueSource, valueIndex, value); tok {
 			valueType = t
 			valueTypeOK = true
 			value = tableMutatorValueWithType(ctx.Registry, typeValues, value, valueOK, valueType)
@@ -235,15 +246,19 @@ func readTableMutatorEvidence(
 
 func tableMutatorArgumentType(
 	ctx transfer.NodeContext,
-	argumentType SignatureArgumentTypeFunc,
+	input callpayload.CallOutcomeInput,
+	argumentTypes PreparedSignatureArgumentTypeProgram,
 	source factflow.ValueSource,
-	in state.State,
-	read func(cfg.Point) state.State,
+	index int,
+	value product.Value,
 ) (typ.Type, bool) {
-	if argumentType == nil {
+	if argumentTypes.Empty() {
 		return nil, false
 	}
-	t, ok := argumentType(ctx, source, in, read)
+	t, ok, err := argumentTypes.evaluate(input, SignatureArgumentTypeContext{Node: ctx, Source: source, Index: index, Value: value})
+	if err != nil {
+		panic(err)
+	}
 	if !tableMutatorConcreteType(t, ok) {
 		return nil, false
 	}

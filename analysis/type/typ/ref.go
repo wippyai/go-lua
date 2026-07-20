@@ -1,6 +1,8 @@
 package typ
 
 import (
+	"sync/atomic"
+
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -60,9 +62,16 @@ func (r *Ref) Equals(other Type) bool {
 type Alias struct {
 	Name string // Alias name
 	// Underlying type.
-	Target    Type
-	unaliased Type
-	hash      uint64
+	Target Type
+	// unaliasedMemo caches the fully-flattened target so UnaliasedTarget
+	// never re-walks a chain it has already resolved. Aliases built through
+	// NewAlias populate it at construction; an Alias assembled some other
+	// way resolves and publishes it on first use. Either way the memo is
+	// write-once: duplicate first-use computation from concurrent readers is
+	// harmless since flattening is a pure function of Target, and only the
+	// atomic publish matters for visibility.
+	unaliasedMemo atomic.Pointer[Type]
+	hash          uint64
 	typeProperties
 }
 
@@ -70,13 +79,15 @@ type Alias struct {
 func NewAlias(name string, target Type) *Alias {
 	h := EqualityHash(target)
 
-	return &Alias{
+	a := &Alias{
 		Name:           name,
 		Target:         target,
-		unaliased:      flattenAliasTarget(target),
 		hash:           h,
 		typeProperties: typePropertiesOf(target),
 	}
+	resolved := flattenAliasTarget(target)
+	a.unaliasedMemo.Store(&resolved)
+	return a
 }
 
 func (a *Alias) Kind() kind.Kind { return kind.Alias }
@@ -88,11 +99,20 @@ func (a *Alias) Hash() uint64 {
 	return EqualityHash(a.UnaliasedTarget())
 }
 
+// UnaliasedTarget returns the type Target chains to once every intermediate
+// Alias layer is peeled away. The result is cached: repeated calls, including
+// the ones subtype checking makes once per recursion level, cost O(1) after
+// the chain has been resolved the first time, regardless of chain length.
 func (a *Alias) UnaliasedTarget() Type {
-	if a == nil || a.unaliased == nil {
-		return a.Target
+	if a == nil {
+		return nil
 	}
-	return a.unaliased
+	if cached := a.unaliasedMemo.Load(); cached != nil {
+		return *cached
+	}
+	resolved := flattenAliasTarget(a.Target)
+	a.unaliasedMemo.Store(&resolved)
+	return resolved
 }
 
 // Equals compares structurally through the alias target.
@@ -100,6 +120,10 @@ func (a *Alias) Equals(other Type) bool {
 	return typeEquals(a.Target, other)
 }
 
+// flattenAliasTarget walks target through its Alias layers to the first
+// non-Alias type (or the point a cycle re-enters), consulting each
+// intermediate Alias's own memo (an atomic load, never a computation trigger)
+// so a chain already resolved from another entry point is not re-walked.
 func flattenAliasTarget(target Type) Type {
 	current := target
 	var seen typePath
@@ -112,8 +136,8 @@ func flattenAliasTarget(target Type) Type {
 			return current
 		}
 		next := alias.Target
-		if alias.unaliased != nil {
-			next = alias.unaliased
+		if cached := alias.unaliasedMemo.Load(); cached != nil {
+			next = *cached
 		}
 		if next == nil || next == current {
 			return current

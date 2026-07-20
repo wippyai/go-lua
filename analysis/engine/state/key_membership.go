@@ -43,6 +43,10 @@ type DynamicIndexReadOrigin struct {
 	Key       pathaddr.StateKey
 }
 
+func (o DynamicIndexReadOrigin) valid() bool {
+	return o.Value != "" && o.Container.Kind != keyspace.KindInvalid && o.Key != ""
+}
+
 // DynamicIndexValueOrigin records that Value was assigned from one dynamic
 // value source of Container. It is paired with DynamicIndexValueKeyMembership at
 // query time so loop variables can recover key evidence after the mutation
@@ -144,10 +148,74 @@ func keyMembershipDomain() lattice.Lattice[keyMembershipLane] {
 				pendingRestores: pendingDynamicAllRestoreSetIntersection(a.pendingRestores, b.pendingRestores),
 			}
 		},
+		Meet: keyMembershipLaneMeet,
 		Widen: func(prev, next keyMembershipLane) keyMembershipLane {
 			return keyMembershipDomain().Join(prev, next)
 		},
 	}
+}
+
+func keyMembershipLaneMeet(a, b keyMembershipLane) keyMembershipLane {
+	if a.bottom || b.bottom {
+		return keyMembershipLane{bottom: true}
+	}
+	out := keyMembershipLane{
+		path:            keyMembershipSetUnion(a.path, b.path),
+		dynamicAll:      keyMembershipSetUnion(a.dynamicAll, b.dynamicAll),
+		readOrigins:     dynamicIndexReadOriginSetUnion(a.readOrigins, b.readOrigins),
+		pendingRestores: pendingDynamicAllRestoreSetUnion(a.pendingRestores, b.pendingRestores),
+	}
+	switch {
+	case a.dynamicTop && b.dynamicTop:
+		out.dynamicTop = true
+	case a.dynamicTop:
+		out.dynamic = mapedit.Clone(b.dynamic)
+		out.valueOrigins = mapedit.Clone(b.valueOrigins)
+	case b.dynamicTop:
+		out.dynamic = mapedit.Clone(a.dynamic)
+		out.valueOrigins = mapedit.Clone(a.valueOrigins)
+	default:
+		out.dynamic = keyMembershipSetIntersection(a.dynamic, b.dynamic)
+		out.valueOrigins = dynamicIndexValueOriginSetIntersection(a.valueOrigins, b.valueOrigins)
+	}
+	return normalizeKeyMembershipLane(out)
+}
+
+// normalizeKeyMembershipLane keeps the coupled may coordinates in their one
+// canonical spelling. dynamicTop is the shared Top marker for both dynamic
+// memberships and their value origins, so finite entries beside it are
+// semantically redundant. Must coordinates remain valid refinements below
+// lane Top and are deliberately retained.
+func normalizeKeyMembershipLane(lane keyMembershipLane) keyMembershipLane {
+	if lane.bottom {
+		return keyMembershipLane{bottom: true}
+	}
+	if lane.dynamicTop {
+		lane.dynamic = nil
+		lane.valueOrigins = nil
+	}
+	// Empty finite sets have one physical spelling. Boundary and image laws may
+	// clone a non-nil empty map; retaining it would make representation identity
+	// depend on execution history and grow terminal hash-conses on every no-op.
+	if len(lane.path) == 0 {
+		lane.path = nil
+	}
+	if len(lane.dynamic) == 0 {
+		lane.dynamic = nil
+	}
+	if len(lane.dynamicAll) == 0 {
+		lane.dynamicAll = nil
+	}
+	if len(lane.valueOrigins) == 0 {
+		lane.valueOrigins = nil
+	}
+	if len(lane.readOrigins) == 0 {
+		lane.readOrigins = nil
+	}
+	if len(lane.pendingRestores) == 0 {
+		lane.pendingRestores = nil
+	}
+	return lane
 }
 
 func (l keyMembershipLane) reachable() keyMembershipLane {
@@ -175,6 +243,30 @@ func (l keyMembershipLane) has(m KeyMembership) bool {
 	default:
 		return false
 	}
+}
+
+// hasPathKeyMembership evaluates the lane's complete must theorem for one
+// observed key/table pair. A direct path fact and a value-origin paired with
+// its dynamic container fact are two representations of the same proposition;
+// every demand projector must ask this theorem rather than inspecting only
+// the direct-path storage arm.
+func (l keyMembershipLane) hasPathKeyMembership(key, table pathaddr.StateKey) bool {
+	if l.has(PathKeyMembership(key, table)) {
+		return true
+	}
+	if key == "" || table == "" || l.bottom {
+		return false
+	}
+	for origin := range l.valueOrigins {
+		if origin.Value != key {
+			continue
+		}
+		if l.has(DynamicIndexAllValuesKeyMembership(origin.Container, table)) ||
+			l.has(DynamicIndexValueKeyMembership(origin.Container, origin.Site, table)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l keyMembershipLane) add(m KeyMembership) (keyMembershipLane, bool) {
@@ -219,6 +311,22 @@ func (l keyMembershipLane) add(m KeyMembership) (keyMembershipLane, bool) {
 	default:
 		return l, false
 	}
+}
+
+func (l keyMembershipLane) addReadOrigin(origin DynamicIndexReadOrigin) (keyMembershipLane, bool) {
+	if !origin.valid() {
+		return l, false
+	}
+	if _, ok := l.readOrigins[origin]; ok {
+		return l, false
+	}
+	l = l.reachable()
+	l.readOrigins = mapedit.Clone(l.readOrigins)
+	if l.readOrigins == nil {
+		l.readOrigins = make(map[DynamicIndexReadOrigin]struct{}, 1)
+	}
+	l.readOrigins[origin] = struct{}{}
+	return l, true
 }
 
 func (l keyMembershipLane) clearMatching(match func(KeyMembership) bool) (keyMembershipLane, bool) {
@@ -521,6 +629,33 @@ func dynamicIndexReadOriginSetIntersection(a, b map[DynamicIndexReadOrigin]struc
 	return out
 }
 
+func dynamicIndexReadOriginSetUnion(a, b map[DynamicIndexReadOrigin]struct{}) map[DynamicIndexReadOrigin]struct{} {
+	if len(a) == 0 {
+		return mapedit.Clone(b)
+	}
+	if len(b) == 0 {
+		return mapedit.Clone(a)
+	}
+	out := mapedit.Clone(a)
+	for origin := range b {
+		out[origin] = struct{}{}
+	}
+	return out
+}
+
+func dynamicIndexValueOriginSetIntersection(a, b map[DynamicIndexValueOrigin]struct{}) map[DynamicIndexValueOrigin]struct{} {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	out := make(map[DynamicIndexValueOrigin]struct{})
+	for origin := range a {
+		if _, ok := b[origin]; ok {
+			out[origin] = struct{}{}
+		}
+	}
+	return out
+}
+
 func dynamicIndexValueOriginSetUnion(a, b map[DynamicIndexValueOrigin]struct{}) map[DynamicIndexValueOrigin]struct{} {
 	if len(a) == 0 {
 		return mapedit.Clone(b)
@@ -548,6 +683,20 @@ func pendingDynamicAllRestoreSetIntersection(a, b map[PendingDynamicAllValueRest
 	return out
 }
 
+func pendingDynamicAllRestoreSetUnion(a, b map[PendingDynamicAllValueRestore]struct{}) map[PendingDynamicAllValueRestore]struct{} {
+	if len(a) == 0 {
+		return mapedit.Clone(b)
+	}
+	if len(b) == 0 {
+		return mapedit.Clone(a)
+	}
+	out := mapedit.Clone(a)
+	for restore := range b {
+		out[restore] = struct{}{}
+	}
+	return out
+}
+
 // KeyMembershipsSnapshot is a stable snapshot of finite must key-membership
 // facts. Bottom is explicit; Top means no guaranteed memberships.
 type KeyMembershipsSnapshot struct {
@@ -567,23 +716,7 @@ func (s State) HasPathKeyMembership(key, table pathaddr.StateKey) bool {
 	if !s.laneEnabled(laneKeyMembershipBit) {
 		return false
 	}
-	lane := s.keyMemberships
-	if lane.has(PathKeyMembership(key, table)) {
-		return true
-	}
-	if key == "" || table == "" || lane.bottom {
-		return false
-	}
-	for origin := range lane.valueOrigins {
-		if origin.Value != key {
-			continue
-		}
-		if lane.has(DynamicIndexAllValuesKeyMembership(origin.Container, table)) ||
-			lane.has(DynamicIndexValueKeyMembership(origin.Container, origin.Site, table)) {
-			return true
-		}
-	}
-	return false
+	return s.keyMemberships.hasPathKeyMembership(key, table)
 }
 
 func (s State) AddPathKeyMembership(key, table pathaddr.StateKey) State {
@@ -735,15 +868,10 @@ func (s State) AddDynamicIndexReadOrigin(value pathaddr.StateKey, container keys
 		return s
 	}
 	origin := DynamicIndexReadOrigin{Value: value, Container: container, Key: key}
-	if _, ok := s.keyMemberships.readOrigins[origin]; ok {
+	lane, changed := s.keyMemberships.addReadOrigin(origin)
+	if !changed {
 		return s
 	}
-	lane := s.keyMemberships.reachable()
-	lane.readOrigins = mapedit.Clone(lane.readOrigins)
-	if lane.readOrigins == nil {
-		lane.readOrigins = make(map[DynamicIndexReadOrigin]struct{}, 1)
-	}
-	lane.readOrigins[origin] = struct{}{}
 	out := s.reachable()
 	out.keyMemberships = lane
 	return out
@@ -901,6 +1029,26 @@ func (s State) clearKeyMembershipsForPathKeySubtree(ks *keyspace.KeySpace, pathK
 	out := s.reachable()
 	out.keyMemberships = lane
 	return out
+}
+
+func (l keyMembershipLane) clearPathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (keyMembershipLane, bool, bool) {
+	if ks == nil || pathKey == "" {
+		return l, false, false
+	}
+	prefix, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return l, false, false
+	}
+	match := func(candidate pathaddr.StateKey) bool {
+		key, keyOK := ks.FromStateKey(candidate.PathKey())
+		return keyOK && stateKeyHasPrefix(ks, key, prefix)
+	}
+	next, changed := l.clearMatching(func(m KeyMembership) bool {
+		return match(m.Key) || match(m.Table) ||
+			(m.Kind == KeyMembershipDynamicIndexValue || m.Kind == KeyMembershipDynamicIndexAllValues) &&
+				stateKeyHasPrefix(ks, m.Container, prefix)
+	})
+	return next, changed, true
 }
 
 func keyMembershipLess(a, b KeyMembership) bool {

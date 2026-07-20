@@ -2,26 +2,14 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
-	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-type callOutcomePresenceTargets struct {
-	callPoint     cfg.Point
-	triggerTarget factflow.CallResultTargetView
-	target        factflow.CallResultTargetView
-	triggerAssign cfg.Point
-	targetAssign  cfg.Point
-	establish     cfg.Point
-}
-
+// callOutcomeAssignmentKey is the immutable identity of one call-result
+// assignment query retained by path-store preparation. Call correlations
+// themselves are published by CallOutcomeCorrelationFactorProgram; this cache
+// owns only CFG attribution of later stores.
 type callOutcomeAssignmentKey struct {
 	callPoint   cfg.Point
 	resultIndex int
@@ -29,31 +17,15 @@ type callOutcomeAssignmentKey struct {
 	targetPath  pathdom.PathKey
 }
 
-type callOutcomeActiveInKey struct {
-	callPoint     cfg.Point
-	triggerIndex  int
-	targetIndex   int
-	triggerAssign cfg.Point
-	targetAssign  cfg.Point
-	triggerPath   pathdom.PathKey
-	targetPath    pathdom.PathKey
-}
-
-// callOutcomeSite is an exact, immutable call-site entry. CallSiteView is safe
-// to retain because Facts owns immutable call-site storage for the lifetime of
-// the node/edge transfer closure which owns this cache.
 type callOutcomeSite struct {
 	point cfg.Point
 	site  factflow.CallSiteView
 }
 
-// callOutcomeTraversalStats is optional test/benchmark accounting. Production
-// transfer caches leave stats nil, so attribution does not retain per-run data.
 type callOutcomeTraversalStats struct {
-	callSiteBuilds         int
-	callSitePointProbes    int
-	edgeCallEntriesVisited int
-	presenceDirectLookups  int
+	callSiteBuilds        int
+	callSitePointProbes   int
+	presenceDirectLookups int
 }
 
 type callOutcomeTraversalCache struct {
@@ -63,9 +35,7 @@ type callOutcomeTraversalCache struct {
 	callSitesBuilt   bool
 	callSites        []callOutcomeSite
 	pointOrder       map[cfg.Point]int
-	predecessors     map[cfg.Point][]cfg.Point
 	assignmentPoints map[callOutcomeAssignmentKey]cfg.Point
-	activeIn         map[callOutcomeActiveInKey]map[cfg.Point]bool
 	stats            *callOutcomeTraversalStats
 }
 
@@ -92,9 +62,6 @@ func (c *callOutcomeTraversalCache) graphRPO(graph cfg.Graph) []cfg.Point {
 	return c.rpo
 }
 
-// exactCallSites returns only the graph points which carry call-site facts, in
-// graph RPO order. The immutable entries are built once per graph and reused
-// across every solve which reuses the prepared transfer closure.
 func (c *callOutcomeTraversalCache) exactCallSites(graph cfg.Graph, facts factflow.Facts) []callOutcomeSite {
 	if graph == nil {
 		return nil
@@ -114,8 +81,7 @@ func (c *callOutcomeTraversalCache) exactCallSites(graph cfg.Graph, facts factfl
 	}
 	c.callSites = make([]callOutcomeSite, 0, facts.CallSiteCount())
 	for _, point := range rpo {
-		site, ok := facts.CallSiteView(point)
-		if ok {
+		if site, ok := facts.CallSiteView(point); ok {
 			c.callSites = append(c.callSites, callOutcomeSite{point: point, site: site})
 		}
 	}
@@ -130,45 +96,11 @@ func (c *callOutcomeTraversalCache) graphPointOrder(graph cfg.Graph) map[cfg.Poi
 	if c.pointOrder == nil {
 		rpo := c.graphRPO(graph)
 		c.pointOrder = make(map[cfg.Point]int, len(rpo))
-		for i, point := range rpo {
-			c.pointOrder[point] = i
+		for index, point := range rpo {
+			c.pointOrder[point] = index
 		}
 	}
 	return c.pointOrder
-}
-
-func (c *callOutcomeTraversalCache) graphPredecessors(graph cfg.Graph, point cfg.Point) []cfg.Point {
-	if graph == nil {
-		return nil
-	}
-	c.resetForGraph(graph)
-	if c.predecessors != nil {
-		if preds, ok := c.predecessors[point]; ok {
-			return preds
-		}
-	} else {
-		c.predecessors = make(map[cfg.Point][]cfg.Point)
-	}
-	preds := cfg.PredecessorsReadOnly(graph, point)
-	c.predecessors[point] = preds
-	return preds
-}
-
-func callOutcomeTargetForResult(site factflow.CallSiteView, resultIndex int) (factflow.CallResultTargetView, bool) {
-	if resultIndex < 0 {
-		return factflow.CallResultTargetView{}, false
-	}
-	var found factflow.CallResultTargetView
-	ok := false
-	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
-		if target.ResultIndex() == resultIndex {
-			found = target
-			ok = true
-			return false
-		}
-		return true
-	})
-	return found, ok
 }
 
 func callOutcomeRelatableTarget(target factflow.CallResultTargetView) bool {
@@ -178,318 +110,6 @@ func callOutcomeRelatableTarget(target factflow.CallResultTargetView) bool {
 	default:
 		return false
 	}
-}
-
-func applyCallOutcomeEdgeFacts(
-	ctx transfer.EdgeContext,
-	facts factflow.Facts,
-	executor *ResolvedCallOutcomeEdgeExecutor,
-	outcomeProvider callpayload.CallOutcomeProvider,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	branchRefinements []factflow.BranchRefinement,
-	out state.State,
-) state.State {
-	if outcomeProvider == nil || ctx.Graph == nil || !ctx.HasCond {
-		return out
-	}
-	if executor == nil {
-		executor = &ResolvedCallOutcomeEdgeExecutor{}
-	}
-	cache := &executor.cache
-	callSites := cache.exactCallSites(ctx.Graph, facts)
-	if cache.stats != nil {
-		cache.stats.edgeCallEntriesVisited += len(callSites)
-	}
-	for _, callSite := range callSites {
-		callPoint, siteView := callSite.point, callSite.site
-		if !callOutcomeEdgeMayUseOutcome(ctx, branchRefinements, callPoint, siteView) {
-			continue
-		}
-		outcome := outcomeProvider(transfer.NodeContext{
-			Graph:    ctx.Graph,
-			Registry: ctx.Registry,
-			Point:    callPoint,
-			Node:     ctx.Graph.Node(callPoint),
-			Read:     emptyStateRead,
-		}, siteView, out, emptyStateRead)
-		out = executor.Apply(ResolvedCallOutcomeEdgeRequest{
-			Context: ctx, Facts: facts, Resolver: resolver, ProjectPath: projectPath,
-			BranchRefinements: branchRefinements, Output: out, CallPoint: callPoint,
-			Site: siteView, Outcome: outcome,
-		})
-	}
-	return out
-}
-
-func callOutcomeEdgeMayUseOutcome(
-	ctx transfer.EdgeContext,
-	branchRefinements []factflow.BranchRefinement,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-) bool {
-	if site.Context() == factflow.CallSiteContextCondition {
-		branch, ok := callOutcomeConditionBranchPoint(ctx.Graph, callPoint)
-		if ok && branch == ctx.Edge.From {
-			return true
-		}
-	}
-	if !ctx.Graph.IsBranch(ctx.Edge.From) || len(branchRefinements) == 0 {
-		return false
-	}
-	matches := false
-	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
-		if !callOutcomeRelatableTarget(target) {
-			return true
-		}
-		targetPath := target.TargetPathRef()
-		for _, branchRefinement := range branchRefinements {
-			if pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), targetPath) {
-				matches = true
-				return false
-			}
-		}
-		return true
-	})
-	return matches
-}
-
-func applyCallReturnConditionRefinements(
-	ctx transfer.EdgeContext,
-	facts factflow.Facts,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	outcome callpayload.CallOutcome,
-	out state.State,
-) state.State {
-	if site.Context() != factflow.CallSiteContextCondition {
-		return out
-	}
-	branch, ok := callOutcomeConditionBranchPoint(ctx.Graph, callPoint)
-	if !ok || branch != ctx.Edge.From {
-		return out
-	}
-	bindings := callArgumentPlaceholderBindings(facts, resolver, site)
-	callReturnValue := ctx.Edge.Cond
-	if site.ConditionNegated() {
-		callReturnValue = !callReturnValue
-	}
-	for _, refinement := range outcome.ReturnConditionRefinements {
-		if refinement.ReturnIndex != 0 || refinement.ReturnValue != callReturnValue {
-			continue
-		}
-		targetPath, ok := refinement.Target.Substitute(bindings)
-		if !ok {
-			continue
-		}
-		out = applyValueRefinementAt(
-			ctx.Registry,
-			resolver,
-			projectPath,
-			ctx.Edge.From,
-			out,
-			targetPath,
-			factflow.NewValueConstraint(refinement.Value),
-		)
-	}
-	return out
-}
-
-func applyCallReturnConditionSlotRefinements(
-	ctx transfer.EdgeContext,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	branchRefinements []factflow.BranchRefinement,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	outcome callpayload.CallOutcome,
-	out state.State,
-) state.State {
-	if !ctx.Graph.IsBranch(ctx.Edge.From) {
-		return out
-	}
-	for _, refinement := range outcome.ReturnConditionSlots {
-		out = applyCallReturnConditionSlotRefinement(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, site, refinement, out)
-	}
-	return out
-}
-
-func applyCallReturnConditionSlotRefinement(
-	ctx transfer.EdgeContext,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	branchRefinements []factflow.BranchRefinement,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	refinement callpayload.CallReturnConditionSlotRefinement,
-	out state.State,
-) state.State {
-	triggerTarget, ok := callOutcomeTargetForResult(site, refinement.ReturnIndex)
-	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
-		return out
-	}
-	target, ok := callOutcomeTargetForResult(site, refinement.TargetIndex)
-	if !ok || !callOutcomeRelatableTarget(target) {
-		return out
-	}
-	triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, triggerTarget, refinement.ReturnIndex)
-	if !ok {
-		return out
-	}
-	targetAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, target, refinement.TargetIndex)
-	if !ok {
-		return out
-	}
-	relationTargets := callOutcomePresenceTargets{
-		callPoint:     callPoint,
-		triggerTarget: triggerTarget,
-		target:        target,
-		triggerAssign: triggerAssign,
-		targetAssign:  targetAssign,
-		establish:     callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign),
-	}
-	activeIn := callOutcomeRelationActiveIn(cache, ctx.Graph, facts, relationTargets)
-	if !activeIn[ctx.Edge.From] || !callOutcomeBranchRefinesTruthiness(ctx, branchRefinements, triggerTarget, refinement.ReturnValue) {
-		return out
-	}
-	return applyBranchRefinement(ctx, resolver, projectPath, out, target.TargetPathRef(), factflow.NewValueConstraint(refinement.Value))
-}
-
-func callOutcomeBranchRefinesTruthiness(
-	ctx transfer.EdgeContext,
-	branchRefinements []factflow.BranchRefinement,
-	triggerTarget factflow.CallResultTargetView,
-	want bool,
-) bool {
-	triggerPath := triggerTarget.TargetPathRef()
-	for _, branchRefinement := range branchRefinements {
-		if !pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), triggerPath) {
-			continue
-		}
-		refinement, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond)
-		if !ok {
-			continue
-		}
-		if valueRefinementPinsLuaTruthiness(ctx, refinement, want) {
-			return true
-		}
-	}
-	return false
-}
-
-func valueRefinementPinsLuaTruthiness(
-	ctx transfer.EdgeContext,
-	refinement factflow.ValueRefinement,
-	want bool,
-) bool {
-	constraint, ok := refinement.Constraint()
-	if !ok || product.Equal(ctx.Registry, constraint, product.Bottom(ctx.Registry)) {
-		return false
-	}
-	if presence.Equal(product.PresenceOf(constraint), presence.Absent()) {
-		return !want
-	}
-	canTruthy := valuerefine.CanBeTruthy(ctx.Registry, constraint)
-	canFalsy := valuerefine.CanBeFalsy(ctx.Registry, constraint)
-	return canTruthy != canFalsy && canTruthy == want
-}
-
-func applyCallReturnPresenceRelations(
-	ctx transfer.EdgeContext,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	branchRefinements []factflow.BranchRefinement,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	outcome callpayload.CallOutcome,
-	out state.State,
-) state.State {
-	if !ctx.Graph.IsBranch(ctx.Edge.From) {
-		return out
-	}
-	for _, relation := range outcome.ReturnPresenceRelations {
-		out = applyCallReturnPresenceRelation(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, site, relation, out)
-	}
-	return out
-}
-
-func applyCallReturnPresenceRelation(
-	ctx transfer.EdgeContext,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	branchRefinements []factflow.BranchRefinement,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	relation callpayload.CallReturnPresenceRelation,
-	out state.State,
-) state.State {
-	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)
-	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
-		return out
-	}
-	target, ok := callOutcomeTargetForResult(site, relation.TargetIndex)
-	if !ok || !callOutcomeRelatableTarget(target) {
-		return out
-	}
-	triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, triggerTarget, relation.TriggerIndex)
-	if !ok {
-		return out
-	}
-	targetAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, target, relation.TargetIndex)
-	if !ok {
-		return out
-	}
-	relationTargets := callOutcomePresenceTargets{
-		callPoint:     callPoint,
-		triggerTarget: triggerTarget,
-		target:        target,
-		triggerAssign: triggerAssign,
-		targetAssign:  targetAssign,
-		establish:     callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign),
-	}
-	activeIn := callOutcomeRelationActiveIn(cache, ctx.Graph, facts, relationTargets)
-	if !activeIn[ctx.Edge.From] || !callOutcomeBranchRefinesPath(branchRefinements, triggerTarget) {
-		return out
-	}
-	branchRelation := factflow.NewBranchPresenceRelation(
-		triggerTarget.TargetPathRef(),
-		relation.TriggerPresence,
-		target.TargetPathRef(),
-		relation.TargetPresence,
-	)
-	refinement, ok := branchPresenceRelationRefinement(nil, ctx, resolver, projectPath, out, branchRefinements, branchRelation)
-	if !ok {
-		return out
-	}
-	return applyBranchRefinement(ctx, resolver, projectPath, out, branchRelation.TargetPathRef(), refinement)
-}
-
-func callOutcomeConditionBranchPoint(graph cfg.Graph, point cfg.Point) (cfg.Point, bool) {
-	if graph == nil {
-		return 0, false
-	}
-	if graph.IsBranch(point) {
-		return point, true
-	}
-	successors := cfg.SuccessorsReadOnly(graph, point)
-	if len(successors) != 1 {
-		return 0, false
-	}
-	branch := successors[0]
-	if !graph.IsBranch(branch) {
-		return 0, false
-	}
-	return branch, true
 }
 
 func callOutcomeResultAssignmentPoint(
@@ -503,11 +123,10 @@ func callOutcomeResultAssignmentPoint(
 	if cache == nil {
 		cache = &callOutcomeTraversalCache{}
 	}
+	rpo := cache.graphRPO(graph)
 	key := callOutcomeAssignmentKey{
-		callPoint:   callPoint,
-		resultIndex: resultIndex,
-		targetIndex: target.Index(),
-		targetPath:  target.TargetPathKey(),
+		callPoint: callPoint, resultIndex: resultIndex,
+		targetIndex: target.Index(), targetPath: target.TargetPathKey(),
 	}
 	if cache.assignmentPoints != nil {
 		if point, ok := cache.assignmentPoints[key]; ok {
@@ -516,7 +135,7 @@ func callOutcomeResultAssignmentPoint(
 	} else {
 		cache.assignmentPoints = make(map[callOutcomeAssignmentKey]cfg.Point)
 	}
-	for _, point := range cache.graphRPO(graph) {
+	for _, point := range rpo {
 		if assignment, ok := facts.RootAssignment(point); ok &&
 			target.TargetPathEqual(assignment.TargetPathRef()) &&
 			callOutcomeValueSourceConsumesResult(assignment.Source(), callPoint, target, resultIndex) {
@@ -534,13 +153,8 @@ func callOutcomeValueSourceConsumesResult(
 	target factflow.CallResultTargetView,
 	resultIndex int,
 ) bool {
-	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != callPoint {
-		return false
-	}
-	if source.ResultIndex != resultIndex {
-		return false
-	}
-	return source.TargetIndex == target.Index()
+	return source.Kind == factflow.ValueSourceCall && source.HasCallPoint && source.CallPoint == callPoint &&
+		source.ResultIndex == resultIndex && source.TargetIndex == target.Index()
 }
 
 func callOutcomeLaterPoint(cache *callOutcomeTraversalCache, graph cfg.Graph, first, second cfg.Point) cfg.Point {
@@ -554,116 +168,9 @@ func callOutcomeLaterPoint(cache *callOutcomeTraversalCache, graph cfg.Graph, fi
 	return first
 }
 
-func callOutcomeRelationActiveIn(
-	cache *callOutcomeTraversalCache,
-	graph cfg.Graph,
-	facts factflow.Facts,
-	targets callOutcomePresenceTargets,
-) map[cfg.Point]bool {
-	if cache == nil {
-		cache = &callOutcomeTraversalCache{}
-	}
-	key := callOutcomeActiveInKey{
-		callPoint:     targets.callPoint,
-		triggerIndex:  targets.triggerTarget.Index(),
-		targetIndex:   targets.target.Index(),
-		triggerAssign: targets.triggerAssign,
-		targetAssign:  targets.targetAssign,
-		triggerPath:   targets.triggerTarget.TargetPathKey(),
-		targetPath:    targets.target.TargetPathKey(),
-	}
-	if cache.activeIn != nil {
-		if activeIn, ok := cache.activeIn[key]; ok {
-			return activeIn
-		}
-	} else {
-		cache.activeIn = make(map[callOutcomeActiveInKey]map[cfg.Point]bool)
-	}
-	rpo := cache.graphRPO(graph)
-	activeIn := make(map[cfg.Point]bool, len(rpo))
-	activeOut := make(map[cfg.Point]bool, len(rpo))
-	for changed := true; changed; {
-		changed = false
-		for _, point := range rpo {
-			in := callOutcomeAllPredecessorsActive(cache, graph, point, activeOut)
-			out := in
-			switch {
-			case point == targets.establish:
-				out = true
-			case in && callOutcomeRelationKilledAt(facts, point, targets):
-				out = false
-			}
-			if activeIn[point] != in {
-				activeIn[point] = in
-				changed = true
-			}
-			if activeOut[point] != out {
-				activeOut[point] = out
-				changed = true
-			}
-		}
-	}
-	cache.activeIn[key] = activeIn
-	return activeIn
-}
-
-func callOutcomeAllPredecessorsActive(cache *callOutcomeTraversalCache, graph cfg.Graph, point cfg.Point, activeOut map[cfg.Point]bool) bool {
-	var preds []cfg.Point
-	if cache != nil {
-		preds = cache.graphPredecessors(graph, point)
-	} else if graph != nil {
-		preds = cfg.PredecessorsReadOnly(graph, point)
-	}
-	if len(preds) == 0 {
-		return false
-	}
-	for _, pred := range preds {
-		if !activeOut[pred] {
-			return false
-		}
-	}
-	return true
-}
-
-func callOutcomeRelationKilledAt(
-	facts factflow.Facts,
-	point cfg.Point,
-	targets callOutcomePresenceTargets,
-) bool {
-	if point == targets.targetAssign || point == targets.triggerAssign {
-		return false
-	}
-	if assignment, ok := facts.RootAssignment(point); ok && callOutcomeRelationTargetPath(assignment.TargetPathRef(), targets) {
-		return true
-	}
-	if pathAssignment, ok := facts.PathAssignment(point); ok && callOutcomeRelationTargetPath(pathAssignment.TargetPathRef(), targets) {
-		return true
-	}
-	return false
-}
-
-func callOutcomeRelationTargetPath(targetPath pathdom.Path, targets callOutcomePresenceTargets) bool {
-	return targets.target.TargetPathEqual(targetPath) || targets.triggerTarget.TargetPathEqual(targetPath)
-}
-
-func callOutcomeBranchRefinesPath(
-	branchRefinements []factflow.BranchRefinement,
-	target factflow.CallResultTargetView,
-) bool {
-	for _, refinement := range branchRefinements {
-		if pathsMatchForBranchRelation(refinement.TargetPathRef(), target.TargetPathRef()) {
-			return true
-		}
-	}
-	return false
-}
-
 func pathsMatchForBranchRelation(left, right pathdom.Path) bool {
 	if left.Symbol != 0 || right.Symbol != 0 {
-		if left.Symbol != right.Symbol {
-			return false
-		}
-		if left.Version != 0 && right.Version != 0 && left.Version != right.Version {
+		if left.Symbol != right.Symbol || left.Version != 0 && right.Version != 0 && left.Version != right.Version {
 			return false
 		}
 	} else if left.Root != right.Root {
@@ -672,9 +179,9 @@ func pathsMatchForBranchRelation(left, right pathdom.Path) bool {
 	if len(left.Segments) != len(right.Segments) {
 		return false
 	}
-	for i := range left.Segments {
-		lseg, rseg := left.Segments[i], right.Segments[i]
-		if lseg.Kind != rseg.Kind || lseg.Name != rseg.Name || lseg.Index != rseg.Index {
+	for index := range left.Segments {
+		leftSegment, rightSegment := left.Segments[index], right.Segments[index]
+		if leftSegment.Kind != rightSegment.Kind || leftSegment.Name != rightSegment.Name || leftSegment.Index != rightSegment.Index {
 			return false
 		}
 	}

@@ -5,13 +5,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func expandInstantiatedGeneric(v *typ.Instantiated, orig typ.Type, state *expandState) typ.Type {
+func expandInstantiatedGeneric(v *typ.Instantiated, orig typ.Type, state *expandState, mode expandMode) typ.Type {
 	if v.Generic == nil || len(v.TypeArgs) != len(v.Generic.TypeParams) || v.Generic.Body == nil {
 		return orig
 	}
 	if active := state.matchingActive(v); active != nil {
 		active.used = true
 		return active.mu
+	}
+	if mode == expandModeRoot && len(state.active) != 0 {
+		return orig
 	}
 	// A recursive generic that changes its arguments describes a generative
 	// (non-regular) family, so no finite ordinary μ graph can represent its
@@ -30,7 +33,11 @@ func expandInstantiatedGeneric(v *typ.Instantiated, orig typ.Type, state *expand
 
 	body := Params(v.Generic.Body, v.Generic.TypeParams, v.TypeArgs)
 	body = Self(body, orig)
-	body = expandInstantiatedGuardMode(body, state, expandModeTablePolicy)
+	bodyMode := expandModeTablePolicy
+	if mode == expandModeRoot {
+		bodyMode = expandModeRoot
+	}
+	body = expandInstantiatedGuardMode(body, state, bodyMode)
 	if !active.used {
 		return body
 	}

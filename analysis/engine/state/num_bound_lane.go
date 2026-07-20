@@ -13,12 +13,12 @@ type numBoundLane struct {
 	lane lift.MustMapLane[keyspace.Key, int64]
 }
 
-func expandNumBoundBoundary(expansion *boundaryClosureExpansion, bounds numBoundLane) {
+func emitNumBoundReachability(program *boundaryReachabilityProgramBuilder, bounds numBoundLane) {
 	if bounds.lane.Bottom() {
 		return
 	}
 	for path := range bounds.lane.Values() {
-		expansion.connect(path)
+		program.pathCone(false, path)
 	}
 }
 

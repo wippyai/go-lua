@@ -2,19 +2,203 @@ package refinement
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	typerefine "github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
+
+// PartitionTruthiness intersects value with one side of Lua's truthiness
+// partition. exact reports whether the selected side is represented exactly
+// by the product vocabulary. It never truncates recursive types or drops an
+// unrelated axis: unrepresentable complements retain value and report false.
+//
+// Lua's falsy side is always representable (nil | false). The truthy side is a
+// relative complement and is exact only when truthyTypePart can express it in
+// the stable type vocabulary.
+func PartitionTruthiness(reg *axis.Registry, value product.Value, wantTruthy bool) (product.Value, bool) {
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return value, true
+	}
+	if !wantTruthy {
+		falsyType := typeexpr.Union(typ.Nil, typ.False)
+		if valueType, ok := typevalue.TypeOf(reg, value); ok && valueType != nil && !typ.IsTopLike(valueType) {
+			var exact bool
+			falsyType, exact = falsyTypePart(valueType, &typegraph.Path{})
+			if !exact {
+				return value, false
+			}
+			if falsyType == nil || typ.IsNever(falsyType) {
+				return product.Bottom(reg), true
+			}
+		}
+		// Optional values encode nil in the dedicated presence lane; their
+		// remaining axes describe the present alternative.  Meeting an optional
+		// string with a fully materialized nil value therefore contradicts the
+		// string runtime-kind axis.  When the exact falsy projection is nil-only,
+		// refine the owning presence coordinate directly and preserve every
+		// independent present-alternative axis.
+		if subtype.IsSubtype(falsyType, typ.Nil) {
+			return product.WithPresence(reg, value, presence.Absent()), true
+		}
+		constraint := typevalue.WithWitness(reg, typevalue.FromType(reg, falsyType), falsyType)
+		return MeetConstraint(reg, value, constraint), true
+	}
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil {
+		return value, false
+	}
+	narrowed, exact := truthyTypePart(t, &typegraph.Path{})
+	if !exact {
+		return value, false
+	}
+	if narrowed == nil || typ.IsNever(narrowed) {
+		return product.Bottom(reg), true
+	}
+	// FromType alone materializes the runtime axes, but broad-to-literal
+	// narrowing (notably boolean -> true) also requires the stable witness.
+	// Keeping both is what makes the partition exact across the full product.
+	constraint := typevalue.WithWitness(reg, typevalue.FromType(reg, narrowed), narrowed)
+	return MeetConstraint(reg, value, constraint), true
+}
+
+func falsyTypePart(t typ.Type, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	t = unwrap.Annotated(t)
+	if typ.IsTopLike(t) {
+		return typeexpr.Union(typ.Nil, typ.False), true
+	}
+	if !active.Enter(t, 2) {
+		return t, false
+	}
+	defer active.Leave(t, 2)
+	switch value := t.(type) {
+	case *typ.Optional:
+		inner, exact := falsyTypePart(value.Inner, active)
+		if !exact {
+			return t, false
+		}
+		// Lua optionality is a disjoint nil alternative.  When the present
+		// member has no falsy inhabitant, the exact falsy projection is nil,
+		// not a synthetic nil|Never wrapper.  Keeping that wrapper loses the
+		// presence-axis certificate during type materialization and makes a
+		// direct `if optionalString` false edge remain Maybe.
+		if inner == nil || typ.IsNever(inner) {
+			return typ.Nil, true
+		}
+		return typeexpr.Union(typ.Nil, inner), true
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(value.Members))
+		for _, member := range value.Members {
+			part, exact := falsyTypePart(member, active)
+			if !exact {
+				return t, false
+			}
+			if part != nil && !typ.IsNever(part) {
+				members = append(members, part)
+			}
+		}
+		return typeexpr.Union(members...), true
+	case *typ.Literal:
+		if boolean, ok := value.Value.(bool); ok && !boolean {
+			return t, true
+		}
+		return typ.Never, true
+	case *typ.Alias:
+		return falsyTypePart(value.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(value)
+		if expanded == nil || expanded == t {
+			return t, false
+		}
+		return falsyTypePart(expanded, active)
+	case *typ.Recursive:
+		if value.Body == nil || value.Body == t {
+			return t, false
+		}
+		return falsyTypePart(value.Body, active)
+	default:
+		switch {
+		case subtype.IsSubtype(t, typ.Nil), subtype.IsSubtype(t, typ.False):
+			return t, true
+		case t.Kind() == kind.Boolean:
+			return typ.False, true
+		case !typeAdmitsFalsy(t, nil):
+			return typ.Never, true
+		default:
+			return t, false
+		}
+	}
+}
+
+func truthyTypePart(t typ.Type, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil || typ.IsTopLike(t) {
+		return t, false
+	}
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 1) {
+		return t, false
+	}
+	defer active.Leave(t, 1)
+	switch value := t.(type) {
+	case *typ.Optional:
+		return truthyTypePart(value.Inner, active)
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(value.Members))
+		for _, member := range value.Members {
+			part, exact := truthyTypePart(member, active)
+			if !exact {
+				return t, false
+			}
+			if part != nil && !typ.IsNever(part) {
+				members = append(members, part)
+			}
+		}
+		return typeexpr.Union(members...), true
+	case *typ.Literal:
+		if boolean, ok := value.Value.(bool); ok && !boolean {
+			return typ.Never, true
+		}
+		return t, true
+	case *typ.Alias:
+		return truthyTypePart(value.UnaliasedTarget(), active)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(value)
+		if expanded == nil || expanded == t {
+			return t, false
+		}
+		return truthyTypePart(expanded, active)
+	case *typ.Recursive:
+		if value.Body == nil || value.Body == t {
+			return t, false
+		}
+		return truthyTypePart(value.Body, active)
+	default:
+		if subtype.IsSubtype(t, typ.Nil) || subtype.IsSubtype(t, typ.False) {
+			return typ.Never, true
+		}
+		if t.Kind() == kind.Boolean {
+			return typ.True, true
+		}
+		if !typeAdmitsFalsy(t, nil) {
+			return t, true
+		}
+		return t, false
+	}
+}
 
 // CanBeFalse reports whether value's present type evidence may be boolean false.
 // Missing or unknown evidence is treated as admitting false so branch narrowing
@@ -24,14 +208,14 @@ func CanBeFalse(reg *axis.Registry, value product.Value) bool {
 	if !ok || t == nil {
 		return true
 	}
-	return typeAdmitsFalse(t)
+	return typeAdmitsFalse(t, nil)
 }
 
-func typeAdmitsFalse(t typ.Type) bool {
-	return typeAdmitsFalseSeen(t, &typegraph.Path{})
+func typeAdmitsFalse(t typ.Type, typeCache *typevalue.Cache) bool {
+	return typeAdmitsFalseSeen(t, &typegraph.Path{}, typeCache)
 }
 
-func typeAdmitsFalseSeen(t typ.Type, active *typegraph.Path) bool {
+func typeAdmitsFalseSeen(t typ.Type, active *typegraph.Path, typeCache *typevalue.Cache) bool {
 	if t == nil {
 		return true
 	}
@@ -42,28 +226,28 @@ func typeAdmitsFalseSeen(t typ.Type, active *typegraph.Path) bool {
 	defer active.Leave(t, 0)
 	switch v := t.(type) {
 	case *typ.Optional:
-		return typeAdmitsFalseSeen(v.Inner, active)
+		return typeAdmitsFalseSeen(v.Inner, active, typeCache)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeAdmitsFalseSeen(member, active) {
+			if typeAdmitsFalseSeen(member, active, typeCache) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return typeAdmitsFalseSeen(v.UnaliasedTarget(), active)
+		return typeAdmitsFalseSeen(v.UnaliasedTarget(), active, typeCache)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && typeAdmitsFalseSeen(expanded, active)
+		return expanded != nil && expanded != t && typeAdmitsFalseSeen(expanded, active, typeCache)
 	case *typ.Recursive:
-		return v.Body != nil && v.Body != t && typeAdmitsFalseSeen(v.Body, active)
+		return v.Body != nil && v.Body != t && typeAdmitsFalseSeen(v.Body, active, typeCache)
 	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Function:
 		return false
 	default:
 		if typ.IsNever(t) {
 			return false
 		}
-		return subtype.IsSubtype(typ.False, t)
+		return isSubtypeCached(typeCache, typ.False, t)
 	}
 }
 
@@ -71,29 +255,57 @@ func typeAdmitsFalseSeen(t typ.Type, active *typegraph.Path) bool {
 // under Lua truthiness. Missing or unknown evidence is treated as admitting
 // truth so branch narrowing remains sound.
 func CanBeTruthy(reg *axis.Registry, value product.Value) bool {
-	t, ok := typevalue.TypeOf(reg, value)
+	return CanBeTruthyCached(reg, nil, value)
+}
+
+// CanBeTruthyCached is CanBeTruthy for a caller that already owns this check
+// run's *typevalue.Cache. A non-nil cache reuses the run's memoized
+// variant-origin projection instead of rebuilding it for this query.
+func CanBeTruthyCached(reg *axis.Registry, typeCache *typevalue.Cache, value product.Value) bool {
+	t, ok := cachedTypeOf(reg, typeCache, value)
 	if !ok || t == nil {
 		return true
 	}
-	return typeAdmitsTruthy(t)
+	return typeAdmitsTruthy(t, typeCache)
 }
 
 // CanBeFalsy reports whether value may evaluate falsy under Lua truthiness.
 // Missing or unknown evidence is treated as admitting falsy so branch pruning
 // remains sound.
 func CanBeFalsy(reg *axis.Registry, value product.Value) bool {
-	t, ok := typevalue.TypeOf(reg, value)
+	return CanBeFalsyCached(reg, nil, value)
+}
+
+// CanBeFalsyCached is CanBeFalsy for a caller that already owns this check
+// run's *typevalue.Cache. A non-nil cache reuses the run's memoized
+// variant-origin projection instead of rebuilding it for this query.
+func CanBeFalsyCached(reg *axis.Registry, typeCache *typevalue.Cache, value product.Value) bool {
+	t, ok := cachedTypeOf(reg, typeCache, value)
 	if !ok || t == nil {
 		return true
 	}
-	return typeAdmitsFalsy(t)
+	return typeAdmitsFalsy(t, typeCache)
 }
 
-func typeAdmitsTruthy(t typ.Type) bool {
-	return typeAdmitsTruthySeen(t, &typegraph.Path{})
+func cachedTypeOf(reg *axis.Registry, typeCache *typevalue.Cache, value product.Value) (typ.Type, bool) {
+	if typeCache != nil {
+		return typeCache.TypeOf(reg, value)
+	}
+	return typevalue.TypeOf(reg, value)
 }
 
-func typeAdmitsTruthySeen(t typ.Type, active *typegraph.Path) bool {
+func isSubtypeCached(typeCache *typevalue.Cache, sub, super typ.Type) bool {
+	if typeCache != nil {
+		return typeCache.IsSubtype(sub, super)
+	}
+	return subtype.IsSubtype(sub, super)
+}
+
+func typeAdmitsTruthy(t typ.Type, typeCache *typevalue.Cache) bool {
+	return typeAdmitsTruthySeen(t, &typegraph.Path{}, typeCache)
+}
+
+func typeAdmitsTruthySeen(t typ.Type, active *typegraph.Path, typeCache *typevalue.Cache) bool {
 	if t == nil {
 		return true
 	}
@@ -104,34 +316,34 @@ func typeAdmitsTruthySeen(t typ.Type, active *typegraph.Path) bool {
 	defer active.Leave(t, 0)
 	switch v := t.(type) {
 	case *typ.Optional:
-		return typeAdmitsTruthySeen(v.Inner, active)
+		return typeAdmitsTruthySeen(v.Inner, active, typeCache)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeAdmitsTruthySeen(member, active) {
+			if typeAdmitsTruthySeen(member, active, typeCache) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return typeAdmitsTruthySeen(v.UnaliasedTarget(), active)
+		return typeAdmitsTruthySeen(v.UnaliasedTarget(), active, typeCache)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && typeAdmitsTruthySeen(expanded, active)
+		return expanded != nil && expanded != t && typeAdmitsTruthySeen(expanded, active, typeCache)
 	case *typ.Recursive:
-		return v.Body != nil && v.Body != t && typeAdmitsTruthySeen(v.Body, active)
+		return v.Body != nil && v.Body != t && typeAdmitsTruthySeen(v.Body, active, typeCache)
 	default:
 		if typ.IsNever(t) {
 			return false
 		}
-		return !subtype.IsSubtype(t, typ.Nil) && !subtype.IsSubtype(t, typ.False)
+		return !isSubtypeCached(typeCache, t, typ.Nil) && !isSubtypeCached(typeCache, t, typ.False)
 	}
 }
 
-func typeAdmitsFalsy(t typ.Type) bool {
-	return typeAdmitsFalsySeen(t, &typegraph.Path{})
+func typeAdmitsFalsy(t typ.Type, typeCache *typevalue.Cache) bool {
+	return typeAdmitsFalsySeen(t, &typegraph.Path{}, typeCache)
 }
 
-func typeAdmitsFalsySeen(t typ.Type, active *typegraph.Path) bool {
+func typeAdmitsFalsySeen(t typ.Type, active *typegraph.Path, typeCache *typevalue.Cache) bool {
 	if t == nil {
 		return true
 	}
@@ -145,23 +357,23 @@ func typeAdmitsFalsySeen(t typ.Type, active *typegraph.Path) bool {
 		return true
 	case *typ.Union:
 		for _, member := range v.Members {
-			if typeAdmitsFalsySeen(member, active) {
+			if typeAdmitsFalsySeen(member, active, typeCache) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return typeAdmitsFalsySeen(v.UnaliasedTarget(), active)
+		return typeAdmitsFalsySeen(v.UnaliasedTarget(), active, typeCache)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && typeAdmitsFalsySeen(expanded, active)
+		return expanded != nil && expanded != t && typeAdmitsFalsySeen(expanded, active, typeCache)
 	case *typ.Recursive:
-		return v.Body != nil && v.Body != t && typeAdmitsFalsySeen(v.Body, active)
+		return v.Body != nil && v.Body != t && typeAdmitsFalsySeen(v.Body, active, typeCache)
 	default:
 		if typ.IsNever(t) {
 			return false
 		}
-		return subtype.IsSubtype(typ.Nil, t) || subtype.IsSubtype(typ.False, t)
+		return isSubtypeCached(typeCache, typ.Nil, t) || isSubtypeCached(typeCache, typ.False, t)
 	}
 }
 

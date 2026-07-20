@@ -110,6 +110,7 @@ func callSiteFromView(site factflow.CallSiteView) factflow.CallSite {
 	point, hasPoint := site.Point()
 	receiverPath, hasReceiverPath := site.ReceiverPath()
 	methodPath, hasMethodPath := site.MethodPath()
+	calleeSource, hasCalleeSource := site.CalleeSource()
 	receiverSource, hasReceiverSource := site.ReceiverSource()
 	exprRef, hasExpr := site.Expr()
 	argCount := site.ArgumentSourceCount()
@@ -139,6 +140,8 @@ func callSiteFromView(site factflow.CallSiteView) factflow.CallSite {
 		CalleeSymbol:       site.CalleeSymbol(),
 		CalleePath:         site.CalleePath(),
 		CalleeMemberAccess: site.CalleeMemberAccess(),
+		CalleeSource:       calleeSource,
+		HasCalleeSource:    hasCalleeSource,
 		ReceiverPath:       receiverPath,
 		HasReceiverPath:    hasReceiverPath,
 		MethodPath:         methodPath,
@@ -395,10 +398,10 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing local c fact")
 	}
-	if got := bFact.Source(); got.ExprRef == 0 || got.ResultIndex != 0 || !got.Expanded || got.OpenTail {
+	if got := bFact.Source(); got.ExprRef == 0 || !got.HasCallPoint || got.CallPoint != localPoints[1] || got.ResultIndex != 0 || !got.Expanded || got.OpenTail {
 		t.Fatalf("local b source = %#v", got)
 	}
-	if got := cFact.Source(); got.ExprRef == 0 || got.ResultIndex != 1 || !got.Expanded || got.OpenTail {
+	if got := cFact.Source(); got.ExprRef == 0 || !got.HasCallPoint || got.CallPoint != localPoints[1] || got.ResultIndex != 1 || !got.Expanded || got.OpenTail {
 		t.Fatalf("local c source = %#v", got)
 	}
 

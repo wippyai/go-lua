@@ -2,11 +2,32 @@ package transformer
 
 import (
 	"fmt"
-
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
-	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 )
+
+// ScalarUnaryValue retains one pure Lua scalar unary operation. The operand
+// remains symbolic until specialization; sourcevalue owns truthiness.
+func (a *Arena) ScalarUnaryValue(operator string, operand ValueTerm) (ValueTerm, bool) {
+	if a == nil || !isPureUnaryOperator(operator) || operand == 0 || int(operand) >= len(a.values) {
+		return 0, false
+	}
+	return a.internValue(valueNode{op: valueUnaryOperation, operator: operator, args: []ValueTerm{operand}}), true
+}
+
+func isPureUnaryOperator(operator string) bool {
+	switch operator {
+	case "not", "#", "-", "~":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalScalarUnaryValue(operator, operand string) string {
+	if !isPureUnaryOperator(operator) {
+		return "_"
+	}
+	return fmt.Sprintf("u%s(%s)", operator, operand)
+}
 
 // ScalarBinaryValue retains one of the pure scalar operations needed by a
 // symbolic function relation. The operands remain terms until specialization;
@@ -18,81 +39,37 @@ func (a *Arena) ScalarBinaryValue(operator string, left, right ValueTerm) (Value
 	if a == nil || left == 0 || right == 0 || int(left) >= len(a.values) || int(right) >= len(a.values) {
 		return 0, false
 	}
-	var op valueOp
-	switch operator {
-	case "==":
-		op = valueScalarEqual
-	case "~=":
-		op = valueScalarNotEqual
-	case "and":
-		op = valueScalarAnd
-	case "or":
-		op = valueScalarOr
-	default:
+	if !isPureBinaryOperator(operator) {
 		return 0, false
 	}
-	return a.scalarBinaryValue(op, left, right), true
+	return a.scalarBinaryValue(operator, left, right), true
 }
 
-func (a *Arena) scalarBinaryValue(op valueOp, left, right ValueTerm) ValueTerm {
-	if !isScalarBinaryValueOp(op) || left == 0 || right == 0 {
+func isPureBinaryOperator(operator string) bool {
+	switch operator {
+	case "+", "-", "*", "/", "//", "%", "^", "&", "|", "~", "<<", ">>",
+		"==", "~=", "<", "<=", ">", ">=", "and", "or":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Arena) scalarBinaryValue(operator string, left, right ValueTerm) ValueTerm {
+	if !isPureBinaryOperator(operator) || left == 0 || right == 0 {
 		return 0
 	}
-	if op == valueScalarEqual || op == valueScalarNotEqual {
+	if operator == "==" || operator == "~=" {
 		leftKey, rightKey := a.canonicalValue(left), a.canonicalValue(right)
 		if rightKey < leftKey || rightKey == leftKey && right < left {
 			left, right = right, left
 		}
 	}
-	return a.internValue(valueNode{op: op, args: []ValueTerm{left, right}})
+	return a.internValue(valueNode{op: valueBinaryOperation, operator: operator, args: []ValueTerm{left, right}})
 }
 
-func isScalarBinaryValueOp(op valueOp) bool {
-	return op >= valueScalarEqual && op <= valueScalarOr
-}
-
-func scalarBinaryOperator(op valueOp) (string, bool) {
-	switch op {
-	case valueScalarEqual:
-		return "==", true
-	case valueScalarNotEqual:
-		return "~=", true
-	case valueScalarAnd:
-		return "and", true
-	case valueScalarOr:
-		return "or", true
-	default:
-		return "", false
-	}
-}
-
-func (a *Arena) evalScalarBinaryValue(op valueOp, args []ValueTerm, cursor BindingCursor, context SpecializationContext) (product.Value, bool) {
-	operator, ok := scalarBinaryOperator(op)
-	if !ok || len(args) != 2 {
-		return product.Value{}, false
-	}
-	left, ok := a.evalValue(args[0], cursor, context)
-	if !ok {
-		return product.Value{}, false
-	}
-	if op == valueScalarAnd && !valuerefine.CanBeTruthy(a.reg, left) {
-		return left, true
-	}
-	if op == valueScalarOr && !valuerefine.CanBeFalsy(a.reg, left) {
-		return left, true
-	}
-	right, ok := a.evalValue(args[1], cursor, context)
-	if !ok {
-		return product.Value{}, false
-	}
-	// This is deliberately the sole semantic authority. Symbolic terms own
-	// representation and substitution; Lua sourcevalue owns abstract execution.
-	return luasourcevalue.BinaryOperationValue(a.reg, nil, operator, left, right)
-}
-
-func canonicalScalarBinaryValue(op valueOp, left, right string) string {
-	operator, ok := scalarBinaryOperator(op)
-	if !ok {
+func canonicalScalarBinaryValue(operator, left, right string) string {
+	if !isPureBinaryOperator(operator) {
 		return "_"
 	}
 	return fmt.Sprintf("b%s(%s,%s)", operator, left, right)

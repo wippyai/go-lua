@@ -3,10 +3,12 @@ package sourcevalue
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
@@ -15,12 +17,45 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/indexproof"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func readBoundDynamicIndexValueForTest(
+	reg *axis.Registry, typeValues *typevalue.Cache, keys *keyspace.KeySpace, resolver *visibility.Resolver,
+	point cfg.Point, tablePath, keyPath pathdom.Path, tableValue, keyValue product.Value, input state.State, projectPath bool,
+) (product.Value, bool) {
+	form := indexform.IndexForm{}
+	if constant, exact := typevalue.IntegerLiteralValue(reg, keyValue); exact {
+		form = indexform.NewConstantIndex(constant)
+	} else if !keyPath.IsEmpty() {
+		form, _ = indexform.NewAffineIndex(keyPath, 1, 0)
+	}
+	return ReadBoundDynamicValue(BoundDynamicRead{
+		Registry: reg, TypeValues: typeValues, KeySpace: keys, Visibility: resolver, Point: point,
+		TablePath: tablePath, KeyPath: keyPath, TableValue: tableValue, KeyValue: keyValue,
+		ValueInput: input, ProjectPath: projectPath, IndexForm: form,
+	})
+}
+
+func ReadBoundDynamicIndexValue(
+	reg *axis.Registry, typeValues *typevalue.Cache, keys *keyspace.KeySpace, resolver *visibility.Resolver,
+	point cfg.Point, tablePath, keyPath pathdom.Path, tableValue, keyValue product.Value, input state.State,
+) (product.Value, bool) {
+	return readBoundDynamicIndexValueForTest(reg, typeValues, keys, resolver, point, tablePath, keyPath, tableValue, keyValue, input, true)
+}
+
+func ReadBoundDynamicTableValue(
+	reg *axis.Registry, typeValues *typevalue.Cache, keys *keyspace.KeySpace, resolver *visibility.Resolver,
+	point cfg.Point, tablePath, keyPath pathdom.Path, tableValue, keyValue product.Value, input state.State,
+) (product.Value, bool) {
+	return readBoundDynamicIndexValueForTest(reg, typeValues, keys, resolver, point, tablePath, keyPath, tableValue, keyValue, input, false)
+}
 
 func TestReadBoundDynamicIndexValueJoinsEveryMayMatchingFiniteFactDeterministically(t *testing.T) {
 	reg := standard.Registry()
@@ -59,7 +94,7 @@ func TestReadBoundDynamicIndexValueJoinsEveryMayMatchingFiniteFactDeterministica
 			StaticMembers: map[keyspace.Key]product.Value{staticKey: staticValue},
 		})
 		in := state.State{}.WriteHeapTableObject(reg, id, object)
-		got, ok := ReadBoundDynamicIndexValue(reg, typevalue.NewCache(), ks, nil, 0, pathdom.Path{Root: "references"}, table, abstractName, in)
+		got, ok := ReadBoundDynamicIndexValue(reg, typevalue.NewCache(), ks, nil, 0, pathdom.Path{Root: "references"}, pathdom.Path{}, table, abstractName, in)
 		if !ok {
 			t.Fatal("abstract-string dynamic read failed")
 		}
@@ -82,20 +117,20 @@ func TestReadBoundDynamicIndexValueDistinguishesFalseFromAbsentAndFailsClosed(t 
 	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: table, StaticMembers: map[keyspace.Key]product.Value{memberKey: falseValue}, StableShape: true})
 	in := state.State{}.WriteHeapTableObject(reg, id, object)
 
-	got, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, table, typevalue.LiteralString(reg, "false-node"), in)
+	got, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, pathdom.Path{}, table, typevalue.LiteralString(reg, "false-node"), in)
 	if !ok || !product.Equal(reg, got, falseValue) || !presence.Equal(product.PresenceOf(got), presence.Present()) {
 		t.Fatalf("false member = %#v/%v, want present false", got, ok)
 	}
-	missing, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, table, typevalue.LiteralString(reg, "missing"), in)
+	missing, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, pathdom.Path{}, table, typevalue.LiteralString(reg, "missing"), in)
 	if !ok || !presence.Equal(product.PresenceOf(missing), presence.Absent()) {
 		t.Fatalf("stable missing member = %#v/%v, want absent", missing, ok)
 	}
 	mutable := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: table})
-	if _, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, table, typevalue.LiteralString(reg, "missing"), state.State{}.WriteHeapTableObject(reg, id, mutable)); ok {
+	if _, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, pathdom.Path{}, table, typevalue.LiteralString(reg, "missing"), state.State{}.WriteHeapTableObject(reg, id, mutable)); ok {
 		t.Fatal("mutable missing member did not fail closed")
 	}
-	if _, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, product.Top(), typevalue.LiteralString(reg, "missing"), in); ok {
-		t.Fatal("read without exact caller heap binding did not fail closed")
+	if unknown, ok := ReadBoundDynamicIndexValue(reg, nil, ks, nil, 0, basePath, pathdom.Path{}, product.Top(), typevalue.LiteralString(reg, "missing"), in); !ok || !product.Equal(reg, unknown, product.Top()) {
+		t.Fatalf("abstract owner read = %#v/%v, want conservative Top", unknown, ok)
 	}
 }
 
@@ -120,11 +155,11 @@ func TestReadBoundDynamicIndexValueProjectsReferencesIdentityFromSelfPath(t *tes
 		WritePathKey(reg, ks, resolver.KeyAt(point, referencesPath), referencesValue).
 		WriteHeapTableObject(reg, referencesID, object)
 
-	got, ok := ReadBoundDynamicIndexValue(reg, nil, ks, resolver, point, referencesPath, selfValue, typevalue.LiteralString(reg, "node"), in)
+	got, ok := ReadBoundDynamicIndexValue(reg, nil, ks, resolver, point, referencesPath, pathdom.Path{}, selfValue, typevalue.LiteralString(reg, "node"), in)
 	if !ok || !product.Equal(reg, got, nodeValue) {
 		t.Fatalf("self.references[node] = %#v/%v, want %#v", got, ok, nodeValue)
 	}
-	if _, ok := ReadBoundDynamicIndexValue(reg, nil, ks, resolver, point, referencesPath, referencesValue, typevalue.LiteralString(reg, "node"), in); ok {
+	if _, ok := ReadBoundDynamicIndexValue(reg, nil, ks, resolver, point, referencesPath, pathdom.Path{}, referencesValue, typevalue.LiteralString(reg, "node"), in); ok {
 		t.Fatal("receiver operand incompatible with tablePath owner did not fail closed")
 	}
 }
@@ -141,7 +176,7 @@ func TestReadBoundDynamicIndexValueFallsBackToCanonicalTypedIndexWithoutIdentity
 		t.Fatal("test setup RuntimeIndex failed")
 	}
 	want = InheritTopOriginEvidence(reg, want, tableValue)
-	got, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, pathdom.Path{Root: "references"}, tableValue, keyValue, state.State{})
+	got, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, pathdom.Path{Root: "references"}, pathdom.Path{}, tableValue, keyValue, state.State{})
 	if !ok || !product.Equal(reg, got, want) {
 		t.Fatalf("typed identity-free dynamic read = %#v/%v, want canonical RuntimeIndex %#v", got, ok, want)
 	}
@@ -150,11 +185,52 @@ func TestReadBoundDynamicIndexValueFallsBackToCanonicalTypedIndexWithoutIdentity
 	}
 }
 
-func TestReadBoundDynamicTableValueDoesNotReprojectRealTablePath(t *testing.T) {
+func TestBoundConstantReadUsesLengthFloorToExcludeShortUnionArm(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(17)
+	sym := symbol.ID(27)
+	resolver := testResolver(point, sym, "parts")
+	parent := pathdom.NewPath(sym, "parts")
+	containerType := &typ.Union{Members: []typ.Type{
+		typetable.NewRecord().Build(),
+		typ.NewArray(typ.String),
+	}}
+	table := typevalue.WithWitness(reg, product.Top(), containerType)
+	parentKey, ok := resolver.StateKeyAt(point, parent)
+	if !ok {
+		t.Fatal("parent state key")
+	}
+	input := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), table).
+		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
+	request := BoundDynamicRead{
+		Registry: reg, KeySpace: resolver.KeySpace(), Visibility: resolver, Point: point,
+		TablePath: parent, TableValue: table, KeyValue: typevalue.LiteralInt(reg, 2),
+		ValueInput: input, IndexForm: indexform.NewConstantIndex(2),
+	}
+	observedType, typeOK := typevalue.TypeOf(reg, table)
+	if !typeOK || !indexproof.StaticIndexExcludesNilUnderLengthFloor(observedType, 2, 2) {
+		t.Fatalf("selected type proof = %v/%t, want non-nil", observedType, typeOK)
+	}
+	if inRange, projected := BoundDynamicReadInRange(request); !projected || !inRange {
+		t.Fatalf("range evidence = %t/%t, want exact proof", inRange, projected)
+	}
+	value, projected := ReadBoundDynamicValue(request)
+	if !projected || !presence.Equal(product.PresenceOf(value), presence.Present()) {
+		projectedType, hasProjectedType := typevalue.TypeOf(reg, value)
+		runtimeValue, runtimeOK := typevalue.RuntimeIndex(reg, table, request.KeyValue)
+		runtimeType, hasRuntimeType := typevalue.TypeOf(reg, runtimeValue)
+		t.Fatalf("read presence = %v/%t type=%v/%t; runtime=%t type=%v/%t", product.PresenceOf(value), projected, projectedType, hasProjectedType, runtimeOK, runtimeType, hasRuntimeType)
+	}
+}
+
+func TestReadBoundDynamicOwnerValueProjectsDescendantWithoutStateRoot(t *testing.T) {
 	reg := standard.Registry()
 	cache := typevalue.NewCache()
 	ks := keyspace.New()
-	tableValue := cache.FromTypeWithWitness(reg, typetable.NewMap(typ.String, typ.String))
+	tableType := typetable.NewMap(typ.String, typ.String)
+	tableValue := cache.FromTypeWithWitness(reg, tableType)
+	ownerValue := cache.FromTypeWithWitness(reg, typetable.NewMap(typ.String, tableType))
 	keyValue := typevalue.LiteralString(reg, "node")
 	path := pathdom.NewPath(symbol.ID(9), "graph").Field("references")
 	want, ok := cache.RuntimeIndex(reg, tableValue, keyValue)
@@ -162,12 +238,52 @@ func TestReadBoundDynamicTableValueDoesNotReprojectRealTablePath(t *testing.T) {
 		t.Fatal("test setup RuntimeIndex failed")
 	}
 	want = InheritTopOriginEvidence(reg, want, tableValue)
-	got, ok := ReadBoundDynamicTableValue(reg, cache, ks, nil, 0, path, tableValue, keyValue, state.State{})
+	got, ok := ReadBoundDynamicTableValue(reg, cache, ks, nil, 0, path, pathdom.Path{}, tableValue, keyValue, state.State{})
 	if !ok || !product.Equal(reg, got, want) {
 		t.Fatalf("direct table read = %#v/%v, want %#v", got, ok, want)
 	}
-	if _, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, path, tableValue, keyValue, state.State{}); ok {
-		t.Fatal("owner-path form accepted an already-derived table value")
+	ownerRead, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, path, pathdom.Path{}, ownerValue, keyValue, state.State{})
+	if !ok || !product.Equal(reg, ownerRead, want) {
+		t.Fatalf("owner-path read with omitted State root = %#v/%v, want %#v", ownerRead, ok, want)
+	}
+}
+
+func TestReadBoundDynamicTableValueOfSparseAxisTopIsExactlyTop(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	// Omitted registered axes are Top in product.Value. Presence-only input is
+	// therefore an unconstrained present Lua value, not a missing type producer.
+	tableValue := product.WithPresence(reg, product.Top(), presence.Present())
+	keyValue := typevalue.LiteralString(reg, "field")
+	got, ok := ReadBoundDynamicTableValue(reg, typevalue.NewCache(), ks, nil, 0, pathdom.NewPath(symbol.ID(9), "table"), pathdom.Path{}, tableValue, keyValue, state.State{})
+	if !ok || !product.Equal(reg, got, product.Top()) {
+		t.Fatalf("sparse-axis Top table read = %#v/%v, want exact Top", got, ok)
+	}
+}
+
+func TestReadBoundDynamicTableValueOfNonIndexableOperandsIsExactlyBottom(t *testing.T) {
+	reg := standard.Registry()
+	got, ok := ReadBoundDynamicTableValue(
+		reg, typevalue.NewCache(), keyspace.New(), nil, 0, pathdom.Path{}, pathdom.Path{},
+		typevalue.LiteralNumber(reg, 42), typevalue.LiteralString(reg, "field"), state.State{},
+	)
+	if !ok || !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("non-indexable normal result = %#v/%v, want exact Bottom", got, ok)
+	}
+}
+
+func TestReadBoundDynamicIndexValueOfVisibleNestedSparseAxisTopIsExactlyTop(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(1)
+	payload := symbol.ID(19)
+	resolver := testResolver(point, payload, "payload")
+	ks := resolver.KeySpace()
+	root := product.WithPresence(reg, product.Top(), presence.Present())
+	tablePath := pathdom.NewPath(payload, "payload").Field("user").Field("profile")
+	in := state.State{}.WriteValue(reg, key.SymbolValue(payload), root)
+	got, ok := ReadBoundDynamicIndexValue(reg, typevalue.NewCache(), ks, resolver, point, tablePath, pathdom.Path{}, root, typevalue.LiteralString(reg, "name"), in)
+	if !ok || !product.Equal(reg, got, product.Top()) {
+		t.Fatalf("visible nested sparse-axis Top read = %#v/%v, want exact Top", got, ok)
 	}
 }
 
@@ -189,7 +305,7 @@ func TestReadBoundDynamicIndexValueProjectsTypedOwnerPathBeforeFallbackIndex(t *
 	}
 	want = InheritTopOriginEvidence(reg, want, references)
 	path := pathdom.NewPath(symbol.ID(9), "self").Field("references")
-	got, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, path, ownerValue, keyValue, state.State{})
+	got, ok := ReadBoundDynamicIndexValue(reg, cache, ks, nil, 0, path, pathdom.Path{}, ownerValue, keyValue, state.State{})
 	if !ok || !product.Equal(reg, got, want) {
 		t.Fatalf("typed owner-path dynamic read = %#v/%v, want %#v", got, ok, want)
 	}

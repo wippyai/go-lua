@@ -21,8 +21,12 @@ local function leaf(flag)
 	return nil
 end
 
-local function caller(flag)
+local function middle(flag)
 	return leaf(flag)
+end
+
+local function caller(flag)
+	return middle(flag)
 end
 
 local function unrelated(flag)
@@ -42,8 +46,12 @@ local function leaf(flag)
 	return nil
 end
 
-local function caller(flag)
+local function middle(flag)
 	return leaf(flag)
+end
+
+local function caller(flag)
+	return middle(flag)
 end
 
 local function unrelated(flag)
@@ -57,9 +65,34 @@ return caller(true), unrelated(false)
 `)
 
 	assertVersionChanged(t, before, after, "leaf")
+	assertVersionChanged(t, before, after, "middle")
 	assertVersionChanged(t, before, after, "caller")
 	assertVersionChanged(t, before, after, "chunk")
 	assertVersionUnchanged(t, before, after, "unrelated")
+}
+
+func TestRecursiveSCCResultVersionsAreStableAcrossIndependentSolves(t *testing.T) {
+	src := `
+local function recurse(flag)
+	if flag then
+		return recurse(false)
+	end
+	return "ok"
+end
+
+return recurse(true)
+`
+	first := resultVersionsByName(t, src)
+	second := resultVersionsByName(t, src)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("recursive SCC result versions are unstable\nfirst:  %v\nsecond: %v", first, second)
+	}
+	if _, ok := first["recurse"]; !ok {
+		t.Fatalf("recursive SCC did not publish its lexical body; have %v", sortedVersionNames(first))
+	}
+	if len(first) != 2 {
+		t.Fatalf("recursive SCC published %d result versions, want exactly chunk and recurse", len(first))
+	}
 }
 
 func TestResultVersionsIgnoreCommentsOutsideBodies(t *testing.T) {
@@ -119,8 +152,8 @@ return caller(true)
 	}
 }
 
-func TestLegacyResultVersionGoldenSurvivesTypedLineage(t *testing.T) {
-	got := resultVersionsByName(t, `
+func TestCanonicalResultVersionSurvivesTypedLineage(t *testing.T) {
+	src := `
 local function leaf(flag)
 	if flag then
 		return "ok"
@@ -132,19 +165,20 @@ local function caller(flag)
 	return leaf(flag)
 end
 
-return caller(true)
-`)
-	want := map[string]uint64{
-		"caller": 2148273550197998753,
-		"chunk":  12267018107357744344,
-		"leaf":   13734066513507477918,
+	return caller(true)
+	`
+	first := resultVersionsByName(t, src)
+	second := resultVersionsByName(t, src)
+	wantNames := []string{"caller", "chunk", "leaf"}
+	if got := sortedVersionNames(first); !reflect.DeepEqual(got, wantNames) {
+		t.Fatalf("canonical ResultVersion bodies = %v, want %v", got, wantNames)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacy ResultVersion golden changed\nwant: %#v\n got: %#v", want, got)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("typed lineage ResultVersions are unstable\nfirst:  %#v\nsecond: %#v", first, second)
 	}
 }
 
-func TestHighFanoutMaterializedContextsHaveStableKeysBodyOrderAndVersions(t *testing.T) {
+func TestHighFanoutLexicalBodiesHaveStableKeysOrderAndVersions(t *testing.T) {
 	stmts := parseChunk(t, `
 local function alpha(value: number): number
 	return value + 1
@@ -173,7 +207,8 @@ end
 return first() + second() + third()
 `)
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	config := Config{Check: body.Config{Registry: standard.Registry()}}
+	stats := &Stats{}
+	config := Config{Check: body.Config{Registry: standard.Registry()}, Stats: stats}
 
 	var wantKeys []summary.SummaryKey
 	var wantBodies []materializedBodyVersion
@@ -184,8 +219,11 @@ return first() + second() + third()
 		}
 		gotKeys := resultSummaryKeys(result)
 		gotBodies := materializedBodyVersions(result.RootResult())
-		if len(gotKeys) != 13 || len(gotBodies) != 13 {
-			t.Fatalf("run %d semantic high-fanout materialization = %d summary keys, %d bodies; want 13 each", run, len(gotKeys), len(gotBodies))
+		if len(gotKeys) != 7 || len(gotBodies) != 7 {
+			t.Fatalf("run %d semantic high-fanout publication = %d summary keys, %d bodies; want one result for each of 7 lexical bodies", run, len(gotKeys), len(gotBodies))
+		}
+		if stats.FunctionalSummary.LexicalBodies != 7 || stats.FunctionalSummary.FormalEquations <= 0 {
+			t.Fatalf("run %d formal execution = %d lexical bodies / %d equations; want 7 bodies and non-empty equations", run, stats.FunctionalSummary.LexicalBodies, stats.FunctionalSummary.FormalEquations)
 		}
 		if run == 0 {
 			wantKeys, wantBodies = gotKeys, gotBodies
@@ -212,7 +250,6 @@ func resultSummaryKeys(result Result) []summary.SummaryKey {
 type materializedBodyVersion struct {
 	ordinal       string
 	resultVersion uint64
-	callContext   bool
 }
 
 func materializedBodyVersions(root *body.Result) []materializedBodyVersion {
@@ -225,7 +262,6 @@ func materializedBodyVersions(root *body.Result) []materializedBodyVersion {
 		out = append(out, materializedBodyVersion{
 			ordinal:       ordinal,
 			resultVersion: result.ResultVersion(),
-			callContext:   result.IsCallContextResult(),
 		})
 		for index, child := range result.FunctionResults() {
 			walk(child, ordinal+"/"+strconv.Itoa(index))
@@ -254,7 +290,7 @@ func resultVersionsByName(t *testing.T, src string) map[string]uint64 {
 				t.Fatalf("missing stable name for child result %#v", child.Function())
 			}
 			if _, exists := out[name]; exists {
-				t.Fatalf("duplicate function result name %q", name)
+				t.Fatalf("lexical body %q published more than one result", name)
 			}
 			out[name] = child.ResultVersion()
 			walk(child)
@@ -285,31 +321,27 @@ func childResultName(root, child *body.Result) string {
 
 func assertVersionChanged(t *testing.T, before, after map[string]uint64, name string) {
 	t.Helper()
-	left, right := requireVersion(t, before, after, name)
-	if left == right {
-		t.Fatalf("%s version did not change: %d", name, left)
+	left, leftOK := before[name]
+	right, rightOK := after[name]
+	if !leftOK || !rightOK {
+		t.Fatalf("version missing %q: before=%v after=%v", name, sortedVersionNames(before), sortedVersionNames(after))
 	}
+	if left != right {
+		return
+	}
+	t.Fatalf("%s lexical-body version did not change: %x", name, left)
 }
 
 func assertVersionUnchanged(t *testing.T, before, after map[string]uint64, name string) {
 	t.Helper()
-	left, right := requireVersion(t, before, after, name)
+	left, leftOK := before[name]
+	right, rightOK := after[name]
+	if !leftOK || !rightOK {
+		t.Fatalf("version missing %q: before=%v after=%v", name, sortedVersionNames(before), sortedVersionNames(after))
+	}
 	if left != right {
-		t.Fatalf("%s version changed: before=%d after=%d", name, left, right)
+		t.Fatalf("%s lexical-body version changed: before=%x after=%x", name, left, right)
 	}
-}
-
-func requireVersion(t *testing.T, before, after map[string]uint64, name string) (uint64, uint64) {
-	t.Helper()
-	left, ok := before[name]
-	if !ok {
-		t.Fatalf("before version missing %q; have %v", name, sortedVersionNames(before))
-	}
-	right, ok := after[name]
-	if !ok {
-		t.Fatalf("after version missing %q; have %v", name, sortedVersionNames(after))
-	}
-	return left, right
 }
 
 func sortedVersionNames(versions map[string]uint64) []string {

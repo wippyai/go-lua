@@ -1,13 +1,15 @@
 package factapply
 
 import (
+	"fmt"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/callpayload"
+	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -17,153 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
-
-func applyCallOutcomePresenceRelationPublishes(
-	ctx transfer.NodeContext,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	outcomeProvider callpayload.CallOutcomeProvider,
-	resolver *visibility.Resolver,
-	read func(cfg.Point) state.State,
-	out state.State,
-) state.State {
-	if outcomeProvider == nil || resolver == nil || ctx.Graph == nil {
-		return out
-	}
-	if read == nil {
-		read = emptyStateRead
-	}
-	if cache == nil {
-		cache = &callOutcomeTraversalCache{}
-	}
-	cache.resetForGraph(ctx.Graph)
-	assignment, ok := facts.RootAssignment(ctx.Point)
-	if !ok {
-		return out
-	}
-	source := assignment.Source()
-	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
-		return out
-	}
-	callPoint := source.CallPoint
-	if cache.stats != nil {
-		cache.stats.presenceDirectLookups++
-	}
-	siteView, ok := facts.CallSiteView(callPoint)
-	if !ok || !callOutcomePresenceRelationCanPublishAt(ctx.Graph, facts, cache, callPoint, siteView, ctx.Point) {
-		return out
-	}
-	outcome := outcomeProvider(callContextAt(ctx, callPoint, read), siteView, out, read)
-	for _, relation := range outcome.ReturnPresenceRelations {
-		out = publishCallReturnPresenceImplication(ctx, facts, cache, resolver, callPoint, siteView, relation, out)
-	}
-	return out
-}
-
-func callOutcomePresenceRelationCanPublishAt(
-	graph cfg.Graph,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	point cfg.Point,
-) bool {
-	if graph == nil {
-		return false
-	}
-	assignment, ok := facts.RootAssignment(point)
-	if !ok || !callOutcomeAssignmentConsumesCall(assignment, callPoint) {
-		return false
-	}
-	if site.ResultTargetCount() == 0 {
-		return false
-	}
-	canPublish := false
-	site.ForEachResultTarget(func(triggerTarget factflow.CallResultTargetView) bool {
-		if !callOutcomeRelatableTarget(triggerTarget) {
-			return true
-		}
-		triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, triggerTarget, triggerTarget.ResultIndex())
-		if !ok {
-			return true
-		}
-		site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
-			if !callOutcomeRelatableTarget(target) {
-				return true
-			}
-			targetAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, target, target.ResultIndex())
-			if !ok {
-				return true
-			}
-			if callOutcomeLaterPoint(cache, graph, targetAssign, triggerAssign) == point {
-				canPublish = true
-				return false
-			}
-			return true
-		})
-		return !canPublish
-	})
-	return canPublish
-}
-
-func callOutcomeAssignmentConsumesCall(assignment factflow.RootAssignment, callPoint cfg.Point) bool {
-	source := assignment.Source()
-	return source.Kind == factflow.ValueSourceCall && source.HasCallPoint && source.CallPoint == callPoint
-}
-
-func publishCallReturnPresenceImplication(
-	ctx transfer.NodeContext,
-	facts factflow.Facts,
-	cache *callOutcomeTraversalCache,
-	resolver *visibility.Resolver,
-	callPoint cfg.Point,
-	site factflow.CallSiteView,
-	relation callpayload.CallReturnPresenceRelation,
-	out state.State,
-) state.State {
-	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)
-	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
-		return out
-	}
-	target, ok := callOutcomeTargetForResult(site, relation.TargetIndex)
-	if !ok || !callOutcomeRelatableTarget(target) {
-		return out
-	}
-	triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, triggerTarget, relation.TriggerIndex)
-	if !ok {
-		return out
-	}
-	targetAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, target, relation.TargetIndex)
-	if !ok {
-		return out
-	}
-	if ctx.Point != callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign) {
-		return out
-	}
-	trigger, ok := factKeyspaceKeyAt(resolver, ctx.Point, triggerTarget.TargetPathRef())
-	if !ok {
-		return out
-	}
-	targetK, ok := factKeyspaceKeyAt(resolver, ctx.Point, target.TargetPathRef())
-	if !ok {
-		return out
-	}
-	implication := pathevidence.NewPathPresenceImplication(
-		trigger,
-		relation.TriggerPresence,
-		targetK,
-		relation.TargetPresence,
-	)
-	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
-		Registry:     ctx.Registry,
-		Resolver:     resolver,
-		Point:        ctx.Point,
-		Output:       out,
-		Publications: []pathevidence.PathPresenceImplication{implication},
-		Token:        tokenOf(ctx.Session),
-	})
-	return result.Output
-}
 
 func applyPathValuePresenceImplication(
 	ctx transfer.NodeContext,
@@ -295,136 +150,327 @@ func activatePathPresenceImplicationsWithToken(
 
 func pathPresenceImplicationTriggered(
 	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
+	access presenceKeyAccess,
+	storage presenceImplicationStorage,
 	implication pathevidence.PathPresenceImplication,
-) bool {
+) (bool, error) {
 	if implication.HasTriggerPathEqual {
-		return pathPresenceImplicationPathEqualTriggered(resolver, out, implication)
+		return pathPresenceImplicationPathEqualTriggered(storage, implication)
+	}
+	if implication.HasTriggerTruthiness {
+		current, ok := readPresenceStoragePathValue(reg, access, storage, implication.Trigger)
+		if !ok || product.Equal(reg, current, product.Bottom(reg)) {
+			return false, nil
+		}
+		canTruthy := valuerefine.CanBeTruthy(reg, current)
+		canFalsy := valuerefine.CanBeFalsy(reg, current)
+		return canTruthy != canFalsy && canTruthy == implication.TriggerTruthy, nil
 	}
 	if implication.HasTriggerValue {
-		current, ok := readPathKeyValue(reg, resolver, point, out, resolver.KeySpace().Format(implication.Trigger))
+		current, ok := readPresenceStoragePathValue(reg, access, storage, implication.Trigger)
 		if !ok || product.Equal(reg, current, product.Bottom(reg)) {
-			return false
+			return false, nil
 		}
 		if implication.HasTriggerPresence {
 			presenceConstraint := product.NewWithPresence(reg, product.ShapeTop, implication.TriggerPresence)
-			if !product.Domain(reg).LessOrEq(current, presenceConstraint) && !out.HasBranchProof(pathevidence.BranchProof{
+			proven, valid := storage.HasProof(pathevidence.BranchProof{
 				Kind:     pathevidence.BranchProofPathPresence,
 				Path:     implication.Trigger,
 				Presence: implication.TriggerPresence,
-			}) {
-				return false
+			})
+			if !valid {
+				return false, fmt.Errorf("factapply: invalid presence proof storage")
+			}
+			if !product.Domain(reg).LessOrEq(current, presenceConstraint) && !proven {
+				return false, nil
 			}
 			meet := product.Meet(reg, current, implication.TriggerValue)
-			return !product.Equal(reg, meet, product.Bottom(reg)) && !presence.Equal(product.PresenceOf(meet), presence.Bottom())
+			return !product.Equal(reg, meet, product.Bottom(reg)) && !presence.Equal(product.PresenceOf(meet), presence.Bottom()), nil
 		}
-		return product.Domain(reg).LessOrEq(current, implication.TriggerValue)
+		return product.Domain(reg).LessOrEq(current, implication.TriggerValue), nil
 	}
 	if !presenceIsConcrete(implication.TriggerPresence) {
-		return false
+		return false, nil
 	}
-	current, ok := readPathKeyPresence(reg, resolver, point, out, resolver.KeySpace().Format(implication.Trigger))
-	return ok && presence.Equal(current, implication.TriggerPresence)
+	// Stable root keys name the lexical binding directly. Reading that slot is
+	// the exact selected-edge fact and avoids routing an unversioned tuple
+	// relation back through a point-versioned resolver spelling.
+	if slot, ok := rootValueDependencyForKey(access.keys, implication.Trigger); ok {
+		value, valid := storage.ReadRoot(slot)
+		if !valid {
+			return false, fmt.Errorf("factapply: undeclared presence root read")
+		}
+		current := product.PresenceOf(value)
+		if presence.Equal(current, implication.TriggerPresence) {
+			return true, nil
+		}
+	}
+	current, ok := readPresenceStoragePathValue(reg, access, storage, implication.Trigger)
+	return ok && presence.Equal(product.PresenceOf(current), implication.TriggerPresence), nil
 }
 
 func pathPresenceImplicationPathEqualTriggered(
-	resolver *visibility.Resolver,
-	out state.State,
+	storage presenceImplicationStorage,
 	implication pathevidence.PathPresenceImplication,
-) bool {
-	if resolver == nil {
-		return false
+) (bool, error) {
+	if storage == nil {
+		return false, fmt.Errorf("factapply: invalid equality trigger storage")
 	}
-	if out.HasBranchProof(pathevidence.BranchProof{
+	forward, valid := storage.HasProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  implication.Trigger,
 		Other: implication.TriggerOther,
-	}) || out.HasBranchProof(pathevidence.BranchProof{
+	})
+	if !valid {
+		return false, fmt.Errorf("factapply: invalid equality proof storage")
+	}
+	reverse, valid := storage.HasProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  implication.TriggerOther,
 		Other: implication.Trigger,
-	}) {
-		return true
+	})
+	if !valid {
+		return false, fmt.Errorf("factapply: invalid equality proof storage")
 	}
-	ks := resolver.KeySpace()
-	return out.HasEquivalentKeyspaceKey(ks, implication.Trigger, implication.TriggerOther)
+	if forward || reverse {
+		return true, nil
+	}
+	equal, valid := storage.HasEquivalentKey(implication.Trigger, implication.TriggerOther)
+	if !valid {
+		return false, fmt.Errorf("factapply: invalid equality storage")
+	}
+	return equal, nil
 }
 
-func applyPathPresenceImplicationTarget(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	implication pathevidence.PathPresenceImplication,
-) state.State {
-	ks := resolver.KeySpace()
-	if !implication.HasTargetValue && !presenceIsConcrete(implication.TargetPresence) {
-		return out
+type presenceImplicationTargetLocation struct {
+	root bool
+	slot key.ValueDependency
+	path keyspace.Key
+}
+
+type presenceImplicationRoundTarget struct {
+	location   presenceImplicationTargetLocation
+	constraint product.Value
+	initialize bool
+}
+
+type presenceImplicationRound struct {
+	targets       map[presenceImplicationTargetLocation]int
+	ordered       []presenceImplicationRoundTarget
+	invalidations []pathdom.PathKey
+}
+
+func (r *presenceImplicationRound) addTarget(reg *axis.Registry, location presenceImplicationTargetLocation, constraint product.Value, initialize bool) {
+	if index, ok := r.targets[location]; ok {
+		target := &r.ordered[index]
+		target.constraint = product.Meet(reg, target.constraint, constraint)
+		target.initialize = target.initialize || initialize
+		return
 	}
-	if !pathKeyCurrentlyVisibleKey(resolver, point, implication.Target) {
-		return out
+	if r.targets == nil {
+		r.targets = make(map[presenceImplicationTargetLocation]int)
+	}
+	r.targets[location] = len(r.ordered)
+	r.ordered = append(r.ordered, presenceImplicationRoundTarget{location: location, constraint: constraint, initialize: initialize})
+}
+
+func accumulatePathPresenceImplicationTarget(
+	reg *axis.Registry,
+	access presenceKeyAccess,
+	storage presenceImplicationStorage,
+	implication pathevidence.PathPresenceImplication,
+	round *presenceImplicationRound,
+) error {
+	if !implication.HasTargetValue && !presenceIsConcrete(implication.TargetPresence) {
+		return nil
+	}
+	// A segment-free endpoint denotes the lexical symbol carrier, regardless
+	// of which point-version spelling was current when the implication was
+	// published. This mirrors trigger activation and prevents a later CFG point
+	// from hiding a valid tuple correlation behind a different resolver version.
+	if _, ok := rootValueDependencyForKey(access.keys, implication.Target); ok {
+		accumulatePathPresenceImplicationTargetKey(reg, access.keys, implication, implication.Target, round)
+		return nil
 	}
 	targetKeys := []keyspace.Key{implication.Target}
 	seen := map[keyspace.Key]struct{}{implication.Target: {}}
-	for _, equivalent := range out.EquivalentKeyspaceKeys(ks, implication.Target) {
-		if _, ok := seen[equivalent]; ok || !pathKeyCurrentlyVisibleKey(resolver, point, equivalent) {
+	equivalents, valid := storage.EquivalentKeys(implication.Target)
+	if !valid {
+		return fmt.Errorf("factapply: invalid equivalent-key storage")
+	}
+	for _, equivalent := range equivalents {
+		if _, ok := seen[equivalent]; ok {
 			continue
 		}
 		seen[equivalent] = struct{}{}
 		targetKeys = append(targetKeys, equivalent)
 	}
-	for _, key := range targetKeys {
-		out = applyPathPresenceImplicationTargetKey(reg, resolver, out, implication, key)
+	for _, targetKey := range targetKeys {
+		// Visibility is a property of a semantic equality class, not of the
+		// representative chosen by a producer. Boundary existentials are not
+		// caller-visible themselves, but their proven root representative is.
+		if !access.readable(targetKey) {
+			continue
+		}
+		accumulatePathPresenceImplicationTargetKey(reg, access.keys, implication, targetKey, round)
 	}
-	return out
+	return nil
 }
 
-func applyPathPresenceImplicationTargetKey(
+func accumulatePathPresenceImplicationTargetKey(
 	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	out state.State,
+	ks *keyspace.KeySpace,
 	implication pathevidence.PathPresenceImplication,
 	targetKey keyspace.Key,
-) state.State {
-	ks := resolver.KeySpace()
+	round *presenceImplicationRound,
+) {
 	constraint := implication.TargetValue
 	if !implication.HasTargetValue {
 		constraint = product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
 	}
-	if sym, ok := rootSymbolForResolverKey(targetKey); ok {
-		if presenceImplicationTargetInvalidatesDescendants(implication) {
-			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, ks.Format(targetKey)); valid {
-				out = invalidated
-			}
-		}
-		slot := key.SymbolValue(sym)
-		return out.UpdateValue(reg, slot, func(value product.Value) product.Value {
-			if implication.HasTargetValue {
-				return assignmentImplicationTargetValue(reg, value, constraint)
-			}
-			return product.Meet(reg, value, constraint)
-		})
+	if slot, ok := rootValueDependencyForKey(ks, targetKey); ok {
+		location := presenceImplicationTargetLocation{root: true, slot: slot}
+		round.addTarget(reg, location, constraint, implication.HasTargetValue)
+	} else {
+		location := presenceImplicationTargetLocation{path: targetKey}
+		// Local path refinements are a sparse map: a missing Bottom entry is
+		// initialized by the first consequence. Root Values instead refine an
+		// already-existing lexical carrier unless the implication carries an exact
+		// assigned value.
+		round.addTarget(reg, location, constraint, true)
 	}
-	current := out.ReadLocalPathKey(reg, targetKey)
-	if implication.HasTargetValue {
-		return out.WriteLocalPathKey(reg, targetKey, assignmentImplicationTargetValue(reg, current, constraint))
+	if presenceImplicationTargetInvalidatesDescendants(implication) {
+		round.invalidations = append(round.invalidations, ks.Format(targetKey))
 	}
-	if product.Equal(reg, current, product.Bottom(reg)) {
-		return out.WriteLocalPathKey(reg, targetKey, constraint)
-	}
-	return out.WriteLocalPathKey(reg, targetKey, product.Meet(reg, current, constraint))
 }
 
-func assignmentImplicationTargetValue(reg *axis.Registry, current product.Value, assigned product.Value) product.Value {
-	if product.Equal(reg, current, product.Bottom(reg)) {
-		return assigned
+// applyPresenceImplicationRound commits the complete conjunctive consequence
+// set from one immutable trigger snapshot. No downstream row can observe a
+// transient first writer before a conflicting writer has been met into the
+// same target. The storage fork also makes cross-axis invalidation atomic.
+func applyPresenceImplicationRound(
+	reg *axis.Registry,
+	storage presenceImplicationStorage,
+	round presenceImplicationRound,
+) (bool, error) {
+	staged := storage.Fork()
+	if staged == nil {
+		return false, fmt.Errorf("factapply: presence implication storage cannot fork")
 	}
-	// Multiple simultaneously activated implications may constrain the same
-	// target. Their consequences are conjunctive refinements, never ordered
-	// assignments: meet them so conflicts conservatively drop to bottom.
-	return product.Meet(reg, current, assigned)
+	changed := false
+	for _, target := range round.ordered {
+		var current product.Value
+		var valid bool
+		if target.location.root {
+			current, valid = staged.ReadRoot(target.location.slot)
+		} else {
+			current, valid = staged.ReadPath(target.location.path)
+		}
+		if !valid {
+			return false, fmt.Errorf("factapply: undeclared presence target read")
+		}
+		if !product.BelongsToRegistry(reg, current) || !product.BelongsToRegistry(reg, target.constraint) {
+			return false, fmt.Errorf("%w: foreign presence implication value", state.ErrInvalidLaneFactor)
+		}
+		next := product.Meet(reg, current, target.constraint)
+		if target.initialize && product.Equal(reg, current, product.Bottom(reg)) {
+			next = target.constraint
+		}
+		// An established conjunction that is Bottom is an infeasible abstract
+		// environment, not an absent sparse-map entry. Collapse the route now so
+		// no later closure can reinterpret the contradiction as unobserved and
+		// resurrect it.
+		if (product.Equal(reg, next, product.Bottom(reg)) || presence.Equal(product.PresenceOf(next), presence.Bottom())) &&
+			(target.initialize || !product.Equal(reg, current, product.Bottom(reg))) {
+			if !staged.MakeUnreachable() || !storage.Commit(staged) {
+				return false, fmt.Errorf("factapply: presence contradiction commit failed")
+			}
+			return true, nil
+		}
+		var wrote bool
+		if target.location.root {
+			wrote, valid = staged.WriteRoot(target.location.slot, next)
+		} else {
+			wrote, valid = staged.WritePath(target.location.path, next)
+		}
+		if !valid {
+			return false, fmt.Errorf("factapply: undeclared presence target write")
+		}
+		changed = changed || wrote
+	}
+	seenInvalidation := make(map[pathdom.PathKey]struct{}, len(round.invalidations))
+	for _, root := range round.invalidations {
+		if _, duplicate := seenInvalidation[root]; duplicate {
+			continue
+		}
+		seenInvalidation[root] = struct{}{}
+		invalidated, valid := staged.InvalidateDescendants(root)
+		if !valid {
+			return false, fmt.Errorf("factapply: invalid descendant invalidation storage")
+		}
+		changed = changed || invalidated
+	}
+	if !storage.Commit(staged) {
+		return false, fmt.Errorf("factapply: presence implication storage commit failed")
+	}
+	return changed, nil
+}
+
+func readPresenceStoragePathValue(reg *axis.Registry, access presenceKeyAccess, storage presenceImplicationStorage, path keyspace.Key) (product.Value, bool) {
+	if reg == nil || !access.valid() || storage == nil {
+		return product.Value{}, false
+	}
+	candidates := []keyspace.Key{path}
+	equivalents, valid := storage.EquivalentKeys(path)
+	if !valid {
+		return product.Value{}, false
+	}
+	seen := map[keyspace.Key]struct{}{path: {}}
+	for _, equivalent := range equivalents {
+		if _, duplicate := seen[equivalent]; duplicate {
+			continue
+		}
+		seen[equivalent] = struct{}{}
+		candidates = append(candidates, equivalent)
+	}
+	var out product.Value
+	observed := false
+	declared := false
+	for _, candidate := range candidates {
+		if !access.readable(candidate) {
+			continue
+		}
+		value, ok := readPresenceStorageKey(access.keys, storage, candidate)
+		if !ok {
+			continue
+		}
+		declared = true
+		// A missing sparse path refinement is not an equality constraint.
+		// Root Values supply the concrete observation when the producer's
+		// representative is a boundary existential.
+		if product.Equal(reg, value, product.Bottom(reg)) {
+			continue
+		}
+		if !observed {
+			out, observed = value, true
+			continue
+		}
+		out = product.Meet(reg, out, value)
+	}
+	if observed {
+		return out, true
+	}
+	return product.Bottom(reg), declared
+}
+
+func readPresenceStorageKey(keys *keyspace.KeySpace, storage presenceImplicationStorage, path keyspace.Key) (product.Value, bool) {
+	if storage == nil {
+		return product.Value{}, false
+	}
+	if slot, root := rootValueDependencyForKey(keys, path); root {
+		return storage.ReadRoot(slot)
+	}
+	return storage.ReadPath(path)
 }
 
 func presenceImplicationTargetInvalidatesDescendants(implication pathevidence.PathPresenceImplication) bool {
@@ -459,8 +505,8 @@ func readPathKeyValue(
 	if !pathKeyCurrentlyVisible(resolver, point, pathKey) {
 		return product.Value{}, false
 	}
-	if sym, ok := rootSymbolForResolverPathKey(resolver.KeySpace(), pathKey); ok {
-		return out.ReadValue(reg, key.SymbolValue(sym)), true
+	if slot, ok := rootValueSlotForResolverPathKey(resolver.KeySpace(), pathKey); ok {
+		return out.ReadValue(reg, slot), true
 	}
 	return out.ReadPathKey(reg, resolver.KeySpace(), pathKey), true
 }
@@ -512,6 +558,36 @@ func rootSymbolForResolverKey(pathKey keyspace.Key) (symbol.ID, bool) {
 		return 0, false
 	}
 	return pathKey.Sym, pathKey.Sym != 0
+}
+
+func rootValueSlotForResolverPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (key.Value, bool) {
+	k, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return 0, false
+	}
+	return rootValueSlotForResolverKey(k)
+}
+
+func rootValueSlotForResolverKey(pathKey keyspace.Key) (key.Value, bool) {
+	if pathKey.Segs != 0 {
+		return 0, false
+	}
+	switch pathKey.Kind {
+	case keyspace.KindResolverSym, keyspace.KindUnversionedSym, keyspace.KindStableSym:
+		slot := key.SymbolValue(pathKey.Sym)
+		return slot, slot != 0
+	case keyspace.KindRetSlot:
+		return key.ReturnSlot(int(pathKey.Root)), true
+	default:
+		return 0, false
+	}
+}
+
+func rootValueDependencyForKey(keys *keyspace.KeySpace, path keyspace.Key) (key.ValueDependency, bool) {
+	if path.Segs != 0 {
+		return key.ValueDependency{}, false
+	}
+	return pathevidence.PathValueDependency(keys, path)
 }
 
 func presenceIsConcrete(value presence.Value) bool {

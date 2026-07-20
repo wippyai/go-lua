@@ -237,7 +237,7 @@ scale("not-number")`), "test.lua")
 	}
 	var base *body.Result
 	for _, fn := range root.FunctionResults() {
-		if fn != nil && !fn.IsCallContextResult() {
+		if fn != nil {
 			base = fn
 			break
 		}

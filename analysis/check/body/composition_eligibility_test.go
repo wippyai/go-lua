@@ -135,6 +135,37 @@ end
 	}
 }
 
+func TestSymbolicBoundaryCapturesRetainCalleeOnlyCallbackParameter(t *testing.T) {
+	stmts := parseChunk(t, `
+local function factory(fn: () -> string)
+	local function target()
+		return fn()
+	end
+	return target
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	var targetFn *ast.FunctionExpr
+	bindings.ForEachFunctionOrigin(func(origin bind.FunctionOrigin) bool {
+		if origin.HasTargetSymbol && bindings.Name(origin.TargetSymbol) == "target" {
+			targetFn = origin.Func
+			return false
+		}
+		return true
+	})
+	if targetFn == nil {
+		t.Fatal("target function missing")
+	}
+	prepared, err := PrepareBoundFunction(targetFn, bindings, Config{Registry: standard.Registry()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captures := prepared.OperationPlan().BoundaryCaptures()
+	if len(captures) != 1 || bindings.Name(captures[0]) != "fn" {
+		t.Fatalf("boundary captures = %v, want callee-only callback parameter fn", captures)
+	}
+}
+
 func TestCompositionEligibilityRejectsCaptureEscapingToDescendant(t *testing.T) {
 	stmts := parseChunk(t, `
 local suffix = "!"

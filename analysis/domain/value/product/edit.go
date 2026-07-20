@@ -101,7 +101,7 @@ func (ed *Editor) Done() Value {
 	if ed.bottom {
 		return ed.rt.bottomValue()
 	}
-	if anyReducerApplicable(ed.rt, ed.rt.reducers, ed.slots) {
+	if anyReducerApplicable(ed.rt.reducers, ed.slots) {
 		owned := make([]slot, len(ed.slots))
 		copy(owned, ed.slots)
 		return internRuntime(ed.rt, ShapeOf(ed.source), ed.presence, owned)

@@ -5,13 +5,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
-func TestPreparedSignatureProducerReusesCanonicalOutcomeAndIteration(t *testing.T) {
+func TestPreparedSignatureProducerReusesCanonicalOutcomeAndSignature(t *testing.T) {
 	reg := standard.Registry()
 	config := SignatureOutcomeProviderConfig{
 		Signatures:  signaturelookup.Source{IncludeStdlib: true},
@@ -23,13 +22,13 @@ func TestPreparedSignatureProducerReusesCanonicalOutcomeAndIteration(t *testing.
 	}
 	ctx := transfer.NodeContext{Registry: reg}
 	site := factflow.NewCallSite(factflow.CallSiteConfig{}).View()
-	want := SignatureOutcomeProvider(config)(ctx, site, state.State{}, nil)
-	got := producer.OutcomeProvider()(ctx, site, state.State{}, nil)
-	if !reflect.DeepEqual(want, got) {
-		t.Fatalf("prepared signature outcome differs\nwant=%#v\n got=%#v", want, got)
+	wantProgram := SignatureOutcomeProvider(config)
+	gotProgram := producer.OutcomeProvider()
+	if !reflect.DeepEqual(testPrepareCallOutcome(t, wantProgram, ctx, site).Capability().FieldRoles(), testPrepareCallOutcome(t, gotProgram, ctx, site).Capability().FieldRoles()) {
+		t.Fatalf("prepared signature capability differs")
 	}
-	iter, ok := producer.IteratorForSite(ctx, site)
-	if !ok || iter.Source.Index != 0 {
-		t.Fatalf("prepared iterator=%#v/%v", iter, ok)
+	sig, ok := producer.SignatureForSite(ctx, site)
+	if !ok || sig.Type == nil {
+		t.Fatalf("prepared signature=%#v/%v", sig, ok)
 	}
 }

@@ -1,7 +1,6 @@
 package body
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -9,8 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -22,52 +20,75 @@ import (
 func stdlibSignatureReturnValue(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	refinements sourcevalue.ExpressionRefinements,
-	visibilityResolver *visibility.Resolver,
-) effectlowering.SignatureReturnValueFunc {
-	if reg == nil || sources == nil {
-		return nil
+	input effectlowering.SignatureOutcomeInputProgram,
+) effectlowering.SignatureReturnValueProgram {
+	if reg == nil || !input.Valid() {
+		return effectlowering.SignatureReturnValueProgram{}
 	}
-	sourceResolver := refinements.Bind(reg, sources)
-	return func(ctx effectlowering.SignatureReturnContext) (product.Value, bool) {
+	heapInput, err := input.WithHeapMemberQuery()
+	if err != nil {
+		panic(err)
+	}
+	operands, err := effectlowering.SealSignatureReturnValueProgram(input, func(site effectlowering.SignatureOutcomeSite) bool {
+		return !stdlibTableUnpackResultSite(site)
+	}, func(ctx effectlowering.SignatureReturnValueInputContext) (product.Value, bool) {
 		switch {
 		case ctx.Name == "type" && ctx.Index == 0 && bareGlobalCall(ctx.Site, "type"):
-			return typeCallReturnValue(reg, typeValues, sourceResolver, ctx)
+			return typeCallReturnValue(reg, typeValues, ctx)
 		case ctx.Name == "select" && ctx.Index == 0 && bareGlobalCall(ctx.Site, "select"):
-			return selectCountReturnValue(reg, sourceResolver, ctx)
+			return selectCountReturnValue(reg, ctx)
 		case ctx.Name == "tonumber" && ctx.Index == 0 && bareGlobalCall(ctx.Site, "tonumber") && ctx.Site.ArgumentSourceCount() >= 2:
 			return returnValueWithType(reg, normalize.Optional(typ.Integer)), true
 		case ctx.Name == "string.byte":
 			return stringByteReturnValue(reg), true
 		case ctx.Name == "string.match":
-			return stringMatchReturnValue(reg, sourceResolver, ctx)
+			return stringMatchReturnValue(reg, ctx)
 		case ctx.Name == "string.find":
-			return stringFindReturnValue(reg, sourceResolver, ctx)
+			return stringFindReturnValue(reg, ctx)
 		case ctx.Name == "string.gmatch" || ctx.Name == "string.gfind":
-			return stringGMatchReturnValue(reg, sourceResolver, ctx)
+			return stringGMatchReturnValue(reg, ctx)
 		case ctx.Name == "string.unpack":
-			return stringUnpackReturnValue(reg, sourceResolver, ctx)
-		case (ctx.Name == "unpack" || ctx.Name == "table.unpack") && ctx.Index == 0:
-			return tableUnpackFirstReturnValue(reg, typeValues, facts, sourceResolver, visibilityResolver, ctx)
+			return stringUnpackReturnValue(reg, ctx)
 		default:
 			return product.Value{}, false
 		}
+	})
+	if err != nil {
+		panic(err)
 	}
+	heap, err := effectlowering.SealSignatureReturnValueProgram(heapInput, stdlibTableUnpackResultSite, func(ctx effectlowering.SignatureReturnValueInputContext) (product.Value, bool) {
+		if ctx.Index != 0 {
+			return product.Value{}, false
+		}
+		return tableUnpackFirstReturnValue(reg, typeValues, ctx)
+	})
+	if err != nil {
+		panic(err)
+	}
+	return effectlowering.ComposeSignatureReturnValuePrograms(operands, heap)
+}
+
+func stdlibTableUnpackResultSite(site effectlowering.SignatureOutcomeSite) bool {
+	if site.Name != "unpack" && site.Name != "table.unpack" {
+		return false
+	}
+	observed := false
+	site.Site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		if target.ResultIndex() == 0 {
+			observed = true
+			return false
+		}
+		return true
+	})
+	return observed
 }
 
 func typeCallReturnValue(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
-	arg, ok := ctx.Site.ArgumentSourceAt(0)
-	if !ok {
-		return product.Value{}, false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
+	value, ok := ctx.Input.Argument(0)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -76,14 +97,9 @@ func typeCallReturnValue(
 
 func selectCountReturnValue(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
-	arg, ok := ctx.Site.ArgumentSourceAt(0)
-	if !ok {
-		return product.Value{}, false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
+	value, ok := ctx.Input.Argument(0)
 	if !ok || !isHashLiteral(reg, value) {
 		return product.Value{}, false
 	}
@@ -105,10 +121,9 @@ func isHashLiteral(reg *axis.Registry, value product.Value) bool {
 
 func stringUnpackReturnValue(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
-	format, ok := stringUnpackFormatLiteral(reg, resolver, ctx)
+	format, ok := stringUnpackFormatLiteral(reg, ctx)
 	if !ok {
 		if ctx.Index == 0 {
 			return product.Value{}, false
@@ -128,43 +143,19 @@ func stringUnpackReturnValue(
 func tableUnpackFirstReturnValue(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
-	facts factflow.Facts,
-	resolver sourcevalue.SourceValues,
-	visibilityResolver *visibility.Resolver,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
-	arg, ok := ctx.Site.ArgumentSourceAt(0)
+	value, ok := ctx.Input.Argument(0)
 	if !ok {
 		return product.Value{}, false
 	}
-	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
-	if !ok {
-		return product.Value{}, false
-	}
-	if arg.Kind == factflow.ValueSourceExpression && arg.HasExpr {
-		if p, ok := facts.ExpressionPathRef(arg.ExprRef); ok && !p.IsEmpty() {
-			firstPath := p.AppendSegments([]segment.Segment{{
-				Kind:  segment.SegmentIndexInt,
-				Index: 1,
-			}})
-			if first, ok := readexpr.Project(readexpr.Config{
-				Registry:        reg,
-				Facts:           facts,
-				Visibility:      visibilityResolver,
-				TypeValues:      typeValues,
-				ProofVisibility: visibilityResolver,
-			}, ctx.Node.Point, firstPath, ctx.In); ok {
-				return first, true
-			}
-		}
-	}
-	if visibilityResolver != nil {
-		if first, ok := sourcevalue.HeapMemberFromValue(reg, visibilityResolver.KeySpace(), ctx.In, value, []segment.Segment{{
-			Kind:  segment.SegmentIndexInt,
-			Index: 1,
-		}}); ok {
-			return first, true
-		}
+	if first, ok, err := ctx.Input.HeapMember(value, []segment.Segment{{
+		Kind:  segment.SegmentIndexInt,
+		Index: 1,
+	}}); err != nil {
+		panic(err)
+	} else if ok {
+		return first, true
 	}
 	container, ok := typeValues.TypeOf(reg, value)
 	if !ok {
@@ -190,10 +181,9 @@ func stringByteReturnValue(reg *axis.Registry) product.Value {
 
 func stringMatchReturnValue(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
-	if pattern, ok := stringPatternLiteral(reg, resolver, ctx, 1); ok {
+	if pattern, ok := stringPatternLiteral(reg, ctx, 1); ok {
 		returns := stringlib.MatchReturnTypes(pattern)
 		if ctx.Index < len(returns) {
 			return returnValueWithType(reg, returns[ctx.Index]), true
@@ -205,16 +195,15 @@ func stringMatchReturnValue(
 
 func stringFindReturnValue(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
 	if ctx.Index < 2 {
 		return returnValueWithType(reg, normalize.Optional(typ.Integer)), true
 	}
-	if plain, ok := stringBoolLiteralArg(reg, resolver, ctx, 3); ok && plain {
+	if plain, ok := stringBoolLiteralArg(reg, ctx, 3); ok && plain {
 		return typevalue.Nil(reg), true
 	}
-	if pattern, ok := stringPatternLiteral(reg, resolver, ctx, 1); ok {
+	if pattern, ok := stringPatternLiteral(reg, ctx, 1); ok {
 		captures := stringlib.CaptureTypes(pattern)
 		captureIndex := ctx.Index - 2
 		if captureIndex < len(captures) {
@@ -227,13 +216,12 @@ func stringFindReturnValue(
 
 func stringGMatchReturnValue(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (product.Value, bool) {
 	if ctx.Index != 0 {
 		return product.Value{}, false
 	}
-	if pattern, ok := stringPatternLiteral(reg, resolver, ctx, 1); ok {
+	if pattern, ok := stringPatternLiteral(reg, ctx, 1); ok {
 		return returnValueWithType(reg, stringlib.GMatchIterator(stringlib.CaptureTypes(pattern))), true
 	}
 	return returnValueWithType(reg, stringlib.GeneralGMatchIterator()), true
@@ -241,15 +229,10 @@ func stringGMatchReturnValue(
 
 func stringPatternLiteral(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 	signatureIndex int,
 ) (string, bool) {
-	arg, ok := stringSignatureSourceAt(ctx, signatureIndex)
-	if !ok {
-		return "", false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
+	value, ok := stringSignatureValueAt(ctx, signatureIndex)
 	if !ok {
 		return "", false
 	}
@@ -258,15 +241,10 @@ func stringPatternLiteral(
 
 func stringBoolLiteralArg(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 	signatureIndex int,
 ) (bool, bool) {
-	arg, ok := stringSignatureSourceAt(ctx, signatureIndex)
-	if !ok {
-		return false, false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
+	value, ok := stringSignatureValueAt(ctx, signatureIndex)
 	if !ok {
 		return false, false
 	}
@@ -282,34 +260,29 @@ func stringBoolLiteralArg(
 	return b, ok
 }
 
-func stringSignatureArgSourceIndex(ctx effectlowering.SignatureReturnContext, signatureIndex int) int {
+func stringSignatureArgSourceIndex(ctx effectlowering.SignatureReturnValueInputContext, signatureIndex int) int {
 	if ctx.Site.MethodName() != "" {
 		return signatureIndex - 1
 	}
 	return signatureIndex
 }
 
-func stringSignatureSourceAt(ctx effectlowering.SignatureReturnContext, signatureIndex int) (factflow.ValueSource, bool) {
+func stringSignatureValueAt(ctx effectlowering.SignatureReturnValueInputContext, signatureIndex int) (product.Value, bool) {
 	if ctx.Site.MethodName() != "" && signatureIndex == 0 {
-		return ctx.Site.ReceiverSource()
+		return ctx.Input.Receiver()
 	}
 	argIndex := stringSignatureArgSourceIndex(ctx, signatureIndex)
 	if argIndex < 0 {
-		return factflow.ValueSource{}, false
+		return product.Value{}, false
 	}
-	return ctx.Site.ArgumentSourceAt(argIndex)
+	return ctx.Input.Argument(argIndex)
 }
 
 func stringUnpackFormatLiteral(
 	reg *axis.Registry,
-	resolver sourcevalue.SourceValues,
-	ctx effectlowering.SignatureReturnContext,
+	ctx effectlowering.SignatureReturnValueInputContext,
 ) (string, bool) {
-	arg, ok := stringSignatureSourceAt(ctx, 0)
-	if !ok {
-		return "", false
-	}
-	value, ok := resolver.ValueOfSource(ctx.Node.Point, arg, ctx.In, ctx.Read)
+	value, ok := stringSignatureValueAt(ctx, 0)
 	if !ok {
 		return "", false
 	}

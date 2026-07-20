@@ -1,24 +1,21 @@
 package factapply
 
 import (
+	"fmt"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/internal/typegraph"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -27,248 +24,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func applyRootAssignmentFact(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	fact factflow.RootAssignment,
-	closedDynamicAllValues []ClosedDynamicAllValueInvariant,
-	typeValues *typevalue.Cache,
-) (state.State, bool) {
-	declared, hasDeclared := fact.DeclaredValue()
-	out, targetPath, sourceValue, hasSourceValue, applied := applyRootAssignment(ctx, resolver, facts, sources, read, in, out, fact.TargetSymbol(), fact.TargetPathRef(), fact.Source(), declared, hasDeclared, fact.DeclaredValueContracts(), fact.DeclaredValueOverlays())
-	if !applied {
-		if evidenceTarget, ok := rootAssignmentEvidenceTargetPath(fact.TargetSymbol(), fact.TargetPathRef()); ok {
-			out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, evidenceTarget, fact.Source())
-		}
-		return out, false
-	}
-	// The source path-equality proof is suppressed inside the shared helper for a
-	// covariant record exposure of this source: the alias is typed wider than its
-	// source, so the equality would couple them through reference-equality member
-	// congruence and let a write through the wide alias reset the narrow source to
-	// Top. The eager source widen (the covariant exposure applied at the end of the
-	// node transfer) establishes the sound widened source field type instead. An
-	// array exposure keeps the equality for its read-back diagnostics.
-	out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, fact.Source())
-	out = addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
-	out = addPathKeyMembershipsFromDynamicIndexSource(ctx, resolver, facts, out, targetPath, fact.Source())
-	out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
-	out = applyRootAssignmentNumCeil(ctx, resolver, facts, in, out, targetPath, fact.Source())
-	out = applyUserLatticeAssignment(ctx, resolver, facts, in, out, targetPath, fact.Source())
-	out = applyRootAssignmentLenFloorFromValue(ctx, resolver, typeValues, out, targetPath, sourceValue, hasSourceValue)
-	out = applyObjectLiteralEntriesWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), sourceValue, hasSourceValue, typeValues)
-	out = applyClosedDynamicAllValueRootAssignment(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source(), closedDynamicAllValues)
-	return out, applied
-}
-
 func rootAssignmentEvidenceTargetPath(target symbol.ID, targetPath pathdom.Path) (pathdom.Path, bool) {
 	root, ok := rootAssignmentTarget(target, targetPath)
 	if !ok {
 		return pathdom.Path{}, false
 	}
 	return rootAssignmentPath(root, targetPath), true
-}
-
-func applyRootAssignment(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	target symbol.ID,
-	targetPath pathdom.Path,
-	source factflow.ValueSource,
-	declared product.Value,
-	hasDeclared bool,
-	declaredContracts bool,
-	declaredOverlays bool,
-) (state.State, pathdom.Path, product.Value, bool, bool) {
-	root, ok := rootAssignmentTarget(target, targetPath)
-	if !ok {
-		return out, pathdom.Path{}, product.Value{}, false, false
-	}
-	if hasDeclared && declaredContracts {
-		declared = declaredContractWithSourceRuntimeIdentity(ctx, facts, sources, read, in, out, source, declared)
-		targetPath = rootAssignmentPath(root, targetPath)
-		return writeRootSymbol(ctx, resolver, out, root, targetPath, declared), targetPath, declared, false, true
-	}
-	var value product.Value
-	hasSourceValue := false
-	if sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out)); ok && !product.Equal(ctx.Registry, sourceValue, product.Bottom(ctx.Registry)) {
-		value = sourceValue
-		hasSourceValue = true
-		value = refineRootAssignmentDynamicIndexValue(ctx, resolver, facts, sources, read, in, value, source)
-		value = refineRootAssignmentPathPresenceValue(ctx, resolver, facts, in, value, source)
-		if hasDeclared && declaredOverlays {
-			value = valueref.MergeDeclaredContract(ctx.Registry, value, declared)
-			if declaredClaim := product.Get(ctx.Registry, declared, assertion.Key); !declaredClaim.IsBottom() && !declaredClaim.IsTop() {
-				currentClaim := product.Get(ctx.Registry, value, assertion.Key)
-				value = product.Set(ctx.Registry, value, assertion.Key, assertion.Combine(currentClaim, declaredClaim))
-			}
-			if declaredPresence := product.PresenceOf(declared); !declaredPresence.IsBottom() && !declaredPresence.IsTop() {
-				value = product.WithPresence(ctx.Registry, value, declaredPresence)
-			}
-		}
-	} else {
-		if !hasDeclared {
-			return out, pathdom.Path{}, product.Value{}, false, false
-		}
-		value = declared
-	}
-	targetPath = rootAssignmentPath(root, targetPath)
-	return writeRootSymbol(ctx, resolver, out, root, targetPath, value), targetPath, value, hasSourceValue, true
-}
-
-func declaredContractWithSourceRuntimeIdentity(
-	ctx transfer.NodeContext,
-	_ factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	source factflow.ValueSource,
-	declared product.Value,
-) product.Value {
-	if ctx.Registry == nil || sources == nil || !source.HasExpr {
-		return declared
-	}
-	if id, ok := product.Get(ctx.Registry, declared, identity.Key).ID(); ok && id != (identity.ID{}) {
-		return declared
-	}
-	if !declaredContractCanCarrySourceRuntimeIdentity(ctx.Registry, declared) {
-		return declared
-	}
-	sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out))
-	if !ok {
-		return declared
-	}
-	id, ok := product.Get(ctx.Registry, sourceValue, identity.Key).ID()
-	if !ok || id == (identity.ID{}) {
-		return declared
-	}
-	return product.Set(ctx.Registry, declared, identity.Key, identity.Singleton(id))
-}
-
-func declaredContractCanCarrySourceRuntimeIdentity(reg *axis.Registry, declared product.Value) bool {
-	t, ok := typevalue.TypeOf(reg, declared)
-	if !ok || t == nil {
-		return false
-	}
-	switch t.(type) {
-	case *typ.Record:
-		return true
-	default:
-		return typ.IsBuiltinTableTopMarker(t)
-	}
-}
-
-func refineRootAssignmentDynamicIndexValue(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	value product.Value,
-	source factflow.ValueSource,
-) product.Value {
-	if resolver == nil || sources == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return value
-	}
-	dyn, ok := facts.DynamicIndexExpression(source.ExprRef)
-	if !ok {
-		return value
-	}
-	if !dynamicIndexModuloLengthKeyInRange(ctx, resolver, facts, sources, read, in, dyn) {
-		return value
-	}
-	return sourcevalue.WithoutNilRuntimeKind(ctx.Registry, product.WithPresence(ctx.Registry, value, presence.Present()))
-}
-
-func refineRootAssignmentPathPresenceValue(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	in state.State,
-	value product.Value,
-	source factflow.ValueSource,
-) product.Value {
-	if resolver == nil || resolver.KeySpace() == nil {
-		return value
-	}
-	sourcePath, ok := sourcePathFromValueSource(resolver, facts, source)
-	if !ok || sourcePath.IsEmpty() {
-		return value
-	}
-	sourceKey, ok := visibility.AddressAt(resolver, ctx.Point, sourcePath).VisibleLocalKeyspaceKey()
-	if !ok || sourceKey.Kind == keyspace.KindInvalid {
-		return value
-	}
-	snapshot := in.BranchProofsSnapshot(resolver.KeySpace())
-	if snapshot.Bottom || snapshot.Top || len(snapshot.Proofs) == 0 {
-		return value
-	}
-	for _, proof := range snapshot.Proofs {
-		if proof.Kind != pathevidence.BranchProofPathPresence ||
-			!presence.Equal(proof.Presence, presence.Present()) {
-			continue
-		}
-		if rootAssignmentPresenceProofMatchesKey(resolver.KeySpace(), proof.Path, sourceKey) {
-			return sourcevalue.WithoutNilRuntimeKind(ctx.Registry, product.WithPresence(ctx.Registry, value, presence.Present()))
-		}
-	}
-	return value
-}
-
-func rootAssignmentPresenceProofMatchesKey(ks *keyspace.KeySpace, proof, candidate keyspace.Key) bool {
-	if proof == candidate {
-		return true
-	}
-	if ks == nil ||
-		proof.Kind != keyspace.KindResolverSym ||
-		candidate.Kind != keyspace.KindResolverSym ||
-		proof.Sym == 0 ||
-		proof.Sym != candidate.Sym {
-		return false
-	}
-	proofSegments, proofOK := ks.SegmentsView(proof)
-	candidateSegments, candidateOK := ks.SegmentsView(candidate)
-	if !proofOK || !candidateOK || len(proofSegments) != len(candidateSegments) {
-		return false
-	}
-	return pathaddr.SegmentsHasPrefix(proofSegments, candidateSegments) &&
-		pathaddr.SegmentsHasPrefix(candidateSegments, proofSegments)
-}
-
-func dynamicIndexModuloLengthKeyInRange(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	dyn factflow.DynamicIndexExpression,
-) bool {
-	tablePath := dyn.TablePathRef()
-	if !dynamicIndexTableProvenNonEmpty(ctx, resolver, in, tablePath) {
-		return false
-	}
-	baseSource, ok := moduloLengthIndexBaseSource(ctx.Registry, facts, dyn.KeySource(), tablePath)
-	if !ok {
-		return false
-	}
-	baseValue, ok := sources.ValueOfSource(ctx.Point, baseSource, in, readWithCurrentPointState(ctx.Point, read, in))
-	if !ok {
-		return false
-	}
-	return typevalue.HasIntegerType(ctx.Registry, baseValue)
 }
 
 func moduloLengthIndexBaseSource(
@@ -312,7 +73,7 @@ func expressionSourceIsIntegerLiteral(reg *axis.Registry, facts factflow.Facts, 
 	if source.Kind == factflow.ValueSourceLiteral && source.LiteralKind == factflow.ValueSourceLiteralInteger {
 		return source.Int == want
 	}
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+	if reg == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 		return false
 	}
 	value, ok := facts.ExpressionValue(source.ExprRef)
@@ -339,32 +100,6 @@ func expressionSourceIsLengthOfPath(facts factflow.Facts, source factflow.ValueS
 	return ok && got.Equal(p)
 }
 
-func dynamicIndexTableProvenNonEmpty(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	in state.State,
-	tablePath pathdom.Path,
-) bool {
-	stateKey, ok := visibility.AddressAt(resolver, ctx.Point, tablePath).VisibleStateKey()
-	if !ok {
-		return false
-	}
-	if floor, ok := in.ReadLenFloor(resolver.KeySpace(), stateKey); ok && floor >= 1 {
-		return true
-	}
-	if value, ok := in.ReadPathStaticMember(resolver.KeySpace(), stateKey.PathKey()); ok {
-		if t, ok := typevalue.TypeOf(ctx.Registry, value); ok {
-			return typevalue.DefinitelyNonEmptyIndexContainer(t)
-		}
-	}
-	if value, ok := sourcevalue.ReadPathValue(ctx.Registry, resolver, ctx.Point, tablePath, in); ok {
-		if t, ok := typevalue.TypeOf(ctx.Registry, value); ok {
-			return typevalue.DefinitelyNonEmptyIndexContainer(t)
-		}
-	}
-	return false
-}
-
 func rootAssignmentTarget(target symbol.ID, targetPath pathdom.Path) (symbol.ID, bool) {
 	if len(targetPath.Segments) != 0 {
 		return 0, false
@@ -386,168 +121,86 @@ func rootAssignmentPath(target symbol.ID, targetPath pathdom.Path) pathdom.Path 
 	return out
 }
 
-func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, out state.State, target symbol.ID, targetPath pathdom.Path, value product.Value) state.State {
+func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, out state.State, target symbol.ID, targetPath pathdom.Path, value product.Value, preserveIdempotentTarget bool) state.State {
 	if target == 0 {
 		return out
 	}
-	if resolver != nil {
-		preserved := rootAssignmentPreservedStableTargetImplications(ctx.Registry, resolver, out, target, value)
+	if resolver != nil && !(preserveIdempotentTarget && product.Equal(ctx.Registry, out.ReadValue(ctx.Registry, key.SymbolValue(target)), value)) {
+		previousValue := out.ReadValue(ctx.Registry, key.SymbolValue(target))
+		idempotent := product.Equal(ctx.Registry, previousValue, value)
 		if invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath); ok {
 			out = invalidated
 		}
-		out = out.InvalidateStableSymbolPathEvidence(target)
-		for _, implication := range preserved {
-			out = out.AddPathPresenceImplication(implication)
+		domain := state.RegisteredProductDomain(ctx.Registry)
+		mutation, err := PrepareRootAssignmentStablePathEvidence(
+			ctx.Registry, domain, resolver.KeySpace(), out.PathPresenceImplicationsSnapshot(resolver.KeySpace()), target, value, idempotent,
+		)
+		if err != nil {
+			panic(fmt.Sprintf("factapply: seal stable-root path evidence: %v", err))
+		}
+		out, err = domain.ApplyStableRootPathEvidenceMutation(mutation, out)
+		if err != nil {
+			panic(fmt.Sprintf("factapply: apply stable-root path evidence: %v", err))
 		}
 	}
-	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
+	domain := state.RegisteredProductDomain(ctx.Registry)
+	write, err := domain.SealRootAssignmentValueWrite(key.SymbolValue(target), value)
+	if err != nil {
+		panic(fmt.Sprintf("factapply: seal root-assignment Values write: %v", err))
+	}
+	next, err := domain.ApplyRootAssignmentValueWrite(write, out)
+	if err != nil {
+		panic(fmt.Sprintf("factapply: apply root-assignment Values write: %v", err))
+	}
+	return next
 }
 
-func rootAssignmentPreservedStableTargetImplications(
-	reg *axis.Registry,
+func closedDynamicRootAssignmentMemberships(
 	resolver *visibility.Resolver,
-	out state.State,
-	target symbol.ID,
-	value product.Value,
-) []pathevidence.PathPresenceImplication {
-	if reg == nil || resolver == nil || target == 0 {
-		return nil
-	}
-	snapshot := out.PathPresenceImplicationsSnapshot(resolver.KeySpace())
-	if snapshot.Bottom || len(snapshot.Implications) == 0 {
-		return nil
-	}
-	var preserved []pathevidence.PathPresenceImplication
-	for _, implication := range snapshot.Implications {
-		if stableRootImplicationEndpointMatchesSymbol(implication.Trigger, target) {
-			continue
-		}
-		if !stableRootImplicationEndpointMatchesSymbol(implication.Target, target) {
-			continue
-		}
-		if !rootAssignmentValueSatisfiesImplicationTarget(reg, value, implication) {
-			continue
-		}
-		preserved = append(preserved, implication)
-	}
-	return preserved
-}
-
-func stableRootImplicationEndpointMatchesSymbol(candidate keyspace.Key, target symbol.ID) bool {
-	if candidate.Sym != target || candidate.Segs != 0 {
-		return false
-	}
-	switch candidate.Kind {
-	case keyspace.KindUnversionedSym, keyspace.KindStableSym:
-		return true
-	default:
-		return false
-	}
-}
-
-func rootAssignmentValueSatisfiesImplicationTarget(
-	reg *axis.Registry,
-	value product.Value,
-	implication pathevidence.PathPresenceImplication,
-) bool {
-	if implication.HasTargetValue {
-		return product.Domain(reg).LessOrEq(value, implication.TargetValue)
-	}
-	if !presence.Equal(implication.TargetPresence, presence.Present()) && !presence.Equal(implication.TargetPresence, presence.Absent()) {
-		return false
-	}
-	constraint := product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
-	return product.Domain(reg).LessOrEq(value, constraint)
-}
-
-func applyClosedDynamicAllValueRootAssignment(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
 	targetPath pathdom.Path,
-	source factflow.ValueSource,
+	freshEmptyTarget bool,
+	freshEmptyPath func(pathdom.Path) bool,
 	invariants []ClosedDynamicAllValueInvariant,
-) state.State {
+) []state.KeyMembership {
 	if resolver == nil || len(invariants) == 0 || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
-		return out
+		return nil
 	}
 	targetRoot := pathdom.Path{Symbol: targetPath.Symbol}
-	freshEmpty := rootAssignmentIsFreshEmptyTable(ctx, resolver, facts, sources, read, in, out, targetRoot, source)
+	memberships := make([]state.KeyMembership, 0, len(invariants))
 	for _, invariant := range invariants {
-		if invariant.Container.Equal(targetRoot) && freshEmpty {
-			out = addClosedDynamicAllValueInvariantAt(resolver, out, invariant)
+		applies := invariant.Container.Equal(targetRoot) && freshEmptyTarget
+		if !applies && invariant.Table.Equal(targetRoot) && freshEmptyPath != nil {
+			applies = freshEmptyPath(invariant.Container)
+		}
+		if !applies {
 			continue
 		}
-		if invariant.Table.Equal(targetRoot) && rootPathHasFreshEmptyTable(ctx.Registry, out, invariant.Container) {
-			out = addClosedDynamicAllValueInvariantAt(resolver, out, invariant)
+		containerKey := resolver.KeySpace().FromPath(invariant.Container)
+		if containerKey.Kind == keyspace.KindInvalid {
+			continue
+		}
+		tableKey := resolver.KeySpace().FromPath(invariant.Table)
+		if tableKey.Kind == keyspace.KindInvalid {
+			continue
+		}
+		tableStateKey, ok := pathaddr.StateKeyFromPathKey(resolver.KeySpace().Format(tableKey))
+		if !ok {
+			continue
+		}
+		memberships = append(memberships, state.DynamicIndexAllValuesKeyMembership(containerKey, tableStateKey))
+		if invariant.Site != "" {
+			memberships = append(memberships, state.DynamicIndexValueKeyMembership(containerKey, invariant.Site, tableStateKey))
 		}
 	}
-	return out
+	return memberships
 }
 
-func rootAssignmentIsFreshEmptyTable(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	root pathdom.Path,
-	source factflow.ValueSource,
-) bool {
-	if rootPathHasFreshEmptyTable(ctx.Registry, out, root) {
-		return true
-	}
-	if sources == nil || !source.HasExpr {
+func rootPathHasFreshEmptyTable(domain state.ProductDomain, keys *keyspace.KeySpace, st state.State, root pathdom.Path) bool {
+	if !domain.Valid() || keys == nil || root.Symbol == 0 || len(root.Segments) != 0 {
 		return false
 	}
-	literal, ok := facts.ObjectLiteralView(source.ExprRef)
-	if !ok || literal.EntryCount() != 0 {
-		return false
-	}
-	sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out))
-	if !ok {
-		return false
-	}
-	_, ok = product.Get(ctx.Registry, sourceValue, identity.Key).ID()
-	return ok
-}
-
-func addClosedDynamicAllValueInvariantAt(resolver *visibility.Resolver, out state.State, invariant ClosedDynamicAllValueInvariant) state.State {
-	containerKey := resolver.KeySpace().FromPath(invariant.Container)
-	if containerKey.Kind == keyspace.KindInvalid {
-		return out
-	}
-	tableKey := resolver.KeySpace().FromPath(invariant.Table)
-	if tableKey.Kind == keyspace.KindInvalid {
-		return out
-	}
-	tableStateKey, ok := pathaddr.StateKeyFromPathKey(resolver.KeySpace().Format(tableKey))
-	if !ok {
-		return out
-	}
-	return out.AddDynamicIndexAllValuesKeyMembership(containerKey, tableStateKey)
-}
-
-func rootPathHasFreshEmptyTable(reg *axis.Registry, st state.State, root pathdom.Path) bool {
-	if reg == nil || root.Symbol == 0 || len(root.Segments) != 0 {
-		return false
-	}
-	value := st.ReadSymbolValue(reg, root.Symbol)
-	id, ok := product.Get(reg, value, identity.Key).ID()
-	if !ok {
-		return false
-	}
-	object := st.ReadHeapTableObject(reg, id)
-	if heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)) {
-		return false
-	}
-	return len(object.StaticMembers()) == 0 && len(object.DynamicIndexFacts()) == 0
+	fresh, err := domain.RootAssignmentFreshEmptyState(keys, st, key.SymbolValue(root.Symbol))
+	return err == nil && fresh
 }
 
 func rootPathDynamicValueKeyMembershipTables(reg *axis.Registry, st state.State, root pathdom.Path, container keyspace.Key) []pathaddr.StateKey {
@@ -555,7 +208,7 @@ func rootPathDynamicValueKeyMembershipTables(reg *axis.Registry, st state.State,
 		return nil
 	}
 	value := st.ReadSymbolValue(reg, root.Symbol)
-	id, ok := product.Get(reg, value, identity.Key).ID()
+	id, ok := identityvalue.ExactID(reg, value)
 	if !ok {
 		return nil
 	}
@@ -567,41 +220,6 @@ func rootPathDynamicValueKeyMembershipTables(reg *axis.Registry, st state.State,
 		return nil
 	}
 	return dynamicIndexValueCommonKeyMembershipTablesFromFacts(reg, st, container, object.DynamicIndexFacts())
-}
-
-func addPathKeyMembershipsFromDynamicIndexSource(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	targetPath pathdom.Path,
-	source factflow.ValueSource,
-) state.State {
-	if resolver == nil || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return out
-	}
-	dyn, ok := facts.DynamicIndexExpression(source.ExprRef)
-	if !ok {
-		return out
-	}
-	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).VisibleStateKey()
-	if !ok {
-		return out
-	}
-	var readKey pathaddr.StateKey
-	if keyPath, keyOK := dynamicIndexExpressionKeyPath(resolver, facts, dyn); keyOK {
-		readKey, _ = visibility.AddressAt(resolver, ctx.Point, keyPath).VisibleStateKey()
-	}
-	forEachDynamicIndexTableKeyAt(resolver, ctx.Point, dyn.TablePathRef(), func(containerKey keyspace.Key) bool {
-		if readKey != "" {
-			out = out.AddDynamicIndexReadOrigin(targetKey, containerKey, readKey)
-		}
-		for _, table := range dynamicIndexValueCommonKeyMembershipTables(ctx.Registry, out, containerKey) {
-			out = out.AddPathKeyMembership(targetKey, table)
-		}
-		return true
-	})
-	return out
 }
 
 func dynamicIndexExpressionKeyPath(resolver *visibility.Resolver, facts factflow.Facts, dyn factflow.DynamicIndexExpression) (pathdom.Path, bool) {
@@ -620,17 +238,6 @@ func forEachDynamicIndexTableKeyAt(resolver *visibility.Resolver, point cfg.Poin
 		visibility.StateKeyVisible,
 		visibility.StateKeyRootOrVisible,
 	)
-}
-
-func dynamicIndexValueCommonKeyMembershipTables(reg *axis.Registry, st state.State, container keyspace.Key) []pathaddr.StateKey {
-	if tables := st.DynamicIndexAllValuesKeyMembershipTables(container); len(tables) != 0 {
-		return tables
-	}
-	snapshot := st.DynamicIndexFactsSnapshot()
-	if snapshot.Top || len(snapshot.Facts) == 0 {
-		return nil
-	}
-	return dynamicIndexValueCommonKeyMembershipTablesFromFacts(reg, st, container, snapshot.Facts)
 }
 
 func dynamicIndexValueCommonKeyMembershipTablesFromFacts(reg *axis.Registry, st state.State, container keyspace.Key, facts map[dynamicindex.Key]dynamicindex.Fact) []pathaddr.StateKey {
@@ -678,79 +285,40 @@ func dynamicIndexValueCommonKeyMembershipTablesFromFacts(reg *axis.Registry, st 
 	return out
 }
 
-func applyRootAssignmentNumFloor(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	in state.State,
-	out state.State,
-	targetPath pathdom.Path,
-	source factflow.ValueSource,
-) state.State {
-	if resolver == nil || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
-		return out
-	}
-	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).RootOrVisibleStateKey()
-	if !ok {
-		return out
-	}
-	// Reassigning the root invalidates every difference relation over its old
-	// value (and, if it is an array, its old length).
-	out = out.ClearDiffConstraintsFor(targetKey)
-	out = out.ClearNumFloor(resolver.KeySpace(), targetKey)
-	if floor, ok := sourcevalue.NumFloorForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
-		return out.WriteNumFloor(resolver.KeySpace(), targetKey, floor)
-	}
-	return out
-}
-
-func applyRootAssignmentNumCeil(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	in state.State,
-	out state.State,
-	targetPath pathdom.Path,
-	source factflow.ValueSource,
-) state.State {
-	if resolver == nil || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
-		return out
-	}
-	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).RootOrVisibleStateKey()
-	if !ok {
-		return out
-	}
-	out = out.ClearNumCeil(resolver.KeySpace(), targetKey)
-	if ceil, ok := sourcevalue.NumCeilForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
-		return out.WriteNumCeil(resolver.KeySpace(), targetKey, ceil)
-	}
-	return out
-}
-
-func applyRootAssignmentLenFloorFromValue(
-	ctx transfer.NodeContext,
+func prepareRootAssignmentCompletion(
+	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	typeValues *typevalue.Cache,
-	out state.State,
+	point cfg.Point,
 	targetPath pathdom.Path,
 	sourceValue product.Value,
 	hasSourceValue bool,
-) state.State {
-	if resolver == nil || typeValues == nil || !hasSourceValue || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
-		return out
+	freshEmptyTarget bool,
+	freshEmptyPath func(pathdom.Path) bool,
+	invariants []ClosedDynamicAllValueInvariant,
+) (state.RootAssignmentCompletion, error) {
+	config := state.RootAssignmentCompletionConfig{}
+	if resolver != nil && typeValues != nil && hasSourceValue && targetPath.Symbol != 0 && len(targetPath.Segments) == 0 {
+		if t, ok := typeValues.TypeOf(reg, sourceValue); ok {
+			// A length floor is a sparse keyed coordinate. Its bottom element
+			// (zero: no positive lower bound) has no address; publish the key
+			// and positive evidence atomically so the completion can never
+			// contain a semantically meaningless half-coordinate.
+			if floor := staticSequenceLengthFloor(t); floor > 0 {
+				if targetKey, ok := visibility.AddressAt(resolver, point, targetPath).VisibleStateKey(); ok {
+					if local, ok := resolver.KeySpace().InternStateKey(targetKey); ok {
+						length, err := state.NewRootAssignmentLenFloor(local, floor)
+						if err != nil {
+							return state.RootAssignmentCompletion{}, err
+						}
+						config.LenFloor = length
+					}
+				}
+			}
+		}
 	}
-	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).VisibleStateKey()
-	if !ok {
-		return out
-	}
-	t, ok := typeValues.TypeOf(ctx.Registry, sourceValue)
-	if !ok {
-		return out
-	}
-	if floor := staticSequenceLengthFloor(t); floor > 0 {
-		return out.WriteLenFloor(resolver.KeySpace(), targetKey, floor)
-	}
-	return out
+	config.KeyMemberships = closedDynamicRootAssignmentMemberships(resolver, targetPath, freshEmptyTarget, freshEmptyPath, invariants)
+	return state.SealRootAssignmentCompletion(config)
 }
 
 func staticSequenceLengthFloor(t typ.Type) int64 {

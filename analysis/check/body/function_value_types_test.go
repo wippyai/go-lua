@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -23,197 +22,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-func TestFunctionContextEntryHoldsAllowsExtraCurrentHeapFacts(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	requiredID := testTableIdentity(7100, 1)
-	extraID := testTableIdentity(7100, 2)
-	requiredRoot := heapTableValue(reg, requiredID)
-	extraRoot := heapTableValue(reg, extraID)
-	memberValue := product.Set(
-		reg,
-		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
-		runtimekind.Key,
-		runtimekind.Singleton(runtimekind.String),
-	)
-	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: requiredRoot,
-		StaticMembers: map[keyspace.Key]product.Value{
-			nameStaticKey(t, ks, "name"): memberValue,
-		},
-	}))
-	current := entry.WriteHeapTableObject(reg, extraID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: extraRoot,
-	}))
-
-	if !functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds returned false, want extra current heap facts tolerated")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsMissingRequiredHeapFacts(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	requiredID := testTableIdentity(7100, 3)
-	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: heapTableValue(reg, requiredID),
-	}))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, state.State{}, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds returned true, want missing required heap facts rejected")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsWidenedPathRefinement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	pathKey := path.PathKey("sym71@1.value")
-	entry := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Present(), runtimekind.String))
-	current := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Maybe(), runtimekind.String))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds returned true, want widened current path refinement rejected")
-	}
-
-	morePrecise := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Present(), runtimekind.String))
-	if !functionContextEntryHolds(reg, ks, ks, entry, morePrecise, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds rejected matching current path refinement")
-	}
-}
-
-func TestFunctionContextEntryHoldsAllowsMissingSelfIdentityRefinement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	sourceID := identity.LuaFunction(71)
-	entry := state.State{}.WritePathKey(reg, ks, path.PathKey("sym71@1"), identityValue(reg, sourceID))
-
-	if !functionContextEntryHolds(reg, ks, ks, entry, state.State{}, sourceID) {
-		t.Fatalf("functionContextEntryHolds rejected missing refinement for source function identity")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsMissingSelfIdentityWithExtraRequirement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	sourceID := identity.LuaFunction(71)
-	required := product.Set(reg, identityValue(reg, sourceID), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	entry := state.State{}.WritePathKey(reg, ks, path.PathKey("sym71@1"), required)
-
-	if functionContextEntryHolds(reg, ks, ks, entry, state.State{}, sourceID) {
-		t.Fatalf("functionContextEntryHolds accepted missing self path with extra required runtime kind")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsMissingNonSelfIdentityRefinement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	entry := state.State{}.WritePathKey(reg, ks, path.PathKey("sym72@1"), identityValue(reg, identity.LuaFunction(72)))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, state.State{}, identity.LuaFunction(71)) {
-		t.Fatalf("functionContextEntryHolds accepted missing refinement for non-source identity")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsTopIdentityForSpecificPathRefinement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	pathKey := path.PathKey("sym73@1.service")
-	requiredID := testTableIdentity(7300, 1)
-	entry := state.State{}.WritePathKey(reg, ks, pathKey, heapTableValue(reg, requiredID))
-	current := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Present(), runtimekind.Table))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(71)) {
-		t.Fatalf("functionContextEntryHolds accepted identity-top current value for specific required identity")
-	}
-
-	matching := state.State{}.WritePathKey(reg, ks, pathKey, heapTableValue(reg, requiredID))
-	if !functionContextEntryHolds(reg, ks, ks, entry, matching, identity.LuaFunction(71)) {
-		t.Fatalf("functionContextEntryHolds rejected matching specific identity")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsTopRuntimeKindForSpecificPathRefinement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	pathKey := path.PathKey("sym74@1.value")
-	entry := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Present(), runtimekind.String))
-	current := state.State{}.WritePathKey(reg, ks, pathKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(71)) {
-		t.Fatalf("functionContextEntryHolds accepted runtime-kind top current value for specific required kind")
-	}
-}
-
-func TestFunctionContextEntryHoldsAllowsMorePreciseCurrentPathRefinement(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	pathKey := path.PathKey("sym75@1.value")
-	entry := state.State{}.WritePathKey(reg, ks, pathKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
-	current := state.State{}.WritePathKey(reg, ks, pathKey, runtimeValue(reg, presence.Present(), runtimekind.String))
-
-	if !functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(71)) {
-		t.Fatalf("functionContextEntryHolds rejected more precise current path refinement")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsMissingRequiredHeapStaticMember(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	requiredID := testTableIdentity(7100, 4)
-	requiredRoot := heapTableValue(reg, requiredID)
-	memberValue := runtimeValue(reg, presence.Present(), runtimekind.String)
-	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: requiredRoot,
-		StaticMembers: map[keyspace.Key]product.Value{
-			nameStaticKey(t, ks, "name"): memberValue,
-		},
-	}))
-	current := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: requiredRoot,
-	}))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds returned true, want missing required heap static member rejected")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsWidenedHeapStaticMember(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	requiredID := testTableIdentity(7100, 5)
-	requiredRoot := heapTableValue(reg, requiredID)
-	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: requiredRoot,
-		StaticMembers: map[keyspace.Key]product.Value{
-			nameStaticKey(t, ks, "name"): runtimeValue(reg, presence.Present(), runtimekind.String),
-		},
-	}))
-	current := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: requiredRoot,
-		StaticMembers: map[keyspace.Key]product.Value{
-			nameStaticKey(t, ks, "name"): runtimeValue(reg, presence.Maybe(), runtimekind.String),
-		},
-	}))
-
-	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds returned true, want widened heap static member rejected")
-	}
-}
-
-func TestFunctionContextEntryHoldsRejectsTopCurrentHeapWhenHeapFactsRequired(t *testing.T) {
-	reg := standard.Registry()
-	ks := keyspace.New()
-	requiredID := testTableIdentity(7100, 6)
-	entry := state.State{}.WriteHeapTableObject(reg, requiredID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: heapTableValue(reg, requiredID),
-	}))
-	current := state.Domain(reg).Top()
-
-	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(1)) {
-		t.Fatalf("functionContextEntryHolds returned true, want top current heap rejected when entry requires finite heap facts")
-	}
-}
 
 func TestCloneFunctionValueTypesDecouplesMutableIndexes(t *testing.T) {
 	id := identity.LuaFunction(710)
@@ -230,25 +38,17 @@ func TestCloneFunctionValueTypesDecouplesMutableIndexes(t *testing.T) {
 		ByPath: map[factflow.CalleePathKey]*typ.Function{
 			key: originalFn,
 		},
-		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
-			id: {{EntryKeys: keyspace.New(), Type: originalFn}},
-		},
 	}
 
 	clone := cloneFunctionValueTypes(types)
 	types.ByIdentity[id] = mutatedFn
 	types.ByPath[key] = mutatedFn
-	types.ContextsByIdentity[id][0].Type = mutatedFn
-	types.ContextsByIdentity[id] = append(types.ContextsByIdentity[id], FunctionValueContext{Type: mutatedFn})
 
 	if clone.ByIdentity[id] != originalFn {
 		t.Fatalf("clone ByIdentity changed after source map mutation")
 	}
 	if clone.ByPath[key] != originalFn {
 		t.Fatalf("clone ByPath changed after source map mutation")
-	}
-	if got := clone.ContextsByIdentity[id]; len(got) != 1 || got[0].Type != originalFn {
-		t.Fatalf("clone contexts = %#v, want one original context", got)
 	}
 }
 
@@ -260,63 +60,34 @@ func TestWithOwnedFunctionValueTypesReusesCallerOwnedProjection(t *testing.T) {
 		ByIdentity: map[identity.ID]*typ.Function{
 			id: originalFn,
 		},
-		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
-			id: {{EntryKeys: keyspace.New(), Type: originalFn}},
-		},
 	}
 
 	var defensive Result
 	WithFunctionValueTypes(&defensive, types)
 	types.ByIdentity[id] = mutatedFn
-	types.ContextsByIdentity[id][0].Type = mutatedFn
 	if defensive.funcTypes.ByIdentity[id] != originalFn {
 		t.Fatalf("WithFunctionValueTypes reused caller map")
 	}
-	if defensive.funcTypes.ContextsByIdentity[id][0].Type != originalFn {
-		t.Fatalf("WithFunctionValueTypes reused caller context slice")
-	}
 
 	types.ByIdentity[id] = originalFn
-	types.ContextsByIdentity[id][0].Type = originalFn
 	var owned Result
 	WithOwnedFunctionValueTypes(&owned, types)
 	types.ByIdentity[id] = mutatedFn
-	types.ContextsByIdentity[id][0].Type = mutatedFn
 	if owned.funcTypes.ByIdentity[id] != mutatedFn {
 		t.Fatalf("WithOwnedFunctionValueTypes cloned caller-owned map")
-	}
-	if owned.funcTypes.ContextsByIdentity[id][0].Type != mutatedFn {
-		t.Fatalf("WithOwnedFunctionValueTypes cloned caller-owned context slice")
 	}
 }
 
 func TestFunctionValueTypesEqualComparesProjectionStructurally(t *testing.T) {
-	reg := standard.Registry()
 	id := identity.LuaFunction(981)
 	pathKey := factflow.CalleePathKey("sym981.fn")
 	fn := typ.Func().Param("name", typ.String).Returns(typ.Number).Build()
 	otherFn := typ.Func().Param("name", typ.String).Returns(typ.Number).Build()
-	leftKeys := keyspace.New()
-	rightKeys := keyspace.New()
-	if _, ok := leftKeys.FromPathKey(path.PathKey("sym981@1.decoy")); !ok {
-		t.Fatal("left decoy path key did not parse")
-	}
-	contextPath := path.PathKey("sym981@1.ctx")
-	contextValue := typevalue.LiteralString(reg, "ready")
-	leftEntry := state.State{}.
-		WriteValue(reg, statekey.ReturnSlot(0), product.Top()).
-		WritePathKey(reg, leftKeys, contextPath, contextValue)
-	rightEntry := state.State{}.
-		WriteValue(reg, statekey.ReturnSlot(0), product.Top()).
-		WritePathKey(reg, rightKeys, contextPath, contextValue)
 	left := FunctionValueTypes{
 		ByIdentity: map[identity.ID]*typ.Function{id: fn},
 		ByPath:     map[factflow.CalleePathKey]*typ.Function{pathKey: fn},
 		ParamSpansByPath: map[factflow.CalleePathKey][]factflow.SourceSpan{
 			pathKey: {{StartLine: 1, StartCol: 2, EndLine: 1, EndCol: 6}},
-		},
-		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
-			id: {{Entry: leftEntry, EntryKeys: leftKeys, Type: fn}},
 		},
 	}
 	right := FunctionValueTypes{
@@ -325,17 +96,14 @@ func TestFunctionValueTypesEqualComparesProjectionStructurally(t *testing.T) {
 		ParamSpansByPath: map[factflow.CalleePathKey][]factflow.SourceSpan{
 			pathKey: {{StartLine: 1, StartCol: 2, EndLine: 1, EndCol: 6}},
 		},
-		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
-			id: {{Entry: rightEntry, EntryKeys: rightKeys, Type: otherFn}},
-		},
 	}
 
-	if !FunctionValueTypesEqual(reg, left, right) {
+	if !FunctionValueTypesEqual(left, right) {
 		t.Fatalf("FunctionValueTypesEqual rejected structurally equal projection")
 	}
 
 	right.ParamSpansByPath[pathKey] = []factflow.SourceSpan{{StartLine: 9}}
-	if FunctionValueTypesEqual(reg, left, right) {
+	if FunctionValueTypesEqual(left, right) {
 		t.Fatalf("FunctionValueTypesEqual accepted changed span projection")
 	}
 }
@@ -360,7 +128,6 @@ func TestResultHasFunctionValueTypesUsesStructuralEquality(t *testing.T) {
 }
 
 func TestSealedFunctionValueTypesUseIdentityWithoutWeakeningStructuralFallback(t *testing.T) {
-	reg := standard.Registry()
 	id := identity.LuaFunction(983)
 	stringFn := typ.Func().Returns(typ.String).Build()
 	numberFn := typ.Func().Returns(typ.Number).Build()
@@ -368,7 +135,7 @@ func TestSealedFunctionValueTypesUseIdentityWithoutWeakeningStructuralFallback(t
 	shared := SealFunctionValueTypes(FunctionValueTypes{
 		ByIdentity: map[identity.ID]*typ.Function{id: stringFn},
 	})
-	if !FunctionValueTypesEqual(reg, shared, shared) {
+	if !FunctionValueTypesEqual(shared, shared) {
 		t.Fatal("copies of one sealed immutable projection are not equal")
 	}
 
@@ -377,7 +144,7 @@ func TestSealedFunctionValueTypesUseIdentityWithoutWeakeningStructuralFallback(t
 	different := SealFunctionValueTypes(FunctionValueTypes{
 		ByIdentity: map[identity.ID]*typ.Function{id: numberFn},
 	})
-	if FunctionValueTypesEqual(reg, shared, different) {
+	if FunctionValueTypesEqual(shared, different) {
 		t.Fatal("distinct sealed projections bypassed structural comparison")
 	}
 
@@ -386,7 +153,7 @@ func TestSealedFunctionValueTypesUseIdentityWithoutWeakeningStructuralFallback(t
 			id: typ.Func().Returns(typ.String).Build(),
 		},
 	})
-	if !FunctionValueTypesEqual(reg, shared, equivalent) {
+	if !FunctionValueTypesEqual(shared, equivalent) {
 		t.Fatal("distinct structurally equal sealed projections were rejected")
 	}
 }
@@ -430,11 +197,10 @@ func BenchmarkFunctionValueTypesEqualSharedMaterializationProjection(b *testing.
 		types.ByIdentity[identity.LuaFunction(uint64(i+1))] = fn
 	}
 	types = SealFunctionValueTypes(types)
-	reg := standard.Registry()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if !FunctionValueTypesEqual(reg, types, types) {
+		if !FunctionValueTypesEqual(types, types) {
 			b.Fatal("shared projection changed")
 		}
 	}
@@ -450,11 +216,10 @@ func BenchmarkFunctionValueTypesEqualIndependentProjection(b *testing.B) {
 	left := SealFunctionValueTypes(types)
 	right := types
 	right.identity = &functionValueTypesIdentity{}
-	reg := standard.Registry()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if !FunctionValueTypesEqual(reg, left, right) {
+		if !FunctionValueTypesEqual(left, right) {
 			b.Fatal("equivalent independent projection changed")
 		}
 	}
@@ -492,38 +257,6 @@ func TestFunctionValueTypeForCallSiteAtBoundaryUsesCurrentPathValue(t *testing.T
 	if !ok || got != currentFn {
 		t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want current identity function", got, ok)
 	}
-}
-
-func TestFunctionValueTypeForCallSiteAtBoundaryUsesGlobalTableOverridePathValue(t *testing.T) {
-	reg := standard.Registry()
-	result, err := CheckChunk(parseChunk(t, `
-local captured_fn
-
-_G.coroutine = {
-    spawn = function(fn: () -> ())
-        captured_fn = fn
-        return true
-    end,
-}
-
-coroutine.spawn(function() end)
-`), Config{Registry: reg, Globals: []string{"coroutine"}})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-
-	for _, point := range result.Graph().RPO() {
-		site, ok := result.CallSiteView(point)
-		if !ok || site.CalleePathRef().String() != "coroutine.spawn" {
-			continue
-		}
-		fn, ok := result.FunctionValueTypeForCallSiteAtBoundary(point, site)
-		if !ok || fn == nil || len(fn.Params) != 1 {
-			t.Fatalf("FunctionValueTypeForCallSiteAtBoundary = %v/%v, want one-parameter override function", fn, ok)
-		}
-		return
-	}
-	t.Fatal("missing coroutine.spawn call site")
 }
 
 func TestFunctionValueTypeForCallSiteAtBoundaryRejectsStalePathWhenCurrentValueIsNotCallable(t *testing.T) {

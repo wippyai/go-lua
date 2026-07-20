@@ -6,14 +6,18 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -24,6 +28,24 @@ func boundaryStateKey(t *testing.T, keys *keyspace.KeySpace, path keyspace.Key) 
 		t.Fatalf("invalid state path %q", keys.FormatReadOnly(path))
 	}
 	return value
+}
+
+func testBoundaryAuthority(t *testing.T) *BoundaryAllocationAuthority {
+	t.Helper()
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte(t.Name()))
+	authority, err := NewBoundaryAllocationAuthority(ApplyBoundaryAllocationRoute(lexicalidentity.FunctionBody(namespace, 1), lexicalidentity.RootBody(namespace), 1, 0), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return authority
+}
+
+func rebaseBoundaryForTest(authority *BoundaryAllocationAuthority, reg *axis.Registry, artifact BoundaryArtifact, keys *keyspace.KeySpace, roots BoundaryRootMap, namespace BoundaryExistentialNamespace) (BoundaryArtifact, error) {
+	transport, err := authority.BindTransport(keys, roots, namespace)
+	if err != nil {
+		return BoundaryArtifact{}, err
+	}
+	return transport.Rebase(reg, artifact)
 }
 
 func TestBoundaryTransportMixedPathAndSlotNamespacesIsAtomic(t *testing.T) {
@@ -46,7 +68,7 @@ func TestBoundaryTransportMixedPathAndSlotNamespacesIsAtomic(t *testing.T) {
 		t.Fatalf("root boundary projection did not apply product policy: %#v/%v", root, ok)
 	}
 	bindings := BoundaryRootMap{{FromRoot: 0, ToRoot: 0, To: actualPath, ToSlot: actualSlot}}
-	rebased, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: bindings})
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, bindings, BoundaryExistentialNamespace{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,8 +88,71 @@ func TestBoundaryTransportMixedPathAndSlotNamespacesIsAtomic(t *testing.T) {
 		t.Fatal("apply changed fact outside destination closure")
 	}
 
-	if got, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: append(bindings, BoundaryRootBinding{FromRoot: 9, ToRoot: 1, ToSlot: key.SymbolValue(999)})}); err == nil || got.reg != nil {
+	if got, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, append(bindings, BoundaryRootBinding{FromRoot: 9, ToRoot: 1, ToSlot: key.SymbolValue(999)}), BoundaryExistentialNamespace{}); err == nil || got.reg != nil {
 		t.Fatalf("partial slot binding published artifact: %#v, %v", got, err)
+	}
+}
+
+func TestBoundaryTransportPreservesClosedDynamicAllValueMembership(t *testing.T) {
+	reg := standard.Registry()
+	from, to := keyspace.New(), keyspace.New()
+	fromContainer := from.FromPath(pathdom.Path{Symbol: 501})
+	fromTable := from.FromPath(pathdom.Path{Symbol: 502})
+	toContainer := to.FromPath(pathdom.Path{Symbol: 601})
+	toTable := to.FromPath(pathdom.Path{Symbol: 602})
+	fromTableState := boundaryStateKey(t, from, fromTable)
+	toTableState := boundaryStateKey(t, to, toTable)
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	source := Domain(reg).Bottom().
+		AddDynamicIndexAllValuesKeyMembership(fromContainer, fromTableState)
+	artifact, err := ProjectBoundary(reg, from, source, BoundaryRoots{
+		{Slot: key.SymbolValue(501), Path: fromContainer, Value: value},
+		{Slot: key.SymbolValue(502), Path: fromTable, Value: value},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, BoundaryRootMap{
+		{FromRoot: 0, ToRoot: 0, To: toContainer, ToSlot: key.SymbolValue(601)},
+		{FromRoot: 1, ToRoot: 1, To: toTable, ToSlot: key.SymbolValue(602)},
+	}, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := ApplyBoundary(reg, to, Reachable(Domain(reg).Bottom()), rebased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := applied.DynamicIndexAllValuesKeyMembershipTables(toContainer)
+	if len(tables) != 1 || tables[0] != toTableState {
+		t.Fatalf("closed dynamic membership = %#v, want %s", tables, toTableState)
+	}
+}
+
+func TestBoundaryTransportDropsMembershipWithUnregisteredStateKeyEndpoint(t *testing.T) {
+	reg := standard.Registry()
+	from, to := keyspace.New(), keyspace.New()
+	fromContainer := from.FromPath(pathdom.Path{Symbol: 701})
+	toContainer := to.FromPath(pathdom.Path{Symbol: 801})
+	opaqueTable := pathaddr.StateKey(".opaque-table")
+	if _, valid := pathaddr.StateKeyFromPathKey(opaqueTable.PathKey()); valid {
+		t.Fatal("fixture table endpoint unexpectedly belongs to the state-key grammar")
+	}
+	source := Domain(reg).Bottom().AddDynamicIndexValueKeyMembership(
+		fromContainer, "opaque-table-membership", opaqueTable,
+	)
+	artifact, err := ProjectBoundary(reg, from, source, BoundaryRoots{{Path: fromContainer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, BoundaryRootMap{{
+		FromRoot: 0, ToRoot: 0, To: toContainer,
+	}}, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatalf("unregistered membership endpoint blocked an otherwise valid boundary: %v", err)
+	}
+	if snapshot := rebased.world.KeyMembershipsSnapshot(); len(snapshot.Memberships) != 0 {
+		t.Fatalf("unregistered membership endpoint crossed boundary: %#v", snapshot.Memberships)
 	}
 }
 
@@ -82,10 +167,10 @@ func TestBoundaryRejectsForeignRegistryBeforePublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := RebaseBoundary(foreign, artifact, keys, BoundaryRebaseConfig{}); err == nil || got.reg != nil {
+	if got, err := rebaseBoundaryForTest(testBoundaryAuthority(t), foreign, artifact, keys, nil, BoundaryExistentialNamespace{}); err == nil || got.reg != nil {
 		t.Fatalf("foreign rebase = %#v, %v", got, err)
 	}
-	if got, err := ApplyBoundary(foreign, keys, Domain(reg).Bottom(), artifact); err == nil || got.laneMask != 0 {
+	if got, err := ApplyBoundary(foreign, keys, Domain(reg).Bottom(), artifact); err == nil || got.laneMask != (laneMask{}) {
 		t.Fatalf("foreign apply published state: %#v, %v", got, err)
 	}
 }
@@ -117,7 +202,7 @@ func TestBoundarySelectedLaneInventoryIsPreservedExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rebased, err := RebaseBoundary(reg, artifact, keys, BoundaryRebaseConfig{Roots: BoundaryRootMap{{FromRoot: 0, ToRoot: 0, ToSlot: to}}})
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, keys, BoundaryRootMap{{FromRoot: 0, ToRoot: 0, ToSlot: to}}, BoundaryExistentialNamespace{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +216,7 @@ func TestBoundarySelectedLaneInventoryIsPreservedExactly(t *testing.T) {
 	if applied.laneMask != source.laneMask || !product.Equal(reg, applied.ReadValue(reg, to), value) {
 		t.Fatal("selected-lane apply changed inventory or value")
 	}
-	if got, err := ApplyBoundary(reg, keys, Domain(reg).Bottom(), rebased); err == nil || got.laneMask != 0 {
+	if got, err := ApplyBoundary(reg, keys, Domain(reg).Bottom(), rebased); err == nil || got.laneMask != (laneMask{}) {
 		t.Fatal("lane-inventory mismatch did not fail atomically")
 	}
 }
@@ -197,7 +282,7 @@ func TestBoundaryOrdinalRelationClonesDescendantFactsForAliasedArguments(t *test
 		{FromRoot: 1, ToRoot: 1, To: formalTwo, ToSlot: formalTwoSlot},
 		{FromRoot: 0, ToRoot: 0, To: formalOne, ToSlot: formalOneSlot},
 	}
-	rebased, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: bindings})
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, bindings, BoundaryExistentialNamespace{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,8 +315,6 @@ func TestBoundaryIdentityTopRetainsEveryFiniteIdentityAtomically(t *testing.T) {
 	actual := to.FromPath(pathdom.Path{Symbol: 501, Version: 1})
 	first := identity.ID{Kind: "lua.table", Site: "first", Index: 1}
 	second := identity.ID{Kind: "lua.table", Site: "second", Index: 2}
-	firstTo := identity.ID{Kind: "lua.table", Site: "caller-first", Index: 11}
-	secondTo := identity.ID{Kind: "lua.table", Site: "caller-second", Index: 12}
 	source := Domain(reg).Bottom().
 		WriteHeapTableObject(reg, first, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: identityvalue.Present(reg, first)})).
 		WriteHeapTableObject(reg, second, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: identityvalue.Present(reg, second)}))
@@ -240,13 +323,7 @@ func TestBoundaryIdentityTopRetainsEveryFiniteIdentityAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := BoundaryRootMap{{FromRoot: 0, ToRoot: 0, To: actual}}
-	if got, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: bindings, Allocations: BoundaryAllocationMap{first: firstTo, second: firstTo}}); err == nil || got.reg != nil {
-		t.Fatalf("non-injective allocation map published: %#v, %v", got, err)
-	}
-	if got, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: bindings, Allocations: BoundaryAllocationMap{first: firstTo}}); err == nil || got.reg != nil {
-		t.Fatalf("partial allocation map published: %#v, %v", got, err)
-	}
-	rebased, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: bindings, Allocations: BoundaryAllocationMap{first: firstTo, second: secondTo}})
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, bindings, BoundaryExistentialNamespace{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,11 +335,189 @@ func TestBoundaryIdentityTopRetainsEveryFiniteIdentityAtomically(t *testing.T) {
 	if len(objects) != 2 {
 		t.Fatalf("identity-Top boundary retained %d objects, want 2", len(objects))
 	}
-	if _, ok := objects[firstTo]; !ok {
+	if _, ok := objects[first]; !ok {
 		t.Fatal("first rebased object missing")
 	}
-	if _, ok := objects[secondTo]; !ok {
+	if _, ok := objects[second]; !ok {
 		t.Fatal("second rebased object missing")
+	}
+}
+
+func TestBoundaryAllocationAuthorityIsCompleteAndCoalescesRecursiveSite(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	stable := identity.ID{Kind: "lua.table", Site: "stable", Index: 1}
+	caller := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("boundary-allocation-plan")))
+	callee := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("boundary-allocation-plan")), 1)
+	template := identity.ManifestAllocationTemplate(callee, 2, 1)
+	templateTerm := identity.AllocationTerm(template)
+	lens, err := NewBoundaryAllocationAuthority(ApplyBoundaryAllocationRoute(callee, caller, 19, 3), []identity.AllocationTemplate{template})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lens.MatchesFrame(callee, caller, 19, 3) || lens.MatchesFrame(callee, caller, 20, 3) {
+		t.Fatal("allocation authority lost or confused structural frame authority")
+	}
+	fresh, ok := lens.RebaseAllocation(template)
+	if !ok || fresh == (identity.ID{}) {
+		t.Fatalf("fresh identity = %#v/%v", fresh, ok)
+	}
+	templateRoot := product.Set(reg, typevalue.LiteralInt(reg, 7), identity.Key, identity.SingletonTerm(templateTerm))
+	priorRoot := product.Set(reg, typevalue.LiteralString(reg, "prior"), identity.Key, identity.Singleton(fresh))
+	source := Domain(reg).Bottom().
+		WriteHeapTableObject(reg, stable, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: identityvalue.Present(reg, stable)})).
+		WriteHeapTableObject(reg, fresh, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: priorRoot}))
+	source.heapTableIdentity = source.heapTableIdentity.withTerm(templateTerm, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: templateRoot}))
+	source.frozenTables, _ = source.frozenTables.freezeTerm(templateTerm)
+	artifact, err := ProjectBoundary(reg, keys, source, BoundaryRoots{{Value: product.Top()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootMap := BoundaryRootMap{{FromRoot: 0, ToRoot: 0}}
+	if got, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, keys, rootMap, BoundaryExistentialNamespace{}); err == nil || got.reg != nil {
+		t.Fatalf("omitted reachable template published %#v, %v", got, err)
+	}
+	rebased, err := rebaseBoundaryForTest(lens, reg, artifact, keys, rootMap, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := ApplyBoundary(reg, keys, Domain(reg).Bottom(), rebased)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := applied.HeapTableObjectsSnapshot().Objects
+	if len(objects) != 2 || objects[stable].IsBottom() || objects[fresh].IsBottom() {
+		t.Fatalf("recursive site did not coalesce without losing stable object: %#v", objects)
+	}
+	rebasedTemplateRoot := product.Set(reg, templateRoot, identity.Key, identity.Singleton(fresh))
+	wantRoot := product.Join(reg, rebasedTemplateRoot, priorRoot)
+	if !product.Equal(reg, objects[fresh].Root(), wantRoot) {
+		t.Fatalf("recursive site payload was overwritten: got %v, want joined %v", objects[fresh].Root(), wantRoot)
+	}
+	if applied.IsTableFrozen(fresh) {
+		t.Fatal("must-frozen proof survived coalescing with an unfrozen prior site")
+	}
+}
+
+func TestBoundaryTransportPreservesExactStabilizedArtifact(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	path := keys.FromPath(pathdom.Path{Symbol: 337, Version: 1})
+	value := typevalue.LiteralString(reg, "stable")
+	world := Domain(reg).Bottom().WriteLocalPathKey(reg, path, value)
+	artifact, err := ProjectBoundary(reg, keys, world, BoundaryRoots{{Slot: key.SymbolValue(337), Path: path, Value: value}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-boundary")))
+	target := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-boundary")), 1)
+	template := identity.ManifestAllocationTemplate(target, 1, 1)
+	authority, err := NewBoundaryAllocationAuthority(ApplyBoundaryAllocationRoute(target, caller, 19, 0), []identity.AllocationTemplate{template})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := authority.BindTransport(keys, BoundaryRootMap{{FromRoot: 0, ToRoot: 0, To: path, ToSlot: key.SymbolValue(337)}}, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebased, err := transport.Rebase(reg, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebased.keys != artifact.keys || &rebased.roots[0] != &artifact.roots[0] {
+		t.Fatal("identity transport rebuilt immutable boundary storage")
+	}
+	if !Domain(reg).Equal(rebased.world, artifact.world) {
+		t.Fatal("identity transport changed stabilized boundary semantics")
+	}
+}
+
+func TestBoundaryTransportCompilesOneShapeWithoutCachingDynamicValues(t *testing.T) {
+	reg := standard.Registry()
+	from, to := keyspace.New(), keyspace.New()
+	formalPath := from.FromPath(pathdom.Path{Symbol: 701, Version: 1})
+	actualPath := to.FromPath(pathdom.Path{Symbol: 801, Version: 1})
+	formalSlot, actualSlot := key.SymbolValue(701), key.SymbolValue(801)
+	leftValue := typevalue.LiteralString(reg, "left")
+	rightValue := typevalue.LiteralString(reg, "right")
+	project := func(value product.Value) BoundaryArtifact {
+		t.Helper()
+		world := Domain(reg).Bottom().WriteValue(reg, formalSlot, value).WriteLocalPathKey(reg, formalPath, value)
+		artifact, err := ProjectBoundary(reg, from, world, BoundaryRoots{{Slot: formalSlot, Path: formalPath, Value: value}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return artifact
+	}
+	authority := testBoundaryAuthority(t)
+	transport, err := authority.BindTransport(to, BoundaryRootMap{{FromRoot: 0, ToRoot: 0, To: actualPath, ToSlot: actualSlot}}, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := transport.Rebase(reg, project(leftValue))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := transport.Rebase(reg, project(rightValue))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.plans) != 1 {
+		t.Fatalf("compiled transport shapes = %d, want 1", len(transport.plans))
+	}
+	leftRoot, leftOK := left.BoundaryRootAt(0)
+	rightRoot, rightOK := right.BoundaryRootAt(0)
+	if !leftOK || !rightOK || !product.Equal(reg, leftRoot.Value, product.ProjectBoundary(reg, leftValue)) ||
+		!product.Equal(reg, rightRoot.Value, product.ProjectBoundary(reg, rightValue)) || product.Equal(reg, leftRoot.Value, rightRoot.Value) {
+		t.Fatalf("compiled plan cached a dynamic root value: left=%#v/%v right=%#v/%v", leftRoot, leftOK, rightRoot, rightOK)
+	}
+}
+
+func TestBoundaryTransportCanonicalizesRootRelationForPlanSharing(t *testing.T) {
+	reg := standard.Registry()
+	from, to := keyspace.New(), keyspace.New()
+	formalLeft := from.FromPath(pathdom.Path{Symbol: 711, Version: 1})
+	formalRight := from.FromPath(pathdom.Path{Symbol: 712, Version: 1})
+	actualLeft := to.FromPath(pathdom.Path{Symbol: 811, Version: 1})
+	actualRight := to.FromPath(pathdom.Path{Symbol: 812, Version: 1})
+	left := typevalue.LiteralString(reg, "left")
+	right := typevalue.LiteralString(reg, "right")
+	world := Domain(reg).Bottom().
+		WriteValue(reg, key.SymbolValue(711), left).
+		WriteValue(reg, key.SymbolValue(712), right).
+		WriteLocalPathKey(reg, formalLeft, left).
+		WriteLocalPathKey(reg, formalRight, right)
+	artifact, err := ProjectBoundary(reg, from, world, BoundaryRoots{
+		{Slot: key.SymbolValue(711), Path: formalLeft, Value: left},
+		{Slot: key.SymbolValue(712), Path: formalRight, Value: right},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := BoundaryRootMap{
+		{FromRoot: 0, ToRoot: 0, To: actualLeft, ToSlot: key.SymbolValue(811)},
+		{FromRoot: 1, ToRoot: 1, To: actualRight, ToSlot: key.SymbolValue(812)},
+	}
+	authority := testBoundaryAuthority(t)
+	first, err := authority.BindTransport(to, bindings, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := authority.BindTransport(to, BoundaryRootMap{bindings[1], bindings[0]}, BoundaryExistentialNamespace{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("permuted root relation compiled a distinct transport")
+	}
+	if _, err := first.Rebase(reg, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Rebase(reg, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.plans) != 1 {
+		t.Fatalf("permuted root relation compiled %d plans, want 1", len(first.plans))
 	}
 }
 
@@ -274,7 +529,6 @@ func TestBoundaryReverseAliasesCoalesceDeterministically(t *testing.T) {
 	actualPath := pathdom.Path{Symbol: 342, Version: 1}
 	left, right, actual := from.FromPath(leftPath), from.FromPath(rightPath), to.FromPath(actualPath)
 	id := identity.ID{Kind: "lua.table", Site: "reverse-alias", Index: 1}
-	toID := identity.ID{Kind: "lua.table", Site: "reverse-alias-caller", Index: 2}
 	value := identityvalue.Present(reg, id)
 	source := Domain(reg).Bottom().
 		WriteNumFloor(from, boundaryStateKey(t, from, from.FromPath(leftPath.Field("leaf"))), 7).
@@ -288,14 +542,12 @@ func TestBoundaryReverseAliasesCoalesceDeterministically(t *testing.T) {
 		{FromRoot: 0, ToRoot: 0, To: actual},
 		{FromRoot: 1, ToRoot: 0, To: actual},
 	}
-	config := func(roots BoundaryRootMap) BoundaryRebaseConfig {
-		return BoundaryRebaseConfig{Roots: roots, Allocations: BoundaryAllocationMap{id: toID}}
-	}
-	first, err := RebaseBoundary(reg, artifact, to, config(bindings))
+	authority := testBoundaryAuthority(t)
+	first, err := rebaseBoundaryForTest(authority, reg, artifact, to, bindings, BoundaryExistentialNamespace{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RebaseBoundary(reg, artifact, to, config(BoundaryRootMap{bindings[1], bindings[0]}))
+	second, err := rebaseBoundaryForTest(authority, reg, artifact, to, BoundaryRootMap{bindings[1], bindings[0]}, BoundaryExistentialNamespace{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +566,7 @@ func TestBoundaryReverseAliasesCoalesceDeterministically(t *testing.T) {
 	if len(objects) != 1 {
 		t.Fatalf("coalesced heap objects = %d, want 1", len(objects))
 	}
-	if _, ok := objects[toID]; !ok {
+	if _, ok := objects[id]; !ok {
 		t.Fatal("rebased aliased heap identity missing")
 	}
 }
@@ -323,7 +575,8 @@ func TestBoundaryCreatesFiniteStructuralExistentialForConnectedLocalPath(t *test
 	reg := standard.Registry()
 	from, to := keyspace.New(), keyspace.New()
 	formal := from.FromPath(pathdom.Path{Symbol: 601, Version: 1})
-	local := from.FromPath(pathdom.Path{Symbol: 602, Version: 1})
+	localRootPath := pathdom.Path{Symbol: 602, Version: 1}
+	local := from.FromPath(pathdom.Path{Symbol: 602, Version: 1, Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}})
 	actual := to.FromPath(pathdom.Path{Symbol: 701, Version: 1})
 	source := Domain(reg).Bottom().AddBranchProof(pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: formal, Other: local})
 	artifact, err := ProjectBoundary(reg, from, source, BoundaryRoots{{Path: formal, Value: product.Top()}})
@@ -333,7 +586,7 @@ func TestBoundaryCreatesFiniteStructuralExistentialForConnectedLocalPath(t *test
 	namespace := BoundaryExistentialNamespace{
 		OwnerLo: 2, Point: 7, Partition: 2,
 	}
-	rebased, err := RebaseBoundary(reg, artifact, to, BoundaryRebaseConfig{Roots: BoundaryRootMap{{FromRoot: 0, ToRoot: 0, To: actual}}, Existentials: namespace})
+	rebased, err := rebaseBoundaryForTest(testBoundaryAuthority(t), reg, artifact, to, BoundaryRootMap{{FromRoot: 0, ToRoot: 0, To: actual}}, namespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,8 +594,7 @@ func TestBoundaryCreatesFiniteStructuralExistentialForConnectedLocalPath(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	localRoot := local
-	localRoot.Segs = 0
+	localRoot := from.FromPath(localRootPath)
 	existential, ok := to.ImportExistential(from, localRoot, namespace)
 	if !ok {
 		t.Fatal("import existential")
@@ -357,7 +609,11 @@ func TestBoundaryCreatesFiniteStructuralExistentialForConnectedLocalPath(t *test
 	if !ok || otherCall == existential {
 		t.Fatal("two call sites collided in existential namespace")
 	}
-	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: actual, Other: existential}
+	existentialDescendant, ok := to.AppendSegment(existential, segment.Segment{Kind: segment.SegmentField, Name: "channel"})
+	if !ok {
+		t.Fatal("append existential descendant")
+	}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: actual, Other: existentialDescendant}
 	found := false
 	applied.ForEachBranchProof(func(got pathevidence.BranchProof) bool { found = found || got == proof; return true })
 	if !found {

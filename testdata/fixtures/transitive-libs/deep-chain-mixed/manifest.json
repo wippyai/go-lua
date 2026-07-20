@@ -8,8 +8,7 @@
       "min_stack": 1,
       "max_unknown": 1,
       "max_no_fact": 1
-    },
-    "skip": "pending: manifest relational escape/placement lanes + placement-polymorphic summaries (tasks 3eb96899, 150f00f9) not yet landed"
+    }
   },
   "run": {
     "skip": "checker-only placement fixture"

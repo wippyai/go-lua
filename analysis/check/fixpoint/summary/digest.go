@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	internalhash "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -39,6 +40,20 @@ func NormalizedPayloadDigestContext(ctx context.Context, reg *axis.Registry, s S
 	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg, heapKeySpace: heapKeySpace, ctx: ctx}
 	w.writeString("summary-payload-v1")
 	w.writeReflect(reflect.ValueOf(s))
+	if err := w.err(); err != nil {
+		return 0, err
+	}
+	return Digest(w.h.Sum64()), nil
+}
+
+// CanonicalCallOutcomeDigestContext fingerprints a detached call outcome after
+// its heap objects have been structurally imported into heapKeySpace. Unlike a
+// State fingerprint, this includes observable return-correlation and boundary
+// evidence that need not alter the caller's applied point State.
+func CanonicalCallOutcomeDigestContext(ctx context.Context, reg *axis.Registry, heapKeySpace *keyspace.KeySpace, outcome callpayload.CallOutcome) (Digest, error) {
+	w := summaryDigestWriter{h: internalhash.NewWriter(), reg: reg, heapKeySpace: heapKeySpace, ctx: ctx}
+	w.writeString("canonical-call-outcome-v1")
+	w.writeReflect(reflect.ValueOf(outcome))
 	if err := w.err(); err != nil {
 		return 0, err
 	}

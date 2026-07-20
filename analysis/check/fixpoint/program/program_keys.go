@@ -1,16 +1,11 @@
 package program
 
 import (
-	"fmt"
-	"hash/fnv"
-	"slices"
-
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -21,20 +16,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type callContextRef struct {
-	owner summary.SummaryKey
-	expr  factflow.ExprRef
-}
-
-type functionExpressionRef struct {
-	owner summary.SummaryKey
-	expr  factflow.ExprRef
+type keyedFunction struct {
+	funcExpr *ast.FunctionExpr
+	key      summary.SummaryKey
 }
 
 type programKeys struct {
 	rootKey                  summary.SummaryKey
 	functions                []keyedFunction
-	contexts                 contextIndex
 	functionByKey            map[summary.SummaryKey]*ast.FunctionExpr
 	functionKeys             map[symbol.ID]summary.SummaryKey
 	functionIDs              map[identity.ID]summary.SummaryKey
@@ -44,32 +33,7 @@ type programKeys struct {
 	functionTypes            map[summary.SummaryKey]*typ.Function
 	metatableProof           metatableMethodProof
 	metatableMethodReceivers map[symbol.ID]typ.Type
-	metatableSeedReceivers   map[symbol.ID]typ.Type
-	closedDynamicAllValues   []factapply.ClosedDynamicAllValueInvariant
-
-	// inferredParamSeeds carries the call-site parameter seed per function so both
-	// the summary fixpoint and the materialization pass re-check each body with
-	// the same inferred parameter values.
-	inferredParamSeeds map[*ast.FunctionExpr][]paramSeed
-
-	// bindings and enclosed support parameter inference: enclosed is the set of
-	// function symbols whose complete call-site set is statically known, so their
-	// parameters may be inferred from call sites and body usage.
-	bindings *bind.Result
-	enclosed map[symbol.ID]struct{}
-
-	// queryDependencies is compact scheduling evidence extracted while each
-	// context-discovery prepass Result is already live. Edges point from caller
-	// to runtime-resolved lexical callees; no body graph is retained.
-	queryDependencies map[summary.SummaryKey]map[summary.SummaryKey]struct{}
-
-	// certifyRelationContexts keeps the expensive full-domain entry proof off
-	// the legacy hot path. It is enabled only by relation activation/audits.
-	certifyRelationContexts bool
-	// Strict symbolic validation accepts an exact non-Top product even when it
-	// lacks a portable call-boundary type. The certificate still reconstructs
-	// and compares the complete registered State domain.
-	certifyRelationFullProducts bool
+	bindings                 *bind.Result
 }
 
 // functionSymbol returns the function symbol owning fn.
@@ -91,162 +55,19 @@ func (k programKeys) summaryKeyForFunction(fn *ast.FunctionExpr) (summary.Summar
 
 // functionSymbolsByKey inverts functionKeys so a resolved call summary key maps
 // back to its callee function symbol for call-site parameter inference.
-func (k programKeys) functionSymbolsByKey() map[summary.SummaryKey]symbol.ID {
-	if len(k.functionKeys) == 0 {
-		return nil
-	}
-	out := make(map[summary.SummaryKey]symbol.ID, len(k.functionKeys))
-	for sym, key := range k.functionKeys {
-		out[key] = sym
-	}
-	return out
-}
-
-// materializedOwnerRoutingDigest fences only the call-context routing visible
-// to one body. The old whole-program shape digest changed whenever any body
-// discovered a context, invalidating every materialized body even when its own
-// provider routing and all summary reads were unchanged.
-func materializedOwnerRoutingDigest(keys programKeys, owner summary.SummaryKey) uint64 {
-	h := fnv.New64a()
-	writeSummaryKeyDigest(h, owner)
-	expressions := keys.contexts.FunctionExpressionKeysForOwner(owner)
-	refs := make([]factflow.ExprRef, 0, len(expressions))
-	for expr := range expressions {
-		refs = append(refs, expr)
-	}
-	slices.Sort(refs)
-	for _, expr := range refs {
-		fmt.Fprintf(h, "expr:%d=", expr)
-		writeSummaryKeyDigest(h, expressions[expr])
-	}
-	return h.Sum64()
-}
-
-// summaryOwnerResolutionDigest fences the non-summary input consulted by call
-// outcome providers. Summary payloads are validated separately by the solve
-// cache; this digest covers only which summary key a body can select for a
-// call. It is content-derived, so equal independently parsed units retain
-// sharing while a changed call-resolution graph cannot reuse a stale result.
-func summaryOwnerResolutionDigest(keys programKeys, owner summary.SummaryKey) uint64 {
-	h := fnv.New64a()
-	writeSummaryKeyDigest(h, owner)
-	fmt.Fprintf(h, "owner-routing:%d;", materializedOwnerRoutingDigest(keys, owner))
-	writeSymbolSummaryKeySetDigest(h, keys.functionKeys)
-	writeIdentitySummaryKeySetDigest(h, keys.functionIDs)
-	writeSymbolSummaryKeySetDigest(h, keys.targetKeys)
-	writeCalleePathKeySetDigest(h, keys.pathKeys)
-	writeCalleePathMultiKeySetDigest(h, keys.pathMultiKeys)
-	return h.Sum64()
-}
-
-func writeSymbolSummaryKeySetDigest(h interface{ Write([]byte) (int, error) }, values map[symbol.ID]summary.SummaryKey) {
-	if len(values) == 0 {
-		return
-	}
-	keys := make([]symbol.ID, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		fmt.Fprintf(h, "map:%d=", key)
-		writeSummaryKeyDigest(h, values[key])
-	}
-}
-
-func writeIdentitySummaryKeySetDigest(h interface{ Write([]byte) (int, error) }, values map[identity.ID]summary.SummaryKey) {
-	if len(values) == 0 {
-		return
-	}
-	keys := make([]identity.ID, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.SortFunc(keys, func(a, b identity.ID) int {
-		if a.Kind != b.Kind {
-			if a.Kind < b.Kind {
-				return -1
-			}
-			return 1
-		}
-		if a.Site != b.Site {
-			if a.Site < b.Site {
-				return -1
-			}
-			return 1
-		}
-		if a.Index < b.Index {
-			return -1
-		}
-		if a.Index > b.Index {
-			return 1
-		}
-		return 0
-	})
-	for _, key := range keys {
-		fmt.Fprintf(h, "id:%s/%s/%d=", key.Kind, key.Site, key.Index)
-		writeSummaryKeyDigest(h, values[key])
-	}
-}
-
-func writeCalleePathKeySetDigest(h interface{ Write([]byte) (int, error) }, values map[factflow.CalleePathKey]summary.SummaryKey) {
-	if len(values) == 0 {
-		return
-	}
-	keys := make([]factflow.CalleePathKey, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		fmt.Fprintf(h, "path:%s=", key)
-		writeSummaryKeyDigest(h, values[key])
-	}
-}
-
-func writeCalleePathMultiKeySetDigest(h interface{ Write([]byte) (int, error) }, values map[factflow.CalleePathKey][]summary.SummaryKey) {
-	if len(values) == 0 {
-		return
-	}
-	keys := make([]factflow.CalleePathKey, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		fmt.Fprintf(h, "multi:%s=", key)
-		summaryKeys := append([]summary.SummaryKey(nil), values[key]...)
-		slices.SortFunc(summaryKeys, func(a, b summary.SummaryKey) int {
-			if a.Less(b) {
-				return -1
-			}
-			if b.Less(a) {
-				return 1
-			}
-			return 0
-		})
-		for _, summaryKey := range summaryKeys {
-			writeSummaryKeyDigest(h, summaryKey)
-		}
-	}
-}
-
-func writeSummaryKeyDigest(h interface{ Write([]byte) (int, error) }, key summary.SummaryKey) {
-	if key.Ref.Kind == ref.KindCFG {
-		panic("program: process-local CFG function reference cannot cross a digest/artifact boundary")
-	}
-	fmt.Fprintf(
-		h,
-		"%d/%d/%d/%d/%d;",
-		key.Ref.Kind,
-		key.Ref.ID,
-		key.Entry.Values,
-		key.Entry.Facts,
-		key.Entry.References,
-	)
-}
-
 func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Registry, external typeannotation.Resolver, moduleExports importlookup.Source, stmts ...[]ast.Stmt) programKeys {
+	return collectKeysWithPublicRoot(bindings, root, nil, reg, external, moduleExports, stmts...)
+}
+
+// collectFunctionKeys assigns the demanded function's public identity while
+// collecting every binder-derived lookup. A RunFunction root is one lexical
+// body, so its identity, target, and path bindings must all name the configured
+// root key rather than also publishing the binder symbol key.
+func collectFunctionKeys(bindings *bind.Result, root summary.SummaryKey, publicRoot *ast.FunctionExpr, reg *axis.Registry, external typeannotation.Resolver, moduleExports importlookup.Source, stmts ...[]ast.Stmt) programKeys {
+	return collectKeysWithPublicRoot(bindings, root, publicRoot, reg, external, moduleExports, stmts...)
+}
+
+func collectKeysWithPublicRoot(bindings *bind.Result, root summary.SummaryKey, publicRoot *ast.FunctionExpr, reg *axis.Registry, external typeannotation.Resolver, moduleExports importlookup.Source, stmts ...[]ast.Stmt) programKeys {
 	metatableContext := collectMetatableMethodContext(bindings, external, moduleExports, stmts...)
 	out := programKeys{
 		rootKey:                  root,
@@ -257,10 +78,8 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		pathKeys:                 make(map[factflow.CalleePathKey]summary.SummaryKey),
 		pathMultiKeys:            make(map[factflow.CalleePathKey][]summary.SummaryKey),
 		functionTypes:            make(map[summary.SummaryKey]*typ.Function),
-		contexts:                 newContextIndex(),
 		metatableProof:           metatableContext.proof,
 		metatableMethodReceivers: metatableContext.methodReceivers,
-		metatableSeedReceivers:   metatableContext.seedReceivers,
 		bindings:                 bindings,
 	}
 	if bindings == nil {
@@ -273,6 +92,9 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 			return true
 		}
 		key := summary.DefaultSummaryKey(ref.FromSymbol(origin.Symbol))
+		if origin.Func == publicRoot {
+			key = root
+		}
 		out.functions = append(out.functions, keyedFunction{funcExpr: origin.Func, key: key})
 		out.functionByKey[key] = origin.Func
 		out.functionKeys[origin.Symbol] = key
@@ -309,7 +131,6 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 	for pathKey := range ambiguousPathKeys {
 		delete(out.pathKeys, pathKey)
 	}
-	applyMetatableMethodReceiverEntryStates(&out, bindings, reg, external, moduleExports, stmts...)
 	return out
 }
 

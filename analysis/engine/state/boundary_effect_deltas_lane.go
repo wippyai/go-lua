@@ -7,37 +7,43 @@ import (
 )
 
 func projectEffectDeltasBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if source.effectDeltas.top {
-		out.effectDeltas = source.effectDeltas
-		return true
+	out.effectDeltas, _ = projectEffectDeltasBoundaryFactor(ctx, source.effectDeltas)
+	return true
+}
+func projectEffectDeltasBoundaryFactor(ctx *boundaryProjectContext, source effectDeltaLane) (effectDeltaLane, bool) {
+	if source.top {
+		return source, true
 	}
-	values := projectFiniteMap(source.effectDeltas.values, func(key effectdelta.Key, _ effectdelta.Value) bool { return ctx.closure.ContainsPath(key.Target) })
+	values := projectFiniteMap(source.values, func(key effectdelta.Key, _ effectdelta.Value) bool { return ctx.closure.ContainsPath(key.Target) })
 	for key, value := range values {
 		value.Before = product.ProjectBoundary(ctx.reg, value.Before)
 		value.After = product.ProjectBoundary(ctx.reg, value.After)
 		values[key] = value
 	}
-	out.effectDeltas = effectDeltaLaneFromMap(effectdelta.MapDomain(ctx.reg), values)
-	return true
+	return effectDeltaLaneFromMap(effectdelta.MapDomain(ctx.reg), values), true
 }
 func rebaseEffectDeltasBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if source.effectDeltas.top {
-		out.effectDeltas = source.effectDeltas
-		return true
+	var ok bool
+	out.effectDeltas, ok = rebaseEffectDeltasBoundaryFactor(ctx, source.effectDeltas)
+	return ok
+}
+func rebaseEffectDeltasBoundaryFactor(ctx *boundaryRebaseContext, source effectDeltaLane) (effectDeltaLane, bool) {
+	if source.top {
+		return source, true
 	}
-	values := make(map[effectdelta.Key]effectdelta.Value, len(source.effectDeltas.values))
-	for key, value := range source.effectDeltas.values {
+	values := make(map[effectdelta.Key]effectdelta.Value, len(source.values))
+	for key, value := range source.values {
 		paths, ok := boundaryRebasePaths(ctx, key.Target)
 		if !ok {
-			return false
+			return effectDeltaLane{}, false
 		}
 		value.Before, ok = rebaseBoundaryProduct(ctx, value.Before)
 		if !ok {
-			return false
+			return effectDeltaLane{}, false
 		}
 		value.After, ok = rebaseBoundaryProduct(ctx, value.After)
 		if !ok {
-			return false
+			return effectDeltaLane{}, false
 		}
 		for _, path := range paths {
 			nextKey := key
@@ -49,17 +55,14 @@ func rebaseEffectDeltasBoundary(ctx *boundaryRebaseContext, source State, out *S
 			values[nextKey] = candidate
 		}
 	}
-	out.effectDeltas = effectDeltaLaneFromMap(effectdelta.MapDomain(ctx.reg), values)
-	return true
+	return effectDeltaLaneFromMap(effectdelta.MapDomain(ctx.reg), values), true
 }
-func applyEffectDeltasBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if destination.effectDeltas.top || fragment.effectDeltas.top {
-		out.effectDeltas = effectDeltaLane{mapLane: mapLane[effectdelta.Key, effectdelta.Value]{top: true}}
-		return true
+func applyEffectDeltasBoundaryLane(ctx *boundaryApplyContext, destination, fragment effectDeltaLane) (effectDeltaLane, bool) {
+	if destination.top || fragment.top {
+		return effectDeltaLane{mapLane: mapLane[effectdelta.Key, effectdelta.Value]{top: true}}, true
 	}
-	values := applyFiniteMap(destination.effectDeltas.values, fragment.effectDeltas.values, func(key effectdelta.Key, _ effectdelta.Value) bool { return ctx.closure.ContainsPath(key.Target) })
-	out.effectDeltas = effectDeltaLaneFromMap(effectdelta.MapDomain(ctx.reg), values)
-	return true
+	values := applyFiniteMap(destination.values, fragment.values, func(key effectdelta.Key, _ effectdelta.Value) bool { return ctx.closure.ContainsPath(key.Target) })
+	return effectDeltaLaneFromMap(effectdelta.MapDomain(ctx.reg), values), true
 }
 func equalEffectDeltasBoundary(reg *axis.Registry, a, b State) bool {
 	d := effectdelta.MapDomain(reg)

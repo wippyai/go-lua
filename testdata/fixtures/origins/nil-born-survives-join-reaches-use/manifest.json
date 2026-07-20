@@ -95,8 +95,7 @@
           }
         ]
       }
-    ],
-    "skip": "pending: origin-chain witness traces (task 13897ee5) not yet rendered"
+    ]
   },
   "run": {
     "skip": "diagnostic-only fixture"

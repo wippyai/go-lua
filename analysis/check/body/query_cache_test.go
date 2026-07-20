@@ -15,7 +15,7 @@ func TestResultQueryCachePathValuesUseInlineTierBeforeMap(t *testing.T) {
 	value := cachedProductValue{value: product.Top(), ok: true}
 
 	for i := 0; i < resultQueryInline; i++ {
-		cache.pathValues.remember(pathValueCacheKey{point: cfg.Point(i + 1), path: testQueryCachePathIdentity(i + 1)}, value)
+		cache.pathValues.remember(pathValueCacheKey{point: cfg.Point(i + 1), path: testQueryCachePathKey(i + 1)}, value)
 	}
 	if cache.pathValues.inlineLen != resultQueryInline {
 		t.Fatalf("inline path entries = %d, want %d", cache.pathValues.inlineLen, resultQueryInline)
@@ -24,7 +24,7 @@ func TestResultQueryCachePathValuesUseInlineTierBeforeMap(t *testing.T) {
 		t.Fatal("path cache allocated map before inline tier overflowed")
 	}
 
-	overflow := pathValueCacheKey{point: cfg.Point(99), path: testQueryCachePathIdentity(99)}
+	overflow := pathValueCacheKey{point: cfg.Point(99), path: testQueryCachePathKey(99)}
 	cache.pathValues.remember(overflow, value)
 	if cache.pathValues.inlineLen != 0 {
 		t.Fatalf("inline path entries after overflow = %d, want 0", cache.pathValues.inlineLen)
@@ -85,7 +85,7 @@ func TestPathValueCacheKeyUsesKeyspaceIdentity(t *testing.T) {
 	if got.mode != sourceValueReadBoundary || got.point != cfg.Point(9) {
 		t.Fatalf("cache key = %#v, want mode/point preserved", got)
 	}
-	if got.path.Key.Kind == keyspace.KindInvalid || got.path.Legacy != "" {
+	if got.path.Kind == keyspace.KindInvalid {
 		t.Fatalf("cache key path identity = %#v, want keyspace-backed identity", got.path)
 	}
 }
@@ -98,7 +98,7 @@ func TestDominatingMemberReadPresenceKeyUsesSamePathIdentityPolicy(t *testing.T)
 	if !ok {
 		t.Fatal("newDominatingMemberReadPresenceKey failed")
 	}
-	if got.point != cfg.Point(4) || got.path.Key.Kind == keyspace.KindInvalid || got.path.Legacy != "" {
+	if got.point != cfg.Point(4) || got.path.Kind == keyspace.KindInvalid {
 		t.Fatalf("presence key = %#v, want keyspace-backed identity at point 4", got)
 	}
 }
@@ -107,6 +107,6 @@ func testQueryCacheKey(index int) keyspace.Key {
 	return keyspace.Key{Kind: keyspace.KindRetSlot, Root: uint32(index)}
 }
 
-func testQueryCachePathIdentity(index int) keyspace.PathIdentity {
-	return keyspace.PathIdentity{Key: testQueryCacheKey(index)}
+func testQueryCachePathKey(index int) keyspace.Key {
+	return testQueryCacheKey(index)
 }

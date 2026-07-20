@@ -13,6 +13,11 @@ type fieldResult struct {
 	nilable bool
 }
 
+// zeroFieldResult is the descendAccessWrappers stop-value thunk for every
+// resolution-style caller in this package: an exhausted or unresolvable
+// walk reports "unresolved", not a fabricated type.
+func zeroFieldResult() fieldResult { return fieldResult{} }
+
 func (r fieldResult) materialize() (typ.Type, bool) {
 	if !r.ok {
 		return nil, false

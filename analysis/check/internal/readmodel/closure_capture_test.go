@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -18,10 +19,11 @@ local function get(): string
 end
 return get
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram21, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram21.RootResult()
 	var captures []ClosureCapture
 	New(result).ForEachClosureCapture(func(capture ClosureCapture) bool {
 		captures = append(captures, capture)

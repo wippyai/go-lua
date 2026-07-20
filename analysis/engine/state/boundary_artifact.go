@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 	"sort"
+	"sync"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
@@ -11,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 // BoundaryArtifact is the opaque, root-reachable portion of an abstract world
@@ -24,6 +24,7 @@ type BoundaryArtifact struct {
 	closure BoundaryClosure
 	world   State
 	roots   BoundaryRoots
+	shape   boundaryArtifactShape
 }
 
 type boundaryProjectContext struct {
@@ -38,9 +39,27 @@ type boundaryRebaseContext struct {
 	toKeys      *keyspace.KeySpace
 	roots       boundaryPathMap
 	slots       map[key.Value][]key.Value
-	allocations BoundaryAllocationMap
-	fromClosure BoundaryClosure
-	toClosure   BoundaryClosure
+	allocations *BoundaryAllocationAuthority
+	identities  *IdentitySubstitutionAuthority
+	// identityImaged records that coordinate owner terms were already mapped
+	// through the Apply topology image; boundary transport must preserve those
+	// caller-owned formal terms while still rebasing paths and allocations.
+	identityImaged bool
+	quotient       boundaryInverseQuotient
+	fromClosure    BoundaryClosure
+	toClosure      BoundaryClosure
+	// formalRekey is the sole formal root-image law. Ordinary structural
+	// lanes use the same resolver-version quotient as coordinate families and
+	// scalar transaction children; roots is retained for the exact inverse.
+	formalRekey *CoordinateFormalRootRekey
+	// structuralIdentity selects the full-State allocation quotient: paths,
+	// slots, and state keys remain in the same owner keyspace while only exact
+	// allocation identities are alpha-renamed.
+	structuralIdentity bool
+	// relationBottom is exact elimination by a Bottom formal image, not an
+	// execution error. The owning relational transaction consumes it as its
+	// unreachable element.
+	relationBottom bool
 }
 
 type boundaryApplyContext struct {
@@ -51,12 +70,22 @@ type boundaryApplyContext struct {
 
 type BoundaryExistentialNamespace = keyspace.ExistentialNamespace
 
-// BoundaryRebaseConfig carries the complete finite substitution authority for
-// one μ application.
-type BoundaryRebaseConfig struct {
-	Roots        BoundaryRootMap
-	Allocations  BoundaryAllocationMap
-	Existentials BoundaryExistentialNamespace
+// validBoundaryRootSlot is the single structural-boundary slot vocabulary.
+// Expression cells are evaluator scratch and never structural roots. Symbols,
+// final N5 tuple slots, and point-owned call-result carriers are addressable
+// boundary coordinates.
+func validBoundaryRootSlot(slot key.Value) bool {
+	if slot == 0 {
+		return true
+	}
+	if _, ok := key.ParseSymbolValue(slot); ok {
+		return true
+	}
+	if _, ok := key.ParseReturnSlot(slot); ok {
+		return true
+	}
+	_, _, ok := key.ParseCallResult(slot)
+	return ok
 }
 
 // ProjectBoundary computes and projects the complete finite boundary closure.
@@ -70,12 +99,8 @@ func ProjectBoundary(reg *axis.Registry, keys *keyspace.KeySpace, source State, 
 		if !product.BelongsToRegistry(reg, root.Value) {
 			return BoundaryArtifact{}, fmt.Errorf("state: boundary root value belongs to a foreign registry")
 		}
-		if root.Slot != 0 {
-			if _, ok := key.ParseSymbolValue(root.Slot); !ok {
-				if _, ok := key.ParseReturnSlot(root.Slot); !ok {
-					return BoundaryArtifact{}, fmt.Errorf("state: malformed boundary root slot")
-				}
-			}
+		if !validBoundaryRootSlot(root.Slot) {
+			return BoundaryArtifact{}, fmt.Errorf("state: malformed boundary root slot")
 		}
 		if root.Path.Kind != keyspace.KindInvalid && keys.FormatReadOnly(root.Path) == "" {
 			return BoundaryArtifact{}, fmt.Errorf("state: boundary root belongs to a foreign keyspace")
@@ -94,73 +119,102 @@ func ProjectBoundary(reg *axis.Registry, keys *keyspace.KeySpace, source State, 
 	for i := range projectedRoots {
 		projectedRoots[i].Value = product.ProjectBoundary(reg, projectedRoots[i].Value)
 	}
-	return BoundaryArtifact{reg: reg, keys: keys, closure: closure, world: out, roots: projectedRoots}, nil
+	artifact := BoundaryArtifact{reg: reg, keys: keys, closure: closure, world: out, roots: projectedRoots}
+	artifact.shape = artifact.structuralShape()
+	return artifact, nil
 }
 
-// RebaseBoundary atomically substitutes structural roots and lexical
+// BoundaryTransport is one opaque, immutable boundary transaction. Root
+// relation, destination keyspace, existential namespace, and allocation route
+// authority are sealed together before any artifact can be rebased.
+type BoundaryTransport struct {
+	authority    *BoundaryAllocationAuthority
+	toKeys       *keyspace.KeySpace
+	roots        BoundaryRootMap
+	existentials BoundaryExistentialNamespace
+	planMu       sync.Mutex
+	plans        map[boundaryArtifactShape][]*boundaryTransportPlan
+}
+
+func (authority *BoundaryAllocationAuthority) BindTransport(toKeys *keyspace.KeySpace, roots BoundaryRootMap, existentials BoundaryExistentialNamespace) (*BoundaryTransport, error) {
+	if authority == nil || toKeys == nil || !toKeys.Valid() {
+		return nil, fmt.Errorf("state: boundary transport requires allocation and keyspace authority")
+	}
+	ownedRoots := canonicalBoundaryRootMap(roots)
+	identity := boundaryTransportIdentityOf(toKeys, ownedRoots, existentials)
+	authority.transportMu.Lock()
+	defer authority.transportMu.Unlock()
+	if authority.transportBuckets == nil {
+		authority.transportBuckets = make(map[boundaryTransportIdentity][]*BoundaryTransport)
+	}
+	for _, prior := range authority.transportBuckets[identity] {
+		if prior.toKeys == toKeys && prior.existentials == existentials && boundaryRootMapEqual(prior.roots, ownedRoots) {
+			return prior, nil
+		}
+	}
+	transport := &BoundaryTransport{authority: authority, toKeys: toKeys, roots: ownedRoots, existentials: existentials, plans: make(map[boundaryArtifactShape][]*boundaryTransportPlan)}
+	authority.transportBuckets[identity] = append(authority.transportBuckets[identity], transport)
+	return transport, nil
+}
+
+// Rebase atomically substitutes structural roots and lexical
 // allocation identities into a new keyspace authority. An unmapped reachable
 // path or identity rejects the complete artifact; no partial carrier escapes.
-func RebaseBoundary(reg *axis.Registry, artifact BoundaryArtifact, toKeys *keyspace.KeySpace, config BoundaryRebaseConfig) (BoundaryArtifact, error) {
+func (transport *BoundaryTransport) Rebase(reg *axis.Registry, artifact BoundaryArtifact) (BoundaryArtifact, error) {
+	if transport == nil {
+		return BoundaryArtifact{}, fmt.Errorf("state: boundary rebase requires a sealed transport")
+	}
+	authority, toKeys, roots := transport.authority, transport.toKeys, transport.roots
 	if reg == nil || artifact.reg != reg || artifact.keys == nil || !artifact.keys.Valid() || toKeys == nil || !toKeys.Valid() {
 		return BoundaryArtifact{}, fmt.Errorf("state: boundary rebase requires registry and valid keyspaces")
 	}
-	if !boundaryAllocationMapInjective(artifact.closure, config.Allocations) {
-		return BoundaryArtifact{}, fmt.Errorf("state: boundary allocation map is incomplete or non-injective")
+	if authority == nil {
+		return BoundaryArtifact{}, fmt.Errorf("state: boundary rebase requires frame allocation authority")
 	}
-	rootPaths, rootSlots, aliases, rootCount, ok := buildBoundaryRootRelation(artifact, toKeys, config.Roots)
-	if !ok {
-		return BoundaryArtifact{}, fmt.Errorf("state: invalid boundary root relation")
+	if !boundaryAllocationAuthorityCovers(artifact.closure, authority) {
+		return BoundaryArtifact{}, fmt.Errorf("state: allocation authority omits a reachable template")
 	}
-	effectiveRoots, ok := completeBoundaryRootMap(artifact.keys, toKeys, artifact.closure, rootPaths, config.Existentials)
-	if !ok {
-		return BoundaryArtifact{}, fmt.Errorf("state: boundary existential root construction failed")
+	// A stabilized target boundary is commonly projected and admitted again at
+	// the same structural addresses. Once allocation templates have already
+	// been quotiented, that transport is the mathematical identity. Preserve
+	// the immutable artifact directly instead of rebuilding its complete
+	// closure and all seventeen lane fragments on every recursive equation.
+	if boundaryTransportIsIdentity(artifact, toKeys, roots) {
+		return artifact, nil
 	}
-	closure, ok := rebaseBoundaryClosure(artifact.keys, toKeys, artifact.closure, effectiveRoots, rootSlots, config.Allocations)
-	if !ok {
-		return BoundaryArtifact{}, fmt.Errorf("state: boundary closure rebase failed")
+	plan, err := transport.planFor(artifact)
+	if err != nil {
+		return BoundaryArtifact{}, err
 	}
-	ctx := boundaryRebaseContext{
-		reg: reg, fromKeys: artifact.keys, toKeys: toKeys, roots: effectiveRoots, slots: rootSlots,
-		allocations: config.Allocations, fromClosure: artifact.closure, toClosure: closure,
+	return plan.apply(reg, artifact)
+}
+
+func boundaryTransportIsIdentity(artifact BoundaryArtifact, toKeys *keyspace.KeySpace, roots BoundaryRootMap) bool {
+	if artifact.keys != toKeys || len(roots) != len(artifact.roots) {
+		return false
 	}
-	out := State{laneMask: artifact.world.laneMask}
-	for _, spec := range defaultLaneCatalog.specs {
-		if !artifact.world.laneMask.allows(spec.bit) {
-			continue
-		}
-		if !spec.boundary.rebase(&ctx, artifact.world, &out) {
-			return BoundaryArtifact{}, fmt.Errorf("state: boundary rebase failed in lane %q", spec.id)
-		}
-	}
-	if len(aliases) != 0 {
-		if out.laneMask.allows(defaultLaneCatalog.mustLaneBit(LanePathEvidence)) {
-			for _, alias := range aliases {
-				out = out.AddBranchProof(pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: alias[0], Other: alias[1]})
-			}
+	for source := range artifact.closure.identities {
+		if _, allocation := source.Allocation(); allocation {
+			return false
 		}
 	}
-	out.canonical = true
-	rebasedRoots := make(BoundaryRoots, rootCount)
-	rootSet := make([]bool, rootCount)
-	valueDomain := product.Domain(reg)
-	for _, binding := range config.Roots {
+	seen := make([]bool, len(roots))
+	for _, binding := range roots {
+		if binding.FromRoot < 0 || binding.FromRoot >= len(artifact.roots) || binding.ToRoot != binding.FromRoot || seen[binding.FromRoot] {
+			return false
+		}
 		root := artifact.roots[binding.FromRoot]
-		root.Slot, root.Path = binding.ToSlot, binding.To
-		root.Value, ok = rebaseBoundaryValue(&ctx, root.Value)
-		if !ok {
-			return BoundaryArtifact{}, fmt.Errorf("state: boundary root value rebase failed")
+		if binding.To != root.Path || binding.ToSlot != root.Slot {
+			return false
 		}
-		if rootSet[binding.ToRoot] {
-			if rebasedRoots[binding.ToRoot].Slot != root.Slot || rebasedRoots[binding.ToRoot].Path != root.Path {
-				return BoundaryArtifact{}, fmt.Errorf("state: boundary destination root schema collision")
-			}
-			rebasedRoots[binding.ToRoot].Value = valueDomain.Join(rebasedRoots[binding.ToRoot].Value, root.Value)
-		} else {
-			rebasedRoots[binding.ToRoot] = root
-			rootSet[binding.ToRoot] = true
+		seen[binding.FromRoot] = true
+	}
+	for _, present := range seen {
+		if !present {
+			return false
 		}
 	}
-	return BoundaryArtifact{reg: reg, keys: toKeys, closure: closure, world: out, roots: rebasedRoots}, nil
+	return true
 }
 
 func buildBoundaryRootRelation(artifact BoundaryArtifact, toKeys *keyspace.KeySpace, bindings BoundaryRootMap) (boundaryPathMap, map[key.Value][]key.Value, [][2]keyspace.Key, int, bool) {
@@ -169,6 +223,7 @@ func buildBoundaryRootRelation(artifact BoundaryArtifact, toKeys *keyspace.KeySp
 	}
 	seenFrom := make([]bool, len(artifact.roots))
 	toOrdinals := make(map[int]struct{}, len(bindings))
+	scalarOwners := make(map[int]int, len(bindings))
 	paths := make(boundaryPathMap, 0, len(bindings))
 	slots := make(map[key.Value][]key.Value)
 	aliases := make([][2]keyspace.Key, 0)
@@ -179,26 +234,22 @@ func buildBoundaryRootRelation(artifact BoundaryArtifact, toKeys *keyspace.KeySp
 			return nil, nil, nil, 0, false
 		}
 		source := artifact.roots[binding.FromRoot]
-		if (source.Path.Kind == keyspace.KindInvalid) != (binding.To.Kind == keyspace.KindInvalid) ||
-			binding.To.Kind != keyspace.KindInvalid && toKeys.FormatReadOnly(binding.To) == "" {
+		if binding.To.Kind != keyspace.KindInvalid && toKeys.FormatReadOnly(binding.To) == "" {
 			return nil, nil, nil, 0, false
 		}
-		if (source.Slot == 0) != (binding.ToSlot == 0) {
+		if !validBoundaryRootSlot(binding.ToSlot) {
 			return nil, nil, nil, 0, false
-		}
-		if binding.ToSlot != 0 {
-			if _, ok := key.ParseSymbolValue(binding.ToSlot); !ok {
-				if _, ok := key.ParseReturnSlot(binding.ToSlot); !ok {
-					return nil, nil, nil, 0, false
-				}
-			}
 		}
 		seenFrom[binding.FromRoot] = true
 		toOrdinals[binding.ToRoot] = struct{}{}
+		scalarOwners[binding.ToRoot]++
 		if binding.ToRoot > maxTo {
 			maxTo = binding.ToRoot
 		}
-		if source.Path.Kind != keyspace.KindInvalid {
+		// A value-only actual has no caller structural address.  Do not install
+		// an explicit source->Invalid path edge: completeBoundaryRootMap must give
+		// any reachable source structure its frame-owned existential image.
+		if source.Path.Kind != keyspace.KindInvalid && binding.To.Kind != keyspace.KindInvalid {
 			paths = append(paths, boundaryPathBinding{from: source.Path, to: binding.To})
 			pathsByFrom[source.Path] = append(pathsByFrom[source.Path], binding.To)
 		}
@@ -213,6 +264,11 @@ func buildBoundaryRootRelation(artifact BoundaryArtifact, toKeys *keyspace.KeySp
 	}
 	if len(toOrdinals) != maxTo+1 {
 		return nil, nil, nil, 0, false
+	}
+	for ordinal := 0; ordinal <= maxTo; ordinal++ {
+		if scalarOwners[ordinal] < 1 {
+			return nil, nil, nil, 0, false
+		}
 	}
 	for source, destinations := range pathsByFrom {
 		sort.Slice(destinations, func(i, j int) bool { return toKeys.Less(destinations[i], destinations[j]) })
@@ -246,20 +302,16 @@ func compactValues(in []key.Value) []key.Value {
 	return out
 }
 
-func boundaryAllocationMapInjective(closure BoundaryClosure, allocations BoundaryAllocationMap) bool {
-	seen := make(map[identity.ID]identity.ID, len(closure.identities))
-	for from := range closure.identities {
-		if from == (identity.ID{}) {
-			continue
+func boundaryAllocationAuthorityCovers(closure BoundaryClosure, lens *BoundaryAllocationAuthority) bool {
+	for source := range closure.identities {
+		if template, allocation := source.Allocation(); allocation {
+			if lens == nil {
+				return false
+			}
+			if _, ok := lens.bindings[template]; !ok {
+				return false
+			}
 		}
-		to, ok := allocations[from]
-		if !ok || to == (identity.ID{}) {
-			return false
-		}
-		if prior, exists := seen[to]; exists && prior != from {
-			return false
-		}
-		seen[to] = from
 	}
 	return true
 }
@@ -283,21 +335,28 @@ func ApplyBoundary(reg *axis.Registry, keys *keyspace.KeySpace, destination Stat
 	if reg == nil || artifact.reg != reg || keys == nil || !keys.Valid() || artifact.keys != keys {
 		return State{}, fmt.Errorf("state: boundary apply requires the artifact keyspace authority")
 	}
-	ctx := boundaryApplyContext{reg: reg, keys: keys, closure: artifact.closure}
 	if destination.laneMask != artifact.world.laneMask {
 		return State{}, fmt.Errorf("state: destination and boundary artifact lane inventories differ")
 	}
-	out := destination
-	for _, spec := range defaultLaneCatalog.specs {
-		if !artifact.world.laneMask.allows(spec.bit) {
-			continue
+	domain := RegisteredProductDomain(reg)
+	if domain.mask != artifact.world.laneMask {
+		ids := make([]LaneID, 0, len(defaultLaneCatalog.specs))
+		for _, spec := range defaultLaneCatalog.specs {
+			if artifact.world.laneMask.allows(spec.bit) {
+				ids = append(ids, spec.id)
+			}
 		}
-		if !spec.boundary.apply(&ctx, destination, artifact.world, &out) {
-			return State{}, fmt.Errorf("state: boundary apply failed in lane %q", spec.id)
+		var err error
+		domain, err = defaultLaneCatalog.TryProductDomainWithLaneSet(reg, NewLaneSet(ids...))
+		if err != nil {
+			return State{}, err
 		}
 	}
-	out.canonical = true
-	return out, nil
+	patch, err := domain.SealBoundaryPatch(keys, artifact)
+	if err != nil {
+		return State{}, err
+	}
+	return patch.Apply(destination)
 }
 
 // BoundaryEqual reports structural equality under one keyspace authority.
@@ -323,7 +382,7 @@ func BoundaryEqual(reg *axis.Registry, a, b BoundaryArtifact) bool {
 	return true
 }
 func emptyBoundaryClosure() BoundaryClosure {
-	return BoundaryClosure{slots: map[key.Value]struct{}{}, paths: map[keyspace.Key]struct{}{}, identities: map[identity.ID]struct{}{}, heapSuffixes: map[boundaryHeapSuffix]struct{}{}}
+	return BoundaryClosure{slots: map[key.Value]struct{}{}, paths: map[keyspace.Key]struct{}{}, identities: map[identity.Term]struct{}{}, heapSuffixes: map[boundaryHeapSuffix]struct{}{}}
 }
 func projectBoundaryWorld(reg *axis.Registry, keys *keyspace.KeySpace, source State, closure BoundaryClosure) (State, error) {
 	ctx := boundaryProjectContext{reg: reg, keys: keys, closure: closure}
@@ -350,15 +409,15 @@ func setSubset[T comparable](a, b map[T]struct{}) bool {
 	}
 	return true
 }
-func rebaseBoundaryClosure(from, to *keyspace.KeySpace, in BoundaryClosure, roots boundaryPathMap, slots map[key.Value][]key.Value, allocations BoundaryAllocationMap) (BoundaryClosure, bool) {
+func rebaseBoundaryClosure(from, to *keyspace.KeySpace, in BoundaryClosure, roots boundaryPathMap, slots map[key.Value][]key.Value, lens *BoundaryAllocationAuthority) (BoundaryClosure, error) {
 	out := BoundaryClosure{
 		slots: make(map[key.Value]struct{}, len(in.slots)), paths: make(map[keyspace.Key]struct{}, len(in.paths)),
-		identities: make(map[identity.ID]struct{}, len(in.identities)), allIdentities: in.allIdentities, heapSuffixes: make(map[boundaryHeapSuffix]struct{}, len(in.heapSuffixes)),
+		identities: make(map[identity.Term]struct{}, len(in.identities)), allIdentities: in.allIdentities, heapSuffixes: make(map[boundaryHeapSuffix]struct{}, len(in.heapSuffixes)),
 	}
 	for slot := range in.slots {
 		next, ok := slots[slot]
 		if !ok || len(next) == 0 {
-			return BoundaryClosure{}, false
+			return BoundaryClosure{}, fmt.Errorf("slot %d has no destination", slot)
 		}
 		for _, value := range next {
 			out.slots[value] = struct{}{}
@@ -367,34 +426,34 @@ func rebaseBoundaryClosure(from, to *keyspace.KeySpace, in BoundaryClosure, root
 	for path := range in.paths {
 		next, ok := rebaseBoundaryPaths(from, to, roots, path)
 		if !ok {
-			return BoundaryClosure{}, false
+			return BoundaryClosure{}, fmt.Errorf("path %q has no destination", from.FormatReadOnly(path))
 		}
 		for _, value := range next {
 			out.paths[value] = struct{}{}
 		}
 	}
 	for id := range in.identities {
-		next, ok := RebaseBoundaryIdentity(allocations, id)
+		next, ok := rebaseBoundaryIdentity(lens, id)
 		if !ok {
-			return BoundaryClosure{}, false
+			return BoundaryClosure{}, fmt.Errorf("identity has no allocation substitution")
 		}
 		out.identities[next] = struct{}{}
 	}
 	for suffix := range in.heapSuffixes {
-		owner, ok := RebaseBoundaryIdentity(allocations, suffix.owner)
+		owner, ok := rebaseBoundaryIdentity(lens, suffix.owner)
 		if !ok {
-			return BoundaryClosure{}, false
+			return BoundaryClosure{}, fmt.Errorf("heap suffix owner has no allocation substitution")
 		}
 		next, ok := to.ImportKey(from, suffix.suffix)
 		if !ok {
-			return BoundaryClosure{}, false
+			return BoundaryClosure{}, fmt.Errorf("heap suffix belongs to another keyspace")
 		}
 		out.heapSuffixes[boundaryHeapSuffix{owner: owner, suffix: next}] = struct{}{}
 	}
-	return out, true
+	return out, nil
 }
 
-func completeBoundaryRootMap(from, to *keyspace.KeySpace, closure BoundaryClosure, explicit boundaryPathMap, namespace BoundaryExistentialNamespace) (boundaryPathMap, bool) {
+func completeBoundaryRootMap(from, to *keyspace.KeySpace, closure BoundaryClosure, explicit boundaryPathMap, namespace BoundaryExistentialNamespace) (boundaryPathMap, error) {
 	out := append(boundaryPathMap(nil), explicit...)
 	paths := make([]keyspace.Key, 0, len(closure.paths))
 	for path := range closure.paths {
@@ -405,26 +464,87 @@ func completeBoundaryRootMap(from, to *keyspace.KeySpace, closure BoundaryClosur
 		if _, ok := rebaseBoundaryPaths(from, to, out, path); ok {
 			continue
 		}
-		root := path
-		root.Segs = 0
-		if from.FormatReadOnly(root) == "" {
-			return nil, false
+		var err error
+		out, err = completeVersionInsensitiveSymbolRoot(from, to, path, out, explicit)
+		if err != nil {
+			return nil, fmt.Errorf("version-insensitive companion for source path %q (kind %d): %w", from.FormatReadOnly(path), path.Kind, err)
+		}
+		if _, mapped := rebaseBoundaryPaths(from, to, out, path); mapped {
+			continue
+		}
+		root, ok := from.StructuralRoot(path)
+		if !ok {
+			return nil, fmt.Errorf("source path %q (kind %d) has no structural root", from.FormatReadOnly(path), path.Kind)
 		}
 		toRoot, ok := to.ImportExistential(from, root, namespace)
 		if !ok {
-			return nil, false
+			return nil, fmt.Errorf("source root %q (kind %d) cannot enter existential namespace %+v", from.FormatReadOnly(root), root.Kind, namespace)
 		}
 		out = append(out, boundaryPathBinding{from: root, to: toRoot})
 	}
-	return out, true
+	return out, nil
+}
+
+// completeVersionInsensitiveSymbolRoot derives the structural half of an
+// exact resolver-root binding when a projected lane explicitly demanded the
+// bare symN root. This is a relation-local bridge, not a global version
+// wildcard: only exact resolver roots certified by the frame participate, and
+// no descendant or sibling SSA version is included.
+func completeVersionInsensitiveSymbolRoot(from, to *keyspace.KeySpace, path keyspace.Key, current, explicit boundaryPathMap) (boundaryPathMap, error) {
+	if path.Kind != keyspace.KindUnversionedSym || path.Segs != 0 {
+		return current, nil
+	}
+	targets := make([]keyspace.Key, 0, 1)
+	for _, binding := range explicit {
+		if binding.from.Kind != keyspace.KindResolverSym || binding.from.Sym != path.Sym || binding.from.Segs != 0 {
+			continue
+		}
+		if (binding.to.Kind != keyspace.KindResolverSym && binding.to.Kind != keyspace.KindUnversionedSym) || binding.to.Segs != 0 || binding.to.Sym == 0 {
+			// A captured/result source may legitimately map to ret[n] or another
+			// non-symbol root. It is not the two-spelling symbol relation handled
+			// here and retains the ordinary explicit substitution unchanged.
+			continue
+		}
+		targets = append(targets, to.FromPath(pathdom.Path{Symbol: binding.to.Sym}))
+	}
+	if len(targets) == 0 {
+		return current, nil
+	}
+	sort.Slice(targets, func(i, j int) bool { return to.Less(targets[i], targets[j]) })
+	for index, target := range targets {
+		if index != 0 && target == targets[index-1] {
+			continue
+		}
+		duplicate := false
+		for _, binding := range current {
+			if binding.from == path && binding.to == target {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		current = append(current, boundaryPathBinding{from: path, to: target})
+	}
+	return current, nil
 }
 
 func rebaseBoundaryStateKeys(ctx *boundaryRebaseContext, in pathaddr.StateKey) ([]pathaddr.StateKey, bool) {
+	if ctx != nil && ctx.structuralIdentity {
+		if in == "" {
+			return []pathaddr.StateKey{""}, true
+		}
+		if _, ok := ctx.fromKeys.FromStateKey(pathdom.PathKey(in.String())); !ok || ctx.fromKeys != ctx.toKeys {
+			return nil, false
+		}
+		return []pathaddr.StateKey{in}, true
+	}
 	path, ok := ctx.fromKeys.FromStateKey(pathdom.PathKey(in.String()))
 	if !ok {
 		return nil, false
 	}
-	next, ok := rebaseBoundaryPaths(ctx.fromKeys, ctx.toKeys, ctx.roots, path)
+	next, ok := boundaryRebasePaths(ctx, path)
 	if !ok {
 		return nil, false
 	}
@@ -434,6 +554,16 @@ func rebaseBoundaryStateKeys(ctx *boundaryRebaseContext, in pathaddr.StateKey) (
 		if !valid {
 			return nil, false
 		}
+		if ctx.formalRekey != nil {
+			preimages := ctx.quotient.stateKeys[value]
+			seen := false
+			for _, prior := range preimages {
+				seen = seen || prior == in
+			}
+			if !seen {
+				ctx.quotient.stateKeys[value] = append(preimages, in)
+			}
+		}
 		out = append(out, value)
 	}
 	return out, true
@@ -441,15 +571,19 @@ func rebaseBoundaryStateKeys(ctx *boundaryRebaseContext, in pathaddr.StateKey) (
 
 func rebaseBoundaryValue(ctx *boundaryRebaseContext, value product.Value) (product.Value, bool) {
 	current := product.Get(ctx.reg, value, identity.Key)
-	id, exact := current.ID()
+	term, exact := current.Term()
 	if !exact {
 		return value, true
 	}
-	next, ok := RebaseBoundaryIdentity(ctx.allocations, id)
+	next, ok := identityImage(ctx, term)
 	if !ok {
 		return product.Value{}, false
 	}
-	return product.Set(ctx.reg, value, identity.Key, identity.Singleton(next)), true
+	if next.IsBottom() {
+		ctx.relationBottom = true
+		return product.Bottom(ctx.reg), true
+	}
+	return product.Set(ctx.reg, value, identity.Key, next), true
 }
 
 func boundaryClosureEqual(a, b BoundaryClosure) bool {

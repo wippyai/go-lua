@@ -1,6 +1,7 @@
 package factapply
 
 import (
+	"context"
 	"math"
 
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
@@ -8,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -29,6 +31,7 @@ type resolvedDynamicIndexWriteData struct {
 	TableStateKeys      []pathaddr.StateKey
 	AllValueTables      []pathaddr.StateKey
 	PendingRestores     []state.PendingDynamicAllValueRestore
+	RestoreKeys         []pathaddr.StateKey
 	KeyStateKey         pathaddr.StateKey
 	HasKeyStateKey      bool
 	SourceMemberships   []pathaddr.StateKey
@@ -47,6 +50,7 @@ type resolvedDynamicIndexWriteData struct {
 	DefinitelyPresent   bool
 	DefinitelyAbsent    bool
 	MayBeAbsent         bool
+	Direct              bool
 }
 
 // ApplyResolvedDynamicIndexWrite performs the authoritative lane updates in
@@ -59,72 +63,83 @@ func ApplyResolvedDynamicIndexWrite(reg *axis.Registry, ks *keyspace.KeySpace, o
 		return out, false
 	}
 
-	allValueTables := append([]pathaddr.StateKey(nil), resolved.AllValueTables...)
-	out = out.ClearDynamicIndexValueKeyMembershipsForContainer(resolved.Key.Table)
-	if resolved.MayBeAbsent {
-		for _, tableKey := range resolved.TableStateKeys {
-			out = out.ClearKeyMembershipsForPath(tableKey)
+	if resolved.Direct {
+		domain := state.RegisteredProductDomain(reg)
+		plan, err := domain.PrepareDynamicIndexMembershipFactorPlan(ks, state.DynamicIndexMembershipFactorConfig{
+			Key: resolved.Key, Fact: resolved.Fact,
+			TableStateKeys: resolved.TableStateKeys, AllValueTables: resolved.AllValueTables,
+			PendingRestores: resolved.PendingRestores, RestoreKeys: resolved.RestoreKeys,
+			KeyStateKey: resolved.KeyStateKey, MembershipTable: resolved.Table.rootOrVisible,
+			SourceMemberships: resolved.SourceMemberships, TableSymbol: resolved.TableSymbol,
+			HasKeyStateKey: resolved.HasKeyStateKey, DefinitelyPresent: resolved.DefinitelyPresent,
+			DefinitelyAbsent: resolved.DefinitelyAbsent, MayBeAbsent: resolved.MayBeAbsent,
+		})
+		if err != nil {
+			return out, false
 		}
-		if resolved.TableSymbol != 0 {
-			out = out.ClearKeyMembershipsForTableSymbol(ks, resolved.TableSymbol)
+		written, err := domain.ApplyDynamicIndexMembership(plan, out)
+		if err != nil {
+			return out, false
 		}
-	}
-	for _, restore := range resolved.PendingRestores {
-		out = out.AddPendingDynamicAllValueRestore(restore.Container, restore.Table, restore.Key)
-	}
-	out = out.WriteDynamicIndexFact(reg, resolved.Key, resolved.Fact)
-	if resolved.DefinitelyPresent && resolved.HasKeyStateKey {
-		out = out.AddPathKeyMembership(resolved.KeyStateKey, resolved.Table.rootOrVisible)
-	}
-	if resolved.DefinitelyPresent {
-		for _, table := range resolved.SourceMemberships {
-			out = out.AddDynamicIndexValueKeyMembership(resolved.Key.Table, resolved.Key.Site, table)
-		}
-	}
-	if resolved.DefinitelyAbsent {
-		for _, table := range allValueTables {
-			out = out.AddDynamicIndexAllValuesKeyMembership(resolved.Key.Table, table)
-		}
-	} else {
-		for _, table := range allValueTables {
-			if stateKeyIn(resolved.SourceMemberships, table) {
-				out = out.AddDynamicIndexAllValuesKeyMembership(resolved.Key.Table, table)
-			}
-		}
-	}
-	if resolved.DefinitelyAbsent && resolved.HasKeyStateKey {
-		keys := append([]pathaddr.StateKey{resolved.KeyStateKey}, out.EquivalentStateKeys(ks, resolved.KeyStateKey)...)
-		for _, key := range keys {
-			for _, restore := range out.PendingDynamicAllValueRestores(resolved.Key.Table, key) {
-				out = out.AddDynamicIndexAllValuesKeyMembership(restore.Container, restore.Table)
-				out = out.ClearPendingDynamicAllValueRestore(restore)
-			}
-		}
+		out = written
 	}
 	if resolved.HasEquality && resolved.EqualityTarget.stateKey != resolved.EqualitySource.stateKey {
-		out = out.AddBranchProof(pathevidence.BranchProof{
-			Kind: pathevidence.BranchProofPathEqual, Path: resolved.EqualityTarget.local, Other: resolved.EqualitySource.local,
-		}).CanonicalizeTypestateResources(ks)
+		proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: resolved.EqualityTarget.local, Other: resolved.EqualitySource.local}
+		domain := state.RegisteredProductDomain(reg)
+		written, err := domain.ApplyPathEqualityProof(ks, proof, out)
+		if err != nil {
+			return out, false
+		}
+		out = written
 	}
 	if resolved.HasStaticTarget {
-		edit := out.Edit(reg)
-		edit.WriteLocalPathStaticMember(resolved.StaticTarget.local, resolved.Fact.Value)
-		if canonical, ok := ks.FieldCanonical(resolved.StaticTarget.local); ok {
-			edit.WriteLocalPathStaticMember(canonical, resolved.Fact.Value)
+		domain := state.RegisteredProductDomain(reg)
+		plan, err := domain.PrepareStaticMemberFactorPlan(ks, resolved.StaticTarget.local, resolved.Fact.Value)
+		if err != nil {
+			return out, false
 		}
-		out = edit.Done()
+		written, err := domain.ApplyStaticMember(plan, out)
+		if err != nil {
+			return out, false
+		}
+		out = written
 	}
-	if resolved.HasTableID {
+	if resolved.HasTableID && resolved.Direct {
 		switch resolved.TableOwnerPlacement {
 		case placement.OwnedHeap, placement.SharedHeap, placement.Unknown:
-			out = markReachableHeapValuePlacement(reg, out, resolved.Fact.Value, resolved.TableOwnerPlacement, map[identity.ID]struct{}{})
+			domain := state.RegisteredProductDomain(reg)
+			plan, err := domain.PreparePlacementReachabilityPlan(ks, []product.Value{resolved.Fact.Value}, resolved.TableOwnerPlacement)
+			if err != nil {
+				return out, false
+			}
+			written, err := domain.ApplyPlacementReachability(context.Background(), plan, out)
+			if err != nil {
+				return out, false
+			}
+			out = written
 		}
 	}
 	if resolved.HasAppend && resolved.AppendFloor < math.MaxInt64 {
-		out = out.WriteLenFloor(ks, resolved.AppendStateKey, resolved.AppendFloor)
+		path, interned := ks.InternStateKey(resolved.AppendStateKey)
+		if !interned {
+			return out, false
+		}
+		domain := state.RegisteredProductDomain(reg)
+		plan, err := domain.PrepareLengthFloorFactorPlan(ks, path, resolved.AppendFloor)
+		if err != nil {
+			return out, false
+		}
+		written, err := domain.ApplyLengthFloor(plan, out)
+		if err != nil {
+			return out, false
+		}
+		out = written
 	}
 	if resolved.HasTableID {
-		object := out.ReadHeapTableObject(reg, resolved.TableID)
+		object, observed := observeIndexMutationHeapObject(reg, out, identity.ConcreteTerm(resolved.TableID))
+		if !observed {
+			return out, false
+		}
 		if !heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)) {
 			dynamic := object.DynamicIndexFacts()
 			if dynamic == nil {
@@ -135,9 +150,19 @@ func ApplyResolvedDynamicIndexWrite(reg *axis.Registry, ks *keyspace.KeySpace, o
 			} else {
 				dynamic[resolved.Key] = resolved.Fact
 			}
-			out = out.WriteHeapTableObject(reg, resolved.TableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			replacement := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 				Root: object.Root(), StaticMembers: object.StaticMembers(), DynamicIndexFacts: dynamic,
-			}))
+			})
+			domain := state.RegisteredProductDomain(reg)
+			plan, err := domain.PrepareObjectGraphReplacePlan(ks, []state.ObjectGraphMutation{{Identity: identity.ConcreteTerm(resolved.TableID), Object: replacement}})
+			if err != nil {
+				return out, false
+			}
+			written, err := domain.ApplyObjectGraphMutation(plan, out)
+			if err != nil {
+				return out, false
+			}
+			out = written
 		}
 	}
 	return out, true

@@ -272,60 +272,6 @@ func BenchmarkStdlibLookupOwnership(b *testing.B) {
 	})
 }
 
-func TestSignaturesReturnsClonesAndRespectsPrecedence(t *testing.T) {
-	first := manifest.New("example/first")
-	first.DefineFunctionSignature("shared", testSignature("first", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}))
-	second := manifest.New("example/second")
-	wantShared := testSignature("second", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
-	wantRequire := testSignature("require_override", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
-	second.DefineFunctionSignature("shared", wantShared)
-	global := manifest.New("")
-	global.DefineFunctionSignature(stdlib.Require, wantRequire)
-	src := Source{Manifests: []*manifest.Manifest{first, second, global}, IncludeStdlib: true}
-
-	all := src.Signatures()
-	if got := all["shared"]; !wantShared.Equals(got) {
-		t.Fatalf("Signatures()[shared] = %v, want later manifest %v", got, wantShared)
-	}
-	if got := all[stdlib.Require]; !wantRequire.Equals(got) {
-		t.Fatalf("Signatures()[%s] = %v, want manifest override %v", stdlib.Require, got, wantRequire)
-	}
-	if _, ok := all[stdlib.Type]; !ok {
-		t.Fatalf("Signatures() missing stdlib %q", stdlib.Type)
-	}
-
-	shared := all["shared"]
-	shared.Type.Params[0].Name = "changed"
-	shared.Effect.Labels = nil
-
-	again := src.Signatures()
-	if again["shared"].Type.Params[0].Name != "second_arg" {
-		t.Fatalf("Signatures returned aliased function params: %q", again["shared"].Type.Params[0].Name)
-	}
-	if len(again["shared"].Effect.Labels) == 0 {
-		t.Fatal("Signatures returned aliased effect labels")
-	}
-}
-
-func TestSignaturesDoesNotPublishModuleLocalBareStdlibNameAsGlobal(t *testing.T) {
-	local := testSignature("channel_select", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
-	m := manifest.New("channel")
-	m.DefineFunctionSignature("select", local)
-	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
-
-	all := src.Signatures()
-	global, ok := all["select"]
-	if !ok {
-		t.Fatal("Signatures() missing stdlib select")
-	}
-	if local.Equals(global) {
-		t.Fatalf("Signatures()[select] used module-local channel.select signature for bare stdlib global")
-	}
-	if qualified, ok := all["channel.select"]; ok {
-		t.Fatalf("Signatures() published synthesized qualified local %v; bulk map should expose stored global names only", qualified)
-	}
-}
-
 func TestStdlibSignatureNamesExposeNamesWithoutSignatureMaterialization(t *testing.T) {
 	names := StdlibSignatureNames()
 	if len(names) == 0 {

@@ -2,8 +2,49 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
+
+// DynamicIndexTarget is the single typed identity of a write through a
+// dynamic member, including any static suffix after the key.
+type DynamicIndexTarget struct {
+	tablePath path.Path
+	keySource ValueSource
+	suffix    []segment.Segment
+	valid     bool
+}
+
+func NewDynamicIndexTarget(tablePath path.Path, keySource ValueSource, suffix []segment.Segment) DynamicIndexTarget {
+	return DynamicIndexTarget{
+		tablePath: tablePath.Clone(), keySource: keySource,
+		suffix: append([]segment.Segment(nil), suffix...),
+		valid:  !tablePath.IsEmpty() && keySource.Valid(),
+	}
+}
+
+func (t DynamicIndexTarget) Valid() bool {
+	return t.valid && !t.tablePath.IsEmpty() && t.keySource.Valid()
+}
+func (t DynamicIndexTarget) TablePathRef() path.Path      { return t.tablePath }
+func (t DynamicIndexTarget) KeySource() ValueSource       { return t.keySource }
+func (t DynamicIndexTarget) SuffixRef() []segment.Segment { return t.suffix }
+func (t DynamicIndexTarget) Equal(other DynamicIndexTarget) bool {
+	if !t.Valid() || !other.Valid() || !t.tablePath.Equal(other.tablePath) || t.keySource != other.keySource || len(t.suffix) != len(other.suffix) {
+		return false
+	}
+	for index := range t.suffix {
+		if t.suffix[index] != other.suffix[index] {
+			return false
+		}
+	}
+	return true
+}
+func (t DynamicIndexTarget) copy() DynamicIndexTarget {
+	t.tablePath = t.tablePath.Clone()
+	t.suffix = append([]segment.Segment(nil), t.suffix...)
+	return t
+}
 
 // DynamicIndexReadbackIntent describes which dynamic-index evidence a later
 // applicator should read back after resolving the source paths/products.
@@ -19,10 +60,9 @@ const (
 // DynamicIndexWrite describes a write through a dynamic table index at a CFG
 // point. Key/value products remain unresolved ValueSource evidence here.
 type DynamicIndexWrite struct {
-	tablePath path.Path
+	target    DynamicIndexTarget
 	keyPath   path.Path
 	valuePath path.Path
-	keySource ValueSource
 	source    ValueSource
 
 	admission        dynamicindex.Admission
@@ -37,15 +77,13 @@ type DynamicIndexWrite struct {
 
 // NewDynamicIndexWrite creates a dynamic-index write event.
 func NewDynamicIndexWrite(
-	tablePath path.Path,
-	keySource ValueSource,
+	target DynamicIndexTarget,
 	source ValueSource,
 	admission dynamicindex.Admission,
 	readbackIntent DynamicIndexReadbackIntent,
 ) DynamicIndexWrite {
 	return DynamicIndexWrite{
-		tablePath:      tablePath.Clone(),
-		keySource:      keySource,
+		target:         target.copy(),
 		source:         source,
 		admission:      admission,
 		readbackIntent: readbackIntent,
@@ -53,11 +91,13 @@ func NewDynamicIndexWrite(
 }
 
 // TablePath returns the table path receiving the dynamic index write.
-func (w DynamicIndexWrite) TablePath() path.Path { return w.tablePath.Clone() }
+func (w DynamicIndexWrite) TablePath() path.Path { return w.target.tablePath.Clone() }
 
 // TablePathRef returns the dynamic-index table path for immediate read-only use.
 // Callers must not mutate or retain the returned path.
-func (w DynamicIndexWrite) TablePathRef() path.Path { return w.tablePath }
+func (w DynamicIndexWrite) TablePathRef() path.Path { return w.target.tablePath }
+
+func (w DynamicIndexWrite) TargetRef() DynamicIndexTarget { return w.target }
 
 // WithKeyPath returns a copy carrying the statically resolved path for the
 // dynamic key operand, when the key expression itself has stable identity.
@@ -120,7 +160,9 @@ func (w DynamicIndexWrite) ValuePathRef() (path.Path, bool) {
 }
 
 // KeySource returns the source evidence for the dynamic key.
-func (w DynamicIndexWrite) KeySource() ValueSource { return w.keySource }
+func (w DynamicIndexWrite) KeySource() ValueSource { return w.target.keySource }
+
+func (w DynamicIndexWrite) TargetSuffixRef() []segment.Segment { return w.target.suffix }
 
 // Source returns the source evidence for the value written at the dynamic key.
 func (w DynamicIndexWrite) Source() ValueSource { return w.source }
@@ -160,7 +202,7 @@ func (w DynamicIndexWrite) ReadbackIntent() DynamicIndexReadbackIntent {
 }
 
 func (w DynamicIndexWrite) copy() DynamicIndexWrite {
-	w.tablePath = w.tablePath.Clone()
+	w.target = w.target.copy()
 	w.keyPath = w.keyPath.Clone()
 	w.valuePath = w.valuePath.Clone()
 	return w

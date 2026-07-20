@@ -1,0 +1,95 @@
+package transformer
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
+)
+
+// StabilizedRelationView is the complete route-free result of one formal WTO
+// solve. The lexical coordinate records were projected from that stabilized
+// execution before Solve returned; this value retains no scheduler, route,
+// application environment, provider, or materialization callback.
+type StabilizedRelationView struct {
+	lexicalBodies []FormalLexicalBodyCoordinates
+	program       *RelationProgram
+}
+
+// LexicalBodies returns exactly one detached coordinate record per frozen
+// lexical body, in the canonical RelationProgram body order.
+func (v StabilizedRelationView) LexicalBodies() []FormalLexicalBodyCoordinates {
+	return append([]FormalLexicalBodyCoordinates(nil), v.lexicalBodies...)
+}
+
+// FunctionalApplyInstantiations reports the number of frozen caller-side
+// substitutions. Apply never creates another body equation system.
+func (v StabilizedRelationView) FunctionalApplyInstantiations() int {
+	if v.program == nil || v.program.formalTemplate == nil {
+		return 0
+	}
+	count := 0
+	for _, equation := range v.program.formalTemplate.equations {
+		if equation.Operator.apply != nil {
+			count++
+		}
+	}
+	return count
+}
+
+// FunctionalSummaryBodyWork reports the cells and equations physically owned
+// by one lexical body in the sole formal equation system.
+func (v StabilizedRelationView) FunctionalSummaryBodyWork(body lexicalidentity.StableLexicalBodyID) (cells int, equations int, ok bool) {
+	if v.program == nil || v.program.formalRegion == nil || v.program.formalTemplate == nil {
+		return 0, 0, false
+	}
+	variable, present := v.program.byBody[body]
+	if !present || variable == 0 {
+		return 0, 0, false
+	}
+	for _, cell := range v.program.formalRegion.cells {
+		if cell.Variable == variable {
+			cells++
+		}
+	}
+	for _, equation := range v.program.formalTemplate.equations {
+		if equation.Cell.cell.Variable == variable {
+			equations++
+		}
+	}
+	return cells, equations, cells > 0 && equations > 0
+}
+
+// FormalEquationCount reports the complete frozen equation inventory, not a
+// caller/application route count.
+func (v StabilizedRelationView) FormalEquationCount() int {
+	if v.program == nil || v.program.formalTemplate == nil {
+		return 0
+	}
+	return len(v.program.formalTemplate.equations)
+}
+
+// Solve executes the one canonical formal forest through the generic WTO
+// solver, detaches the observation witnesses produced by its stabilized Apply
+// evaluations, and publishes exactly one route-free record per lexical body.
+func (p *RelationProgram) Solve(ctx context.Context, bodyID lexicalidentity.StableLexicalBodyID, entry state.State) (StabilizedRelationView, error) {
+	if ctx == nil || p == nil || p.registry == nil {
+		return StabilizedRelationView{}, fmt.Errorf("transformer: formal relation solve is unowned")
+	}
+	if _, present := p.byBody[bodyID]; !present {
+		return StabilizedRelationView{}, fmt.Errorf("transformer: formal relation solve has no body %s", bodyID)
+	}
+	execution, err := executeFormalRootRelation(ctx, p, bodyID, entry)
+	if err != nil {
+		return StabilizedRelationView{}, err
+	}
+	lexicalBodies, err := projectFormalLexicalBodies(ctx, execution)
+	if err != nil {
+		return StabilizedRelationView{}, err
+	}
+	if len(lexicalBodies) != len(p.bodies) {
+		return StabilizedRelationView{}, fmt.Errorf("transformer: formal relation solve published %d lexical bodies, want %d", len(lexicalBodies), len(p.bodies))
+	}
+	return StabilizedRelationView{lexicalBodies: lexicalBodies, program: p}, nil
+}

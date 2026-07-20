@@ -16,8 +16,7 @@ import (
 type OutputKind uint8
 
 const (
-	OutputReturn OutputKind = iota
-	OutputObligation
+	OutputObligation OutputKind = iota
 	OutputEffect
 	OutputCellResult
 	outputKindCount
@@ -70,7 +69,7 @@ func NewOutputCapabilityRegistry(catalog state.LaneCatalog) *OutputCapabilityReg
 // composition certificate rather than a value-only callback.
 func newDefaultOutputCapabilityRegistry() *OutputCapabilityRegistry {
 	r := NewOutputCapabilityRegistry(state.DefaultLaneCatalog())
-	for _, output := range []OutputKind{OutputReturn, OutputObligation} {
+	for _, output := range []OutputKind{OutputObligation} {
 		for _, lane := range r.lanes {
 			_ = r.Set(output, lane, CapabilityUnaffected)
 		}

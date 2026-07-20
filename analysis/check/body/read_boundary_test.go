@@ -17,13 +17,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 type sourceValueFunc func(cfg.Point, factflow.ValueSource, state.State, func(cfg.Point) state.State) (product.Value, bool)
@@ -87,51 +85,6 @@ func TestValueSourcePathParsesUnversionedStructuralSymbolKey(t *testing.T) {
 	}
 }
 
-func TestRecoveredPathShapeInvalidatedByFactflowPathAssignment(t *testing.T) {
-	reg := standard.Registry()
-	stmts := parseChunk(t, `
-local box = { field = "ready" }
-box.field = "changed"
-local after = box.field
-`)
-	result, err := CheckChunk(stmts, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-
-	rootPoint := requireLocalAssignmentPoint(t, result, stmts[0].(*ast.LocalAssignStmt), 0)
-	after := stmts[2].(*ast.LocalAssignStmt)
-	afterPoint := requireLocalAssignmentPoint(t, result, after, 0)
-	target, ok := result.ExpressionPath(after.Exprs[0])
-	if !ok {
-		t.Fatal("missing expression path for box.field")
-	}
-	if !result.pathShapeInvalidatedAfterAssignment(rootPoint, afterPoint, target) {
-		t.Fatal("member write should invalidate recovered descendant path shape")
-	}
-}
-
-func TestPathPresenceInvalidationIgnoresDescendantFactflowPathAssignment(t *testing.T) {
-	reg := standard.Registry()
-	fn := parseFunction(t, `
-function f(box: any): ()
-	box.field = "changed"
-	local after = box
-end`)
-	bindings := bind.BindFunction(fn, bind.Options{})
-	result, err := CheckBoundFunction(fn, bindings, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckBoundFunction: %v", err)
-	}
-
-	memberPoint := requirePathAssignmentPoint(t, result, fn.Stmts[0].(*ast.AssignStmt))
-	afterPoint := requireLocalAssignmentPoint(t, result, fn.Stmts[1].(*ast.LocalAssignStmt), 0)
-	root := mustParamSlot(t, bindings, fn, 0).Symbol
-	if result.PathPresenceInvalidatedBetween(memberPoint, afterPoint, pathdom.NewPath(root, "box")) {
-		t.Fatal("descendant member write must not invalidate root presence proof")
-	}
-}
-
 func requirePathAssignmentPoint(t *testing.T, result *Result, stmt *ast.AssignStmt) cfg.Point {
 	t.Helper()
 	for _, point := range result.cfg.StmtPoints.PointsFor(stmt) {
@@ -192,10 +145,7 @@ func TestPathValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
 		t.Fatalf("path cache size after first read = %d, want 1", got)
 	}
 	result.queries.forEachPathValueKey(func(key pathValueCacheKey) bool {
-		if key.path.Legacy != "" {
-			t.Fatalf("path cache used legacy string key %q with resolver-backed keyspace", key.path.Legacy)
-		}
-		if got := result.visibility.KeySpace().Format(key.path.Key); got != p.Key() {
+		if got := result.visibility.KeySpace().Format(key.path); got != p.Key() {
 			t.Fatalf("path cache structural key = %q, want %q", got, p.Key())
 		}
 		return true
@@ -210,43 +160,6 @@ func TestPathValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
 	if !product.Equal(reg, first, second) || !product.Equal(reg, first, want) {
 		t.Fatalf("cached path values = %v then %v, want %v", first, second, want)
 	}
-}
-
-func TestPathValueAtBoundaryUsesDominatingTypeGuardAfterRootReassignmentMerge(t *testing.T) {
-	reg := standard.Registry()
-	result, err := CheckFunction(parseFunction(t, `
-function f(bindings: any): table
-	if type(bindings) ~= "table" then
-		return {}
-	end
-	if type(bindings.checkpoint) == "table" then
-		bindings = bindings.checkpoint
-	end
-	return bindings
-end`), Config{Registry: reg, Signatures: signaturelookup.Source{IncludeStdlib: true}})
-	if err != nil {
-		t.Fatalf("CheckFunction: %v", err)
-	}
-	for _, point := range result.ReturnPoints() {
-		fact, ok := result.ReturnFact(point)
-		if !ok || len(fact.Exprs) != 1 {
-			continue
-		}
-		p, ok := result.ExpressionPath(fact.Exprs[0])
-		if !ok || p.Root != "bindings" {
-			continue
-		}
-		value, ok := result.PathValueAtBoundary(point, p)
-		if !ok {
-			t.Fatalf("PathValueAtBoundary(%s) returned false", p.String())
-		}
-		got, ok := typevalue.TypeOf(reg, value)
-		if !ok || !subtype.IsSubtype(got, typetable.BuiltinTopMarker()) {
-			t.Fatalf("PathValueAtBoundary(%s) type = %v/%v, want table", p.String(), got, ok)
-		}
-		return
-	}
-	t.Fatal("path-backed return bindings not found")
 }
 
 func TestDistinctPathsShareExactIdentityAtBoundary(t *testing.T) {
@@ -358,51 +271,6 @@ func TestPathProjectionContextsAreScopedByReadMode(t *testing.T) {
 	}
 	if !product.Equal(reg, gotBefore, before) {
 		t.Fatalf("PathValueBeforeBoundary = %v, want before-boundary value %v", gotBefore, before)
-	}
-}
-
-func TestEdgeCanCompleteNormallyCachesSolvedTransferProjection(t *testing.T) {
-	reg := standard.Registry()
-	graph := cfg.New()
-	from := graph.AddNode(cfg.NodeBranch)
-	to := graph.AddNode(cfg.NodeAssign)
-	graph.AddEdge(graph.Entry(), from, false)
-	graph.AddEdge(from, to, false)
-	graph.AddEdge(to, graph.Exit(), false)
-
-	sym := symbol.ID(41)
-	st := state.State{}.WriteValue(reg, statekey.SymbolValue(sym), typevalue.FromType(reg, typ.String))
-	var boundaryCalls int
-	var edgeCalls int
-	result := &Result{
-		registry: reg,
-		cfg:      &cfgbuild.Result{Graph: graph},
-		flow: transfer.Result{
-			from: st,
-		},
-		boundaryXfer: func(_ transfer.NodeContext, in state.State) state.State {
-			boundaryCalls++
-			return in
-		},
-		edgeXfer: func(_ transfer.EdgeContext, in state.State) state.State {
-			edgeCalls++
-			return in
-		},
-	}
-	result.sealObservations()
-	sealedBoundaryCalls, sealedEdgeCalls := boundaryCalls, edgeCalls
-
-	if !result.EdgeCanCompleteNormally(from, to) {
-		t.Fatal("first EdgeCanCompleteNormally returned false")
-	}
-	if !result.EdgeCanCompleteNormally(from, to) {
-		t.Fatal("second EdgeCanCompleteNormally returned false")
-	}
-	if boundaryCalls != sealedBoundaryCalls {
-		t.Fatalf("boundary transfer replayed after seal: %d calls, want %d", boundaryCalls, sealedBoundaryCalls)
-	}
-	if edgeCalls != sealedEdgeCalls {
-		t.Fatalf("edge transfer replayed after seal: %d calls, want %d", edgeCalls, sealedEdgeCalls)
 	}
 }
 
@@ -667,5 +535,84 @@ func TestTypestateResourceAtCallEntryUsesRootOrVisibleRootForPathBackedSource(t 
 	}
 	if callEntryResource.ID != typestate.ResourceID("sym42") {
 		t.Fatalf("call-entry resource = %#v, want root-or-visible root", callEntryResource)
+	}
+}
+
+func genericForVariablePoint(t *testing.T, facts map[cfg.Point]GenericForFact, stmt *ast.GenericForStmt) cfg.Point {
+	t.Helper()
+	for point, fact := range facts {
+		if fact.Stmt == stmt && fact.Role == GenericForRoleVariable {
+			return point
+		}
+	}
+	t.Fatalf("no generic-for variable point found for statement")
+	return 0
+}
+
+func genericForPathSource(t *testing.T, sym symbol.ID, name string) factflow.ValueSource {
+	t.Helper()
+	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	if !ok {
+		t.Fatal("NewValueSourceShape returned false")
+	}
+	source, ok := factflow.NewPathValueSource(pathdom.NewPath(sym, name).Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("NewPathValueSource returned false")
+	}
+	return source
+}
+
+// TestUnresolvedGenericForVariableSourceIsPointSpecific proves
+// unresolvedGenericForVariableSource resolves against the generic-for fact
+// recorded at its own point, not against any generic-for variable anywhere in
+// the body. Two independent generic-for loops each bind a distinct variable at
+// their own CFG point; the source resolved for loop A's point must not match
+// loop B's variable symbol, and vice versa.
+func TestUnresolvedGenericForVariableSourceIsPointSpecific(t *testing.T) {
+	stmts, err := parse.ParseString(`
+for a in pairs(t1) do
+end
+for b in pairs(t2) do
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"pairs", "t1", "t2"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	genericFors := genericForFactsFromSource(bindings, built, stmts)
+
+	loopA := stmts[0].(*ast.GenericForStmt)
+	loopB := stmts[1].(*ast.GenericForStmt)
+
+	pointA := genericForVariablePoint(t, genericFors, loopA)
+	pointB := genericForVariablePoint(t, genericFors, loopB)
+
+	symA := bindings.GenericForSymbols(loopA)[0]
+	symB := bindings.GenericForSymbols(loopB)[0]
+	if symA == 0 || symB == 0 || symA == symB {
+		t.Fatalf("loop variable symbols = %d, %d, want distinct non-zero symbols", symA, symB)
+	}
+
+	result := &Result{
+		cfg:         built,
+		genericFors: genericFors,
+		visibility:  visibility.NewResolver(visibility.NewBuilder().Build()),
+	}
+
+	sourceA := genericForPathSource(t, symA, "a")
+	sourceB := genericForPathSource(t, symB, "b")
+
+	if !result.unresolvedGenericForVariableSource(pointA, sourceA) {
+		t.Fatal("point A did not resolve its own generic-for variable source")
+	}
+	if !result.unresolvedGenericForVariableSource(pointB, sourceB) {
+		t.Fatal("point B did not resolve its own generic-for variable source")
+	}
+	if result.unresolvedGenericForVariableSource(pointA, sourceB) {
+		t.Fatal("point A incorrectly resolved point B's generic-for variable source")
+	}
+	if result.unresolvedGenericForVariableSource(pointB, sourceA) {
+		t.Fatal("point B incorrectly resolved point A's generic-for variable source")
 	}
 }

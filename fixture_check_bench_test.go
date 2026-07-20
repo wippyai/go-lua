@@ -31,8 +31,8 @@ func BenchmarkFixtureChecks(b *testing.B) {
 		}
 		b.Run(name, func(b *testing.B) {
 			diags, entryFile := fixtureDiagnostics(s)
-			if verdict := judgeAgainstCuratedExpectations(s, diags, entryFile); !verdict.passed {
-				b.Fatalf("fixture %s no longer satisfies curated expectations: missing=%v unexpected=%v", name, verdict.missing, verdict.unexpected)
+			if verdict := judgeAgainstFixtureExpectations(s, diags, entryFile); !verdict.passed {
+				b.Fatalf("fixture %s no longer satisfies fixture expectations: missing=%v unexpected=%v", name, verdict.missing, verdict.unexpected)
 			}
 
 			b.Run("baseline", func(b *testing.B) {

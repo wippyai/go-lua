@@ -3,6 +3,8 @@ package effectlowering
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -12,6 +14,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func TestExactSameAsReturnArgumentUsesProviderTransformPrecedence(t *testing.T) {
+	dependent := signature.Function{
+		Type: typ.Func().Param("left", typ.Any).Param("right", typ.Any).Returns(typ.Any).Build(),
+		Effect: effect.Empty.With(returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.SameAs{Source: effect.ParamRef{Index: -1}},
+		}),
+	}
+	if got, exact := ExactSameAsReturnArgument(dependent, 0, 2); !exact || got != 1 {
+		t.Fatalf("dependent return argument = %d/%t, want last argument 1", got, exact)
+	}
+	nonDependent := signature.Function{
+		Type: typ.Func().Param("value", typ.Any).Returns(typ.Any).Build(),
+		Effect: effect.Empty.With(returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.ElementOf{Source: effect.ParamRef{Index: 0}},
+		}),
+	}
+	if got, exact := ExactSameAsReturnArgument(nonDependent, 0, 1); exact || got != 0 {
+		t.Fatalf("non-dependent return argument = %d/%t, want rejected", got, exact)
+	}
+}
 
 func TestStaticScalarSignatureReturnsAcceptsFormatRejectsBorrowingConcat(t *testing.T) {
 	reg := standard.Registry()

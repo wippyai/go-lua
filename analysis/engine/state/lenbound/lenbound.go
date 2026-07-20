@@ -44,4 +44,15 @@ func elemDomain() lattice.Lattice[Floor] {
 	})
 }
 
+// ElementDomain returns the canonical scalar lattice used by both the
+// concrete LenFloors carrier and its transposed coordinate family.
+func ElementDomain() lattice.Lattice[Floor] { return elemDomain() }
+
+// BottomFloor is the unreachable scalar used when the family skeleton is
+// Bottom. Reachable omitted coordinates use TopFloor instead.
+func BottomFloor() Floor { return elemDomain().Bottom() }
+
+// TopFloor is the reachable no-evidence scalar.
+func TopFloor() Floor { return elemDomain().Top() }
+
 const maxFloor = int64(^uint64(0) >> 1)

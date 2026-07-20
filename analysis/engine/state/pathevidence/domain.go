@@ -42,6 +42,12 @@ func domainForRegistry(reg *axis.Registry) lattice.Lattice[Lane] {
 				ops.proofs.Equal(ops.proofLane(a), ops.proofLane(b)) &&
 				ops.pathPresenceImplications.Equal(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b))
 		},
+		Same: func(a, b Lane) bool {
+			return ops.refinements.Same != nil && ops.refinements.Same(ops.refinementLane(a), ops.refinementLane(b)) &&
+				ops.staticMembers.Same != nil && ops.staticMembers.Same(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
+				ops.proofs.Same != nil && ops.proofs.Same(ops.proofLane(a), ops.proofLane(b)) &&
+				ops.pathPresenceImplications.Same != nil && ops.pathPresenceImplications.Same(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b))
+		},
 		LessOrEq: func(a, b Lane) bool {
 			return ops.refinements.LessOrEq(ops.refinementLane(a), ops.refinementLane(b)) &&
 				ops.staticMembers.LessOrEq(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
@@ -54,6 +60,14 @@ func domainForRegistry(reg *axis.Registry) lattice.Lattice[Lane] {
 				ops.staticMembers.Join(ops.staticMemberLane(a), ops.staticMemberLane(b)),
 				ops.proofs.Join(ops.proofLane(a), ops.proofLane(b)),
 				ops.pathPresenceImplications.Join(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b)),
+			)
+		},
+		Meet: func(a, b Lane) Lane {
+			return ops.fromLanes(
+				ops.refinements.Meet(ops.refinementLane(a), ops.refinementLane(b)),
+				ops.staticMembers.Meet(ops.staticMemberLane(a), ops.staticMemberLane(b)),
+				ops.proofs.Meet(ops.proofLane(a), ops.proofLane(b)),
+				ops.pathPresenceImplications.Meet(ops.pathPresenceImplicationLane(a), ops.pathPresenceImplicationLane(b)),
 			)
 		},
 		Widen: func(prev, next Lane) Lane {

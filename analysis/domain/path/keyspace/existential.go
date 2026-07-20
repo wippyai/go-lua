@@ -57,6 +57,11 @@ func (ks *KeySpace) boundaryExistentialDescriptor(source Key, namespace Existent
 		if d.namedRoot == "" {
 			return boundaryExistentialDescriptor{}, false
 		}
+	case kindFormalRoot:
+		if source.Root == 0 || int(source.Root) >= len(ks.formalRootEntries) {
+			return boundaryExistentialDescriptor{}, false
+		}
+		d.namedRoot = encodeFormalRootDescriptor(ks.formalRootEntries[source.Root])
 	case kindBoundaryExistential:
 		d.namedRoot = encodeBoundaryExistentialDescriptor(ks.existentialEntries[source.Root])
 	default:
@@ -149,6 +154,9 @@ func validBoundaryExistentialDescriptor(d boundaryExistentialDescriptor) bool {
 		return d.sym == 0 && d.version == 0 && d.namedRoot == ""
 	case KindNamed:
 		return d.sym == 0 && d.version == 0 && d.slot == 0 && d.namedRoot != ""
+	case kindFormalRoot:
+		_, ok := decodeFormalRootDescriptor(d.namedRoot)
+		return d.sym == 0 && d.version == 0 && d.slot == 0 && ok
 	case kindBoundaryExistential:
 		_, ok := decodeBoundaryExistentialDescriptor(d.namedRoot)
 		return d.sym == 0 && d.version == 0 && d.slot == 0 && ok

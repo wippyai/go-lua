@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
-	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -213,10 +212,12 @@ func pathMethodCalleeValue(
 		}
 	}
 	methodSegment := segment.Segment{Kind: segment.SegmentField, Name: method}
-	if methodValue, ok := readexpr.ProjectStaticMember(config, ctx.Point, receiverPath, methodSegment, in); ok && hasCalleeEvidence(reg, methodValue) {
+	methodValue, methodOK := readexpr.ProjectStaticMember(config, ctx.Point, receiverPath, methodSegment, in)
+	if methodOK && hasCalleeEvidence(reg, methodValue) {
 		return methodValue, true
 	}
-	if methodValue, ok := readexpr.ProjectWithoutRootStaticMemberOverlay(config, ctx.Point, receiverPath.AppendSegments([]segment.Segment{methodSegment}), in); ok && hasCalleeEvidence(reg, methodValue) {
+	methodValue, methodOK = readexpr.ProjectWithoutRootStaticMemberOverlay(config, ctx.Point, receiverPath.AppendSegments([]segment.Segment{methodSegment}), in)
+	if methodOK && hasCalleeEvidence(reg, methodValue) {
 		return methodValue, true
 	}
 	receiverValue, ok := readexpr.Project(config, ctx.Point, receiverPath, in)
@@ -279,20 +280,26 @@ func methodTypeValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverTy
 
 func explicitAnyReceiverMethodOutcomeProvider(
 	reg *axis.Registry,
-	sources sourcevalue.SourceValues,
 	typeValues *typevalue.Cache,
-) callpayload.CallOutcomeProvider {
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-		if reg == nil || sources == nil || typeValues == nil || site.MethodName() == "" {
-			return callpayload.CallOutcome{}
+) callpayload.CallOutcomeProgram {
+	shape := func(_ transfer.NodeContext, site factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
+		if site.MethodName() == "" {
+			return callpayload.CallOutcomeSiteShape{}, nil
 		}
-		source, ok := site.ReceiverSource()
-		if !ok {
-			return callpayload.CallOutcome{}
+		if _, present := site.ReceiverSource(); !present {
+			return callpayload.CallOutcomeSiteShape{}, nil
 		}
-		receiverValue, ok := sources.ValueOfSource(ctx.Point, source, in, read)
+		return callpayload.CallOutcomeSiteShape{
+			FieldNames: []string{"Results"},
+		}, nil
+	}
+	evaluate := func(ctx transfer.NodeContext, site factflow.CallSiteView, input callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		if reg == nil || typeValues == nil || site.MethodName() == "" {
+			return callpayload.CallOutcome{}, nil
+		}
+		receiverValue, ok := input.Receiver()
 		if !ok || !product.Get(reg, receiverValue, evidence.Key).IsExplicitTop() {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, nil
 		}
 		value := typeValues.FromTypeWithWitness(reg, typ.Any)
 		value = sourcevalue.InheritTopOriginEvidence(reg, value, receiverValue)
@@ -317,39 +324,12 @@ func explicitAnyReceiverMethodOutcomeProvider(
 		if len(results) == 0 {
 			results = append(results, callpayload.CallResult{Index: 0, Value: value})
 		}
-		return callpayload.CallOutcome{Results: results}
+		return callpayload.CallOutcome{Results: results}, nil
 	}
-}
-
-func channelMethodReceiverTypeProvider(
-	reg *axis.Registry,
-	facts factflow.Facts,
-	resolver *visibility.Resolver,
-	sources sourcevalue.SourceValues,
-	typeValues *typevalue.Cache,
-) effectlowering.ReceiverTypeFunc {
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
-		if receiverPath, ok := site.ReceiverPath(); ok && !receiverPath.IsEmpty() {
-			config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
-			value, ok := readexpr.Project(config, ctx.Point, receiverPath, in)
-			if !ok {
-				return nil, false
-			}
-			return typevalue.WitnessOf(reg, value)
-		}
-		if sources == nil {
-			return nil, false
-		}
-		source, ok := site.ReceiverSource()
-		if !ok {
-			return nil, false
-		}
-		value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
-		if !ok {
-			return nil, false
-		}
-		return typevalue.WitnessOf(reg, value)
-	}
+	return callpayload.SealCallOutcomeProgram(
+		"explicit any-receiver method outcome", []string{"Results"},
+		state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate,
+	)
 }
 
 func hasCalleeEvidence(reg *axis.Registry, value product.Value) bool {

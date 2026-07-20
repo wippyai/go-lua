@@ -4,15 +4,25 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
 
 const LaneHeapTableIdentity LaneID = "heap-table-identity"
 
 var heapTableIdentityLaneSpec = laneSpec{
-	id:           LaneHeapTableIdentity,
-	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandHeapTableIdentityBoundary, project: projectHeapBoundary, rebase: rebaseHeapBoundary, apply: applyHeapBoundary, equal: equalHeapBoundary},
+	id:                       LaneHeapTableIdentity,
+	keySpaceMode:             laneKeySpaceOwned,
+	valueDependencies:        independentValueDependencies(),
+	identitySupport:          enumeratedIdentitySupport(visitHeapTableIdentityLaneIdentities, func(s State) heapTableIdentityLane { return s.heapTableIdentity }, IdentityImagePointwiseMap),
+	numericConsistency:       numericConsistencyIndependent(),
+	semanticLaws:             []laneSemanticLaw{pathSubtreeMutationIndependent(), pathDescendantMutationIndependent(), pathResolutionParticipant(), pathEqualityQuotientIndependent(), genericForBindingFixed(true, false, false), pathReplacementLane[heapTableIdentityLane](false, true, true, applyPathReplacementHeapLane), effectFactorIndependent(), callBoundaryIndependent()},
+	boundaryClosureCompanion: noBoundaryClosureCompanion(),
+	rootAssignment:           rootAssignmentUnchanged(false, true, true),
+	dynamicRead:              dynamicReadIndependent(),
+	coordinateFamilies:       []coordinateFamilySpec{heapCoordinateFamilySpec},
+	boundary:                 boundaryLaneOps{project: projectHeapBoundary, rebase: rebaseHeapBoundary, postRebase: postRebaseBoundaryNoop, equal: equalHeapBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.heapTableIdentity.rekey(from, to)
 		if !ok {
@@ -23,44 +33,41 @@ var heapTableIdentityLaneSpec = laneSpec{
 	},
 	fingerprint: fingerprintHeapTableIdentity,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
-		domain := heapidentity.MapDomain(reg)
-		return stateLane(domain,
-			func(s State) map[identity.ID]heapidentity.TableObject {
-				return s.heapTableIdentity.asMap(domain)
+		domain := heapTermMapDomain(reg)
+		laneDomain := wrapDomain(domain,
+			func(objects map[identity.Term]heapidentity.TableObject) heapTableIdentityLane {
+				return heapTableIdentityLaneFromMap(domain, objects)
 			},
-			func(out *State, objects map[identity.ID]heapidentity.TableObject) {
-				out.heapTableIdentity = heapTableIdentityLaneFromMap(domain, objects)
-			},
+			func(lane heapTableIdentityLane) map[identity.Term]heapidentity.TableObject { return lane.asMap(domain) },
+		)
+		return stateLaneWithBoundary(laneDomain,
+			func(s State) heapTableIdentityLane { return s.heapTableIdentity },
+			func(out *State, lane heapTableIdentityLane) { out.heapTableIdentity = lane },
+			typedLaneFactorRepresentation[heapTableIdentityLane]{equal: laneDomain.Equal},
+			typedBoundaryFactorOps[heapTableIdentityLane]{apply: applyHeapBoundaryLane, roots: boundaryRootsUnchanged[heapTableIdentityLane](), project: projectHeapBoundaryFactor, rebase: rebaseHeapBoundaryFactor, postRebase: boundaryPostRebaseUnchanged[heapTableIdentityLane], reachability: emitHeapTableIdentityReachability},
 		)
 	},
 }
 
-func expandHeapTableIdentityBoundary(expansion *boundaryClosureExpansion, source State) {
-	if source.heapTableIdentity.top {
+func emitHeapTableIdentityReachability(program *boundaryReachabilityProgramBuilder, lane heapTableIdentityLane) {
+	if lane.top {
 		return
 	}
-	ids := expansion.closure.identities
-	if expansion.closure.allIdentities {
-		ids = make(map[identity.ID]struct{}, len(source.heapTableIdentity.values))
-		for id := range source.heapTableIdentity.values {
-			ids[id] = struct{}{}
-			expansion.addIdentity(id)
-		}
-	}
-	for id := range ids {
-		object, ok := source.heapTableIdentity.values[id]
-		if !ok {
+	for owner, object := range lane.values {
+		if !program.identity(owner) {
 			continue
 		}
-		expansion.addValue(object.Root())
-		for path, value := range object.StaticMembers() {
-			expansion.addHeapSuffix(id, path)
-			expansion.addValue(value)
-		}
-		for factKey, fact := range object.DynamicIndexFacts() {
-			expansion.addHeapSuffix(id, factKey.Table)
-			expansion.addValue(fact.KeyValue)
-			expansion.addValue(fact.Value)
-		}
+		program.addValue(object.Root())
+		object.VisitStaticMembers(func(path keyspace.Key, value product.Value) bool {
+			program.addHeapSuffix(owner, path)
+			program.addValue(value)
+			return true
+		})
+		object.VisitDynamicIndexFacts(func(factKey dynamicindex.Key, fact dynamicindex.Fact) bool {
+			program.addHeapSuffix(owner, factKey.Table)
+			program.addValue(fact.KeyValue)
+			program.addValue(fact.Value)
+			return true
+		})
 	}
 }

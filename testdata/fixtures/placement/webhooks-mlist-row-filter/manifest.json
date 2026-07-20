@@ -1,8 +1,6 @@
 {
   "description": "Runtime row-filter: the returned subset's membership depends on input, so its placement is the deferred+promote residual (information-theoretically optimal); source rows are borrowed.",
-  "check": {
-    "skip": "pending: field-granular / derivation-sensitive / closure-capture placement precision (task 150f00f9) not yet landed"
-  },
+  "check": {},
   "run": {
     "skip": "checker-only placement fixture"
   }

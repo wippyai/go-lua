@@ -241,7 +241,7 @@ func TestPreparedCallSurfaceNeverHidesWIRCallsMissingFacts(t *testing.T) {
 	owner := lexicalidentity.RootBody(namespace)
 	body := wir.NewBody("hidden-call")
 	body.Emit(wir.Instruction{Op: wir.OpCall, Point: 1})
-	surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{}), nil, owner, namespace, 2)
+	surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{}), nil, nil, owner, namespace, 2)
 	if !surface.Complete() || len(surface.Sites()) != 1 || surface.Sites()[0].Point != 1 || surface.Sites()[0].Target.Kind() != operationplan.CallSurfaceTargetRejected {
 		t.Fatalf("factless WIR call disappeared: %#v", surface)
 	}
@@ -258,7 +258,7 @@ func TestPreparedCallSurfaceNeverHidesWIRCallsMissingFacts(t *testing.T) {
 			for _, instruction := range instructions {
 				malformed.Emit(instruction)
 			}
-			got := sealPreparedCallSurface(bindings, malformed, factflow.NewFacts(factflow.FactsInput{}), nil, owner, namespace, 2)
+			got := sealPreparedCallSurface(bindings, malformed, factflow.NewFacts(factflow.FactsInput{}), nil, nil, owner, namespace, 2)
 			if got.Complete() || got.Digest().Available() {
 				t.Fatalf("malformed WIR census remained authoritative: %#v", got)
 			}
@@ -311,7 +311,7 @@ func TestPreparedCallSurfaceSealsOnlyExactExternalMethodShape(t *testing.T) {
 		}), operations: map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, want: operationplan.CallSurfaceTargetRejected},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{1: test.site}}), test.operations, owner, namespace, 2)
+			surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{1: test.site}}), test.operations, nil, owner, namespace, 2)
 			if !surface.Complete() || len(surface.Sites()) != 1 || surface.Sites()[0].Target.Kind() != test.want {
 				t.Fatalf("method surface = %#v, want complete target kind %v", surface, test.want)
 			}
@@ -332,7 +332,7 @@ func TestPreparedCallSurfaceRejectsDynamicExternalMethodReceiver(t *testing.T) {
 	if !ok {
 		t.Fatal("signature operation rejected")
 	}
-	surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{1: factflow.NewCallSite(factflow.CallSiteConfig{MethodName: "gsub", CalleeMemberAccess: true})}}), map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, lexicalidentity.RootBody(namespace), namespace, 2)
+	surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{1: factflow.NewCallSite(factflow.CallSiteConfig{MethodName: "gsub", CalleeMemberAccess: true})}}), map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, nil, lexicalidentity.RootBody(namespace), namespace, 2)
 	if !surface.Complete() || surface.Sites()[0].Target.Kind() != operationplan.CallSurfaceTargetRejected {
 		t.Fatalf("dynamic method surface = %#v, want rejected", surface)
 	}
@@ -383,7 +383,7 @@ func TestPreparedCallSurfaceExternalTargetRequiresExactWIRCallee(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			surface := sealPreparedCallSurface(bindings, body, factflow.NewFacts(factflow.FactsInput{
 				CallSites: map[cfg.Point]factflow.CallSite{1: test.site},
-			}), map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, owner, namespace, 2)
+			}), map[cfg.Point]operationplan.SignatureCallOperation{1: operation}, nil, owner, namespace, 2)
 			if !surface.Complete() || len(surface.Sites()) != 1 || surface.Sites()[0].Target.Kind() != test.want {
 				t.Fatalf("external surface = %#v, want complete target kind %v", surface, test.want)
 			}

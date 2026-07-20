@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -278,6 +279,44 @@ local x: string | number = produce()
 	}
 	if gotClaim := product.Get(reg, declared, assertion.Key); !gotClaim.Has(assertion.TypeClaim) {
 		t.Fatalf("declared contract assertion = %s, want type claim", gotClaim)
+	}
+}
+
+// TestLowerOrdinaryRebindOfDeclaredAnyLocalCarriesExplicitTopOverlay pins the
+// any-laundering producer fix: rebinding a `local a: any` to a concrete value
+// must keep evidence that a is still explicitly any, the same evidence its own
+// declaration gets. Before this fix the rebind's RootAssignment fact carried no
+// declared overlay at all, so readmodel had to re-derive "is a's declared type
+// any" at every consumer to relaunder the evidence back onto the value.
+func TestLowerOrdinaryRebindOfDeclaredAnyLocalCarriesExplicitTopOverlay(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built := parseSemanticChunk(t, `
+local a: any = 1
+a = { x = 1 }
+`)
+	body := wirlower.Lower("chunk", stmts, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
+
+	point := requireStmtPoints(t, built, stmts[1], 1)[0]
+	fact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatalf("missing root assignment at point %d", point)
+	}
+	if got := fact.Kind(); got != factflow.RootAssignmentOrdinaryRootWrite {
+		t.Fatalf("rebind assignment kind = %v, want ordinary root write", got)
+	}
+	if fact.DeclaredValueContracts() {
+		t.Fatalf("rebind of declared-any local used declared replacement contract; want overlay preserving literal identity")
+	}
+	if !fact.DeclaredValueOverlays() {
+		t.Fatalf("rebind of declared-any local missing declared overlay; producer dropped the target's any evidence on rebind")
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		t.Fatalf("rebind of declared-any local missing declared value")
+	}
+	if got := product.Get(reg, declared, evidence.Key); !got.IsExplicitTop() {
+		t.Fatalf("rebind declared overlay evidence = %s, want explicit top", got)
 	}
 }
 
@@ -970,6 +1009,10 @@ end`)
 	wantSuffix := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
 	if !reflect.DeepEqual(suffix, wantSuffix) {
 		t.Fatalf("dynamic invalidation suffix = %#v, want %#v", suffix, wantSuffix)
+	}
+	invalidationTarget, exact := invalidation.DynamicTargetContract()
+	if !exact || !write.TargetRef().Equal(invalidationTarget) || !reflect.DeepEqual(write.TargetSuffixRef(), wantSuffix) {
+		t.Fatalf("dynamic write/invalidation lost their shared typed target: write=%#v invalidation=%#v exact=%t", write.TargetRef(), invalidationTarget, exact)
 	}
 }
 

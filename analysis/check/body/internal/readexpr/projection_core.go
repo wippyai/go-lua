@@ -35,7 +35,7 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 	if p.IsEmpty() {
 		return product.Value{}, false
 	}
-	pathID, ok := newProjectionPathIdentity(config, p)
+	pathID, ok := projectionPathKey(config, p)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -59,6 +59,10 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 			return rememberProjection(config, memoKey, value, true)
 		}
 		return rememberProjection(config, memoKey, overlayStaticMemberWitness(config, point, p, in, value), true)
+	}
+	if p.Segments[len(p.Segments)-1].Kind == segment.SegmentIndexInt {
+		value, ok := staticIntegerIndexValue(config, point, p, in)
+		return rememberProjection(config, memoKey, value, ok)
 	}
 
 	exactPresent := product.Value{}
@@ -120,7 +124,7 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 			}
 			return rememberProjection(config, memoKey, mergeProjectedWithExact(reg, projected, exactPresent, true), true)
 		}
-		return rememberProjection(config, memoKey, dropInBoundsIndexNil(config, point, p, in, projected), true)
+		return rememberProjection(config, memoKey, projected, true)
 	}
 
 	if projected, ok, blocked := projectFromStructuralEvidence(config, point, p, in); ok {
@@ -134,7 +138,7 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 			}
 			return rememberProjection(config, memoKey, mergeProjectedWithExact(reg, projected, exactPresent, true), true)
 		}
-		return rememberProjection(config, memoKey, dropInBoundsIndexNil(config, point, p, in, projected), true)
+		return rememberProjection(config, memoKey, projected, true)
 	} else if blocked && !hasExactPresent {
 		return rememberProjection(config, memoKey, product.Value{}, false)
 	}
@@ -153,7 +157,7 @@ func project(config Config, point cfg.Point, p pathdom.Path, in state.State, ove
 	if parentValue, hasParent := project(config, point, p.ParentView(), in, false); hasParent {
 		value = sourcevalue.InheritTopOriginEvidence(reg, value, parentValue)
 	}
-	return rememberProjection(config, memoKey, dropInBoundsIndexNil(config, point, p, in, value), true)
+	return rememberProjection(config, memoKey, value, true)
 }
 
 func projectCurrentVariantOrigin(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
@@ -232,14 +236,12 @@ func projectDynamicOrHeapMember(
 	reg := config.Registry
 	if dynamicProjected, ok := projectFromDynamicIndexFacts(config, point, p, in); ok {
 		dynamicProjected = refineProjectionWithCurrentRootType(config, point, p, in, dynamicProjected)
-		dynamicProjected = dropInBoundsIndexNil(config, point, p, in, dynamicProjected)
 		if value, ok := strongProjectedValueOrFallback(reg, dynamicProjected, exact, hasExact); ok {
 			return value, true
 		}
 	}
 	if heapProjected, ok := projectFromHeapIdentity(config, point, p, in); ok {
 		heapProjected = refineProjectionWithCurrentRootType(config, point, p, in, heapProjected)
-		heapProjected = dropInBoundsIndexNil(config, point, p, in, heapProjected)
 		if value, ok := strongProjectedValueOrFallback(reg, heapProjected, exact, hasExact); ok {
 			return value, true
 		}

@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -28,15 +27,12 @@ import (
 )
 
 type operationalEffectContext struct {
-	effects               *signature.OperationalEffects
-	signatureType         *typ.Function
-	argSources            signatureArgumentReader
-	sources               sourcevalue.SourceValues
-	expressionRefinements sourcevalue.ExpressionRefinements
-	in                    state.State
-	read                  func(cfg.Point) state.State
-	keySpace              *keyspace.KeySpace
-	typeValues            *typevalue.Cache
+	effects       *signature.OperationalEffects
+	signatureType *typ.Function
+	argSources    signatureArgumentReader
+	input         callpayload.CallOutcomeInput
+	keySpace      *keyspace.KeySpace
+	typeValues    *typevalue.Cache
 }
 
 func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutcome, op operationalEffectContext) callpayload.CallOutcome {
@@ -104,6 +100,7 @@ var operationalNormalReturnLanes = callboundary.BindNormalReturnFactLanes(
 			out.LifecycleFacts = operationalLifecycleFacts(effects)
 		},
 		callboundary.LaneNumFloors:      operationalNormalReturnNoop,
+		callboundary.LaneNumCeils:       operationalNormalReturnNoop,
 		callboundary.LaneRelConstraints: operationalNormalReturnNoop,
 	},
 	func(handler operationalNormalReturnLaneHandler) bool { return handler != nil },
@@ -357,20 +354,15 @@ func operationalDynamicIndexOperandValue(
 }
 
 func operationalPlaceholderOperandValue(
-	ctx transfer.NodeContext,
+	_ transfer.NodeContext,
 	op operationalEffectContext,
 	operandPath pathdom.Path,
 ) (product.Value, bool) {
-	if !operandPath.IsPlaceholder() || len(operandPath.Segments) != 0 || op.sources == nil {
+	if !operandPath.IsPlaceholder() || len(operandPath.Segments) != 0 {
 		return product.Value{}, false
 	}
 	index := operandPath.PlaceholderIndex()
-	source, ok := op.argSources.ArgumentSourceAt(index)
-	if !ok {
-		return product.Value{}, false
-	}
-	resolver := op.expressionRefinements.Bind(ctx.Registry, op.sources)
-	return resolver.ValueOfSource(ctx.Point, source, op.in, op.read)
+	return op.argSources.ArgumentValueAt(op.input, index)
 }
 
 func operationalDynamicIndexAdmission(admission signature.DynamicIndexAdmission) (dynamicindex.Admission, bool) {
@@ -567,7 +559,27 @@ func operationalLifecycleKind(kind signature.LifecycleKind) (callboundary.Lifecy
 	}
 }
 
+type allocationIdentityResolver struct {
+	point cfg.Point
+	exact map[signature.AllocationTemplateID]identity.Term
+}
+
+func (r allocationIdentityResolver) term(id signature.AllocationTemplateID) identity.Term {
+	if r.exact != nil {
+		return r.exact[id]
+	}
+	return identity.ConcreteTerm(allocationTemplateIdentityAt(r.point, id))
+}
+
+func (r allocationIdentityResolver) concrete(id signature.AllocationTemplateID) (identity.ID, bool) {
+	return r.term(id).Concrete()
+}
+
 func operationalReturnAllocationValue(reg *axis.Registry, typeValues *typevalue.Cache, effects *signature.OperationalEffects, signatureType *typ.Function, point cfg.Point, returnIndex int, value product.Value) product.Value {
+	return operationalReturnAllocationValueWithIdentities(reg, typeValues, effects, signatureType, allocationIdentityResolver{point: point}, returnIndex, value)
+}
+
+func operationalReturnAllocationValueWithIdentities(reg *axis.Registry, typeValues *typevalue.Cache, effects *signature.OperationalEffects, signatureType *typ.Function, identities allocationIdentityResolver, returnIndex int, value product.Value) product.Value {
 	if reg == nil || effects == nil || len(effects.ReturnAllocationTemplates) == 0 {
 		return value
 	}
@@ -575,10 +587,10 @@ func operationalReturnAllocationValue(reg *axis.Registry, typeValues *typevalue.
 		if template.ReturnIndex != returnIndex || template.Root == "" {
 			continue
 		}
-		if rootValue, ok := returnAllocationTemplateRootValue(reg, typeValues, template, signatureType, point, value); ok {
+		if rootValue, ok := returnAllocationTemplateRootValue(reg, typeValues, template, signatureType, value); ok {
 			value = refineReturnAllocationValue(reg, value, rootValue)
 		}
-		return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentityAt(point, template.Root)))
+		return product.Set(reg, value, identity.Key, identity.SingletonTerm(identities.term(template.Root)))
 	}
 	return value
 }
@@ -602,7 +614,6 @@ func returnAllocationTemplateRootValue(
 	typeValues *typevalue.Cache,
 	template signature.ReturnAllocationTemplate,
 	signatureType *typ.Function,
-	point cfg.Point,
 	current product.Value,
 ) (product.Value, bool) {
 	for _, object := range template.Objects {
@@ -620,6 +631,10 @@ func returnAllocationTemplateRootValue(
 }
 
 func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue.Cache, ks *keyspace.KeySpace, signatureType *typ.Function, e signature.OperationalEffects) map[identity.ID]heapidentity.TableObject {
+	return operationalHeapTableObjectsWithIdentities(ctx, typeValues, ks, signatureType, e, allocationIdentityResolver{point: ctx.Point})
+}
+
+func operationalHeapTableObjectsWithIdentities(ctx transfer.NodeContext, typeValues *typevalue.Cache, ks *keyspace.KeySpace, signatureType *typ.Function, e signature.OperationalEffects, identities allocationIdentityResolver) map[identity.ID]heapidentity.TableObject {
 	if ctx.Registry == nil || ks == nil || len(e.ReturnAllocationTemplates) == 0 {
 		return nil
 	}
@@ -630,8 +645,11 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue
 			if object.ID == "" {
 				continue
 			}
-			id := allocationTemplateIdentityAt(ctx.Point, object.ID)
-			root := allocationTemplateValue(ctx.Registry, typeValues, ctx.Point, object.ID, object.Type, signatureType)
+			id, exact := identities.concrete(object.ID)
+			if !exact {
+				continue
+			}
+			root := allocationTemplateValue(ctx.Registry, typeValues, identities, object.ID, object.Type, signatureType)
 			staticMembers := make(map[keyspace.Key]product.Value, len(object.StaticMembers))
 			for _, member := range object.StaticMembers {
 				if member.Value == "" {
@@ -641,7 +659,7 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue
 				if !ok {
 					continue
 				}
-				staticMembers[key] = allocationTemplateValue(ctx.Registry, typeValues, ctx.Point, member.Value, objectTypes[member.Value], nil)
+				staticMembers[key] = allocationTemplateValue(ctx.Registry, typeValues, identities, member.Value, objectTypes[member.Value], nil)
 			}
 			tableKey, tableKeyOK := ks.FromStateKey(pathdom.PathKey(object.ID))
 			dynamicEntries := make(map[dynamicindex.Key]dynamicindex.Fact, len(object.DynamicEntries))
@@ -657,8 +675,8 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue
 					Site:  dynamicindex.Site(fmt.Sprintf("manifest:%d", i)),
 				}] = dynamicindex.Fact{
 					KeyPresence: presence.Present(),
-					KeyValue:    allocationTemplateKeyValue(ctx.Registry, typeValues, ctx.Point, entry, signatureType),
-					Value:       allocationTemplateValue(ctx.Registry, typeValues, ctx.Point, entry.Value, objectTypes[entry.Value], nil),
+					KeyValue:    allocationTemplateKeyValue(ctx.Registry, typeValues, identities, entry, signatureType),
+					Value:       allocationTemplateValue(ctx.Registry, typeValues, identities, entry.Value, objectTypes[entry.Value], nil),
 					Admission:   dynamicindex.AdmissionAdmitted,
 				}
 			}
@@ -677,6 +695,71 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, typeValues *typevalue
 	return out
 }
 
+// SymbolicStaticAllocation is the identity.Term-native closed allocation
+// graph. It is the canonical pre-boundary form: allocation templates remain
+// symbolic while heap roots, members, and placements share one identity map.
+type SymbolicStaticAllocation struct {
+	Result    product.Value
+	Mutations []state.ObjectGraphMutation
+}
+
+// MaterializeSymbolicStaticAllocation lowers one template without requiring
+// concrete identity.ID images. The same operational lowering helpers build
+// both concrete provider objects and this formal object graph.
+func MaterializeSymbolicStaticAllocation(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, point cfg.Point, template signature.ReturnAllocationTemplate, exact map[signature.AllocationTemplateID]identity.Term) (SymbolicStaticAllocation, bool) {
+	if reg == nil || ks == nil || !ks.Valid() || point == 0 || len(exact) != len(template.Objects) {
+		return SymbolicStaticAllocation{}, false
+	}
+	identities := allocationIdentityResolver{point: point, exact: exact}
+	for _, object := range template.Objects {
+		if object.ID == "" || !identities.term(object.ID).Valid() {
+			return SymbolicStaticAllocation{}, false
+		}
+	}
+	result, fn, ok := staticAllocationResult(reg, typeValues, template, identities)
+	if !ok {
+		return SymbolicStaticAllocation{}, false
+	}
+	objectTypes := allocationObjectTypes(template.Objects, fn)
+	mutations := make([]state.ObjectGraphMutation, 0, len(template.Objects))
+	for _, object := range template.Objects {
+		root := allocationTemplateValue(reg, typeValues, identities, object.ID, object.Type, fn)
+		staticMembers := make(map[keyspace.Key]product.Value, len(object.StaticMembers))
+		for _, member := range object.StaticMembers {
+			if member.Value == "" {
+				return SymbolicStaticAllocation{}, false
+			}
+			key, keyOK := heapidentity.StaticMemberSuffixKey(ks, member.Suffix)
+			if !keyOK {
+				return SymbolicStaticAllocation{}, false
+			}
+			staticMembers[key] = allocationTemplateValue(reg, typeValues, identities, member.Value, objectTypes[member.Value], nil)
+		}
+		tableKey, tableKeyOK := ks.FromStateKey(pathdom.PathKey(object.ID))
+		dynamicEntries := make(map[dynamicindex.Key]dynamicindex.Fact, len(object.DynamicEntries))
+		for index, entry := range object.DynamicEntries {
+			if !tableKeyOK || entry.Key == "" && entry.KeyType == nil && entry.Value == "" {
+				return SymbolicStaticAllocation{}, false
+			}
+			dynamicEntries[dynamicindex.Key{Table: tableKey, Site: dynamicindex.Site(fmt.Sprintf("manifest:%d", index))}] = dynamicindex.Fact{
+				KeyPresence: presence.Present(),
+				KeyValue:    allocationTemplateKeyValue(reg, typeValues, identities, entry, fn),
+				Value:       allocationTemplateValue(reg, typeValues, identities, entry.Value, objectTypes[entry.Value], nil),
+				Admission:   dynamicindex.AdmissionAdmitted,
+			}
+		}
+		mutations = append(mutations, state.ObjectGraphMutation{
+			Identity: identities.term(object.ID),
+			Object: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: root, StaticMembers: staticMembers, DynamicIndexFacts: dynamicEntries,
+				StableShape: object.StableShape, PrefixStableShape: object.PrefixStable,
+			}),
+			Placement: placement.OwnedHeap,
+		})
+	}
+	return SymbolicStaticAllocation{Result: result, Mutations: mutations}, true
+}
+
 func allocationObjectTypes(objects []signature.AllocationObjectTemplate, signatureType *typ.Function) map[signature.AllocationTemplateID]typ.Type {
 	if len(objects) == 0 {
 		return nil
@@ -692,6 +775,10 @@ func allocationObjectTypes(objects []signature.AllocationObjectTemplate, signatu
 }
 
 func operationalAllocationPlacements(point cfg.Point, e signature.OperationalEffects) map[identity.ID]placement.Value {
+	return operationalAllocationPlacementsWithIdentities(e, allocationIdentityResolver{point: point})
+}
+
+func operationalAllocationPlacementsWithIdentities(e signature.OperationalEffects, identities allocationIdentityResolver) map[identity.ID]placement.Value {
 	if len(e.ReturnAllocationTemplates) == 0 {
 		return nil
 	}
@@ -701,25 +788,28 @@ func operationalAllocationPlacements(point cfg.Point, e signature.OperationalEff
 			if object.ID == "" {
 				continue
 			}
-			id := allocationTemplateIdentityAt(point, object.ID)
+			id, exact := identities.concrete(object.ID)
+			if !exact {
+				continue
+			}
 			out[id] = placement.Join(out[id], placement.OwnedHeap)
 		}
 	}
 	return out
 }
 
-func allocationTemplateKeyValue(reg *axis.Registry, typeValues *typevalue.Cache, point cfg.Point, entry signature.AllocationDynamicEntryTemplate, signatureType *typ.Function) product.Value {
+func allocationTemplateKeyValue(reg *axis.Registry, typeValues *typevalue.Cache, identities allocationIdentityResolver, entry signature.AllocationDynamicEntryTemplate, signatureType *typ.Function) product.Value {
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	if keyType := closeUninferredSignatureTypeParams(signatureType, entry.KeyType); keyType != nil {
 		value = returnValueFromTypeCached(reg, typeValues, keyType)
 	}
 	if entry.Key != "" {
-		value = product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentityAt(point, entry.Key)))
+		value = product.Set(reg, value, identity.Key, identity.SingletonTerm(identities.term(entry.Key)))
 	}
 	return value
 }
 
-func allocationTemplateValue(reg *axis.Registry, typeValues *typevalue.Cache, point cfg.Point, id signature.AllocationTemplateID, t typ.Type, signatureType *typ.Function) product.Value {
+func allocationTemplateValue(reg *axis.Registry, typeValues *typevalue.Cache, identities allocationIdentityResolver, id signature.AllocationTemplateID, t typ.Type, signatureType *typ.Function) product.Value {
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	if t = closeUninferredSignatureTypeParams(signatureType, t); t != nil {
 		value = returnValueFromTypeCached(reg, typeValues, t)
@@ -727,7 +817,7 @@ func allocationTemplateValue(reg *axis.Registry, typeValues *typevalue.Cache, po
 	if id == "" {
 		return value
 	}
-	return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentityAt(point, id)))
+	return product.Set(reg, value, identity.Key, identity.SingletonTerm(identities.term(id)))
 }
 
 func allocationTemplateIdentity(id signature.AllocationTemplateID) identity.ID {

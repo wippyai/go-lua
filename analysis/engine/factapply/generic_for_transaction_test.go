@@ -7,7 +7,6 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/userlattice"
@@ -17,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestConcreteGenericForRandomizedMatchesLegacyCompositionAcrossAllLanes(t *testing.T) {
+func TestGenericForRandomizedMatchesCanonicalTransactionAcrossAllLanes(t *testing.T) {
 	const (
 		point  = cfg.Point(711)
 		target = symbol.ID(711)
@@ -26,7 +25,7 @@ func TestConcreteGenericForRandomizedMatchesLegacyCompositionAcrossAllLanes(t *t
 	userAxis := userlattice.AxisID("test.generic-for")
 	reg := concreteRootTransactionRegistry(t, userAxis)
 	resolver := branchEdgeTransactionResolver(point, target, first)
-	op, ok := NewGenericForOperation(1, target, first, GenericForSource{Kind: GenericForSourceCall, CallPoint: 17, HasCallPoint: true}, nil)
+	op, ok := NewGenericForOperation(1, target, first, []GenericForSource{{Kind: GenericForSourceCall, CallPoint: 17, HasCallPoint: true}}, nil)
 	if !ok {
 		t.Fatal("NewGenericForOperation rejected valid operation")
 	}
@@ -36,9 +35,9 @@ func TestConcreteGenericForRandomizedMatchesLegacyCompositionAcrossAllLanes(t *t
 	if !ok {
 		t.Fatal("target state key unavailable")
 	}
-	firstKey, ok := visibility.AddressAt(resolver, point, pathdom.Path{Symbol: first}).VisibleStateKey()
+	targetStructural, ok := visibility.AddressAt(resolver, point, targetPath).VisibleLocalKeyspaceKey()
 	if !ok {
-		t.Fatal("first state key unavailable")
+		t.Fatal("target structural key unavailable")
 	}
 	seeds := concreteRootTransactionLaneSeeds(t, reg, resolver.KeySpace(), userAxis)
 	all := state.State{}
@@ -57,41 +56,40 @@ func TestConcreteGenericForRandomizedMatchesLegacyCompositionAcrossAllLanes(t *t
 		output := values[rng.Intn(len(values))]
 		resolved := rng.Intn(2) == 0
 		value := presentValue(reg)
-		resolve := func(transfer.NodeContext, GenericForOperation, state.State) (product.Value, bool) {
-			return value, resolved
-		}
-		membership := func(_ transfer.NodeContext, _ GenericForOperation, out state.State, _ pathdom.Path) state.State {
-			return out.AddPathKeyMembership(targetKey, firstKey)
-		}
-
 		want := output.ClearKeyMembershipsForPath(targetKey)
 		if resolved {
 			want = want.WriteValue(reg, key.SymbolValue(target), value)
 		}
-		want = membership(ctx, op, want, targetPath)
-		got := ApplyConcreteGenericFor(ConcreteGenericForRequest{
-			Context: ctx, Resolver: resolver, Input: input, Output: output,
-			Operation: op, Semantics: genericForTestSemantics{resolve: resolve, membership: membership},
+		productDomain := state.RegisteredProductDomain(reg)
+		got := ApplyGenericFor(GenericForRequest{
+			Context: ctx, Input: input, Output: output, Operation: op,
+			ResolvedValue: value, HasResolvedValue: resolved,
+			Domain: productDomain,
+			Membership: genericForTestMembership{config: state.GenericForFactorConfig{
+				Keys: resolver.KeySpace(), VariableIndex: op.VariableIndex(), Target: targetStructural,
+			}},
 		})
 		if got.Canceled || !domain.Equal(got.Output, want) {
-			t.Fatalf("iteration %d differs from legacy composition", i)
+			t.Fatalf("iteration %d differs from canonical composition", i)
 		}
 	}
 }
 
-func TestConcreteGenericForCancellationRollsBackProviderPrefix(t *testing.T) {
+func TestGenericForCancellationRollsBackMembershipPrefix(t *testing.T) {
 	reg := concreteRootTransactionRegistry(t, "test.generic-for-cancel")
-	resolver := branchEdgeTransactionResolver(721, 721)
-	op, _ := NewGenericForOperation(0, 721, 721, GenericForSource{}, nil)
+	op, _ := NewGenericForOperation(0, 721, 721, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx, session := cancellation.Attach(ctx)
+	cancel()
 	base := state.State{}.WriteValue(reg, key.SymbolValue(999), presentValue(reg))
-	result := ApplyConcreteGenericFor(ConcreteGenericForRequest{
-		Context:  transfer.NodeContext{Context: ctx, Session: session, Registry: reg, Point: 721},
-		Resolver: resolver, Input: base, Output: base, Operation: op,
-		Semantics: genericForTestSemantics{resolve: func(transfer.NodeContext, GenericForOperation, state.State) (product.Value, bool) {
-			cancel()
-			return presentValue(reg), true
+	resolver := branchEdgeTransactionResolver(721, 721)
+	target, _ := visibility.AddressAt(resolver, 721, pathdom.Path{Symbol: 721}).VisibleLocalKeyspaceKey()
+	result := ApplyGenericFor(GenericForRequest{
+		Context: transfer.NodeContext{Context: ctx, Session: session, Registry: reg, Point: 721},
+		Input:   base, Output: base, Operation: op, ResolvedValue: presentValue(reg), HasResolvedValue: true,
+		Domain: state.RegisteredProductDomain(reg),
+		Membership: genericForTestMembership{config: state.GenericForFactorConfig{
+			Keys: resolver.KeySpace(), VariableIndex: 0, Target: target,
 		}},
 	})
 	if !result.Canceled || !state.Domain(reg).Equal(result.Output, base) {
@@ -99,21 +97,10 @@ func TestConcreteGenericForCancellationRollsBackProviderPrefix(t *testing.T) {
 	}
 }
 
-type genericForTestSemantics struct {
-	resolve    func(transfer.NodeContext, GenericForOperation, state.State) (product.Value, bool)
-	membership func(transfer.NodeContext, GenericForOperation, state.State, pathdom.Path) state.State
+type genericForTestMembership struct {
+	config state.GenericForFactorConfig
 }
 
-func (s genericForTestSemantics) ResolveGenericFor(ctx transfer.NodeContext, op GenericForOperation, in state.State) (product.Value, bool) {
-	if s.resolve == nil {
-		return product.Value{}, false
-	}
-	return s.resolve(ctx, op, in)
-}
-
-func (s genericForTestSemantics) ApplyGenericForMembership(ctx transfer.NodeContext, op GenericForOperation, out state.State, path pathdom.Path) state.State {
-	if s.membership == nil {
-		return out
-	}
-	return s.membership(ctx, op, out, path)
+func (s genericForTestMembership) PrepareGenericForFactorTransaction(_ transfer.NodeContext, _ GenericForOperation, domain state.ProductDomain) (state.GenericForFactorTransaction, error) {
+	return domain.PrepareGenericForFactorTransaction(s.config)
 }

@@ -33,8 +33,8 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 		t.Fatalf("parse %q: %v", src, err)
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	body := wirlower.Lower("main", stmts, bindings, built)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	body := wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, typeresolve.New(bindings), wirlower.Options{SealedLuaTypeChecks: true})
 	return wir.Print(body, built.Graph)
 }
 
@@ -45,8 +45,8 @@ func lowerBody(t *testing.T, src string, globals ...string) *wir.Body {
 		t.Fatalf("parse %q: %v", src, err)
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	return wirlower.Lower("main", stmts, bindings, built)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	return wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, typeresolve.New(bindings), wirlower.Options{SealedLuaTypeChecks: true})
 }
 
 func TestBranchCarriesImpliedChecks(t *testing.T) {
@@ -491,7 +491,7 @@ end
 		t.Fatalf("parse: %v", err)
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"registry_get", "type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 
 	for _, tc := range []struct {
 		name      string
@@ -502,7 +502,7 @@ end
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolver := typeresolve.NewWithExternal(bindings, typelookup.Source{Manifests: tc.manifests})
-			body := wirlower.LowerWithResolver("main", stmts, bindings, built, resolver)
+			body := wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, resolver, wirlower.Options{SealedLuaTypeChecks: true})
 			typeCalls := 0
 			typePredicateChecks := 0
 
@@ -721,6 +721,42 @@ local ready = check()!
 	}
 	if claims[1].Claim != wir.ClaimAssert || claims[1].Type != 0 || claims[1].Dst.Kind != wir.OperandPath || claims[1].A.Kind != wir.OperandTemp {
 		t.Fatalf("non-nil claim = %#v, want path target claiming call result temp without type", claims[1])
+	}
+}
+
+// TestClaimSourcedLocalAssignmentResolvesAliasSource proves a claim-sourced
+// local assignment (`local y = obj.child :: number`) exposes its aliased
+// source path through Instruction.AssignmentSourceOperand. OpClaim writes a
+// value the same way OpAssign/OpStaticMemberWrite do; consumers that resolve
+// assignment sources must see through the claim to the path it wraps.
+func TestClaimSourcedLocalAssignmentResolvesAliasSource(t *testing.T) {
+	body := lowerBody(t, `
+local obj = {}
+local y = obj.child :: number
+`)
+	var claim wir.Instruction
+	found := false
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpClaim {
+			claim = inst
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no OpClaim instruction lowered for claim-sourced assignment")
+	}
+	source, ok := claim.AssignmentSourceOperand()
+	if !ok {
+		t.Fatalf("AssignmentSourceOperand() ok = false, want true for claim-sourced assignment")
+	}
+	if source.Kind != wir.OperandPath {
+		t.Fatalf("AssignmentSourceOperand() = %#v, want path operand", source)
+	}
+	got := body.Path(wir.PathRef(source.Ref))
+	want := []segment.Segment{{Kind: segment.SegmentField, Name: "child"}}
+	if len(got.Segments) != 1 || got.Segments[0] != want[0] {
+		t.Fatalf("resolved alias path = %#v, want obj.child", got)
 	}
 }
 

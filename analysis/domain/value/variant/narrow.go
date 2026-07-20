@@ -143,11 +143,18 @@ func pathForcesLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) bool 
 	return ok && subtype.IsSubtype(field, lit)
 }
 
+// booleanRootUnion is the implicit two-member decomposition of typ.Boolean.
+// Boolean is a closed, two-valued primitive rather than a *typ.Union node, but
+// excluding one literal from it is exactly as representable as excluding a
+// member from an explicit true|false union, so rootUnion treats it as one.
+var booleanRootUnion = &typ.Union{Members: []typ.Type{typ.True, typ.False}}
+
 // NarrowByLiteralNot keeps the members of a union t that lit does not inhabit:
 // the complement of an `x == lit` guard's true edge for a root value. A
 // non-union type (an open scalar) cannot have a single literal subtracted, so it
-// reports no narrowing. The returned bool reports whether a strict narrowing was
-// possible.
+// reports no narrowing; typ.Boolean is the one exception, since it is a closed
+// two-valued type and decomposes into true|false. The returned bool reports
+// whether a strict narrowing was possible.
 func NarrowByLiteralNot(t typ.Type, lit typ.Type) (typ.Type, bool) {
 	if t == nil || lit == nil {
 		return nil, false
@@ -200,6 +207,9 @@ func rootUnionSeen(t typ.Type, active *typegraph.Path) (*typ.Union, bool) {
 		}
 		return rootUnionSeen(expanded, active)
 	default:
+		if typ.TypeEquals(t, typ.Boolean) {
+			return booleanRootUnion, true
+		}
 		return nil, false
 	}
 }

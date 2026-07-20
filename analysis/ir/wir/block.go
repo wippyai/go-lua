@@ -40,6 +40,7 @@ type Body struct {
 	returnMeta           []ReturnValueMeta
 	rootTypes            []RootType
 	impliedChecks        []ImpliedCheck
+	armGroups            []ImpliedCheckRange
 	branchDiffs          []BranchDiffConstraint
 	callTargets          map[callResultTargetKey]CallResultTarget
 	evaluations          map[cfg.Point]ExpressionEvaluation
@@ -179,6 +180,16 @@ type TypeRefRange struct {
 
 // ImpliedCheckRange is a [Start, Start+Len) window into Body.impliedChecks.
 type ImpliedCheckRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// ArmRange is a [Start, Start+Len) window into Body.armGroups: one
+// ImpliedCheckRange per top-level sufficiency arm, in source order. An arm
+// that resolved no leaf check is stored as a zero-length ImpliedCheckRange
+// rather than omitted, so a sound joined conclusion can require every arm to
+// contribute before trusting it.
+type ArmRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -627,6 +638,21 @@ func (b *Body) SufficientChecks(r ImpliedCheckRange) []ImpliedCheck {
 	return b.ImpliedChecks(r)
 }
 
+// SufficientCheckArms resolves an arm range into its per-arm leaf-check
+// groups, in source order. An element is nil when that arm resolved no leaf
+// check; unlike SufficientChecks, arm boundaries are preserved.
+func (b *Body) SufficientCheckArms(r ArmRange) [][]ImpliedCheck {
+	if r.Len == 0 {
+		return nil
+	}
+	groups := b.armGroups[r.Start : r.Start+r.Len]
+	out := make([][]ImpliedCheck, len(groups))
+	for i, group := range groups {
+		out[i] = b.ImpliedChecks(group)
+	}
+	return out
+}
+
 // BranchDiffConstraints returns the branch difference-constraint descriptors
 // for a variadic range.
 func (b *Body) BranchDiffConstraints(r BranchDiffConstraintRange) []BranchDiffConstraint {
@@ -956,6 +982,22 @@ func (b *Body) AppendImpliedChecks(checks []ImpliedCheck) ImpliedCheckRange {
 	start := uint32(len(b.impliedChecks))
 	b.impliedChecks = append(b.impliedChecks, checks...)
 	return ImpliedCheckRange{Start: start, Len: uint32(len(checks))}
+}
+
+// AppendSufficientCheckArms copies each arm's leaf checks into the shared
+// branch-implied-check pool, then windows them into the arm-group pool,
+// returning the outer range. An arm with no checks still occupies its own
+// zero-length window, so a caller reading the range back can require every
+// arm to contribute before trusting a joined conclusion.
+func (b *Body) AppendSufficientCheckArms(arms [][]ImpliedCheck) ArmRange {
+	if len(arms) == 0 {
+		return ArmRange{}
+	}
+	start := uint32(len(b.armGroups))
+	for _, arm := range arms {
+		b.armGroups = append(b.armGroups, b.AppendImpliedChecks(arm))
+	}
+	return ArmRange{Start: start, Len: uint32(len(arms))}
 }
 
 // AppendBranchDiffConstraints copies branch difference-constraint descriptors

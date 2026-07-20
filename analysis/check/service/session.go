@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
@@ -41,14 +40,11 @@ type analysisCacheKey struct {
 type BatchSession struct {
 	mu sync.RWMutex
 
-	units         map[UnitID]retainedUnit
-	results       map[resultKey]*completedSnapshot
-	latest        map[unitProfileKey]resultKey
-	bySeq         map[embedding.SolveSeq]resultKey
-	analysisCache map[analysisCacheKey]*completedSnapshot
-	// summaryCache is session-scoped so content-identical bodies from separate
-	// units reuse normalized summaries without retaining their body flows.
-	summaryCache       *program.SummarySolveCache
+	units              map[UnitID]retainedUnit
+	results            map[resultKey]*completedSnapshot
+	latest             map[unitProfileKey]resultKey
+	bySeq              map[embedding.SolveSeq]resultKey
+	analysisCache      map[analysisCacheKey]*completedSnapshot
 	semanticProjection bool
 	nextSeq            embedding.SolveSeq
 	nextUnitGeneration uint64
@@ -88,7 +84,6 @@ func NewBatchSession(options ...BatchSessionOption) *BatchSession {
 		latest:             make(map[unitProfileKey]resultKey),
 		bySeq:              make(map[embedding.SolveSeq]resultKey),
 		analysisCache:      make(map[analysisCacheKey]*completedSnapshot),
-		summaryCache:       program.NewSummarySolveCache(checkerRegistry),
 		semanticProjection: selected.semanticProjection,
 	}
 }
@@ -158,8 +153,8 @@ func analysisKey(unit retainedUnit, profile string) analysisCacheKey {
 
 // cachedAnalysis returns a new publication wrapper around immutable completed
 // analysis. The wrapper's tag is the only mutable part of publication, so a
-// forced solve can still receive a fresh SolveSeq without rerunning any body
-// or summary solve. The key includes the exact logical lexical namespace as
+// forced solve can still receive a fresh SolveSeq without rerunning the
+// analysis. The key includes the exact logical lexical namespace as
 // well as content/version digests: content-identical logical units may have
 // different stable body ownership and therefore must never share completed
 // artifacts.

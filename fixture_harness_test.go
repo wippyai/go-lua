@@ -20,7 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -29,16 +28,15 @@ import (
 
 // Suite describes a fixture suite loaded from manifest.json.
 type fixtureSuite struct {
-	Description     string        `json:"description,omitempty"`
-	Files           []string      `json:"files,omitempty"`
-	Stdlib          *bool         `json:"stdlib,omitempty"`
-	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "resource", "stream", "time", "funcs", "uuid"
-	DeadlineSeconds int           `json:"deadline_seconds,omitempty"`
-	Serial          bool          `json:"serial,omitempty"`
-	Check           *fixtureCheck `json:"check,omitempty"`
-	Run             *fixtureRun   `json:"run,omitempty"`
-	Bench           *fixtureBench `json:"bench,omitempty"`
-	Skip            string        `json:"skip,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Files       []string      `json:"files,omitempty"`
+	Stdlib      *bool         `json:"stdlib,omitempty"`
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "resource", "stream", "time", "funcs", "uuid"
+	Serial      bool          `json:"serial,omitempty"`
+	Check       *fixtureCheck `json:"check,omitempty"`
+	Run         *fixtureRun   `json:"run,omitempty"`
+	Bench       *fixtureBench `json:"bench,omitempty"`
+	Skip        string        `json:"skip,omitempty"`
 }
 
 type fixtureCheck struct {
@@ -291,9 +289,6 @@ func runCheckPhaseContext(t *testing.T, s namedSuite, ctx context.Context) {
 	if ctx != nil {
 		baseOpts = append(baseOpts, testutil.WithContext(ctx))
 	}
-	if os.Getenv("FIXTURE_WTO") != "" {
-		baseOpts = append(baseOpts, testutil.WithSchedule(transfer.ScheduleWTO, nil))
-	}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
@@ -394,37 +389,21 @@ func logFixtureStats(t testing.TB, suite, file string, stats *program.Stats) {
 	if stats == nil {
 		return
 	}
-	t.Logf("fixture stats %s/%s: solves prepass=%d summary=%d summary_point_transfers=%d summary_dependency_change_solves=%d summary_dependency_change_transfers=%d materialize=%d max_funcs=%d max_contexts=%d max_context_refs=%d semantic_call_contexts=%d sites_per_semantic=%v materialized_context_solves=%d materialized_context_new=%d query_bodies=%d query_transfers=%d body_solves=%d body_transfers=%d dense_attempts=%d dense_completed=%d dense_fallbacks=%d",
+	var summaryCells, summaryEquations int
+	for _, bodyStats := range stats.FunctionalSummary.Bodies {
+		summaryCells += bodyStats.Cells
+		summaryEquations += bodyStats.Equations
+	}
+	t.Logf("fixture stats %s/%s: functions=%d lexical_bodies=%d formal_equations=%d summary_cells=%d summary_equations=%d apply_instantiations=%d",
 		suite,
 		file,
-		stats.PrepassBodySolves,
-		stats.SummaryBodySolves,
-		stats.SummaryPointTransfers,
-		stats.SummaryBodySolvesAfterDependencyChange,
-		stats.SummaryPointTransfersAfterDependencyChange,
-		stats.MaterializeBodySolves,
 		stats.MaxFunctionCount,
-		stats.MaxContextCount,
-		stats.MaxCallContextRefCount,
-		stats.MaxSemanticCallContextCount,
-		stats.CallSitesPerSemanticEntry,
-		stats.MaterializedContextSolves,
-		stats.MaterializedContextNewContexts,
-		stats.Query.BodyInvocations,
-		stats.Query.Solver.TransferCalls,
-		stats.Body.BodySolves,
-		stats.Body.Transfer.Solver.TransferCalls,
-		stats.Body.Transfer.DenseAttempts,
-		stats.Body.Transfer.DenseCompleted,
-		stats.Body.Transfer.DenseFallbacks,
+		stats.FunctionalSummary.LexicalBodies,
+		stats.FunctionalSummary.FormalEquations,
+		summaryCells,
+		summaryEquations,
+		stats.FunctionalSummary.ApplyInstantiations,
 	)
-	if os.Getenv("FIXTURE_ATTRIBUTION") != "" {
-		attribution, err := json.Marshal(stats.BodySolveAttribution())
-		if err != nil {
-			t.Fatalf("encode fixture attribution: %v", err)
-		}
-		t.Logf("fixture attribution %s/%s: %s", suite, file, attribution)
-	}
 }
 
 func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan placementplan.Plan) {

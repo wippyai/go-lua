@@ -46,6 +46,12 @@ type Resolver struct {
 	single map[singleSegment]pathdom.PathKey
 	keys   *keyspace.KeySpace
 	input  bool
+	// projection is an exact keyspace-authority adapter.  It changes only the
+	// root namespace in which this resolver interns an otherwise identical
+	// visibility result.  Source-path interpretation and SSA selection remain
+	// owned by this Resolver; users cannot supply an alternate path resolver.
+	projectionSource *keyspace.KeySpace
+	projection       func(keyspace.Key) (keyspace.Key, bool)
 }
 
 // NewResolver creates a resolver bound to a visibility source.
@@ -79,6 +85,45 @@ func (r *Resolver) KeySpace() *keyspace.KeySpace {
 	return r.keys
 }
 
+// ProjectKeySpace returns a resolver view whose exact address results are
+// transported into target by project.  This is the formal-relation boundary:
+// it preserves the resolver's source/SSA semantics while replacing concrete
+// lexical roots with their already-sealed formal identities.  Projection is
+// applied to interned keys, never to formatted path strings.
+func (r *Resolver) ProjectKeySpace(target *keyspace.KeySpace, project func(keyspace.Key) (keyspace.Key, bool)) (*Resolver, bool) {
+	if r == nil || r.keys == nil || !r.keys.Valid() || target == nil || !target.Valid() || project == nil || r.projection != nil {
+		return nil, false
+	}
+	out := *r
+	out.projectionSource = r.keys
+	out.projection = project
+	out.keys = target
+	out.root = make(map[versionedRoot]pathdom.PathKey)
+	out.single = make(map[singleSegment]pathdom.PathKey)
+	return &out, true
+}
+
+func (r *Resolver) projectKey(source keyspace.Key) (keyspace.Key, bool) {
+	if r == nil || r.keys == nil || source.Kind == keyspace.KindInvalid {
+		return keyspace.Key{}, false
+	}
+	if r.projection == nil {
+		return source, r.keys.FormatReadOnly(source) != ""
+	}
+	target, ok := r.projection(source)
+	return target, ok && target.Kind != keyspace.KindInvalid && r.keys.FormatReadOnly(target) != ""
+}
+
+func (r *Resolver) sourceKeySpace() *keyspace.KeySpace {
+	if r != nil && r.projectionSource != nil {
+		return r.projectionSource
+	}
+	if r == nil {
+		return nil
+	}
+	return r.keys
+}
+
 // StructKeyAt returns the interned structural state key for path at point. Its
 // Format() equals KeyAt(point, path); a non-point-local or unresolved path
 // yields the invalid zero key (Format == "").
@@ -93,14 +138,18 @@ func (r *Resolver) StructKeyAt(point cfg.Point, path pathdom.Path) keyspace.Key 
 // VisibleLocalKeyspaceKeyAt returns the interned point-local value-lane key for
 // path without formatting and reparsing the legacy PathKey string.
 func (r *Resolver) VisibleLocalKeyspaceKeyAt(point cfg.Point, path pathdom.Path) (keyspace.Key, bool) {
-	if path.IsEmpty() || path.Symbol == 0 || r == nil || r.source == nil || r.keys == nil {
+	if path.IsEmpty() || path.Symbol == 0 || r == nil || r.source == nil || r.keys == nil || r.sourceKeySpace() == nil {
 		return keyspace.Key{}, false
 	}
 	version := r.visibleVersion(point, path.Symbol)
 	if version.IsZero() {
 		return keyspace.Key{}, false
 	}
-	return r.keys.FromResolverKey(path.Symbol, version.ID, path.Segments)
+	source, ok := r.sourceKeySpace().FromResolverKey(path.Symbol, version.ID, path.Segments)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return r.projectKey(source)
 }
 
 // VisibleKeyspaceKeyAt returns the interned key for the visible state spelling
@@ -111,7 +160,8 @@ func (r *Resolver) VisibleKeyspaceKeyAt(point cfg.Point, path pathdom.Path) (key
 		return keyspace.Key{}, false
 	}
 	if path.IsPlaceholder() {
-		return r.keys.FromPath(path), true
+		source := r.sourceKeySpace().FromPath(path)
+		return r.projectKey(source)
 	}
 	return r.VisibleLocalKeyspaceKeyAt(point, path)
 }
@@ -124,9 +174,19 @@ func (r *Resolver) RootOrVisibleKeyspaceKeyAt(point cfg.Point, path pathdom.Path
 		return keyspace.Key{}, false
 	}
 	if len(path.Segments) == 0 {
-		return r.keys.FromPath(path), true
+		source := r.sourceKeySpace().FromPath(path)
+		return r.projectKey(source)
 	}
 	return r.VisibleLocalKeyspaceKeyAt(point, path)
+}
+
+// StructuralKeyspaceKeyAt interns path without point-local SSA rewriting in
+// this resolver's selected root namespace.
+func (r *Resolver) StructuralKeyspaceKeyAt(path pathdom.Path) (keyspace.Key, bool) {
+	if path.IsEmpty() || r == nil || r.keys == nil || r.sourceKeySpace() == nil {
+		return keyspace.Key{}, false
+	}
+	return r.projectKey(r.sourceKeySpace().FromPath(path))
 }
 
 // KeyAt returns the point-visible state key for path at point. Symbol-rooted
@@ -137,11 +197,11 @@ func (r *Resolver) KeyAt(point cfg.Point, path pathdom.Path) pathdom.PathKey {
 		return ""
 	}
 	if path.IsPlaceholder() {
-		local, ok := pathaddr.LocalOfPath(path)
+		key, ok := r.VisibleKeyspaceKeyAt(point, path)
 		if !ok {
 			return ""
 		}
-		return local.LocalKey().PathKey()
+		return r.keys.FormatReadOnly(key)
 	}
 	if path.Symbol == 0 || r == nil || r.source == nil {
 		return ""
@@ -199,7 +259,7 @@ func (r *Resolver) KeyForVersion(sym symbol.ID, version int, segments []segment.
 	if sym == 0 || version <= 0 {
 		return ""
 	}
-	if r != nil {
+	if r != nil && r.projection == nil {
 		cacheKey := versionedRoot{sym: sym, version: version}
 		if len(segments) == 0 {
 			if cached, ok := r.root[cacheKey]; ok {
@@ -221,6 +281,17 @@ func (r *Resolver) KeyForVersion(sym symbol.ID, version int, segments []segment.
 			r.single[singleKey] = key.PathKey()
 			return key.PathKey()
 		}
+	}
+	if r != nil && r.projection != nil {
+		source, ok := r.sourceKeySpace().FromResolverKey(sym, version, segments)
+		if !ok {
+			return ""
+		}
+		target, ok := r.projectKey(source)
+		if !ok {
+			return ""
+		}
+		return r.keys.FormatReadOnly(target)
 	}
 	key, ok := pathaddr.LocalKeyForVersion(sym, version, segments)
 	if !ok {

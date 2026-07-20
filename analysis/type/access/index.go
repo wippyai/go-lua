@@ -57,7 +57,7 @@ func (q *query) index(container typ.Type, key typ.Type, depth int, mode indexMod
 }
 
 func (q *query) indexCore(container typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
-	return descendAccessWrappers(container, depth, nil, func(t typ.Type, depth int) fieldResult {
+	return descendAccessWrappers(container, depth, nil, zeroFieldResult, func(t typ.Type, depth int) fieldResult {
 		if top, ok := SpecialAccessType(t); ok {
 			return fieldResult{t: top, ok: true}
 		}

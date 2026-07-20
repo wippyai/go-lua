@@ -17,15 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
-type normalReturnApplyPhase uint8
-
-const (
-	normalReturnApplyBeforeParamFacts normalReturnApplyPhase = iota
-	normalReturnApplyAfterParamFacts
-	normalReturnApplyAfterParamRelations
-	normalReturnApplyFinalWrites
-)
-
 type normalReturnApplyContext struct {
 	node                            transfer.NodeContext
 	typeValues                      *typevalue.Cache
@@ -65,111 +56,6 @@ func (ctx normalReturnApplyContext) relationGraphKey(operand callboundary.RelOpe
 	return relationGraphKeyAt(ctx.resolver, ctx.point, targetPath, operand.IsLength)
 }
 
-type normalReturnApplyLaneHandler struct {
-	phase normalReturnApplyPhase
-	apply func(normalReturnApplyContext, state.State) state.State
-}
-
-func applyNormalReturnFactPhase(ctx normalReturnApplyContext, phase normalReturnApplyPhase, out state.State) state.State {
-	for _, lane := range normalReturnApplyLanes {
-		handler := lane.Value
-		if handler.phase == phase {
-			out = handler.apply(ctx, out)
-		}
-	}
-	return out
-}
-
-var normalReturnApplyLanes = callboundary.BindNormalReturnFactLanes("normal-return apply", map[callboundary.NormalReturnFactLaneID]normalReturnApplyLaneHandler{
-	callboundary.LanePathRefinements: {
-		phase: normalReturnApplyBeforeParamFacts,
-		apply: applyNormalReturnPathRefinements,
-	},
-	callboundary.LanePathInvalidations: {
-		phase: normalReturnApplyAfterParamFacts,
-		apply: applyNormalReturnPathInvalidations,
-	},
-	callboundary.LanePersistentPathWrites: {
-		phase: normalReturnApplyFinalWrites,
-		apply: applyNormalReturnPersistentPathWrites,
-	},
-	callboundary.LanePathStaticMembers: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnPathStaticMembers,
-	},
-	callboundary.LanePathStaticMemberDeltas: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnPathStaticMemberDeltas,
-	},
-	callboundary.LanePathPresenceImplications: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnPathPresenceImplications,
-	},
-	callboundary.LaneDynamicIndexFacts: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnDynamicIndexFacts,
-	},
-	callboundary.LaneKeyMemberships: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnKeyMemberships,
-	},
-	callboundary.LaneDynamicValueKeys: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnDynamicValueKeys,
-	},
-	callboundary.LaneDynamicAllValues: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnDynamicAllValues,
-	},
-	callboundary.LaneBranchProofs: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnBranchProofs,
-	},
-	callboundary.LaneNumFloors: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnNumFloors,
-	},
-	callboundary.LaneRelConstraints: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnRelConstraints,
-	},
-	callboundary.LaneChannelSelects: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnChannelSelects,
-	},
-	callboundary.LaneFrozenTables: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnFrozenTables,
-	},
-	callboundary.LaneEffectDeltas: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnEffectDeltas,
-	},
-	callboundary.LaneStoreRelations: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnStoreRelations,
-	},
-	callboundary.LaneLifecycleFacts: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnLifecycleFacts,
-	},
-	callboundary.LaneEscapeEvents: {
-		phase: normalReturnApplyAfterParamRelations,
-		apply: applyNormalReturnEscapeEvents,
-	},
-}, func(handler normalReturnApplyLaneHandler) bool { return handler.apply != nil })
-
-func applyNormalReturnPathRefinements(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, fact := range ctx.normalFacts.PathRefinements {
-		targetPath, ok := ctx.substitute(fact.Path)
-		if !ok {
-			continue
-		}
-		out = applyValueRefinementAtCached(ctx.typeValues, ctx.node.Registry, ctx.resolver, ctx.projectPath, ctx.point, out, targetPath, factflow.NewValueConstraint(fact.Value))
-	}
-	return out
-}
-
 func applyNormalReturnPathInvalidations(ctx normalReturnApplyContext, out state.State) state.State {
 	dynamicIndexMutationTables := normalReturnDynamicIndexMutationTables(ctx.normalFacts.DynamicIndexFacts)
 	for _, fact := range ctx.normalFacts.PathInvalidations {
@@ -177,9 +63,16 @@ func applyNormalReturnPathInvalidations(ctx normalReturnApplyContext, out state.
 		if !ok {
 			continue
 		}
+		// A write invalidates value-origin relations for the written container
+		// even when the replacement value itself is too imprecise to publish as
+		// a DynamicIndexFact. Structural-witness preservation governs table
+		// shape, not provenance from an older store.
+		if targetKey, exact := ctx.keyspaceKey(fact.Path); exact {
+			out = out.ClearDynamicIndexValueKeyMembershipsForContainer(targetKey)
+		}
 		mutatesDynamicIndex := normalReturnPathMatchesAny(fact.Path, dynamicIndexMutationTables)
 		if callOutcomeConcreteRootInvalidation(fact.Path) && !mutatesDynamicIndex {
-			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, product.Top())
+			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, product.Top(), false)
 			continue
 		}
 		preserveStructuralWitness := fact.PreserveStructuralWitness || boundaryRootBoundToDescendant(fact.Path, targetPath)
@@ -212,7 +105,7 @@ func applyNormalReturnPersistentPathWrites(ctx normalReturnApplyContext, out sta
 			continue
 		}
 		if callboundary.IsConcreteSymbolPath(fact.Path) && len(targetPath.Segments) == 0 {
-			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, fact.Value)
+			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, fact.Value, false)
 			continue
 		}
 		out = applyValueWriteAt(ctx.node.Registry, ctx.resolver, ctx.point, out, targetPath, fact.Value)
@@ -242,7 +135,7 @@ func applyNormalReturnPathStaticMembers(ctx normalReturnApplyContext, out state.
 		if !ok {
 			continue
 		}
-		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, targetPath, fact.Value, false)
+		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, targetPath, fact.Value)
 	}
 	return out
 }
@@ -273,7 +166,7 @@ func applyNormalReturnPathStaticMemberDeltas(ctx normalReturnApplyContext, out s
 		out = edit.DoneOn(out)
 	}
 	for _, write := range heapWrites {
-		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, write.path, write.value, false)
+		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, write.path, write.value)
 	}
 	return out
 }
@@ -327,11 +220,11 @@ func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out
 
 func applyNormalReturnKeyMemberships(ctx normalReturnApplyContext, out state.State) state.State {
 	for _, fact := range ctx.normalFacts.KeyMemberships {
-		keyStateKey, ok := ctx.stateKey(fact.Key)
+		keyStateKey, ok := ctx.visibleStateKey(fact.Key)
 		if !ok {
 			continue
 		}
-		tableStateKey, ok := ctx.stateKey(fact.Table)
+		tableStateKey, ok := ctx.visibleStateKey(fact.Table)
 		if !ok {
 			continue
 		}
@@ -346,7 +239,7 @@ func applyNormalReturnDynamicValueKeys(ctx normalReturnApplyContext, out state.S
 		if !ok {
 			continue
 		}
-		tableStateKey, ok := ctx.stateKey(fact.Table)
+		tableStateKey, ok := ctx.visibleStateKey(fact.Table)
 		if !ok {
 			continue
 		}
@@ -361,7 +254,7 @@ func applyNormalReturnDynamicAllValues(ctx normalReturnApplyContext, out state.S
 		if !ok {
 			continue
 		}
-		tableStateKey, ok := ctx.stateKey(fact.Table)
+		tableStateKey, ok := ctx.visibleStateKey(fact.Table)
 		if !ok {
 			continue
 		}

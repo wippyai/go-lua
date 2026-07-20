@@ -6,6 +6,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
 
 func TestSnapshotsBottomTopAndReachableEmpty(t *testing.T) {
@@ -46,6 +47,26 @@ func TestMustSetJoinIntersectionAndWiden(t *testing.T) {
 	}
 	if !domain.Equal(domain.Join(domain.Bottom(), left), left) {
 		t.Fatalf("bottom should be join identity")
+	}
+}
+
+func TestDomainExactMeetLaws(t *testing.T) {
+	a := Fact{Select: "select-a", Kind: FactSelect, Result: testStateKey("sym1@1.result")}
+	b := Fact{Select: "select-b", Kind: FactCase, Case: testStateKey("sym2@1.case")}
+	left := Top().Add(a)
+	right := Top().Add(b)
+	both := left.Add(b)
+	domain := Domain()
+	if domain.Meet == nil {
+		t.Fatal("channel-select domain has no exact Meet")
+	}
+	latticelaws.LawSuite[Lane]{
+		Name:   "channelselectfact.Lane",
+		Domain: domain,
+		Sample: []Lane{domain.Bottom(), domain.Top(), left, right, both},
+	}.Run(t)
+	if got := domain.Meet(left, right); !domain.Equal(got, both) {
+		t.Fatalf("Meet(singleton a, singleton b) = %#v, want union %#v", got.Snapshot(), both.Snapshot())
 	}
 }
 

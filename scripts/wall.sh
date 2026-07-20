@@ -42,8 +42,8 @@ run "build" go build ./...
 run "vet" go vet ./...
 run "full tests" go test ./...
 run "fixtures" go test . -run '^TestFixtures$' -count=1
-run "fixture meta-gates" go test . -run '^(TestCuratedGate|TestFixtureDiagnosticsRequireEvidenceRenderAndLabels|TestDiagnosticExpectation.*|TestDiagnosticFileMatchingUsesExactFixtureAliases|TestFixtureDiagnostic.*|TestDiagnosticRenderPolicy.*|TestStructuredDiagnosticsCanRequireCompleteList|TestFrameLocalFixtureQualificationStats|TestDecomposableFixtureQualificationStats)$' -count=1
-run "curated oracle" go test . -run '^TestCuratedOracle$' -count=1
+run "fixture meta-gates" go test . -run '^(TestFixtureDiagnosticsRequireEvidenceRenderAndLabels|TestDiagnosticExpectation.*|TestDiagnosticFileMatchingUsesExactFixtureAliases|TestFixtureDiagnostic.*|TestDiagnosticRenderPolicy.*|TestStructuredDiagnosticsCanRequireCompleteList|TestFrameLocalFixtureQualificationStats|TestDecomposableFixtureQualificationStats)$' -count=1
+run "full oracle" go test . -run '^TestFullOracle$' -count=1
 run "soundness probes" go test . -run '^TestSoundness' -count=1
 run "lattice laws" go test ./analysis/engine/factapply -run '^TestCoreAbstractInterpretationLaws$' -count=1
 run "architecture/import audits" go test ./analysis/architecture -count=1

@@ -1,6 +1,8 @@
 package state
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -39,10 +41,14 @@ func (s State) DynamicIndexFactsSnapshot() DynamicIndexFactsSnapshot {
 	if !s.laneEnabled(laneDynamicIndexBit) {
 		return DynamicIndexFactsSnapshot{}
 	}
-	if s.dynamicIndex.top {
+	return dynamicIndexFactsSnapshot(s.dynamicIndex)
+}
+
+func dynamicIndexFactsSnapshot(lane dynamicIndexLane) DynamicIndexFactsSnapshot {
+	if lane.top {
 		return DynamicIndexFactsSnapshot{Top: true}
 	}
-	return DynamicIndexFactsSnapshot{Facts: s.dynamicIndex.cloneValues()}
+	return DynamicIndexFactsSnapshot{Facts: lane.cloneValues()}
 }
 
 type ChannelSelectFactsSnapshot struct {
@@ -58,7 +64,11 @@ func (s State) ChannelSelectFactsSnapshot() ChannelSelectFactsSnapshot {
 	if !s.laneEnabled(laneChannelSelectBit) {
 		return ChannelSelectFactsSnapshot{Bottom: true}
 	}
-	snapshot := s.channelSelect.Snapshot()
+	return channelSelectFactsSnapshot(s.channelSelect)
+}
+
+func channelSelectFactsSnapshot(lane channelselectfact.Lane) ChannelSelectFactsSnapshot {
+	snapshot := lane.Snapshot()
 	return ChannelSelectFactsSnapshot{
 		Bottom: snapshot.Bottom,
 		Top:    snapshot.Top,
@@ -77,10 +87,14 @@ func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
 	if !s.laneEnabled(laneEffectDeltasBit) {
 		return EffectDeltasSnapshot{}
 	}
-	if s.effectDeltas.top {
+	return effectDeltasSnapshot(s.effectDeltas)
+}
+
+func effectDeltasSnapshot(lane effectDeltaLane) EffectDeltasSnapshot {
+	if lane.top {
 		return EffectDeltasSnapshot{Top: true}
 	}
-	return EffectDeltasSnapshot{Deltas: s.effectDeltas.cloneValues()}
+	return EffectDeltasSnapshot{Deltas: lane.cloneValues()}
 }
 
 type HeapTableObjectsSnapshot struct {
@@ -94,10 +108,34 @@ func (s State) HeapTableObjectsSnapshot() HeapTableObjectsSnapshot {
 	if !s.laneEnabled(laneHeapTableIdentityBit) {
 		return HeapTableObjectsSnapshot{}
 	}
-	if s.heapTableIdentity.top {
-		return HeapTableObjectsSnapshot{Top: true}
+	return heapTableObjectsSnapshot(s.heapTableIdentity)
+}
+
+func heapTableObjectsSnapshot(lane heapTableIdentityLane) HeapTableObjectsSnapshot {
+	// This legacy concrete snapshot cannot spell an unresolved relational key.
+	// Preserve soundness as Top; publication callers that require exact finite
+	// evidence use checkedHeapTableObjectsSnapshot and receive the typed error.
+	snapshot, _ := checkedHeapTableObjectsSnapshot(lane)
+	return snapshot
+}
+
+// checkedHeapTableObjectsSnapshot is the single concrete publication law for
+// the relational heap lane. Formal and allocation terms are exact inside the
+// solver, but they cannot cross the concrete CallOutcome boundary before the
+// owning substitution transaction has materialized them.
+func checkedHeapTableObjectsSnapshot(lane heapTableIdentityLane) (HeapTableObjectsSnapshot, error) {
+	if lane.top {
+		return HeapTableObjectsSnapshot{Top: true}, nil
 	}
-	return HeapTableObjectsSnapshot{Objects: heapidentity.CloneMap(s.heapTableIdentity.values)}
+	objects := make(map[identity.ID]heapidentity.TableObject, len(lane.values))
+	for term, object := range lane.values {
+		id, concrete := term.Concrete()
+		if !concrete {
+			return HeapTableObjectsSnapshot{Top: true}, fmt.Errorf("state: unresolved relational heap identity crossed concrete snapshot boundary")
+		}
+		objects[id] = heapidentity.CloneObject(object)
+	}
+	return HeapTableObjectsSnapshot{Objects: objects}, nil
 }
 
 type PlacementsSnapshot struct {
@@ -112,8 +150,26 @@ func (s State) PlacementsSnapshot() PlacementsSnapshot {
 	if !s.laneEnabled(lanePlacementBit) {
 		return PlacementsSnapshot{}
 	}
-	if s.placement.top {
-		return PlacementsSnapshot{Top: true}
+	// See heapTableObjectsSnapshot: unresolved relational keys conservatively
+	// observe as Top, while exact publication uses the checked law below.
+	snapshot, _ := checkedPlacementsSnapshot(s.placement)
+	return snapshot
+}
+
+// checkedPlacementsSnapshot shares the same concrete publication fence as
+// heap objects. Keeping it beside the State snapshot prevents factor views
+// from growing a second placement interpretation.
+func checkedPlacementsSnapshot(lane placementLane) (PlacementsSnapshot, error) {
+	if lane.top {
+		return PlacementsSnapshot{Top: true}, nil
 	}
-	return PlacementsSnapshot{Placements: s.placement.cloneValues()}
+	placements := make(map[identity.ID]placement.Value, len(lane.values))
+	for term, value := range lane.values {
+		id, concrete := term.Concrete()
+		if !concrete {
+			return PlacementsSnapshot{Top: true}, fmt.Errorf("state: unresolved relational placement identity crossed concrete snapshot boundary")
+		}
+		placements[id] = value
+	}
+	return PlacementsSnapshot{Placements: placements}, nil
 }

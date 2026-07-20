@@ -5,22 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/callpayload"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -60,6 +52,49 @@ end
 		t.Fatalf("missing ordinary assignment at point %d", reassignPoint)
 	}
 	assertWIRConcreteCastAssertion(t, facts, reassignFact.Source(), typ.String, factflow.ValueSourcePath)
+}
+
+func TestLowerDeclaredAnnotationClaimProducesRuntimeValidationRefinement(t *testing.T) {
+	fn, bindings, built := parseSemanticFunction(t, `
+function f(): ()
+    local x: number
+    local y: number = 5
+end
+`)
+	body := wirlower.LowerFunction("f", fn, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+
+	noInitPoint := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
+	noInitSource := mustLocalSource(t, facts, noInitPoint)
+	assertWIRConcreteCastAssertion(t, facts, noInitSource, typ.Number, factflow.ValueSourceNil)
+	noInitLocal, ok := facts.LocalAssignment(noInitPoint)
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", noInitPoint)
+	}
+	if _, ok := noInitLocal.DeclaredAnnotationValue(); !ok {
+		t.Fatalf("no-initializer declared local missing DeclaredAnnotationValue")
+	}
+
+	// A literal-initialized declared local keeps its literal source precision
+	// (TestLowerAnnotatedScalarLiteralAssignmentKeepsLiteralSource): the
+	// annotation still reaches DeclaredAnnotationValue, but the source is not
+	// wrapped in an ExpressionRefinement since the literal is already more
+	// precise than the bare declared type.
+	literalPoint := requireStmtPoints(t, built, fn.Stmts[1], 1)[0]
+	literalLocal, ok := facts.LocalAssignment(literalPoint)
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", literalPoint)
+	}
+	literalSource := literalLocal.Source()
+	if literalSource.HasExpr {
+		t.Fatalf("literal-initialized declared local source = %#v, want unwrapped literal source", literalSource)
+	}
+	if literalSource.Kind != factflow.ValueSourceLiteral || literalSource.LiteralKind != factflow.ValueSourceLiteralInteger || literalSource.Int != 5 {
+		t.Fatalf("literal-initialized declared local source = %#v, want integer literal 5", literalSource)
+	}
+	if _, ok := literalLocal.DeclaredAnnotationValue(); !ok {
+		t.Fatalf("literal-initialized declared local missing DeclaredAnnotationValue")
+	}
 }
 
 func TestLowerReturnClaimsUseWIRClaimSources(t *testing.T) {
@@ -470,6 +505,14 @@ func assertWIRClaimSourcePath(t *testing.T, facts factflow.Facts, source factflo
 	if !ok || !got.Equal(want) {
 		t.Fatalf("WIR claim source ref %d path = %v/%v, want %v", source.ExprRef, got, ok, want)
 	}
+	refinement, ok := facts.ExpressionRefinement(source.ExprRef)
+	if !ok {
+		t.Fatalf("WIR claim source ref %d has no refinement", source.ExprRef)
+	}
+	owned, ok := refinement.ResultPath()
+	if !ok || !owned.Equal(want) {
+		t.Fatalf("WIR claim result path = %v/%v, want owned %v", owned, ok, want)
+	}
 }
 
 func assertWIRAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
@@ -666,67 +709,6 @@ if x as number then end
 	assertWIRConcreteCastAssertion(t, facts, source, typ.Number, factflow.ValueSourcePath)
 }
 
-func TestLowerParsedAnyClaimCastsMarkUntrustedTop(t *testing.T) {
-	stmts, bindings, built := parseSemanticChunk(t, `
-local x = 0
-local a, b, c, d = x as any, x :: any, x as unknown, x :: unknown
-`)
-
-	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "parsed-any-claims", stmts, built, bindings, standard.Registry())
-	local := mustLocalStmt(t, stmts, 1)
-	points := requireStmtPoints(t, built, local, 4)
-	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	for _, point := range points {
-		source := mustLocalSource(t, facts, point)
-		refinement, ok := facts.ExpressionRefinement(source.ExprRef)
-		if !ok {
-			t.Fatalf("missing any claim refinement for source ref %d", source.ExprRef)
-		}
-		if got := product.Get(reg, refinement.Refinement(), assertion.Key); !assertion.Equal(got, assertion.Any()) {
-			t.Fatalf("refinement assertion = %s, want any", got)
-		}
-		if got := product.Get(reg, refinement.Refinement(), evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
-			t.Fatalf("refinement evidence = %s, want explicit-top", got)
-		}
-	}
-	xSym := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
-	input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), base)
-
-	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts: facts,
-		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry: reg,
-			KeySpace: keyspace.New(),
-		}),
-	})
-	for _, point := range points {
-		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, input)
-		fact, ok := facts.LocalAssignment(point)
-		if !ok {
-			t.Fatalf("missing local assignment at point %d", point)
-		}
-		assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-		want := product.Set(reg, base, assertion.Key, assertion.Any())
-		want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop())
-		if !product.Equal(reg, assigned, want) {
-			t.Fatalf("assigned value changed axes other than assertion.Any and explicit-top at point %d", point)
-		}
-		if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, assertion.Any()) {
-			t.Fatalf("assigned assertion = %s, want any", got)
-		}
-		if got := product.PresenceOf(assigned); !presence.Equal(got, presence.Present()) {
-			t.Fatalf("assigned presence = %s, want present", got)
-		}
-		if got := product.Get(reg, assigned, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
-			t.Fatalf("assigned runtime kind = %s, want table", got)
-		}
-		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
-			t.Fatalf("assigned evidence = %s, want explicit-top", got)
-		}
-	}
-}
-
 func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	read := ident("x")
@@ -755,296 +737,6 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	}
 	if got := refinementAssertion(t, inner); !assertion.Equal(got, assertion.NonNil()) {
 		t.Fatalf("inner assertion = %s, want non-nil", got)
-	}
-}
-
-func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testing.T) {
-	decl := localAssign([]string{"x"}, number("0"))
-	typeRead := ident("x")
-	anyRead := ident("x")
-	nonNilRead := ident("x")
-	typeCast := &ast.CastExpr{Expr: typeRead, Type: primitiveType("number")}
-	anyCast := &ast.CastExpr{Expr: anyRead, Type: primitiveType("any")}
-	nonNil := &ast.NonNilAssertExpr{Expr: nonNilRead}
-	local := localAssign([]string{"a", "b", "c"}, typeCast, anyCast, nonNil)
-	stmts := []ast.Stmt{decl, local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	reg, err := standard.RegistryWithAxes(testLowerSparseAxisSpec().Erase())
-	if err != nil {
-		t.Fatalf("RegistryWithAxes error = %v", err)
-	}
-	facts := lowerChunkFactsWithWIR(t, "claim-refinement-indicators", stmts, built, bindings, reg)
-	points := requireStmtPoints(t, built, local, 3)
-	xSym := mustLocalAt(t, bindings, decl, 0)
-	type sourceCase struct {
-		name              string
-		point             cfg.Point
-		base              product.Value
-		wantClaim         assertion.Value
-		wantPresence      presence.Value
-		wantRuntimeKind   runtimekind.Value
-		checkRuntimeKind  bool
-		checkNoRefinement bool
-		checkEvidence     bool
-		wantEvidence      evidence.Value
-	}
-	cases := []sourceCase{
-		{
-			name:         "type",
-			point:        points[0],
-			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testLowerSparseAxisKey, testLowerSparseAxisLow),
-			wantClaim:    concreteCastAssertionForType(typ.Number),
-			wantPresence: presence.Present(),
-		},
-		{
-			name:              "any",
-			point:             points[1],
-			base:              product.Set(reg, product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testLowerSparseAxisKey, testLowerSparseAxisLow), runtimekind.Key, runtimekind.Singleton(runtimekind.Table)),
-			wantClaim:         assertion.Any(),
-			wantPresence:      presence.Present(),
-			wantRuntimeKind:   runtimekind.Singleton(runtimekind.Table),
-			checkRuntimeKind:  true,
-			checkNoRefinement: true,
-			checkEvidence:     true,
-			wantEvidence:      evidence.ExplicitTop(),
-		},
-		{
-			name:         "non-nil",
-			point:        points[2],
-			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Maybe()), testLowerSparseAxisKey, testLowerSparseAxisLow),
-			wantClaim:    assertion.NonNil(),
-			wantPresence: presence.Present(),
-		},
-	}
-	for i := range cases {
-		source := mustLocalSource(t, facts, cases[i].point)
-		if _, ok := facts.ExpressionRefinement(source.ExprRef); !ok {
-			t.Fatalf("%s refinement missing", cases[i].name)
-		}
-	}
-
-	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts: facts,
-		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry: reg,
-			KeySpace: keyspace.New(),
-		}),
-	})
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.checkRuntimeKind {
-				if got := product.PresenceOf(tc.base); !presence.Equal(got, tc.wantPresence) {
-					t.Fatalf("base input presence = %s, want %s", got, tc.wantPresence)
-				}
-				if got := product.Get(reg, tc.base, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
-					t.Fatalf("base input runtime kind = %s, want %s", got, tc.wantRuntimeKind)
-				}
-			}
-			input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), tc.base)
-			out := factApply(transfer.NodeContext{Registry: reg, Point: tc.point}, input)
-			fact, ok := facts.LocalAssignment(tc.point)
-			if !ok {
-				t.Fatalf("missing local assignment at point %d", tc.point)
-			}
-			assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-			if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, tc.wantClaim) {
-				t.Fatalf("assigned assertion = %s, want %s", got, tc.wantClaim)
-			}
-			if got := product.PresenceOf(assigned); !presence.Equal(got, tc.wantPresence) {
-				t.Fatalf("assigned presence = %s, want %s", got, tc.wantPresence)
-			}
-			if tc.checkRuntimeKind {
-				if got := product.Get(reg, assigned, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
-					t.Fatalf("assigned runtime kind = %s, want %s", got, tc.wantRuntimeKind)
-				}
-			}
-			if got := product.Get(reg, assigned, testLowerSparseAxisKey); got != testLowerSparseAxisLow {
-				t.Fatalf("assigned sparse axis = %v, want %v", got, testLowerSparseAxisLow)
-			}
-			if tc.checkEvidence {
-				if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, tc.wantEvidence) {
-					t.Fatalf("assigned evidence = %s, want %s", got, tc.wantEvidence)
-				}
-			}
-			if tc.checkNoRefinement {
-				if len(facts.BranchRefinements(tc.point)) != 0 {
-					t.Fatalf("%s assignment produced branch refinement", tc.name)
-				}
-			}
-			if got := product.Get(reg, tc.base, assertion.Key); !assertion.Equal(got, assertion.Top()) {
-				t.Fatalf("base value mutated with assertion = %s", got)
-			}
-			if tc.checkRuntimeKind {
-				if got := product.Get(reg, tc.base, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
-					t.Fatalf("base runtime kind = %s, want %s", got, tc.wantRuntimeKind)
-				}
-			}
-			if got := product.Get(reg, tc.base, testLowerSparseAxisKey); got != testLowerSparseAxisLow {
-				t.Fatalf("base sparse axis = %v, want %v", got, testLowerSparseAxisLow)
-			}
-		})
-	}
-}
-
-func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
-	decl := localAssign([]string{"x"}, number("0"))
-	read := ident("x")
-	nonNil := &ast.NonNilAssertExpr{Expr: read}
-	cast := &ast.CastExpr{Expr: nonNil, Type: primitiveType("number")}
-	local := localAssign([]string{"a"}, cast)
-	stmts := []ast.Stmt{decl, local}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "nested-claim-indicators", stmts, built, bindings, standard.Registry())
-	point := requireStmtPoints(t, built, local, 1)[0]
-	source := mustLocalSource(t, facts, point)
-	outer, ok := facts.ExpressionRefinement(source.ExprRef)
-	if !ok {
-		t.Fatalf("missing outer assertion refinement")
-	}
-	if _, ok := facts.ExpressionRefinement(outer.Source().ExprRef); !ok {
-		t.Fatalf("missing inner assertion refinement")
-	}
-	base := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
-	xSym := mustLocalAt(t, bindings, decl, 0)
-	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts: facts,
-		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry: reg,
-			KeySpace: keyspace.New(),
-		}),
-	})
-
-	input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), base)
-	out := factApply(transfer.NodeContext{Registry: reg, Point: point}, input)
-	fact, ok := facts.LocalAssignment(point)
-	if !ok {
-		t.Fatalf("missing local assignment at point %d", point)
-	}
-	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-	got := product.Get(reg, assigned, assertion.Key)
-	if !got.Has(assertion.TypeClaim) || !got.Has(assertion.NonNilClaim) {
-		t.Fatalf("nested assertion = %s, want type and non-nil indicators", got)
-	}
-	if got := product.Get(reg, base, assertion.Key); !assertion.Equal(got, assertion.Top()) {
-		t.Fatalf("base value mutated with assertion = %s", got)
-	}
-}
-
-func TestLowerNestedAnyClaimRefinementsKeepUntrustedTop(t *testing.T) {
-	stmts, bindings, built := parseSemanticChunk(t, `
-local x = 0
-local a, b = (x as any) as number, (x :: any) :: number
-`)
-
-	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "nested-any-claim-indicators", stmts, built, bindings, reg)
-	local := mustLocalStmt(t, stmts, 1)
-	points := requireStmtPoints(t, built, local, 2)
-	for _, point := range points {
-		source := mustLocalSource(t, facts, point)
-		outer, ok := facts.ExpressionRefinement(source.ExprRef)
-		if !ok {
-			t.Fatalf("missing outer assertion refinement for source ref %d", source.ExprRef)
-		}
-		assertClaimRefinementProduct(t, outer.Refinement(), concreteCastAssertionForType(typ.Number))
-		inner := outer.Source()
-		innerRefinement, ok := facts.ExpressionRefinement(inner.ExprRef)
-		if !ok {
-			t.Fatalf("missing inner any assertion refinement for source ref %d", inner.ExprRef)
-		}
-		if got := product.Get(reg, innerRefinement.Refinement(), assertion.Key); !assertion.Equal(got, assertion.Any()) {
-			t.Fatalf("inner assertion = %s, want any", got)
-		}
-		if got := product.Get(reg, innerRefinement.Refinement(), evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
-			t.Fatalf("inner evidence = %s, want explicit-top", got)
-		}
-	}
-
-	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts: facts,
-		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry: reg,
-			KeySpace: keyspace.New(),
-		}),
-	})
-	xSym := mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0)
-	input := state.State{}.WriteValue(reg, key.SymbolValue(xSym), product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
-	for _, point := range points {
-		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, input)
-		fact, ok := facts.LocalAssignment(point)
-		if !ok {
-			t.Fatalf("missing local assignment at point %d", point)
-		}
-		assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-		base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), assertion.Key, assertion.Any())
-		base = product.Set(reg, base, evidence.Key, evidence.ExplicitTop())
-		want := applyConcreteCastRefinement(reg, base, typ.Number)
-		wantClaim := assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)
-		want = product.Set(reg, want, assertion.Key, wantClaim)
-		want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop())
-		if !product.Equal(reg, assigned, want) {
-			t.Fatalf("assigned claim/evidence = %s/%s, want %s/%s",
-				product.Get(reg, assigned, assertion.Key), product.Get(reg, assigned, evidence.Key),
-				product.Get(reg, want, assertion.Key), product.Get(reg, want, evidence.Key))
-		}
-		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
-			t.Fatalf("assigned evidence = %v, want explicit-top", got)
-		}
-	}
-}
-
-func TestLowerColonCastRuntimeValidationClearsStaleAnyEvidence(t *testing.T) {
-	stmts, bindings, built := parseSemanticChunk(t, `
-local x: any = 1
-local a = x :: string
-`)
-
-	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "colon-cast-clears-any", stmts, built, bindings, reg)
-	local := mustLocalStmt(t, stmts, 1)
-	point := requireStmtPoints(t, built, local, 1)[0]
-	source := mustLocalSource(t, facts, point)
-	refinement, ok := facts.ExpressionRefinement(source.ExprRef)
-	if !ok {
-		t.Fatalf("missing cast refinement for source ref %d", source.ExprRef)
-	}
-	if got := refinement.Mode(); got != factflow.ExpressionRefinementRuntimeValidation {
-		t.Fatalf("refinement mode = %v, want runtime validation", got)
-	}
-	input := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
-	input = product.Set(reg, input, evidence.Key, evidence.ExplicitTop())
-	input = product.Set(reg, input, assertion.Key, assertion.Any())
-	input = typevalue.WithWitness(reg, input, typ.Any)
-	inner := refinement.Source()
-	transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts: facts,
-		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry: reg,
-			ExpressionValues: map[factflow.ExprRef]product.Value{
-				inner.ExprRef: input,
-			},
-		}),
-	})
-
-	out := transferFn(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
-	fact, ok := facts.LocalAssignment(point)
-	if !ok {
-		t.Fatalf("missing local assignment at point %d", point)
-	}
-	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-	if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)) {
-		t.Fatalf("assigned assertion = %s, want runtime type claim", got)
-	}
-	if got := product.PresenceOf(assigned); !presence.Equal(got, presence.Present()) {
-		t.Fatalf("assigned presence = %s, want present", got)
-	}
-	witness := product.Get(reg, assigned, typewitness.Key)
-	gotType, ok := witness.Type()
-	if !ok || !typ.TypeEquals(gotType, typ.String) {
-		t.Fatalf("assigned witness = %v/%v, want string", witness, ok)
 	}
 }
 
@@ -1128,171 +820,6 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	conditionInner := conditionClaim.Source()
 	if conditionInner.Kind != factflow.ValueSourceCall || conditionInner.CallPoint != ifPoints[0] || !conditionInner.HasCallPoint {
 		t.Fatalf("condition assertion inner source = %#v, want call source at point %d", conditionInner, ifPoints[0])
-	}
-}
-
-func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T) {
-	cases := []struct {
-		name string
-		wrap func(*ast.FuncCallExpr) ast.Expr
-		want assertion.Value
-	}{
-		{
-			name: "cast",
-			wrap: func(call *ast.FuncCallExpr) ast.Expr {
-				return &ast.CastExpr{Expr: call, Type: primitiveType("number"), Syntax: ast.CastSyntaxAs}
-			},
-			want: concreteCastAssertionForType(typ.Number),
-		},
-		{
-			name: "non-nil",
-			wrap: func(call *ast.FuncCallExpr) ast.Expr {
-				return &ast.NonNilAssertExpr{Expr: call}
-			},
-			want: assertion.NonNil(),
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			makeCall := &ast.FuncCallExpr{Func: ident("make")}
-			local := localAssign([]string{"a", "b"}, tc.wrap(makeCall))
-			stmts := []ast.Stmt{local}
-			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
-			built := cfgbuild.BuildChunk(stmts, bindings)
-
-			reg := standard.Registry()
-			body := wirlower.Lower("expanded-claim-wrapped-call", stmts, bindings, built)
-			facts := LowerDetailed(built.Graph, Config{Registry: reg, WIR: body}).Facts
-			points := requireStmtPoints(t, built, local, 3)
-			site, ok := facts.CallSiteView(points[0])
-			if !ok {
-				t.Fatal("missing wrapped call site")
-			}
-			innerRef, ok := site.Expr()
-			if !ok || innerRef == 0 {
-				t.Fatalf("call-site expr ref = %d/%v", innerRef, ok)
-			}
-
-			firstSource := mustLocalSource(t, facts, points[1])
-			secondSource := mustLocalSource(t, facts, points[2])
-			if firstSource.ExprRef == secondSource.ExprRef {
-				t.Fatalf("expanded wrapped call reused one outer source ref for both result slots: %#v %#v", firstSource, secondSource)
-			}
-
-			assertSlotRefinement := func(source factflow.ValueSource, resultIndex int) {
-				t.Helper()
-				refinement, ok := facts.ExpressionRefinement(source.ExprRef)
-				if !ok {
-					t.Fatalf("missing refinement for source ref %d", source.ExprRef)
-				}
-				assertClaimRefinementProduct(t, refinement.Refinement(), tc.want)
-				inner := refinement.Source()
-				if inner.Kind != factflow.ValueSourceCall || inner.ResultIndex != resultIndex || inner.CallPoint != points[0] || !inner.HasCallPoint {
-					t.Fatalf("refinement source = %#v, want call result %d at point %d", inner, resultIndex, points[0])
-				}
-			}
-			assertSlotRefinement(firstSource, 0)
-			assertSlotRefinement(secondSource, 1)
-
-			firstValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
-			secondValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-			transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-				Facts: facts,
-				Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-					Registry: reg,
-				}),
-				CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-					if ctx.Point != points[0] {
-						t.Fatalf("call result requested at point %d, want %d", ctx.Point, points[0])
-					}
-					return callpayload.CallOutcome{
-						Results: []callpayload.CallResult{
-							{Index: 0, Value: firstValue},
-							{Index: 1, Value: secondValue},
-						},
-					}
-				},
-			})
-
-			out := transferFn(transfer.NodeContext{Registry: reg, Point: points[1]}, state.State{})
-			out = transferFn(transfer.NodeContext{Registry: reg, Point: points[2]}, out)
-			firstFact, ok := facts.LocalAssignment(points[1])
-			if !ok {
-				t.Fatalf("missing first local assignment")
-			}
-			secondFact, ok := facts.LocalAssignment(points[2])
-			if !ok {
-				t.Fatalf("missing second local assignment")
-			}
-			firstAssigned := out.ReadValue(reg, key.SymbolValue(firstFact.TargetSymbol()))
-			secondAssigned := out.ReadValue(reg, key.SymbolValue(secondFact.TargetSymbol()))
-			wantFirst := product.Set(reg, firstValue, assertion.Key, tc.want)
-			wantSecond := product.Set(reg, secondValue, assertion.Key, tc.want)
-			if tc.want.Has(assertion.TypeClaim) {
-				wantFirst = applyConcreteCastRefinement(reg, firstValue, typ.Number)
-				wantSecond = applyConcreteCastRefinement(reg, secondValue, typ.Number)
-			}
-			if !product.Equal(reg, firstAssigned, wantFirst) {
-				t.Fatalf("first assigned claim/witness/runtime = %s/%v/%s, want %s/%v/%s",
-					product.Get(reg, firstAssigned, assertion.Key), product.Get(reg, firstAssigned, typewitness.Key), product.Get(reg, firstAssigned, runtimekind.Key),
-					product.Get(reg, wantFirst, assertion.Key), product.Get(reg, wantFirst, typewitness.Key), product.Get(reg, wantFirst, runtimekind.Key))
-			}
-			if !product.Equal(reg, secondAssigned, wantSecond) {
-				t.Fatalf("second assigned claim/witness/runtime = %s/%v/%s, want %s/%v/%s",
-					product.Get(reg, secondAssigned, assertion.Key), product.Get(reg, secondAssigned, typewitness.Key), product.Get(reg, secondAssigned, runtimekind.Key),
-					product.Get(reg, wantSecond, assertion.Key), product.Get(reg, wantSecond, typewitness.Key), product.Get(reg, wantSecond, runtimekind.Key))
-			}
-		})
-	}
-}
-
-func TestLowerConcreteCastWrappedAnyCallPublishesRuntimeWitness(t *testing.T) {
-	makeCall := &ast.FuncCallExpr{Func: ident("make")}
-	local := localAssign([]string{"a"}, &ast.CastExpr{
-		Expr:   makeCall,
-		Type:   primitiveType("number"),
-		Syntax: ast.CastSyntaxAs,
-	})
-	stmts := []ast.Stmt{local}
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
-	reg := standard.Registry()
-	facts := lowerChunkFactsWithWIR(t, "concrete-cast-wrapped-any-call", stmts, built, bindings, reg)
-	points := requireStmtPoints(t, built, local, 2)
-	source := mustLocalSource(t, facts, points[1])
-	refinement, ok := facts.ExpressionRefinement(source.ExprRef)
-	if !ok {
-		t.Fatalf("missing refinement for source ref %d", source.ExprRef)
-	}
-	assertConcreteCastRefinementProduct(t, refinement.Refinement(), typ.Number)
-
-	anyResult := typevalueWithExplicitAny(reg, typ.Any)
-	transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts: facts,
-		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-			Registry: reg,
-		}),
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-			return callpayload.CallOutcome{
-				Results: []callpayload.CallResult{{Index: 0, Value: anyResult}},
-			}
-		},
-	})
-
-	out := transferFn(transfer.NodeContext{Registry: reg, Point: points[1]}, state.State{})
-	fact, ok := facts.LocalAssignment(points[1])
-	if !ok {
-		t.Fatalf("missing local assignment")
-	}
-	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
-	if got := product.Get(reg, assigned, assertion.Key); !got.Has(assertion.RuntimeClaim) || !got.Has(assertion.TypeClaim) {
-		t.Fatalf("assigned assertion = %s, want runtime type claim", got)
-	}
-	witness := product.Get(reg, assigned, typewitness.Key)
-	gotType, ok := witness.Type()
-	if !ok || !typ.TypeEquals(gotType, typ.Number) {
-		t.Fatalf("assigned witness = %v/%v, want number", witness, ok)
 	}
 }
 

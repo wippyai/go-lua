@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -19,7 +20,7 @@ func compileGenericForOperations(
 	facts map[cfg.Point]GenericForFact,
 	types *typeresolve.Resolver,
 	resolvePath func(ast.Expr) (pathdom.Path, bool),
-	resolveIterator func(cfg.Point) (iteration.Iterator, bool),
+	signatureCalls map[cfg.Point]operationplan.SignatureCallOperation,
 	resolveDeclaredSource func(cfg.Point, effect.ParamRef) (int, typ.Type, bool),
 ) map[cfg.Point]operationplan.GenericForOperation {
 	if len(facts) == 0 {
@@ -31,9 +32,9 @@ func compileGenericForOperations(
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			continue
 		}
-		source := operationplan.GenericForSource{}
-		if len(fact.Sources) != 0 {
-			projected := fact.Sources[0]
+		sources := make([]operationplan.GenericForSource, len(fact.Sources))
+		for i, projected := range fact.Sources {
+			source := operationplan.GenericForSource{}
 			switch projected.Kind {
 			case sourceprovenance.SourceExpression:
 				source.Kind = operationplan.GenericForSourceExpression
@@ -45,19 +46,34 @@ func compileGenericForOperations(
 				source.CallPoint = projected.CallPoint
 				source.HasCallPoint = projected.HasCallPoint
 			}
+			sources[i] = source
+		}
+		var source operationplan.GenericForSource
+		if len(sources) != 0 {
+			source = sources[0]
 		}
 		contracts := genericForSourceContracts(fact, types)
 		var iterator iteration.Iterator
 		hasIterator := false
-		if resolveIterator != nil && source.Kind == operationplan.GenericForSourceCall && source.HasCallPoint {
-			iterator, hasIterator = resolveIterator(source.CallPoint)
+		if source.Kind == operationplan.GenericForSourceCall && source.HasCallPoint {
+			// The sealed signature-call operation is the sole producer of iterator
+			// protocol vocabulary. Generic-for must not independently repeat name,
+			// receiver, or signature resolution: method calls need the same typed
+			// receiver proof as the call transaction itself.
+			if call, ok := signatureCalls[source.CallPoint]; ok {
+				iterator, hasIterator = iteration.ActiveIterator(call.Signature().Effect.Labels)
+			}
 		}
 		contracts = genericForDeclaredSourceContracts(fact, source, iterator, hasIterator, contracts, resolveDeclaredSource)
 		first := fact.Symbols[0]
-		op, ok := operationplan.NewGenericForOperation(fact.VariableIndex, fact.Symbols[fact.VariableIndex], first, source, contracts)
+		op, ok := operationplan.NewGenericForOperation(fact.VariableIndex, fact.Symbols[fact.VariableIndex], first, sources, contracts)
 		if ok {
 			if hasIterator {
 				op = op.WithIterator(iterator)
+			} else if call, exists := signatureCalls[source.CallPoint]; exists {
+				if _, callable := effectlowering.CallableIteratorSignature(call.Signature()); callable {
+					op = op.WithCallableIterator()
+				}
 			}
 			out[point] = op
 		}
@@ -65,11 +81,10 @@ func compileGenericForOperations(
 	return out
 }
 
-// genericForDeclaredSourceContracts freezes the state-independent portion of
-// genericForDeclaredPathIteratorSourceType into the immutable operation plan.
-// Solved and dominating-path recovery deliberately remain concrete fallbacks:
-// they depend on a particular fixpoint state and cannot authorize a reusable
-// symbolic equation.
+// genericForDeclaredSourceContracts freezes the state-independent declared
+// source contract into the immutable operation plan. State-dependent source
+// information is represented by the canonical Projection term; there is no
+// second concrete recovery path.
 func genericForDeclaredSourceContracts(
 	fact GenericForFact,
 	source operationplan.GenericForSource,

@@ -3,14 +3,15 @@ package state
 import (
 	"fmt"
 	"sort"
+	"sync"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // BoundaryRoot is one caller value/path pair bound to a callee root. Slot is
@@ -36,13 +37,19 @@ type BoundaryRootBinding struct {
 	// ToRoot is the destination tuple ordinal. Multiple source roots may target
 	// one ordinal; their values are joined deterministically.
 	ToRoot int
+	// To and ToSlot are the destination address at which ApplyBoundary
+	// materializes the rebased root value. A source rvalue may have neither a
+	// path nor a slot while its destination formal has both; in that case no
+	// structural source lanes are invented, but the exact value still acquires
+	// its callee-owned address.
 	To     keyspace.Key
 	ToSlot key.Value
 }
 
 // BoundaryRootMap is an ordered-tuple relation whose slice order is irrelevant.
-// One source ordinal may clone to several destination ordinals; several source
-// ordinals may coalesce into one destination ordinal.
+// One source ordinal may clone to several destination ordinals. Every
+// destination has at least one preimage. Many-to-one quotients remain valid
+// and join their value owners deterministically.
 type BoundaryRootMap []BoundaryRootBinding
 
 type boundaryPathBinding struct {
@@ -52,10 +59,95 @@ type boundaryPathBinding struct {
 
 type boundaryPathMap []boundaryPathBinding
 
-// BoundaryAllocationMap rebases lexical allocation templates atomically with
-// path roots. Every nonzero identity transported by a lane must have an
-// explicit entry; callers add identity mappings for intentionally stable IDs.
-type BoundaryAllocationMap map[identity.ID]identity.ID
+// BoundaryAllocationAuthority is the immutable allocation quotient owned by
+// one structural invocation route: either a forest root or one lexical Apply.
+// Destinations are derived from route authority; callers cannot supply
+// arbitrary identity maps. Concrete non-template identities are stable by
+// definition. Reverse fibers are frozen beside the forward map so every must
+// lane consumes the same quotient authority.
+type BoundaryAllocationAuthority struct {
+	bindings         map[identity.AllocationTemplate]identity.ID
+	preimages        map[identity.ID][]identity.Term
+	target           lexicalidentity.StableLexicalBodyID
+	caller           lexicalidentity.StableLexicalBodyID
+	point            uint32
+	occurrence       uint32
+	root             bool
+	transportMu      sync.Mutex
+	transportBuckets map[boundaryTransportIdentity][]*BoundaryTransport
+}
+
+// BoundaryAllocationRoute is the typed structural invocation coordinate for
+// allocation substitution. Root entry and lexical Apply are disjoint forms.
+type BoundaryAllocationRoute struct {
+	target     lexicalidentity.StableLexicalBodyID
+	caller     lexicalidentity.StableLexicalBodyID
+	point      uint32
+	occurrence uint32
+	root       bool
+}
+
+func RootBoundaryAllocationRoute(target lexicalidentity.StableLexicalBodyID) BoundaryAllocationRoute {
+	return BoundaryAllocationRoute{target: target, root: true}
+}
+
+func ApplyBoundaryAllocationRoute(target, caller lexicalidentity.StableLexicalBodyID, point, occurrence uint32) BoundaryAllocationRoute {
+	return BoundaryAllocationRoute{target: target, caller: caller, point: point, occurrence: occurrence}
+}
+
+// NewBoundaryAllocationAuthority derives every instantiated allocation identity
+// once, while the invocation route is frozen. Tuple-mu reuses this authority
+// through all iterations and allocates no identity strings.
+func NewBoundaryAllocationAuthority(route BoundaryAllocationRoute, templates []identity.AllocationTemplate) (*BoundaryAllocationAuthority, error) {
+	if route.target == (lexicalidentity.StableLexicalBodyID{}) || route.root && (route.caller != (lexicalidentity.StableLexicalBodyID{}) || route.point != 0 || route.occurrence != 0) ||
+		!route.root && (route.caller == (lexicalidentity.StableLexicalBodyID{}) || route.point == 0) {
+		return nil, fmt.Errorf("state: allocation authority requires a structural root or Apply route")
+	}
+	authority := &BoundaryAllocationAuthority{target: route.target, caller: route.caller, point: route.point, occurrence: route.occurrence, root: route.root}
+	if len(templates) == 0 {
+		return authority, nil
+	}
+	authority.bindings = make(map[identity.AllocationTemplate]identity.ID, len(templates))
+	authority.preimages = make(map[identity.ID][]identity.Term, len(templates))
+	actuals := make(map[identity.ID]struct{}, len(templates))
+	for _, template := range templates {
+		if !template.Valid() || template.Owner() != route.target {
+			return nil, fmt.Errorf("state: allocation authority contains invalid template")
+		}
+		if _, duplicate := authority.bindings[template]; duplicate {
+			return nil, fmt.Errorf("state: allocation authority contains duplicate template")
+		}
+		actual := identity.RootBoundaryAllocation(template)
+		if !route.root {
+			actual = identity.BoundaryAllocation(template, route.caller, route.point, route.occurrence)
+		}
+		if actual == (identity.ID{}) {
+			return nil, fmt.Errorf("state: allocation authority could not derive fresh identity")
+		}
+		if _, collision := actuals[actual]; collision {
+			return nil, fmt.Errorf("state: allocation authority identities collide")
+		}
+		authority.bindings[template] = actual
+		authority.preimages[actual] = []identity.Term{identity.AllocationTerm(template)}
+		actuals[actual] = struct{}{}
+	}
+	return authority, nil
+}
+
+// MatchesFrame reports whether this is the exact immutable authority linked to
+// one structural call frame. It is O(1) and allocates nothing in Apply.
+func (p *BoundaryAllocationAuthority) MatchesFrame(target, caller lexicalidentity.StableLexicalBodyID, callPoint, occurrence uint32) bool {
+	return p != nil && !p.root && p.target == target && p.caller == caller && p.point == callPoint && p.occurrence == occurrence &&
+		target != (lexicalidentity.StableLexicalBodyID{}) && caller != (lexicalidentity.StableLexicalBodyID{}) && callPoint != 0
+}
+
+func (p *BoundaryAllocationAuthority) MatchesRoot(target lexicalidentity.StableLexicalBodyID) bool {
+	return p != nil && p.root && p.target == target && target != (lexicalidentity.StableLexicalBodyID{})
+}
+
+// Empty reports that the route has no lexical allocation templates to
+// substitute. The authority and its route identity remain valid.
+func (p *BoundaryAllocationAuthority) Empty() bool { return p != nil && len(p.bindings) == 0 }
 
 // BoundaryClosure is the least root-reachable set needed to project State
 // lanes. It is state-owned so every lane can share one reachability authority
@@ -63,13 +155,13 @@ type BoundaryAllocationMap map[identity.ID]identity.ID
 type BoundaryClosure struct {
 	slots         map[key.Value]struct{}
 	paths         map[keyspace.Key]struct{}
-	identities    map[identity.ID]struct{}
+	identities    map[identity.Term]struct{}
 	allIdentities bool
 	heapSuffixes  map[boundaryHeapSuffix]struct{}
 }
 
 type boundaryHeapSuffix struct {
-	owner  identity.ID
+	owner  identity.Term
 	suffix keyspace.Key
 }
 
@@ -88,120 +180,63 @@ func buildBoundaryRootClosure(reg *axis.Registry, keys *keyspace.KeySpace, sourc
 	if reg == nil || keys == nil || !keys.Valid() {
 		return BoundaryClosure{}, fmt.Errorf("state: boundary closure requires registry and valid keyspace")
 	}
-	if specs == nil {
-		specs = defaultLaneCatalog.specs
+	catalog := defaultLaneCatalog
+	if specs != nil {
+		catalog = newLaneCatalog(specs)
 	}
-	closure := BoundaryClosure{
-		slots:        make(map[key.Value]struct{}, len(roots)),
-		paths:        make(map[keyspace.Key]struct{}, len(roots)),
-		identities:   make(map[identity.ID]struct{}),
-		heapSuffixes: make(map[boundaryHeapSuffix]struct{}),
+	domain := catalog.ProductDomain(reg)
+	factors, err := domain.Decompose(source)
+	if err != nil {
+		return BoundaryClosure{}, err
 	}
-	for _, root := range roots {
-		if root.Slot != 0 {
-			closure.slots[root.Slot] = struct{}{}
+	programs := make([]BoundaryReachabilityProgram, 0, len(factors))
+	for _, factor := range factors {
+		program, prepareErr := domain.PrepareBoundaryFactorReachability(keys, factor)
+		if prepareErr != nil {
+			return BoundaryClosure{}, prepareErr
 		}
-		if root.Path.Kind != keyspace.KindInvalid {
-			if keys.FormatReadOnly(root.Path) == "" {
-				return BoundaryClosure{}, fmt.Errorf("state: boundary root belongs to a foreign keyspace")
+		programs = append(programs, program)
+	}
+	if len(programs) == 0 {
+		empty, sealErr := newBoundaryReachabilityProgramBuilder(reg, keys).seal()
+		if sealErr != nil {
+			return BoundaryClosure{}, sealErr
+		}
+		programs = append(programs, empty)
+	}
+	programSet, err := SealBoundaryReachabilityProgramSet(programs...)
+	if err != nil {
+		return BoundaryClosure{}, err
+	}
+	factorRoots := make([]BoundaryFactorRoot, len(roots))
+	seedValues := make([]product.Value, 0, len(roots)*2+1)
+	if source.values.top {
+		seedValues = append(seedValues, product.Top())
+	}
+	for index, root := range roots {
+		factorRoots[index] = BoundaryFactorRoot{Slot: root.Slot, Path: root.Path}
+		seedValues = append(seedValues, root.Value)
+		if !source.values.top && root.Slot != 0 {
+			if value, present := source.values.get(root.Slot); present {
+				seedValues = append(seedValues, value)
 			}
-			closure.paths[root.Path] = struct{}{}
-		}
-		closure.addValueIdentity(reg, root.Value)
-	}
-
-	expansion := boundaryClosureExpansion{reg: reg, keys: keys, closure: &closure}
-	for {
-		expansion.changed = false
-		for _, spec := range specs {
-			if !source.laneMask.allows(spec.bit) {
-				continue
-			}
-			spec.boundary.expand(&expansion, source)
-		}
-		if !expansion.changed {
-			break
 		}
 	}
-	return closure, nil
+	selection, err := SealBoundaryFactorSelection(keys, factorRoots, nil, false)
+	if err != nil {
+		return BoundaryClosure{}, err
+	}
+	selection, err = programSet.Close(selection, seedValues)
+	if err != nil {
+		return BoundaryClosure{}, err
+	}
+	return selection.closure, nil
 }
 
 // ContainsSlot reports whether slot belongs to the boundary root tuple.
 func (c BoundaryClosure) ContainsSlot(slot key.Value) bool {
 	_, ok := c.slots[slot]
 	return ok
-}
-
-// boundaryClosureExpansion is the monotone capability exposed to lane-owned
-// expanders. It deliberately owns mutation so lane hooks cannot remove facts
-// or terminate the fixed point early.
-type boundaryClosureExpansion struct {
-	reg     *axis.Registry
-	keys    *keyspace.KeySpace
-	closure *BoundaryClosure
-	changed bool
-}
-
-func (e *boundaryClosureExpansion) addPath(path keyspace.Key) {
-	if path.Kind == keyspace.KindInvalid || e.closure.hasPath(path) {
-		return
-	}
-	e.closure.paths[path] = struct{}{}
-	e.changed = true
-}
-
-func (e *boundaryClosureExpansion) addValue(value product.Value) {
-	if id, ok := identityvalue.ExactID(e.reg, value); ok {
-		if _, seen := e.closure.identities[id]; !seen {
-			e.closure.identities[id] = struct{}{}
-			e.changed = true
-		}
-		return
-	}
-	if identity.Equal(product.Get(e.reg, value, identity.Key), identity.Top()) && !e.closure.allIdentities {
-		e.closure.allIdentities = true
-		e.changed = true
-	}
-}
-
-func (e *boundaryClosureExpansion) addIdentity(id identity.ID) {
-	if id == (identity.ID{}) {
-		return
-	}
-	if _, seen := e.closure.identities[id]; seen {
-		return
-	}
-	e.closure.identities[id] = struct{}{}
-	e.changed = true
-}
-
-func (e *boundaryClosureExpansion) addStateKey(raw interface{ String() string }) keyspace.Key {
-	path, ok := e.keys.FromStateKey(pathdom.PathKey(raw.String()))
-	if !ok {
-		return keyspace.Key{}
-	}
-	return path
-}
-
-func (e *boundaryClosureExpansion) connect(paths ...keyspace.Key) bool {
-	touches := false
-	for _, path := range paths {
-		touches = touches || e.closure.pathTouches(e.keys, path)
-	}
-	if touches {
-		for _, path := range paths {
-			e.addPath(path)
-		}
-	}
-	return touches
-}
-
-func (e *boundaryClosureExpansion) addHeapSuffix(owner identity.ID, suffix keyspace.Key) {
-	qualified := boundaryHeapSuffix{owner: owner, suffix: suffix}
-	if _, seen := e.closure.heapSuffixes[qualified]; seen {
-		return
-	}
-	e.closure.heapSuffixes[qualified] = struct{}{}
 }
 
 // ContainsPath reports whether path belongs to the least reachable closure.
@@ -212,10 +247,14 @@ func (c BoundaryClosure) ContainsPath(path keyspace.Key) bool {
 
 // ContainsIdentity reports whether id belongs to the least reachable closure.
 func (c BoundaryClosure) ContainsIdentity(id identity.ID) bool {
-	if c.allIdentities && id != (identity.ID{}) {
+	return c.ContainsIdentityTerm(identity.ConcreteTerm(id))
+}
+
+func (c BoundaryClosure) ContainsIdentityTerm(term identity.Term) bool {
+	if c.allIdentities && term.Valid() {
 		return true
 	}
-	_, ok := c.identities[id]
+	_, ok := c.identities[term]
 	return ok
 }
 
@@ -223,13 +262,17 @@ func (c BoundaryClosure) ContainsIdentity(id identity.ID) bool {
 // reachable through owner. Rootless heap suffixes deliberately never enter the
 // absolute path namespace.
 func (c BoundaryClosure) ContainsHeapSuffix(owner identity.ID, suffix keyspace.Key) bool {
+	return c.ContainsHeapSuffixTerm(identity.ConcreteTerm(owner), suffix)
+}
+
+func (c BoundaryClosure) ContainsHeapSuffixTerm(owner identity.Term, suffix keyspace.Key) bool {
 	_, ok := c.heapSuffixes[boundaryHeapSuffix{owner: owner, suffix: suffix}]
 	return ok
 }
 
 func (c *BoundaryClosure) addValueIdentity(reg *axis.Registry, value product.Value) {
-	if id, ok := identityvalue.ExactID(reg, value); ok {
-		c.identities[id] = struct{}{}
+	if term, ok := identityvalue.ExactTerm(reg, value); ok {
+		c.identities[term] = struct{}{}
 		return
 	}
 	if identity.Equal(product.Get(reg, value, identity.Key), identity.Top()) {
@@ -269,15 +312,19 @@ func rebaseBoundaryPaths(fromKeys, toKeys *keyspace.KeySpace, roots boundaryPath
 		if binding.from.Kind == keyspace.KindInvalid && binding.to.Kind == keyspace.KindInvalid {
 			continue
 		}
-		if fromKeys.FormatReadOnly(binding.from) == "" || toKeys.FormatReadOnly(binding.to) == "" {
+		// Structural ownership is proved by the keyspace itself. Formatting the
+		// two roots here used to rebuild their complete strings once per source
+		// path, turning boundary quotienting into an allocation-heavy
+		// paths-by-roots string loop.
+		depth, fromValid := fromKeys.SegmentLen(binding.from)
+		_, toValid := toKeys.SegmentLen(binding.to)
+		if !fromValid || !toValid {
 			return nil, false
 		}
-		if !fromKeys.HasPrefix(path, binding.from) {
+		// KeySpace.HasPrefix is a strict descendant query for some root kinds;
+		// boundary substitution also includes the root itself.
+		if path != binding.from && !fromKeys.HasPrefix(path, binding.from) {
 			continue
-		}
-		depth, ok := fromKeys.SegmentLen(binding.from)
-		if !ok {
-			return nil, false
 		}
 		if len(selected) != 0 && depth == selectedDepth {
 			if binding.from != selected[0].from {
@@ -307,13 +354,31 @@ func rebaseBoundaryPaths(fromKeys, toKeys *keyspace.KeySpace, roots boundaryPath
 		var next keyspace.Key
 		if importedPath == importedFrom {
 			next = binding.to
+		} else if importedFrom == binding.to {
+			// Crossing lexical bodies can change only KeySpace ownership while
+			// preserving the exact symbol/version spelling (notably captures).
+			// KeySpace.Rebase deliberately rejects an unchanged spelling, but the
+			// boundary substitution is still real: importedPath is now owned by
+			// the destination keyspace and retains the certified suffix exactly.
+			next = importedPath
 		} else {
 			next, ok = toKeys.Rebase(importedPath, importedFrom, binding.to)
 			if !ok {
-				return nil, false
+				next, ok = toKeys.RebaseToExistential(importedPath, importedFrom, binding.to)
+			}
+			if !ok {
+				// One source root may deliberately have both a structural-value
+				// destination and a certified SSA/existential destination. A
+				// descendant belongs only to destinations whose address space can
+				// represent its exact suffix; the root-only alias still carries the
+				// root value and is not authority to erase the descendant route.
+				continue
 			}
 		}
 		out = append(out, next)
+	}
+	if len(out) == 0 {
+		return nil, false
 	}
 	sort.Slice(out, func(i, j int) bool { return toKeys.Less(out[i], out[j]) })
 	unique := out[:0]
@@ -325,12 +390,26 @@ func rebaseBoundaryPaths(fromKeys, toKeys *keyspace.KeySpace, roots boundaryPath
 	return unique, true
 }
 
-// RebaseBoundaryIdentity performs exact allocation substitution. It returns
+// rebaseBoundaryIdentity performs exact allocation substitution. It returns
 // false for an unmapped identity so callers cannot partially rebase a lane.
-func RebaseBoundaryIdentity(allocations BoundaryAllocationMap, id identity.ID) (identity.ID, bool) {
-	if id == (identity.ID{}) {
-		return identity.ID{}, true
+func rebaseBoundaryIdentity(lens *BoundaryAllocationAuthority, term identity.Term) (identity.Term, bool) {
+	if concrete, ok := term.Concrete(); ok {
+		return identity.ConcreteTerm(concrete), true
 	}
-	next, ok := allocations[id]
+	template, allocation := term.Allocation()
+	if !allocation || lens == nil {
+		return identity.Term{}, false
+	}
+	next, ok := lens.bindings[template]
+	return identity.ConcreteTerm(next), ok && next != (identity.ID{})
+}
+
+// RebaseAllocation exposes the lens's typed allocation substitution. Concrete
+// identities never enter this authority.
+func (p *BoundaryAllocationAuthority) RebaseAllocation(template identity.AllocationTemplate) (identity.ID, bool) {
+	if p == nil || !template.Valid() {
+		return identity.ID{}, false
+	}
+	next, ok := p.bindings[template]
 	return next, ok && next != (identity.ID{})
 }

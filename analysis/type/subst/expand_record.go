@@ -66,7 +66,7 @@ func expandRecord(v *typ.Record, orig typ.Type, state *expandState, mode expandM
 		}
 	}
 
-	if !changed && mode == expandModeStructural {
+	if !changed && mode != expandModeTablePolicy {
 		return orig
 	}
 

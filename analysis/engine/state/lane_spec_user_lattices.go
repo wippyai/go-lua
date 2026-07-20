@@ -9,9 +9,26 @@ import (
 const LaneUserLattices LaneID = "user-lattices"
 
 var userLatticesLaneSpec = laneSpec{
-	id:           LaneUserLattices,
-	keySpaceMode: laneKeySpaceOwned,
-	boundary:     boundaryLaneOps{expand: expandUserLatticesBoundary, project: projectUserLatticesBoundary, rebase: rebaseUserLatticesBoundary, apply: applyUserLatticesBoundary, equal: equalUserLatticesBoundary},
+	dynamicRead:        dynamicReadIndependent(),
+	id:                 LaneUserLattices,
+	keySpaceMode:       laneKeySpaceOwned,
+	formalRekey:        formalRekeyStructural(),
+	valueDependencies:  independentValueDependencies(),
+	identitySupport:    independentIdentitySupport(),
+	numericConsistency: numericConsistencyIndependent(),
+	semanticLaws: []laneSemanticLaw{pathSubtreeMutationIndependent(), pathDescendantMutationIndependent(), pathResolutionIndependent(), pathEqualityQuotientIndependent(), genericForBindingIndependent(), pathReplacementLane[userLatticeLane](true, true, true, applyPathReplacementUserLane), effectFactorIndependent(), callBoundaryLane[userLatticeLane](
+		func(s State) userLatticeLane { return s.userLattices },
+		func(out *State, lane userLatticeLane) { out.userLattices = lane },
+		applyUserLatticeCallBoundary,
+	)},
+	boundaryClosureCompanion: noBoundaryClosureCompanion(),
+	rootAssignment: withRootAssignmentScalarLaw(
+		rootAssignmentUnchanged(true, true, true),
+		func(s State) userLatticeLane { return s.userLattices },
+		func(out *State, lane userLatticeLane) { out.userLattices = lane },
+		applyRootAssignmentUserScalar,
+	),
+	boundary: boundaryLaneOps{project: projectUserLatticesBoundary, rebase: rebaseUserLatticesBoundary, postRebase: postRebaseBoundaryNoop, equal: equalUserLatticesBoundary},
 	rekey: func(s State, from, to *keyspace.KeySpace) (State, bool) {
 		lane, ok := s.userLattices.rekey(from, to)
 		if !ok {
@@ -23,18 +40,21 @@ var userLatticesLaneSpec = laneSpec{
 	fingerprint: fingerprintUserLattices,
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
 		rt := userlattice.RuntimeFor(reg)
-		return stateLane(userLatticeDomain(rt),
+		domain := userLatticeDomain(rt)
+		return stateLaneWithBoundary(domain,
 			func(s State) userLatticeLane { return s.userLattices },
 			func(out *State, lane userLatticeLane) { out.userLattices = lane },
+			typedLaneFactorRepresentation[userLatticeLane]{equal: domain.Equal},
+			typedBoundaryFactorOps[userLatticeLane]{apply: applyUserLatticesBoundaryLane, roots: boundaryRootsUnchanged[userLatticeLane](), project: projectUserLatticesBoundaryFactor, rebase: rebaseUserLatticesBoundaryFactor, postRebase: boundaryPostRebaseUnchanged[userLatticeLane], reachability: emitUserLatticesReachability},
 		)
 	},
 }
 
-func expandUserLatticesBoundary(expansion *boundaryClosureExpansion, source State) {
-	if source.userLattices.top {
+func emitUserLatticesReachability(program *boundaryReachabilityProgramBuilder, lane userLatticeLane) {
+	if lane.top {
 		return
 	}
-	for userKey := range source.userLattices.values {
-		expansion.connect(userKey.path)
+	for userKey := range lane.values {
+		program.pathCone(false, userKey.path)
 	}
 }

@@ -1,8 +1,6 @@
 {
   "description": "Nested numeric-for counters i,j widened to [1,+inf) must be re-bounded to [1,rows] and [1,cols] by narrowing so a 2D grid[i][j] access is proven in-bounds at both levels.",
-  "check": {
-    "skip": "pending: solver narrowing (decreasing) pass (task 7c17de64) not yet implemented"
-  },
+  "check": {},
   "run": {
     "skip": "checker-only narrowing-precision fixture"
   }

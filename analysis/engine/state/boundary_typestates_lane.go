@@ -13,36 +13,42 @@ func boundaryTypestateResource(keys *keyspace.KeySpace, closure BoundaryClosure,
 	return ok && boundaryContainsStateKey(keys, closure, key)
 }
 func projectTypestatesBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if typestate.Equal(source.typestates, typestate.Domain.Top()) {
-		out.typestates = typestate.Domain.Top()
-		return true
+	out.typestates, _ = projectTypestatesBoundaryFactor(ctx, source.typestates)
+	return true
+}
+func projectTypestatesBoundaryFactor(ctx *boundaryProjectContext, source typestate.Store) (typestate.Store, bool) {
+	if typestate.Equal(source, typestate.Domain.Top()) {
+		return typestate.Domain.Top(), true
 	}
-	resources := source.typestates.Resources()
+	resources := source.Resources()
 	kept := resources[:0]
 	for _, resource := range resources {
 		if boundaryTypestateResource(ctx.keys, ctx.closure, resource) {
 			kept = append(kept, resource)
 		}
 	}
-	out.typestates = source.typestates.Restrict(kept)
-	return true
+	return source.Restrict(kept), true
 }
 func rebaseTypestatesBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if typestate.Equal(source.typestates, typestate.Domain.Top()) {
-		out.typestates = typestate.Domain.Top()
-		return true
+	var ok bool
+	out.typestates, ok = rebaseTypestatesBoundaryFactor(ctx, source.typestates)
+	return ok
+}
+func rebaseTypestatesBoundaryFactor(ctx *boundaryRebaseContext, source typestate.Store) (typestate.Store, bool) {
+	if typestate.Equal(source, typestate.Domain.Top()) {
+		return typestate.Domain.Top(), true
 	}
 	result := typestate.Domain.Bottom()
-	for _, resource := range source.typestates.Resources() {
+	for _, resource := range source.Resources() {
 		key, ok := pathaddr.StateKeyFromPathKey(pathdom.PathKey(resource.ID.String()))
 		if !ok {
-			return false
+			return typestate.Store{}, false
 		}
 		next, ok := rebaseBoundaryStateKeys(ctx, key)
 		if !ok {
-			return false
+			return typestate.Store{}, false
 		}
-		one := source.typestates.Restrict([]typestate.Resource{resource})
+		one := source.Restrict([]typestate.Resource{resource})
 		for _, target := range next {
 			mapped := one.MapResources(func(current typestate.Resource) typestate.Resource {
 				current.ID = typestate.ResourceID(target.String())
@@ -51,23 +57,20 @@ func rebaseTypestatesBoundary(ctx *boundaryRebaseContext, source State, out *Sta
 			result = typestate.Domain.Join(result, mapped)
 		}
 	}
-	out.typestates = result
-	return true
+	return result, true
 }
-func applyTypestatesBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if typestate.Equal(destination.typestates, typestate.Domain.Top()) || typestate.Equal(fragment.typestates, typestate.Domain.Top()) {
-		out.typestates = typestate.Domain.Top()
-		return true
+func applyTypestatesBoundaryLane(ctx *boundaryApplyContext, destination, fragment typestate.Store) (typestate.Store, bool) {
+	if typestate.Equal(destination, typestate.Domain.Top()) || typestate.Equal(fragment, typestate.Domain.Top()) {
+		return typestate.Domain.Top(), true
 	}
-	resources := destination.typestates.Resources()
+	resources := destination.Resources()
 	outside := resources[:0]
 	for _, resource := range resources {
 		if !boundaryTypestateResource(ctx.keys, ctx.closure, resource) {
 			outside = append(outside, resource)
 		}
 	}
-	out.typestates = destination.typestates.Restrict(outside).Overlay(fragment.typestates)
-	return true
+	return destination.Restrict(outside).Overlay(fragment), true
 }
 func equalTypestatesBoundary(_ *axis.Registry, a, b State) bool {
 	return typestate.Equal(a.typestates, b.typestates)

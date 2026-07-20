@@ -18,8 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/solve"
-	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -43,8 +41,8 @@ import (
 var (
 	ErrRegistryRequired = errors.New("check: registry is required")
 	ErrStaticRequired   = errors.New("check: prepared body is required")
-	ErrUnsupportedCFG   = errors.New("check: unsupported cfg")
-	ErrRetainedResume   = errors.New("check: retained solve cannot compose with legacy resume")
+	ErrBindingsRequired = errors.New("check: lexical bindings are required")
+	ErrCFGRequired      = errors.New("check: cfg builder returned no graph")
 )
 
 type Config struct {
@@ -61,9 +59,9 @@ type Config struct {
 	ExpressionValues             map[factflow.ExprRef]product.Value
 	ExpressionValue              sourcevalue.ExpressionValueProvider
 	VarargValue                  sourcevalue.VarargValueProvider
-	CallOutcome                  callpayload.CallOutcomeProvider
+	CallOutcome                  callpayload.CallOutcomeProgram
 	CallOutcomeFactory           CallOutcomeFactory
-	SignatureArgumentType        SignatureArgumentTypeFunc
+	SignatureArgumentType        effectlowering.SignatureArgumentTypeProgram
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
 	SummaryInputDigests          func() []uint64
 	// SummaryInputs is the identity-preserving form of SummaryInputDigests.
@@ -85,8 +83,6 @@ type Config struct {
 	// StateLanes selects the State product-lattice lanes for each solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
 	StateLanes []state.LaneID
-	Schedule   transfer.Schedule
-	CompareWTO func(transfer.WTOComparison)
 
 	EntryState             state.State
 	Initial                transfer.InitialState
@@ -97,14 +93,6 @@ type Config struct {
 
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
-
-	// Resume is an optional run-local CFG checkpoint.  External summary users
-	// supply ResumePoints after a monotone dependency change and use the point
-	// hooks to rediscover point-scoped dependencies.
-	Resume       *transfer.Session
-	ResumePoints []cfg.Point
-	BeforePoint  func(cfg.Point)
-	AfterPoint   func(cfg.Point)
 
 	Stats *Stats
 }
@@ -124,25 +112,15 @@ type Stats struct {
 	// directly observable.
 	LexicalCFGBuilds    int
 	LexicalWIRLowerings int
-	BodySolves          int
-	Transfer            transfer.Stats
 	Observation         ObservationStats
 }
 
-// ObservationStats reports deterministic seal work. Captured outputs are
-// reused only when their point-input and every dynamic state read retain the
-// exact solve-local revision after narrowing; all other planned outputs are
-// recomputed once during the seal pass.
+// ObservationStats reports the finite stabilized-coordinate projection owned
+// by result publication. No transfer is replayed while collecting these facts.
 type ObservationStats struct {
 	PlannedNodeOutputs        int
-	CapturedNodeOutputs       int
-	ValidatedNodeOutputs      int
-	RecomputedNodeOutputs     int
 	PlannedBoundaryOutputs    int
 	PlannedEdgeReachability   int
-	CapturedBoundaryOutputs   int
-	ValidatedBoundaryOutputs  int
-	RecomputedBoundaryOutputs int
 	ProjectedBoundaryOutputs  int
 	ProjectedEdgeReachability int
 }
@@ -150,45 +128,44 @@ type ObservationStats struct {
 // Static is the reusable, entry-independent analysis artifact for one bound
 // chunk or function body.
 type Static struct {
-	lexicalBodyID         lexicalidentity.StableLexicalBodyID
-	tableLiteralSite      identity.TableLiteralSite
-	registry              *axis.Registry
-	bindings              *bind.Result
-	cfg                   *cfgbuild.Result
-	function              *ast.FunctionExpr
-	wir                   *wir.Body
-	sourceStmts           []ast.Stmt
-	signatures            signaturelookup.Source
-	moduleTypes           typelookup.Source
-	moduleLoads           importlookup.Source
-	globals               []string
-	globalTypes           map[string]typ.Type
-	modules               moduleidentity.Projection
-	signatureID           *signatureIdentityResolver
-	sealedLuaTypeChecks   bool
-	facts                 factflow.Facts
-	operationPlan         *operationplan.Plan
-	symbolTypes           map[symbol.ID]typ.Type
-	assignments           assignmentFactSet
-	declarations          declarationFactSet
-	genericFors           map[cfg.Point]GenericForFact
-	visibility            *visibility.Resolver
-	sources               sourcevalue.SourceValues
-	readExpressionConfig  *readexpr.Config
-	customExpressionValue bool
-	calleeValue           CalleeValueFunc
-	receiverFn            ReceiverCallableFunc
-	typeNS                *typeresolve.Resolver
-	typeValues            *typevalue.Cache
+	lexicalBodyID                 lexicalidentity.StableLexicalBodyID
+	tableLiteralSite              identity.TableLiteralSite
+	registry                      *axis.Registry
+	bindings                      *bind.Result
+	cfg                           *cfgbuild.Result
+	function                      *ast.FunctionExpr
+	wir                           *wir.Body
+	sourceStmts                   []ast.Stmt
+	signatures                    signaturelookup.Source
+	moduleTypes                   typelookup.Source
+	moduleLoads                   importlookup.Source
+	globals                       []string
+	globalTypes                   map[string]typ.Type
+	modules                       moduleidentity.Projection
+	signatureID                   *signatureIdentityResolver
+	sealedLuaTypeChecks           bool
+	facts                         factflow.Facts
+	operationPlan                 *operationplan.Plan
+	readGraph                     ReadGraph
+	symbolTypes                   map[symbol.ID]typ.Type
+	assignments                   assignmentFactSet
+	declarations                  declarationFactSet
+	genericFors                   map[cfg.Point]GenericForFact
+	visibility                    *visibility.Resolver
+	sources                       sourcevalue.SourceValues
+	readExpressionConfig          *readexpr.Config
+	customExpressionValue         bool
+	customExpressionValueProvider sourcevalue.ExpressionValueProvider
+	calleeValue                   CalleeValueFunc
+	receiverFn                    ReceiverCallableFunc
+	typeNS                        *typeresolve.Resolver
+	typeValues                    *typevalue.Cache
 
 	entrySeeds         []state.ValueSeed
 	entrySeedsPrepared bool
 
-	callOutcomeSupplement callpayload.CallOutcomeProvider
+	callOutcomeSupplement callpayload.CallOutcomeProgram
 	signatureReturnOps    effectlowering.ReturnTypeOps
-	wtoPlan               *solve.WTOPlan[cfg.Point]
-	concreteFlow          *concreteflow.Plan
-
 	// The immutable digests cache canonical prepared-body inputs. A Static is
 	// solved many times across prepass, summary convergence, contexts, and
 	// materialization; re-encoding its WIR and imported manifests on every solve
@@ -225,6 +202,16 @@ func (s *Static) KeySpace() *keyspace.KeySpace {
 		return nil
 	}
 	return s.visibility.KeySpace()
+}
+
+// PathSemanticAuthority returns the immutable prepared path authority shared
+// by replacement tuple-engine semantic transactions. It does not expose a body
+// transfer or retain solve State.
+func (s *Static) PathSemanticAuthority() *factapply.PathSemanticAuthority {
+	if s == nil {
+		return nil
+	}
+	return factapply.NewPathSemanticAuthorityWithWiden(s.visibility, luaPathTypeProjector, luaCovariantWiden, s.typeValues)
 }
 
 // Registry returns the immutable value-axis registry owned by this prepared
@@ -282,12 +269,10 @@ type SolveConfig struct {
 	// StateLanes selects the State product-lattice lanes for this solve.
 	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
 	StateLanes []state.LaneID
-	Schedule   transfer.Schedule
-	CompareWTO func(transfer.WTOComparison)
 
-	CallOutcome                  callpayload.CallOutcomeProvider
+	CallOutcome                  callpayload.CallOutcomeProgram
 	CallOutcomeFactory           CallOutcomeFactory
-	SignatureArgumentType        SignatureArgumentTypeFunc
+	SignatureArgumentType        effectlowering.SignatureArgumentTypeProgram
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
 	// SummaryInputDigests returns content digests for summaries read during this
 	// solve. It is consulted once at result-publication time.
@@ -299,14 +284,9 @@ type SolveConfig struct {
 	// read set. It is publication metadata and never changes ResultVersion.
 	SummaryInputsComplete bool
 
-	WidenAt      func(cfg.Point) bool
-	WidenDelay   func(cfg.Point) int
-	Resume       *transfer.Session
-	ResumePoints []cfg.Point
-	BeforePoint  func(cfg.Point)
-	AfterPoint   func(cfg.Point)
-
-	Stats *Stats
+	WidenAt    func(cfg.Point) bool
+	WidenDelay func(cfg.Point) int
+	Stats      *Stats
 }
 
 type Result struct {
@@ -324,6 +304,7 @@ type Result struct {
 	signatureID           *signatureIdentityResolver
 	sealedLuaTypeChecks   bool
 	facts                 factflow.Facts
+	operationPlan         *operationplan.Plan
 	symbolTypes           map[symbol.ID]typ.Type
 	assignments           assignmentFactSet
 	declarations          declarationFactSet
@@ -331,25 +312,21 @@ type Result struct {
 	exprRefinements       sourcevalue.ExpressionRefinements
 	typeNS                *typeresolve.Resolver
 	flow                  transfer.Result
-	boundaryXfer          transfer.NodeTransfer
-	edgeXfer              transfer.EdgeTransfer
 	published             PublishedFacts
 	observationPlan       ObservationPlan
-	capturedNodeOutputs   map[cfg.Point]state.State
 	observation           ObservationStats
 	visibility            *visibility.Resolver
 	sources               sourcevalue.SourceValues
 	customExpressionValue bool
-	callOutcome           callpayload.CallOutcomeProvider
 	calleeValue           CalleeValueFunc
-	signatureArg          SignatureArgumentTypeFunc
+	signatureArg          effectlowering.SignatureArgumentTypeProgram
 	typeValues            *typevalue.Cache
 	stateLanes            []state.LaneID
 	functions             []*Result
-	callContext           bool
 	bodyParamObligations  bool
 	funcTypes             FunctionValueTypes
 	callExprPts           map[*ast.FuncCallExpr]cfg.Point
+	diagnosticOutput      callpayload.DiagnosticOutput
 
 	queries resultQueryCache
 
@@ -369,6 +346,7 @@ type Result struct {
 type CallOutcomeContext struct {
 	LexicalBodyID               lexicalidentity.StableLexicalBodyID
 	Facts                       factflow.Facts
+	OperationPlan               *operationplan.Plan
 	Sources                     sourcevalue.SourceValues
 	PathValue                   PathValueFunc
 	DynamicRead                 DynamicReadFunc
@@ -392,7 +370,7 @@ type PathValueFunc func(transfer.NodeContext, pathdom.Path, state.State) (produc
 // table itself (DynamicTableRead).
 type DynamicReadFunc func(transfer.NodeContext, pathdom.Path, product.Value, product.Value, state.State) (product.Value, bool)
 
-type CallOutcomeFactory func(CallOutcomeContext) callpayload.CallOutcomeProvider
+type CallOutcomeFactory func(CallOutcomeContext) callpayload.CallOutcomeProgram
 
 type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
@@ -400,9 +378,7 @@ type ReceiverCallableFunc func(ctx transfer.NodeContext, site factflow.CallSiteV
 
 type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []callpayload.CallReturnPresenceRelation
 
-type SignatureArgumentTypeFunc func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
-
-type SignatureArgumentTypeFactory func(CallOutcomeContext) SignatureArgumentTypeFunc
+type SignatureArgumentTypeFactory func(CallOutcomeContext, effectlowering.SignatureOutcomeInputProgram) effectlowering.SignatureArgumentTypeProgram
 
 func newChecker(config Config) (*checker, error) {
 	if config.Registry == nil {
@@ -415,40 +391,6 @@ func newChecker(config Config) (*checker, error) {
 		config.TypeValues = typevalue.NewCache()
 	}
 	return &checker{config: copyConfig(config)}, nil
-}
-
-func CheckChunk(stmts []ast.Stmt, config Config) (*Result, error) {
-	prepared, err := PrepareChunk(stmts, config)
-	if err != nil {
-		return nil, err
-	}
-	return SolvePrepared(prepared, config.SolveConfig())
-}
-
-// CheckBoundChunk checks a chunk using caller-supplied lexical bindings.
-func CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (*Result, error) {
-	prepared, err := PrepareBoundChunk(stmts, bindings, config)
-	if err != nil {
-		return nil, err
-	}
-	return SolvePrepared(prepared, config.SolveConfig())
-}
-
-func CheckFunction(fn *ast.FunctionExpr, config Config) (*Result, error) {
-	prepared, err := PrepareFunction(fn, config)
-	if err != nil {
-		return nil, err
-	}
-	return SolvePrepared(prepared, config.SolveConfig())
-}
-
-// CheckBoundFunction checks a function using caller-supplied lexical bindings.
-func CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (*Result, error) {
-	prepared, err := PrepareBoundFunction(fn, bindings, config)
-	if err != nil {
-		return nil, err
-	}
-	return SolvePrepared(prepared, config.SolveConfig())
 }
 
 func PrepareChunk(stmts []ast.Stmt, config Config) (*Static, error) {
@@ -485,13 +427,6 @@ func PrepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Co
 		return nil, err
 	}
 	return checker.prepareBoundFunction(fn, bindings)
-}
-
-func SolvePrepared(prepared *Static, config SolveConfig) (*Result, error) {
-	if prepared == nil {
-		return nil, ErrStaticRequired
-	}
-	return prepared.solve(config)
 }
 
 // InputDigest returns the deterministic digest for a prepared body's static

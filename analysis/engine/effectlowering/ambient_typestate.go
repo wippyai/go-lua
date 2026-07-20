@@ -24,24 +24,42 @@ type AmbientTypestateEscapeOutcomeProviderConfig struct {
 	Facts       factflow.Facts
 	KeySpace    *keyspace.KeySpace
 	Resolver    *visibility.Resolver
+	Domain      state.ProductDomain
 }
 
 // AmbientTypestateEscapeOutcomeProvider conservatively transfers locally
 // tracked lifecycle ownership when an unknown callee receives a path-backed
 // resource. This is protocol-independent and prevents an unmodeled callee from
 // being treated as preserving db, file, lock, or channel ownership.
-func AmbientTypestateEscapeOutcomeProvider(config AmbientTypestateEscapeOutcomeProviderConfig) callpayload.CallOutcomeProvider {
+func AmbientTypestateEscapeOutcomeProvider(config AmbientTypestateEscapeOutcomeProviderConfig) callpayload.CallOutcomeProgram {
 	args := signatureArgumentReader{keySpace: config.KeySpace}
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, _ func(cfg.Point) state.State) callpayload.CallOutcome {
-		if typestateCallHasKnownSignature(ctx, site, config.NameForSite, config.Signatures) {
-			return callpayload.CallOutcome{}
-		}
-		facts := typestateOpaqueEscapeFacts(ctx, site, in, config.Facts, config.Resolver, config.KeySpace, args)
-		if len(facts) == 0 {
-			return callpayload.CallOutcome{}
-		}
-		return callpayload.CallOutcome{NormalReturnFacts: callboundary.NormalReturnFacts{LifecycleFacts: facts}}
+	typestateQuery, queryErr := config.Domain.SealTypestateQueryCapability(config.KeySpace)
+	if queryErr != nil {
+		panic(queryErr)
 	}
+	shape := func(ctx transfer.NodeContext, site factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
+		if typestateCallHasKnownSignature(ctx, site, config.NameForSite, config.Signatures) {
+			return callpayload.CallOutcomeSiteShape{}, nil
+		}
+		return callpayload.CallOutcomeSiteShape{FieldNames: []string{"NormalReturnFacts"}, InputLanes: typestateQuery.Lanes()}, nil
+	}
+	evaluate := func(ctx transfer.NodeContext, site factflow.CallSiteView, input callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		if typestateCallHasKnownSignature(ctx, site, config.NameForSite, config.Signatures) {
+			return callpayload.CallOutcome{}, nil
+		}
+		facts, err := typestateOpaqueEscapeFacts(ctx, site, input, typestateQuery, config.Facts, config.Resolver, config.KeySpace, args)
+		if err != nil {
+			return callpayload.CallOutcome{}, err
+		}
+		if len(facts) == 0 {
+			return callpayload.CallOutcome{}, nil
+		}
+		return callpayload.CallOutcome{NormalReturnFacts: callboundary.NormalReturnFacts{LifecycleFacts: facts}}, nil
+	}
+	return callpayload.SealCallOutcomeProgram(
+		"ambient typestate escape outcome", []string{"NormalReturnFacts"},
+		typestateQuery.Lanes(), state.LaneSet{}, shape, nil, evaluate,
+	)
 }
 
 func typestateCallHasKnownSignature(ctx transfer.NodeContext, site factflow.CallSiteView, nameForSite SignatureSiteNameFunc, signatures SignatureLookup) bool {
@@ -59,22 +77,35 @@ func typestateCallHasKnownSignature(ctx transfer.NodeContext, site factflow.Call
 func typestateOpaqueEscapeFacts(
 	ctx transfer.NodeContext,
 	site factflow.CallSiteView,
-	in state.State,
+	input callpayload.CallOutcomeInput,
+	capability state.TypestateQueryCapability,
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
 	ks *keyspace.KeySpace,
 	args signatureArgumentReader,
-) []callboundary.LifecycleFact {
+) ([]callboundary.LifecycleFact, error) {
 	if resolver == nil || ks == nil {
-		return nil
+		return nil, nil
 	}
-	open := in.OpenTypestateObligations()
+	primary := input.Primary()
+	typestateFactor, ok := primary.Factor(capability.TypestateLane().ID())
+	if !ok {
+		return nil, nil
+	}
+	pathFactor, ok := primary.Factor(capability.PathEqualityLane().ID())
+	if !ok {
+		return nil, nil
+	}
+	open, err := input.Domain().OpenTypestateObligationsFactor(capability, typestateFactor, pathFactor)
+	if err != nil {
+		return nil, err
+	}
 	if len(open) == 0 {
-		return nil
+		return nil, nil
 	}
 	targets := typestateOpaqueEscapeTargets(site, facts, ks, args)
 	if len(targets) == 0 {
-		return nil
+		return nil, nil
 	}
 	seen := make(map[typestate.Resource]struct{}, len(open))
 	var out []callboundary.LifecycleFact
@@ -89,7 +120,10 @@ func typestateOpaqueEscapeFacts(
 			}
 			matched := false
 			for _, stateKey := range stateKeys {
-				resource := in.CanonicalTypestateResource(ks, stateKey, obligation.Resource.Protocol)
+				resource, _, _, err := input.Domain().CanonicalTypestateResourceFactor(capability, typestateFactor, pathFactor, stateKey, obligation.Resource.Protocol)
+				if err != nil {
+					return nil, err
+				}
 				if resource == obligation.Resource {
 					matched = true
 					break
@@ -109,7 +143,7 @@ func typestateOpaqueEscapeFacts(
 			})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // Channel methods are modeled by the ambient channel lifecycle provider even

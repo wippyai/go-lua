@@ -152,10 +152,10 @@ func (l *paramPreservationLedger) observeFact(ctx planCompileContext, point cfg.
 		// preservation only certifies the formal's post-state identity.
 		return
 	case operationplan.CallSite:
-		// A sealed lexical call is not judged here. Direct relation composition
-		// transfers the callee's must-preservation proof into this ledger, or
-		// invalidates every contributing caller root when that proof is absent.
-		// Keeping the bit pending is what lets that later exact proof speak.
+		// A sealed lexical call is not judged here. Snapshot specialization
+		// transfers the callee's must-preservation proof through its call frame,
+		// or invalidates every contributing caller root when the proof is absent.
+		// Keeping the bit pending lets that later exact proof speak.
 		if surface, ok := ctx.plan.CallSurface(); ok {
 			if site, found := surface.Site(point); found && site.Target.Kind() == operationplan.CallSurfaceTargetLexical {
 				return
@@ -277,7 +277,7 @@ func (l paramPreservationLedger) certifiedRefinements(arena *Arena, effects *Eff
 	// This closed structured-output audit is intentionally shared with manual
 	// PathRefinementTerm admission. Scalar post-parameter slots are harmless;
 	// mutation, escape, heap, alias, and future families reject.
-	if !rowPreservesRefinementRoots(effects, Row{Output: row.Output, Effects: row.Effects}) {
+	if !preservesRefinementRoots(effects, row.Output, row.steps) {
 		return nil
 	}
 	// A surviving local alias would make later exposure/mutation reasoning

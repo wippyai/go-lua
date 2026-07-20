@@ -59,3 +59,30 @@ func TestPortfolioEmptyAssertedUnknown(t *testing.T) {
 		t.Fatalf("expected Unknown with no asserted constraints, got %s", got)
 	}
 }
+
+func TestPortfolioStopsAfterCheaperProof(t *testing.T) {
+	secondConstructed := false
+	portfolio := NewPortfolio(
+		func() Solver { return fixedResultSolver{result: decision.Valid} },
+		func() Solver {
+			secondConstructed = true
+			return fixedResultSolver{result: decision.Unknown}
+		},
+	)
+	if got := portfolio.Entails(nil, numeric.Le{X: key("x"), Y: key("y")}); got != decision.Valid {
+		t.Fatalf("portfolio result = %s, want Valid", got)
+	}
+	if secondConstructed {
+		t.Fatal("portfolio constructed the expensive backend after a decisive proof")
+	}
+}
+
+type fixedResultSolver struct {
+	result decision.Result
+}
+
+func (fixedResultSolver) Assert(numeric.NumericConstraint) {}
+
+func (s fixedResultSolver) Entails(numeric.NumericConstraint) decision.Result {
+	return s.result
+}

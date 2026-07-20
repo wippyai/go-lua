@@ -173,6 +173,25 @@ func TestSemanticFingerprintCanonicalizesLaneSetAndMapOrder(t *testing.T) {
 	}
 }
 
+func TestSemanticFingerprintCanonicalizesPathMembershipOrderWithoutContainer(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	firstKey := mustTestStateKey(pathdom.PathKey("sym901@1.key"))
+	firstTable := mustTestStateKey(pathdom.PathKey("sym901@1.table"))
+	secondKey := mustTestStateKey(pathdom.PathKey("sym902@1.key"))
+	secondTable := mustTestStateKey(pathdom.PathKey("sym902@1.table"))
+	left := State{}.
+		AddPathKeyMembership(firstKey, firstTable).
+		AddPathKeyMembership(secondKey, secondTable)
+	right := State{}.
+		AddPathKeyMembership(secondKey, secondTable).
+		AddPathKeyMembership(firstKey, firstTable)
+
+	if got, want := fingerprintForTest(t, reg, keys, []LaneID{LaneKeyMemberships}, left), fingerprintForTest(t, reg, keys, []LaneID{LaneKeyMemberships}, right); got != want {
+		t.Fatalf("path-membership insertion order changed fingerprint: %d != %d", got, want)
+	}
+}
+
 func TestSemanticFingerprintObservesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

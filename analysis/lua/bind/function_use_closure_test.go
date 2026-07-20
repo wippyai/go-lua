@@ -25,6 +25,9 @@ func TestLocalFunctionUseClosureCertifiesOnlyDirectLocalCalls(t *testing.T) {
 	if !reflect.DeepEqual(fact.DirectCalls, []*ast.FuncCallExpr{first, second}) {
 		t.Fatalf("direct calls = %#v, want lexical call order", fact.DirectCalls)
 	}
+	if identity, ok := bindings.StableDirectCallFunctionIdentity(fact.TargetSymbol); !ok || identity != fact.FunctionSymbol {
+		t.Fatalf("stable direct-call identity = %d/%v, want %d/true", identity, ok, fact.FunctionSymbol)
+	}
 	returned := fact.DirectCalls
 	returned[0] = nil
 	if bindings.LocalFunctionUseClosures()[0].DirectCalls[0] != first {
@@ -100,13 +103,17 @@ func TestLocalFunctionUseClosureFailsClosedForEveryNonCallUse(t *testing.T) {
 func TestLocalFunctionUseClosureRejectsRecursiveCapture(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: ident("worker")}
 	definition := localAssign([]string{"worker"}, function(nil, &ast.FuncCallStmt{Expr: call}))
-	facts := BindChunk([]ast.Stmt{definition}, Options{}).LocalFunctionUseClosures()
+	bindings := BindChunk([]ast.Stmt{definition}, Options{})
+	facts := bindings.LocalFunctionUseClosures()
 	if len(facts) != 1 {
 		t.Fatalf("use closures = %#v, want recursive record", facts)
 	}
 	fact := facts[0]
 	if !fact.RuntimeUseScanComplete || fact.BindingStable || fact.ValueDoesNotEscape || fact.CallSetComplete {
 		t.Fatalf("recursive capture proof = %#v, want every positive field degraded", fact)
+	}
+	if identity, ok := bindings.StableDirectCallFunctionIdentity(fact.TargetSymbol); ok || identity != 0 {
+		t.Fatalf("recursive stable direct-call identity = %d/%v, want 0/false", identity, ok)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -21,7 +22,7 @@ func (l acceptanceSignatureLookup) Lookup(string) (signature.Function, bool) {
 }
 
 func TestValidateGraphPureSignatureRelationsMatchCanonicalOutcomes(t *testing.T) {
-	prepared, _ := validateGraphSemanticProgramFixture(t)
+	prepared := validateGraphPreparedFixture(t)
 	matched := 0
 	for rawPoint := 0; rawPoint < prepared.operationPlan.PointCount(); rawPoint++ {
 		point := cfg.Point(rawPoint)
@@ -37,12 +38,17 @@ func TestValidateGraphPureSignatureRelationsMatchCanonicalOutcomes(t *testing.T)
 		if !ok {
 			t.Fatalf("signature descriptor at point %d lost call-site evidence", point)
 		}
+		inputProgram, err := effectlowering.SealSignatureOutcomeOperands(state.RegisteredProductDomain(prepared.registry), prepared.visibility.KeySpace())
+		if err != nil {
+			t.Fatal(err)
+		}
 		oracle := effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:  acceptanceSignatureLookup{sig: op.Signature()},
 			NameForSite: func(transfer.NodeContext, factflow.CallSiteView) (string, bool) { return "resolved", true },
-			Facts:       prepared.facts, TypeValues: prepared.typeValues,
+			Facts:       prepared.facts, TypeValues: prepared.typeValues, KeySpace: prepared.visibility.KeySpace(), InputProgram: inputProgram,
 		})
-		outcome := oracle(transfer.NodeContext{Point: point, Registry: prepared.registry}, site, state.State{}, func(cfg.Point) state.State { return state.State{} })
+		ctx := transfer.NodeContext{Point: point, Registry: prepared.registry}
+		outcome := testEvaluateCallOutcome(t, oracle, ctx, site, sealedBodyCallInput(t, oracle, ctx, site, state.State{}, callpayload.CallOutcomeValueOperands{}))
 		if !outcome.PostReturnAuthority || len(outcome.Results) != len(returns) {
 			t.Fatalf("point %d canonical authority/results = %v/%d, want true/%d", point, outcome.PostReturnAuthority, len(outcome.Results), len(returns))
 		}
@@ -59,7 +65,7 @@ func TestValidateGraphPureSignatureRelationsMatchCanonicalOutcomes(t *testing.T)
 }
 
 func TestValidateGraphOwnsEightDurableAllocationSites(t *testing.T) {
-	prepared, _ := validateGraphSemanticProgramFixture(t)
+	prepared := validateGraphPreparedFixture(t)
 	count := 0
 	for rawPoint := 0; rawPoint < prepared.operationPlan.PointCount(); rawPoint++ {
 		op, ok := prepared.operationPlan.SignatureAllocationOperation(cfg.Point(rawPoint))
@@ -78,7 +84,7 @@ func TestValidateGraphOwnsEightDurableAllocationSites(t *testing.T) {
 }
 
 func TestValidateGraphAllocationRelationsMatchCanonicalOutcomesWithoutSolves(t *testing.T) {
-	prepared, _ := validateGraphSemanticProgramFixture(t)
+	prepared := validateGraphPreparedFixture(t)
 	shape := transformer.Shape{
 		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
 		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
@@ -104,16 +110,21 @@ func TestValidateGraphAllocationRelationsMatchCanonicalOutcomesWithoutSolves(t *
 		call, _ := prepared.operationPlan.SignatureCallOperation(point)
 		site, _ := prepared.facts.CallSiteView(point)
 		ks := keyspace.New()
-		materialized, exact := effectlowering.MaterializeStaticAllocation(prepared.registry, prepared.typeValues, ks, point, allocation.Template())
+		inputProgram, err := effectlowering.SealSignatureOutcomeOperands(state.RegisteredProductDomain(prepared.registry), ks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		materialized, exact := effectlowering.MaterializeStaticAllocation(prepared.registry, prepared.typeValues, ks, point, allocation.Template(), nil)
 		if !exact {
 			t.Fatalf("allocation point %d failed canonical materialization", point)
 		}
 		oracleProvider := effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:  acceptanceSignatureLookup{sig: call.Signature()},
 			NameForSite: func(transfer.NodeContext, factflow.CallSiteView) (string, bool) { return "resolved", true },
-			Facts:       prepared.facts, TypeValues: prepared.typeValues, KeySpace: ks,
+			Facts:       prepared.facts, TypeValues: prepared.typeValues, KeySpace: ks, InputProgram: inputProgram,
 		})
-		oracle := oracleProvider(transfer.NodeContext{Registry: prepared.registry, Point: point}, site, state.State{}, func(cfg.Point) state.State { return state.State{} })
+		ctx := transfer.NodeContext{Registry: prepared.registry, Point: point}
+		oracle := testEvaluateCallOutcome(t, oracleProvider, ctx, site, sealedBodyCallInput(t, oracleProvider, ctx, site, state.State{}, callpayload.CallOutcomeValueOperands{}))
 		if len(oracle.Results) != 1 || !product.Equal(prepared.registry, oracle.Results[0].Value, materialized.Result) ||
 			len(oracle.HeapTableObjects) != len(materialized.Objects) || len(oracle.Placements) != len(materialized.Placements) {
 			t.Fatalf("allocation point %d differs from canonical provider", point)

@@ -1,13 +1,11 @@
 package factapply
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -32,38 +30,40 @@ type GenericForSource = operationplan.GenericForSource
 // NewGenericForOperation copies all caller-owned slices and paths.
 type GenericForOperation = operationplan.GenericForOperation
 
-func NewGenericForOperation(variableIndex int, target, firstTarget symbol.ID, source GenericForSource, sourceContracts []typ.Type) (GenericForOperation, bool) {
-	return operationplan.NewGenericForOperation(variableIndex, target, firstTarget, source, sourceContracts)
+func NewGenericForOperation(variableIndex int, target, firstTarget symbol.ID, protocolSources []GenericForSource, sourceContracts []typ.Type) (GenericForOperation, bool) {
+	return operationplan.NewGenericForOperation(variableIndex, target, firstTarget, protocolSources, sourceContracts)
 }
 
-// ConcreteGenericForRequest preserves the established generic-for transaction:
-// membership for the target is cleared first, value resolution observes Input,
-// and membership/heap descendants are applied to the evolving Output.
-type ConcreteGenericForRequest struct {
-	Context   transfer.NodeContext
-	Resolver  *visibility.Resolver
-	Input     state.State
-	Output    state.State
-	Operation GenericForOperation
-	Semantics ConcreteGenericForSemantics
+// GenericForRequest is the canonical generic-for binding transaction.
+// ResolvedValue is evaluated by the relation's frozen Projection term before
+// entering this transaction; generic-for never re-enters call or source
+// semantics. HasResolvedValue distinguishes an inexact projection from an
+// exact bottom value.
+type GenericForRequest struct {
+	Context          transfer.NodeContext
+	Input            state.State
+	Output           state.State
+	Operation        GenericForOperation
+	ResolvedValue    product.Value
+	HasResolvedValue bool
+	Membership       GenericForMembershipAuthority
+	Domain           state.ProductDomain
 }
 
-// ConcreteGenericForSemantics is the owner-supplied iterator/container
-// interpretation. A prepared body owns one implementation, avoiding callback
-// closure allocation on every fixed-point transfer.
-type ConcreteGenericForSemantics interface {
-	ResolveGenericFor(transfer.NodeContext, GenericForOperation, state.State) (product.Value, bool)
-	ApplyGenericForMembership(transfer.NodeContext, GenericForOperation, state.State, pathdom.Path) state.State
+// GenericForMembershipAuthority freezes the one factor-native non-scalar
+// transaction. Concrete State and formal tuples are only carrier adapters;
+// neither owns generic-for semantics.
+type GenericForMembershipAuthority interface {
+	PrepareGenericForFactorTransaction(transfer.NodeContext, GenericForOperation, state.ProductDomain) (state.GenericForFactorTransaction, error)
 }
 
-type ConcreteGenericForResult struct {
+type GenericForResult struct {
 	Output   state.State
 	Canceled bool
 }
 
-// GenericForTransaction is the shared syntax-free binding transaction shape.
-// Concrete and symbolic executors consume this same plan; iterator resolution
-// and membership remain owner-supplied algebras.
+// GenericForTransaction is the syntax-free binding transaction shape consumed
+// by the canonical guarded relation executor.
 type GenericForTransaction struct {
 	Target          symbol.ID
 	VariableIndex   int
@@ -82,38 +82,61 @@ func PlanGenericForTransaction(op GenericForOperation) (GenericForTransaction, b
 	}, true
 }
 
-// ApplyConcreteGenericFor executes one loop-variable binding atomically.
-// Cancellation before or after a provider callback publishes no prefix.
-func ApplyConcreteGenericFor(req ConcreteGenericForRequest) ConcreteGenericForResult {
+// ApplyGenericFor executes one loop-variable binding atomically. Projection is
+// already resolved by the canonical term DAG; this function only performs the
+// clear/write/membership transaction.
+func ApplyGenericFor(req GenericForRequest) GenericForResult {
 	token := req.Context.Session.Token()
 	if token != nil && token.Canceled() {
-		return ConcreteGenericForResult{Output: req.Input, Canceled: true}
+		return GenericForResult{Output: req.Input, Canceled: true}
 	}
 	op := req.Operation
 	transaction, valid := PlanGenericForTransaction(op)
 	if !valid {
-		return ConcreteGenericForResult{Output: req.Output}
+		return GenericForResult{Output: req.Output}
 	}
 	out := req.Output
-	targetPath := pathdom.Path{Symbol: transaction.Target}
-	if transaction.ClearMembership && req.Resolver != nil {
-		if targetKey, ok := visibility.AddressAt(req.Resolver, req.Context.Point, targetPath).VisibleStateKey(); ok {
-			out = out.ClearKeyMembershipsForPath(targetKey)
-		}
+	if req.Membership == nil || !req.Domain.Valid() {
+		return GenericForResult{Output: req.Input, Canceled: true}
 	}
-	if transaction.ResolveValue && req.Semantics != nil {
-		if value, ok := req.Semantics.ResolveGenericFor(req.Context, op, req.Input); ok {
-			out = out.WriteValue(req.Context.Registry, key.SymbolValue(op.Target()), value)
-		}
+	factorTransaction, err := req.Membership.PrepareGenericForFactorTransaction(req.Context, op, req.Domain)
+	if err != nil || !factorTransaction.Valid() {
+		return GenericForResult{Output: req.Input, Canceled: true}
+	}
+	sourceLanes, currentLanes := factorTransaction.SourceLanes(), factorTransaction.CurrentLanes()
+	sourceFactors, err := req.Domain.DecomposeLanes(req.Input, sourceLanes)
+	if err != nil {
+		return GenericForResult{Output: req.Input, Canceled: true}
+	}
+	currentFactors, err := req.Domain.DecomposeLanes(req.Output, currentLanes)
+	if err != nil {
+		return GenericForResult{Output: req.Input, Canceled: true}
+	}
+	writes, err := factorTransaction.Apply(sourceFactors, currentFactors)
+	if err != nil {
+		return GenericForResult{Output: req.Input, Canceled: true}
 	}
 	if token != nil && token.Canceled() {
-		return ConcreteGenericForResult{Output: req.Input, Canceled: true}
+		return GenericForResult{Output: req.Input, Canceled: true}
 	}
-	if transaction.ApplyMembership && req.Semantics != nil {
-		out = req.Semantics.ApplyGenericForMembership(req.Context, op, out, targetPath)
+	delta, err := req.Domain.ComposeSparse(writes)
+	if err != nil {
+		return GenericForResult{Output: req.Input, Canceled: true}
+	}
+	writeLanes := factorTransaction.WriteLanes()
+	writeIDs := make([]state.LaneID, len(writeLanes))
+	for index, lane := range writeLanes {
+		writeIDs[index] = lane.ID()
+	}
+	out, err = req.Domain.PatchFactors(out, delta, state.NewLaneSet(writeIDs...))
+	if err != nil {
+		return GenericForResult{Output: req.Input, Canceled: true}
+	}
+	if transaction.ResolveValue && req.HasResolvedValue {
+		out = out.WriteValue(req.Context.Registry, key.SymbolValue(op.Target()), req.ResolvedValue)
 	}
 	if token != nil && token.Canceled() {
-		return ConcreteGenericForResult{Output: req.Input, Canceled: true}
+		return GenericForResult{Output: req.Input, Canceled: true}
 	}
-	return ConcreteGenericForResult{Output: out}
+	return GenericForResult{Output: out}
 }

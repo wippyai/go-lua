@@ -38,6 +38,7 @@ func (forgedErasedSpec) BoundaryPolicy() BoundaryPolicy { return PortableIdentit
 func (forgedErasedSpec) ProjectBoundaryAny(v any) any   { return v }
 func (forgedErasedSpec) ReducerHook() Reducer           { return nil }
 func (forgedErasedSpec) ReducerReadsHook() []string     { return nil }
+func (forgedErasedSpec) ReducerWritesHook() []string    { return nil }
 
 // staleReadyErasedSpec models descriptor metadata that passed an older typed
 // boundary but arrives at Registry without a usable schema version.

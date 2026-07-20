@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -61,6 +62,8 @@ func TestPathPresenceImplicationOrderComparesEverySemanticField(t *testing.T) {
 
 	implications := []PathPresenceImplication{
 		{Trigger: trigger, TriggerPresence: presence.Present(), Target: target, TargetPresence: presence.Present()},
+		NewPathTruthinessValueRefinementImplication(trigger, false, target, value("target-a")),
+		NewPathTruthinessValueRefinementImplication(trigger, true, target, value("target-a")),
 		{Trigger: trigger, TriggerValue: value("trigger-a"), HasTriggerValue: true, Target: target, TargetPresence: presence.Present()},
 		{Trigger: trigger, TriggerValue: value("trigger-b"), HasTriggerValue: true, Target: target, TargetPresence: presence.Present()},
 		{Trigger: trigger, TriggerPresence: presence.Present(), TriggerValue: value("trigger-a"), HasTriggerValue: true, HasTriggerPresence: true, Target: target, TargetPresence: presence.Present()},
@@ -76,6 +79,36 @@ func TestPathPresenceImplicationOrderComparesEverySemanticField(t *testing.T) {
 				t.Fatalf("semantic implications %d and %d compare equal:\nleft:  %#v\nright: %#v", i, j, implications[i], implications[j])
 			}
 		}
+	}
+}
+
+func TestInvalidateStableSymbolPreservingImplicationsIsOneAtomicRewrite(t *testing.T) {
+	ks := keyspace.New()
+	target := symbol.ID(71)
+	other := symbol.ID(72)
+	targetKey := ks.FromPath(pathdom.NewPath(target, "target"))
+	otherKey := ks.FromPath(pathdom.NewPath(other, "other"))
+	preserve := NewPathPresenceImplication(otherKey, presence.Present(), targetKey, presence.Present())
+	drop := NewPathPresenceImplication(targetKey, presence.Present(), otherKey, presence.Present())
+	unrelated := NewPathPresenceImplication(otherKey, presence.Present(), otherKey, presence.Absent())
+	lane := Lane{}
+	for _, implication := range []PathPresenceImplication{preserve, drop, unrelated} {
+		var changed bool
+		lane, changed = lane.AddPathPresenceImplication(implication)
+		if !changed {
+			t.Fatal("fixture implication was not added")
+		}
+	}
+	visits := 0
+	got := lane.InvalidateStableSymbolPreservingImplications(target, func(implication PathPresenceImplication) bool {
+		visits++
+		return implication == preserve
+	})
+	if visits != 2 {
+		t.Fatalf("preservation predicate visits = %d, want 2 matching implications", visits)
+	}
+	if !got.HasPathPresenceImplication(preserve) || got.HasPathPresenceImplication(drop) || !got.HasPathPresenceImplication(unrelated) {
+		t.Fatal("atomic stable-symbol rewrite did not preserve exactly the proven implication set")
 	}
 }
 

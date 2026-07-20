@@ -12,8 +12,15 @@ import (
 // kinds produce string, matching the concrete body checker's signature
 // fallback without discarding caller dependence before specialization.
 func LuaTypeNameValue(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (product.Value, bool) {
-	if reg == nil || product.Equal(reg, value, product.Bottom(reg)) {
+	if reg == nil {
 		return product.Value{}, false
+	}
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		// Lua type is strict in its evaluated operand. Abstract Bottom is the
+		// exact least result, not an unavailable evaluator; callers need this
+		// distinction to make an unreachable guard edge Bottom rather than abort
+		// relation execution.
+		return product.Bottom(reg), true
 	}
 	kinds := product.Get(reg, value, runtimekind.Key)
 	if kinds.IsTop() || kinds.IsBottom() {

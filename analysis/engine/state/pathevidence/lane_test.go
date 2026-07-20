@@ -1,13 +1,17 @@
 package pathevidence
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -119,6 +123,29 @@ func TestInvalidateSubtreePrefixesMatchesComputedInvalidation(t *testing.T) {
 	}
 }
 
+func TestInvalidateSubtreePrefixesRetainsTypedFormalRootIdentity(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte(t.Name())))
+	root, ok := ks.InternFormalRoot(formal.NewRoot(owner, 1, formal.Middle))
+	if !ok {
+		t.Fatal("formal root")
+	}
+	child, ok := ks.AppendSegment(root, segment.Segment{Kind: segment.SegmentField, Name: "field"})
+	if !ok {
+		t.Fatal("formal child")
+	}
+	lane, _ := (Lane{}).WritePathKey(reg, child, product.Top())
+	prefixes, ok := lane.PathKeySubtreeInvalidationPrefixes(ks, ks.FormatReadOnly(root))
+	if !ok {
+		t.Fatal("formal subtree prefixes")
+	}
+	next, changed := lane.InvalidatePathKeySubtreePrefixesChanged(ks, prefixes)
+	if !changed || !product.Equal(reg, next.ReadPathKey(reg, child), product.Bottom(reg)) {
+		t.Fatal("typed formal subtree survived its canonical invalidation plan")
+	}
+}
+
 func TestInvalidateSubtreeRemovesStableStaticMemberCounterpart(t *testing.T) {
 	ks := keyspace.New()
 	present := product.Top()
@@ -214,8 +241,14 @@ func TestRekeyValueLanesImportsEveryKeyKindAcrossOppositeInternOrder(t *testing.
 	placeholder := from.FromPath(pathdom.NewPlaceholder(2).Field("leaf"))
 	retSlot := from.FromPath(pathdom.Path{Root: "ret[4]", Segments: field})
 	named := from.FromPath(pathdom.Path{Root: "global", Segments: field})
-	namedCanonical := from.FromPath(pathdom.Path{Root: "sym99", Segments: field})
-	namedCanonical.Canon = true
+	namedStable, ok := pathaddr.StableOfPath(pathdom.Path{Root: "sym99", Segments: field})
+	if !ok {
+		t.Fatal("canonical named stable address failed")
+	}
+	namedCanonical, ok := from.FromStateKey(namedStable.Key())
+	if !ok || !namedCanonical.Canon {
+		t.Fatal("canonical named key failed")
+	}
 	rootless, ok := from.FromRootlessSuffix(field)
 	if !ok {
 		t.Fatal("rootless key failed")
@@ -404,6 +437,13 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 		Path:     mustStateKey(t, ks, "sym10@1.child"),
 		Presence: presence.Present(),
 	})
+	// Enumeration is over finite terms already tracked by the lane. These
+	// presence facts make the two descendant representatives explicit; the
+	// equality proof then relates them by exact constructor congruence.
+	l, _ = l.AddBranchProofs([]BranchProof{
+		{Kind: BranchProofPathPresence, Path: mustStateKey(t, ks, "sym20@1.child.name"), Presence: presence.Present()},
+		{Kind: BranchProofPathPresence, Path: mustStateKey(t, ks, "sym30@1.leaf.name"), Presence: presence.Present()},
+	})
 
 	got := l.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.child.name"))
 	want := []pathdom.PathKey{
@@ -431,6 +471,39 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 	}
 }
 
+func TestEquivalentKeyspaceKeysNormalizesLargeObservationSetAgainstEqualityEndpoints(t *testing.T) {
+	ks := keyspace.New()
+	left := mustStateKey(t, ks, "sym10@1")
+	right := mustStateKey(t, ks, "sym20@1")
+	rightChild := mustStateKey(t, ks, "sym20@1.child")
+	proofs := make([]BranchProof, 0, 1026)
+	proofs = append(proofs,
+		BranchProof{Kind: BranchProofPathEqual, Path: left, Other: right},
+		BranchProof{Kind: BranchProofPathPresence, Path: rightChild, Presence: presence.Present()},
+	)
+	// These are tracked observations, not equations. Their prefixes must not be
+	// inserted into the equality endpoint DAG or change its quotient.
+	for index := 0; index < 1024; index++ {
+		proofs = append(proofs, BranchProof{
+			Kind:     BranchProofPathPresence,
+			Path:     mustStateKey(t, ks, pathdom.PathKey(fmt.Sprintf("sym%d@1.payload.field", 1000+index))),
+			Presence: presence.Present(),
+		})
+	}
+	lane, changed := (Lane{}).AddBranchProofs(proofs)
+	if !changed {
+		t.Fatal("AddBranchProofs reported unchanged")
+	}
+	start := mustStateKey(t, ks, "sym10@1.child")
+	got := lane.EquivalentKeyspaceKeys(ks, start)
+	if len(got) != 1 || got[0] != rightChild {
+		t.Fatalf("EquivalentKeyspaceKeys = %#v, want [%s]", got, ks.Format(rightChild))
+	}
+	if lane.HasEquivalentKeyspaceKey(ks, start, mustStateKey(t, ks, "sym1000@1.payload.field")) {
+		t.Fatal("unrelated tracked observation entered the equality quotient")
+	}
+}
+
 func TestEqualityProofMayRebaseFromRequiresSharedStructuralRoot(t *testing.T) {
 	ks := keyspace.New()
 	local := mustStateKey(t, ks, "sym10@1.child")
@@ -452,7 +525,7 @@ func TestEqualityProofMayRebaseFromRequiresSharedStructuralRoot(t *testing.T) {
 	}
 }
 
-func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
+func TestEquivalentPathKeysDoesNotInventCyclicDescendantTerms(t *testing.T) {
 	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{
 		Kind:  BranchProofPathEqual,
@@ -460,21 +533,17 @@ func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
 		Other: mustStateKey(t, ks, "sym10@1"),
 	})
 
-	got := l.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.label"))
-	want := []pathdom.PathKey{
-		pathdom.PathKey("sym10@1.__index.label"),
+	start := mustStateKey(t, ks, "sym10@1.label")
+	target := mustStateKey(t, ks, "sym10@1.__index.label")
+	if got := l.EquivalentKeyspaceKeys(ks, start); len(got) != 0 {
+		t.Fatalf("EquivalentKeyspaceKeys invented untracked terms: %#v", got)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("EquivalentPathKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s", i, got[i], want[i])
-		}
+	if !l.HasEquivalentKeyspaceKey(ks, start, target) {
+		t.Fatalf("ground congruence did not prove %s = %s", ks.Format(start), ks.Format(target))
 	}
 }
 
-func TestEquivalentPathKeysBoundsMutualDescendantAliasExpansion(t *testing.T) {
+func TestEquivalentPathCongruenceClosesRepeatedLengthGrowthWithoutLimit(t *testing.T) {
 	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{
 		Kind:  BranchProofPathEqual,
@@ -487,18 +556,52 @@ func TestEquivalentPathKeysBoundsMutualDescendantAliasExpansion(t *testing.T) {
 		Other: mustStateKey(t, ks, "sym10@1.child"),
 	})
 
-	got := l.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.label"))
-	want := []pathdom.PathKey{
-		pathdom.PathKey("sym10@1.child.child.label"),
-		pathdom.PathKey("sym20@1.child.label"),
+	start := mustStateKey(t, ks, "sym10@1.label")
+	// The removed sum-once limit was start depth 1 + two positive deltas = 3.
+	// Proving this depth-11 target requires repeatedly closing the same two
+	// equations over target subterms; no fixed expansion count can justify it.
+	target := mustStateKey(t, ks, "sym10@1.child.child.child.child.child.child.child.child.child.child.label")
+	if !l.HasEquivalentKeyspaceKey(ks, start, target) {
+		t.Fatalf("ground congruence did not prove repeated length growth to %s", ks.Format(target))
 	}
-	if len(got) != len(want) {
-		t.Fatalf("EquivalentPathKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	if got := l.EquivalentKeyspaceKeys(ks, start); len(got) != 0 {
+		t.Fatalf("EquivalentKeyspaceKeys invented members of an infinite class: %#v", got)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s", i, got[i], want[i])
+}
+
+func TestEquivalentPathCongruenceIsProofOrderDeterministic(t *testing.T) {
+	ks := keyspace.New()
+	proofs := []BranchProof{
+		{Kind: BranchProofPathEqual, Path: mustStateKey(t, ks, "sym10@1"), Other: mustStateKey(t, ks, "sym20@1.child")},
+		{Kind: BranchProofPathEqual, Path: mustStateKey(t, ks, "sym20@1"), Other: mustStateKey(t, ks, "sym10@1.child")},
+		{Kind: BranchProofPathPresence, Path: mustStateKey(t, ks, "sym10@1.child.child.label"), Presence: presence.Present()},
+	}
+	forward, _ := (Lane{}).AddBranchProofs(proofs)
+	reverse, _ := (Lane{}).AddBranchProofs([]BranchProof{proofs[2], proofs[1], proofs[0]})
+	start := mustStateKey(t, ks, "sym10@1.label")
+	forwardKeys := forward.EquivalentKeyspaceKeys(ks, start)
+	reverseKeys := reverse.EquivalentKeyspaceKeys(ks, start)
+	if len(forwardKeys) != len(reverseKeys) {
+		t.Fatalf("proof order changed result cardinality: %v vs %v", forwardKeys, reverseKeys)
+	}
+	for index := range forwardKeys {
+		if forwardKeys[index] != reverseKeys[index] {
+			t.Fatalf("proof order changed result[%d]: %s vs %s", index, ks.Format(forwardKeys[index]), ks.Format(reverseKeys[index]))
 		}
+	}
+}
+
+func TestEquivalentPathCongruenceKeepsFullWidthSymbolRootsDistinct(t *testing.T) {
+	ks := keyspace.New()
+	left := mustStateKey(t, ks, "sym4294967297@1.value")
+	right := mustStateKey(t, ks, "sym2@1.value")
+	unrelated := mustStateKey(t, ks, "sym8589934593@1.value")
+	lane, _ := (Lane{}).AddBranchProof(BranchProof{Kind: BranchProofPathEqual, Path: left, Other: right})
+	if !lane.HasEquivalentKeyspaceKey(ks, left, right) {
+		t.Fatal("full-width symbol equality was not closed")
+	}
+	if lane.HasEquivalentKeyspaceKey(ks, unrelated, right) {
+		t.Fatal("symbol roots with equal low 32 bits were conflated")
 	}
 }
 
@@ -631,5 +734,23 @@ func TestDomainStableAcrossRepeatedConstruction(t *testing.T) {
 	}
 	if !domain.Equal(domain.Join(bottom, top), top) {
 		t.Fatalf("reconstructed path-evidence domain join(bottom, top) did not produce top")
+	}
+}
+
+func TestDomainSameUsesAllPersistentSublaneIdentities(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	path := mustStructKey(t, ks, pathdom.PathKey("sym1@1.field"))
+	shared, _ := (Lane{}).WritePathKey(reg, path, product.Top())
+	domain := Domain(reg)
+	if domain.Same == nil || !domain.Same(shared, shared) {
+		t.Fatal("shared path-evidence lane lost persistent identity")
+	}
+	clone := shared.Clone()
+	if !domain.Equal(shared, clone) {
+		t.Fatal("cloned path-evidence lane changed semantics")
+	}
+	if domain.Same(shared, clone) {
+		t.Fatal("distinct equal path-evidence maps were treated as the same representation")
 	}
 }

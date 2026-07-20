@@ -1,4 +1,5 @@
-// Package program composes Lua-bound check bodies into fixed-point summary queries.
+// Package program composes Lua-bound lexical bodies into one relation-program
+// fixed point and publishes its stabilized coordinates.
 package program
 
 import (
@@ -6,14 +7,11 @@ import (
 	"maps"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/lexicalidentity"
+	"github.com/wippyai/go-lua/analysis/internal/rsswatch"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -21,138 +19,22 @@ import (
 
 // Config configures fixed-point analysis for one Lua program.
 type Config struct {
-	// Context cooperatively stops body and summary worklists. Nil preserves the
-	// legacy uncancelable program driver behavior.
+	// Context cooperatively stops the relation worklist. Nil falls back to the
+	// body context and then context.Background.
 	Context context.Context
 	Check   body.Config
 
 	RootKey summary.SummaryKey
-	Seed    summary.Reader
-
-	WidenAt    func(summary.SummaryKey) bool
-	WidenDelay func(summary.SummaryKey) int
-
-	// SummaryCache optionally shares exact body-to-summary applications across
-	// RunChunk calls. It keeps summaries only, never full body solve graphs.
-	SummaryCache *SummarySolveCache
-	CacheProfile string
 
 	Stats *Stats
-
-	// semanticProgramAudit is an internal acceptance hook. It is intentionally
-	// unavailable outside this package and never installed by production.
-	semanticProgramAudit func(*body.Static, body.Config, *body.Result) error
-	// relationCatalogAudit exercises the inactive lexical-relation preparation
-	// seam in package tests. Production never installs it, so catalog preparation
-	// cannot add work or alter call routing before activation is explicitly gated.
-	relationCatalogAudit func(relationRunCatalog) error
-	// relationSnapshotAudit observes the fully frozen inactive relation system.
-	// It is test-only and never changes production call routing.
-	relationSnapshotAudit func(relationRunSnapshot) error
-	// enableRelationActivation is the internal differential gate for the older
-	// mixed relation path. It is never enabled by production callers.
-	enableRelationActivation bool
-	// enableStrictRelationPhaseCollapse gates the transactional whole-owner path.
-	// Corpus promotion remains off until its admitted slice is net-positive.
-	enableStrictRelationPhaseCollapse bool
-	// forceLegacyRelations is the test-only escape hatch for differential
-	// oracles. Production callers cannot set it outside this package.
-	forceLegacyRelations bool
-	// strictRelationForceReject injects a transaction rejection for package tests.
-	// It is never reachable from public Config construction.
-	strictRelationForceReject bool
 }
 
 // Stats holds caller-owned observational counters for a program fixed-point
 // analysis run.
 type Stats struct {
 	Body              body.Stats
-	Query             query.Stats
-	PrepassBodySolves int
-	SummaryBodySolves int
-	// SummaryPointTransfers counts CFG point-transfer evaluations performed
-	// while applying summary equations. It intentionally excludes prepass and
-	// materialization work so interprocedural invalidation cost is visible.
-	SummaryPointTransfers int
-	// Summary*AfterDependencyChange isolate the currently wasteful path: an
-	// exact cached summary application existed for this body variant, but one
-	// of the summaries it read grew, so the body had to be solved again.
-	SummaryBodySolvesAfterDependencyChange     int
-	SummaryPointTransfersAfterDependencyChange int
-	MaterializeBodySolves                      int
-	MaxFunctionCount                           int
-	MaxContextCount                            int
-	MaxCallContextRefCount                     int
-	MaxSemanticCallContextCount                int
-	MaxSitesPerSemanticEntry                   int
-	CallSitesPerSemanticEntry                  map[int]int
-	MaterializedContextSolves                  int
-	MaterializedContextNewContexts             int
-	SummaryCacheHits                           int
-	SummaryCacheMisses                         int
-	RelationProducersEligible                  int
-	RelationOwnersActive                       int
-	RelationContextsSpecialized                int
-	RelationCallsHandled                       int
-	RelationActivationFallbacks                int
-	RelationSummaryEquationsOmitted            int
-	RelationMaterializationsReused             int
-	RelationUnexpectedMisses                   int
-	RelationRetainedResultsReleased            int
-	// RelationPlanner* expose the staged strict planner's deterministic work
-	// funnel. Prefiltered counts owners that survive the cheap static and
-	// complete-call-surface scan; Compiled counts transformer Prepare calls.
-	RelationPlannerOwnersScanned     int
-	RelationPlannerOwnersPrefiltered int
-	RelationPlannerOwnersCompiled    int
-	RelationPlannerOwnersActivated   int
-	// PrebuiltSemanticLexicalEvaluations counts lexical symbolic programs read
-	// from a caller-prepared relation catalog by the evaluated-program
-	// transaction. Catalog construction is intentionally outside this counter.
-	PrebuiltSemanticLexicalEvaluations       int
-	PrebuiltSemanticLexicalEvaluationsByBody map[lexicalidentity.StableLexicalBodyID]int
-	// EvaluatedShadowRootsProduced counts complete neutral roots. They are not
-	// authoritative or published until canonical identities are installed.
-	EvaluatedShadowRootsProduced int
-	// EvaluatedRelationCompilerPrepares counts transformer compiler preparation
-	// attempts made by the dedicated total evaluated-catalog builder.
-	EvaluatedRelationCompilerPrepares int
-	// EvaluatedRelationEquationApplications counts actual relation equation
-	// evaluator invocations in the total evaluated transaction. It is distinct
-	// from body solves: an evaluated equation applies a prepared symbolic
-	// program and must never enter body.SolvePrepared.
-	EvaluatedRelationEquationApplications int
-	// EvaluatedRootProjections counts actual sparse-root projection attempts.
-	// Roots remain transaction-local until every projection succeeds.
-	EvaluatedRootProjections int
-	// EvaluatedObserver* count the single structural observer-forest projection
-	// built from the sealed total catalog. They are graph-size counters, never
-	// relation, body, query, or diagnostic-evaluation work.
-	EvaluatedObserverCatalogTemplates  int
-	EvaluatedObserverCallSitesScanned  int
-	EvaluatedObserverDiagnosticNodes   int
-	EvaluatedObserverDiagnosticEdges   int
-	EvaluatedObserverUncalledTemplates int
-	// EvaluatedObserverCallTemplates counts exact owner-local correlated call
-	// worlds matched to lexical forest edges. EvaluatedObserverTermApplications
-	// counts later relation-owned batch specializations independently of relation
-	// equation applications.
-	EvaluatedObserverCallTemplates    int
-	EvaluatedObserverTermApplications int
-	// EvaluatedObserverBoundaryApplications counts relation-owned call-boundary
-	// transactions. BoundaryRounds counts observer worklist dequeues, including
-	// recurrence revisits; neither counter includes relation equations.
-	EvaluatedObserverBoundaryApplications int
-	EvaluatedObserverBoundaryRounds       int
-	// EvaluatedObserverInstanceProjections counts structurally shared local
-	// instance roots. EntryProjections is its unique chunk-entry subset.
-	EvaluatedObserverInstanceProjections int
-	EvaluatedObserverEntryProjections    int
-	// EvaluatedObserverProgramPublications counts completed unique chunk-entry
-	// publications. It is zero on every rejected or canceled transaction.
-	EvaluatedObserverProgramPublications int
-
-	bodySolveAttribution map[bodySolveAttributionKey]BodySolveAttribution
+	MaxFunctionCount  int
+	FunctionalSummary FunctionalSummaryStats
 }
 
 // Result is the fixed-point result for one bound program.
@@ -176,148 +58,32 @@ func RunChunk(stmts []ast.Stmt, config Config) (Result, error) {
 // lexical bindings. Summary keys and call results are derived from the same
 // binding identity, so function calls cannot drift through an accidental rebind.
 func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Result, error) {
-	config.Check = withSemanticProgramAudit(config.Check, config.semanticProgramAudit)
+	rsswatch.Start()
 	config = configWithStats(config)
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
 	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
-	keys.certifyRelationFullProducts = config.enableStrictRelationPhaseCollapse
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	prepared, err := prepareBoundChunkBodies(stmts, bindings, config.Check, keys)
 	if err != nil {
 		return Result{}, err
 	}
-	if config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
-		if config.relationCatalogAudit != nil {
-			if err := config.relationCatalogAudit(catalog); err != nil {
-				return Result{}, err
-			}
-		}
-		if config.relationSnapshotAudit != nil {
-			snapshot, err := catalog.Freeze(config.Context)
-			if err != nil {
-				return Result{}, err
-			}
-			if err := config.relationSnapshotAudit(snapshot); err != nil {
-				return Result{}, err
-			}
-		}
-	}
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
-	inferred, err := collectCallContextKeys(&keys, stmts, bindings, config.Check, config.Stats, prepared)
+	published, err := runPreparedRelationProgram(config.Context, prepared, prepared.root, config.Check, keys, config.Stats)
 	if err != nil {
 		return Result{}, err
-	}
-	if err := contextErr(config.Context); err != nil {
-		return Result{}, err
-	}
-	recordProgramShape(config.Stats, keys)
-	config.Check.ClosedDynamicAllValues = append([]factapply.ClosedDynamicAllValueInvariant(nil), keys.closedDynamicAllValues...)
-	applyMetatableMethodReceiverEntryStates(&keys, bindings, config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	if err := applyInferredParamEntryStates(&keys, bindings, inferred); err != nil {
-		return Result{}, err
-	}
-	keys.certifyFinalRelationContextEntries(config.Check.Registry, prepared)
-	var relationActivation *relationRunActivation
-	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {
-		strict := config.enableStrictRelationPhaseCollapse
-		var catalog relationRunCatalog
-		if strict {
-			catalog = prepareStagedStrictRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil, config.Stats)
-		} else {
-			catalog = prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, nil)
-			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
-		}
-		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
-		if err != nil {
-			return Result{}, err
-		}
-		if relationActivation != nil && strict {
-			relationActivation.strict = true
-			relationActivation, err = prepareStrictRelationOwners(config.Check, config.Stats, relationActivation, prepared, keys, config.strictRelationForceReject)
-			if err != nil {
-				return Result{}, err
-			}
-		}
-	}
-	defer relationActivation.discardOwnedRetained()
-	functions := make([]query.Function, 0, 1+len(keys.functions)+keys.contexts.Len())
-	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
-	defer retained.Release()
-	indexBase := summaryIndexBase(keys)
-	rootRuntime := relationActivation.ownerRuntime(keys.rootKey, prepared.root, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, keys.rootKey))
-	functions = append(functions, chunkFunction(keys.rootKey, prepared.root, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof))
-	for _, origin := range keys.functions {
-		static := prepared.function(origin.funcExpr)
-		if relationActivation.omitsEquation(origin.key, static) {
-			if config.Stats != nil {
-				config.Stats.RelationSummaryEquationsOmitted++
-			}
-			continue
-		}
-		runtime := relationActivation.ownerRuntime(origin.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, origin.key))
-		functions = append(functions, boundFunction(origin, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
-	}
-	keys.contexts.ForEach(func(context keyedFunction) {
-		static := prepared.function(context.funcExpr)
-		if relationActivation.omitsEquation(context.key, static) {
-			if config.Stats != nil {
-				config.Stats.RelationSummaryEquationsOmitted++
-			}
-			return
-		}
-		runtime := relationActivation.contextOwnerRuntime(context, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, context.key))
-		functions = append(functions, boundFunction(context, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, context.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, context.key), keys.metatableProof, true))
-	})
-	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
-
-	snapshot, err := query.Run(query.Config{
-		Context:    config.Context,
-		Registry:   config.Check.Registry,
-		Functions:  functions,
-		Pinned:     relationActivation.pinnedSummaries(),
-		Seed:       config.Seed,
-		WidenAt:    config.WidenAt,
-		WidenDelay: config.WidenDelay,
-		Stats:      queryStats(config.Stats),
-	})
-	if err != nil {
-		return Result{}, err
-	}
-	if err := contextErr(config.Context); err != nil {
-		return Result{}, err
-	}
-	root, snapshot, err := materializeChunkWithReturnPresenceProofs(
-		prepared,
-		bindings,
-		config.Check,
-		config.Stats,
-		snapshot,
-		contextKeyFunc(keys, keys.rootKey),
-		directKeyFunc(keys),
-		keys,
-		retained,
-		relationActivation,
-	)
-	if err != nil {
-		return Result{}, err
-	}
-	if !relationActivation.handoffRetained() {
-		return Result{}, errStrictRelationRetainedResultMissing
 	}
 	return Result{
-		snapshot:     snapshot,
+		snapshot:     published.snapshot,
 		rootKey:      keys.rootKey,
 		functionKeys: maps.Clone(keys.functionKeys),
 		targetKeys:   maps.Clone(keys.targetKeys),
 		pathKeys:     maps.Clone(keys.pathKeys),
-		rootResult:   root,
+		rootResult:   published.root,
 	}, nil
 }
 
@@ -331,15 +97,13 @@ func RunFunction(fn *ast.FunctionExpr, config Config) (Result, error) {
 // RunBoundFunction runs fixed-point summary equations over fn using
 // caller-owned lexical bindings.
 func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (Result, error) {
-	config.Check = withSemanticProgramAudit(config.Check, config.semanticProgramAudit)
+	rsswatch.Start()
 	config = configWithStats(config)
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
 	stmts := functionStmts(fn)
-	keys := collectKeys(bindings, rootKey(config.RootKey), config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
-	keys.certifyRelationContexts = config.enableRelationActivation || config.enableStrictRelationPhaseCollapse || config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil
-	keys.certifyRelationFullProducts = config.enableStrictRelationPhaseCollapse
+	keys := collectFunctionKeys(bindings, rootKey(config.RootKey), fn, config.Check.Registry, config.Check.ModuleTypes, config.Check.ModuleExports, stmts)
 	recordProgramShape(config.Stats, keys)
 	config.Check = configWithMetatableMethodSignatureArguments(config.Check, keys.metatableProof)
 	if fnType, ok := lowerFunctionExprType(fn, bindings, config.Check.ModuleTypes); ok {
@@ -349,128 +113,30 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 	if err != nil {
 		return Result{}, err
 	}
-	if config.relationCatalogAudit != nil || config.relationSnapshotAudit != nil {
-		catalog := prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
-		if config.relationCatalogAudit != nil {
-			if err := config.relationCatalogAudit(catalog); err != nil {
-				return Result{}, err
-			}
-		}
-		if config.relationSnapshotAudit != nil {
-			snapshot, err := catalog.Freeze(config.Context)
-			if err != nil {
-				return Result{}, err
-			}
-			if err := config.relationSnapshotAudit(snapshot); err != nil {
-				return Result{}, err
-			}
-		}
-	}
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
-	var relationActivation *relationRunActivation
-	if !config.forceLegacyRelations && (config.enableRelationActivation || config.enableStrictRelationPhaseCollapse) {
-		strict := config.enableStrictRelationPhaseCollapse
-		var catalog relationRunCatalog
-		if strict {
-			catalog = prepareStagedStrictRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn, config.Stats)
-		} else {
-			catalog = prepareInactiveRelationCatalog(config.Check.Registry, bindings, keys, prepared, fn)
-			catalog = catalog.certifiedContextActivationSlice(config.Check.Registry, keys.contexts)
-		}
-		relationActivation, err = freezeRelationActivation(config.Context, config.Stats, catalog)
-		if err != nil {
-			return Result{}, err
-		}
-		if relationActivation != nil && strict {
-			relationActivation.strict = true
-			relationActivation, err = prepareStrictRelationOwners(config.Check, config.Stats, relationActivation, prepared, keys, config.strictRelationForceReject)
-			if err != nil {
-				return Result{}, err
-			}
-		}
-	}
-	defer relationActivation.discardOwnedRetained()
-	functions := make([]query.Function, 0, 1+len(keys.functions))
-	retained := newRetainedSummaryApplicationRun(config.Check.Registry, config.SummaryCache != nil && config.Check.Schedule == transfer.ScheduleWTO, config.CacheProfile)
-	defer retained.Release()
-	indexBase := summaryIndexBase(keys)
 	rootPrepared := prepared.function(fn)
-	if relationActivation.omitsEquation(keys.rootKey, rootPrepared) {
-		if config.Stats != nil {
-			config.Stats.RelationSummaryEquationsOmitted++
-		}
-	} else {
-		rootRuntime := relationActivation.ownerRuntime(keys.rootKey, rootPrepared, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, keys.rootKey))
-		functions = append(functions, boundFunction(keyedFunction{funcExpr: fn, key: keys.rootKey}, rootPrepared, config.Check, config.Stats, rootRuntime, config.CacheProfile, contextKeyFunc(keys, keys.rootKey), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, keys.rootKey), keys.metatableProof, false))
-	}
-	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
-	for _, origin := range keys.functions {
-		if _, ok := seen[origin.key]; ok {
-			continue
-		}
-		seen[origin.key] = struct{}{}
-		static := prepared.function(origin.funcExpr)
-		if relationActivation.omitsEquation(origin.key, static) {
-			if config.Stats != nil {
-				config.Stats.RelationSummaryEquationsOmitted++
-			}
-			continue
-		}
-		runtime := relationActivation.ownerRuntime(origin.key, static, config.SummaryCache, retained, summaryOwnerResolutionDigest(keys, origin.key))
-		functions = append(functions, boundFunction(origin, static, config.Check, config.Stats, runtime, config.CacheProfile, contextKeyFunc(keys, origin.key), directKeyFunc(keys), summaryIndexForOwner(indexBase, keys, origin.key), keys.metatableProof, false))
-	}
-	functions = dependencyFirstFunctions(functions, &keys, config.Check.Registry)
-
-	snapshot, err := query.Run(query.Config{
-		Context:    config.Context,
-		Registry:   config.Check.Registry,
-		Functions:  functions,
-		Pinned:     relationActivation.pinnedSummaries(),
-		Seed:       config.Seed,
-		WidenAt:    config.WidenAt,
-		WidenDelay: config.WidenDelay,
-		Stats:      queryStats(config.Stats),
-	})
+	published, err := runPreparedRelationProgram(config.Context, prepared, rootPrepared, config.Check, keys, config.Stats)
 	if err != nil {
 		return Result{}, err
-	}
-	if err := contextErr(config.Context); err != nil {
-		return Result{}, err
-	}
-	root, snapshot, err := materializeFunctionWithReturnPresenceProofs(
-		fn,
-		prepared,
-		bindings,
-		config.Check,
-		config.Stats,
-		snapshot,
-		contextKeyFunc(keys, keys.rootKey),
-		directKeyFunc(keys),
-		keys,
-		retained,
-		relationActivation,
-	)
-	if err != nil {
-		return Result{}, err
-	}
-	if !relationActivation.handoffRetained() {
-		return Result{}, errStrictRelationRetainedResultMissing
 	}
 	return Result{
-		snapshot:     snapshot,
+		snapshot:     published.snapshot,
 		rootKey:      keys.rootKey,
 		functionKeys: maps.Clone(keys.functionKeys),
 		targetKeys:   maps.Clone(keys.targetKeys),
 		pathKeys:     maps.Clone(keys.pathKeys),
-		rootResult:   root,
+		rootResult:   published.root,
 	}, nil
 }
 
 func configWithStats(config Config) Config {
 	if config.Context == nil {
 		config.Context = config.Check.Context
+	}
+	if config.Context == nil {
+		config.Context = context.Background()
 	}
 	config.Check.Context = config.Context
 	if config.Stats != nil {

@@ -7,31 +7,39 @@ import (
 )
 
 type placementLane struct {
-	mapLane[identity.ID, placement.Value]
+	mapLane[identity.Term, placement.Value]
 }
 
 func placementLaneFromMap(
-	domain lattice.Lattice[map[identity.ID]placement.Value],
-	values map[identity.ID]placement.Value,
+	domain lattice.Lattice[map[identity.Term]placement.Value],
+	values map[identity.Term]placement.Value,
 ) placementLane {
 	return placementLane{mapLaneFromMap(domain, values)}
 }
 
 func (l placementLane) read(id identity.ID) placement.Value {
-	if id == (identity.ID{}) {
+	return l.readTerm(identity.ConcreteTerm(id))
+}
+
+func (l placementLane) readTerm(term identity.Term) placement.Value {
+	if !term.Valid() {
 		return placement.Bottom
 	}
 	if l.isTop() {
 		return placement.Unknown
 	}
-	if value, ok := l.get(id); ok {
+	if value, ok := l.get(term); ok {
 		return value
 	}
 	return placement.Bottom
 }
 
 func (l placementLane) without(id identity.ID) (placementLane, bool) {
-	values, changed := l.mapLane.without(id)
+	return l.withoutTerm(identity.ConcreteTerm(id))
+}
+
+func (l placementLane) withoutTerm(term identity.Term) (placementLane, bool) {
+	values, changed := l.mapLane.without(term)
 	if !changed {
 		return l, false
 	}
@@ -39,6 +47,13 @@ func (l placementLane) without(id identity.ID) (placementLane, bool) {
 }
 
 func (l placementLane) with(id identity.ID, value placement.Value) placementLane {
+	return l.withTerm(identity.ConcreteTerm(id), value)
+}
+
+func (l placementLane) withTerm(term identity.Term, value placement.Value) placementLane {
+	if !term.Valid() {
+		return l
+	}
 	requireNonBottomLaneValue(value == placement.Bottom, "placement", "placement")
-	return placementLane{l.mapLane.with(id, value)}
+	return placementLane{l.mapLane.with(term, value)}
 }

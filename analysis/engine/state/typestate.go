@@ -5,6 +5,8 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 // TypestateResourceFromCanonicalKey identifies one resource in state by an
@@ -83,6 +85,61 @@ func (s State) CanonicalizeTypestateResources(ks *keyspace.KeySpace) State {
 	out := s.reachable()
 	out.typestates = next
 	return out
+}
+
+func canonicalTypestateResourceKeyFromQuotient(ks *keyspace.KeySpace, quotient pathevidence.EqualityQuotient, target pathaddr.StateKey, cache map[pathevidence.EqualityClass]pathaddr.StateKey) pathaddr.StateKey {
+	if ks == nil || !ks.Valid() || !quotient.Valid() || target == "" {
+		return target
+	}
+	candidate, ok := ks.FromStateKey(target.PathKey())
+	if !ok {
+		return target
+	}
+	class, valid := quotient.Class(candidate)
+	if !valid {
+		return target
+	}
+	observedCanonical, found := cache[class]
+	if !found {
+		var observedPath pathdom.PathKey
+		if !quotient.RangeClass(class, func(equivalent keyspace.Key) {
+			formatted := fieldCanonicalTypestatePathKey(ks, ks.Format(equivalent))
+			if formatted != "" && (observedPath == "" || formatted < observedPath) {
+				observedPath = formatted
+			}
+		}) {
+			return target
+		}
+		observedCanonical, ok = pathaddr.StateKeyFromPathKey(observedPath)
+		if !ok {
+			return target
+		}
+		cache[class] = observedCanonical
+	}
+	canonical := fieldCanonicalTypestatePathKey(ks, target.PathKey())
+	if observedCanonical != "" && (canonical == "" || observedCanonical.PathKey() < canonical) {
+		canonical = observedCanonical.PathKey()
+	}
+	out, ok := pathaddr.StateKeyFromPathKey(canonical)
+	if !ok {
+		return target
+	}
+	return out
+}
+
+func applyPathEqualityTypestates(store typestate.Store, _ *axis.Registry, ks *keyspace.KeySpace, quotient pathevidence.EqualityQuotient) (typestate.Store, bool, bool) {
+	if ks == nil || !ks.Valid() || !quotient.Valid() {
+		return store, false, false
+	}
+	canonicalByClass := make(map[pathevidence.EqualityClass]pathaddr.StateKey)
+	next := store.MapResources(func(resource typestate.Resource) typestate.Resource {
+		target, ok := pathaddr.StateKeyFromPathKey(pathdom.PathKey(resource.ID.String()))
+		if !ok {
+			return resource
+		}
+		return TypestateResourceFromCanonicalKey(canonicalTypestateResourceKeyFromQuotient(ks, quotient, target, canonicalByClass), resource.Protocol)
+	})
+	return next, !typestate.Equal(next, store), true
 }
 
 // TypestateSnapshot returns a copy of the current typestate lane.

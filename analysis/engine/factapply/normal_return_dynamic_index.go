@@ -54,7 +54,7 @@ func freshDynamicIndexMutationTablesAtCallEntry(
 		if count != 1 {
 			continue
 		}
-		if rootPathHasFreshEmptyTable(ctx.Registry, in, paths[tableKey]) {
+		if rootPathHasFreshEmptyTable(state.RegisteredProductDomain(ctx.Registry), resolver.KeySpace(), in, paths[tableKey]) {
 			out[tableKey] = struct{}{}
 		}
 	}

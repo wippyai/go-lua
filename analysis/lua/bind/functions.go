@@ -180,6 +180,47 @@ func (r *Result) StableLocalFunctionIdentity(targetBinding symbol.ID) (symbol.ID
 	return functionIdentity, indexed && functionIdentity != 0
 }
 
+// StableDirectCallFunctionIdentity returns the stable lexical function bound
+// to targetBinding only when every runtime read is the callee of a direct call
+// and the function is not self-recursive through that binding. It is the
+// constant-scope authority for consumers that may erase the function value
+// itself while retaining its direct lexical call edge.
+func (r *Result) StableDirectCallFunctionIdentity(targetBinding symbol.ID) (symbol.ID, bool) {
+	identity, stable := r.StableLocalFunctionIdentity(targetBinding)
+	if !stable || !r.runtimeUseScanComplete {
+		return 0, false
+	}
+	calls := r.directCalls[targetBinding]
+	directReads := make(map[*ast.IdentExpr]struct{}, len(calls))
+	for _, call := range calls {
+		if call == nil {
+			continue
+		}
+		if ident, ok := call.Func.(*ast.IdentExpr); ok && ident != nil {
+			directReads[ident] = struct{}{}
+		}
+	}
+	reads := r.readIdents[targetBinding]
+	if len(directReads) != len(reads) {
+		return 0, false
+	}
+	for _, read := range reads {
+		if _, direct := directReads[read]; !direct {
+			return 0, false
+		}
+	}
+	fn, found := r.functionsBySymbol[identity]
+	if !found {
+		return 0, false
+	}
+	for _, capture := range r.directCaptures[fn] {
+		if capture.Captured == targetBinding {
+			return 0, false
+		}
+	}
+	return identity, true
+}
+
 // Functions returns all bound functions in parent-before-child order.
 func (r *Result) Functions() []*ast.FunctionExpr {
 	if r == nil {

@@ -200,7 +200,7 @@ func sourceSpanValid(span SourceSpan) bool {
 // of a statically known container path.
 type PathDescendantInvalidation struct {
 	containerPath path.Path
-	dynamicTarget dynamicInvalidationTarget
+	dynamicTarget DynamicIndexTarget
 }
 
 // NewPathDescendantInvalidation creates a descendant-only invalidation fact for
@@ -209,23 +209,11 @@ func NewPathDescendantInvalidation(containerPath path.Path) PathDescendantInvali
 	return PathDescendantInvalidation{containerPath: containerPath.Clone()}
 }
 
-type dynamicInvalidationTarget struct {
-	tablePath path.Path
-	keySource ValueSource
-	suffix    []segment.Segment
-	ok        bool
-}
-
 // WithDynamicTarget returns i with the unresolved dynamic-index target that
 // caused the broad invalidation. When the key source later proves a literal
 // member, fact application can additionally invalidate the concrete path.
-func (i PathDescendantInvalidation) WithDynamicTarget(tablePath path.Path, keySource ValueSource, suffix []segment.Segment) PathDescendantInvalidation {
-	i.dynamicTarget = dynamicInvalidationTarget{
-		tablePath: tablePath.Clone(),
-		keySource: keySource,
-		suffix:    append([]segment.Segment(nil), suffix...),
-		ok:        true,
-	}
+func (i PathDescendantInvalidation) WithDynamicTarget(target DynamicIndexTarget) PathDescendantInvalidation {
+	i.dynamicTarget = target.copy()
 	return i
 }
 
@@ -243,7 +231,7 @@ func (i PathDescendantInvalidation) ContainerPathRef() path.Path {
 // DynamicTarget returns the dynamic-index table, key source, and post-index
 // suffix when this broad invalidation came from a target such as t[k].field.
 func (i PathDescendantInvalidation) DynamicTarget() (path.Path, ValueSource, []segment.Segment, bool) {
-	if !i.dynamicTarget.ok {
+	if !i.dynamicTarget.Valid() {
 		return path.Path{}, ValueSource{}, nil, false
 	}
 	return i.dynamicTarget.tablePath.Clone(), i.dynamicTarget.keySource, append([]segment.Segment(nil), i.dynamicTarget.suffix...), true
@@ -252,15 +240,18 @@ func (i PathDescendantInvalidation) DynamicTarget() (path.Path, ValueSource, []s
 // DynamicTargetRef returns the dynamic target for immediate read-only use.
 // Callers must not mutate or retain the returned suffix.
 func (i PathDescendantInvalidation) DynamicTargetRef() (path.Path, ValueSource, []segment.Segment, bool) {
-	if !i.dynamicTarget.ok {
+	if !i.dynamicTarget.Valid() {
 		return path.Path{}, ValueSource{}, nil, false
 	}
 	return i.dynamicTarget.tablePath, i.dynamicTarget.keySource, i.dynamicTarget.suffix, true
 }
 
+func (i PathDescendantInvalidation) DynamicTargetContract() (DynamicIndexTarget, bool) {
+	return i.dynamicTarget, i.dynamicTarget.Valid()
+}
+
 func (i PathDescendantInvalidation) copy() PathDescendantInvalidation {
 	i.containerPath = i.containerPath.Clone()
-	i.dynamicTarget.tablePath = i.dynamicTarget.tablePath.Clone()
-	i.dynamicTarget.suffix = append([]segment.Segment(nil), i.dynamicTarget.suffix...)
+	i.dynamicTarget = i.dynamicTarget.copy()
 	return i
 }

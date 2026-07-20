@@ -151,7 +151,7 @@ func (r *Result) AssignmentSourceProvenFunctionAtBoundary(point cfg.Point, sourc
 	if !ok {
 		return false
 	}
-	if _, ok := r.FunctionValueTypeForValueAtBoundary(point, value); ok {
+	if _, ok := r.FunctionValueTypeForValue(value); ok {
 		return true
 	}
 	return productRuntimeKind(r, value).Contains(runtimekind.Function)

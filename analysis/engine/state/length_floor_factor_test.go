@@ -1,0 +1,33 @@
+package state
+
+import (
+	"testing"
+
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+)
+
+func TestLengthFloorFactorMatchesCanonicalConcreteWrite(t *testing.T) {
+	reg := standard.Registry()
+	keys := keyspace.New()
+	stateKey := pathaddr.StateKey("sym300@1.items")
+	path, ok := keys.InternStateKey(stateKey)
+	if !ok {
+		t.Fatal("length path")
+	}
+	input := Reachable(State{}).WriteLenFloor(keys, stateKey, 2)
+	domain := RegisteredProductDomain(reg)
+	plan, err := domain.PrepareLengthFloorFactorPlan(keys, path, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := domain.ApplyLengthFloor(plan, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := input.WriteLenFloor(keys, stateKey, 5)
+	if !domain.Lattice().Equal(got, want) {
+		t.Fatal("factor-native length floor diverged from canonical concrete write")
+	}
+}

@@ -974,6 +974,13 @@ func TestReadOnlyGraphHelpersUseCFGViews(t *testing.T) {
 	if &succs[0] != &c.succs[int(a)][0] {
 		t.Fatal("SuccessorsReadOnly copied CFG successors; want internal read-only view")
 	}
+	conditions := SuccessorConditionsReadOnly(c, a)
+	if len(conditions) != 1 || conditions[0] {
+		t.Fatalf("SuccessorConditionsReadOnly(%d) = %v, want [false]", a, conditions)
+	}
+	if &conditions[0] != &c.succConds[int(a)][0] {
+		t.Fatal("SuccessorConditionsReadOnly copied CFG conditions; want internal read-only view")
+	}
 
 	preds := PredecessorsReadOnly(c, b)
 	if len(preds) != 1 || preds[0] != a {
@@ -1006,6 +1013,10 @@ func TestReadOnlyGraphHelpersPreserveFallbackCopySemantics(t *testing.T) {
 	if &succs[0] == &c.succs[int(a)][0] {
 		t.Fatal("SuccessorsReadOnly fallback returned CFG internals; want Graph copy semantics")
 	}
+	conditions := SuccessorConditionsReadOnly(graph, a)
+	if len(conditions) != 1 || conditions[0] {
+		t.Fatalf("SuccessorConditionsReadOnly fallback = %v, want [false]", conditions)
+	}
 
 	preds := PredecessorsReadOnly(graph, b)
 	if len(preds) != 1 || preds[0] != a {
@@ -1021,6 +1032,27 @@ func TestReadOnlyGraphHelpersPreserveFallbackCopySemantics(t *testing.T) {
 	}
 	if len(c.rpo) != 0 && &rpo[0] == &c.rpo[0] {
 		t.Fatal("RPOReadOnly fallback returned CFG internals; want Graph copy semantics")
+	}
+}
+
+func TestSuccessorConditionsReadOnlyPreservesParallelOppositeEdges(t *testing.T) {
+	c := New()
+	branch := c.AddBranch()
+	join := c.AddNode(NodeJoin)
+	c.AddEdge(branch, join, true)
+	c.AddEdge(branch, join, false)
+
+	for name, graph := range map[string]Graph{"native": c, "fallback": copyOnlyGraph{cfg: c}} {
+		t.Run(name, func(t *testing.T) {
+			successors := SuccessorsReadOnly(graph, branch)
+			conditions := SuccessorConditionsReadOnly(graph, branch)
+			if len(successors) != 2 || successors[0] != join || successors[1] != join {
+				t.Fatalf("parallel successors = %v, want [%d %d]", successors, join, join)
+			}
+			if len(conditions) != 2 || !conditions[0] || conditions[1] {
+				t.Fatalf("parallel conditions = %v, want [true false]", conditions)
+			}
+		})
 	}
 }
 

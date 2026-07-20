@@ -139,6 +139,14 @@ func (a Axis) Join(left, right Element) Element {
 	return a.spec.join[int(left)*n+int(right)]
 }
 
+func (a Axis) Meet(left, right Element) Element {
+	if int(left) >= len(a.spec.elements) || int(right) >= len(a.spec.elements) {
+		return a.spec.bottom
+	}
+	n := len(a.spec.elements)
+	return a.spec.meet[int(left)*n+int(right)]
+}
+
 func (a Axis) Assign(source Element) Element {
 	if a.spec.assignMode != AssignPropagate || int(source) >= len(a.spec.assignMap) {
 		return a.spec.bottom

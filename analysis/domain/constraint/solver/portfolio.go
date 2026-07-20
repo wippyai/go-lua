@@ -26,14 +26,13 @@ func DefaultPortfolio() Portfolio {
 //
 // Entailment-by-refutation: for each backend a fresh Solver asserts all of
 // asserted, then is queried for goal. A Valid from any backend proves the goal.
-// An Invalid (only a complete backend ever returns it) refutes the goal and
-// short-circuits to Invalid. Unknown continues to the next backend. After all
-// backends, Valid if any proved it, else Unknown.
+// Valid and Invalid are both decisive and return immediately. Unknown alone
+// continues to the next backend, so a difference-logic proof never pays for the
+// exact general-linear tableau.
 //
 // This is entailment, not satisfiability aggregation, so it does not use
 // decision.Result.Combine.
 func (p Portfolio) Entails(asserted []numeric.NumericConstraint, goal numeric.NumericConstraint) decision.Result {
-	proved := false
 	for _, make := range p.backends {
 		s := make()
 		for _, c := range asserted {
@@ -41,14 +40,11 @@ func (p Portfolio) Entails(asserted []numeric.NumericConstraint, goal numeric.Nu
 		}
 		switch s.Entails(goal) {
 		case decision.Valid:
-			proved = true
+			return decision.Valid
 		case decision.Invalid:
 			return decision.Invalid
 		case decision.Unknown:
 		}
-	}
-	if proved {
-		return decision.Valid
 	}
 	return decision.Unknown
 }

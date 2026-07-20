@@ -3,6 +3,8 @@ package body
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
@@ -15,8 +17,9 @@ import (
 // forest. Every lexical function has exactly one CFG, WIR body and Static;
 // parent closure protos point at those same immutable child artifacts.
 type StaticForest struct {
-	root      *Static
-	functions map[*ast.FunctionExpr]*Static
+	root         *Static
+	functions    map[*ast.FunctionExpr]*Static
+	callTopology operationplan.CallTopology
 }
 
 // Root returns the prepared chunk root. Function-root forests have no separate
@@ -59,17 +62,19 @@ func PrepareBoundFunctionForest(fn *ast.FunctionExpr, bindings *bind.Result, con
 }
 
 type preparedLexicalFunction struct {
-	built  *cfgbuild.Result
-	wir    wirlower.PreparedFunction
-	static *Static
+	built    *cfgbuild.Result
+	wir      wirlower.PreparedFunction
+	resolver *typeresolve.Resolver
 }
 
 func (c *checker) prepareBoundForest(chunk []ast.Stmt, rootFn *ast.FunctionExpr, bindings *bind.Result) (*StaticForest, error) {
 	if bindings == nil {
-		return nil, ErrUnsupportedCFG
+		return nil, ErrBindingsRequired
 	}
 	functions := bindings.Functions()
 	prepared := make(map[*ast.FunctionExpr]preparedLexicalFunction, len(functions))
+	sealedLuaTypeChecks := luaTypePredicateChecksSealedForLowering(bindings, c.config.Signatures, c.config.GlobalTypes)
+	cfgOptions := cfgbuild.Options{SealedLuaTypeChecks: sealedLuaTypeChecks}
 
 	// Binding order is parent-before-child, therefore reverse order makes every
 	// direct child available before its parent is lowered.
@@ -78,9 +83,9 @@ func (c *checker) prepareBoundForest(chunk []ast.Stmt, rootFn *ast.FunctionExpr,
 		if err := validatePreparedChildren(bindings, fn, prepared); err != nil {
 			return nil, err
 		}
-		built := cfgbuild.BuildFunction(fn, bindings)
+		built := cfgbuild.BuildFunctionWithOptions(fn, bindings, cfgOptions)
 		if built == nil || built.Graph == nil {
-			return nil, ErrUnsupportedCFG
+			return nil, ErrCFGRequired
 		}
 		if c.config.Stats != nil {
 			c.config.Stats.LexicalCFGBuilds++
@@ -90,26 +95,32 @@ func (c *checker) prepareBoundForest(chunk []ast.Stmt, rootFn *ast.FunctionExpr,
 		// "function" is the established owner-local WIR identity. Parent protos
 		// carry their own lexical display name independently, so sharing this one
 		// prepared body preserves every existing Static digest and call owner.
-		wirBody := wirlower.LowerFunctionWithResolverAndOptions("function", fn, bindings, built, resolver, c.forestWIROptions(prepared))
+		wirBody := wirlower.LowerFunctionWithResolverAndOptions("function", fn, bindings, built, resolver, c.forestWIROptions(prepared, sealedLuaTypeChecks))
 		if c.config.Stats != nil {
-			c.config.Stats.StaticFunctionPrepares++
 			c.config.Stats.LexicalWIRLowerings++
 		}
-		static := c.prepare(bindings, built, fn, wirBody, resolver, functionSourceStmts(fn))
 		prepared[fn] = preparedLexicalFunction{
-			built:  built,
-			wir:    wirlower.PreparedFunction{Body: wirBody, Graph: built.Graph},
-			static: static,
+			built:    built,
+			wir:      wirlower.PreparedFunction{Body: wirBody, Graph: built.Graph},
+			resolver: resolver,
 		}
 	}
 
-	forest := &StaticForest{functions: make(map[*ast.FunctionExpr]*Static, len(prepared))}
-	for fn, item := range prepared {
-		forest.functions[fn] = item.static
-	}
 	if rootFn != nil {
-		if forest.functions[rootFn] == nil {
+		root, ok := prepared[rootFn]
+		if !ok || root.built == nil || root.wir.Body == nil {
 			return nil, fmt.Errorf("prepare lexical forest: root function is not owned by bindings")
+		}
+		namespace := c.config.UnitNamespace
+		if namespace == (lexicalidentity.UnitNamespace{}) {
+			namespace = standaloneLexicalUnitNamespace(bindings, root.built, root.wir.Body)
+		}
+		forest, err := c.prepareLexicalStatics(bindings, functions, prepared, namespace)
+		if err != nil {
+			return nil, err
+		}
+		if err := forest.sealCallTopology(bindings); err != nil {
+			return nil, err
 		}
 		return forest, nil
 	}
@@ -117,28 +128,75 @@ func (c *checker) prepareBoundForest(chunk []ast.Stmt, rootFn *ast.FunctionExpr,
 	if err := validatePreparedChildren(bindings, nil, prepared); err != nil {
 		return nil, err
 	}
-	built := cfgbuild.BuildChunk(chunk, bindings)
+	built := cfgbuild.BuildChunkWithOptions(chunk, bindings, cfgOptions)
 	if built == nil || built.Graph == nil {
-		return nil, ErrUnsupportedCFG
+		return nil, ErrCFGRequired
 	}
 	if c.config.Stats != nil {
 		c.config.Stats.LexicalCFGBuilds++
 	}
 	moduleTypes := newRequireAliasTypeResolver(moduleidentity.NewRequireAliases(bindings, chunk, nil), c.config.ModuleTypes)
 	resolver := typeresolve.NewWithExternal(bindings, moduleTypes)
-	wirBody := wirlower.LowerWithResolverAndOptions("chunk", chunk, bindings, built, resolver, c.forestWIROptions(prepared))
+	wirBody := wirlower.LowerWithResolverAndOptions("chunk", chunk, bindings, built, resolver, c.forestWIROptions(prepared, sealedLuaTypeChecks))
 	if c.config.Stats != nil {
-		c.config.Stats.StaticChunkPrepares++
 		c.config.Stats.LexicalWIRLowerings++
 	}
-	forest.root = c.prepare(bindings, built, nil, wirBody, resolver, chunk)
+	namespace := c.config.UnitNamespace
+	if namespace == (lexicalidentity.UnitNamespace{}) {
+		namespace = standaloneLexicalUnitNamespace(bindings, built, wirBody)
+	}
+	forest, err := c.prepareLexicalStatics(bindings, functions, prepared, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if c.config.Stats != nil {
+		c.config.Stats.StaticChunkPrepares++
+	}
+	forest.root, err = c.prepare(bindings, built, nil, wirBody, resolver, chunk)
+	if err != nil {
+		return nil, err
+	}
+	if err := forest.sealCallTopology(bindings); err != nil {
+		return nil, err
+	}
+	return forest, nil
+}
+
+// prepareLexicalStatics is the second forest phase. Every body is prepared
+// exactly once after the selected root has established one shared unit
+// namespace for the complete lexical forest.
+func (c *checker) prepareLexicalStatics(
+	bindings *bind.Result,
+	functions []*ast.FunctionExpr,
+	prepared map[*ast.FunctionExpr]preparedLexicalFunction,
+	namespace lexicalidentity.UnitNamespace,
+) (*StaticForest, error) {
+	if namespace == (lexicalidentity.UnitNamespace{}) {
+		return nil, fmt.Errorf("prepare lexical forest: root has no stable unit namespace")
+	}
+	c.config.UnitNamespace = namespace
+	forest := &StaticForest{functions: make(map[*ast.FunctionExpr]*Static, len(prepared))}
+	for _, fn := range functions {
+		item, ok := prepared[fn]
+		if !ok || item.built == nil || item.wir.Body == nil || item.resolver == nil {
+			return nil, fmt.Errorf("prepare lexical forest: function is absent from lowered forest")
+		}
+		if c.config.Stats != nil {
+			c.config.Stats.StaticFunctionPrepares++
+		}
+		static, err := c.prepare(bindings, item.built, fn, item.wir.Body, item.resolver, functionSourceStmts(fn))
+		if err != nil {
+			return nil, err
+		}
+		forest.functions[fn] = static
+	}
 	return forest, nil
 }
 
 func validatePreparedChildren(bindings *bind.Result, parent *ast.FunctionExpr, prepared map[*ast.FunctionExpr]preparedLexicalFunction) error {
 	for _, child := range bindings.NestedFunctions(parent) {
 		item, ok := prepared[child]
-		if !ok || item.wir.Body == nil || item.wir.Graph == nil || item.static == nil {
+		if !ok || item.wir.Body == nil || item.wir.Graph == nil || item.built == nil || item.resolver == nil {
 			symbol, _ := bindings.FunctionSymbol(child)
 			return fmt.Errorf("prepare lexical forest: child function %d is not prepared before its owner", symbol)
 		}
@@ -146,9 +204,10 @@ func validatePreparedChildren(bindings *bind.Result, parent *ast.FunctionExpr, p
 	return nil
 }
 
-func (c *checker) forestWIROptions(prepared map[*ast.FunctionExpr]preparedLexicalFunction) wirlower.Options {
+func (c *checker) forestWIROptions(prepared map[*ast.FunctionExpr]preparedLexicalFunction, sealedLuaTypeChecks bool) wirlower.Options {
 	return wirlower.Options{
 		MethodReceiverTypes: c.config.MethodReceiverTypes,
+		SealedLuaTypeChecks: sealedLuaTypeChecks,
 		PreparedChild: func(fn *ast.FunctionExpr) (wirlower.PreparedFunction, bool) {
 			item, ok := prepared[fn]
 			return item.wir, ok

@@ -21,8 +21,13 @@ func ApplyExpressionConditionFacts(
 	facts factflow.ExpressionConditionFacts,
 ) state.State {
 	ctx := transfer.NodeContext{Registry: reg, Point: point}
+	domain := state.RegisteredProductDomain(reg)
 	for _, refinement := range facts.Refinements() {
-		out = applyValueRefinementAt(reg, resolver, projectPath, point, out, refinement.TargetPathRef(), refinement.Value())
+		if next, _, err := applyValueRefinementFactorState(
+			domain, nil, resolver, projectPath, point, out, refinement.TargetPathRef(), refinement.Value(), false,
+		); err == nil {
+			out = next
+		}
 	}
 	for _, relation := range facts.PathRelations() {
 		out = applyPostconditionPathRelation(ctx, resolver, projectPath, out, relation)
@@ -39,7 +44,13 @@ func applyPostconditionPathRelation(
 ) state.State {
 	switch fact.Kind() {
 	case factflow.PostconditionPathRelationEqual:
-		return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Point, out, fact.LeftPath(), fact.RightPath())
+		next, _, err := applyPathEqualityFactorState(
+			state.RegisteredProductDomain(ctx.Registry), nil, resolver, ctx.Point, out, fact.LeftPath(), fact.RightPath(),
+		)
+		if err == nil {
+			return next
+		}
+		return out
 	default:
 		return out
 	}

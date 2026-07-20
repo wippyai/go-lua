@@ -47,6 +47,18 @@ func (s Snapshot) EncodeCanonical(writer *canonical.Writer) error {
 		if err := writer.String(key.namedRoot); err != nil {
 			return err
 		}
+		if key.kind == kindFormalRoot {
+			owner := key.formalRoot.Owner()
+			if err := writer.Bytes(owner[:]); err != nil {
+				return err
+			}
+			if err := writer.Uint(key.formalRoot.Ordinal()); err != nil {
+				return err
+			}
+			if err := writer.Uint(uint64(key.formalRoot.Vocabulary())); err != nil {
+				return err
+			}
+		}
 		if err := writer.Count(uint64(len(key.segments))); err != nil {
 			return err
 		}

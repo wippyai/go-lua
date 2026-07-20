@@ -185,7 +185,7 @@ func TestExprSuppressesExpressionCoveredPredicates(t *testing.T) {
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 
-	got, ok := Expr(cond, LuaOptions(bindings))
+	got, ok := Expr(cond, SealedLuaTypeOptions(bindings))
 	if !ok {
 		t.Fatal("Expr rejected expression-covered predicate")
 	}

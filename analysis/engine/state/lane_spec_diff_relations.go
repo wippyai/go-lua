@@ -5,33 +5,46 @@ import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 const LaneDiffRelations LaneID = "diff-relations"
 
 var diffRelationsLaneSpec = laneSpec{
-	id:           LaneDiffRelations,
-	keySpaceMode: laneKeySpaceFree,
-	fingerprint:  fingerprintDiffRelations,
-	boundary:     boundaryLaneOps{expand: expandDiffRelationsBoundary, project: projectDiffRelationsBoundary, rebase: rebaseDiffRelationsBoundary, apply: applyDiffRelationsBoundary, equal: equalDiffRelationsBoundary},
+	dynamicRead:              dynamicReadIndependent(),
+	id:                       LaneDiffRelations,
+	keySpaceMode:             laneKeySpaceFree,
+	valueDependencies:        independentValueDependencies(),
+	identitySupport:          independentIdentitySupport(),
+	numericConsistency:       numericConsistencyContributor(contributeDiffRelations),
+	semanticLaws:             []laneSemanticLaw{pathSubtreeMutationIndependent(), pathDescendantMutationIndependent(), pathResolutionIndependent(), pathEqualityQuotientIndependent(), genericForBindingIndependent(), pathReplacementIndependent(), effectFactorIndependent(), callBoundaryIndependent()},
+	boundaryClosureCompanion: noBoundaryClosureCompanion(),
+	rootAssignment:           rootAssignmentUnchanged(false, true, true),
+	coordinateFamilies:       []coordinateFamilySpec{diffRelationCoordinateFamilySpec},
+	fingerprint:              fingerprintDiffRelations,
+	boundary:                 boundaryLaneOps{project: projectDiffRelationsBoundary, rebase: rebaseDiffRelationsBoundary, postRebase: postRebaseBoundaryNoop, equal: equalDiffRelationsBoundary},
 	markReachable: func(s State) State {
-		s.diffRelations = s.diffRelations.reachable()
+		if s.diffRelations.bottom {
+			setStateDiffRelations(&s, s.diffRelations.reachable())
+		}
 		return s
 	},
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
-		return stateLane(diffRelationDomain(),
+		domain := diffRelationDomain()
+		return stateLaneWithBoundary(domain,
 			func(s State) diffRelationLane { return s.diffRelations },
-			func(out *State, lane diffRelationLane) { out.diffRelations = lane },
+			setStateDiffRelations,
+			typedLaneFactorRepresentation[diffRelationLane]{equal: domain.Equal},
+			typedBoundaryFactorOps[diffRelationLane]{apply: applyDiffRelationsBoundaryLane, roots: boundaryRootsReachable(func(lane diffRelationLane) diffRelationLane { return lane.reachable() }), project: projectDiffRelationsBoundaryFactor, rebase: rebaseDiffRelationsBoundaryFactor, postRebase: boundaryPostRebaseUnchanged[diffRelationLane], reachability: emitDiffRelationsReachability},
 		)
 	},
 }
 
-func expandDiffRelationsBoundary(expansion *boundaryClosureExpansion, source State) {
-	if source.diffRelations.bottom {
+func emitDiffRelationsReachability(program *boundaryReachabilityProgramBuilder, lane diffRelationLane) {
+	if lane.bottom {
 		return
 	}
-	for relation := range source.diffRelations.values {
-		a := expansion.addStateKey(relation.A.Key)
-		c := expansion.addStateKey(relation.C.Key)
+	for relation := range lane.values {
+		a := program.addStateKey(relation.A.Key)
+		c := program.addStateKey(relation.C.Key)
 		if relation.B.valid() {
-			expansion.connect(a, expansion.addStateKey(relation.B.Key), c)
-			continue
+			program.pathCone(false, a, program.addStateKey(relation.B.Key), c)
+		} else {
+			program.pathCone(false, a, c)
 		}
-		expansion.connect(a, c)
 	}
 }

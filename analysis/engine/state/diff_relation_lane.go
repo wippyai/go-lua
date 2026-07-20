@@ -85,8 +85,17 @@ func (l diffRelationLane) reachable() diffRelationLane {
 }
 
 func (l diffRelationLane) add(c RelConstraint) (diffRelationLane, bool) {
-	if !c.A.valid() || !c.C.valid() || c.A == c.C {
+	c, valid := canonicalRelConstraint(c)
+	if !valid {
 		return l, false
+	}
+	lane, changed := l.mustSetLane.insert(c)
+	return diffRelationLane{lane}, changed
+}
+
+func canonicalRelConstraint(c RelConstraint) (RelConstraint, bool) {
+	if !c.A.valid() || !c.C.valid() || c.A == c.C {
+		return RelConstraint{}, false
 	}
 	if c.B.valid() {
 		if relOperandLess(c.B, c.A) || (c.A == c.B && c.CoA > c.CoB) {
@@ -97,8 +106,7 @@ func (l diffRelationLane) add(c RelConstraint) (diffRelationLane, bool) {
 		c.B = RelOperand{}
 		c.CoB = 0
 	}
-	lane, changed := l.mustSetLane.insert(c)
-	return diffRelationLane{lane}, changed
+	return c, true
 }
 
 func relOperandLess(a, b RelOperand) bool {

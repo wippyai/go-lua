@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -33,7 +34,16 @@ func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cf
 				sig, ok = effectlowering.RefineStaticStringMethodSignature(reg, sig, site)
 			}
 			if ok {
-				_, ok = effectlowering.StaticScalarStringMethodReturns(reg, nil, sig, site)
+				// Iterator-producing methods are owned by the generic-for protocol,
+				// not by the scalar return projector. Admit their signature descriptor
+				// exactly when this is an iterator-source site and the canonical effect
+				// law exposes one active iterator. All other method calls retain the
+				// existing finite scalar-return proof.
+				_, collectionIterator := iteration.ActiveIterator(sig.Effect.Labels)
+				_, callableIterator := effectlowering.CallableIteratorSignature(sig)
+				if site.Context() != factflow.CallSiteContextIteratorSource || (!collectionIterator && !callableIterator) {
+					_, ok = effectlowering.StaticScalarStringMethodReturns(reg, nil, sig, site)
+				}
 			}
 		}
 		if !ok {
@@ -105,9 +115,14 @@ func exactGuardedStringMethodReceiver(reg *axis.Registry, bindings *bind.Result,
 		if branch == point {
 			continue
 		}
-		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
-			edge, edgeOK := graph.EdgeCond(branch, succ)
-			if !edgeOK || !guardedMethodProofEdgeDominates(graph, dominators, branch, succ, point) || guardedMethodReceiverReassigned(facts, graph, reachability, succ, point, receiver) {
+		successors := cfg.SuccessorsReadOnly(graph, branch)
+		conditions := cfg.SuccessorConditionsReadOnly(graph, branch)
+		if len(conditions) != len(successors) {
+			continue
+		}
+		for index, succ := range successors {
+			edge := conditions[index]
+			if !guardedMethodProofEdgeDominates(graph, dominators, branch, succ, point) || guardedMethodReceiverReassigned(facts, graph, reachability, succ, point, receiver) {
 				continue
 			}
 			for _, refinement := range facts.BranchRefinements(branch) {

@@ -109,6 +109,14 @@ func factDomainForRegistry(reg *axis.Registry) lattice.Lattice[Fact] {
 				Admission:   admissionJoin(a.Admission, b.Admission),
 			}
 		},
+		Meet: func(a, b Fact) Fact {
+			return Fact{
+				KeyPresence: presence.Meet(a.KeyPresence, b.KeyPresence),
+				KeyValue:    valueDomain.Meet(a.KeyValue, b.KeyValue),
+				Value:       valueDomain.Meet(a.Value, b.Value),
+				Admission:   admissionMeet(a.Admission, b.Admission),
+			}
+		},
 		Widen: func(prev, next Fact) Fact {
 			return Fact{
 				KeyPresence: presence.Widen(prev.KeyPresence, next.KeyPresence),
@@ -169,4 +177,17 @@ func admissionJoin(a, b Admission) Admission {
 		return a
 	}
 	return AdmissionUnknown
+}
+
+func admissionMeet(a, b Admission) Admission {
+	if a == b {
+		return a
+	}
+	if a == AdmissionUnknown {
+		return b
+	}
+	if b == AdmissionUnknown {
+		return a
+	}
+	return AdmissionBottom
 }

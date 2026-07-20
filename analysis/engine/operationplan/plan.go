@@ -170,6 +170,11 @@ type Plan struct {
 	boundaryReturns              []product.Value
 	signatureRefs                []uint32
 	signatures                   []SignatureCallOperation
+	moduleLoadRefs               []uint32
+	moduleLoads                  []ModuleLoadOperation
+	moduleLoadTables             []ModuleLoadExportTable
+	attachMetatableRefs          []uint32
+	attachMetatables             []AttachMetatableOperation
 	signatureAllocationRefs      []uint32
 	signatureAllocationOrdinals  []uint32
 	signatureAllocationOwners    []uint64
@@ -289,13 +294,23 @@ func validateStructuralExpressionRegion(graph cfg.Graph, region factflow.Structu
 	points := region.OwnedRHSPoints()
 	validPoint := func(point cfg.Point) bool { return uint64(point) < uint64(graph.Size()) && graph.Node(point) != nil }
 	if !validPoint(branch) || !validPoint(join) || !validPoint(trueTarget) || !validPoint(falseTarget) ||
-		graph.Node(branch).Kind != cfg.NodeBranch || graph.Node(join).Kind != cfg.NodeJoin || len(graph.Successors(branch)) != 2 {
+		graph.Node(branch).Kind != cfg.NodeBranch || graph.Node(join).Kind != cfg.NodeJoin {
 		return false
 	}
-	if cond, ok := graph.EdgeCond(branch, trueTarget); !ok || !cond {
+	successors := cfg.SuccessorsReadOnly(graph, branch)
+	conditions := cfg.SuccessorConditionsReadOnly(graph, branch)
+	if len(successors) != 2 || len(conditions) != len(successors) {
 		return false
 	}
-	if cond, ok := graph.EdgeCond(branch, falseTarget); !ok || cond {
+	trueFound, falseFound := false, false
+	for index, successor := range successors {
+		if conditions[index] {
+			trueFound = trueFound || successor == trueTarget
+		} else {
+			falseFound = falseFound || successor == falseTarget
+		}
+	}
+	if !trueFound || !falseFound {
 		return false
 	}
 	rhsTarget := falseTarget

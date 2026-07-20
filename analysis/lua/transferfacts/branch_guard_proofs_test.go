@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 )
 
@@ -49,6 +50,13 @@ func TestBranchPathEvidenceForDirectCheckLaws(t *testing.T) {
 				{kind: factflow.BranchPathEvidenceIndexInRange, target: xPath, other: xsPath, hasOther: true, edge: false},
 			},
 		},
+		{
+			name:  "frozen table retains the exact condition call producer",
+			check: branchcond.Check{Kind: branchcond.CheckFrozenTable, Path: xPath, ProducerPoint: cfg.Point(7), HasProducerPoint: true},
+			want: []branchEvidenceWant{
+				{kind: factflow.BranchPathEvidenceFrozenTable, target: xPath, edge: true, producer: cfg.Point(7)},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -72,6 +80,7 @@ type branchEvidenceWant struct {
 	hasPresence   bool
 	edge          bool
 	oppositeFalsy bool
+	producer      cfg.Point
 }
 
 func branchEvidenceContains(got []factflow.BranchPathEvidence, want branchEvidenceWant) bool {
@@ -88,6 +97,12 @@ func branchEvidenceContains(got []factflow.BranchPathEvidence, want branchEviden
 		if want.hasPresence {
 			gotPresence, ok := proof.Presence()
 			if !ok || gotPresence != want.presence {
+				continue
+			}
+		}
+		if want.producer != 0 {
+			producer, ok := proof.ProducerPoint()
+			if !ok || producer != want.producer {
 				continue
 			}
 		}

@@ -19,25 +19,26 @@ type NilableAccessEvidence struct {
 // point using solved expression projections.
 func (r *Result) AssignmentNilableAccessEvidence(point cfg.Point, expr ast.Expr) []NilableAccessEvidence {
 	var out []NilableAccessEvidence
-	var visit func(ast.Expr, int)
-	visit = func(expr ast.Expr, depth int) {
-		if depth > typ.DefaultRecursionDepth {
-			return
-		}
+	chain := make([]*ast.AttrGetExpr, 0, 4)
+	for {
 		attr, ok := expr.(*ast.AttrGetExpr)
 		if !ok || attr.Object == nil || attr.Key == nil {
-			return
+			break
 		}
-		visit(attr.Object, depth+1)
+		chain = append(chain, attr)
+		expr = attr.Object
+	}
+	for index := len(chain) - 1; index >= 0; index-- {
+		attr := chain[index]
 		label := AssignmentSourceLabel(attr.Object)
 		access := AssignmentAttrKeyLabel(attr)
 		if label == "" || access == "" {
-			return
+			continue
 		}
 		t, ok := r.ExpressionTypeBeforeBoundary(point, attr.Object)
 		nilable := typ.TypeEquals(t, typ.Nil) || typevalue.TypeIncludesNil(t)
 		if !ok || t == nil || obligationTypeIsGradual(t) || typ.IsNever(t) || !nilable {
-			return
+			continue
 		}
 		out = append(out, NilableAccessEvidence{
 			Label:  label,
@@ -45,7 +46,6 @@ func (r *Result) AssignmentNilableAccessEvidence(point cfg.Point, expr ast.Expr)
 			Span:   sourceSpanFromAST(ast.SpanOf(attr.Object)),
 		})
 	}
-	visit(expr, 0)
 	return out
 }
 

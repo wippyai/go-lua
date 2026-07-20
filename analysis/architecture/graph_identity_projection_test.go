@@ -39,6 +39,26 @@ var reviewedRunLocalGraphIDCalls = map[graphIDCallSite]string{
 		function:   "MatchesPreparation",
 		expression: "graph.ID()",
 	}: "rejects run-local compiler/CFG substitution before an evaluated transaction; the identity is never encoded or published",
+	{
+		path:       "analysis/check/body/execution_factory.go",
+		function:   "FreezeInitialStatePlan",
+		expression: "f.Graph().ID()",
+	}: "binds a run-local immutable initial-state plan to the exact prepared CFG; the identity is neither semantic nor published",
+	{
+		path:       "analysis/check/fixpoint/transformer/boundary_application_executor.go",
+		function:   "newBoundaryApplicationCoordinateScheduler",
+		expression: "rootRuntime.body.graph.ID()",
+	}: "validates a run-local initial-state plan against the root CFG before the sole relation solve; the identity is never published",
+	{
+		path:       "analysis/check/fixpoint/transformer/boundary_application_executor.go",
+		function:   "newBoundaryApplicationCoordinateScheduler",
+		expression: "runtime.body.graph.ID()",
+	}: "validates each run-local initial-state plan against its lexical CFG before the sole relation solve; the identity is never published",
+	{
+		path:       "analysis/check/fixpoint/transformer/relation_program.go",
+		function:   "FreezeRelationProgram",
+		expression: "unit.Graph.ID()",
+	}: "validates a run-local initial-state plan while freezing its exact lexical CFG; the identity is never encoded or published",
 }
 
 type graphIDCallSite struct {

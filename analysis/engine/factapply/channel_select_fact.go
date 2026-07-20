@@ -5,59 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
-
-func applyChannelSelect(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	event factflow.ChannelSelect,
-) state.State {
-	fact, ok := channelSelectFactAt(resolver, ctx.Point, event)
-	if !ok {
-		return out
-	}
-	return out.AddChannelSelectFact(fact)
-}
-
-func channelSelectFactAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	event factflow.ChannelSelect,
-) (channelselectfact.Fact, bool) {
-	kind, ok := channelSelectKind(event.Kind())
-	if !ok {
-		return channelselectfact.Fact{}, false
-	}
-	fact := channelselectfact.Fact{
-		Select:     channelselectfact.ID(event.SelectID()),
-		Kind:       kind,
-		Index:      event.Index(),
-		HasDefault: event.HasDefault(),
-	}
-	if resultPath, ok := event.ResultPath(); ok {
-		resultKey, ok := visibility.AddressAt(resolver, point, resultPath).VisibleStateKey()
-		if !ok {
-			return channelselectfact.Fact{}, false
-		}
-		fact.Result = resultKey
-	}
-	if casePath, ok := event.CasePath(); ok {
-		caseKey, ok := visibility.AddressAt(resolver, point, casePath).VisibleStateKey()
-		if !ok {
-			return channelselectfact.Fact{}, false
-		}
-		fact.Case = caseKey
-	}
-	if payload, ok := event.PayloadValue(); ok {
-		fact.Payload = payload
-		fact.HasPayload = true
-	}
-	return fact, true
-}
 
 func channelSelectKind(kind factflow.ChannelSelectKind) (channelselectfact.Kind, bool) {
 	switch kind {

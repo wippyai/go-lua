@@ -1,9 +1,10 @@
 package factapply
 
 import (
-	"sort"
+	"context"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -12,82 +13,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-type channelSelectResultGroup struct {
-	resultIndex int
-	hasResult   bool
-	hasDefault  bool
-	cases       []factflow.ChannelSelect
-}
-
-func applyChannelSelectResult(
-	ctx transfer.NodeContext,
-	typeValues *typevalue.Cache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	events []factflow.ChannelSelect,
-) state.State {
-	groups := channelSelectResultGroups(events)
-	var edit state.ValueEdit
-	editing := false
-	for selectID, group := range groups {
-		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 && !group.hasDefault {
-			continue
-		}
-		resultValue, ok := channelSelectResultValue(ctx, typeValues, resolver, projectPath, out, selectID, group.cases, group.hasDefault)
-		if !ok {
-			continue
-		}
-		if !editing {
-			edit = out.EditValues(ctx.Registry)
-			editing = true
-		}
-		edit.WriteReturnSlot(group.resultIndex, resultValue)
-	}
-	if !editing {
-		return out
-	}
-	return edit.Done()
-}
-
-func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.ChannelSelectID]channelSelectResultGroup {
-	if len(events) == 0 {
-		return nil
-	}
-	groups := make(map[factflow.ChannelSelectID]channelSelectResultGroup)
-	for _, event := range events {
-		selectID := event.SelectID()
-		if selectID == "" {
-			continue
-		}
-		group := groups[selectID]
-		switch event.Kind() {
-		case factflow.ChannelSelectSelect:
-			group.resultIndex = event.Index()
-			group.hasResult = true
-			group.hasDefault = event.HasDefault()
-		case factflow.ChannelSelectReceive:
-			if _, ok := event.PayloadValue(); ok {
-				group.cases = append(group.cases, event)
-			} else if _, ok := event.CasePath(); ok {
-				group.cases = append(group.cases, event)
-			}
-		}
-		groups[selectID] = group
-	}
-	for selectID, group := range groups {
-		sort.SliceStable(group.cases, func(i, j int) bool {
-			return group.cases[i].Index() < group.cases[j].Index()
-		})
-		groups[selectID] = group
-	}
-	return groups
-}
 
 func channelSelectResultValue(
 	ctx transfer.NodeContext,
@@ -99,47 +28,41 @@ func channelSelectResultValue(
 	cases []factflow.ChannelSelect,
 	hasDefault bool,
 ) (product.Value, bool) {
-	reg := ctx.Registry
-	if reg == nil || len(cases) == 0 && !hasDefault {
+	if ctx.Registry == nil || len(cases) == 0 && !hasDefault {
 		return product.Value{}, false
 	}
-	resultCases := make([]channelselect.ResultCase, 0, len(cases))
+	if typeValues == nil {
+		typeValues = typevalue.NewCache()
+	}
+	selectEvent := factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+		SelectID: selectID, Kind: factflow.ChannelSelectSelect, HasDefault: hasDefault,
+	})
+	transaction := ChannelSelectTransaction{point: ctx.Point, steps: make([]ChannelSelectStep, 0, len(cases)+1)}
+	transaction.steps = append(transaction.steps, ChannelSelectStep{event: selectEvent})
 	for _, event := range cases {
-		payloadType, ok := channelSelectEventPayloadType(ctx, typeValues, resolver, projectPath, out, event)
+		transaction.steps = append(transaction.steps, ChannelSelectStep{event: event})
+	}
+	prepared, err := PrepareChannelSelectTransaction(ctx.Registry, transaction,
+		func(path pathdom.Path) (pathaddr.StateKey, bool) {
+			return visibility.AddressAt(resolver, ctx.Point, path).VisibleStateKey()
+		},
+		func(cfg.Point, int) (uint8, bool) { return 1, true },
+	)
+	if err != nil {
+		return product.Value{}, false
+	}
+	read := func(path PreparedChannelSelectPath) (product.Value, bool) {
+		payload, ok := channelSelectCasePathPayloadType(ctx, typeValues, resolver, projectPath, out, path.SourcePath())
 		if !ok {
-			payloadType = typ.Unknown
+			return product.Value{}, false
 		}
-		resultCases = append(resultCases, channelselect.ResultCase{
-			Index:   event.Index(),
-			Payload: payloadType,
-		})
+		return typeValues.FromTypeWithWitness(ctx.Registry, payload), true
 	}
-	if len(resultCases) == 0 && !hasDefault {
+	evaluated, err := EvaluatePreparedChannelSelect(context.Background(), ctx.Registry, typeValues, prepared, read)
+	if err != nil || len(evaluated.writes) != 1 {
 		return product.Value{}, false
 	}
-	resultType, ok := channelselect.ResultValueTypeWithDefault(string(selectID), resultCases, hasDefault)
-	if !ok {
-		return product.Value{}, false
-	}
-	return typeValues.FromTypeWithWitness(reg, resultType), true
-}
-
-func channelSelectEventPayloadType(
-	ctx transfer.NodeContext,
-	typeValues *typevalue.Cache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	event factflow.ChannelSelect,
-) (typ.Type, bool) {
-	if payloadValue, ok := event.PayloadValue(); ok {
-		return valueWitnessType(ctx.Registry, payloadValue)
-	}
-	casePath, ok := event.CasePath()
-	if !ok {
-		return nil, false
-	}
-	return channelSelectCasePathPayloadType(ctx, typeValues, resolver, projectPath, out, casePath)
+	return evaluated.writes[0].Value, true
 }
 
 func channelSelectCasePathPayloadType(

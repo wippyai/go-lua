@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -44,10 +45,11 @@ func coldBuildHoistableLoad(t *testing.T, source string) (lexicalidentity.Stable
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: standard.Registry()})
+	resultProgram47, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram47.RootResult()
 	var loads []HoistableLoad
 	New(result).ForEachHoistableLoad(func(load HoistableLoad) bool {
 		loads = append(loads, load)

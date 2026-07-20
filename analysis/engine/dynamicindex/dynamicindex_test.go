@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -127,6 +128,87 @@ func TestAdmissionOrderAndJoin(t *testing.T) {
 	}
 	if got := domain.Join(bottom, admitted).Admission; got != AdmissionAdmitted {
 		t.Fatalf("bottom join admitted = %v, want admitted", got)
+	}
+}
+
+func TestDomainExactMeetLaws(t *testing.T) {
+	reg := standard.Registry()
+	domain := Domain(reg)
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	absent := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+	admitted := Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   AdmissionAdmitted,
+	}
+	rejected := Fact{
+		KeyPresence: presence.Absent(),
+		KeyValue:    absent,
+		Value:       absent,
+		Admission:   AdmissionRejected,
+	}
+	unknown := Fact{
+		KeyPresence: presence.Maybe(),
+		KeyValue:    product.Top(),
+		Value:       product.Top(),
+		Admission:   AdmissionUnknown,
+	}
+	if domain.Meet == nil {
+		t.Fatal("dynamic-index fact domain has no exact Meet")
+	}
+	latticelaws.LawSuite[Fact]{
+		Name:   "dynamicindex.Fact",
+		Domain: domain,
+		Sample: []Fact{domain.Bottom(), admitted, rejected, unknown, domain.Top()},
+	}.Run(t)
+
+	met := domain.Meet(admitted, rejected)
+	if !presence.Equal(met.KeyPresence, presence.Bottom()) ||
+		!product.Equal(reg, met.KeyValue, product.Bottom(reg)) ||
+		!product.Equal(reg, met.Value, product.Bottom(reg)) ||
+		met.Admission != AdmissionBottom {
+		t.Fatalf("Meet(admitted, rejected) = %#v, want pointwise bottom", met)
+	}
+	if got := domain.Meet(domain.Top(), admitted); !domain.Equal(got, admitted) {
+		t.Fatalf("Meet(top, admitted) = %#v, want admitted", got)
+	}
+}
+
+func TestMapDomainExactMeetLaws(t *testing.T) {
+	reg := standard.Registry()
+	factDomain := Domain(reg)
+	domain := MapDomain(reg)
+	ks := keyspace.New()
+	tableKey, ok := ks.FromStateKey(pathdom.PathKey("sym1@1.table"))
+	if !ok {
+		t.Fatal("FromStateKey failed")
+	}
+	first := Key{Table: tableKey, Site: "first"}
+	second := Key{Table: tableKey, Site: "second"}
+	fact := Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		Value:       product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
+		Admission:   AdmissionAdmitted,
+	}
+	left := map[Key]Fact{first: fact}
+	right := map[Key]Fact{first: fact, second: fact}
+	if domain.Meet == nil {
+		t.Fatal("dynamic-index map domain has no exact Meet")
+	}
+	latticelaws.LawSuite[map[Key]Fact]{
+		Name:   "dynamicindex.Map",
+		Domain: domain,
+		Sample: []map[Key]Fact{
+			domain.Bottom(), left, right, domain.Top(),
+		},
+	}.Run(t)
+	if got := domain.Meet(left, right); !domain.Equal(got, left) {
+		t.Fatalf("Meet(left, right) = %#v, want shared pointwise facts %#v", got, left)
+	}
+	if got := domain.Meet(map[Key]Fact{first: factDomain.Bottom()}, right); !domain.Equal(got, domain.Bottom()) {
+		t.Fatalf("Meet(explicit bottom, right) = %#v, want canonical map bottom", got)
 	}
 }
 

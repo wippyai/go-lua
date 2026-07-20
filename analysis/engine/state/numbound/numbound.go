@@ -46,6 +46,9 @@ func IntDomain(in Spec) lattice.Lattice[int64] {
 		Join: func(a, b int64) int64 {
 			return elemJoin(in, a, b)
 		},
+		Meet: func(a, b int64) int64 {
+			return elemMeet(in, a, b)
+		},
 		Widen: func(prev, next int64) int64 {
 			return elemWiden(in, prev, next)
 		},
@@ -70,6 +73,13 @@ func elemJoin(spec Spec, a, b int64) int64 {
 		return max(a, b)
 	}
 	return min(a, b)
+}
+
+func elemMeet(spec Spec, a, b int64) int64 {
+	if spec.Direction == Upper {
+		return min(a, b)
+	}
+	return max(a, b)
 }
 
 func elemWiden(spec Spec, prev, next int64) int64 {
@@ -152,6 +162,7 @@ func elemDomain() lattice.Lattice[Floor] {
 		Equal:    func(a, b Floor) bool { return ints.Equal(a.Lo, b.Lo) },
 		LessOrEq: func(a, b Floor) bool { return ints.LessOrEq(a.Lo, b.Lo) },
 		Join:     func(a, b Floor) Floor { return Floor{Lo: ints.Join(a.Lo, b.Lo)} },
+		Meet:     func(a, b Floor) Floor { return Floor{Lo: ints.Meet(a.Lo, b.Lo)} },
 		Widen:    func(prev, next Floor) Floor { return Floor{Lo: ints.Widen(prev.Lo, next.Lo)} },
 	}
 }

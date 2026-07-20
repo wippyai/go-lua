@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
@@ -246,21 +245,15 @@ func (s State) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.P
 	return s.invalidatePathKeySubtree(ks, pathKey, true)
 }
 
-// InvalidateStableSymbolPathEvidence removes versionless or stable path
-// evidence rooted at sym. Root writes use this to clear root-level conditional
-// implications that are not covered by point-local subtree invalidation.
-func (s State) InvalidateStableSymbolPathEvidence(sym symbol.ID) State {
-	if !s.laneEnabled(lanePathEvidenceBit) || sym == 0 {
-		return s
-	}
-	pathEvidence := s.pathEvidence.InvalidateStableSymbol(sym)
-	out := s.reachable()
-	out.pathEvidence = pathEvidence
-	return out
-}
-
 func (s State) InvalidatePathKeySubtreePreservingDynamicValueKeyMemberships(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
 	return s.invalidatePathKeySubtree(ks, pathKey, false)
+}
+
+// PathKeySubtreeInvalidationPrefixes returns the finite alias set an imminent
+// subtree mutation will invalidate. Mutation transactions use it to retain the
+// same write targets after invalidation removes their path-evidence entries.
+func (s State) PathKeySubtreeInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey) ([]pathdom.PathKey, bool) {
+	return s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
 }
 
 // InvalidateOnlyPathEvidenceSubtree removes finite path refinements/static
@@ -275,12 +268,38 @@ func (s State) InvalidateOnlyPathEvidenceSubtree(ks *keyspace.KeySpace, pathKey 
 	out := s
 	out.pathEvidence = pathEvidence
 	if lenFloorChanged {
-		out.lenFloors = lenFloors
+		setStateLenFloors(&out, lenFloors)
 	}
 	return out, true
 }
 
 func (s State) invalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey, clearDynamicValueMemberships bool) (State, bool) {
+	if !clearDynamicValueMemberships {
+		// The preserving variant is used by path writes, not N4 root replacement;
+		// its distinct membership law remains explicit until represented as its
+		// own registered semantic capability.
+		return s.invalidatePathKeySubtreePreservingDynamicMemberships(ks, pathKey)
+	}
+	prefixes, ok := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
+	if !ok {
+		return s, false
+	}
+	out := s
+	for _, spec := range defaultLaneCatalog.specs {
+		law, declared := findLaneSemanticLaw(spec.semanticLaws, laneSemanticPathSubtreeMutation)
+		if !declared || !s.laneEnabled(spec.bit) || !law.participates {
+			continue
+		}
+		next, _, valid := law.applyState(out, pathSubtreeMutationRequest{keys: ks, prefixes: prefixes, path: pathKey})
+		if !valid {
+			return s, false
+		}
+		out = next
+	}
+	return out, true
+}
+
+func (s State) invalidatePathKeySubtreePreservingDynamicMemberships(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
 	prefixes, ok := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return s, false
@@ -290,13 +309,9 @@ func (s State) invalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.P
 	out := s
 	out.pathEvidence = pathEvidence
 	out = out.ClearDynamicIndexFactsForPathKeySubtree(ks, pathKey)
-	if clearDynamicValueMemberships {
-		out = out.ClearKeyMembershipsForPathKeySubtree(ks, pathKey)
-	} else {
-		out = out.ClearPathKeyMembershipsForPathKeySubtree(ks, pathKey)
-	}
+	out = out.ClearPathKeyMembershipsForPathKeySubtree(ks, pathKey)
 	if lenFloorChanged {
-		out.lenFloors = lenFloors
+		setStateLenFloors(&out, lenFloors)
 	}
 	return out, true
 }
@@ -305,19 +320,38 @@ func (s State) invalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.P
 // while preserving the exact pathKey refinement. It returns false when pathKey
 // is not a recognized structural path-key spelling.
 func (s State) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
+	out, _, ok := s.InvalidatePathKeyDescendantsChanged(ks, pathKey)
+	return out, ok
+}
+
+// InvalidatePathKeyDescendantsChanged is the registered transactional form.
+// It distinguishes invalid input from a valid no-op and reports whether any
+// participating lane changed without scanning the complete State product.
+func (s State) InvalidatePathKeyDescendantsChanged(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool, bool) {
 	prefixes, ok := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 	if !ok {
-		return s, false
+		return s, false, false
 	}
-	pathEvidence := s.pathEvidence.InvalidatePathKeyDescendantPrefixes(ks, prefixes)
-	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeyDescendantMutation(ks, prefixes)
 	out := s
-	out.pathEvidence = pathEvidence
-	out = out.ClearDynamicIndexFactsForPathKeyDescendants(ks, pathKey)
-	if lenFloorChanged {
-		out.lenFloors = lenFloors
+	changedAny := false
+	for _, spec := range defaultLaneCatalog.specs {
+		law, declared := findLaneSemanticLaw(spec.semanticLaws, laneSemanticPathDescendantMutation)
+		if !declared {
+			return s, false, false
+		}
+		if !s.laneEnabled(spec.bit) || !law.participates {
+			continue
+		}
+		next, changed, valid := law.applyState(out, pathDescendantMutationRequest{keys: ks, prefixes: prefixes, path: pathKey})
+		if !valid {
+			return s, false, false
+		}
+		if changed {
+			out = next
+			changedAny = true
+		}
 	}
-	return out, true
+	return out, changedAny, true
 }
 
 func (s State) InvalidatePathKeyDescendantsPreservingDynamicValueKeyMemberships(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
@@ -484,6 +518,26 @@ func (s State) AddPathPresenceImplication(implication pathevidence.PathPresenceI
 	out := s.reachable()
 	out.pathEvidence = pathEvidence
 	return out
+}
+
+// AddPathPresenceImplicationChanged is the exact registered-storage form. It
+// validates registry/keyspace ownership and distinguishes malformed input,
+// valid no-op, and semantic publication (including clearing a Bottom must-set).
+func (s State) AddPathPresenceImplicationChanged(reg *axis.Registry, keys *keyspace.KeySpace, implication pathevidence.PathPresenceImplication) (State, bool, bool) {
+	canonical, ok := pathevidence.CanonicalPathPresenceImplications(reg, keys, []pathevidence.PathPresenceImplication{implication})
+	if !ok || len(canonical) != 1 {
+		return s, false, false
+	}
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s, false, true
+	}
+	pathEvidence, changed := s.pathEvidence.AddPathPresenceImplication(canonical[0])
+	if !changed {
+		return s, false, true
+	}
+	out := s.reachable()
+	out.pathEvidence = pathEvidence
+	return out, true, true
 }
 
 func (s State) HasPathPresenceImplication(implication pathevidence.PathPresenceImplication) bool {

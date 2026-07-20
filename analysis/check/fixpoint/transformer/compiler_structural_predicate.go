@@ -14,12 +14,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// preparePredicateExpressions admits complete source-authored scalar predicate
-// DAGs owned by either a return or a CFG branch. It builds one immutable
-// expression allow-set before row solving. Leaf availability is certified
-// structurally here and resolved against the current row only during transfer;
-// local declarations do not exist in the entry environment yet.
-func preparePredicateExpressions(ctx *planCompileContext) error {
+// prepareCertifiedScalarExpressions admits complete source-authored scalar
+// refinement and predicate DAGs. It builds one immutable expression allow-set
+// before row solving. Leaf availability is certified structurally here and
+// resolved against the current row only during transfer; local declarations
+// do not exist in the entry environment yet.
+func prepareCertifiedScalarExpressions(ctx *planCompileContext) error {
 	if ctx == nil || ctx.plan == nil {
 		return fmt.Errorf("missing plan")
 	}
@@ -30,15 +30,33 @@ func preparePredicateExpressions(ctx *planCompileContext) error {
 	})
 	sort.Slice(refinementRefs, func(i, j int) bool { return refinementRefs[i] < refinementRefs[j] })
 	var roots []factflow.ExprRef
+	// Unary and true-comparison scalar operations are value producers wherever
+	// their result is consumed, not only when they happen to be a function
+	// return or CFG branch condition: exactCompilerSourceTermActive in
+	// compiler.go gates lowering on ctx.predicateExpressions for exactly these
+	// two shapes (the lua_type/pure-unary branch, and the exactScalarComparison
+	// branch for "==","~=","<","<=",">",">="), so certifying the complete
+	// finite producer set here keeps certification aligned with what lowering
+	// actually requires. and/or is deliberately excluded: ScalarBinaryValue
+	// lowers "and"/"or" unconditionally regardless of certification, so their
+	// only certification need is the return/branch-consumed case handled
+	// below, which additionally proves the exact structural region a bare
+	// and/or fact is not otherwise required to have.
+	ctx.facts.ForEachExpressionOperation(func(ref factflow.ExprRef, operation factflow.ExpressionOperation) bool {
+		identity, intrinsicOperation := operation.Intrinsic()
+		supportedUnary := operation.Kind() == factflow.ExpressionOperationUnary &&
+			(intrinsicOperation && identity == intrinsic.LuaType || !intrinsicOperation && isPureUnaryOperator(operation.Op()))
+		supportedBinary := operation.Kind() == factflow.ExpressionOperationBinary &&
+			isExactScalarPredicateOperator(operation.Op())
+		if supportedUnary || supportedBinary {
+			roots = append(roots, ref)
+		}
+		return true
+	})
 	for raw := 0; raw < ctx.plan.PointCount(); raw++ {
 		point := cfg.Point(raw)
 		if ret, ok := ctx.facts.Return(point); ok {
 			for _, source := range ret.Sources() {
-				if source.HasExpr {
-					if refinement, refined := ctx.facts.ExpressionRefinement(source.ExprRef); refined && refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
-						return fmt.Errorf("expression refinement %d is outside a certified predicate", source.ExprRef)
-					}
-				}
 				if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
 					continue
 				}
@@ -54,35 +72,33 @@ func preparePredicateExpressions(ctx *planCompileContext) error {
 		}
 		condition, conditionOK := ctx.facts.BranchConditionSource(point)
 		if conditionOK && condition.Kind == factflow.ValueSourceExpression && condition.HasExpr {
-			if refinement, refined := ctx.facts.ExpressionRefinement(condition.ExprRef); refined && refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
-				return fmt.Errorf("expression refinement %d is outside a certified predicate", condition.ExprRef)
-			}
 			if _, operation := ctx.facts.ExpressionOperation(condition.ExprRef); operation {
 				roots = append(roots, condition.ExprRef)
 			}
 		}
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i] < roots[j] })
+	if len(roots) > 1 {
+		unique := roots[:1]
+		for _, ref := range roots[1:] {
+			if ref != unique[len(unique)-1] {
+				unique = append(unique, ref)
+			}
+		}
+		roots = unique
+	}
 	ctx.predicateExpressions = make(map[factflow.ExprRef]struct{})
-	ctx.predicateRefinements = make(map[factflow.ExprRef]struct{})
+	ctx.expressionRefinements = make(map[factflow.ExprRef]struct{})
 	ctx.structuralPredicates = make(map[factflow.ExprRef]factflow.StructuralExpressionRegion)
 	active := make(map[factflow.ExprRef]bool)
-	// Runtime casts are pure symbolic value producers in their own right. They
-	// are not required to sit under a Boolean return expression: assignments,
-	// call arguments, and later predicates may all consume the same exact cast.
-	// Certify the finite factflow producer graph once, then let row execution
-	// resolve its lexical leaves at their actual dominance point.
+	// Source-authored refinements are exact scalar producers in this dialect,
+	// including assertions, declared claims, and runtime validations used by
+	// assignments, call arguments, and returns. Certify each producer by its own
+	// finite source graph; consumers still require the matching ExprRef, so an
+	// unrelated refinement cannot lend authority to another expression.
 	for _, ref := range refinementRefs {
-		refinement, _ := ctx.facts.ExpressionRefinement(ref)
-		if refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
-			continue
-		}
-		if err := validateRuntimeRefinement(ctx, ref, active); err != nil {
-			// Preserve the public fail-closed classification used by existing
-			// callers. The important distinction is semantic: exact standalone
-			// runtime casts now enter the certified producer graph, while a
-			// malformed/conflicting producer still rejects the whole relation.
-			return fmt.Errorf("expression refinement %d is outside a certified predicate", ref)
+		if err := validateExpressionRefinement(ctx, ref, active); err != nil {
+			return fmt.Errorf("expression refinement %d is not a certified scalar expression", ref)
 		}
 	}
 	for _, root := range roots {
@@ -116,14 +132,60 @@ func preparePredicateExpressions(ctx *planCompileContext) error {
 		if rhs.HasSourcePoint && !containsStructuralPoint(region.OwnedRHSPoints(), rhs.SourcePoint) {
 			return fmt.Errorf("expression %d RHS producer is outside certified effect region", owner)
 		}
-		if !structuralRHSIsEffectFree(ctx.plan, region) {
-			return fmt.Errorf("expression %d certified RHS region owns impure operations", owner)
-		}
+		// OwnedRHSPoints is execution ownership, not the scalar term: it is
+		// deliberately complete enough to include conditional calls and writes.
+		// validatePredicateExpr has already proved the frozen scalar DAG, while
+		// predicateSourceBoundDuringRow proves a call result is a canonical leaf.
+		// The operation-plan cell remains the sole executor of the call/effect;
+		// specializing the scalar term only reads its resulting coordinate.
+		//
+		// Certifying an owner with an impure RHS (a write or a call) no longer
+		// needs a standalone purity gate over the region's owned cell kinds. The
+		// two consumers of a certified and/or's value are structurally incapable
+		// of re-executing, duplicating, or reordering that RHS:
+		//
+		//  - The executable value is bound exactly once, unconditionally of
+		//    certification, by bindStructuralExpressionTerms/
+		//    structuralExpressionWrites (structural_freezer.go): a single phi
+		//    write into the expression's ExpressionValue cell at region.Join(),
+		//    sourced from op.Left() or op.Right() depending on which CFG edge
+		//    control actually took. exactCompilerSourceTermActive's and/or case
+		//    (compiler.go) reads that one bound cell by reference; it never
+		//    reconstructs op.Right() from its operands.
+		//  - exactPredicateProofTermActive is the only consumer that does
+		//    reconstruct the RHS symbolically, and it exists solely to prove
+		//    branch path evidence (validateRepresentedBranchEvidence); its own
+		//    doc comment records that the result is never installed as a
+		//    WorldProgram read, so building it has no runtime effect to
+		//    duplicate.
+		//
+		// This is why a bare effectful RHS call remains certifiable as a
+		// predicate leaf (TestPreparePredicateExpressions/"an effectful RHS call
+		// remains CFG-owned while its result is a predicate leaf"): the call
+		// cell it owns executes exactly once regardless of certification, which
+		// that test proves directly by counting executable call cells.
+		//
+		// This was not always true. Before the phi-cell split, and/or's
+		// executable value was itself reconstructed by exactCompilerSourceTermActive
+		// from op.Left()/op.Right() (see git history at a254bab86), so an impure
+		// RHS producer really could be re-read from an arbitrary consuming
+		// context; structuralRHSIsEffectFree/structuralPredicatePointKindPurity
+		// were the correct gate for that architecture. They are dead weight in
+		// this one.
 	}
 	return nil
 }
 
 func samePredicateSource(facts factflow.Facts, left, right factflow.ValueSource) bool {
+	return samePredicateSourceActive(facts, left, right, make(map[predicateExpressionPair]bool))
+}
+
+type predicateExpressionPair struct {
+	left  factflow.ExprRef
+	right factflow.ExprRef
+}
+
+func samePredicateSourceActive(facts factflow.Facts, left, right factflow.ValueSource, active map[predicateExpressionPair]bool) bool {
 	if left == right {
 		return true
 	}
@@ -133,7 +195,44 @@ func samePredicateSource(facts factflow.Facts, left, right factflow.ValueSource)
 		return leftPathOK && rightPathOK && leftPath.Equal(rightPath)
 	}
 	if left.HasExpr || right.HasExpr {
-		return left.HasExpr && right.HasExpr && left.ExprRef == right.ExprRef
+		if !left.HasExpr || !right.HasExpr {
+			return false
+		}
+		if left.ExprRef == right.ExprRef {
+			return true
+		}
+		pair := predicateExpressionPair{left: left.ExprRef, right: right.ExprRef}
+		if active[pair] {
+			return false
+		}
+		leftDynamic, leftHasDynamic := facts.DynamicIndexExpression(left.ExprRef)
+		rightDynamic, rightHasDynamic := facts.DynamicIndexExpression(right.ExprRef)
+		if leftHasDynamic || rightHasDynamic {
+			if !leftHasDynamic || !rightHasDynamic {
+				return false
+			}
+			active[pair] = true
+			equal := sameDynamicIndexSourceActive(facts, leftDynamic, rightDynamic, active)
+			delete(active, pair)
+			return equal
+		}
+		leftOperation, leftExact := facts.ExpressionOperation(left.ExprRef)
+		rightOperation, rightExact := facts.ExpressionOperation(right.ExprRef)
+		if !leftExact || !rightExact || leftOperation.Kind() != rightOperation.Kind() || leftOperation.Op() != rightOperation.Op() {
+			return false
+		}
+		leftIntrinsic, leftHasIntrinsic := leftOperation.Intrinsic()
+		rightIntrinsic, rightHasIntrinsic := rightOperation.Intrinsic()
+		if leftHasIntrinsic != rightHasIntrinsic || leftHasIntrinsic && leftIntrinsic != rightIntrinsic {
+			return false
+		}
+		active[pair] = true
+		equal := samePredicateSourceActive(facts, leftOperation.Left(), rightOperation.Left(), active)
+		if equal && leftOperation.Kind() == factflow.ExpressionOperationBinary {
+			equal = samePredicateSourceActive(facts, leftOperation.Right(), rightOperation.Right(), active)
+		}
+		delete(active, pair)
+		return equal
 	}
 	if left.Kind != right.Kind {
 		return false
@@ -148,6 +247,36 @@ func samePredicateSource(facts factflow.Facts, left, right factflow.ValueSource)
 	default:
 		return false
 	}
+}
+
+// sameDynamicIndexSourceActive recognizes two DynamicIndexExpression facts as
+// the same table[key] read when they denote the same table and the same key,
+// recursively. A static table path is the authoritative identity when either
+// side carries one (per DynamicIndexExpression's own contract); pathdom.Path
+// equality is symbol-and-version exact, so a reassignment of the table
+// binding between the two facts already fails this comparison. When neither
+// side has a static table path (an unnameable table producer, e.g. a cast
+// result), the table producers themselves must recursively resolve to the
+// same source through samePredicateSourceActive. This never certifies more
+// than the existing per-fact identity already licenses: it is the same
+// equivalence samePredicateSourceActive already grants to structurally
+// identical ExpressionOperation trees, extended to the one fact kind
+// (dynamic-index reads) that has neither a static ExpressionPath nor an
+// ExpressionOperation of its own.
+func sameDynamicIndexSourceActive(facts factflow.Facts, left, right factflow.DynamicIndexExpression, active map[predicateExpressionPair]bool) bool {
+	leftPath, rightPath := left.TablePathRef(), right.TablePathRef()
+	if !leftPath.IsEmpty() || !rightPath.IsEmpty() {
+		if leftPath.IsEmpty() || rightPath.IsEmpty() || !leftPath.Equal(rightPath) {
+			return false
+		}
+	} else {
+		leftTableSource, leftHasTableSource := left.TableSource()
+		rightTableSource, rightHasTableSource := right.TableSource()
+		if !leftHasTableSource || !rightHasTableSource || !samePredicateSourceActive(facts, leftTableSource, rightTableSource, active) {
+			return false
+		}
+	}
+	return samePredicateSourceActive(facts, left.KeySource(), right.KeySource(), active)
 }
 
 func predicateSourcePath(facts factflow.Facts, source factflow.ValueSource) (pathdom.Path, bool) {
@@ -169,16 +298,16 @@ func predicateSourcePath(facts factflow.Facts, source factflow.ValueSource) (pat
 	return pathdom.Path{}, false
 }
 
-func validateRuntimeRefinement(ctx *planCompileContext, ref factflow.ExprRef, active map[factflow.ExprRef]bool) error {
-	if _, done := ctx.predicateRefinements[ref]; done {
+func validateExpressionRefinement(ctx *planCompileContext, ref factflow.ExprRef, active map[factflow.ExprRef]bool) error {
+	if _, done := ctx.expressionRefinements[ref]; done {
 		return nil
 	}
 	if ref == 0 || active[ref] {
 		return fmt.Errorf("cyclic expression DAG")
 	}
 	refinement, ok := ctx.facts.ExpressionRefinement(ref)
-	if !ok || refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation {
-		return fmt.Errorf("is not a runtime cast")
+	if !ok {
+		return fmt.Errorf("is not an expression refinement")
 	}
 	if _, conflict := ctx.facts.ExpressionOperation(ref); conflict {
 		return fmt.Errorf("shares identity with a scalar operation")
@@ -190,8 +319,8 @@ func validateRuntimeRefinement(ctx *planCompileContext, ref factflow.ExprRef, ac
 		return fmt.Errorf("shares identity with a function literal")
 	}
 	if path, shared := ctx.facts.ExpressionPathRef(ref); shared {
-		innerPath, exact := predicateSourcePath(ctx.facts, refinement.Source())
-		if !exact || !path.Equal(innerPath) {
+		resultPath, owned := refinement.ResultPathRef()
+		if !owned || !path.Equal(resultPath) {
 			return fmt.Errorf("shares identity with an unrelated path")
 		}
 	}
@@ -199,53 +328,56 @@ func validateRuntimeRefinement(ctx *planCompileContext, ref factflow.ExprRef, ac
 		return fmt.Errorf("shares identity with a dynamic index")
 	}
 	active[ref] = true
-	if err := validatePredicateSource(ctx, refinement.Source(), active); err != nil {
+	if err := validatePredicateSource(ctx, refinement.Source(), active); err != nil &&
+		(refinement.Mode() != factflow.ExpressionRefinementRuntimeValidation || !runtimeValidationOwnsUnresolvedScalarSource(refinement.Source())) {
 		delete(active, ref)
 		return fmt.Errorf("source: %w", err)
 	}
 	delete(active, ref)
-	ctx.predicateRefinements[ref] = struct{}{}
+	ctx.expressionRefinements[ref] = struct{}{}
 	return nil
 }
 
-func structuralRHSIsEffectFree(plan *operationplan.Plan, region factflow.StructuralExpressionRegion) bool {
-	if plan == nil {
-		return false
-	}
-	for _, point := range region.OwnedRHSPoints() {
-		cursor := plan.Cursor(point)
-		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
-			pure, known := structuralPredicatePointKindPurity(cell.Kind())
-			if !known || !pure {
-				return false
-			}
-		}
-	}
-	return true
+// runtimeValidationOwnsUnresolvedScalarSource recognizes the one contextual
+// producer for which a runtime validation is itself sufficient normal-path
+// value authority. A closed indexed call-result coordinate denotes exactly
+// one Lua value even when the surrounding value list expands or the call has
+// no context-independent symbolic result. The
+// validation may therefore use the sourcevalue package's established Bottom
+// pre-check spelling and publish only its validated contract.
+//
+// This is deliberately not general predicate admission: an open tail is not
+// a closed coordinate, and an adjusted call can select only slot zero. Paths,
+// environments, resources, heaps, unknown sources, and arbitrary expression
+// producers still require their ordinary exact term.
+func runtimeValidationOwnsUnresolvedScalarSource(source factflow.ValueSource) bool {
+	return source.Valid() && source.Kind == factflow.ValueSourceCall && source.HasCallPoint &&
+		source.ResultIndex >= 0 && !source.OpenTail &&
+		(!source.Adjusted || source.ResultIndex == 0)
 }
 
-func structuralPredicatePointKindPurity(kind operationplan.Kind) (pure, known bool) {
-	switch kind {
-	case operationplan.BranchEdgeReachability, operationplan.BranchConditionSource,
-		operationplan.BranchRefinement, operationplan.BranchPresenceRelation,
-		operationplan.BranchPathRelation, operationplan.BranchPathEvidence,
-		operationplan.BranchSufficientLiteralCase:
-		return true, true
-	case operationplan.RootAssignment, operationplan.PathAssignment, operationplan.PathStaticMemberWrite,
-		operationplan.DynamicIndexWrite, operationplan.PathDescendantInvalidation, operationplan.CovariantExposure,
-		operationplan.NoNormalReturn, operationplan.PathValuePresenceImplication, operationplan.ChannelSelect,
-		operationplan.PostconditionRefinement, operationplan.PostconditionPathRelation, operationplan.CallResultValue,
-		operationplan.ReturnPresenceRelation, operationplan.Return, operationplan.CallSite, operationplan.ObjectLiteral,
-		operationplan.ExpressionValue, operationplan.ExpressionOperation, operationplan.ExpressionFunction,
-		operationplan.ExpressionRefinement, operationplan.ExpressionPath, operationplan.DynamicIndexExpression,
-		operationplan.ExpressionCondition:
-		return false, true
-	default:
-		return false, false
-	}
-}
-
+// validatePredicateExpr certifies ref as a predicate ROOT: a return value or
+// CFG branch condition, which must itself satisfy the root producer gate
+// (comparison, and/or, unary, or the lua_type intrinsic).
 func validatePredicateExpr(ctx *planCompileContext, ref factflow.ExprRef, active map[factflow.ExprRef]bool) error {
+	return validatePredicateExprScope(ctx, ref, active, true)
+}
+
+// validatePredicateOperandExpr certifies ref as a predicate OPERAND: an
+// expression reached only as the scalar operand of an already-certified
+// root. Its gate is the operand-legality rule the downstream compiler can
+// lower exactly for a nested operand position (isPureUnaryOperator /
+// isPureBinaryOperator in exactCompilerSourceTermActive), which is wider
+// than the root gate for binary operators: pure arithmetic such as "*" is a
+// legal nested operand even though it can never itself be a predicate root.
+// Comparison and and/or operators satisfy both gates identically, so an
+// operand that is itself a comparison/logical root still goes through the
+// same structural-region and registration bookkeeping as a root would.
+func validatePredicateOperandExpr(ctx *planCompileContext, ref factflow.ExprRef, active map[factflow.ExprRef]bool) error {
+	return validatePredicateExprScope(ctx, ref, active, false)
+}
+
+func validatePredicateExprScope(ctx *planCompileContext, ref factflow.ExprRef, active map[factflow.ExprRef]bool, root bool) error {
 	if ref == 0 {
 		return fmt.Errorf("zero expression identity")
 	}
@@ -257,9 +389,13 @@ func validatePredicateExpr(ctx *planCompileContext, ref factflow.ExprRef, active
 	}
 	op, ok := ctx.facts.ExpressionOperation(ref)
 	identity, hasIdentity := op.Intrinsic()
-	validUnary := ok && op.Kind() == factflow.ExpressionOperationUnary && hasIdentity && identity == intrinsic.LuaType
-	validBinary := ok && op.Kind() == factflow.ExpressionOperationBinary &&
-		(op.Op() == "==" || op.Op() == "~=" || op.Op() == "and" || op.Op() == "or")
+	validUnary := ok && op.Kind() == factflow.ExpressionOperationUnary &&
+		(hasIdentity && identity == intrinsic.LuaType || !hasIdentity && isPureUnaryOperator(op.Op()))
+	binaryGate := isSupportedPredicateBinaryOperator
+	if !root {
+		binaryGate = isPureBinaryOperator
+	}
+	validBinary := ok && op.Kind() == factflow.ExpressionOperationBinary && binaryGate(op.Op())
 	if !validUnary && !validBinary {
 		return fmt.Errorf("unsupported predicate producer")
 	}
@@ -301,19 +437,34 @@ func validatePredicateExpr(ctx *planCompileContext, ref factflow.ExprRef, active
 	return nil
 }
 
+func isExactScalarPredicateOperator(operator string) bool {
+	switch operator {
+	case "==", "~=", "<", "<=", ">", ">=":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedPredicateBinaryOperator(operator string) bool {
+	return isExactScalarPredicateOperator(operator) || operator == "and" || operator == "or"
+}
+
 func validatePredicateSource(ctx *planCompileContext, source factflow.ValueSource, active map[factflow.ExprRef]bool) error {
 	if !source.Valid() || source.Expanded || source.OpenTail {
 		return fmt.Errorf("non-scalar operand %#v", source)
 	}
+	// Calls remain contextual operations; only their scalar result coordinate
+	// participates in this predicate DAG. predicateSourceBoundDuringRow below
+	// admits that coordinate only when the canonical call surface owns the exact
+	// point/result slot. The call itself is still executed in row order, so its
+	// effects, suspension, failure, and dispatch are never modeled as pure.
 	if source.HasExpr {
 		if _, refined := ctx.facts.ExpressionRefinement(source.ExprRef); refined {
-			return validateRuntimeRefinement(ctx, source.ExprRef, active)
+			return validateExpressionRefinement(ctx, source.ExprRef, active)
 		}
 		if _, nested := ctx.facts.ExpressionOperation(source.ExprRef); nested {
-			return validatePredicateExpr(ctx, source.ExprRef, active)
-		}
-		if _, conflict := ctx.facts.ObjectLiteralView(source.ExprRef); conflict {
-			return fmt.Errorf("operand %d is an object literal", source.ExprRef)
+			return validatePredicateOperandExpr(ctx, source.ExprRef, active)
 		}
 		if _, exact := exactSignatureExpressionTerm(*ctx, source); exact {
 			return nil
@@ -336,6 +487,40 @@ func validatePredicateSource(ctx *planCompileContext, source factflow.ValueSourc
 func predicateSourceBoundDuringRow(ctx planCompileContext, source factflow.ValueSource) bool {
 	var target symbol.ID
 	switch source.Kind {
+	case factflow.ValueSourceCall:
+		if !source.HasCallPoint || source.ResultIndex < 0 || source.Adjusted && source.ResultIndex != 0 {
+			return false
+		}
+		site, exactSite := ctx.facts.CallSiteView(source.CallPoint)
+		point, exactPoint := site.Point()
+		if !exactSite || !exactPoint || point != source.CallPoint {
+			return false
+		}
+		surface, exactSurface := ctx.plan.CallSurface()
+		if !exactSurface {
+			return false
+		}
+		var targetKind operationplan.CallSurfaceTargetKind
+		for _, classified := range surface.Sites() {
+			if classified.Point == source.CallPoint {
+				targetKind = classified.Target.Kind()
+				break
+			}
+		}
+		if targetKind == 0 {
+			return false
+		}
+		for index := 0; index < site.ResultTargetCount(); index++ {
+			result, present := site.ResultTargetAt(index)
+			if present && result.ResultIndex() == source.ResultIndex {
+				if targetKind == operationplan.CallSurfaceTargetLexical {
+					return true
+				}
+				_, frozen := ctx.builder.Arena().callResultValue(source.CallPoint, source.ResultIndex)
+				return frozen
+			}
+		}
+		return false
 	case factflow.ValueSourcePath:
 		sym, version, _, ok := pathaddr.ParseResolverPath(source.PathKey)
 		if !ok || sym == 0 || version != 0 {

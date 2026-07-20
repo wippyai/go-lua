@@ -28,8 +28,7 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 
 	dynamicTable := path.NewPath(symbol.ID(102), "table").Field("dynamic")
 	dynamicWrite := NewDynamicIndexWrite(
-		dynamicTable,
-		keySource,
+		NewDynamicIndexTarget(dynamicTable, keySource, nil),
 		source,
 		dynamicindex.AdmissionAdmitted,
 		DynamicIndexReadbackKeyAndValue,
@@ -85,7 +84,7 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	inequalityEvidence := NewBranchPathInequalityEvidenceOnEdge(leftPath, rightPath, true)
 	falseEdgeEvidence := NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, false)
 	frozenPath := path.NewPath(symbol.ID(106), "frozen")
-	frozenEvidence := NewBranchFrozenTableEvidenceOnEdge(frozenPath, true)
+	frozenEvidence := NewBranchFrozenTableEvidenceOnEdge(frozenPath, cfg.Point(8), true)
 	leftPath.Segments[0].Name = "changed"
 	rightPath.Segments[0].Name = "changed"
 	if equalityEvidence.Kind() != BranchPathEvidenceEqual || inequalityEvidence.Kind() != BranchPathEvidenceNotEqual {
@@ -169,8 +168,7 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 		},
 		DynamicIndexWrites: map[cfg.Point]DynamicIndexWrite{
 			point: NewDynamicIndexWrite(
-				path.NewPath(symbol.ID(202), "table").Field("dynamic"),
-				keySource,
+				NewDynamicIndexTarget(path.NewPath(symbol.ID(202), "table").Field("dynamic"), keySource, nil),
 				source,
 				dynamicindex.AdmissionAdmitted,
 				DynamicIndexReadbackKeyAndValue,
@@ -208,7 +206,7 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 
 	facts := NewFacts(input)
 	input.PathStaticMemberWrites[point] = NewPathStaticMemberWrite(path.NewPath(symbol.ID(208), "changed"), callSource)
-	input.DynamicIndexWrites[point] = NewDynamicIndexWrite(path.NewPath(symbol.ID(209), "changed"), callSource, callSource, dynamicindex.AdmissionRejected, DynamicIndexReadbackNone)
+	input.DynamicIndexWrites[point] = NewDynamicIndexWrite(NewDynamicIndexTarget(path.NewPath(symbol.ID(209), "changed"), callSource, nil), callSource, dynamicindex.AdmissionRejected, DynamicIndexReadbackNone)
 	input.BranchPathEvidence[point] = NewBranchPathEvidenceSet(NewBranchPathInequalityEvidenceOnEdge(path.NewPath(symbol.ID(210), "changed"), path.NewPath(symbol.ID(211), "changed"), true))
 	input.ChannelSelects[point] = NewChannelSelectSet(NewChannelSelect(ChannelSelectConfig{SelectID: ChannelSelectID("changed"), Kind: ChannelSelectReceive}))
 

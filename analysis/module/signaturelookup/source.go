@@ -127,29 +127,6 @@ func manifestLocalSignatureName(modulePath, name string) (string, bool) {
 	return "", false
 }
 
-// Signatures returns a cloned merged map, with manifest entries overriding
-// stdlib entries for the same stable function name.
-func (s Source) Signatures() map[string]signature.Function {
-	out := make(map[string]signature.Function)
-	if s.IncludeStdlib {
-		for name, sig := range stdlib.Signatures() {
-			out[name] = sig
-		}
-	}
-	for _, m := range s.Manifests {
-		if m == nil {
-			continue
-		}
-		for name, sig := range m.FunctionSignatures {
-			if s.IncludeStdlib && m.Path != "" && isBareStdlibName(name) {
-				continue
-			}
-			out[name] = m.ScopeSignature(sig).Clone()
-		}
-	}
-	return out
-}
-
 // StdlibSignatureNames returns the standard-library function names without
 // materializing cloned signatures.
 func StdlibSignatureNames() []string {

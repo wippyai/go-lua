@@ -37,36 +37,28 @@ func TypeFieldProvablyAbsent(t typ.Type, name string) bool {
 }
 
 func ClosedRecordLacksField(t typ.Type, name string) bool {
-	return closedRecordLacksField(t, name, 0)
-}
-
-func closedRecordLacksField(t typ.Type, name string, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+	if !inspect.LeastBoolFixedPoint(t, typeProjectionProductivityEquation) {
 		return false
 	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Record:
-		return closedRecordWithoutField(v, name)
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		for _, member := range v.Members {
-			if !closedRecordLacksField(member, name, depth+1) {
-				return false
+	return inspect.GreatestBoolFixedPoint(t, func(current typ.Type) inspect.BoolEquation {
+		switch v := current.(type) {
+		case *typ.Annotated:
+			return typeBoolAll(v.Inner)
+		case *typ.Record:
+			return typeBoolConstant(closedRecordWithoutField(v, name))
+		case *typ.Union:
+			if len(v.Members) == 0 {
+				return typeBoolConstant(false)
 			}
+			return typeBoolAll(v.Members...)
+		case *typ.Alias:
+			return typeBoolAll(v.UnaliasedTarget())
+		case *typ.Recursive:
+			return typeBoolAll(v.Body)
+		default:
+			return typeBoolConstant(false)
 		}
-		return true
-	case *typ.Alias:
-		return closedRecordLacksField(v.UnaliasedTarget(), name, depth+1)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == t {
-			return false
-		}
-		return closedRecordLacksField(v.Body, name, depth+1)
-	default:
-		return false
-	}
+	})
 }
 
 func closedRecordWithoutField(r *typ.Record, name string) bool {
@@ -90,40 +82,42 @@ func TypeFamilyBase(t typ.Type) (typ.Type, bool) {
 	if base, ok := literal.FamilyBase(t); ok {
 		return base, true
 	}
-	return intersectionFamilyBase(t, 0)
+	return intersectionFamilyBase(t)
 }
 
-func intersectionFamilyBase(t typ.Type, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		next := v.UnaliasedTarget()
-		if next == nil || next == t {
-			return nil, false
-		}
-		return intersectionFamilyBase(next, depth+1)
-	case *typ.Optional:
-		return intersectionFamilyBase(v.Inner, depth+1)
-	case *typ.Intersection:
-		for _, candidate := range v.Members {
-			if candidate == nil {
-				continue
-			}
-			coversAll := true
-			for _, member := range v.Members {
-				if member == nil || typ.TypeEquals(member, candidate) {
+func intersectionFamilyBase(t typ.Type) (typ.Type, bool) {
+	seen := inspect.NewIdentitySeen(nil)
+	for t != nil && !seen.Contains(t) {
+		seen.Remember(t)
+		switch v := t.(type) {
+		case *typ.Annotated:
+			t = v.Inner
+		case *typ.Alias:
+			t = v.UnaliasedTarget()
+		case *typ.Optional:
+			t = v.Inner
+		case *typ.Intersection:
+			for _, candidate := range v.Members {
+				if candidate == nil {
 					continue
 				}
-				if !subtype.IsSubtype(member, candidate) {
-					coversAll = false
-					break
+				coversAll := true
+				for _, member := range v.Members {
+					if member == nil || typ.TypeEquals(member, candidate) {
+						continue
+					}
+					if !subtype.IsSubtype(member, candidate) {
+						coversAll = false
+						break
+					}
+				}
+				if coversAll {
+					return candidate, true
 				}
 			}
-			if coversAll {
-				return candidate, true
-			}
+			return nil, false
+		default:
+			return nil, false
 		}
 	}
 	return nil, false
@@ -138,14 +132,21 @@ func TypeWithoutOptionalNil(t typ.Type) typ.Type {
 }
 
 func TypeIsUnionReceiver(t typ.Type) bool {
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Union:
-		return true
-	case *typ.Alias:
-		return TypeIsUnionReceiver(v.UnaliasedTarget())
-	default:
-		return false
+	seen := inspect.NewIdentitySeen(nil)
+	for t != nil && !seen.Contains(t) {
+		seen.Remember(t)
+		switch v := t.(type) {
+		case *typ.Annotated:
+			t = v.Inner
+		case *typ.Alias:
+			t = v.UnaliasedTarget()
+		case *typ.Union:
+			return true
+		default:
+			return false
+		}
 	}
+	return false
 }
 
 func TypeIsClosedConcreteRecord(t typ.Type) bool {
@@ -185,50 +186,40 @@ type StaticTypeChild struct {
 }
 
 func StaticTypeChildren(t typ.Type) []StaticTypeChild {
-	return staticTypeChildren(t, 0)
-}
-
-func staticTypeChildren(t typ.Type, depth int) []StaticTypeChild {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		return staticTypeChildren(v.UnaliasedTarget(), depth+1)
-	case *typ.Optional:
-		return staticTypeChildren(v.Inner, depth+1)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == t {
-			return nil
-		}
-		return staticTypeChildren(v.Body, depth+1)
-	case *typ.Instantiated:
-		expanded, ok := subst.ExpandInstantiatedChanged(v)
-		if !ok {
-			return nil
-		}
-		return staticTypeChildren(expanded, depth+1)
-	case *typ.Record:
-		out := make([]StaticTypeChild, 0, len(v.Fields)+len(v.StaticMembers))
-		for _, field := range v.Fields {
-			out = append(out, StaticTypeChild{
-				Segment: segment.Segment{Kind: segment.SegmentField, Name: field.Name},
-				Type:    field.Type,
-			})
-		}
-		for _, member := range v.StaticMembers {
-			if member.Kind != typ.StaticMemberStringIndex {
-				continue
+	seen := inspect.NewIdentitySeen(nil)
+	for t != nil && !seen.Contains(t) {
+		seen.Remember(t)
+		switch v := t.(type) {
+		case *typ.Annotated:
+			t = v.Inner
+		case *typ.Alias:
+			t = v.UnaliasedTarget()
+		case *typ.Optional:
+			t = v.Inner
+		case *typ.Recursive:
+			t = v.Body
+		case *typ.Instantiated:
+			expanded, ok := subst.ExpandInstantiatedChanged(v)
+			if !ok {
+				return nil
 			}
-			out = append(out, StaticTypeChild{
-				Segment: segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name},
-				Type:    member.Type,
-			})
+			t = expanded
+		case *typ.Record:
+			out := make([]StaticTypeChild, 0, len(v.Fields)+len(v.StaticMembers))
+			for _, field := range v.Fields {
+				out = append(out, StaticTypeChild{Segment: segment.Segment{Kind: segment.SegmentField, Name: field.Name}, Type: field.Type})
+			}
+			for _, member := range v.StaticMembers {
+				if member.Kind == typ.StaticMemberStringIndex {
+					out = append(out, StaticTypeChild{Segment: segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name}, Type: member.Type})
+				}
+			}
+			return out
+		default:
+			return nil
 		}
-		return out
-	default:
-		return nil
 	}
+	return nil
 }
 
 func (r *Result) TransparentComparableType(t typ.Type) typ.Type {
@@ -259,7 +250,9 @@ func (r *Result) TransparentComparableType(t typ.Type) typ.Type {
 }
 
 func TransparentExpectedType(t typ.Type) typ.Type {
-	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+	seen := inspect.NewIdentitySeen(nil)
+	for t != nil && !seen.Contains(t) {
+		seen.Remember(t)
 		switch tt := t.(type) {
 		case *typ.Annotated:
 			if tt.Inner == nil || tt.Inner == t {
@@ -288,6 +281,36 @@ func TransparentExpectedType(t typ.Type) typ.Type {
 		}
 	}
 	return t
+}
+
+func typeProjectionProductivityEquation(current typ.Type) inspect.BoolEquation {
+	switch v := current.(type) {
+	case *typ.Annotated:
+		return typeBoolAny(v.Inner)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return typeBoolConstant(false)
+		}
+		return typeBoolAny(v.Members...)
+	case *typ.Alias:
+		return typeBoolAny(v.UnaliasedTarget())
+	case *typ.Recursive:
+		return typeBoolAny(v.Body)
+	default:
+		return typeBoolConstant(current != nil)
+	}
+}
+
+func typeBoolConstant(value bool) inspect.BoolEquation {
+	return inspect.BoolEquation{Join: inspect.BoolConstant, Constant: value}
+}
+
+func typeBoolAll(inputs ...typ.Type) inspect.BoolEquation {
+	return inspect.BoolEquation{Join: inspect.BoolAll, Inputs: inputs}
+}
+
+func typeBoolAny(inputs ...typ.Type) inspect.BoolEquation {
+	return inspect.BoolEquation{Join: inspect.BoolAny, Inputs: inputs}
 }
 
 func shallowExpandExpectedInstantiated(inst *typ.Instantiated) typ.Type {

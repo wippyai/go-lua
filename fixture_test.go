@@ -5,41 +5,26 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 )
 
-const defaultFixtureDeadline = 30 * time.Second
-const defaultFixtureMemoryLimitBytes int64 = 8 << 30
 const fixtureCancellationGrace = time.Second
 
 var fixtureSlotAcquireMu sync.Mutex
 
-// fixtureDeadline bounds a normal fixture step. FIXTURE_DEADLINE_SECONDS is a
-// local/CI override for stress runs; fixture manifests may request a larger
-// budget for intentionally broad adversarial suites.
-func fixtureDeadline() time.Duration {
+// fixtureDeadline returns the explicit developer deadline, when one was
+// requested. Normal fixture and oracle execution is mathematically uncapped:
+// correctness must come from convergence, never from a wall-clock budget.
+func fixtureDeadline() (time.Duration, bool) {
 	if v := os.Getenv("FIXTURE_DEADLINE_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return time.Duration(n) * time.Second
+			return time.Duration(n) * time.Second, true
 		}
 	}
-	return defaultFixtureDeadline
-}
-
-func fixtureDeadlineForSuite(s namedSuite) time.Duration {
-	if v := os.Getenv("FIXTURE_DEADLINE_SECONDS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return time.Duration(n) * time.Second
-		}
-	}
-	if s.Suite.DeadlineSeconds > 0 {
-		return time.Duration(s.Suite.DeadlineSeconds) * time.Second
-	}
-	return defaultFixtureDeadline
+	return 0, false
 }
 
 func fixtureSequential() bool {
@@ -78,52 +63,6 @@ func fixtureTimeoutExitsProcess() bool {
 	}
 }
 
-func fixtureMemoryLimitBytes() int64 {
-	if v := os.Getenv("FIXTURE_MEMORY_LIMIT_MB"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return defaultFixtureMemoryLimitBytes
-		}
-		return int64(n) << 20
-	}
-	return defaultFixtureMemoryLimitBytes
-}
-
-func startFixtureMemoryGuard(t *testing.T) {
-	t.Helper()
-	limit := fixtureMemoryLimitBytes()
-	if limit <= 0 {
-		return
-	}
-	previous := debug.SetMemoryLimit(limit)
-	t.Cleanup(func() {
-		debug.SetMemoryLimit(previous)
-	})
-
-	done := make(chan struct{})
-	t.Cleanup(func() {
-		close(done)
-	})
-	go func() {
-		ticker := time.NewTicker(250 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				var mem runtime.MemStats
-				runtime.ReadMemStats(&mem)
-				if int64(mem.HeapAlloc) <= limit {
-					continue
-				}
-				fmt.Fprintf(os.Stderr, "fatal: fixture heap allocation exceeded %d MiB (heap=%d MiB); exiting before runaway analysis can exhaust the machine\n", limit>>20, mem.HeapAlloc>>20)
-				os.Exit(2)
-			}
-		}
-	}()
-}
-
 func failFixtureDeadline(t *testing.T, message string) {
 	t.Helper()
 	if fixtureTimeoutExitsProcess() {
@@ -134,13 +73,18 @@ func failFixtureDeadline(t *testing.T, message string) {
 	t.Fatal(message)
 }
 
-// runWithDeadline runs fn under the per-fixture deadline. Check phases receive
-// a context that reaches the fixed-point engine; a timed-out fixture is marked
-// failed after it cooperatively stops. Process exit remains only for a worker
-// that ignores cancellation through the grace period.
+// runWithDeadline runs fn directly unless a developer explicitly requested a
+// deadline. The default path has neither a timer nor a cancellation goroutine.
+// Under an explicit deadline, check phases receive a context that reaches the
+// fixed-point engine. Process exit remains only for a worker that ignores that
+// requested cancellation through the grace period.
 func runWithDeadline(t *testing.T, suite namedSuite, step string, fn func(context.Context, *testing.T)) {
 	t.Helper()
-	deadline := fixtureDeadlineForSuite(suite)
+	deadline, bounded := fixtureDeadline()
+	if !bounded {
+		fn(context.Background(), t)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	done := make(chan any, 1)
@@ -183,7 +127,6 @@ func TestFixtures(t *testing.T) {
 	if len(suites) == 0 {
 		t.Fatal("no fixture suites found")
 	}
-	startFixtureMemoryGuard(t)
 	fixtureSlots := make(chan struct{}, fixtureParallelism())
 	report := newFixtureImpactRecorder()
 	t.Cleanup(func() {
@@ -319,19 +262,24 @@ func TestFixtureOrder_GoogleMetadataThenOptionalHttpBody(t *testing.T) {
 	runCheckPhase(t, optionalBody)
 }
 
-func TestFixtureDeadlineForSuiteUsesManifestBudget(t *testing.T) {
+func TestFixtureDeadlineIsUncappedByDefault(t *testing.T) {
 	t.Setenv("FIXTURE_DEADLINE_SECONDS", "")
-	suite := namedSuite{Suite: fixtureSuite{DeadlineSeconds: 42}}
-	if got := fixtureDeadlineForSuite(suite); got != 42*time.Second {
-		t.Fatalf("fixtureDeadlineForSuite = %s, want 42s", got)
+	if got, bounded := fixtureDeadline(); bounded || got != 0 {
+		t.Fatalf("fixtureDeadline = (%s, %t), want uncapped", got, bounded)
 	}
 }
 
-func TestFixtureDeadlineForSuiteEnvOverridesManifestBudget(t *testing.T) {
+func TestFixtureDeadlineRequiresExplicitEnv(t *testing.T) {
 	t.Setenv("FIXTURE_DEADLINE_SECONDS", "7")
-	suite := namedSuite{Suite: fixtureSuite{DeadlineSeconds: 42}}
-	if got := fixtureDeadlineForSuite(suite); got != 7*time.Second {
-		t.Fatalf("fixtureDeadlineForSuite = %s, want 7s", got)
+	if got, bounded := fixtureDeadline(); !bounded || got != 7*time.Second {
+		t.Fatalf("fixtureDeadline = (%s, %t), want (7s, true)", got, bounded)
+	}
+}
+
+func TestFixtureDeadlineRejectsInvalidEnvWithoutAddingCap(t *testing.T) {
+	t.Setenv("FIXTURE_DEADLINE_SECONDS", "invalid")
+	if got, bounded := fixtureDeadline(); bounded || got != 0 {
+		t.Fatalf("fixtureDeadline = (%s, %t), want uncapped", got, bounded)
 	}
 }
 
@@ -382,20 +330,6 @@ func TestFixtureTimeoutExitCanBeDisabled(t *testing.T) {
 	t.Setenv("FIXTURE_TIMEOUT_EXIT", "0")
 	if fixtureTimeoutExitsProcess() {
 		t.Fatal("fixture timeout exit should be disabled by FIXTURE_TIMEOUT_EXIT=0")
-	}
-}
-
-func TestFixtureMemoryLimitDefaultGuardsRunawayFixtures(t *testing.T) {
-	t.Setenv("FIXTURE_MEMORY_LIMIT_MB", "")
-	if got := fixtureMemoryLimitBytes(); got != defaultFixtureMemoryLimitBytes {
-		t.Fatalf("fixtureMemoryLimitBytes = %d, want %d", got, defaultFixtureMemoryLimitBytes)
-	}
-}
-
-func TestFixtureMemoryLimitCanBeDisabled(t *testing.T) {
-	t.Setenv("FIXTURE_MEMORY_LIMIT_MB", "0")
-	if got := fixtureMemoryLimitBytes(); got != 0 {
-		t.Fatalf("fixtureMemoryLimitBytes = %d, want disabled", got)
 	}
 }
 

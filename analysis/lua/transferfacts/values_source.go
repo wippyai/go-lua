@@ -1,6 +1,8 @@
 package transferfacts
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -384,7 +386,13 @@ func (l *lowerer) wirMultiDefTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	left, ok := l.wirInstructionExpressionOperandValueSource(leftDef, leftDef.A, exprIndex, targetIndex, seen)
+	// Expression-operation operands are producer identities, independent of the
+	// consumer slot presenting the completed logical result. Keep them in the
+	// canonical scalar namespace so repeated consumers cannot overwrite one
+	// ExprRef with shape-dependent child identities.
+	left, ok := l.wirInstructionExpressionOperandValueSource(
+		leftDef, leftDef.A, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, seen,
+	)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -392,7 +400,9 @@ func (l *lowerer) wirMultiDefTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	right, ok := l.wirDefinitionValueSourceWithRef(temp, rhsDef, rightRef, exprIndex, targetIndex, seen)
+	right, ok := l.wirDefinitionValueSourceWithRef(
+		temp, rhsDef, rightRef, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, seen,
+	)
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
@@ -430,6 +440,20 @@ func (l *lowerer) wirLogicalTempDefsOrdered(leftDef, rhsDef wir.Instruction) (wi
 	if leftDef.Op != wir.OpAssign || !wirInstructionDefinesTemp(rhsDef, leftDef.Dst.Ref) {
 		return wir.Instruction{}, wir.Instruction{}, "", false
 	}
+	// Exact WIR ownership decides the operator even when a nested RHS makes
+	// both graph successors reach the eventual definition. Reachability is only
+	// a fallback for older point-local shapes without a structural region.
+	if leftDef.Dst.Kind == wir.OperandTemp {
+		if region, exact := l.wir.StructuralExpressionRegion(wir.StructuralExpressionOwner{HasTemp: true, Temp: leftDef.Dst.Ref}); exact {
+			if region.Guard != leftDef.Point || !cfgPointInSortedSet(region.OwnedRHSPoints, rhsDef.Point) {
+				return wir.Instruction{}, wir.Instruction{}, "", false
+			}
+			if region.RHSOnTrue {
+				return leftDef, rhsDef, "and", true
+			}
+			return leftDef, rhsDef, "or", true
+		}
+	}
 	branch, ok := l.wirLogicalBranchForLeftDef(leftDef)
 	if !ok {
 		return wir.Instruction{}, wir.Instruction{}, "", false
@@ -442,6 +466,11 @@ func (l *lowerer) wirLogicalTempDefsOrdered(leftDef, rhsDef wir.Instruction) (wi
 		return leftDef, rhsDef, "and", true
 	}
 	return leftDef, rhsDef, "or", true
+}
+
+func cfgPointInSortedSet(points []cfg.Point, target cfg.Point) bool {
+	index := sort.Search(len(points), func(i int) bool { return points[i] >= target })
+	return index < len(points) && points[index] == target
 }
 
 func (l *lowerer) wirDefinitionValueSourceWithRef(
@@ -475,6 +504,17 @@ func (l *lowerer) wirDefinitionValueSourceWithRef(
 }
 
 func (l *lowerer) wirLogicalBranchForLeftDef(def wir.Instruction) (wir.Instruction, bool) {
+	if def.Dst.Kind == wir.OperandTemp {
+		region, exact := l.wir.StructuralExpressionRegion(wir.StructuralExpressionOwner{HasTemp: true, Temp: def.Dst.Ref})
+		if exact {
+			for _, inst := range l.wir.PointInstructions(region.Guard) {
+				if inst.Op == wir.OpBranch {
+					return inst, true
+				}
+			}
+			return wir.Instruction{}, false
+		}
+	}
 	for _, inst := range l.wir.PointInstructions(def.Point) {
 		if inst.Op != wir.OpBranch {
 			continue
@@ -598,18 +638,19 @@ func (l *lowerer) wirEdgeFromBranchToPoint(branch, target cfg.Point) (bool, bool
 	}
 	var out bool
 	var have bool
-	for _, succ := range cfg.SuccessorsReadOnly(l.graph, branch) {
+	successors := cfg.SuccessorsReadOnly(l.graph, branch)
+	conditions := cfg.SuccessorConditionsReadOnly(l.graph, branch)
+	if len(conditions) != len(successors) {
+		return false, false
+	}
+	for index, succ := range successors {
 		if succ != target {
-			continue
-		}
-		edge, ok := l.graph.EdgeCond(branch, succ)
-		if !ok {
 			continue
 		}
 		if have {
 			return false, false
 		}
-		out = edge
+		out = conditions[index]
 		have = true
 	}
 	if have {
@@ -618,18 +659,14 @@ func (l *lowerer) wirEdgeFromBranchToPoint(branch, target cfg.Point) (bool, bool
 	if l.wirReachability == nil {
 		l.wirReachability = cfg.NewReachability(l.graph)
 	}
-	for _, succ := range cfg.SuccessorsReadOnly(l.graph, branch) {
-		edge, ok := l.graph.EdgeCond(branch, succ)
-		if !ok {
-			continue
-		}
+	for index, succ := range successors {
 		if succ != target && !l.wirReachability.CanReach(succ, target) {
 			continue
 		}
 		if have {
 			return false, false
 		}
-		out = edge
+		out = conditions[index]
 		have = true
 	}
 	return out, have
@@ -816,6 +853,15 @@ func (l *lowerer) wirAssignmentExpressionValueSourceWithRef(
 		return l.wirClaimTempExpressionValueSourceWithRef(inst, exprRef, exprIndex, targetIndex, final, expanded, openTail, seen)
 	}
 	if inst.A.Kind == wir.OperandTemp {
+		// A logical expression is represented in WIR as two reaching
+		// definitions of one result temp. Resolve that finite merge through its
+		// structural owner before following an arbitrary individual definition;
+		// otherwise an assignment such as `x = x or {}` can make the assignment
+		// expression identity appear as its own operand even though the source
+		// expression graph is acyclic.
+		if source, ok := l.wirMultiDefTempExpressionValueSource(inst.A.Ref, exprIndex, targetIndex, final, expanded, openTail, seen); ok {
+			return source, true
+		}
 		def, ok := l.wirTempDefs()[inst.A.Ref]
 		if !ok {
 			return factflow.ValueSource{}, false
@@ -1190,7 +1236,6 @@ func (l *lowerer) wirClaimTempExpressionValueSourceWithRef(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
-	l.addWIRClaimExpressionPath(exprRef, inst)
 	if !l.recordExpressionRefinementFromWIRClaim(source, inner, inst) {
 		return factflow.ValueSource{}, false
 	}
@@ -1216,22 +1261,8 @@ func (l *lowerer) wirClaimInnerValueSource(
 	return l.pathExpressionSourceFromWIR("claim-inner", inst.Point, inst.A, exprIndex, targetIndex, final, expanded, openTail, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue)
 }
 
-func (l *lowerer) addWIRClaimExpressionPath(exprRef factflow.ExprRef, inst wir.Instruction) {
-	if exprRef == 0 || inst.A.Kind != wir.OperandPath || l == nil || l.wir == nil {
-		return
-	}
-	p := l.wir.Path(wir.PathRef(inst.A.Ref))
-	if p.IsEmpty() {
-		return
-	}
-	if l.expressionPaths == nil {
-		l.expressionPaths = make(map[factflow.ExprRef]path.Path)
-	}
-	l.expressionPaths[exprRef] = p
-}
-
 func (l *lowerer) addWIRClaimExpressionValue(exprRef factflow.ExprRef, inst wir.Instruction) {
-	if exprRef == 0 || inst.Claim != wir.ClaimCast {
+	if exprRef == 0 || (inst.Claim != wir.ClaimCast && inst.Claim != wir.ClaimAnnotation) {
 		return
 	}
 	t := l.wir.Type(inst.Type)
@@ -1274,11 +1305,11 @@ func (l *lowerer) wirBinaryTempExpressionValueSourceWithRef(
 ) (factflow.ValueSource, bool) {
 	op, ok := wirExpressionOperator(inst)
 	if !ok {
-		return l.wirCheckTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail)
+		return l.wirCheckExpressionValueSourceWithRef(exprRef, inst, exprIndex, targetIndex, final, expanded, openTail)
 	}
 	leftOp, rightOp, ok := wirBinaryExpressionOperands(l.wir, inst)
 	if !ok {
-		return l.wirCheckTempExpressionValueSource(temp, inst, exprIndex, targetIndex, final, expanded, openTail)
+		return l.wirCheckExpressionValueSourceWithRef(exprRef, inst, exprIndex, targetIndex, final, expanded, openTail)
 	}
 	left, ok := l.wirBinaryExpressionOperandValueSource(inst, leftOp, exprIndex, targetIndex, seen)
 	if !ok {
@@ -1360,6 +1391,21 @@ func (l *lowerer) wirCheckTempExpressionValueSource(
 	if !ok {
 		return factflow.ValueSource{}, false
 	}
+	return l.wirCheckExpressionValueSourceWithRef(exprRef, inst, exprIndex, targetIndex, final, expanded, openTail)
+}
+
+func (l *lowerer) wirCheckExpressionValueSourceWithRef(
+	exprRef factflow.ExprRef,
+	inst wir.Instruction,
+	exprIndex int,
+	targetIndex int,
+	final bool,
+	expanded bool,
+	openTail bool,
+) (factflow.ValueSource, bool) {
+	if exprRef == 0 || inst.Check == 0 {
+		return factflow.ValueSource{}, false
+	}
 	l.addWIRExpressionCondition(exprRef, inst)
 	l.addSealedLuaTypeCheckOperation(exprRef, inst)
 	if l.expressionValues == nil {
@@ -1400,7 +1446,14 @@ func (l *lowerer) addSealedLuaTypeCheckOperation(predicate factflow.ExprRef, ins
 	if !ok {
 		return
 	}
-	literal, ok := factflow.NewStringLiteralValueSource(check.TypeName, 0, 0, 0, shape)
+	var right factflow.ValueSource
+	if check.TypeName != "" {
+		right, ok = factflow.NewStringLiteralValueSource(check.TypeName, 0, 0, 0, shape)
+	} else if !check.OtherPath.IsEmpty() {
+		right, ok = factflow.NewPathValueSource(check.OtherPath.Key(), 0, 0, 0, shape)
+	} else {
+		return
+	}
 	if !ok {
 		return
 	}
@@ -1408,7 +1461,7 @@ func (l *lowerer) addSealedLuaTypeCheckOperation(predicate factflow.ExprRef, ins
 	if check.Kind == wir.CheckTypeNot {
 		op = "~="
 	}
-	predicateOp, ok := factflow.NewBinaryExpressionOperation(op, typeSource, literal)
+	predicateOp, ok := factflow.NewBinaryExpressionOperation(op, typeSource, right)
 	if !ok {
 		return
 	}
@@ -1421,7 +1474,13 @@ func (l *lowerer) sealedLuaTypeCheckAuthorized(inst wir.Instruction) bool {
 		return false
 	}
 	check := l.wir.Check(inst.Check)
-	if (check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot) || check.Path.IsEmpty() || check.TypeName == "" {
+	if (check.Kind != wir.CheckTypeEqual && check.Kind != wir.CheckTypeNot) || check.Path.IsEmpty() {
+		return false
+	}
+	if !check.OtherPath.IsEmpty() {
+		return true
+	}
+	if check.TypeName == "" {
 		return false
 	}
 	_, exact := runtimekind.ParseTag(check.TypeName)

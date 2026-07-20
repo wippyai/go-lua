@@ -90,9 +90,13 @@ func (r *Result) DominatingRuntimeTypeGuardProves(point cfg.Point, p pathdom.Pat
 		if !RuntimeTypeGuardProves(check.TypeName, want) {
 			continue
 		}
-		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
-			cond, ok := graph.EdgeCond(branch, succ)
-			if !ok || cond != rejectCond {
+		successors := cfg.SuccessorsReadOnly(graph, branch)
+		conditions := cfg.SuccessorConditionsReadOnly(graph, branch)
+		if len(conditions) != len(successors) {
+			continue
+		}
+		for index, succ := range successors {
+			if conditions[index] != rejectCond {
 				continue
 			}
 			if !r.PointCanReach(succ, point) {

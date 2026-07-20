@@ -55,6 +55,37 @@ func (r *signatureIdentityResolver) intrinsicForCallSiteView(ctx transfer.NodeCo
 	return signature.IntrinsicLuaType, true
 }
 
+// canonicalStdlibGlobalCall reports exact authority for one root global from
+// the prepared base environment. This is the shared binding/environment seam
+// for semantic operations which must not be rediscovered from source text by
+// downstream consumers.
+func (r *signatureIdentityResolver) canonicalStdlibGlobalCall(ctx transfer.NodeContext, site factflow.CallSiteView, name string) bool {
+	if r == nil || r.bindings == nil || name == "" || site.MethodName() != "" {
+		return false
+	}
+	p := site.CalleePathRef()
+	if len(p.Segments) != 0 || r.rootReplacedAt(ctx.Point, site.CalleeSymbol(), p) {
+		return false
+	}
+	root := site.CalleeSymbol()
+	if p.Symbol != 0 {
+		root = p.Symbol
+	}
+	kind, known := r.bindings.Kind(root)
+	if root == 0 || !known || kind != symbol.Global || r.bindings.Name(root) != name || r.bindings.HasWrite(root) {
+		return false
+	}
+	globalTable, hasGlobalTable := r.bindings.GlobalSymbol("_G")
+	if hasGlobalTable && r.bindings.HasRead(globalTable) {
+		return false
+	}
+	if _, shadowed := r.intrinsicShadowedGlobalNames[name]; shadowed {
+		return false
+	}
+	_, present := r.implicitStdlibNames[name]
+	return present
+}
+
 // luaTypeIntrinsicEnvironmentSealed is the unit-wide half of intrinsic
 // authority shared by call sites and normalized type predicates. The latter
 // have no call site after WIR normalization, so this proof is transported to
@@ -87,6 +118,30 @@ func (r *signatureIdentityResolver) luaTypePredicateChecksSealed() bool {
 	return known && kind == symbol.Global && r.bindings.Name(root) == "type" && r.luaTypeIntrinsicEnvironmentSealed(root)
 }
 
+// luaTypePredicateChecksSealedForLowering computes the unit-owned authority
+// before CFG/WIR construction. It intentionally uses only the same lexical and
+// environment facts consumed by luaTypeIntrinsicEnvironmentSealed: lowering
+// must know whether it may erase the runtime call, while point-local call
+// identity remains the later resolver's responsibility.
+func luaTypePredicateChecksSealedForLowering(bindings *bind.Result, signatures signaturelookup.Source, globalTypes map[string]typ.Type) bool {
+	if bindings == nil || !signatures.IncludeStdlib {
+		return false
+	}
+	root, ok := bindings.GlobalSymbol("type")
+	if !ok || root == 0 {
+		return false
+	}
+	kind, known := bindings.Kind(root)
+	if !known || kind != symbol.Global || bindings.Name(root) != "type" || bindings.HasWrite(root) {
+		return false
+	}
+	if _, overridden := globalTypes["type"]; overridden {
+		return false
+	}
+	globalTable, hasGlobalTable := bindings.GlobalSymbol("_G")
+	return !hasGlobalTable || !bindings.HasRead(globalTable)
+}
+
 func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *wir.Body, modules moduleidentity.Projection, signatures signaturelookup.Source, globalTypes map[string]typ.Type, moduleExports importlookup.Source) *signatureIdentityResolver {
 	rootWrites := signatureRootWritesFromWIR(bindings, body)
 	rootWriteQuery := factquery.NewDominatingOrdinaryRootWriteQuery(graph, func(point cfg.Point, target symbol.ID) bool {
@@ -100,6 +155,9 @@ func newSignatureIdentityResolver(bindings *bind.Result, graph cfg.Graph, body *
 	intrinsicShadowed := make(map[string]struct{})
 	if _, configured := globalTypes["type"]; configured {
 		intrinsicShadowed["type"] = struct{}{}
+	}
+	if _, configured := globalTypes["setmetatable"]; configured {
+		intrinsicShadowed["setmetatable"] = struct{}{}
 	}
 	return &signatureIdentityResolver{
 		bindings:                     bindings,

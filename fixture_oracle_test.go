@@ -3,6 +3,7 @@ package lua
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -13,54 +14,44 @@ import (
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
-// The fixture oracle is the scorecard for the normal type-checking flow. It runs
-// every testdata fixture and judges diagnostics against curated expectations
-// rather than against an older engine.
+// The full fixture oracle is the scorecard for the normal type-checking flow. It
+// runs every discovered testdata fixture and judges diagnostics against its
+// checked-in expectations rather than against an older engine.
 
-// oracleVerdict is the outcome of judging one fixture's diagnostics against its
-// curated expectations.
-type oracleVerdict struct {
+// fixtureExpectationVerdict is the outcome of judging one fixture's diagnostics against its
+// checked-in expectations.
+type fixtureExpectationVerdict struct {
 	name   string
 	passed bool
-	// missing are curated expectations the checker did not satisfy.
+	// missing are checked-in expectations the checker did not satisfy.
 	missing []string
-	// unexpected are diagnostics the checker emitted that the curated expectations
+	// unexpected are diagnostics the checker emitted that the checked-in expectations
 	// do not account for.
 	unexpected []string
 }
 
-func oracleFixtureVerdictWithDeadline(t *testing.T, s namedSuite) oracleVerdict {
-	t.Helper()
-	deadline := fixtureDeadlineForSuite(s)
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	done := make(chan oracleVerdict, 1)
-	go func() {
-		var v oracleVerdict
-		defer func() {
-			if r := recover(); r != nil {
-				v = oracleVerdict{name: s.Name, passed: false, unexpected: []string{fmt.Sprintf("panic: %v", r)}}
-			}
-			done <- v
-		}()
-		diags, entry := fixtureDiagnosticsWithContext(s, ctx)
-		v = judgeAgainstCuratedExpectations(s, diags, entry)
+func fullOracleFixtureVerdict(s namedSuite) (v fixtureExpectationVerdict) {
+	defer func() {
+		if r := recover(); r != nil {
+			v = fixtureExpectationVerdict{name: s.Name, passed: false, unexpected: []string{fmt.Sprintf("panic: %v", r)}}
+		}
 	}()
+	diags, entry := fixtureDiagnostics(s)
+	return fullOracleVerdictFromDiagnostics(s, diags, entry)
+}
 
-	select {
-	case v := <-done:
-		return v
-	case <-ctx.Done():
-		message := fmt.Sprintf("oracle fixture deadline exceeded: %s did not complete within %s; cancellation requested", s.Name, deadline)
-		select {
-		case v := <-done:
-			t.Error(message)
-			return v
-		case <-time.After(fixtureCancellationGrace):
-			failFixtureDeadline(t, message)
-			return oracleVerdict{name: s.Name, passed: false}
+func fullOracleVerdictFromDiagnostics(s namedSuite, diagnostics []diag.Diagnostic, entryFile string) fixtureExpectationVerdict {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code != diag.Code("check") {
+			continue
+		}
+		return fixtureExpectationVerdict{
+			name:       s.Name,
+			passed:     false,
+			unexpected: []string{"checker infrastructure failure: " + diagSummary(diagnostic)},
 		}
 	}
+	return judgeAgainstFixtureExpectations(s, diagnostics, entryFile)
 }
 
 // fixtureDiagnostics runs one fixture's full check phase (all dependency modules
@@ -90,7 +81,7 @@ func fixtureDiagnosticsWithContext(s namedSuite, ctx context.Context, extraOpts 
 			baseOpts = append(baseOpts, testutil.WithManifest(pkg, m))
 			baseOpts = append(baseOpts, testutil.WithGlobals(pkg))
 		} else {
-			return nil, ""
+			panic(fmt.Sprintf("fixture %q: package manifest %q is unavailable", s.Name, pkg))
 		}
 	}
 	ruleOpts, err := fixtureDiagnosticRuleOptions(s.Suite.Check)
@@ -129,16 +120,17 @@ func fixtureDiagnosticsWithContext(s namedSuite, ctx context.Context, extraOpts 
 	entryFile = files[len(files)-1]
 	result := testutil.CheckFile(sources[entryFile], entryFile, entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
+	result.ReleaseTransient()
 
 	return allDiagnostics, entryFile
 }
 
-// judgeAgainstCuratedExpectations applies the same curated-truth verification as
+// judgeAgainstFixtureExpectations applies the same checked-in verification as
 // runCheckPhase: inline expect-error/expect-warning annotations verify local
 // markers, manifest check.diagnostics is a structured complete-list oracle when
 // present, then check.errors count wins; otherwise the fixture is expected clean.
-func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic, entryFile string) oracleVerdict {
-	v := oracleVerdict{name: s.Name, passed: true}
+func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic, entryFile string) fixtureExpectationVerdict {
+	v := fixtureExpectationVerdict{name: s.Name, passed: true}
 
 	files := resolveFiles(s)
 	var expectations []inlineExpectation
@@ -240,42 +232,33 @@ func diagSummary(d diag.Diagnostic) string {
 	return fmt.Sprintf("%s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.String(), d.Message)
 }
 
-// shouldSkipOracleSuite mirrors the fixture harness's suite-level skips.
-func shouldSkipOracleSuite(s namedSuite) (skip bool, deadlock bool) {
-	if strings.Contains(s.Name, "deadlock") {
-		return false, true
-	}
-	if s.Suite.Skip != "" {
-		return true, false
-	}
-	if s.Suite.Check != nil && s.Suite.Check.Skip != "" {
-		return true, false
-	}
-	return false, false
+func isDeadlockFixtureSuite(s namedSuite) bool {
+	return strings.Contains(s.Name, "deadlock")
 }
 
-// TestCuratedOracle judges every fixture's diagnostics against curated
-// expectations and reports the pass count plus the failing fixtures bucketed by
-// cause. It is a measurement, not a hard gate; TestCuratedGate pins the subset
-// that must stay green.
-func TestCuratedOracle(t *testing.T) {
+// TestFullOracle is the hard semantic gate for every discovered fixture. It
+// also reports the pass count and buckets failures by cause so a red gate remains
+// actionable. A failed verdict must fail this test; the scorecard is not a
+// substitute for the gate.
+func TestFullOracle(t *testing.T) {
 	suites, err := discoverFixtures("testdata/fixtures")
 	if err != nil {
 		t.Fatalf("discovering fixtures: %v", err)
 	}
-	startFixtureMemoryGuard(t)
-
+	if len(suites) == 0 {
+		t.Fatal("full oracle discovered no fixture suites")
+	}
 	var mu sync.Mutex
-	var verdicts []oracleVerdict
-	pass, fail, skipped, deadlockPass, deadlockFail := 0, 0, 0, 0, 0
+	var verdicts []fixtureExpectationVerdict
+	pass, fail, deadlockPass, deadlockFail := 0, 0, 0, 0
 	t.Cleanup(func() {
 		total := pass + fail
-		t.Logf("CURATED ORACLE SCORECARD: %d/%d fixtures PASS against curated truth (%d fail, %d skipped); deadlock-* %d pass / %d fail",
-			pass, total, fail, skipped, deadlockPass, deadlockFail)
+		t.Logf("FULL ORACLE SCORECARD: %d/%d fixtures PASS against fixture expectations (%d fail); deadlock-* %d pass / %d fail",
+			pass, total, fail, deadlockPass, deadlockFail)
 
 		// Bucket the failures by dominant cause for the worklist.
 		codeBuckets := make(map[string]int)
-		var failNames []oracleVerdict
+		var failNames []fixtureExpectationVerdict
 		for _, v := range verdicts {
 			if v.passed {
 				continue
@@ -311,17 +294,18 @@ func TestCuratedOracle(t *testing.T) {
 	})
 
 	fixtureSlots := make(chan struct{}, fixtureParallelism())
+	traceFixtures := os.Getenv("FULL_ORACLE_TRACE") != ""
 	runFixtureSuites(t, suites, fixtureSlots, func(t *testing.T, s namedSuite) {
-		skip, deadlock := shouldSkipOracleSuite(s)
-		if skip {
-			mu.Lock()
-			skipped++
-			mu.Unlock()
-			t.Skip("oracle fixture skipped")
+		started := time.Now()
+		if traceFixtures {
+			fmt.Fprintf(os.Stderr, "FULL_ORACLE_BEGIN %s\n", s.Name)
 		}
-		v := oracleFixtureVerdictWithDeadline(t, s)
+		deadlock := isDeadlockFixtureSuite(s)
+		v := fullOracleFixtureVerdict(s)
+		if traceFixtures {
+			fmt.Fprintf(os.Stderr, "FULL_ORACLE_END %s pass=%t elapsed=%s\n", s.Name, v.passed, time.Since(started))
+		}
 		mu.Lock()
-		defer mu.Unlock()
 		verdicts = append(verdicts, v)
 		if v.passed {
 			pass++
@@ -334,71 +318,38 @@ func TestCuratedOracle(t *testing.T) {
 				deadlockFail++
 			}
 		}
+		mu.Unlock()
+		if !v.passed {
+			t.Errorf("fixture fails checked-in expectations (%d missing, %d unexpected)", len(v.missing), len(v.unexpected))
+			for _, m := range v.missing {
+				t.Errorf("    MISS: %s", m)
+			}
+			for _, u := range v.unexpected {
+				t.Errorf("    FALSE+: %s", u)
+			}
+		}
 	})
 }
 
-// TestCuratedGate is the hard regression gate for the curated oracle: it pins the
-// set of fixtures that exercise type-name / scope resolution so those wins cannot
-// silently regress.
-func TestCuratedGate(t *testing.T) {
-	// Fixtures whose curated truth is reached only when a module-local named type
-	// resolves structurally: union-alias discriminant narrowing and
-	// type-name-in-scope resolution.
-	mustPass := []string{
-		// Union-alias discriminant narrowing: x.kind == "a" refines the named union
-		// AB to variant A so the variant-A field access type-checks clean.
-		"narrowing/union-discriminated-literal",
-		// Discriminant narrowing detecting a wrong-variant method: a.kind == "dog"
-		// refines Animal to Dog, so a.meow() is the curated expect-error.
-		"narrowing/discriminator-wrong-method",
-		// A named non-generic alias used as a function return type resolves
-		// structurally rather than to an unresolved Ref.
-		"regression/type-alias-function-return",
-		// A generic type alias instantiation resolves through the module scope.
-		"regression/generic-type-alias-instantiate",
-		// Strict-any proof boundary with exact-call entry values: the provider may
-		// export `data_func:any`, but the concrete call path with a literal string
-		// must remain clean without teaching the driver a page-registry special case.
-		"narrowing/dynamic-registry-renderer-guard",
-		// Cross-module aliases must resolve in parameter and return annotation
-		// positions, rather than degrading an imported type to any.
-		"modules/imported-qualified-type-alias-signature",
-		// A host manifest's ambient global and its module-qualified type name are
-		// separate resolution paths; both must remain available to consumers.
-		"modules/host-global-qualified-type",
-		// An M-table field assigned from a stable local function must retain the
-		// inferred function signature through export and require.
-		"modules/imported-stable-local-function-export",
+func TestFullOracleRejectsCheckerInfrastructureDiagnostic(t *testing.T) {
+	wantErrors := 1
+	suite := namedSuite{
+		Name:  "infrastructure-failure-must-not-match-error-count",
+		Suite: fixtureSuite{Check: &fixtureCheck{Errors: &wantErrors}},
+	}
+	diagnostic := diag.Diagnostic{
+		Position: diag.Position{File: "main.lua"},
+		Code:     diag.Code("check"),
+		Message:  "canonical solver failed",
+		Severity: diag.SeverityError,
 	}
 
-	suites, err := discoverFixtures("testdata/fixtures")
-	if err != nil {
-		t.Fatalf("discovering fixtures: %v", err)
+	verdict := fullOracleVerdictFromDiagnostics(suite, []diag.Diagnostic{diagnostic}, "main.lua")
+	if verdict.passed {
+		t.Fatal("checker infrastructure diagnostic satisfied a fixture error-count expectation")
 	}
-	byName := make(map[string]namedSuite, len(suites))
-	for _, s := range suites {
-		byName[s.Name] = s
-	}
-
-	for _, name := range mustPass {
-		name := name
-		t.Run(name, func(t *testing.T) {
-			s, ok := byName[name]
-			if !ok {
-				t.Fatalf("gate fixture %q not found", name)
-			}
-			diags, entry := fixtureDiagnostics(s)
-			v := judgeAgainstCuratedExpectations(s, diags, entry)
-			if !v.passed {
-				t.Errorf("%s: fixture fails curated truth (%d missing, %d unexpected)", name, len(v.missing), len(v.unexpected))
-				for _, m := range v.missing {
-					t.Errorf("    MISS: %s", m)
-				}
-				for _, u := range v.unexpected {
-					t.Errorf("    FALSE+: %s", u)
-				}
-			}
-		})
+	if len(verdict.unexpected) != 1 || !strings.Contains(verdict.unexpected[0], "checker infrastructure failure") {
+		t.Fatalf("unexpected infrastructure verdict: %#v", verdict)
 	}
 }
 

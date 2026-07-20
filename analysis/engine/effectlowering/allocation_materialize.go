@@ -24,29 +24,69 @@ type MaterializedStaticAllocation struct {
 	KeySpace   *keyspace.KeySpace
 }
 
-func MaterializeStaticAllocation(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, point cfg.Point, template signature.ReturnAllocationTemplate) (MaterializedStaticAllocation, bool) {
-	if reg == nil || ks == nil || point == 0 || template.Root == "" || len(template.Objects) == 0 {
+func MaterializeStaticAllocation(reg *axis.Registry, typeValues *typevalue.Cache, ks *keyspace.KeySpace, point cfg.Point, template signature.ReturnAllocationTemplate, exactIdentities map[signature.AllocationTemplateID]identity.Term) (MaterializedStaticAllocation, bool) {
+	if reg == nil || ks == nil || point == 0 {
 		return MaterializedStaticAllocation{}, false
 	}
-	var rootType typ.Type
-	for _, object := range template.Objects {
-		if object.ID == template.Root {
-			rootType = object.Type
-			break
+	identities := allocationIdentityResolver{point: point, exact: exactIdentities}
+	if exactIdentities != nil {
+		if len(exactIdentities) != len(template.Objects) {
+			return MaterializedStaticAllocation{}, false
+		}
+		for _, object := range template.Objects {
+			if object.ID == "" {
+				return MaterializedStaticAllocation{}, false
+			}
+			if _, concrete := exactIdentities[object.ID].Concrete(); !concrete {
+				return MaterializedStaticAllocation{}, false
+			}
 		}
 	}
-	if rootType == nil || typ.ContainsTypeParam(rootType) {
+	result, fn, ok := staticAllocationResult(reg, typeValues, template, identities)
+	if !ok {
 		return MaterializedStaticAllocation{}, false
 	}
-	fn := typ.Func().Returns(rootType).Build()
 	effects := signature.OperationalEffects{ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{template}}
-	result := returnValueFromSignatureTypeCached(reg, typeValues, fn, rootType)
-	result = operationalReturnAllocationValue(reg, typeValues, &effects, fn, point, template.ReturnIndex, result)
 	ctx := transfer.NodeContext{Registry: reg, Point: point}
-	objects := operationalHeapTableObjects(ctx, typeValues, ks, fn, effects)
-	placements := operationalAllocationPlacements(point, effects)
+	objects := operationalHeapTableObjectsWithIdentities(ctx, typeValues, ks, fn, effects, identities)
+	placements := operationalAllocationPlacementsWithIdentities(effects, identities)
 	if len(objects) == 0 || len(placements) == 0 {
 		return MaterializedStaticAllocation{}, false
 	}
 	return MaterializedStaticAllocation{Result: result, Objects: objects, Placements: placements, KeySpace: ks}, true
+}
+
+// StaticAllocationResult derives the relational return value of one allocation
+// transaction without constructing its concrete heap graph. Allocation terms
+// remain symbolic here; only MaterializeStaticAllocation may require concrete
+// identities at a boundary authority.
+func StaticAllocationResult(reg *axis.Registry, typeValues *typevalue.Cache, template signature.ReturnAllocationTemplate, exactIdentities map[signature.AllocationTemplateID]identity.Term) (product.Value, bool) {
+	if reg == nil || len(exactIdentities) != len(template.Objects) {
+		return product.Value{}, false
+	}
+	result, _, ok := staticAllocationResult(reg, typeValues, template, allocationIdentityResolver{exact: exactIdentities})
+	return result, ok
+}
+
+func staticAllocationResult(reg *axis.Registry, typeValues *typevalue.Cache, template signature.ReturnAllocationTemplate, identities allocationIdentityResolver) (product.Value, *typ.Function, bool) {
+	if reg == nil || template.Root == "" || len(template.Objects) == 0 {
+		return product.Value{}, nil, false
+	}
+	var rootType typ.Type
+	for _, object := range template.Objects {
+		if object.ID == "" || !identities.term(object.ID).Valid() {
+			return product.Value{}, nil, false
+		}
+		if object.ID == template.Root {
+			rootType = object.Type
+		}
+	}
+	if rootType == nil || typ.ContainsTypeParam(rootType) {
+		return product.Value{}, nil, false
+	}
+	fn := typ.Func().Returns(rootType).Build()
+	effects := signature.OperationalEffects{ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{template}}
+	result := returnValueFromSignatureTypeCached(reg, typeValues, fn, rootType)
+	result = operationalReturnAllocationValueWithIdentities(reg, typeValues, &effects, fn, identities, template.ReturnIndex, result)
+	return result, fn, true
 }

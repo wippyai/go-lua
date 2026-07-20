@@ -1,14 +1,24 @@
 package transformer
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
 // ResolvedPathInvalidation is a caller-bound invalidation request. It contains
@@ -46,6 +56,16 @@ type ResolvedIndexMutation struct {
 	Site            EffectSite
 }
 
+type ResolvedPathStore struct {
+	Assignment          factapply.ResolvedPathStoreWrite
+	Static              factapply.ResolvedPathStoreWrite
+	HasAssignment       bool
+	HasStatic           bool
+	Site                EffectSite
+	StaticHasAnnotation bool
+	Object              factapply.ResolvedPathStoreObject
+}
+
 // ResolvedEffectTarget is the caller-bound form of EffectTargetTerm. Path and
 // Allocation expose mutually exclusive payloads.
 type ResolvedEffectTarget struct {
@@ -69,15 +89,59 @@ type ResolvedEffect struct {
 	Invalidation ResolvedPathInvalidation
 	Mutation     ResolvedIndexMutation
 	Allocation   ResolvedAllocationTemplate
+	Object       factapply.ResolvedPathStoreObject
+	PathStore    ResolvedPathStore
 }
 
 // ResolvedAllocationTemplate is the specialization handoff for one shared
 // allocation node. Result and heap/fresh lowering must use this same site and
 // template identity.
 type ResolvedAllocationTemplate struct {
-	Site     operationplan.SignatureAllocationSite
-	Template operationplan.SignatureAllocationOperation
-	Result   product.Value
+	Site       operationplan.SignatureAllocationSite
+	Template   operationplan.SignatureAllocationOperation
+	Result     product.Value
+	identities map[signature.AllocationTemplateID]identity.Term
+}
+
+// freezeTransaction is the allocation materialization fence. The route-owned
+// authority substitutes every arena-owned AllocationTerm before the concrete
+// heap graph is constructed, so result, heap, placement, and freshness cannot
+// split across identity namespaces.
+
+func (a ResolvedAllocationTemplate) freezeTransaction(reg *axis.Registry, keys *keyspace.KeySpace, allocations *state.BoundaryAllocationAuthority) (factapply.AllocationTemplateTransaction, error) {
+	if allocations == nil || len(a.identities) == 0 {
+		return factapply.AllocationTemplateTransaction{}, fmt.Errorf("transformer: allocation transaction has no boundary authority")
+	}
+	concrete := make(map[signature.AllocationTemplateID]identity.Term, len(a.identities))
+	for name, term := range a.identities {
+		template, symbolic := term.Allocation()
+		if !symbolic {
+			return factapply.AllocationTemplateTransaction{}, fmt.Errorf("transformer: allocation transaction retained a non-template identity")
+		}
+		actual, exact := allocations.RebaseAllocation(template)
+		if !exact {
+			return factapply.AllocationTemplateTransaction{}, fmt.Errorf("transformer: allocation transaction is outside boundary authority")
+		}
+		concrete[name] = identity.ConcreteTerm(actual)
+	}
+	materialized, ok := effectlowering.MaterializeStaticAllocation(
+		reg, nil, keys, cfg.Point(a.Site.Ordinal), a.Template.Template(), concrete,
+	)
+	if !ok {
+		return factapply.AllocationTemplateTransaction{}, fmt.Errorf("transformer: allocation transaction failed concrete boundary materialization")
+	}
+	rootTerm, rootBound := concrete[a.Template.Template().Root]
+	rootID, rootConcrete := rootTerm.Concrete()
+	if !rootBound || !rootConcrete {
+		return factapply.AllocationTemplateTransaction{}, fmt.Errorf("transformer: allocation transaction has no concrete root image")
+	}
+	expected := product.Set(reg, a.Result, identity.Key, identity.Singleton(rootID))
+	if !product.Equal(reg, materialized.Result, expected) {
+		return factapply.AllocationTemplateTransaction{}, fmt.Errorf("transformer: allocation transaction diverged from its symbolic result")
+	}
+	return factapply.NewAllocationTemplateTransaction(reg, factapply.AllocationTemplateMaterialization{
+		Result: materialized.Result, Objects: materialized.Objects, Placements: materialized.Placements, KeySpace: materialized.KeySpace,
+	})
 }
 
 // EffectContribution certifies the boundary lanes emitted by one resolved
@@ -167,8 +231,26 @@ func presentEffectBoundaryKinds(fragment summary.Summary) map[callboundary.Bound
 	return boundaryKinds
 }
 
+type effectValueResolver func(ValueTerm) (product.Value, bool)
+
+// resolve is the concrete adapter for the canonical effect assembler. Value
+// syntax is owned by Arena's value algebra; effect assembly only consumes the
+// resulting leaves.
 func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context SpecializationContext) (ResolvedEffect, bool) {
+	return a.resolveWithValues(term, cursor, func(value ValueTerm) (product.Value, bool) {
+		return a.terms.evalValue(value, cursor, context)
+	})
+}
+
+// resolveWithValues assembles one typed effect from already-resolved semantic
+// ValueTerm leaves and structural paths. Guarded execution supplies leaves
+// from guardedValueDecision; concrete callers supply the canonical scalar
+// value algebra through resolve above. There is only one effect assembly law.
+func (a *EffectArena) resolveWithValues(term EffectTerm, cursor BindingCursor, resolveValue effectValueResolver) (ResolvedEffect, bool) {
 	if a == nil || a.terms == nil || term == 0 || int(term) >= len(a.nodes) {
+		return ResolvedEffect{}, false
+	}
+	if resolveValue == nil {
 		return ResolvedEffect{}, false
 	}
 	node := a.nodes[term]
@@ -181,9 +263,31 @@ func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context Spe
 		if !ok {
 			return ResolvedEffect{}, false
 		}
-		return ResolvedEffect{Kind: node.kind, Allocation: ResolvedAllocationTemplate{Site: op.Site(), Template: op, Result: result}}, true
+		return ResolvedEffect{Kind: node.kind, Allocation: ResolvedAllocationTemplate{
+			Site: op.Site(), Template: op, Result: result,
+			identities: cloneAllocationIdentityMap(a.terms.allocations[node.allocation].identities),
+		}}, true
 	}
-	invalidation, ok := a.resolveInvalidation(node.invalidation, cursor, context)
+	if node.kind == EffectObjectMaterialization {
+		object, ok := a.resolvePathStoreObject(node.pathStoreObject, cursor, resolveValue)
+		if !ok || node.site.Owner == 0 || len(object.Heaps) == 0 || len(object.Entries) != 0 || object.ListFloor != 0 {
+			return ResolvedEffect{}, false
+		}
+		return ResolvedEffect{Kind: node.kind, Object: object}, true
+	}
+	if node.kind == EffectPathStore {
+		assignment, assignmentOK := a.resolvePathStoreWrite(node.pathStoreAssignment, node.pathStoreHasAssignment, cursor, resolveValue)
+		static, staticOK := a.resolvePathStoreWrite(node.pathStoreStatic, node.pathStoreHasStatic, cursor, resolveValue)
+		object, objectOK := a.resolvePathStoreObject(node.pathStoreObject, cursor, resolveValue)
+		if !assignmentOK || !staticOK || !objectOK || node.site.Owner == 0 {
+			return ResolvedEffect{}, false
+		}
+		return ResolvedEffect{Kind: node.kind, PathStore: ResolvedPathStore{
+			Assignment: assignment, Static: static, HasAssignment: node.pathStoreHasAssignment, HasStatic: node.pathStoreHasStatic,
+			Site: node.site, StaticHasAnnotation: node.pathStoreStaticHasAnnotation, Object: object,
+		}}, true
+	}
+	invalidation, ok := a.resolveInvalidation(node.invalidation, cursor, resolveValue)
 	if !ok {
 		return ResolvedEffect{}, false
 	}
@@ -198,11 +302,11 @@ func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context Spe
 		return ResolvedEffect{}, false
 	}
 	table, _ := tableTarget.Path()
-	key, ok := a.terms.evalValue(node.key, cursor, context)
+	key, ok := resolveValue(node.key)
 	if !ok {
 		return ResolvedEffect{}, false
 	}
-	value, ok := a.terms.evalValue(node.value, cursor, context)
+	value, ok := resolveValue(node.value)
 	if !ok {
 		return ResolvedEffect{}, false
 	}
@@ -226,7 +330,78 @@ func (a *EffectArena) resolve(term EffectTerm, cursor BindingCursor, context Spe
 	}}, true
 }
 
-func (a *EffectArena) resolveInvalidation(config InvalidatePathConfig, cursor BindingCursor, context SpecializationContext) (ResolvedPathInvalidation, bool) {
+func (a *EffectArena) resolvePathStoreWrite(config PathStoreWriteConfig, present bool, cursor BindingCursor, resolveValue effectValueResolver) (factapply.ResolvedPathStoreWrite, bool) {
+	if !present {
+		return factapply.ResolvedPathStoreWrite{}, true
+	}
+	target, targetOK := a.terms.evalPath(config.Target, cursor)
+	value, valueOK := resolveValue(config.Value)
+	var source pathdom.Path
+	sourceOK := true
+	if config.HasSourcePath {
+		source, sourceOK = a.terms.evalPath(config.SourcePath, cursor)
+	}
+	if !targetOK || !valueOK || !sourceOK {
+		return factapply.ResolvedPathStoreWrite{}, false
+	}
+	return factapply.ResolvedPathStoreWrite{
+		Target: target, Value: value, SourcePath: source, HasSourcePath: config.HasSourcePath, SuppressProof: config.SuppressProof,
+	}, true
+}
+
+func (a *EffectArena) resolvePathStoreObject(config PathStoreObjectConfig, cursor BindingCursor, resolveValue effectValueResolver) (factapply.ResolvedPathStoreObject, bool) {
+	object := factapply.ResolvedPathStoreObject{
+		Heaps:     make([]factapply.ResolvedPathStoreHeapObject, len(config.Heaps)),
+		Entries:   make([]factapply.ResolvedPathStoreWrite, len(config.Entries)),
+		ListFloor: config.ListFloor,
+	}
+	for heapIndex, heapConfig := range config.Heaps {
+		root, ok := resolveValue(heapConfig.Root)
+		if !ok {
+			return factapply.ResolvedPathStoreObject{}, false
+		}
+		heap := factapply.ResolvedPathStoreHeapObject{Root: root, Members: make([]factapply.ResolvedPathStoreHeapMember, len(heapConfig.Members)), StableShape: heapConfig.StableShape}
+		for memberIndex, memberConfig := range heapConfig.Members {
+			value, ok := resolveValue(memberConfig.Value)
+			if !ok {
+				return factapply.ResolvedPathStoreObject{}, false
+			}
+			member := factapply.ResolvedPathStoreHeapMember{Suffix: append([]segment.Segment(nil), memberConfig.Suffix...), Value: value, HasExpected: memberConfig.HasExpected}
+			if memberConfig.HasExpected {
+				member.Expected, ok = resolveValue(memberConfig.Expected)
+				if !ok {
+					return factapply.ResolvedPathStoreObject{}, false
+				}
+			}
+			heap.Members[memberIndex] = member
+		}
+		object.Heaps[heapIndex] = heap
+	}
+	for entryIndex, entryConfig := range config.Entries {
+		target, targetOK := a.terms.evalPath(entryConfig.Target, cursor)
+		value, valueOK := resolveValue(entryConfig.Value)
+		if !targetOK || !valueOK {
+			return factapply.ResolvedPathStoreObject{}, false
+		}
+		entry := factapply.ResolvedPathStoreWrite{Target: target, Value: value, HasSourcePath: entryConfig.HasSourcePath, SuppressProof: entryConfig.SuppressProof, HasExpected: entryConfig.HasExpected}
+		if entryConfig.HasSourcePath {
+			entry.SourcePath, targetOK = a.terms.evalPath(entryConfig.SourcePath, cursor)
+			if !targetOK {
+				return factapply.ResolvedPathStoreObject{}, false
+			}
+		}
+		if entryConfig.HasExpected {
+			entry.Expected, valueOK = resolveValue(entryConfig.Expected)
+			if !valueOK {
+				return factapply.ResolvedPathStoreObject{}, false
+			}
+		}
+		object.Entries[entryIndex] = entry
+	}
+	return object, true
+}
+
+func (a *EffectArena) resolveInvalidation(config InvalidatePathConfig, cursor BindingCursor, resolveValue effectValueResolver) (ResolvedPathInvalidation, bool) {
 	targetRef, ok := a.resolveTarget(config.Target, cursor)
 	if !ok {
 		return ResolvedPathInvalidation{}, false
@@ -239,7 +414,7 @@ func (a *EffectArena) resolveInvalidation(config InvalidatePathConfig, cursor Bi
 	}
 	if config.Precise != nil {
 		table, tableOK := a.terms.evalPath(config.Precise.Table, cursor)
-		key, keyOK := a.terms.evalValue(config.Precise.Key, cursor, context)
+		key, keyOK := resolveValue(config.Precise.Key)
 		if !tableOK || !keyOK {
 			return ResolvedPathInvalidation{}, false
 		}
@@ -264,6 +439,20 @@ func (a *EffectArena) resolveTarget(target EffectTargetTerm, cursor BindingCurso
 	if !ok {
 		return ResolvedEffectTarget{}, false
 	}
-	allocation := ResolvedAllocationTemplate{Site: op.Site(), Template: op, Result: result}
+	allocation := ResolvedAllocationTemplate{
+		Site: op.Site(), Template: op, Result: result,
+		identities: cloneAllocationIdentityMap(a.terms.allocations[target.allocation].identities),
+	}
 	return ResolvedEffectTarget{kind: effectTargetAllocation, allocation: allocation}, true
+}
+
+func cloneAllocationIdentityMap(input map[signature.AllocationTemplateID]identity.Term) map[signature.AllocationTemplateID]identity.Term {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[signature.AllocationTemplateID]identity.Term, len(input))
+	for name, term := range input {
+		out[name] = term
+	}
+	return out
 }

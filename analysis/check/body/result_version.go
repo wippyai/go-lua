@@ -1,6 +1,7 @@
 package body
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding"
@@ -51,6 +52,10 @@ func computeResultVersion(s *Static, config SolveConfig, entry state.State, init
 }
 
 func computeResultVersionLineage(s *Static, config SolveConfig, entry state.State, initial transfer.InitialState) (ResultVersionLineage, error) {
+	return computeResultVersionLineageWithApplications(s, config, entry, initial, nil)
+}
+
+func computeResultVersionLineageWithApplications(s *Static, config SolveConfig, entry state.State, initial transfer.InitialState, applicationDependencies []ApplicationDependency) (ResultVersionLineage, error) {
 	if s == nil {
 		return ResultVersionLineage{}, nil
 	}
@@ -66,6 +71,10 @@ func computeResultVersionLineage(s *Static, config SolveConfig, entry state.Stat
 		if config.Context != nil && config.Context.Err() != nil {
 			return ResultVersionLineage{}, errors.Join(solve.ErrCanceled, err)
 		}
+		return ResultVersionLineage{}, err
+	}
+	dependencies, err := canonicalApplicationDependencies(applicationDependencies)
+	if err != nil {
 		return ResultVersionLineage{}, err
 	}
 	// Summary payloads, product values, entry/initial states, and several type
@@ -84,7 +93,6 @@ func computeResultVersionLineage(s *Static, config SolveConfig, entry state.Stat
 		stateLanes: state.CloneLanes(config.StateLanes),
 	}
 	w.writeClosedDynamicInvariants(config.ClosedDynamicAllValues)
-	w.writeInt("schedule", int(config.Schedule))
 	w.writeWidening(config)
 	w.writeState("entry", entry)
 	w.writeInitialStates(initial, s.cfg.Graph)
@@ -93,6 +101,7 @@ func computeResultVersionLineage(s *Static, config SolveConfig, entry state.Stat
 	} else {
 		w.writeSummaryInputDigests(config.SummaryInputDigests)
 	}
+	w.writeApplicationDependencies(dependencies)
 	if err := w.err(); err != nil {
 		return ResultVersionLineage{}, errors.Join(solve.ErrCanceled, err)
 	}
@@ -104,6 +113,52 @@ func computeResultVersionLineage(s *Static, config SolveConfig, entry state.Stat
 		inputs:   inputs,
 		complete: complete,
 	}, nil
+}
+
+func canonicalApplicationDependencies(in []ApplicationDependency) ([]ApplicationDependency, error) {
+	out := append([]ApplicationDependency(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		left, right := out[i], out[j]
+		if left.CallPoint != right.CallPoint {
+			return left.CallPoint < right.CallPoint
+		}
+		if left.CallOccurrence != right.CallOccurrence {
+			return left.CallOccurrence < right.CallOccurrence
+		}
+		if order := bytes.Compare(left.Target[:], right.Target[:]); order != 0 {
+			return order < 0
+		}
+		return left.SemanticVersion < right.SemanticVersion
+	})
+	write := 0
+	for _, dependency := range out {
+		if dependency.Target == (lexicalidentity.StableLexicalBodyID{}) || dependency.SemanticVersion == 0 {
+			return nil, fmt.Errorf("body: invalid application dependency")
+		}
+		if write != 0 && sameApplicationDependencyEdge(out[write-1], dependency) {
+			if out[write-1].SemanticVersion != dependency.SemanticVersion {
+				return nil, fmt.Errorf("body: conflicting application dependency at call point %d occurrence %d", dependency.CallPoint, dependency.CallOccurrence)
+			}
+			continue
+		}
+		out[write] = dependency
+		write++
+	}
+	return out[:write], nil
+}
+
+func sameApplicationDependencyEdge(left, right ApplicationDependency) bool {
+	return left.Target == right.Target && left.CallPoint == right.CallPoint && left.CallOccurrence == right.CallOccurrence
+}
+
+func (w *bodyDigestWriter) writeApplicationDependencies(dependencies []ApplicationDependency) {
+	w.writeInt("application-dependency-count", len(dependencies))
+	for _, dependency := range dependencies {
+		w.writeInt("application-dependency-call-point", int(dependency.CallPoint))
+		w.writeUint64("application-dependency-call-occurrence", uint64(dependency.CallOccurrence))
+		w.writeBytes("application-dependency-target", dependency.Target[:])
+		w.writeUint64("application-dependency-semantic-version", dependency.SemanticVersion)
+	}
 }
 
 func (w *bodyDigestWriter) writeWidening(config SolveConfig) {
@@ -519,24 +574,34 @@ func (w *bodyDigestWriter) writeGraph(graph cfg.Graph) {
 	w.writeInt("exit", ord[graph.Exit()])
 	for _, point := range points {
 		w.writeInt("graph-point", ord[point])
-		succs := append([]cfg.Point(nil), cfg.SuccessorsReadOnly(graph, point)...)
-		sort.Slice(succs, func(i, j int) bool {
-			leftCond, leftHas := graph.EdgeCond(point, succs[i])
-			rightCond, rightHas := graph.EdgeCond(point, succs[j])
-			if leftHas != rightHas {
-				return !leftHas && rightHas
+		type successorEdge struct {
+			to      cfg.Point
+			cond    bool
+			hasCond bool
+		}
+		successors := cfg.SuccessorsReadOnly(graph, point)
+		conditions := cfg.SuccessorConditionsReadOnly(graph, point)
+		edges := make([]successorEdge, len(successors))
+		for index, successor := range successors {
+			edges[index].to = successor
+			if len(conditions) == len(successors) {
+				edges[index].cond, edges[index].hasCond = conditions[index], true
 			}
-			if leftCond != rightCond {
-				return !leftCond && rightCond
+		}
+		sort.Slice(edges, func(i, j int) bool {
+			if edges[i].hasCond != edges[j].hasCond {
+				return !edges[i].hasCond && edges[j].hasCond
 			}
-			return ord[succs[i]] < ord[succs[j]]
+			if edges[i].cond != edges[j].cond {
+				return !edges[i].cond && edges[j].cond
+			}
+			return ord[edges[i].to] < ord[edges[j].to]
 		})
-		w.writeInt("succ-count", len(succs))
-		for _, succ := range succs {
-			cond, hasCond := graph.EdgeCond(point, succ)
-			w.writeInt("succ", ord[succ])
-			w.writeBool("succ-has-cond", hasCond)
-			w.writeBool("succ-cond", cond)
+		w.writeInt("succ-count", len(edges))
+		for _, edge := range edges {
+			w.writeInt("succ", ord[edge.to])
+			w.writeBool("succ-has-cond", edge.hasCond)
+			w.writeBool("succ-cond", edge.cond)
 		}
 	}
 }
@@ -946,7 +1011,7 @@ func (w *bodyDigestWriter) writeStringSlice(label string, values []string) {
 func (w *bodyDigestWriter) writeClosedDynamicInvariants(in []factapply.ClosedDynamicAllValueInvariant) {
 	entries := make([]string, 0, len(in))
 	for _, invariant := range in {
-		entries = append(entries, w.pathString(invariant.Container)+"=>"+w.pathString(invariant.Table))
+		entries = append(entries, w.pathString(invariant.Container)+"=>"+w.pathString(invariant.Table)+"@"+string(invariant.Site))
 	}
 	sort.Strings(entries)
 	w.writeInt("closed-dynamic-count", len(entries))

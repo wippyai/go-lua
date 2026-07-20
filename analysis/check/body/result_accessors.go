@@ -177,9 +177,8 @@ func (r *Result) computeNormalReachability() map[cfg.Point]bool {
 }
 
 // EdgeCanCompleteNormally reports whether the selected outgoing edge can carry
-// a non-bottom state in this solved body. It reuses the same node and edge
-// transfer functions as the body solve so summary projection can distinguish
-// syntactic bypasses from paths proven unreachable by the analyzed state.
+// a non-bottom state in this solved body. Branch normality is an immutable
+// stabilized coordinate; this query never replays node or edge semantics.
 func (r *Result) EdgeCanCompleteNormally(from, to cfg.Point) bool {
 	if normal, ok := r.publishedEdgeNormal(from, to); ok {
 		return normal
@@ -201,51 +200,7 @@ func (r *Result) EdgeCanCompleteNormally(from, to cfg.Point) bool {
 		}
 		return r.PointReachable(from)
 	}
-	// A Result assembled by a narrow unit test may not have passed through the
-	// publication path. Completed body results always read PublishedFacts.
-	return r.computeEdgeCanCompleteNormally(from, to)
-}
-
-func (r *Result) computeEdgeCanCompleteNormally(from, to cfg.Point) bool {
-	if r == nil || r.cfg == nil || r.registry == nil || r.boundaryXfer == nil || r.edgeXfer == nil {
-		return true
-	}
-	graph := r.cfg.Graph
-	if graph == nil {
-		return true
-	}
-	in, ok := r.solvedStateAt(from)
-	if !ok {
-		return false
-	}
-	domain, err := state.TryDomainWithOptionalLanes(r.registry, r.stateLanes)
-	if err != nil {
-		domain = state.Domain(r.registry)
-	}
-	if domain.Equal(state.NormalizeForDomain(domain, in), domain.Bottom()) {
-		return false
-	}
-	out := r.boundaryXfer(transfer.NodeContext{
-		Graph:    graph,
-		Registry: r.registry,
-		Point:    from,
-		Node:     graph.Node(from),
-		Read: func(point cfg.Point) state.State {
-			if st, ok := r.solvedStateAt(point); ok {
-				return st
-			}
-			return domain.Bottom()
-		},
-	}, in)
-	cond, hasCond := graph.EdgeCond(from, to)
-	hasCond = hasCond && graph.IsBranch(from)
-	out = r.edgeXfer(transfer.EdgeContext{
-		Graph:    graph,
-		Registry: r.registry,
-		Edge:     cfg.Edge{From: from, To: to, Cond: cond},
-		HasCond:  hasCond,
-	}, out)
-	return !domain.Equal(state.NormalizeForDomain(domain, out), domain.Bottom())
+	return false
 }
 
 func (r *Result) solvedStateAt(point cfg.Point) (state.State, bool) {
@@ -700,10 +655,15 @@ func (r *Result) FunctionResults() []*Result {
 	return append([]*Result(nil), r.functions...)
 }
 
-// IsCallContextResult reports whether this result was solved for one concrete
-// call context rather than the function's context-independent summary body.
-func (r *Result) IsCallContextResult() bool {
-	return r != nil && r.callContext
+// ApplicationDependency records one exact direct child application consumed
+// by a canonical parent application. Its identity is parent-local and semantic:
+// the lexical call edge plus target body. The frozen scheduler route is
+// deliberately absent because it is lookup authority, not cache lineage.
+type ApplicationDependency struct {
+	Target          lexicalidentity.StableLexicalBodyID
+	CallPoint       cfg.Point
+	CallOccurrence  uint32
+	SemanticVersion uint64
 }
 
 // HasBodyOwnedParamObligations reports whether this function body's solved
@@ -776,17 +736,6 @@ func WithFunctionResults(result *Result, functions []*Result) *Result {
 		return nil
 	}
 	result.functions = append([]*Result(nil), functions...)
-	return result
-}
-
-// WithCallContextResult marks result as the materialization for one caller's
-// argument/effect context. Diagnostics use this to keep cross-boundary reports
-// owned by the call site instead of also reporting inside the specialized body.
-func WithCallContextResult(result *Result) *Result {
-	if result == nil {
-		return nil
-	}
-	result.callContext = true
 	return result
 }
 

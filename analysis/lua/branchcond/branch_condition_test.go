@@ -647,6 +647,96 @@ func TestSufficientChecksOnEdgeExtractsTruthyDisjunctCases(t *testing.T) {
 	}
 }
 
+func TestSufficientCheckArmsKeepsTypeEqualityDisjunctsSeparate(t *testing.T) {
+	xUserdata := ident("x")
+	xTable := ident("x")
+	expr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(xUserdata), Rhs: stringLit("userdata")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(xTable), Rhs: stringLit("table")},
+	}
+	bindings := bindReturn(expr, "type")
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, xUserdata), "x")
+
+	arms, ok := SufficientCheckArms(expr, bindings, true)
+	if !ok {
+		t.Fatalf("SufficientCheckArms did not recognize the top-level disjunction")
+	}
+	if len(arms) != 2 {
+		t.Fatalf("SufficientCheckArms returned %d arms, want 2: %#v", len(arms), arms)
+	}
+	if len(arms[0]) != 1 || len(arms[1]) != 1 {
+		t.Fatalf("arms = %#v, want exactly one check per arm", arms)
+	}
+	assertCheck(t, arms[0][0].Check, CheckTypeEqual, xPath, "userdata")
+	assertCheck(t, arms[1][0].Check, CheckTypeEqual, xPath, "table")
+	for i, arm := range arms {
+		if !arm[0].Edge || !arm[0].Polarity {
+			t.Fatalf("arm %d = %#v, want true outer edge and true leaf polarity", i, arm)
+		}
+	}
+}
+
+func TestSufficientCheckArmsAcceptsMixedTypeAndLiteralDisjunction(t *testing.T) {
+	xTable := ident("x")
+	xLiteral := ident("x")
+	expr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(xTable), Rhs: stringLit("table")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: xLiteral, Rhs: stringLit("special")},
+	}
+	bindings := bindReturn(expr, "type")
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, xTable), "x")
+
+	arms, ok := SufficientCheckArms(expr, bindings, true)
+	if !ok {
+		t.Fatalf("SufficientCheckArms did not recognize the top-level disjunction")
+	}
+	if len(arms) != 2 {
+		t.Fatalf("SufficientCheckArms returned %d arms, want 2: %#v", len(arms), arms)
+	}
+	assertCheck(t, arms[0][0].Check, CheckTypeEqual, xPath, "table")
+	assertLiteralCheck(t, arms[1][0].Check, CheckLiteralEqual, xPath, "special")
+}
+
+func TestSufficientCheckArmsReportsOpaqueArmInsteadOfDroppingIt(t *testing.T) {
+	xTable := ident("x")
+	expr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(xTable), Rhs: stringLit("table")},
+		Rhs:      call("mystery"),
+	}
+	bindings := bindReturn(expr, "type", "mystery")
+
+	arms, ok := SufficientCheckArms(expr, bindings, true)
+	if !ok {
+		t.Fatalf("SufficientCheckArms did not recognize the top-level disjunction")
+	}
+	if len(arms) != 2 {
+		t.Fatalf("SufficientCheckArms returned %d arms, want 2: %#v", len(arms), arms)
+	}
+	if len(arms[0]) != 1 {
+		t.Fatalf("recognized arm = %#v, want one type-equality check", arms[0])
+	}
+	if len(arms[1]) != 0 {
+		t.Fatalf("unrecognized arm = %#v, want an explicit empty arm, not a dropped one", arms[1])
+	}
+}
+
+func TestSufficientCheckArmsFalseEdgeOfDisjunctionIsNotArmed(t *testing.T) {
+	x := ident("x")
+	expr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(x), Rhs: stringLit("userdata")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: ident("x"), Rhs: stringLit("table")},
+	}
+	bindings := bindReturn(expr, "type")
+
+	if arms, ok := SufficientCheckArms(expr, bindings, false); ok || arms != nil {
+		t.Fatalf("SufficientCheckArms(false) = %#v, %v, want not recognized: the false edge of an `or` is a conjunction of negations, already handled by ImpliedChecksOnEdge", arms, ok)
+	}
+}
+
 func TestNormalizeLiteralComparisons(t *testing.T) {
 	tests := []struct {
 		name     string

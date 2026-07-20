@@ -1,6 +1,7 @@
 package solver
 
 import (
+	"math"
 	"strconv"
 	"testing"
 
@@ -113,9 +114,8 @@ func TestLinearBackendNeverInvalid(t *testing.T) {
 }
 
 func TestLinearBackendOverflowStaysSound(t *testing.T) {
-	// Bounds near the int64 extremes force the Fourier-Motzkin combination to
-	// overflow; the backend must abandon the proof and return Unknown rather than
-	// panic or report a spurious contradiction.
+	// Bounds near the int64 extremes are handled exactly. This particular tighter
+	// goal remains unproven and must not become a spurious decision.
 	const big = int64(1) << 62
 	b := NewLinearBackend()
 	assertAll(b,
@@ -235,5 +235,149 @@ func TestPortfolioSumEntailment(t *testing.T) {
 
 	if got := DefaultPortfolio().Entails(asserted, goal); got != decision.Valid {
 		t.Fatalf("portfolio should prove i <= n via the linear backend, got %s", got)
+	}
+}
+
+func TestLinearBackendMoreThan32Variables(t *testing.T) {
+	// The old Fourier-Motzkin backend returned Unknown as soon as the combined
+	// proof system mentioned more than 32 variables.
+	b := NewLinearBackend()
+	const links = 48
+	for i := range links {
+		b.Assert(numeric.Le{X: key(chainVar(i)), Y: key(chainVar(i + 1)), C: -1})
+	}
+	if got := b.Entails(numeric.Le{X: key(chainVar(0)), Y: key(chainVar(links)), C: -links}); got != decision.Valid {
+		t.Fatalf("48-link entailment = %s, want Valid", got)
+	}
+}
+
+func TestLinearBackendMoreThan1024Rows(t *testing.T) {
+	// Loose, distinct floors keep the row set above the old cap; j>=0 is the
+	// strongest floor needed to discharge i+j<=n => i<=n.
+	b := NewLinearBackend()
+	b.Assert(numeric.NewSumLe(key("i"), key("j"), key("n"), 0))
+	for i := int64(1); i <= 1050; i++ {
+		b.Assert(numeric.GeConst{X: key("j"), C: -i})
+	}
+	b.Assert(numeric.GeConst{X: key("j"), C: 0})
+	if got := b.Entails(numeric.Le{X: key("i"), Y: key("n"), C: 0}); got != decision.Valid {
+		t.Fatalf("1052-row entailment = %s, want Valid", got)
+	}
+}
+
+func TestLinearBackendExactScaledSumResidue(t *testing.T) {
+	// This is outside difference logic: 2i+3j<=n with non-negative operands
+	// entails the weaker i+j<=n.
+	b := NewLinearBackend()
+	assertAll(b,
+		numeric.NewScaledLe(2, key("i"), 3, key("j"), key("n"), 0),
+		numeric.GeConst{X: key("i"), C: 0},
+		numeric.GeConst{X: key("j"), C: 0},
+	)
+	goal := numeric.NewSumLe(key("i"), key("j"), key("n"), 0)
+	if got := b.Entails(goal); got != decision.Valid {
+		t.Fatalf("scaled-sum entailment = %s, want Valid", got)
+	}
+}
+
+func TestLinearBackendFeasibilityOutcomes(t *testing.T) {
+	t.Run("infeasible assertions entail ex falso", func(t *testing.T) {
+		b := NewLinearBackend()
+		assertAll(b,
+			numeric.LeConst{X: key("x"), C: 0},
+			numeric.GeConst{X: key("x"), C: 1},
+		)
+		if got := b.Entails(numeric.Le{X: key("a"), Y: key("b"), C: -99}); got != decision.Valid {
+			t.Fatalf("infeasible assertions entailment = %s, want Valid", got)
+		}
+	})
+
+	t.Run("feasible unbounded system stays unknown", func(t *testing.T) {
+		b := NewLinearBackend()
+		b.Assert(numeric.GeConst{X: key("x"), C: 0})
+		if got := b.Entails(numeric.Le{X: key("x"), Y: key("y"), C: 0}); got != decision.Unknown {
+			t.Fatalf("unbounded entailment = %s, want Unknown", got)
+		}
+	})
+}
+
+func TestAffineSatisfiableSeparatesContradictionFromEntailment(t *testing.T) {
+	asserted := []numeric.NumericConstraint{
+		numeric.LeConst{X: key("x"), C: 0},
+		numeric.GeConst{X: key("x"), C: 1},
+	}
+	if AffineSatisfiable(asserted) {
+		t.Fatal("contradictory affine assertions reported satisfiable")
+	}
+	if !AffineSatisfiable([]numeric.NumericConstraint{
+		numeric.GeConst{X: key("x"), C: 1},
+		numeric.LeConst{X: key("x"), C: 9},
+	}) {
+		t.Fatal("satisfiable affine interval reported contradictory")
+	}
+}
+
+func TestLinearBackendDegenerateBlandTermination(t *testing.T) {
+	// Every active bound meets at zero and duplicate zero-RHS rows create ratio
+	// ties. Bland's canonical labels must terminate without cycling.
+	b := NewLinearBackend()
+	for range 12 {
+		assertAll(b,
+			numeric.NewScaledLe(2, key("i"), 1, key("j"), key("n"), 0),
+			numeric.GeConst{X: key("i"), C: 0},
+			numeric.GeConst{X: key("j"), C: 0},
+			numeric.LeConst{X: key("n"), C: 0},
+		)
+	}
+	if got := b.Entails(numeric.Le{X: key("i"), Y: key("n"), C: 0}); got != decision.Valid {
+		t.Fatalf("degenerate entailment = %s, want Valid", got)
+	}
+}
+
+func TestLinearBackendAssertionOrderDeterminism(t *testing.T) {
+	asserted := []numeric.NumericConstraint{
+		numeric.NewScaledLe(2, key("i"), 3, key("j"), key("n"), 4),
+		numeric.GeConst{X: key("i"), C: 0},
+		numeric.GeConst{X: key("j"), C: 0},
+		numeric.Le{X: key("n"), Y: key("limit"), C: 0},
+	}
+	goal := numeric.Le{X: key("i"), Y: key("limit"), C: 4}
+	decide := func(reverse bool) decision.Result {
+		b := NewLinearBackend()
+		if reverse {
+			for i := len(asserted) - 1; i >= 0; i-- {
+				b.Assert(asserted[i])
+			}
+		} else {
+			assertAll(b, asserted...)
+		}
+		return b.Entails(goal)
+	}
+	if forward, reverse := decide(false), decide(true); forward != decision.Valid || reverse != forward {
+		t.Fatalf("order decisions forward=%s reverse=%s, want both Valid", forward, reverse)
+	}
+}
+
+func TestLinearBackendStrictNegationBeyondInt64(t *testing.T) {
+	// Negating x-y<=MaxInt64 needs the exact bound -(MaxInt64+1). The old
+	// int64 normalization overflowed and returned Unknown even for an asserted
+	// goal.
+	b := NewLinearBackend()
+	goal := numeric.Le{X: key("x"), Y: key("y"), C: math.MaxInt64}
+	b.Assert(goal)
+	if got := b.Entails(goal); got != decision.Valid {
+		t.Fatalf("MaxInt64 goal entailment = %s, want Valid", got)
+	}
+}
+
+func BenchmarkLinearBackendScaledEntailment(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		solver := NewLinearBackend()
+		assertAll(solver,
+			numeric.NewScaledLe(2, key("i"), 3, key("j"), key("n"), 0),
+			numeric.GeConst{X: key("i"), C: 0},
+			numeric.GeConst{X: key("j"), C: 0},
+		)
+		_ = solver.Entails(numeric.NewSumLe(key("i"), key("j"), key("n"), 0))
 	}
 }

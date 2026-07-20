@@ -4,8 +4,7 @@
     "placement": {
       "min_owned_heap": 2,
       "min_shared_heap": 1
-    },
-    "skip": "pending: field-granular / derivation-sensitive / closure-capture placement precision (task 150f00f9) not yet landed"
+    }
   },
   "run": {
     "skip": "checker-only placement fixture"

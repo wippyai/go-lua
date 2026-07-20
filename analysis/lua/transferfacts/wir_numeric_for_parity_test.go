@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -168,6 +169,31 @@ end
 		return
 	}
 	t.Fatal("fixture did not produce a WIR numeric-for point")
+}
+
+func TestLowerWithWIRNumericForStructuralHeaderSurvivesInvalidBound(t *testing.T) {
+	fn, bindings, built := parseSemanticFunction(t, `
+function scan()
+	for i = "invalid", 10 do end
+end
+`)
+	body := wirlower.LowerFunction("numeric-for-invalid-bound", fn, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+
+	for _, point := range built.Graph.RPO() {
+		if !body.HasInstruction(point, wir.OpIterate) {
+			continue
+		}
+		root, ok := facts.RootAssignment(point)
+		if !ok || !root.DeclaredValueContracts() || root.Source().Kind != factflow.ValueSourceUnknown {
+			t.Fatalf("numeric-for structural marker at %d = %#v/%t", point, root, ok)
+		}
+		if got := facts.BranchNumFloorRefinements(point); len(got) != 0 {
+			t.Fatalf("invalid bound unexpectedly certified numeric floor: %#v", got)
+		}
+		return
+	}
+	t.Fatal("fixture did not produce a numeric-for structural header")
 }
 
 func requireNumericForStmt(t *testing.T, fn *ast.FunctionExpr, index int) *ast.NumberForStmt {

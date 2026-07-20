@@ -102,12 +102,12 @@ func TestAmbiguousBoundaryCapturesFailClosed(t *testing.T) {
 }
 
 func TestPlanOwnsOrderedBoundaryGlobalSymbols(t *testing.T) {
-	globals := []symbol.ID{19, 17}
+	globals := []BoundaryGlobal{{Symbol: 19}, {Symbol: 17}}
 	plan := New(cfg.New(), factflow.FactsInput{}).
 		WithBoundaryParams([]symbol.ID{7}).
 		WithBoundaryCaptures([]symbol.ID{11}).
 		WithBoundaryGlobals(globals)
-	globals[0] = 99
+	globals[0].Symbol = 99
 	if !plan.BoundaryGlobalsValid() {
 		t.Fatal("valid global boundary rejected")
 	}
@@ -121,8 +121,41 @@ func TestPlanOwnsOrderedBoundaryGlobalSymbols(t *testing.T) {
 	}
 }
 
+// TestWithBoundaryGlobalsStoresContractsCanonicallyRegardlessOfInputOrder
+// proves the boundary-globals seam is unrepresentable-misaligned: the symbol
+// and its contract travel together as one BoundaryGlobal unit through the
+// canonical sort, so BoundaryGlobals() and BoundaryGlobalContracts() stay
+// positionally aligned no matter what order the caller supplies pairs in.
+func TestWithBoundaryGlobalsStoresContractsCanonicallyRegardlessOfInputOrder(t *testing.T) {
+	reg := standard.Registry()
+	first := typevalue.LiteralString(reg, "first")
+	second := typevalue.LiteralString(reg, "second")
+
+	firstUseOrder := New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams(nil).
+		WithBoundaryCaptures(nil).
+		WithBoundaryGlobals([]BoundaryGlobal{{Symbol: 19, Contract: second}, {Symbol: 17, Contract: first}})
+	reversedOrder := New(cfg.New(), factflow.FactsInput{}).
+		WithBoundaryParams(nil).
+		WithBoundaryCaptures(nil).
+		WithBoundaryGlobals([]BoundaryGlobal{{Symbol: 17, Contract: first}, {Symbol: 19, Contract: second}})
+
+	for name, plan := range map[string]*Plan{"first-use order": firstUseOrder, "canonical order": reversedOrder} {
+		if !plan.BoundaryGlobalsValid() {
+			t.Fatalf("%s: valid global boundary rejected", name)
+		}
+		globals, contracts := plan.BoundaryGlobals(), plan.BoundaryGlobalContracts()
+		if len(globals) != 2 || globals[0] != 17 || globals[1] != 19 {
+			t.Fatalf("%s: boundary globals = %v, want canonical [17 19]", name, globals)
+		}
+		if len(contracts) != 2 || !product.Equal(reg, contracts[0], first) || !product.Equal(reg, contracts[1], second) {
+			t.Fatalf("%s: boundary global contracts = %#v, want [first second] aligned to canonical order", name, contracts)
+		}
+	}
+}
+
 func TestAmbiguousBoundaryGlobalsFailClosed(t *testing.T) {
-	for _, globals := range [][]symbol.ID{{0}, {17, 17}, {7}, {11}} {
+	for _, globals := range [][]BoundaryGlobal{{{Symbol: 0}}, {{Symbol: 17}, {Symbol: 17}}, {{Symbol: 7}}, {{Symbol: 11}}} {
 		plan := New(cfg.New(), factflow.FactsInput{}).
 			WithBoundaryParams([]symbol.ID{7}).
 			WithBoundaryCaptures([]symbol.ID{11}).

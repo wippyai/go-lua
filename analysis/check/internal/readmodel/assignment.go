@@ -8,8 +8,6 @@ import (
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -269,12 +267,12 @@ func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssig
 			value = explanation
 		}
 		value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
-		return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+		return value, true
 	}
 	if explanationOK {
 		value = explanation
 		value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
-		return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+		return value, true
 	}
 	if r.callResultSourceUnderSupplied(fact.Source) {
 		if reg := r.result.Registry(); reg != nil {
@@ -284,7 +282,7 @@ func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssig
 	if fact.Source.Kind == sourceprovenance.SourceExpression && fact.Expr != nil {
 		if value, ok = r.result.ExpressionValueBeforeBoundary(point, fact.Expr); ok {
 			value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
-			return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+			return value, true
 		}
 	}
 	if !ok {
@@ -292,13 +290,13 @@ func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssig
 			value, ok = r.result.ExpressionValueBeforeBoundary(point, fact.Expr)
 			if ok {
 				value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
-				return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+				return value, true
 			}
 		}
 		return product.Value{}, false
 	}
 	value = r.result.WithMemberReadNilWitness(point, fact.Expr, value)
-	return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+	return value, true
 }
 
 func assignmentNilableAccessEvidenceFromBody(evidence []body.NilableAccessEvidence) []readapi.NilableAccessEvidence {
@@ -526,7 +524,7 @@ func (r Reader) ordinaryAssignmentSourceValue(point cfg.Point, fact body.Ordinar
 	if fact.Source.Kind == sourceprovenance.SourceExpression && fact.Value != nil {
 		if value, ok := r.result.ExpressionValueBeforeBoundary(point, fact.Value); ok {
 			value = r.result.WithMemberReadNilWitness(point, fact.Value, value)
-			return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+			return value, true
 		}
 	}
 	if t, ok := body.LiteralExpressionType(fact.Value); ok && r.result != nil && r.result.Registry() != nil {
@@ -535,42 +533,19 @@ func (r Reader) ordinaryAssignmentSourceValue(point cfg.Point, fact body.Ordinar
 	}
 	if value, ok := r.SourceValue(point, fact.Source); ok {
 		value = r.result.WithMemberReadNilWitness(point, fact.Value, value)
-		return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+		return value, true
 	}
 	if fact.Value != nil {
 		if value, ok := r.result.ExpressionValueBeforeBoundary(point, fact.Value); ok {
 			value = r.result.WithMemberReadNilWitness(point, fact.Value, value)
-			return r.assignmentDeclaredTopValue(point, fact.Source, value), true
+			return value, true
 		}
 	}
 	return product.Value{}, false
 }
 
-func (r Reader) assignmentDeclaredTopValue(point cfg.Point, source sourceprovenance.ASTSource, value product.Value) product.Value {
-	expr := source.Expr
-	if r.result == nil || expr == nil || sourceprovenance.ConcreteRuntimeCastSource(source) || r.ValueHasUntrustedTopOrigin(value) {
-		return value
-	}
-	if r.ValueHasRuntimeValidationProof(value) {
-		return value
-	}
-	p, ok := r.result.ExpressionPath(expr)
-	if !ok || p.IsEmpty() {
-		return value
-	}
-	if r.pathHasPositiveRuntimeTypeGuard(point, p) {
-		return value
-	}
-	declared, ok := r.result.DeclaredPathTypeAt(point, p, true)
-	if !ok || declared == nil || !typ.IsAny(declared) {
-		return value
-	}
-	value = product.Set(r.result.Registry(), value, evidence.Key, evidence.ExplicitTop())
-	return product.Set(r.result.Registry(), value, assertion.Key, assertion.Any())
-}
-
 func (r Reader) assignmentSourceType(point cfg.Point, value product.Value) (typ.Type, bool) {
-	if fn, ok := r.result.FunctionValueTypeForValueAtBoundary(point, value); ok {
+	if fn, ok := r.result.FunctionValueTypeForValue(value); ok {
 		return fn, true
 	}
 	return r.ValueTypeWithPresence(value)

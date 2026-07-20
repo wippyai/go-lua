@@ -2044,14 +2044,17 @@ func TestCheckAndExportUnsupportedModuleStaysUnknownNotAny(t *testing.T) {
 	}
 }
 
-func TestCheckDoesNotReportUnsupportedCFGAsTypeDiagnostic(t *testing.T) {
+func TestCheckMethodDefinitionRunsCanonicalEngine(t *testing.T) {
 	result := Check(`
 		local t = {}
 		function t:m()
 		end
 	`)
 	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for unsupported active CFG coverage", result.Diagnostics)
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.checked == nil {
+		t.Fatal("method definition did not run the canonical relation program")
 	}
 }
 

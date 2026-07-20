@@ -18,7 +18,7 @@ func TestPlanOwnsImmutableTypedGenericForPayload(t *testing.T) {
 	point := graph.AddNode(cfg.NodeAssign)
 	path := pathdom.Path{Symbol: 7, Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "items"}}}
 	contracts := []typ.Type{typ.String}
-	op, ok := NewGenericForOperation(1, symbol.ID(9), symbol.ID(8), GenericForSource{Kind: GenericForSourceExpression, RootPath: path, HasRootPath: true}, contracts)
+	op, ok := NewGenericForOperation(1, symbol.ID(9), symbol.ID(8), []GenericForSource{{Kind: GenericForSourceExpression, RootPath: path, HasRootPath: true}}, contracts)
 	if !ok {
 		t.Fatal("valid generic-for operation rejected")
 	}
@@ -35,7 +35,7 @@ func TestPlanOwnsImmutableTypedGenericForPayload(t *testing.T) {
 	if got.Target() != 9 || got.FirstTarget() != 8 || got.VariableIndex() != 1 {
 		t.Fatalf("payload identity = %#v", got)
 	}
-	if source := got.Source(); source.RootPath.Segments[0].Name != "items" {
+	if source, _ := got.ProtocolSource(0); source.RootPath.Segments[0].Name != "items" {
 		t.Fatalf("plan retained caller path: %#v", source)
 	}
 	if contract, ok := got.SourceContract(0); !ok || !typ.TypeEquals(contract, typ.String) {
@@ -45,10 +45,10 @@ func TestPlanOwnsImmutableTypedGenericForPayload(t *testing.T) {
 		t.Fatalf("iterator = %#v/%v", gotIterator, ok)
 	}
 
-	returned := got.Source()
+	returned, _ := got.ProtocolSource(0)
 	returned.RootPath.Segments[0].Name = "again"
 	gotAgain, _ := plan.GenericForOperation(point)
-	if gotAgain.Source().RootPath.Segments[0].Name != "items" {
+	if source, _ := gotAgain.ProtocolSource(0); source.RootPath.Segments[0].Name != "items" {
 		t.Fatal("payload getter exposed plan storage")
 	}
 }
@@ -68,8 +68,8 @@ func TestGenericForMarkerWithoutTypedPayloadFailsClosed(t *testing.T) {
 func TestConflictingGenericForPayloadsFailClosedIndependentOfOrder(t *testing.T) {
 	graph := cfg.New()
 	point := graph.AddNode(cfg.NodeAssign)
-	one, _ := NewGenericForOperation(0, 8, 8, GenericForSource{}, nil)
-	two, _ := NewGenericForOperation(1, 9, 8, GenericForSource{}, nil)
+	one, _ := NewGenericForOperation(0, 8, 8, nil, nil)
+	two, _ := NewGenericForOperation(1, 9, 8, nil, nil)
 	for _, input := range [][]ExtensionInput{
 		{{Point: point, Kind: BodyGenericFor, GenericFor: one}, {Point: point, Kind: BodyGenericFor, GenericFor: two}},
 		{{Point: point, Kind: BodyGenericFor, GenericFor: two}, {Point: point, Kind: BodyGenericFor, GenericFor: one}},

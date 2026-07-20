@@ -7,37 +7,43 @@ import (
 )
 
 func projectDynamicIndexBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if source.dynamicIndex.top {
-		out.dynamicIndex = source.dynamicIndex
-		return true
+	out.dynamicIndex, _ = projectDynamicIndexBoundaryFactor(ctx, source.dynamicIndex)
+	return true
+}
+func projectDynamicIndexBoundaryFactor(ctx *boundaryProjectContext, source dynamicIndexLane) (dynamicIndexLane, bool) {
+	if source.top {
+		return source, true
 	}
-	values := projectFiniteMap(source.dynamicIndex.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool { return ctx.closure.ContainsPath(key.Table) })
+	values := projectFiniteMap(source.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool { return ctx.closure.ContainsPath(key.Table) })
 	for key, value := range values {
 		value.KeyValue = product.ProjectBoundary(ctx.reg, value.KeyValue)
 		value.Value = product.ProjectBoundary(ctx.reg, value.Value)
 		values[key] = value
 	}
-	out.dynamicIndex = dynamicIndexLaneFromMap(dynamicindex.MapDomain(ctx.reg), values)
-	return true
+	return dynamicIndexLaneFromMap(dynamicindex.MapDomain(ctx.reg), values), true
 }
 func rebaseDynamicIndexBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if source.dynamicIndex.top {
-		out.dynamicIndex = source.dynamicIndex
-		return true
+	var ok bool
+	out.dynamicIndex, ok = rebaseDynamicIndexBoundaryFactor(ctx, source.dynamicIndex)
+	return ok
+}
+func rebaseDynamicIndexBoundaryFactor(ctx *boundaryRebaseContext, source dynamicIndexLane) (dynamicIndexLane, bool) {
+	if source.top {
+		return source, true
 	}
-	values := make(map[dynamicindex.Key]dynamicindex.Fact, len(source.dynamicIndex.values))
-	for key, value := range source.dynamicIndex.values {
+	values := make(map[dynamicindex.Key]dynamicindex.Fact, len(source.values))
+	for key, value := range source.values {
 		paths, ok := boundaryRebasePaths(ctx, key.Table)
 		if !ok {
-			return false
+			return dynamicIndexLane{}, false
 		}
 		value.KeyValue, ok = rebaseBoundaryProduct(ctx, value.KeyValue)
 		if !ok {
-			return false
+			return dynamicIndexLane{}, false
 		}
 		value.Value, ok = rebaseBoundaryProduct(ctx, value.Value)
 		if !ok {
-			return false
+			return dynamicIndexLane{}, false
 		}
 		for _, path := range paths {
 			nextKey := key
@@ -49,17 +55,14 @@ func rebaseDynamicIndexBoundary(ctx *boundaryRebaseContext, source State, out *S
 			values[nextKey] = candidate
 		}
 	}
-	out.dynamicIndex = dynamicIndexLaneFromMap(dynamicindex.MapDomain(ctx.reg), values)
-	return true
+	return dynamicIndexLaneFromMap(dynamicindex.MapDomain(ctx.reg), values), true
 }
-func applyDynamicIndexBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if destination.dynamicIndex.top || fragment.dynamicIndex.top {
-		out.dynamicIndex = dynamicIndexLane{mapLane: mapLane[dynamicindex.Key, dynamicindex.Fact]{top: true}}
-		return true
+func applyDynamicIndexBoundaryLane(ctx *boundaryApplyContext, destination, fragment dynamicIndexLane) (dynamicIndexLane, bool) {
+	if destination.top || fragment.top {
+		return dynamicIndexLane{mapLane: mapLane[dynamicindex.Key, dynamicindex.Fact]{top: true}}, true
 	}
-	values := applyFiniteMap(destination.dynamicIndex.values, fragment.dynamicIndex.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool { return ctx.closure.ContainsPath(key.Table) })
-	out.dynamicIndex = dynamicIndexLaneFromMap(dynamicindex.MapDomain(ctx.reg), values)
-	return true
+	values := applyFiniteMap(destination.values, fragment.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool { return ctx.closure.ContainsPath(key.Table) })
+	return dynamicIndexLaneFromMap(dynamicindex.MapDomain(ctx.reg), values), true
 }
 func equalDynamicIndexBoundary(reg *axis.Registry, a, b State) bool {
 	d := dynamicindex.MapDomain(reg)

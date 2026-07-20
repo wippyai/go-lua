@@ -19,6 +19,7 @@ func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
 	}
 	shape, _ := l.callShapeFromWIR(point)
 	metadata, _ := l.callSiteMetadataFromWIR(point)
+	calleeSource, hasCalleeSource := l.callCalleeSourceFromWIR(point)
 	receiverSource, hasReceiverSource := l.callReceiverSourceFromWIR(point, valueSourceShape{
 		exprIndex:   0,
 		targetIndex: 0,
@@ -36,6 +37,8 @@ func (l *lowerer) callSiteFromWIR(point cfg.Point) (factflow.CallSite, bool) {
 		CalleeSymbol:       shape.calleeSymbol,
 		CalleePath:         shape.calleePath,
 		CalleeMemberAccess: shape.calleeMemberAccess,
+		CalleeSource:       calleeSource,
+		HasCalleeSource:    hasCalleeSource,
 		ReceiverPath:       shape.receiverPath,
 		HasReceiverPath:    shape.hasReceiverPath,
 		MethodPath:         shape.methodPath,
@@ -245,6 +248,52 @@ func (l *lowerer) callReceiverSourceFromWIR(point cfg.Point, shape valueSourceSh
 		return factflow.NewUnknownValueSource(shape.exprIndex), true
 	}
 	return factflow.ValueSource{}, false
+}
+
+func (l *lowerer) callCalleeSourceFromWIR(point cfg.Point) (factflow.ValueSource, bool) {
+	inst, ok := l.wirCallInstruction(point)
+	if !ok || inst.Call.Method != 0 {
+		return factflow.ValueSource{}, false
+	}
+	if source, ok := l.valueSourceFromWIRRootPathOperand(
+		inst.Call.Callee,
+		0,
+		factflow.NoValueSourceIndex,
+		true,
+		wir.SymbolLocal,
+		wir.SymbolParam,
+		wir.SymbolGlobal,
+		wir.SymbolUpvalue,
+	); ok {
+		return source, true
+	}
+	if source, ok := l.pathExpressionSourceFromWIR(
+		"call-callee",
+		point,
+		inst.Call.Callee,
+		0,
+		factflow.NoValueSourceIndex,
+		true,
+		false,
+		false,
+		wir.SymbolLocal,
+		wir.SymbolParam,
+		wir.SymbolGlobal,
+		wir.SymbolUpvalue,
+	); ok {
+		return source, true
+	}
+	if source, ok := l.valueSourceFromWIROperand(
+		inst.Call.Callee,
+		0,
+		factflow.NoValueSourceIndex,
+		true,
+		false,
+		false,
+	); ok {
+		return source, true
+	}
+	return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), true
 }
 
 func (l *lowerer) callArgumentSourcesFromWIR(point cfg.Point) ([]factflow.ValueSource, bool) {

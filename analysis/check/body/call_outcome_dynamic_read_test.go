@@ -1,6 +1,7 @@
 package body
 
 import (
+	"os"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -14,10 +15,38 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func resolveReferenceFixture(t testing.TB) *Static {
+	t.Helper()
+	src, err := os.ReadFile("../../../testdata/fixtures/regression/deadlock-compiler-lua/main.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := parseChunk(t, string(src))
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"uuid"}})
+	for _, origin := range bindings.FunctionOrigins() {
+		if origin.Func.Line() != 289 {
+			continue
+		}
+		prepared, err := PrepareBoundFunction(origin.Func, bindings, Config{
+			Registry: standard.Registry(), Globals: []string{"uuid"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		})
+		if err != nil {
+			t.Fatalf("PrepareBoundFunction(resolve_reference): %v", err)
+		}
+		return prepared
+	}
+	t.Fatal("FlowGraph.resolve_reference at line 289 is missing")
+	return nil
+}
+
 func TestCallOutcomeContextDynamicReadUsesCanonicalBodyVisibility(t *testing.T) {
-	prepared := resolveReferenceTransformerFixture(t)
+	prepared := resolveReferenceFixture(t)
 	cache := typevalue.NewCache()
 	ctx := prepared.callOutcomeContext(cache)
 	if ctx.DynamicRead == nil || ctx.DynamicTableRead == nil {
@@ -47,12 +76,18 @@ func TestCallOutcomeContextDynamicReadUsesCanonicalBodyVisibility(t *testing.T) 
 	key := typevalue.LiteralString(reg, "node")
 	node := transfer.NodeContext{Registry: reg, Graph: prepared.cfg.Graph, Point: prepared.cfg.Graph.Entry()}
 	got, ok := ctx.DynamicRead(node, tablePath, selfValue, key, in)
-	want, wantOK := sourcevalue.ReadBoundDynamicIndexValue(reg, cache, ks, prepared.visibility, node.Point, tablePath, selfValue, key, in)
+	want, wantOK := sourcevalue.ReadBoundDynamicValue(sourcevalue.BoundDynamicRead{
+		Registry: reg, TypeValues: cache, KeySpace: ks, Visibility: prepared.visibility, Point: node.Point,
+		TablePath: tablePath, TableValue: selfValue, KeyValue: key, ValueInput: in, ProjectPath: true,
+	})
 	if ok != wantOK || !ok || !product.Equal(reg, got, want) || !product.Equal(reg, got, wantValue) {
 		t.Fatalf("body dynamic read = %#v/%v, canonical = %#v/%v", got, ok, want, wantOK)
 	}
 	direct, directOK := ctx.DynamicTableRead(node, tablePath, referencesValue, key, in)
-	directWant, directWantOK := sourcevalue.ReadBoundDynamicTableValue(reg, cache, ks, prepared.visibility, node.Point, tablePath, referencesValue, key, in)
+	directWant, directWantOK := sourcevalue.ReadBoundDynamicValue(sourcevalue.BoundDynamicRead{
+		Registry: reg, TypeValues: cache, KeySpace: ks, Visibility: prepared.visibility, Point: node.Point,
+		TablePath: tablePath, TableValue: referencesValue, KeyValue: key, ValueInput: in,
+	})
 	if directOK != directWantOK || !directOK || !product.Equal(reg, direct, directWant) {
 		t.Fatalf("body direct-table read = %#v/%v, canonical = %#v/%v", direct, directOK, directWant, directWantOK)
 	}

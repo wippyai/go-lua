@@ -42,7 +42,7 @@ func (rt *registryRuntime) setAxis(v Value, info axisRuntimeAxis, value any) Val
 			candidate[index] = slot{ordinal: info.ordinal, value: value}
 			copy(candidate[index+1:], source[index:])
 		}
-		if anyReducerApplicable(rt, rt.reducers, candidate[:count]) {
+		if anyReducerApplicable(rt.reducers, candidate[:count]) {
 			owned := make([]slot, count)
 			copy(owned, candidate[:count])
 			return internRuntime(rt, ShapeOf(v), PresenceOf(v), owned)
@@ -75,7 +75,7 @@ func slotIndex(slots []slot, ordinal uint16) (int, bool) {
 // when a reducer can actually run. This lets presence-only edits probe the
 // interner without a speculative slice allocation.
 func internBorrowedRuntime(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) Value {
-	if anyReducerApplicable(rt, rt.reducers, slots) {
+	if anyReducerApplicable(rt.reducers, slots) {
 		owned := make([]slot, len(slots))
 		copy(owned, slots)
 		return internRuntime(rt, shape, p, owned)
@@ -87,7 +87,7 @@ func internBorrowedRuntime(rt *registryRuntime, shape Shape, p presence.Value, s
 // owned candidate; otherwise the interner sees the caller's stack candidate
 // directly and allocates only after a miss.
 func internConstructedRuntime(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) Value {
-	if anyReducerApplicable(rt, rt.reducers, slots) {
+	if anyReducerApplicable(rt.reducers, slots) {
 		return internRuntime(rt, shape, p, slots)
 	}
 	return internCanonicalNoReducer(rt, shape, p, slots)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -271,6 +272,103 @@ func TestCanonicalizeTypestateResourcesAfterLatePathEquality(t *testing.T) {
 	)
 	if obligations := closed.OpenTypestateObligations(); len(obligations) != 0 {
 		t.Fatalf("open obligations = %#v, want late alias transition to close resource", obligations)
+	}
+}
+
+func TestPathEqualityTransactionMatchesCanonicalConcreteTypestateRewrite(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	ks := keyspace.New()
+	field := pathdom.PathKey("sym10@1.tx")
+	index := pathdom.PathKey(`sym10@1["tx"]`)
+	alias := pathdom.PathKey("sym11@1")
+	protocol := typestate.Protocol("transaction")
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, index),
+		Other: mustStateKey(t, ks, alias),
+	}
+	current := State{}.AcquireTypestate(
+		TypestateResourceFromCanonicalKey(testStateKey(t, field), protocol),
+		typestate.State("active"),
+		typestate.Obligation{Final: "finished"},
+	)
+	want := current.AddBranchProof(proof).CanonicalizeTypestateResources(ks)
+	pathFamily, ok := domain.PathEvidenceCoordinateFamily()
+	if !ok {
+		t.Fatal("path-evidence coordinate family missing")
+	}
+	pathFactors, err := domain.DecomposeLanes(current, []ProductLane{pathFamily.Lane()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathSkeleton, pathScalars, err := domain.DecomposeCoordinateFamily(pathFactors[0], pathFamily, ks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofSlot, err := domain.PathBranchProofCoordinateSlot(ks, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := sealTestPathEvidenceAuthority(t, domain, ks, nil, nil, nil, []CoordinateSlot{proofSlot}, false, true)
+	carrier, err := domain.OpenCoordinatePathEvidenceCarrier(
+		pathSkeleton, pathScalars, ValueLaneFactor{}, true,
+		authority, PathDescendantMutationFactors{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := domain.PrepareCoordinatePathEqualityTransaction(carrier, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, applyErr := domain.ApplyCoordinatePathEqualityTransaction(transaction, carrier); applyErr != nil || !changed || !carrier.HasProof(proof) {
+		t.Fatalf("coordinate equality publication changed=%t proof=%t err=%v", changed, carrier.HasProof(proof), applyErr)
+	}
+
+	lanes := domain.PathEqualityQuotientLanes()
+	wantLaneIDs := []LaneID{LaneDynamicIndex, LaneKeyMemberships, LaneTypestates}
+	if got := productLaneIDs(lanes); !slices.Equal(got, wantLaneIDs) {
+		t.Fatalf("equality participants = %v, want %v", got, wantLaneIDs)
+	}
+	currentFactors, err := domain.DecomposeLanes(current, lanes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFactors, err := domain.DecomposeLanes(want, lanes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range lanes {
+		factored, applyErr := domain.ApplyPathEqualityTransactionFactor(transaction, currentFactors[index])
+		if applyErr != nil {
+			t.Fatal(applyErr)
+		}
+		equal, equalErr := domain.LaneEqual(factored, wantFactors[index])
+		if equalErr != nil || !equal {
+			t.Fatalf("factor equality transaction lane %q differs from concrete: equal=%v err=%v", lanes[index].ID(), equal, equalErr)
+		}
+	}
+}
+
+func TestPathEqualityProofCompositionMatchesCanonicalConcreteRewrite(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	ks := keyspace.New()
+	left := mustStateKey(t, ks, pathdom.PathKey("sym20@1.left"))
+	right := mustStateKey(t, ks, pathdom.PathKey("sym21@1.right"))
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: left, Other: right}
+	current := Reachable(State{}).AcquireTypestate(
+		TypestateResourceFromCanonicalKey(pathaddr.StateKey("sym20@1.left"), typestate.Protocol("composition")),
+		typestate.State("open"), typestate.Obligation{Final: "closed"},
+	)
+	want := current.AddBranchProof(proof).CanonicalizeTypestateResources(ks)
+	got, err := domain.ApplyPathEqualityProof(ks, proof, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domain.Lattice().Equal(got, want) {
+		t.Fatal("factor-native equality composition diverged from canonical concrete rewrite")
 	}
 }
 
@@ -1059,7 +1157,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if state.effectDeltas.hasFinite(fx.effectKey) {
 		t.Fatalf("effect delta kept explicit bottom entry")
 	}
-	if state.placement.hasFinite(fx.escapeID) {
+	if state.placement.hasFinite(identity.ConcreteTerm(fx.escapeID)) {
 		t.Fatalf("placement kept explicit bottom entry")
 	}
 }
@@ -1900,6 +1998,12 @@ func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 			Kind:  pathevidence.BranchProofPathNotEqual,
 			Path:  mustStateKey(t, ks, pathdom.PathKey("sym10@1")),
 			Other: mustStateKey(t, ks, pathdom.PathKey("sym40@1")),
+		}).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, pathdom.PathKey("sym20@1.child.name")), Presence: presence.Present(),
+		}).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, pathdom.PathKey("sym30@1.leaf.name")), Presence: presence.Present(),
 		})
 
 	got := s.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.child.name"))
@@ -1936,6 +2040,12 @@ func TestEquivalentStateKeysReturnsTypedAliases(t *testing.T) {
 			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  mustStateKey(t, ks, pathdom.PathKey("sym20@1.child")),
 			Other: mustStateKey(t, ks, pathdom.PathKey("sym30@1.leaf")),
+		}).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, first.PathKey()), Presence: presence.Present(),
+		}).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, second.PathKey()), Presence: presence.Present(),
 		})
 
 	got := s.EquivalentStateKeys(ks, start)
@@ -2473,7 +2583,7 @@ func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs
 	}
 }
 
-func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
+func TestTopLanesReadTopAndAbsorbValuesUpdates(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
@@ -2521,35 +2631,37 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		t.Fatalf("top static-member lane should read as unknown absence")
 	}
 
-	requirePanic(t, func() {
-		top.WriteValue(reg, slot, present)
+	if got := top.WriteValue(reg, slot, present); !Domain(reg).Equal(got, top) {
+		t.Fatal("WriteValue changed Values Top")
+	}
+	called := false
+	if got := top.UpdateValue(reg, slot, func(product.Value) product.Value {
+		called = true
+		return present
+	}); called || !Domain(reg).Equal(got, top) {
+		t.Fatalf("UpdateValue over Top called transformer=%t or changed state", called)
+	}
+	if got := top.WriteReturnSlot(reg, 0, present); !Domain(reg).Equal(got, top) {
+		t.Fatal("WriteReturnSlot changed Values Top")
+	}
+	if got := top.UpdateReturnSlot(reg, 0, func(product.Value) product.Value {
+		called = true
+		return present
+	}); called || !Domain(reg).Equal(got, top) {
+		t.Fatalf("UpdateReturnSlot over Top called transformer=%t or changed state", called)
+	}
+	edit := top.EditValues(reg)
+	edit.Write(slot, present)
+	edit.Update(slot, func(product.Value) product.Value {
+		called = true
+		return present
 	})
-	requirePanic(t, func() {
-		top.UpdateValue(reg, slot, func(v product.Value) product.Value {
-			if !valueDomain.Equal(v, product.Top()) {
-				t.Fatalf("UpdateValue on top read %s, want top", formatValue(reg, v))
-			}
-			return present
-		})
-	})
-	requirePanic(t, func() {
-		top.WriteReturnSlot(reg, 0, present)
-	})
-	requirePanic(t, func() {
-		top.UpdateReturnSlot(reg, 0, func(v product.Value) product.Value {
-			if !valueDomain.Equal(v, product.Top()) {
-				t.Fatalf("UpdateReturnSlot on top read %s, want top", formatValue(reg, v))
-			}
-			return present
-		})
-	})
-	requirePanic(t, func() {
-		edit := top.EditValues(reg)
-		edit.Write(slot, present)
-	})
-	requirePanic(t, func() {
-		top.SeedValues(reg, []ValueSeed{{Slot: slot, Value: present}})
-	})
+	if got := edit.Done(); called || !Domain(reg).Equal(got, top) {
+		t.Fatalf("ValueEdit over Top called transformer=%t or changed state", called)
+	}
+	if got := top.SeedValues(reg, []ValueSeed{{Slot: slot, Value: present}}); !Domain(reg).Equal(got, top) {
+		t.Fatal("SeedValues changed Values Top")
+	}
 	requirePanic(t, func() {
 		top.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)
 	})

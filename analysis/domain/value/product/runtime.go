@@ -22,6 +22,8 @@ type registryRuntime struct {
 	canonicalAxes []uint16
 	byID          map[string]uint16
 	reducers      []reducerEntry
+	reducerDeps   [][]int
+	presenceDeps  []int
 
 	bottomSlots []slot
 
@@ -178,12 +180,9 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 		rt.bottomSlots = append(rt.bottomSlots, slot{ordinal: uint16(ordinal), value: rt.axes[index].bottomAny})
 	}
 
-	reducers := reg.ReducersView()
-	if reducers.Len() > 0 {
-		rt.reducers = make([]reducerEntry, 0, reducers.Len())
-		for i := 0; i < reducers.Len(); i++ {
-			rt.reducers = append(rt.reducers, reducerEntry{apply: reducers.At(i), reads: reducers.ReadsAt(i)})
-		}
+	if err := rt.buildReducers(reg.ReducersView()); err != nil {
+		rt.err = err
+		return rt
 	}
 	return rt
 }

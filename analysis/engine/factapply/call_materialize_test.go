@@ -1,10 +1,12 @@
 package factapply
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -20,42 +22,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
-func TestLazyCallResultReaderDefersInitializationUntilRead(t *testing.T) {
-	reader := &lazyCallResultReader{
-		ctx: transfer.NodeContext{Point: cfg.Point(10)},
-	}
-
-	read := reader.ReadLazy()
-	if reader.initialized {
-		t.Fatal("ReadLazy initialized call-result materialization before a read")
-	}
-
-	_ = read(cfg.Point(11))
-	if !reader.initialized {
-		t.Fatal("lazy read did not initialize call-result materialization when read")
-	}
-}
-
-func TestSamePointReadUsesCurrentStateWithoutInitializingLazyMaterialization(t *testing.T) {
-	point := cfg.Point(10)
-	reader := &lazyCallResultReader{
-		ctx: transfer.NodeContext{Point: point},
-	}
-
-	read := readWithCurrentPointState(point, reader.ReadLazy(), state.State{})
-	_ = read(point)
-	if reader.initialized {
-		t.Fatal("same-point read initialized materialization instead of using current state")
-	}
-
-	_ = read(point + 1)
-	if !reader.initialized {
-		t.Fatal("non-current read did not initialize call-result materialization")
-	}
-}
-
-func TestApplyCallProducerReturnSlotsClearsAndWritesInOnePhase(t *testing.T) {
+func TestApplyCallProducerResultsClearsAndWritesInOnePhase(t *testing.T) {
 	reg := standard.Registry()
+	point := cfg.Point(17)
 	result := symbol.ID(22)
 	stale0 := presentValue(reg)
 	stale1 := absentValue(reg)
@@ -72,166 +41,130 @@ func TestApplyCallProducerReturnSlotsClearsAndWritesInOnePhase(t *testing.T) {
 		},
 	}).View()
 
-	got := applyCallProducerReturnSlots(
-		transfer.NodeContext{Registry: reg},
-		site,
-		in,
-		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: written}}},
-		true,
-	)
+	got := mustApplyExternalCallFactorPrefix(t, reg, point, site, in,
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: written}}})
 
-	assertValue(t, reg, got, key.ReturnSlot(0), written)
-	assertValue(t, reg, got, key.ReturnSlot(1), product.Bottom(reg))
+	assertValue(t, reg, got, key.CallResult(uint32(point), 0), written)
+	assertValue(t, reg, got, key.CallResult(uint32(point), 1), product.Bottom(reg))
 	assertValue(t, reg, got, key.ReturnSlot(2), preserve)
 }
 
-func TestApplyCallMaterializationConstrainsFixedResultWithoutProducer(t *testing.T) {
+func TestAdjacentCallProducersKeepPointAndSlotIdentity(t *testing.T) {
 	reg := standard.Registry()
-	point := cfg.Point(10)
-	written := typevalue.FromType(reg, typ.Number)
-	facts := factflow.NewFacts(factflow.FactsInput{
-		CallSites: map[cfg.Point]factflow.CallSite{
-			point: factflow.NewCallSite(factflow.CallSiteConfig{}),
+	firstPoint, secondPoint := cfg.Point(41), cfg.Point(42)
+	firstHead := typevalue.LiteralString(reg, "first-head")
+	firstTail := typevalue.LiteralString(reg, "first-tail")
+	secondHead := typevalue.LiteralString(reg, "second-head")
+	secondTail := typevalue.LiteralString(reg, "second-tail")
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 0, 0, 0, path.Path{}),
+			factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 1, 1, 0, path.Path{}),
 		},
-		CallResultValues: map[cfg.Point]factflow.CallResultValueSet{
-			point: factflow.NewCallResultValueSet(factflow.NewCallResultValue(0, written)),
-		},
-	})
-
-	got := materializeCallOutcome(
-		transfer.NodeContext{Registry: reg, Point: point},
-		facts,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		func(cfg.Point) state.State { return state.State{} },
-		state.State{},
-		state.State{},
-	)
-
-	assertValue(t, reg, got, key.ReturnSlot(0), written)
+	}).View()
+	out := mustApplyExternalCallFactorPrefix(t, reg, firstPoint, site, state.Reachable(state.State{}),
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: firstHead}, {Index: 1, Value: firstTail}}})
+	out = mustApplyExternalCallFactorPrefix(t, reg, secondPoint, site, out,
+		callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: secondHead}, {Index: 1, Value: secondTail}}})
+	for _, expected := range []struct {
+		point cfg.Point
+		slot  uint32
+		value product.Value
+	}{
+		{firstPoint, 0, firstHead}, {firstPoint, 1, firstTail},
+		{secondPoint, 0, secondHead}, {secondPoint, 1, secondTail},
+	} {
+		assertValue(t, reg, out, key.CallResult(uint32(expected.point), expected.slot), expected.value)
+	}
+	if got := out.ReadValue(reg, key.ReturnSlot(0)); !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatal("call producer wrote the function return tuple before N5")
+	}
 }
 
-func TestApplyCallMaterializationFixedResultOverridesBottomOutcome(t *testing.T) {
-	reg := standard.Registry()
-	point := cfg.Point(10)
-	target := symbol.ID(77)
-	written := typevalue.FromType(reg, typ.String)
-	facts := factflow.NewFacts(factflow.FactsInput{
-		CallSites: map[cfg.Point]factflow.CallSite{
-			point: factflow.NewCallSite(factflow.CallSiteConfig{
-				ResultTargets: []factflow.CallResultTarget{
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "value")),
-				},
-			}),
-		},
-		CallResultValues: map[cfg.Point]factflow.CallResultValueSet{
-			point: factflow.NewCallResultValueSet(factflow.NewCallResultValue(0, written)),
-		},
-	})
-
-	got := materializeCallOutcome(
-		transfer.NodeContext{Registry: reg, Point: point},
-		facts,
-		nil,
-		func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-			return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: product.Bottom(reg)}}}
-		},
-		nil,
-		nil,
-		nil,
-		nil,
-		func(cfg.Point) state.State { return state.State{} },
-		state.State{},
-		state.State{},
+func mustApplyExternalCallFactorPrefix(
+	t *testing.T,
+	reg *axis.Registry,
+	point cfg.Point,
+	site factflow.CallSiteView,
+	input state.State,
+	outcome callpayload.CallOutcome,
+) state.State {
+	t.Helper()
+	got, _, err := applyConcreteExternalCallFactorPrefix(
+		context.Background(), nil, state.RegisteredProductDomain(reg), point, site, input, outcome,
 	)
-
-	assertValue(t, reg, got, key.ReturnSlot(0), written)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
-func TestConstrainReturnSlotDoesNotWeakenProvenSlotWithExplicitAny(t *testing.T) {
+func TestConstrainCallResultDoesNotWeakenProvenCellWithExplicitAny(t *testing.T) {
 	reg := standard.Registry()
+	point := cfg.Point(19)
 	optionalString := typeexpr.Optional(typ.String)
 	proven := typevalue.FromType(reg, optionalString)
 	untrusted := typevalue.WithWitness(reg,
 		product.Set(reg, proven, evidence.Key, evidence.ExplicitTop()),
 		optionalString,
 	)
-	edit := state.State{}.
-		WriteReturnSlot(reg, 0, proven).
-		EditValues(reg)
+	got := applyCallResultValueForTest(t, reg, point, proven, untrusted)
 
-	constrainReturnSlotEdit(
-		transfer.NodeContext{Registry: reg},
-		&edit,
-		factflow.NewCallResultValue(0, untrusted),
-	)
-	got := edit.Done()
-
-	assertValue(t, reg, got, key.ReturnSlot(0), proven)
+	assertValue(t, reg, got, key.CallResult(uint32(point), 0), proven)
 }
 
-func TestConstrainReturnSlotDoesNotWeakenProvenSlotWithUnknown(t *testing.T) {
+func TestConstrainCallResultDoesNotWeakenProvenCellWithUnknown(t *testing.T) {
 	reg := standard.Registry()
+	point := cfg.Point(23)
 	proven := typevalue.FromType(reg, typ.String)
 	unknown := typevalue.FromType(reg, typ.Unknown)
-	edit := state.State{}.
-		WriteReturnSlot(reg, 0, proven).
-		EditValues(reg)
+	got := applyCallResultValueForTest(t, reg, point, proven, unknown)
 
-	constrainReturnSlotEdit(
-		transfer.NodeContext{Registry: reg},
-		&edit,
-		factflow.NewCallResultValue(0, unknown),
-	)
-	got := edit.Done()
-
-	assertValue(t, reg, got, key.ReturnSlot(0), proven)
+	assertValue(t, reg, got, key.CallResult(uint32(point), 0), proven)
 }
 
-func TestConstrainReturnSlotDoesNotWeakenProvenRecordSlotWithUnknown(t *testing.T) {
+func TestConstrainCallResultDoesNotWeakenProvenRecordWithUnknown(t *testing.T) {
 	reg := standard.Registry()
+	point := cfg.Point(29)
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Field("count", typ.Number).
 		Build()
 	proven := typevalue.FromType(reg, record)
 	unknown := typevalue.FromType(reg, typ.Unknown)
-	edit := state.State{}.
-		WriteReturnSlot(reg, 0, proven).
-		EditValues(reg)
+	got := applyCallResultValueForTest(t, reg, point, proven, unknown)
 
-	constrainReturnSlotEdit(
-		transfer.NodeContext{Registry: reg},
-		&edit,
-		factflow.NewCallResultValue(0, unknown),
-	)
-	got := edit.Done()
-
-	assertValue(t, reg, got, key.ReturnSlot(0), proven)
+	assertValue(t, reg, got, key.CallResult(uint32(point), 0), proven)
 }
 
-func TestConstrainReturnSlotUsesFixedTypedFactOverUnknownOutcome(t *testing.T) {
+func TestConstrainCallResultUsesFixedTypedFactOverUnknownOutcome(t *testing.T) {
 	reg := standard.Registry()
+	point := cfg.Point(31)
 	record := typetable.NewRecord().
 		Field("code", typ.String).
 		Field("message", typ.String).
 		Build()
 	unknown := typevalue.FromType(reg, typ.Unknown)
 	fixed := typevalue.FromType(reg, typeexpr.Optional(record))
-	edit := state.State{}.
-		WriteReturnSlot(reg, 0, unknown).
-		EditValues(reg)
+	got := applyCallResultValueForTest(t, reg, point, unknown, fixed)
 
-	constrainReturnSlotEdit(
-		transfer.NodeContext{Registry: reg},
-		&edit,
-		factflow.NewCallResultValue(0, fixed),
-	)
-	got := edit.Done()
+	assertValue(t, reg, got, key.CallResult(uint32(point), 0), fixed)
+}
 
-	assertValue(t, reg, got, key.ReturnSlot(0), fixed)
+func applyCallResultValueForTest(t *testing.T, reg *axis.Registry, point cfg.Point, current, fixed product.Value) state.State {
+	t.Helper()
+	transaction := PlanCallResultTransaction(factflow.NewFacts(factflow.FactsInput{
+		CallResultValues: map[cfg.Point]factflow.CallResultValueSet{
+			point: factflow.NewCallResultValueSet(factflow.NewCallResultValue(0, fixed)),
+		},
+	}), point)
+	input := state.State{}.WriteValue(reg, key.CallResult(uint32(point), 0), current)
+	result := ApplyConcreteCallResultTransaction(ConcreteCallResultRequest{
+		Context:     transfer.NodeContext{Context: context.Background(), Registry: reg, Point: point},
+		Transaction: transaction, Phase: ConcreteCallResultPhaseMaterialize, Output: input,
+	})
+	if result.Canceled {
+		t.Fatal("canonical call-result materialization was canceled")
+	}
+	return result.Output
 }

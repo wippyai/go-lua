@@ -83,6 +83,125 @@ func TestReturnedAllocationIsDeterministicPerStaticCallerSite(t *testing.T) {
 	if got := ReturnedAllocationInBody(ID{}, testBodyIdentity(41), 0, 0, 0, 9); got != (ID{}) {
 		t.Fatalf("zero template produced %#v", got)
 	}
+	if IsReturnedAllocation(ID{Kind: "lua.table", Site: "returned-allocation-v2:forged", Index: 9}) {
+		t.Fatal("site spelling forged returned-allocation phase")
+	}
+}
+
+// TestReturnedAllocationRecognitionIsIndependentOfCalleeTemplateKind guards the
+// #1682 register defect: ReturnedAllocationInBody once tagged the constructed
+// ID with the callee template's own Kind, while IsReturnedAllocation checked
+// the ID against the fixed returned-allocation Kind. Those two Kinds can never
+// be equal, so the predicate was permanently false and callers always took the
+// overwrite path for a returned heap allocation instead of joining it with
+// whatever the same static call-outcome slot already held. Every callee
+// template, regardless of its own Kind, must still be recognized as a returned
+// allocation once instantiated at a caller site.
+func TestReturnedAllocationRecognitionIsIndependentOfCalleeTemplateKind(t *testing.T) {
+	body := testBodyIdentity(53)
+	templates := map[string]ID{
+		"lua.table":           testTableIdentity(31, 7),
+		"manifest.allocation": ManifestAllocation("callee-template-site", 5),
+	}
+	for name, template := range templates {
+		t.Run(name, func(t *testing.T) {
+			if template.Kind != name {
+				t.Fatalf("test setup: template kind = %q, want %q", template.Kind, name)
+			}
+			got := ReturnedAllocationInBody(template, body, 0, 0, 0, 12)
+			if got == (ID{}) {
+				t.Fatal("empty returned-allocation identity")
+			}
+			if got.Kind == template.Kind {
+				t.Fatalf("returned-allocation Kind leaked the callee template Kind %q", template.Kind)
+			}
+			if !IsReturnedAllocation(got) {
+				t.Fatalf("IsReturnedAllocation(%#v) = false for callee template kind %q, want true", got, template.Kind)
+			}
+		})
+	}
+}
+
+// TestReturnedAllocationJoinPromotesDistinctEvidenceInsteadOfLastWriteWins ties
+// the #1682 defect to the identity axis's own lattice law: two distinct
+// returned allocations reaching the same axis value must JOIN to Top, the
+// axis's documented signal that evidence diverged, and must never resolve to
+// whichever singleton was written last.
+func TestReturnedAllocationJoinPromotesDistinctEvidenceInsteadOfLastWriteWins(t *testing.T) {
+	body := testBodyIdentity(53)
+	first := ReturnedAllocationInBody(testTableIdentity(31, 7), body, 0, 0, 0, 12)
+	second := ReturnedAllocationInBody(testTableIdentity(31, 8), body, 0, 0, 0, 12)
+	if first == second {
+		t.Fatal("test setup: distinct callee templates aliased at one call point")
+	}
+	joined := Join(Singleton(first), Singleton(second))
+	if !joined.IsTop() {
+		t.Fatalf("Join(first, second) = %s, want top", joined)
+	}
+	if lastWriteWins := Join(Singleton(first), Singleton(second)); Equal(lastWriteWins, Singleton(second)) {
+		t.Fatal("join resolved to the second write instead of promoting to top")
+	}
+}
+
+func TestBoundaryAllocationIsFiniteLexicalCallSiteIdentity(t *testing.T) {
+	caller := testBodyIdentity(44)
+	template := ManifestAllocationTemplate(testBodyIdentity(91), 7, 1)
+	first := BoundaryAllocation(template, caller, 19, 3)
+	if first == (ID{}) || !IsBoundaryAllocation(first) {
+		t.Fatalf("boundary allocation = %#v", first)
+	}
+	if again := BoundaryAllocation(template, caller, 19, 3); again != first {
+		t.Fatalf("same lexical mu application changed identity: %#v != %#v", again, first)
+	}
+	for name, other := range map[string]ID{
+		"allocation": BoundaryAllocation(ManifestAllocationTemplate(testBodyIdentity(91), 8, 1), caller, 19, 3),
+		"object":     BoundaryAllocation(ManifestAllocationTemplate(testBodyIdentity(91), 7, 2), caller, 19, 3),
+		"owner":      BoundaryAllocation(ManifestAllocationTemplate(testBodyIdentity(92), 7, 1), caller, 19, 3),
+		"caller":     BoundaryAllocation(template, testBodyIdentity(45), 19, 3),
+		"point":      BoundaryAllocation(template, caller, 20, 3),
+		"occurrence": BoundaryAllocation(template, caller, 19, 4),
+	} {
+		if other == first {
+			t.Fatalf("%s did not distinguish boundary allocation", name)
+		}
+	}
+	if BoundaryAllocation(AllocationTemplate{}, caller, 19, 3) != (ID{}) ||
+		BoundaryAllocation(template, lexicalidentity.StableLexicalBodyID{}, 19, 3) != (ID{}) ||
+		BoundaryAllocation(template, caller, 0, 3) != (ID{}) {
+		t.Fatal("invalid boundary allocation authority did not fail closed")
+	}
+	if _, concrete := AllocationTerm(template).Concrete(); concrete {
+		t.Fatal("template and instantiated allocation alternatives were not separated")
+	}
+}
+
+func TestBoundaryAllocationCannotConsumeAnInstantiatedIdentity(t *testing.T) {
+	template := ManifestAllocationTemplate(testBodyIdentity(91), 7, 1)
+	actual := BoundaryAllocation(template, testBodyIdentity(44), 19, 3)
+	if actual == (ID{}) {
+		t.Fatal("expected instantiated allocation")
+	}
+	// The next phase accepts only the structural coordinate. There is no
+	// conversion from actual (ID) back to AllocationTemplate; recreating the
+	// same coordinate is idempotent and never incorporates actual's spelling.
+	again := BoundaryAllocation(ManifestAllocationTemplate(template.Owner(), template.AllocationOrdinal(), template.ObjectOrdinal()), testBodyIdentity(44), 19, 3)
+	if again != actual {
+		t.Fatalf("structural coordinate changed identity: %#v != %#v", again, actual)
+	}
+}
+
+func TestRootBoundaryAllocationIsFiniteStructuralIdentity(t *testing.T) {
+	template := ManifestAllocationTemplate(testBodyIdentity(93), 7, 2)
+	got := RootBoundaryAllocation(template)
+	if got == (ID{}) || !IsRootBoundaryAllocation(got) {
+		t.Fatalf("root allocation = %#v", got)
+	}
+	if again := RootBoundaryAllocation(template); again != got {
+		t.Fatalf("root allocation is nondeterministic: %#v != %#v", again, got)
+	}
+	if other := RootBoundaryAllocation(ManifestAllocationTemplate(testBodyIdentity(93), 7, 3)); other == got {
+		t.Fatal("distinct root allocation objects collided")
+	}
 }
 
 func TestLuaTableLiteralIdentityDoesNotAliasEqualGraphAndExprPairs(t *testing.T) {

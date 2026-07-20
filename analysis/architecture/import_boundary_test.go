@@ -1404,13 +1404,20 @@ func TestNormalReturnFactPipelineHasPositiveLaneOwners(t *testing.T) {
 			},
 		},
 		{
-			path: filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "normal_return_project_lanes.go"),
+			path: filepath.Join("..", "check", "projection", "normal_return_project_lanes.go"),
 			contains: []string{
-				"var normalReturnProjectLanes = callboundary.BindNormalReturnFactLanes",
+				"var normalReturnProjectLanes = []normalReturnSupplement",
 			},
 		},
 		{
-			path: filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "boundary_path_projector.go"),
+			path: filepath.Join("..", "engine", "callboundary", "projected_state_facts.go"),
+			contains: []string{
+				"var projectedStateFactHandlers = BindNormalReturnFactLanes",
+				"func NormalReturnFactsFromProjectedState",
+			},
+		},
+		{
+			path: filepath.Join("..", "check", "projection", "boundary_path_projector.go"),
 			contains: []string{
 				"type boundaryPathProjector struct",
 				"func (p boundaryPathProjector) StatePath",
@@ -1418,7 +1425,7 @@ func TestNormalReturnFactPipelineHasPositiveLaneOwners(t *testing.T) {
 			},
 		},
 		{
-			path: filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "project_normal_return_facts.go"),
+			path: filepath.Join("..", "check", "projection", "project_normal_return_facts.go"),
 			contains: []string{
 				"for _, lane := range normalReturnProjectLanes",
 			},
@@ -1437,18 +1444,6 @@ func TestNormalReturnFactPipelineHasPositiveLaneOwners(t *testing.T) {
 				"applyNormalReturnFactPhase(normalApply, normalReturnApplyBeforeParamFacts, out)",
 				"applyNormalReturnFactPhase(normalApply, normalReturnApplyAfterParamFacts, out)",
 				"applyNormalReturnFactPhase(normalApply, normalReturnApplyAfterParamRelations, out)",
-			},
-		},
-		{
-			path: filepath.Join("..", "engine", "factapply", "call_return_slot_facts.go"),
-			contains: []string{
-				"return facts.FilterPaths",
-			},
-		},
-		{
-			path: filepath.Join("..", "check", "fixpoint", "program", "internal", "callresult", "provider.go"),
-			contains: []string{
-				".DropFactsTouchingPaths(",
 			},
 		},
 	}
@@ -1504,7 +1499,7 @@ func TestPathAddressPipelineHasPositiveOwner(t *testing.T) {
 			path: filepath.Join("..", "engine", "factapply", "dynamic_index_write.go"),
 			contains: []string{
 				"visibility.AddressAt(resolver, point, tablePath).ForEachStateKey(",
-				"visibility.AddressAt(resolver, point, tablePath).RootOrVisibleKeyspaceKey()",
+				"visibility.StateKeyRootOrVisible",
 			},
 		},
 		{
@@ -1788,7 +1783,7 @@ func TestExportManifestSourceProjectionHasPositiveOwner(t *testing.T) {
 }
 
 func TestProjectSummaryReturnSlotProjectionHasPositiveOwner(t *testing.T) {
-	owner := filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "return_slot_projection.go")
+	owner := filepath.Join("..", "check", "projection", "return_slot_projection.go")
 	content, err := os.ReadFile(owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1806,8 +1801,8 @@ func TestProjectSummaryReturnSlotProjectionHasPositiveOwner(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "project_return_presence_relations.go"),
-		filepath.Join("..", "check", "fixpoint", "program", "internal", "projectsummary", "project_return_condition_slots.go"),
+		filepath.Join("..", "check", "projection", "project_return_presence_relations.go"),
+		filepath.Join("..", "check", "projection", "project_return_condition_slots.go"),
 	} {
 		content, err := os.ReadFile(path)
 		if err != nil {

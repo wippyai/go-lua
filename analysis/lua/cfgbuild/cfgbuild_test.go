@@ -945,7 +945,7 @@ func TestBuildChunkConditionShortCircuitOrRHSCallUsesConditionalPath(t *testing.
 	}
 	stmts := []ast.Stmt{stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "find", "str"}})
-	result := BuildChunk(stmts, bindings)
+	result := BuildChunkWithOptions(stmts, bindings, Options{SealedLuaTypeChecks: true})
 	if result == nil || result.Graph == nil {
 		t.Fatalf("BuildChunk returned nil")
 	}
@@ -1743,7 +1743,7 @@ func TestBuildChunkAllowsLogicalGlobalTypePathPredicateWithoutCallNode(t *testin
 	}}}
 	stmts := []ast.Stmt{ret}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "value"}})
-	result := BuildChunk(stmts, bindings)
+	result := BuildChunkWithOptions(stmts, bindings, Options{SealedLuaTypeChecks: true})
 	if result == nil || result.Graph == nil {
 		t.Fatalf("BuildChunk returned nil for logical global type(path) predicate")
 	}

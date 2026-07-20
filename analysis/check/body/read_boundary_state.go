@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -12,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -105,7 +103,7 @@ func (r *Result) needsBoundaryNodeOutput(point cfg.Point) bool {
 	if r == nil {
 		return false
 	}
-	return plannedBoundaryNodeOutput(r.facts, r.callOutcome != nil, point)
+	return plannedBoundaryNodeOutput(r.facts, point)
 }
 
 func (r *Result) readExprConfig(mode sourceValueReadMode) readexpr.Config {
@@ -149,11 +147,8 @@ func (r *Result) boundarySources(mode sourceValueReadMode) sourcevalue.SourceVal
 
 func (r *Result) sourceValueAtPoint(mode sourceValueReadMode, point cfg.Point, source factflow.ValueSource, st state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		if dyn, ok := r.facts.DynamicIndexExpression(source.ExprRef); ok {
+		if _, ok := r.facts.DynamicIndexExpression(source.ExprRef); ok {
 			if _, refined := r.facts.ExpressionRefinement(source.ExprRef); !refined {
-				if value, ok := r.dynamicIndexSourceValueAtPoint(mode, point, source.ExprRef, dyn, st, read); ok {
-					return value, true
-				}
 				if value, ok := readexpr.Provider(r.readExprConfig(mode))(point, source.ExprRef, source, st); ok {
 					return value, true
 				}
@@ -186,8 +181,22 @@ func (r *Result) sourceValueAtPoint(mode sourceValueReadMode, point cfg.Point, s
 	return r.typeValues.FromTypeWithWitness(r.registry, typ.Unknown), true
 }
 
+// unresolvedGenericForVariableSource reports whether source is the exact
+// generic-for loop variable bound at point, using the fact recorded at that
+// point rather than any generic-for variable in the body.
 func (r *Result) unresolvedGenericForVariableSource(point cfg.Point, source factflow.ValueSource) bool {
-	return r.genericForVariablePathSource(source)
+	if r == nil || source.Kind != factflow.ValueSourcePath {
+		return false
+	}
+	p, ok := r.ValueSourcePath(source)
+	if !ok || p.Symbol == 0 {
+		return false
+	}
+	fact, ok := r.GenericFor(point)
+	if !ok || fact.Role != GenericForRoleVariable || !fact.HasSymbols || fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
+		return false
+	}
+	return p.Symbol == fact.Symbols[fact.VariableIndex]
 }
 
 func (r *Result) genericForVariablePathSource(source factflow.ValueSource) bool {
@@ -220,86 +229,6 @@ func (r *Result) genericSourceValueAtPoint(mode sourceValueReadMode, point cfg.P
 		return product.Value{}, false
 	}
 	return value, true
-}
-
-func (r *Result) dynamicIndexSourceValueAtPoint(
-	mode sourceValueReadMode,
-	point cfg.Point,
-	expr factflow.ExprRef,
-	dyn factflow.DynamicIndexExpression,
-	st state.State,
-	read func(cfg.Point) state.State,
-) (product.Value, bool) {
-	if r == nil || r.registry == nil || r.typeValues == nil {
-		return product.Value{}, false
-	}
-	tableValue, ok := r.pathValueForSourceMode(mode, point, dyn.TablePathRef())
-	if !ok {
-		if tableSource, sourceOK := dyn.TableSource(); sourceOK {
-			tableValue, ok = r.genericSourceValueAtPoint(mode, point, tableSource, st, read)
-		}
-	}
-	if !ok {
-		return product.Value{}, false
-	}
-	keyValue, ok := r.dynamicIndexKeyValueForSourceMode(mode, point, dyn.KeySource(), st, read)
-	if !ok {
-		return product.Value{}, false
-	}
-	value, ok := r.typeValues.RuntimeIndex(r.registry, tableValue, keyValue)
-	if !ok {
-		tableType, tableTypeOK := r.typeValues.TypeOf(r.registry, tableValue)
-		keyType, keyTypeOK := r.typeValues.TypeOf(r.registry, keyValue)
-		if !keyTypeOK || keyType == nil {
-			keyType = typ.Unknown
-		}
-		if !tableTypeOK || tableType == nil {
-			return product.Value{}, false
-		}
-		projected, projectedOK := access.RuntimeIndex(tableType, keyType)
-		if !projectedOK || projected == nil {
-			return product.Value{}, false
-		}
-		value = r.typeValues.FromTypeWithWitness(r.registry, projected)
-	}
-	value = sourcevalue.InheritTopOriginEvidence(r.registry, value, tableValue)
-	if readexpr.DynamicIndexReadProvenPresent(r.readExprConfig(mode), point, expr, st) {
-		value = sourcevalue.WithoutNilRuntimeKind(r.registry, product.WithPresence(r.registry, value, presence.Present()))
-	}
-	return value, true
-}
-
-func (r *Result) dynamicIndexKeyValueForSourceMode(
-	mode sourceValueReadMode,
-	point cfg.Point,
-	source factflow.ValueSource,
-	st state.State,
-	read func(cfg.Point) state.State,
-) (product.Value, bool) {
-	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		if p, ok := r.facts.ExpressionPathRef(source.ExprRef); ok {
-			if value, ok := r.pathValueForSourceMode(mode, point, p); ok && r.sourceValueHasType(value) {
-				return value, true
-			}
-			if value, ok := r.declaredPathValueForDynamicIndexKey(point, p); ok {
-				return value, true
-			}
-			if value, ok := r.facts.ExpressionValue(source.ExprRef); ok && r.sourceValueHasType(value) {
-				return value, true
-			}
-		}
-	}
-	if source.Kind == factflow.ValueSourcePath {
-		if p, ok := r.ValueSourcePath(source); ok {
-			if value, ok := r.pathValueForSourceMode(mode, point, p); ok && r.sourceValueHasType(value) {
-				return value, true
-			}
-			if value, ok := r.declaredPathValueForDynamicIndexKey(point, p); ok {
-				return value, true
-			}
-		}
-	}
-	return r.genericSourceValueAtPoint(mode, point, source, st, read)
 }
 
 func (r *Result) pathValueForSourceMode(mode sourceValueReadMode, point cfg.Point, p pathdom.Path) (product.Value, bool) {

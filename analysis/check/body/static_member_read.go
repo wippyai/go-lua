@@ -273,9 +273,9 @@ func (r *Result) forEachStaticMemberReadOccurrence(mode staticMemberReadScanMode
 	seen := make(map[staticMemberReadSeenKey]struct{})
 	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
 		if use.Role == ExpressionUseOrdinaryAssignmentTarget {
-			return r.walkStaticMemberReadAssignmentTarget(use.Point, use.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0)
+			return r.walkStaticMemberReadAssignmentTarget(use.Point, use.Expr, mode, staticMemberReadContext{}, seen, visit, &visited)
 		}
-		return r.walkStaticMemberReads(use.Point, use.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0, false)
+		return r.walkStaticMemberReads(use.Point, use.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, false)
 	})
 	if mode == staticMemberReadScanMissingMember {
 		for _, point := range r.Graph().RPO() {
@@ -283,7 +283,7 @@ func (r *Result) forEachStaticMemberReadOccurrence(mode staticMemberReadScanMode
 				continue
 			}
 			if fact, ok := r.ExpressionEvaluation(point); ok {
-				if !r.walkStaticMemberReads(point, fact.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, 0, false) {
+				if !r.walkStaticMemberReads(point, fact.Expr, mode, staticMemberReadContext{}, seen, visit, &visited, false) {
 					return true
 				}
 			}
@@ -300,25 +300,8 @@ func (r *Result) walkStaticMemberReadAssignmentTarget(
 	seen map[staticMemberReadSeenKey]struct{},
 	visit func(StaticMemberReadOccurrence) bool,
 	visited *bool,
-	depth int,
 ) bool {
-	if target == nil || depth > typ.DefaultRecursionDepth {
-		return true
-	}
-	switch t := target.(type) {
-	case *ast.AttrGetExpr:
-		if !r.walkStaticMemberReads(point, t.Object, mode, ctx, seen, visit, visited, depth+1, false) {
-			return false
-		}
-		if t.KeySyntax == ast.AttrKeyIndex {
-			return r.walkStaticMemberReads(point, t.Key, mode, ctx, seen, visit, visited, depth+1, false)
-		}
-	case *ast.CastExpr:
-		return r.walkStaticMemberReadAssignmentTarget(point, t.Expr, mode, ctx, seen, visit, visited, depth+1)
-	case *ast.NonNilAssertExpr:
-		return r.walkStaticMemberReadAssignmentTarget(point, t.Expr, mode, ctx, seen, visit, visited, depth+1)
-	}
-	return true
+	return r.walkStaticMemberReadsMode(point, target, mode, ctx, seen, visit, visited, false, true)
 }
 
 func (r *Result) walkStaticMemberReads(
@@ -329,99 +312,104 @@ func (r *Result) walkStaticMemberReads(
 	seen map[staticMemberReadSeenKey]struct{},
 	visit func(StaticMemberReadOccurrence) bool,
 	visited *bool,
-	depth int,
 	allowExactNilRead bool,
 ) bool {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return true
+	return r.walkStaticMemberReadsMode(point, expr, mode, ctx, seen, visit, visited, allowExactNilRead, false)
+}
+
+func (r *Result) walkStaticMemberReadsMode(
+	point cfg.Point,
+	expr ast.Expr,
+	mode staticMemberReadScanMode,
+	ctx staticMemberReadContext,
+	seen map[staticMemberReadSeenKey]struct{},
+	visit func(StaticMemberReadOccurrence) bool,
+	visited *bool,
+	allowExactNilRead bool,
+	assignment bool,
+) bool {
+	type frame struct {
+		expr          ast.Expr
+		ctx           staticMemberReadContext
+		allowExactNil bool
+		assignment    bool
+		exitAttr      bool
 	}
-	next := func(child ast.Expr) bool {
-		return r.walkStaticMemberReads(point, child, mode, ctx, seen, visit, visited, depth+1, false)
-	}
-	switch e := expr.(type) {
-	case *ast.AttrGetExpr:
-		if !next(e.Object) {
-			return false
+	stack := []frame{{expr: expr, ctx: ctx, allowExactNil: allowExactNilRead, assignment: assignment}}
+	for len(stack) != 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if current.expr == nil {
+			continue
 		}
-		if e.KeySyntax == ast.AttrKeyIndex && !next(e.Key) {
-			return false
-		}
-		key := staticMemberReadSeenKey{point: point, expr: e}
-		if _, ok := seen[key]; ok {
-			return true
-		}
-		seen[key] = struct{}{}
-		occ, ok := r.staticMemberReadOccurrence(point, e, ctx, allowExactNilRead)
-		if !ok {
-			return true
-		}
-		*visited = true
-		return visit(occ)
-	case *ast.FuncCallExpr:
-		if mode == staticMemberReadScanMissingMember {
-			if callee, ok := e.Func.(*ast.AttrGetExpr); ok && callee.KeySyntax == ast.AttrKeyDot {
-				if !r.walkStaticMemberReads(point, callee.Object, mode, ctx, seen, visit, visited, depth+1, false) {
-					return false
+		if current.assignment {
+			switch target := current.expr.(type) {
+			case *ast.AttrGetExpr:
+				if target.KeySyntax == ast.AttrKeyIndex {
+					stack = append(stack, frame{expr: target.Key, ctx: current.ctx})
 				}
-			} else if !next(e.Func) {
-				return false
+				stack = append(stack, frame{expr: target.Object, ctx: current.ctx})
+			case *ast.CastExpr:
+				stack = append(stack, frame{expr: target.Expr, ctx: current.ctx, assignment: true})
+			case *ast.NonNilAssertExpr:
+				stack = append(stack, frame{expr: target.Expr, ctx: current.ctx, assignment: true})
 			}
-		} else if !next(e.Func) {
-			return false
+			continue
 		}
-		if !next(e.Receiver) {
-			return false
-		}
-		for _, arg := range e.Args {
-			if !next(arg) {
-				return false
-			}
-		}
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
+		if current.exitAttr {
+			attr := current.expr.(*ast.AttrGetExpr)
+			key := staticMemberReadSeenKey{point: point, expr: attr}
+			if _, duplicate := seen[key]; duplicate {
 				continue
 			}
-			if field.KeySyntax == ast.AttrKeyIndex && !next(field.Key) {
-				return false
+			seen[key] = struct{}{}
+			if occ, ok := r.staticMemberReadOccurrence(point, attr, current.ctx, current.allowExactNil); ok {
+				*visited = true
+				if !visit(occ) {
+					return false
+				}
 			}
-			if !next(field.Value) {
-				return false
+			continue
+		}
+		switch node := current.expr.(type) {
+		case *ast.AttrGetExpr:
+			stack = append(stack, frame{expr: node, ctx: current.ctx, allowExactNil: current.allowExactNil, exitAttr: true})
+			if node.KeySyntax == ast.AttrKeyIndex {
+				stack = append(stack, frame{expr: node.Key, ctx: current.ctx})
+			}
+			stack = append(stack, frame{expr: node.Object, ctx: current.ctx})
+		case *ast.FuncCallExpr:
+			children := make([]ast.Expr, 0, 2+len(node.Args))
+			if mode == staticMemberReadScanMissingMember {
+				if callee, ok := node.Func.(*ast.AttrGetExpr); ok && callee.KeySyntax == ast.AttrKeyDot {
+					children = append(children, callee.Object)
+				} else {
+					children = append(children, node.Func)
+				}
+			} else {
+				children = append(children, node.Func)
+			}
+			children = append(children, node.Receiver)
+			children = append(children, node.Args...)
+			for i := len(children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{expr: children[i], ctx: current.ctx})
+			}
+		case *ast.LogicalOpExpr:
+			rightContext := current.ctx
+			if mode == staticMemberReadScanMissingMember {
+				if node.Operator == "and" {
+					rightContext = r.staticMemberReadExpressionEdgeContext(node.Lhs, true, current.ctx)
+				} else if node.Operator == "or" {
+					rightContext = r.staticMemberReadExpressionEdgeContext(node.Lhs, false, current.ctx)
+				}
+			}
+			stack = append(stack, frame{expr: node.Rhs, ctx: rightContext}, frame{expr: node.Lhs, ctx: current.ctx, allowExactNil: mode == staticMemberReadScanMissingMember && node.Operator == "or"})
+		default:
+			children := adviceClaimChildren(current.expr)
+			for i := len(children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{expr: children[i], ctx: current.ctx})
 			}
 		}
-	case *ast.LogicalOpExpr:
-		if mode == staticMemberReadScanMissingMember {
-			if !r.walkStaticMemberReads(point, e.Lhs, mode, ctx, seen, visit, visited, depth+1, e.Operator == "or") {
-				return false
-			}
-			nextCtx := ctx
-			switch e.Operator {
-			case "and":
-				nextCtx = r.staticMemberReadExpressionEdgeContext(e.Lhs, true, ctx)
-			case "or":
-				nextCtx = r.staticMemberReadExpressionEdgeContext(e.Lhs, false, ctx)
-			}
-			return r.walkStaticMemberReads(point, e.Rhs, mode, nextCtx, seen, visit, visited, depth+1, false)
-		}
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.RelationalOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.StringConcatOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.ArithmeticOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryNotOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryLenOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		return next(e.Expr)
-	case *ast.CastExpr:
-		return next(e.Expr)
-	case *ast.NonNilAssertExpr:
-		return next(e.Expr)
 	}
 	return true
 }

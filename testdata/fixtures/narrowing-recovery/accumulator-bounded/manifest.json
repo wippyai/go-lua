@@ -1,8 +1,6 @@
 {
   "description": "Loop accumulator widened to [0,+inf) must be re-bounded to [0,#xs] by narrowing so a guarded xs[count] read is proven in-bounds.",
-  "check": {
-    "skip": "pending: solver narrowing (decreasing) pass (task 7c17de64) not yet implemented"
-  },
+  "check": {},
   "run": {
     "skip": "checker-only narrowing-precision fixture"
   }

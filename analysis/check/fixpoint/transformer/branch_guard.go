@@ -12,42 +12,15 @@ import (
 // lowering owns only Lua truthy/falsy polarity.
 type BranchValueTerm func(factflow.ValueSource) (ValueTerm, bool)
 
-// LowerBranchGuards lowers the initial exact guard-only slice. The branch view
-// is the same factapply algebra used by concrete edge execution. Any active
-// refinement, relation, persistent evidence, or sufficient-literal implication
-// fails closed until a symbolic output transaction represents that family.
-func LowerBranchGuards(arena *Arena, branch factapply.BranchAlgebra, resolve BranchValueTerm) (truthy, falsy Guard, err error) {
-	if arena == nil || resolve == nil {
-		return 0, 0, fmt.Errorf("branch: arena and condition resolver are required")
-	}
-	if exact, reason := branch.GuardOnly(); !exact {
-		return 0, 0, fmt.Errorf("%s", reason)
-	}
-	condition, _ := branch.Condition()
-	source := condition.Source()
-	value, ok := resolve(source)
-	if !ok || value == 0 {
-		return 0, 0, fmt.Errorf("branch: contextual-condition-source")
-	}
-	if condition.TruthyOnTrueEdge() {
-		return arena.Truthy(value), arena.Falsy(value), nil
-	}
-	return arena.Falsy(value), arena.Truthy(value), nil
-}
-
-// LowerBranchConditionGuards lowers the condition polarity when scalar root
-// refinements are represented separately by LowerBranchRefinements. Persistent
-// relation/evidence families remain fail-closed.
-func LowerBranchConditionGuards(arena *Arena, branch factapply.BranchAlgebra, resolve BranchValueTerm) (truthy, falsy Guard, err error) {
-	return lowerBranchConditionGuards(arena, branch, resolve, false)
-}
-
-func lowerBranchConditionGuards(arena *Arena, branch factapply.BranchAlgebra, resolve BranchValueTerm, representedPathEvidence bool) (truthy, falsy Guard, err error) {
+func lowerBranchConditionGuards(arena *Arena, branch factapply.BranchAlgebra, resolve BranchValueTerm, representedPathEvidence, representedStateRelations, representedSufficientCases bool) (truthy, falsy Guard, err error) {
 	if arena == nil || resolve == nil {
 		return 0, 0, fmt.Errorf("branch: arena and condition resolver are required")
 	}
 	for _, reason := range branch.GuardOnlyBlockers() {
-		if reason != "branch:refinement" && !(representedPathEvidence && reason == "branch:path-evidence") {
+		if reason != "branch:refinement" &&
+			!(representedPathEvidence && reason == "branch:path-evidence") &&
+			!(representedStateRelations && (reason == "branch:presence-relation" || reason == "branch:path-relation")) &&
+			!(representedSufficientCases && reason == "branch:sufficient-literal-case") {
 			return 0, 0, fmt.Errorf("%s", reason)
 		}
 	}

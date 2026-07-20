@@ -29,7 +29,12 @@ func (q *query) indexInArray(a *typ.Array, key typ.Type, depth int, mode indexMo
 
 func (q *query) arrayRuntimeKeyMayBeInteger(key typ.Type, depth int) bool {
 	if stopDepth(key, depth) {
-		return false
+		// May-contain query (invariants.md Rule 1 dual): stopping without a
+		// definitive answer must not narrow a runtime read to "never an
+		// integer key". A false here would make the caller treat the array
+		// element as unreachable and fall back to a bare-nil read type,
+		// silently dropping a runtime-possible value from the result.
+		return true
 	}
 	if typ.IsAny(key) || typ.IsUnknown(key) {
 		return true
@@ -39,7 +44,7 @@ func (q *query) arrayRuntimeKeyMayBeInteger(key typ.Type, depth int) bool {
 		return false
 	}
 	defer q.leave(visit)
-	return descendAccessWrappers(key, depth, nil, func(key typ.Type, depth int) bool {
+	return descendAccessWrappers(key, depth, nil, trueThunk, func(key typ.Type, depth int) bool {
 		if typ.IsAny(key) || typ.IsUnknown(key) {
 			return true
 		}

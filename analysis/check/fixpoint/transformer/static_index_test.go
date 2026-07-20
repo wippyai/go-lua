@@ -47,7 +47,7 @@ func TestStaticIndexTermIsCanonicalRebasesAndMatchesSharedKernel(t *testing.T) {
 	}
 }
 
-func TestAdjustedDirectBindingAdmitsOnlyIteratorDerivedMemberProjection(t *testing.T) {
+func TestAdjustedDirectBindingAdmitsExactMemberProjection(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	ref := factflow.ExprRef(71)
@@ -101,6 +101,48 @@ func TestAdjustedDirectBindingAdmitsOnlyIteratorDerivedMemberProjection(t *testi
 	}
 }
 
+func TestAdjustedDirectBindingAdmitsCertifiedRuntimeValidationScalar(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	innerRef, castRef := factflow.ExprRef(72), factflow.ExprRef(73)
+	param := symbol.ID(23)
+	scalarShape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	adjustedShape, _ := factflow.NewValueSourceShape(true, false, true, false)
+	inner, _ := factflow.NewExpressionValueSource(innerRef, 0, 0, 0, scalarShape)
+	cast, _ := factflow.NewExpressionValueSource(castRef, 0, 0, 0, adjustedShape)
+	validatedType := typetable.NewRecord().Field("name", typ.String).Build()
+	validated := typevalue.FromType(reg, validatedType)
+	plan := operationplan.New(graph, factflow.FactsInput{
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			innerRef: pathdom.NewPath(param, "param"),
+		},
+		ExpressionRefinements: map[factflow.ExprRef]factflow.ExpressionRefinement{
+			castRef: factflow.NewExpressionRuntimeValidation(inner, validated),
+		},
+	})
+	builder := NewBuilder(reg, Shape{Params: 1}, DefaultOutputCapabilityRegistry(), plan)
+	ctx := planCompileContext{
+		registry: reg,
+		graph:    graph,
+		plan:     plan,
+		facts:    plan.Facts(),
+		builder:  builder,
+		locals: map[symbol.ID]ValueTerm{
+			param: builder.Arena().Root(Root{Kind: RootParam}),
+		},
+		expressionRefinements: map[factflow.ExprRef]struct{}{castRef: {}},
+	}
+	value, path, err := exactDirectCallSourceBinding(ctx, cast)
+	if err != nil || value == 0 || path != 0 || builder.Arena().values[value].op != valueExpressionRefinement {
+		t.Fatalf("adjusted runtime validation binding = %d/%d/%v", value, path, err)
+	}
+
+	ctx.expressionRefinements = nil
+	if _, _, err := exactDirectCallSourceBinding(ctx, cast); err == nil {
+		t.Fatal("uncertified adjusted runtime validation accepted")
+	}
+}
+
 func TestStaticIndexMalformedKeyFailsBeforeRebasePublication(t *testing.T) {
 	reg := standard.Registry()
 	callee, caller := NewArena(reg), NewArena(reg)
@@ -134,9 +176,9 @@ func TestOperationPlanGenericAliasCarriesStaticIndexDirectBinding(t *testing.T) 
 	aliasSource, _ := factflow.NewPathValueSource(pathdom.NewPath(routeSymbol, "route").Key(), 0, 0, 0, scalar)
 	iteratorSite := factflow.NewCallSite(factflow.CallSiteConfig{Final: true, Expanded: true, ArgumentSources: []factflow.ValueSource{containerSource}})
 	record := typetable.NewRecord().Field("target_name", typ.String).Build()
-	op, ok := operationplan.NewGenericForOperation(1, routeSymbol, routeSymbol-1, operationplan.GenericForSource{
+	op, ok := operationplan.NewGenericForOperation(1, routeSymbol, routeSymbol-1, []operationplan.GenericForSource{{
 		Kind: operationplan.GenericForSourceCall, CallPoint: iteratorCall, HasCallPoint: true,
-	}, []typ.Type{typ.NewArray(record)})
+	}}, []typ.Type{typ.NewArray(record)})
 	if !ok {
 		t.Fatal("generic operation rejected")
 	}
@@ -163,6 +205,10 @@ func TestOperationPlanGenericAliasCarriesStaticIndexDirectBinding(t *testing.T) 
 		ctx.locals[id] = term
 	}
 	ctx.genericBindings = make(map[symbol.ID]symbolicGenericBinding)
+	var rootAssignment rootAssignmentTerm
+	ctx.rootAssignment = &rootAssignment
+	ctx.structuralEnvironment = true
+	ctx.point = aliasPoint
 	if _, err := lowerGenericForBinding(ctx, genericPoint, true); err != nil {
 		t.Fatalf("generic binding: %v", err)
 	}
@@ -174,7 +220,7 @@ func TestOperationPlanGenericAliasCarriesStaticIndexDirectBinding(t *testing.T) 
 		t.Fatalf("aliased member binding = %d/%d/%v", value, path, err)
 	}
 	node := prepared.builder.Arena().values[value]
-	if node.op != valueStaticIndex || len(node.args) != 2 || prepared.builder.Arena().values[node.args[0]].op != valueIteratorProjection {
-		t.Fatalf("aliased member term did not retain iterator provenance: %#v", node)
+	if node.op != valueDynamicTableRead || node.point != aliasPoint || len(node.args) != 2 || node.path == 0 || prepared.builder.Arena().values[node.args[0]].op != valueEnvironment {
+		t.Fatalf("aliased member term is not the point-anchored post-N4 direct environment-table read: %#v", node)
 	}
 }

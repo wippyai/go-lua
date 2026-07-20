@@ -13,32 +13,36 @@ import (
 func TestRebaseTermDAGsPreservesNamespacesCorrelationAndCanonicalIdentity(t *testing.T) {
 	reg := standard.Registry()
 	callee, caller := NewArena(reg), NewArena(reg)
-	calleeShape := Shape{Params: 1, Captures: 1, Globals: 1}
-	callerShape := Shape{Params: 3}
+	calleeShape := Shape{Params: 1, Captures: 1, Globals: 1, Ambients: 1}
+	callerShape := Shape{Params: 4}
 	cp := Root{Kind: RootParam, Index: 0}
 	cc := Root{Kind: RootCapture, Index: 0}
 	cg := Root{Kind: RootGlobal, Index: 0}
+	ca := Root{Kind: RootAmbient, Index: 0}
 	p0 := caller.Root(Root{Kind: RootParam, Index: 0})
 	p1 := caller.Root(Root{Kind: RootParam, Index: 1})
 	p2 := caller.Root(Root{Kind: RootParam, Index: 2})
+	p3 := caller.Root(Root{Kind: RootParam, Index: 3})
 	constant := callee.Constant(typevalue.LiteralString(reg, "fixed"))
-	joined := callee.JoinValue(callee.Root(cp), callee.Root(cc), callee.Root(cg), constant)
+	joined := callee.JoinValue(callee.Root(cp), callee.Root(cc), callee.Root(cg), callee.Root(ca), constant)
 	guard := callee.And(
 		callee.Truthy(callee.Root(cp)),
 		callee.Or(callee.Falsy(callee.Root(cc)), callee.Truthy(joined)),
 	)
 	basePath := caller.Path(Root{Kind: RootParam, Index: 1}, segment.Segment{Kind: segment.SegmentField, Name: "base"})
 	sourcePath := callee.Path(cc, segment.Segment{Kind: segment.SegmentField, Name: "leaf"})
-	bindings, err := NewTermRootBindings(calleeShape, callerShape, []ValueTerm{p0, p1, p2}, []PathTerm{0, basePath, 0})
+	ambientPath := caller.Path(Root{Kind: RootParam, Index: 3}, segment.Segment{Kind: segment.SegmentField, Name: "ambient"})
+	sourceAmbientPath := callee.Path(ca, segment.Segment{Kind: segment.SegmentField, Name: "leaf"})
+	bindings, err := NewTermRootBindings(calleeShape, callerShape, []ValueTerm{p0, p1, p2, p3}, []PathTerm{0, basePath, 0, ambientPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := TermRebaseInput{Values: []ValueTerm{joined, constant}, Paths: []PathTerm{sourcePath}, Guards: []Guard{guard}}
+	input := TermRebaseInput{Values: []ValueTerm{joined, constant}, Paths: []PathTerm{sourcePath, sourceAmbientPath}, Guards: []Guard{guard}}
 	got, err := RebaseTermDAGs(caller, callee, bindings, input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantJoin := caller.JoinValue(p0, p1, p2, caller.Constant(typevalue.LiteralString(reg, "fixed")))
+	wantJoin := caller.JoinValue(p0, p1, p2, p3, caller.Constant(typevalue.LiteralString(reg, "fixed")))
 	if got.Values[0] != wantJoin || got.Values[1] != caller.Constant(typevalue.LiteralString(reg, "fixed")) {
 		t.Fatalf("rebased values = %v, want canonical join %d", got.Values, wantJoin)
 	}
@@ -53,8 +57,15 @@ func TestRebaseTermDAGsPreservesNamespacesCorrelationAndCanonicalIdentity(t *tes
 	if got.Paths[0] != wantPath {
 		t.Fatalf("rebased path = %d, want composed canonical path %d", got.Paths[0], wantPath)
 	}
+	wantAmbientPath := caller.Path(Root{Kind: RootParam, Index: 3},
+		segment.Segment{Kind: segment.SegmentField, Name: "ambient"},
+		segment.Segment{Kind: segment.SegmentField, Name: "leaf"},
+	)
+	if got.Paths[1] != wantAmbientPath {
+		t.Fatalf("rebased ambient path = %d, want composed canonical path %d", got.Paths[1], wantAmbientPath)
+	}
 	// Equal numeric source indices in distinct namespaces remained distinct.
-	if p0 == p1 || p1 == p2 || p0 == p2 {
+	if p0 == p1 || p0 == p2 || p0 == p3 || p1 == p2 || p1 == p3 || p2 == p3 {
 		t.Fatal("test assumption: caller namespace bindings unexpectedly alias")
 	}
 	again, err := RebaseTermDAGs(caller, callee, bindings, input)

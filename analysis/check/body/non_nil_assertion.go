@@ -29,7 +29,7 @@ func (r *Result) ForEachNonNilAssertionOccurrence(visit func(NonNilAssertionOccu
 	seen := make(map[nonNilAssertionKey]struct{})
 	visited := false
 	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
-		return r.forEachNonNilAssertionInExpr(use.Point, use.Expr, seen, visit, &visited, 0)
+		return r.forEachNonNilAssertionInExpr(use.Point, use.Expr, seen, visit, &visited)
 	})
 	return visited
 }
@@ -45,86 +45,41 @@ func (r *Result) forEachNonNilAssertionInExpr(
 	seen map[nonNilAssertionKey]struct{},
 	visit func(NonNilAssertionOccurrence) bool,
 	visited *bool,
-	depth int,
 ) bool {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return true
+	type frame struct {
+		expr ast.Expr
+		exit bool
 	}
-	if assert, ok := expr.(*ast.NonNilAssertExpr); ok {
-		r.forEachNonNilAssertionInExpr(point, assert.Expr, seen, visit, visited, depth+1)
+	stack := []frame{{expr: expr}}
+	for len(stack) != 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if current.expr == nil {
+			continue
+		}
+		if !current.exit {
+			stack = append(stack, frame{expr: current.expr, exit: true})
+			children := adviceClaimChildren(current.expr)
+			for i := len(children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{expr: children[i]})
+			}
+			continue
+		}
+		assert, ok := current.expr.(*ast.NonNilAssertExpr)
+		if !ok {
+			continue
+		}
 		key := nonNilAssertionKey{point: point, expr: assert}
-		if _, ok := seen[key]; ok {
-			return true
+		if _, duplicate := seen[key]; duplicate {
+			continue
 		}
 		seen[key] = struct{}{}
-		item, ok := r.nonNilAssertionOccurrence(point, assert)
-		if !ok {
-			return true
-		}
-		*visited = true
-		return visit(item)
-	}
-	return r.walkNonNilAssertionExprChildren(point, expr, seen, visit, visited, depth)
-}
-
-func (r *Result) walkNonNilAssertionExprChildren(
-	point cfg.Point,
-	expr ast.Expr,
-	seen map[nonNilAssertionKey]struct{},
-	visit func(NonNilAssertionOccurrence) bool,
-	visited *bool,
-	depth int,
-) bool {
-	next := func(child ast.Expr) bool {
-		return r.forEachNonNilAssertionInExpr(point, child, seen, visit, visited, depth+1)
-	}
-	switch e := expr.(type) {
-	case *ast.AttrGetExpr:
-		if !next(e.Object) {
-			return false
-		}
-		if e.KeySyntax == ast.AttrKeyIndex {
-			return next(e.Key)
-		}
-	case *ast.FuncCallExpr:
-		if !next(e.Func) || !next(e.Receiver) {
-			return false
-		}
-		for _, arg := range e.Args {
-			if !next(arg) {
+		if item, present := r.nonNilAssertionOccurrence(point, assert); present {
+			*visited = true
+			if !visit(item) {
 				return false
 			}
 		}
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			if field.KeySyntax == ast.AttrKeyIndex && !next(field.Key) {
-				return false
-			}
-			if !next(field.Value) {
-				return false
-			}
-		}
-	case *ast.LogicalOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.RelationalOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.StringConcatOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.ArithmeticOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryNotOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryLenOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		return next(e.Expr)
-	case *ast.CastExpr:
-		return next(e.Expr)
 	}
 	return true
 }

@@ -5,7 +5,6 @@ package checktest
 
 import (
 	"context"
-	"errors"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -18,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -41,8 +39,6 @@ type config struct {
 	modules          map[string]*ModuleResult
 	diagnosticPolicy diagnostic.Policy
 	stateLanes       []state.LaneID
-	schedule         transfer.Schedule
-	compareWTO       func(transfer.WTOComparison)
 	stats            *program.Stats
 }
 
@@ -51,15 +47,6 @@ type config struct {
 func WithContext(ctx context.Context) Option {
 	return func(c *config) {
 		c.context = ctx
-	}
-}
-
-// WithSchedule selects an opt-in body schedule for fixture/benchmark runs.
-// FIFO remains the default. compare may be nil.
-func WithSchedule(schedule transfer.Schedule, compare func(transfer.WTOComparison)) Option {
-	return func(c *config) {
-		c.schedule = schedule
-		c.compareWTO = compare
 	}
 }
 
@@ -73,7 +60,6 @@ type ModuleResult struct {
 	Errors    []diagnostic.Diagnostic
 	Manifest  *manifest.Manifest
 	Placement placementplan.Plan
-	bodies    []*body.Result
 }
 
 func WithStdlib() Option {
@@ -174,12 +160,26 @@ func moduleResultFromCheck(name string, result Result) *ModuleResult {
 		m = manifest.New(name)
 		m.SetExport(typ.Unknown)
 	}
-	return &ModuleResult{
+	out := &ModuleResult{
 		Errors:    result.Diagnostics,
 		Manifest:  m,
 		Placement: result.PlacementPlan(),
-		bodies:    result.BodyResults(),
 	}
+	result.ReleaseTransient()
+	return out
+}
+
+// ReleaseTransient drops solved CFG and projection state after a harness
+// consumer has copied its diagnostics, placement, and any required manifest.
+// It changes no published observation and is idempotent.
+func (r *Result) ReleaseTransient() {
+	if r == nil || r.checked == nil {
+		return
+	}
+	if root := r.checked.RootResult(); root != nil {
+		root.ReleaseTransientTree()
+	}
+	r.checked = nil
 }
 
 func (r Result) PlacementPlan() placementplan.Plan {
@@ -293,8 +293,6 @@ func checkSource(src, filename string, opts ...Option) Result {
 			Globals:       globals,
 			GlobalTypes:   globalTypes,
 			StateLanes:    cfg.stateLanes,
-			Schedule:      cfg.schedule,
-			CompareWTO:    cfg.compareWTO,
 			Signatures:    signatures,
 			ModuleExports: moduleExports,
 			ModuleTypes:   moduleTypes,
@@ -302,12 +300,6 @@ func checkSource(src, filename string, opts ...Option) Result {
 		Stats: cfg.stats,
 	})
 	if err != nil {
-		if errors.Is(err, body.ErrUnsupportedCFG) {
-			structural = cfg.diagnosticPolicy.Apply(structural)
-			setDefaultFile(structural, filename)
-			diagnostic.Sort(structural)
-			return Result{Diagnostics: structural}
-		}
 		diags := append([]diagnostic.Diagnostic{{
 			Position: diagnostic.Position{File: filename},
 			Code:     diagnostic.Code("check"),

@@ -7,11 +7,9 @@ import (
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -76,9 +74,8 @@ func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1), HasExpr: true}
 
 	cases := []struct {
-		name        string
-		input       factflow.FactsInput
-		callOutcome bool
+		name  string
+		input factflow.FactsInput
 	}{
 		{
 			name: "root assignment",
@@ -101,7 +98,7 @@ func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 		{
 			name: "dynamic index write",
 			input: factflow.FactsInput{DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
-				point: factflow.NewDynamicIndexWrite(rootPath, source, source, dynamicindex.AdmissionUnknown, factflow.DynamicIndexReadbackNone),
+				point: factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(rootPath, source, nil), source, dynamicindex.AdmissionUnknown, factflow.DynamicIndexReadbackNone),
 			}},
 		},
 		{
@@ -132,7 +129,6 @@ func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 			input: factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{
 				point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
 			}},
-			callOutcome: true,
 		},
 		{
 			name: "no normal return",
@@ -182,11 +178,6 @@ func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := &Result{facts: factflow.NewFacts(tc.input)}
-			if tc.callOutcome {
-				result.callOutcome = func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-					return callpayload.CallOutcome{}
-				}
-			}
 			if !result.needsBoundaryNodeOutput(point) {
 				t.Fatalf("needsBoundaryNodeOutput(%d) = false, want true", point)
 			}
@@ -194,14 +185,14 @@ func TestNeedsBoundaryNodeOutputCoversNodeTransferFactLanes(t *testing.T) {
 	}
 }
 
-func TestNeedsBoundaryNodeOutputIgnoresStatementCallWithoutOutcome(t *testing.T) {
+func TestNeedsBoundaryNodeOutputIncludesEveryLexicalCall(t *testing.T) {
 	point := cfg.Point(11)
 	result := &Result{facts: factflow.NewFacts(factflow.FactsInput{
 		CallSites: map[cfg.Point]factflow.CallSite{
 			point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
 		},
 	})}
-	if result.needsBoundaryNodeOutput(point) {
-		t.Fatalf("needsBoundaryNodeOutput(%d) = true, want false for non-producer statement call without outcome provider", point)
+	if !result.needsBoundaryNodeOutput(point) {
+		t.Fatalf("needsBoundaryNodeOutput(%d) = false, want true for exact call publication", point)
 	}
 }

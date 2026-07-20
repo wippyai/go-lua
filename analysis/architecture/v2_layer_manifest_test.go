@@ -68,7 +68,6 @@ var retiredParallelPackagePrefixes = []v2PackagePrefix{
 	"github.com/wippyai/go-lua/analysis/semantic/transaction",
 	"github.com/wippyai/go-lua/analysis/engine/circuit",
 	"github.com/wippyai/go-lua/analysis/engine/concrete",
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/poc",
 }
 
 var retiredParallelSourcePaths = []string{

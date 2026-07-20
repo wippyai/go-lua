@@ -6,9 +6,45 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
+
+func TestScalarNotAndFalsyAbsentRefinementMatchLuaKernels(t *testing.T) {
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	root := arena.Root(Root{Kind: RootParam})
+	not, ok := arena.ScalarUnaryValue("not", root)
+	if !ok {
+		t.Fatal("ScalarUnaryValue(not) rejected")
+	}
+	falsyAbsent, ok := arena.RefineValue(root, factflow.NewFalsyAbsentConstraint(typevalue.Nil(reg)))
+	if !ok {
+		t.Fatal("RefineValue(falsy-absent) rejected")
+	}
+	for _, value := range []product.Value{
+		typevalue.LiteralString(reg, "value"), typevalue.LiteralBool(reg, false), typevalue.Nil(reg), product.Top(),
+	} {
+		cursor, err := NewBindingCursor(Shape{Params: 1}, []product.Value{value}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotNot, gotNotOK := arena.evalValue(not, cursor, SpecializationContext{})
+		wantNot, wantNotOK := luasourcevalue.UnaryOperationValue(reg, nil, "not", value)
+		if gotNotOK != wantNotOK || gotNotOK && !product.Equal(reg, gotNot, wantNot) {
+			t.Fatalf("not(%#v) = %#v/%v, want %#v/%v", value, gotNot, gotNotOK, wantNot, wantNotOK)
+		}
+		gotRefined, refinedOK := arena.evalValue(falsyAbsent, cursor, SpecializationContext{})
+		wantRefined := value
+		if !valuerefine.CanBeFalse(reg, value) {
+			wantRefined = product.Meet(reg, value, typevalue.Nil(reg))
+		}
+		if !refinedOK || !product.Equal(reg, gotRefined, wantRefined) {
+			t.Fatalf("falsy-absent(%#v) = %#v/%v, want %#v", value, gotRefined, refinedOK, wantRefined)
+		}
+	}
+}
 
 func TestScalarBinaryValueDifferentialAgainstLuaKernel(t *testing.T) {
 	reg := standard.Registry()
@@ -133,7 +169,7 @@ func TestScalarBinaryValueCanonicalStructureAndDeterminism(t *testing.T) {
 	if first, second := build(false), build(true); first != second {
 		t.Fatalf("canonical spelling depends on construction order: %q != %q", first, second)
 	}
-	if _, ok := arena.ScalarBinaryValue("+", left, right); ok {
+	if _, ok := arena.ScalarBinaryValue("??", left, right); ok {
 		t.Fatal("unsupported scalar operation admitted")
 	}
 }

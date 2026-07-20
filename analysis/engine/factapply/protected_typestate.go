@@ -6,10 +6,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
-// applyProtectedCallTypestate catches the callback's exceptional lifecycle
+// ApplyProtectedCallTypestate catches the callback's exceptional lifecycle
 // state at pcall/xpcall. Each exit class is first materialized against the
 // caller's state, then their typestate lanes are joined at the caught outcome.
-func applyProtectedCallTypestate(out state.State, protected callboundary.ProtectedCallTypestate) state.State {
+// It is the sole authoritative protected-call State transfer used by both
+// concrete call lowering and the reduced relation executor.
+func ApplyProtectedCallTypestate(out state.State, protected callboundary.ProtectedCallTypestate) state.State {
 	if protected.Empty() {
 		return out
 	}

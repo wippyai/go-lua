@@ -4,18 +4,21 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestAllocationResultAndEffectShareOneTemplateTerm(t *testing.T) {
 	reg := standard.Registry()
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("allocation-result-effect")))
 	sig, _ := (signaturelookup.Source{IncludeStdlib: true}).Lookup("table.create")
 	template, ok := effectlowering.StaticSignatureAllocationTemplate(sig)
 	if !ok {
@@ -32,11 +35,19 @@ func TestAllocationResultAndEffectShareOneTemplateTerm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !arena.bindLexicalOwner(owner) {
+		t.Fatal("allocation arena owner rejected")
+	}
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
 	value, exact := arena.evalValue(result, cursor, SpecializationContext{})
 	resolved, resolvedExact := effects.resolve(effect, cursor, SpecializationContext{})
 	if !exact || !resolvedExact || resolved.Kind != EffectAllocationTemplate || !product.Equal(reg, value, resolved.Allocation.Result) {
 		t.Fatalf("shared allocation value/effect exact=%v/%v resolved=%#v", exact, resolvedExact, resolved)
+	}
+	identityTerm, singleton := product.Get(reg, value, identity.Key).Term()
+	templateIdentity, symbolic := identityTerm.Allocation()
+	if !singleton || !symbolic || !templateIdentity.Valid() {
+		t.Fatalf("allocation result identity = %#v/%v, want one symbolic allocation term", identityTerm, singleton)
 	}
 
 	callerTerms := NewArena(reg)
@@ -46,6 +57,9 @@ func TestAllocationResultAndEffectShareOneTemplateTerm(t *testing.T) {
 	if err != nil || len(rebased.Effects) != 1 {
 		t.Fatalf("allocation effect rebase = %#v/%v", rebased, err)
 	}
+	if !callerTerms.bindLexicalOwner(owner) {
+		t.Fatal("rebased allocation arena owner rejected")
+	}
 	again, ok := callerEffects.resolve(rebased.Effects[0], cursor, SpecializationContext{})
 	if !ok || again.Allocation.Site != op.Site() || !product.Equal(reg, again.Allocation.Result, value) {
 		t.Fatalf("rebased allocation = %#v/%v", again, ok)
@@ -54,6 +68,7 @@ func TestAllocationResultAndEffectShareOneTemplateTerm(t *testing.T) {
 
 func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
 	reg := standard.Registry()
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("allocation-effect-target")))
 	sig, _ := (signaturelookup.Source{IncludeStdlib: true}).Lookup("table.create")
 	template, ok := effectlowering.StaticSignatureAllocationTemplate(sig)
 	if !ok {
@@ -64,6 +79,10 @@ func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
 	}, template)
 	calleeTerms := NewArena(reg)
 	allocation := calleeTerms.AllocationTemplate(op)
+	otherOp, _ := operationplan.NewSignatureAllocationOperation(operationplan.SignatureAllocationSite{
+		Owner: 71, Template: template.Root, Ordinal: 5,
+	}, template)
+	otherAllocation := calleeTerms.AllocationTemplate(otherOp)
 	allocationTarget := AllocationEffectTarget(allocation)
 	key := calleeTerms.Constant(typevalue.LiteralString(reg, "key"))
 	value := calleeTerms.Constant(typevalue.LiteralString(reg, "value"))
@@ -82,6 +101,9 @@ func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
 	if err != nil || second != first || !callee.Valid(first, Shape{}) {
 		t.Fatalf("allocation target was not canonical/valid: first=%d second=%d err=%v", first, second, err)
 	}
+	if !calleeTerms.bindLexicalOwner(owner) {
+		t.Fatal("callee allocation arena owner rejected")
+	}
 
 	cursor, _ := NewBindingCursor(Shape{}, nil, nil)
 	resolved, exact := callee.resolve(first, cursor, SpecializationContext{})
@@ -99,6 +121,9 @@ func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
 	if err != nil || len(rebased.Effects) != 1 {
 		t.Fatalf("allocation target rebase = %#v/%v", rebased, err)
 	}
+	if !callerTerms.bindLexicalOwner(owner) {
+		t.Fatal("caller allocation arena owner rejected")
+	}
 	again, exact := caller.resolve(rebased.Effects[0], cursor, SpecializationContext{})
 	rebasedTarget, targetExact := again.Mutation.TableTarget.Allocation()
 	if !exact || !targetExact || rebasedTarget.Site != op.Site() {
@@ -111,10 +136,7 @@ func TestEffectTargetTermAllocationCanonicalRebaseAndResolution(t *testing.T) {
 		t.Fatal("target containing both path and allocation was admitted")
 	}
 
-	otherOp, _ := operationplan.NewSignatureAllocationOperation(operationplan.SignatureAllocationSite{
-		Owner: 71, Template: template.Root, Ordinal: 5,
-	}, template)
-	otherTarget := AllocationEffectTarget(calleeTerms.AllocationTemplate(otherOp))
+	otherTarget := AllocationEffectTarget(otherAllocation)
 	config.Table = otherTarget
 	if _, err := callee.IndexMutation(config); err == nil {
 		t.Fatal("invalidation of one allocation paired with mutation of another")

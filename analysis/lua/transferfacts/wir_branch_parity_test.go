@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/semantic/intrinsic"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -123,7 +124,7 @@ end
 	point := requireStmtPoints(t, built, fn.Stmts[0], 1)[0]
 	body := wirlower.LowerFunction("branch-no-sidecars", fn, bindings, built)
 
-	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body, SealedLuaTypeChecks: true}).Facts
 	target := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
 	if _, ok := branchRefinementAt(facts.BranchRefinements(point), target); !ok {
 		t.Fatalf("WIR no-sidecar branch refinements missing %s at point %d: %#v", target, point, facts.BranchRefinements(point))
@@ -354,6 +355,61 @@ end
 	}
 }
 
+func TestLowerWithWIRNormalizedCallBranchKeepsCanonicalCallResultSource(t *testing.T) {
+	stmts, bindings, built := parseSemanticChunk(t, `
+local value = {}
+if table.isfrozen(value) then
+	local hit = true
+end
+`, "table")
+	body := wirlower.Lower("normalized-call-condition", stmts, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+
+	for _, point := range built.Graph.RPO() {
+		if !built.Graph.IsBranch(point) {
+			continue
+		}
+		source, ok := facts.BranchConditionSource(point)
+		if !ok || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.ResultIndex != 0 {
+			t.Fatalf("normalized call condition source at %d = %#v/%t, want call result", point, source, ok)
+		}
+		return
+	}
+	t.Fatal("fixture did not produce a normalized call branch")
+}
+
+func TestLowerWithWIRNestedLogicalCallBranchKeepsCompletedProducer(t *testing.T) {
+	stmts, bindings, built := parseSemanticChunk(t, `
+local function allowed(value) return true end
+local pages = {{id = nil, route = "x", secure = false}}
+local routes = {x = "x"}
+for _, page in ipairs(pages) do
+	local route = page.route
+	if route and routes[route] == page.id and (not page.secure or allowed(page)) then
+		local hit = true
+	end
+end
+`, "ipairs")
+	body := wirlower.Lower("nested-logical-call-condition", stmts, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+
+	var final cfg.Point
+	for _, point := range built.Graph.RPO() {
+		for _, inst := range body.PointInstructions(point) {
+			if inst.Op == wir.OpBranch && inst.A.Kind == wir.OperandTemp {
+				final = point
+			}
+		}
+	}
+	if final == 0 {
+		t.Fatalf("fixture did not produce completed logical branch\n%s", wir.Print(body, built.Graph))
+	}
+	source, ok := facts.BranchConditionSource(final)
+	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("nested logical condition source at %d = %#v/%t, want completed expression\n%s", final, source, ok, wir.Print(body, built.Graph))
+	}
+}
+
 func TestLowerWithWIRCompoundBranchRefinementLanesMatchSidecar(t *testing.T) {
 	stmts, bindings, built := parseSemanticChunk(t, `
 local x: any = 1
@@ -537,7 +593,7 @@ end
 	}
 }
 
-func TestLowerWIRRelationalBranchCheckDoesNotUseOperandPathAsConditionSource(t *testing.T) {
+func TestLowerWIRRelationalBranchCheckPublishesExactBooleanConditionSource(t *testing.T) {
 	fn, bindings, built := parseSemanticFunction(t, `
 function f(a: {tag: "a"}, b: {tag: "b"}): ()
     if a == b then local hit = true end
@@ -555,11 +611,88 @@ end
 	body.SetPointRange(point, start, start+1)
 
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
-	if source, ok := facts.BranchConditionSource(point); ok {
-		t.Fatalf("relational WIR branch published operand path as condition source: %#v", source)
+	source, ok := facts.BranchConditionSource(point)
+	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("relational WIR branch condition source = %#v/%v, want exact expression producer", source, ok)
+	}
+	operation, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok || operation.Kind() != factflow.ExpressionOperationBinary || operation.Op() != "==" ||
+		operation.Left().Kind != factflow.ValueSourcePath || operation.Right().Kind != factflow.ValueSourcePath {
+		t.Fatalf("relational WIR branch producer = %#v/%v, want path equality", operation, ok)
 	}
 	if got := facts.BranchPathRelations(point); len(got) == 0 {
 		t.Fatalf("relational WIR branch path relations = 0, want equality/inequality facts")
+	}
+}
+
+func TestLowerWIRIndexInRangeBranchPublishesExactBooleanConditionSource(t *testing.T) {
+	stmts, bindings, built := parseSemanticChunk(t, `
+local thresholds: {number} = { 3, 5, 8 }
+local i: number = 1
+while i <= #thresholds do
+	i = i + 1
+end
+`)
+	body := wirlower.Lower("debug-length-derived", stmts, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body}).Facts
+	var branchPoint cfg.Point
+	for _, point := range built.Graph.RPO() {
+		for _, inst := range body.PointInstructions(point) {
+			if inst.Op == wir.OpBranch && inst.Check != 0 && body.Check(inst.Check).Kind == wir.CheckIndexInRange {
+				branchPoint = point
+			}
+		}
+	}
+	if branchPoint == 0 {
+		t.Fatalf("missing index-range WIR branch\n%s", wir.Print(body, built.Graph))
+	}
+	source, ok := facts.BranchConditionSource(branchPoint)
+	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("index-range condition source = %#v/%t, want expression", source, ok)
+	}
+	predicate, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok || predicate.Kind() != factflow.ExpressionOperationBinary || predicate.Op() != "<=" || predicate.Left().Kind != factflow.ValueSourcePath {
+		t.Fatalf("index-range predicate = %#v/%t, want index <= length", predicate, ok)
+	}
+	lengthSource := predicate.Right()
+	length, ok := facts.ExpressionOperation(lengthSource.ExprRef)
+	if !lengthSource.HasExpr || !ok || length.Kind() != factflow.ExpressionOperationUnary || length.Op() != "#" || length.Left().Kind != factflow.ValueSourcePath {
+		t.Fatalf("index-range length = %#v source=%#v/%t, want #array", length, lengthSource, ok)
+	}
+}
+
+func TestLowerWIRDynamicLuaTypeBranchPublishesExactBooleanConditionSource(t *testing.T) {
+	stmts, bindings, built := parseSemanticChunk(t, `
+local x: number = 5
+local kind: string = "number"
+if type(x) == kind then end
+`, "type")
+	body := wirlower.Lower("debug-type-eq", stmts, bindings, built)
+	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body, SealedLuaTypeChecks: true}).Facts
+	var branchPoint cfg.Point
+	for _, point := range built.Graph.RPO() {
+		for _, inst := range body.PointInstructions(point) {
+			if inst.Op == wir.OpBranch && inst.Check != 0 && body.Check(inst.Check).Kind == wir.CheckTypeEqual {
+				branchPoint = point
+			}
+		}
+	}
+	if branchPoint == 0 {
+		t.Fatalf("missing dynamic lua-type WIR branch\n%s", wir.Print(body, built.Graph))
+	}
+	source, ok := facts.BranchConditionSource(branchPoint)
+	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		t.Fatalf("dynamic lua-type condition source = %#v/%t, want expression", source, ok)
+	}
+	predicate, ok := facts.ExpressionOperation(source.ExprRef)
+	if !ok || predicate.Kind() != factflow.ExpressionOperationBinary || predicate.Op() != "==" || predicate.Right().Kind != factflow.ValueSourcePath {
+		t.Fatalf("dynamic lua-type predicate = %#v/%t, want type(value) == tag-path", predicate, ok)
+	}
+	typeSource := predicate.Left()
+	typeOperation, ok := facts.ExpressionOperation(typeSource.ExprRef)
+	identity, intrinsicOK := typeOperation.Intrinsic()
+	if !typeSource.HasExpr || !ok || !intrinsicOK || identity != intrinsic.LuaType {
+		t.Fatalf("dynamic lua-type producer = %#v source=%#v/%t, want LuaType intrinsic", typeOperation, typeSource, ok)
 	}
 }
 

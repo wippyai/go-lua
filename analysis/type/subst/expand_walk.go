@@ -31,7 +31,7 @@ func expandInstantiatedGuardMode(t typ.Type, state *expandState, mode expandMode
 func expandInstantiatedCore(t typ.Type, orig typ.Type, state *expandState, mode expandMode) typ.Type {
 	switch v := t.(type) {
 	case *typ.Instantiated:
-		return expandInstantiatedGeneric(v, orig, state)
+		return expandInstantiatedGeneric(v, orig, state, mode)
 	case *typ.Optional:
 		return expandOptional(v, orig, state, mode)
 	case *typ.Union:

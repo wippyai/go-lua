@@ -25,11 +25,13 @@ type DirectLexicalDeclarations struct {
 	complete bool
 }
 
-// SealDirectLexicalDeclarations seals a complete declaration census. A
-// partial, duplicate, annotated, non-local, or structurally mismatched census
-// returns the zero authority. Escape and call-set completeness are established
-// by the binder before this method is called; sealing fences that evidence to
-// the exact immutable fact snapshot consumed by the compiler.
+// SealDirectLexicalDeclarations seals the complete binder-selected direct-call
+// subset. Function expressions outside that subset remain ordinary function
+// values; they are not evidence that the direct-call subset is incomplete.
+// Duplicate, annotated, non-local, or structurally mismatched entries return
+// the zero authority. Escape and call-set completeness are established by the
+// binder before this method is called; sealing fences that evidence to the
+// exact immutable fact snapshot consumed by the compiler.
 func SealDirectLexicalDeclarations(p *Plan, input []DirectLexicalDeclaration) DirectLexicalDeclarations {
 	if p == nil {
 		return DirectLexicalDeclarations{}
@@ -40,9 +42,6 @@ func SealDirectLexicalDeclarations(p *Plan, input []DirectLexicalDeclaration) Di
 		functions[ref] = fn
 		return true
 	})
-	if len(functions) == 0 || len(input) != len(functions) {
-		return DirectLexicalDeclarations{}
-	}
 	entries := append([]DirectLexicalDeclaration(nil), input...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Expression < entries[j].Expression })
 	for i, entry := range entries {
@@ -53,6 +52,25 @@ func SealDirectLexicalDeclarations(p *Plan, input []DirectLexicalDeclaration) Di
 		}
 	}
 	return DirectLexicalDeclarations{owner: p, entries: entries, complete: true}
+}
+
+// SealEmptyDirectLexicalDeclarations seals the unique empty declaration
+// census, but only when p contains no function-literal identity sidecar. It is
+// the exact proof used by syntax-built RelationProgram tests and other units
+// for which there is mathematically nothing for a binder to certify.
+func SealEmptyDirectLexicalDeclarations(p *Plan) DirectLexicalDeclarations {
+	if p == nil {
+		return DirectLexicalDeclarations{}
+	}
+	empty := true
+	p.facts.ForEachExpressionFunction(func(factflow.ExprRef, symbol.ID) bool {
+		empty = false
+		return false
+	})
+	if !empty {
+		return DirectLexicalDeclarations{}
+	}
+	return DirectLexicalDeclarations{owner: p, complete: true}
 }
 
 func (p *Plan) matchesDirectLexicalDeclaration(want DirectLexicalDeclaration) bool {
@@ -81,6 +99,16 @@ func (p *Plan) matchesDirectLexicalDeclaration(want DirectLexicalDeclaration) bo
 	return matches == 1
 }
 
+// AdmitsDirectLexicalDeclaration reports whether candidate has the exact
+// plan-owned declaration shape that may be erased in favor of direct lexical
+// call composition. Binder use-closure proves stability and completeness;
+// the Plan independently owns value-side conditions such as annotations and
+// declared overlays. Keeping this predicate here prevents binder authority
+// construction from duplicating (and drifting from) the semantic census.
+func (p *Plan) AdmitsDirectLexicalDeclaration(candidate DirectLexicalDeclaration) bool {
+	return p != nil && p.matchesDirectLexicalDeclaration(candidate)
+}
+
 // Contains reports whether ref is a member of the exact
 // sealed declaration census.
 func (a DirectLexicalDeclarations) Contains(p *Plan, ref factflow.ExprRef, function, target symbol.ID) bool {
@@ -93,6 +121,22 @@ func (a DirectLexicalDeclarations) Contains(p *Plan, ref factflow.ExprRef, funct
 	return index < len(a.entries) && a.entries[index] == (DirectLexicalDeclaration{
 		Expression: ref, Function: function, Target: target,
 	})
+}
+
+// FunctionForTarget returns the exact function-expression identity owned by a
+// sealed direct-only local binding. This is the value producer for a captured
+// sibling function: the declaration is intentionally absent from mutable
+// State, but its exact function value remains part of a callee frame.
+func (a DirectLexicalDeclarations) FunctionForTarget(p *Plan, target symbol.ID) (factflow.ExprRef, symbol.ID, bool) {
+	if p == nil || a.owner != p || !a.complete || target == 0 {
+		return 0, 0, false
+	}
+	for _, entry := range a.entries {
+		if entry.Target == target {
+			return entry.Expression, entry.Function, true
+		}
+	}
+	return 0, 0, false
 }
 
 // Matches reports exact whole-plan authority for p.

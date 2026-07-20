@@ -13,9 +13,16 @@ type Writer interface {
 	SetAny(key string, value any)
 }
 
-// Reducer is an optional registry hook for reduced products. It may inspect any
-// registered axis and update zero or more axes. Returning true requests another
-// reducer pass.
+// Reducer is an optional registry hook for reduced products. Its Spec declares
+// (or derives) every axis it reads and writes. Writes must be reductive: each
+// exact change is less than or equal to the previous value. Reducers must be
+// monotone over their declared inputs. On finite-height axes, fair dependency
+// scheduling therefore reaches the unique greatest common fixed point beneath
+// the input product without a pass cap.
+//
+// The bool result is retained for source compatibility. Scheduling is derived
+// exclusively from exact product changes, so a stale return value cannot cause
+// either missed work or a blind extra pass.
 type Reducer func(Writer) bool
 
 // Get reads a typed value from a reducer view.

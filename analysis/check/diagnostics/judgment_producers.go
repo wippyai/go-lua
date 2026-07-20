@@ -46,9 +46,6 @@ func reachableJudgmentContext(result *body.Result, sourceFile string) pass.Conte
 
 func reachableCallJudgmentContext(result *body.Result, sourceFile string) pass.Context {
 	ctx := reachableJudgmentContext(result, sourceFile)
-	if result != nil {
-		ctx.SuppressCallerOwnedParameters = result.IsCallContextResult()
-	}
 	return ctx
 }
 
@@ -86,7 +83,6 @@ func (c producerContext) directCallContractJudgments(result *body.Result) []judg
 	ctx := c.judgmentContext(result, nil)
 	if result != nil {
 		ctx.PointReachable = result.PointNormallyReachable
-		ctx.SuppressCallerOwnedParameters = result.IsCallContextResult()
 	}
 	ctx.Canceled = c.canceled
 	return firstDirectCallContractJudgmentPerCall(

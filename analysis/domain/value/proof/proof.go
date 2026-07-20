@@ -280,6 +280,7 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 		return false
 	}
 	if t, ok := typevalue.WitnessOf(r.reg, value); ok {
+		t = WitnessTypeForPresence(t, product.PresenceOf(value))
 		if r.IsSubtype(t, want) {
 			return true
 		}

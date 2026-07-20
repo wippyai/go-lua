@@ -29,7 +29,7 @@ func (r *Result) ForEachRedundantClaimOccurrence(visit func(RedundantClaimOccurr
 	seenCasts := make(map[adviceCastSeenKey]struct{})
 	seenCalls := make(map[adviceCallSeenKey]struct{})
 	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
-		return r.walkAdviceClaims(use.Point, use.Expr, seenCasts, seenCalls, visit, &visited, 0)
+		return r.walkAdviceClaims(use.Point, use.Expr, seenCasts, seenCalls, visit, &visited)
 	})
 	return visited
 }
@@ -51,85 +51,97 @@ func (r *Result) walkAdviceClaims(
 	seenCalls map[adviceCallSeenKey]struct{},
 	visit func(RedundantClaimOccurrence) bool,
 	visited *bool,
-	depth int,
 ) bool {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return true
+	type frame struct {
+		expr ast.Expr
+		exit bool
 	}
-	next := func(child ast.Expr) bool {
-		return r.walkAdviceClaims(point, child, seenCasts, seenCalls, visit, visited, depth+1)
-	}
-	switch e := expr.(type) {
-	case *ast.CastExpr:
-		if !next(e.Expr) {
-			return false
+	stack := []frame{{expr: expr}}
+	for len(stack) != 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if current.expr == nil {
+			continue
 		}
-		if markSeen(seenCasts, adviceCastSeenKey{point: point, expr: e}) {
-			return true
-		}
-		occ, ok := r.redundantCastOccurrence(point, e)
-		if !ok {
-			return true
-		}
-		*visited = true
-		return visit(occ)
-	case *ast.FuncCallExpr:
-		if !next(e.Func) || !next(e.Receiver) {
-			return false
-		}
-		for _, arg := range e.Args {
-			if !next(arg) {
-				return false
+		if !current.exit {
+			stack = append(stack, frame{expr: current.expr, exit: true})
+			children := adviceClaimChildren(current.expr)
+			for i := len(children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{expr: children[i]})
 			}
+			continue
 		}
-		if markSeen(seenCalls, adviceCallSeenKey{point: point, expr: e}) {
-			return true
-		}
-		occ, ok := r.redundantTypeCastCallOccurrence(point, e)
-		if !ok {
-			return true
-		}
-		*visited = true
-		return visit(occ)
-	case *ast.AttrGetExpr:
-		if !next(e.Object) {
-			return false
-		}
-		if e.KeySyntax == ast.AttrKeyIndex {
-			return next(e.Key)
-		}
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
+		switch e := current.expr.(type) {
+		case *ast.CastExpr:
+			if markSeen(seenCasts, adviceCastSeenKey{point: point, expr: e}) {
 				continue
 			}
-			if field.KeySyntax == ast.AttrKeyIndex && !next(field.Key) {
-				return false
+			if occ, ok := r.redundantCastOccurrence(point, e); ok {
+				*visited = true
+				if !visit(occ) {
+					return false
+				}
 			}
-			if !next(field.Value) {
-				return false
+		case *ast.FuncCallExpr:
+			if markSeen(seenCalls, adviceCallSeenKey{point: point, expr: e}) {
+				continue
+			}
+			if occ, ok := r.redundantTypeCastCallOccurrence(point, e); ok {
+				*visited = true
+				if !visit(occ) {
+					return false
+				}
 			}
 		}
-	case *ast.LogicalOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.RelationalOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.StringConcatOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.ArithmeticOpExpr:
-		return next(e.Lhs) && next(e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryNotOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryLenOpExpr:
-		return next(e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		return next(e.Expr)
-	case *ast.NonNilAssertExpr:
-		return next(e.Expr)
 	}
 	return true
+}
+
+func adviceClaimChildren(expr ast.Expr) []ast.Expr {
+	switch e := expr.(type) {
+	case *ast.CastExpr:
+		return []ast.Expr{e.Expr}
+	case *ast.FuncCallExpr:
+		out := make([]ast.Expr, 0, 2+len(e.Args))
+		out = append(out, e.Func, e.Receiver)
+		return append(out, e.Args...)
+	case *ast.AttrGetExpr:
+		if e.KeySyntax == ast.AttrKeyIndex {
+			return []ast.Expr{e.Object, e.Key}
+		}
+		return []ast.Expr{e.Object}
+	case *ast.TableExpr:
+		out := make([]ast.Expr, 0, 2*len(e.Fields))
+		for _, field := range e.Fields {
+			if field != nil {
+				if field.KeySyntax == ast.AttrKeyIndex {
+					out = append(out, field.Key)
+				}
+				out = append(out, field.Value)
+			}
+		}
+		return out
+	case *ast.LogicalOpExpr:
+		return []ast.Expr{e.Lhs, e.Rhs}
+	case *ast.RelationalOpExpr:
+		return []ast.Expr{e.Lhs, e.Rhs}
+	case *ast.StringConcatOpExpr:
+		return []ast.Expr{e.Lhs, e.Rhs}
+	case *ast.ArithmeticOpExpr:
+		return []ast.Expr{e.Lhs, e.Rhs}
+	case *ast.UnaryMinusOpExpr:
+		return []ast.Expr{e.Expr}
+	case *ast.UnaryNotOpExpr:
+		return []ast.Expr{e.Expr}
+	case *ast.UnaryLenOpExpr:
+		return []ast.Expr{e.Expr}
+	case *ast.UnaryBNotOpExpr:
+		return []ast.Expr{e.Expr}
+	case *ast.NonNilAssertExpr:
+		return []ast.Expr{e.Expr}
+	default:
+		return nil
+	}
 }
 
 func (r *Result) redundantCastOccurrence(point cfg.Point, expr *ast.CastExpr) (RedundantClaimOccurrence, bool) {

@@ -28,37 +28,52 @@ type GenericForSource struct {
 	HasRootPath  bool
 }
 
+func (s GenericForSource) clone() GenericForSource {
+	s.RootPath.Segments = append([]segment.Segment(nil), s.RootPath.Segments...)
+	return s
+}
+
+func (s GenericForSource) valid() bool {
+	return s.HasCallPoint == (s.CallPoint != 0) && s.HasRootPath == !s.RootPath.IsEmpty()
+}
+
 // GenericForOperation is the complete neutral payload for one loop-variable
 // binding. It belongs to the operation plan so every executor consumes the
 // same immutable semantic operation.
 type GenericForOperation struct {
-	variableIndex   int
-	target          symbol.ID
-	firstTarget     symbol.ID
-	source          GenericForSource
-	sourceContracts []typ.Type
-	iterator        iteration.Iterator
-	hasIterator     bool
+	variableIndex    int
+	target           symbol.ID
+	firstTarget      symbol.ID
+	protocolSources  []GenericForSource
+	sourceContracts  []typ.Type
+	iterator         iteration.Iterator
+	hasIterator      bool
+	callableIterator bool
 }
 
-func NewGenericForOperation(variableIndex int, target, firstTarget symbol.ID, source GenericForSource, sourceContracts []typ.Type) (GenericForOperation, bool) {
+func NewGenericForOperation(variableIndex int, target, firstTarget symbol.ID, protocolSources []GenericForSource, sourceContracts []typ.Type) (GenericForOperation, bool) {
 	if variableIndex < 0 || target == 0 {
 		return GenericForOperation{}, false
 	}
-	source.RootPath.Segments = append([]segment.Segment(nil), source.RootPath.Segments...)
-	if source.HasCallPoint != (source.CallPoint != 0) || source.HasRootPath != !source.RootPath.IsEmpty() {
-		return GenericForOperation{}, false
+	sources := make([]GenericForSource, len(protocolSources))
+	for i, source := range protocolSources {
+		if !source.valid() {
+			return GenericForOperation{}, false
+		}
+		sources[i] = source.clone()
 	}
-	return GenericForOperation{variableIndex: variableIndex, target: target, firstTarget: firstTarget, source: source, sourceContracts: append([]typ.Type(nil), sourceContracts...)}, true
+	return GenericForOperation{variableIndex: variableIndex, target: target, firstTarget: firstTarget, protocolSources: sources, sourceContracts: append([]typ.Type(nil), sourceContracts...)}, true
 }
 
-func (o GenericForOperation) VariableIndex() int     { return o.variableIndex }
-func (o GenericForOperation) Target() symbol.ID      { return o.target }
-func (o GenericForOperation) FirstTarget() symbol.ID { return o.firstTarget }
-func (o GenericForOperation) Source() GenericForSource {
-	out := o.source
-	out.RootPath.Segments = append([]segment.Segment(nil), out.RootPath.Segments...)
-	return out
+func (o GenericForOperation) VariableIndex() int       { return o.variableIndex }
+func (o GenericForOperation) Target() symbol.ID        { return o.target }
+func (o GenericForOperation) FirstTarget() symbol.ID   { return o.firstTarget }
+func (o GenericForOperation) ProtocolSourceCount() int { return len(o.protocolSources) }
+func (o GenericForOperation) ProtocolSource(index int) (GenericForSource, bool) {
+	if index < 0 || index >= len(o.protocolSources) {
+		return GenericForSource{}, false
+	}
+	return o.protocolSources[index].clone(), true
 }
 func (o GenericForOperation) SourceContract(index int) (typ.Type, bool) {
 	if index < 0 || index >= len(o.sourceContracts) || o.sourceContracts[index] == nil {
@@ -70,26 +85,43 @@ func (o GenericForOperation) WithIterator(iterator iteration.Iterator) GenericFo
 	if iterator.Kind != iteration.IterateIndexed && iterator.Kind != iteration.IterateKeyed {
 		return o
 	}
-	o.iterator, o.hasIterator = iterator, true
+	o.iterator, o.hasIterator, o.callableIterator = iterator, true, false
 	return o
 }
 func (o GenericForOperation) Iterator() (iteration.Iterator, bool) { return o.iterator, o.hasIterator }
-func (o GenericForOperation) valid() bool                          { return o.variableIndex >= 0 && o.target != 0 }
+
+// WithCallableIterator records that the canonical call descriptor returns the
+// iterator function itself, rather than describing a collection projection.
+func (o GenericForOperation) WithCallableIterator() GenericForOperation {
+	o.iterator, o.hasIterator, o.callableIterator = iteration.Iterator{}, false, true
+	return o
+}
+func (o GenericForOperation) CallableIterator() bool { return o.callableIterator }
+func (o GenericForOperation) valid() bool            { return o.variableIndex >= 0 && o.target != 0 }
 func (o GenericForOperation) clone() GenericForOperation {
 	out := o
-	out.source = o.Source()
+	out.protocolSources = make([]GenericForSource, len(o.protocolSources))
+	for i, source := range o.protocolSources {
+		out.protocolSources[i] = source.clone()
+	}
 	out.sourceContracts = append([]typ.Type(nil), o.sourceContracts...)
 	return out
 }
 
 func (o GenericForOperation) equal(other GenericForOperation) bool {
 	if o.variableIndex != other.variableIndex || o.target != other.target || o.firstTarget != other.firstTarget ||
-		o.source.Kind != other.source.Kind || o.source.CallPoint != other.source.CallPoint || o.source.HasCallPoint != other.source.HasCallPoint ||
-		o.source.HasRootPath != other.source.HasRootPath || !o.source.RootPath.Equal(other.source.RootPath) || len(o.sourceContracts) != len(other.sourceContracts) {
+		len(o.protocolSources) != len(other.protocolSources) || len(o.sourceContracts) != len(other.sourceContracts) {
 		return false
 	}
-	if o.iterator != other.iterator || o.hasIterator != other.hasIterator {
+	if o.iterator != other.iterator || o.hasIterator != other.hasIterator || o.callableIterator != other.callableIterator {
 		return false
+	}
+	for i, source := range o.protocolSources {
+		otherSource := other.protocolSources[i]
+		if source.Kind != otherSource.Kind || source.CallPoint != otherSource.CallPoint || source.HasCallPoint != otherSource.HasCallPoint ||
+			source.HasRootPath != otherSource.HasRootPath || !source.RootPath.Equal(otherSource.RootPath) {
+			return false
+		}
 	}
 	for i := range o.sourceContracts {
 		if !typ.TypeEquals(o.sourceContracts[i], other.sourceContracts[i]) {

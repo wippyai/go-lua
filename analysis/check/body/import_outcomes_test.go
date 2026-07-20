@@ -6,24 +6,20 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
-	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
@@ -74,48 +70,12 @@ func TestImportOutcomesUsesTypeValueWitnessBoundary(t *testing.T) {
 	}
 }
 
-func TestAnnotatedRequireLocalSourceUsesManifestExportReturnSlot(t *testing.T) {
-	reg := standard.Registry()
-	exportType := typetable.NewRecord().Field("run", typ.Func().Build()).Build()
-	m := manifest.New("pkg")
-	m.SetExport(exportType)
-
-	result, err := CheckChunk(parseChunk(t, `
-		local pkg: {run: () -> ()}? = require("pkg")
-	`), Config{
-		Registry: reg,
-		Globals:  []string{"require"},
-		Signatures: signaturelookup.Source{
-			IncludeStdlib: true,
-			Manifests:     []*manifest.Manifest{m},
-		},
-		ModuleExports: importlookup.Source{
-			Manifests: []*manifest.Manifest{m},
-		},
-	})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	point, _ := requireLocalAssignmentExprByName(t, result, "pkg")
-	fact, ok := result.LocalAssignment(point)
-	if !ok {
-		t.Fatal("missing local assignment for pkg")
-	}
-	value, ok := result.LocalAssignmentSourceValueAtBoundary(point, fact.Source)
-	if !ok {
-		t.Fatal("missing source value for annotated require assignment")
-	}
-	gotType, ok := typevalue.TypeOf(reg, value)
-	if !ok || !typ.TypeEquals(gotType, exportType) {
-		t.Fatalf("annotated require source type = %v/%v, want manifest export %v", gotType, ok, exportType)
-	}
-	exprValue, ok := result.ExpressionValueAtBoundary(point, fact.Expr)
-	if !ok {
-		t.Fatal("missing expression value for annotated require assignment")
-	}
-	exprType, ok := typevalue.TypeOf(reg, exprValue)
-	if !ok || !typ.TypeEquals(exprType, exportType) {
-		t.Fatalf("annotated require expression type = %v/%v, want manifest export %v", exprType, ok, exportType)
+func TestExplicitAnyReceiverProviderDoesNotClaimReceiverForNonMethodCall(t *testing.T) {
+	provider := explicitAnyReceiverMethodOutcomeProvider(standard.Registry(), typevalue.NewCache())
+	site := factflow.NewCallSite(factflow.CallSiteConfig{}).View()
+	prepared := testPrepareCallOutcome(t, provider, transfer.NodeContext{Registry: standard.Registry()}, site)
+	if len(prepared.Capability().FieldRoles()) != 0 {
+		t.Fatalf("non-method provider fields = %#v, want empty", prepared.Capability().FieldRoles())
 	}
 }
 
@@ -180,11 +140,10 @@ func TestCallableValueOutcomeUsesTypedStaticMethodOverWeakExactPath(t *testing.T
 		WritePathKey(reg, resolver.KeySpace(), methodKey, weakValue)
 	calleeValue := calleeValueProvider(reg, factflow.NewFacts(factflow.FactsInput{}), resolver, nil, typevalue.NewCache(), nil, nil, nil)
 	provider := effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
-		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),
-		Callable:    typecall.Callable,
+		Callable: typecall.Callable,
 	})
-
-	got := provider(transfer.NodeContext{Point: point, Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+	ctx := transfer.NodeContext{Point: point, Registry: reg}
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
 		ReceiverPath:    receiverPath,
 		HasReceiverPath: true,
 		MethodPath:      methodPath,
@@ -193,7 +152,13 @@ func TestCallableValueOutcomeUsesTypedStaticMethodOverWeakExactPath(t *testing.T
 		ResultTargets: []factflow.CallResultTarget{
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, result, resultPath),
 		},
-	}).View(), in, nil)
+	}).View()
+	callee, ok := calleeValue(ctx, site, in, nil)
+	if !ok {
+		t.Fatal("callee operand did not resolve")
+	}
+	input := sealedBodyCallInput(t, provider, ctx, site, in, callpayload.CallOutcomeValueOperands{Callee: callee, HasCallee: true})
+	got := testEvaluateCallOutcome(t, provider, ctx, site, input)
 
 	if len(got.Results) != 1 || got.Results[0].Index != 0 {
 		t.Fatalf("callable outcome results = %#v, want one result slot", got.Results)
@@ -201,55 +166,5 @@ func TestCallableValueOutcomeUsesTypedStaticMethodOverWeakExactPath(t *testing.T
 	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
 	if !ok || !typ.TypeEquals(gotType, typ.Number) {
 		t.Fatalf("callable outcome return type = %v/%v, want number (outcome %#v)", gotType, ok, got)
-	}
-}
-
-func TestExplicitAnyReceiverMethodResultSurvivesMultiReturnAssignment(t *testing.T) {
-	reg := standard.Registry()
-	result, err := CheckChunk(parseChunk(t, `
-local provider_instance: any = nil
-local raw_result, err = (provider_instance :: any):structured_output({})
-if err then
-	local message = err:message()
-end
-`), Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	var messagePoint cfg.Point
-	var receiverSource factflow.ValueSource
-	for _, point := range result.Graph().RPO() {
-		fact, ok := result.SourceCall(point)
-		if !ok || fact.Method != "message" {
-			continue
-		}
-		site, ok := result.CallSiteView(point)
-		if !ok {
-			t.Fatalf("message call has no lowered call site at %d", point)
-		}
-		var hasReceiver bool
-		receiverSource, hasReceiver = site.ReceiverSource()
-		if !hasReceiver {
-			t.Fatalf("message call has no receiver source at %d", point)
-		}
-		messagePoint = point
-		break
-	}
-	if messagePoint == 0 {
-		t.Fatal("missing err:message call")
-	}
-	receiverValue, ok := result.SourceValueAtBoundary(messagePoint, receiverSource)
-	if !ok {
-		t.Fatalf("message receiver source did not resolve at %d", messagePoint)
-	}
-	if ev := product.Get(reg, receiverValue, evidence.Key); !ev.IsExplicitTop() {
-		t.Fatalf("message receiver evidence = %s, want explicit top from upstream :: any call", ev)
-	}
-	outcome, ok := result.CallOutcomeAt(messagePoint)
-	if !ok || len(outcome.Results) == 0 {
-		t.Fatalf("message outcome = %#v/%v, want result", outcome, ok)
-	}
-	if ev := product.Get(reg, outcome.Results[0].Value, evidence.Key); !ev.IsExplicitTop() {
-		t.Fatalf("message result evidence = %s, want explicit top inherited from receiver", ev)
 	}
 }

@@ -1,8 +1,6 @@
 {
   "description": "Length floor of a loop-filled array, lost under widening, is recovered by narrowing so a guarded read a[k] is proven non-optional (number, not number?).",
-  "check": {
-    "skip": "pending: solver narrowing (decreasing) pass (task 7c17de64) not yet implemented"
-  },
+  "check": {},
   "run": {
     "skip": "checker-only narrowing-precision fixture"
   }

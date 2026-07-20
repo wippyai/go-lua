@@ -38,9 +38,9 @@ func (r *Result) ForEachConcatOperandOccurrence(visit func(ConcatOperandOccurren
 	seen := make(map[concatSeenKey]struct{})
 	r.ForEachReachableExpressionUse(func(use ExpressionUse) bool {
 		if use.Role == ExpressionUseOrdinaryAssignmentTarget {
-			return r.walkConcatAssignmentTargetReads(use.Point, use.Expr, concatOperandContext{}, seen, visit, &visited, 0)
+			return r.walkConcatAssignmentTargetReads(use.Point, use.Expr, concatOperandContext{}, seen, visit, &visited)
 		}
-		return r.walkConcatOperands(use.Point, use.Expr, concatOperandContext{}, seen, visit, &visited, 0)
+		return r.walkConcatOperands(use.Point, use.Expr, concatOperandContext{}, seen, visit, &visited)
 	})
 	return visited
 }
@@ -118,115 +118,90 @@ func (r *Result) walkConcatOperands(
 	seen map[concatSeenKey]struct{},
 	visit func(ConcatOperandOccurrence) bool,
 	visited *bool,
-	depth int,
 ) bool {
-	if expr == nil || depth > typ.DefaultRecursionDepth {
-		return true
-	}
-	if logical, ok := expr.(*ast.LogicalOpExpr); ok {
-		if !r.walkConcatOperands(point, logical.Lhs, ctx, seen, visit, visited, depth+1) {
-			return false
-		}
-		switch logical.Operator {
-		case "and":
-			next, reachable := r.concatExpressionEdgeContext(logical.Lhs, true, ctx)
-			return !reachable || r.walkConcatOperands(point, logical.Rhs, next, seen, visit, visited, depth+1)
-		case "or":
-			next, reachable := r.concatExpressionEdgeContext(logical.Lhs, false, ctx)
-			return !reachable || r.walkConcatOperands(point, logical.Rhs, next, seen, visit, visited, depth+1)
-		default:
-			return r.walkConcatOperands(point, logical.Rhs, ctx, seen, visit, visited, depth+1)
-		}
-	}
-	if concat, ok := expr.(*ast.StringConcatOpExpr); ok {
-		if !r.walkConcatOperands(point, concat.Lhs, ctx, seen, visit, visited, depth+1) ||
-			!r.walkConcatOperands(point, concat.Rhs, ctx, seen, visit, visited, depth+1) {
-			return false
-		}
-		key := concatSeenKey{expr: concat, point: point}
-		if _, ok := seen[key]; ok {
-			return true
-		}
-		seen[key] = struct{}{}
-		if _, nested := concat.Lhs.(*ast.StringConcatOpExpr); !nested {
-			if operand, ok := r.concatOperand(point, concat.Lhs, "left", ctx); ok {
-				*visited = true
-				if !visit(operand) {
-					return false
-				}
-			}
-		}
-		if _, nested := concat.Rhs.(*ast.StringConcatOpExpr); !nested {
-			if operand, ok := r.concatOperand(point, concat.Rhs, "right", ctx); ok {
-				*visited = true
-				return visit(operand)
-			}
-		}
-		return true
-	}
-	return r.walkConcatExprChildren(point, expr, ctx, seen, visit, visited, depth+1)
+	return r.walkConcatOperandsMode(point, expr, ctx, seen, visit, visited, false)
 }
 
-func (r *Result) walkConcatExprChildren(
+func (r *Result) walkConcatOperandsMode(
 	point cfg.Point,
 	expr ast.Expr,
 	ctx concatOperandContext,
 	seen map[concatSeenKey]struct{},
 	visit func(ConcatOperandOccurrence) bool,
 	visited *bool,
-	depth int,
+	assignment bool,
 ) bool {
-	if expr == nil {
-		return true
+	type frame struct {
+		expr       ast.Expr
+		ctx        concatOperandContext
+		exitConcat bool
+		assignment bool
 	}
-	walk := func(child ast.Expr) bool {
-		return r.walkConcatOperands(point, child, ctx, seen, visit, visited, depth)
-	}
-	switch e := expr.(type) {
-	case *ast.AttrGetExpr:
-		if !walk(e.Object) {
-			return false
+	stack := []frame{{expr: expr, ctx: ctx, assignment: assignment}}
+	for len(stack) != 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if current.expr == nil {
+			continue
 		}
-		if e.KeySyntax == ast.AttrKeyIndex {
-			return walk(e.Key)
-		}
-	case *ast.FuncCallExpr:
-		if !walk(e.Func) || !walk(e.Receiver) {
-			return false
-		}
-		for _, arg := range e.Args {
-			if !walk(arg) {
-				return false
+		if current.assignment {
+			switch target := current.expr.(type) {
+			case *ast.AttrGetExpr:
+				if target.KeySyntax == ast.AttrKeyIndex {
+					stack = append(stack, frame{expr: target.Key, ctx: current.ctx})
+				}
+				stack = append(stack, frame{expr: target.Object, ctx: current.ctx})
+			case *ast.CastExpr:
+				stack = append(stack, frame{expr: target.Expr, ctx: current.ctx, assignment: true})
+			case *ast.NonNilAssertExpr:
+				stack = append(stack, frame{expr: target.Expr, ctx: current.ctx, assignment: true})
 			}
+			continue
 		}
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
+		if current.exitConcat {
+			concat := current.expr.(*ast.StringConcatOpExpr)
+			key := concatSeenKey{expr: concat, point: point}
+			if _, duplicate := seen[key]; duplicate {
 				continue
 			}
-			if field.KeySyntax == ast.AttrKeyIndex && !walk(field.Key) {
-				return false
+			seen[key] = struct{}{}
+			for _, operand := range []struct {
+				expr ast.Expr
+				side string
+			}{{concat.Lhs, "left"}, {concat.Rhs, "right"}} {
+				if _, nested := operand.expr.(*ast.StringConcatOpExpr); nested {
+					continue
+				}
+				if occurrence, ok := r.concatOperand(point, operand.expr, operand.side, current.ctx); ok {
+					*visited = true
+					if !visit(occurrence) {
+						return false
+					}
+				}
 			}
-			if !walk(field.Value) {
-				return false
+			continue
+		}
+		switch node := current.expr.(type) {
+		case *ast.LogicalOpExpr:
+			rightContext := current.ctx
+			reachable := true
+			if node.Operator == "and" {
+				rightContext, reachable = r.concatExpressionEdgeContext(node.Lhs, true, current.ctx)
+			} else if node.Operator == "or" {
+				rightContext, reachable = r.concatExpressionEdgeContext(node.Lhs, false, current.ctx)
+			}
+			if reachable {
+				stack = append(stack, frame{expr: node.Rhs, ctx: rightContext})
+			}
+			stack = append(stack, frame{expr: node.Lhs, ctx: current.ctx})
+		case *ast.StringConcatOpExpr:
+			stack = append(stack, frame{expr: node, ctx: current.ctx, exitConcat: true}, frame{expr: node.Rhs, ctx: current.ctx}, frame{expr: node.Lhs, ctx: current.ctx})
+		default:
+			children := adviceClaimChildren(current.expr)
+			for i := len(children) - 1; i >= 0; i-- {
+				stack = append(stack, frame{expr: children[i], ctx: current.ctx})
 			}
 		}
-	case *ast.RelationalOpExpr:
-		return walk(e.Lhs) && walk(e.Rhs)
-	case *ast.ArithmeticOpExpr:
-		return walk(e.Lhs) && walk(e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		return walk(e.Expr)
-	case *ast.UnaryNotOpExpr:
-		return walk(e.Expr)
-	case *ast.UnaryLenOpExpr:
-		return walk(e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		return walk(e.Expr)
-	case *ast.CastExpr:
-		return walk(e.Expr)
-	case *ast.NonNilAssertExpr:
-		return walk(e.Expr)
 	}
 	return true
 }
@@ -238,25 +213,11 @@ func (r *Result) walkConcatAssignmentTargetReads(
 	seen map[concatSeenKey]struct{},
 	visit func(ConcatOperandOccurrence) bool,
 	visited *bool,
-	depth int,
 ) bool {
-	if target == nil || depth > typ.DefaultRecursionDepth {
-		return true
-	}
-	switch t := target.(type) {
-	case *ast.AttrGetExpr:
-		if !r.walkConcatOperands(point, t.Object, ctx, seen, visit, visited, depth+1) {
-			return false
-		}
-		if t.KeySyntax == ast.AttrKeyIndex {
-			return r.walkConcatOperands(point, t.Key, ctx, seen, visit, visited, depth+1)
-		}
-	case *ast.CastExpr:
-		return r.walkConcatAssignmentTargetReads(point, t.Expr, ctx, seen, visit, visited, depth+1)
-	case *ast.NonNilAssertExpr:
-		return r.walkConcatAssignmentTargetReads(point, t.Expr, ctx, seen, visit, visited, depth+1)
-	}
-	return true
+	// The same finite worklist owns ordinary expressions and the restricted
+	// assignment-target read surface; the latter never treats the target write
+	// itself as a read.
+	return r.walkConcatOperandsMode(point, target, ctx, seen, visit, visited, true)
 }
 
 func (r *Result) concatExpressionEdgeContext(expr ast.Expr, cond bool, ctx concatOperandContext) (concatOperandContext, bool) {

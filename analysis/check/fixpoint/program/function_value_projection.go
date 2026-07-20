@@ -5,28 +5,28 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reader, keys programKeys, external typeannotation.Resolver, caches ...*resultSummaryProjectionCache) body.FunctionValueTypes {
-	if reg == nil || summaries == nil {
-		return body.FunctionValueTypes{}
-	}
-	var cache *resultSummaryProjectionCache
-	if len(caches) != 0 {
-		cache = caches[0]
-	}
+// functionValueTypesFromSummaryRoots projects only lexical function identities
+// and paths. Contexts are attached from frozen RelationProgram applications.
+func functionValueTypesFromSummaryRoots(
+	reg *axis.Registry,
+	summaries summary.Reader,
+	keys programKeys,
+	external typeannotation.Resolver,
+) body.FunctionValueTypes {
 	out := body.FunctionValueTypes{}
 	for id, key := range keys.functionIDs {
-		fn, ok := functionTypeFromSummaryCached(reg, summaries, key, functionValueDeclaredType(keys, key, external), cache)
+		fn, ok := functionTypeFromSummary(reg, summaries, key, functionValueDeclaredType(keys, key, external))
 		if !ok {
 			continue
 		}
@@ -36,7 +36,7 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 		out.ByIdentity[id] = fn
 	}
 	for pathKey, key := range keys.pathKeys {
-		fn, ok := functionTypeFromSummaryCached(reg, summaries, key, functionValueDeclaredType(keys, key, external), cache)
+		fn, ok := functionTypeFromSummary(reg, summaries, key, functionValueDeclaredType(keys, key, external))
 		if !ok {
 			continue
 		}
@@ -59,33 +59,97 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			}
 		}
 	}
-	keys.contexts.ForEach(func(context keyedFunction) {
-		sym, ok := keys.functionSymbol(context.funcExpr)
-		if !ok || sym == 0 || !context.hasEntryState {
-			return
+	return out
+}
+
+func functionTypeFromProjectedSummary(reg *axis.Registry, projected summary.Summary, declared *typ.Function) (*typ.Function, bool) {
+	if reg == nil || declared == nil {
+		return nil, false
+	}
+	returns, hasReturns := returnTypesFromSummary(reg, projected)
+	if !hasReturns {
+		return declared, true
+	}
+	if len(declared.Returns) != 0 {
+		return functionTypeWithSummaryReturns(declared, returns), true
+	}
+	builder := typ.Func()
+	for _, param := range declared.TypeParams {
+		builder.TypeParamRef(param)
+	}
+	builder.ReserveParams(len(declared.Params))
+	for _, param := range declared.Params {
+		if param.Optional {
+			builder.OptParam(param.Name, param.Type)
+		} else {
+			builder.Param(param.Name, param.Type)
 		}
-		baseKey, ok := keys.functionKeys[sym]
-		if !ok {
-			return
+	}
+	if declared.Variadic != nil {
+		builder.Variadic(declared.Variadic)
+	}
+	return builder.Returns(returns...).Build(), true
+}
+
+func relationFunctionHasExplicitValidationSurface(fn *ast.FunctionExpr, bindings *bind.Result) bool {
+	if fn == nil {
+		return false
+	}
+	if len(fn.ReturnTypes) != 0 {
+		return true
+	}
+	if bindings != nil {
+		for _, slot := range bindings.ParamSlots(fn) {
+			if !slot.ImplicitSelf && slot.Type != nil {
+				return true
+			}
 		}
-		id := identity.LuaFunction(uint64(sym))
-		fn, ok := functionTypeFromSummaryCached(reg, summaries, context.key, functionValueDeclaredType(keys, context.key, external), cache)
-		if !ok {
-			fn, ok = functionTypeFromSummaryCached(reg, summaries, baseKey, functionValueDeclaredType(keys, baseKey, external), cache)
+	}
+	if fn.ParList == nil {
+		return false
+	}
+	for _, expr := range fn.ParList.Types {
+		if expr != nil {
+			return true
 		}
-		if !ok || fn == nil {
-			return
+	}
+	return fn.ParList.VarargType != nil
+}
+
+// relationFunctionConcreteCallsComplete certifies that every runtime use of a
+// stable local function is represented by one concrete relation application.
+// DirectCallSetComplete deliberately includes direct calls through a nested
+// lexical closure; aliases, stores, arguments, returns, writes, and unknown
+// reads all fail closed in the binder and retain definition-wide analysis.
+func relationFunctionConcreteCallsComplete(fn *ast.FunctionExpr, bindings *bind.Result, memberClosures map[symbol.ID]frozenMemberUseClosure, applicationCount int) bool {
+	if fn == nil || bindings == nil || applicationCount <= 0 {
+		return false
+	}
+	function, ok := bindings.FunctionSymbol(fn)
+	if !ok {
+		return false
+	}
+	if closure, exists := memberClosures[function]; exists {
+		return closure.complete && closure.callSites == applicationCount
+	}
+	for _, closure := range bindings.LocalFunctionUseClosures() {
+		if closure.FunctionSymbol != function {
+			continue
 		}
-		if out.ContextsByIdentity == nil {
-			out.ContextsByIdentity = make(map[identity.ID][]body.FunctionValueContext)
+		stable, stableOK := bindings.StableLocalFunctionIdentity(closure.TargetSymbol)
+		return closure.RuntimeUseScanComplete && closure.DirectCallSetComplete &&
+			stableOK && stable == function && len(closure.DirectCalls) != 0
+	}
+	return false
+}
+
+func relationSummaryHasUsefulParamObligation(reg *axis.Registry, sum summary.Summary) bool {
+	for _, value := range sum.ParamObligations {
+		if summary.UsefulParamObligation(reg, value) {
+			return true
 		}
-		out.ContextsByIdentity[id] = append(out.ContextsByIdentity[id], body.FunctionValueContext{
-			Entry:     context.entryState.Snapshot(),
-			EntryKeys: context.entryKeys,
-			Type:      fn,
-		})
-	})
-	return body.SealFunctionValueTypes(out)
+	}
+	return false
 }
 
 func functionValueDeclaredType(keys programKeys, key summary.SummaryKey, external typeannotation.Resolver) *typ.Function {
@@ -186,61 +250,15 @@ func functionTypeFromSummary(reg *axis.Registry, summaries summary.Reader, key s
 	return builder.Returns(returns...).Build(), true
 }
 
-func functionTypeFromSummaryCached(
-	reg *axis.Registry,
-	summaries summary.Reader,
-	key summary.SummaryKey,
-	declared *typ.Function,
-	cache *resultSummaryProjectionCache,
-) (*typ.Function, bool) {
-	if reg == nil || summaries == nil || declared == nil {
-		return nil, false
+func readOwnedNormalizedSummary(reg *axis.Registry, summaries summary.Reader, key summary.SummaryKey) (summary.Summary, bool) {
+	if owned, ok := summaries.(summary.OwnedNormalizedReader); ok {
+		return owned.ReadOwnedNormalized(key)
 	}
-	sum, present := readOwnedNormalizedSummary(reg, summaries, key)
-	cacheKey := functionTypeProjectionCacheKey{key: key, declared: declared}
-	if cache != nil && len(cache.functionTypes) != 0 {
-		if cached, ok := cache.functionTypes[cacheKey]; ok && cached.present == present &&
-			(!present || productValueSlicesEqual(reg, cached.returns, sum.Returns)) {
-			return cached.value, true
-		}
+	projected, ok := summaries.Read(key)
+	if !ok {
+		return summary.Summary{}, false
 	}
-	value := declared
-	if present {
-		returns, hasReturns := returnTypesFromSummary(reg, sum)
-		if hasReturns {
-			if len(declared.Returns) != 0 {
-				value = functionTypeWithSummaryReturns(declared, returns)
-			} else {
-				builder := typ.Func()
-				for _, tp := range declared.TypeParams {
-					builder.TypeParamRef(tp)
-				}
-				builder.ReserveParams(len(declared.Params))
-				for _, param := range declared.Params {
-					if param.Optional {
-						builder.OptParam(param.Name, param.Type)
-					} else {
-						builder.Param(param.Name, param.Type)
-					}
-				}
-				if declared.Variadic != nil {
-					builder.Variadic(declared.Variadic)
-				}
-				value = builder.Returns(returns...).Build()
-			}
-		}
-	}
-	if cache != nil {
-		if cache.functionTypes == nil {
-			cache.functionTypes = make(map[functionTypeProjectionCacheKey]functionTypeProjectionCacheEntry)
-		}
-		entry := functionTypeProjectionCacheEntry{present: present, value: value}
-		if present {
-			entry.returns = append([]product.Value(nil), sum.Returns...)
-		}
-		cache.functionTypes[cacheKey] = entry
-	}
-	return value, true
+	return summary.Normalize(reg, projected), true
 }
 
 func functionTypeWithSummaryReturns(declared *typ.Function, returns []typ.Type) *typ.Function {

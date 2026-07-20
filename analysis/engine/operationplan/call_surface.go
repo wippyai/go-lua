@@ -29,6 +29,7 @@ type CallSurfaceTarget struct {
 	kind     CallSurfaceTargetKind
 	lexical  lexicalidentity.StableLexicalBodyID
 	external SignatureCallOperation
+	moduleID ModuleLoadContentID
 	residue  callSurfaceResidue
 }
 
@@ -57,22 +58,23 @@ type callSurfaceTargetHint struct {
 	member     string
 	temporary  uint32
 	externalID signature.ContentID
+	moduleID   ModuleLoadContentID
 }
 
 func (h callSurfaceTargetHint) valid() bool {
 	switch h.kind {
 	case callSurfaceHintNone:
-		return h.path == "" && h.member == "" && h.temporary == 0 && !h.externalID.Available()
+		return h.path == "" && h.member == "" && h.temporary == 0 && !h.externalID.Available() && !h.moduleID.Available()
 	case callSurfaceHintPath:
-		return h.path != "" && h.member == "" && h.temporary == 0 && !h.externalID.Available()
+		return h.path != "" && h.member == "" && h.temporary == 0 && !h.externalID.Available() && !h.moduleID.Available()
 	case callSurfaceHintMethod:
-		return h.path != "" && h.member != "" && h.temporary == 0 && !h.externalID.Available()
+		return h.path != "" && h.member != "" && h.temporary == 0 && !h.externalID.Available() && !h.moduleID.Available()
 	case callSurfaceHintTemporary:
 		// WIR temporaries are zero-based. The hint kind, rather than the
 		// numeric payload, distinguishes temporary zero from no hint.
-		return h.path == "" && h.member == "" && !h.externalID.Available()
+		return h.path == "" && h.member == "" && !h.externalID.Available() && !h.moduleID.Available()
 	case callSurfaceHintExternalContent:
-		return h.path == "" && h.member == "" && h.temporary == 0 && h.externalID.Available()
+		return h.path == "" && h.member == "" && h.temporary == 0 && (h.externalID.Available() || h.moduleID.Available())
 	default:
 		return false
 	}
@@ -99,13 +101,39 @@ func NewLexicalCallSurfaceTarget(body lexicalidentity.StableLexicalBodyID) (Call
 // content. A sealed intrinsic, including Lua type, remains part of the owned
 // operation rather than being reconstructed from a name by a consumer.
 func NewExternalCallSurfaceTarget(operation SignatureCallOperation) (CallSurfaceTarget, bool) {
-	if !operation.valid() {
+	return newExternalCallSurfaceTarget(operation, ModuleLoadOperation{})
+}
+
+// NewModuleLoadCallSurfaceTarget classifies a module-only require call as an
+// external call even when no signature descriptor exists for the site.
+func NewModuleLoadCallSurfaceTarget(operation ModuleLoadOperation) (CallSurfaceTarget, bool) {
+	return newExternalCallSurfaceTarget(SignatureCallOperation{}, operation)
+}
+
+// NewCompositeExternalCallSurfaceTarget preserves both signature-primary and
+// module-load-supplemental producers at one external site.
+func NewCompositeExternalCallSurfaceTarget(signatureOperation SignatureCallOperation, moduleOperation ModuleLoadOperation) (CallSurfaceTarget, bool) {
+	if !signatureOperation.valid() || !moduleOperation.valid() {
 		return CallSurfaceTarget{}, false
 	}
-	content := operation.ContentID()
-	return CallSurfaceTarget{kind: CallSurfaceTargetExternal, external: operation.clone(), residue: callSurfaceResidue{
+	return newExternalCallSurfaceTarget(signatureOperation, moduleOperation)
+}
+
+func newExternalCallSurfaceTarget(signatureOperation SignatureCallOperation, moduleOperation ModuleLoadOperation) (CallSurfaceTarget, bool) {
+	if !signatureOperation.valid() && !moduleOperation.valid() {
+		return CallSurfaceTarget{}, false
+	}
+	var signatureID signature.ContentID
+	if signatureOperation.valid() {
+		signatureID = signatureOperation.ContentID()
+	}
+	var moduleID ModuleLoadContentID
+	if moduleOperation.valid() {
+		moduleID = moduleOperation.ContentID()
+	}
+	return CallSurfaceTarget{kind: CallSurfaceTargetExternal, external: signatureOperation.clone(), moduleID: moduleID, residue: callSurfaceResidue{
 		kind: callSurfaceResidueExternal,
-		hint: callSurfaceTargetHint{kind: callSurfaceHintExternalContent, externalID: content},
+		hint: callSurfaceTargetHint{kind: callSurfaceHintExternalContent, externalID: signatureID, moduleID: moduleID},
 	}}, true
 }
 
@@ -151,7 +179,8 @@ func (t CallSurfaceTarget) LexicalBody() (lexicalidentity.StableLexicalBodyID, b
 }
 
 // ExternalContentID returns the full-width canonical signature identity when
-// Kind is external.
+// the external site has a signature producer. Module-only external sites
+// intentionally return false here and expose ModuleLoadOperation instead.
 func (t CallSurfaceTarget) ExternalContentID() (signature.ContentID, bool) {
 	if t.kind != CallSurfaceTargetExternal || !t.external.valid() {
 		return signature.ContentID{}, false
@@ -168,6 +197,15 @@ func (t CallSurfaceTarget) ExternalOperation() (SignatureCallOperation, bool) {
 	return t.external.clone(), true
 }
 
+// ModuleLoadContentID returns the module producer identity carried by the
+// census. The detached operation itself remains Plan-owned and point-indexed.
+func (t CallSurfaceTarget) ModuleLoadContentID() (ModuleLoadContentID, bool) {
+	if t.kind != CallSurfaceTargetExternal || !t.moduleID.Available() {
+		return ModuleLoadContentID{}, false
+	}
+	return t.moduleID, true
+}
+
 // MatchesExternalOperation reports whether t owns exactly the same resolved
 // signature-call descriptor as operation. Consumers use this narrow seam
 // instead of reconstructing descriptor equality from names or digests.
@@ -175,14 +213,21 @@ func (t CallSurfaceTarget) MatchesExternalOperation(operation SignatureCallOpera
 	return t.kind == CallSurfaceTargetExternal && t.external.valid() && operation.valid() && t.external.equal(operation)
 }
 
+// MatchesModuleLoadOperation checks the census's full-width producer identity.
+// Exact descriptor equality remains Plan-owned at the point-indexed operation
+// seam; the call surface deliberately retains no export-table authority.
+func (t CallSurfaceTarget) MatchesModuleLoadOperation(operation ModuleLoadOperation) bool {
+	return t.kind == CallSurfaceTargetExternal && t.moduleID.Available() && operation.valid() && t.moduleID == operation.ContentID()
+}
+
 func (t CallSurfaceTarget) valid() bool {
 	switch t.kind {
 	case CallSurfaceTargetLexical:
-		return t.lexical != (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid() && !t.residue.valid()
+		return t.lexical != (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid() && !t.moduleID.Available() && !t.residue.valid()
 	case CallSurfaceTargetExternal:
-		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && t.external.valid() && t.residue.valid() && t.residue.kind == callSurfaceResidueExternal
+		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && (t.external.valid() || t.moduleID.Available()) && t.residue.valid() && t.residue.kind == callSurfaceResidueExternal
 	case CallSurfaceTargetRejected:
-		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid() && t.residue.valid() && t.residue.kind == callSurfaceResidueUnresolved
+		return t.lexical == (lexicalidentity.StableLexicalBodyID{}) && !t.external.valid() && !t.moduleID.Available() && t.residue.valid() && t.residue.kind == callSurfaceResidueUnresolved
 	default:
 		return false
 	}
@@ -321,7 +366,7 @@ func (s CallSurface) Site(point cfg.Point) (CallSurfaceSite, bool) {
 
 func digestCallSurface(owner lexicalidentity.StableLexicalBodyID, pointCount int, sites []CallSurfaceSite) CallSurfaceDigest {
 	hash := sha256.New()
-	writeCallSurfaceBytes(hash, []byte("wippy.operationplan.call-surface.v2"))
+	writeCallSurfaceBytes(hash, []byte("wippy.operationplan.call-surface.v3"))
 	writeCallSurfaceBytes(hash, owner[:])
 	writeCallSurfaceUint64(hash, uint64(pointCount))
 	writeCallSurfaceUint64(hash, uint64(len(sites)))
@@ -332,10 +377,21 @@ func digestCallSurface(owner lexicalidentity.StableLexicalBodyID, pointCount int
 		case CallSurfaceTargetLexical:
 			writeCallSurfaceBytes(hash, site.Target.lexical[:])
 		case CallSurfaceTargetExternal:
-			content := site.Target.external.ContentID()
-			writeCallSurfaceBytes(hash, content[:])
-			intrinsic, _ := site.Target.external.Intrinsic()
-			_, _ = hash.Write([]byte{byte(intrinsic)})
+			if site.Target.external.valid() {
+				_, _ = hash.Write([]byte{1})
+				content := site.Target.external.ContentID()
+				writeCallSurfaceBytes(hash, content[:])
+				intrinsic, _ := site.Target.external.Intrinsic()
+				_, _ = hash.Write([]byte{byte(intrinsic)})
+			} else {
+				_, _ = hash.Write([]byte{0})
+			}
+			if site.Target.moduleID.Available() {
+				_, _ = hash.Write([]byte{1})
+				writeCallSurfaceBytes(hash, site.Target.moduleID[:])
+			} else {
+				_, _ = hash.Write([]byte{0})
+			}
 		case CallSurfaceTargetRejected:
 		}
 		if site.Target.residue.valid() {
@@ -358,7 +414,18 @@ func digestCallSurfaceHint(hash callSurfaceWriter, hint callSurfaceTargetHint) {
 	case callSurfaceHintTemporary:
 		writeCallSurfaceUint64(hash, uint64(hint.temporary))
 	case callSurfaceHintExternalContent:
-		writeCallSurfaceBytes(hash, hint.externalID[:])
+		if hint.externalID.Available() {
+			_, _ = hash.Write([]byte{1})
+			writeCallSurfaceBytes(hash, hint.externalID[:])
+		} else {
+			_, _ = hash.Write([]byte{0})
+		}
+		if hint.moduleID.Available() {
+			_, _ = hash.Write([]byte{1})
+			writeCallSurfaceBytes(hash, hint.moduleID[:])
+		} else {
+			_, _ = hash.Write([]byte{0})
+		}
 	case callSurfaceHintNone:
 	}
 }

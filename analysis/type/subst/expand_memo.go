@@ -13,6 +13,7 @@ type expandMode uint8
 const (
 	expandModeStructural expandMode = iota
 	expandModeTablePolicy
+	expandModeRoot
 )
 
 type expandMemoKey struct {

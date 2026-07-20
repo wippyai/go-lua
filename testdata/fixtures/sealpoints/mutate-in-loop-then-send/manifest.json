@@ -1,9 +1,7 @@
 {
   "description": "A Report accumulator is built, mutated across loop iterations, then sent after the loop; the send is Proven-if-sealed-at-P where P is the post-loop point (line 13), and is Refuted/Unknown without a seal because acc is mutable-and-live at the send boundary.",
   "packages": ["channel"],
-  "check": {
-    "skip": "pending: send-safety seal-point judgments (task ad6c114f) not yet emitted"
-  },
+  "check": {},
   "run": {
     "skip": "checker-only send-safety fixture"
   }

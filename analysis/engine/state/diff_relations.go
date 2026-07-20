@@ -30,12 +30,20 @@ func (s State) writeRelConstraint(c RelConstraint) State {
 	if !s.laneEnabled(laneDiffRelationsBit) {
 		return s
 	}
-	lane, changed := s.diffRelations.add(c)
+	canonical, valid := canonicalRelConstraint(c)
+	if !valid {
+		return s
+	}
+	lane, changed := s.diffRelations.add(canonical)
 	if !changed {
 		return s
 	}
+	previousConsistency := s.numericConsistency
 	out := s.reachable()
-	out.diffRelations = lane
+	setStateDiffRelations(&out, lane)
+	constraint := canonical.NumericConstraint()
+	var storage [3]pathdom.PathKey
+	out.markNumericConsistencyDirty(previousConsistency, numericConstraintKeys(storage[:0], constraint)...)
 	return out
 }
 
@@ -51,7 +59,11 @@ func (s State) RelConstraints() RelConstraintsSnapshot {
 	if !s.laneEnabled(laneDiffRelationsBit) {
 		return RelConstraintsSnapshot{Bottom: true}
 	}
-	bottom, top, items := s.diffRelations.snapshot(relConstraintLess)
+	return relConstraintsSnapshot(s.diffRelations)
+}
+
+func relConstraintsSnapshot(lane diffRelationLane) RelConstraintsSnapshot {
+	bottom, top, items := lane.snapshot(relConstraintLess)
 	return RelConstraintsSnapshot{Bottom: bottom, Top: top, Constraints: items}
 }
 
@@ -69,7 +81,7 @@ func (s State) ClearDiffConstraintsFor(key pathaddr.StateKey) State {
 		return s
 	}
 	out := s.reachable()
-	out.diffRelations = lane
+	setStateDiffRelations(&out, lane)
 	return out
 }
 

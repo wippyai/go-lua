@@ -33,6 +33,10 @@ type keyspaceAddressResolver interface {
 	RootOrVisibleKeyspaceKeyAt(cfg.Point, pathdom.Path) (keyspace.Key, bool)
 }
 
+type structuralKeyspaceAddressResolver interface {
+	StructuralKeyspaceKeyAt(pathdom.Path) (keyspace.Key, bool)
+}
+
 // AddressAt returns the address view for path at point.
 func AddressAt(resolver PathKeyResolver, point cfg.Point, path pathdom.Path) Address {
 	return Address{resolver: resolver, point: point, path: path}
@@ -106,6 +110,13 @@ func (a Address) RootOrVisibleStateKey() (pathaddr.StateKey, bool) {
 	if a.path.IsEmpty() || a.path.Symbol == 0 {
 		return "", false
 	}
+	if direct, ok := a.resolver.(keyspaceAddressResolver); ok {
+		key, exact := direct.RootOrVisibleKeyspaceKeyAt(a.point, a.path)
+		if !exact || a.resolver.KeySpace() == nil {
+			return "", false
+		}
+		return pathaddr.StateKeyFromPathKey(a.resolver.KeySpace().FormatReadOnly(key))
+	}
 	if len(a.path.Segments) == 0 {
 		return pathaddr.StateKeyFromPathKey(a.path.Key())
 	}
@@ -131,6 +142,13 @@ func (a Address) RootOrVisibleKeyspaceKey() (keyspace.Key, bool) {
 // StructuralStateKey returns the path's own structural state key without
 // point-local visibility rewriting.
 func (a Address) StructuralStateKey() (pathaddr.StateKey, bool) {
+	if direct, ok := a.resolver.(structuralKeyspaceAddressResolver); ok {
+		key, exact := direct.StructuralKeyspaceKeyAt(a.path)
+		if !exact || a.resolver.KeySpace() == nil {
+			return "", false
+		}
+		return pathaddr.StateKeyFromPathKey(a.resolver.KeySpace().FormatReadOnly(key))
+	}
 	return pathaddr.StateKeyFromPathKey(a.path.Key())
 }
 

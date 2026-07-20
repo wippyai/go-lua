@@ -31,7 +31,10 @@ type mustSetLane[T comparable] struct {
 }
 
 func mustSetLaneFromLift[T comparable](l lift.MustSetLane[T]) mustSetLane[T] {
-	return mustSetLane[T]{bottom: l.Bottom(), values: mapedit.Clone(l.Values())}
+	// MustSetLane values are immutable once published to the lattice. Keep the
+	// persistent representation so Same and operand-reusing lattice operations
+	// remain visible through this state-side adapter.
+	return mustSetLane[T]{bottom: l.Bottom(), values: l.Values()}
 }
 
 func (l mustSetLane[T]) asMustSet() lift.MustSetLane[T] {
@@ -88,16 +91,44 @@ func wrapDomain[E any, L any](
 	wrap func(E) L,
 	unwrap func(L) E,
 ) lattice.Lattice[L] {
+	combine := func(a, b L, operation func(E, E) E) L {
+		aValue, bValue := unwrap(a), unwrap(b)
+		result := operation(aValue, bValue)
+		if elem.Same != nil {
+			switch {
+			case elem.Same(result, aValue):
+				return a
+			case elem.Same(result, bValue):
+				return b
+			}
+		}
+		// A lattice operation may rebuild an equal carrier even when its
+		// persistent implementation missed operand reuse. Keep the wrapper's
+		// existing operand spelling in that exact semantic no-op case.
+		switch {
+		case elem.Equal(result, aValue):
+			return a
+		case elem.Equal(result, bValue):
+			return b
+		}
+		return wrap(result)
+	}
 	out := lattice.Lattice[L]{
 		Bottom:   func() L { return wrap(elem.Bottom()) },
 		Top:      func() L { return wrap(elem.Top()) },
 		Equal:    func(a, b L) bool { return elem.Equal(unwrap(a), unwrap(b)) },
 		LessOrEq: func(a, b L) bool { return elem.LessOrEq(unwrap(a), unwrap(b)) },
-		Join:     func(a, b L) L { return wrap(elem.Join(unwrap(a), unwrap(b))) },
-		Widen:    func(prev, next L) L { return wrap(elem.Widen(unwrap(prev), unwrap(next))) },
+		Join:     func(a, b L) L { return combine(a, b, elem.Join) },
+		Widen:    func(prev, next L) L { return combine(prev, next, elem.Widen) },
+	}
+	if elem.Same != nil {
+		out.Same = func(a, b L) bool { return elem.Same(unwrap(a), unwrap(b)) }
+	}
+	if elem.Meet != nil {
+		out.Meet = func(a, b L) L { return combine(a, b, elem.Meet) }
 	}
 	if elem.Narrow != nil {
-		out.Narrow = func(prev, next L) L { return wrap(elem.Narrow(unwrap(prev), unwrap(next))) }
+		out.Narrow = func(prev, next L) L { return combine(prev, next, elem.Narrow) }
 	}
 	return out
 }

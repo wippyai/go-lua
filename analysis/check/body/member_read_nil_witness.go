@@ -26,10 +26,15 @@ import (
 // because it combines expression paths, declared types, heap/path proofs, and
 // branch evidence from the solved body.
 func (r *Result) WithMemberReadNilWitness(point cfg.Point, expr ast.Expr, value product.Value) product.Value {
-	priorStructuralMutation := r.memberReadHasPriorStructuralMutation(point, expr)
+	// distrustExactnessProofs covers every reason a point-local exactness fact
+	// can be stale: a synchronously invoked closure capture, or a write through
+	// a differently-rooted alias of the same object that the point-local
+	// path/static-member lattice does not always learn about.
+	distrustExactnessProofs := r.memberReadHasPriorStructuralMutation(point, expr) ||
+		r.memberReadHasCrossSymbolAliasWriteReachable(point, expr)
 	if r == nil || r.Registry() == nil || expr == nil ||
-		(!priorStructuralMutation && !r.MemberReadCanMissOrDeclaredNilable(point, expr)) ||
-		(!priorStructuralMutation &&
+		(!distrustExactnessProofs && !r.MemberReadCanMissOrDeclaredNilable(point, expr)) ||
+		(!distrustExactnessProofs &&
 			(r.memberReadValueAlreadyProvenPresent(point, expr, value) ||
 				r.ExpressionReadProvenPresentBeforeBoundary(point, expr) ||
 				r.memberReadHasExactPathProof(point, expr) ||
@@ -129,6 +134,58 @@ func (r *Result) memberReadHasPriorStructuralMutation(point cfg.Point, expr ast.
 		if r.opaqueCallMaySynchronouslyInvokeCapturedClosure(candidate) &&
 			r.callArgumentGraphCapturesIdentity(candidate, id) {
 			return true
+		}
+	}
+	return false
+}
+
+// memberReadHasCrossSymbolAliasWriteReachable reports whether a write reachable
+// before point targets the same field suffix as expr's receiver through a
+// different root local. Point-local path/static-member facts are keyed by
+// syntactic local path; a plain "local alias = box" declaration does not
+// always record a path-equality proof between alias and box, so a write
+// through the differently-named alias can leave a stale presence fact for
+// expr's own path. This re-derives aliasing from the same runtime-identity
+// mechanism dominance-based guard queries already use (assignmentPathMayTouch
+// RecoveredPath / descendantInvalidationMayTouchRecoveredPath), restricted to
+// writes through a different root symbol: a direct rewrite of the same local
+// is already reflected correctly by the forward state and must not be
+// invalidated here, or every ordinary field reassignment would spuriously
+// lose its narrowing.
+func (r *Result) memberReadHasCrossSymbolAliasWriteReachable(point cfg.Point, expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.Object == nil {
+		return false
+	}
+	suffix, ok := memberReadSuffix(attr)
+	if !ok {
+		return false
+	}
+	objectPath, ok := r.ExpressionPath(attr.Object)
+	if !ok || objectPath.IsEmpty() || objectPath.Symbol == 0 {
+		return false
+	}
+	target := objectPath.AppendSegments(suffix)
+	graph := r.Graph()
+	if graph == nil {
+		return false
+	}
+	entry := graph.Entry()
+	for _, candidate := range graph.RPO() {
+		if candidate == point || !r.PointCanReach(entry, candidate) || !r.PointCanReach(candidate, point) {
+			continue
+		}
+		if assignment, ok := r.OrdinaryAssignment(candidate); ok && assignment.HasPath &&
+			assignment.Path.Symbol != 0 && assignment.Path.Symbol != target.Symbol &&
+			r.assignmentPathMayTouchRecoveredPath(candidate, assignment.Path, target) {
+			return true
+		}
+		if invalidation, ok := r.PathDescendantInvalidation(candidate); ok {
+			container := invalidation.ContainerPath()
+			if container.Symbol != 0 && container.Symbol != target.Symbol &&
+				r.descendantInvalidationMayTouchRecoveredPath(candidate, invalidation, target) {
+				return true
+			}
 		}
 	}
 	return false
@@ -251,11 +308,11 @@ func (r *Result) memberReadHasExactHeapProof(point cfg.Point, expr ast.Expr) boo
 		return false
 	}
 	table := st.ReadHeapTableObject(r.Registry(), id)
-	if _, ok := table.StaticMember(memberKey); ok {
+	if member, ok := table.StaticMember(memberKey); ok && presence.Equal(product.PresenceOf(member), presence.Present()) {
 		return true
 	}
 	if canonical, ok := heapidentity.FieldCanonicalStaticMemberSuffixKey(r.KeySpace(), suffix); ok {
-		if _, ok := table.StaticMember(canonical); ok {
+		if member, ok := table.StaticMember(canonical); ok && presence.Equal(product.PresenceOf(member), presence.Present()) {
 			return true
 		}
 	}
@@ -298,6 +355,9 @@ func (r *Result) memberReadHasLiteralDeclarationProof(point cfg.Point, expr ast.
 	}
 	declaration, ok := r.DominatingPathRootDeclarationSource(point, objectPath)
 	if !ok || declaration.Source.Kind != factflow.ValueSourceExpression || !declaration.Source.HasExpr {
+		return false
+	}
+	if r.pathShapeInvalidatedAfterAssignment(declaration.Point, point, objectPath.AppendSegments(suffix)) {
 		return false
 	}
 	literal, ok := r.ObjectLiteralView(declaration.Source.ExprRef)

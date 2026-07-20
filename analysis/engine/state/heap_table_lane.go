@@ -2,20 +2,22 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type heapTableIdentityLane struct {
-	values map[identity.ID]heapidentity.TableObject
+	values map[identity.Term]heapidentity.TableObject
 	top    bool
 }
 
 func heapTableIdentityLaneFromMap(
-	domain lattice.Lattice[map[identity.ID]heapidentity.TableObject],
-	values map[identity.ID]heapidentity.TableObject,
+	domain lattice.Lattice[map[identity.Term]heapidentity.TableObject],
+	values map[identity.Term]heapidentity.TableObject,
 ) heapTableIdentityLane {
 	if domain.Equal(values, domain.Top()) {
 		return heapTableIdentityLane{top: true}
@@ -23,7 +25,7 @@ func heapTableIdentityLaneFromMap(
 	return heapTableIdentityLane{values: values}
 }
 
-func (l heapTableIdentityLane) asMap(domain lattice.Lattice[map[identity.ID]heapidentity.TableObject]) map[identity.ID]heapidentity.TableObject {
+func (l heapTableIdentityLane) asMap(domain lattice.Lattice[map[identity.Term]heapidentity.TableObject]) map[identity.Term]heapidentity.TableObject {
 	if l.top {
 		return domain.Top()
 	}
@@ -31,28 +33,40 @@ func (l heapTableIdentityLane) asMap(domain lattice.Lattice[map[identity.ID]heap
 }
 
 func (l heapTableIdentityLane) read(reg *axis.Registry, id identity.ID) heapidentity.TableObject {
-	if id == (identity.ID{}) {
+	return l.readTerm(reg, identity.ConcreteTerm(id))
+}
+
+func (l heapTableIdentityLane) readTerm(reg *axis.Registry, term identity.Term) heapidentity.TableObject {
+	if !term.Valid() {
 		return heapidentity.BottomObject(reg)
 	}
 	if l.top {
 		return heapidentity.TopObject()
 	}
-	if object, ok := l.values[id]; ok {
+	if object, ok := l.values[term]; ok {
 		return object
 	}
 	return heapidentity.BottomObject(reg)
 }
 
 func (l heapTableIdentityLane) hasFinite(id identity.ID) bool {
+	return l.hasFiniteTerm(identity.ConcreteTerm(id))
+}
+
+func (l heapTableIdentityLane) hasFiniteTerm(term identity.Term) bool {
 	if l.top {
 		return false
 	}
-	_, ok := l.values[id]
+	_, ok := l.values[term]
 	return ok
 }
 
 func (l heapTableIdentityLane) without(id identity.ID) (heapTableIdentityLane, bool) {
-	values, changed := heapidentity.DeleteEntry(l.values, id)
+	return l.withoutTerm(identity.ConcreteTerm(id))
+}
+
+func (l heapTableIdentityLane) withoutTerm(term identity.Term) (heapTableIdentityLane, bool) {
+	values, changed := mapedit.Without(l.values, term)
 	if !changed {
 		return l, false
 	}
@@ -67,24 +81,35 @@ func (l heapTableIdentityLane) rekey(from, to *keyspace.KeySpace) (heapTableIden
 	if l.top || len(l.values) == 0 {
 		return l, true
 	}
-	values := make(map[identity.ID]heapidentity.TableObject, len(l.values))
-	for id, object := range l.values {
+	values := make(map[identity.Term]heapidentity.TableObject, len(l.values))
+	for term, object := range l.values {
 		rekeyed, ok := object.Rekey(from, to)
 		if !ok {
 			return l, false
 		}
-		values[id] = rekeyed
+		values[term] = rekeyed
 	}
 	l.values = values
 	return l, true
 }
 
 func (l heapTableIdentityLane) with(id identity.ID, object heapidentity.TableObject) heapTableIdentityLane {
-	values := heapidentity.CloneMap(l.values)
-	if values == nil {
-		values = make(map[identity.ID]heapidentity.TableObject, 1)
+	return l.withTerm(identity.ConcreteTerm(id), object)
+}
+
+func (l heapTableIdentityLane) withTerm(term identity.Term, object heapidentity.TableObject) heapTableIdentityLane {
+	if !term.Valid() {
+		return l
 	}
-	values[id] = object
+	values := mapedit.Clone(l.values)
+	if values == nil {
+		values = make(map[identity.Term]heapidentity.TableObject, 1)
+	}
+	values[term] = object
 	l.values = values
 	return l
+}
+
+func heapTermMapDomain(reg *axis.Registry) lattice.Lattice[map[identity.Term]heapidentity.TableObject] {
+	return lift.Map[identity.Term, heapidentity.TableObject](heapidentity.ObjectDomain(reg))
 }

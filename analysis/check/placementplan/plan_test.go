@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -398,10 +399,11 @@ func TestFromResultProjectsStackObjectLiteralAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram401, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram401.RootResult()
 
 	plan := FromResult(result)
 	if plan.Incomplete {
@@ -434,10 +436,11 @@ return total
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram437, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram437.RootResult()
 
 	plan := FromResult(result)
 	total, decomposable := plan.AllocationStats()
@@ -484,10 +487,11 @@ return total
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram487, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram487.RootResult()
 
 	plan := FromResult(result)
 	if len(plan.HoistableLoads) != 1 {
@@ -511,10 +515,11 @@ local total = scratch.a + scratch.b
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram514, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram514.RootResult()
 
 	plan := FromResult(result)
 	total, frameLocal := plan.FrameLocalStats()

@@ -1,6 +1,7 @@
 package sourcevalue
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -44,10 +45,6 @@ type ObjectLiteralViewEvaluator func(lit factflow.ObjectLiteralView, resolver fa
 // optional because the generic transfer engine cannot infer vararg shape.
 type VarargValueProvider func(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
-// StaticScalarKeySegment maps a language-level scalar key value into the
-// canonical path segment used by static member projections.
-type StaticScalarKeySegment func(value product.Value) (segment.Segment, bool)
-
 // ExpressionConditionStateRefiner applies the path facts selected by a
 // short-circuit condition to the temporary state used for the right operand.
 type ExpressionConditionStateRefiner func(point cfg.Point, in state.State, facts factflow.ExpressionConditionFacts) state.State
@@ -74,7 +71,6 @@ type SourceValuesConfig struct {
 	DynamicIndexExprs     map[factflow.ExprRef]factflow.DynamicIndexExpression
 	ExpressionOp          ExpressionOperationEvaluator
 	ExpressionCondition   ExpressionConditionStateRefiner
-	StaticScalarKey       StaticScalarKeySegment
 	ExpressionValue       ExpressionValueProvider
 	PreferExpressionValue bool
 	VarargValue           VarargValueProvider
@@ -102,7 +98,6 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 		dynamicIndexExprs:     copyDynamicIndexExpressions(config.DynamicIndexExprs),
 		expressionOp:          config.ExpressionOp,
 		expressionCondition:   config.ExpressionCondition,
-		staticScalarKey:       config.StaticScalarKey,
 		expressionValue:       config.ExpressionValue,
 		preferExpressionValue: config.PreferExpressionValue,
 		varargValue:           config.VarargValue,
@@ -166,7 +161,6 @@ type sourceValueResolver struct {
 	dynamicIndexExprs     map[factflow.ExprRef]factflow.DynamicIndexExpression
 	expressionOp          ExpressionOperationEvaluator
 	expressionCondition   ExpressionConditionStateRefiner
-	staticScalarKey       StaticScalarKeySegment
 	expressionValue       ExpressionValueProvider
 	preferExpressionValue bool
 	varargValue           VarargValueProvider
@@ -896,12 +890,6 @@ func (r sourceValueResolver) valueOfDynamicIndexExpression(
 	}
 	active[expr] = true
 	keyValue, keyOK := r.valueOfOperationSource(point, dyn.KeySource(), in, read, active)
-	if keyOK {
-		if value, ok := r.valueOfStaticDynamicIndexPath(point, dyn, keyValue, in); ok {
-			delete(active, expr)
-			return value, true
-		}
-	}
 	var tableValue product.Value
 	tableOK := false
 	if hasTableSource {
@@ -913,56 +901,33 @@ func (r sourceValueResolver) valueOfDynamicIndexExpression(
 	if !tableOK || !keyOK {
 		return product.Value{}, false
 	}
-	if value, ok := r.projectStaticDynamicIndexFromTable(tableValue, keyValue); ok {
-		return value, true
+	keys := r.keySpace
+	if r.visibility != nil {
+		keys = r.visibility.KeySpace()
 	}
-	value, ok := r.typeValues.RuntimeIndex(r.registry, tableValue, keyValue)
+	if keys == nil {
+		keys = keyspace.New()
+	}
+	form := indexform.IndexForm{}
+	if constant, exact := typevalue.IntegerLiteralValue(r.registry, keyValue); exact {
+		form = indexform.NewConstantIndex(constant)
+	}
+	value, ok := ReadBoundDynamicValue(BoundDynamicRead{
+		Registry: r.registry, TypeValues: r.typeValues, KeySpace: keys, Visibility: r.visibility, Point: point,
+		TablePath: dyn.TablePathRef(), TableValue: tableValue, KeyValue: keyValue, ValueInput: in, IndexForm: form,
+	})
 	if !ok {
 		return product.Value{}, false
 	}
-	value = InheritTopOriginEvidence(r.registry, value, tableValue)
 	return value, true
-}
-
-func (r sourceValueResolver) valueOfStaticDynamicIndexPath(
-	point cfg.Point,
-	dyn factflow.DynamicIndexExpression,
-	keyValue product.Value,
-	in state.State,
-) (product.Value, bool) {
-	if r.visibility == nil {
-		return product.Value{}, false
-	}
-	seg, ok := r.staticScalarKeySegment(keyValue)
-	if !ok {
-		return product.Value{}, false
-	}
-	return ReadPathValue(r.registry, r.visibility, point, dyn.TablePathRef().Append(seg), in)
-}
-
-func (r sourceValueResolver) projectStaticDynamicIndexFromTable(tableValue, keyValue product.Value) (product.Value, bool) {
-	if r.projectPathValue == nil {
-		return product.Value{}, false
-	}
-	seg, ok := r.staticScalarKeySegment(keyValue)
-	if !ok {
-		return product.Value{}, false
-	}
-	return r.projectPathValue(tableValue, []segment.Segment{seg})
-}
-
-func (r sourceValueResolver) staticScalarKeySegment(value product.Value) (segment.Segment, bool) {
-	if r.staticScalarKey == nil {
-		return segment.Segment{}, false
-	}
-	return r.staticScalarKey(value)
 }
 
 func (r sourceValueResolver) valueOfCall(source factflow.ValueSource, read func(cfg.Point) state.State) (product.Value, bool) {
 	if !source.HasCallPoint || source.ResultIndex < 0 || read == nil {
 		return product.Value{}, false
 	}
-	return read(source.CallPoint).ReadReturnSlot(r.registry, source.ResultIndex), true
+	slot := key.CallResult(uint32(source.CallPoint), uint32(source.ResultIndex))
+	return read(source.CallPoint).ReadValue(r.registry, slot), true
 }
 
 func copyExpressionValues(in map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {

@@ -32,6 +32,9 @@ func ElementDomain[T any](ops ElementOps[T]) lattice.Lattice[T] {
 		Join: func(a, b T) T {
 			return ops.New(minInt64(ops.Lo(a), ops.Lo(b)))
 		},
+		Meet: func(a, b T) T {
+			return ops.New(maxInt64(ops.Lo(a), ops.Lo(b)))
+		},
 		Widen: func(prev, next T) T {
 			if ops.Lo(next) > ops.Lo(prev) {
 				return ops.New(ops.TopLo)
@@ -43,6 +46,13 @@ func ElementDomain[T any](ops ElementOps[T]) lattice.Lattice[T] {
 
 func minInt64(a, b int64) int64 {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
 		return a
 	}
 	return b

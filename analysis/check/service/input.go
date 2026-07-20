@@ -188,7 +188,6 @@ func unitInputDigest(input UnitInput, sourceDigests map[embedding.DocumentID]Dig
 	for _, lane := range input.StateLanes {
 		w.string(string(lane))
 	}
-	w.uint64(uint64(input.Schedule))
 	writeDiagnosticPolicy(w, input.DiagnosticPolicy)
 	writeJudgmentPolicy(w, input.JudgmentPolicy)
 	return w.sum(), nil

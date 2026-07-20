@@ -189,3 +189,39 @@ func (s State) clearDynamicIndexFactsForPathKey(ks *keyspace.KeySpace, pathKey p
 	out.dynamicIndex.values = values
 	return out
 }
+
+func (l dynamicIndexLane) clearPathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (dynamicIndexLane, bool, bool) {
+	if ks == nil || pathKey == "" || l.top {
+		return l, false, ks != nil && pathKey != ""
+	}
+	prefix, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return l, false, false
+	}
+	values, changed := mapedit.DeleteMatching(l.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool {
+		return stateKeyHasStrictPrefix(ks, key.Table, prefix)
+	})
+	if !changed {
+		return l, false, true
+	}
+	l.values = values
+	return l, true, true
+}
+
+func (l dynamicIndexLane) clearPathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (dynamicIndexLane, bool, bool) {
+	if ks == nil || pathKey == "" || l.top {
+		return l, false, ks != nil && pathKey != ""
+	}
+	prefix, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return l, false, false
+	}
+	values, changed := mapedit.DeleteMatching(l.values, func(key dynamicindex.Key, _ dynamicindex.Fact) bool {
+		return stateKeyHasPrefix(ks, key.Table, prefix)
+	})
+	if !changed {
+		return l, false, true
+	}
+	l.values = values
+	return l, true, true
+}

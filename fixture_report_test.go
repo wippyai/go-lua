@@ -23,7 +23,7 @@ type fixtureImpactRecorder struct {
 type fixtureImpactReport struct {
 	Schema          string               `json:"schema"`
 	GeneratedAt     string               `json:"generated_at"`
-	DeadlineSeconds int64                `json:"deadline_seconds"`
+	DeadlineSeconds int64                `json:"deadline_seconds,omitempty"`
 	TotalFixtures   int                  `json:"total_fixtures"`
 	PassedFixtures  int                  `json:"passed_fixtures"`
 	FailedFixtures  int                  `json:"failed_fixtures"`
@@ -123,10 +123,11 @@ func (r *fixtureImpactRecorder) snapshot() fixtureImpactReport {
 	}
 	sort.Strings(names)
 
+	deadline, _ := fixtureDeadline()
 	report := fixtureImpactReport{
 		Schema:          "go-lua.fixture-impact.v1",
 		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
-		DeadlineSeconds: int64(fixtureDeadline().Seconds()),
+		DeadlineSeconds: int64(deadline.Seconds()),
 		Fixtures:        make([]fixtureImpactSuite, 0, len(names)),
 	}
 	for _, name := range names {

@@ -125,19 +125,12 @@ func (s State) ApplyUserClaim(reg *axis.Registry, ks *keyspace.KeySpace, axisID 
 	return s.writeUserElement(axis, key, elem)
 }
 
-// ApplyUserCallBoundary applies each axis's on-call-boundary keep/drop policy
-// to every finite user-lattice cell.
-func (s State) ApplyUserCallBoundary(reg *axis.Registry) State {
-	if !s.laneEnabled(laneUserLatticesBit) || reg == nil {
-		return s
+func applyUserLatticeCallBoundary(lane userLatticeLane, reg *axis.Registry) (userLatticeLane, bool, bool) {
+	if reg == nil {
+		return lane, false, false
 	}
-	lane, changed := s.userLattices.applyCallBoundary(userlattice.RuntimeFor(reg))
-	if !changed {
-		return s
-	}
-	out := s.reachable()
-	out.userLattices = lane
-	return out
+	next, changed := lane.applyCallBoundary(userlattice.RuntimeFor(reg))
+	return next, changed, true
 }
 
 // PropagateUserAssignment applies the on-assign hooks from sourceKey to

@@ -20,13 +20,57 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
+
+func testPrepareCallOutcome(t *testing.T, program callpayload.CallOutcomeProgram, ctx transfer.NodeContext, site factflow.CallSiteView) callpayload.CallOutcomeSiteProgram {
+	t.Helper()
+	prepared, err := program.PrepareSite(ctx, site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepared
+}
+
+func testEvaluateCallOutcome(t *testing.T, program callpayload.CallOutcomeProgram, ctx transfer.NodeContext, site factflow.CallSiteView, input callpayload.CallOutcomeInput) callpayload.CallOutcome {
+	t.Helper()
+	if site.ResultTargetCount() == 0 {
+		arguments := make([]factflow.ValueSource, 16)
+		results := make([]factflow.CallResultTarget, 16)
+		for index := range results {
+			results[index] = factflow.NewCallResultTarget(factflow.CallResultTargetExpression, index, index, 0, pathdom.Path{})
+		}
+		site = factflow.NewCallSite(factflow.CallSiteConfig{ArgumentSources: arguments, ResultTargets: results}).View()
+	}
+	prepared := testPrepareCallOutcome(t, program, ctx, site)
+	outcome, err := prepared.Evaluate(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return outcome
+}
+
+func testOutcomeProgram(
+	evaluate func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error),
+	correlations ...callpayload.CallOutcomeCorrelationShape,
+) callpayload.CallOutcomeProgram {
+	if evaluate == nil {
+		return callpayload.CallOutcomeProgram{}
+	}
+	roles := callpayload.CallOutcomeFieldRoles()
+	fields := make([]string, len(roles))
+	for index, role := range roles {
+		fields[index] = role.FieldName
+	}
+	shape := func(transfer.NodeContext, factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
+		return callpayload.CallOutcomeSiteShape{FieldNames: fields, Correlations: correlations}, nil
+	}
+	return callpayload.SealCallOutcomeProgram("calloutcome test", fields, state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate)
+}
 
 func fieldSuffix(name string) pathdom.Path {
 	return pathdom.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: name}}}
@@ -36,7 +80,7 @@ func TestComposeSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFacts
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -47,9 +91,9 @@ func TestComposeSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFacts
 			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 0, Value: true},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -75,10 +119,15 @@ func TestComposeSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFacts
 			ReturnConditionSlots: []callpayload.CallReturnConditionSlotRefinement{
 				{ReturnIndex: 0, ReturnValue: false, TargetIndex: 1, Value: primaryValue},
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(
+		testOutcomeProgram(primary),
+		testOutcomeProgram(supplemental,
+			callpayload.ReturnPresenceShape(1, presence.Present(), 0, presence.Absent()),
+			callpayload.ReturnConditionSlotShape(0, false, 1)),
+	), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	if len(got.Results) != 2 {
 		t.Fatalf("got %d results, want 2: %#v", len(got.Results), got.Results)
@@ -129,7 +178,7 @@ func TestComposeSupplementalHeapObjectsPreservesOneSidedStaticMembers(t *testing
 	}
 	root := product.Top()
 	member := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
@@ -137,17 +186,17 @@ func TestComposeSupplementalHeapObjectsPreservesOneSidedStaticMembers(t *testing
 					StaticMembers: map[keyspace.Key]product.Value{key: member},
 				}),
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: root}),
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	object, ok := got.HeapTableObjects[id]
 	if !ok {
@@ -164,7 +213,7 @@ func TestComposeSupplementalCompactsNilProvidersAndPreservesMergeOrder(t *testin
 	firstValue := product.Absent(reg)
 	secondValue := product.Top()
 	var calls []string
-	first := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	first := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		calls = append(calls, "first")
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
@@ -172,9 +221,9 @@ func TestComposeSupplementalCompactsNilProvidersAndPreservesMergeOrder(t *testin
 			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 0, Value: firstValue},
 			},
-		}
+		}, nil
 	}
-	second := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	second := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		calls = append(calls, "second")
 		return callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{Index: 1, Value: secondValue}},
@@ -184,14 +233,14 @@ func TestComposeSupplementalCompactsNilProvidersAndPreservesMergeOrder(t *testin
 			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 1, Value: true},
 			},
-		}
+		}, nil
 	}
 
-	provider := ComposeSupplemental(nil, first, nil, second)
-	if provider == nil {
+	provider := ComposeSupplemental(testOutcomeProgram(nil), testOutcomeProgram(first), testOutcomeProgram(nil), testOutcomeProgram(second))
+	if provider.Empty() {
 		t.Fatal("ComposeSupplemental returned nil for non-nil providers")
 	}
-	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, provider, transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	if len(calls) != 2 || calls[0] != "first" || calls[1] != "second" {
 		t.Fatalf("provider calls = %v, want first then second", calls)
@@ -282,7 +331,7 @@ func TestComposeSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testin
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
@@ -297,9 +346,9 @@ func TestComposeSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testin
 			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 0, Value: true},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 1, Value: supplementalValue}},
@@ -320,10 +369,15 @@ func TestComposeSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testin
 			ReturnConditionSlots: []callpayload.CallReturnConditionSlotRefinement{
 				{ReturnIndex: 0, ReturnValue: false, TargetIndex: 1, Value: primaryValue},
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(
+		testOutcomeProgram(primary),
+		testOutcomeProgram(supplemental,
+			callpayload.ReturnPresenceShape(1, presence.Present(), 0, presence.Absent()),
+			callpayload.ReturnConditionSlotShape(0, false, 1)),
+	), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	if !got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = false, want true")
@@ -360,16 +414,16 @@ func TestComposeSupplementalAuthorityAllowsSpecificRefinementOfExistingWeakResul
 	reg := standard.Registry()
 	primaryValue := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
 	supplementalValue := typeValue(reg, typ.Number)
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
 			ReturnConditionRefinements: []callpayload.CallReturnConditionRefinement{
 				{ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: supplementalValue},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Results: []callpayload.CallResult{
 				{Index: 0, Value: supplementalValue},
@@ -378,10 +432,13 @@ func TestComposeSupplementalAuthorityAllowsSpecificRefinementOfExistingWeakResul
 			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
 				{TriggerIndex: 0, TriggerPresence: presence.Present(), TargetIndex: 1, TargetPresence: presence.Present()},
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(
+		testOutcomeProgram(primary, callpayload.ReturnConditionPathShape(0, true, pathdom.NewPlaceholder(0))),
+		testOutcomeProgram(supplemental, callpayload.ReturnPresenceShape(0, presence.Present(), 1, presence.Present())),
+	), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	if !got.PostReturnAuthority {
 		t.Fatal("PostReturnAuthority = false, want authoritative primary preserved")
@@ -405,22 +462,25 @@ func TestComposeSupplementalAuthorityAllowsNarrowerExistingResultSlotRefinement(
 	reg := standard.Registry()
 	primaryValue := product.WithPresence(reg, typeValue(reg, typ.Number), presence.Maybe())
 	supplementalValue := typeValue(reg, typ.Number)
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
 			ReturnConditionRefinements: []callpayload.CallReturnConditionRefinement{
 				{ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: supplementalValue},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(
+		testOutcomeProgram(primary, callpayload.ReturnConditionPathShape(0, true, pathdom.NewPlaceholder(0))),
+		testOutcomeProgram(supplemental),
+	), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
 	if len(got.Results) != 1 || !ok || !typ.TypeEquals(gotType, typ.Number) {
@@ -432,16 +492,16 @@ func TestComposeSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *t
 	reg := standard.Registry()
 	primaryValue := typeValue(reg, typ.String)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
 			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 0, Value: primaryValue},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -452,10 +512,10 @@ func TestComposeSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *t
 			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 1, Value: supplementalValue},
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	if !got.PostReturnAuthority {
 		t.Fatal("PostReturnAuthority = false, want authoritative primary preserved")
@@ -475,18 +535,16 @@ func TestComposeSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	supplementalValue := typeValue(reg, typ.String)
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}}}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}}}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}}}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}}}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)),
 		transfer.NodeContext{Registry: reg},
-		factflow.NewCallSite(factflow.CallSiteConfig{}).View(),
-		state.State{},
-		nil,
+		factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{},
 	)
 
 	if len(got.Results) != 1 {
@@ -505,18 +563,16 @@ func TestComposeSupplementalPromotesGradualResultEvidenceToExplicit(t *testing.T
 	reg := standard.Registry()
 	gradual := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.GradualTop())
 	explicit := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.ExplicitTop())
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: gradual}}}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: gradual}}}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: explicit}}}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: explicit}}}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)),
 		transfer.NodeContext{Registry: reg},
-		factflow.NewCallSite(factflow.CallSiteConfig{}).View(),
-		state.State{},
-		nil,
+		factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{},
 	)
 
 	if len(got.Results) != 1 {
@@ -531,18 +587,16 @@ func TestComposeSupplementalDoesNotDemoteExplicitResultEvidenceToGradual(t *test
 	reg := standard.Registry()
 	explicit := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.ExplicitTop())
 	gradual := product.Set(reg, typevalue.FromType(reg, typ.Any), evidence.Key, evidence.GradualTop())
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: explicit}}}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: explicit}}}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
-		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: gradual}}}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: gradual}}}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)),
 		transfer.NodeContext{Registry: reg},
-		factflow.NewCallSite(factflow.CallSiteConfig{}).View(),
-		state.State{},
-		nil,
+		factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{},
 	)
 
 	if len(got.Results) != 1 {
@@ -556,22 +610,22 @@ func TestComposeSupplementalDoesNotDemoteExplicitResultEvidenceToGradual(t *test
 func TestComposeSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T) {
 	reg := standard.Registry()
 	tableID := identity.ID{Kind: "table", Site: "compose", Index: 1}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	object, ok := got.HeapTableObjects[tableID]
 	if !ok {
 		t.Fatalf("HeapTableObjects = %#v, want %v", got.HeapTableObjects, tableID)
@@ -584,23 +638,23 @@ func TestComposeSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T)
 func TestComposeSupplementalMergesPlacementFactsWithoutAuthority(t *testing.T) {
 	tableID := identity.ID{Kind: "table", Site: "compose-placement", Index: 1}
 	otherID := identity.ID{Kind: "table", Site: "compose-placement", Index: 2}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Placements: map[identity.ID]placement.Value{
 				tableID: placement.Stack,
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Placements: map[identity.ID]placement.Value{
 				tableID: placement.SharedHeap,
 				otherID: placement.OwnedHeap,
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	if got.Placements[tableID] != placement.SharedHeap {
 		t.Fatalf("placement[%v] = %s, want shared-heap", tableID, got.Placements[tableID])
 	}
@@ -610,22 +664,22 @@ func TestComposeSupplementalMergesPlacementFactsWithoutAuthority(t *testing.T) {
 }
 
 func TestComposeSupplementalMergesParamLengthFloorsWithoutAuthority(t *testing.T) {
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(0), Floor: 2},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(1), Floor: 3},
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	if len(got.ParamLengthFloors) != 2 {
 		t.Fatalf("ParamLengthFloors = %#v, want primary and supplemental floors", got.ParamLengthFloors)
 	}
@@ -639,23 +693,23 @@ func TestComposeSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testi
 	reg := standard.Registry()
 	primaryID := identity.ID{Kind: "table", Site: "compose", Index: 2}
 	supplementalID := identity.ID{Kind: "table", Site: "compose", Index: 3}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				primaryID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				supplementalID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	if len(got.HeapTableObjects) != 1 {
 		t.Fatalf("HeapTableObjects = %#v, want only authoritative primary object", got.HeapTableObjects)
 	}
@@ -672,13 +726,13 @@ func TestComposeSupplementalAuthorityKeepsHeapFactsForAuthoritativeResultIdentit
 	resultID := identity.ID{Kind: "table", Site: "compose-result", Index: 1}
 	resultValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(resultID))
 	memberKey := keyspace.New().FromPath(pathdom.NewPath(symbol.ID(1), "root").Field("run"))
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 0, Value: resultValue}},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				resultID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
@@ -688,10 +742,10 @@ func TestComposeSupplementalAuthorityKeepsHeapFactsForAuthoritativeResultIdentit
 					},
 				}),
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	object, ok := got.HeapTableObjects[resultID]
 	if !ok {
 		t.Fatalf("HeapTableObjects = %#v, want supplemental facts for authoritative result identity", got.HeapTableObjects)
@@ -705,21 +759,21 @@ func TestComposeSupplementalAuthorityDropsEmptyHeapFactForAuthoritativeResultIde
 	reg := standard.Registry()
 	resultID := identity.ID{Kind: "table", Site: "compose-result-empty", Index: 1}
 	resultValue := product.Set(reg, typevalue.FromType(reg, typetable.NewRecord().Build()), identity.Key, identity.Singleton(resultID))
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []callpayload.CallResult{{Index: 0, Value: resultValue}},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				resultID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: resultValue}),
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 
 	if len(got.HeapTableObjects) != 0 {
 		t.Fatalf("HeapTableObjects = %#v, want empty no-op heap fact filtered", got.HeapTableObjects)
@@ -729,24 +783,24 @@ func TestComposeSupplementalAuthorityDropsEmptyHeapFactForAuthoritativeResultIde
 func TestComposeSupplementalAuthorityBlocksSupplementalPlacementFacts(t *testing.T) {
 	primaryID := identity.ID{Kind: "table", Site: "compose-placement", Index: 4}
 	supplementalID := identity.ID{Kind: "table", Site: "compose-placement", Index: 5}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Placements: map[identity.ID]placement.Value{
 				primaryID: placement.Stack,
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			Placements: map[identity.ID]placement.Value{
 				primaryID:      placement.SharedHeap,
 				supplementalID: placement.OwnedHeap,
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	if len(got.Placements) != 1 {
 		t.Fatalf("Placements = %#v, want only authoritative primary placement", got.Placements)
 	}
@@ -759,23 +813,23 @@ func TestComposeSupplementalAuthorityBlocksSupplementalPlacementFacts(t *testing
 }
 
 func TestComposeSupplementalAuthorityBlocksSupplementalParamLengthFloors(t *testing.T) {
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(0), Floor: 2},
 			},
-		}
+		}, nil
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
 		return callpayload.CallOutcome{
 			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(1), Floor: 3},
 			},
-		}
+		}, nil
 	}
 
-	got := ComposeSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	got := testEvaluateCallOutcome(t, ComposeSupplemental(testOutcomeProgram(primary), testOutcomeProgram(supplemental)), transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), callpayload.CallOutcomeInput{})
 	if len(got.ParamLengthFloors) != 1 {
 		t.Fatalf("ParamLengthFloors = %#v, want only authoritative primary floor", got.ParamLengthFloors)
 	}

@@ -3,10 +3,13 @@ package transformer
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // TermRootBindings maps every callee boundary namespace into one caller arena.
@@ -22,16 +25,18 @@ type TermRootBindings struct {
 }
 
 // NewTermRootBindings takes an immutable snapshot of dense caller-arena term
-// IDs. Values must have exactly callee.ValueCount entries. Paths may be nil
+// IDs. Values must have exactly callee.InputCount entries. Callee Result and
+// HeapTemplate roots are lexical existentials and are never caller bindings.
+// Paths may be nil
 // when no source PathTerm is imported, or have the same packed width. Missing
 // value roots are rejected; individual path roots may be zero and fail closed
 // only when a source PathTerm references them.
 func NewTermRootBindings(callee, caller Shape, values []ValueTerm, paths []PathTerm) (TermRootBindings, error) {
-	if len(values) != callee.ValueCount() {
-		return TermRootBindings{}, fmt.Errorf("transformer: got %d value term bindings, want %d", len(values), callee.ValueCount())
+	if len(values) != callee.InputCount() {
+		return TermRootBindings{}, fmt.Errorf("transformer: got %d value term bindings, want %d", len(values), callee.InputCount())
 	}
-	if paths != nil && len(paths) != callee.ValueCount() {
-		return TermRootBindings{}, fmt.Errorf("transformer: got %d path term bindings, want %d", len(paths), callee.ValueCount())
+	if paths != nil && len(paths) != callee.InputCount() {
+		return TermRootBindings{}, fmt.Errorf("transformer: got %d path term bindings, want %d", len(paths), callee.InputCount())
 	}
 	for i, term := range values {
 		if term == 0 {
@@ -47,14 +52,14 @@ func NewTermRootBindings(callee, caller Shape, values []ValueTerm, paths []PathT
 }
 
 func (b TermRootBindings) value(root Root) ValueTerm {
-	if !b.callee.validate(root) {
+	if !b.callee.validateInput(root) {
 		return 0
 	}
 	return b.values[b.callee.offset(root.Kind)+int(root.Index)]
 }
 
 func (b TermRootBindings) path(root Root) PathTerm {
-	if b.paths == nil || !b.callee.validate(root) {
+	if b.paths == nil || !b.callee.validateInput(root) {
 		return 0
 	}
 	return b.paths[b.callee.offset(root.Kind)+int(root.Index)]
@@ -165,10 +170,10 @@ type rebaseValidator struct {
 func (v *rebaseValidator) validate(input TermRebaseInput) error {
 	v.values = make(map[ValueTerm]visitState)
 	v.guards = make(map[Guard]visitState)
-	if len(v.bindings.values) != v.bindings.callee.ValueCount() {
+	if len(v.bindings.values) != v.bindings.callee.InputCount() {
 		return fmt.Errorf("transformer: malformed value term binding width")
 	}
-	if v.bindings.paths != nil && len(v.bindings.paths) != v.bindings.callee.ValueCount() {
+	if v.bindings.paths != nil && len(v.bindings.paths) != v.bindings.callee.InputCount() {
 		return fmt.Errorf("transformer: malformed path term binding width")
 	}
 	// Validate all supplied caller bindings, including unused entries. A
@@ -177,8 +182,13 @@ func (v *rebaseValidator) validate(input TermRebaseInput) error {
 		if term == 0 {
 			return fmt.Errorf("transformer: missing caller value binding %d", i)
 		}
-		if err := validateValueDAG(v.caller, term, v.bindings.caller, make(map[ValueTerm]visitState), false); err != nil {
-			return fmt.Errorf("transformer: caller value binding %d: %w", i, err)
+		// A caller binding is an opaque, already-owned caller expression. It
+		// may legitimately be an Environment, FrameResult, or CellResult term;
+		// only source-callee terms are forbidden from exporting those nodes.
+		// Reusing the boundary-export validator here conflated the two sides of
+		// substitution and rejected valid composed arguments.
+		if !v.caller.validValue(term, v.bindings.caller, make(map[ValueTerm]bool)) {
+			return fmt.Errorf("transformer: caller value binding %d is not a valid caller expression", i)
 		}
 	}
 	for i, term := range v.bindings.paths {
@@ -231,6 +241,15 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		if len(n.args) != 0 {
 			return fmt.Errorf("transformer: malformed constant term %d", term)
 		}
+	case valueObjectLiteral:
+		if !n.objectPlan.Valid() || n.objectPlan.ValueSourceCount() != len(n.args) {
+			return fmt.Errorf("transformer: malformed object term %d", term)
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
 	case valueJoin:
 		if len(n.args) < 2 {
 			return fmt.Errorf("transformer: malformed join term %d", term)
@@ -240,14 +259,26 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 				return err
 			}
 		}
-	case valueRefinement:
+	case valueSelect:
+		if len(n.args) != 2 || n.guard == 0 {
+			return fmt.Errorf("transformer: malformed select term %d", term)
+		}
+		if err := v.guard(n.guard); err != nil {
+			return err
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
+	case valueRefinement, valueFalsyAbsentRefinement:
 		if len(n.args) != 1 {
 			return fmt.Errorf("transformer: malformed refinement term %d", term)
 		}
 		if err := v.value(n.args[0]); err != nil {
 			return err
 		}
-	case valueRuntimeValidation:
+	case valueExpressionRefinement:
 		if len(n.args) != 1 {
 			return fmt.Errorf("transformer: malformed runtime validation term %d", term)
 		}
@@ -263,6 +294,13 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		if err := v.value(n.args[0]); err != nil {
 			return err
 		}
+	case valuePredicateObservation:
+		if len(n.args) != 1 {
+			return fmt.Errorf("transformer: malformed predicate-observation term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
+		}
 	case valueDynamicRead:
 		if len(n.args) != 2 || n.path == 0 {
 			return fmt.Errorf("transformer: malformed DynamicRead term %d", term)
@@ -270,17 +308,29 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 		if err := v.path(n.path); err != nil {
 			return err
 		}
+		if n.keyPath != 0 {
+			if err := v.optionalPath(n.keyPath); err != nil {
+				return err
+			}
+		}
 		for _, arg := range n.args {
 			if err := v.value(arg); err != nil {
 				return err
 			}
 		}
 	case valueDynamicTableRead:
-		if (len(n.args) != 2 && len(n.args) != 3) || n.path == 0 {
+		if len(n.args) != 2 {
 			return fmt.Errorf("transformer: malformed direct DynamicRead term %d", term)
 		}
-		if err := v.path(n.path); err != nil {
-			return err
+		if n.path != 0 {
+			if err := v.optionalPath(n.path); err != nil {
+				return err
+			}
+		}
+		if n.keyPath != 0 {
+			if err := v.optionalPath(n.keyPath); err != nil {
+				return err
+			}
 		}
 		for _, arg := range n.args {
 			if err := v.value(arg); err != nil {
@@ -296,8 +346,15 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 				return err
 			}
 		}
-	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
-		if len(n.args) != 2 {
+	case valueUnaryOperation:
+		if len(n.args) != 1 || !isPureUnaryOperator(n.operator) {
+			return fmt.Errorf("transformer: malformed scalar unary term %d", term)
+		}
+		if err := v.value(n.args[0]); err != nil {
+			return err
+		}
+	case valueBinaryOperation:
+		if len(n.args) != 2 || !isPureBinaryOperator(n.operator) {
 			return fmt.Errorf("transformer: malformed scalar binary term %d", term)
 		}
 		for _, arg := range n.args {
@@ -306,11 +363,26 @@ func (v *rebaseValidator) value(term ValueTerm) error {
 			}
 		}
 	case valueIteratorProjection:
-		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
+		if (len(n.args) != 1 && len(n.args) != 2) || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
 			return fmt.Errorf("transformer: malformed iterator projection term %d", term)
 		}
-		if err := v.value(n.args[0]); err != nil {
-			return err
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
+	case valueGenericForResult:
+		if len(n.args) != 4 || n.variableIndex < 0 {
+			return fmt.Errorf("transformer: malformed generic-for result term %d", term)
+		}
+		for _, arg := range n.args {
+			if err := v.value(arg); err != nil {
+				return err
+			}
+		}
+	case valueLoopContinuation:
+		if n.owner == (lexicalidentity.StableLexicalBodyID{}) || len(n.args) != 0 {
+			return fmt.Errorf("transformer: malformed loop continuation term %d", term)
 		}
 	case valueStaticIndex:
 		if len(n.args) != 2 || !v.callee.validStaticIndexKey(n.args[1]) {
@@ -344,6 +416,9 @@ func (v *rebaseValidator) path(term PathTerm) error {
 		return fmt.Errorf("transformer: invalid source path term %d", term)
 	}
 	n := v.callee.paths[term]
+	if n.environment != 0 {
+		return fmt.Errorf("transformer: body-owned environment path %d cannot cross a call frame", n.environment)
+	}
 	if !v.bindings.callee.validate(n.root) {
 		return fmt.Errorf("transformer: invalid source path root %#v", n.root)
 	}
@@ -351,6 +426,28 @@ func (v *rebaseValidator) path(term PathTerm) error {
 		return fmt.Errorf("transformer: missing path binding for source root %#v", n.root)
 	}
 	return nil
+}
+
+// optionalPath validates an embedded evidence lens without requiring the
+// caller to own an address for a value-only argument. Direct-table reads are
+// exact from their scalar table/key terms; these paths only add relational
+// evidence. Explicitly projected paths and owner-path reads continue through
+// path and therefore still require complete bindings.
+func (v *rebaseValidator) optionalPath(term PathTerm) error {
+	if term == 0 || int(term) >= len(v.callee.paths) {
+		return fmt.Errorf("transformer: invalid optional source path term %d", term)
+	}
+	n := v.callee.paths[term]
+	if n.environment != 0 {
+		return nil
+	}
+	if !v.bindings.callee.validate(n.root) {
+		return fmt.Errorf("transformer: invalid optional source path root %#v", n.root)
+	}
+	if v.bindings.path(n.root) == 0 {
+		return nil
+	}
+	return v.path(term)
 }
 
 func (v *rebaseValidator) guard(guard Guard) error {
@@ -414,15 +511,26 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) != 0 {
 			return fmt.Errorf("malformed constant term %d", term)
 		}
+	case valueObjectLiteral:
+		if !n.objectPlan.Valid() || n.objectPlan.ValueSourceCount() != len(n.args) {
+			return fmt.Errorf("malformed object term %d", term)
+		}
 	case valueJoin:
 		if len(n.args) < 2 {
 			return fmt.Errorf("malformed join term %d", term)
 		}
-	case valueRefinement:
+	case valueSelect:
+		if len(n.args) != 2 || n.guard == 0 {
+			return fmt.Errorf("malformed select term %d", term)
+		}
+		if err := validateGuardDAG(arena, n.guard, shape, seen, make(map[Guard]visitState), allowCell); err != nil {
+			return err
+		}
+	case valueRefinement, valueFalsyAbsentRefinement:
 		if len(n.args) != 1 {
 			return fmt.Errorf("malformed refinement term %d", term)
 		}
-	case valueRuntimeValidation:
+	case valueExpressionRefinement:
 		if len(n.args) != 1 {
 			return fmt.Errorf("malformed runtime validation term %d", term)
 		}
@@ -434,6 +542,10 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 		if len(n.args) != 1 || n.resultIndex < 0 {
 			return fmt.Errorf("malformed call-result term %d", term)
 		}
+	case valuePredicateObservation:
+		if len(n.args) != 1 {
+			return fmt.Errorf("malformed predicate-observation term %d", term)
+		}
 	case valueDynamicRead:
 		if len(n.args) != 2 {
 			return fmt.Errorf("malformed DynamicRead term %d", term)
@@ -442,23 +554,37 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 			return err
 		}
 	case valueDynamicTableRead:
-		if len(n.args) != 2 && len(n.args) != 3 {
+		if len(n.args) != 2 {
 			return fmt.Errorf("malformed direct DynamicRead term %d", term)
 		}
-		if err := validatePathTerm(arena, n.path, shape); err != nil {
-			return err
+		if n.path != 0 {
+			if err := validatePathTerm(arena, n.path, shape); err != nil {
+				return err
+			}
 		}
 	case valueStringConcat:
 		if len(n.args) != 2 {
 			return fmt.Errorf("malformed string concat term %d", term)
 		}
-	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
-		if len(n.args) != 2 {
+	case valueUnaryOperation:
+		if len(n.args) != 1 || !isPureUnaryOperator(n.operator) {
+			return fmt.Errorf("malformed scalar unary term %d", term)
+		}
+	case valueBinaryOperation:
+		if len(n.args) != 2 || !isPureBinaryOperator(n.operator) {
 			return fmt.Errorf("malformed scalar binary term %d", term)
 		}
 	case valueIteratorProjection:
-		if len(n.args) != 1 || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
+		if (len(n.args) != 1 && len(n.args) != 2) || n.variableIndex < 0 || n.variableIndex > 1 || n.hasAsserted != (n.assertedType != nil) {
 			return fmt.Errorf("malformed iterator projection term %d", term)
+		}
+	case valueGenericForResult:
+		if len(n.args) != 4 || n.variableIndex < 0 {
+			return fmt.Errorf("malformed generic-for result term %d", term)
+		}
+	case valueLoopContinuation:
+		if n.owner == (lexicalidentity.StableLexicalBodyID{}) || len(n.args) != 0 {
+			return fmt.Errorf("malformed loop continuation term %d", term)
 		}
 	case valueStaticIndex:
 		if len(n.args) != 2 || !arena.validStaticIndexKey(n.args[1]) {
@@ -484,11 +610,58 @@ func validateValueDAG(arena *Arena, term ValueTerm, shape Shape, seen map[ValueT
 	return nil
 }
 
+func validateGuardDAG(arena *Arena, guard Guard, shape Shape, values map[ValueTerm]visitState, guards map[Guard]visitState, allowCell bool) error {
+	if guard == 0 || int(guard) >= len(arena.guards) {
+		return fmt.Errorf("invalid guard %d", guard)
+	}
+	switch guards[guard] {
+	case visitActive:
+		return fmt.Errorf("cyclic guard DAG at guard %d", guard)
+	case visitDone:
+		return nil
+	}
+	guards[guard] = visitActive
+	n := arena.guards[guard]
+	switch n.op {
+	case guardTrue, guardFalse:
+		if n.value != 0 || len(n.args) != 0 {
+			return fmt.Errorf("malformed constant guard %d", guard)
+		}
+	case guardTruthy, guardFalsy:
+		if n.value == 0 || len(n.args) != 0 {
+			return fmt.Errorf("malformed predicate guard %d", guard)
+		}
+		if err := validateValueDAG(arena, n.value, shape, values, allowCell); err != nil {
+			return err
+		}
+	case guardAnd, guardOr:
+		if n.value != 0 || len(n.args) < 2 {
+			return fmt.Errorf("malformed logical guard %d", guard)
+		}
+		for _, arg := range n.args {
+			if err := validateGuardDAG(arena, arg, shape, values, guards, allowCell); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("invalid guard operation at guard %d", guard)
+	}
+	guards[guard] = visitDone
+	return nil
+}
+
 func validatePathTerm(arena *Arena, term PathTerm, shape Shape) error {
 	if term == 0 || int(term) >= len(arena.paths) {
 		return fmt.Errorf("invalid path term %d", term)
 	}
-	if !shape.validate(arena.paths[term].root) {
+	n := arena.paths[term]
+	if n.environment != 0 {
+		if n.root != (Root{}) || !arena.validEnvironmentSlot(statekey.SymbolValue(n.environment)) {
+			return fmt.Errorf("invalid environment path root %d", n.environment)
+		}
+		return nil
+	}
+	if !shape.validate(n.root) {
 		return fmt.Errorf("invalid path boundary root %#v", arena.paths[term].root)
 	}
 	return nil
@@ -516,12 +689,24 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 		out = s.bindings.value(n.root)
 	case valueConstant:
 		out = s.caller.Constant(n.value)
+	case valueObjectLiteral:
+		args := make([]ValueTerm, len(n.args))
+		for index, arg := range n.args {
+			args[index] = s.value(arg)
+		}
+		out = s.caller.ObjectLiteralValue(n.objectPlan, args...)
 	case valueJoin:
 		args := make([]ValueTerm, len(n.args))
 		for i, arg := range n.args {
 			args[i] = s.value(arg)
 		}
 		out = s.caller.JoinValue(args...)
+	case valueSelect:
+		out = s.caller.SelectValue(s.guard(n.guard), s.value(n.args[0]), s.value(n.args[1]))
+		if out == 0 {
+			s.err = fmt.Errorf("transformer: validated select term %d failed to rebase", term)
+			return 0
+		}
 	case valueRefinement:
 		var ok bool
 		out, ok = s.caller.RefineValue(s.value(n.args[0]), factflow.NewValueConstraint(n.value))
@@ -529,10 +714,17 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 			s.err = fmt.Errorf("transformer: validated refinement term %d failed to rebase", term)
 			return 0
 		}
-	case valueRuntimeValidation:
-		out = s.caller.runtimeValidationValue(s.value(n.args[0]), n.value)
+	case valueFalsyAbsentRefinement:
+		var ok bool
+		out, ok = s.caller.RefineValue(s.value(n.args[0]), factflow.NewFalsyAbsentConstraint(n.value))
+		if !ok {
+			s.err = fmt.Errorf("transformer: validated falsy-absent refinement term %d failed to rebase", term)
+			return 0
+		}
+	case valueExpressionRefinement:
+		out = s.caller.expressionRefinementValue(s.value(n.args[0]), n.expressionRefinement())
 		if out == 0 {
-			s.err = fmt.Errorf("transformer: validated runtime validation term %d failed to rebase", term)
+			s.err = fmt.Errorf("transformer: validated expression refinement term %d failed to rebase", term)
 			return 0
 		}
 	case valueCallResult:
@@ -546,20 +738,46 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 			s.err = fmt.Errorf("transformer: validated call-result term %d failed to rebase", term)
 			return 0
 		}
-	case valueDynamicRead:
-		out = s.caller.DynamicReadValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
-	case valueDynamicTableRead:
-		if len(n.args) == 3 {
-			out = s.caller.DynamicReadTableValueOr(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]), s.value(n.args[2]))
-		} else {
-			out = s.caller.DynamicReadTableValue(s.value(n.args[0]), s.path(n.path), s.value(n.args[1]))
+	case valuePredicateObservation:
+		out = s.caller.predicateObservationValue(n.point, s.value(n.args[0]))
+		if out == 0 {
+			s.err = fmt.Errorf("transformer: predicate-observation term %d failed to rebase", term)
+			return 0
 		}
+	case valueDynamicRead:
+		keyPath := PathTerm(0)
+		if n.keyPath != 0 {
+			keyPath = s.optionalPath(n.keyPath)
+		}
+		shape, rangePath, integerProof := s.dynamicIndexEvidence(n)
+		out = s.caller.dynamicReadValueAtPaths(n.point, s.value(n.args[0]), s.path(n.path), s.value(n.args[1]), keyPath, shape, rangePath, integerProof)
+	case valueDynamicTableRead:
+		path := PathTerm(0)
+		if n.path != 0 {
+			path = s.optionalPath(n.path)
+		}
+		keyPath := PathTerm(0)
+		if n.keyPath != 0 {
+			keyPath = s.optionalPath(n.keyPath)
+		}
+		shape, rangePath, integerProof := s.dynamicIndexEvidence(n)
+		out = s.caller.dynamicReadTableValueAtPaths(n.point, s.value(n.args[0]), path, s.value(n.args[1]), keyPath, shape, rangePath, integerProof)
 	case valueStringConcat:
 		out = s.caller.StringConcatValue(s.value(n.args[0]), s.value(n.args[1]))
-	case valueScalarEqual, valueScalarNotEqual, valueScalarAnd, valueScalarOr:
-		out = s.caller.scalarBinaryValue(n.op, s.value(n.args[0]), s.value(n.args[1]))
+	case valueUnaryOperation:
+		out, _ = s.caller.ScalarUnaryValue(n.operator, s.value(n.args[0]))
+	case valueBinaryOperation:
+		out = s.caller.scalarBinaryValue(n.operator, s.value(n.args[0]), s.value(n.args[1]))
 	case valueIteratorProjection:
-		out = s.caller.IteratorProjectionValueWithContract(n.iterator, n.variableIndex, s.value(n.args[0]), n.assertedType, n.hasAsserted)
+		fallback := ValueTerm(0)
+		if len(n.args) == 2 {
+			fallback = s.value(n.args[1])
+		}
+		out = s.caller.iteratorProjectionValueWithFallback(n.iterator, n.variableIndex, s.value(n.args[0]), fallback, n.assertedType, n.hasAsserted)
+	case valueGenericForResult:
+		out = s.caller.genericForResultValue(n.variableIndex, s.value(n.args[0]), s.value(n.args[1]), s.value(n.args[2]), s.value(n.args[3]))
+	case valueLoopContinuation:
+		out = s.caller.loopContinuationValueOwned(n.owner, n.point)
 	case valueStaticIndex:
 		owner := s.value(n.args[0])
 		keyNode := s.callee.values[n.args[1]]
@@ -583,11 +801,45 @@ func (s *rebaseState) value(term ValueTerm) ValueTerm {
 	return out
 }
 
+// dynamicIndexEvidence rebases the normalized range tuple atomically. A lost
+// optional path/certificate removes only the range optimization; retaining an
+// operator whose required witness disappeared would create malformed symbolic
+// syntax and a parallel interpretation of IndexShape validity.
+func (s *rebaseState) dynamicIndexEvidence(n valueNode) (indexform.IndexShape, PathTerm, ValueTerm) {
+	shape := n.indexShape
+	rangePath := PathTerm(0)
+	if n.rangePath != 0 {
+		rangePath = s.optionalPath(n.rangePath)
+	}
+	integerProof := ValueTerm(0)
+	if n.integerProof != 0 {
+		integerProof = s.value(n.integerProof)
+	}
+	if !shape.Valid() {
+		return indexform.IndexShape{}, 0, 0
+	}
+	switch shape.Kind() {
+	case indexform.IndexFormAffine:
+		if rangePath == 0 {
+			return indexform.IndexShape{}, 0, 0
+		}
+	case indexform.IndexFormModuloLength:
+		if integerProof == 0 {
+			return indexform.IndexShape{}, 0, 0
+		}
+	}
+	return shape, rangePath, integerProof
+}
+
 func (s *rebaseState) path(term PathTerm) PathTerm {
 	if got := s.paths[term]; got != 0 {
 		return got
 	}
 	n := s.callee.paths[term]
+	if n.environment != 0 {
+		s.err = fmt.Errorf("transformer: body-owned environment path %d cannot be rebased", n.environment)
+		return 0
+	}
 	base := s.caller.paths[s.bindings.path(n.root)]
 	suffix := make([]segment.Segment, 0, len(base.segments)+len(n.segments))
 	suffix = append(suffix, base.segments...)
@@ -595,6 +847,29 @@ func (s *rebaseState) path(term PathTerm) PathTerm {
 	out := s.caller.Path(base.root, suffix...)
 	s.paths[term] = out
 	return out
+}
+
+func (s *rebaseState) optionalPath(term PathTerm) PathTerm {
+	if term == 0 {
+		return 0
+	}
+	n := s.callee.paths[term]
+	if n.environment != 0 {
+		// Same-body relation composition keeps the lexical environment slot in
+		// the destination arena. Preserve that exact address instead of erasing
+		// optional flow evidence. A true cross-body application has no such slot
+		// and therefore still drops the unexportable callee-local path.
+		if !s.caller.validEnvironmentSlot(statekey.SymbolValue(n.environment)) {
+			return 0
+		}
+		out := s.caller.EnvironmentPath(n.environment, n.segments...)
+		s.paths[term] = out
+		return out
+	}
+	if s.bindings.path(n.root) == 0 {
+		return 0
+	}
+	return s.path(term)
 }
 
 func (s *rebaseState) guard(guard Guard) Guard {

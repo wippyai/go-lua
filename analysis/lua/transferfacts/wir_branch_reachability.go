@@ -160,9 +160,11 @@ func (l *lowerer) wirStaticReachablePoints() map[cfg.Point]bool {
 		}
 		reachable[point] = true
 		edgeReachability, hasEdgeReachability := l.staticWIRBranchEdgeReachability(point)
-		for _, succ := range cfg.SuccessorsReadOnly(l.graph, point) {
+		successors := cfg.SuccessorsReadOnly(l.graph, point)
+		conditions := cfg.SuccessorConditionsReadOnly(l.graph, point)
+		for index, succ := range successors {
 			if hasEdgeReachability {
-				if cond, ok := l.graph.EdgeCond(point, succ); ok && edgeReachability.EdgeUnreachable(cond) {
+				if len(conditions) == len(successors) && edgeReachability.EdgeUnreachable(conditions[index]) {
 					continue
 				}
 			}

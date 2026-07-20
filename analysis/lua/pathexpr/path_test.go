@@ -205,6 +205,41 @@ func TestResolveAliasNonAnyCastPreservesOperandPath(t *testing.T) {
 	assertAliasResolved(t, expr, bindings, path.NewPath(sym, "obj").Field("child"))
 }
 
+// TestResolveAliasClaimSourcedLocalDeclarationResolvesAssignmentRHS proves
+// ResolveAlias resolves the exact expression shape a declared-type local
+// assignment carries as its initializer: `local a: T = obj.child as T` binds
+// obj.child, not a., and a plain reassignment through the same cast/assert
+// wrapping binds identically. This is the call-boundary alias contract
+// ResolveAlias documents; nothing in pathexpr rejects it, so this test locks
+// the contract, not a currently-broken behavior.
+func TestResolveAliasClaimSourcedLocalDeclarationResolvesAssignmentRHS(t *testing.T) {
+	root := ident("obj")
+	rhs := cast(dot(root, "child"), primitiveType("number"))
+	local := &ast.LocalAssignStmt{
+		Names: []string{"a"},
+		Types: []ast.TypeExpr{primitiveType("number")},
+		Exprs: []ast.Expr{rhs},
+	}
+	bindings := bind.BindChunk([]ast.Stmt{local}, bind.Options{})
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertRejected(t, local.Exprs[0], bindings)
+	assertAliasResolved(t, local.Exprs[0], bindings, path.NewPath(sym, "obj").Field("child"))
+}
+
+func TestResolveAliasClaimSourcedReassignmentResolvesAssignmentRHS(t *testing.T) {
+	target := ident("a")
+	root := ident("obj")
+	rhs := nonNil(dot(root, "child"))
+	assign := &ast.AssignStmt{Lhs: []ast.Expr{target}, Rhs: []ast.Expr{rhs}}
+	decl := &ast.LocalAssignStmt{Names: []string{"a"}, Exprs: []ast.Expr{&ast.NumberExpr{Value: "0"}}}
+	bindings := bind.BindChunk([]ast.Stmt{decl, assign}, bind.Options{})
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertRejected(t, assign.Rhs[0], bindings)
+	assertAliasResolved(t, assign.Rhs[0], bindings, path.NewPath(sym, "obj").Field("child"))
+}
+
 func TestResolveAliasMapSupertypeCastWithAnyValuePreservesOperandPath(t *testing.T) {
 	root := ident("suites")
 	expr := cast(root, &ast.MapTypeExpr{

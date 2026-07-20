@@ -1065,7 +1065,7 @@ func parseSemanticChunk(t *testing.T, source string, globals ...string) ([]ast.S
 		t.Fatalf("ParseString: %v", err)
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	if built == nil {
 		t.Fatalf("BuildChunk returned nil")
 	}
@@ -1086,7 +1086,7 @@ func parseSemanticFunction(t *testing.T, source string, globals ...string) (*ast
 		t.Fatalf("statement = %T, want function definition", stmts[0])
 	}
 	bindings := bind.BindFunction(def.Func, bind.Options{Globals: globals})
-	built := cfgbuild.BuildFunction(def.Func, bindings)
+	built := cfgbuild.BuildFunctionWithOptions(def.Func, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	if built == nil {
 		t.Fatalf("BuildFunction returned nil")
 	}

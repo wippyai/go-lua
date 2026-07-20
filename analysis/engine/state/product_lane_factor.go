@@ -1,0 +1,726 @@
+package state
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+)
+
+var (
+	// ErrInvalidProductLane reports a lane descriptor that does not belong to
+	// the ProductDomain receiving the operation.
+	ErrInvalidProductLane = errors.New("state: invalid product lane")
+	// ErrInvalidLaneFactor reports an opaque component that does not belong to
+	// the ProductDomain or lane receiving the operation.
+	ErrInvalidLaneFactor = errors.New("state: invalid lane factor")
+	// ErrIncompleteLaneFactors reports a Compose input that is not the exact,
+	// registry-ordered factor inventory produced by Decompose.
+	ErrIncompleteLaneFactors = errors.New("state: incomplete lane factor inventory")
+)
+
+// LaneOrdinal is a ProductDomain-local position in registry order. It is not
+// a bit index and imposes no cardinality cap on the factor inventory.
+type LaneOrdinal int
+
+// ProductLane is an opaque, domain-owned descriptor for one enabled State
+// lane. Descriptors are obtained from ProductDomain.LaneInventory.
+type ProductLane struct {
+	seal         *productDomainSeal
+	ordinal      LaneOrdinal
+	id           LaneID
+	slotFactored bool
+}
+
+// ID returns the registered semantic lane name.
+func (l ProductLane) ID() LaneID { return l.id }
+
+// Ordinal returns the lane's stable position in this ProductDomain.
+func (l ProductLane) Ordinal() LaneOrdinal { return l.ordinal }
+
+// LaneFactor is one opaque component of the State product lattice. Its
+// concrete representation remains owned by the lane registration; consumers
+// cannot inspect, cast, or mutate it.
+type LaneFactor struct {
+	lane    ProductLane
+	payload laneFactorPayload
+}
+
+// Lane returns the domain-owned descriptor for this component.
+func (f LaneFactor) Lane() ProductLane { return f.lane }
+
+// ProductFactorSelection is an immutable ProductDomain-owned ordinal mask for
+// non-Values State lanes. Values has a finer slot-level projection and can
+// never be represented by this whole-lane selector.
+type ProductFactorSelection struct {
+	seal     *productDomainSeal
+	selected []bool
+}
+
+type productLaneRuntime struct {
+	lane               ProductLane
+	ops                laneFactorOps
+	fingerprint        func(*fingerprintWriter, State)
+	valueDependencies  laneValueDependencyPolicy
+	identitySupport    laneIdentitySupportPolicy
+	numericConsistency laneNumericConsistencyPolicy
+	rootAssignment     rootAssignmentLanePolicy
+	dynamicRead        laneDynamicReadPolicy
+	semanticLaws       []laneSemanticLaw
+	formalRekey        laneFormalRekeyPolicy
+	coordinates        []coordinateFamilyRuntime
+}
+
+// PatchLaneFactors returns base with exactly replacements installed. The
+// replacement inventory is sparse, ownership-checked, and duplicate-free;
+// no omitted lane is extracted or recomposed. This is the concrete handoff
+// used by factor-native semantic programs after their transaction succeeds.
+func (d ProductDomain) PatchLaneFactors(base State, replacements []LaneFactor) (State, error) {
+	if !d.Valid() {
+		return State{}, fmt.Errorf("%w: invalid product domain", ErrInvalidLaneFactor)
+	}
+	runtimes := make([]*productLaneRuntime, len(replacements))
+	seen := make([]bool, len(d.factorLanes))
+	for index, factor := range replacements {
+		runtime, err := d.validateFactor(factor)
+		if err != nil {
+			return State{}, err
+		}
+		ordinal := int(runtime.lane.ordinal)
+		if seen[ordinal] {
+			return State{}, fmt.Errorf("%w: duplicate replacement factor", ErrIncompleteLaneFactors)
+		}
+		seen[ordinal] = true
+		runtimes[index] = runtime
+	}
+	out := d.Normalize(base)
+	for index, runtime := range runtimes {
+		runtime.ops.install(&out, replacements[index].payload)
+	}
+	out.canonical = true
+	return d.Normalize(out), nil
+}
+
+// LaneInventory returns every enabled lane in catalog registration order.
+// The returned slice is caller-owned; its descriptors remain sealed to d.
+func (d ProductDomain) LaneInventory() []ProductLane {
+	if !d.Valid() {
+		return nil
+	}
+	out := make([]ProductLane, len(d.factorLanes))
+	for i := range d.factorLanes {
+		out[i] = d.factorLanes[i].lane
+	}
+	return out
+}
+
+// PathResolutionLanes returns the exact enabled lane inventory whose facts
+// participate in member-path resolution. Participation is declared by each
+// lane registration, so adding or removing a product axis cannot silently
+// grow a second operation-owned LaneID table.
+func (d ProductDomain) PathResolutionLanes() []ProductLane {
+	if !d.Valid() {
+		return nil
+	}
+	out := make([]ProductLane, 0)
+	for index := range d.factorLanes {
+		runtime := &d.factorLanes[index]
+		law, declared := findLaneSemanticLaw(runtime.semanticLaws, laneSemanticPathResolutionParticipant)
+		if declared && law.participates {
+			out = append(out, runtime.lane)
+		}
+	}
+	return out
+}
+
+// NonValuesLaneInventory returns the whole-lane carrier inventory used by the
+// transposed evaluator. Values is intentionally absent because it is factored
+// by exact slots through ValueLaneFactor rather than transported as one axis.
+func (d ProductDomain) NonValuesLaneInventory() []ProductLane {
+	if !d.Valid() {
+		return nil
+	}
+	out := make([]ProductLane, 0, len(d.factorLanes))
+	for index := range d.factorLanes {
+		if !d.factorLanes[index].lane.slotFactored {
+			out = append(out, d.factorLanes[index].lane)
+		}
+	}
+	return out
+}
+
+// NonValuesLaneCount returns the dense non-Values carrier width without
+// materializing an inventory slice. Hot factor transactions pair it with
+// NonValuesLaneAt to validate caller-owned tuples directly against the frozen
+// catalog.
+func (d ProductDomain) NonValuesLaneCount() int {
+	if !d.Valid() {
+		return 0
+	}
+	count := len(d.factorLanes)
+	if d.hasSlotFactor {
+		count--
+	}
+	return count
+}
+
+// NonValuesLaneAt returns one dense non-Values descriptor in registry order.
+// The bool is false for an invalid domain or out-of-range dense ordinal.
+func (d ProductDomain) NonValuesLaneAt(index int) (ProductLane, bool) {
+	if !d.Valid() || index < 0 || index >= d.NonValuesLaneCount() {
+		return ProductLane{}, false
+	}
+	factorIndex := index
+	if d.hasSlotFactor && factorIndex >= int(d.slotFactor) {
+		factorIndex++
+	}
+	if factorIndex < 0 || factorIndex >= len(d.factorLanes) || d.factorLanes[factorIndex].lane.slotFactored {
+		return ProductLane{}, false
+	}
+	return d.factorLanes[factorIndex].lane, true
+}
+
+// SlotFactoredCarrier returns the unique enabled lane whose coordinates are
+// transported through ValueLaneFactor rather than as one opaque LaneFactor.
+func (d ProductDomain) SlotFactoredCarrier() (ProductLane, bool) {
+	if !d.Valid() || !d.hasSlotFactor || int(d.slotFactor) < 0 || int(d.slotFactor) >= len(d.factorLanes) {
+		return ProductLane{}, false
+	}
+	return d.factorLanes[d.slotFactor].lane, true
+}
+
+// BoundaryClosureCompanion returns the optional unique enabled lane whose
+// independently projected factor extends the shared boundary closure.
+func (d ProductDomain) BoundaryClosureCompanion() (ProductLane, bool) {
+	if !d.Valid() || !d.hasBoundaryClosureCompanion || int(d.boundaryClosureCompanion) < 0 || int(d.boundaryClosureCompanion) >= len(d.factorLanes) {
+		return ProductLane{}, false
+	}
+	return d.factorLanes[d.boundaryClosureCompanion].lane, true
+}
+
+// ProductLane returns the enabled descriptor named id.
+func (d ProductDomain) ProductLane(id LaneID) (ProductLane, bool) {
+	if !d.Valid() {
+		return ProductLane{}, false
+	}
+	for i := range d.factorLanes {
+		if d.factorLanes[i].lane.id == id {
+			return d.factorLanes[i].lane, true
+		}
+	}
+	return ProductLane{}, false
+}
+
+// SealFactorSelection validates lane names once and compiles them to the exact
+// ProductDomain-local ordinal inventory used by hot projection and patching.
+func (d ProductDomain) SealFactorSelection(lanes LaneSet) (ProductFactorSelection, error) {
+	if err := d.validateTupleLaneSelection(lanes); err != nil {
+		return ProductFactorSelection{}, err
+	}
+	selection := ProductFactorSelection{seal: d.seal, selected: make([]bool, len(d.factorLanes))}
+	for index := range d.factorLanes {
+		selection.selected[index] = lanes.Has(d.factorLanes[index].lane.id)
+	}
+	return selection, nil
+}
+
+// Decompose returns the exact registry-ordered component representation of
+// value. Disabled lanes are normalized away before extraction.
+func (d ProductDomain) Decompose(value State) ([]LaneFactor, error) {
+	if !d.Valid() {
+		return nil, fmt.Errorf("%w: invalid product domain", ErrInvalidLaneFactor)
+	}
+	value = d.Normalize(value)
+	out := make([]LaneFactor, len(d.factorLanes))
+	for i := range d.factorLanes {
+		runtime := &d.factorLanes[i]
+		out[i] = LaneFactor{lane: runtime.lane, payload: runtime.ops.extract(value)}
+	}
+	return out, nil
+}
+
+// DecomposeLanes extracts only the requested sealed descriptors, in caller
+// order. It performs no scan over unrequested lanes; duplicates and foreign
+// descriptors fail before a factor is returned.
+func (d ProductDomain) DecomposeLanes(value State, lanes []ProductLane) ([]LaneFactor, error) {
+	if !d.Valid() {
+		return nil, fmt.Errorf("%w: invalid product domain", ErrInvalidLaneFactor)
+	}
+	runtimes := make([]*productLaneRuntime, len(lanes))
+	seen := make([]bool, len(d.factorLanes))
+	for index, lane := range lanes {
+		runtime, err := d.validateLane(lane)
+		if err != nil {
+			return nil, err
+		}
+		ordinal := int(runtime.lane.ordinal)
+		if seen[ordinal] {
+			return nil, fmt.Errorf("%w: duplicate lane descriptor", ErrInvalidProductLane)
+		}
+		seen[ordinal] = true
+		runtimes[index] = runtime
+	}
+	value = d.Normalize(value)
+	out := make([]LaneFactor, len(runtimes))
+	for index, runtime := range runtimes {
+		out[index] = LaneFactor{lane: runtime.lane, payload: runtime.ops.extract(value)}
+	}
+	return out, nil
+}
+
+// Compose is the inverse of Decompose. It accepts exactly one factor for every
+// enabled lane, in registry order; omission, duplication, reordering, and
+// cross-domain factors fail closed.
+func (d ProductDomain) Compose(factors []LaneFactor) (State, error) {
+	if !d.Valid() {
+		return State{}, fmt.Errorf("%w: invalid product domain", ErrIncompleteLaneFactors)
+	}
+	if len(factors) != len(d.factorLanes) {
+		return State{}, fmt.Errorf("%w: got %d factors, want %d", ErrIncompleteLaneFactors, len(factors), len(d.factorLanes))
+	}
+	out := d.lattice.Bottom()
+	for i := range d.factorLanes {
+		runtime := &d.factorLanes[i]
+		if _, err := d.validateFactorFor(runtime, factors[i]); err != nil {
+			return State{}, fmt.Errorf("%w: position %d: %v", ErrIncompleteLaneFactors, i, err)
+		}
+		runtime.ops.install(&out, factors[i].payload)
+	}
+	out.canonical = true
+	return d.Normalize(out), nil
+}
+
+// ComposeSparse installs only the supplied sealed factors over product
+// Bottom. Omitted lanes remain Bottom; input order is irrelevant, while
+// duplicate or foreign factors fail without publishing a partial State.
+func (d ProductDomain) ComposeSparse(factors []LaneFactor) (State, error) {
+	if !d.Valid() {
+		return State{}, fmt.Errorf("%w: invalid product domain", ErrIncompleteLaneFactors)
+	}
+	runtimes := make([]*productLaneRuntime, len(factors))
+	seen := make([]bool, len(d.factorLanes))
+	for index, factor := range factors {
+		runtime, err := d.validateFactor(factor)
+		if err != nil {
+			return State{}, err
+		}
+		ordinal := int(runtime.lane.ordinal)
+		if seen[ordinal] {
+			return State{}, fmt.Errorf("%w: duplicate lane factor", ErrIncompleteLaneFactors)
+		}
+		seen[ordinal] = true
+		runtimes[index] = runtime
+	}
+	out := d.lattice.Bottom()
+	for index, runtime := range runtimes {
+		runtime.ops.install(&out, factors[index].payload)
+	}
+	out.canonical = true
+	return d.Normalize(out), nil
+}
+
+// ProjectFactors retains exactly lanes from value and replaces every other
+// registered component with Bottom. Values is deliberately excluded: its
+// point-local slot projection is finer than a whole-lane factor operation.
+func (d ProductDomain) ProjectFactors(value State, lanes LaneSet) (State, error) {
+	selection, err := d.SealFactorSelection(lanes)
+	if err != nil {
+		return State{}, err
+	}
+	return d.ProjectSelectedFactors(value, selection)
+}
+
+// ProjectSelectedFactors retains exactly selection from value. The sealed
+// ordinal mask avoids allocating factor slices for every guarded tuple leaf.
+func (d ProductDomain) ProjectSelectedFactors(value State, selection ProductFactorSelection) (State, error) {
+	if err := d.validateFactorSelection(selection); err != nil {
+		return State{}, err
+	}
+	value = d.Normalize(value)
+	out := d.lattice.Bottom()
+	for index := range d.factorLanes {
+		if !selection.selected[index] {
+			continue
+		}
+		d.factorLanes[index].ops.copy(&out, value)
+	}
+	out.canonical = true
+	return d.Normalize(out), nil
+}
+
+// PatchFactors returns base with exactly the declared write lanes replaced by delta.
+// Both inputs remain opaque registered products; lane ownership and selection
+// are validated before any component is installed. Values is owned by the
+// separate exact slot patch and therefore fails closed here.
+func (d ProductDomain) PatchFactors(base, delta State, writes LaneSet) (State, error) {
+	selection, err := d.SealFactorSelection(writes)
+	if err != nil {
+		return State{}, err
+	}
+	return d.PatchSelectedFactors(base, delta, selection)
+}
+
+// PatchSelectedFactors returns base with the selected registered components
+// installed directly from delta, without materializing factor inventories.
+func (d ProductDomain) PatchSelectedFactors(base, delta State, selection ProductFactorSelection) (State, error) {
+	if err := d.validateFactorSelection(selection); err != nil {
+		return State{}, err
+	}
+	out := d.Normalize(base)
+	delta = d.Normalize(delta)
+	for index := range d.factorLanes {
+		if !selection.selected[index] {
+			continue
+		}
+		d.factorLanes[index].ops.copy(&out, delta)
+	}
+	out.canonical = true
+	return d.Normalize(out), nil
+}
+
+// ChangesOnlyFactors reports whether every changed non-Values component is
+// declared by writes. It is the fail-closed runtime check for a catalog effect
+// certificate; Values is intentionally checked by its slot-level owner.
+func (d ProductDomain) ChangesOnlyFactors(before, after State, writes LaneSet) (bool, error) {
+	selection, err := d.SealFactorSelection(writes)
+	if err != nil {
+		return false, err
+	}
+	return d.ChangesOnlySelectedFactors(before, after, selection)
+}
+
+// ChangesOnlySelectedFactors is ChangesOnlyFactors over a prevalidated ordinal
+// selection. It compares registered components directly without factor slices.
+func (d ProductDomain) ChangesOnlySelectedFactors(before, after State, selection ProductFactorSelection) (bool, error) {
+	if err := d.validateFactorSelection(selection); err != nil {
+		return false, err
+	}
+	before = d.Normalize(before)
+	after = d.Normalize(after)
+	for index := range d.factorLanes {
+		runtime := &d.factorLanes[index]
+		if runtime.lane.slotFactored || selection.selected[index] {
+			continue
+		}
+		if !runtime.ops.equalState(before, after) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (d ProductDomain) validateFactorSelection(selection ProductFactorSelection) error {
+	if !d.Valid() || selection.seal == nil || selection.seal != d.seal || len(selection.selected) != len(d.factorLanes) {
+		return fmt.Errorf("%w: foreign factor selection", ErrInvalidProductLane)
+	}
+	return nil
+}
+
+func (d ProductDomain) validateTupleLaneSelection(lanes LaneSet) error {
+	if !d.Valid() {
+		return fmt.Errorf("%w: invalid product domain", ErrInvalidProductLane)
+	}
+	seen := make(map[LaneID]struct{}, lanes.Len())
+	for _, id := range lanes.ids {
+		if _, duplicate := seen[id]; duplicate {
+			return fmt.Errorf("%w: duplicate lane %q", ErrInvalidProductLane, id)
+		}
+		seen[id] = struct{}{}
+		if !d.lanes.Has(id) {
+			return fmt.Errorf("%w: lane %q is not enabled", ErrInvalidProductLane, id)
+		}
+		runtime, ok := d.runtimeForLaneID(id)
+		if !ok || runtime.lane.slotFactored {
+			return fmt.Errorf("%w: lane %q requires slot-level projection", ErrInvalidProductLane, id)
+		}
+	}
+	return nil
+}
+
+// LaneBottom returns the bottom component for lane.
+func (d ProductDomain) LaneBottom(lane ProductLane) (LaneFactor, error) {
+	runtime, err := d.validateLane(lane)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.bottom()}, nil
+}
+
+// LaneTop returns the top component for lane.
+func (d ProductDomain) LaneTop(lane ProductLane) (LaneFactor, error) {
+	runtime, err := d.validateLane(lane)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.top()}, nil
+}
+
+// LaneEqual reports semantic equality of two components of the same lane.
+func (d ProductDomain) LaneEqual(left, right LaneFactor) (bool, error) {
+	runtime, err := d.validateFactorPair(left, right)
+	if err != nil {
+		return false, err
+	}
+	return runtime.ops.equal(left.payload, right.payload), nil
+}
+
+// LaneSame reports whether two components share the same persistent
+// representation. False does not imply semantic inequality: lanes whose
+// registered lattice has no Same predicate, and equal values held by distinct
+// persistent representations, both report false.
+func (d ProductDomain) LaneSame(left, right LaneFactor) (bool, error) {
+	runtime, err := d.validateFactorPair(left, right)
+	if err != nil {
+		return false, err
+	}
+	return runtime.ops.same(left.payload, right.payload), nil
+}
+
+// LaneCanonicalRepresentationEqual is the collision proof for the canonical
+// factor-terminal interner. It is deliberately separate from LaneSame: maps
+// or immutable values built independently may be canonical-equal without
+// sharing a persistent representation.
+func (d ProductDomain) LaneCanonicalRepresentationEqual(left, right LaneFactor) (bool, error) {
+	runtime, err := d.validateFactorPair(left, right)
+	if err != nil || runtime.ops.canonicalEqual == nil {
+		return false, err
+	}
+	return runtime.ops.canonicalEqual(left.payload, right.payload), nil
+}
+
+// LaneLessOrEq reports the component lattice order.
+func (d ProductDomain) LaneLessOrEq(left, right LaneFactor) (bool, error) {
+	runtime, err := d.validateFactorPair(left, right)
+	if err != nil {
+		return false, err
+	}
+	return runtime.ops.lessOrEq(left.payload, right.payload), nil
+}
+
+// LaneJoin returns the componentwise least upper bound.
+func (d ProductDomain) LaneJoin(left, right LaneFactor) (LaneFactor, error) {
+	runtime, err := d.validateFactorPair(left, right)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.join(left.payload, right.payload)}, nil
+}
+
+// LaneMeet returns the componentwise greatest lower bound. Domains that do
+// not define meet reject the operation instead of approximating it.
+func (d ProductDomain) LaneMeet(left, right LaneFactor) (LaneFactor, error) {
+	runtime, err := d.validateFactorPair(left, right)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.meet(left.payload, right.payload)}, nil
+}
+
+// LaneWiden applies the registered lane widening.
+func (d ProductDomain) LaneWiden(previous, next LaneFactor) (LaneFactor, error) {
+	runtime, err := d.validateFactorPair(previous, next)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.widen(previous.payload, next.payload)}, nil
+}
+
+// LaneNarrow applies the registered lane narrowing, or keeps previous when
+// the lane has no narrowing operator, matching the whole-State domain.
+func (d ProductDomain) LaneNarrow(previous, next LaneFactor) (LaneFactor, error) {
+	runtime, err := d.validateFactorPair(previous, next)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.narrow(previous.payload, next.payload)}, nil
+}
+
+// LaneFingerprint returns the deterministic semantic digest of one component.
+// d owns the registry and lane selection; config supplies only the contextual
+// fingerprint policy and keyspace. A conflicting registry or lane request is
+// rejected instead of silently hashing a different product.
+func (d ProductDomain) LaneFingerprint(config FingerprintConfig, factor LaneFactor) (uint64, error) {
+	runtime, err := d.validateFactor(factor)
+	if err != nil {
+		return 0, err
+	}
+	if config.Registry != nil && config.Registry != d.reg {
+		return 0, fmt.Errorf("%w: fingerprint registry does not own product domain", ErrInvalidLaneFactor)
+	}
+	if config.Lanes != nil && (len(config.Lanes) != 1 || config.Lanes[0] != runtime.lane.id) {
+		return 0, fmt.Errorf("%w: fingerprint lane selection does not name %q", ErrInvalidLaneFactor, runtime.lane.id)
+	}
+	return d.fingerprintLane(config, runtime, factor)
+}
+
+func (d ProductDomain) fingerprintLane(config FingerprintConfig, runtime *productLaneRuntime, factor LaneFactor) (uint64, error) {
+	if config.Context != nil {
+		if err := config.Context.Err(); err != nil {
+			return 0, err
+		}
+	}
+	if runtime.fingerprint == nil {
+		return 0, fmt.Errorf("%w: lane %q", ErrFingerprintCoverage, runtime.lane.id)
+	}
+	config.Registry = d.reg
+	config.Lanes = nil
+	writer := newFingerprintWriter(config)
+	writer.string("schema", "go-lua.state-lane-factor/v1")
+	writer.string("lane", string(runtime.lane.id))
+	component := d.lattice.Bottom()
+	runtime.ops.install(&component, factor.payload)
+	runtime.fingerprint(writer, component)
+	if err := writer.err(); err != nil {
+		return 0, err
+	}
+	return writer.sum64(), nil
+}
+
+// VisitLaneValueDependencies enumerates the exact concrete or formal Values
+// roots referenced by one component. The dependency policy is catalog-owned,
+// so adding a State lane cannot bypass factor alignment by omitting a central
+// type switch.
+func (d ProductDomain) VisitLaneValueDependencies(factor LaneFactor, keys *keyspace.KeySpace, visit func(statekey.ValueDependency)) error {
+	runtime, err := d.validateFactor(factor)
+	if err != nil {
+		return err
+	}
+	if keys == nil || visit == nil {
+		return fmt.Errorf("%w: Values dependency visitation requires keyspace and visitor", ErrInvalidLaneFactor)
+	}
+	switch runtime.valueDependencies.kind {
+	case laneValueDependenciesIndependent:
+		return nil
+	case laneValueDependenciesEnumerated:
+		component := d.lattice.Bottom()
+		runtime.ops.install(&component, factor.payload)
+		runtime.valueDependencies.visit(component, keys, visit)
+		return nil
+	default:
+		return fmt.Errorf("%w: lane %q has no Values dependency policy", ErrInvalidLaneFactor, runtime.lane.id)
+	}
+}
+
+// VisitLaneIdentities enumerates every exact identity stored by one opaque
+// lane factor. The visitor is catalog-owned: lane growth cannot silently omit
+// allocation templates from boundary quotienting.
+func (d ProductDomain) VisitLaneIdentities(factor LaneFactor, visit func(identity.ID)) error {
+	if visit == nil {
+		return fmt.Errorf("%w: identity visitation requires visitor", ErrInvalidLaneFactor)
+	}
+	return d.visitLaneIdentities(factor, func(term identity.Term) bool {
+		id, concrete := term.Concrete()
+		if concrete {
+			visit(id)
+		}
+		return true
+	})
+}
+
+// VisitLaneIdentityTerms enumerates the complete typed identity support of one
+// factor. Formal relation construction uses this method; concrete consumers
+// may use VisitLaneIdentities, which filters to materialized IDs.
+func (d ProductDomain) VisitLaneIdentityTerms(factor LaneFactor, visit func(identity.Term)) error {
+	if visit == nil {
+		return fmt.Errorf("%w: identity-term visitation requires visitor", ErrInvalidLaneFactor)
+	}
+	return d.visitLaneIdentities(factor, func(term identity.Term) bool {
+		visit(term)
+		return true
+	})
+}
+
+// LaneIdentityImageLaw returns the exact registered pushforward/inverse-fiber
+// behavior for lane. Dispatch is through the sealed domain descriptor, never
+// through LaneID or factor payload inspection.
+func (d ProductDomain) LaneIdentityImageLaw(lane ProductLane) (IdentityImageLaw, error) {
+	runtime, err := d.validateLane(lane)
+	if err != nil {
+		return IdentityImageInvalid, err
+	}
+	return runtime.identitySupport.image, nil
+}
+
+func (d ProductDomain) visitLaneIdentities(factor LaneFactor, visit func(identity.Term) bool) error {
+	runtime, err := d.validateFactor(factor)
+	if err != nil {
+		return err
+	}
+	if visit == nil {
+		return fmt.Errorf("%w: identity visitation requires visitor", ErrInvalidLaneFactor)
+	}
+	switch runtime.identitySupport.kind {
+	case laneIdentitiesIndependent:
+		return nil
+	case laneIdentitiesEnumerated:
+		runtime.identitySupport.visit(d.reg, factor.payload, visit)
+		return nil
+	default:
+		return fmt.Errorf("%w: lane %q has no identity-support policy", ErrInvalidLaneFactor, runtime.lane.id)
+	}
+}
+
+// LaneContainsAllocationTemplate reports whether a factor contains any exact
+// lexical allocation template. Unknown/top identity values are not templates;
+// they retain their ordinary lattice meaning.
+func (d ProductDomain) LaneContainsAllocationTemplate(factor LaneFactor) (bool, error) {
+	contains := false
+	err := d.visitLaneIdentities(factor, func(term identity.Term) bool {
+		_, contains = term.Allocation()
+		return !contains
+	})
+	return contains, err
+}
+
+func (d ProductDomain) validateLane(lane ProductLane) (*productLaneRuntime, error) {
+	if !d.Valid() || lane.seal == nil || lane.seal != d.seal {
+		return nil, fmt.Errorf("%w: foreign product domain", ErrInvalidProductLane)
+	}
+	ordinal := int(lane.ordinal)
+	if ordinal < 0 || ordinal >= len(d.factorLanes) {
+		return nil, fmt.Errorf("%w: ordinal %d", ErrInvalidProductLane, ordinal)
+	}
+	runtime := &d.factorLanes[ordinal]
+	if runtime.lane.id != lane.id {
+		return nil, fmt.Errorf("%w: ordinal %d names %q, not %q", ErrInvalidProductLane, ordinal, runtime.lane.id, lane.id)
+	}
+	return runtime, nil
+}
+
+func (d ProductDomain) validateFactor(factor LaneFactor) (*productLaneRuntime, error) {
+	runtime, err := d.validateLane(factor.lane)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidLaneFactor, err)
+	}
+	if factor.payload == nil {
+		return nil, fmt.Errorf("%w: lane %q has no payload", ErrInvalidLaneFactor, runtime.lane.id)
+	}
+	return runtime, nil
+}
+
+func (d ProductDomain) validateFactorFor(runtime *productLaneRuntime, factor LaneFactor) (*productLaneRuntime, error) {
+	if runtime == nil {
+		return nil, fmt.Errorf("%w: missing expected lane runtime", ErrInvalidLaneFactor)
+	}
+	actual, err := d.validateFactor(factor)
+	if err != nil {
+		return nil, err
+	}
+	if actual.lane.ordinal != runtime.lane.ordinal {
+		return nil, fmt.Errorf("%w: got lane %q, want %q", ErrInvalidLaneFactor, actual.lane.id, runtime.lane.id)
+	}
+	return actual, nil
+}
+
+func (d ProductDomain) validateFactorPair(left, right LaneFactor) (*productLaneRuntime, error) {
+	runtime, err := d.validateFactor(left)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.validateFactorFor(runtime, right); err != nil {
+		return nil, err
+	}
+	return runtime, nil
+}

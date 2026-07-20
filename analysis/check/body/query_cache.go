@@ -5,7 +5,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -21,7 +20,6 @@ import (
 type resultQueryCache struct {
 	sourceValues           cachedProductValueCache[sourceValueCacheKey]
 	pathValues             cachedProductValueCache[pathValueCacheKey]
-	callOutcomes           map[cfg.Point]callpayload.CallOutcome
 	normalReachable        map[cfg.Point]bool
 	normalReachableSet     bool
 	memberReadSources      []dominatingMemberReadPresenceSource
@@ -33,7 +31,6 @@ type resultQueryCache struct {
 	immediateDominators    map[cfg.Point]cfg.Point
 	readContexts           [sourceValueReadModeCount]readexpr.Context
 	sourceResolvers        [sourceValueReadModeCount]sourcevalue.SourceValues
-	callOutcomeCapacity    int
 	branchSites            map[cfg.Point]branchSite
 	branchSitesOK          bool
 	returnFacts            map[cfg.Point]ReturnFact
@@ -48,8 +45,8 @@ type resultQueryCache struct {
 
 const resultQueryInline = 4
 
-func newResultQueryCache(facts factflow.Facts) resultQueryCache {
-	return resultQueryCache{callOutcomeCapacity: facts.CallSiteCount()}
+func newResultQueryCache() resultQueryCache {
+	return resultQueryCache{}
 }
 
 func (c *resultQueryCache) reset() {
@@ -58,7 +55,6 @@ func (c *resultQueryCache) reset() {
 	}
 	c.sourceValues.reset()
 	c.pathValues.reset()
-	c.callOutcomes = nil
 	c.normalReachable = nil
 	c.normalReachableSet = false
 	c.memberReadSources = nil
@@ -100,28 +96,34 @@ type sourceValueCacheKey struct {
 type pathValueCacheKey struct {
 	mode  sourceValueReadMode
 	point cfg.Point
-	path  keyspace.PathIdentity
+	path  keyspace.Key
 }
 
 func newPathValueCacheKey(ks *keyspace.KeySpace, mode sourceValueReadMode, point cfg.Point, p pathdom.Path) (pathValueCacheKey, bool) {
-	pathID, ok := keyspace.PathIdentityFromPath(ks, p)
-	if !ok {
+	if ks == nil || !ks.Valid() || p.IsEmpty() {
 		return pathValueCacheKey{}, false
 	}
-	return pathValueCacheKey{mode: mode, point: point, path: pathID}, true
+	pathKey := ks.FromPath(p)
+	if pathKey.Kind == keyspace.KindInvalid {
+		return pathValueCacheKey{}, false
+	}
+	return pathValueCacheKey{mode: mode, point: point, path: pathKey}, true
 }
 
 type dominatingMemberReadPresenceKey struct {
 	point cfg.Point
-	path  keyspace.PathIdentity
+	path  keyspace.Key
 }
 
 func newDominatingMemberReadPresenceKey(ks *keyspace.KeySpace, point cfg.Point, p pathdom.Path) (dominatingMemberReadPresenceKey, bool) {
-	pathID, ok := keyspace.PathIdentityFromPath(ks, p)
-	if !ok {
+	if ks == nil || !ks.Valid() || p.IsEmpty() {
 		return dominatingMemberReadPresenceKey{}, false
 	}
-	return dominatingMemberReadPresenceKey{point: point, path: pathID}, true
+	pathKey := ks.FromPath(p)
+	if pathKey.Kind == keyspace.KindInvalid {
+		return dominatingMemberReadPresenceKey{}, false
+	}
+	return dominatingMemberReadPresenceKey{point: point, path: pathKey}, true
 }
 
 type cachedProductValue struct {
@@ -313,21 +315,6 @@ func (c *resultQueryCache) forEachPathValueKey(fn func(pathValueCacheKey) bool) 
 		return
 	}
 	c.pathValues.forEachKey(fn)
-}
-
-func (c *resultQueryCache) callOutcome(point cfg.Point) (callpayload.CallOutcome, bool) {
-	if c.callOutcomes == nil {
-		return callpayload.CallOutcome{}, false
-	}
-	outcome, ok := c.callOutcomes[point]
-	return outcome, ok
-}
-
-func (c *resultQueryCache) rememberCallOutcome(point cfg.Point, outcome callpayload.CallOutcome) {
-	if c.callOutcomes == nil {
-		c.callOutcomes = make(map[cfg.Point]callpayload.CallOutcome, c.callOutcomeCapacity)
-	}
-	c.callOutcomes[point] = outcome
 }
 
 func (c *resultQueryCache) signatureType(name string) (cachedSignatureType, bool) {

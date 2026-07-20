@@ -1,0 +1,353 @@
+package transformer
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+// formalRelationEvalTrace is diagnostic authority for one execution. It is
+// absent unless GOLUA_TRACE_FORMAL_EQUATIONS names a positive slow-equation
+// threshold (for example "500ms"), so production evaluation has no timer,
+// counter, formatting, or allocation cost.
+type formalRelationEvalTrace struct {
+	threshold time.Duration
+	sequence  uint64
+	active    *formalRelationEvalTraceDetail
+}
+
+type formalRelationEvalTraceDetail struct {
+	outcomeRegions, outcomeWrites                     int
+	outcomeReadRoots, outcomeNonterminalRoots         int
+	outcomeDistinctRoots, outcomeDistinctTopVariables int
+	outcomeSupportNodes, outcomeSupportVariables      int
+	outcomeSupportRanks                               []uint32
+	outcomeSupportOrdinals                            map[uint32][]formalFiberOrdinal
+	outcomePlan                                       *formalOutcomeStep
+	definitionCalls, definitionCallerRoots            int
+	definitionTargetRoots, definitionRows             int
+	definitionCapabilityCount                         int
+	definitionSupportRanks                            []uint32
+	definitionPartitionApplyOps                       uint64
+	definitionCapabilityApplyOps                      uint64
+	definitionPartitionTime                           time.Duration
+	definitionCapabilityTime                          time.Duration
+	definitionEquationCalls                           int
+	definitionInputs, definitionLiveOutcomes          int
+	definitionRead, definitionSeedJoin                formalRelationEvalTracePhase
+	definitionSeedValidate, definitionTargetValidate  formalRelationEvalTracePhase
+	definitionCompose, definitionTargetJoin           formalRelationEvalTracePhase
+	definitionCorrelation, definitionCorrelationSetup formalRelationEvalTracePhase
+	definitionExecute, definitionPublish              formalRelationEvalTracePhase
+	guardComposeRead, guardComposeSubstitute          formalRelationEvalTracePhase
+	guardComposeGroups, guardComposeClose             formalRelationEvalTracePhase
+	guardComposeJoin, guardComposeGroupPartition      formalRelationEvalTracePhase
+	guardComposeGroupLeaves, guardComposeScalarJoin   formalRelationEvalTracePhase
+	guardComposeValidate, guardComposePublish         formalRelationEvalTracePhase
+	guardComposeCloseStates, guardComposeCloseJoins   int
+	guardComposeGroupRegions                          int
+}
+
+type formalRelationEvalTracePhase struct {
+	count    int
+	applyOps uint64
+	elapsed  time.Duration
+	mallocs  uint64
+	bytes    uint64
+}
+
+type formalRelationEvalTracePhaseMark struct {
+	started  time.Time
+	applyOps uint64
+	mallocs  uint64
+	bytes    uint64
+}
+
+func beginFormalRelationEvalTracePhase(algebra *formalTupleAlgebra) formalRelationEvalTracePhaseMark {
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	mark := formalRelationEvalTracePhaseMark{started: time.Now(), mallocs: memory.Mallocs, bytes: memory.TotalAlloc}
+	if algebra != nil {
+		mark.applyOps = algebra.decisions.applyOps
+	}
+	return mark
+}
+
+func finishFormalRelationEvalTracePhase(algebra *formalTupleAlgebra, phase *formalRelationEvalTracePhase, mark formalRelationEvalTracePhaseMark) {
+	if phase == nil {
+		return
+	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	phase.count++
+	phase.elapsed += time.Since(mark.started)
+	phase.mallocs += memory.Mallocs - mark.mallocs
+	phase.bytes += memory.TotalAlloc - mark.bytes
+	if algebra != nil {
+		phase.applyOps += algebra.decisions.applyOps - mark.applyOps
+	}
+}
+
+type formalRelationEvalTraceSnapshot struct {
+	decisionNodes, decisionTerminals, decisionUnique int
+	decisionApply, decisionITE, decisionCare         int
+	decisionCareApply                                int
+	decisionApplyOps                                 uint64
+	componentTerminals, directoryNodes               int
+}
+
+func newFormalRelationEvalTrace() *formalRelationEvalTrace {
+	raw := strings.TrimSpace(os.Getenv("GOLUA_TRACE_FORMAL_EQUATIONS"))
+	if raw == "" {
+		return nil
+	}
+	threshold, err := time.ParseDuration(raw)
+	if err != nil || threshold <= 0 {
+		fmt.Fprintf(os.Stderr, "FORMAL_EQUATION_TRACE_CONFIG value=%s error=%v\n", strconv.Quote(raw), err)
+		return nil
+	}
+	return &formalRelationEvalTrace{threshold: threshold}
+}
+
+func snapshotFormalRelationEvaluation(algebra *formalTupleAlgebra) formalRelationEvalTraceSnapshot {
+	if algebra == nil {
+		return formalRelationEvalTraceSnapshot{}
+	}
+	snapshot := formalRelationEvalTraceSnapshot{
+		decisionNodes:      len(algebra.decisions.nodes),
+		decisionTerminals:  len(algebra.decisions.terminals),
+		decisionUnique:     len(algebra.decisions.unique),
+		decisionApply:      len(algebra.decisions.applyMemo),
+		decisionITE:        len(algebra.decisions.iteMemo),
+		decisionCare:       len(algebra.decisions.careMemo),
+		decisionCareApply:  len(algebra.decisions.careApplyMemo),
+		decisionApplyOps:   algebra.decisions.applyOps,
+		componentTerminals: len(algebra.components.terminals),
+	}
+	for _, directory := range algebra.directories {
+		if directory != nil {
+			snapshot.directoryNodes += len(directory.nodes)
+		}
+	}
+	return snapshot
+}
+
+func (t *formalRelationEvalTrace) evaluate(
+	algebra *formalTupleAlgebra,
+	equation formalRelationEquation,
+	read func(formalRelationCell) formalRelationTuple,
+) formalRelationTuple {
+	sequence := atomic.AddUint64(&t.sequence, 1)
+	started := time.Now()
+	before := snapshotFormalRelationEvaluation(algebra)
+	detail := &formalRelationEvalTraceDetail{}
+	t.active = detail
+	done := make(chan struct{})
+	timer := time.AfterFunc(t.threshold, func() {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		fmt.Fprintf(os.Stderr, "FORMAL_EQUATION_ACTIVE seq=%d elapsed=%s %s\n", sequence, time.Since(started).Round(time.Millisecond), formatFormalRelationEquationTrace(algebra, equation))
+	})
+	result := evaluateFormalRelationEquation(algebra, equation, read)
+	t.active = nil
+	close(done)
+	timer.Stop()
+	elapsed := time.Since(started)
+	if elapsed < t.threshold {
+		return result
+	}
+	after := snapshotFormalRelationEvaluation(algebra)
+	fmt.Fprintf(os.Stderr,
+		"FORMAL_EQUATION_SLOW seq=%d elapsed=%s %s dd_nodes=%+d dd_terminals=%+d dd_unique=%+d dd_apply_memo=%+d dd_ite_memo=%+d dd_care_memo=%+d dd_care_apply_memo=%+d dd_apply_ops=%+d component_terminals=%+d directory_nodes=%+d outcome_read_roots=%d outcome_nonterminal_roots=%d outcome_distinct_roots=%d outcome_distinct_top_variables=%d outcome_support_nodes=%d outcome_support_variables=%d outcome_regions=%d outcome_writes=%d\n",
+		sequence, elapsed.Round(time.Millisecond), formatFormalRelationEquationTrace(algebra, equation),
+		after.decisionNodes-before.decisionNodes,
+		after.decisionTerminals-before.decisionTerminals,
+		after.decisionUnique-before.decisionUnique,
+		after.decisionApply-before.decisionApply,
+		after.decisionITE-before.decisionITE,
+		after.decisionCare-before.decisionCare,
+		after.decisionCareApply-before.decisionCareApply,
+		after.decisionApplyOps-before.decisionApplyOps,
+		after.componentTerminals-before.componentTerminals,
+		after.directoryNodes-before.directoryNodes,
+		detail.outcomeReadRoots,
+		detail.outcomeNonterminalRoots,
+		detail.outcomeDistinctRoots,
+		detail.outcomeDistinctTopVariables,
+		detail.outcomeSupportNodes,
+		detail.outcomeSupportVariables,
+		detail.outcomeRegions,
+		detail.outcomeWrites,
+	)
+	if detail.outcomePlan != nil {
+		fmt.Fprintf(os.Stderr, "FORMAL_OUTCOME_PLAN seq=%d %s\n", sequence, formatFormalOutcomePlanTrace(detail.outcomePlan))
+		for _, rank := range detail.outcomeSupportRanks {
+			fmt.Fprintf(os.Stderr, "FORMAL_OUTCOME_SUPPORT seq=%d rank=%d atom=%s components=%s\n", sequence, rank,
+				formatFormalGuardRankTrace(algebra, rank), formatFormalOutcomeOrdinalsTrace(algebra, equation, detail.outcomeSupportOrdinals[rank]))
+		}
+	}
+	if detail.definitionCalls != 0 {
+		fmt.Fprintf(os.Stderr,
+			"FORMAL_DEFINITION_CORRELATION seq=%d calls=%d caller_roots=%d target_roots=%d support_ranks=%v rows=%d partition_apply_ops=%d partition_time=%s capability_count=%d capability_apply_ops=%d capability_time=%s\n",
+			sequence,
+			detail.definitionCalls,
+			detail.definitionCallerRoots,
+			detail.definitionTargetRoots,
+			detail.definitionSupportRanks,
+			detail.definitionRows,
+			detail.definitionPartitionApplyOps,
+			detail.definitionPartitionTime.Round(time.Microsecond),
+			detail.definitionCapabilityCount,
+			detail.definitionCapabilityApplyOps,
+			detail.definitionCapabilityTime.Round(time.Microsecond),
+		)
+	}
+	if detail.definitionEquationCalls != 0 {
+		fmt.Fprintf(os.Stderr,
+			"FORMAL_DEFINITION_PHASES seq=%d equations=%d inputs=%d live_outcomes=%d read=%s seed_join=%s seed_validate=%s target_validate=%s compose=%s target_join=%s correlation=%s correlation_setup=%s execute=%s publish=%s\n",
+			sequence,
+			detail.definitionEquationCalls,
+			detail.definitionInputs,
+			detail.definitionLiveOutcomes,
+			formatFormalRelationEvalTracePhase(detail.definitionRead),
+			formatFormalRelationEvalTracePhase(detail.definitionSeedJoin),
+			formatFormalRelationEvalTracePhase(detail.definitionSeedValidate),
+			formatFormalRelationEvalTracePhase(detail.definitionTargetValidate),
+			formatFormalRelationEvalTracePhase(detail.definitionCompose),
+			formatFormalRelationEvalTracePhase(detail.definitionTargetJoin),
+			formatFormalRelationEvalTracePhase(detail.definitionCorrelation),
+			formatFormalRelationEvalTracePhase(detail.definitionCorrelationSetup),
+			formatFormalRelationEvalTracePhase(detail.definitionExecute),
+			formatFormalRelationEvalTracePhase(detail.definitionPublish),
+		)
+	}
+	if detail.guardComposeClose.count != 0 {
+		fmt.Fprintf(os.Stderr,
+			"FORMAL_GUARD_COMPOSE seq=%d read=%s substitute=%s groups=%s close=%s join=%s group_partition=%s group_leaves=%s scalar_join=%s validate=%s publish=%s close_states=%d close_joins=%d group_regions=%d\n",
+			sequence,
+			formatFormalRelationEvalTracePhase(detail.guardComposeRead),
+			formatFormalRelationEvalTracePhase(detail.guardComposeSubstitute),
+			formatFormalRelationEvalTracePhase(detail.guardComposeGroups),
+			formatFormalRelationEvalTracePhase(detail.guardComposeClose),
+			formatFormalRelationEvalTracePhase(detail.guardComposeJoin),
+			formatFormalRelationEvalTracePhase(detail.guardComposeGroupPartition),
+			formatFormalRelationEvalTracePhase(detail.guardComposeGroupLeaves),
+			formatFormalRelationEvalTracePhase(detail.guardComposeScalarJoin),
+			formatFormalRelationEvalTracePhase(detail.guardComposeValidate),
+			formatFormalRelationEvalTracePhase(detail.guardComposePublish),
+			detail.guardComposeCloseStates,
+			detail.guardComposeCloseJoins,
+			detail.guardComposeGroupRegions,
+		)
+	}
+	return result
+}
+
+func formatFormalRelationEvalTracePhase(phase formalRelationEvalTracePhase) string {
+	return fmt.Sprintf("%d/%s/%d/%d/%d", phase.count, phase.elapsed.Round(time.Microsecond), phase.applyOps, phase.mallocs, phase.bytes)
+}
+
+// formalRelationTraceSupportRanks returns the exact ordered decision-variable
+// support of roots. It is called only while the opt-in equation trace is
+// active; ordinary evaluation pays neither its traversal nor its allocations.
+func formalRelationTraceSupportRanks(kernel *decisionKernel, roots ...decisionRef) []uint32 {
+	if kernel == nil || len(roots) == 0 {
+		return nil
+	}
+	seen := make(map[decisionRef]struct{}, len(roots))
+	ranks := make(map[uint32]struct{})
+	stack := append([]decisionRef(nil), roots...)
+	for len(stack) != 0 {
+		last := len(stack) - 1
+		root := stack[last]
+		stack = stack[:last]
+		if _, present := seen[root]; present || int(root) >= len(kernel.nodes) {
+			continue
+		}
+		seen[root] = struct{}{}
+		node := kernel.nodes[root]
+		if node.terminal {
+			continue
+		}
+		ranks[node.variable] = struct{}{}
+		stack = append(stack, node.low, node.high)
+	}
+	ordered := make([]uint32, 0, len(ranks))
+	for rank := range ranks {
+		ordered = append(ordered, rank)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	return ordered
+}
+
+func formatFormalOutcomePlanTrace(plan *formalOutcomeStep) string {
+	lanes := make([]string, 0, len(plan.lanes))
+	for _, lane := range plan.lanes {
+		lanes = append(lanes, fmt.Sprintf("%s[%d]", lane.group.lane.ID(), len(lane.group.members)))
+	}
+	bindings := make([]string, 0, plan.transaction.ResultBindingCount())
+	for index := 0; index < plan.transaction.ResultBindingCount(); index++ {
+		source, target, ok := plan.transaction.ResultBinding(index)
+		projects, projectsOK := plan.transaction.ResultBindingProjectsHeap(index)
+		bindings = append(bindings, fmt.Sprintf("%d>%d:%t:%t:%t", source, target, ok, projectsOK, projects))
+	}
+	topology := make([]string, 0, plan.returnTopology.Len())
+	for _, lane := range plan.returnTopology.Lanes() {
+		topology = append(topology, string(lane.ID()))
+	}
+	return fmt.Sprintf("reads=%d writes=%d value_groups=%d lanes=%v result_bindings=%v targets=%v return_topology=%v return_topology_edges=not_exposed covariant_steps=%d covariant_bindings=%d covariant_topology=%d",
+		len(plan.readOrdinals), len(plan.writeOrdinals), len(plan.valueFactorGroups), lanes, bindings, plan.targets, topology,
+		plan.covariant.Len(), len(plan.covariantBindings), plan.covariantTopology.Len())
+}
+
+func formatFormalGuardRankTrace(algebra *formalTupleAlgebra, rank uint32) string {
+	if algebra != nil && algebra.program != nil && algebra.program.formalGuards != nil {
+		for key, candidate := range algebra.program.formalGuards.ranks {
+			if candidate == rank {
+				return fmt.Sprintf("%q/var=%d/scope=%d/root=%d/step=%d/definition=%d", key.arena.canonicalValue(key.term), key.variable, key.scope, key.root, key.step, key.definition)
+			}
+		}
+	}
+	return "unknown"
+}
+
+func formatFormalOutcomeOrdinalsTrace(algebra *formalTupleAlgebra, equation formalRelationEquation, ordinals []formalFiberOrdinal) string {
+	span, _, _, ok := algebra.span(equation.Cell.cell.Variable)
+	if !ok {
+		return "[]"
+	}
+	parts := make([]string, 0, len(ordinals))
+	for _, ordinal := range ordinals {
+		descriptor := span.forest.descriptors[span.first+int(ordinal)]
+		parts = append(parts, fmt.Sprintf("%d/r%d/l%s/f%s", ordinal, descriptor.role, descriptor.lane.ID(), descriptor.family.ID()))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+func formatFormalRelationEquationTrace(algebra *formalTupleAlgebra, equation formalRelationEquation) string {
+	cell := equation.Cell.cell
+	body := ""
+	if algebra != nil && algebra.program != nil && cell.Variable != 0 && int(cell.Variable) <= len(algebra.program.bodies) {
+		body = algebra.program.bodies[cell.Variable-1].body.String()
+	}
+	boundary, point := boundaryStepInvalid, 0
+	if step, ok := formalRelationStepOperator(equation.Operator); ok {
+		boundary, point = step.kind, int(step.point)
+	}
+	shape := ""
+	if plan := equation.Operator.outcomeTransaction; plan != nil {
+		shape = fmt.Sprintf(" outcome_reads=%d outcome_writes=%d outcome_demands=%d outcome_sources=%d outcome_lanes=%d",
+			len(plan.readOrdinals), len(plan.writeOrdinals), len(plan.demands), len(plan.sources), len(plan.lanes))
+	}
+	return fmt.Sprintf("body=%s cell=%+v capability=%d boundary=%d point=%d inputs=%d seeds=%d nonreturning=%d%s",
+		body, cell, equation.Operator.stepCapability, boundary, point, len(equation.Inputs), len(equation.Seeds), len(equation.ApplyNonreturning), shape)
+}

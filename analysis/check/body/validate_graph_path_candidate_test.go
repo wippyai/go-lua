@@ -8,7 +8,7 @@ import (
 )
 
 func TestValidateGraphBoundaryPathReadCandidateCensus(t *testing.T) {
-	prepared, _ := validateGraphSemanticProgramFixture(t)
+	prepared := validateGraphPreparedFixture(t)
 	descendantPaths := 0
 	prepared.facts.ForEachExpressionPath(func(_ factflow.ExprRef, path pathdom.Path) bool {
 		if path.Version == 0 && len(path.Segments) != 0 {

@@ -18,6 +18,19 @@ func TestVerifyTaintLatticeComputesJoin(t *testing.T) {
 	}
 }
 
+func TestVerifyTaintLatticeComputesMeet(t *testing.T) {
+	verified, err := Verify(taintSpec())
+	if err != nil {
+		t.Fatalf("Verify(taint) error = %v", err)
+	}
+	rtAxis := Axis{spec: verified}
+	sanitized, _ := rtAxis.Element("Sanitized")
+	tainted, _ := rtAxis.Element("Tainted")
+	if got := rtAxis.ElementName(rtAxis.Meet(sanitized, tainted)); got != "Untainted" {
+		t.Fatalf("Sanitized meet Tainted = %s, want Untainted", got)
+	}
+}
+
 func TestVerifyRejectsMissingLUB(t *testing.T) {
 	spec := Spec{
 		ID:       "test.missing-lub",

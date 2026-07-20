@@ -15,7 +15,11 @@ func (s State) NumFloorsSnapshot(ks *keyspace.KeySpace) NumFloorsSnapshot {
 	if !s.laneEnabled(laneNumFloorsBit) {
 		return NumFloorsSnapshot{Bottom: true}
 	}
-	bottom, floors := numBoundSnapshot(s.numFloors, ks)
+	return numFloorsSnapshot(s.numFloors, ks)
+}
+
+func numFloorsSnapshot(lane numBoundLane, ks *keyspace.KeySpace) NumFloorsSnapshot {
+	bottom, floors := numBoundSnapshot(lane, ks)
 	return NumFloorsSnapshot{Bottom: bottom, Floors: floors}
 }
 
@@ -41,12 +45,14 @@ func (s State) WriteNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, 
 	if !ok {
 		return s
 	}
+	previousConsistency := s.numericConsistency
 	out := s.reachable()
 	floors, changed := out.numFloors.Write(key, lo, numbound.Lower)
 	if !changed {
 		return s
 	}
-	out.numFloors = floors
+	setStateNumFloors(&out, floors)
+	out.markNumericConsistencyDirty(previousConsistency, stateKey.PathKey())
 	return out
 }
 
@@ -65,6 +71,6 @@ func (s State) ClearNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) 
 		return s
 	}
 	out := s.reachable()
-	out.numFloors = floors
+	setStateNumFloors(&out, floors)
 	return out
 }

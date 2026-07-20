@@ -5,14 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 // DescriptorHandler lowers one executable operation into the existing Summary
@@ -25,8 +20,8 @@ type DescriptorHandler interface {
 
 // DescriptorRegistry is the only transformer-to-Summary specialization seam.
 type DescriptorRegistry struct {
-	handlers            map[DescriptorKind]DescriptorHandler
-	evaluatedRootSealed bool
+	handlers map[DescriptorKind]DescriptorHandler
+	sealed   bool
 }
 
 func NewDescriptorRegistry(handlers ...DescriptorHandler) (*DescriptorRegistry, error) {
@@ -52,7 +47,7 @@ func newDefaultDescriptorRegistry() *DescriptorRegistry {
 	if err != nil {
 		panic(err)
 	}
-	r.evaluatedRootSealed = true
+	r.sealed = true
 	return r
 }
 
@@ -61,12 +56,12 @@ func newCompilerDescriptorRegistry(declared []product.Value) (*DescriptorRegistr
 	if err != nil {
 		return nil, err
 	}
-	r.evaluatedRootSealed = true
+	r.sealed = true
 	return r, nil
 }
 
-func (r *DescriptorRegistry) validEvaluatedRootSchema(reg *axis.Registry) bool {
-	if r == nil || !r.evaluatedRootSealed || len(r.handlers) != 2 {
+func (r *DescriptorRegistry) validSchema(reg *axis.Registry) bool {
+	if r == nil || !r.sealed || len(r.handlers) != 2 {
 		return false
 	}
 	returns, ok := r.handlers[DescriptorReturn].(returnHandler)
@@ -88,9 +83,7 @@ var defaultDescriptorRegistry = newDefaultDescriptorRegistry()
 
 func DefaultDescriptorRegistry() *DescriptorRegistry { return defaultDescriptorRegistry }
 
-type returnHandler struct {
-	declared []product.Value
-}
+type returnHandler struct{ declared []product.Value }
 
 func (returnHandler) Kind() DescriptorKind     { return DescriptorReturn }
 func (returnHandler) ConditionalAllowed() bool { return true }
@@ -125,344 +118,6 @@ func (obligationHandler) Apply(reg *axis.Registry, out *summary.Summary, slot ui
 		out.ParamObligations[slot] = product.Meet(reg, out.ParamObligations[slot], value)
 	}
 	return nil
-}
-
-// Specialize transactionally evaluates every feasible correlated row and emits
-// the existing Summary representation. False means the caller must run the
-// contextual solver; out is guaranteed zero on failure.
-func (r Relation) Specialize(cursor BindingCursor, descriptors *DescriptorRegistry, resolve CellResultResolver) (out summary.Summary, ok bool) {
-	return r.SpecializeWithContext(cursor, descriptors, SpecializationContext{CellResult: resolve})
-}
-
-// SpecializeWithContext is the inactive full specialization seam for value
-// terms that require caller-owned concrete read semantics.
-func (r Relation) SpecializeWithContext(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext) (out summary.Summary, ok bool) {
-	return r.specializeWithEffects(cursor, descriptors, context, nil)
-}
-
-// SpecializeWithEffects is the inactive effect-aware specialization seam.
-// Effects can only become fragments of the existing Summary; caller State
-// application remains outside Relation and is owned by the call adapter.
-func (r Relation) SpecializeWithEffects(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext, resolve EffectSummaryResolver) (out summary.Summary, ok bool) {
-	return r.specializeWithEffects(cursor, descriptors, context, resolve)
-}
-
-// SpecializationResult separates the canonical Summary payload from symbolic
-// must-preservation metadata. PreservedParams contains sorted boundary
-// parameter indexes preserved by every feasible row. The metadata is not an
-// ordinary generic Summary fact: only a concrete certified entry may project
-// it as a normal-return path refinement.
-type SpecializationResult struct {
-	Summary           summary.Summary
-	PreservedParams   []uint32
-	PreservedCaptures []uint32
-	Observations      ObservationProjection
-}
-
-// SpecializeDetailed evaluates the same transaction as Specialize while
-// retaining row-local parameter preservation. It deliberately walks guards a
-// second time and is intended for freeze-time certified context publication,
-// not the hot per-call path. Effectful relations fail closed because this
-// migration API supplies no effect resolver. The returned slice is owned by
-// the result. False guarantees a zero result.
-func (r Relation) SpecializeDetailed(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext) (SpecializationResult, bool) {
-	sum, ok := r.specializeWithEffects(cursor, descriptors, context, nil)
-	if !ok {
-		return SpecializationResult{}, false
-	}
-	params, captures, ok := r.specializedPreservedRoots(cursor, context)
-	if !ok {
-		return SpecializationResult{}, false
-	}
-	observations, ok := r.specializedObservations(cursor, context)
-	if !ok {
-		return SpecializationResult{}, false
-	}
-	return SpecializationResult{Summary: sum, PreservedParams: params, PreservedCaptures: captures, Observations: observations}, true
-}
-
-func (r Relation) specializedObservations(cursor BindingCursor, context SpecializationContext) (ObservationProjection, bool) {
-	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
-		return ObservationProjection{}, false
-	}
-	var out []Observation
-	for _, row := range r.rows {
-		rowFeasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
-		if !valid {
-			return ObservationProjection{}, false
-		}
-		if !rowFeasible {
-			continue
-		}
-		for _, term := range row.Observations {
-			feasible, valid := r.arena.evalGuard(term.Guard, cursor, context)
-			if !valid {
-				return ObservationProjection{}, false
-			}
-			if !feasible {
-				continue
-			}
-			actual, valid := r.arena.evalValue(term.Actual, cursor, context)
-			if !valid {
-				return ObservationProjection{}, false
-			}
-			if term.BodyOwner == (lexicalidentity.StableLexicalBodyID{}) || !term.Anchor.Valid() {
-				return ObservationProjection{}, false
-			}
-			item := Observation{Owner: term.BodyOwner, Invocation: term.Route, Kind: term.Kind, Anchor: term.Anchor, Slot: term.Slot, Actual: actual}
-			if term.Expected != 0 {
-				item.Expected, valid = r.arena.evalValue(term.Expected, cursor, context)
-				if !valid {
-					return ObservationProjection{}, false
-				}
-				item.HasExpected = true
-			}
-			out = append(out, item)
-		}
-	}
-	for _, term := range r.annotations.observations {
-		feasible, valid := r.arena.evalGuard(term.Guard, cursor, context)
-		if !valid {
-			return ObservationProjection{}, false
-		}
-		if !feasible {
-			continue
-		}
-		actual, valid := r.arena.evalValue(term.Actual, cursor, context)
-		if !valid || term.BodyOwner == (lexicalidentity.StableLexicalBodyID{}) || !term.Anchor.Valid() {
-			return ObservationProjection{}, false
-		}
-		item := Observation{Owner: term.BodyOwner, Invocation: term.Route, Kind: term.Kind, Anchor: term.Anchor, Slot: term.Slot, Actual: actual}
-		if term.Expected != 0 {
-			item.Expected, valid = r.arena.evalValue(term.Expected, cursor, context)
-			if !valid {
-				return ObservationProjection{}, false
-			}
-			item.HasExpected = true
-		}
-		out = append(out, item)
-	}
-	return canonicalizeObservations(r.arena.reg, out), true
-}
-
-// specializedPreservedParams intersects the must-preservation sets of every
-// feasible correlated row. One non-preserving alternative removes the root;
-// an infeasible alternative has no effect.
-func (r Relation) specializedPreservedRoots(cursor BindingCursor, context SpecializationContext) ([]uint32, []uint32, bool) {
-	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
-		return nil, nil, false
-	}
-	var params, captures []bool
-	have := false
-	for _, row := range r.rows {
-		feasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
-		if !valid {
-			return nil, nil, false
-		}
-		if !feasible {
-			continue
-		}
-		rowParams := make([]bool, r.shape.Params)
-		rowCaptures := make([]bool, r.shape.Captures)
-		for _, refinement := range row.PathRefinements {
-			root, valid := refinement.preservedRoot(r.arena)
-			if !valid || !r.shape.validate(root) {
-				return nil, nil, false
-			}
-			switch root.Kind {
-			case RootParam:
-				rowParams[root.Index] = true
-			case RootCapture:
-				rowCaptures[root.Index] = true
-			default:
-				return nil, nil, false
-			}
-		}
-		if !have {
-			params, captures = rowParams, rowCaptures
-			have = true
-			continue
-		}
-		for index := range params {
-			params[index] = params[index] && rowParams[index]
-		}
-		for index := range captures {
-			captures[index] = captures[index] && rowCaptures[index]
-		}
-	}
-	if !have {
-		return nil, nil, true
-	}
-	outParams := make([]uint32, 0, len(params))
-	for index, present := range params {
-		if present {
-			outParams = append(outParams, uint32(index))
-		}
-	}
-	outCaptures := make([]uint32, 0, len(captures))
-	for index, present := range captures {
-		if present {
-			outCaptures = append(outCaptures, uint32(index))
-		}
-	}
-	return outParams, outCaptures, true
-}
-
-func (r Relation) specializeWithEffects(cursor BindingCursor, descriptors *DescriptorRegistry, context SpecializationContext, resolve EffectSummaryResolver) (out summary.Summary, ok bool) {
-	if r.arena == nil || r.contextual != "" || cursor.shape != r.shape {
-		return summary.Summary{}, false
-	}
-	if descriptors == nil {
-		descriptors = r.descriptors
-		if descriptors == nil {
-			descriptors = DefaultDescriptorRegistry()
-		}
-	}
-	reg := r.arena.reg
-	var accumulated summary.Summary
-	var candidates []summary.Summary
-	var rawCandidateReturns [][]product.Value
-	have := false
-	for _, row := range r.rows {
-		feasible, valid := r.arena.evalGuard(row.Guard, cursor, context)
-		if !valid {
-			return summary.Summary{}, false
-		}
-		if !feasible {
-			continue
-		}
-		candidate := row.Output.Clone()
-		var rawReturns []product.Value
-		if r.inferReturnCorrelations {
-			rawReturns = append(rawReturns, row.Output.Returns...)
-		}
-		for _, operation := range row.Ops {
-			handler := descriptors.handlers[operation.Descriptor]
-			if handler == nil {
-				return summary.Summary{}, false
-			}
-			if row.Guard != r.arena.True() && !handler.ConditionalAllowed() {
-				return summary.Summary{}, false
-			}
-			value, valid := r.arena.evalValue(operation.Value, cursor, context)
-			if !valid {
-				return summary.Summary{}, false
-			}
-			if err := handler.Apply(reg, &candidate, operation.Slot, value); err != nil {
-				return summary.Summary{}, false
-			}
-			if operation.Descriptor == DescriptorReturn {
-				if r.inferReturnCorrelations {
-					priorLen := len(rawReturns)
-					for len(rawReturns) <= int(operation.Slot) {
-						rawReturns = append(rawReturns, product.Bottom(reg))
-					}
-					if int(operation.Slot) >= priorLen {
-						rawReturns[operation.Slot] = value
-					} else {
-						rawReturns[operation.Slot] = summary.JoinReturnValue(reg, rawReturns[operation.Slot], value)
-					}
-				}
-				if param, exact := r.arena.directParamRoot(operation.Value); exact {
-					if r.authority.allowsSummary("ReturnFlows") && r.authority.allowsSummary("ReturnParamPathAliases") {
-						placeholder, placeholderOK := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(param))
-						if !placeholderOK {
-							return summary.Summary{}, false
-						}
-						candidate.ReturnFlows = append(candidate.ReturnFlows, summary.ReturnFlow{
-							ReturnIndex: int(operation.Slot), Kind: summary.ReturnFlowParam, Param: param,
-						})
-						candidate.ReturnParamPathAliases = append(candidate.ReturnParamPathAliases, summary.ReturnParamPathAlias{
-							ReturnIndex: int(operation.Slot), Source: placeholder,
-						})
-					}
-				} else if param, exact := r.arena.refinedParamRoot(operation.Value); exact && r.authority.allowsSummary("ReturnParamPathAliases") {
-					placeholder, placeholderOK := pathaddr.PlaceholderKeyFromPath(pathdom.NewPlaceholder(param))
-					if !placeholderOK {
-						return summary.Summary{}, false
-					}
-					candidate.ReturnParamPathAliases = append(candidate.ReturnParamPathAliases, summary.ReturnParamPathAlias{
-						ReturnIndex: int(operation.Slot), Source: placeholder,
-					})
-				}
-			}
-		}
-		if (len(row.Proofs) != 0 || len(row.PathRefinements) != 0) && !r.authority.allowsSummary("NormalReturnFacts") {
-			return summary.Summary{}, false
-		}
-		for _, proof := range row.Proofs {
-			tablePath, valid := proof.placeholderPath(r.arena)
-			if !valid {
-				return summary.Summary{}, false
-			}
-			proofPath := tablePath.Clone()
-			if proof.Key != 0 {
-				key, valid := r.arena.evalValue(proof.Key, cursor, context)
-				if !valid {
-					return summary.Summary{}, false
-				}
-				keySegment, valid := typevalue.ExactScalarKeySegment(reg, nil, key)
-				if !valid {
-					return summary.Summary{}, false
-				}
-				proofPath.Segments = append(proofPath.Segments, keySegment)
-			}
-			candidate.NormalReturnFacts.BranchProofs = append(candidate.NormalReturnFacts.BranchProofs, callboundary.BranchProof{
-				Kind: proof.Kind, Path: proofPath, Presence: proof.Presence,
-			})
-		}
-		if len(row.Effects) != 0 {
-			if resolve == nil || r.effects == nil || r.authority == nil {
-				return summary.Summary{}, false
-			}
-			resolved := make([]ResolvedEffect, len(row.Effects))
-			for i, effect := range row.Effects {
-				var valid bool
-				resolved[i], valid = r.effects.resolve(effect, cursor, context)
-				if !valid || resolved[i].Kind != r.effects.Kind(effect) {
-					return summary.Summary{}, false
-				}
-			}
-			resolution, valid := resolve(resolved)
-			if !valid || !r.authority.allowsEffectResolution(resolved, resolution) {
-				return summary.Summary{}, false
-			}
-			candidate = summary.Join(reg, candidate, resolution.Summary)
-		}
-		if !have {
-			accumulated = candidate
-			have = true
-		} else {
-			accumulated = summary.Join(reg, accumulated, candidate)
-		}
-		if r.inferReturnCorrelations {
-			candidates = append(candidates, candidate)
-			rawCandidateReturns = append(rawCandidateReturns, rawReturns)
-		}
-	}
-	if !have {
-		return summary.Summary{}, true
-	}
-	accumulated.ReturnParamPathAliases = append(accumulated.ReturnParamPathAliases, r.projection.returnParamPathAliases...)
-	if r.inferReturnCorrelations {
-		var declared []product.Value
-		if handler, ok := descriptors.handlers[DescriptorReturn].(returnHandler); ok {
-			declared = handler.declared
-		}
-		conditions, relations, exact := inferReturnRowCorrelations(reg, candidates, rawCandidateReturns, declared)
-		if !exact {
-			return summary.Summary{}, false
-		}
-		if len(conditions) != 0 && !r.authority.allowsSummary("ReturnConditionSlotRefinements") {
-			return summary.Summary{}, false
-		}
-		if len(relations) != 0 && !r.authority.allowsSummary("ReturnPresenceRelations") {
-			return summary.Summary{}, false
-		}
-		accumulated.ReturnConditionSlotRefinements = append(accumulated.ReturnConditionSlotRefinements, conditions...)
-		accumulated.ReturnPresenceRelations = append(accumulated.ReturnPresenceRelations, relations...)
-	}
-	return summary.NormalizeOwned(reg, accumulated), true
 }
 
 func (a *Arena) evalGuard(guard Guard, cursor BindingCursor, context SpecializationContext) (bool, bool) {

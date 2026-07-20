@@ -80,6 +80,16 @@ func TestMustMap_CommonKeysCombineValues(t *testing.T) {
 	if !d.Equal(widened, wantWiden) {
 		t.Fatalf("Widen = %s, want %s", formatMustMap(widened), formatMustMap(wantWiden))
 	}
+
+	met := d.Meet(a, b)
+	wantMeet := MustMapValues(map[string]sign{
+		"common":    sBottom,
+		"leftOnly":  sPos,
+		"rightOnly": sZero,
+	})
+	if !d.Equal(met, wantMeet) {
+		t.Fatalf("Meet = %s, want %s", formatMustMap(met), formatMustMap(wantMeet))
+	}
 }
 
 func TestMustMap_WidenPreservesOperandOrderWhenIteratingSmallerSide(t *testing.T) {
@@ -221,6 +231,14 @@ func TestMustSet_Intersection(t *testing.T) {
 	widened := d.Widen(a, b)
 	if !d.Equal(widened, want) {
 		t.Fatalf("Widen = %s, want %s", formatMustSet(widened), formatMustSet(want))
+	}
+
+	met := d.Meet(a, b)
+	wantMeet := MustSetValues(map[string]struct{}{
+		"common": {}, "leftOnly": {}, "rightOnly": {},
+	})
+	if !d.Equal(met, wantMeet) {
+		t.Fatalf("Meet = %s, want %s", formatMustSet(met), formatMustSet(wantMeet))
 	}
 }
 

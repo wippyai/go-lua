@@ -251,6 +251,16 @@ type Instruction struct {
 	// does not imply that `a` or `b` held, but either leaf is a sufficient case.
 	SufficientChecks ImpliedCheckRange
 
+	// SufficientCheckArmsTrue and SufficientCheckArmsFalse window the per-arm
+	// leaf-check groups behind SufficientChecks for the true and false edge
+	// respectively: one entry per top-level disjunct (true) or conjunct
+	// (false), each still separated instead of flattened together, including
+	// an arm that resolved no leaf check. Sound conclusions that must hold no
+	// matter which arm forced the edge need arm boundaries preserved, which
+	// SufficientChecks discards by flattening.
+	SufficientCheckArmsTrue  ArmRange
+	SufficientCheckArmsFalse ArmRange
+
 	// DiffConstraints is the normalized difference-logic descriptor window for
 	// OpBranch conditions. It carries syntax-derived linear relations; transfer
 	// decides the factflow projection.
@@ -320,10 +330,10 @@ type Instruction struct {
 // AssignmentSourceOperand returns the operand whose value is written by an
 // assignment-like instruction. It centralizes the opcode layout so consumers do
 // not need to know that dynamic-index stores write B while direct/static stores
-// write A.
+// and claims (casts, non-nil asserts) write A.
 func (i Instruction) AssignmentSourceOperand() (Operand, bool) {
 	switch i.Op {
-	case OpAssign, OpStaticMemberWrite:
+	case OpAssign, OpStaticMemberWrite, OpClaim:
 		if i.A.Kind != OperandNone {
 			return i.A, true
 		}

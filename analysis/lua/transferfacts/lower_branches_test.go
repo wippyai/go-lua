@@ -815,7 +815,7 @@ func TestLowerTypeGuardBranchPathEvidence(t *testing.T) {
 	}}
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, typeRead), "x")
@@ -1561,6 +1561,11 @@ end
 	if !proof.ActiveOnEdge(true) || proof.ActiveOnEdge(false) {
 		t.Fatalf("branch path evidence active true/false = %v/%v, want true/false", proof.ActiveOnEdge(true), proof.ActiveOnEdge(false))
 	}
+	producer, hasProducer := proof.ProducerPoint()
+	condition, hasCondition := facts.BranchConditionSource(branchPoint)
+	if !hasProducer || !hasCondition || condition.Kind != factflow.ValueSourceCall || !condition.HasCallPoint || producer != condition.CallPoint {
+		t.Fatalf("frozen-table producer = %d/%v condition=%#v/%v, want exact condition call point", producer, hasProducer, condition, hasCondition)
+	}
 }
 
 func TestLowerTableIsFrozenNegatedConditionPublishesFrozenTableProofOnFalseEdge(t *testing.T) {
@@ -2109,7 +2114,7 @@ func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 	}}
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
@@ -2137,7 +2142,7 @@ func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
 	}}
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
@@ -2171,7 +2176,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 	}}
 	stmts := []ast.Stmt{decl, eqStmt, notStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
 	nilValue := valueRefinementExpectation{
@@ -2268,7 +2273,7 @@ func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
 	}}
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
@@ -2295,10 +2300,231 @@ func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
 	}}
 	stmts := []ast.Stmt{decl, typeStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	facts := lowerChunkFactsWithWIR(t, "branch", stmts, built, bindings, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	if len(facts.BranchRefinements(point)) != 0 {
 		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)
+	}
+}
+
+// trueEdgeDisjunctiveRefinementAt returns the true-edge value refinement a
+// disjunctive type()-equality guard joined for wantPath, failing the test if
+// none was produced.
+func trueEdgeDisjunctiveRefinementAt(t *testing.T, facts factflow.Facts, point cfg.Point, wantPath path.Path) factflow.ValueRefinement {
+	t.Helper()
+	for _, refinement := range facts.BranchRefinements(point) {
+		if !refinement.TargetPath().Equal(wantPath) {
+			continue
+		}
+		if value, ok := refinement.TrueValue(); ok {
+			return value
+		}
+	}
+	t.Fatalf("missing true-edge disjunctive refinement at point %d for %s", point, wantPath.String())
+	return factflow.ValueRefinement{}
+}
+
+// disjunctiveRefinementEdgeCounts scans every BranchRefinement recorded for
+// wantPath at point and returns how many carry a true-edge value and how many
+// carry a false-edge-only value. The single true-edge entry (if any) is
+// checked against wantTrue.
+func disjunctiveRefinementEdgeCounts(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantPath path.Path,
+	wantTrue valueRefinementExpectation,
+) (trueEdges, falseEdges int) {
+	t.Helper()
+	for _, refinement := range facts.BranchRefinements(point) {
+		if !refinement.TargetPath().Equal(wantPath) {
+			continue
+		}
+		if trueValue, ok := refinement.TrueValue(); ok {
+			trueEdges++
+			assertValueRefinement(t, "disjunctive true edge", trueValue, wantTrue)
+			if _, hasFalse := refinement.FalseValue(); hasFalse {
+				t.Fatalf("disjunctive true-edge refinement also carries a false-edge value: %#v", refinement)
+			}
+			continue
+		}
+		if _, ok := refinement.FalseValue(); ok {
+			falseEdges++
+		}
+	}
+	return trueEdges, falseEdges
+}
+
+// TestLowerDisjunctiveTypeEqualityTrueEdgeJoinsUnionRefinement pins the fix
+// for the audited "optional method call" false-positive family bucket 2:
+// `type(x) == "userdata" or type(x) == "table"` excludes nil on every
+// disjunct, so the true edge must join both disjuncts' narrowing into a
+// userdata|table refinement rather than proving nothing. The false edge
+// (conjunction of negations) is unaffected and already worked; it is checked
+// here too as a regression guard on negation polarity.
+func TestLowerDisjunctiveTypeEqualityTrueEdgeJoinsUnionRefinement(t *testing.T) {
+	decl := localAssign([]string{"x"}, ident("input"))
+	userdataRead := ident("x")
+	tableRead := ident("x")
+	ifStmt := &ast.IfStmt{Condition: &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(userdataRead), Rhs: stringLit("userdata")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(tableRead), Rhs: stringLit("table")},
+	}}
+	stmts := []ast.Stmt{decl, ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "input"}})
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, userdataRead), "x")
+
+	wantKind := runtimekind.Join(runtimekind.Singleton(runtimekind.Userdata), runtimekind.Singleton(runtimekind.Table))
+	trueEdges, falseEdges := disjunctiveRefinementEdgeCounts(t, facts, point, xPath, valueRefinementExpectation{
+		presence:       presence.Present(),
+		hasPresence:    true,
+		runtimeKind:    wantKind,
+		hasRuntimeKind: true,
+	})
+	if trueEdges != 1 {
+		t.Fatalf("x got %d true-edge disjunctive refinements at point %d, want exactly 1", trueEdges, point)
+	}
+	if falseEdges != 2 {
+		t.Fatalf("x got %d false-edge refinements at point %d, want 2 (not-userdata, not-table)", falseEdges, point)
+	}
+}
+
+// TestLowerDisjunctiveTypeEqualityMixedWithLiteralJoinsUnionRefinement covers
+// a disjunction mixing a type()-equality check with an ordinary literal
+// equality check: both disjuncts still exclude nil, so the true edge must
+// still join to a non-nil conclusion even though the two checks are different
+// kinds.
+func TestLowerDisjunctiveTypeEqualityMixedWithLiteralJoinsUnionRefinement(t *testing.T) {
+	decl := localAssign([]string{"x"}, ident("input"))
+	tableRead := ident("x")
+	literalRead := ident("x")
+	ifStmt := &ast.IfStmt{Condition: &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(tableRead), Rhs: stringLit("table")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: literalRead, Rhs: stringLit("special")},
+	}}
+	stmts := []ast.Stmt{decl, ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "input"}})
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, tableRead), "x")
+
+	value := trueEdgeDisjunctiveRefinementAt(t, facts, point, xPath)
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("mixed disjunctive true-edge refinement missing constraint")
+	}
+	gotPresence := product.PresenceOf(constraint)
+	if !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present: table and the literal string disjunct are both non-nil", gotPresence)
+	}
+}
+
+// TestLowerDisjunctiveTypeEqualitySoundnessExcludesTypeNotNamedByEitherDisjunct
+// is the first required soundness case: `type(x) == "userdata" or
+// type(x) == "string"` must never let table-ness be proven, since neither
+// disjunct names table. The joined runtime kind must be exactly the union of
+// what was actually named.
+func TestLowerDisjunctiveTypeEqualitySoundnessExcludesTypeNotNamedByEitherDisjunct(t *testing.T) {
+	decl := localAssign([]string{"x"}, ident("input"))
+	userdataRead := ident("x")
+	stringRead := ident("x")
+	ifStmt := &ast.IfStmt{Condition: &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(userdataRead), Rhs: stringLit("userdata")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(stringRead), Rhs: stringLit("string")},
+	}}
+	stmts := []ast.Stmt{decl, ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "input"}})
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, userdataRead), "x")
+
+	value := trueEdgeDisjunctiveRefinementAt(t, facts, point, xPath)
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("disjunctive true-edge refinement missing constraint")
+	}
+	got := product.Get(standard.Registry(), constraint, runtimekind.Key)
+	if got.Contains(runtimekind.Table) {
+		t.Fatalf("runtime kind = %s, must not include table: neither disjunct named it", got)
+	}
+	want := runtimekind.Join(runtimekind.Singleton(runtimekind.Userdata), runtimekind.Singleton(runtimekind.String))
+	if !runtimekind.Equal(got, want) {
+		t.Fatalf("runtime kind = %s, want %s", got, want)
+	}
+}
+
+// TestLowerDisjunctiveTypeEqualitySoundnessKeepsNilPossibleWhenArmIsNil is the
+// second required soundness case: `type(x) == "nil" or type(x) == "table"`
+// must never let non-nil be proven, since one disjunct is exactly the nil
+// case. Non-nil must fall out of the type-union narrowing alone, not from a
+// bespoke nil rule, so this is checked as an ordinary presence consequence of
+// the joined kind set.
+func TestLowerDisjunctiveTypeEqualitySoundnessKeepsNilPossibleWhenArmIsNil(t *testing.T) {
+	decl := localAssign([]string{"x"}, ident("input"))
+	nilRead := ident("x")
+	tableRead := ident("x")
+	ifStmt := &ast.IfStmt{Condition: &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(nilRead), Rhs: stringLit("nil")},
+		Rhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(tableRead), Rhs: stringLit("table")},
+	}}
+	stmts := []ast.Stmt{decl, ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "input"}})
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
+
+	value := trueEdgeDisjunctiveRefinementAt(t, facts, point, xPath)
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("disjunctive true-edge refinement missing constraint")
+	}
+	gotPresence := product.PresenceOf(constraint)
+	if presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, must not prove non-nil: one disjunct is type(x) == \"nil\"", gotPresence)
+	}
+	got := product.Get(standard.Registry(), constraint, runtimekind.Key)
+	want := runtimekind.Join(runtimekind.Singleton(runtimekind.Nil), runtimekind.Singleton(runtimekind.Table))
+	if !runtimekind.Equal(got, want) {
+		t.Fatalf("runtime kind = %s, want %s", got, want)
+	}
+}
+
+// TestLowerDisjunctiveTypeEqualityOpaqueArmProducesNoJoinedRefinement checks
+// that a disjunct the engine cannot reason about at all blocks the join
+// entirely: `type(x) == "table" or mystery()` gives no true-edge conclusion
+// about x, because the edge could have been forced by the unrecognized call.
+func TestLowerDisjunctiveTypeEqualityOpaqueArmProducesNoJoinedRefinement(t *testing.T) {
+	decl := localAssign([]string{"x"}, ident("input"))
+	tableRead := ident("x")
+	ifStmt := &ast.IfStmt{Condition: &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(tableRead), Rhs: stringLit("table")},
+		Rhs:      &ast.FuncCallExpr{Func: ident("mystery")},
+	}}
+	stmts := []ast.Stmt{decl, ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "input", "mystery"}})
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+	facts := lowerChunkFactsWithSealedLuaTypeWIR(t, "branch", stmts, built, bindings, standard.Registry())
+	point := requireBranchPointForStmt(t, built, ifStmt)
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, tableRead), "x")
+
+	for _, refinement := range facts.BranchRefinements(point) {
+		if !refinement.TargetPath().Equal(xPath) {
+			continue
+		}
+		if _, ok := refinement.TrueValue(); ok {
+			t.Fatalf("got a true-edge refinement for x even though one arm (an unrecognized call) is opaque: %#v", refinement)
+		}
 	}
 }

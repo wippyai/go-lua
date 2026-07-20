@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -21,6 +23,45 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func TestResolvedNestedDynamicIndexMutationPublishesOnlySuffixedTarget(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(9191)
+	tableSymbol := symbol.ID(9191)
+	tablePath := pathdom.NewPath(tableSymbol, "items")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9192, HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9193, HasExpr: true}
+	suffix := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
+	target := factflow.NewDynamicIndexTarget(tablePath, keySource, suffix)
+	write := factflow.NewDynamicIndexWrite(target, valueSource, dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue)
+	invalidation := factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(target)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		DynamicIndexWrites:          map[cfg.Point]factflow.DynamicIndexWrite{point: write},
+		PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{point: invalidation},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, tableSymbol, "items")
+	resolver := visibility.NewResolver(builder.Build())
+	keyValue := typevalue.LiteralString(reg, "active")
+	valueValue := typevalue.LiteralString(reg, "timer")
+	result, err := runResolvedIndexMutation(ResolvedIndexMutationFreezeRequest{
+		Context: transfer.NodeContext{Registry: reg, Point: point}, Resolver: resolver, Facts: facts,
+		Input: state.State{}, Output: state.State{}, Invalidation: invalidation, Write: write,
+		KeyValue: keyValue, Value: valueValue, HasKeyValue: true, HasValue: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	precise := tablePath.IndexStr("active").Field("value")
+	preciseKey, keyOK := visibility.AddressAt(resolver, point, precise).VisibleKeyspaceKey()
+	got, ok := result.Output.ReadLocalPathStaticMember(preciseKey)
+	if !keyOK || !ok || !product.Equal(reg, got, valueValue) {
+		t.Fatalf("nested dynamic write target = %#v/%t, want exact suffixed value", got, ok)
+	}
+	if got := result.Output.DynamicIndexFactsSnapshot(); got.Top || len(got.Facts) != 0 {
+		t.Fatalf("nested dynamic write published false direct-table facts: %#v", got)
+	}
+}
+
 func TestResolvedIndexMutationMatchesAuthoritativeN3N4OnEveryLane(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(9201)
@@ -29,9 +70,9 @@ func TestResolvedIndexMutationMatchesAuthoritativeN3N4OnEveryLane(t *testing.T) 
 	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9202, HasExpr: true}
 	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9203, HasExpr: true}
 	keyValue, valueValue := presentValue(reg), absentValue(reg)
-	write := factflow.NewDynamicIndexWrite(tablePath, keySource, valueSource,
+	write := factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(tablePath, keySource, nil), valueSource,
 		dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue)
-	invalidation := factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(tablePath, keySource, nil)
+	invalidation := factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(factflow.NewDynamicIndexTarget(tablePath, keySource, nil))
 	facts := factflow.NewFacts(factflow.FactsInput{
 		DynamicIndexWrites:          map[cfg.Point]factflow.DynamicIndexWrite{point: write},
 		PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{point: invalidation},
@@ -81,8 +122,20 @@ func TestResolvedIndexMutationMatchesAuthoritativeN3N4OnEveryLane(t *testing.T) 
 		t.Fatalf("resolved transaction = applied:%v canceled:%v", got.Applied, got.Canceled)
 	}
 	lanes := state.DefaultLaneCatalog().LaneSet().IDs()
-	if len(got.LaneDeltas) != len(lanes) || len(lanes) != 17 {
-		t.Fatalf("lane differential width = %d, want %d", len(got.LaneDeltas), len(lanes))
+	if len(lanes) != 17 {
+		t.Fatalf("lane inventory width = %d, want 17", len(lanes))
+	}
+	productDomain := state.RegisteredProductDomain(reg)
+	beforeFactors, err := productDomain.Decompose(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterFactors, err := productDomain.Decompose(got.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeFactors) != len(lanes) || len(afterFactors) != len(lanes) {
+		t.Fatalf("factor inventory = %d/%d, want %d", len(beforeFactors), len(afterFactors), len(lanes))
 	}
 	for i, lane := range lanes {
 		domain, err := state.TryDomainWithLanes(reg, []state.LaneID{lane})
@@ -98,9 +151,13 @@ func TestResolvedIndexMutationMatchesAuthoritativeN3N4OnEveryLane(t *testing.T) 
 		if !domain.Equal(closedOut, closedAfterMutation) {
 			t.Fatalf("producer mutation changed frozen dynamic-index write on lane %q", lane)
 		}
+		equal, err := productDomain.LaneEqual(beforeFactors[i], afterFactors[i])
+		if err != nil {
+			t.Fatal(err)
+		}
 		wantChanged := !domain.Equal(in, want)
-		if got.LaneDeltas[i].Lane != lane || got.LaneDeltas[i].Changed != wantChanged {
-			t.Fatalf("lane delta %d = %#v, want %q changed=%v", i, got.LaneDeltas[i], lane, wantChanged)
+		if beforeFactors[i].Lane().ID() != lane || afterFactors[i].Lane().ID() != lane || !equal != wantChanged {
+			t.Fatalf("lane factor %d = %q/%q changed=%v, want %q changed=%v", i, beforeFactors[i].Lane().ID(), afterFactors[i].Lane().ID(), !equal, lane, wantChanged)
 		}
 	}
 }
@@ -112,9 +169,9 @@ func TestResolvedIndexMutationCancellationAndMissingResolutionPublishNothing(t *
 	tablePath := pathdom.NewPath(tableSymbol, "items")
 	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9211, HasExpr: true}
 	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9212, HasExpr: true}
-	write := factflow.NewDynamicIndexWrite(tablePath, keySource, valueSource,
+	write := factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(tablePath, keySource, nil), valueSource,
 		dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue)
-	invalidation := factflow.NewPathDescendantInvalidation(tablePath)
+	invalidation := factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(write.TargetRef())
 	builder := visibility.NewBuilder()
 	builder.Define(point, tableSymbol, "items")
 	resolver := visibility.NewResolver(builder.Build())
@@ -131,7 +188,7 @@ func TestResolvedIndexMutationCancellationAndMissingResolutionPublishNothing(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Canceled || got.Applied || len(got.LaneDeltas) != 0 || !state.Domain(reg).Equal(got.Output, before) {
+	if !got.Canceled || got.Applied || !state.Domain(reg).Equal(got.Output, before) {
 		t.Fatalf("canceled transaction published: %#v", got)
 	}
 	request.Context.Session = nil
@@ -160,9 +217,9 @@ func TestResolvedIndexMutationRetainsCanonicalAppendAndPlacementProofGates(t *te
 	valueSource, _ := factflow.NewExpressionValueSource(9223, -1, -1, 0, shape)
 	lenOp, _ := factflow.NewUnaryExpressionOperation("#", tableSource)
 	keyOp, _ := factflow.NewBinaryExpressionOperation("+", lenSource, oneSource)
-	write := factflow.NewDynamicIndexWrite(tablePath, keySource, valueSource,
+	write := factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(tablePath, keySource, nil), valueSource,
 		dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackValue)
-	invalidation := factflow.NewPathDescendantInvalidation(tablePath)
+	invalidation := factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(write.TargetRef())
 	facts := factflow.NewFacts(factflow.FactsInput{ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{
 		lenExpr: lenOp, keyExpr: keyOp,
 	}})
@@ -221,16 +278,13 @@ func runResolvedIndexMutation(request ResolvedIndexMutationFreezeRequest) (Resol
 	if err != nil {
 		return ResolvedIndexMutationResult{Output: request.Output}, err
 	}
-	if artifact.data == nil || artifact.data.executions != 1 {
-		return ResolvedIndexMutationResult{Output: request.Output}, fmt.Errorf("freeze execution count = %v", artifact.data)
+	if artifact.data == nil {
+		return ResolvedIndexMutationResult{Output: request.Output}, fmt.Errorf("freeze produced no closed program")
 	}
 	var token *cancellation.Token
 	if request.Context.Session != nil {
 		token = request.Context.Session.Token()
 	}
-	result, err := ApplyResolvedIndexMutation(artifact, token)
-	if artifact.data.executions != 1 {
-		return ResolvedIndexMutationResult{Output: request.Output}, fmt.Errorf("Apply repeated concrete execution")
-	}
+	result, err := ApplyResolvedIndexMutation(artifact, token, request.Input, request.Output)
 	return result, err
 }

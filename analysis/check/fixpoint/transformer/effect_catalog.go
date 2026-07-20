@@ -51,8 +51,9 @@ func (d EffectDescriptor) BoundaryKinds() []callboundary.BoundaryFactKind {
 func (d EffectDescriptor) LaneUse(lane state.LaneID) LaneUse { return d.lanes[lane] }
 
 // EffectCatalog is the exhaustive EffectKind x LaneCatalog binding plus point
-// admission. It is inactive metadata: production PlanCompiler does not consult
-// it until a later activation stage.
+// admission. The compiler uses it for effect capability admission and the
+// coordinate evaluator uses the same descriptors as its exact axis footprint;
+// neither side maintains an independent operation-to-lane switch.
 type EffectCatalog struct {
 	lanes       []state.LaneID
 	descriptors map[EffectKind]EffectDescriptor
@@ -129,9 +130,11 @@ func validateEffectSources(descriptor EffectDescriptor) error {
 		seen[source] = struct{}{}
 	}
 	want := map[EffectKind][]operationplan.Kind{
-		EffectInvalidatePath:     {operationplan.PathDescendantInvalidation},
-		EffectIndexMutation:      {operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite},
-		EffectAllocationTemplate: {operationplan.CallSite},
+		EffectInvalidatePath:        {operationplan.PathDescendantInvalidation},
+		EffectIndexMutation:         {operationplan.PathDescendantInvalidation, operationplan.DynamicIndexWrite},
+		EffectAllocationTemplate:    {operationplan.CallSite},
+		EffectObjectMaterialization: {operationplan.ObjectLiteral},
+		EffectPathStore:             {operationplan.PathAssignment, operationplan.PathStaticMemberWrite},
 	}[descriptor.kind]
 	if !sameOperationKinds(descriptor.sources, want) {
 		return fmt.Errorf("transformer: effect %d operation sources %v, want atomic %v", descriptor.kind, descriptor.sources, want)
@@ -181,16 +184,15 @@ type EffectAdmission struct {
 	Consumes []operationplan.Kind
 }
 
-// AdmitPoint groups the N3 invalidation and N4 dynamic write into one atomic
-// index mutation. A write without its barrier fails closed. Unrelated operation
-// families are ignored by this inactive effect catalog.
+// AdmitPoint recognizes the canonical atomic point-effect families. Paired
+// sources are admitted together; a partial pair fails closed.
 func (c *EffectCatalog) AdmitPoint(active []operationplan.Kind) (EffectAdmission, bool, error) {
 	if c == nil {
 		return EffectAdmission{}, false, fmt.Errorf("transformer: nil effect catalog")
 	}
 	counts := make(map[operationplan.Kind]int)
 	for _, kind := range active {
-		if kind == operationplan.PathDescendantInvalidation || kind == operationplan.DynamicIndexWrite {
+		if kind == operationplan.PathDescendantInvalidation || kind == operationplan.DynamicIndexWrite || kind == operationplan.PathAssignment || kind == operationplan.PathStaticMemberWrite {
 			counts[kind]++
 			if counts[kind] > 1 {
 				return EffectAdmission{}, false, fmt.Errorf("transformer: duplicate point effect source %s", kind)
@@ -199,6 +201,18 @@ func (c *EffectCatalog) AdmitPoint(active []operationplan.Kind) (EffectAdmission
 	}
 	hasInvalidation := counts[operationplan.PathDescendantInvalidation] == 1
 	hasWrite := counts[operationplan.DynamicIndexWrite] == 1
+	hasPathAssignment := counts[operationplan.PathAssignment] == 1
+	hasStaticWrite := counts[operationplan.PathStaticMemberWrite] == 1
+	if hasPathAssignment != hasStaticWrite {
+		return EffectAdmission{}, false, fmt.Errorf("transformer: path store requires paired assignment and static-member sources")
+	}
+	if hasPathAssignment {
+		if hasInvalidation || hasWrite {
+			return EffectAdmission{}, false, fmt.Errorf("transformer: multiple atomic point effects require ordered multi-effect admission")
+		}
+		descriptor := c.descriptors[EffectPathStore]
+		return EffectAdmission{Kind: descriptor.kind, Consumes: descriptor.Sources()}, true, nil
+	}
 	switch {
 	case hasWrite && !hasInvalidation:
 		return EffectAdmission{}, false, fmt.Errorf("transformer: dynamic index write missing atomic path invalidation barrier")
@@ -223,10 +237,23 @@ func defaultEffectDescriptors() []EffectDescriptor {
 	}
 	mutation := cloneLaneUses(invalidates)
 	mutation[state.LanePlacement] = LaneUseReadWrite
+	mutation[state.LaneTypestates] = LaneUseReadWrite
+	mutation[state.LaneEffectDeltas] = LaneUseReadWrite
 	allocation := baseEffectLaneUses()
-	allocation[state.LaneValues] = LaneUseWrite
-	allocation[state.LaneHeapTableIdentity] = LaneUseWrite
-	allocation[state.LanePlacement] = LaneUseWrite
+	allocation[state.LaneHeapTableIdentity] = LaneUseReadWrite
+	allocation[state.LanePlacement] = LaneUseReadWrite
+	objectMaterialization := baseEffectLaneUses()
+	objectMaterialization[state.LaneValues] = LaneUseRead
+	objectMaterialization[state.LaneHeapTableIdentity] = LaneUseWrite
+	objectMaterialization[state.LanePlacement] = LaneUseReadWrite
+	pathStore := baseEffectLaneUses()
+	for _, lane := range []state.LaneID{
+		state.LaneValues, state.LanePathEvidence, state.LaneDynamicIndex,
+		state.LaneHeapTableIdentity, state.LaneKeyMemberships, state.LaneTypestates,
+		state.LanePlacement, state.LaneLenFloors, state.LaneUserLattices,
+	} {
+		pathStore[lane] = LaneUseReadWrite
+	}
 	return []EffectDescriptor{
 		NewEffectDescriptor(EffectInvalidatePath,
 			[]operationplan.Kind{operationplan.PathDescendantInvalidation}, invalidates,
@@ -251,6 +278,16 @@ func defaultEffectDescriptors() []EffectDescriptor {
 				callboundary.BoundaryFactKind("HeapTableObjects"),
 				callboundary.BoundaryFactKind("FreshHeapAllocations"),
 				callboundary.BoundaryFactKind("HeapKeySpace"),
+			}),
+		NewEffectDescriptor(EffectObjectMaterialization,
+			[]operationplan.Kind{operationplan.ObjectLiteral}, objectMaterialization,
+			[]callboundary.BoundaryFactKind{callboundary.BoundaryFactKind("HeapTableObjects")}),
+		NewEffectDescriptor(EffectPathStore,
+			[]operationplan.Kind{operationplan.PathAssignment, operationplan.PathStaticMemberWrite}, pathStore,
+			[]callboundary.BoundaryFactKind{
+				callboundary.BoundaryFactKind(callboundary.LanePathStaticMembers),
+				callboundary.BoundaryFactKind(callboundary.LaneBranchProofs),
+				callboundary.BoundaryFactKind("HeapTableObjects"),
 			}),
 	}
 }

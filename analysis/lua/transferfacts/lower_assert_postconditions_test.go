@@ -65,7 +65,7 @@ func TestLowerDirectAssertTypeEqualPostcondition(t *testing.T) {
 	})
 	stmts := []ast.Stmt{decl, stmt}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"assert", "type"}})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 
 	body := wirlower.Lower("assert-postcondition", stmts, bindings, built)
 	facts := LowerDetailed(built.Graph, Config{Registry: standard.Registry(), WIR: body, SealedLuaTypeChecks: true}).Facts

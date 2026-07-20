@@ -69,11 +69,19 @@ func (ks *KeySpace) ImportKey(from *KeySpace, k Key) (Key, bool) {
 			return Key{}, false
 		}
 		out.Root = uint32(ks.internRoot(name))
+	case kindFormalRoot:
+		descriptor := from.formalRootEntries[k.Root]
+		formalRoot, ok := ks.formalRootKey(descriptor)
+		if !ok {
+			return Key{}, false
+		}
+		formalRoot.Segs = segs
+		return ks.bindKey(formalRoot), true
 	case kindBoundaryExistential:
 		descriptor := from.existentialEntries[k.Root]
 		existential := ks.existentialKey(descriptor)
 		existential.Segs = segs
-		return existential, true
+		return ks.bindKey(existential), true
 	case KindRootlessSuffix:
 		if len(segments) == 0 {
 			return Key{}, false
@@ -95,7 +103,10 @@ func (ks *KeySpace) namedRootKey(root string, segs SegmentsID) Key {
 	if idx, ok := retSlotIndex(root); ok {
 		return ks.bindKey(Key{Kind: KindRetSlot, Root: uint32(idx), Segs: segs})
 	}
-	return ks.bindKey(Key{Kind: KindNamed, Root: uint32(ks.internRoot(root)), Segs: segs, Canon: strings.HasPrefix(root, boundaryExistentialPrefix)})
+	return ks.bindKey(Key{
+		Kind: KindNamed, Root: uint32(ks.internRoot(root)), Segs: segs,
+		Canon: strings.HasPrefix(root, boundaryExistentialPrefix) || strings.HasPrefix(root, formalRootPrefix),
+	})
 }
 
 // FromResolverKey produces the structural key for a verbose resolver root, the
@@ -137,10 +148,16 @@ func (ks *KeySpace) LookupResolverKey(sym symbol.ID, version int, segments []seg
 	if len(segments) != 0 && segs == 0 {
 		return Key{}, false
 	}
+	var candidate Key
 	if version > 0 {
-		return ks.bindKey(Key{Kind: KindResolverSym, Sym: sym, Ver: uint32(version), Segs: segs}), true
+		candidate = Key{Kind: KindResolverSym, Sym: sym, Ver: uint32(version), Segs: segs, owner: ks.owner}
+	} else {
+		candidate = Key{Kind: KindUnversionedSym, Sym: sym, Segs: segs, owner: ks.owner}
 	}
-	return ks.bindKey(Key{Kind: KindUnversionedSym, Sym: sym, Segs: segs}), true
+	if !ks.validKey(candidate) {
+		return Key{}, false
+	}
+	return candidate, true
 }
 
 // FromPathKey parses a point-local resolver key string (sym<id>@<ver><segs>)
@@ -197,17 +214,29 @@ func (ks *KeySpace) FromStateKey(key pathdom.PathKey) (Key, bool) {
 		}
 		out := ks.namedRootKey(path.Root, ks.internSegments(path.Segments))
 		out.Canon = true
-		return out, true
+		return ks.bindKey(out), true
 	}
 	root, segments, ok := parsePlainNamedRoot(string(key))
 	if !ok {
 		return Key{}, false
 	}
 	segs := ks.internSegments(segments)
+	if strings.HasPrefix(root, formalRootPrefix) {
+		descriptor, valid := decodeFormalRootDescriptor(root)
+		if !valid {
+			return Key{}, false
+		}
+		out, interned := ks.formalRootKey(descriptor)
+		if !interned {
+			return Key{}, false
+		}
+		out.Segs = segs
+		return ks.bindKey(out), true
+	}
 	if descriptor, existential := decodeBoundaryExistentialDescriptor(root); existential {
 		out := ks.existentialKey(descriptor)
 		out.Segs = segs
-		return out, true
+		return ks.bindKey(out), true
 	}
 	return ks.namedRootKey(root, segs), true
 }

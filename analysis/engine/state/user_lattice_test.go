@@ -45,9 +45,45 @@ func TestUserLatticeCallBoundaryDrop(t *testing.T) {
 	stateKey := pathaddr.StateKey("sym802@1")
 
 	withTaint := State{}.WriteUserElement(reg, ks, taintAxis, stateKey, "Tainted")
-	dropped := withTaint.ApplyUserCallBoundary(reg)
+	dropped, err := RegisteredProductDomain(reg).ApplyCallBoundary(withTaint)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got, ok := dropped.ReadUserElement(reg, ks, taintAxis, stateKey); !ok || got != "Untainted" {
 		t.Fatalf("call-boundary taint = %q/%v, want Untainted/true", got, ok)
+	}
+}
+
+func TestCallBoundaryFactorMatchesConcreteUserLatticeLaw(t *testing.T) {
+	const taintAxis userlattice.AxisID = "state.test.call-factor"
+	reg := userLatticeTestRegistry(t, userLatticeTestSpec(taintAxis, userlattice.CallBoundaryDrop))
+	ks := keyspace.New()
+	stateKey := pathaddr.StateKey("sym812@1")
+	domain := RegisteredProductDomain(reg)
+	input := State{}.WriteUserElement(reg, ks, taintAxis, stateKey, "Tainted")
+
+	got, err := domain.ApplyCallBoundary(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes := domain.CallBoundaryFactorLanes()
+	if len(lanes) != 1 || lanes[0].ID() != LaneUserLattices {
+		t.Fatalf("call-boundary participants = %#v, want only user-lattices", lanes)
+	}
+	factors, err := domain.DecomposeLanes(input, lanes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factors[0], err = domain.ApplyCallBoundaryFactor(factors[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	factored, err := domain.PatchLaneFactors(input, factors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domain.Lattice().Equal(factored, got) {
+		t.Fatal("factor-native call boundary differs from concrete law")
 	}
 }
 
@@ -64,6 +100,55 @@ func TestUserLatticeJoinIdenticalAllocFree(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("user-lattice identical join allocations/run = %.1f, want 0", allocs)
+	}
+}
+
+func TestUserLatticeMeetIsPointwiseExact(t *testing.T) {
+	const taintAxis userlattice.AxisID = "state.test.meet"
+	reg := userLatticeTestRegistry(t, userLatticeTestSpec(taintAxis, userlattice.CallBoundaryKeep))
+	ks := keyspace.New()
+	first := pathaddr.StateKey("sym804@1")
+	second := pathaddr.StateKey("sym805@1")
+	productDomain, err := DefaultLaneCatalog().TryProductDomainWithLaneSet(reg, NewLaneSet(LaneUserLattices))
+	if err != nil {
+		t.Fatalf("product domain: %v", err)
+	}
+	domain := productDomain.Lattice()
+	left := domain.Bottom().
+		WriteUserElement(reg, ks, taintAxis, first, "Sanitized").
+		WriteUserElement(reg, ks, taintAxis, second, "Tainted")
+	right := domain.Bottom().
+		WriteUserElement(reg, ks, taintAxis, first, "Tainted")
+	lane, _ := productDomain.ProductLane(LaneUserLattices)
+	leftFactor, err := productDomain.DecomposeLanes(left, []ProductLane{lane})
+	if err != nil {
+		t.Fatalf("decompose left: %v", err)
+	}
+	rightFactor, err := productDomain.DecomposeLanes(right, []ProductLane{lane})
+	if err != nil {
+		t.Fatalf("decompose right: %v", err)
+	}
+	metFactor, err := productDomain.LaneMeet(leftFactor[0], rightFactor[0])
+	if err != nil {
+		t.Fatalf("lane meet: %v", err)
+	}
+	met, err := productDomain.Compose([]LaneFactor{metFactor})
+	if err != nil {
+		t.Fatalf("compose meet: %v", err)
+	}
+	if got, _ := met.ReadUserElement(reg, ks, taintAxis, first); got != "Untainted" {
+		t.Fatalf("first meet = %q, want Untainted", got)
+	}
+	if got, _ := met.ReadUserElement(reg, ks, taintAxis, second); got != "Untainted" {
+		t.Fatalf("second meet = %q, want Untainted", got)
+	}
+	topFactor, _ := productDomain.LaneTop(lane)
+	topMeet, err := productDomain.LaneMeet(topFactor, leftFactor[0])
+	if err != nil {
+		t.Fatalf("Meet(Top,left): %v", err)
+	}
+	if equal, _ := productDomain.LaneEqual(topMeet, leftFactor[0]); !equal {
+		t.Fatalf("Meet(Top,left) != left factor")
 	}
 }
 

@@ -38,38 +38,8 @@ type observationCoverageRequirement struct {
 	exact bool
 }
 
-type coverageBDD uint32
-
-const (
-	coverageFalse coverageBDD = iota
-	coverageTrue
-)
-
-type coverageBDDNode struct {
-	variable uint32
-	low      coverageBDD
-	high     coverageBDD
-}
-
-type coverageUniqueKey struct {
-	variable uint32
-	low      coverageBDD
-	high     coverageBDD
-}
-
-type coverageApplyOp uint8
-
-const (
-	coverageAnd coverageApplyOp = iota + 1
-	coverageOr
-)
-
-type coverageApplyKey struct {
-	op          coverageApplyOp
-	left, right coverageBDD
-}
-
 type observationCoverageScratch struct {
+	decisionKernel
 	arena *Arena
 
 	worlds          map[observationCoverageKey]int
@@ -81,25 +51,19 @@ type observationCoverageScratch struct {
 	collectSeen     map[Guard]struct{}
 	collectOps      uint64
 	directSet       map[observationCoverageGuardWorld]struct{}
-	bddWork         []coverageBDD
-	lastUnionInputs []coverageBDD
-	lastUnionResult coverageBDD
+	bddWork         []decisionRef
+	lastUnionInputs []decisionRef
+	lastUnionResult decisionRef
 	lastUnionValid  bool
 
-	nodes     []coverageBDDNode
-	unique    map[coverageUniqueKey]coverageBDD
-	applyMemo map[coverageApplyKey]coverageBDD
-	notMemo   map[coverageBDD]coverageBDD
-	guardMemo map[Guard]coverageBDD
-	applyOps  int
+	guardMemo map[Guard]decisionRef
 }
 
 func newObservationCoverageScratch() *observationCoverageScratch {
 	return &observationCoverageScratch{
 		worlds: make(map[observationCoverageKey]int),
 		seen:   make(map[ValueTerm]struct{}), ranks: make(map[ValueTerm]uint32), names: make(map[ValueTerm]string), collectSeen: make(map[Guard]struct{}), directSet: make(map[observationCoverageGuardWorld]struct{}),
-		unique: make(map[coverageUniqueKey]coverageBDD), applyMemo: make(map[coverageApplyKey]coverageBDD),
-		notMemo: make(map[coverageBDD]coverageBDD), guardMemo: make(map[Guard]coverageBDD),
+		decisionKernel: newDecisionKernel(), guardMemo: make(map[Guard]decisionRef),
 	}
 }
 
@@ -136,21 +100,10 @@ func (s *observationCoverageScratch) reset(arena *Arena) {
 		}
 	}
 	s.arena = arena
-	s.nodes = s.nodes[:0]
-	s.nodes = append(s.nodes, coverageBDDNode{}, coverageBDDNode{})
-	for key := range s.unique {
-		delete(s.unique, key)
-	}
-	for key := range s.applyMemo {
-		delete(s.applyMemo, key)
-	}
-	for key := range s.notMemo {
-		delete(s.notMemo, key)
-	}
+	s.decisionKernel.resetBoolean()
 	for key := range s.guardMemo {
 		delete(s.guardMemo, key)
 	}
-	s.applyOps = 0
 	s.bddWork = s.bddWork[:0]
 	s.lastUnionInputs = s.lastUnionInputs[:0]
 	s.lastUnionValid = false
@@ -303,11 +256,11 @@ func observationRequirementsCover(ctx context.Context, arena *Arena, requirement
 			if !ok {
 				return false, scratch.coverageError(ctx)
 			}
-			gap, ok := scratch.apply(ctx, coverageAnd, required, notOwed)
+			gap, ok := scratch.apply(ctx, decisionAnd, required, notOwed)
 			if !ok {
 				return false, scratch.coverageError(ctx)
 			}
-			if gap != coverageFalse {
+			if gap != decisionFalse {
 				return false, nil
 			}
 			if len(world.owed) == 0 {
@@ -329,11 +282,11 @@ func observationRequirementsCover(ctx context.Context, arena *Arena, requirement
 		if !ok {
 			return false, scratch.coverageError(ctx)
 		}
-		gap, ok := scratch.apply(ctx, coverageAnd, owed, notEvidence)
+		gap, ok := scratch.apply(ctx, decisionAnd, owed, notEvidence)
 		if !ok {
 			return false, scratch.coverageError(ctx)
 		}
-		if gap != coverageFalse {
+		if gap != decisionFalse {
 			return false, nil
 		}
 	}
@@ -405,33 +358,10 @@ func (s *observationCoverageScratch) collectGuardAtoms(ctx context.Context, guar
 }
 
 func (s *observationCoverageScratch) rankAtoms() error {
-	for _, atom := range s.atoms {
-		if _, ok := s.names[atom]; !ok {
-			s.names[atom] = s.arena.canonicalValue(atom)
-		}
-	}
-	for index := 1; index < len(s.atoms); index++ {
-		atom := s.atoms[index]
-		name := s.names[atom]
-		position := index
-		for position > 0 {
-			prior := s.atoms[position-1]
-			priorName := s.names[prior]
-			if name > priorName || (name == priorName && atom >= prior) {
-				break
-			}
-			s.atoms[position] = s.atoms[position-1]
-			position--
-		}
-		s.atoms[position] = atom
-	}
-	for index, atom := range s.atoms {
-		s.ranks[atom] = uint32(index)
-	}
-	return nil
+	return rankStructuralGuardAtoms(s.arena, s.atoms, s.names, s.ranks)
 }
 
-func (s *observationCoverageScratch) guardUnion(ctx context.Context, guards []observationCoverageGuardWorld) (coverageBDD, bool) {
+func (s *observationCoverageScratch) guardUnion(ctx context.Context, guards []observationCoverageGuardWorld) (decisionRef, bool) {
 	s.bddWork = s.bddWork[:0]
 	for _, world := range guards {
 		row, ok := s.guard(ctx, world.row)
@@ -442,14 +372,14 @@ func (s *observationCoverageScratch) guardUnion(ctx context.Context, guards []ob
 		if !ok {
 			return 0, false
 		}
-		next, ok := s.apply(ctx, coverageAnd, row, local)
+		next, ok := s.apply(ctx, decisionAnd, row, local)
 		if !ok {
 			return 0, false
 		}
 		s.bddWork = append(s.bddWork, next)
 	}
 	if len(s.bddWork) == 0 {
-		return coverageFalse, true
+		return decisionFalse, true
 	}
 	if s.lastUnionValid && len(s.lastUnionInputs) == len(s.bddWork) {
 		equal := true
@@ -464,7 +394,7 @@ func (s *observationCoverageScratch) guardUnion(ctx context.Context, guards []ob
 		}
 	}
 	if cap(s.lastUnionInputs) < len(s.bddWork) {
-		s.lastUnionInputs = make([]coverageBDD, len(s.bddWork))
+		s.lastUnionInputs = make([]decisionRef, len(s.bddWork))
 	} else {
 		s.lastUnionInputs = s.lastUnionInputs[:len(s.bddWork)]
 	}
@@ -475,7 +405,7 @@ func (s *observationCoverageScratch) guardUnion(ctx context.Context, guards []ob
 			if read+1 == width {
 				s.bddWork[write] = s.bddWork[read]
 			} else {
-				joined, ok := s.apply(ctx, coverageOr, s.bddWork[read], s.bddWork[read+1])
+				joined, ok := s.apply(ctx, decisionOr, s.bddWork[read], s.bddWork[read+1])
 				if !ok {
 					return 0, false
 				}
@@ -489,7 +419,7 @@ func (s *observationCoverageScratch) guardUnion(ctx context.Context, guards []ob
 	return s.lastUnionResult, true
 }
 
-func (s *observationCoverageScratch) guard(ctx context.Context, guard Guard) (coverageBDD, bool) {
+func (s *observationCoverageScratch) guard(ctx context.Context, guard Guard) (decisionRef, bool) {
 	if cached, ok := s.guardMemo[guard]; ok {
 		return cached, true
 	}
@@ -497,30 +427,30 @@ func (s *observationCoverageScratch) guard(ctx context.Context, guard Guard) (co
 		return 0, false
 	}
 	node := s.arena.guards[guard]
-	var out coverageBDD
+	var out decisionRef
 	var ok bool = true
 	switch node.op {
 	case guardTrue:
-		out = coverageTrue
+		out = decisionTrue
 	case guardFalse:
-		out = coverageFalse
+		out = decisionFalse
 	case guardTruthy, guardFalsy:
 		rank, found := s.ranks[node.value]
 		if !found {
 			return 0, false
 		}
-		out, ok = s.makeNode(rank, coverageFalse, coverageTrue)
+		out, ok = s.makeNode(rank, decisionFalse, decisionTrue)
 		if ok && node.op == guardFalsy {
 			out, ok = s.negate(ctx, out)
 		}
 	case guardAnd, guardOr:
-		op, identity := coverageAnd, coverageTrue
+		op, identity := decisionAnd, decisionTrue
 		if node.op == guardOr {
-			op, identity = coverageOr, coverageFalse
+			op, identity = decisionOr, decisionFalse
 		}
 		out = identity
 		for _, child := range node.args {
-			var next coverageBDD
+			var next decisionRef
 			next, ok = s.guard(ctx, child)
 			if !ok {
 				break
@@ -539,108 +469,43 @@ func (s *observationCoverageScratch) guard(ctx context.Context, guard Guard) (co
 	return out, ok
 }
 
-func (s *observationCoverageScratch) makeNode(variable uint32, low, high coverageBDD) (coverageBDD, bool) {
-	if low == high {
-		return low, true
+func (s *observationCoverageScratch) makeNode(variable uint32, low, high decisionRef) (decisionRef, bool) {
+	if int(low) >= len(s.nodes) || int(high) >= len(s.nodes) {
+		return 0, false
 	}
-	key := coverageUniqueKey{variable: variable, low: low, high: high}
-	if prior, ok := s.unique[key]; ok {
-		return prior, true
-	}
-	id := coverageBDD(len(s.nodes))
-	s.nodes = append(s.nodes, coverageBDDNode{variable: variable, low: low, high: high})
-	s.unique[key] = id
-	return id, true
+	return s.branch(variable, low, high), true
 }
 
-func (s *observationCoverageScratch) apply(ctx context.Context, op coverageApplyOp, left, right coverageBDD) (coverageBDD, bool) {
-	s.applyOps++
-	if s.applyOps&255 == 0 && ctx.Err() != nil {
-		return 0, false
-	}
-	if op == coverageAnd {
-		if left == coverageFalse || right == coverageFalse {
-			return coverageFalse, true
+func (s *observationCoverageScratch) apply(ctx context.Context, op decisionBooleanOp, left, right decisionRef) (decisionRef, bool) {
+	out, err := s.decisionKernel.apply(ctx, uint8(op), true, left, right, func(left, right decisionLeaf) (decisionLeaf, error) {
+		if left > 1 || right > 1 {
+			return 0, errDecisionMalformed
 		}
-		if left == coverageTrue {
-			return right, true
+		if op == decisionAnd {
+			if left == 1 && right == 1 {
+				return 1, nil
+			}
+			return 0, nil
 		}
-		if right == coverageTrue || left == right {
-			return left, true
+		if op == decisionOr {
+			if left == 1 || right == 1 {
+				return 1, nil
+			}
+			return 0, nil
 		}
-	} else {
-		if left == coverageTrue || right == coverageTrue {
-			return coverageTrue, true
-		}
-		if left == coverageFalse {
-			return right, true
-		}
-		if right == coverageFalse || left == right {
-			return left, true
-		}
-	}
-	if right < left {
-		left, right = right, left
-	}
-	key := coverageApplyKey{op: op, left: left, right: right}
-	if prior, ok := s.applyMemo[key]; ok {
-		return prior, true
-	}
-	leftNode, rightNode := s.nodes[left], s.nodes[right]
-	variable := leftNode.variable
-	if rightNode.variable < variable {
-		variable = rightNode.variable
-	}
-	leftLow, leftHigh := left, left
-	if leftNode.variable == variable {
-		leftLow, leftHigh = leftNode.low, leftNode.high
-	}
-	rightLow, rightHigh := right, right
-	if rightNode.variable == variable {
-		rightLow, rightHigh = rightNode.low, rightNode.high
-	}
-	low, ok := s.apply(ctx, op, leftLow, rightLow)
-	if !ok {
-		return 0, false
-	}
-	high, ok := s.apply(ctx, op, leftHigh, rightHigh)
-	if !ok {
-		return 0, false
-	}
-	out, ok := s.makeNode(variable, low, high)
-	if ok {
-		s.applyMemo[key] = out
-	}
-	return out, ok
+		return 0, errDecisionMalformed
+	})
+	return out, err == nil
 }
 
-func (s *observationCoverageScratch) negate(ctx context.Context, value coverageBDD) (coverageBDD, bool) {
-	if value == coverageFalse {
-		return coverageTrue, true
-	}
-	if value == coverageTrue {
-		return coverageFalse, true
-	}
-	if prior, ok := s.notMemo[value]; ok {
-		return prior, true
-	}
-	if ctx.Err() != nil {
-		return 0, false
-	}
-	node := s.nodes[value]
-	low, ok := s.negate(ctx, node.low)
-	if !ok {
-		return 0, false
-	}
-	high, ok := s.negate(ctx, node.high)
-	if !ok {
-		return 0, false
-	}
-	out, ok := s.makeNode(node.variable, low, high)
-	if ok {
-		s.notMemo[value] = out
-	}
-	return out, ok
+func (s *observationCoverageScratch) negate(ctx context.Context, value decisionRef) (decisionRef, bool) {
+	out, err := s.decisionKernel.mapLeaves(ctx, uint8(decisionNot), value, func(leaf decisionLeaf) (decisionLeaf, error) {
+		if leaf > 1 {
+			return 0, errDecisionMalformed
+		}
+		return 1 - leaf, nil
+	})
+	return out, err == nil
 }
 
 func (s *observationCoverageScratch) coverageError(ctx context.Context) error {

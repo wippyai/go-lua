@@ -54,6 +54,18 @@ func TestElemLatticeLaws(t *testing.T) {
 	if got := d.Join(neg, a); got.Lo != -7 {
 		t.Fatalf("Join must preserve weaker negative floors; got %d want -7", got.Lo)
 	}
+	if got := d.Meet(a, b); got.Lo != 3 {
+		t.Fatalf("Meet must keep stronger floor max(1,3)=3; got %d", got.Lo)
+	}
+	if got := d.Meet(neg, a); got.Lo != 1 {
+		t.Fatalf("Meet must preserve stronger floor max(-7,1)=1; got %d", got.Lo)
+	}
+	if got := d.Meet(a, d.Join(a, b)); !d.Equal(got, a) {
+		t.Fatalf("Meet absorption failed: got %v want %v", got, a)
+	}
+	if got := d.Join(a, d.Meet(a, b)); !d.Equal(got, a) {
+		t.Fatalf("Join absorption failed: got %v want %v", got, a)
+	}
 	if got := d.Join(d.Bottom(), b); !d.Equal(got, b) {
 		t.Fatalf("Join with Bottom must yield the other operand; got %v", got)
 	}
@@ -65,6 +77,12 @@ func TestElemLatticeLaws(t *testing.T) {
 	}
 	if !d.LessOrEq(neg, d.Top()) {
 		t.Fatalf("every concrete floor must be below Top")
+	}
+	if got := d.Meet(d.Bottom(), b); !d.Equal(got, d.Bottom()) {
+		t.Fatalf("Meet with Bottom must yield Bottom; got %v", got)
+	}
+	if got := d.Meet(d.Top(), b); !d.Equal(got, b) {
+		t.Fatalf("Meet with Top must yield the other operand; got %v", got)
 	}
 }
 
@@ -110,6 +128,40 @@ func TestMapMustSemantics(t *testing.T) {
 	}
 	if _, ok := vals[y]; ok {
 		t.Fatalf("non-common key must be dropped at the merge")
+	}
+}
+
+func TestMapMeetConjoinsSupportAndFloors(t *testing.T) {
+	d := MapDomain()
+	ks := keyspace.New()
+	x := keyOf(ks, t, "x")
+	y := keyOf(ks, t, "y")
+	z := keyOf(ks, t, "z")
+	a := lift_mustValues(map[keyspace.Key]Floor{
+		x: {Lo: -4},
+		y: {Lo: 2},
+	})
+	b := lift_mustValues(map[keyspace.Key]Floor{
+		x: {Lo: 7},
+		z: {Lo: -3},
+	})
+
+	met := d.Meet(a, b)
+	vals := met.Values()
+	if len(vals) != 3 || vals[x].Lo != 7 || vals[y].Lo != 2 || vals[z].Lo != -3 {
+		t.Fatalf("meet = %#v, want union support with shared max floor", vals)
+	}
+	if got := d.Meet(d.Bottom(), a); !d.Equal(got, d.Bottom()) {
+		t.Fatal("must-map Bottom did not absorb Meet")
+	}
+	if got := d.Meet(d.Top(), a); !d.Equal(got, a) {
+		t.Fatal("must-map Top was not Meet identity")
+	}
+	if got := d.Meet(a, d.Join(a, b)); !d.Equal(got, a) {
+		t.Fatal("must-map Meet absorption failed")
+	}
+	if got := d.Join(a, d.Meet(a, b)); !d.Equal(got, a) {
+		t.Fatal("must-map Join absorption failed")
 	}
 }
 

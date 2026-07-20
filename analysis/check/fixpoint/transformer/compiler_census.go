@@ -30,21 +30,41 @@ func (c *PlanCompiler) EligibilityCensus(reg *axis.Registry, graph cfg.Graph, pl
 	if c == nil || reg == nil || graph == nil || plan == nil || graph.Size() != plan.PointCount() {
 		return []PlanEligibilityEntry{{Family: "compiler", Reason: "registry, graph, plan, and matching rows are required"}}
 	}
+	builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
 	ctx := planCompileContext{
 		registry: reg, graph: graph, plan: plan, facts: plan.Facts(),
-		builder: NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan),
+		builder: builder,
 		locals:  make(map[symbol.ID]ValueTerm), expressions: make(map[factflow.ExprRef][]ValueTerm), allocationEffects: make(map[cfg.Point]EffectTerm), genericBindings: make(map[symbol.ID]symbolicGenericBinding),
 	}
-	var rowEffects []EffectTerm
+	var rowSteps []rowStep
 	var rowOutput summary.Summary
-	ctx.rowEffects = &rowEffects
+	ctx.rowSteps = &rowSteps
 	ctx.rowOutput = &rowOutput
 	if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
 		return []PlanEligibilityEntry{{Family: "compiler", Reason: "boundary: " + err.Error()}}
 	}
+	if err := bindChannelSelectResultTerms(&ctx); err != nil {
+		return []PlanEligibilityEntry{{Family: "compiler", Reason: "channel select results: " + err.Error()}}
+	}
 	if err := bindStaticSignatureTerms(&ctx); err != nil {
 		return []PlanEligibilityEntry{{Family: "compiler", Reason: "signature calls: " + err.Error()}}
 	}
+	// Production lowering executes against the one sealed State-backed
+	// environment. The census must exercise the same term producers rather than
+	// the retired row-local binding model, or exact N4/N5 instances are reported
+	// contextual even though the structural freezer admits them.
+	ctx.locals = make(map[symbol.ID]ValueTerm)
+	for _, id := range sealedEnvironmentSymbols(plan) {
+		term := builder.Arena().bindEnvironmentSymbol(id)
+		if term == 0 {
+			return []PlanEligibilityEntry{{Family: "compiler", Reason: fmt.Sprintf("environment symbol %d could not be sealed", id)}}
+		}
+		ctx.locals[id] = term
+	}
+	if err := bindStructuralExpressionTerms(builder, plan); err != nil {
+		return []PlanEligibilityEntry{{Family: "compiler", Reason: "structural expressions: " + err.Error()}}
+	}
+	ctx.structuralEnvironment = true
 	var out []PlanEligibilityEntry
 	dependencies := plan.DependencyCursor()
 	for family, ok := dependencies.Next(); ok; family, ok = dependencies.Next() {
@@ -69,6 +89,13 @@ func (c *PlanCompiler) EligibilityCensus(reg *axis.Registry, graph cfg.Graph, pl
 		}
 	}
 	for _, point := range order {
+		var rootAssignment rootAssignmentTerm
+		var returnTransaction returnTransactionTerm
+		var structuralOutput structuralOutputContribution
+		ctx.point = point
+		ctx.rootAssignment = &rootAssignment
+		ctx.returnTransaction = &returnTransaction
+		ctx.structuralOutput = &structuralOutput
 		cursor := plan.Cursor(point)
 		for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
 			handler := c.facts[cell.Kind()]

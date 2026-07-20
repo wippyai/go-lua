@@ -34,7 +34,7 @@ need_string(42)`)
 	}
 }
 
-func TestDirectCallJudgmentSuppressesCallerOwnedSpecializedParameterDuplicate(t *testing.T) {
+func TestDirectCallJudgmentReportsCallerOwnedParameterMismatchOnce(t *testing.T) {
 	result := runDiagnosticsResult(t, `local function invoke(provider, payload)
     provider.send(payload)
 end
@@ -56,7 +56,7 @@ invoke(p, "bad")`)
 		}
 	}
 	if len(callArg) != 1 {
-		t.Fatalf("direct-call diagnostics = %d, want caller-owned summary only: %#v", len(callArg), diags)
+		t.Fatalf("direct-call diagnostics = %d, want one caller-owned mismatch: %#v", len(callArg), diags)
 	}
 	d := callArg[0]
 	if d.Position.Line != 9 || d.Position.Column != 11 {

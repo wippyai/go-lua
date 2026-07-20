@@ -5,10 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -21,50 +19,49 @@ type ModuleExportLookup interface {
 // ModuleLoadOutcomeProviderConfig carries module export lookup plus the generic
 // fact/source read models needed to resolve require's module path argument.
 type ModuleLoadOutcomeProviderConfig struct {
-	Exports               ModuleExportLookup
-	NameFor               SignatureNameFunc
-	NameForSite           SignatureSiteNameFunc
-	Sources               sourcevalue.SourceValues
-	ExpressionRefinements sourcevalue.ExpressionRefinements
-	TypeValues            *typevalue.Cache
+	Exports     ModuleExportLookup
+	NameFor     SignatureNameFunc
+	NameForSite SignatureSiteNameFunc
+	TypeValues  *typevalue.Cache
 }
 
 // ModuleLoadOutcomeProvider materializes require("exact-path") slot zero from
 // manifest export metadata. Non-require calls, non-single-argument calls,
 // dynamic paths, and missing manifests fail closed with no result.
-func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpayload.CallOutcomeProvider {
+func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpayload.CallOutcomeProgram {
 	exports := config.Exports
 	nameFor := config.NameFor
 	nameForSite := config.NameForSite
-	sources := config.Sources
-	expressionRefinements := config.ExpressionRefinements
 	typeValues := config.TypeValues
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
-		if exports == nil || (nameFor == nil && nameForSite == nil) || sources == nil {
-			return callpayload.CallOutcome{}
+	shape := func(ctx transfer.NodeContext, site factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
+		name, ok := signatureNameForSite(ctx, site, nameForSite, nameFor)
+		if !ok || name != "require" || site.ArgumentSourceCount() != 1 {
+			return callpayload.CallOutcomeSiteShape{}, nil
+		}
+		return callpayload.CallOutcomeSiteShape{FieldNames: []string{"Results", "PostReturnAuthority"}}, nil
+	}
+	evaluate := func(ctx transfer.NodeContext, site factflow.CallSiteView, input callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		if exports == nil || (nameFor == nil && nameForSite == nil) {
+			return callpayload.CallOutcome{}, nil
 		}
 		name, ok := signatureNameForSite(ctx, site, nameForSite, nameFor)
 		if !ok || name != "require" {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, nil
 		}
 		if site.ArgumentSourceCount() != 1 {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, nil
 		}
-		arg, ok := site.ArgumentSourceAt(0)
+		value, ok := input.Argument(0)
 		if !ok {
-			return callpayload.CallOutcome{}
-		}
-		value, ok := expressionRefinements.Bind(ctx.Registry, sources).ValueOfSource(ctx.Point, arg, in, read)
-		if !ok {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, nil
 		}
 		path, ok := typevalue.StringLiteralOf(ctx.Registry, value)
 		if !ok {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, nil
 		}
 		exportType, ok := exports.LookupExport(path)
 		if !ok || exportType == nil {
-			return callpayload.CallOutcome{}
+			return callpayload.CallOutcome{}, nil
 		}
 		out := callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{
@@ -73,6 +70,7 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 			}},
 		}
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
-		return out
+		return out, nil
 	}
+	return callpayload.SealCallOutcomeProgram("module-load outcome", []string{"Results", "PostReturnAuthority"}, state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate)
 }

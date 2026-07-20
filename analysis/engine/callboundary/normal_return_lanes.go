@@ -28,6 +28,7 @@ const (
 	LaneStoreRelations           NormalReturnFactLaneID = "store-relations"
 	LaneLifecycleFacts           NormalReturnFactLaneID = "lifecycle-facts"
 	LaneNumFloors                NormalReturnFactLaneID = "num-floors"
+	LaneNumCeils                 NormalReturnFactLaneID = "num-ceils"
 	LaneRelConstraints           NormalReturnFactLaneID = "rel-constraints"
 )
 

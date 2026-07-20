@@ -612,6 +612,9 @@ func (r *Result) callPrefixMutationKind(point cfg.Point, id identity.ID, receive
 		if name == "" || !invalidation.PreserveStructuralWitness {
 			return prefixMutationUnknown, true
 		}
+		if _, inPrefix := fields[name]; !inPrefix {
+			continue
+		}
 		if r.callStaticMemberExistedBefore(point, id, invalidation.Path) {
 			return prefixMutationUnknown, true
 		}

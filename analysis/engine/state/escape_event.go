@@ -16,7 +16,11 @@ func (s State) EscapeEventsSnapshot() EscapeEventsSnapshot {
 	if !s.laneEnabled(laneEscapeEventsBit) {
 		return EscapeEventsSnapshot{Bottom: true}
 	}
-	snapshot := s.escapeEvents.Snapshot()
+	return escapeEventsSnapshot(s.escapeEvents)
+}
+
+func escapeEventsSnapshot(lane escapeevent.Lane) EscapeEventsSnapshot {
+	snapshot := lane.Snapshot()
 	return EscapeEventsSnapshot{
 		Bottom: snapshot.Bottom,
 		Top:    snapshot.Top,

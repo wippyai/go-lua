@@ -18,15 +18,22 @@ func (r *Result) PreferredLocalAssignmentSourceValue(lowered, generic product.Va
 
 // LocalAssignmentGenericSourceValueMorePrecise reports whether the generic
 // expression read carries the same non-nil type as a nilable lowered source and
-// should therefore preserve the tighter proof.
+// should therefore preserve the tighter proof. A lowered value that is Any/
+// Unknown because it is an explicit declared-any contract is not a proof gap:
+// it is preferred over the generic read exactly like a proof-bearing lowered
+// type is, so an explicit `local x: any` boundary never gets laundered away by
+// a sharper-looking but untagged generic read.
 func (r *Result) LocalAssignmentGenericSourceValueMorePrecise(lowered, generic product.Value) bool {
 	loweredType, loweredOK := r.ValueTypeWithPresence(lowered)
 	genericType, genericOK := r.ValueTypeWithPresence(generic)
 	if !genericOK || genericType == nil || typ.IsNever(genericType) {
 		return false
 	}
-	if !loweredOK || loweredType == nil || typ.IsAny(loweredType) || typ.IsUnknown(loweredType) {
+	if !loweredOK || loweredType == nil {
 		return true
+	}
+	if typ.IsAny(loweredType) || typ.IsUnknown(loweredType) {
+		return !r.ValueHasExplicitTopOrigin(lowered)
 	}
 	withoutNil := ProjectionWithoutNil(loweredType)
 	if withoutNil == nil || typ.IsNever(withoutNil) || typ.TypeEquals(withoutNil, loweredType) {

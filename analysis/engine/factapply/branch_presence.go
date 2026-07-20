@@ -22,16 +22,8 @@ func branchPresenceRelationRefinement(
 	branchRefinements []factflow.BranchRefinement,
 	relation factflow.BranchPresenceRelation,
 ) (factflow.ValueRefinement, bool) {
-	triggerPath := relation.TriggerPathRef()
-	for _, branchRefinement := range branchRefinements {
-		if !pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), triggerPath) {
-			continue
-		}
-		refinement, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond)
-		if !ok || !refinement.HasPresence(relation.TriggerPresence()) {
-			continue
-		}
-		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
+	if refinement, ok := branchPresenceRelationStaticRefinement(ctx.Registry, ctx.Edge.Cond, branchRefinements, relation); ok {
+		return refinement, true
 	}
 	if branchEdgeImpliesAbsentFromNonFalseFalsy(typeValues, ctx, resolver, projectPath, out, branchRefinements, relation) {
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
@@ -39,12 +31,39 @@ func branchPresenceRelationRefinement(
 	return factflow.ValueRefinement{}, false
 }
 
-func branchEdgeImpliesAbsentFromNonFalseFalsy(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
+// branchPresenceRelationStaticRefinement is the representation-independent
+// part of presence implication: the selected edge's frozen branch refinement
+// itself proves the trigger presence. It deliberately takes no State. Both the
+// concrete and formal programs lower this theorem to the same target
+// refinement factor; only the exceptional non-false-falsy case needs a
+// runtime trigger value.
+func branchPresenceRelationStaticRefinement(
+	reg *axis.Registry,
+	cond bool,
+	branchRefinements []factflow.BranchRefinement,
+	relation factflow.BranchPresenceRelation,
+) (factflow.ValueRefinement, bool) {
+	triggerPath := relation.TriggerPathRef()
+	for _, branchRefinement := range branchRefinements {
+		if !pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), triggerPath) {
+			continue
+		}
+		refinement, ok := branchRefinement.ValueForEdge(cond)
+		if !ok || !refinement.HasPresence(relation.TriggerPresence()) {
+			continue
+		}
+		return presenceRefinement(reg, relation.TargetPresence()), true
+	}
+	return factflow.ValueRefinement{}, false
+}
+
+// branchPresenceRelationNeedsNonBooleanTrigger identifies the sole dynamic
+// presence theorem. When the opposite edge proves the trigger present but the
+// selected edge carries no explicit refinement, the selected edge proves
+// absence exactly when the trigger cannot be Boolean false. Runtime execution
+// supplies only that registered value query; the relation shape is frozen here.
+func branchPresenceRelationNeedsNonBooleanTrigger(
+	cond bool,
 	branchRefinements []factflow.BranchRefinement,
 	relation factflow.BranchPresenceRelation,
 ) bool {
@@ -56,19 +75,28 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 		if !pathsMatchForBranchRelation(branchRefinement.TargetPathRef(), triggerPath) {
 			continue
 		}
-		if _, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond); ok {
+		if _, ok := branchRefinement.ValueForEdge(cond); ok {
 			continue
 		}
-		opposite, ok := branchRefinement.ValueForEdge(!ctx.Edge.Cond)
-		if !ok || !opposite.HasPresence(presence.Present()) {
-			continue
+		opposite, ok := branchRefinement.ValueForEdge(!cond)
+		if ok && opposite.HasPresence(presence.Present()) {
+			return true
 		}
-		if branchTriggerCanBeFalse(typeValues, ctx, resolver, projectPath, out, triggerPath) {
-			continue
-		}
-		return true
 	}
 	return false
+}
+
+func branchEdgeImpliesAbsentFromNonFalseFalsy(
+	typeValues *typevalue.Cache,
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	out state.State,
+	branchRefinements []factflow.BranchRefinement,
+	relation factflow.BranchPresenceRelation,
+) bool {
+	return branchPresenceRelationNeedsNonBooleanTrigger(ctx.Edge.Cond, branchRefinements, relation) &&
+		!branchTriggerCanBeFalse(typeValues, ctx, resolver, projectPath, out, relation.TriggerPathRef())
 }
 
 func branchTriggerCanBeFalse(
@@ -79,11 +107,11 @@ func branchTriggerCanBeFalse(
 	out state.State,
 	triggerPath pathdom.Path,
 ) bool {
-	current, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Edge.From, out, triggerPath, projectPath)
+	current, ok := branchFeasibilityValue(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, triggerPath)
 	if !ok {
 		return true
 	}
-	kinds := product.Get(ctx.Registry, current.value, runtimekind.Key)
+	kinds := product.Get(ctx.Registry, current, runtimekind.Key)
 	if kinds.IsBottom() || kinds.IsTop() {
 		return true
 	}

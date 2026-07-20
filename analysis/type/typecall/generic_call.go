@@ -202,16 +202,24 @@ func validateInstantiatedArguments(fn *typ.Function, args []typ.Type, substitute
 
 func containsUnsubstitutedTypeParam(t typ.Type, params []*typ.TypeParam) bool {
 	for _, param := range params {
-		if param != nil && containsTypeParamOutsideShadow(t, param, false, nil) {
+		if param != nil && containsTypeParamOutsideShadow(t, param, false, nil, 0) {
 			return true
 		}
 	}
 	return false
 }
 
-func containsTypeParamOutsideShadow(t typ.Type, target *typ.TypeParam, shadowed bool, active map[typ.Type]bool) bool {
+// containsTypeParamOutsideShadow is a may-contain query (invariants.md Rule
+// 1 dual): it exists to catch generic arguments that still reference an
+// unbound type parameter, so an incomplete search must assume the parameter
+// is still reachable (true) rather than silently clear a real constraint
+// violation.
+func containsTypeParamOutsideShadow(t typ.Type, target *typ.TypeParam, shadowed bool, active map[typ.Type]bool, depth int) bool {
 	if t == nil || target == nil {
 		return false
+	}
+	if depth > typ.DefaultRecursionDepth {
+		return true
 	}
 	if param, ok := t.(*typ.TypeParam); ok {
 		return !shadowed && param == target
@@ -228,7 +236,7 @@ func containsTypeParamOutsideShadow(t typ.Type, target *typ.TypeParam, shadowed 
 	switch node := t.(type) {
 	case *typ.Instantiated:
 		for _, arg := range node.TypeArgs {
-			if containsTypeParamOutsideShadow(arg, target, shadowed, active) {
+			if containsTypeParamOutsideShadow(arg, target, shadowed, active, depth+1) {
 				return true
 			}
 		}
@@ -249,7 +257,7 @@ func containsTypeParamOutsideShadow(t typ.Type, target *typ.TypeParam, shadowed 
 		}
 	}
 	return typ.WalkChildren(t, func(child typ.Type) bool {
-		return containsTypeParamOutsideShadow(child, target, shadowed, active)
+		return containsTypeParamOutsideShadow(child, target, shadowed, active, depth+1)
 	})
 }
 
@@ -267,6 +275,13 @@ func instantiatedArgumentAssignable(actual typ.Type, formal typ.Type, depth int)
 func instantiatedArgumentAssignableSeen(actual typ.Type, formal typ.Type, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil {
 		return true
+	}
+	if depth > typ.DefaultRecursionDepth {
+		// Positive assignability relation (invariants.md Rule 1): an
+		// exhausted budget must fail closed. Cycle-pair tracking (active,
+		// below) separately closes genuine coinductive repeats with true;
+		// this only bounds a non-repeating chain.
+		return false
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
@@ -293,7 +308,7 @@ func instantiatedArgumentAssignableSeen(actual typ.Type, formal typ.Type, depth 
 		}
 		return instantiatedArgumentAssignableSeen(actual, f.Inner, depth+1, active)
 	case *typ.Instantiated:
-		expanded := expandFormalInstantiatedForInference(f)
+		expanded := subst.ExpandInstantiatedRoot(f)
 		if expanded != nil && expanded != formal {
 			return instantiatedArgumentAssignableSeen(actual, expanded, depth+1, active)
 		}
@@ -349,9 +364,19 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 	return hasFreshPrecisionShapeSeen(actual, formal, depth, &graph.PairPath{})
 }
 
+// hasFreshPrecisionShapeSeen is a may-contain query (invariants.md Rule 1
+// dual): it looks for at least one nested position where fresh-literal
+// precision must be preserved. A cycle repeat without having found one
+// contributes no new witness (false, matching active.Enter below); depth
+// exhaustion is the same "no witness found yet" situation for a
+// non-repeating chain, so it must default to true rather than assert none
+// exists.
 func hasFreshPrecisionShapeSeen(actual typ.Type, formal typ.Type, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil {
 		return false
+	}
+	if depth > typ.DefaultRecursionDepth {
+		return true
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
@@ -460,6 +485,9 @@ func actualRecordForValidationSeen(actual typ.Type, depth int, active *graph.Pat
 	if actual == nil {
 		return nil, false
 	}
+	if depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
 	actual = unwrap.Annotated(actual)
 	if !active.Enter(actual) {
 		return nil, false
@@ -518,6 +546,13 @@ func providedRecordFieldsAssignableSeen(actual *typ.Record, formal *typ.Record, 
 
 func inferTypeParamBindingsSeen(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int, active *graph.PairPath) {
 	if formal == nil || actual == nil {
+		return
+	}
+	if depth > typ.DefaultRecursionDepth {
+		// Binding inference has no truth value to get wrong at exhaustion:
+		// stopping just leaves deeper type parameters unbound, which
+		// containsUnsubstitutedTypeParam's may-contain default (true) later
+		// reports as a constraint violation rather than silently accepting.
 		return
 	}
 
@@ -600,7 +635,7 @@ func inferTypeParamBindingsSeen(formal typ.Type, actual typ.Type, index int, bin
 			}
 			return
 		}
-		expanded := expandFormalInstantiatedForInference(f)
+		expanded := subst.ExpandInstantiatedRoot(f)
 		if expanded != nil && expanded != formal {
 			inferTypeParamBindingsSeen(expanded, actual, index, bindings, path, trace, depth+1, active)
 		}
@@ -613,16 +648,6 @@ func inferTypeParamBindingsSeen(formal typ.Type, actual typ.Type, index int, bin
 			inferTypeParamBindingsSeen(member, actual, index, bindings, path, trace, depth+1, active)
 		}
 	}
-}
-
-func expandFormalInstantiatedForInference(inst *typ.Instantiated) typ.Type {
-	if inst == nil || inst.Generic == nil ||
-		inst.Generic.Body == nil ||
-		len(inst.TypeArgs) != len(inst.Generic.TypeParams) {
-		return inst
-	}
-	body := subst.Params(inst.Generic.Body, inst.Generic.TypeParams, inst.TypeArgs)
-	return subst.Self(body, inst)
 }
 
 func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int, active *graph.PairPath) {

@@ -1,10 +1,6 @@
 package summary
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"reflect"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -21,33 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
-
-func TestNormalReturnSummaryLaneRegistryCoversStorageLanes(t *testing.T) {
-	storage := callboundary.NormalReturnFactLanes()
-	if len(normalReturnSummaryLanes) != len(storage) {
-		t.Fatalf("summary normal-return lanes = %d, want storage lane count %d", len(normalReturnSummaryLanes), len(storage))
-	}
-	for _, lane := range normalReturnSummaryLanes {
-		if !normalReturnSummaryLaneValid(lane.Value) {
-			t.Fatal("summary normal-return lane has incomplete behavior")
-		}
-	}
-}
-
-func TestNormalReturnFactsSummaryOperationsUseLaneRegistry(t *testing.T) {
-	file := parseNormalReturnFactsSource(t)
-	fields := normalReturnFactsStorageFields(t)
-
-	for _, name := range []string{"normalizeNormalReturnFactsWith", "CloneNormalReturnFacts"} {
-		fn := requireFuncDecl(t, file, name)
-		if !funcUsesIdent(fn, "normalReturnSummaryLanes") {
-			t.Fatalf("%s must iterate normalReturnSummaryLanes", name)
-		}
-		if field := firstSelectedStorageField(fn, fields); field != "" {
-			t.Fatalf("%s selects storage field %s directly; use normalReturnSummaryLanes", name, field)
-		}
-	}
-}
 
 func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *testing.T) {
 	reg := mustRegistry(t)
@@ -202,10 +171,10 @@ func TestPathPresenceImplicationOrderingUsesSemanticProductHash(t *testing.T) {
 		t.Fatalf("RegistryWithAxes(right): %v", err)
 	}
 
-	left := normalizeNormalReturnFacts(leftReg, callboundary.NormalReturnFacts{
+	left := callboundary.NormalizeNormalReturnFacts(leftReg, callboundary.NormalReturnFacts{
 		PathPresenceImplications: pathPresenceImplicationsForOrder(leftReg, runtimekind.Table, runtimekind.Function),
 	}).PathPresenceImplications
-	right := normalizeNormalReturnFacts(rightReg, callboundary.NormalReturnFacts{
+	right := callboundary.NormalizeNormalReturnFacts(rightReg, callboundary.NormalReturnFacts{
 		PathPresenceImplications: pathPresenceImplicationsForOrder(rightReg, runtimekind.Function, runtimekind.Table),
 	}).PathPresenceImplications
 
@@ -269,68 +238,6 @@ func implicationRuntimeKind(t *testing.T, reg *axis.Registry, fact callboundary.
 		t.Fatalf("trigger runtime kind = %s, want singleton", product.Get(reg, fact.TriggerValue, runtimekind.Key))
 	}
 	return tags[0]
-}
-
-func parseNormalReturnFactsSource(t *testing.T) *ast.File {
-	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "normal_return_facts.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse normal_return_facts.go: %v", err)
-	}
-	return file
-}
-
-func requireFuncDecl(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
-	t.Helper()
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name.Name == name {
-			return fn
-		}
-	}
-	t.Fatalf("function %s not found", name)
-	return nil
-}
-
-func funcUsesIdent(fn *ast.FuncDecl, name string) bool {
-	found := false
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		ident, ok := node.(*ast.Ident)
-		if ok && ident.Name == name {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
-}
-
-func normalReturnFactsStorageFields(t *testing.T) map[string]struct{} {
-	t.Helper()
-	out := make(map[string]struct{})
-	typ := reflect.TypeOf(callboundary.NormalReturnFacts{})
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if field.Type.Kind() == reflect.Slice {
-			out[field.Name] = struct{}{}
-		}
-	}
-	return out
-}
-
-func firstSelectedStorageField(fn *ast.FuncDecl, fields map[string]struct{}) string {
-	var found string
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		sel, ok := node.(*ast.SelectorExpr)
-		if ok {
-			if _, isStorageField := fields[sel.Sel.Name]; isStorageField {
-				found = sel.Sel.Name
-				return false
-			}
-		}
-		return true
-	})
-	return found
 }
 
 func TestNormalReturnFactsLifecycleKeyDistinguishesFinalStateSets(t *testing.T) {
@@ -402,10 +309,10 @@ func TestNormalReturnFactsNormalizeDropsBottomDynamicAndEffectFacts(t *testing.T
 	}})
 
 	facts := got.NormalReturnFacts
-	if len(facts.DynamicIndexFacts) != 1 || !dynamicIndexFactEqual(reg, facts.DynamicIndexFacts[0], keptDynamic) {
+	if len(facts.DynamicIndexFacts) != 1 || !dynamicIndexFactsSemanticallyEqual(reg, facts.DynamicIndexFacts[0], keptDynamic) {
 		t.Fatalf("DynamicIndexFacts = %#v, want exactly %#v after bottom pruning", facts.DynamicIndexFacts, keptDynamic)
 	}
-	if len(facts.EffectDeltas) != 1 || !effectDeltaEqual(reg, facts.EffectDeltas[0], keptEffect) {
+	if len(facts.EffectDeltas) != 1 || !effectDeltasSemanticallyEqual(reg, facts.EffectDeltas[0], keptEffect) {
 		t.Fatalf("EffectDeltas = %#v, want exactly %#v after bottom pruning", facts.EffectDeltas, keptEffect)
 	}
 }
@@ -419,7 +326,7 @@ func TestNormalReturnFactsSparseNormalizeAndCloneKeepsOnlyActiveLanes(t *testing
 		}},
 	}
 
-	got := CloneNormalReturnFacts(normalizeNormalReturnFacts(reg, input))
+	got := callboundary.CloneNormalReturnFacts(callboundary.NormalizeNormalReturnFacts(reg, input))
 
 	for _, lane := range callboundary.NormalReturnFactLanes() {
 		gotLen := lane.Len(got)
@@ -449,7 +356,7 @@ func BenchmarkSparseNormalReturnFactsNormalizeClone(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		got := CloneNormalReturnFacts(normalizeNormalReturnFacts(reg, input))
+		got := callboundary.CloneNormalReturnFacts(callboundary.NormalizeNormalReturnFacts(reg, input))
 		if len(got.NumFloors) != 1 {
 			b.Fatalf("NumFloors length = %d, want 1", len(got.NumFloors))
 		}
@@ -755,7 +662,7 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		t.Fatalf("common dynamic index fact did not pointwise join: %#v", common)
 	}
 	if leftOnlyFact := findDynamicIndexFact(got.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
-		!dynamicIndexFactEqual(reg, *leftOnlyFact, left.NormalReturnFacts.DynamicIndexFacts[1]) {
+		!dynamicIndexFactsSemanticallyEqual(reg, *leftOnlyFact, left.NormalReturnFacts.DynamicIndexFacts[1]) {
 		t.Fatalf("left-only dynamic index fact = %#v, want original fact", leftOnlyFact)
 	}
 	if len(got.BranchProofs) != 1 || !got.BranchProofs[0].Path.Equal(commonPath) {
@@ -776,7 +683,7 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		t.Fatalf("common effect delta did not pointwise join: %#v", common)
 	}
 	if leftOnlyDelta := findEffectDelta(got.EffectDeltas, "caller.effect.left"); leftOnlyDelta == nil ||
-		!effectDeltaEqual(reg, *leftOnlyDelta, left.NormalReturnFacts.EffectDeltas[1]) {
+		!effectDeltasSemanticallyEqual(reg, *leftOnlyDelta, left.NormalReturnFacts.EffectDeltas[1]) {
 		t.Fatalf("left-only effect delta = %#v, want original delta", leftOnlyDelta)
 	}
 	if len(got.EscapeEvents) != 2 {
@@ -813,11 +720,11 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 
 	widened := Widen(reg, left, right).NormalReturnFacts
 	if leftOnlyFact := findDynamicIndexFact(widened.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
-		!dynamicIndexFactEqual(reg, *leftOnlyFact, left.NormalReturnFacts.DynamicIndexFacts[1]) {
+		!dynamicIndexFactsSemanticallyEqual(reg, *leftOnlyFact, left.NormalReturnFacts.DynamicIndexFacts[1]) {
 		t.Fatalf("widen left-only dynamic index fact = %#v, want original fact", leftOnlyFact)
 	}
 	if leftOnlyDelta := findEffectDelta(widened.EffectDeltas, "caller.effect.left"); leftOnlyDelta == nil ||
-		!effectDeltaEqual(reg, *leftOnlyDelta, left.NormalReturnFacts.EffectDeltas[1]) {
+		!effectDeltasSemanticallyEqual(reg, *leftOnlyDelta, left.NormalReturnFacts.EffectDeltas[1]) {
 		t.Fatalf("widen left-only effect delta = %#v, want original delta", leftOnlyDelta)
 	}
 	if common := findEscapeEvent(widened.EscapeEvents, commonPath, false); common == nil ||
@@ -1141,6 +1048,20 @@ func findEscapeEvent(events []callboundary.EscapeEventFact, target pathdom.Path,
 		}
 	}
 	return nil
+}
+
+func dynamicIndexFactsSemanticallyEqual(reg *axis.Registry, left, right callboundary.DynamicIndexFact) bool {
+	return callboundary.NormalReturnFactsEqual(reg,
+		callboundary.NormalReturnFacts{DynamicIndexFacts: []callboundary.DynamicIndexFact{left}},
+		callboundary.NormalReturnFacts{DynamicIndexFacts: []callboundary.DynamicIndexFact{right}},
+	)
+}
+
+func effectDeltasSemanticallyEqual(reg *axis.Registry, left, right callboundary.EffectDelta) bool {
+	return callboundary.NormalReturnFactsEqual(reg,
+		callboundary.NormalReturnFacts{EffectDeltas: []callboundary.EffectDelta{left}},
+		callboundary.NormalReturnFacts{EffectDeltas: []callboundary.EffectDelta{right}},
+	)
 }
 
 func presentProduct(reg *axis.Registry) product.Value {

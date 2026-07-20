@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valueproof "github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -28,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/indexproof"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
@@ -39,8 +41,8 @@ func TestProjectionScratchUsesStructuralPathIdentity(t *testing.T) {
 	first := path.NewPath(symbol.ID(101), "value")
 	second := path.NewPath(symbol.ID(102), "value")
 	ks := keyspace.New()
-	firstID := projectionPathIdentity{Key: ks.FromPath(first)}
-	secondID := projectionPathIdentity{Key: ks.FromPath(second)}
+	firstID := ks.FromPath(first)
+	secondID := ks.FromPath(second)
 
 	var active projectionActive
 	if !active.push(projectionFrame{point: point, path: firstID}) {
@@ -64,7 +66,7 @@ func TestProjectionScratchUsesStructuralPathIdentity(t *testing.T) {
 
 	for i := 0; i < projectionScratchInline; i++ {
 		p := path.NewPath(symbol.ID(200+i), "value")
-		id := projectionPathIdentity{Key: ks.FromPath(p)}
+		id := ks.FromPath(p)
 		active.push(projectionFrame{point: point, path: id})
 		memo.remember(projectionMemoKey{point: point, path: id}, projectionResult{ok: true})
 	}
@@ -87,12 +89,12 @@ func TestProjectionScratchResetClearsAndRetainsSmallOverflowMaps(t *testing.T) {
 
 	first := projectionFrame{
 		point: point,
-		path:  projectionPathIdentity{Key: ks.FromPath(path.NewPath(symbol.ID(1000), "value"))},
+		path:  ks.FromPath(path.NewPath(symbol.ID(1000), "value")),
 	}
 	for i := 0; i <= projectionScratchInline; i++ {
 		frame := projectionFrame{
 			point: point,
-			path:  projectionPathIdentity{Key: ks.FromPath(path.NewPath(symbol.ID(1000+i), "value"))},
+			path:  ks.FromPath(path.NewPath(symbol.ID(1000+i), "value")),
 		}
 		active.push(frame)
 		memo.remember(projectionMemoKey{point: point, path: frame.path}, projectionResult{ok: true})
@@ -117,26 +119,23 @@ func TestProjectionScratchResetClearsAndRetainsSmallOverflowMaps(t *testing.T) {
 	}
 }
 
-func TestNewProjectionPathIdentityRejectsEmptyPath(t *testing.T) {
-	if got, ok := newProjectionPathIdentity(Config{}, path.Path{}); ok || got != (projectionPathIdentity{}) {
+func TestProjectionPathKeyRejectsEmptyPath(t *testing.T) {
+	if got, ok := projectionPathKey(Config{}, path.Path{}); ok || got != (keyspace.Key{}) {
 		t.Fatalf("empty path identity = %#v/%v, want zero/false", got, ok)
 	}
 }
 
-func TestNewProjectionPathIdentityUsesVisibilityKeyspace(t *testing.T) {
+func TestProjectionPathKeyUsesVisibilityKeyspace(t *testing.T) {
 	point := cfg.Point(1)
 	p := path.NewPath(symbol.ID(10), "t").Field("name")
 	resolver := testResolver(point, symbol.ID(10), "t")
 
-	got, ok := newProjectionPathIdentity(Config{Visibility: resolver}, p)
+	got, ok := projectionPathKey(Config{Visibility: resolver}, p)
 	if !ok {
 		t.Fatal("identity construction failed")
 	}
-	if got.Key.Kind == keyspace.KindInvalid {
+	if got.Kind == keyspace.KindInvalid {
 		t.Fatalf("identity did not use typed keyspace key: %#v", got)
-	}
-	if got.Legacy != "" {
-		t.Fatalf("identity kept legacy fallback with visibility keyspace: %#v", got)
 	}
 }
 
@@ -254,11 +253,8 @@ func TestDynamicIndexProviderUsesExactLiteralKeyFactWhenPathMembershipVersionDif
 		}))
 	if gotKey, ok := dynamicIndexExpressionKeyValue(Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}, point, keySource, in); !ok {
 		t.Fatal("key value did not resolve")
-	} else if seg, ok := staticScalarKeySegment(reg, typeValues, gotKey); !ok || seg.Kind != segment.SegmentIndexString || seg.Name != "alpha" {
+	} else if seg, ok := typevalue.ExactScalarKeySegment(reg, typeValues, gotKey); !ok || seg.Kind != segment.SegmentIndexString || seg.Name != "alpha" {
 		t.Fatalf("key segment = %#v/%v, want string index alpha", seg, ok)
-	}
-	if !dynamicIndexFactDefinitelyPresent(reg, dynamicindex.NewFact(reg, dynamicindex.FactConfig{Value: arrayValue, HasValue: true, Admission: dynamicindex.AdmissionUnknown})) {
-		t.Fatalf("array value not classified present: %v", product.PresenceOf(arrayValue))
 	}
 
 	value, ok := Provider(Config{
@@ -277,38 +273,76 @@ func TestDynamicIndexProviderUsesExactLiteralKeyFactWhenPathMembershipVersionDif
 	}
 }
 
-func TestDynamicIndexIntegerTermAcceptsDirectPathAndLiteralSources(t *testing.T) {
-	indexPath := path.NewPath(symbol.ID(501), "i")
-	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+func TestMembershipCertifiedDynamicReadCarriesTypedContainerElementContract(t *testing.T) {
+	reg := standard.Registry()
+	typeValues := typevalue.NewCache()
+	point := cfg.Point(222)
+	tableSym := symbol.ID(331)
+	keySym := symbol.ID(332)
+	tablePath := path.NewPath(tableSym, "items")
+	keyPath := path.NewPath(keySym, "item_key")
+	builder := visibility.NewBuilder()
+	builder.Define(point, tableSym, "items")
+	builder.Define(point, keySym, "item_key")
+	resolver := visibility.NewResolver(builder.Build())
+	tableStateKey, ok := resolver.StateKeyAt(point, tablePath)
 	if !ok {
-		t.Fatal("NewValueSourceShape returned false")
+		t.Fatal("missing table state key")
 	}
-	pathSource, ok := factflow.NewPathValueSource(indexPath.Key(), factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
+	tableKey, ok := resolver.KeySpace().InternStateKey(tableStateKey)
 	if !ok {
-		t.Fatal("NewPathValueSource returned false")
+		t.Fatal("missing table key")
 	}
-	literalSource, ok := factflow.NewIntegerLiteralValueSource(1, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
+	keyStateKey, ok := resolver.StateKeyAt(point, keyPath)
 	if !ok {
-		t.Fatal("NewIntegerLiteralValueSource returned false")
+		t.Fatal("missing key state key")
 	}
-	exprSource, ok := factflow.NewExpressionValueSource(99, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, shape)
+	keyType := typ.LiteralString("known")
+	keyValue := typeValues.FromTypeWithWitness(reg, keyType)
+	keyExpr := factflow.ExprRef(22201)
+	readExpr := factflow.ExprRef(22202)
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	dyn, ok := factflow.NewDynamicIndexExpression(tablePath, keySource)
 	if !ok {
-		t.Fatal("NewExpressionValueSource returned false")
-	}
-	op, ok := factflow.NewBinaryExpressionOperation("+", pathSource, literalSource)
-	if !ok {
-		t.Fatal("NewBinaryExpressionOperation returned false")
+		t.Fatal("NewDynamicIndexExpression returned false")
 	}
 	facts := factflow.NewFacts(factflow.FactsInput{
-		ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{99: op},
+		DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{readExpr: dyn},
+		ExpressionPaths:         map[factflow.ExprRef]path.Path{keyExpr: keyPath},
 	})
-
-	term, ok := dynamicIndexIntegerTerm(Config{Facts: facts}, exprSource)
-	if !ok {
-		t.Fatal("dynamicIndexIntegerTerm returned false")
-	}
-	if !term.Path.Equal(indexPath) || term.Coeff != 1 || term.Offset != 1 {
-		t.Fatalf("term = %#v, want %s + 1", term, indexPath.String())
+	recordType := typetable.NewRecord().Field("name", typ.String).Build()
+	for _, tc := range []struct {
+		name      string
+		element   typ.Type
+		factValue product.Value
+	}{
+		{name: "structural record", element: recordType, factValue: typeValues.FromType(reg, recordType)},
+		{name: "untyped scalar", element: typ.String, factValue: product.NewWithPresence(reg, product.ShapeTop, presence.Present())},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tableValue := typeValues.FromTypeWithWitness(reg, typ.NewMap(typ.String, tc.element))
+			in := state.State{}.
+				WriteValue(reg, key.SymbolValue(tableSym), tableValue).
+				WriteValue(reg, key.SymbolValue(keySym), keyValue).
+				WritePathKey(reg, resolver.KeySpace(), tableStateKey.PathKey(), tableValue).
+				WritePathKey(reg, resolver.KeySpace(), keyStateKey.PathKey(), keyValue).
+				AddPathKeyMembership(keyStateKey, tableStateKey).
+				WriteDynamicIndexFact(reg, dynamicindex.Key{Table: tableKey, Site: dynamicindex.SiteForPoint(int(point))}, dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+					Value: tc.factValue, HasValue: true, Admission: dynamicindex.AdmissionUnknown,
+				}))
+			value, ok := Provider(Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues})(
+				point, readExpr, factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: readExpr, HasExpr: true}, in,
+			)
+			if !ok {
+				t.Fatal("Provider returned false")
+			}
+			if !valueproof.New(reg, typeValues).ValueProofAdmissible(value, tc.element) {
+				got, _ := typevalue.TypeOf(reg, value)
+				witness, witnessOK := typevalue.WitnessOf(reg, value)
+				t.Fatalf("membership-certified value type = %v witness=%v/%v presence=%v evidence=%v assertion=%v runtime=%v, want admissible %v contract",
+					got, witness, witnessOK, product.PresenceOf(value), product.Get(reg, value, evidence.Key), product.Get(reg, value, assertion.Key), product.Get(reg, value, runtimekind.Key), tc.element)
+			}
+		})
 	}
 }
 
@@ -976,7 +1010,7 @@ func TestProjectLenFloorPrunesImpossibleEmptyUnionArmForArrayIndex(t *testing.T)
 		typetable.NewRecord().Build(),
 		typ.NewArray(typ.String),
 	)
-	if !definitelyInBoundsIndexContainerTypeAtFloor(parentType, 2, 2, 0) {
+	if !indexproof.StaticIndexPresentUnderLengthFloor(parentType, 2, 2) {
 		t.Fatalf("type predicate rejected %s", parentType.String())
 	}
 	rootValue := typevalue.WithWitness(reg, product.Top(), parentType)
@@ -1442,6 +1476,7 @@ func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {
 	point := cfg.Point(6)
 	sym := symbol.ID(16)
 	readPath := path.NewPath(sym, "x")
+	resolver := testResolver(point, sym, "x")
 	want := product.Set(
 		reg,
 		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
@@ -1450,7 +1485,7 @@ func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {
 	)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(sym), want)
 
-	got, ok := Project(Config{Registry: reg}, point, readPath, in)
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
 		t.Fatalf("Project returned false")
 	}

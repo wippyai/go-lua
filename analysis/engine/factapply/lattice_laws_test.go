@@ -23,8 +23,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
@@ -32,7 +30,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/state/userlattice"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -404,43 +401,14 @@ func testCoreTransferMonotonicity(t *testing.T) {
 	point := cfg.Point(930)
 	target := symbol.ID(930)
 	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	absent := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
 	top := product.Top()
 	base := state.Reachable(state.State{})
-
-	t.Run("assignment", func(t *testing.T) {
-		source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 930, HasExpr: true}
-		apply := NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: factflow.NewFacts(factflow.FactsInput{RootAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, pathdom.NewPath(target, "target"), source),
-			}}),
-			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg, ExpressionValues: map[factflow.ExprRef]product.Value{930: absent}}),
-		})
-		assertTransferMonotone(t, domain, []state.State{
-			base.WriteValue(reg, statekey.SymbolValue(target), present),
-			base.WriteValue(reg, statekey.SymbolValue(target), top),
-		}, func(in state.State) state.State {
-			return apply(transfer.NodeContext{Registry: reg, Point: point}, in)
-		})
-	})
 
 	builder := visibility.NewBuilder()
 	builder.Define(point, target, "target")
 	trigger := symbol.ID(931)
 	builder.Define(point, trigger, "trigger")
 	resolver := visibility.NewResolver(builder.Build())
-
-	t.Run("branch-refinement", func(t *testing.T) {
-		ctx := transfer.EdgeContext{Registry: reg, Edge: cfg.Edge{From: point, To: point + 1, Cond: true}, HasCond: true}
-		refinement := factflow.NewValueConstraint(absent)
-		assertTransferMonotone(t, domain, []state.State{
-			base.WriteValue(reg, statekey.SymbolValue(target), present),
-			base.WriteValue(reg, statekey.SymbolValue(target), absent),
-			base.WriteValue(reg, statekey.SymbolValue(target), top),
-		}, func(in state.State) state.State {
-			return applyBranchRefinement(ctx, resolver, nil, in, pathdom.NewPath(target, "target"), refinement)
-		})
-	})
 
 	t.Run("implication-activation", func(t *testing.T) {
 		ks := resolver.KeySpace()

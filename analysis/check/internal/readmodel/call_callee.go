@@ -78,7 +78,14 @@ func (r Reader) callCalleeReport(point cfg.Point, site factflow.CallSiteView) Ca
 			return CallCalleeReport{}
 		}
 	}
-	value, ok := r.result.PathValueAtBoundary(point, p)
+	// Resolve the runtime callee from the stabilized pre-call coordinate. A
+	// call node's boundary output is post-transfer state; reading the callee
+	// path from that output can resurrect the prepared declaration value after
+	// an interprocedural effect has updated the same root immediately before
+	// this call. CallCalleeValueAtBoundary owns the same point input and source
+	// semantics as call execution, so diagnostics and execution observe one
+	// canonical callee value.
+	value, ok := r.result.CallCalleeValueAtBoundary(point, site)
 	if !ok {
 		return CallCalleeReport{}
 	}

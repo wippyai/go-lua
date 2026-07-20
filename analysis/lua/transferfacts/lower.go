@@ -2,6 +2,8 @@
 package transferfacts
 
 import (
+	"sort"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -159,11 +161,44 @@ func LowerDetailed(graph cfg.Graph, config Config) Lowered {
 	input.DynamicIndexExpressions = l.dynamicIndexExpressions
 	input.ExpressionConditions = l.expressionConditions
 	regions := l.structuralExpressionRegionsFromWIR()
+	l.completeStructuralBranchConditions(&input, regions)
 	plan := operationplan.NewWithStructuralExpressionRegions(graph, input, regions)
 	return Lowered{
 		Facts:       plan.Facts(),
 		Plan:        plan,
 		SymbolTypes: copySymbolTypes(symbolTypes),
+	}
+}
+
+// completeStructuralBranchConditions seals the guard source from the finished
+// logical expression DAG. Point-local lowering can visit a guard before a
+// later consumer causes its owner temp to be materialized; the region already
+// proves which logical owner controls that guard, so its exact left operand is
+// the canonical missing condition source. Existing WIR branch descriptors stay
+// authoritative and are never replaced.
+func (l *lowerer) completeStructuralBranchConditions(input *factflow.FactsInput, regions map[factflow.ExprRef]factflow.StructuralExpressionRegion) {
+	if l == nil || input == nil || len(regions) == 0 {
+		return
+	}
+	owners := make([]factflow.ExprRef, 0, len(regions))
+	for owner := range regions {
+		owners = append(owners, owner)
+	}
+	sort.Slice(owners, func(i, j int) bool { return owners[i] < owners[j] })
+	for _, owner := range owners {
+		region := regions[owner]
+		if _, exists := input.BranchConditionSources[region.Branch()]; exists {
+			continue
+		}
+		operation, exact := l.expressionOperations[owner]
+		if !exact || operation.Kind() != factflow.ExpressionOperationBinary ||
+			(operation.Op() != "and" && operation.Op() != "or") {
+			continue
+		}
+		condition, exact := factflow.NewBranchCondition(operation.Left(), true)
+		if exact {
+			input.BranchConditionSources[region.Branch()] = condition
+		}
 	}
 }
 
@@ -245,6 +280,9 @@ func (l *lowerer) addBranchFactsFromWIR(input *factflow.FactsInput, point cfg.Po
 		appendBranchDiffConstraint(input.BranchRefinements, point, lowered...)
 	}
 	if lowered := l.branchAliasRefinementsFromWIR(point); len(lowered) != 0 {
+		appendBranchRefinement(input.BranchRefinements, point, lowered...)
+	}
+	if lowered := l.branchDisjunctiveRefinementsFromWIR(point); len(lowered) != 0 {
 		appendBranchRefinement(input.BranchRefinements, point, lowered...)
 	}
 	if lowered, ok := l.branchPathRelationsFromWIR(point); ok {

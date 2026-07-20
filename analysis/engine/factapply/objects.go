@@ -1,10 +1,7 @@
 package factapply
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -16,110 +13,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 )
 
-func applyObjectLiteralEntries(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	targetPath pathdom.Path,
-	valueSource factflow.ValueSource,
-	typeValues *typevalue.Cache,
-) state.State {
-	return applyObjectLiteralEntriesWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, targetPath, valueSource, product.Value{}, false, typeValues)
-}
-
-func applyObjectLiteralEntriesWithKnownSourceValue(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	targetPath pathdom.Path,
-	valueSource factflow.ValueSource,
-	knownSourceValue product.Value,
-	hasKnownSourceValue bool,
-	typeValues *typevalue.Cache,
-) state.State {
-	if !valueSource.HasExpr {
-		return out
-	}
-	literal, ok := facts.ObjectLiteralView(valueSource.ExprRef)
-	if !ok {
-		return out
-	}
-	var entryValues *objectLiteralSourceCache
-	out, entryValues = materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, valueSource, knownSourceValue, hasKnownSourceValue, typeValues)
-	if resolver == nil {
-		return out
-	}
-	out = applyObjectLiteralListLengthFloor(ctx, resolver, out, targetPath, literal)
-	writes := make([]objectLiteralEntryWrite, 0, literal.EntryCount())
-	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		entryPath, ok := entry.AppendSuffixTo(targetPath)
-		if !ok {
-			return true
-		}
-		if factPathKeyAt(resolver, ctx.Point, entryPath) == "" {
-			return true
-		}
-		source := entry.Source()
-		value, ok := objectLiteralEntrySourceValue(ctx, sources, read, in, out, entryValues, source)
-		if !ok {
-			return true
-		}
-		value = objectEntryValue(ctx.Registry, typeValues, entry, value)
-		if rootEvidence, ok := untrustedRootEvidence(ctx.Registry, out, targetPath.Symbol); ok {
-			value = product.Set(ctx.Registry, value, evidence.Key, rootEvidence)
-		}
-		writes = append(writes, objectLiteralEntryWrite{path: entryPath, source: source, value: value})
-		return true
-	})
-	if applied, ok := applyIndependentObjectLiteralEntryWrites(ctx, resolver, facts, out, writes); ok {
-		return applied
-	}
-	for _, write := range writes {
-		invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, write.path)
-		if !ok {
-			continue
-		}
-		written, ok := writePathAt(ctx.Registry, invalidated, resolver, ctx.Point, write.path, write.value)
-		if !ok {
-			continue
-		}
-		out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, written, write.path, write.source)
-	}
-	return out
-}
-
-func applyObjectLiteralListLengthFloor(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	targetPath pathdom.Path,
-	literal factflow.ObjectLiteralView,
-) state.State {
-	floor := objectLiteralContiguousListLengthFloor(literal)
-	if floor <= 0 || targetPath.IsEmpty() || targetPath.Symbol == 0 {
-		return out
-	}
-	targetKey, ok := visibility.AddressAt(resolver, ctx.Point, targetPath).VisibleStateKey()
-	if !ok {
-		return out
-	}
-	return out.WriteLenFloor(resolver.KeySpace(), targetKey, floor)
-}
+type objectLiteralLookup func(factflow.ExprRef) (factflow.ObjectLiteralView, bool)
 
 func objectLiteralContiguousListLengthFloor(literal factflow.ObjectLiteralView) int64 {
 	if literal.EntryCount() == 0 {
@@ -146,89 +46,20 @@ func objectLiteralContiguousListLengthFloor(literal factflow.ObjectLiteralView) 
 	}
 }
 
-type objectLiteralEntryWrite struct {
-	path   pathdom.Path
-	source factflow.ValueSource
-	value  product.Value
+// ObjectLiteralListLengthFloor is the canonical structural list-prefix
+// calculation shared by concrete resolution and symbolic N4 compilation.
+func ObjectLiteralListLengthFloor(literal factflow.ObjectLiteralView) int64 {
+	return objectLiteralContiguousListLengthFloor(literal)
 }
 
-func applyIndependentObjectLiteralEntryWrites(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	writes []objectLiteralEntryWrite,
-) (state.State, bool) {
-	if len(writes) < 2 || !objectLiteralEntryWritesIndependent(writes) {
-		return out, false
-	}
-	invalidated := out
-	for _, write := range writes {
-		next, ok := invalidatePathSubtreeAt(invalidated, resolver, ctx.Point, write.path)
-		if !ok {
-			return out, false
-		}
-		invalidated = next
-	}
-	writeKeys := make([][]keyspace.Key, len(writes))
-	seenKeys := make(map[keyspace.Key]struct{}, len(writes)*2)
-	for i, write := range writes {
-		keys, ok := pathWriteLocalKeysAt(invalidated, resolver, ctx.Point, write.path)
-		if !ok {
-			return out, false
-		}
-		for _, key := range keys {
-			if _, exists := seenKeys[key]; exists {
-				return out, false
-			}
-			seenKeys[key] = struct{}{}
-		}
-		writeKeys[i] = keys
-	}
-	edit := invalidated.EditPathEvidence(ctx.Registry)
-	for i, write := range writes {
-		for _, key := range writeKeys[i] {
-			edit.WriteLocalPathKey(key, write.value)
-		}
-	}
-	written := edit.DoneOn(invalidated)
-	for _, write := range writes {
-		written = addPathEqualityProofFromSource(resolver, facts, ctx.Point, written, write.path, write.source)
-	}
-	return written, true
-}
-
-func objectLiteralEntryWritesIndependent(writes []objectLiteralEntryWrite) bool {
-	for i := 0; i < len(writes); i++ {
-		for j := i + 1; j < len(writes); j++ {
-			if pathsOverlap(writes[i].path, writes[j].path) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func pathsOverlap(a, b pathdom.Path) bool {
-	if a.Symbol != b.Symbol || a.Root != b.Root || a.Version != b.Version {
-		return false
-	}
-	return segmentsPrefix(a.Segments, b.Segments) || segmentsPrefix(b.Segments, a.Segments)
-}
-
-func segmentsPrefix(prefix, full []segment.Segment) bool {
-	if len(prefix) > len(full) {
-		return false
-	}
-	for i := range prefix {
-		if prefix[i] != full[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func materializeObjectLiteralHeap(
+// materializeObjectLiteralHeapBatchCached resolves one ordered set of object-
+// literal roots into the callback-free ResolvedPathStoreObject vocabulary and
+// publishes the complete graph through the sole resolved heap kernel. One
+// source cache and one active/done traversal are shared by the whole batch, so
+// repeated call arguments and shared nested literals are evaluated exactly
+// once. Resolution is atomic: no heap is published unless every reachable
+// literal is well formed and acyclic.
+func materializeObjectLiteralHeapBatchCached(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
 	facts factflow.Facts,
@@ -236,115 +67,89 @@ func materializeObjectLiteralHeap(
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
-	source factflow.ValueSource,
-	typeValues *typevalue.Cache,
-) state.State {
-	out, _ = materializeObjectLiteralHeapCached(ctx, resolver, facts, sources, read, in, out, source, typeValues)
-	return out
-}
-
-func materializeObjectLiteralHeapCached(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	source factflow.ValueSource,
-	typeValues *typevalue.Cache,
-) (state.State, *objectLiteralSourceCache) {
-	return materializeObjectLiteralHeapCachedWithKnownSourceValue(ctx, resolver, facts, sources, read, in, out, source, product.Value{}, false, typeValues)
-}
-
-func materializeObjectLiteralHeapCachedWithKnownSourceValue(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	source factflow.ValueSource,
-	knownSourceValue product.Value,
-	hasKnownSourceValue bool,
+	roots []factflow.ValueSource,
 	typeValues *typevalue.Cache,
 ) (state.State, *objectLiteralSourceCache) {
 	if sources == nil || resolver == nil {
 		return out, nil
 	}
-	if !source.HasExpr {
-		return out, nil
-	}
-	literal, ok := facts.ObjectLiteralView(source.ExprRef)
-	if !ok {
-		return out, nil
-	}
 	cache := newObjectLiteralSourceCache(ctx.Point, sources, read, in, out)
-	if hasKnownSourceValue {
-		cache.seed(source, knownSourceValue)
-	}
-	return writeObjectLiteralHeap(ctx, resolver, facts, in, out, source, literal, nil, typeValues, cache), cache
+	return materializeObjectLiteralHeapBatchWithCache(ctx, resolver, facts.ObjectLiteralView, out, roots, typeValues, cache), cache
 }
 
-func writeObjectLiteralHeap(
+func materializeObjectLiteralHeapBatchWithCache(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	in state.State,
+	lookup objectLiteralLookup,
 	out state.State,
-	source factflow.ValueSource,
-	literal factflow.ObjectLiteralView,
-	active map[factflow.ExprRef]bool,
+	roots []factflow.ValueSource,
 	typeValues *typevalue.Cache,
 	sourceCache *objectLiteralSourceCache,
 ) state.State {
-	if !source.HasExpr {
+	if resolver == nil || sourceCache == nil || len(roots) == 0 {
 		return out
 	}
-	if active != nil && active[source.ExprRef] {
-		return out
-	}
-	rootValue, ok := objectLiteralRootValue(ctx, typeValues, source, literal, sourceCache)
-	if !ok {
-		return out
-	}
-	id, ok := product.Get(ctx.Registry, rootValue, identity.Key).ID()
-	if !ok {
-		return out
-	}
-	if active == nil {
-		active = make(map[factflow.ExprRef]bool, 1)
-	}
-	active[source.ExprRef] = true
-	ks := resolver.KeySpace()
-	staticMembers := make(map[keyspace.Key]product.Value, literal.EntryCount())
-	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		segments := entry.SuffixSegmentsView()
-		key, ok := ks.FromRootlessSuffix(segments)
-		if !ok {
+	active := make(map[factflow.ExprRef]bool)
+	done := make(map[factflow.ExprRef]bool)
+	heaps := make([]ResolvedPathStoreHeapObject, 0, len(roots))
+	var resolve func(factflow.ValueSource) bool
+	resolve = func(source factflow.ValueSource) bool {
+		if !source.HasExpr {
 			return true
 		}
-		entrySource := entry.Source()
-		value, ok := sourceCache.value(entrySource)
-		if !ok {
+		literal, object := lookup(source.ExprRef)
+		if !object {
 			return true
 		}
-		value = objectEntryValue(ctx.Registry, typeValues, entry, value)
-		staticMembers[key] = value
-		if canonical, ok := heapidentity.FieldCanonicalStaticMemberSuffixKey(ks, segments); ok {
-			staticMembers[canonical] = value
+		if _, identified := literal.Identity(); !identified || active[source.ExprRef] {
+			return false
 		}
-		if entrySource.HasExpr {
-			if nested, ok := facts.ObjectLiteralView(entrySource.ExprRef); ok {
-				out = writeObjectLiteralHeap(ctx, resolver, facts, in, out, entrySource, nested, active, typeValues, sourceCache)
+		if done[source.ExprRef] {
+			return true
+		}
+		active[source.ExprRef] = true
+		defer delete(active, source.ExprRef)
+		rootValue, ok := objectLiteralRootValue(ctx, typeValues, literal, sourceCache)
+		if !ok {
+			return false
+		}
+		if _, identified := product.Get(ctx.Registry, rootValue, identity.Key).ID(); !identified {
+			return false
+		}
+		heap := ResolvedPathStoreHeapObject{Root: rootValue, Members: make([]ResolvedPathStoreHeapMember, 0, literal.EntryCount())}
+		_, hasListTail := literal.ListElementSource()
+		heap.StableShape = literal.StaticStringKeysComplete() && !hasListTail
+		exact := true
+		literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+			entrySource := entry.Source()
+			if !resolve(entrySource) {
+				exact = false
+				return false
 			}
+			value, available := sourceCache.value(entrySource)
+			if !available {
+				return true
+			}
+			member := ResolvedPathStoreHeapMember{Suffix: entry.SuffixSegments(), Value: objectEntryValue(ctx.Registry, typeValues, entry, value)}
+			heap.Members = append(heap.Members, member)
+			return true
+		})
+		if !exact {
+			return false
 		}
+		heaps = append(heaps, heap)
+		done[source.ExprRef] = true
 		return true
-	})
-	delete(active, source.ExprRef)
-	out = out.WritePlacement(id, placement.Join(out.ReadPlacement(id), placement.Stack))
-	return out.WriteHeapTableObject(ctx.Registry, id, heapidentity.NewOwnedStaticTableObject(rootValue, staticMembers))
+	}
+	for _, root := range roots {
+		if !resolve(root) {
+			return out
+		}
+	}
+	if len(heaps) == 0 {
+		return out
+	}
+	return applyResolvedObjectHeaps(ctx.Registry, resolver.KeySpace(), out, heaps)
 }
 
 type objectLiteralSourceCache struct {
@@ -414,44 +219,13 @@ func (c *objectLiteralSourceCache) seed(source factflow.ValueSource, value produ
 	c.values[source] = cachedObjectLiteralSourceValue{value: value, ok: true}
 }
 
-func objectLiteralEntrySourceValue(
-	ctx transfer.NodeContext,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	cache *objectLiteralSourceCache,
-	source factflow.ValueSource,
-) (product.Value, bool) {
-	if cache != nil {
-		return cache.value(source)
-	}
-	if sources == nil {
-		return product.Value{}, false
-	}
-	return sources.ValueOfSource(ctx.Point, source, in, readWithCurrentPointState(ctx.Point, read, out))
-}
-
 func objectLiteralRootValue(
 	ctx transfer.NodeContext,
 	typeValues *typevalue.Cache,
-	source factflow.ValueSource,
 	literal factflow.ObjectLiteralView,
 	sourceCache *objectLiteralSourceCache,
 ) (product.Value, bool) {
-	if cached, ok := sourceCache.cached(source); ok && cached.ok {
-		if _, hasIdentity := product.Get(ctx.Registry, cached.value, identity.Key).ID(); hasIdentity && typevalue.HasWitness(ctx.Registry, cached.value) {
-			return cached.value, true
-		}
-	}
-	if _, ok := literal.Identity(); ok {
-		t, ok := luasourcevalue.ObjectLiteralTypeViewCached(ctx.Registry, typeValues, literal, sourceCache)
-		if !ok {
-			return product.Value{}, false
-		}
-		return luasourcevalue.ObjectLiteralValueFromTypeCached(ctx.Registry, typeValues, literal, t), true
-	}
-	return sourceCache.value(source)
+	return luasourcevalue.ObjectLiteralValueFromViewCached(ctx.Registry, typeValues, literal, sourceCache)
 }
 
 func objectEntryValue(reg *axis.Registry, typeValues *typevalue.Cache, entry factflow.ObjectEntryView, value product.Value) product.Value {

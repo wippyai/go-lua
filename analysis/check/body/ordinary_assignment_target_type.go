@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -172,37 +173,32 @@ func staticAssignmentWriteSegment(attr *ast.AttrGetExpr) (segment.Segment, bool)
 }
 
 func staticAssignmentWriteContainer(current, declared typ.Type, hasDeclared bool) typ.Type {
-	if hasDeclared && declared != nil && !declaredAssignmentContainerIsUnion(declared, 0) {
+	if hasDeclared && declared != nil && !declaredAssignmentContainerIsUnion(declared) {
 		return declared
 	}
 	return current
 }
 
-func declaredAssignmentContainerIsUnion(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return false
-	}
-	switch tt := t.(type) {
-	case *typ.Annotated:
-		return declaredAssignmentContainerIsUnion(tt.Inner, depth+1)
-	case *typ.Alias:
-		next := tt.UnaliasedTarget()
-		if next == nil || next == t {
+func declaredAssignmentContainerIsUnion(t typ.Type) bool {
+	seen := inspect.NewIdentitySeen(nil)
+	for t != nil && !seen.Contains(t) {
+		seen.Remember(t)
+		switch tt := t.(type) {
+		case *typ.Annotated:
+			t = tt.Inner
+		case *typ.Alias:
+			t = tt.UnaliasedTarget()
+		case *typ.Optional:
+			t = tt.Inner
+		case *typ.Recursive:
+			t = tt.Body
+		case *typ.Union:
+			return true
+		default:
 			return false
 		}
-		return declaredAssignmentContainerIsUnion(next, depth+1)
-	case *typ.Optional:
-		return declaredAssignmentContainerIsUnion(tt.Inner, depth+1)
-	case *typ.Recursive:
-		if tt.Body == nil || tt.Body == t {
-			return false
-		}
-		return declaredAssignmentContainerIsUnion(tt.Body, depth+1)
-	case *typ.Union:
-		return true
-	default:
-		return false
 	}
+	return false
 }
 
 func (r *Result) ordinaryAssignmentTargetTypeResult(point cfg.Point, target ast.Expr, t typ.Type) OrdinaryAssignmentTargetType {

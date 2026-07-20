@@ -57,8 +57,7 @@ type producerContext struct {
 
 	judgmentPolicy judgment.PolicyConfig
 
-	suppressDirectCallContracts bool
-	canceled                    func() bool
+	canceled func() bool
 }
 
 type diagnosticProducer struct {
@@ -162,9 +161,6 @@ func directCallContractJudgmentProducer() diagnosticProducer {
 		judgment.CodeCallArgType,
 	}, func(result *body.Result, context producerContext) []judgment.Judgment {
 		if result == nil {
-			return nil
-		}
-		if context.suppressDirectCallContracts {
 			return nil
 		}
 		return context.directCallContractJudgments(result)
@@ -303,8 +299,6 @@ func produceJudgmentsWithParents(
 		parent:     parentResult,
 		parents:    append([]*body.Result(nil), parentResults...),
 		sourceFile: sourceFile,
-
-		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
 	}
 	var out []judgment.Judgment
 	for _, producer := range diagnosticProducers() {
@@ -316,7 +310,7 @@ func produceJudgmentsWithParents(
 	if result == nil {
 		return out
 	}
-	for _, fn := range result.ReportableFunctionResults() {
+	for _, fn := range result.FunctionResults() {
 		childParents := append(append([]*body.Result(nil), parentResults...), result)
 		out = append(out, produceJudgmentsWithParents(fn, sourceFile, result, childParents...)...)
 	}
@@ -329,8 +323,7 @@ func produceJudgmentsWithContext(ctx context.Context, result *body.Result, sourc
 	}
 	context := producerContext{
 		parent: parentResult, parents: append([]*body.Result(nil), parentResults...), sourceFile: sourceFile,
-		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
-		canceled:                    func() bool { return ctx != nil && ctx.Err() != nil },
+		canceled: func() bool { return ctx != nil && ctx.Err() != nil },
 	}
 	var out []judgment.Judgment
 	for _, producer := range diagnosticProducers() {
@@ -342,7 +335,7 @@ func produceJudgmentsWithContext(ctx context.Context, result *body.Result, sourc
 	if result == nil || context.canceled() {
 		return out
 	}
-	for _, fn := range result.ReportableFunctionResults() {
+	for _, fn := range result.FunctionResults() {
 		childParents := append(append([]*body.Result(nil), parentResults...), result)
 		out = append(out, produceJudgmentsWithContext(ctx, fn, sourceFile, result, childParents...)...)
 		if context.canceled() {
@@ -364,14 +357,12 @@ func produceWithParents(
 		displayFile: config.SourceFile,
 
 		judgmentPolicy: config.Judgment.Normalized(),
-
-		suppressDirectCallContracts: directCallContractsOwnedByContext(parentResult, result),
 	}
 	out := produceOne(result, config, context)
 	if result == nil {
 		return out
 	}
-	for _, fn := range result.ReportableFunctionResults() {
+	for _, fn := range result.FunctionResults() {
 		childParents := append(append([]*body.Result(nil), parentResults...), result)
 		out = append(out, produceWithParents(fn, config, result, childParents...)...)
 	}
@@ -387,17 +378,4 @@ func produceOne(result *body.Result, config Config, context producerContext) []d
 		out = append(out, producer.produce(result, context)...)
 	}
 	return out
-}
-
-func directCallContractsOwnedByContext(parent, result *body.Result) bool {
-	if parent == nil || result == nil || result.IsCallContextResult() || result.Function() == nil {
-		return false
-	}
-	for _, sibling := range parent.FunctionResults() {
-		if sibling == nil || !sibling.IsCallContextResult() || sibling.Function() != result.Function() {
-			continue
-		}
-		return true
-	}
-	return false
 }

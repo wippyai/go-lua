@@ -41,7 +41,7 @@ func (s *BatchSession) EnsureSolved(ctx context.Context, req SolveRequest) (Resu
 		snapshot := s.cachedAnalysis(unit, profile, documentVersion)
 		if snapshot == nil {
 			var err error
-			snapshot, err = solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, s.summaryCache, s.semanticProjection)
+			snapshot, err = solveUnit(ctx, unit, profile, documentVersion, s.semanticProjection)
 			if err != nil {
 				return ResultTag{}, err
 			}
@@ -128,15 +128,11 @@ func (s *BatchSession) solveInputSnapshot(req SolveRequest) (retainedUnit, strin
 	return unit, profile, documentVersion, ResultTag{}, false, nil
 }
 
-func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentVersion int64) (*completedSnapshot, error) {
-	return solveUnitWithSummaryCache(ctx, unit, profile, documentVersion, nil, true)
-}
-
 func unitLexicalNamespace(input UnitInput) lexicalidentity.UnitNamespace {
 	return lexicalidentity.UnitNamespaceFromLogicalUnit(string(input.ID), input.ModulePath, input.EntryDocument.String())
 }
 
-func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, cache *program.SummarySolveCache, semanticProjection bool) (*completedSnapshot, error) {
+func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentVersion int64, semanticProjection bool) (*completedSnapshot, error) {
 	ctx, _ = cancellation.Attach(ctx)
 	input := unit.input
 	if err := ctx.Err(); err != nil {
@@ -162,13 +158,12 @@ func solveUnitWithSummaryCache(ctx context.Context, unit retainedUnit, profile s
 		globals = append(globals, item.Globals...)
 	}
 	globals = normalizedStrings(globals)
-	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, SummaryCache: cache, CacheProfile: profile, Check: body.Config{
+	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, Check: body.Config{
 		Registry:      checkerRegistry,
 		UnitNamespace: unitLexicalNamespace(input),
 		Globals:       globals,
 		GlobalTypes:   globalTypes,
 		StateLanes:    input.StateLanes,
-		Schedule:      input.Schedule,
 		Signatures:    signaturelookup.Source{Manifests: manifests, IncludeStdlib: input.IncludeStdlib},
 		ModuleExports: importlookup.Source{Manifests: manifests},
 		ModuleTypes:   typelookup.Source{Manifests: manifests},

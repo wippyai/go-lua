@@ -16,6 +16,18 @@ type DirectLexicalDeclarationAuthority struct {
 	plan         *operationplan.Plan
 	bindings     *bind.Result
 	declarations operationplan.DirectLexicalDeclarations
+	empty        bool
+}
+
+// sealEmptyDirectLexicalDeclarationAuthority proves the unique empty census
+// directly from an exact Plan. It cannot admit a function value: any
+// ExpressionFunction sidecar makes sealing fail closed.
+func sealEmptyDirectLexicalDeclarationAuthority(plan *operationplan.Plan) (DirectLexicalDeclarationAuthority, error) {
+	declarations := operationplan.SealEmptyDirectLexicalDeclarations(plan)
+	if !declarations.Matches(plan) {
+		return DirectLexicalDeclarationAuthority{}, fmt.Errorf("direct lexical declarations: binder authority is required for a non-empty census")
+	}
+	return DirectLexicalDeclarationAuthority{plan: plan, declarations: declarations, empty: true}, nil
 }
 
 // SealDirectLexicalDeclarationAuthority derives authority directly from the
@@ -39,9 +51,20 @@ func SealDirectLexicalDeclarationAuthority(plan *operationplan.Plan, bindings *b
 	valid := true
 	var invalid string
 	plan.Facts().ForEachExpressionFunction(func(ref factflow.ExprRef, function symbol.ID) bool {
-		closure, ok := closures[function]
 		fn, found := bindings.FunctionBySymbol(function)
 		origin, originated := bindings.FunctionOrigin(fn)
+		if !found || !originated || origin.Parent != owner || origin.Symbol != function {
+			valid = false
+			invalid = fmt.Sprintf("function=%d found=%v origin=%#v", function, found, origin)
+			return false
+		}
+		closure, ok := closures[function]
+		// Only a stable local declaration whose complete runtime use set is
+		// direct-callable belongs to this authority. Every other function
+		// expression remains an ordinary exact function value in the relation.
+		if !ok || origin.Kind != bind.FunctionOriginLocalAssignment || origin.TargetSymbol != closure.TargetSymbol {
+			return true
+		}
 		stable, stableOK := bindings.StableLocalFunctionIdentity(closure.TargetSymbol)
 		capturesClosed := found
 		if capturesClosed {
@@ -57,19 +80,25 @@ func SealDirectLexicalDeclarationAuthority(plan *operationplan.Plan, bindings *b
 				}
 			}
 		}
-		if !ok || !found || !originated || stable != function || !stableOK ||
+		if stable != function || !stableOK ||
 			!closure.RuntimeUseScanComplete || !closure.DirectCallSetComplete ||
-			origin.Parent != owner || origin.Kind != bind.FunctionOriginLocalAssignment || origin.TargetSymbol != closure.TargetSymbol ||
 			!capturesClosed {
-			valid = false
-			invalid = fmt.Sprintf("function=%d target=%d closure=%#v found=%v origin=%#v stable=%d/%v direct-captures=%d", function, closure.TargetSymbol, closure, found, origin, stable, stableOK, len(bindings.DirectCaptures(fn)))
-			return false
+			return true
 		}
-		entries = append(entries, operationplan.DirectLexicalDeclaration{Expression: ref, Function: function, Target: closure.TargetSymbol})
+		candidate := operationplan.DirectLexicalDeclaration{Expression: ref, Function: function, Target: closure.TargetSymbol}
+		// Stable direct use is necessary but not sufficient to erase the value
+		// declaration. An annotated/overlaid declaration still owns executable
+		// root semantics and therefore remains an ordinary exact function value;
+		// direct call composition may consume it without admitting it to the
+		// erased-declaration subset.
+		if !plan.AdmitsDirectLexicalDeclaration(candidate) {
+			return true
+		}
+		entries = append(entries, candidate)
 		return true
 	})
 	if !valid {
-		return DirectLexicalDeclarationAuthority{}, fmt.Errorf("function value is captured, escaping, mutable, or not direct-call complete: %s", invalid)
+		return DirectLexicalDeclarationAuthority{}, fmt.Errorf("function value has no exact binder origin: %s", invalid)
 	}
 	declarations := operationplan.SealDirectLexicalDeclarations(plan, entries)
 	if !declarations.Matches(plan) {
@@ -79,5 +108,5 @@ func SealDirectLexicalDeclarationAuthority(plan *operationplan.Plan, bindings *b
 }
 
 func (a DirectLexicalDeclarationAuthority) matches(plan *operationplan.Plan) bool {
-	return a.plan == plan && a.bindings != nil && a.declarations.Matches(plan)
+	return a.plan == plan && (a.bindings != nil || a.empty) && a.declarations.Matches(plan)
 }

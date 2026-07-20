@@ -1,0 +1,17 @@
+family_pattern,census_test,census_package,source_count,representative_entry
+RootAssignments: root assignment source,TestExternalCensusRootAssignmentScalar,analysis/check/fixpoint/program,91,app.test.channel:errors
+global carrier contracts conflict,TestExternalCensusGlobalCarrierConflict,analysis/check/fixpoint/program,36,app.test.compress:zstd_dict
+branch: missing condition source,TestExternalCensusBranchMissingConditionSource,analysis/check/fixpoint/program,32,app.lib:assert
+branch: contextual-refinement-kind,TestExternalCensusBranchContextualRefinementKind,analysis/check/fixpoint/program,11,app.test.ctx:process_calls_func_async_worker
+unsupported predicate producer,TestExternalCensusUnsupportedPredicateProducer,analysis/check/fixpoint/program,10,app.api:cli
+is outside a certified predicate,TestExternalCensusRefinementOutsideCertifiedPredicate,analysis/check/fixpoint/program,8,app.test.process:cancel_receiver_worker
+ambient symbol N has no caller environment term,TestExternalCensusAmbientSymbolCallerEnvironment,analysis/check/fixpoint/program,8,app.lib:test_sdk
+world freezer produced malformed code,TestExternalCensusWorldFreezerMalformed,analysis/check/fixpoint/program,6,app.test.types:import_base64
+Returns: return source N: assignment source,TestExternalCensusReturnScalar,analysis/check/fixpoint/program,5,app.test.types:type_alias
+structural branch condition is not its exact left operand,TestExternalCensusStructuralBranchConditionNotExactLeftOperand,analysis/check/fixpoint/program,4,app.lib:sigv4
+generic-for: custom iterator expression requires signature effect proof,TestExternalCensusGenericForCustomIterator,analysis/check/fixpoint/program,2,app.test.fs:readdir
+branch: contextual condition source,TestExternalCensusBranchContextualConditionSource,analysis/check/fixpoint/program,2,app.test.registry:generation_drain
+boundary atom,TestExternalCensusBoundaryAtomExact,analysis/check/fixpoint/program,2,app.test.errors:stack
+call return source has no exact value-list authority,TestExternalCensusReturnCallAuthority,analysis/check/fixpoint/program,1,app.test.network:batch_probe
+operand factflow.ValueSource,TestExternalCensusValueSourceOperand,analysis/check/fixpoint/program,1,wippy.test:runner
+PathDescendantInvalidations,TestExternalCensusPathDescendantInvalidations,analysis/check/fixpoint/program,1,wippy.migration:registry_test

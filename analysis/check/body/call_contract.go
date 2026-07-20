@@ -29,7 +29,7 @@ func (r *Result) InstantiateCallFunctionType(point cfg.Point, site factflow.Call
 			args[index] = fn
 			return true
 		}
-		if value, ok := r.SourceValueAtBoundary(point, source); ok {
+		if value, ok := r.SourceValueAtBoundary(point, source); ok && r.TypeEvidenceUsableForInference(value) {
 			if t, ok := r.ValueStructuralType(value); ok {
 				args[index] = t
 			}

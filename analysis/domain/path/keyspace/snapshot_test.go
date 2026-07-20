@@ -49,6 +49,7 @@ func TestSnapshotPreservesAdversarialStructuralIdentity(t *testing.T) {
 	resolver, _ := space.FromResolverKey(7, 3, []segment.Segment{{Kind: segment.SegmentField, Name: "x"}})
 	resolverNext := resolver
 	resolverNext.Ver = 4
+	resolverNext = space.ownKey(resolverNext)
 	resolverMax := space.ownKey(Key{Kind: KindResolverSym, Sym: math.MaxUint64, Ver: math.MaxUint32})
 	unversioned, _ := space.FromResolverKey(7, 0, []segment.Segment{{Kind: segment.SegmentField, Name: "x"}})
 	stable, _ := space.FromStableSymbol(7, []segment.Segment{{Kind: segment.SegmentField, Name: "x"}})
@@ -59,6 +60,7 @@ func TestSnapshotPreservesAdversarialStructuralIdentity(t *testing.T) {
 	named := space.FromPath(pathdom.Path{Root: "sym7@3", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "x"}}})
 	namedCanonical := named
 	namedCanonical.Canon = true
+	namedCanonical = space.ownKey(namedCanonical)
 
 	keys := []Key{
 		fieldDot, twoFields, field, stringIndex,
@@ -461,7 +463,7 @@ func snapshotFixture(t testing.TB, reverse bool) (*KeySpace, []Key) {
 		func() Key {
 			key := space.FromPath(pathdom.Path{Root: "$2", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "x"}}})
 			key.Canon = true
-			return key
+			return space.ownKey(key)
 		},
 		func() Key {
 			return space.FromPath(pathdom.Path{Root: "ret[3]", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "x"}}})
@@ -472,7 +474,7 @@ func snapshotFixture(t testing.TB, reverse bool) (*KeySpace, []Key) {
 		func() Key {
 			key := space.FromPath(pathdom.Path{Root: "omega", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "a"}, {Kind: segment.SegmentField, Name: "b"}}})
 			key.Canon = true
-			return key
+			return space.ownKey(key)
 		},
 		func() Key {
 			key, _ := space.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "raw"}})

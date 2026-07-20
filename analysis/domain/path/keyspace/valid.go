@@ -14,5 +14,5 @@ func (ks *KeySpace) InternSize() int {
 	if !ks.Valid() {
 		return 0
 	}
-	return len(ks.segEntries) + len(ks.rootEntries) + len(ks.existentialEntries) - 3
+	return len(ks.segEntries) + len(ks.rootEntries) + len(ks.formalRootEntries) + len(ks.existentialEntries) - 4
 }

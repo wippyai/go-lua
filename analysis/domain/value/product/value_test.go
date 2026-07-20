@@ -461,9 +461,9 @@ func TestReducePresenceShapeSparseSlots(t *testing.T) {
 	})
 
 	t.Run("explicit top removes sparse slot", func(t *testing.T) {
-		reg := mustRegistry(t, syntheticTopReducerSpec().Erase())
+		reg := mustRegistry(t, syntheticSpec().Erase())
 
-		v := intern(reg, ShapeTop, presence.Absent(), []slot{sparseTestSlot(reg, syntheticKey.ID(), syntheticLow)})
+		v := intern(reg, ShapeTop, presence.Absent(), []slot{sparseTestSlot(reg, syntheticKey.ID(), syntheticTop)})
 
 		if ShapeOf(v) != ShapeBottom {
 			t.Fatalf("ShapeOf = %s, want %s", ShapeOf(v), ShapeBottom)
@@ -656,22 +656,22 @@ func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
 	if got := Get(reg, v, syntheticKey); got != syntheticLow {
 		t.Fatalf("source axis = %v, want %v", got, syntheticLow)
 	}
-	if got := Get(reg, v, secondSyntheticKey); got != syntheticHigh {
-		t.Fatalf("reducer mirror axis = %v, want %v", got, syntheticHigh)
+	if got := Get(reg, v, secondSyntheticKey); got != syntheticLow {
+		t.Fatalf("reducer mirror axis = %v, want %v", got, syntheticLow)
 	}
 }
 
 func TestReducerMutatesOwnedWorkSlotsOnly(t *testing.T) {
 	reg := mustRegistry(t, syntheticMirrorReducerSpec().Erase(), secondSyntheticSpec().Erase())
 
-	base := Set(reg, Top(), secondSyntheticKey, syntheticLow)
+	base := Set(reg, Top(), secondSyntheticKey, syntheticHigh)
 	next := Set(reg, base, syntheticKey, syntheticLow)
 
-	if got := Get(reg, base, secondSyntheticKey); got != syntheticLow {
-		t.Fatalf("source slot was mutated by reducer: second axis = %v, want %v", got, syntheticLow)
+	if got := Get(reg, base, secondSyntheticKey); got != syntheticHigh {
+		t.Fatalf("source slot was mutated by reducer: second axis = %v, want %v", got, syntheticHigh)
 	}
-	if got := Get(reg, next, secondSyntheticKey); got != syntheticHigh {
-		t.Fatalf("reduced value second axis = %v, want %v", got, syntheticHigh)
+	if got := Get(reg, next, secondSyntheticKey); got != syntheticLow {
+		t.Fatalf("reduced value second axis = %v, want %v", got, syntheticLow)
 	}
 }
 
@@ -689,6 +689,99 @@ func TestReducerCanUseExplicitPresenceHelpers(t *testing.T) {
 	if got := Get(reg, v, syntheticKey); got != syntheticLow {
 		t.Fatalf("sparse slot = %v, want %v", got, syntheticLow)
 	}
+}
+
+func TestReducerDependencyClosureHasNoPassCapAndIsRegistrationOrderIndependent(t *testing.T) {
+	const chainLength = 40
+	keys := make([]axis.Key[int], chainLength+1)
+	for i := range keys {
+		keys[i] = axis.NewKey[int](fmt.Sprintf("test.reducer.chain.%03d", i))
+	}
+
+	build := func(reverse bool) (*axis.Registry, *[]string) {
+		t.Helper()
+		trace := new([]string)
+		specs := make([]axis.ErasedSpec, 0, len(keys))
+		for i, key := range keys {
+			var dependency axis.Key[int]
+			if i < chainLength {
+				dependency = keys[i+1]
+			}
+			spec := reducerChainSpec(key, dependency, trace)
+			specs = append(specs, spec.Erase())
+		}
+		if reverse {
+			slices.Reverse(specs)
+		}
+		return mustRegistry(t, specs...), trace
+	}
+
+	forward, forwardTrace := build(false)
+	reverse, reverseTrace := build(true)
+	forwardValue := Set(forward, Top(), keys[chainLength], 1)
+	reverseValue := Set(reverse, Top(), keys[chainLength], 1)
+
+	for _, key := range keys {
+		if got := Get(forward, forwardValue, key); got != 1 {
+			t.Fatalf("forward %s = %d, want 1", key.ID(), got)
+		}
+		if got := Get(reverse, reverseValue, key); got != 1 {
+			t.Fatalf("reverse %s = %d, want 1", key.ID(), got)
+		}
+	}
+	if got, want := fmt.Sprint(*forwardTrace), fmt.Sprint(*reverseTrace); got != want {
+		t.Fatalf("reducer schedule depends on registration order:\nforward %s\nreverse %s", got, want)
+	}
+	if got, want := len(*forwardTrace), chainLength; got != want {
+		t.Fatalf("reducer chain invoked %d rules, want %d", got, want)
+	}
+	if got, want := Hash(forward, forwardValue), Hash(reverse, reverseValue); got != want {
+		t.Fatalf("canonical closure hash differs by registration order: %x != %x", got, want)
+	}
+}
+
+func TestReducerRejectsNonReductiveWrite(t *testing.T) {
+	spec := syntheticSpec()
+	spec.Reducer = func(w axis.Writer) bool {
+		axis.Set(w, syntheticKey, syntheticHigh)
+		return true
+	}
+	reg := mustRegistry(t, spec.Erase())
+
+	mustPanicContaining(t, `made non-reductive write to axis "test.synthetic"`, func() {
+		_ = Set(reg, Top(), syntheticKey, syntheticLow)
+	})
+}
+
+func reducerChainSpec(key, dependency axis.Key[int], trace *[]string) axis.Spec[int] {
+	spec := axis.Spec[int]{
+		Key:       key,
+		Bottom:    func() int { return 0 },
+		Top:       func() int { return 2 },
+		Equal:     func(a, b int) bool { return a == b },
+		LessOrEq:  func(a, b int) bool { return a <= b },
+		Join:      func(a, b int) int { return max(a, b) },
+		Meet:      func(a, b int) int { return min(a, b) },
+		Widen:     func(a, b int) int { return max(a, b) },
+		Hash:      func(v int) uint64 { return uint64(v) + 1 },
+		Boundary:  axis.PortableIdentity,
+		Retention: axis.ImmutableRetention[int](),
+		Canonical: axis.PendingCanonical[int]("test-only reducer chain"),
+	}
+	if dependency.ID() == "" {
+		return spec
+	}
+	spec.ReducerReads = []string{dependency.ID()}
+	spec.ReducerWrites = []string{key.ID()}
+	spec.Reducer = func(w axis.Writer) bool {
+		*trace = append(*trace, key.ID())
+		value, ok := axis.Get(w, dependency)
+		if ok && value == 1 {
+			axis.Set(w, key, 1)
+		}
+		return true
+	}
+	return spec
 }
 
 func TestReducerGenericPresenceAccessPanics(t *testing.T) {
@@ -847,15 +940,6 @@ func syntheticHighMeetSpec() axis.Spec[synthetic] {
 	return spec
 }
 
-func syntheticTopReducerSpec() axis.Spec[synthetic] {
-	spec := syntheticSpec()
-	spec.Reducer = func(w axis.Writer) bool {
-		axis.Set(w, syntheticKey, syntheticTop)
-		return false
-	}
-	return spec
-}
-
 func syntheticMirrorReducerSpec() axis.Spec[synthetic] {
 	spec := syntheticSpec()
 	spec.Reducer = func(w axis.Writer) bool {
@@ -863,9 +947,11 @@ func syntheticMirrorReducerSpec() axis.Spec[synthetic] {
 		if !ok || source != syntheticLow {
 			return false
 		}
-		axis.Set(w, secondSyntheticKey, syntheticHigh)
+		axis.Set(w, secondSyntheticKey, syntheticLow)
 		return false
 	}
+	spec.ReducerReads = []string{syntheticKey.ID()}
+	spec.ReducerWrites = []string{secondSyntheticKey.ID()}
 	return spec
 }
 
@@ -879,6 +965,8 @@ func presenceHelperReducerSpec() axis.Spec[synthetic] {
 		axis.Set(w, syntheticKey, syntheticLow)
 		return false
 	}
+	spec.ReducerReads = []string{presence.Key.ID()}
+	spec.ReducerWrites = []string{presence.Key.ID(), syntheticKey.ID()}
 	return spec
 }
 
@@ -888,6 +976,7 @@ func presenceGenericGetReducerSpec() axis.Spec[synthetic] {
 		_, _ = axis.Get(w, presence.Key)
 		return false
 	}
+	spec.ReducerReads = []string{presence.Key.ID()}
 	return spec
 }
 
@@ -897,6 +986,7 @@ func presenceGenericSetReducerSpec() axis.Spec[synthetic] {
 		axis.Set(w, presence.Key, presence.Present())
 		return false
 	}
+	spec.ReducerWrites = []string{presence.Key.ID()}
 	return spec
 }
 

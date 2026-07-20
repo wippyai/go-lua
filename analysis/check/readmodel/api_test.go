@@ -94,6 +94,30 @@ func TestNumericForDefinitelyNotNumberHasNoSemanticDepthLimit(t *testing.T) {
 	}
 }
 
+// TestNumericForDefinitelyNotNumberDepthExhaustionFailsClosed proves depth is
+// a termination backstop independent of the active-node cycle memo: a
+// non-cyclic chain of distinct alias nodes never repeats in active, so only a
+// live depth budget can cut such a walk short. At exhaustion the query must
+// resolve to the may-contain-number dual (true) rather than reach the honest
+// non-numeric String leaf, so a pathological chain fails closed instead of
+// proving the operand cannot be a number.
+func TestNumericForDefinitelyNotNumberDepthExhaustionFailsClosed(t *testing.T) {
+	exhausted := typ.DefaultRecursionDepth + 1
+	if got := numericForMayContainNumber(typ.String, exhausted, nil); !got {
+		t.Fatal("numericForMayContainNumber succeeded after recursion-depth exhaustion, want the may-contain-number dual (true)")
+	}
+
+	// A real, non-cyclic alias chain, entered near the budget so recursion
+	// through the genuine Alias case crosses it after a couple of frames
+	// instead of reaching the non-numeric String leaf underneath.
+	base := &typ.Alias{Name: "Base", Target: typ.String}
+	mid := &typ.Alias{Name: "Mid", Target: base}
+	top := &typ.Alias{Name: "Top", Target: mid}
+	if got := numericForMayContainNumber(top, typ.DefaultRecursionDepth-1, nil); !got {
+		t.Fatal("alias chain traversal reached the non-numeric leaf instead of failing closed at depth exhaustion")
+	}
+}
+
 func TestNumericForDefinitelyNotNumberSolvesRecursiveMayEquation(t *testing.T) {
 	stringLoop := &typ.Alias{Name: "StringLoop"}
 	stringUnion := &typ.Union{Members: []typ.Type{typ.String, stringLoop}}

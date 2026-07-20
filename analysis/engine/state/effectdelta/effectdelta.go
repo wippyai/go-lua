@@ -61,6 +61,14 @@ func valueDomainForRegistry(reg *axis.Registry) lattice.Lattice[Value] {
 				valueDomain.Equal(a.After, b.After) &&
 				a.Change == b.Change
 		},
+		Same: func(a, b Value) bool {
+			if a.Change == ChangeBottom || b.Change == ChangeBottom {
+				return a.Change == ChangeBottom && b.Change == ChangeBottom
+			}
+			return valueDomain.Same(a.Before, b.Before) &&
+				valueDomain.Same(a.After, b.After) &&
+				a.Change == b.Change
+		},
 		LessOrEq: func(a, b Value) bool {
 			if a.Change == ChangeBottom {
 				return true
@@ -83,6 +91,20 @@ func valueDomainForRegistry(reg *axis.Registry) lattice.Lattice[Value] {
 				Before: valueDomain.Join(a.Before, b.Before),
 				After:  valueDomain.Join(a.After, b.After),
 				Change: changeJoin(a.Change, b.Change),
+			}
+		},
+		Meet: func(a, b Value) Value {
+			if a.Change == ChangeBottom || b.Change == ChangeBottom {
+				return Bottom(reg)
+			}
+			change := changeMeet(a.Change, b.Change)
+			if change == ChangeBottom {
+				return Bottom(reg)
+			}
+			return Value{
+				Before: valueDomain.Meet(a.Before, b.Before),
+				After:  valueDomain.Meet(a.After, b.After),
+				Change: change,
 			}
 		},
 		Widen: func(prev, next Value) Value {
@@ -143,4 +165,20 @@ func changeJoin(a, b Change) Change {
 		return a
 	}
 	return ChangeUnknown
+}
+
+func changeMeet(a, b Change) Change {
+	if a == b {
+		return a
+	}
+	if a == ChangeBottom || b == ChangeBottom {
+		return ChangeBottom
+	}
+	if a == ChangeUnknown {
+		return b
+	}
+	if b == ChangeUnknown {
+		return a
+	}
+	return ChangeBottom
 }

@@ -2,6 +2,7 @@ package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -10,6 +11,12 @@ import (
 // It is the in-IR projection of a condition already normalized by lowering; the
 // IR concludes nothing from it, it only carries the descriptor for the transfer
 // interpreter and the textual printer.
+//
+// wir is the sole owner of this enum: it is upstream IR and analysis/lua's
+// syntax-facing packages (branchcond in particular) consume it, never the
+// reverse, so branchcond.CheckKind is a type alias of this type rather than a
+// second definition. Add new variants here first; CheckKindExhaustivenessTest
+// fails the build if the two packages' names or count ever diverge again.
 type CheckKind uint8
 
 const (
@@ -28,6 +35,7 @@ const (
 	CheckIndexInRange
 	CheckNumGe
 	CheckNumLe
+	CheckFrozenTable
 )
 
 // Check is the neutral condition descriptor interned by a Body. Lowering
@@ -51,6 +59,11 @@ type Check struct {
 	// rather than the true edge. Only the bound checks (CheckIndexInRange,
 	// CheckNumGe, CheckNumLe, CheckLenGe) use it.
 	Negated bool
+	// ProducerPoint is the exact contextual operation whose result owns this
+	// check. Scalar checks leave it absent because their operands are complete
+	// provenance; relation checks such as CheckFrozenTable require it.
+	ProducerPoint    cfg.Point
+	HasProducerPoint bool
 }
 
 // ImpliedCheck records one normalized leaf check proven on a particular outer

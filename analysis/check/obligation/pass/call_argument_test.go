@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	obligationpass "github.com/wippyai/go-lua/analysis/check/obligation/pass"
@@ -836,16 +837,17 @@ func checkFunction(t *testing.T, src string, m *manifest.Manifest) *body.Result 
 	if m != nil {
 		manifests = append(manifests, m)
 	}
-	result, err := body.CheckFunction(parseFunction(t, src), body.Config{
+	resultProgram839, err := program.RunFunction(parseFunction(t, src), program.Config{Check: body.Config{
 		Registry: standard.Registry(),
 		Globals:  []string{"need_string"},
 		Signatures: signaturelookup.Source{
 			Manifests: manifests,
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
+	result := resultProgram839.RootResult()
 	return result
 }
 

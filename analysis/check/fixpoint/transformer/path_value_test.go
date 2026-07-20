@@ -4,19 +4,10 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestLowerBoundaryPathValueUsesCanonicalDescendantRead(t *testing.T) {
@@ -24,9 +15,10 @@ func TestLowerBoundaryPathValueUsesCanonicalDescendantRead(t *testing.T) {
 	arena := NewArena(reg)
 	root := Root{Kind: RootParam, Index: 0}
 	ownerTerm := arena.Root(root)
+	base := arena.Path(root)
 	lexical := pathdom.NewPath(symbol.ID(41), "self").Field("nodes").IndexStr("wanted")
 	valueTerm, pathTerm, err := arena.LowerBoundaryPathValue(lexical, BoundaryPathBinding{
-		Symbol: 41, Root: root, Owner: ownerTerm,
+		Symbol: 41, Root: root, Base: base, Owner: ownerTerm,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -34,56 +26,97 @@ func TestLowerBoundaryPathValueUsesCanonicalDescendantRead(t *testing.T) {
 	if valueTerm == 0 || pathTerm == 0 {
 		t.Fatalf("lowered terms = %d/%d", valueTerm, pathTerm)
 	}
-	if again, againPath, err := arena.LowerBoundaryPathValue(lexical, BoundaryPathBinding{Symbol: 41, Root: root, Owner: ownerTerm}); err != nil || again != valueTerm || againPath != pathTerm {
+	if again, againPath, err := arena.LowerBoundaryPathValue(lexical, BoundaryPathBinding{Symbol: 41, Root: root, Base: base, Owner: ownerTerm}); err != nil || again != valueTerm || againPath != pathTerm {
 		t.Fatalf("lowering was not canonical: %d/%d, %v", again, againPath, err)
 	}
 
-	ks := keyspace.New()
-	rootID := identity.ID{Kind: "table", Site: "graph", Index: 1}
-	nodesID := identity.ID{Kind: "table", Site: "nodes", Index: 2}
-	rootValue := identityvalue.Present(reg, rootID)
-	nodesValue := identityvalue.Present(reg, nodesID)
-	want := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.MaterializeOptional(typ.String)), typ.String)
-	want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop().WithOrigin(evidence.Origin{Kind: evidence.OriginSource, ID: 77}))
-	memberKey := func(seg segment.Segment) keyspace.Key {
-		key, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{seg})
-		if !ok {
-			t.Fatalf("static key for %#v", seg)
-		}
-		return key
-	}
-	in := state.State{}.
-		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-			Root: rootValue, StableShape: true,
-			StaticMembers: map[keyspace.Key]product.Value{memberKey(segment.Segment{Kind: segment.SegmentField, Name: "nodes"}): nodesValue},
-		})).
-		WriteHeapTableObject(reg, nodesID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-			Root: nodesValue, StableShape: true,
-			StaticMembers: map[keyspace.Key]product.Value{memberKey(segment.Segment{Kind: segment.SegmentIndexString, Name: "wanted"}): want},
-		}))
 	basePath := pathdom.NewPath(symbol.ID(901), "caller_graph")
-	cursor, err := NewBindingCursor(Shape{Params: 1}, []product.Value{rootValue}, []pathdom.Path{basePath})
+	cursor, err := NewBindingCursor(Shape{Params: 1}, []product.Value{product.Top()}, []pathdom.Path{basePath})
 	if err != nil {
 		t.Fatal(err)
-	}
-	types := typevalue.NewCache()
-	resolver := func(tablePath pathdom.Path, table, key product.Value) (product.Value, bool) {
-		return sourcevalue.ReadBoundDynamicIndexValue(reg, types, ks, nil, 0, tablePath, table, key, in)
-	}
-	got, ok := arena.evalValue(valueTerm, cursor, SpecializationContext{DynamicRead: resolver})
-	if !ok || !product.Equal(reg, got, want) {
-		t.Fatalf("descendant value = %#v/%v, want exact canonical product %#v", got, ok, want)
 	}
 	gotPath, ok := arena.evalPath(pathTerm, cursor)
 	wantPath := basePath.Field("nodes").IndexStr("wanted")
 	if !ok || !gotPath.Equal(wantPath) {
 		t.Fatalf("descendant path = %s/%v, want %s", gotPath, ok, wantPath)
 	}
-	if ev := product.Get(reg, got, evidence.Key); !evidence.Equal(ev, product.Get(reg, want, evidence.Key)) {
-		t.Fatalf("evidence axis = %#v, want %#v", ev, product.Get(reg, want, evidence.Key))
-	}
 	if _, ok := arena.evalValue(valueTerm, cursor, SpecializationContext{}); ok {
-		t.Fatal("descendant read resolved without caller-owned canonical resolver")
+		t.Fatal("descendant read bypassed the factor-native guarded resolver")
+	}
+}
+
+func TestLowerBoundaryPathValueMakesSubstitutableSingleMemberPathMandatory(t *testing.T) {
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	root := Root{Kind: RootParam, Index: 0}
+	value, _, err := arena.LowerBoundaryPathValue(
+		pathdom.NewPath(symbol.ID(42), "provider").Field("send"),
+		BoundaryPathBinding{Symbol: 42, Root: root, Base: arena.Path(root), Owner: arena.Root(root)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node := arena.values[value]; node.op != valueDynamicRead || node.path == 0 {
+		t.Fatalf("formal member read is not path-owning: %s", arena.canonicalValue(value))
+	}
+}
+
+func TestLowerBoundaryRequiredPathValueUsesMandatoryCarrierReads(t *testing.T) {
+	reg := standard.Registry()
+	for _, tc := range []struct {
+		name    string
+		carrier Root
+	}{
+		{name: "param", carrier: Root{Kind: RootParam, Index: 0}},
+		{name: "capture", carrier: Root{Kind: RootCapture, Index: 1}},
+		{name: "global", carrier: Root{Kind: RootGlobal, Index: 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carrier := tc.carrier
+			arena := NewArena(reg)
+			id := symbol.ID(70 + carrier.Kind)
+			owner := arena.bindEnvironmentSymbol(id)
+			binding := BoundaryPathBinding{Symbol: id, Base: arena.EnvironmentPath(id), Owner: owner, Point: 9}
+
+			rootPath := pathdom.NewPath(id, "carrier")
+			rootValue, rootTerm, err := arena.LowerBoundaryRequiredPathValue(rootPath, binding, carrier)
+			if err != nil || rootValue != owner || rootTerm != binding.Base {
+				t.Fatalf("root required path = %d/%d/%v, want %d/%d", rootValue, rootTerm, err, owner, binding.Base)
+			}
+			for _, lexical := range []pathdom.Path{
+				rootPath.Field("send"),
+				rootPath.Field("client").Field("send"),
+			} {
+				value, fullPath, err := arena.LowerBoundaryRequiredPathValue(lexical, binding, carrier)
+				if err != nil {
+					t.Fatal(err)
+				}
+				node := arena.values[value]
+				if node.op != valueDynamicRead || node.path == 0 || node.point != 9 || fullPath == 0 {
+					t.Fatalf("required path %s is not a point-owned mandatory read: %s", lexical, arena.canonicalValue(value))
+				}
+			}
+		})
+	}
+}
+
+func TestLowerBoundaryRequiredPathValueRejectsLocalCarrierWithoutChangingOptionalLowering(t *testing.T) {
+	reg := standard.Registry()
+	arena := NewArena(reg)
+	id := symbol.ID(81)
+	owner := arena.bindEnvironmentSymbol(id)
+	binding := BoundaryPathBinding{Symbol: id, Base: arena.EnvironmentPath(id), Owner: owner, Point: 4}
+	lexical := pathdom.NewPath(id, "local").Field("send")
+
+	if value, path, err := arena.LowerBoundaryRequiredPathValue(lexical, binding, Root{}); err == nil || value != 0 || path != 0 {
+		t.Fatalf("local required path = %d/%d/%v, want closed rejection", value, path, err)
+	}
+	value, _, err := arena.LowerBoundaryPathValue(lexical, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node := arena.values[value]; node.op != valueDynamicTableRead {
+		t.Fatalf("ordinary local path lost optional lowering: %s", arena.canonicalValue(value))
 	}
 }
 
@@ -92,14 +125,15 @@ func TestLowerBoundaryPathValueRejectsNonCanonicalBindings(t *testing.T) {
 	arena := NewArena(reg)
 	root := Root{Kind: RootParam, Index: 0}
 	owner := arena.Root(root)
+	base := arena.Path(root)
 	tests := []struct {
 		name    string
 		path    pathdom.Path
 		binding BoundaryPathBinding
 	}{
-		{name: "versioned", path: pathdom.Path{Root: "x", Symbol: 1, Version: 2}, binding: BoundaryPathBinding{Symbol: 1, Root: root, Owner: owner}},
-		{name: "wrong symbol", path: pathdom.NewPath(symbol.ID(1), "x").Field("y"), binding: BoundaryPathBinding{Symbol: 2, Root: root, Owner: owner}},
-		{name: "missing owner", path: pathdom.NewPath(symbol.ID(1), "x").Field("y"), binding: BoundaryPathBinding{Symbol: 1, Root: root}},
+		{name: "versioned", path: pathdom.Path{Root: "x", Symbol: 1, Version: 2}, binding: BoundaryPathBinding{Symbol: 1, Root: root, Base: base, Owner: owner}},
+		{name: "wrong symbol", path: pathdom.NewPath(symbol.ID(1), "x").Field("y"), binding: BoundaryPathBinding{Symbol: 2, Root: root, Base: base, Owner: owner}},
+		{name: "missing owner", path: pathdom.NewPath(symbol.ID(1), "x").Field("y"), binding: BoundaryPathBinding{Symbol: 1, Root: root, Base: base}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,60 +144,30 @@ func TestLowerBoundaryPathValueRejectsNonCanonicalBindings(t *testing.T) {
 	}
 }
 
-func TestLowerBoundaryDynamicReadValueMatchesCanonicalKernel(t *testing.T) {
+func TestLowerBoundaryDynamicReadValueRequiresFactorNativeResolver(t *testing.T) {
 	reg := standard.Registry()
 	arena := NewArena(reg)
 	tableRoot := Root{Kind: RootParam, Index: 0}
 	keyRoot := Root{Kind: RootParam, Index: 1}
 	tableOwner := arena.Root(tableRoot)
+	tableBase := arena.Path(tableRoot)
 	keyTerm := arena.Root(keyRoot)
 	tablePath := pathdom.NewPath(symbol.ID(51), "self").Field("references")
 	read, retainedPath, err := arena.LowerBoundaryDynamicReadValue(tablePath, BoundaryPathBinding{
-		Symbol: 51, Root: tableRoot, Owner: tableOwner,
+		Symbol: 51, Root: tableRoot, Base: tableBase, Owner: tableOwner,
 	}, keyTerm)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ks := keyspace.New()
-	rootID := identity.ID{Kind: "table", Site: "graph", Index: 10}
-	referencesID := identity.ID{Kind: "table", Site: "references", Index: 11}
-	rootValue := identityvalue.Present(reg, rootID)
-	referencesValue := identityvalue.Present(reg, referencesID)
-	want := typevalue.LiteralString(reg, "node-17")
-	staticKey := func(seg segment.Segment) keyspace.Key {
-		key, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{seg})
-		if !ok {
-			t.Fatalf("static key for %#v", seg)
-		}
-		return key
-	}
-	in := state.State{}.
-		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-			Root: rootValue, StableShape: true,
-			StaticMembers: map[keyspace.Key]product.Value{staticKey(segment.Segment{Kind: segment.SegmentField, Name: "references"}): referencesValue},
-		})).
-		WriteHeapTableObject(reg, referencesID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-			Root: referencesValue, StableShape: true,
-			StaticMembers: map[keyspace.Key]product.Value{staticKey(segment.Segment{Kind: segment.SegmentIndexString, Name: "route"}): want},
-		}))
 	callerPath := pathdom.NewPath(symbol.ID(951), "graph")
 	keyValue := typevalue.LiteralString(reg, "route")
-	cursor, err := NewBindingCursor(Shape{Params: 2}, []product.Value{rootValue, keyValue}, []pathdom.Path{callerPath, pathdom.NewPath(symbol.ID(952), "name")})
+	cursor, err := NewBindingCursor(Shape{Params: 2}, []product.Value{product.Top(), keyValue}, []pathdom.Path{callerPath, pathdom.NewPath(symbol.ID(952), "name")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	types := typevalue.NewCache()
-	canonical := func(path pathdom.Path, table, key product.Value) (product.Value, bool) {
-		return sourcevalue.ReadBoundDynamicIndexValue(reg, types, ks, nil, 0, path, table, key, in)
-	}
-	got, ok := arena.evalValue(read, cursor, SpecializationContext{DynamicRead: canonical})
-	if !ok || !product.Equal(reg, got, want) {
-		t.Fatalf("dynamic descendant read = %#v/%v, want %#v", got, ok, want)
-	}
-	direct, ok := sourcevalue.ReadBoundDynamicIndexValue(reg, types, ks, nil, 0, callerPath.Field("references"), rootValue, keyValue, in)
-	if !ok || !product.Equal(reg, got, direct) {
-		t.Fatalf("symbolic/canonical differential = %#v vs %#v/%v", got, direct, ok)
+	if _, ok := arena.evalValue(read, cursor, SpecializationContext{}); ok {
+		t.Fatal("dynamic descendant read bypassed the factor-native guarded resolver")
 	}
 	gotPath, ok := arena.evalPath(retainedPath, cursor)
 	if !ok || !gotPath.Equal(callerPath.Field("references")) {

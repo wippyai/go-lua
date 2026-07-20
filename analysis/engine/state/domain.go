@@ -9,7 +9,7 @@ import (
 // LaneID names one State product-lattice axis.
 type LaneID string
 
-var domainCache registrycache.Cache[lattice.Lattice[State]]
+var productDomainCache registrycache.Cache[ProductDomain]
 
 // DomainOptions are per-solve lattice knobs that must not be cached globally.
 type DomainOptions struct {
@@ -20,7 +20,26 @@ type DomainOptions struct {
 
 // Domain builds the default State lattice with every state axis enabled.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
-	return domainCache.GetFor(reg, defaultStateDomain)
+	return RegisteredProductDomain(reg).Lattice()
+}
+
+// RegisteredProductDomain returns the canonical all-lane product capability
+// required by coordinate-factorized solvers.
+func RegisteredProductDomain(reg *axis.Registry) ProductDomain {
+	return productDomainCache.GetFor(reg, func(reg *axis.Registry) ProductDomain {
+		return defaultLaneCatalog.ProductDomain(reg)
+	})
+}
+
+func TryRegisteredProductDomainWithOptionalLanesAndOptions(reg *axis.Registry, lanes []LaneID, options DomainOptions) (ProductDomain, error) {
+	if lanes == nil {
+		return defaultLaneCatalog.TryProductDomainWithLaneSetAndOptions(reg, defaultLaneCatalog.LaneSet(), options)
+	}
+	return defaultLaneCatalog.TryProductDomainWithLaneSetAndOptions(reg, NewLaneSet(lanes...), options)
+}
+
+func TryRegisteredProductDomainWithLanes(reg *axis.Registry, lanes []LaneID) (ProductDomain, error) {
+	return defaultLaneCatalog.TryProductDomainWithLaneSet(reg, NewLaneSet(lanes...))
 }
 
 // IsBottom reports whether st is the unreachable bottom element of the default
@@ -29,10 +48,6 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 func IsBottom(reg *axis.Registry, st State) bool {
 	domain := Domain(reg)
 	return domain.Equal(st, domain.Bottom())
-}
-
-func defaultStateDomain(reg *axis.Registry) lattice.Lattice[State] {
-	return defaultLaneCatalog.Domain(reg)
 }
 
 // NormalizeForDomain returns st in the canonical shape owned by domain. For a

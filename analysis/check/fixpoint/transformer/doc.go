@@ -1,9 +1,11 @@
-// Package transformer contains the inactive executable core used to compile a
-// lexical function into a reusable guarded relation.
+// Package transformer compiles each lexical function into typed WorldProgram
+// input IR, reduces a complete call/resource SCC once into normalized
+// parametric boundary relations, and applies those relations through lazy
+// binding environments. The abstract domains remain owned by State; this
+// package changes orchestration, not semantic axes.
 //
-// The package deliberately does not participate in program solving yet.  Its
-// publication boundary is the existing summary.Summary type: specialization
-// is transactional and either returns one complete summary or requests the
-// existing contextual solver.  This keeps the concrete solver as the oracle
-// while transformer coverage is grown operation by operation and lane by lane.
+// WorldProgram is never interpreted per call. Calls reference reduced relation
+// variables, and evaluator application cells own the sole semantic fixed point
+// with WTO widening/narrowing. There is no contextual fallback, depth budget,
+// row budget, or recursion cutoff in this pipeline.
 package transformer

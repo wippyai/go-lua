@@ -20,21 +20,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	enginestate "github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func TestUnitLexicalNamespaceIgnoresScheduleAndDiagnosticPolicy(t *testing.T) {
+func TestUnitLexicalNamespaceIgnoresDiagnosticPolicy(t *testing.T) {
 	input := UnitInput{ID: "unit", ModulePath: "module", EntryDocument: embedding.MemDocument("entry")}
 	want := unitLexicalNamespace(input)
-	input.Schedule = transfer.ScheduleWTO
 	input.DiagnosticPolicy = diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
 		diagnostic.Code("test.policy"): diagnostic.Disable(),
 	}}
 	if got := unitLexicalNamespace(input); got != want {
-		t.Fatalf("policy/schedule changed lexical namespace: %s -> %s", want, got)
+		t.Fatalf("policy changed lexical namespace: %s -> %s", want, got)
 	}
 }
 
@@ -450,12 +448,12 @@ return value
 	}
 }
 
-func TestBatchSessionHighFanoutMaterializedContextsAreDeterministic(t *testing.T) {
+func TestBatchSessionHighFanoutLexicalBodiesAreDeterministic(t *testing.T) {
 	ctx := context.Background()
 	session := NewBatchSession()
 	input := UnitInput{
-		ID:         "high-fanout-contexts",
-		ModulePath: "example/high-fanout-contexts",
+		ID:         "high-fanout-bodies",
+		ModulePath: "example/high-fanout-bodies",
 		EntryFile:  "main.lua",
 		SourceFiles: map[string][]byte{"main.lua": []byte(`
 local function alpha(value)
@@ -496,8 +494,8 @@ return first() .. second() .. third()
 		t.Fatal("first completed result missing")
 	}
 	wantBodies := first.Bodies()
-	if len(wantBodies) < 24 {
-		t.Fatalf("bodies = %d, want high-fanout materialized contexts", len(wantBodies))
+	if len(wantBodies) != 7 {
+		t.Fatalf("bodies = %d, want exactly one result for each of 7 lexical bodies", len(wantBodies))
 	}
 
 	for run := 1; run < 12; run++ {
@@ -626,7 +624,7 @@ func TestBatchSessionDiscardsSnapshotAfterInterleavedUnitEdit(t *testing.T) {
 	done := make(chan *completedSnapshot, 1)
 	errs := make(chan error, 1)
 	go func() {
-		snapshot, err := solveUnit(ctx, unit, profile, documentVersion)
+		snapshot, err := solveUnit(ctx, unit, profile, documentVersion, true)
 		if err != nil {
 			errs <- err
 			return

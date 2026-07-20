@@ -14,6 +14,7 @@ type verifiedSpec struct {
 	top    Element
 	leq    []bool
 	join   []Element
+	meet   []Element
 
 	assignMode      AssignMode
 	assignMap       []Element
@@ -29,7 +30,8 @@ func (s *verifiedSpec) ExtensionKind() string { return extensionKind }
 func (s *verifiedSpec) ExtensionID() string   { return string(s.id) }
 
 // Verify checks every lattice law and transfer-map monotonicity requirement,
-// returning the immutable runtime descriptor used by Register.
+// compiling exact join and meet tables into the immutable runtime descriptor
+// used by Register.
 func Verify(spec Spec) (*VerifiedSpec, error) {
 	if spec.ID == "" {
 		return nil, fmt.Errorf("userlattice: spec has empty id")
@@ -99,6 +101,10 @@ func Verify(spec Spec) (*VerifiedSpec, error) {
 	if err != nil {
 		return nil, err
 	}
+	meet, err := buildMeetTable(spec.ID, elements, leq)
+	if err != nil {
+		return nil, err
+	}
 	assignMap, err := buildElementMap(spec.ID, "assign map", spec.Hooks.OnAssign.Map, index, elements, leq)
 	if err != nil {
 		return nil, err
@@ -136,6 +142,7 @@ func Verify(spec Spec) (*VerifiedSpec, error) {
 		top:             top,
 		leq:             leq,
 		join:            join,
+		meet:            meet,
 		assignMode:      spec.Hooks.OnAssign.Mode,
 		assignMap:       assignMap,
 		callBoundary:    spec.Hooks.OnCallBoundary.Mode,
@@ -191,6 +198,40 @@ func buildJoinTable(id AxisID, elements []ElementID, leq []bool) ([]Element, err
 		}
 	}
 	return join, nil
+}
+
+func buildMeetTable(id AxisID, elements []ElementID, leq []bool) ([]Element, error) {
+	n := len(elements)
+	meet := make([]Element, n*n)
+	for a := 0; a < n; a++ {
+		for b := 0; b < n; b++ {
+			var maximal []int
+			for lower := 0; lower < n; lower++ {
+				if !leq[lower*n+a] || !leq[lower*n+b] {
+					continue
+				}
+				isMaximal := true
+				for other := 0; other < n; other++ {
+					if other == lower {
+						continue
+					}
+					if leq[other*n+a] && leq[other*n+b] && leq[lower*n+other] {
+						isMaximal = false
+						break
+					}
+				}
+				if isMaximal {
+					maximal = append(maximal, lower)
+				}
+			}
+			if len(maximal) != 1 {
+				return nil, fmt.Errorf("userlattice %q: pair (%s, %s) has no greatest lower bound; maximal lower bounds: %s",
+					id, elements[a], elements[b], elementList(elements, maximal))
+			}
+			meet[a*n+b] = Element(maximal[0])
+		}
+	}
+	return meet, nil
 }
 
 func buildElementMap(id AxisID, label string, entries []ElementMapEntry, index map[ElementID]Element, elements []ElementID, leq []bool) ([]Element, error) {

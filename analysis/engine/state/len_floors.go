@@ -30,11 +30,13 @@ func (s State) WriteLenFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, 
 	if !ok {
 		return s
 	}
+	previousConsistency := s.numericConsistency
 	out := s.reachable()
 	floors, changed := out.lenFloors.write(key, lo)
 	if !changed {
 		return s
 	}
-	out.lenFloors = floors
+	setStateLenFloors(&out, floors)
+	out.markNumericConsistencyDirty(previousConsistency, RelLengthOperand(stateKey).NumericKey())
 	return out
 }

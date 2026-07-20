@@ -3,7 +3,6 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -11,10 +10,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -25,69 +24,25 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func applyBranchRefinement(
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	return applyBranchRefinementCached(nil, ctx, resolver, projectPath, out, targetPath, refinement)
-}
-
-func applyBranchRefinementCached(
-	typeValues *typevalue.Cache,
-	ctx transfer.EdgeContext,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	var reachable bool
-	out, reachable = ApplyConcreteGuardRefinement(ConcreteGuardRefinementRequest{
-		Registry:    ctx.Registry,
-		TypeValues:  typeValues,
-		Resolver:    resolver,
-		ProjectPath: projectPath,
-		Point:       ctx.Edge.From,
-		Input:       out,
-		Output:      out,
-		TargetPath:  targetPath,
-		Refinement:  refinement,
-	})
-	if !reachable {
-		return out
-	}
-	return activatePathPresenceImplicationsForPath(ctx.Registry, resolver, ctx.Edge.From, out, targetPath)
-}
-
-func branchRefinementContradictsCurrentValue(
-	typeValues *typevalue.Cache,
+// valueRefinementContradictsCurrentValue is the representation-neutral guard
+// feasibility law shared by concrete State and factor-native execution.
+func valueRefinementContradictsCurrentValue(
 	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
+	typeValues *typevalue.Cache,
+	current product.Value,
 	refinement factflow.ValueRefinement,
 ) bool {
-	if refinement.FalsyAbsent() && falsyAbsentRefinementUnproven(reg, resolver, projectPath, point, out, targetPath) {
+	if refinement.FalsyAbsent() && !falsyAbsentValueProven(reg, current) {
 		return false
 	}
 	constraint, ok := refinement.Constraint()
-	if !ok {
-		return false
-	}
-	current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath)
-	if !ok || product.Equal(reg, current.value, product.Bottom(reg)) {
+	if !ok || product.Equal(reg, current, product.Bottom(reg)) {
 		return false
 	}
 	if refinement.NegatedLiteral() {
-		return valuerefine.NegatedLiteralContradictsValue(reg, typeValues, current.value, constraint)
+		return valuerefine.NegatedLiteralContradictsValue(reg, typeValues, current, constraint)
 	}
-	refined := valuerefine.MeetConstraint(reg, current.value, constraint)
+	refined := valuerefine.MeetConstraint(reg, current, constraint)
 	return product.Equal(reg, refined, product.Bottom(reg)) || presence.Equal(product.PresenceOf(refined), presence.Bottom())
 }
 
@@ -226,18 +181,6 @@ func applyBranchDiffConstraint(
 	return out.WriteScaledConstraint(fact.CoHi(), hiKey, coHi2, hi2Key, loKey, fact.C())
 }
 
-func applyValueRefinementAt(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	return applyValueRefinementAtCached(nil, reg, resolver, projectPath, point, out, targetPath, refinement)
-}
-
 func applyValueWriteAt(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
@@ -250,7 +193,17 @@ func applyValueWriteAt(
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
-		out = out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), value)
+		slot := key.SymbolValue(targetPath.Symbol)
+		current := out.ReadValue(reg, slot)
+		currentID, currentExact := identityvalue.ExactID(reg, current)
+		writtenID, writtenExact := identityvalue.ExactID(reg, value)
+		if currentExact && writtenExact && currentID == writtenID {
+			object := out.ReadHeapTableObject(reg, currentID)
+			if !object.IsBottom() {
+				out = out.WriteHeapTableObject(reg, currentID, object.WithRoot(value))
+			}
+		}
+		out = out.WriteValue(reg, slot, value)
 		return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
 	}
 	if resolver == nil {
@@ -261,105 +214,6 @@ func applyValueWriteAt(
 		return out
 	}
 	return activatePathPresenceImplicationsForPath(reg, resolver, point, written, targetPath)
-}
-
-func applyValueRefinementAtCached(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	out = ApplyConcreteValueRefinement(ConcreteValueRefinementRequest{
-		Registry:    reg,
-		TypeValues:  typeValues,
-		Resolver:    resolver,
-		ProjectPath: projectPath,
-		Point:       point,
-		Input:       out,
-		Output:      out,
-		TargetPath:  targetPath,
-		Refinement:  refinement,
-	})
-	return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
-}
-
-func applyValueRefinementAtWithoutImplicationsCached(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	if targetPath.Symbol == 0 {
-		return out
-	}
-	if refinement.FalsyAbsent() && falsyAbsentRefinementUnproven(reg, resolver, projectPath, point, out, targetPath) {
-		return out
-	}
-	if len(targetPath.Segments) == 0 {
-		if refinement.NegatedLiteral() {
-			return out
-		}
-		var preserve narrowedRootDescendantFacts
-		if constraint, ok := refinement.Constraint(); ok && rootRefinementInvalidatesDescendants(reg, refinement) {
-			var narrowedRoot typ.Type
-			if rootRefinementCanKeepDescendants(reg, typeValues, constraint) && typeValues != nil {
-				narrowedRoot, _ = typeValues.TypeOf(reg, constraint)
-			}
-			if rootRefinementCanKeepDescendants(reg, typeValues, constraint) {
-				preserve = descendantFactsCompatibleWithNarrowedRoot(reg, typeValues, resolver, projectPath, point, out, targetPath, narrowedRoot)
-			}
-			out = invalidateRootDescendantsAt(resolver, point, out, targetPath)
-		}
-		out = out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
-			if product.Equal(reg, value, product.Bottom(reg)) {
-				if constraint, ok := refinement.Constraint(); ok {
-					return constraint
-				}
-			}
-			return refineProductValue(reg, value, refinement)
-		})
-		return preserve.Restore(out)
-	}
-	if constraint, ok := refinement.Constraint(); ok {
-		if lit, ok := literalConstraintType(reg, constraint); ok {
-			if narrowed, applied := applyDescendantLiteralRootOriginRefinement(typeValues, reg, resolver, projectPath, point, out, targetPath, lit, refinement.NegatedLiteral()); applied {
-				return narrowed
-			}
-			if refinement.NegatedLiteral() {
-				return out
-			}
-		}
-	}
-	out = applyDescendantTruthyRootOriginRefinement(typeValues, reg, resolver, point, out, targetPath, refinement)
-	refinement = inheritUntrustedRootEvidenceForDescendantRefinement(typeValues, reg, resolver, projectPath, point, out, targetPath, refinement)
-	if resolver == nil {
-		return out
-	}
-	current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath)
-	if !ok {
-		constraint, hasConstraint := refinement.Constraint()
-		if !hasConstraint {
-			return out
-		}
-		written, wrote := writePathAt(reg, out, resolver, point, targetPath, constraint)
-		if !wrote {
-			return out
-		}
-		return written
-	}
-	written, ok := current.write(reg, out, refineProductValue(reg, current.value, refinement))
-	if !ok {
-		return out
-	}
-	return written
 }
 
 func rootRefinementInvalidatesDescendants(reg *axis.Registry, refinement factflow.ValueRefinement) bool {
@@ -418,23 +272,31 @@ func rootRefinementCanKeepDescendants(reg *axis.Registry, typeValues *typevalue.
 	return true
 }
 
-// falsyAbsentRefinementUnproven reports whether a falsy-edge Absent refinement
-// cannot be soundly applied to the subject: its present value could be the
-// boolean false, so a falsy edge does not prove it nil. The subject's runtime
-// kind or present type witness must rule out boolean and false-literal values.
-func falsyAbsentRefinementUnproven(
+// branchFeasibilityValue has one authority for a lexical root: the canonical
+// SymbolValue slot. Routing the same root through point-local path projection
+// can expose a weaker structural spelling and lose its type witness. Descendant
+// paths still require resolver projection because they have no scalar slot.
+func branchFeasibilityValue(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
-) bool {
-	current, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, targetPath, projectPath)
-	if !ok {
-		return true
+) (product.Value, bool) {
+	if reg == nil || targetPath.Symbol == 0 {
+		return product.Value{}, false
 	}
-	return valuerefine.CanBeFalse(reg, current.value)
+	if len(targetPath.Segments) == 0 {
+		value := out.ReadValue(reg, key.SymbolValue(targetPath.Symbol))
+		return value, !product.Equal(reg, value, product.Bottom(reg))
+	}
+	current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath)
+	if !ok || product.Equal(reg, current.value, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	return current.value, true
 }
 
 func refineProductValue(reg *axis.Registry, value product.Value, refinement factflow.ValueRefinement) product.Value {
@@ -522,38 +384,6 @@ func literalConstraintType(reg *axis.Registry, constraint product.Value) (typ.Ty
 	return t, true
 }
 
-func inheritUntrustedRootEvidenceForDescendantRefinement(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) factflow.ValueRefinement {
-	constraint, ok := refinement.Constraint()
-	if !ok || targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
-		return refinement
-	}
-	if constraintProvesRuntimeCheckedValue(reg, constraint) {
-		return refinement
-	}
-	if current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath); ok {
-		if valueProvesScalarValue(reg, current.value) {
-			return refinement
-		}
-		if valueHasUntrustedTopEvidence(reg, current.value) {
-			return refinement
-		}
-	}
-	rootEvidence, ok := untrustedRootEvidence(reg, out, targetPath.Symbol)
-	if !ok {
-		return refinement
-	}
-	return refinement.WithConstraint(reg, product.Set(reg, product.Top(), evidence.Key, rootEvidence))
-}
-
 func untrustedRootEvidence(reg *axis.Registry, out state.State, root symbol.ID) (evidence.Value, bool) {
 	if reg == nil || root == 0 {
 		return evidence.Top(), false
@@ -593,281 +423,6 @@ func valueProvesScalarValue(reg *axis.Registry, value product.Value) bool {
 	}
 }
 
-func applyDescendantTruthyRootOriginRefinement(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
-		return out
-	}
-	if !refinementHasPresentConstraint(refinement) {
-		return out
-	}
-	rootSlot := key.SymbolValue(targetPath.Symbol)
-	rootValue := out.ReadValue(reg, rootSlot)
-	if product.Equal(reg, rootValue, product.Bottom(reg)) {
-		return out
-	}
-	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{
-		ApplyPresence: true,
-	})
-	if !ok {
-		return out
-	}
-	narrowed, ok := narrowRootByPathLiteral(typeValues, reg, resolver, nil, point, out, targetPath, rootValue, rootType, typ.LiteralBool(true))
-	if !ok {
-		return out
-	}
-	return narrowed
-}
-
-func applyDescendantLiteralRootOriginRefinement(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	lit typ.Type,
-	negated bool,
-) (state.State, bool) {
-	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
-		return out, false
-	}
-	rootSlot := key.SymbolValue(targetPath.Symbol)
-	rootValue := out.ReadValue(reg, rootSlot)
-	if product.Equal(reg, rootValue, product.Bottom(reg)) {
-		return out, false
-	}
-	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{
-		ApplyPresence: true,
-	})
-	if !ok {
-		return out, false
-	}
-	if negated {
-		if narrowed, applied := narrowRootByPathLiteralNot(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit); applied {
-			return narrowed, true
-		}
-	} else if narrowed, applied := narrowRootByPathLiteral(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit); applied {
-		return narrowed, true
-	}
-	return narrowNestedUnionDescendant(typeValues, reg, resolver, projectPath, point, out, targetPath, rootType, lit, negated)
-}
-
-// narrowNestedUnionDescendant narrows a discriminated union held in a nested
-// field when the discriminant tag of that nested union is checked. The root is
-// not itself the union (so root-origin narrowing does not apply); instead the
-// deepest prefix of the path whose member type is a discriminated union is
-// narrowed at its own path location, so a later read of that nested field sees
-// the selected arm. This covers a generic payload field whose own kind tag is
-// tested through a record that wraps it.
-func narrowNestedUnionDescendant(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	rootType typ.Type,
-	lit typ.Type,
-	negated bool,
-) (state.State, bool) {
-	if resolver == nil {
-		return out, false
-	}
-	segments := targetPath.Segments
-	for j := 1; j < len(segments); j++ {
-		prefix := segments[:j]
-		rest := segments[j:]
-		unionType, ok := variant.FieldAtPath(rootType, prefix)
-		if !ok {
-			continue
-		}
-		var family uint64
-		var cases []int
-		if negated {
-			family, cases, ok = typeValues.OriginByPathLiteralNot(unionType, rest, lit)
-		} else {
-			family, cases, ok = typeValues.OriginByPathLiteral(unionType, rest, lit)
-		}
-		if !ok {
-			continue
-		}
-		narrowedType, ok := typeValues.NarrowVariantByOrigin(unionType, family, cases)
-		if !ok {
-			continue
-		}
-		anchorPath := targetPath
-		anchorPath.Segments = append([]segment.Segment(nil), prefix...)
-		constraint := typeValues.FromTypeWithWitness(reg, narrowedType)
-		constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
-		anchor, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, anchorPath, projectPath)
-		if !ok {
-			pathKey := factPathKeyAt(resolver, point, anchorPath)
-			if pathKey == "" {
-				return out, false
-			}
-			return out.WritePathKey(reg, resolver.KeySpace(), pathKey, constraint), true
-		}
-		return anchor.write(reg, out, product.Meet(reg, anchor.value, constraint))
-	}
-	return out, false
-}
-
-func applyDescendantTruthyOppositeRootOriginRefinement(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-) state.State {
-	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
-		return out
-	}
-	rootSlot := key.SymbolValue(targetPath.Symbol)
-	rootValue := out.ReadValue(reg, rootSlot)
-	if product.Equal(reg, rootValue, product.Bottom(reg)) {
-		return out
-	}
-	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{})
-	if !ok {
-		return out
-	}
-	narrowed, ok := narrowRootByPathLiteralNot(typeValues, reg, resolver, nil, point, out, targetPath, rootValue, rootType, typ.LiteralBool(true))
-	if !ok {
-		return out
-	}
-	return narrowed
-}
-
-func narrowRootByPathLiteral(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	rootValue product.Value,
-	rootType typ.Type,
-	lit typ.Type,
-) (state.State, bool) {
-	return narrowRootByPathLiteralMatch(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit, false)
-}
-
-func narrowRootByPathLiteralNot(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	rootValue product.Value,
-	rootType typ.Type,
-	lit typ.Type,
-) (state.State, bool) {
-	return narrowRootByPathLiteralMatch(typeValues, reg, resolver, projectPath, point, out, targetPath, rootValue, rootType, lit, true)
-}
-
-func narrowRootByPathLiteralMatch(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	rootValue product.Value,
-	rootType typ.Type,
-	lit typ.Type,
-	negate bool,
-) (state.State, bool) {
-	if valueHasUntrustedTopEvidence(reg, rootValue) {
-		return out, false
-	}
-	var family uint64
-	var cases []int
-	var ok bool
-	if negate {
-		family, cases, ok = typeValues.OriginByPathLiteralNot(rootType, targetPath.Segments, lit)
-	} else {
-		family, cases, ok = typeValues.OriginByPathLiteral(rootType, targetPath.Segments, lit)
-	}
-	if !ok {
-		return out, false
-	}
-	narrowedType, ok := typeValues.NarrowVariantByOrigin(rootType, family, cases)
-	if !ok {
-		return out, false
-	}
-	constraint := typeValues.FromTypeWithWitness(reg, narrowedType)
-	constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
-	refinedRoot := refineProductValue(reg, rootValue, factflow.NewValueConstraint(constraint))
-	if product.Equal(reg, refinedRoot, product.Bottom(reg)) {
-		return unreachableState(reg), true
-	}
-	rootPath := targetPath.RootOnly()
-	preserve := descendantFactsCompatibleWithNarrowedRoot(reg, typeValues, resolver, projectPath, point, out, rootPath, narrowedType)
-	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
-	out = out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), refinedRoot)
-	return preserve.Restore(out), true
-}
-
-type narrowedRootDescendantFacts struct {
-	reg           *axis.Registry
-	pathFacts     []narrowedRootDescendantFact
-	staticMembers []narrowedRootDescendantFact
-}
-
-type narrowedRootDescendantFact struct {
-	key   keyspace.Key
-	value product.Value
-}
-
-func descendantFactsCompatibleWithNarrowedRoot(
-	reg *axis.Registry,
-	typeValues *typevalue.Cache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	rootPath pathdom.Path,
-	narrowedRoot typ.Type,
-) narrowedRootDescendantFacts {
-	preserve := narrowedRootDescendantFacts{reg: reg}
-	if reg == nil || resolver == nil || rootPath.Symbol == 0 || len(rootPath.Segments) != 0 {
-		return preserve
-	}
-	rootKey, ok := factKeyspaceKeyAt(resolver, point, rootPath)
-	if !ok {
-		return preserve
-	}
-	ks := resolver.KeySpace()
-	out.ForEachPathRefinement(func(pathKey keyspace.Key, value product.Value) bool {
-		if preserved, ok := compatibleNarrowedRootDescendant(reg, typeValues, ks, projectPath, rootKey, pathKey, value, narrowedRoot); ok {
-			preserve.pathFacts = append(preserve.pathFacts, narrowedRootDescendantFact{key: pathKey, value: preserved})
-		}
-		return true
-	})
-	out.ForEachPathStaticMember(func(pathKey keyspace.Key, value product.Value) bool {
-		if preserved, ok := compatibleNarrowedRootDescendant(reg, typeValues, ks, projectPath, rootKey, pathKey, value, narrowedRoot); ok {
-			preserve.staticMembers = append(preserve.staticMembers, narrowedRootDescendantFact{key: pathKey, value: preserved})
-		}
-		return true
-	})
-	return preserve
-}
-
 func compatibleNarrowedRootDescendant(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
@@ -881,12 +436,12 @@ func compatibleNarrowedRootDescendant(
 	if ks == nil || !ks.HasStrictPrefix(pathKey, rootKey) || product.Equal(reg, value, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
-	path, ok := ks.StatePath(pathKey)
-	if !ok {
+	segments, ok := ks.SegmentsView(pathKey)
+	if !ok || len(segments) == 0 {
 		return product.Value{}, false
 	}
 	if typeValues != nil && projectPath != nil && narrowedRoot != nil {
-		if projected, ok := projectPath(narrowedRoot, path); ok {
+		if projected, ok := projectStructuralSegments(projectPath, narrowedRoot, segments); ok {
 			projectedValue := projectedPathValue(reg, typeValues, projected)
 			merged := product.Meet(reg, value, projectedValue)
 			if product.Equal(reg, merged, product.Bottom(reg)) {
@@ -923,17 +478,6 @@ func descendantFactDependsOnInvalidatedRoot(reg *axis.Registry, value product.Va
 	return !origin.IsTop() && !origin.IsBottom()
 }
 
-func (f narrowedRootDescendantFacts) Restore(out state.State) state.State {
-	edit := out.EditPathEvidence(f.reg)
-	for _, fact := range f.pathFacts {
-		edit.WriteLocalPathKey(fact.key, fact.value)
-	}
-	for _, fact := range f.staticMembers {
-		edit.WriteLocalPathStaticMember(fact.key, fact.value)
-	}
-	return edit.Done()
-}
-
 func valueHasUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {
 	if reg == nil {
 		return false
@@ -948,4 +492,20 @@ func valueHasUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool 
 func refinementHasPresentConstraint(refinement factflow.ValueRefinement) bool {
 	constraint, ok := refinement.Constraint()
 	return ok && presence.Equal(product.PresenceOf(constraint), presence.Present())
+}
+
+// descendantRefinementMayNarrowPathOrigin is the preparation-side predicate
+// for the root/nested-origin writes performed by the canonical refinement
+// kernel above. Literal discriminants and truthy member tests are the only
+// refinement forms that can escape the selected member coordinate.
+func descendantRefinementMayNarrowPathOrigin(reg *axis.Registry, refinement factflow.ValueRefinement) bool {
+	if refinementHasPresentConstraint(refinement) {
+		return true
+	}
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		return false
+	}
+	_, literal := literalConstraintType(reg, constraint)
+	return literal
 }

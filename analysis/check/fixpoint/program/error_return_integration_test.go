@@ -120,7 +120,6 @@ func TestErrorReturnLocalFunctionSummaryRefinesValuePresenceAcrossGuard(t *testi
 		local n: number = result
 	`)
 	result := runChunk(t, stmts, body.Config{Registry: reg})
-
 	assign := stmts[1].(*ast.LocalAssignStmt)
 	value := localSymbolAt(t, result, assign, 0)
 	branch := firstBranchPoint(t, result)
@@ -270,15 +269,16 @@ func TestTableFreezeAndIsFrozenBranchCarryFrozenProof(t *testing.T) {
 	}
 	entryID := testTableIdentity(31, 31)
 	entryState := state.State{}.WriteValue(reg, key.SymbolValue(tValue), product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(entryID)))
-	result, err := body.CheckBoundChunk(stmts, bindings, body.Config{
+	checked, err := program.RunBoundChunk(stmts, bindings, program.Config{Check: body.Config{
 		Registry:   reg,
 		Globals:    []string{"table", "t"},
 		Signatures: signaturelookup.Source{IncludeStdlib: true},
 		EntryState: entryState,
-	})
+	}})
 	if err != nil {
-		t.Fatalf("CheckBoundChunk: %v", err)
+		t.Fatalf("RunBoundChunk: %v", err)
 	}
+	result := checked.RootResult()
 
 	branch := firstBranchPoint(t, result)
 	branchState := stateAt(t, result, branch)

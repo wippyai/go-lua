@@ -68,6 +68,19 @@ func (r signatureArgumentReader) ArgumentSourceAt(index int) (factflow.ValueSour
 	return r.site.ArgumentSourceAt(index)
 }
 
+// ArgumentValueAt projects the same receiver-aware formal ordering from the
+// canonical already-evaluated call operand tuple. Source syntax remains only
+// provenance for path-backed facts; it is never re-evaluated here.
+func (r signatureArgumentReader) ArgumentValueAt(input callpayload.CallOutcomeInput, index int) (product.Value, bool) {
+	if r.hasReceiverSource {
+		if index == 0 {
+			return input.Receiver()
+		}
+		return input.Argument(index - 1)
+	}
+	return input.Argument(index)
+}
+
 func (r signatureArgumentReader) ForEachArgumentSource(fn func(index int, source factflow.ValueSource) bool) {
 	if r.hasReceiverSource {
 		if !fn(0, r.receiverSource) {
@@ -108,20 +121,6 @@ func signatureParamPathInvalidationsForReader(sig signature.Function, args signa
 		out = append(out, callpayload.CallParamPathInvalidation{
 			Path:                      pathdom.NewPlaceholder(argIndex),
 			PreserveStructuralWitness: target.PreserveStructuralWitness,
-		})
-	}
-	return out
-}
-
-func signatureNormalReturnPathInvalidations(in []callpayload.CallParamPathInvalidation) []callboundary.PathInvalidationFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.PathInvalidationFact, 0, len(in))
-	for _, fact := range in {
-		out = append(out, callboundary.PathInvalidationFact{
-			Path:                      fact.Path,
-			PreserveStructuralWitness: fact.PreserveStructuralWitness,
 		})
 	}
 	return out

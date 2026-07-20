@@ -58,11 +58,17 @@ func Domain() lattice.Lattice[Lane] {
 		Equal: func(a, b Lane) bool {
 			return factDomain.Equal(factLane(a), factLane(b))
 		},
+		Same: func(a, b Lane) bool {
+			return factDomain.Same(factLane(a), factLane(b))
+		},
 		LessOrEq: func(a, b Lane) bool {
 			return factDomain.LessOrEq(factLane(a), factLane(b))
 		},
 		Join: func(a, b Lane) Lane {
 			return laneFromFactLane(factDomain.Join(factLane(a), factLane(b)))
+		},
+		Meet: func(a, b Lane) Lane {
+			return laneFromFactLane(factDomain.Meet(factLane(a), factLane(b)))
 		},
 		Widen: func(prev, next Lane) Lane {
 			return laneFromFactLane(factDomain.Widen(factLane(prev), factLane(next)))
@@ -80,7 +86,8 @@ func factLane(l Lane) lift.MustSetLane[Fact] {
 func laneFromFactLane(l lift.MustSetLane[Fact]) Lane {
 	return Lane{
 		bottom: l.Bottom(),
-		facts:  cloneSet(l.Values()),
+		// MustSetLane values are persistent and immutable once published.
+		facts: l.Values(),
 	}
 }
 
@@ -121,6 +128,21 @@ func (l Lane) Has(fact Fact) bool {
 	}
 	_, ok := l.facts[fact]
 	return ok
+}
+
+// ForEachFact visits the finite must facts without allocating or imposing a
+// presentation order. Returning false stops traversal. Bottom and Top have no
+// finite facts to visit.
+func (l Lane) ForEachFact(visit func(Fact) bool) bool {
+	if visit == nil || l.bottom {
+		return true
+	}
+	for fact := range l.facts {
+		if !visit(fact) {
+			return false
+		}
+	}
+	return true
 }
 
 func (l Lane) Snapshot() Snapshot {

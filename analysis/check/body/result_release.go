@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
@@ -20,14 +21,10 @@ func (r *Result) ReleaseTransient() {
 		return
 	}
 	r.flow = nil
-	r.boundaryXfer = nil
-	r.edgeXfer = nil
 	r.published = PublishedFacts{}
 	r.observationPlan = ObservationPlan{}
-	r.capturedNodeOutputs = nil
 	r.sources = nil
-	r.callOutcome = nil
-	r.signatureArg = nil
+	r.signatureArg = effectlowering.SignatureArgumentTypeProgram{}
 	r.exprRefinements = sourcevalue.ExpressionRefinements{}
 	r.queries.reset()
 

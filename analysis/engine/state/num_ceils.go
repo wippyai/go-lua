@@ -15,7 +15,11 @@ func (s State) NumCeilsSnapshot(ks *keyspace.KeySpace) NumCeilsSnapshot {
 	if !s.laneEnabled(laneNumCeilsBit) {
 		return NumCeilsSnapshot{Bottom: true}
 	}
-	bottom, ceils := numBoundSnapshot(s.numCeils, ks)
+	return numCeilsSnapshot(s.numCeils, ks)
+}
+
+func numCeilsSnapshot(lane numBoundLane, ks *keyspace.KeySpace) NumCeilsSnapshot {
+	bottom, ceils := numBoundSnapshot(lane, ks)
 	return NumCeilsSnapshot{Bottom: bottom, Ceils: ceils}
 }
 
@@ -41,12 +45,14 @@ func (s State) WriteNumCeil(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, h
 	if !ok {
 		return s
 	}
+	previousConsistency := s.numericConsistency
 	out := s.reachable()
 	ceils, changed := out.numCeils.Write(key, hi, numbound.Upper)
 	if !changed {
 		return s
 	}
-	out.numCeils = ceils
+	setStateNumCeils(&out, ceils)
+	out.markNumericConsistencyDirty(previousConsistency, stateKey.PathKey())
 	return out
 }
 
@@ -65,6 +71,6 @@ func (s State) ClearNumCeil(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) S
 		return s
 	}
 	out := s.reachable()
-	out.numCeils = ceils
+	setStateNumCeils(&out, ceils)
 	return out
 }

@@ -57,23 +57,23 @@ func (c *Context) bind(config Config) Config {
 
 type projectionFrame struct {
 	point cfg.Point
-	path  projectionPathIdentity
+	path  keyspace.Key
 }
 
 type projectionFrameMapKey struct {
 	point cfg.Point
-	path  projectionPathIdentity
+	path  keyspace.Key
 }
 
 type projectionMemoKey struct {
 	point       cfg.Point
-	path        projectionPathIdentity
+	path        keyspace.Key
 	overlayRoot bool
 }
 
 type projectionMemoMapKey struct {
 	point       cfg.Point
-	path        projectionPathIdentity
+	path        keyspace.Key
 	overlayRoot bool
 }
 
@@ -82,14 +82,16 @@ type projectionResult struct {
 	ok    bool
 }
 
-type projectionPathIdentity = keyspace.PathIdentity
-
-func newProjectionPathIdentity(config Config, p pathdom.Path) (projectionPathIdentity, bool) {
+func projectionPathKey(config Config, p pathdom.Path) (keyspace.Key, bool) {
 	var ks *keyspace.KeySpace
 	if config.Visibility != nil {
 		ks = config.Visibility.KeySpace()
 	}
-	return keyspace.PathIdentityFromPath(ks, p)
+	if ks == nil || !ks.Valid() || p.IsEmpty() {
+		return keyspace.Key{}, false
+	}
+	key := ks.FromPath(p)
+	return key, key.Kind != keyspace.KindInvalid
 }
 
 const (
@@ -309,14 +311,8 @@ func DynamicIndexReadProvenPresent(config Config, point cfg.Point, expr factflow
 	if !ok {
 		return false
 	}
-	if dynamicIndexKeyMembershipProvesRead(config, point, dyn, in) ||
-		dynamicIndexInBoundsProvesRead(config, point, dyn, in) {
-		return true
-	}
-	if _, ok := dynamicIndexExpressionProvenMemberValue(config, point, dyn, in); ok {
-		return true
-	}
-	return false
+	value, ok := dynamicIndexExpressionValue(config, point, dyn, in)
+	return ok && presence.Equal(product.PresenceOf(value), presence.Present()) && !typevalue.HasOnlyNilType(config.Registry, value)
 }
 
 func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
@@ -339,6 +335,7 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	if !ok {
 		return product.Value{}, false
 	}
+	value = sourcevalue.PreferExactHeapRoot(config.Registry, config.TypeValues, in, value)
 	return applyPathPresenceProof(config, point, p, in, value), true
 }
 

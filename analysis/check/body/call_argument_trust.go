@@ -3,6 +3,7 @@ package body
 import (
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -219,46 +220,124 @@ func (r *Result) RootPathArgumentUsesBoundary(point cfg.Point, p pathdom.Path) b
 // dynamic-index table sources, and dominating root declarations, so it lives on
 // body.Result instead of readmodel projection code.
 func (r *Result) CallerOwnedParameterSource(point cfg.Point, source factflow.ValueSource) bool {
-	return r.callerOwnedParameterSource(point, source, nil)
+	return r.callerOwnedParameterSource(point, source, nil, 0)
 }
 
-func (r *Result) callerOwnedParameterSource(point cfg.Point, source factflow.ValueSource, active map[factflow.ExprRef]struct{}) bool {
-	if r == nil {
+// callerOwnedParameterGuard is the recursion state shared by
+// callerOwnedParameterSource and callerOwnedParameterDeclarationSource.
+//
+// Expression-operand traversal (operator Left/Right, dynamic-index table
+// source) cycles on ExprRef alone: ExpressionOperationRef and
+// DynamicIndexExpressionRef are keyed by expression identity, not by the
+// query point, so a repeated ExprRef always re-explores the same subtree.
+//
+// Declaration-source lookup cycles on the (point, path) pair it is re-entered
+// with. DominatingPathRootDeclarationSource is a pure function of that pair
+// for one Result (same dominator chain, same facts), so once a (point, path)
+// pair repeats, the rest of the expansion is identical forever. This is the
+// axis the ExprRef-only guard could not see: hopping through a dominating
+// declaration changes the query point and swaps in a different source
+// without ever registering the original ExprRef, so a cycle between the two
+// functions never revisited a guarded ExprRef.
+type callerOwnedParameterGuard struct {
+	expr map[factflow.ExprRef]struct{}
+	decl map[callerOwnedDeclarationVisit]struct{}
+}
+
+// callerOwnedDeclarationVisit identifies one declaration-source lookup. path
+// is a comparable, allocation-free structural key (see keyspace.Key) so
+// repeated visits to the same (point, path) pair cost a plain map probe.
+type callerOwnedDeclarationVisit struct {
+	point cfg.Point
+	path  keyspace.Key
+}
+
+func newCallerOwnedDeclarationVisit(ks *keyspace.KeySpace, point cfg.Point, p pathdom.Path) (callerOwnedDeclarationVisit, bool) {
+	if ks == nil || !ks.Valid() || p.IsEmpty() {
+		return callerOwnedDeclarationVisit{}, false
+	}
+	key := ks.FromPath(p)
+	if key.Kind == keyspace.KindInvalid {
+		return callerOwnedDeclarationVisit{}, false
+	}
+	return callerOwnedDeclarationVisit{point: point, path: key}, true
+}
+
+// CallerOwnedRootParameterContract returns the exact finalized entry contract
+// for a caller-owned root parameter in the canonical lexical application. A
+// mismatching caller value is diagnosed on that incoming edge; body uses may
+// therefore assume this contract instead of treating the incompatible meet as
+// an any/unknown value. Annotated/unowned parameters and non-root paths cannot
+// obtain this authority.
+func (r *Result) CallerOwnedRootParameterContract(p pathdom.Path) (product.Value, bool) {
+	if r == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
+		return product.Value{}, false
+	}
+	if !r.callerOwnedParameterPath(p) {
+		return product.Value{}, false
+	}
+	plan := r.operationPlan
+	if plan == nil || !plan.BoundaryParamsValid() {
+		return product.Value{}, false
+	}
+	params := plan.BoundaryParams()
+	contracts := plan.BoundaryParamContracts()
+	if len(params) != len(contracts) {
+		return product.Value{}, false
+	}
+	for index, param := range params {
+		if param != p.Symbol {
+			continue
+		}
+		contract := contracts[index]
+		if !r.callArgumentValueHasReadableType(contract) || r.ValueHasUntrustedTopOrigin(contract) {
+			return product.Value{}, false
+		}
+		return contract, true
+	}
+	return product.Value{}, false
+}
+
+func (r *Result) callerOwnedParameterSource(point cfg.Point, source factflow.ValueSource, active *callerOwnedParameterGuard, depth int) bool {
+	if r == nil || depth > typ.DefaultRecursionDepth {
 		return false
+	}
+	if active == nil {
+		active = &callerOwnedParameterGuard{}
 	}
 	if p, ok := r.callArgumentSourcePath(source); ok {
 		if r.callerOwnedParameterPath(p) {
 			return true
 		}
-		if r.callerOwnedParameterDeclarationSource(point, p, active) {
+		if r.callerOwnedParameterDeclarationSource(point, p, active, depth+1) {
 			return true
 		}
 	}
 	if !source.HasExpr || source.ExprRef == 0 {
 		return false
 	}
-	if active == nil {
-		active = make(map[factflow.ExprRef]struct{}, 1)
+	if active.expr == nil {
+		active.expr = make(map[factflow.ExprRef]struct{}, 1)
 	}
-	if _, seen := active[source.ExprRef]; seen {
+	if _, seen := active.expr[source.ExprRef]; seen {
 		return false
 	}
-	active[source.ExprRef] = struct{}{}
+	active.expr[source.ExprRef] = struct{}{}
 	op, ok := r.ExpressionOperationRef(source.ExprRef)
 	if ok {
-		if r.callerOwnedParameterSource(point, op.Left(), active) {
+		if r.callerOwnedParameterSource(point, op.Left(), active, depth+1) {
 			return true
 		}
-		if op.Kind() == factflow.ExpressionOperationBinary && r.callerOwnedParameterSource(point, op.Right(), active) {
+		if op.Kind() == factflow.ExpressionOperationBinary && r.callerOwnedParameterSource(point, op.Right(), active, depth+1) {
 			return true
 		}
 	}
 	if dyn, ok := r.DynamicIndexExpressionRef(source.ExprRef); ok {
-		if tableSource, ok := dyn.TableSource(); ok && r.callerOwnedParameterSource(point, tableSource, active) {
+		if tableSource, ok := dyn.TableSource(); ok && r.callerOwnedParameterSource(point, tableSource, active, depth+1) {
 			return true
 		}
 		if tablePath := dyn.TablePathRef(); !tablePath.IsEmpty() {
-			if r.callerOwnedParameterPath(tablePath) || r.callerOwnedParameterDeclarationSource(point, tablePath, active) {
+			if r.callerOwnedParameterPath(tablePath) || r.callerOwnedParameterDeclarationSource(point, tablePath, active, depth+1) {
 				return true
 			}
 		}
@@ -277,15 +356,27 @@ func (r *Result) callArgumentSourcePath(source factflow.ValueSource) (pathdom.Pa
 	return pathdom.Path{}, false
 }
 
-func (r *Result) callerOwnedParameterDeclarationSource(point cfg.Point, p pathdom.Path, active map[factflow.ExprRef]struct{}) bool {
-	if p.IsEmpty() || p.Symbol == 0 || point == 0 || r == nil || r.Graph() == nil {
+func (r *Result) callerOwnedParameterDeclarationSource(point cfg.Point, p pathdom.Path, active *callerOwnedParameterGuard, depth int) bool {
+	if p.IsEmpty() || p.Symbol == 0 || point == 0 || r == nil || r.Graph() == nil || depth > typ.DefaultRecursionDepth {
 		return false
+	}
+	if active == nil {
+		active = &callerOwnedParameterGuard{}
+	}
+	if visit, ok := newCallerOwnedDeclarationVisit(r.KeySpace(), point, p); ok {
+		if active.decl == nil {
+			active.decl = make(map[callerOwnedDeclarationVisit]struct{}, 1)
+		}
+		if _, seen := active.decl[visit]; seen {
+			return false
+		}
+		active.decl[visit] = struct{}{}
 	}
 	declaration, ok := r.DominatingPathRootDeclarationSource(point, p)
 	if !ok || !declaration.Source.HasExpr {
 		return false
 	}
-	return r.callerOwnedParameterSource(declaration.Point, declaration.Source, active)
+	return r.callerOwnedParameterSource(declaration.Point, declaration.Source, active, depth+1)
 }
 
 func (r *Result) callerOwnedParameterPath(p pathdom.Path) bool {

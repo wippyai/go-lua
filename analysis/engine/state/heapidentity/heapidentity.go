@@ -195,21 +195,28 @@ func (o TableObject) StaticMembers() map[keyspace.Key]product.Value {
 	return clonePathMap(o.staticMembers)
 }
 
+// VisitStaticMembers visits the object's immutable finite static-member lane
+// without allocating a defensive snapshot. The iteration order is unspecified;
+// callers that require canonical ordering must collect and order the keys.
+func (o TableObject) VisitStaticMembers(visit func(keyspace.Key, product.Value) bool) {
+	if visit == nil {
+		return
+	}
+	for key, value := range o.staticMembers {
+		if !visit(key, value) {
+			return
+		}
+	}
+}
+
 // WithStaticMember returns an object with a proven static member written at the
 // rootless suffix. Static string indexes are mirrored to field spelling so
 // `t["id"]` and `t.id` stay equivalent inside the heap identity lane.
 func (o TableObject) WithStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
-	return o.withStaticMember(reg, ks, suffix, value, false)
+	return o.withStaticMember(reg, ks, suffix, value)
 }
 
-// WithJoinedStaticMember returns an object with a static member value joined
-// into any existing slot witness. It is for stack-local retype-tolerant writes
-// where the fixed slot survives and the field type widens.
-func (o TableObject) WithJoinedStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
-	return o.withStaticMember(reg, ks, suffix, value, true)
-}
-
-func (o TableObject) withStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value, joinExisting bool) (TableObject, bool) {
+func (o TableObject) withStaticMember(reg *axis.Registry, ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) (TableObject, bool) {
 	if o.bottom {
 		return o, false
 	}
@@ -219,18 +226,8 @@ func (o TableObject) withStaticMember(reg *axis.Registry, ks *keyspace.KeySpace,
 	}
 	valueDomain := product.Domain(reg)
 	primaryValue := value
-	if joinExisting {
-		if existing, ok := o.staticMembers[key]; ok {
-			primaryValue = valueDomain.Join(existing, primaryValue)
-		}
-	}
 	canonical, hasCanonical := FieldCanonicalStaticMemberSuffixKey(ks, suffix)
 	canonicalValue := primaryValue
-	if hasCanonical && joinExisting {
-		if existing, ok := o.staticMembers[canonical]; ok {
-			canonicalValue = valueDomain.Join(existing, canonicalValue)
-		}
-	}
 	// Summary facts are applied repeatedly while interprocedural proofs
 	// converge. Preserve the immutable object when the write is already fully
 	// represented; cloning both its member map and the enclosing heap map would
@@ -289,6 +286,21 @@ func (o TableObject) DynamicIndexFact(key dynamicindex.Key) (dynamicindex.Fact, 
 // DynamicIndexFacts returns a defensive copy of finite dynamic-index facts.
 func (o TableObject) DynamicIndexFacts() map[dynamicindex.Key]dynamicindex.Fact {
 	return dynamicindex.CloneMap(o.dynamicIndexFacts)
+}
+
+// VisitDynamicIndexFacts visits the object's immutable finite dynamic-index
+// lane without allocating a defensive snapshot. The iteration order is
+// unspecified; callers that require canonical ordering must collect and order
+// the keys.
+func (o TableObject) VisitDynamicIndexFacts(visit func(dynamicindex.Key, dynamicindex.Fact) bool) {
+	if visit == nil {
+		return
+	}
+	for key, fact := range o.dynamicIndexFacts {
+		if !visit(key, fact) {
+			return
+		}
+	}
 }
 
 // DynamicIndexFactsTop reports whether dynamic-index facts are unknown rather
@@ -454,19 +466,31 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 	valueDomain := product.Domain(reg)
 	staticDomain := lift.MustMap[keyspace.Key, product.Value](valueDomain)
 	dynamicDomain := dynamicindex.MapDomain(reg)
+	equalObject := func(a, b TableObject) bool {
+		if a.bottom || b.bottom {
+			return a.bottom && b.bottom
+		}
+		return valueDomain.Equal(a.root, b.root) &&
+			staticDomain.Equal(staticLane(a), staticLane(b)) &&
+			dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain)) &&
+			a.stableShape == b.stableShape &&
+			a.prefixStableShape == b.prefixStableShape
+	}
+	sameObject := func(a, b TableObject) bool {
+		if a.bottom || b.bottom {
+			return a.bottom && b.bottom
+		}
+		return valueDomain.Same != nil && valueDomain.Same(a.root, b.root) &&
+			staticDomain.Same != nil && staticDomain.Same(staticLane(a), staticLane(b)) &&
+			dynamicDomain.Same != nil && dynamicDomain.Same(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain)) &&
+			a.stableShape == b.stableShape &&
+			a.prefixStableShape == b.prefixStableShape
+	}
 	return lattice.Lattice[TableObject]{
 		Bottom: func() TableObject { return BottomObject(reg) },
 		Top:    TopObject,
-		Equal: func(a, b TableObject) bool {
-			if a.bottom || b.bottom {
-				return a.bottom && b.bottom
-			}
-			return valueDomain.Equal(a.root, b.root) &&
-				staticDomain.Equal(staticLane(a), staticLane(b)) &&
-				dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain)) &&
-				a.stableShape == b.stableShape &&
-				a.prefixStableShape == b.prefixStableShape
-		},
+		Equal:  equalObject,
+		Same:   sameObject,
 		LessOrEq: func(a, b TableObject) bool {
 			switch {
 			case a.bottom:
@@ -490,7 +514,7 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 			}
 			static := staticDomain.Join(staticLane(a), staticLane(b))
 			dynamic := dynamicDomain.Join(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-			return objectFromLanes(
+			result := objectFromLanes(
 				valueDomain.Join(a.root, b.root),
 				static,
 				dynamic,
@@ -498,6 +522,33 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 				a.stableShape && b.stableShape,
 				a.prefixStableShape && b.prefixStableShape,
 			)
+			if sameObject(result, a) || equalObject(result, a) {
+				return a
+			}
+			if sameObject(result, b) || equalObject(result, b) {
+				return b
+			}
+			return result
+		},
+		Meet: func(a, b TableObject) TableObject {
+			if a.bottom || b.bottom {
+				return BottomObject(reg)
+			}
+			result := objectFromLanes(
+				valueDomain.Meet(a.root, b.root),
+				staticDomain.Meet(staticLane(a), staticLane(b)),
+				dynamicDomain.Meet(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain)),
+				dynamicDomain,
+				a.stableShape || b.stableShape,
+				a.prefixStableShape || b.prefixStableShape,
+			)
+			if sameObject(result, a) || equalObject(result, a) {
+				return a
+			}
+			if sameObject(result, b) || equalObject(result, b) {
+				return b
+			}
+			return result
 		},
 		Widen: func(prev, next TableObject) TableObject {
 			if prev.bottom {
@@ -508,7 +559,7 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 			}
 			static := staticDomain.Widen(staticLane(prev), staticLane(next))
 			dynamic := dynamicDomain.Widen(dynamicLane(prev, dynamicDomain), dynamicLane(next, dynamicDomain))
-			return objectFromLanes(
+			result := objectFromLanes(
 				valueDomain.Widen(prev.root, next.root),
 				static,
 				dynamic,
@@ -516,6 +567,13 @@ func objectDomainForRegistry(reg *axis.Registry) lattice.Lattice[TableObject] {
 				prev.stableShape && next.stableShape,
 				prev.prefixStableShape && next.prefixStableShape,
 			)
+			if sameObject(result, prev) || equalObject(result, prev) {
+				return prev
+			}
+			if sameObject(result, next) || equalObject(result, next) {
+				return next
+			}
+			return result
 		},
 	}
 }
@@ -601,16 +659,19 @@ func objectFromLanes(
 	stableShape bool,
 	prefixStableShape bool,
 ) TableObject {
+	// All lane values come from persistent lattice operations and are immutable
+	// once published. Taking ownership here preserves their Same identity and
+	// avoids cloning every heap object reconstructed by Join/Widen.
 	object := TableObject{
 		root:              root,
-		staticMembers:     clonePathMap(static.Values()),
+		staticMembers:     static.Values(),
 		stableShape:       stableShape,
 		prefixStableShape: prefixStableShape,
 	}
 	if dynamicDomain.Equal(dynamic, dynamicDomain.Top()) {
 		object.dynamicIndexFactsTop = true
 	} else {
-		object.dynamicIndexFacts = dynamicindex.CloneMap(dynamic)
+		object.dynamicIndexFacts = dynamic
 	}
 	return object
 }

@@ -8,26 +8,37 @@ import (
 const LaneChannelSelect LaneID = "channel-select"
 
 var channelSelectLaneSpec = laneSpec{
-	id:           LaneChannelSelect,
-	keySpaceMode: laneKeySpaceFree,
-	fingerprint:  fingerprintChannelSelect,
-	boundary:     boundaryLaneOps{expand: expandChannelSelectBoundary, project: projectChannelSelectBoundary, rebase: rebaseChannelSelectBoundary, apply: applyChannelSelectBoundary, equal: equalChannelSelectBoundary},
+	id:                       LaneChannelSelect,
+	keySpaceMode:             laneKeySpaceFree,
+	formalRekey:              formalRekeyStructural(),
+	valueDependencies:        independentValueDependencies(),
+	identitySupport:          enumeratedIdentitySupport(visitChannelSelectLaneIdentities, func(s State) channelselectfact.Lane { return s.channelSelect }, IdentityImageEmbeddedValue),
+	numericConsistency:       numericConsistencyIndependent(),
+	semanticLaws:             []laneSemanticLaw{pathSubtreeMutationIndependent(), pathDescendantMutationIndependent(), pathResolutionIndependent(), pathEqualityQuotientIndependent(), genericForBindingIndependent(), pathReplacementIndependent(), effectFactorIndependent(), callBoundaryIndependent()},
+	boundaryClosureCompanion: noBoundaryClosureCompanion(),
+	rootAssignment:           rootAssignmentUnchanged(false, false, false),
+	dynamicRead:              dynamicReadIndependent(),
+	fingerprint:              fingerprintChannelSelect,
+	boundary:                 boundaryLaneOps{project: projectChannelSelectBoundary, rebase: rebaseChannelSelectBoundary, postRebase: postRebaseBoundaryNoop, equal: equalChannelSelectBoundary},
 	markReachable: func(s State) State {
 		s.channelSelect = s.channelSelect.Reachable()
 		return s
 	},
 	build: func(reg *axis.Registry, _ DomainOptions) laneOps {
-		return stateLane(channelselectfact.Domain(),
+		domain := channelselectfact.Domain()
+		return stateLaneWithBoundary(domain,
 			func(s State) channelselectfact.Lane { return s.channelSelect },
 			func(out *State, lane channelselectfact.Lane) { out.channelSelect = lane },
+			typedLaneFactorRepresentation[channelselectfact.Lane]{equal: domain.Equal},
+			typedBoundaryFactorOps[channelselectfact.Lane]{apply: applyChannelSelectBoundaryLane, roots: boundaryRootsReachable(func(lane channelselectfact.Lane) channelselectfact.Lane { return lane.Reachable() }), project: projectChannelSelectBoundaryFactor, rebase: rebaseChannelSelectBoundaryFactor, postRebase: boundaryPostRebaseUnchanged[channelselectfact.Lane], reachability: emitChannelSelectReachability},
 		)
 	},
 }
 
-func expandChannelSelectBoundary(expansion *boundaryClosureExpansion, source State) {
-	for _, fact := range source.channelSelect.Snapshot().Facts {
-		if expansion.connect(expansion.addStateKey(fact.Result), expansion.addStateKey(fact.Case)) && fact.HasPayload {
-			expansion.addValue(fact.Payload)
+func emitChannelSelectReachability(program *boundaryReachabilityProgramBuilder, lane channelselectfact.Lane) {
+	for _, fact := range lane.Snapshot().Facts {
+		if program.pathCone(false, program.addStateKey(fact.Result), program.addStateKey(fact.Case)) && fact.HasPayload {
+			program.addValue(fact.Payload)
 		}
 	}
 }

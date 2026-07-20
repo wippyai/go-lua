@@ -84,20 +84,23 @@ func TestInternSegmentsUsesStructuralShortKeys(t *testing.T) {
 	}
 }
 
-func TestFormatCachesByStructuralKey(t *testing.T) {
+func TestSpellingSealedByStructuralKey(t *testing.T) {
 	ks := New()
 	key := ks.FromPath(pathdom.NewPath(symbol.ID(42), "value").Field("field"))
+	if got := len(ks.formatByKey); got != 1 {
+		t.Fatalf("sealed spelling entries after mint = %d, want 1", got)
+	}
 	if got := ks.Format(key); got != "sym42.field" {
 		t.Fatalf("Format(key) = %q, want sym42.field", got)
 	}
 	if got := len(ks.formatByKey); got != 1 {
-		t.Fatalf("format cache entries after first format = %d, want 1", got)
+		t.Fatalf("Format mutated sealed spelling table: got %d entries, want 1", got)
 	}
 	if got := ks.Format(key); got != "sym42.field" {
 		t.Fatalf("cached Format(key) = %q, want sym42.field", got)
 	}
 	if got := len(ks.formatByKey); got != 1 {
-		t.Fatalf("format cache entries after repeated format = %d, want 1", got)
+		t.Fatalf("repeated Format mutated sealed spelling table: got %d entries, want 1", got)
 	}
 
 	foreign := key
@@ -106,7 +109,7 @@ func TestFormatCachesByStructuralKey(t *testing.T) {
 		t.Fatalf("Format(foreign key) = %q, want empty fail-closed spelling", got)
 	}
 	if got := len(ks.formatByKey); got != 1 {
-		t.Fatalf("invalid key should not populate format cache; got %d entries", got)
+		t.Fatalf("invalid key should not populate spelling table; got %d entries", got)
 	}
 }
 
@@ -116,6 +119,7 @@ func TestFormatCacheSeparatesCanonicalNamedSpellings(t *testing.T) {
 	syntax := ks.FromPath(p)
 	canonical := syntax
 	canonical.Canon = canonical.isStableNamed()
+	canonical = ks.ownKey(canonical)
 	if got, want := ks.Format(syntax), p.Key(); got != want {
 		t.Fatalf("syntax Format = %q, want %q", got, want)
 	}
@@ -367,6 +371,7 @@ func TestCanonicalNamedRootsMatchAddressEncoding(t *testing.T) {
 			}
 			key := ks.FromPath(p)
 			key.Canon = key.isStableNamed()
+			key = ks.ownKey(key)
 			got := ks.Format(key)
 			if got != stable.Key() {
 				t.Fatalf("canonical Format(%q) = %q, want address stable key %q", p.Key(), got, stable.Key())
@@ -524,6 +529,7 @@ func TestAppendSegmentMatchesConstructedKey(t *testing.T) {
 			wantSegments := append(append([]segment.Segment(nil), ks.Segments(k.key)...), member)
 			want := k.key
 			want.Segs = ks.internSegments(wantSegments)
+			want = ks.ownKey(want)
 			if got != want || ks.Format(got) != ks.Format(want) {
 				t.Fatalf("AppendSegment(%q, %v) = %#v/%q, want %#v/%q",
 					k.oracle, member, got, ks.Format(got), want, ks.Format(want))

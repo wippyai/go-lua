@@ -37,11 +37,13 @@ func (r *Result) DominatingTruthyBranchForPath(point cfg.Point, p pathdom.Path) 
 		if !r.branchHasTruthyEvidenceForPath(branch, p) {
 			continue
 		}
-		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
-			cond, ok := graph.EdgeCond(branch, succ)
-			if !ok {
-				continue
-			}
+		successors := cfg.SuccessorsReadOnly(graph, branch)
+		conditions := cfg.SuccessorConditionsReadOnly(graph, branch)
+		if len(conditions) != len(successors) {
+			continue
+		}
+		for index, succ := range successors {
+			cond := conditions[index]
 			if !r.branchTruthyEvidenceActiveOnEdge(branch, p, cond) {
 				continue
 			}
@@ -79,9 +81,14 @@ func (r *Result) DominatingBranchCheckForPath(
 		if !ok || !check.Path.Equal(p) {
 			continue
 		}
-		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
-			cond, ok := graph.EdgeCond(branch, succ)
-			if !ok || !accepts(branch, check, cond) {
+		successors := cfg.SuccessorsReadOnly(graph, branch)
+		conditions := cfg.SuccessorConditionsReadOnly(graph, branch)
+		if len(conditions) != len(successors) {
+			continue
+		}
+		for index, succ := range successors {
+			cond := conditions[index]
+			if !accepts(branch, check, cond) {
 				continue
 			}
 			if !r.proofEdgeDominatesPoint(graph, branch, succ, point) {
@@ -116,11 +123,13 @@ func (r *Result) DominatingLiteralBranchForPath(point cfg.Point, p pathdom.Path)
 		if !ok || !r.branchCheckPathMatchesAt(point, check.Path, p) {
 			continue
 		}
-		for _, succ := range cfg.SuccessorsReadOnly(graph, branch) {
-			cond, ok := graph.EdgeCond(branch, succ)
-			if !ok {
-				continue
-			}
+		successors := cfg.SuccessorsReadOnly(graph, branch)
+		conditions := cfg.SuccessorConditionsReadOnly(graph, branch)
+		if len(conditions) != len(successors) {
+			continue
+		}
+		for index, succ := range successors {
+			cond := conditions[index]
 			proven, ok := literalProofFromBranchCheck(check, cond)
 			if !ok {
 				continue

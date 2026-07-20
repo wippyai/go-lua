@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -38,10 +39,11 @@ return clean_total + changed_total
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: standard.Registry()})
+	resultProgram41, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram41.RootResult()
 
 	var loads []HoistableLoad
 	New(result).ForEachHoistableLoad(func(load HoistableLoad) bool {
@@ -95,10 +97,11 @@ return total
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: standard.Registry()})
+	resultProgram98, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram98.RootResult()
 	var advice []InvariantLoopRead
 	New(result).ForEachInvariantLoopRead(func(read InvariantLoopRead) bool {
 		advice = append(advice, read)
@@ -138,10 +141,11 @@ return total
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	result, err := body.CheckChunk(stmts, body.Config{Registry: standard.Registry()})
+	resultProgram141, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: standard.Registry()}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram141.RootResult()
 	var loads []HoistableLoad
 	New(result).ForEachHoistableLoad(func(load HoistableLoad) bool {
 		loads = append(loads, load)

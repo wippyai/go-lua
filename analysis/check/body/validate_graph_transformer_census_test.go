@@ -10,14 +10,14 @@ import (
 )
 
 func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) {
-	prepared, _ := validateGraphSemanticProgramFixture(t)
+	prepared := validateGraphPreparedFixture(t)
 	entries := transformer.NewPlanCompiler().EligibilityCensus(prepared.registry, prepared.cfg.Graph, prepared.operationPlan, transformer.Shape{
 		Params:   uint32(len(prepared.operationPlan.BoundaryParams())),
 		Captures: uint32(len(prepared.operationPlan.BoundaryCaptures())),
 		Globals:  uint32(len(prepared.operationPlan.BoundaryGlobals())),
 	})
-	if len(entries) != 328 {
-		t.Fatalf("eligibility entries = %d, want 328 active plan instances/family markers", len(entries))
+	if len(entries) != 342 {
+		t.Fatalf("eligibility entries = %d, want 342 active plan instances/family markers", len(entries))
 	}
 	type counts struct{ total, exact, unboundPath, iteratorCall int }
 	byFamily := map[string]counts{}
@@ -36,16 +36,20 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 		byFamily[entry.Family] = count
 	}
 	want := map[string]counts{
-		"RootAssignments":               {total: 56, exact: 29},
-		"Returns":                       {total: 5, exact: 2},
-		"PathDescendantInvalidations":   {total: 9},
-		"PathValuePresenceImplications": {total: 3},
-		"DynamicIndexWrites":            {total: 9},
-		"CallSites":                     {total: 49, exact: 33},
-		"BranchConditionSources":        {total: 44},
-		"BranchRefinements":             {total: 57},
-		"BranchPathEvidence":            {total: 43},
-		"extension:1":                   {total: 38, exact: 34, iteratorCall: 4},
+		"RootAssignments":               {total: 56, exact: 55},
+		"Returns":                       {total: 5, exact: 5},
+		"PathDescendantInvalidations":   {total: 9, exact: 9},
+		"PathValuePresenceImplications": {total: 3, exact: 3},
+		"DynamicIndexWrites":            {total: 9, exact: 9},
+		"CallSites":                     {total: 49, exact: 49},
+		// Five source-authored #sequence > 0 guards are normalized to the exact
+		// Boolean DAG `#path >= 1`; each distinct CFG branch therefore owns a
+		// condition source even though edge exactness is certified only by the
+		// whole symbolic CFG compiler below.
+		"BranchConditionSources": {total: 58},
+		"BranchRefinements":      {total: 57},
+		"BranchPathEvidence":     {total: 43},
+		"extension:1":            {total: 38, exact: 38},
 	}
 	for family, expected := range want {
 		if got := byFamily[family]; got != expected {
@@ -74,5 +78,5 @@ func TestValidateGraphTransformerEligibilityCensusIsInstanceExact(t *testing.T) 
 	if indexed != 28 || keyed != 10 {
 		t.Fatalf("signature iterator bindings indexed/keyed = %d/%d, want 28/10", indexed, keyed)
 	}
-	t.Log("validate_graph exact now: CallSite 33/49, RootAssignment 29/56 (+13 pure descendant projections, +2 exact scalar comparisons), generic-for 34/38 (+12 declared-source contracts, +18 reusable descendant bindings), Return 2/5")
+	t.Log("validate_graph exact now uses the canonical State-backed structural environment: CallSite 49/49, RootAssignment 55/56, PathDescendantInvalidation 9/9, DynamicIndexWrite 9/9, PathValuePresenceImplication 3/3, generic-for 38/38, Return 5/5; five exact normalized length guards bring the branch-condition census to 58")
 }

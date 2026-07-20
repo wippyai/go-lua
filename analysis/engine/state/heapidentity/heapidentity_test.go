@@ -380,6 +380,57 @@ func TestNewOwnedStaticTableObjectKeepsAccessorsDefensive(t *testing.T) {
 	}
 }
 
+func TestTableObjectVisitorsReadFiniteLanesWithoutSnapshots(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	staticA := fieldSuffixKey(t, ks, "a")
+	staticB := fieldSuffixKey(t, ks, "b")
+	dynamicA := dynamicindex.Key{Table: stateKey(t, ks, "sym91@1.a"), Site: "a"}
+	dynamicB := dynamicindex.Key{Table: stateKey(t, ks, "sym91@1.b"), Site: "b"}
+	value := presentValue(reg)
+	fact := dynamicindex.Fact{KeyValue: value, Value: value, Admission: dynamicindex.AdmissionAdmitted}
+	object := NewTableObject(TableObjectConfig{
+		Root:          value,
+		StaticMembers: map[keyspace.Key]product.Value{staticA: value, staticB: value},
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+			dynamicA: fact,
+			dynamicB: fact,
+		},
+	})
+
+	var staticCount, dynamicCount int
+	allocations := testing.AllocsPerRun(100, func() {
+		staticCount, dynamicCount = 0, 0
+		object.VisitStaticMembers(func(keyspace.Key, product.Value) bool {
+			staticCount++
+			return true
+		})
+		object.VisitDynamicIndexFacts(func(dynamicindex.Key, dynamicindex.Fact) bool {
+			dynamicCount++
+			return true
+		})
+	})
+	if allocations != 0 {
+		t.Fatalf("read-only finite-lane visitors allocated %.0f snapshots per traversal", allocations)
+	}
+	if staticCount != 2 || dynamicCount != 2 {
+		t.Fatalf("visited static/dynamic facts = %d/%d, want 2/2", staticCount, dynamicCount)
+	}
+
+	staticCount, dynamicCount = 0, 0
+	object.VisitStaticMembers(func(keyspace.Key, product.Value) bool {
+		staticCount++
+		return false
+	})
+	object.VisitDynamicIndexFacts(func(dynamicindex.Key, dynamicindex.Fact) bool {
+		dynamicCount++
+		return false
+	})
+	if staticCount != 1 || dynamicCount != 1 {
+		t.Fatalf("visitor early stop counts = %d/%d, want 1/1", staticCount, dynamicCount)
+	}
+}
+
 func TestCloneObjectAndMapIndependence(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

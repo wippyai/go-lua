@@ -280,6 +280,14 @@ var normalReturnFactDescriptors = func() BoundaryFactTable[NormalReturnLaneOps] 
 				return f
 			},
 			func(f NumFloorFact, keep NormalReturnPathPredicate) bool { return keepPath(f.Path, keep) }),
+		normalReturnLaneDescriptor(LaneNumCeils,
+			nil, "NumCeils",
+			func(f NormalReturnFacts) []NumCeilFact { return f.NumCeils },
+			func(f NormalReturnFacts, facts []NumCeilFact) NormalReturnFacts {
+				f.NumCeils = facts
+				return f
+			},
+			func(f NumCeilFact, keep NormalReturnPathPredicate) bool { return keepPath(f.Path, keep) }),
 		normalReturnLaneDescriptor(LaneRelConstraints,
 			nil, "RelConstraints",
 			func(f NormalReturnFacts) []RelConstraintFact { return f.RelConstraints },

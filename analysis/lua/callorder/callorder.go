@@ -37,16 +37,27 @@ type Options struct {
 	AllowShortCircuitCalls bool
 }
 
-// LuaOptions returns the default call-order policy for Lua analysis.
+// LuaOptions returns the authority-free call-order policy for Lua analysis.
+// Syntactically recognizable intrinsic calls remain ordinary runtime calls
+// unless their owner explicitly transports the corresponding environment seal.
 func LuaOptions(bindings *bind.Result) Options {
 	return Options{
 		OpaqueCall: func(call *ast.FuncCallExpr) bool {
 			return channelSelectCallCovered(call, bindings)
 		},
-		ExpressionCoveredCall: func(call *ast.FuncCallExpr, owner ast.Expr) bool {
-			return typePredicateCallCovered(call, owner, bindings)
-		},
 	}
+}
+
+// SealedLuaTypeOptions returns the Lua call-order policy after the caller has
+// proved that the global type function retains canonical intrinsic identity.
+// Only that proof permits the enclosing comparison to own (and therefore
+// erase) the runtime call.
+func SealedLuaTypeOptions(bindings *bind.Result) Options {
+	options := LuaOptions(bindings)
+	options.ExpressionCoveredCall = func(call *ast.FuncCallExpr, owner ast.Expr) bool {
+		return typePredicateCallCovered(call, owner, bindings)
+	}
+	return options
 }
 
 // ValueList returns all supported calls below exprs in Lua evaluation order.

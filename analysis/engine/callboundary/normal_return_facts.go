@@ -37,6 +37,7 @@ type NormalReturnFacts struct {
 	StoreRelations           []StoreRelationFact
 	LifecycleFacts           []LifecycleFact
 	NumFloors                []NumFloorFact
+	NumCeils                 []NumCeilFact
 	RelConstraints           []RelConstraintFact
 }
 
@@ -286,6 +287,13 @@ type LifecycleFact struct {
 type NumFloorFact struct {
 	Path  pathdom.Path
 	Floor int64
+}
+
+// NumCeilFact records a proven upper bound for a numeric placeholder path on
+// normal return: value(Path) <= Ceil.
+type NumCeilFact struct {
+	Path pathdom.Path
+	Ceil int64
 }
 
 // RelOperand is a placeholder operand in a normal-return relational constraint.

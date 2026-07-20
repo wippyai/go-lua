@@ -83,30 +83,3 @@ func TestTypedFingerprintCollisionsRemainStructurallyAuthoritative(t *testing.T)
 		t.Fatalf("colliding mutation effect identity = %d/%d invalidations=%d/%d err=%v", m0, m1, e0, e1, err)
 	}
 }
-
-func TestTypedFingerprintPreservesCanonicalRelationSpelling(t *testing.T) {
-	makeRowKey := func(mask uint64) string {
-		reg := standard.Registry()
-		arena := NewArena(reg)
-		arena.fingerprintMask = mask
-		effects := NewEffectArena(arena)
-		root := Root{Kind: RootParam, Index: 0}
-		value := arena.Root(root)
-		constant := arena.Constant(typevalue.LiteralString(reg, "value"))
-		path := arena.Path(root, segment.Segment{Kind: segment.SegmentField, Name: "member"})
-		effect, err := effects.InvalidatePath(InvalidatePathConfig{Target: PathEffectTarget(path), Scope: InvalidationScopeDescendants})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return rowKey(arena, effects, Row{
-			Guard:   arena.And(arena.Truthy(value), arena.Falsy(constant)),
-			Ops:     []Operation{{Kind: OutputReturn, Descriptor: DescriptorReturn, Slot: 0, Value: arena.JoinValue(value, constant)}},
-			Effects: []EffectTerm{effect},
-		})
-	}
-	regular := makeRowKey(^uint64(0))
-	forcedCollision := makeRowKey(0)
-	if forcedCollision != regular {
-		t.Fatalf("canonical relation spelling changed under collisions:\nregular: %s\ncollision: %s", regular, forcedCollision)
-	}
-}

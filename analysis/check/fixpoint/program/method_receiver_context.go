@@ -2,15 +2,11 @@ package program
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
@@ -30,84 +26,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func applyMetatableMethodReceiverEntryStates(
-	keys *programKeys,
-	bindings *bind.Result,
-	reg *axis.Registry,
-	external typeannotation.Resolver,
-	moduleExports importlookup.Source,
-	roots ...[]ast.Stmt,
-) {
-	if keys == nil || bindings == nil || reg == nil {
-		return
-	}
-	context := collectMetatableMethodContext(bindings, external, moduleExports, roots...)
-	methodReceivers := context.methodReceivers
-	if len(methodReceivers) == 0 {
-		return
-	}
-	applyMetatableMethodReceiverEntryStatesTo(keys.functions, methodReceivers, context.seedReceivers, context.proof, bindings, reg)
-	keys.contexts.TransformEntries(func(fn keyedFunction) keyedFunction {
-		functions := []keyedFunction{fn}
-		applyMetatableMethodReceiverEntryStatesTo(functions, methodReceivers, context.seedReceivers, context.proof, bindings, reg)
-		return functions[0]
-	})
-}
-
-func applyMetatableMethodReceiverEntryStatesTo(
-	functions []keyedFunction,
-	methodReceivers map[symbol.ID]typ.Type,
-	seedReceivers map[symbol.ID]typ.Type,
-	proof metatableMethodProof,
-	bindings *bind.Result,
-	reg *axis.Registry,
-) {
-	for i := range functions {
-		fn := functions[i].funcExpr
-		if fn == nil {
-			continue
-		}
-		origin, ok := bindings.FunctionOrigin(fn)
-		if !ok || origin.Kind != bind.FunctionOriginMethod {
-			continue
-		}
-		table, ok := methodFunctionTableSymbol(bindings, origin)
-		if !ok {
-			continue
-		}
-		receiver, ok := methodReceivers[table]
-		if !ok || !usableContextualTypeOnly(receiver) {
-			continue
-		}
-		seedReceiver := seedReceivers[table]
-		seeded := false
-		if seedType := receiver; usableContextualTypeOnly(seedType) {
-			if seed, ok := implicitSelfParamSeed(reg, bindings, fn, seedType); ok {
-				functions[i].entryState = forceParamSeed(reg, functions[i].entryState, seed)
-				seeded = true
-			}
-		}
-		memberReceiver := receiver
-		if usableContextualTypeOnly(seedReceiver) {
-			memberReceiver = seedReceiver
-		}
-		members := proof.methodSurfaceMembers(reg, table, memberReceiver)
-		var membersSeeded bool
-		functions[i].entryState, functions[i].entryKeys, membersSeeded = seedImplicitSelfMethodStaticMembers(
-			reg,
-			functions[i].entryState,
-			functions[i].entryKeys,
-			bindings,
-			fn,
-			members,
-		)
-		if !seeded && !membersSeeded {
-			continue
-		}
-		functions[i].hasEntryState = true
-	}
-}
-
 func metatableMethodReceiverTypes(bindings *bind.Result, external typeannotation.Resolver, moduleExports importlookup.Source, roots ...[]ast.Stmt) map[symbol.ID]typ.Type {
 	return collectMetatableMethodContext(bindings, external, moduleExports, roots...).methodReceivers
 }
@@ -118,14 +36,15 @@ func collectMetatableMethodContext(bindings *bind.Result, external typeannotatio
 	}
 	resolver := typeresolve.NewWithExternal(bindings, external)
 	collector := methodReceiverCollector{
-		bindings:      bindings,
-		resolver:      resolver,
-		external:      external,
-		moduleExports: moduleExports,
-		localTypes:    make(map[symbol.ID]typ.Type),
-		functionTypes: collectFunctionTypesByPath(bindings, external, roots...),
-		metaIndexes:   make(map[symbol.ID]symbol.ID),
-		receivers:     make(map[symbol.ID]typ.Type),
+		bindings:       bindings,
+		resolver:       resolver,
+		external:       external,
+		moduleExports:  moduleExports,
+		localTypes:     make(map[symbol.ID]typ.Type),
+		functionTypes:  collectFunctionTypesByPath(bindings, external, roots...),
+		metaIndexes:    make(map[symbol.ID]symbol.ID),
+		metaIndexReads: make(map[symbol.ID]map[*ast.IdentExpr]struct{}),
+		receivers:      make(map[symbol.ID]typ.Type),
 	}
 	for _, stmts := range roots {
 		collector.collectTypesAndMetatables(stmts)
@@ -189,15 +108,16 @@ func collectFunctionTypesByPath(bindings *bind.Result, external typeannotation.R
 }
 
 type methodReceiverCollector struct {
-	bindings      *bind.Result
-	resolver      *typeresolve.Resolver
-	external      typeannotation.Resolver
-	moduleExports importlookup.Source
-	localTypes    map[symbol.ID]typ.Type
-	functionTypes map[pathdom.PathKey]*typ.Function
-	metaIndexes   map[symbol.ID]symbol.ID
-	receivers     map[symbol.ID]typ.Type
-	surfaceOnly   map[symbol.ID]struct{}
+	bindings       *bind.Result
+	resolver       *typeresolve.Resolver
+	external       typeannotation.Resolver
+	moduleExports  importlookup.Source
+	localTypes     map[symbol.ID]typ.Type
+	functionTypes  map[pathdom.PathKey]*typ.Function
+	metaIndexes    map[symbol.ID]symbol.ID
+	metaIndexReads map[symbol.ID]map[*ast.IdentExpr]struct{}
+	receivers      map[symbol.ID]typ.Type
+	surfaceOnly    map[symbol.ID]struct{}
 }
 
 type constructorField struct {
@@ -209,6 +129,7 @@ type metatableMethodProof struct {
 	bindings        *bind.Result
 	resolver        *typeresolve.Resolver
 	metaIndexes     map[symbol.ID]symbol.ID
+	metaIndexReads  map[symbol.ID]map[*ast.IdentExpr]struct{}
 	receiverHints   map[symbol.ID]typ.Type
 	methodReceivers map[symbol.ID]typ.Type
 }
@@ -218,6 +139,7 @@ func (c methodReceiverCollector) proof() metatableMethodProof {
 		bindings:        c.bindings,
 		resolver:        c.resolver,
 		metaIndexes:     copyMetatableIndexMap(c.metaIndexes),
+		metaIndexReads:  copyMetatableIndexReads(c.metaIndexReads),
 		receiverHints:   c.receiverHintsByMetatable(),
 		methodReceivers: copyReceiverMap(c.receivers),
 	}
@@ -363,6 +285,7 @@ func (c methodReceiverCollector) collectLocalMetatableIndex(stmt *ast.LocalAssig
 		table, ok := metatableIndexTable(c.bindings, expr)
 		if ok {
 			c.metaIndexes[symbols[i]] = table
+			c.recordMetatableIndexRead(table, metatableIndexReadIdent(expr))
 		}
 	}
 }
@@ -380,7 +303,21 @@ func (c methodReceiverCollector) collectAssignedMetatableIndex(stmt *ast.AssignS
 			continue
 		}
 		c.metaIndexes[meta.metatable] = meta.methods
+		c.recordMetatableIndexRead(meta.methods, rootIdentExpr(stmt.Rhs[i]))
 	}
+}
+
+func (c *methodReceiverCollector) recordMetatableIndexRead(methods symbol.ID, ident *ast.IdentExpr) {
+	if c == nil || methods == 0 || ident == nil {
+		return
+	}
+	if c.metaIndexReads == nil {
+		c.metaIndexReads = make(map[symbol.ID]map[*ast.IdentExpr]struct{})
+	}
+	if c.metaIndexReads[methods] == nil {
+		c.metaIndexReads[methods] = make(map[*ast.IdentExpr]struct{})
+	}
+	c.metaIndexReads[methods][ident] = struct{}{}
 }
 
 func (c methodReceiverCollector) collectLocalSetmetatableReceiver(stmt *ast.LocalAssignStmt) {
@@ -1193,6 +1130,24 @@ func copyMetatableIndexMap(in map[symbol.ID]symbol.ID) map[symbol.ID]symbol.ID {
 	return out
 }
 
+func copyMetatableIndexReads(in map[symbol.ID]map[*ast.IdentExpr]struct{}) map[symbol.ID]map[*ast.IdentExpr]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[symbol.ID]map[*ast.IdentExpr]struct{}, len(in))
+	for methods, reads := range in {
+		if len(reads) == 0 {
+			continue
+		}
+		owned := make(map[*ast.IdentExpr]struct{}, len(reads))
+		for read := range reads {
+			owned[read] = struct{}{}
+		}
+		out[methods] = owned
+	}
+	return out
+}
+
 func copyReceiverMap(in map[symbol.ID]typ.Type) map[symbol.ID]typ.Type {
 	if len(in) == 0 {
 		return nil
@@ -1260,86 +1215,31 @@ func metatableIndexTable(bindings *bind.Result, expr ast.Expr) (symbol.ID, bool)
 	return 0, false
 }
 
+func metatableIndexReadIdent(expr ast.Expr) *ast.IdentExpr {
+	table, ok := expr.(*ast.TableExpr)
+	if !ok || table == nil {
+		return nil
+	}
+	arrayIndex := 0
+	for _, field := range table.Fields {
+		suffix, ok := pathexpr.ResolveTableFieldSuffix(field, &arrayIndex)
+		if ok && len(suffix.Path.Segments) == 1 && suffix.Path.Segments[0].Name == "__index" {
+			return rootIdentExpr(field.Value)
+		}
+	}
+	return nil
+}
+
+func rootIdentExpr(expr ast.Expr) *ast.IdentExpr {
+	ident, _ := expr.(*ast.IdentExpr)
+	return ident
+}
+
 func methodFunctionTableSymbol(bindings *bind.Result, origin bind.FunctionOrigin) (symbol.ID, bool) {
 	if bindings == nil {
 		return 0, false
 	}
 	return bindings.MethodOriginReceiverSymbol(origin)
-}
-
-func implicitSelfParamSeed(reg *axis.Registry, bindings *bind.Result, fn *ast.FunctionExpr, t typ.Type) (paramSeed, bool) {
-	for _, slot := range bindings.ParamSlots(fn) {
-		if slot.Symbol == 0 || slot.Name != "self" || !slot.ImplicitSelf {
-			continue
-		}
-		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == 0 {
-			return paramSeed{}, false
-		}
-		return paramSeed{
-			slot:  valueSlot,
-			value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
-		}, true
-	}
-	return paramSeed{}, false
-}
-
-func seedImplicitSelfMethodStaticMembers(
-	reg *axis.Registry,
-	entry state.State,
-	entryKeys *keyspace.KeySpace,
-	bindings *bind.Result,
-	fn *ast.FunctionExpr,
-	members []methodStaticMemberSeed,
-) (state.State, *keyspace.KeySpace, bool) {
-	if reg == nil || bindings == nil || fn == nil || len(members) == 0 {
-		return entry, entryKeys, false
-	}
-	self, ok := implicitSelfSymbol(bindings, fn)
-	if !ok {
-		return entry, entryKeys, false
-	}
-	if entryKeys == nil {
-		entryKeys = keyspace.New()
-	}
-	out := entry
-	edit := out.EditPathEvidence(reg)
-	seeded := false
-	for _, member := range members {
-		if member.name == "" {
-			continue
-		}
-		segments := []segment.Segment{{
-			Kind: segment.SegmentField,
-			Name: member.name,
-		}}
-		local, ok := pathaddr.LocalKeyForVersion(self, 1, segments)
-		if !ok {
-			continue
-		}
-		edit.WritePathStaticMember(entryKeys, local.PathKey(), member.value)
-		if stable, ok := entryKeys.FromStableSymbol(self, segments); ok {
-			edit.WriteLocalPathStaticMember(stable, member.value)
-		}
-		seeded = true
-	}
-	return edit.DoneOn(out), entryKeys, seeded
-}
-
-func forceParamSeed(reg *axis.Registry, entry state.State, seed paramSeed) state.State {
-	if reg == nil || seed.slot == 0 {
-		return entry
-	}
-	return entry.Snapshot().WriteValue(reg, seed.slot, seed.value)
-}
-
-func implicitSelfSymbol(bindings *bind.Result, fn *ast.FunctionExpr) (symbol.ID, bool) {
-	for _, slot := range bindings.ParamSlots(fn) {
-		if slot.Symbol != 0 && slot.Name == "self" && slot.ImplicitSelf {
-			return slot.Symbol, true
-		}
-	}
-	return 0, false
 }
 
 func directConstructorField(p pathdom.Path) (string, bool) {

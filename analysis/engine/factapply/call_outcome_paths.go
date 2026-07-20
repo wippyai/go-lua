@@ -116,7 +116,7 @@ func callOutcomeVisibleStateKeyAt(
 		return "", false
 	}
 	if substitutedRootPath(targetPath) {
-		return visibility.AddressAt(resolver, point, targetPath).RootOrVisibleStateKey()
+		return visibility.AddressAt(resolver, point, targetPath).VisibleStateKey()
 	}
 	return factStateKeyAt(resolver, point, targetPath)
 }

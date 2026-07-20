@@ -9,12 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -35,6 +32,15 @@ type ResolvedPathAddress struct {
 	valid              bool
 }
 
+// LocalKey returns the exact resolver-versioned State address frozen for this
+// path. The key remains owned by the resolver's KeySpace.
+func (a ResolvedPathAddress) LocalKey() (keyspace.Key, bool) {
+	if !a.valid || a.local.Kind != keyspace.KindResolverSym || a.local.Sym == 0 || a.local.Ver == 0 {
+		return keyspace.Key{}, false
+	}
+	return a.local, true
+}
+
 // FreezeResolvedPathAddress resolves one path exactly once. The returned value
 // is closed over structural keyspace identity and owns all variable storage.
 func FreezeResolvedPathAddress(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) (ResolvedPathAddress, error) {
@@ -53,6 +59,34 @@ func FreezeResolvedPathAddress(resolver *visibility.Resolver, point cfg.Point, p
 	}
 	for i := range prefixes {
 		prefixes[i].prefixes = prefixes
+	}
+	return prefixes[len(prefixes)-1], nil
+}
+
+// FreezeBoundaryPathAddress closes a path over one certified structural root
+// carried by a linked relation frame. Unlike a local address it has no SSA
+// version: captures and globals are boundary storage, and manufacturing a
+// resolver version would conflate the two namespaces.
+func FreezeBoundaryPathAddress(ks *keyspace.KeySpace, root keyspace.Key, path pathdom.Path) (ResolvedPathAddress, error) {
+	if ks == nil || !ks.Valid() || root.Kind != keyspace.KindUnversionedSym || root.Sym == 0 || root.Ver != 0 ||
+		root.Segs != 0 || path.IsEmpty() || path.Symbol != root.Sym || path.Version != 0 {
+		return ResolvedPathAddress{}, fmt.Errorf("factapply: structural boundary path requires its certified root")
+	}
+	prefixes := make([]ResolvedPathAddress, len(path.Segments)+1)
+	for count := range prefixes {
+		prefixPath := pathdom.Path{Symbol: path.Symbol, Segments: append([]segment.Segment(nil), path.Segments[:count]...)}
+		local := ks.FromPath(prefixPath)
+		raw, ok := pathaddr.StateKeyFromPathKey(ks.FormatReadOnly(local))
+		if !ok {
+			return ResolvedPathAddress{}, fmt.Errorf("factapply: structural boundary path has no State spelling")
+		}
+		prefixes[count] = ResolvedPathAddress{
+			path: prefixPath, owner: ks, local: local, stateKey: raw,
+			rootOrVisible: raw, rootOrVisibleLocal: local, structural: raw, valid: true,
+		}
+	}
+	for index := range prefixes {
+		prefixes[index].prefixes = prefixes
 	}
 	return prefixes[len(prefixes)-1], nil
 }
@@ -162,24 +196,11 @@ func ResolvePathAddressValue(reg *axis.Registry, ks *keyspace.KeySpace, st state
 	if reg == nil || !address.belongsTo(ks) {
 		return product.Value{}, false
 	}
-	return resolvePathAddressValue(reg, ks, st, address)
-}
-
-func resolvePathAddressValue(reg *axis.Registry, ks *keyspace.KeySpace, st state.State, address ResolvedPathAddress) (product.Value, bool) {
-	if len(address.path.Segments) == 0 {
-		return st.ReadValue(reg, statekey.SymbolValue(address.path.Symbol)), true
+	reader, ok := newConcreteResolvedPathValueReader(reg, ks, st)
+	if !ok {
+		return product.Value{}, false
 	}
-	value := st.ReadLocalPathKey(reg, address.local)
-	if !product.Equal(reg, value, product.Bottom(reg)) {
-		return value, true
-	}
-	if projected, ok := projectResolvedDynamicValue(reg, ks, st, address); ok {
-		return projected, true
-	}
-	if projected, ok := projectResolvedHeapStaticValue(reg, ks, st, address); ok {
-		return projected, true
-	}
-	return projectPathOriginValue(nil, reg, st, address.path, nil)
+	return ResolvePathAddressFactorValue(reg, ks, reader, address)
 }
 
 func resolvedPrefix(ks *keyspace.KeySpace, address ResolvedPathAddress, count int) (ResolvedPathAddress, bool) {
@@ -191,80 +212,6 @@ func resolvedPrefix(ks *keyspace.KeySpace, address ResolvedPathAddress, count in
 	}
 	prefix := address.prefixes[count]
 	return prefix, prefix.belongsTo(ks)
-}
-
-func projectResolvedDynamicValue(reg *axis.Registry, ks *keyspace.KeySpace, st state.State, address ResolvedPathAddress) (product.Value, bool) {
-	last := address.path.Segments[len(address.path.Segments)-1]
-	parent, ok := resolvedPrefix(ks, address, len(address.path.Segments)-1)
-	if !ok {
-		return product.Value{}, false
-	}
-	mayMatch := pathKeyHasPresentProof(reg, ks, st, address.stateKey.PathKey())
-	snapshot := st.DynamicIndexFactsSnapshot()
-	if !snapshot.Top && len(snapshot.Facts) != 0 {
-		if joined, ok := joinMatchingDynamicIndexValues(reg, snapshot.Facts, parent.local, last, mayMatch); ok {
-			heapMayMatch := mayMatch || presence.Equal(product.PresenceOf(joined), presence.Present())
-			if _, hasID := product.Get(reg, joined, identity.Key).ID(); !hasID {
-				if heapProjected, heapOK := projectResolvedHeapDynamicValue(reg, ks, st, parent, last, heapMayMatch); heapOK {
-					if _, heapHasID := product.Get(reg, heapProjected, identity.Key).ID(); heapHasID {
-						if merged := product.Meet(reg, joined, heapProjected); !product.Equal(reg, merged, product.Bottom(reg)) {
-							return merged, true
-						}
-					}
-				}
-			}
-			return joined, true
-		}
-	}
-	return projectResolvedHeapDynamicValue(reg, ks, st, parent, last, mayMatch)
-}
-
-func projectResolvedHeapDynamicValue(reg *axis.Registry, ks *keyspace.KeySpace, st state.State, parent ResolvedPathAddress, last segment.Segment, mayMatch bool) (product.Value, bool) {
-	parentValue, ok := resolvePathAddressValue(reg, ks, st, parent)
-	if !ok {
-		return product.Value{}, false
-	}
-	id, ok := product.Get(reg, parentValue, identity.Key).ID()
-	if !ok {
-		projected, projectedOK := projectResolvedHeapStaticValue(reg, ks, st, parent)
-		if !projectedOK {
-			projected, projectedOK = projectPathOriginValue(nil, reg, st, parent.path, nil)
-		}
-		if !projectedOK {
-			return product.Value{}, false
-		}
-		if merged := product.Meet(reg, parentValue, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
-			parentValue = merged
-		} else {
-			parentValue = projected
-		}
-		id, ok = product.Get(reg, parentValue, identity.Key).ID()
-		if !ok {
-			return product.Value{}, false
-		}
-	}
-	return joinMatchingHeapDynamicIndexValues(reg, st.ReadHeapTableObject(reg, id).DynamicIndexFacts(), last, mayMatch)
-}
-
-func projectResolvedHeapStaticValue(reg *axis.Registry, ks *keyspace.KeySpace, st state.State, address ResolvedPathAddress) (product.Value, bool) {
-	root := st.ReadValue(reg, statekey.SymbolValue(address.path.Symbol))
-	rootProjected, rootOK := sourcevalue.HeapMemberFromValue(reg, ks, st, root, address.path.Segments)
-	parent, ok := resolvedPrefix(ks, address, len(address.path.Segments)-1)
-	if !ok {
-		return rootProjected, rootOK
-	}
-	parentValue, parentOK := resolvePathAddressValue(reg, ks, st, parent)
-	if parentOK {
-		if projected, ok := sourcevalue.HeapMemberFromValue(reg, ks, st, parentValue, address.path.Segments[len(address.path.Segments)-1:]); ok {
-			if rootOK {
-				if merged := product.Meet(reg, rootProjected, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
-					return merged, true
-				}
-			}
-			return projected, true
-		}
-	}
-	return rootProjected, rootOK
 }
 
 type resolvedPathInvalidator func(state.State, *keyspace.KeySpace, pathaddr.StateKey) (state.State, bool)
@@ -361,7 +308,7 @@ func invalidateResolvedHeapStaticMembers(reg *axis.Registry, ks *keyspace.KeySpa
 			if !ok {
 				continue
 			}
-			owner, ok := resolvePathAddressValue(reg, ks, st, prefix)
+			owner, ok := ResolvePathAddressValue(reg, ks, st, prefix)
 			if !ok {
 				continue
 			}

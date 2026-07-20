@@ -28,10 +28,10 @@ func TestDynamicIndexPlanHandlerPublishesOneOrderedAtomicBoundaryEffect(t *testi
 	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9303, HasExpr: true}
 	input := factflow.FactsInput{
 		PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
-			point: factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(tablePath, keySource, nil),
+			point: factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(factflow.NewDynamicIndexTarget(tablePath, keySource, nil)),
 		},
 		DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
-			point: factflow.NewDynamicIndexWrite(tablePath, keySource, valueSource,
+			point: factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(tablePath, keySource, nil), valueSource,
 				dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue),
 		},
 		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
@@ -48,8 +48,8 @@ func TestDynamicIndexPlanHandlerPublishesOneOrderedAtomicBoundaryEffect(t *testi
 	if err := bindBoundaryParamTerms(&ctx, Shape{Params: 3}); err != nil {
 		t.Fatal(err)
 	}
-	var effects []EffectTerm
-	ctx.rowEffects = &effects
+	var steps []rowStep
+	ctx.rowSteps = &steps
 	n3 := dynamicIndexPlanHandler{kind: operationplan.PathDescendantInvalidation}
 	n4 := dynamicIndexPlanHandler{kind: operationplan.DynamicIndexWrite}
 	if err := n3.Preflight(ctx, point); err != nil {
@@ -61,16 +61,16 @@ func TestDynamicIndexPlanHandlerPublishesOneOrderedAtomicBoundaryEffect(t *testi
 	if err := n3.Lower(ctx, point, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 0 {
+	if len(steps) != 0 {
 		t.Fatal("N3 published before the atomic N4 boundary")
 	}
 	if err := n4.Lower(ctx, point, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(effects) != 1 || builder.EffectArena().Kind(effects[0]) != EffectIndexMutation {
-		t.Fatalf("ordered effects = %#v, want one index mutation", effects)
+	if len(steps) != 1 || steps[0].kind != rowStepEffect || builder.EffectArena().Kind(steps[0].effect) != EffectIndexMutation {
+		t.Fatalf("ordered steps = %#v, want one index mutation", steps)
 	}
-	node := builder.EffectArena().nodes[effects[0]]
+	node := builder.EffectArena().nodes[steps[0].effect]
 	if node.site.Owner != uint64(table) || node.site.Ordinal != uint32(point) ||
 		node.keyPath == 0 || node.valuePath == 0 || !node.invalidation.PreserveStructuralWitness ||
 		!node.invalidation.PreserveDynamicValueMemberships {
@@ -84,12 +84,107 @@ func TestDynamicIndexPlanHandlerPublishesOneOrderedAtomicBoundaryEffect(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, ok := builder.EffectArena().resolve(effects[0], cursor, SpecializationContext{})
+	resolved, ok := builder.EffectArena().resolve(steps[0].effect, cursor, SpecializationContext{})
 	if !ok || resolved.Kind != EffectIndexMutation ||
 		!resolved.Mutation.Table.Equal(pathdom.NewPlaceholder(0)) ||
 		!resolved.Mutation.KeyPath.Equal(pathdom.NewPlaceholder(1)) ||
 		!resolved.Mutation.ValuePath.Equal(pathdom.NewPlaceholder(2)) {
 		t.Fatalf("resolved boundary mutation = %#v/%v", resolved, ok)
+	}
+}
+
+func TestDynamicIndexPlanHandlerPreservesAliasedLexicalRootRoles(t *testing.T) {
+	reg := standard.Registry()
+	for _, tc := range []struct {
+		name                 string
+		table, key, value    symbol.ID
+		keyField, valueField string
+	}{
+		{name: "table-key", table: 9501, key: 9501, value: 9502},
+		{name: "table-value", table: 9511, key: 9512, value: 9511},
+		{name: "key-value", table: 9521, key: 9522, value: 9522},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			graph := cfg.New()
+			point := graph.AddNode(cfg.NodeAssign)
+			graph.AddEdge(graph.Entry(), point, false)
+			graph.AddEdge(point, graph.Exit(), false)
+			tablePath := pathdom.NewPath(tc.table, "table")
+			keyPath := pathdom.NewPath(tc.key, "key")
+			if tc.keyField != "" {
+				keyPath = keyPath.Field(tc.keyField)
+			}
+			valuePath := pathdom.NewPath(tc.value, "value")
+			if tc.valueField != "" {
+				valuePath = valuePath.Field(tc.valueField)
+			}
+			keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 1, HasExpr: true}
+			valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 2, HasExpr: true}
+			input := factflow.FactsInput{
+				PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+					point: factflow.NewPathDescendantInvalidation(tablePath).WithDynamicTarget(factflow.NewDynamicIndexTarget(tablePath, keySource, nil)),
+				},
+				DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+					point: factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(tablePath, keySource, nil), valueSource,
+						dynamicindex.AdmissionUnknown, factflow.DynamicIndexReadbackKeyAndValue),
+				},
+				ExpressionPaths: map[factflow.ExprRef]pathdom.Path{1: keyPath, 2: valuePath},
+			}
+			params := make([]symbol.ID, 0, 3)
+			paramIndex := make(map[symbol.ID]int, 3)
+			for _, id := range []symbol.ID{tc.table, tc.key, tc.value} {
+				if _, exists := paramIndex[id]; exists {
+					continue
+				}
+				paramIndex[id] = len(params)
+				params = append(params, id)
+			}
+			plan := operationplan.New(graph, input).WithBoundaryParams(params)
+			shape := Shape{Params: uint32(len(params))}
+			builder := NewBuilder(reg, shape, DefaultOutputCapabilityRegistry(), plan)
+			ctx := planCompileContext{
+				registry: reg, graph: graph, plan: plan, facts: plan.Facts(), builder: builder,
+				locals: make(map[symbol.ID]ValueTerm), expressions: make(map[factflow.ExprRef][]ValueTerm),
+			}
+			if err := bindBoundaryParamTerms(&ctx, shape); err != nil {
+				t.Fatal(err)
+			}
+			var steps []rowStep
+			ctx.rowSteps = &steps
+			if err := (dynamicIndexPlanHandler{kind: operationplan.DynamicIndexWrite}).Lower(ctx, point, nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(steps) != 1 {
+				t.Fatalf("ordered effects = %d, want 1", len(steps))
+			}
+			values := make([]product.Value, len(params))
+			paths := make([]pathdom.Path, len(params))
+			for index := range params {
+				values[index] = product.Top()
+				paths[index] = pathdom.NewPlaceholder(index)
+			}
+			cursor, err := NewBindingCursor(shape, values, paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, ok := builder.EffectArena().resolve(steps[0].effect, cursor, SpecializationContext{})
+			if !ok {
+				t.Fatal("aliased-root index mutation did not resolve")
+			}
+			wantTable := pathdom.NewPlaceholder(paramIndex[tc.table])
+			wantKey := pathdom.NewPlaceholder(paramIndex[tc.key])
+			if tc.keyField != "" {
+				wantKey = wantKey.Field(tc.keyField)
+			}
+			wantValue := pathdom.NewPlaceholder(paramIndex[tc.value])
+			if tc.valueField != "" {
+				wantValue = wantValue.Field(tc.valueField)
+			}
+			if !resolved.Mutation.Table.Equal(wantTable) || !resolved.Mutation.KeyPath.Equal(wantKey) || !resolved.Mutation.ValuePath.Equal(wantValue) {
+				t.Fatalf("resolved aliased roles = table %v key %v value %v, want %v/%v/%v",
+					resolved.Mutation.Table, resolved.Mutation.KeyPath, resolved.Mutation.ValuePath, wantTable, wantKey, wantValue)
+			}
+		})
 	}
 }
 
@@ -101,7 +196,7 @@ func TestDynamicIndexPlanHandlerFailsClosedOutsideBoundaryPair(t *testing.T) {
 	tablePath := pathdom.NewPath(table, "table")
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9402, HasExpr: true}
 	input := factflow.FactsInput{DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
-		point: factflow.NewDynamicIndexWrite(tablePath, source, source,
+		point: factflow.NewDynamicIndexWrite(factflow.NewDynamicIndexTarget(tablePath, source, nil), source,
 			dynamicindex.AdmissionAdmitted, factflow.DynamicIndexReadbackKeyAndValue),
 	}}
 	plan := operationplan.New(graph, input).WithBoundaryParams([]symbol.ID{table})

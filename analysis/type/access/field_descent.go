@@ -19,7 +19,7 @@ func (q *query) field(t typ.Type, name string, depth int, cycle fieldResult) fie
 		return fieldResult{t: top, ok: true}
 	}
 
-	return descendAccessWrappers(t, depth, nil, func(t typ.Type, depth int) fieldResult {
+	return descendAccessWrappers(t, depth, nil, zeroFieldResult, func(t typ.Type, depth int) fieldResult {
 		if top, ok := SpecialAccessType(t); ok {
 			return fieldResult{t: top, ok: true}
 		}
@@ -66,6 +66,14 @@ func SpecialAccessType(t typ.Type) (typ.Type, bool) {
 	return nil, false
 }
 
+// stopDepth reports whether a field/index resolution must stop without
+// descending further: the type is missing, or the recursion has exhausted
+// its depth budget. Beyond the O(1)-stack wrapper-unwind loop in
+// descendAccessWrappers, field()/index() re-enter themselves through
+// fieldInUnion/fieldInIntersection (and their index_* counterparts) via
+// ordinary Go recursion, one stack frame per union/intersection member
+// nesting level; a raw, non-normalized deeply nested union or intersection
+// costs one real frame per level and is not bounded by any cycle guard here.
 func stopDepth(t typ.Type, depth int) bool {
-	return t == nil
+	return t == nil || depth > typ.DefaultRecursionDepth
 }

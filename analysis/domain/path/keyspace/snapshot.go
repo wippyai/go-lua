@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -19,13 +20,40 @@ type Snapshot struct {
 // SnapshotKey is one immutable structural key in a Snapshot. Its variable-size
 // storage is private and exposed only through allocation-free scalar accessors.
 type SnapshotKey struct {
-	kind      KeyKind
-	sym       symbol.ID
-	version   uint32
-	root      uint32
-	canon     bool
-	namedRoot string
-	segments  []segment.Segment
+	kind       KeyKind
+	sym        symbol.ID
+	version    uint32
+	root       uint32
+	canon      bool
+	namedRoot  string
+	formalRoot formal.Root
+	segments   []segment.Segment
+}
+
+// canonicalSnapshotKeyKindCount is deliberately independent of keyKindCount:
+// the paired compile-time array bounds make key-namespace growth fail until
+// this canonical owner is reviewed and updated.
+const canonicalSnapshotKeyKindCount = 10
+
+var (
+	_ [canonicalSnapshotKeyKindCount - int(keyKindCount)]struct{}
+	_ [int(keyKindCount) - canonicalSnapshotKeyKindCount]struct{}
+)
+
+// FreezeKey validates and decodes one key into its immutable, solve-independent
+// structural identity. Callers must encode SnapshotKey's scalar fields; they
+// must not interpret private KeyKind values or dense owner-local root IDs.
+func FreezeKey(ctx context.Context, source *KeySpace, key Key) (SnapshotKey, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotKey{}, err
+	}
+	if source == nil {
+		return SnapshotKey{}, fmt.Errorf("keyspace: nil key source")
+	}
+	return freezeSnapshotKey(ctx, source, key)
 }
 
 // FreezeSnapshot validates keys against source, deep-copies their structural
@@ -52,7 +80,7 @@ func FreezeSnapshot(ctx context.Context, source *KeySpace, keys []Key) (Snapshot
 				return Snapshot{}, err
 			}
 		}
-		frozen, err := freezeSnapshotKey(ctx, source, key)
+		frozen, err := FreezeKey(ctx, source, key)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -125,6 +153,16 @@ func freezeSnapshotKey(ctx context.Context, source *KeySpace, key Key) (Snapshot
 			return SnapshotKey{}, fmt.Errorf("keyspace: empty or foreign named snapshot root")
 		}
 		out.root = 0
+	case kindFormalRoot:
+		if key.Sym != 0 || key.Ver != 0 || key.Canon || key.Root == 0 {
+			return SnapshotKey{}, fmt.Errorf("keyspace: malformed formal snapshot key")
+		}
+		root := source.formalRootEntries[key.Root]
+		if !root.Valid() {
+			return SnapshotKey{}, fmt.Errorf("keyspace: invalid formal snapshot descriptor")
+		}
+		out.formalRoot = root
+		out.root = 0
 	case kindBoundaryExistential:
 		if key.Sym != 0 || key.Ver != 0 || key.Canon || key.Root == 0 {
 			return SnapshotKey{}, fmt.Errorf("keyspace: malformed boundary existential snapshot key")
@@ -176,6 +214,15 @@ func (k SnapshotKey) Canonical() bool { return k.canon }
 
 // NamedRoot returns the exact named root, or empty for non-named keys.
 func (k SnapshotKey) NamedRoot() string { return k.namedRoot }
+
+// FormalRoot returns the exact typed relational descriptor, or false for a
+// key from any other namespace.
+func (k SnapshotKey) FormalRoot() (formal.Root, bool) {
+	if k.kind != kindFormalRoot || !k.formalRoot.Valid() {
+		return formal.Root{}, false
+	}
+	return k.formalRoot, true
+}
 
 // SegmentLen reports the number of exact structural path segments.
 func (k SnapshotKey) SegmentLen() int { return len(k.segments) }
@@ -246,6 +293,9 @@ func compareSnapshotKeys(left, right SnapshotKey) int {
 	}
 	if left.namedRoot > right.namedRoot {
 		return 1
+	}
+	if result := formal.Compare(left.formalRoot, right.formalRoot); result != 0 {
+		return result
 	}
 	for index := 0; index < min(len(left.segments), len(right.segments)); index++ {
 		if result := compareSegments(left.segments[index], right.segments[index]); result != 0 {

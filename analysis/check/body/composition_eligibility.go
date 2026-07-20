@@ -46,8 +46,8 @@ func CompositionStateCapabilities() []CompositionStateCapability {
 	return out
 }
 
-// CompositionEligibility reports whether s has the local shape proven by
-// poc/symboliccall. It does not enable composition or alter solving.
+// CompositionEligibility reports whether s has the locally composable shape.
+// It does not enable composition or alter solving.
 func (s *Static) CompositionEligibility() CompositionEligibility {
 	if s == nil {
 		return CompositionEligibility{Reason: "shape:missing-static"}
@@ -79,7 +79,7 @@ func (s *Static) classifyCompositionEligibility() CompositionEligibility {
 	}
 	directCallees := make(map[symbol.ID]struct{})
 	boundaryCaptures := make(map[symbol.ID]struct{})
-	for _, capture := range symbolicBoundaryCaptureSymbols(s.wir, s.bindings.DirectCaptures(s.function)) {
+	for _, capture := range symbolicBoundaryCaptureSymbols(s.wir, s.bindings.DirectCaptures(s.function), s.bindings) {
 		boundaryCaptures[capture] = struct{}{}
 	}
 	for capture := range compositionDescendantCaptureInputs(s.bindings, s.function) {

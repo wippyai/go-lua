@@ -1,54 +1,76 @@
 package state
 
-import "github.com/wippyai/go-lua/analysis/domain/value/axis"
+import (
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+)
 
 func projectStoreRelationsBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if source.storeRelations.bottom {
-		out.storeRelations = source.storeRelations
-		return true
-	}
-	values := projectFiniteSet(source.storeRelations.values, func(value StoreRelation) bool {
-		return boundaryContainsStateKey(ctx.keys, ctx.closure, value.Source) || boundaryContainsStateKey(ctx.keys, ctx.closure, value.Into)
-	})
-	out.storeRelations = storeRelationLane{mustSetLane[StoreRelation]{values: values}}
+	out.storeRelations, _ = projectStoreRelationsBoundaryFactor(ctx, source.storeRelations)
 	return true
 }
-func rebaseStoreRelationsBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if source.storeRelations.bottom {
-		out.storeRelations = source.storeRelations
-		return true
+func projectStoreRelationsBoundaryFactor(ctx *boundaryProjectContext, source storeRelationLane) (storeRelationLane, bool) {
+	if source.bottom {
+		return source, true
 	}
-	values := make(map[StoreRelation]struct{}, len(source.storeRelations.values))
-	for value := range source.storeRelations.values {
+	values := projectFiniteSet(source.values, func(value StoreRelation) bool {
+		return boundaryContainsStateKey(ctx.keys, ctx.closure, value.Source) || boundaryContainsStateKey(ctx.keys, ctx.closure, value.Into)
+	})
+	return storeRelationLane{mustSetLane[StoreRelation]{values: values}}, true
+}
+func rebaseStoreRelationsBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
+	var ok bool
+	out.storeRelations, ok = rebaseStoreRelationsBoundaryFactor(ctx, source.storeRelations)
+	return ok
+}
+func rebaseStoreRelationsBoundaryFactor(ctx *boundaryRebaseContext, source storeRelationLane) (storeRelationLane, bool) {
+	if source.bottom {
+		return source, true
+	}
+	values, ok := rebaseBoundaryMustSet(source.values, func(value StoreRelation) ([]StoreRelation, bool) {
 		sources, ok := rebaseBoundaryStateKeys(ctx, value.Source)
 		if !ok {
-			return false
+			return nil, false
 		}
 		intos, ok := rebaseBoundaryStateKeys(ctx, value.Into)
 		if !ok {
-			return false
+			return nil, false
 		}
+		out := make([]StoreRelation, 0, len(sources)*len(intos))
 		for _, sourceKey := range sources {
 			for _, intoKey := range intos {
 				next := value
 				next.Source, next.Into = sourceKey, intoKey
-				values[next] = struct{}{}
+				out = append(out, next)
 			}
 		}
+		return out, true
+	}, func(value StoreRelation) boundaryPair[pathaddr.StateKey, pathaddr.StateKey] {
+		return boundaryPair[pathaddr.StateKey, pathaddr.StateKey]{first: value.Source, second: value.Into}
+	}, func(value StoreRelation) ([]boundaryPair[pathaddr.StateKey, pathaddr.StateKey], bool) {
+		sources, valid := ctx.quotient.stateKeyPreimages(value.Source)
+		if !valid {
+			return nil, false
+		}
+		intos, valid := ctx.quotient.stateKeyPreimages(value.Into)
+		if !valid {
+			return nil, false
+		}
+		return boundaryPairs(sources, intos), true
+	})
+	if !ok {
+		return storeRelationLane{}, false
 	}
-	out.storeRelations = storeRelationLane{mustSetLane[StoreRelation]{values: values}}
-	return true
+	return storeRelationLane{mustSetLane[StoreRelation]{values: values}}, true
 }
-func applyStoreRelationsBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if destination.storeRelations.bottom || fragment.storeRelations.bottom {
-		out.storeRelations = storeRelationLane{mustSetLane: mustSetLane[StoreRelation]{bottom: true}}
-		return true
+func applyStoreRelationsBoundaryLane(ctx *boundaryApplyContext, destination, fragment storeRelationLane) (storeRelationLane, bool) {
+	if destination.bottom || fragment.bottom {
+		return storeRelationLane{mustSetLane: mustSetLane[StoreRelation]{bottom: true}}, true
 	}
-	values := applyFiniteSet(destination.storeRelations.values, fragment.storeRelations.values, func(value StoreRelation) bool {
+	values := applyFiniteSet(destination.values, fragment.values, func(value StoreRelation) bool {
 		return boundaryContainsStateKey(ctx.keys, ctx.closure, value.Source) || boundaryContainsStateKey(ctx.keys, ctx.closure, value.Into)
 	})
-	out.storeRelations = storeRelationLane{mustSetLane[StoreRelation]{values: values}}
-	return true
+	return storeRelationLane{mustSetLane[StoreRelation]{values: values}}, true
 }
 func equalStoreRelationsBoundary(_ *axis.Registry, a, b State) bool {
 	return storeRelationDomain().Equal(a.storeRelations, b.storeRelations)

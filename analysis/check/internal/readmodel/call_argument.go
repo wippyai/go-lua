@@ -296,6 +296,19 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSiteView, index 
 		arg.ProofCandidateRuntime = r.callArgumentRuntimeValidated(source, candidate)
 		arg.HasProofCandidate = true
 	}
+	if arg.CallerOwnedParameter && arg.UntrustedTopOrigin {
+		if p, pathOK := r.callArgumentSourcePath(source); pathOK {
+			if candidate, candidateOK := r.result.CallerOwnedRootParameterContract(p); candidateOK {
+				arg.ProofCandidateValue = candidate
+				arg.ProofCandidateHash = r.ValueHash(candidate)
+				arg.ProofCandidateType, _ = r.ValueTypeWithPresence(candidate)
+				arg.ProofCandidateTop = r.ValueHasUntrustedTopOrigin(candidate)
+				arg.ProofCandidateExplicitTop = r.ValueHasExplicitTopOrigin(candidate)
+				arg.ProofCandidateRuntime = false
+				arg.HasProofCandidate = true
+			}
+		}
+	}
 	if fn, ok := r.contextualFunctionArgumentType(point, source); ok {
 		arg.FunctionType = fn
 		arg.TypeWithPresence = fn
@@ -305,7 +318,7 @@ func (r Reader) callArgument(point cfg.Point, site factflow.CallSiteView, index 
 	} else if fn, ok := r.functionArgumentPathStaticType(point, source); ok {
 		arg.FunctionType = fn
 		arg.TypeWithPresence = fn
-	} else if fn, ok := r.result.FunctionValueTypeForValueAtBoundary(point, value); ok {
+	} else if fn, ok := r.result.FunctionValueTypeForValue(value); ok {
 		arg.FunctionType = fn
 		arg.TypeWithPresence = fn
 	}
@@ -425,14 +438,7 @@ func (r Reader) unknownArgumentValue() (product.Value, bool) {
 }
 
 func (r Reader) callArgumentValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
-	value, ok := r.callArgumentSelectedValue(point, source)
-	if !ok {
-		return product.Value{}, false
-	}
-	if p, pathOK := r.callArgumentSourcePath(source); pathOK {
-		value = r.callArgumentDeclaredTopValue(point, source, p, value)
-	}
-	return value, true
+	return r.callArgumentSelectedValue(point, source)
 }
 
 func (r Reader) callArgumentSelectedValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
@@ -450,12 +456,12 @@ func (r Reader) callArgumentSelectedValue(point cfg.Point, source factflow.Value
 	}
 	if p, ok := r.callArgumentExpressionPath(source); ok && r.rootPathArgumentUsesBoundary(point, p) {
 		if value, valueOK := r.callArgumentSharperBoundaryValue(point, source, p); valueOK {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 	}
 	if p, ok := r.valueSourcePath(source); ok && r.rootPathArgumentUsesBoundary(point, p) {
 		if value, valueOK := r.callArgumentSharperBoundaryValue(point, source, p); valueOK {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 	}
 	if value, ok := r.callArgumentSharperSourceBoundaryValue(point, source); ok {
@@ -465,10 +471,14 @@ func (r Reader) callArgumentSelectedValue(point cfg.Point, source factflow.Value
 		return value, true
 	}
 	if p, ok := r.callArgumentExpressionPath(source); ok {
-		return r.callArgumentPathValue(point, source, p)
+		if value, valueOK := r.callArgumentPathValue(point, source, p); valueOK {
+			return value, true
+		}
 	}
 	if p, ok := r.valueSourcePath(source); ok && !p.IsEmpty() {
-		return r.callArgumentPathValue(point, source, p)
+		if value, valueOK := r.callArgumentPathValue(point, source, p); valueOK {
+			return value, true
+		}
 	}
 	if value, ok := r.trustedReadableSourceValueBeforeBoundary(point, source); ok {
 		return value, true
@@ -510,27 +520,27 @@ func (r Reader) callArgumentExpressionPath(source factflow.ValueSource) (path.Pa
 func (r Reader) callArgumentPathValue(point cfg.Point, source factflow.ValueSource, p path.Path) (product.Value, bool) {
 	if len(p.Segments) > 0 {
 		if value, ok := r.result.PathValueAtBoundary(point, p); ok {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 	}
 	if r.rootPathArgumentUsesBoundary(point, p) {
 		if value, ok := r.callArgumentSharperBoundaryValue(point, source, p); ok {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 		if value, ok := r.result.PathValueBeforeBoundary(point, p); ok {
 			if r.valueHasReadableType(value) {
-				return r.callArgumentDeclaredTopValue(point, source, p, value), true
+				return value, true
 			}
 			if declared, ok := r.declaredRootArgumentValue(point, p); ok {
 				return declared, true
 			}
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 		if value, ok := r.result.PathValueAtBoundary(point, p); ok {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 		if value, ok := r.result.SourceValueAtBoundary(point, source); ok {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 	}
 	if source.Adjusted || source.Expanded {
@@ -551,13 +561,13 @@ func (r Reader) callArgumentPathValue(point cfg.Point, source factflow.ValueSour
 		if value, ok := r.result.SourceValueBeforeBoundary(point, source); ok {
 			if !r.valueHasReadableType(value) {
 				if boundary, boundaryOK := r.trustedReadableSourceValueAtBoundary(point, source); boundaryOK {
-					return r.callArgumentDeclaredTopValue(point, source, p, boundary), true
+					return boundary, true
 				}
 			}
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 		if value, ok := r.result.PathValueAtBoundary(point, p); ok {
-			return r.callArgumentDeclaredTopValue(point, source, p, value), true
+			return value, true
 		}
 	}
 	return product.Value{}, false
@@ -809,34 +819,6 @@ func (r Reader) declaredTopArgumentValue(point cfg.Point, source factflow.ValueS
 
 func (r Reader) rootPathHasDominatingRuntimeValidationAssignment(point cfg.Point, p path.Path) bool {
 	return r.result != nil && r.result.RootPathHasDominatingRuntimeValidationAssignment(point, p)
-}
-
-func (r Reader) callArgumentDeclaredTopValue(point cfg.Point, source factflow.ValueSource, p path.Path, value product.Value) product.Value {
-	if r.result == nil || r.ValueHasUntrustedTopOrigin(value) {
-		return value
-	}
-	if r.sourceHasRuntimeValidationAuthority(point, source) || p.IsEmpty() {
-		return value
-	}
-	if r.pathHasRuntimeProof(point, p) || r.rootPathHasDominatingRuntimeValidationAssignment(point, p) {
-		return value
-	}
-	if declaredValue, declarationSource, ok := r.untrustedRootDeclarationValue(point, p); ok &&
-		r.untrustedDeclarationStillDescribesValue(declaredValue, value, declarationSource) {
-		return declaredValue
-	}
-	declared, ok := r.explicitTopDeclaredPathTypeAt(p)
-	base := unwrap.Optional(declared)
-	if !ok || base == nil || (!typ.IsAny(base) && !typ.IsUnknown(base)) {
-		return value
-	}
-	reg := r.result.Registry()
-	if reg == nil || r.typeValues == nil {
-		return value
-	}
-	value = typevalue.WithWitness(reg, r.typeValues.FromType(reg, declared), declared)
-	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
-	return product.Set(reg, value, assertion.Key, assertion.Any())
 }
 
 func (r Reader) pathHasRuntimeProof(point cfg.Point, p path.Path) bool {

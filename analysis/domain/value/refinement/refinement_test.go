@@ -40,18 +40,18 @@ func TestTruthinessQueriesTraverseDeepAndRecursiveTypesExactly(t *testing.T) {
 	for range 257 {
 		deep = typ.NewAlias("DeepFalse", deep)
 	}
-	if !typeAdmitsFalse(deep) || !typeAdmitsFalsy(deep) || typeAdmitsTruthy(deep) {
+	if !typeAdmitsFalse(deep, nil) || !typeAdmitsFalsy(deep, nil) || typeAdmitsTruthy(deep, nil) {
 		t.Fatal("deep false evidence was truncated or changed")
 	}
 
 	falsy := typ.NewRecursivePlaceholder("Falsy")
 	falsy.SetBody(&typ.Union{Members: []typ.Type{falsy, typ.False}})
-	if !typeAdmitsFalse(falsy) || !typeAdmitsFalsy(falsy) {
+	if !typeAdmitsFalse(falsy, nil) || !typeAdmitsFalsy(falsy, nil) {
 		t.Fatal("productive recursive false arm was lost")
 	}
 	truthy := typ.NewRecursivePlaceholder("Truthy")
 	truthy.SetBody(&typ.Union{Members: []typ.Type{truthy, typ.String}})
-	if !typeAdmitsTruthy(truthy) || typeAdmitsFalsy(truthy) {
+	if !typeAdmitsTruthy(truthy, nil) || typeAdmitsFalsy(truthy, nil) {
 		t.Fatal("recursive truthy union acquired a false cyclic witness")
 	}
 }

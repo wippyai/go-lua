@@ -46,37 +46,6 @@ func writePathAt(
 	return edit.Done(), true
 }
 
-func pathWriteLocalKeysAt(
-	aliasState state.State,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	path pathdom.Path,
-) ([]keyspace.Key, bool) {
-	pathKey := factPathKeyAt(resolver, point, path)
-	if pathKey == "" {
-		return nil, false
-	}
-	ks := resolver.KeySpace()
-	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
-	if !ok {
-		return nil, false
-	}
-	localKey, ok := ks.FromPathKey(stateKey.PathKey())
-	if !ok {
-		return nil, false
-	}
-	keys := make([]keyspace.Key, 0, 2+len(aliasState.EquivalentStateKeys(ks, stateKey))*2)
-	keys = appendLocalPathKeyWithStaticStringAlias(keys, ks, localKey)
-	for _, target := range aliasState.EquivalentStateKeys(ks, stateKey) {
-		localAlias, ok := ks.FromPathKey(target.PathKey())
-		if !ok {
-			continue
-		}
-		keys = appendLocalPathKeyWithStaticStringAlias(keys, ks, localAlias)
-	}
-	return dedupeKeyspaceKeys(keys), true
-}
-
 func appendLocalPathKeyWithStaticStringAlias(keys []keyspace.Key, ks *keyspace.KeySpace, localKey keyspace.Key) []keyspace.Key {
 	keys = append(keys, localKey)
 	if canonical, ok := ks.FieldCanonical(localKey); ok {
@@ -395,6 +364,13 @@ func invalidateHeapObjectRootStructuralWitness(reg *axis.Registry, object heapid
 
 func pathMutationStateKeys(ks *keyspace.KeySpace, s state.State, stateKey pathaddr.StateKey, includeDescendantAliases bool) []pathaddr.StateKey {
 	keys := stateKeysWithEquivalentAliases(ks, s, stateKey)
+	// Subtree invalidation computes the finite pre-mutation alias roots. Keep
+	// those roots in the mutation transaction even when their concrete path
+	// entries are absent: root-origin and heap ownership facts live in separate
+	// lanes and must be invalidated with the same alias set.
+	if prefixes, ok := s.PathKeySubtreeInvalidationPrefixes(ks, stateKey.PathKey()); ok {
+		keys = append(keys, stateKeysFromPathKeys(prefixes)...)
+	}
 	if !includeDescendantAliases {
 		return dedupeStateKeys(keys)
 	}
@@ -414,6 +390,10 @@ type pathStaticMemberInvalidationTarget struct {
 
 func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, stateKey pathaddr.StateKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
 	targetKeys := stateKeysWithEquivalentAliases(ks, s, stateKey)
+	if prefixes, ok := s.PathKeySubtreeInvalidationPrefixes(ks, stateKey.PathKey()); ok {
+		targetKeys = append(targetKeys, stateKeysFromPathKeys(prefixes)...)
+		targetKeys = dedupeStateKeys(targetKeys)
+	}
 	targets := make([]pathStaticMemberInvalidationTarget, 0, len(targetKeys))
 	for _, equivalent := range targetKeys {
 		targets = append(targets, pathStaticMemberInvalidationTarget{

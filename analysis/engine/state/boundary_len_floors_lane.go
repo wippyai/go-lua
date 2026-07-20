@@ -8,46 +8,46 @@ import (
 )
 
 func projectLenFloorsBoundary(ctx *boundaryProjectContext, source State, out *State) bool {
-	if source.lenFloors.lane.Bottom() {
-		out.lenFloors = source.lenFloors
-		return true
-	}
-	values := projectFiniteMap(source.lenFloors.lane.Values(), func(path keyspace.Key, _ lenbound.Floor) bool { return ctx.closure.ContainsPath(path) })
-	out.lenFloors = lenFloorLane{lane: lift.MustMapValues(values)}
+	lane, _ := projectLenFloorsBoundaryFactor(ctx, source.lenFloors)
+	setStateLenFloors(out, lane)
 	return true
+}
+func projectLenFloorsBoundaryFactor(ctx *boundaryProjectContext, source lenFloorLane) (lenFloorLane, bool) {
+	if source.lane.Bottom() {
+		return source, true
+	}
+	values := projectFiniteMap(source.lane.Values(), func(path keyspace.Key, _ lenbound.Floor) bool { return ctx.closure.ContainsPath(path) })
+	return lenFloorLane{lane: lift.MustMapValues(values)}, true
 }
 func rebaseLenFloorsBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
-	if source.lenFloors.lane.Bottom() {
-		out.lenFloors = source.lenFloors
-		return true
+	lane, ok := rebaseLenFloorsBoundaryFactor(ctx, source.lenFloors)
+	if ok {
+		setStateLenFloors(out, lane)
 	}
-	values := make(map[keyspace.Key]lenbound.Floor, len(source.lenFloors.lane.Values()))
-	domain := lenbound.MapDomain()
-	for path, value := range source.lenFloors.lane.Values() {
-		next, ok := boundaryRebasePaths(ctx, path)
-		if !ok {
-			return false
-		}
-		for _, target := range next {
-			candidate := value
-			if existing, exists := values[target]; exists {
-				joined := domain.Join(lift.MustMapValues(map[keyspace.Key]lenbound.Floor{target: existing}), lift.MustMapValues(map[keyspace.Key]lenbound.Floor{target: candidate}))
-				candidate = joined.Values()[target]
-			}
-			values[target] = candidate
-		}
-	}
-	out.lenFloors = lenFloorLane{lane: lift.MustMapValues(values)}
-	return true
+	return ok
 }
-func applyLenFloorsBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	if destination.lenFloors.lane.Bottom() || fragment.lenFloors.lane.Bottom() {
-		out.lenFloors = lenFloorLane{lane: lift.MustMapBottom[keyspace.Key, lenbound.Floor]()}
-		return true
+func rebaseLenFloorsBoundaryFactor(ctx *boundaryRebaseContext, source lenFloorLane) (lenFloorLane, bool) {
+	if source.lane.Bottom() {
+		return source, true
 	}
-	values := applyFiniteMap(destination.lenFloors.lane.Values(), fragment.lenFloors.lane.Values(), func(path keyspace.Key, _ lenbound.Floor) bool { return ctx.closure.ContainsPath(path) })
-	out.lenFloors = lenFloorLane{lane: lift.MustMapValues(values)}
-	return true
+	values, ok := rebaseBoundaryMustMap(source.lane.Values(), func(path keyspace.Key) ([]keyspace.Key, bool) {
+		return boundaryRebasePaths(ctx, path)
+	}, func(value lenbound.Floor) (lenbound.Floor, bool) { return value, true }, func(path keyspace.Key) keyspace.Key { return path }, func(path keyspace.Key) ([]keyspace.Key, bool) {
+		return ctx.quotient.pathPreimages(path)
+	}, func(a, b lenbound.Floor) lenbound.Floor {
+		return lenbound.Floor{Lo: min(a.Lo, b.Lo)}
+	})
+	if !ok {
+		return lenFloorLane{}, false
+	}
+	return lenFloorLane{lane: lift.MustMapValues(values)}, true
+}
+func applyLenFloorsBoundaryLane(ctx *boundaryApplyContext, destination, fragment lenFloorLane) (lenFloorLane, bool) {
+	if destination.lane.Bottom() || fragment.lane.Bottom() {
+		return lenFloorLane{lane: lift.MustMapBottom[keyspace.Key, lenbound.Floor]()}, true
+	}
+	values := applyFiniteMap(destination.lane.Values(), fragment.lane.Values(), func(path keyspace.Key, _ lenbound.Floor) bool { return ctx.closure.ContainsPath(path) })
+	return lenFloorLane{lane: lift.MustMapValues(values)}, true
 }
 func equalLenFloorsBoundary(_ *axis.Registry, a, b State) bool {
 	return lenFloorMapDomain().Equal(a.lenFloors, b.lenFloors)

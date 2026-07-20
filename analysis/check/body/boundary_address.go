@@ -144,19 +144,9 @@ func (c boundaryAddressContext) pathsEquivalent(left, right pathdom.Path) bool {
 		return false
 	}
 	ks := c.result.visibility.KeySpace()
-	leftPathKey := leftKey.PathKey()
-	rightPathKey := rightKey.PathKey()
-	for _, equivalent := range c.state.EquivalentPathKeys(ks, leftPathKey) {
-		if equivalent == rightPathKey {
-			return true
-		}
-	}
-	for _, equivalent := range c.state.EquivalentPathKeys(ks, rightPathKey) {
-		if equivalent == leftPathKey {
-			return true
-		}
-	}
-	return false
+	leftTerm, leftOK := ks.InternStateKey(leftKey)
+	rightTerm, rightOK := ks.InternStateKey(rightKey)
+	return leftOK && rightOK && c.state.HasEquivalentKeyspaceKey(ks, leftTerm, rightTerm)
 }
 
 func (c boundaryAddressContext) forEachStateKey(p pathdom.Path, visit func(pathaddr.StateKey) bool, forms ...visibility.StateKeyForm) bool {

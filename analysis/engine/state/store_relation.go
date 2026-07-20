@@ -58,7 +58,11 @@ func (s State) StoreRelationsSnapshot() StoreRelationsSnapshot {
 	if !s.laneEnabled(laneStoreRelationsBit) {
 		return StoreRelationsSnapshot{Bottom: true}
 	}
-	bottom, top, relations := s.storeRelations.snapshot(storeRelationLess)
+	return storeRelationsSnapshot(s.storeRelations)
+}
+
+func storeRelationsSnapshot(lane storeRelationLane) StoreRelationsSnapshot {
+	bottom, top, relations := lane.snapshot(storeRelationLess)
 	return StoreRelationsSnapshot{Bottom: bottom, Top: top, Relations: relations}
 }
 

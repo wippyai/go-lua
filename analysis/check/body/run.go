@@ -5,12 +5,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -19,12 +17,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
-	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/solve"
-	"github.com/wippyai/go-lua/analysis/engine/solve/concreteflow"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -45,7 +41,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -76,10 +71,13 @@ func (c *checker) prepareChunk(stmts []ast.Stmt) (*Static, error) {
 }
 
 func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Static, error) {
+	sealedLuaTypeChecks := luaTypePredicateChecksSealedForLowering(bindings, c.config.Signatures, c.config.GlobalTypes)
 	return c.prepareBound(bindings, "chunk",
 		stmts,
 		func() { c.config.Stats.StaticChunkPrepares++ },
-		func() *cfgbuild.Result { return cfgbuild.BuildChunk(stmts, bindings) },
+		func() *cfgbuild.Result {
+			return cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: sealedLuaTypeChecks})
+		},
 		nil,
 		func() moduleidentity.Projection {
 			return moduleidentity.NewRequireAliases(bindings, stmts, nil)
@@ -87,6 +85,7 @@ func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*S
 		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
 			return wirlower.LowerWithResolverAndOptions("chunk", stmts, bindings, built, resolver, wirlower.Options{
 				MethodReceiverTypes: c.config.MethodReceiverTypes,
+				SealedLuaTypeChecks: sealedLuaTypeChecks,
 			})
 		},
 	)
@@ -105,17 +104,20 @@ func (c *checker) prepareBound(
 	requireAliases func() moduleidentity.Projection,
 	lowerWIR func(*cfgbuild.Result, *typeresolve.Resolver) *wir.Body,
 ) (*Static, error) {
+	if bindings == nil {
+		return nil, ErrBindingsRequired
+	}
 	if c.config.Stats != nil {
 		incStat()
 	}
 	built := build()
 	if built == nil || built.Graph == nil {
-		return nil, ErrUnsupportedCFG
+		return nil, ErrCFGRequired
 	}
 	moduleTypes := newRequireAliasTypeResolver(requireAliases(), c.config.ModuleTypes)
 	typeResolver := typeresolve.NewWithExternal(bindings, moduleTypes)
 	wirBody := lowerWIR(built, typeResolver)
-	return c.prepare(bindings, built, fn, wirBody, typeResolver, sourceStmts), nil
+	return c.prepare(bindings, built, fn, wirBody, typeResolver, sourceStmts)
 }
 
 func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
@@ -131,10 +133,13 @@ func functionSourceStmts(fn *ast.FunctionExpr) []ast.Stmt {
 }
 
 func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Static, error) {
+	sealedLuaTypeChecks := luaTypePredicateChecksSealedForLowering(bindings, c.config.Signatures, c.config.GlobalTypes)
 	return c.prepareBound(bindings, "function",
 		functionSourceStmts(fn),
 		func() { c.config.Stats.StaticFunctionPrepares++ },
-		func() *cfgbuild.Result { return cfgbuild.BuildFunction(fn, bindings) },
+		func() *cfgbuild.Result {
+			return cfgbuild.BuildFunctionWithOptions(fn, bindings, cfgbuild.Options{SealedLuaTypeChecks: sealedLuaTypeChecks})
+		},
 		fn,
 		func() moduleidentity.Projection {
 			return moduleidentity.NewRequireAliases(bindings, fn.Stmts, fn)
@@ -142,6 +147,7 @@ func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Resu
 		func(built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
 			return wirlower.LowerFunctionWithResolverAndOptions("function", fn, bindings, built, resolver, wirlower.Options{
 				MethodReceiverTypes: c.config.MethodReceiverTypes,
+				SealedLuaTypeChecks: sealedLuaTypeChecks,
 			})
 		},
 	)
@@ -154,7 +160,7 @@ func (c *checker) prepare(
 	wirBody *wir.Body,
 	typeResolver *typeresolve.Resolver,
 	sourceStmts []ast.Stmt,
-) *Static {
+) (*Static, error) {
 	config := c.config
 	unitNamespace := config.UnitNamespace
 	if unitNamespace == (lexicalidentity.UnitNamespace{}) {
@@ -200,15 +206,39 @@ func (c *checker) prepare(
 		Signatures: config.Signatures, NameForSite: signatureID.nameForCallSiteView,
 		IntrinsicForSite: signatureID.intrinsicForCallSiteView,
 	})
+	directCaptures := bindings.DirectCaptures(fn)
+	boundaryCaptures := symbolicBoundaryCaptureSymbols(wirBody, directCaptures, bindings)
+	boundaryGlobals := bindings.DirectGlobalReads(fn)
+	if fn == nil {
+		boundaryGlobals = bindings.ChunkGlobalReads()
+	}
+	boundaryGlobalContracts := materializeBoundaryGlobalTypeValues(config.Registry, config.TypeValues, bindings, boundaryGlobals, config.GlobalTypes)
+	boundaryGlobalPairs := make([]operationplan.BoundaryGlobal, len(boundaryGlobals))
+	for index, global := range boundaryGlobals {
+		boundaryGlobalPairs[index] = operationplan.BoundaryGlobal{Symbol: global, Contract: boundaryGlobalContracts[index]}
+	}
+	operationPlan := lowered.Plan.
+		WithObservationIdentity(lexicalBodyID, wirBody, built.Graph).
+		WithBoundaryParams(bindings.ParamSymbols(fn)).
+		WithBoundaryCaptures(boundaryCaptures).
+		WithBoundaryGlobals(boundaryGlobalPairs).
+		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn))
+	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
+	entrySeeds = appendBoundaryGlobalContractEntrySeeds(entrySeeds, operationPlan)
+	entrySeeds = applyMethodReceiverEntrySeed(config.Registry, config.TypeValues, bindings, fn, config.MethodReceiverTypes, entrySeeds)
+	paramSlots := make([]statekey.Value, len(operationPlan.BoundaryParams()))
+	for index, param := range operationPlan.BoundaryParams() {
+		paramSlots[index] = statekey.SymbolValue(param)
+	}
+	paramContracts, ok := state.NewEntrySeedPlan(entrySeeds).ValuesForSlots(paramSlots)
+	if !ok {
+		return nil, errors.New("check: prepared parameter tuple has no finalized entry-seed authority")
+	}
+	operationPlan = operationPlan.WithBoundaryParamContracts(paramContracts)
+	signatureCalls := signatureCallOperations(config.Registry, bindings, built.Graph, facts, operationPlan, signatureProducer)
 	genericForOperations := compileGenericForOperations(genericFors, typeResolver, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, bindings)
-	}, func(point cfg.Point) (iteration.Iterator, bool) {
-		site, ok := facts.CallSiteView(point)
-		if !ok || signatureProducer == nil {
-			return iteration.Iterator{}, false
-		}
-		return signatureProducer.IteratorForSite(transfer.NodeContext{Point: point}, site)
-	}, func(point cfg.Point, ref effect.ParamRef) (int, typ.Type, bool) {
+	}, signatureCalls, func(point cfg.Point, ref effect.ParamRef) (int, typ.Type, bool) {
 		site, ok := facts.CallSiteView(point)
 		if !ok {
 			return 0, nil, false
@@ -224,23 +254,13 @@ func (c *checker) prepare(
 		declared, ok := genericForDeclaredPathIteratorSourceType(source, facts, resolver, lowered.SymbolTypes)
 		return index, declared, ok
 	})
-	boundaryCaptures := symbolicBoundaryCaptureSymbols(wirBody, bindings.DirectCaptures(fn))
-	boundaryGlobals := bindings.DirectGlobalReads(fn)
-	if fn == nil {
-		boundaryGlobals = bindings.ChunkGlobalReads()
-	}
-	operationPlan := lowered.Plan.
-		WithObservationIdentity(lexicalBodyID, wirBody, built.Graph).
-		WithBoundaryParams(bindings.ParamSymbols(fn)).
-		WithBoundaryParamContracts(materializeDeclaredParamTypeValues(config.Registry, typevalue.NewCache(), typeResolver, fn)).
-		WithBoundaryCaptures(boundaryCaptures).
-		WithBoundaryGlobals(boundaryGlobals).
-		WithBoundaryGlobalContracts(materializeBoundaryGlobalTypeValues(config.Registry, typevalue.NewCache(), bindings, boundaryGlobals, config.GlobalTypes)).
-		WithBoundaryReturns(materializeDeclaredReturnTypeValues(config.Registry, config.TypeValues, typeResolver, fn))
-	signatureCalls := signatureCallOperations(config.Registry, bindings, built.Graph, facts, operationPlan, signatureProducer)
+	moduleLoadCalls := moduleLoadOperations(config.Registry, built.Graph, facts, signatureID, config.ModuleExports, config.TypeValues)
+	attachMetatables := attachMetatableOperations(built.Graph, facts, signatureID)
 	operationPlan = operationPlan.
-		WithCallSurface(sealPreparedCallSurface(bindings, wirBody, facts, signatureCalls, lexicalBodyID, unitNamespace, built.Graph.Size())).
-		WithSignatureCalls(signatureCalls)
+		WithCallSurface(sealPreparedCallSurface(bindings, wirBody, facts, signatureCalls, moduleLoadCalls, lexicalBodyID, unitNamespace, built.Graph.Size())).
+		WithSignatureCalls(signatureCalls).
+		WithModuleLoads(moduleLoadCalls).
+		WithAttachMetatables(attachMetatables)
 	operationPlan = operationPlan.
 		WithSignatureAllocations(signatureAllocationOperations(operationPlan, uint64(functionSymbol))).
 		WithExtensions(genericForOperationExtensions(genericForOperations))
@@ -289,7 +309,6 @@ func (c *checker) prepare(
 		ExpressionCondition: func(point cfg.Point, in state.State, selected factflow.ExpressionConditionFacts) state.State {
 			return factapply.ApplyExpressionConditionFacts(config.Registry, resolver, luaPathTypeProjector, point, in, selected)
 		},
-		StaticScalarKey:       luaStaticScalarKeySegment(config.Registry, config.TypeValues),
 		ExpressionValue:       expressionValue,
 		PreferExpressionValue: userExpressionValue != nil,
 		VarargValue:           varargValue,
@@ -300,62 +319,54 @@ func (c *checker) prepare(
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, refinedSources, config.TypeValues, bindings, typeResolver, rootDeclarations)
 	receiverFn := declaredReceiverCallableProvider(facts, bindings, typeResolver, rootDeclarations)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, refinedSources, config.TypeValues, calleeValue)
-	entrySeeds := entrySeedPlan(config.Registry, config.TypeValues, bindings, fn, globals, config.GlobalTypes, config.ModuleExports, typeResolver)
-	wtoPlan := compileWTOPlan(built.Graph, config.Schedule)
-	var concretePlan *concreteflow.Plan
-	if wtoPlan != nil {
-		// Certification is intentionally fail-closed. Irreducible bodies and any
-		// future operation-plan shape the dense executor does not understand keep
-		// the existing generic WTO without making body preparation fail.
-		concretePlan, _ = concreteflow.Compile(built.Graph, operationPlan, wtoPlan)
+	prepared := &Static{
+		lexicalBodyID:                 lexicalBodyID,
+		tableLiteralSite:              tableLiteralSite,
+		registry:                      config.Registry,
+		bindings:                      bindings,
+		cfg:                           built,
+		function:                      fn,
+		wir:                           wirBody,
+		sourceStmts:                   append([]ast.Stmt(nil), sourceStmts...),
+		signatures:                    config.Signatures,
+		moduleTypes:                   config.ModuleTypes,
+		moduleLoads:                   config.ModuleExports,
+		globals:                       globals,
+		globalTypes:                   config.GlobalTypes,
+		modules:                       modules,
+		signatureID:                   signatureID,
+		sealedLuaTypeChecks:           sealedLuaTypeChecks,
+		facts:                         facts,
+		operationPlan:                 operationPlan,
+		symbolTypes:                   lowered.SymbolTypes,
+		assignments:                   assignments,
+		declarations:                  declarations,
+		genericFors:                   genericFors,
+		visibility:                    resolver,
+		sources:                       sources,
+		readExpressionConfig:          readExpressionConfig,
+		customExpressionValue:         userExpressionValue != nil,
+		customExpressionValueProvider: userExpressionValue,
+		calleeValue:                   calleeValue,
+		receiverFn:                    receiverFn,
+		typeNS:                        typeResolver,
+		typeValues:                    config.TypeValues,
+		entrySeeds:                    entrySeeds,
+		entrySeedsPrepared:            true,
+		callOutcomeSupplement:         callOutcomeSupplement,
+		signatureReturnOps:            signatureReturnTypeOps(),
 	}
-	return &Static{
-		lexicalBodyID:         lexicalBodyID,
-		tableLiteralSite:      tableLiteralSite,
-		registry:              config.Registry,
-		bindings:              bindings,
-		cfg:                   built,
-		function:              fn,
-		wir:                   wirBody,
-		sourceStmts:           append([]ast.Stmt(nil), sourceStmts...),
-		signatures:            config.Signatures,
-		moduleTypes:           config.ModuleTypes,
-		moduleLoads:           config.ModuleExports,
-		globals:               globals,
-		globalTypes:           config.GlobalTypes,
-		modules:               modules,
-		signatureID:           signatureID,
-		sealedLuaTypeChecks:   sealedLuaTypeChecks,
-		facts:                 facts,
-		operationPlan:         operationPlan,
-		symbolTypes:           lowered.SymbolTypes,
-		assignments:           assignments,
-		declarations:          declarations,
-		genericFors:           genericFors,
-		visibility:            resolver,
-		sources:               sources,
-		readExpressionConfig:  readExpressionConfig,
-		customExpressionValue: userExpressionValue != nil,
-		calleeValue:           calleeValue,
-		receiverFn:            receiverFn,
-		typeNS:                typeResolver,
-		typeValues:            config.TypeValues,
-		entrySeeds:            entrySeeds,
-		entrySeedsPrepared:    true,
-		callOutcomeSupplement: callOutcomeSupplement,
-		signatureReturnOps:    signatureReturnTypeOps(),
-		wtoPlan:               wtoPlan,
-		concreteFlow:          concretePlan,
-	}
+	prepared.readGraph = compileReadGraph(prepared)
+	return prepared, nil
 }
 
-// symbolicBoundaryCaptureSymbols retains only captures that participate in the
-// function's value relation. A captured function symbol used exclusively as a
-// direct callee is discharged by the direct-call catalog and must not widen the
-// producer shape. Any other operand occurrence is a semantic capture; if this
-// scan misses a future operand family, compiler binding fails closed because
-// the referenced symbol has no term.
-func symbolicBoundaryCaptureSymbols(body *wir.Body, captures []bind.Capture) []symbol.ID {
+// symbolicBoundaryCaptureSymbols retains every capture that participates in
+// the function's value relation. WIR value paths intentionally omit callee-only
+// reads, so such a capture may be erased only when the binder proves it is one
+// stable lexical function whose complete use set consists of direct calls.
+// Parameters, ambient captures, and other dynamic callables remain ordinary
+// capture roots even when their sole syntax use is as a callee.
+func symbolicBoundaryCaptureSymbols(body *wir.Body, captures []bind.Capture, bindings *bind.Result) []symbol.ID {
 	if body == nil || len(captures) == 0 {
 		return nil
 	}
@@ -375,144 +386,23 @@ func symbolicBoundaryCaptureSymbols(body *wir.Body, captures []bind.Capture) []s
 	body.ForEachValuePath(observe)
 	out := make([]symbol.ID, 0, len(captures))
 	for _, capture := range captures {
-		if used[capture.Captured] {
+		_, discharged := bindings.StableDirectCallFunctionIdentity(capture.Captured)
+		if used[capture.Captured] || !discharged {
 			out = append(out, capture.Captured)
 		}
 	}
 	return out
 }
 
-func (s *Static) Solve(config SolveConfig) *Result {
-	result, err := s.solve(config)
-	if err != nil {
-		panic(err.Error())
+// newResult binds immutable body/query ownership to one execution factory.
+// Stabilized relation publication retains no point transfers or provider-backed
+// fallback semantics.
+func (f *ExecutionFactory) newResult(flow transfer.Result, observationPlan ObservationPlan) *Result {
+	if f == nil || f.prepared == nil {
+		return nil
 	}
-	return result
-}
-
-// solve is the error-returning counterpart of Solve used by the public
-// prepared-body APIs. Keeping Solve preserves the existing convenience method
-// while SolvePrepared can propagate cooperative cancellation to its caller.
-func (s *Static) solve(config SolveConfig) (*Result, error) {
-	return s.solveWithFlow(config, nil)
-}
-
-type bodyFlowTransaction struct {
-	flow      transfer.Result
-	abortFn   func()
-	committed bool
-}
-
-func (t *bodyFlowTransaction) commit() {
-	if t == nil || t.committed {
-		return
-	}
-	t.committed = true
-}
-
-func (t *bodyFlowTransaction) abort() {
-	if t == nil || t.committed {
-		return
-	}
-	if t.abortFn != nil {
-		t.abortFn()
-	}
-}
-
-type bodyFlowRunner func(transfer.Config) (*bodyFlowTransaction, error)
-
-func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Result, error) {
-	if s == nil {
-		return nil, nil
-	}
-	var session *cancellation.Session
-	config.Context, session = cancellation.Attach(config.Context)
-	sources := sourcevalue.BindSession(s.sources, session)
-	if s.readExpressionConfig != nil {
-		readConfig := *s.readExpressionConfig
-		readConfig.Context = &readexpr.Context{Cancel: session.Token()}
-		sources = sourcevalue.WithExpressionValue(sources, readexpr.Provider(readConfig))
-	}
-	if config.Stats != nil {
-		config.Stats.BodySolves++
-	}
-	typeValues := s.solveTypeValues(config)
-	signatureArgumentType := s.signatureArgumentTypeProvider(config, typeValues)
-	callOutcome := s.callOutcomeProvider(config, typeValues, signatureArgumentType)
-	entryState, initial := s.solveEntryState(typeValues, config.EntryState, config.Initial)
-	widenThresholds := wideningThresholdsFromWIR(s.wir)
-	nodeTransfer := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts:                  s.facts,
-		Sources:                sources,
-		CallOutcome:            callOutcome,
-		Visibility:             s.visibility,
-		ProjectPath:            luaPathTypeProjector,
-		CovariantWiden:         luaCovariantWiden,
-		TypeValues:             typeValues,
-		ClosedDynamicAllValues: config.ClosedDynamicAllValues,
-	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.operationPlan, s.facts, sources, s.symbolTypes, s.signatures, s.signatureID, typeValues, callOutcome, s.visibility.KeySpace(), s.visibility)
-	edgeTransfer := factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
-		Facts:       s.facts,
-		Sources:     sources,
-		CallOutcome: callOutcome,
-		Visibility:  s.visibility,
-		ProjectPath: luaPathTypeProjector,
-		TypeValues:  typeValues,
-	})
-	observationPlan := compileObservationPlan(s.cfg.Graph, s.facts, callOutcome != nil)
-	observationCapture := newObservationCapture(observationPlan)
-	var comparisonConcreteFlow *concreteflow.Plan
-	if config.CompareWTO != nil {
-		comparisonConcreteFlow = s.concreteFlow
-	}
-	transferConfig := transfer.Config{
-		Context:  config.Context,
-		Session:  session,
-		Graph:    s.cfg.Graph,
-		Registry: s.registry,
-		Schedule: config.Schedule,
-		WTOPlan:  s.wtoPlan,
-		// The executor remains attached to Static for differential and benchmark
-		// use, but production publication stays on generic WTO until a corpus gate
-		// demonstrates an end-to-end win outside measurement noise.
-		ConcreteFlow:                  comparisonConcreteFlow,
-		CanonicalConcreteTransactions: comparisonConcreteFlow != nil,
-		FuseConcreteIdentity:          comparisonConcreteFlow != nil,
-		CompareWTO:                    config.CompareWTO,
-		StateLanes:                    config.StateLanes,
-		StateOptions:                  state.DomainOptions{WidenThresholds: widenThresholds},
-		EntryState:                    entryState,
-		Initial:                       initial,
-		NodeTransfer:                  nodeTransfer,
-		EdgeTransfer:                  edgeTransfer,
-		WidenAt:                       config.WidenAt,
-		WidenDelay:                    config.WidenDelay,
-		Stats:                         transferStats(config.Stats),
-		ObserveNode:                   observationPlan.observesNode,
-		RecordNodeObservation:         observationCapture.record,
-		FinalizeNodeObservations:      observationCapture.finalize,
-		ResetNodeObservations:         observationCapture.reset,
-		BeforePoint:                   config.BeforePoint,
-		AfterPoint:                    config.AfterPoint,
-		Resume:                        config.Resume,
-		ResumePoints:                  config.ResumePoints,
-	}
-	var flow transfer.Result
-	var flowTx *bodyFlowTransaction
-	var err error
-	if runFlow == nil {
-		flow, err = transfer.TryRun(transferConfig)
-	} else {
-		flowTx, err = runFlow(transferConfig)
-		if err == nil {
-			flow = flowTx.flow
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	result := &Result{
+	s := f.prepared
+	return &Result{
 		lexicalBodyID:         s.lexicalBodyID,
 		tableLiteralSite:      s.tableLiteralSite,
 		registry:              s.registry,
@@ -527,6 +417,7 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		signatureID:           s.signatureID,
 		sealedLuaTypeChecks:   s.sealedLuaTypeChecks,
 		facts:                 s.facts,
+		operationPlan:         s.operationPlan,
 		symbolTypes:           s.symbolTypes,
 		assignments:           s.assignments,
 		declarations:          s.declarations,
@@ -534,130 +425,15 @@ func (s *Static) solveWithFlow(config SolveConfig, runFlow bodyFlowRunner) (*Res
 		exprRefinements:       sourcevalue.NewExpressionRefinementsFromReader(s.facts),
 		typeNS:                s.typeNS,
 		flow:                  flow,
-		boundaryXfer:          nodeTransfer,
-		edgeXfer:              edgeTransfer,
 		visibility:            s.visibility,
 		sources:               s.sources,
 		customExpressionValue: s.customExpressionValue,
-		callOutcome:           callOutcome,
 		calleeValue:           s.calleeValue,
-		signatureArg:          signatureArgumentType,
-		typeValues:            typeValues,
-		stateLanes:            append([]state.LaneID(nil), config.StateLanes...),
+		signatureArg:          f.signatureArgumentType,
+		typeValues:            f.typeValues,
+		stateLanes:            f.StateLanes(),
 		observationPlan:       observationPlan,
-		capturedNodeOutputs:   observationCapture.valid,
-		observation:           observationCapture.stats,
-		queries:               newResultQueryCache(s.facts),
-	}
-	// Seal the immutable query surface after the solver, including narrowing,
-	// has converged. This replaces lazy node/edge transfer replay in diagnostics
-	// and readmodels with compact published facts.
-	if err := result.sealObservationsContext(config.Context); err != nil {
-		if flowTx != nil {
-			flowTx.abort()
-		}
-		return nil, errors.Join(solve.ErrCanceled, err)
-	}
-	if config.Stats != nil {
-		addObservationStats(&config.Stats.Observation, result.observation)
-	}
-	result.finalizeReturnSlotsFromBoundaryValues()
-	resultLineage, err := computeResultVersionLineage(s, config, entryState, initial)
-	if err != nil {
-		if flowTx != nil {
-			flowTx.abort()
-		}
-		return nil, err
-	}
-	result.resultVersion = resultLineage.ResultVersion()
-	result.resultLineage = resultLineage
-	if flowTx != nil {
-		flowTx.commit()
-	}
-	return result, nil
-}
-
-func (r *Result) finalizeReturnSlotsFromBoundaryValues() {
-	if r == nil || r.registry == nil || r.flow == nil {
-		return
-	}
-	graph := r.Graph()
-	if graph == nil {
-		return
-	}
-	exit := graph.Exit()
-	exitState, ok := r.flow[exit]
-	if !ok {
-		return
-	}
-	domain := product.Domain(r.registry)
-	joined := map[int]product.Value{}
-	seen := map[int]bool{}
-	for _, point := range r.ReturnPoints() {
-		if !r.PointReachable(point) {
-			continue
-		}
-		sources, ok := r.ReturnValueSources(point)
-		if !ok {
-			continue
-		}
-		for i, source := range sources {
-			index := source.TargetIndex
-			if index < 0 {
-				index = i
-			}
-			value, valueOK := r.SourceValueAtBoundary(point, source)
-			if !valueOK || !returnSlotBoundaryValueAdmissible(r.registry, value) {
-				value = product.Top()
-			}
-			if !seen[index] {
-				joined[index] = value
-				seen[index] = true
-				continue
-			}
-			joined[index] = domain.Join(joined[index], value)
-		}
-	}
-	for index, value := range joined {
-		if product.Equal(r.registry, value, product.Bottom(r.registry)) {
-			continue
-		}
-		exitState = exitState.WriteReturnSlot(r.registry, index, value)
-	}
-	r.flow[exit] = exitState
-}
-
-func returnSlotBoundaryValueAdmissible(reg *axis.Registry, value product.Value) bool {
-	if reg == nil {
-		return false
-	}
-	claim := product.Get(reg, value, assertion.Key)
-	if claim.Has(assertion.AnyClaim) && !claim.Has(assertion.RuntimeClaim) {
-		t, ok := typevalue.TypeOf(reg, value)
-		return ok && returnSlotStructuredType(t)
-	}
-	if claim.Has(assertion.TypeClaim) && !claim.Has(assertion.RuntimeClaim) {
-		t, ok := typevalue.TypeOf(reg, value)
-		return ok && returnSlotStructuredType(t)
-	}
-	return true
-}
-
-func returnSlotStructuredType(t typ.Type) bool {
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Tuple, *typ.Record, *typ.Function, *typ.Interface:
-		return true
-	case *typ.Optional:
-		return returnSlotStructuredType(v.Inner)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if !returnSlotStructuredType(member) {
-				return false
-			}
-		}
-		return len(v.Members) != 0
-	default:
-		return false
+		queries:               newResultQueryCache(),
 	}
 }
 
@@ -680,26 +456,13 @@ func (s *Static) solveEntryState(typeValues *typevalue.Cache, entry state.State,
 	)
 }
 
-func transferStats(stats *Stats) *transfer.Stats {
-	if stats == nil {
-		return nil
-	}
-	return &stats.Transfer
-}
-
 func addObservationStats(dst *ObservationStats, src ObservationStats) {
 	if dst == nil {
 		return
 	}
 	dst.PlannedNodeOutputs += src.PlannedNodeOutputs
-	dst.CapturedNodeOutputs += src.CapturedNodeOutputs
-	dst.ValidatedNodeOutputs += src.ValidatedNodeOutputs
-	dst.RecomputedNodeOutputs += src.RecomputedNodeOutputs
 	dst.PlannedBoundaryOutputs += src.PlannedBoundaryOutputs
 	dst.PlannedEdgeReachability += src.PlannedEdgeReachability
-	dst.CapturedBoundaryOutputs += src.CapturedBoundaryOutputs
-	dst.ValidatedBoundaryOutputs += src.ValidatedBoundaryOutputs
-	dst.RecomputedBoundaryOutputs += src.RecomputedBoundaryOutputs
 	dst.ProjectedBoundaryOutputs += src.ProjectedBoundaryOutputs
 	dst.ProjectedEdgeReachability += src.ProjectedEdgeReachability
 }
@@ -714,48 +477,41 @@ func (s *Static) solveTypeValues(config SolveConfig) *typevalue.Cache {
 	return typevalue.NewCache()
 }
 
-func (s *Static) signatureArgumentTypeProvider(config SolveConfig, typeValues *typevalue.Cache) SignatureArgumentTypeFunc {
-	signatureArgumentType := config.SignatureArgumentType
+func (s *Static) signatureArgumentTypeProvider(config SolveConfig, typeValues *typevalue.Cache, input effectlowering.SignatureOutcomeInputProgram) effectlowering.SignatureArgumentTypeProgram {
+	programs := []effectlowering.SignatureArgumentTypeProgram{config.SignatureArgumentType, s.stateSignatureArgumentType(input)}
 	if config.SignatureArgumentTypeFactory != nil {
-		factoryArgumentType := config.SignatureArgumentTypeFactory(s.callOutcomeContext(typeValues))
-		if factoryArgumentType != nil {
-			baseArgumentType := signatureArgumentType
-			signatureArgumentType = func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
-				if t, ok := factoryArgumentType(ctx, source, in, read); ok {
-					return t, true
-				}
-				if baseArgumentType != nil {
-					return baseArgumentType(ctx, source, in, read)
-				}
-				return nil, false
-			}
-		}
+		programs = append([]effectlowering.SignatureArgumentTypeProgram{config.SignatureArgumentTypeFactory(s.callOutcomeContext(typeValues), input)}, programs...)
 	}
-	return signatureArgumentType
+	return effectlowering.ComposeSignatureArgumentTypePrograms(programs...)
 }
 
-func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.Cache, signatureArgumentType SignatureArgumentTypeFunc) callpayload.CallOutcomeProvider {
-	var providers []callpayload.CallOutcomeProvider
+func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.Cache, signatureArgumentType effectlowering.SignatureArgumentTypeProgram, productDomain state.ProductDomain) callpayload.CallOutcomeProgram {
+	var providers []callpayload.CallOutcomeProgram
 	if config.CallOutcomeFactory != nil {
 		providers = append(providers, config.CallOutcomeFactory(s.callOutcomeContext(typeValues)))
 	}
 	providers = append(providers, config.CallOutcome, s.callOutcomeSupplement)
-	frontProviders := []callpayload.CallOutcomeProvider{
+	frontProviders := []callpayload.CallOutcomeProgram{
 		effectlowering.AmbientTypestateEscapeOutcomeProvider(effectlowering.AmbientTypestateEscapeOutcomeProviderConfig{
 			NameForSite: s.signatureID.nameForCallSiteView,
 			Signatures:  s.signatures,
 			Facts:       s.facts,
 			KeySpace:    s.visibility.KeySpace(),
 			Resolver:    s.visibility,
+			Domain:      productDomain,
 		}),
 		effectlowering.AmbientChannelLifecycleOutcomeProvider(effectlowering.AmbientChannelLifecycleOutcomeProviderConfig{
-			ReceiverType: channelMethodReceiverTypeProvider(s.registry, s.facts, s.visibility, s.sources, typeValues),
-			NameForSite:  s.signatureID.nameForCallSiteView,
-			KeySpace:     s.visibility.KeySpace(),
-			Resolver:     s.visibility,
+			NameForSite: s.signatureID.nameForCallSiteView,
+			KeySpace:    s.visibility.KeySpace(),
+			Resolver:    s.visibility,
+			Domain:      productDomain,
 		}),
 	}
 	if hasSignatures(s.signatures) {
+		signatureInputs, err := effectlowering.SealSignatureOutcomeOperands(productDomain, s.visibility.KeySpace())
+		if err != nil {
+			panic(err)
+		}
 		signatureProvider := effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    s.signatures,
 			NameFor:       s.signatureID.nameForCall,
@@ -763,10 +519,10 @@ func (s *Static) callOutcomeProvider(config SolveConfig, typeValues *typevalue.C
 			ReturnTypeOps: s.signatureReturnOps,
 			TypeValues:    typeValues,
 			Facts:         s.facts,
-			Sources:       s.sources,
-			ArgumentType:  effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
-			ReturnValue:   stdlibSignatureReturnValue(s.registry, typeValues, s.facts, s.sources, sourcevalue.NewExpressionRefinementsFromReader(s.facts), s.visibility),
+			ArgumentTypes: signatureArgumentType,
+			ReturnValues:  stdlibSignatureReturnValue(s.registry, typeValues, signatureInputs),
 			KeySpace:      s.visibility.KeySpace(),
+			InputProgram:  signatureInputs,
 		})
 		frontProviders = append(frontProviders, signatureProvider)
 	}
@@ -778,23 +534,40 @@ func (s *Static) callOutcomeContext(typeValues *typevalue.Cache) CallOutcomeCont
 	if s == nil {
 		return CallOutcomeContext{}
 	}
+	return s.callOutcomeContextWithSources(typeValues, s.sources)
+}
+
+// callOutcomeContextWithSources is the sole body-owned call adapter. Static
+// solves use prepared sources; replacement application factories supply their
+// session-bound source set through the same constructor.
+func (s *Static) callOutcomeContextWithSources(typeValues *typevalue.Cache, sources sourcevalue.SourceValues) CallOutcomeContext {
+	if s == nil {
+		return CallOutcomeContext{}
+	}
 	if typeValues == nil {
 		typeValues = s.typeValues
 	}
 	return CallOutcomeContext{
 		LexicalBodyID: s.lexicalBodyID,
 		Facts:         s.facts,
-		Sources:       s.sources,
+		OperationPlan: s.operationPlan,
+		Sources:       sources,
 		PathValue: func(ctx transfer.NodeContext, path pathdom.Path, in state.State) (product.Value, bool) {
 			return readexpr.Project(readexpr.Config{
 				Registry: s.registry, Facts: s.facts, Visibility: s.visibility, TypeValues: typeValues,
 			}, ctx.Point, path, in)
 		},
 		DynamicRead: func(ctx transfer.NodeContext, tablePath pathdom.Path, owner, key product.Value, in state.State) (product.Value, bool) {
-			return sourcevalue.ReadBoundDynamicIndexValue(s.registry, typeValues, s.visibility.KeySpace(), s.visibility, ctx.Point, tablePath, owner, key, in)
+			return sourcevalue.ReadBoundDynamicValue(sourcevalue.BoundDynamicRead{
+				Registry: s.registry, TypeValues: typeValues, KeySpace: s.visibility.KeySpace(), Visibility: s.visibility,
+				Point: ctx.Point, TablePath: tablePath, TableValue: owner, KeyValue: key, ValueInput: in, ProjectPath: true,
+			})
 		},
 		DynamicTableRead: func(ctx transfer.NodeContext, tablePath pathdom.Path, table, key product.Value, in state.State) (product.Value, bool) {
-			return sourcevalue.ReadBoundDynamicTableValue(s.registry, typeValues, s.visibility.KeySpace(), s.visibility, ctx.Point, tablePath, table, key, in)
+			return sourcevalue.ReadBoundDynamicValue(sourcevalue.BoundDynamicRead{
+				Registry: s.registry, TypeValues: typeValues, KeySpace: s.visibility.KeySpace(), Visibility: s.visibility,
+				Point: ctx.Point, TablePath: tablePath, TableValue: table, KeyValue: key, ValueInput: in,
+			})
 		},
 		ProtectedCall:               s.isProtectedCallSite,
 		CalleeValue:                 s.calleeValue,
@@ -853,29 +626,24 @@ func preparedCallOutcomeSupplement(
 	sources sourcevalue.SourceValues,
 	typeValues *typevalue.Cache,
 	calleeValue CalleeValueFunc,
-) callpayload.CallOutcomeProvider {
-	var providers []callpayload.CallOutcomeProvider
-	expressionRefinements := sourcevalue.NewExpressionRefinementsFromReader(facts)
+) callpayload.CallOutcomeProgram {
+	var providers []callpayload.CallOutcomeProgram
 	if hasModuleExports(moduleLoads) {
 		providers = append(providers, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
-			Exports:               moduleLoads,
-			NameFor:               signatureID.nameForCall,
-			NameForSite:           signatureID.nameForCallSiteView,
-			Sources:               sources,
-			ExpressionRefinements: expressionRefinements,
-			TypeValues:            typeValues,
+			Exports:     moduleLoads,
+			NameFor:     signatureID.nameForCall,
+			NameForSite: signatureID.nameForCallSiteView,
+			TypeValues:  typeValues,
 		}))
 	}
 	providers = append(providers, effectlowering.AmbientChannelSendOutcomeProvider(effectlowering.AmbientChannelSendOutcomeProviderConfig{
-		ReceiverType: channelMethodReceiverTypeProvider(reg, facts, resolver, sources, typeValues),
-		KeySpace:     resolver.KeySpace(),
+		KeySpace: resolver.KeySpace(),
 	}))
 	providers = append(providers, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
-		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),
-		Callable:    typecall.Callable,
-		TypeValues:  typeValues,
+		Callable:   typecall.Callable,
+		TypeValues: typeValues,
 	}))
-	providers = append(providers, explicitAnyReceiverMethodOutcomeProvider(reg, sources, typeValues))
+	providers = append(providers, explicitAnyReceiverMethodOutcomeProvider(reg, typeValues))
 	return calloutcome.ComposeSupplemental(providers...)
 }
 
@@ -907,33 +675,6 @@ func luaProjectValue(reg *axis.Registry, typeValues *typevalue.Cache) func(produ
 			return product.Value{}, false
 		}
 		return luaProjectValueFromType(reg, typeValues, rootType, segments)
-	}
-}
-
-func luaStaticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache) sourcevalue.StaticScalarKeySegment {
-	return func(value product.Value) (segment.Segment, bool) {
-		if reg == nil || typeValues == nil {
-			return segment.Segment{}, false
-		}
-		t, ok := typeValues.TypeOf(reg, value)
-		if !ok {
-			return segment.Segment{}, false
-		}
-		lit, ok := unwrap.Alias(t).(*typ.Literal)
-		if !ok {
-			return segment.Segment{}, false
-		}
-		switch v := lit.Value.(type) {
-		case string:
-			return segment.Segment{Kind: segment.SegmentIndexString, Name: v}, true
-		case int64:
-			if int64(int(v)) != v {
-				return segment.Segment{}, false
-			}
-			return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(v)}, true
-		default:
-			return segment.Segment{}, false
-		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -787,6 +788,32 @@ func TestInstantiateGenericCallSubstitutesGenericAliasReturn(t *testing.T) {
 	assertType(t, got, want)
 }
 
+func TestInstantiateGenericCallInfersThroughRegularRecursiveGeneric(t *testing.T) {
+	boxParam := typ.NewTypeParam("BoxT", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, nil)
+	box.SetBody(typetable.NewRecord().
+		Field("value", boxParam).
+		Field("next", typeexpr.Optional(typ.Instantiate(box, boxParam))).
+		Build())
+
+	fnParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParam).
+		Param("box", typ.Instantiate(box, fnParam)).
+		Returns(fnParam).
+		Build()
+	actual := subst.ExpandInstantiated(typ.Instantiate(box, typ.Number))
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{actual})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %v, want one inferred result", got.Returns)
+	}
+	assertType(t, got.Returns[0], typ.Number)
+}
+
 func TestInstantiateGenericCallInfersArrayElementOptionalReturn(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	fn := typ.Func().
@@ -1280,6 +1307,26 @@ func TestInstantiateGenericCallInfersThroughGenericCallbackAlias(t *testing.T) {
 		t.Fatalf("bindings = %#v, want T=%v", bindings, user)
 	}
 	assertType(t, got.Returns[0], typeexpr.Optional(user))
+}
+
+// TestContainsTypeParamOutsideShadowDepthExhaustionMayContainParam proves
+// containsTypeParamOutsideShadow's invariants.md Rule 1 dual polarity.
+// target never actually occurs in deep, so the honest, unbounded answer is
+// "does not contain"; but deep is a non-cyclic chain of distinct *typ.Record
+// allocations deeper than the recursion budget, so cycle tracking (active)
+// never collapses the walk and only depth exhaustion can stop it. Exhaustion
+// must still report true (may still contain target), not false, since a
+// false negative here would silently clear a real unsubstituted-parameter
+// constraint violation in containsUnsubstitutedTypeParam's caller.
+func TestContainsTypeParamOutsideShadowDepthExhaustionMayContainParam(t *testing.T) {
+	target := typ.NewTypeParam("T", nil)
+	var deep typ.Type = typ.String
+	for i := 0; i < 10000; i++ {
+		deep = typetable.NewRecord().Field("next", deep).Build()
+	}
+	if !containsTypeParamOutsideShadow(deep, target, false, nil, 0) {
+		t.Fatal("depth-exhausted search reported the type parameter definitely absent: may-contain query failed closed instead of open")
+	}
 }
 
 func TestInstantiateGenericCallInfersThroughRecursiveUnionWithoutDepthLimit(t *testing.T) {

@@ -7,12 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -49,6 +51,70 @@ func entrySeedPlan(
 	seeds := functionParamEntrySeeds(reg, typeValues, bindings, fn, typeResolver)
 	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, typeValues, bindings, moduleExports, globalTypes)...)
 	seeds = append(seeds, configuredGlobalEntrySeeds(reg, typeValues, bindings, globals, globalTypes)...)
+	return seeds
+}
+
+func appendBoundaryGlobalContractEntrySeeds(seeds []state.ValueSeed, plan *operationplan.Plan) []state.ValueSeed {
+	if plan == nil || !plan.BoundaryGlobalsValid() {
+		return seeds
+	}
+	globals := plan.BoundaryGlobals()
+	contracts := plan.BoundaryGlobalContracts()
+	if len(globals) != len(contracts) {
+		return seeds
+	}
+	for index, global := range globals {
+		slot := key.SymbolValue(global)
+		if slot == 0 {
+			continue
+		}
+		present := false
+		for _, seed := range seeds {
+			if seed.Slot == slot {
+				present = true
+				break
+			}
+		}
+		if !present {
+			seeds = append(seeds, state.ValueSeed{Slot: slot, Value: contracts[index]})
+		}
+	}
+	return seeds
+}
+
+func applyMethodReceiverEntrySeed(reg *axis.Registry, values *typevalue.Cache, bindings *bind.Result, fn *ast.FunctionExpr, receivers map[symbol.ID]typ.Type, seeds []state.ValueSeed) []state.ValueSeed {
+	if reg == nil || bindings == nil || fn == nil || len(receivers) == 0 {
+		return seeds
+	}
+	origin, ok := bindings.FunctionOrigin(fn)
+	if !ok || origin.Kind != bind.FunctionOriginMethod {
+		return seeds
+	}
+	receiver, ok := bindings.MethodOriginReceiverSymbol(origin)
+	if !ok {
+		return seeds
+	}
+	t := receivers[receiver]
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return seeds
+	}
+	if values == nil {
+		values = typevalue.NewCache()
+	}
+	value := values.FromTypeWithWitness(reg, t)
+	for _, slot := range bindings.ParamSlots(fn) {
+		if !slot.ImplicitSelf || slot.Symbol == 0 {
+			continue
+		}
+		valueSlot := key.SymbolValue(slot.Symbol)
+		for index := range seeds {
+			if seeds[index].Slot == valueSlot {
+				seeds[index].Value = value
+				return seeds
+			}
+		}
+		return append(seeds, state.ValueSeed{Slot: valueSlot, Value: value})
+	}
 	return seeds
 }
 
@@ -97,48 +163,60 @@ func functionParamEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bi
 		if valueSlot == 0 {
 			continue
 		}
-		if slot.Type == nil {
-			if slot.Name == "self" {
-				if t, ok := methodReceiverType(bindings, resolver, fn); ok {
-					seeds = append(seeds, state.ValueSeed{
-						Slot:  valueSlot,
-						Value: typeValues.FromTypeWithWitness(reg, t),
-					})
-					continue
-				}
-			}
-			if hasExpectedSig && !slot.ImplicitSelf {
-				if t, ok := contextualParamType(expectedSig, slot.SourceIndex); ok {
-					seeds = append(seeds, state.ValueSeed{
-						Slot:  valueSlot,
-						Value: typeValues.FromTypeWithWitness(reg, t),
-					})
-					continue
-				}
-			}
-			if slot.ImplicitSelf {
-				seeds = append(seeds, state.ValueSeed{
-					Slot:  valueSlot,
-					Value: product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), evidence.Key, evidence.GradualTop()),
-				})
-				continue
-			}
-			seeds = append(seeds, state.ValueSeed{
-				Slot:  valueSlot,
-				Value: product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop()),
-			})
-			continue
-		}
-		t, ok := resolver.Type(slot.Type)
+		value, ok := functionParamContractValue(reg, typeValues, bindings, fn, resolver, slot, expectedSig, hasExpectedSig, true)
 		if !ok {
 			continue
 		}
 		seeds = append(seeds, state.ValueSeed{
 			Slot:  valueSlot,
-			Value: typeValues.FromTypeWithWitness(reg, t),
+			Value: value,
 		})
 	}
 	return seeds
+}
+
+// functionParamContractValue is the sole declared/contextual parameter law
+// shared by entry seeding and symbolic definition frames. In particular,
+// method self occupies a real runtime slot even though it is absent from the
+// AST's explicit parameter list.
+func functionParamContractValue(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	bindings *bind.Result,
+	fn *ast.FunctionExpr,
+	resolver *typeresolve.Resolver,
+	slot bind.ParamSlot,
+	expectedSig *typ.Function,
+	hasExpectedSig bool,
+	gradualUntyped bool,
+) (product.Value, bool) {
+	if reg == nil || bindings == nil || fn == nil || resolver == nil {
+		return product.Value{}, false
+	}
+	if slot.Type != nil {
+		t, ok := resolver.Type(slot.Type)
+		if !ok {
+			return product.Value{}, false
+		}
+		return typeValues.FromTypeWithWitness(reg, t), true
+	}
+	if slot.Name == "self" {
+		if t, ok := methodReceiverType(bindings, resolver, fn); ok {
+			return typeValues.FromTypeWithWitness(reg, t), true
+		}
+	}
+	if hasExpectedSig && !slot.ImplicitSelf {
+		if t, ok := contextualParamType(expectedSig, slot.SourceIndex); ok {
+			return typeValues.FromTypeWithWitness(reg, t), true
+		}
+	}
+	if slot.ImplicitSelf {
+		return product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), evidence.Key, evidence.GradualTop()), true
+	}
+	if !gradualUntyped {
+		return product.Top(), true
+	}
+	return product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop()), true
 }
 
 func configuredGlobalEntrySeeds(

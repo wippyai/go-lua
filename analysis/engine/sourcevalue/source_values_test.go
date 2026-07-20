@@ -235,7 +235,6 @@ func TestSourceValuesDynamicIndexReadUsesStaticPathValue(t *testing.T) {
 		KeySpace:          resolver.KeySpace(),
 		Visibility:        resolver,
 		DynamicIndexExprs: map[ExprRef]DynamicIndexExpression{expr: dyn},
-		StaticScalarKey:   testStaticScalarKeySegment(reg, typeValues),
 	})
 
 	got, ok := values.ValueOfSource(point, source, in, nil)
@@ -365,7 +364,7 @@ func TestSourceValuesLiteralSourcesResolveWitnesses(t *testing.T) {
 	}
 }
 
-func TestSourceValuesCallReadsReturnSlot(t *testing.T) {
+func TestSourceValuesCallReadsPointOwnedResult(t *testing.T) {
 	reg := standard.Registry()
 	callPoint := cfg.Point(33)
 	source := ValueSource{
@@ -380,7 +379,7 @@ func TestSourceValuesCallReadsReturnSlot(t *testing.T) {
 
 	got, ok := resolver.ValueOfSource(cfg.Point(3), source, state.State{}, func(point cfg.Point) state.State {
 		readPoint = point
-		return state.State{}.WriteReturnSlot(reg, 1, value)
+		return state.State{}.WriteValue(reg, key.CallResult(uint32(callPoint), 1), value)
 	})
 	if !ok {
 		t.Fatal("call source did not resolve")
@@ -396,7 +395,9 @@ func TestSourceValuesCallReadsReturnSlot(t *testing.T) {
 func TestSourceValuesMissingMetadataAndUnknownSourcesReturnFalse(t *testing.T) {
 	reg := standard.Registry()
 	resolver := NewSourceValues(SourceValuesConfig{Registry: reg})
-	read := func(cfg.Point) state.State { return state.State{}.WriteReturnSlot(reg, 0, presentValue(reg)) }
+	read := func(point cfg.Point) state.State {
+		return state.State{}.WriteValue(reg, key.CallResult(uint32(point), 0), presentValue(reg))
+	}
 
 	cases := []struct {
 		name   string
@@ -1789,30 +1790,6 @@ func TestExpressionRefinementSourceValuesAnyClaimPreservesPresentInnerValue(t *t
 	}
 }
 
-func testStaticScalarKeySegment(reg *axis.Registry, typeValues *typevalue.Cache) StaticScalarKeySegment {
-	return func(value product.Value) (segment.Segment, bool) {
-		t, ok := typeValues.TypeOf(reg, value)
-		if !ok {
-			return segment.Segment{}, false
-		}
-		lit, ok := t.(*typ.Literal)
-		if !ok {
-			return segment.Segment{}, false
-		}
-		switch v := lit.Value.(type) {
-		case string:
-			return segment.Segment{Kind: segment.SegmentIndexString, Name: v}, true
-		case int64:
-			if int64(int(v)) != v {
-				return segment.Segment{}, false
-			}
-			return segment.Segment{Kind: segment.SegmentIndexInt, Index: int(v)}, true
-		default:
-			return segment.Segment{}, false
-		}
-	}
-}
-
 func TestSourceValuesDynamicIndexExpressionProjectsCallResultTableSource(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(61)
@@ -1843,7 +1820,7 @@ func TestSourceValuesDynamicIndexExpressionProjectsCallResultTableSource(t *test
 		if got != callPoint {
 			return state.State{}
 		}
-		return state.State{}.WriteReturnSlot(reg, 0, typevalue.WithWitness(reg, typevalue.FromType(reg, tableType), tableType))
+		return state.State{}.WriteValue(reg, key.CallResult(uint32(callPoint), 0), typevalue.WithWitness(reg, typevalue.FromType(reg, tableType), tableType))
 	}
 
 	got, ok := resolver.ValueOfSource(point, indexSource, state.State{}, read)
@@ -2164,7 +2141,7 @@ func TestExpressionRefinementSourceValuesAppliesRefinementToCallSource(t *testin
 	var readPoint cfg.Point
 	got, ok := resolver.ValueOfSource(cfg.Point(1), outerSource, state.State{}, func(point cfg.Point) state.State {
 		readPoint = point
-		return state.State{}.WriteReturnSlot(reg, 0, callValue)
+		return state.State{}.WriteValue(reg, key.CallResult(uint32(callPoint), 0), callValue)
 	})
 	if !ok {
 		t.Fatal("asserted call source did not resolve")

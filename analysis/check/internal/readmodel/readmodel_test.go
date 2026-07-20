@@ -47,10 +47,11 @@ func TestValueTypeWitnessPresentProjectsConcreteType(t *testing.T) {
 		t.Fatalf("ValueType with nil registry result returned %v, want false", got)
 	}
 
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram50, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram50.RootResult()
 	got, ok = New(result).ValueType(value)
 	if !ok {
 		t.Fatalf("ValueType returned false")
@@ -65,13 +66,14 @@ local x = missing + known
 missing = 42
 print(known)
 `)
-	result, err := body.CheckChunk(stmts, body.Config{
+	resultProgram68, err := program.RunChunk(stmts, program.Config{Check: body.Config{
 		Registry: reg,
 		Globals:  []string{"known", "print"},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram68.RootResult()
 	var got []UnresolvedValueReference
 	New(result).ForEachUnresolvedValueReference(func(ref UnresolvedValueReference) bool {
 		got = append(got, ref)
@@ -93,10 +95,11 @@ local raw: any = {}
 local payload = Payload(raw)
 local ok = Payload:is(raw)
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram96, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram96.RootResult()
 	var got []UnresolvedValueReference
 	New(result).ForEachUnresolvedValueReference(func(ref UnresolvedValueReference) bool {
 		got = append(got, ref)
@@ -115,10 +118,11 @@ if true then
 end
 local p: LocalPoint = {x = 1}
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram118, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram118.RootResult()
 	var got []UnresolvedTypeReference
 	New(result).ForEachUnresolvedTypeReference(func(ref UnresolvedTypeReference) bool {
 		got = append(got, ref)
@@ -137,10 +141,11 @@ func TestForEachUnresolvedTypeReferenceSkipsUnknownUnqualifiedNames(t *testing.T
 	stmts := parseChunk(t, `
 local p: ExternalName = {}
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram140, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram140.RootResult()
 	var got []UnresolvedTypeReference
 	New(result).ForEachUnresolvedTypeReference(func(ref UnresolvedTypeReference) bool {
 		got = append(got, ref)
@@ -153,10 +158,11 @@ local p: ExternalName = {}
 
 func TestValueTypeAbsentProjectsNil(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram156, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram156.RootResult()
 	got, ok := New(result).ValueType(product.Absent(reg))
 	if !ok {
 		t.Fatalf("ValueType returned false")
@@ -203,10 +209,11 @@ local request = ({id = "r1", retries = 2} :: any)
 
 func TestValueTypeWithPresenceAddsNilForMaybeWitness(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram206, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram206.RootResult()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
 	value = typevalue.WithWitness(reg, value, typ.String)
 
@@ -262,10 +269,11 @@ return log
 
 func TestValueTypeMaybeWitnessStaysConcrete(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram265, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram265.RootResult()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
 	value = typevalue.WithWitness(reg, value, typ.String)
 
@@ -289,10 +297,11 @@ local value: number = 1
 local row: Row = {id = "ok", count = 0}
 row[key] = value
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram292, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram292.RootResult()
 	var got []Assignment
 	New(result).ForEachAssignment(func(assignment Assignment) bool {
 		if assignment.TargetLabel == "row[key]" {
@@ -321,10 +330,11 @@ local counters: {[string]: integer} = {}
 local key = "sent"
 counters[key] = 1
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram324, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram324.RootResult()
 	var got []Assignment
 	New(result).ForEachAssignment(func(assignment Assignment) bool {
 		if assignment.TargetLabel == "counters[key]" {
@@ -514,10 +524,11 @@ type Point = {id: string}
 local raw: any = nil
 local p: Point = {id = raw}
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram517, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram517.RootResult()
 	var got []Assignment
 	New(result).ForEachAssignment(func(assignment Assignment) bool {
 		if assignment.TargetLabel == "p.id" {
@@ -586,10 +597,11 @@ local raw: any = nil
 local box: Box = {p = {id = "ok"}}
 box.p = {id = raw}
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram589, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram589.RootResult()
 	var got []Assignment
 	New(result).ForEachAssignment(func(assignment Assignment) bool {
 		if assignment.TargetLabel == "box.p.id" {
@@ -2244,10 +2256,11 @@ local uncategorized: {Entry} = no_suite
 
 func TestExplicitTopWitnessIsNotStructuralAdmissibilityProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2247, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2247.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2266,10 +2279,11 @@ func TestExplicitTopWitnessIsNotStructuralAdmissibilityProof(t *testing.T) {
 
 func TestGradualTopWitnessIsNotAdmissibilityProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2269, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2269.RootResult()
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 	value = product.Set(reg, value, evidence.Key, evidence.GradualTop())
 	reader := New(result)
@@ -2284,10 +2298,11 @@ func TestGradualTopWitnessIsNotAdmissibilityProof(t *testing.T) {
 
 func TestAnyClaimWitnessIsNotAdmissibilityProofWithoutRuntimeValidation(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2287, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2287.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2305,10 +2320,11 @@ func TestAnyClaimWitnessIsNotAdmissibilityProofWithoutRuntimeValidation(t *testi
 
 func TestGradualTopRuntimeProofIsAdmissible(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2308, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2308.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2327,10 +2343,11 @@ func TestGradualTopRuntimeProofIsAdmissible(t *testing.T) {
 
 func TestExplicitTopWitnessWithoutTypeClaimIsNotStructuralAdmissibilityProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2330, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2330.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2348,10 +2365,11 @@ func TestExplicitTopWitnessWithoutTypeClaimIsNotStructuralAdmissibilityProof(t *
 
 func TestExplicitTopTypeClaimWitnessIsNotStructuralAdmissibilityProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2351, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2351.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2370,10 +2388,11 @@ func TestExplicitTopTypeClaimWitnessIsNotStructuralAdmissibilityProof(t *testing
 
 func TestExplicitTopTypeClaimWithAnyOriginIsNotStructuralAdmissibilityProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2373, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2373.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2392,10 +2411,11 @@ func TestExplicitTopTypeClaimWithAnyOriginIsNotStructuralAdmissibilityProof(t *t
 
 func TestExplicitTopRuntimeProofIsAdmissibleForStructuralContract(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2395, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2395.RootResult()
 	record := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -2411,10 +2431,11 @@ func TestExplicitTopRuntimeProofIsAdmissibleForStructuralContract(t *testing.T) 
 
 func TestExplicitTopScalarRuntimeKindIsNotAdmissibleProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2414, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2414.RootResult()
 	value := product.Set(reg, presentValue(reg), evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Any())
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
@@ -2430,10 +2451,11 @@ func TestExplicitTopScalarRuntimeKindIsNotAdmissibleProof(t *testing.T) {
 
 func TestRuntimeTableKindDoesNotProveStringKeyMapShape(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2433, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2433.RootResult()
 	value := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	value = product.Set(reg, value, assertion.Key, assertion.Runtime())
 	reader := New(result)
@@ -2449,10 +2471,11 @@ func TestRuntimeTableKindDoesNotProveStringKeyMapShape(t *testing.T) {
 
 func TestRuntimeTableKindDoesNotProveArrayShape(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2452, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2452.RootResult()
 	value := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	value = product.Set(reg, value, assertion.Key, assertion.Runtime())
 	reader := New(result)
@@ -2468,10 +2491,11 @@ func TestRuntimeTableKindDoesNotProveArrayShape(t *testing.T) {
 
 func TestExplicitTopScalarWitnessWithoutTypeClaimIsNotAdmissibleProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2471, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2471.RootResult()
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.MaterializeOptional(typ.String)), typ.MaterializeOptional(typ.String))
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	reader := New(result)
@@ -2483,10 +2507,11 @@ func TestExplicitTopScalarWitnessWithoutTypeClaimIsNotAdmissibleProof(t *testing
 
 func TestExplicitTopExactLiteralWitnessIsAdmissibleAsScalarProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2486, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2486.RootResult()
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralString("ready")), typ.LiteralString("ready"))
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	reader := New(result)
@@ -2498,10 +2523,11 @@ func TestExplicitTopExactLiteralWitnessIsAdmissibleAsScalarProof(t *testing.T) {
 
 func TestGradualTopExactLiteralWitnessIsAdmissibleAsScalarProof(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2501, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2501.RootResult()
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralString("ready")), typ.LiteralString("ready"))
 	value = product.Set(reg, value, evidence.Key, evidence.GradualTop())
 	reader := New(result)
@@ -2513,10 +2539,11 @@ func TestGradualTopExactLiteralWitnessIsAdmissibleAsScalarProof(t *testing.T) {
 
 func TestExplicitTopScalarTypeClaimIsAdmissibleAsUserAssertion(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2516, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2516.RootResult()
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Type())
@@ -2535,10 +2562,11 @@ func TestExplicitTopScalarTypeClaimIsAdmissibleAsUserAssertion(t *testing.T) {
 
 func TestExplicitTopRuntimeProofIsAdmissibleForScalarContract(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2538, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2538.RootResult()
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Runtime())
@@ -2551,10 +2579,11 @@ func TestExplicitTopRuntimeProofIsAdmissibleForScalarContract(t *testing.T) {
 
 func TestVariantOriginTypeProjectsStructuralUnion(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2554, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2554.RootResult()
 	okCase := typetable.NewRecord().
 		Field("kind", typ.LiteralString("ok")).
 		Field("value", typ.Number).
@@ -2575,10 +2604,11 @@ func TestVariantOriginTypeProjectsStructuralUnion(t *testing.T) {
 
 func TestRuntimeKindProjection(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2578, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2578.RootResult()
 	reader := New(result)
 	for _, tc := range []struct {
 		name string
@@ -2623,10 +2653,11 @@ func TestRuntimeKindProjection(t *testing.T) {
 
 func TestRefineDeclaredTypeOptionalByPresentEvidence(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2626, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2626.RootResult()
 	value := product.Set(
 		reg,
 		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
@@ -2643,10 +2674,11 @@ func TestRefineDeclaredTypeOptionalByPresentEvidence(t *testing.T) {
 
 func TestValueTypeUsesOriginTypeWhenWitnessFamilyDoesNotReplay(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram2646, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2646.RootResult()
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).
 		Field("bark", typ.String).
@@ -2677,10 +2709,11 @@ type Point = {x: number, y: number}
 local data: any = {}
 local v = Point(data)
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram2680, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2680.RootResult()
 	assign := stmts[2].(*ast.LocalAssignStmt)
 	point, fact := requireLocalAssignment(t, result, assign, 0)
 	if fact.Source.Kind != sourceprovenance.SourceCall || !fact.Source.HasCallPoint {
@@ -2706,10 +2739,11 @@ func TestForEachCallCarriesSyntaxFreeCallAndCalleeSpans(t *testing.T) {
 local function consume(value: string): () end
 consume("ok")
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram2709, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2709.RootResult()
 	var got []CallSite
 	if !New(result).ForEachCall(func(call CallSite) bool {
 		got = append(got, call)
@@ -2734,12 +2768,13 @@ consume("ok")
 
 func TestCallArgumentLabelUsesPathBackedSourceWithoutSyntaxLabel(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckFunction(parseFunction(t, `
+	resultProgram2737, err := program.RunFunction(parseFunction(t, `
 function f(source: {primary: string}): () end
-`), body.Config{Registry: reg})
+`), program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
+	result := resultProgram2737.RootResult()
 	fn := result.Function()
 	slots := result.FunctionParamSlots(fn)
 	if len(slots) != 1 {
@@ -2769,23 +2804,25 @@ func TestForEachConcatOperandReportsDeclaredOptionalAndDynamicIndexRisk(t *testi
 local maybe: string? = nil
 local label = "prefix:" .. maybe
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram2772, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram2772.RootResult()
 	var got []ConcatOperand
 	New(result).ForEachConcatOperand(func(operand ConcatOperand) bool {
 		got = append(got, operand)
 		return true
 	})
-	fnResult, err := body.CheckFunction(parseFunction(t, `
+	fnResultProgram2781, err := program.RunFunction(parseFunction(t, `
 function item(arr: {string}, i: number): string
 	return "item:" .. arr[i]
 end
-`), body.Config{Registry: reg})
+`), program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
+	fnResult := fnResultProgram2781.RootResult()
 	New(fnResult).ForEachConcatOperand(func(operand ConcatOperand) bool {
 		got = append(got, operand)
 		return true
@@ -2937,21 +2974,22 @@ func TestForEachCallReportsArityFromCanonicalContract(t *testing.T) {
 	m.DefineFunctionSignature("add", signature.Function{
 		Type: typ.Func().Param("a", typ.Number).Param("b", typ.Number).Returns(typ.Number).Build(),
 	})
-	result, err := body.CheckFunction(parseFunction(t, `
+	resultProgram2940, err := program.RunFunction(parseFunction(t, `
 function f()
 	add(1)
 	add(1, 2, 3)
 end
-`), body.Config{
+`), program.Config{Check: body.Config{
 		Registry: reg,
 		Globals:  []string{"add"},
 		Signatures: signaturelookup.Source{
 			Manifests: []*manifest.Manifest{m},
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
+	result := resultProgram2940.RootResult()
 	var arities []CallArityReport
 	New(result).ForEachCall(func(call CallSite) bool {
 		if call.Arity.Kind != readapi.CallArityReportNone {
@@ -2982,21 +3020,22 @@ func TestForEachCallReportsUntrustedOrDefaultArgument(t *testing.T) {
 	m.DefineFunctionSignature("need_string", signature.Function{
 		Type: typ.Func().Param("value", typ.String).Build(),
 	})
-	result, err := body.CheckFunction(parseFunction(t, `
+	resultProgram2985, err := program.RunFunction(parseFunction(t, `
 function f(args)
 	local url = (args and args.url) or "http://localhost:8085/hello"
 	need_string(url)
 end
-`), body.Config{
+`), program.Config{Check: body.Config{
 		Registry: reg,
 		Globals:  []string{"need_string"},
 		Signatures: signaturelookup.Source{
 			Manifests: []*manifest.Manifest{m},
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
+	result := resultProgram2985.RootResult()
 	var reports []CallArgumentReport
 	reader := New(result)
 	reader.ForEachCall(func(call CallSite) bool {
@@ -3955,7 +3994,7 @@ end
 	}
 	var checkedArg bool
 	var reports []CallArgumentReport
-	for _, fn := range root.ReportableFunctionResults() {
+	for _, fn := range root.FunctionResults() {
 		reader := New(fn)
 		reader.ForEachCall(func(call CallSite) bool {
 			reports = append(reports, call.Reports...)
@@ -4014,7 +4053,7 @@ end
 	}
 	var checkedArg bool
 	var reports []CallArgumentReport
-	for _, fn := range root.ReportableFunctionResults() {
+	for _, fn := range root.FunctionResults() {
 		reader := New(fn)
 		reader.ForEachCall(func(call CallSite) bool {
 			reports = append(reports, call.Reports...)
@@ -4981,10 +5020,11 @@ x()
 local maybe: (() -> string)? = nil
 maybe()
 `)
-	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	resultProgram4984, err := program.RunChunk(stmts, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram4984.RootResult()
 	var reports []CallCalleeReport
 	New(result).ForEachCall(func(call CallSite) bool {
 		if call.Callee.Kind != readapi.CallCalleeReportNone {
@@ -5015,7 +5055,7 @@ func TestSourceTypePrefersLocalAssignmentLoweredCallSource(t *testing.T) {
 	stmts := parseChunk(t, `
 local pkg: {run: () -> ()}? = require("pkg")
 `)
-	result, err := body.CheckChunk(stmts, body.Config{
+	resultProgram5018, err := program.RunChunk(stmts, program.Config{Check: body.Config{
 		Registry: reg,
 		Globals:  []string{"require"},
 		Signatures: signaturelookup.Source{
@@ -5025,10 +5065,11 @@ local pkg: {run: () -> ()}? = require("pkg")
 		ModuleExports: importlookup.Source{
 			Manifests: []*manifest.Manifest{m},
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram5018.RootResult()
 	assign := stmts[0].(*ast.LocalAssignStmt)
 	point, fact := requireLocalAssignment(t, result, assign, 0)
 	if fact.Source.Kind != sourceprovenance.SourceCall {
@@ -5042,10 +5083,11 @@ local pkg: {run: () -> ()}? = require("pkg")
 
 func TestUntrustedRuntimeTableWitnessIsNotProvenMismatch(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram5045, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram5045.RootResult()
 	value := typevalue.WithWitness(reg, presentValue(reg), typetable.BuiltinTopMarker())
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
@@ -5068,14 +5110,15 @@ if type(block.items) == "table" then
     local labels: {string} = block.items
 end
 `)
-	result, err := body.CheckChunk(stmts, body.Config{
+	resultProgram5071, err := program.RunChunk(stmts, program.Config{Check: body.Config{
 		Registry:   reg,
 		Globals:    []string{"type"},
 		Signatures: signaturelookup.Source{IncludeStdlib: true},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram5071.RootResult()
 	point, fact := requireLocalAssignmentByName(t, result, "labels")
 	reader := New(result)
 
@@ -5135,7 +5178,7 @@ else
     local wrapped = errors.wrap(err, "registration")
 end
 `)
-	result, err := body.CheckChunk(stmts, body.Config{
+	resultProgram5138, err := program.RunChunk(stmts, program.Config{Check: body.Config{
 		Registry: reg,
 		ModuleExports: importlookup.Source{
 			Manifests: []*manifest.Manifest{errorsManifest, validatorManifest},
@@ -5143,10 +5186,11 @@ end
 		Signatures: signaturelookup.Source{
 			Manifests: []*manifest.Manifest{validatorManifest},
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram5138.RootResult()
 	reader := New(result)
 	var seen bool
 	for _, point := range result.Graph().RPO() {
@@ -5177,14 +5221,15 @@ function rows(block: any): {string}?
     return nil
 end
 `)
-	result, err := body.CheckFunction(fn, body.Config{
+	resultProgram5180, err := program.RunFunction(fn, program.Config{Check: body.Config{
 		Registry:   reg,
 		Globals:    []string{"type"},
 		Signatures: signaturelookup.Source{IncludeStdlib: true},
-	})
+	}})
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}
+	result := resultProgram5180.RootResult()
 	ifStmt := fn.Stmts[0].(*ast.IfStmt)
 	assign := ifStmt.Then[0].(*ast.LocalAssignStmt)
 	point, fact := requireLocalAssignment(t, result, assign, 0)
@@ -5273,10 +5318,11 @@ func presentValue(reg *axis.Registry) product.Value {
 
 func TestRuntimeKindReducedTypeNarrowsByRuntimeKindExclusion(t *testing.T) {
 	reg := standard.Registry()
-	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	resultProgram5276, err := program.RunChunk(nil, program.Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
+	result := resultProgram5276.RootResult()
 	reader := New(result)
 	declared := typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})
 

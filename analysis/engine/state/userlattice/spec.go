@@ -65,7 +65,9 @@ type CallBoundaryHook struct {
 }
 
 // JoinHook describes the closed on-join trigger. It intentionally has no
-// options: join is the verified least-upper-bound table computed from Spec.Order.
+// options: registration derives both the least-upper-bound and
+// greatest-lower-bound tables from Spec.Order, so every accepted axis is a
+// finite lattice usable by exact relational composition.
 type JoinHook struct{}
 
 // ClaimHook names an external claim that sets an axis element.

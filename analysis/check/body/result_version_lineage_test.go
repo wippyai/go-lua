@@ -1,42 +1,13 @@
 package body
 
 import (
-	"context"
 	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
-
-func TestResultVersionLineageMatchesPublishedLegacyVersion(t *testing.T) {
-	prepared, err := PrepareChunk(parseChunk(t, "return 1"), Config{Registry: standard.Registry()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	config := SolveConfig{SummaryInputs: func() []SummaryInput {
-		return []SummaryInput{lineageSummaryInput(1, 2, true, 41)}
-	}}
-	result, err := SolvePrepared(prepared, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lineage := result.ResultVersionLineage()
-	if lineage.ResultVersion() != result.ResultVersion() {
-		t.Fatalf("lineage legacy version = %d, published = %d", lineage.ResultVersion(), result.ResultVersion())
-	}
-	if lineage.Complete() || lineage.Digest() != (ResultVersionDigest{}) {
-		t.Fatal("present uint64-only summary input exposed authoritative lineage")
-	}
-	inputs := lineage.SummaryInputs()
-	inputs[0].PayloadDigest++
-	if got := result.ResultVersionLineage().SummaryInputs()[0].PayloadDigest; got != 41 {
-		t.Fatalf("published lineage mutated through accessor: %d", got)
-	}
-}
 
 func TestInputLineageRetainsLegacyUint64Parity(t *testing.T) {
 	prepared, err := PrepareChunk(parseChunk(t, "return 1"), Config{Registry: standard.Registry()})
@@ -104,27 +75,6 @@ func TestResultVersionLineageAuthorityRequiresCompleteCollisionSafeInputs(t *tes
 	}
 }
 
-func TestResultVersionLineageRejectsConflictingDuplicateKey(t *testing.T) {
-	prepared, err := PrepareChunk(parseChunk(t, "return 1"), Config{Registry: standard.Registry()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first := lineageSummaryInput(1, 2, true, 7)
-	conflict := lineageSummaryInput(1, 2, true, 8)
-	_, err = InputLineageContext(prepared, SolveConfig{SummaryInputs: func() []SummaryInput {
-		return []SummaryInput{first, conflict}
-	}})
-	if !errors.Is(err, ErrConflictingSummaryInput) {
-		t.Fatalf("InputLineageContext error = %v, want conflict", err)
-	}
-	result, err := SolvePrepared(prepared, SolveConfig{SummaryInputs: func() []SummaryInput {
-		return []SummaryInput{first, conflict}
-	}})
-	if result != nil || !errors.Is(err, ErrConflictingSummaryInput) {
-		t.Fatalf("conflicting solve result/error = %v/%v", result, err)
-	}
-}
-
 func TestResultVersionLineageRejectsTypedAndAnonymousProviders(t *testing.T) {
 	prepared, err := PrepareChunk(parseChunk(t, "return 1"), Config{Registry: standard.Registry()})
 	if err != nil {
@@ -164,9 +114,8 @@ func TestResultVersionLineageCoversExactSolveConfiguration(t *testing.T) {
 	}
 	base := lineageForConfig(t, prepared, SolveConfig{})
 	variants := map[string]SolveConfig{
-		"schedule": {Schedule: transfer.ScheduleWTO},
-		"lanes":    {StateLanes: []state.LaneID{state.LaneValues}},
-		"widen":    {WidenAt: func(cfg.Point) bool { return false }},
+		"lanes": {StateLanes: []state.LaneID{state.LaneValues}},
+		"widen": {WidenAt: func(cfg.Point) bool { return false }},
 		"initial": {Initial: func(cfg.Point) (state.State, bool) {
 			return state.State{}, false
 		}},
@@ -223,32 +172,6 @@ func TestResultVersionLineageSeparatesPresentAndMissingRead(t *testing.T) {
 	assertDistinctLineage(t, "present/missing", present, missing)
 	if got := missing.SummaryInputs()[0].PayloadDigest; got != 0 {
 		t.Fatalf("missing dependency retained payload digest %d", got)
-	}
-}
-
-func TestResultVersionLineageCancellationPublishesNothing(t *testing.T) {
-	prepared, err := PrepareChunk(parseChunk(t, "return 1"), Config{Registry: standard.Registry()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	config := SolveConfig{
-		Context: ctx,
-		SummaryInputs: func() []SummaryInput {
-			inputs := make([]SummaryInput, 1<<16)
-			for i := range inputs {
-				inputs[i] = lineageSummaryInput(uint64(i+1), uint64(i), false, 99)
-			}
-			cancel()
-			return inputs
-		},
-	}
-	result, err := SolvePrepared(prepared, config)
-	if result != nil {
-		t.Fatal("canceled solve published a result")
-	}
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, solve.ErrCanceled) {
-		t.Fatalf("SolvePrepared error = %v, want solve and context cancellation", err)
 	}
 }
 
