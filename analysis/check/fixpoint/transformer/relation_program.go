@@ -1606,6 +1606,10 @@ func (p *PreparedPlanCompiler) sealRelationProgramWorld() error {
 		return p.freezeErr
 	}
 	p.reductionCount = 1
+	// relationCode is now the sole retained executable representation. The
+	// WorldProgram arena was consumed by the one reduction above and has no
+	// post-seal reader; release it with its owning prepared compiler.
+	p.worldBase = WorldProgram{}
 	return nil
 }
 
