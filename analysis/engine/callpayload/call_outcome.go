@@ -83,17 +83,19 @@ func (o CallOutcome) HasPostReturnEvidence() bool {
 }
 
 type callOutcomeLane struct {
-	fieldName  string
-	postReturn bool
-	has        func(CallOutcome) bool
+	fieldName   string
+	postReturn  bool
+	has         func(CallOutcome) bool
+	transaction *callOutcomeTransactionRole
 }
 
 // CallOutcomeFieldRole describes one registered CallOutcome field's boundary
 // role. It intentionally omits the lane's predicate: callers may classify
 // fields, but only callpayload owns field-presence semantics.
 type CallOutcomeFieldRole struct {
-	FieldName  string
-	PostReturn bool
+	FieldName   string
+	PostReturn  bool
+	transaction *callOutcomeTransactionRole
 }
 
 // CallOutcomeFieldRoleBinding pairs a layer-owned handler with the canonical
@@ -109,8 +111,9 @@ func CallOutcomeFieldRoles() []CallOutcomeFieldRole {
 	out := make([]CallOutcomeFieldRole, len(callOutcomeLanes))
 	for i, lane := range callOutcomeLanes {
 		out[i] = CallOutcomeFieldRole{
-			FieldName:  lane.fieldName,
-			PostReturn: lane.postReturn,
+			FieldName:   lane.fieldName,
+			PostReturn:  lane.postReturn,
+			transaction: lane.transaction,
 		}
 	}
 	return out

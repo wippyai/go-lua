@@ -25,9 +25,14 @@ func SealExternalCallTransferAccess(
 	if len(inputs) == 0 || len(inputPoints) != len(inputs) || primary < 0 || primary >= len(inputs) {
 		return state.TransferAccess{}, fmt.Errorf("factapply: external-call transfer has invalid input roles")
 	}
-	transactionLanes, err := externalCallTransactionLanes(domain.Lanes(), capability)
-	if err != nil {
-		return state.TransferAccess{}, err
+	transactionLanes := capability.TransactionLanes()
+	for _, lane := range domain.CallBoundaryFactorLanes() {
+		transactionLanes = transactionLanes.With(lane.ID())
+	}
+	for _, lane := range transactionLanes.IDs() {
+		if !domain.Lanes().Has(lane) {
+			return state.TransferAccess{}, fmt.Errorf("factapply: external-call field requires unregistered lane %q", lane)
+		}
 	}
 	inputs = cloneTransferInputs(inputs)
 	inputs[primary].Lanes = inputs[primary].Lanes.With(capability.PrimaryInputLanes().IDs()...)
@@ -45,15 +50,8 @@ func SealExternalCallTransferAccess(
 		}
 	}
 	valueWrites := append([]statekey.Value(nil), resultWrites...)
-	for _, role := range capability.FieldRoles() {
-		writesOperands, known := externalCallFieldWritesOperandValues(role.FieldName)
-		if !known {
-			return state.TransferAccess{}, fmt.Errorf("factapply: unclassified CallOutcome Value write field %q", role.FieldName)
-		}
-		if writesOperands {
-			valueWrites = append(valueWrites, inputs[primary].Values...)
-			break
-		}
+	if capability.OperandValueWrites() {
+		valueWrites = append(valueWrites, inputs[primary].Values...)
 	}
 	return state.SealTransferAccess(domain, state.TransferAccessConfig{
 		ProviderInputs: inputs, ValueWrites: valueWrites,
@@ -61,76 +59,6 @@ func SealExternalCallTransferAccess(
 		ValueCarry: primary, LaneCarry: primary, DiagnosticCarry: primary, ReachableCarry: -1,
 		ReachableWrites: true,
 	})
-}
-
-func externalCallFieldWritesOperandValues(field string) (bool, bool) {
-	switch field {
-	case "NormalReturnFacts", "ParamPathRefinements", "ParamPathWrites",
-		"ParamPathInvalidations", "ParamConditions", "ParamPathRelations", "ParamExposures":
-		return true, true
-	case "Results", "PostReturnAuthority", "SuspensionKnown", "MaySuspend",
-		"ProtectedCallTypestate", "HeapTableObjects", "Placements",
-		"ParamObligations", "PathObligations", "TypestateRequirements",
-		"ParamLengthFloors", "ReturnConditionRefinements", "ReturnConditionSlots",
-		"ReturnPresenceRelations":
-		return false, true
-	default:
-		return false, false
-	}
-}
-
-func externalCallTransactionLanes(enabled state.LaneSet, capability callpayload.CallOutcomeCapability) (state.LaneSet, error) {
-	selected := state.NewLaneSet(state.LaneUserLattices)
-	for _, role := range capability.FieldRoles() {
-		lanes, known := externalCallFieldLanes(role.FieldName)
-		if !known {
-			return state.LaneSet{}, fmt.Errorf("factapply: unclassified CallOutcome field %q", role.FieldName)
-		}
-		selected = selected.With(lanes...)
-	}
-	for _, lane := range selected.IDs() {
-		if !enabled.Has(lane) {
-			return state.LaneSet{}, fmt.Errorf("factapply: external-call field requires unregistered lane %q", lane)
-		}
-	}
-	return selected, nil
-}
-
-func externalCallFieldLanes(field string) ([]state.LaneID, bool) {
-	switch field {
-	case "Results", "PostReturnAuthority", "SuspensionKnown", "MaySuspend",
-		"ParamObligations", "PathObligations", "TypestateRequirements",
-		"ReturnConditionRefinements", "ReturnConditionSlots", "ReturnPresenceRelations":
-		return nil, true
-	case "ProtectedCallTypestate":
-		return []state.LaneID{state.LaneTypestates}, true
-	case "HeapTableObjects":
-		return []state.LaneID{state.LaneHeapTableIdentity}, true
-	case "Placements":
-		return []state.LaneID{state.LanePlacement}, true
-	case "ParamLengthFloors":
-		return []state.LaneID{state.LaneLenFloors}, true
-	case "ParamConditions", "ParamPathRelations":
-		return []state.LaneID{state.LanePathEvidence, state.LaneStoreRelations, state.LaneDiffRelations}, true
-	case "ParamExposures":
-		return []state.LaneID{state.LanePathEvidence, state.LaneDynamicIndex, state.LaneHeapTableIdentity, state.LanePlacement}, true
-	case "ParamPathRefinements", "ParamPathWrites", "ParamPathInvalidations":
-		return []state.LaneID{
-			state.LanePathEvidence, state.LaneDynamicIndex, state.LaneHeapTableIdentity,
-			state.LaneFrozenTables, state.LaneStoreRelations, state.LaneKeyMemberships,
-			state.LaneLenFloors, state.LaneNumFloors, state.LaneNumCeils, state.LaneDiffRelations,
-		}, true
-	case "NormalReturnFacts":
-		return []state.LaneID{
-			state.LanePathEvidence, state.LaneDynamicIndex, state.LaneHeapTableIdentity,
-			state.LaneFrozenTables, state.LaneEffectDeltas, state.LaneEscapeEvents,
-			state.LaneChannelSelect, state.LaneStoreRelations, state.LaneKeyMemberships,
-			state.LaneTypestates, state.LanePlacement, state.LaneLenFloors,
-			state.LaneNumFloors, state.LaneNumCeils, state.LaneDiffRelations,
-		}, true
-	default:
-		return nil, false
-	}
 }
 
 // SealGenericForTransferAccess binds the exact generic-for target transaction

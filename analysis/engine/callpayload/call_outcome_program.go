@@ -400,6 +400,31 @@ func (c CallOutcomeCapability) FieldRoles() []CallOutcomeFieldRole {
 	return append([]CallOutcomeFieldRole(nil), c.roles...)
 }
 
+// OperandValueWrites reports whether any selected outcome field can rewrite
+// caller operand slots. The answer is derived solely from the canonical field
+// descriptors retained by this site capability.
+func (c CallOutcomeCapability) OperandValueWrites() bool {
+	for _, role := range c.roles {
+		if role.transaction != nil && role.transaction.operandValueWrites {
+			return true
+		}
+	}
+	return false
+}
+
+// TransactionLanes returns the exact residual State lanes written by the
+// selected outcome fields. The returned set is detached and preserves the
+// canonical descriptor/lane order.
+func (c CallOutcomeCapability) TransactionLanes() state.LaneSet {
+	lanes := state.NewLaneSet()
+	for _, role := range c.roles {
+		if role.transaction != nil {
+			lanes = lanes.With(role.transaction.lanes.IDs()...)
+		}
+	}
+	return lanes
+}
+
 func (c CallOutcomeCapability) CorrelationShapes() []CallOutcomeCorrelationShape {
 	out := append([]CallOutcomeCorrelationShape(nil), c.correlations...)
 	for index := range out {
