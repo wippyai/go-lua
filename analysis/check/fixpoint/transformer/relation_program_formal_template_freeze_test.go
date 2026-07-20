@@ -75,7 +75,7 @@ func formalTemplateFreezeUnit(t *testing.T, body lexicalidentity.StableLexicalBo
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan = plan.WithObservationIdentity(body, code, graph).WithCallSurface(surface)
+	plan = plan.WithCallSurface(surface)
 	resolver := visibility.NewResolver(nil)
 	paths := factapply.NewPathSemanticAuthority(resolver, nil, nil)
 	return RelationProgramUnit{

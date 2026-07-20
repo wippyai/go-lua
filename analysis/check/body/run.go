@@ -218,7 +218,6 @@ func (c *checker) prepare(
 		boundaryGlobalPairs[index] = operationplan.BoundaryGlobal{Symbol: global, Contract: boundaryGlobalContracts[index]}
 	}
 	operationPlan := lowered.Plan.
-		WithObservationIdentity(lexicalBodyID, wirBody, built.Graph).
 		WithBoundaryParams(bindings.ParamSymbols(fn)).
 		WithBoundaryCaptures(boundaryCaptures).
 		WithBoundaryGlobals(boundaryGlobalPairs).

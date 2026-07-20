@@ -339,31 +339,6 @@ func (e *formalRelationExecution) projectFormalApplyOccurrence(
 			Kind: proof.Kind, Path: path, Presence: proof.Presence,
 		})
 	}
-	values, err := region.target.valuesFactor()
-	if err != nil {
-		return callpayload.CallOutcome{}, err
-	}
-	for _, refinement := range payload.refinements {
-		root, exact := refinement.preservedRoot(occurrence.code.terms)
-		if !exact || root.Kind != RootParam {
-			continue
-		}
-		concrete, exact := region.target.body.rootValueSlot(root)
-		if !exact {
-			return callpayload.CallOutcome{}, fmt.Errorf("transformer: formal preserved parameter has no concrete slot")
-		}
-		slot, exact := formalMiddleSlotForStateKey(e.algebra.program, region.target.body, concrete)
-		if !exact {
-			return callpayload.CallOutcome{}, fmt.Errorf("transformer: formal preserved parameter has no slot")
-		}
-		value, useful := callboundary.ProjectPathRefinementValue(e.algebra.program.registry,
-			formalApplyValueAt(values, slot, product.Bottom(e.algebra.program.registry)))
-		if useful {
-			out.ParamPathRefinements = append(out.ParamPathRefinements, callpayload.CallParamPathRefinement{
-				Path: pathdom.NewPlaceholder(int(root.Index)), Value: value,
-			})
-		}
-	}
 	for _, condition := range payload.returnConditions {
 		out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, callpayload.CallReturnConditionRefinement{
 			ReturnIndex: condition.ReturnIndex, ReturnValue: condition.ReturnValue,

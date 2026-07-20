@@ -261,8 +261,8 @@ type CallSurface struct {
 }
 
 // WithCallSurface binds a complete lowering-owned call census to the plan.
-// Ownership and CFG width must agree with the already attached observation
-// identity. Invalid or independently prepared surfaces clear the authority so
+// The surface owns its lexical identity; relation-program freeze checks that
+// identity against the unit being frozen. Invalid surfaces clear authority so
 // downstream compositional admission fails closed.
 func (p *Plan) WithCallSurface(surface CallSurface) *Plan {
 	if p == nil {
@@ -270,9 +270,7 @@ func (p *Plan) WithCallSurface(surface CallSurface) *Plan {
 	}
 	out := *p
 	out.callSurface = CallSurface{}
-	if !surface.Complete() || !surface.Digest().Available() ||
-		p.observationBody == (lexicalidentity.StableLexicalBodyID{}) ||
-		surface.Owner() != p.observationBody || surface.PointCount() != p.PointCount() {
+	if !surface.Complete() || !surface.Digest().Available() || surface.PointCount() != p.PointCount() {
 		return &out
 	}
 	out.callSurface = surface
@@ -283,7 +281,7 @@ func (p *Plan) WithCallSurface(surface CallSurface) *Plan {
 // The bool is false when preparation could not certify the independent census.
 func (p *Plan) CallSurface() (CallSurface, bool) {
 	if p == nil || !p.callSurface.Complete() || !p.callSurface.Digest().Available() ||
-		p.callSurface.Owner() != p.observationBody || p.callSurface.PointCount() != p.PointCount() {
+		p.callSurface.PointCount() != p.PointCount() {
 		return CallSurface{}, false
 	}
 	return p.callSurface, true

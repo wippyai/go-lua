@@ -102,7 +102,7 @@ func TestRelationProgramDirectCallPreservesConditionedPhi(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helperPlan = helperPlan.WithObservationIdentity(helperID, helperWIR, helperGraph).WithCallSurface(helperSurface)
+	helperPlan = helperPlan.WithCallSurface(helperSurface)
 	helperPaths := factapply.NewPathSemanticAuthority(helperResolver, nil, nil)
 
 	callerGraph := cfg.New()
@@ -147,7 +147,7 @@ func TestRelationProgramDirectCallPreservesConditionedPhi(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	callerPlan = callerPlan.WithObservationIdentity(callerID, callerWIR, callerGraph).WithCallSurface(callerSurface)
+	callerPlan = callerPlan.WithCallSurface(callerSurface)
 	callerPaths := factapply.NewPathSemanticAuthority(callerResolver, nil, nil)
 
 	program, err := FreezeRelationProgram([]RelationProgramUnit{

@@ -521,7 +521,6 @@ func TestPredicateSourceBoundDuringRow(t *testing.T) {
 		w := wir.NewBody(t.Name())
 		emitStructuralPredicateCallPoint(w, call)
 		w.AssignDebugPointOrdinals(graph)
-		plan = plan.WithObservationIdentity(bodyID, w, graph)
 		target, ok := operationplan.NewLexicalCallSurfaceTarget(bodyID)
 		if !ok {
 			t.Fatal("lexical call surface target rejected")
@@ -600,7 +599,6 @@ func TestPreparePredicateExpressions(t *testing.T) {
 		w := wir.NewBody(t.Name())
 		emitStructuralPredicateCallPoint(w, call)
 		w.AssignDebugPointOrdinals(graph)
-		plan = plan.WithObservationIdentity(bodyID, w, graph)
 		callTarget, ok := operationplan.NewLexicalCallSurfaceTarget(bodyID)
 		if !ok {
 			t.Fatal("lexical call target rejected")

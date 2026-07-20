@@ -1,26 +1,5 @@
 package transformer
 
-import (
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
-	"github.com/wippyai/go-lua/analysis/symbol"
-)
-
-// SymbolicCFGRow is one correlated control-flow alternative. Values are
-// compiler-local lexical bindings; Guard retains the path condition.
-type SymbolicCFGRow struct {
-	Guard                  Guard
-	Values                 map[symbol.ID]ValueTerm
-	ResultRoots            map[ResultRoot]ValueTerm
-	Operations             []Operation
-	steps                  []rowStep
-	Proofs                 []BranchProofTerm
-	Observations           []ObservationTerm
-	observationObligations []observationObligation
-	Output                 summary.Summary
-	genericBindings        map[symbol.ID]symbolicGenericBinding
-	paramPreserved         paramPreservationLedger
-}
-
 type rowStepKind uint8
 
 const (

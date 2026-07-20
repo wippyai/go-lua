@@ -139,10 +139,6 @@ type returnPayload struct {
 	protectedCallTypestate callboundary.ProtectedCallTypestate
 	operations             []Operation
 	proofs                 []BranchProofTerm
-	refinements            []PathRefinementTerm
-	observations           []ObservationTerm
-	observationObligations []observationObligation
-	preserved              paramPreservationLedger
 	returnConditions       []returnConditionParamRefinementTerm
 	branchLiteralCases     []branchSufficientOutcomeTerm
 	resultPublication      factapply.CallResultTransaction
@@ -314,10 +310,6 @@ func (f *worldProgramFreezer) appendReturn(payload returnPayload) returnPayloadR
 	payload.protectedCallTypestate = payload.protectedCallTypestate.Clone()
 	payload.operations = append([]Operation(nil), payload.operations...)
 	payload.proofs = append([]BranchProofTerm(nil), payload.proofs...)
-	payload.refinements = append([]PathRefinementTerm(nil), payload.refinements...)
-	payload.observations = append([]ObservationTerm(nil), payload.observations...)
-	payload.observationObligations = append([]observationObligation(nil), payload.observationObligations...)
-	payload.preserved = payload.preserved.clone()
 	payload.returnConditions = append([]returnConditionParamRefinementTerm(nil), payload.returnConditions...)
 	payload.branchLiteralCases = cloneBranchSufficientOutcomeTerms(payload.branchLiteralCases)
 	payload.resultPublication = payload.resultPublication.Clone()
@@ -358,10 +350,6 @@ func (f *worldProgramFreezer) seal(root programRef) (WorldProgram, error) {
 		payload.protectedCallTypestate = payload.protectedCallTypestate.Clone()
 		payload.operations = append([]Operation(nil), payload.operations...)
 		payload.proofs = append([]BranchProofTerm(nil), payload.proofs...)
-		payload.refinements = append([]PathRefinementTerm(nil), payload.refinements...)
-		payload.observations = append([]ObservationTerm(nil), payload.observations...)
-		payload.observationObligations = append([]observationObligation(nil), payload.observationObligations...)
-		payload.preserved = payload.preserved.clone()
 		payload.returnConditions = append([]returnConditionParamRefinementTerm(nil), payload.returnConditions...)
 		payload.branchLiteralCases = cloneBranchSufficientOutcomeTerms(payload.branchLiteralCases)
 		payload.resultPublication = payload.resultPublication.Clone()
@@ -776,9 +764,6 @@ func (p WorldProgram) validReturnPayload(ref returnPayloadRef, owned map[callFra
 		return false
 	}
 	payload := p.arena.returns[ref]
-	if !payload.preserved.valid(p.shape.Params+p.shape.Captures) || payload.preserved.boundaryParams != p.shape.Params {
-		return false
-	}
 	for _, operation := range payload.operations {
 		if operation.Kind >= outputKindCount || operation.Value == 0 || !p.terms.validValue(operation.Value, p.shape, make(map[ValueTerm]bool)) ||
 			!p.terms.valueFramesOwned(operation.Value, owned, make(map[ValueTerm]bool)) {
@@ -787,23 +772,6 @@ func (p WorldProgram) validReturnPayload(ref returnPayloadRef, owned map[callFra
 	}
 	for _, proof := range payload.proofs {
 		if !proof.valid(p.terms, p.shape) || proof.Key != 0 && !p.terms.valueFramesOwned(proof.Key, owned, make(map[ValueTerm]bool)) {
-			return false
-		}
-	}
-	for _, refinement := range payload.refinements {
-		if !refinement.validPreservedBoundaryRoot(p.terms, p.shape) || !p.terms.valueFramesOwned(refinement.Value, owned, make(map[ValueTerm]bool)) {
-			return false
-		}
-	}
-	for _, observation := range payload.observations {
-		if !observation.valid(p.terms, p.shape) || !p.terms.guardFramesOwned(observation.Guard, owned, make(map[Guard]bool)) ||
-			!p.terms.valueFramesOwned(observation.Actual, owned, make(map[ValueTerm]bool)) ||
-			observation.Expected != 0 && !p.terms.valueFramesOwned(observation.Expected, owned, make(map[ValueTerm]bool)) {
-			return false
-		}
-	}
-	for _, obligation := range payload.observationObligations {
-		if !obligation.valid(p.terms, p.shape) || !p.terms.guardFramesOwned(obligation.Guard, owned, make(map[Guard]bool)) {
 			return false
 		}
 	}

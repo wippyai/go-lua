@@ -122,7 +122,7 @@ func freezeFormalRootAssignmentTestProgram(
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan = plan.WithObservationIdentity(bodyID, wirBody, graph).WithCallSurface(surface)
+	plan = plan.WithCallSurface(surface)
 	domain := state.RegisteredProductDomain(reg)
 	paths := factapply.NewPathSemanticAuthority(resolver, nil, nil)
 	program, err := FreezeRelationProgram([]RelationProgramUnit{{

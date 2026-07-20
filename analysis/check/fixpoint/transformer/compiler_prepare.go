@@ -20,26 +20,25 @@ import (
 // PreparedPlanCompiler owns the persistent Builder, static semantic
 // certificate, and one frozen WorldProgram for a lexical function.
 type PreparedPlanCompiler struct {
-	compiler            *PlanCompiler
-	registry            *axis.Registry
-	graph               cfg.Graph
-	plan                *operationplan.Plan
-	shape               Shape
-	builder             *Builder
-	base                planCompileContext
-	certificate         SemanticCertificate
-	wtoTape             *symbolicWTOTape
-	worldBase           WorldProgram
-	codeBase            *relationCode
-	rootBase            relationRootRef
-	freezeCount         uint32
-	reductionCount      uint32
-	freezeMu            sync.Mutex
-	frozen              bool
-	frozenDirect        bool
-	freezeErr           error
-	observationComplete bool
-	effectFree          bool
+	compiler       *PlanCompiler
+	registry       *axis.Registry
+	graph          cfg.Graph
+	plan           *operationplan.Plan
+	shape          Shape
+	builder        *Builder
+	base           planCompileContext
+	certificate    SemanticCertificate
+	wtoTape        *symbolicWTOTape
+	worldBase      WorldProgram
+	codeBase       *relationCode
+	rootBase       relationRootRef
+	freezeCount    uint32
+	reductionCount uint32
+	freezeMu       sync.Mutex
+	frozen         bool
+	frozenDirect   bool
+	freezeErr      error
+	effectFree     bool
 	// cyclic is retained as prepared topology metadata for compatibility and
 	// diagnostics. Evaluation deliberately does not branch on it: DAGs are the
 	// zero-component case of the same exact dense executor.
@@ -262,13 +261,11 @@ func (c *PlanCompiler) prepare(reg *axis.Registry, graph cfg.Graph, plan *operat
 	if err != nil {
 		return nil, fmt.Errorf("compiler: WTO topology: %w", err)
 	}
-	observationComplete := exactObservationCoverage(plan, shape, len(tape.components) != 0)
 	prepared := &PreparedPlanCompiler{
 		compiler: c, registry: reg, graph: graph, plan: plan, shape: shape,
 		builder: builder, base: ctx, certificate: certificate, wtoTape: tape,
-		observationComplete: observationComplete,
-		cyclic:              len(tape.components) != 0,
-		environmentSymbols:  environmentSymbols,
+		cyclic:             len(tape.components) != 0,
+		environmentSymbols: environmentSymbols,
 	}
 	prepared.effectFree = prepared.computeEffectFree()
 	return prepared, nil
@@ -362,49 +359,7 @@ func (p *PreparedPlanCompiler) frozenRelation() Relation {
 	}
 	relation.code = p.codeBase
 	relation.root = p.rootBase
-	relation.observationComplete = false
 	return relation
-}
-
-func exactObservationCoverage(plan *operationplan.Plan, shape Shape, cyclic bool) bool {
-	if plan == nil || cyclic {
-		return false
-	}
-	if len(plan.BoundaryParamContracts()) != int(shape.Params) {
-		return false
-	}
-	requirements, sealed := plan.ObservationRequirements()
-	if !sealed {
-		return false
-	}
-	callArguments := make(map[cfg.Point]struct{})
-	routes := make(map[cfg.Point]struct{})
-	cursor := requirements.Cursor(false)
-	for requirement, ok := cursor.Next(); ok; requirement, ok = cursor.Next() {
-		if requirement.Stage() == operationplan.RequirementRoute {
-			if requirement.Projection() != operationplan.ProjectionObservationCallInvocation {
-				return false
-			}
-			routes[requirement.Point()] = struct{}{}
-			continue
-		}
-		if requirement.Stage() != operationplan.RequirementObservation {
-			continue
-		}
-		switch requirement.Projection() {
-		case operationplan.ProjectionObservationAssignment, operationplan.ProjectionObservationCallResult:
-		case operationplan.ProjectionObservationCallArgument:
-			callArguments[requirement.Point()] = struct{}{}
-		default:
-			return false
-		}
-	}
-	for point := range callArguments {
-		if _, ok := routes[point]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func exactDirectCallBindings(ctx planCompileContext, shape Shape, boundary DirectCallBoundary, site factflow.CallSiteView) (DirectCallBindings, error) {

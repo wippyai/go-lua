@@ -5,8 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
 
 var benchmarkCells []Cell
@@ -45,75 +43,6 @@ func BenchmarkCursorCanonicalOrder(b *testing.B) {
 		}
 	}
 	benchmarkCellCount = count
-}
-
-func BenchmarkObservationRequirementsSeal(b *testing.B) {
-	const points = 2_048
-	graph := cfg.New()
-	previous := graph.Entry()
-	input := factflow.FactsInput{RootAssignments: make(map[cfg.Point]factflow.RootAssignment)}
-	for graph.Size() < points-1 {
-		point := graph.AddNode(cfg.NodeAssign)
-		graph.AddEdge(previous, point, false)
-		previous = point
-		if int(point)%7 == 0 {
-			input.RootAssignments[point] = factflow.RootAssignment{}
-		}
-	}
-	graph.AddEdge(previous, graph.Exit(), false)
-	lowered := wir.NewBody("observation-requirements-benchmark")
-	lowered.AssignDebugPointOrdinals(graph)
-	var owner lexicalidentity.StableLexicalBodyID
-	owner[0] = 1
-	plan := New(graph, input)
-	b.Run("identity-baseline", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			benchmarkObservationPlan = bindObservationIdentityBenchmarkBaseline(plan, owner, lowered, graph)
-		}
-	})
-	b.Run("sealed-requirements", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			benchmarkObservationPlan = plan.WithObservationIdentity(owner, lowered, graph)
-		}
-		b.ReportMetric(float64(benchmarkObservationPlan.observationRequirements.slotCount), "requirements/op")
-	})
-}
-
-var benchmarkObservationPlan *Plan
-
-// bindObservationIdentityBenchmarkBaseline is the pre-certificate traversal
-// retained only as a benchmark oracle. Production uses WithObservationIdentity.
-func bindObservationIdentityBenchmarkBaseline(p *Plan, body lexicalidentity.StableLexicalBodyID, lowered *wir.Body, graph cfg.Graph) *Plan {
-	out := *p
-	out.observationBody = lexicalidentity.StableLexicalBodyID{}
-	out.observationPoints = nil
-	if body == (lexicalidentity.StableLexicalBodyID{}) || lowered == nil || graph == nil || graph.Size() != p.PointCount() {
-		return &out
-	}
-	reachable := cfg.RPOReadOnly(graph)
-	debugPoints := lowered.DebugPoints()
-	if len(reachable) == 0 || len(debugPoints) != len(reachable) {
-		return &out
-	}
-	points := make([]observationPoint, p.PointCount())
-	for index, point := range reachable {
-		if uint64(point) >= uint64(len(points)) || points[point].after.Valid() {
-			return &out
-		}
-		debugPoint := debugPoints[index]
-		if debugPoint.Point != point || debugPoint.Ordinal != uint32(index+1) {
-			return &out
-		}
-		after, ok := lowered.DebugPointID(point, wir.DebugPhaseAfter)
-		if !ok {
-			return &out
-		}
-		points[point].after = after
-	}
-	out.observationBody, out.observationPoints = body, points
-	return &out
 }
 
 func benchmarkGraph(points int) cfg.Graph {

@@ -145,10 +145,6 @@ type boundaryOutcomeTuple struct {
 	protectedCallTypestate callboundary.ProtectedCallTypestate
 	operations             []Operation
 	proofs                 []BranchProofTerm
-	refinements            []PathRefinementTerm
-	observations           []ObservationTerm
-	observationObligations []observationObligation
-	preserved              paramPreservationLedger
 	returnConditions       []returnConditionParamRefinementTerm
 	branchLiteralCases     []branchSufficientOutcomeTerm
 	resultPublication      factapply.CallResultTransaction
@@ -330,8 +326,7 @@ func reduceSemanticContribution(program WorldProgram, payload semanticContributi
 	return boundaryOutcomeTuple{
 		suspensionKnown: payload.suspensionKnown, maySuspend: payload.maySuspend,
 		protectedCallTypestate: payload.protectedCallTypestate.Clone(), operations: append([]Operation(nil), payload.operations...),
-		proofs: append([]BranchProofTerm(nil), payload.proofs...), refinements: append([]PathRefinementTerm(nil), payload.refinements...),
-		observations: append([]ObservationTerm(nil), payload.observations...), observationObligations: append([]observationObligation(nil), payload.observationObligations...), preserved: payload.preserved.clone(),
+		proofs:             append([]BranchProofTerm(nil), payload.proofs...),
 		returnConditions:   append([]returnConditionParamRefinementTerm(nil), payload.returnConditions...),
 		branchLiteralCases: cloneBranchSufficientOutcomeTerms(payload.branchLiteralCases),
 		resultPublication:  payload.resultPublication,
@@ -452,10 +447,6 @@ func cloneBoundaryOutcome(in boundaryOutcomeTuple) boundaryOutcomeTuple {
 	in.protectedCallTypestate = in.protectedCallTypestate.Clone()
 	in.operations = append([]Operation(nil), in.operations...)
 	in.proofs = append([]BranchProofTerm(nil), in.proofs...)
-	in.refinements = append([]PathRefinementTerm(nil), in.refinements...)
-	in.observations = append([]ObservationTerm(nil), in.observations...)
-	in.observationObligations = append([]observationObligation(nil), in.observationObligations...)
-	in.preserved = in.preserved.clone()
 	in.returnConditions = append([]returnConditionParamRefinementTerm(nil), in.returnConditions...)
 	in.branchLiteralCases = cloneBranchSufficientOutcomeTerms(in.branchLiteralCases)
 	in.resultPublication = in.resultPublication.Clone()
@@ -858,9 +849,6 @@ func validCallFrameBits(arena *Arena, term callFrameTerm, caller Shape, availabl
 }
 
 func (c *relationCode) validOutcome(outcome boundaryOutcomeTuple, owned []uint64) bool {
-	if !outcome.preserved.valid(c.shape.Params+c.shape.Captures) || outcome.preserved.boundaryParams != c.shape.Params {
-		return false
-	}
 	for _, operation := range outcome.operations {
 		if operation.Kind >= outputKindCount || operation.Value == 0 || c.descriptors.handlers[operation.Descriptor] == nil ||
 			!c.terms.validValue(operation.Value, c.shape, make(map[ValueTerm]bool)) || !valueFramesOwnedBits(c.terms, operation.Value, owned) {
@@ -869,22 +857,6 @@ func (c *relationCode) validOutcome(outcome boundaryOutcomeTuple, owned []uint64
 	}
 	for _, proof := range outcome.proofs {
 		if !proof.valid(c.terms, c.shape) || proof.Key != 0 && !valueFramesOwnedBits(c.terms, proof.Key, owned) {
-			return false
-		}
-	}
-	for _, refinement := range outcome.refinements {
-		if !refinement.validPreservedBoundaryRoot(c.terms, c.shape) || !valueFramesOwnedBits(c.terms, refinement.Value, owned) {
-			return false
-		}
-	}
-	for _, observation := range outcome.observations {
-		if !observation.valid(c.terms, c.shape) || !guardFramesOwnedBits(c.terms, observation.Guard, owned) ||
-			!valueFramesOwnedBits(c.terms, observation.Actual, owned) || observation.Expected != 0 && !valueFramesOwnedBits(c.terms, observation.Expected, owned) {
-			return false
-		}
-	}
-	for _, obligation := range outcome.observationObligations {
-		if !obligation.valid(c.terms, c.shape) || !guardFramesOwnedBits(c.terms, obligation.Guard, owned) {
 			return false
 		}
 	}
@@ -911,8 +883,7 @@ func (c *relationCode) validContribution(contribution semanticContribution, owne
 	return c.validOutcome(boundaryOutcomeTuple{
 		suspensionKnown: contribution.suspensionKnown, maySuspend: contribution.maySuspend,
 		protectedCallTypestate: contribution.protectedCallTypestate, operations: contribution.operations,
-		proofs: contribution.proofs, refinements: contribution.refinements, observations: contribution.observations,
-		observationObligations: contribution.observationObligations, preserved: contribution.preserved,
+		proofs:             contribution.proofs,
 		returnConditions:   contribution.returnConditions,
 		branchLiteralCases: contribution.branchLiteralCases,
 		resultPublication:  contribution.resultPublication,

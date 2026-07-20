@@ -83,7 +83,7 @@ func TestRelationProgramExecutesAllocationAsOneFormalTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan = plan.WithObservationIdentity(bodyID, w, graph).WithCallSurface(surface)
+	plan = plan.WithCallSurface(surface)
 	resolver := visibility.NewResolver(nil)
 	paths := factapply.NewPathSemanticAuthority(resolver, nil, nil)
 	keys := resolver.KeySpace()
@@ -393,7 +393,7 @@ func malformedLexicalAllocationUnit(
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan = plan.WithObservationIdentity(bodyID, code, graph).WithCallSurface(surface)
+	plan = plan.WithCallSurface(surface)
 	resolver := visibility.NewResolver(nil)
 	paths := factapply.NewPathSemanticAuthority(resolver, nil, nil)
 	return RelationProgramUnit{
@@ -420,7 +420,7 @@ func emptyAllocationCollisionTargetUnit(
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan = plan.WithObservationIdentity(bodyID, code, graph).WithCallSurface(surface)
+	plan = plan.WithCallSurface(surface)
 	resolver := visibility.NewResolver(nil)
 	paths := factapply.NewPathSemanticAuthority(resolver, nil, nil)
 	return RelationProgramUnit{

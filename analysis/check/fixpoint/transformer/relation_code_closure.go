@@ -858,18 +858,6 @@ func (r *relationCodeTermRefs) outcome(outcome *boundaryOutcomeTuple) {
 		r.path(&outcome.proofs[index].Table)
 		r.value(&outcome.proofs[index].Key)
 	}
-	for index := range outcome.refinements {
-		r.path(&outcome.refinements[index].Path)
-		r.value(&outcome.refinements[index].Value)
-	}
-	for index := range outcome.observations {
-		r.guard(&outcome.observations[index].Guard)
-		r.value(&outcome.observations[index].Actual)
-		r.value(&outcome.observations[index].Expected)
-	}
-	for index := range outcome.observationObligations {
-		r.guard(&outcome.observationObligations[index].Guard)
-	}
 	for index := range outcome.pathObligations {
 		r.path(&outcome.pathObligations[index].path)
 	}
@@ -887,15 +875,11 @@ func (r *relationCodeTermRefs) contribution(contribution *semanticContribution) 
 	}
 	tuple := boundaryOutcomeTuple{
 		operations: contribution.operations, proofs: contribution.proofs,
-		refinements: contribution.refinements, observations: contribution.observations,
-		observationObligations: contribution.observationObligations,
-		pathObligations:        contribution.pathObligations, paramExposures: contribution.paramExposures,
+		pathObligations: contribution.pathObligations, paramExposures: contribution.paramExposures,
 		returnTransaction: contribution.returnTransaction,
 	}
 	r.outcome(&tuple)
 	contribution.operations, contribution.proofs = tuple.operations, tuple.proofs
-	contribution.refinements, contribution.observations = tuple.refinements, tuple.observations
-	contribution.observationObligations = tuple.observationObligations
 	contribution.pathObligations, contribution.paramExposures = tuple.pathObligations, tuple.paramExposures
 	contribution.returnTransaction = tuple.returnTransaction
 }

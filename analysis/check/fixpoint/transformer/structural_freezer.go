@@ -29,13 +29,10 @@ type structuralEnvironment struct {
 	operations        []Operation
 	steps             []rowStep
 	proofs            []BranchProofTerm
-	observations      []ObservationTerm
-	obligations       []observationObligation
 	output            structuralOutputContribution
 	rootAssignment    rootAssignmentTerm
 	returnTransaction returnTransactionTerm
 	genericBindings   map[symbol.ID]symbolicGenericBinding
-	preserved         paramPreservationLedger
 	callResidual      Guard
 	callResultSymbols map[symbol.ID]struct{}
 }
@@ -78,11 +75,8 @@ func (e structuralEnvironment) clone() structuralEnvironment {
 	e.operations = append([]Operation(nil), e.operations...)
 	e.steps = cloneRowSteps(e.steps)
 	e.proofs = append([]BranchProofTerm(nil), e.proofs...)
-	e.observations = append([]ObservationTerm(nil), e.observations...)
-	e.obligations = append([]observationObligation(nil), e.obligations...)
 	e.output = e.output.clone()
 	e.genericBindings = cloneGenericBindings(e.genericBindings)
-	e.preserved = e.preserved.clone()
 	e.callResultSymbols = cloneSymbolSet(e.callResultSymbols)
 	return e
 }
@@ -103,12 +97,9 @@ func (e structuralEnvironment) edgeClone() structuralEnvironment {
 	out.operations = nil
 	out.steps = nil
 	out.proofs = nil
-	out.observations = nil
-	out.obligations = nil
 	out.output = structuralOutputContribution{}
 	out.rootAssignment = rootAssignmentTerm{}
 	out.returnTransaction = returnTransactionTerm{}
-	out.preserved = paramPreservationLedger{}
 	return out
 }
 
@@ -306,7 +297,7 @@ func (p *PreparedPlanCompiler) freezeStructuralWorldProgramSurface(direct frozen
 			}
 			choiceRef := programRef(len(freezer.programs))
 			freezer.programs = append(freezer.programs, programNode{kind: programChoice, point: point})
-			if contributionPresent(pointContribution, p.shape) {
+			if contributionPresent(pointContribution) {
 				payload := freezer.appendReturn(pointContribution)
 				node.instructions = append(node.instructions, freezer.appendInstruction(instructionNode{kind: instructionContribution, ret: payload}))
 			}
@@ -336,7 +327,7 @@ func (p *PreparedPlanCompiler) freezeStructuralWorldProgramSurface(direct frozen
 					return WorldProgram{}, err
 				}
 				edgeContribution := structuralContribution(edgeEnv, false)
-				if contributionPresent(edgeContribution, p.shape) {
+				if contributionPresent(edgeContribution) {
 					payload := freezer.appendReturn(edgeContribution)
 					freezer.programs[edgeRef].instructions = append(freezer.programs[edgeRef].instructions, freezer.appendInstruction(instructionNode{kind: instructionContribution, ret: payload}))
 				}
@@ -354,7 +345,7 @@ func (p *PreparedPlanCompiler) freezeStructuralWorldProgramSurface(direct frozen
 			if err := p.appendStructuralExpressionWrites(freezer, node, expressionWrites, point, p.wtoTape.points[edges[0].to].point, env); err != nil {
 				return WorldProgram{}, err
 			}
-			if contributionPresent(pointContribution, p.shape) {
+			if contributionPresent(pointContribution) {
 				payload := freezer.appendReturn(pointContribution)
 				node.instructions = append(node.instructions, freezer.appendInstruction(instructionNode{kind: instructionContribution, ret: payload}))
 			}
@@ -662,7 +653,6 @@ func (p *PreparedPlanCompiler) freshStructuralEnvironment(resultRoots map[Result
 	env := structuralEnvironment{
 		values: make(map[symbol.ID]ValueTerm, len(p.environmentSymbols)), resultRoots: cloneResultRootBindings(resultRoots),
 		genericBindings: make(map[symbol.ID]symbolicGenericBinding, len(p.base.genericBindings)),
-		preserved:       newBoundaryPreservationLedger(p.shape.Params, p.shape.Captures),
 	}
 	for _, id := range p.environmentSymbols {
 		term, ok := p.builder.Arena().environmentValue(id)
@@ -691,12 +681,6 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 		}
 	}
 	if site, ok := p.plan.Facts().CallSiteView(point); ok {
-		for slot := 0; slot < site.ArgumentSourceCount(); slot++ {
-			anchor, durable := p.plan.CallArgumentObservationAnchor(point, uint32(slot))
-			if durable {
-				env.obligations = recordobservationObligation(env.obligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: p.builder.Arena().True()})
-			}
-		}
 		materialization, err := compileBoundaryCallObjectMaterialization(ctx, point, site)
 		if err != nil {
 			return structuralEnvironment{}, fmt.Errorf("call object materialization: %w", err)
@@ -746,7 +730,6 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 			// The residual branch retains the canonical dynamic/external producer.
 			// Its stateful instruction is guarded when the WorldProgram is frozen;
 			// this point-local lowering records only its conservative output lanes.
-			env.preserved.observeFact(ctx, point, cell.Kind())
 			if err := handler.Preflight(ctx, point); err != nil {
 				return structuralEnvironment{}, fmt.Errorf("%s: %w", cell.Kind(), err)
 			}
@@ -770,7 +753,6 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 			ctx.locals, ctx.rowSteps = env.values, &env.steps
 			continue
 		}
-		env.preserved.observeFact(ctx, point, cell.Kind())
 		if err := handler.Preflight(ctx, point); err != nil {
 			return structuralEnvironment{}, fmt.Errorf("%s: %w", cell.Kind(), err)
 		}
@@ -781,7 +763,6 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 	extensions := p.plan.ExtensionCursor(point)
 	for cell, ok := extensions.Next(); ok; cell, ok = extensions.Next() {
 		handler := p.compiler.extensions[cell.Kind()]
-		env.preserved.observeExtension(cell.Kind())
 		if err := handler.Preflight(ctx, point); err != nil {
 			return structuralEnvironment{}, fmt.Errorf("extension %d: %w", cell.Kind(), err)
 		}
@@ -790,33 +771,6 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 		}
 	}
 	env.values, env.genericBindings = ctx.locals, ctx.genericBindings
-	if assignment, ok := p.plan.Facts().RootAssignment(point); ok && !exactDirectLexicalDeclaration(ctx, assignment) {
-		anchor, durable := p.plan.AssignmentObservationAnchor(point)
-		if durable {
-			env.obligations = recordobservationObligation(env.obligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: p.builder.Arena().True()})
-			value, present := env.values[assignment.TargetSymbol()]
-			if !present {
-				return structuralEnvironment{}, fmt.Errorf("observation: assignment target %d has no structural environment value", assignment.TargetSymbol())
-			}
-			env.observations = recordObservationTerm(env.observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationAssignment, Anchor: anchor, Guard: p.builder.Arena().True(), Actual: value})
-		}
-	}
-	if site, ok := p.plan.Facts().CallSiteView(point); ok {
-		for targetIndex := 0; targetIndex < site.ResultTargetCount(); targetIndex++ {
-			target, found := site.ResultTargetAt(targetIndex)
-			if !found || target.Kind() != factflow.CallResultTargetLocalAssignment || target.TargetSymbol() == 0 {
-				continue
-			}
-			anchor, durable := p.plan.CallResultObservationAnchor(point, uint32(targetIndex))
-			if !durable {
-				continue
-			}
-			env.obligations = recordobservationObligation(env.obligations, observationObligation{BodyOwner: p.plan.ObservationBody(), Anchor: anchor, Guard: p.builder.Arena().True()})
-			if value, present := env.values[target.TargetSymbol()]; present {
-				env.observations = recordObservationTerm(env.observations, ObservationTerm{BodyOwner: p.plan.ObservationBody(), Kind: ObservationCallResult, Anchor: anchor, Guard: p.builder.Arena().True(), Slot: uint32(targetIndex), Actual: value})
-			}
-		}
-	}
 	return env, nil
 }
 
@@ -1254,8 +1208,7 @@ func appendEnvironmentWrites(f *worldProgramFreezer, node *programNode, arena *A
 
 func structuralContribution(env structuralEnvironment, terminal bool) semanticContribution {
 	return semanticContribution{suspensionKnown: terminal, maySuspend: env.output.maySuspend, operations: env.operations,
-		observations: env.observations, observationObligations: env.obligations,
-		preserved: env.preserved, returnConditions: env.output.returnConditions, paramExposures: env.output.paramExposures,
+		returnConditions: env.output.returnConditions, paramExposures: env.output.paramExposures,
 		paramObligations:  env.output.paramObligations,
 		returnTransaction: env.returnTransaction.clone()}
 }
@@ -1310,9 +1263,6 @@ func (p *PreparedPlanCompiler) boundaryParamExposures(transaction factapply.Cova
 	return out
 }
 
-func contributionPresent(payload semanticContribution, shape Shape) bool {
-	if payload.preserved.equal(newBoundaryPreservationLedger(shape.Params, shape.Captures)) {
-		payload.preserved = paramPreservationLedger{}
-	}
+func contributionPresent(payload semanticContribution) bool {
 	return !payload.empty()
 }

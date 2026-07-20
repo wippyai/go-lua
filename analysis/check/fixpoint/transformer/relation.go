@@ -42,10 +42,8 @@ type Relation struct {
 	inferReturnCorrelations bool
 	contextual              string
 	widened                 bool
-	observationComplete     bool
 	paramContracts          []product.Value
 	projection              relationProjection
-	annotations             relationAnnotations
 }
 
 // relationProjection carries source-structural summary metadata whose legacy
@@ -138,10 +136,9 @@ func (a *relationOutputAuthority) allowsSummary(kind callboundary.BoundaryFactKi
 	return ok
 }
 
-func (r Relation) Shape() Shape                      { return r.shape }
-func (r Relation) ContextualReason() string          { return r.contextual }
-func (r Relation) Widened() bool                     { return r.widened }
-func (r Relation) ObservationCoverageComplete() bool { return r.observationComplete }
+func (r Relation) Shape() Shape             { return r.shape }
+func (r Relation) ContextualReason() string { return r.contextual }
+func (r Relation) Widened() bool            { return r.widened }
 
 // IsBottom reports the owned least element of one relation cell. Ownership is
 // essential: the zero Go value has neither an arena nor a boundary identity and
@@ -199,7 +196,6 @@ func (b *Builder) bottomRelation() Relation {
 		shape: b.shape, arena: b.arena, effects: b.effects, descriptors: b.descriptors,
 		authority:               snapshotRelationOutputAuthority(b.effectCatalog, b.caps),
 		inferReturnCorrelations: b.inferReturnCorrelations,
-		observationComplete:     true,
 		paramContracts:          contracts,
 		projection:              normalizeRelationProjection(b.arena.reg, nil),
 	}

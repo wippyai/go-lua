@@ -70,7 +70,7 @@ func TestCallResultReductionKeepsN3BeforeN5TerminalPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ret := freezer.appendReturn(returnPayload{preserved: newBoundaryPreservationLedger(0, 0), resultPublication: transaction, returnTransaction: testReturnTransactionTerm(t, point)})
+	ret := freezer.appendReturn(returnPayload{resultPublication: transaction, returnTransaction: testReturnTransactionTerm(t, point)})
 	freezer.programs[1] = programNode{kind: programSequence, point: point, instructions: []instructionRef{
 		freezer.appendInstruction(instructionNode{kind: instructionCallResults, result: transaction, resultPhase: factapply.ConcreteCallResultPhasePostconditions}),
 		freezer.appendInstruction(instructionNode{kind: instructionReturn, ret: ret}),
@@ -104,7 +104,7 @@ func TestWorldProgramValidatorAcceptsSharedDiamondContinuation(t *testing.T) {
 	freezer.programs[1] = programNode{kind: programChoice, guard: terms.True(), whenTrue: 2, whenFalse: 3}
 	freezer.programs[2] = programNode{kind: programSequence, next: 4}
 	freezer.programs[3] = programNode{kind: programSequence, next: 4}
-	ret := freezer.appendReturn(returnPayload{preserved: newBoundaryPreservationLedger(0, 0), returnTransaction: testReturnTransactionTerm(t, 1)})
+	ret := freezer.appendReturn(returnPayload{returnTransaction: testReturnTransactionTerm(t, 1)})
 	freezer.programs[4] = programNode{kind: programSequence, instructions: []instructionRef{
 		freezer.appendInstruction(instructionNode{kind: instructionReturn, ret: ret}),
 	}}
@@ -140,9 +140,7 @@ func TestRelationSealHasNoStructuralDepthLimit(t *testing.T) {
 		descriptors: DefaultDescriptorRegistry(),
 		shape:       Shape{},
 		nodes:       nodes,
-		outcomes: []boundaryOutcomeTuple{{}, {
-			preserved: newBoundaryPreservationLedger(0, 0), returnTransaction: testReturnTransactionTerm(t, 1),
-		}},
+		outcomes:    []boundaryOutcomeTuple{{}, {returnTransaction: testReturnTransactionTerm(t, 1)}},
 	}
 	sealed, root, err := sealRelationCode(code, 1)
 	if err != nil {
