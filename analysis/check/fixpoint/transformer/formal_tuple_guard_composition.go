@@ -139,64 +139,123 @@ func (a *formalTupleAlgebra) composeGuardBoundary(tuple formalRelationTuple, bou
 			return fail(err)
 		}
 	}
-	var groupsMark formalRelationEvalTracePhaseMark
-	if traceDetail != nil {
-		groupsMark = beginFormalRelationEvalTracePhase(a)
-	}
-	grouped := make([]bool, span.count)
-	groups := span.groupDescriptors()
-	for _, group := range groups {
-		if !group.valid() || group.variable != tuple.variable {
-			return fail(errFormalComponentForeignOwner)
-		}
-		for _, ordinal := range group.members {
-			if ordinal == 0 || int(ordinal) >= len(grouped) || grouped[ordinal] {
-				return fail(errFormalComponentMalformed)
-			}
-			grouped[ordinal] = true
-		}
-	}
-	if traceDetail != nil {
-		finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeGroups, groupsMark)
-	}
 	closed := mapped
 	if len(boundary.close.ranks) != 0 {
 		var closeMark formalRelationEvalTracePhaseMark
 		if traceDetail != nil {
 			closeMark = beginFormalRelationEvalTracePhase(a)
 		}
-		closedCare, closedRoots, closeErr := a.closeGuardedDecisionVector(mapped[0], mapped[1:], boundary.close,
-			func(leftCare decisionRef, left []decisionRef, rightCare decisionRef, right []decisionRef) ([]decisionRef, error) {
-				var joinMark formalRelationEvalTracePhaseMark
-				if traceDetail != nil {
-					joinMark = beginFormalRelationEvalTracePhase(a)
-					traceDetail.guardComposeCloseJoins++
-				}
-				joined, joinErr := a.joinGuardedTupleRoots(span, authority, descriptors, groups, grouped, leftCare, left, rightCare, right)
-				if traceDetail != nil {
-					finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeJoin, joinMark)
-				}
-				return joined, joinErr
-			})
-		if traceDetail != nil {
-			finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeClose, closeMark)
-		}
+		closedCare, closeErr := boundary.closeBoolean(a.ctx, &a.decisions, mapped[0])
 		if closeErr != nil {
 			return fail(closeErr)
 		}
-		if len(closedRoots) != len(mapped)-1 {
-			return fail(errDecisionMalformed)
-		}
-		closed = make([]decisionRef, len(mapped))
+		closed = append([]decisionRef(nil), mapped...)
 		closed[0] = closedCare
-		copy(closed[1:], closedRoots)
+
+		var groupsMark formalRelationEvalTracePhaseMark
+		if traceDetail != nil {
+			groupsMark = beginFormalRelationEvalTracePhase(a)
+		}
+		grouped := make([]bool, span.count)
+		groups := span.groupDescriptors()
+		for _, group := range groups {
+			if !group.valid() || group.variable != tuple.variable {
+				return fail(errFormalComponentForeignOwner)
+			}
+			roots := make([]decisionRef, len(group.members))
+			for index, ordinal := range group.members {
+				if ordinal == 0 || int(ordinal) >= len(grouped) || grouped[ordinal] {
+					return fail(errFormalComponentMalformed)
+				}
+				grouped[ordinal] = true
+				roots[index] = mapped[ordinal]
+			}
+			localCare, localRoots, localErr := a.closeGuardedDecisionVector(mapped[0], roots, boundary.close,
+				func(leftCare decisionRef, left []decisionRef, rightCare decisionRef, right []decisionRef) ([]decisionRef, error) {
+					var joinMark formalRelationEvalTracePhaseMark
+					if traceDetail != nil {
+						joinMark = beginFormalRelationEvalTracePhase(a)
+						traceDetail.guardComposeCloseJoins++
+					}
+					joined, joinErr := a.joinGuardedGroupRoots(span, authority, group, leftCare, left, rightCare, right)
+					if traceDetail != nil {
+						finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeJoin, joinMark)
+					}
+					return joined, joinErr
+				})
+			if localErr != nil {
+				return fail(localErr)
+			}
+			if localCare != closedCare || len(localRoots) != len(group.members) {
+				return fail(errDecisionMalformed)
+			}
+			for index, ordinal := range group.members {
+				closed[ordinal] = localRoots[index]
+			}
+		}
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeGroups, groupsMark)
+		}
+
+		for ordinal, descriptor := range descriptors {
+			if ordinal == 0 || grouped[ordinal] {
+				continue
+			}
+			localCare, localRoots, localErr := a.closeGuardedDecisionVector(mapped[0], []decisionRef{mapped[ordinal]}, boundary.close,
+				func(leftCare decisionRef, left []decisionRef, rightCare decisionRef, right []decisionRef) ([]decisionRef, error) {
+					if len(left) != 1 || len(right) != 1 {
+						return nil, errDecisionMalformed
+					}
+					var joinMark formalRelationEvalTracePhaseMark
+					if traceDetail != nil {
+						joinMark = beginFormalRelationEvalTracePhase(a)
+						traceDetail.guardComposeCloseJoins++
+					}
+					joined, joinErr := a.decisions.applyUnderCare(
+						a.ctx, formalTupleGuardJoinOp, true,
+						leftCare, left[0], rightCare, right[0],
+						func(leftLeaf, rightLeaf decisionLeaf) (decisionLeaf, error) {
+							leftLeaf, leafErr := a.componentLeaf(authority, descriptor, leftLeaf)
+							if leafErr != nil {
+								return 0, leafErr
+							}
+							rightLeaf, leafErr = a.componentLeaf(authority, descriptor, rightLeaf)
+							if leafErr != nil {
+								return 0, leafErr
+							}
+							if leftLeaf < 2 || rightLeaf < 2 {
+								return a.combineAbsent(formalComponentJoin, descriptor, leftLeaf, rightLeaf)
+							}
+							return authority.combine(a.ctx, formalComponentJoin, leftLeaf, rightLeaf)
+						},
+					)
+					if traceDetail != nil {
+						finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeJoin, joinMark)
+						finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeScalarJoin, joinMark)
+					}
+					if joinErr != nil {
+						return nil, joinErr
+					}
+					return []decisionRef{joined}, nil
+				})
+			if localErr != nil {
+				return fail(localErr)
+			}
+			if localCare != closedCare || len(localRoots) != 1 {
+				return fail(errDecisionMalformed)
+			}
+			closed[ordinal] = localRoots[0]
+		}
+		if traceDetail != nil {
+			finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeClose, closeMark)
+		}
 	}
 
 	var validateMark formalRelationEvalTracePhaseMark
 	if traceDetail != nil {
 		validateMark = beginFormalRelationEvalTracePhase(a)
 	}
-	writes := make([]formalFiberWrite, len(descriptors))
+	writes := make([]formalFiberWrite, 0, len(descriptors))
 	if err := boundary.owner.validateDecisionRootVector(&a.decisions, closed, boundary.close); err != nil {
 		return fail(err)
 	}
@@ -205,10 +264,16 @@ func (a *formalTupleAlgebra) composeGuardBoundary(tuple formalRelationTuple, bou
 		if err := a.validateDescriptorRoot(authority, descriptor, root); err != nil {
 			return fail(err)
 		}
-		writes[ordinal] = formalFiberWrite{ordinal: formalFiberOrdinal(ordinal), value: formalFiberValue(root)}
+		if root != original[ordinal] {
+			writes = append(writes, formalFiberWrite{ordinal: formalFiberOrdinal(ordinal), value: formalFiberValue(root)})
+		}
 	}
 	if traceDetail != nil {
 		finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposeValidate, validateMark)
+	}
+	if len(writes) == 0 {
+		a.decisions.rollback(mark)
+		return tuple, nil
 	}
 	var publishMark formalRelationEvalTracePhaseMark
 	if traceDetail != nil {
@@ -517,82 +582,6 @@ func (a *formalTupleAlgebra) closeGuardedDecisionVector(
 		return 0, nil, errDecisionMalformed
 	}
 	return out.care, out.roots, nil
-}
-
-// joinGuardedTupleRoots performs one whole-product Join at an eliminated guard
-// branch. Group members are reconstructed and joined together; ungrouped
-// descriptors use their terminal authority. Adding a registered axis adds its
-// leaf work here, never another traversal of the guard graph.
-func (a *formalTupleAlgebra) joinGuardedTupleRoots(
-	span formalFiberDescriptorSpan,
-	authority *formalComponentTerminalAuthority,
-	descriptors []formalFiberDescriptor,
-	groups []formalFiberGroupDescriptor,
-	grouped []bool,
-	leftCare decisionRef,
-	left []decisionRef,
-	rightCare decisionRef,
-	right []decisionRef,
-) ([]decisionRef, error) {
-	if len(descriptors) == 0 || len(left) != len(descriptors)-1 || len(right) != len(left) || len(grouped) != len(descriptors) {
-		return nil, errFormalComponentMalformed
-	}
-	out := make([]decisionRef, len(left))
-	for _, group := range groups {
-		leftGroup := make([]decisionRef, len(group.members))
-		rightGroup := make([]decisionRef, len(group.members))
-		for index, ordinal := range group.members {
-			if ordinal == 0 || int(ordinal) >= len(descriptors) || !grouped[ordinal] {
-				return nil, errFormalComponentMalformed
-			}
-			leftGroup[index], rightGroup[index] = left[ordinal-1], right[ordinal-1]
-		}
-		joined, err := a.joinGuardedGroupRoots(span, authority, group, leftCare, leftGroup, rightCare, rightGroup)
-		if err != nil || len(joined) != len(group.members) {
-			if err == nil {
-				err = errFormalComponentMalformed
-			}
-			return nil, err
-		}
-		for index, ordinal := range group.members {
-			out[ordinal-1] = joined[index]
-		}
-	}
-	for ordinal, descriptor := range descriptors {
-		if ordinal == 0 || grouped[ordinal] {
-			continue
-		}
-		var scalarMark formalRelationEvalTracePhaseMark
-		if a.evalTrace != nil && a.evalTrace.active != nil {
-			scalarMark = beginFormalRelationEvalTracePhase(a)
-		}
-		joined, err := a.decisions.applyUnderCare(
-			a.ctx, formalTupleGuardJoinOp, true,
-			leftCare, left[ordinal-1], rightCare, right[ordinal-1],
-			func(leftLeaf, rightLeaf decisionLeaf) (decisionLeaf, error) {
-				leftLeaf, leafErr := a.componentLeaf(authority, descriptor, leftLeaf)
-				if leafErr != nil {
-					return 0, leafErr
-				}
-				rightLeaf, leafErr = a.componentLeaf(authority, descriptor, rightLeaf)
-				if leafErr != nil {
-					return 0, leafErr
-				}
-				if leftLeaf < 2 || rightLeaf < 2 {
-					return a.combineAbsent(formalComponentJoin, descriptor, leftLeaf, rightLeaf)
-				}
-				return authority.combine(a.ctx, formalComponentJoin, leftLeaf, rightLeaf)
-			},
-		)
-		if a.evalTrace != nil && a.evalTrace.active != nil {
-			finishFormalRelationEvalTracePhase(a, &a.evalTrace.active.guardComposeScalarJoin, scalarMark)
-		}
-		if err != nil {
-			return nil, err
-		}
-		out[ordinal-1] = joined
-	}
-	return out, nil
 }
 
 func (a *formalTupleAlgebra) joinGuardedGroupRoots(
