@@ -62,6 +62,7 @@ type formalRelationEvalTraceDetail struct {
 	externalCallPlan                                           *formalExternalCallStep
 	externalCallProviderInputs, externalCallProviderRoots      int
 	externalCallProviderRegions, externalCallProviderEvals     int
+	externalCallDistinctProviderInputs                         int
 	externalCallCommitRoots, externalCallCommitRegions         int
 	externalCallPublicationConditions, externalCallDeltaWrites int
 	externalCallProviderSupport, externalCallOutcomeSupport    []uint32
@@ -261,11 +262,12 @@ func (t *formalRelationEvalTrace) evaluate(
 	}
 	if detail.externalCallPlan != nil {
 		fmt.Fprintf(os.Stderr,
-			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_support=%v provider_regions=%d provider_evals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
+			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_support=%v provider_regions=%d distinct_provider_inputs=%d provider_evals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
 			sequence, detail.externalCallPlan.point,
 			detail.externalCallProviderInputs, detail.externalCallProviderRoots,
 			detail.externalCallProviderSupport, detail.externalCallProviderRegions,
-			detail.externalCallProviderEvals, detail.externalCallOutcomeSupport,
+			detail.externalCallDistinctProviderInputs, detail.externalCallProviderEvals,
+			detail.externalCallOutcomeSupport,
 			detail.externalCallCommitRoots, detail.externalCallCommitSupport,
 			detail.externalCallCommitRegions, detail.externalCallPublicationConditions,
 			detail.externalCallDeltaWrites,

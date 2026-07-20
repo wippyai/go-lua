@@ -1064,6 +1064,64 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProvider(
 	return callpayload.NormalizeCallOutcome(plan.program.registry, outcome), nil
 }
 
+// countDistinctFormalExternalCallInputs is trace-only cardinality accounting
+// for the exact provider relation. Region guard identity is deliberately not
+// part of the key: only the representation-interned projection terminals,
+// derived observation terminals, and demanded guard truth leaves can affect
+// provider evaluation. Hash collisions are resolved by complete vector
+// equality, so the count never relies on a probabilistic identity.
+func (a *formalTupleAlgebra) countDistinctFormalExternalCallInputs(
+	plan *formalExternalCallStep,
+	regions []formalSparseLeafPartition,
+) (int, error) {
+	if a == nil || plan == nil || !plan.sealed {
+		return 0, errFormalComponentForeignOwner
+	}
+	buckets := make(map[uint64][][]decisionLeaf)
+	distinct := 0
+	for _, region := range regions {
+		if len(region.views) != len(plan.wires) || len(region.views) == 0 {
+			return 0, errFormalComponentMalformed
+		}
+		width := len(plan.guardDemands)
+		for _, view := range region.views {
+			width += len(view.leaves) + len(view.derived)
+		}
+		vector := make([]decisionLeaf, 0, width)
+		for _, view := range region.views {
+			vector = append(vector, view.leaves...)
+			vector = append(vector, view.derived...)
+		}
+		for _, demand := range plan.guardDemands {
+			truth, falsity, exact := region.views[0].exactGuard(
+				demand.owner, demand.arena, demand.scope, demand.guard,
+			)
+			if !exact || truth == falsity {
+				return 0, errDecisionMalformed
+			}
+			if truth {
+				vector = append(vector, 1)
+			} else {
+				vector = append(vector, 0)
+			}
+		}
+		hash := formalFactorLeafHash(vector)
+		duplicate := false
+		for _, prior := range buckets[hash] {
+			if formalFactorLeavesEqual(prior, vector) {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		buckets[hash] = append(buckets[hash], vector)
+		distinct++
+	}
+	return distinct, nil
+}
+
 func (a *formalTupleAlgebra) materializeFormalSelectedLane(
 	view formalSparseLeafView,
 	plan formalSelectedFactorLane,
@@ -1352,6 +1410,9 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 		traceDetail.externalCallProviderRoots = len(providerRoots)
 		traceDetail.externalCallProviderSupport = formalRelationTraceSupportRanks(&a.decisions, providerRoots...)
 		traceDetail.externalCallProviderRegions = len(inputRegions)
+		if err == nil {
+			traceDetail.externalCallDistinctProviderInputs, err = a.countDistinctFormalExternalCallInputs(plan, inputRegions)
+		}
 		finishFormalRelationEvalTracePhase(a, &traceDetail.externalCallInput, inputMark)
 	}
 	if err != nil {
