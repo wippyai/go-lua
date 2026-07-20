@@ -1,7 +1,6 @@
 package factapply
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -12,18 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
-
-func appendStaticMemberSuffix(ks *keyspace.KeySpace, base keyspace.Key, suffix []segment.Segment) (keyspace.Key, bool) {
-	out := base
-	for _, seg := range suffix {
-		next, ok := ks.AppendSegment(out, seg)
-		if !ok {
-			return keyspace.Key{}, false
-		}
-		out = next
-	}
-	return out, true
-}
 
 func applyPathDescendantInvalidation(
 	ctx transfer.NodeContext,

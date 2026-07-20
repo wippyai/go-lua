@@ -3,7 +3,6 @@ package factapply
 import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 )
 
@@ -18,17 +17,6 @@ func channelSelectKind(kind factflow.ChannelSelectKind) (channelselectfact.Kind,
 	default:
 		return 0, false
 	}
-}
-
-func applyNormalReturnChannelSelects(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, event := range ctx.normalFacts.ChannelSelects {
-		fact, ok := callChannelSelectFactAt(ctx, event)
-		if !ok {
-			continue
-		}
-		out = out.AddChannelSelectFact(fact)
-	}
-	return out
 }
 
 func callChannelSelectFactAt(

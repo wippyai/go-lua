@@ -112,17 +112,6 @@ func presenceLocationsConflict(keys *keyspace.KeySpace, writer presenceImplicati
 	return false
 }
 
-func presencePathRootSlot(path keyspace.Key) statekey.Value {
-	switch path.Kind {
-	case keyspace.KindResolverSym, keyspace.KindUnversionedSym, keyspace.KindStableSym:
-		return statekey.SymbolValue(path.Sym)
-	case keyspace.KindRetSlot:
-		return statekey.ReturnSlot(int(path.Root))
-	default:
-		return 0
-	}
-}
-
 // presenceImplicationSCCs builds the exact directional RAW/WAW schedule for a
 // sealed implication inventory. Shared read-only triggers create no edge.
 func presenceImplicationSCCs(

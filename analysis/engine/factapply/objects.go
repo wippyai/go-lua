@@ -52,31 +52,6 @@ func ObjectLiteralListLengthFloor(literal factflow.ObjectLiteralView) int64 {
 	return objectLiteralContiguousListLengthFloor(literal)
 }
 
-// materializeObjectLiteralHeapBatchCached resolves one ordered set of object-
-// literal roots into the callback-free ResolvedPathStoreObject vocabulary and
-// publishes the complete graph through the sole resolved heap kernel. One
-// source cache and one active/done traversal are shared by the whole batch, so
-// repeated call arguments and shared nested literals are evaluated exactly
-// once. Resolution is atomic: no heap is published unless every reachable
-// literal is well formed and acyclic.
-func materializeObjectLiteralHeapBatchCached(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	sources sourcevalue.SourceValues,
-	read func(cfg.Point) state.State,
-	in state.State,
-	out state.State,
-	roots []factflow.ValueSource,
-	typeValues *typevalue.Cache,
-) (state.State, *objectLiteralSourceCache) {
-	if sources == nil || resolver == nil {
-		return out, nil
-	}
-	cache := newObjectLiteralSourceCache(ctx.Point, sources, read, in, out)
-	return materializeObjectLiteralHeapBatchWithCache(ctx, resolver, facts.ObjectLiteralView, out, roots, typeValues, cache), cache
-}
-
 func materializeObjectLiteralHeapBatchWithCache(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,

@@ -79,25 +79,6 @@ func writeLocalPathKeyWithStaticStringAliasEdit(
 	}
 }
 
-func dedupeKeyspaceKeys(in []keyspace.Key) []keyspace.Key {
-	if len(in) < 2 {
-		return in
-	}
-	seen := make(map[keyspace.Key]struct{}, len(in))
-	out := in[:0]
-	for _, key := range in {
-		if key.Kind == keyspace.KindInvalid {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, key)
-	}
-	return out
-}
-
 func invalidatePathSubtreeAt(
 	s state.State,
 	resolver *visibility.Resolver,

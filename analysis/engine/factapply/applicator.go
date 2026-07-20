@@ -4,13 +4,9 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -76,40 +72,4 @@ func tokenOf(session *cancellation.Session) *cancellation.Token {
 
 func stateIsBottom(reg *axis.Registry, st state.State) bool {
 	return state.IsBottom(reg, st)
-}
-
-func unreachableState(reg *axis.Registry) state.State {
-	return state.Domain(reg).Bottom()
-}
-
-func branchTruthyEvidenceContradictsCurrentValue(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-) bool {
-	current, ok := branchFeasibilityValue(typeValues, reg, resolver, projectPath, point, out, targetPath)
-	if !ok {
-		return false
-	}
-	return !valuerefine.CanBeTruthy(reg, current)
-}
-
-func branchFalsyEvidenceContradictsCurrentValue(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-) bool {
-	current, ok := branchFeasibilityValue(typeValues, reg, resolver, projectPath, point, out, targetPath)
-	if !ok {
-		return false
-	}
-	return !valuerefine.CanBeFalsy(reg, current)
 }

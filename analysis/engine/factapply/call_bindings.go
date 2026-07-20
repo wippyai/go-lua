@@ -25,19 +25,6 @@ func callPlaceholderBindings(facts factflow.Facts, resolver *visibility.Resolver
 	return bindings
 }
 
-func callArgumentPlaceholderBindings(facts factflow.Facts, resolver *visibility.Resolver, site factflow.CallSiteView) []pathdom.Path {
-	var bindings []pathdom.Path
-	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		sourcePath, ok := callSourcePath(facts, resolver, source)
-		if !ok || sourcePath.IsEmpty() {
-			return true
-		}
-		bindings = bindPlaceholderPath(bindings, i, sourcePath)
-		return true
-	})
-	return bindings
-}
-
 func callSourcePath(facts factflow.Facts, resolver *visibility.Resolver, source factflow.ValueSource) (pathdom.Path, bool) {
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
 		return facts.ExpressionPathRef(source.ExprRef)

@@ -272,33 +272,6 @@ func rootRefinementCanKeepDescendants(reg *axis.Registry, typeValues *typevalue.
 	return true
 }
 
-// branchFeasibilityValue has one authority for a lexical root: the canonical
-// SymbolValue slot. Routing the same root through point-local path projection
-// can expose a weaker structural spelling and lose its type witness. Descendant
-// paths still require resolver projection because they have no scalar slot.
-func branchFeasibilityValue(
-	typeValues *typevalue.Cache,
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-) (product.Value, bool) {
-	if reg == nil || targetPath.Symbol == 0 {
-		return product.Value{}, false
-	}
-	if len(targetPath.Segments) == 0 {
-		value := out.ReadValue(reg, key.SymbolValue(targetPath.Symbol))
-		return value, !product.Equal(reg, value, product.Bottom(reg))
-	}
-	current, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, targetPath, projectPath)
-	if !ok || product.Equal(reg, current.value, product.Bottom(reg)) {
-		return product.Value{}, false
-	}
-	return current.value, true
-}
-
 func refineProductValue(reg *axis.Registry, value product.Value, refinement factflow.ValueRefinement) product.Value {
 	constraint, ok := refinement.Constraint()
 	if !ok {

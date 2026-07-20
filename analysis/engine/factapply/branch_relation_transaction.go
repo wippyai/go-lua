@@ -490,52 +490,6 @@ func (t BranchRelationTransaction) ValidForRegistry(reg *axis.Registry) bool {
 	return true
 }
 
-func (t BranchRelationTransaction) ready(reg *axis.Registry) bool {
-	if !t.ValidForRegistry(reg) {
-		return false
-	}
-	for _, step := range t.steps {
-		if step.kind == BranchRelationStepDynamicPresence && (!step.dynamic.keyBound || !product.BelongsToRegistry(reg, step.dynamic.key)) {
-			return false
-		}
-	}
-	return true
-}
-
-func (t BranchRelationTransaction) executableWithoutVisibility() bool {
-	for _, refinement := range t.refinements {
-		if len(refinement.TargetPathRef().Segments) != 0 {
-			return false
-		}
-	}
-	for _, step := range t.steps {
-		switch step.kind {
-		case BranchRelationStepPresence:
-			if len(step.presence.TriggerPathRef().Segments) != 0 || len(step.presence.TargetPathRef().Segments) != 0 {
-				return false
-			}
-		case BranchRelationStepPath:
-			if len(step.path.LeftPath().Segments) != 0 || len(step.path.RightPath().Segments) != 0 {
-				return false
-			}
-		case BranchRelationStepEvidence:
-			if step.evidence.Kind() != factflow.BranchPathEvidenceTruthy &&
-				(step.evidence.Kind() != factflow.BranchPathEvidenceFrozenTable || len(step.evidence.PathRef().Segments) != 0) {
-				return false
-			}
-		case BranchRelationStepSufficientLiteralCase:
-			// Converse-only metadata is not executed on the selected edge.
-		case BranchRelationStepLengthFloor, BranchRelationStepNumericFloor,
-			BranchRelationStepNumericCeiling, BranchRelationStepDifference,
-			BranchRelationStepDynamicPresence:
-			return false
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // Step returns one immutable transaction member without exposing the backing
 // slice. Payload path accessors return detached paths at their own boundary.
 func (t BranchRelationTransaction) Step(index int) (BranchRelationStep, bool) {

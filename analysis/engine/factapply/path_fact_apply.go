@@ -120,23 +120,6 @@ func closeCongruenceAcrossEquality(reg *axis.Registry, ks *keyspace.KeySpace, ou
 	return out
 }
 
-func closeBranchProofsAcrossEquality(ks *keyspace.KeySpace, out state.State, aKey, bKey keyspace.Key) state.State {
-	if ks == nil || aKey == bKey {
-		return out
-	}
-	proofs := out.BranchProofsSnapshot(ks).Proofs
-	synthetic := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: aKey, Other: bKey}
-	proofs = append(proofs, synthetic)
-	closed := pathevidence.CloseBranchProofsAcrossKnownEqualities(ks, proofs)
-	additions := closed[:0]
-	for _, proof := range closed {
-		if proof != synthetic {
-			additions = append(additions, proof)
-		}
-	}
-	return out.AddBranchProofs(additions)
-}
-
 func closeBranchProofsAcrossKnownEqualities(ks *keyspace.KeySpace, out state.State) state.State {
 	if ks == nil {
 		return out

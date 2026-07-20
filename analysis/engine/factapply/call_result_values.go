@@ -50,7 +50,3 @@ func returnSourceValue(
 	}
 	return sources.ValueOfSource(ctx.Point, source, out, readWithCurrentPointState(ctx.Point, read, out))
 }
-
-func emptyStateRead(cfg.Point) state.State {
-	return state.State{}
-}

@@ -17,29 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/symbol"
 )
-
-func applyPathValuePresenceImplication(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	fact factflow.PathValuePresenceImplication,
-) state.State {
-	implication, ok := pathValuePresenceImplicationAt(ctx, resolver, fact)
-	if !ok {
-		return out
-	}
-	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
-		Registry:     ctx.Registry,
-		Resolver:     resolver,
-		Point:        ctx.Point,
-		Output:       out,
-		Publications: []pathevidence.PathPresenceImplication{implication},
-		Token:        tokenOf(ctx.Session),
-	})
-	return result.Output
-}
 
 func pathValuePresenceImplicationAt(
 	ctx transfer.NodeContext,
@@ -481,55 +459,6 @@ func presenceImplicationTargetInvalidatesDescendants(implication pathevidence.Pa
 	return presence.Equal(targetPresence, presence.Absent())
 }
 
-func readPathKeyPresence(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	pathKey pathdom.PathKey,
-) (presence.Value, bool) {
-	value, ok := readPathKeyValue(reg, resolver, point, out, pathKey)
-	if !ok {
-		return presence.Bottom(), false
-	}
-	return product.PresenceOf(value), true
-}
-
-func readPathKeyValue(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	pathKey pathdom.PathKey,
-) (product.Value, bool) {
-	if !pathKeyCurrentlyVisible(resolver, point, pathKey) {
-		return product.Value{}, false
-	}
-	if slot, ok := rootValueSlotForResolverPathKey(resolver.KeySpace(), pathKey); ok {
-		return out.ReadValue(reg, slot), true
-	}
-	return out.ReadPathKey(reg, resolver.KeySpace(), pathKey), true
-}
-
-func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pathKey pathdom.PathKey) bool {
-	if resolver == nil {
-		return false
-	}
-	k, ok := resolver.KeySpace().FromStateKey(pathKey)
-	if !ok {
-		return true
-	}
-	if k.Kind == keyspace.KindUnversionedSym && k.Segs == 0 && k.Sym != 0 {
-		return true
-	}
-	segments, ok := resolver.KeySpace().SegmentsView(k)
-	if !ok {
-		return false
-	}
-	current := factPathKeyAt(resolver, point, pathdom.Path{Symbol: k.Sym, Segments: segments})
-	return current == pathKey
-}
-
 func pathKeyCurrentlyVisibleKey(resolver *visibility.Resolver, point cfg.Point, pathKey keyspace.Key) bool {
 	if resolver == nil || pathKey.Kind == keyspace.KindInvalid {
 		return false
@@ -543,44 +472,6 @@ func pathKeyCurrentlyVisibleKey(resolver *visibility.Resolver, point cfg.Point, 
 	}
 	current, ok := factKeyspaceKeyAt(resolver, point, pathdom.Path{Symbol: pathKey.Sym, Segments: segments})
 	return ok && current == pathKey
-}
-
-func rootSymbolForResolverPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (symbol.ID, bool) {
-	k, ok := ks.FromStateKey(pathKey)
-	if !ok || k.Segs != 0 {
-		return 0, false
-	}
-	return k.Sym, k.Sym != 0
-}
-
-func rootSymbolForResolverKey(pathKey keyspace.Key) (symbol.ID, bool) {
-	if pathKey.Segs != 0 {
-		return 0, false
-	}
-	return pathKey.Sym, pathKey.Sym != 0
-}
-
-func rootValueSlotForResolverPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (key.Value, bool) {
-	k, ok := ks.FromStateKey(pathKey)
-	if !ok {
-		return 0, false
-	}
-	return rootValueSlotForResolverKey(k)
-}
-
-func rootValueSlotForResolverKey(pathKey keyspace.Key) (key.Value, bool) {
-	if pathKey.Segs != 0 {
-		return 0, false
-	}
-	switch pathKey.Kind {
-	case keyspace.KindResolverSym, keyspace.KindUnversionedSym, keyspace.KindStableSym:
-		slot := key.SymbolValue(pathKey.Sym)
-		return slot, slot != 0
-	case keyspace.KindRetSlot:
-		return key.ReturnSlot(int(pathKey.Root)), true
-	default:
-		return 0, false
-	}
 }
 
 func rootValueDependencyForKey(keys *keyspace.KeySpace, path keyspace.Key) (key.ValueDependency, bool) {

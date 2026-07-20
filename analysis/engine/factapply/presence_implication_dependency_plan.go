@@ -756,15 +756,6 @@ func appendUniqueCoordinateSlot(domain state.ProductDomain, out []state.Coordina
 	return append(out, value)
 }
 
-func appendUniqueValueSlot(out []statekey.Value, value statekey.Value) []statekey.Value {
-	for _, prior := range out {
-		if prior == value {
-			return out
-		}
-	}
-	return append(out, value)
-}
-
 func appendUniqueValueDependency(out []statekey.ValueDependency, value statekey.ValueDependency) []statekey.ValueDependency {
 	if !value.Valid() {
 		return out

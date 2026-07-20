@@ -435,16 +435,6 @@ type branchProgramBuilder struct {
 	hasDynamic  bool
 }
 
-// prepareBranchTransaction lowers immutable branch syntax exactly once. This is
-// the only BranchRelationStepKind switch in the execution architecture.
-func (a *PathSemanticAuthority) prepareBranchTransaction(
-	domain state.ProductDomain,
-	transaction BranchRelationTransaction,
-	inventory state.CoordinateFactorInventory,
-) (preparedBranchTransaction, error) {
-	return a.prepareBranchTransactionMode(domain, transaction, inventory, false)
-}
-
 // PrepareBranchRelationFactors freezes the transaction-owned factor and stage
 // declaration. An unbound dynamic key is represented by the registered whole
 // path family; executable preparation still requires the exact key binding.
@@ -619,14 +609,6 @@ func (b *branchProgramBuilder) root(path pathdom.Path) (keyspace.Key, bool) {
 func (b *branchProgramBuilder) lane(id state.LaneID) []state.ProductLane {
 	lane, ok := b.domain.ProductLane(id)
 	if !ok || lane.ID() == state.LaneValues || lane.ID() == state.LanePathEvidence {
-		return nil
-	}
-	return []state.ProductLane{lane}
-}
-
-func (b *branchProgramBuilder) wholeLane(id state.LaneID) []state.ProductLane {
-	lane, ok := b.domain.ProductLane(id)
-	if !ok {
 		return nil
 	}
 	return []state.ProductLane{lane}

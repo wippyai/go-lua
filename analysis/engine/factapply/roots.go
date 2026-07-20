@@ -7,15 +7,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -195,33 +191,6 @@ func closedDynamicRootAssignmentMemberships(
 	return memberships
 }
 
-func rootPathHasFreshEmptyTable(domain state.ProductDomain, keys *keyspace.KeySpace, st state.State, root pathdom.Path) bool {
-	if !domain.Valid() || keys == nil || root.Symbol == 0 || len(root.Segments) != 0 {
-		return false
-	}
-	fresh, err := domain.RootAssignmentFreshEmptyState(keys, st, key.SymbolValue(root.Symbol))
-	return err == nil && fresh
-}
-
-func rootPathDynamicValueKeyMembershipTables(reg *axis.Registry, st state.State, root pathdom.Path, container keyspace.Key) []pathaddr.StateKey {
-	if reg == nil || root.Symbol == 0 || len(root.Segments) != 0 {
-		return nil
-	}
-	value := st.ReadSymbolValue(reg, root.Symbol)
-	id, ok := identityvalue.ExactID(reg, value)
-	if !ok {
-		return nil
-	}
-	object := st.ReadHeapTableObject(reg, id)
-	if heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)) {
-		return nil
-	}
-	if !product.Equal(reg, object.Root(), value) || len(object.StaticMembers()) != 0 {
-		return nil
-	}
-	return dynamicIndexValueCommonKeyMembershipTablesFromFacts(reg, st, container, object.DynamicIndexFacts())
-}
-
 func dynamicIndexExpressionKeyPath(resolver *visibility.Resolver, facts factflow.Facts, dyn factflow.DynamicIndexExpression) (pathdom.Path, bool) {
 	p, ok := sourcePathFromValueSource(resolver, facts, dyn.KeySource())
 	if !ok || p.IsEmpty() || p.Symbol == 0 {
@@ -238,51 +207,6 @@ func forEachDynamicIndexTableKeyAt(resolver *visibility.Resolver, point cfg.Poin
 		visibility.StateKeyVisible,
 		visibility.StateKeyRootOrVisible,
 	)
-}
-
-func dynamicIndexValueCommonKeyMembershipTablesFromFacts(reg *axis.Registry, st state.State, container keyspace.Key, facts map[dynamicindex.Key]dynamicindex.Fact) []pathaddr.StateKey {
-	if len(facts) == 0 {
-		return nil
-	}
-	domain := product.Domain(reg)
-	common := map[pathaddr.StateKey]struct{}{}
-	foundValueSource := false
-	for dynamicKey, fact := range facts {
-		if dynamicKey.Table != container || fact.Admission == dynamicindex.AdmissionRejected ||
-			domain.Equal(fact.Value, domain.Bottom()) ||
-			presence.Equal(product.PresenceOf(fact.Value), presence.Absent()) {
-			continue
-		}
-		tables := st.DynamicIndexValueKeyMembershipTables(container, dynamicKey.Site)
-		if len(tables) == 0 {
-			return nil
-		}
-		if !foundValueSource {
-			for _, table := range tables {
-				common[table] = struct{}{}
-			}
-			foundValueSource = true
-			continue
-		}
-		next := make(map[pathaddr.StateKey]struct{}, len(common))
-		for _, table := range tables {
-			if _, ok := common[table]; ok {
-				next[table] = struct{}{}
-			}
-		}
-		common = next
-		if len(common) == 0 {
-			return nil
-		}
-	}
-	if !foundValueSource {
-		return nil
-	}
-	out := make([]pathaddr.StateKey, 0, len(common))
-	for table := range common {
-		out = append(out, table)
-	}
-	return out
 }
 
 func prepareRootAssignmentCompletion(

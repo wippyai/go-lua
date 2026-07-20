@@ -25,22 +25,18 @@ type PathStoreTransaction struct {
 	hasAssign           bool
 	hasStatic           bool
 	expressionPaths     map[factflow.ExprRef]pathdom.Path
-	dynamicIndexes      map[factflow.ExprRef]factflow.DynamicIndexExpression
 	objects             map[factflow.ExprRef]factflow.ObjectLiteralView
 	exposures           []factflow.CovariantExposure
 	staticHasAnnotation bool
 	deferredPresence    bool
-	presence            pathStorePresencePlan
 }
 
 func PlanPathStoreTransaction(facts factflow.Facts, point cfg.Point) (PathStoreTransaction, bool) {
 	return planPathStoreTransaction(facts, nil, point)
 }
 
-// PlanPathStoreTransactionWithGraph additionally freezes the call-result
-// presence pairs whose assignment-group barrier is point. The graph is a
-// planning dependency only; Apply never consults Facts or rediscovers CFG
-// ownership.
+// PlanPathStoreTransactionWithGraph plans a PathStoreTransaction for callers
+// that already hold the point's CFG.
 func PlanPathStoreTransactionWithGraph(facts factflow.Facts, graph cfg.Graph, point cfg.Point) (PathStoreTransaction, bool) {
 	return planPathStoreTransaction(facts, graph, point)
 }
@@ -66,9 +62,6 @@ func planPathStoreTransaction(facts factflow.Facts, graph cfg.Graph, point cfg.P
 	if root, ok := facts.RootAssignment(point); ok {
 		source := root.Source()
 		t.deferredPresence = source.Kind == factflow.ValueSourceCall && source.HasCallPoint
-		if t.deferredPresence && graph != nil {
-			t.presence = freezePathStorePresencePlan(graph, facts, point, source.CallPoint)
-		}
 	}
 	seen := make(map[factflow.ValueSource]bool)
 	validObjects := true
@@ -92,10 +85,6 @@ func planPathStoreTransaction(facts factflow.Facts, graph cfg.Graph, point cfg.P
 				t.expressionPaths[source.ExprRef] = p
 			}
 			if dynamic, ok := facts.DynamicIndexExpression(source.ExprRef); ok {
-				if t.dynamicIndexes == nil {
-					t.dynamicIndexes = make(map[factflow.ExprRef]factflow.DynamicIndexExpression)
-				}
-				t.dynamicIndexes[source.ExprRef] = dynamic
 				freezeSource(dynamic.KeySource())
 			}
 		}
@@ -170,52 +159,6 @@ func freezeObjectLiteralView(view factflow.ObjectLiteralView) factflow.ObjectLit
 		owned = owned.WithExpressionID(id)
 	}
 	return owned.View()
-}
-
-type pathStorePresencePair struct {
-	trigger int
-	target  int
-}
-
-type pathStorePresencePlan struct {
-	callPoint cfg.Point
-	site      factflow.CallSiteView
-	pairs     map[pathStorePresencePair]struct{}
-}
-
-func freezePathStorePresencePlan(graph cfg.Graph, facts factflow.Facts, point, callPoint cfg.Point) pathStorePresencePlan {
-	site, ok := facts.CallSiteView(callPoint)
-	if !ok || site.ResultTargetCount() == 0 {
-		return pathStorePresencePlan{}
-	}
-	cache := new(callOutcomeTraversalCache)
-	cache.resetForGraph(graph)
-	plan := pathStorePresencePlan{callPoint: callPoint, site: site}
-	site.ForEachResultTarget(func(trigger factflow.CallResultTargetView) bool {
-		if !callOutcomeRelatableTarget(trigger) {
-			return true
-		}
-		triggerPoint, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, trigger, trigger.ResultIndex())
-		if !ok {
-			return true
-		}
-		site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
-			if !callOutcomeRelatableTarget(target) {
-				return true
-			}
-			targetPoint, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, target, target.ResultIndex())
-			if !ok || callOutcomeLaterPoint(cache, graph, targetPoint, triggerPoint) != point {
-				return true
-			}
-			if plan.pairs == nil {
-				plan.pairs = make(map[pathStorePresencePair]struct{})
-			}
-			plan.pairs[pathStorePresencePair{trigger: trigger.ResultIndex(), target: target.ResultIndex()}] = struct{}{}
-			return true
-		})
-		return true
-	})
-	return plan
 }
 
 func (t PathStoreTransaction) Point() cfg.Point           { return t.point }

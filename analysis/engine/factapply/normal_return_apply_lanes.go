@@ -4,28 +4,22 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 type normalReturnApplyContext struct {
-	node                            transfer.NodeContext
-	typeValues                      *typevalue.Cache
-	resolver                        *visibility.Resolver
-	projectPath                     PathTypeProjector
-	point                           cfg.Point
-	boundaryPaths                   callboundary.PathBindings
-	normalFacts                     callboundary.NormalReturnFacts
-	freshDynamicIndexMutationTables map[keyspace.Key]struct{}
+	node          transfer.NodeContext
+	typeValues    *typevalue.Cache
+	resolver      *visibility.Resolver
+	projectPath   PathTypeProjector
+	point         cfg.Point
+	boundaryPaths callboundary.PathBindings
+	normalFacts   callboundary.NormalReturnFacts
 }
 
 func (ctx normalReturnApplyContext) substitute(path pathdom.Path) (pathdom.Path, bool) {
@@ -56,37 +50,6 @@ func (ctx normalReturnApplyContext) relationGraphKey(operand callboundary.RelOpe
 	return relationGraphKeyAt(ctx.resolver, ctx.point, targetPath, operand.IsLength)
 }
 
-func applyNormalReturnPathInvalidations(ctx normalReturnApplyContext, out state.State) state.State {
-	dynamicIndexMutationTables := normalReturnDynamicIndexMutationTables(ctx.normalFacts.DynamicIndexFacts)
-	for _, fact := range ctx.normalFacts.PathInvalidations {
-		targetPath, ok := ctx.substitute(fact.Path)
-		if !ok {
-			continue
-		}
-		// A write invalidates value-origin relations for the written container
-		// even when the replacement value itself is too imprecise to publish as
-		// a DynamicIndexFact. Structural-witness preservation governs table
-		// shape, not provenance from an older store.
-		if targetKey, exact := ctx.keyspaceKey(fact.Path); exact {
-			out = out.ClearDynamicIndexValueKeyMembershipsForContainer(targetKey)
-		}
-		mutatesDynamicIndex := normalReturnPathMatchesAny(fact.Path, dynamicIndexMutationTables)
-		if callOutcomeConcreteRootInvalidation(fact.Path) && !mutatesDynamicIndex {
-			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, product.Top(), false)
-			continue
-		}
-		preserveStructuralWitness := fact.PreserveStructuralWitness || boundaryRootBoundToDescendant(fact.Path, targetPath)
-		clearStructuralWitness := !preserveStructuralWitness && !mutatesDynamicIndex
-		clearTarget := fact.ClearTarget || (!fact.PreserveStructuralWitness && preserveStructuralWitness)
-		out = writePathInvalidationMarker(ctx.resolver, ctx.point, out, targetPath, preserveStructuralWitness)
-		out = applyPathDescendantInvalidation(ctx.node, ctx.resolver, factflow.Facts{}, nil, nil, out, out, factflow.NewPathDescendantInvalidation(targetPath), clearStructuralWitness)
-		if clearTarget || clearStructuralWitness {
-			out = invalidateMutatedFieldSlot(ctx.node, ctx.resolver, out, targetPath)
-		}
-	}
-	return out
-}
-
 func boundaryRootBoundToDescendant(factPath, targetPath pathdom.Path) bool {
 	if len(factPath.Segments) != 0 || len(targetPath.Segments) == 0 {
 		return false
@@ -96,169 +59,4 @@ func boundaryRootBoundToDescendant(factPath, targetPath pathdom.Path) bool {
 	}
 	_, ok := callboundary.ReturnSlotIndex(factPath)
 	return ok
-}
-
-func applyNormalReturnPersistentPathWrites(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, fact := range ctx.normalFacts.PersistentPathWrites {
-		targetPath, ok := ctx.substitute(fact.Path)
-		if !ok {
-			continue
-		}
-		if callboundary.IsConcreteSymbolPath(fact.Path) && len(targetPath.Segments) == 0 {
-			out = writeRootSymbol(ctx.node, ctx.resolver, out, targetPath.Symbol, targetPath, fact.Value, false)
-			continue
-		}
-		out = applyValueWriteAt(ctx.node.Registry, ctx.resolver, ctx.point, out, targetPath, fact.Value)
-	}
-	return out
-}
-
-func applyNormalReturnPathStaticMembers(ctx normalReturnApplyContext, out state.State) state.State {
-	edit := out.Edit(ctx.node.Registry)
-	changed := false
-	var heapWrites []callboundary.PathStaticMemberFact
-	for _, fact := range ctx.normalFacts.PathStaticMembers {
-		targetPathKey, ok := ctx.pathKey(fact.Path)
-		if !ok {
-			continue
-		}
-		if edit.WritePathStaticMember(ctx.resolver.KeySpace(), targetPathKey, fact.Value) {
-			changed = true
-		}
-		heapWrites = append(heapWrites, fact)
-	}
-	if changed {
-		out = edit.DoneOn(out)
-	}
-	for _, fact := range heapWrites {
-		targetPath, ok := ctx.substitute(fact.Path)
-		if !ok {
-			continue
-		}
-		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, targetPath, fact.Value)
-	}
-	return out
-}
-
-func applyNormalReturnPathStaticMemberDeltas(ctx normalReturnApplyContext, out state.State) state.State {
-	edit := out.Edit(ctx.node.Registry)
-	changed := false
-	type heapWrite struct {
-		path  pathdom.Path
-		value product.Value
-	}
-	var heapWrites []heapWrite
-	for _, fact := range ctx.normalFacts.PathStaticMemberDeltas {
-		targetPathKey, ok := ctx.pathKey(fact.Path)
-		if !ok {
-			continue
-		}
-		value := normalReturnStaticMemberDeltaValue(ctx.node.Registry, fact.Value, fact.Required)
-		if edit.WritePathStaticMember(ctx.resolver.KeySpace(), targetPathKey, value) {
-			changed = true
-		}
-		targetPath, ok := ctx.substitute(fact.Path)
-		if ok {
-			heapWrites = append(heapWrites, heapWrite{path: targetPath, value: value})
-		}
-	}
-	if changed {
-		out = edit.DoneOn(out)
-	}
-	for _, write := range heapWrites {
-		out = writeHeapTableStaticMember(ctx.node, ctx.resolver, out, write.path, write.value)
-	}
-	return out
-}
-
-func normalReturnStaticMemberDeltaValue(reg *axis.Registry, value product.Value, required bool) product.Value {
-	if required {
-		return value
-	}
-	return product.WithPresence(reg, value, presence.Maybe())
-}
-
-func applyNormalReturnPathPresenceImplications(ctx normalReturnApplyContext, out state.State) state.State {
-	publications := make([]pathevidence.PathPresenceImplication, 0, len(ctx.normalFacts.PathPresenceImplications))
-	for _, fact := range ctx.normalFacts.PathPresenceImplications {
-		trigger, ok := ctx.keyspaceKey(fact.Trigger)
-		if !ok {
-			continue
-		}
-		target, ok := ctx.keyspaceKey(fact.Target)
-		if !ok {
-			continue
-		}
-		var implication pathevidence.PathPresenceImplication
-		if fact.HasTriggerValue && fact.HasTargetValue {
-			implication = pathevidence.NewPathValueRefinementImplication(trigger, fact.TriggerValue, target, fact.TargetValue)
-		} else if fact.HasTriggerValue {
-			implication = pathevidence.NewPathValuePresenceImplication(trigger, fact.TriggerValue, target, fact.TargetPresence)
-		} else if fact.HasTargetValue {
-			implication = pathevidence.PathPresenceImplication{
-				Trigger:         trigger,
-				TriggerPresence: fact.TriggerPresence,
-				Target:          target,
-				TargetValue:     fact.TargetValue,
-				HasTargetValue:  true,
-			}
-		} else {
-			implication = pathevidence.NewPathPresenceImplication(trigger, fact.TriggerPresence, target, fact.TargetPresence)
-		}
-		publications = append(publications, implication)
-	}
-	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
-		Registry:     ctx.node.Registry,
-		Resolver:     ctx.resolver,
-		Point:        ctx.point,
-		Output:       out,
-		Publications: publications,
-		Token:        tokenOf(ctx.node.Session),
-	})
-	return result.Output
-}
-
-func applyNormalReturnKeyMemberships(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, fact := range ctx.normalFacts.KeyMemberships {
-		keyStateKey, ok := ctx.visibleStateKey(fact.Key)
-		if !ok {
-			continue
-		}
-		tableStateKey, ok := ctx.visibleStateKey(fact.Table)
-		if !ok {
-			continue
-		}
-		out = out.AddPathKeyMembership(keyStateKey, tableStateKey)
-	}
-	return out
-}
-
-func applyNormalReturnDynamicValueKeys(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, fact := range ctx.normalFacts.DynamicValueKeys {
-		containerKey, ok := ctx.keyspaceKey(fact.Container)
-		if !ok {
-			continue
-		}
-		tableStateKey, ok := ctx.visibleStateKey(fact.Table)
-		if !ok {
-			continue
-		}
-		out = out.AddDynamicIndexValueKeyMembership(containerKey, fact.Site, tableStateKey)
-	}
-	return out
-}
-
-func applyNormalReturnDynamicAllValues(ctx normalReturnApplyContext, out state.State) state.State {
-	for _, fact := range ctx.normalFacts.DynamicAllValues {
-		containerKey, ok := ctx.keyspaceKey(fact.Container)
-		if !ok {
-			continue
-		}
-		tableStateKey, ok := ctx.visibleStateKey(fact.Table)
-		if !ok {
-			continue
-		}
-		out = out.AddDynamicIndexAllValuesKeyMembership(containerKey, tableStateKey)
-	}
-	return out
 }
