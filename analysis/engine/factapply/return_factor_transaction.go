@@ -3,12 +3,10 @@ package factapply
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
@@ -170,28 +168,6 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 			return fail(fmt.Errorf("factapply: return source belongs to a foreign product"))
 		}
 	}
-	targets := make(map[int]ReturnFactorTarget[K], len(in.Targets))
-	for _, target := range in.Targets {
-		if target.Index < 0 || target.Path.Kind == keyspace.KindInvalid {
-			return fail(fmt.Errorf("factapply: return target has invalid output identity"))
-		}
-		if _, duplicate := targets[target.Index]; duplicate {
-			return fail(fmt.Errorf("factapply: duplicate return target %d", target.Index))
-		}
-		targets[target.Index] = target
-	}
-	if len(targets) != in.Return.ResultTargetCount() {
-		return fail(fmt.Errorf("factapply: incomplete return target schema"))
-	}
-	for index := 0; index < in.Return.ResultTargetCount(); index++ {
-		target, ok := in.Return.ResultTarget(index)
-		if !ok {
-			return fail(fmt.Errorf("factapply: malformed return target schema"))
-		}
-		if _, present := targets[target]; !present {
-			return fail(fmt.Errorf("factapply: missing return target %d", target))
-		}
-	}
 
 	// Coordinate families are the native N5 carrier. The dense topology is
 	// validated once; no physical lane is decomposed inside the transaction.
@@ -237,54 +213,36 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 
 	// Bind results first. The source spelling, rather than any projected result
 	// spelling, seeds returned-object reachability exactly as in concrete N5.
-	values := state.ValueFactor[K]{Top: in.Values.Top}
-	if !in.Values.Top && len(in.Values.Values) != 0 {
-		values.Values = make(map[K]product.Value, len(in.Values.Values)+len(targets))
-		for slot, value := range in.Values.Values {
-			values.Values[slot] = value
-		}
+	container, err := returnContainerFactorFromCoordinates(in.Domain, coordinate)
+	if err != nil {
+		return fail(err)
 	}
-	seedValues := make([]product.Value, 0, in.Return.ResultBindingCount())
-	for index := 0; index < in.Return.ResultBindingCount(); index++ {
-		source, target, ok := in.Return.ResultBinding(index)
-		if !ok || source < 0 || source >= len(in.Sources) {
-			return fail(fmt.Errorf("factapply: malformed return binding %d", index))
-		}
-		value := in.Sources[source]
-		seedValues = append(seedValues, value)
-		projects, ok := in.Return.ResultBindingProjectsHeap(index)
-		if !ok {
-			return fail(fmt.Errorf("factapply: malformed return projection %d", index))
-		}
-		if projects {
-			projected, projectErr := projectReturnContainerFromFactors(authority, in.Domain, coordinate, value)
-			if projectErr != nil {
-				return fail(projectErr)
-			}
-			value = projected
-		}
-		if !values.Top {
-			if values.Values == nil {
-				values.Values = make(map[K]product.Value, len(targets))
-			}
-			values.Values[targets[target].Slot] = value
-		}
+	values, seedValues, err := ApplyReturnResultBindings(
+		authority, in.Domain, in.Return, in.Sources, in.Targets, in.Values, container,
+	)
+	if err != nil {
+		return fail(err)
 	}
 
-	// Least reachability over the finite identity graph. A queue executes each
-	// newly reached vertex once; there is no artificial cap and cancellation is
-	// observationally atomic through the fail closure above.
-	seedRoots := make(map[identity.Term]bool)
-	reachable := make(map[identity.Term]bool)
-	adjacent := make(map[identity.Term][]identity.Term)
+	// Build the concrete observations for the one canonical guarded closure.
+	// Formal execution supplies decision conditions to the same function.
+	sources := make([]ReturnIdentityCondition[bool], 0, len(seedValues))
+	admissions := make([]ReturnIdentityCondition[bool], 0)
+	edges := make([]ReturnIdentityEdgeCondition[bool], 0)
+	for _, value := range seedValues {
+		root, exact := product.Get(reg, value, identity.Key).Term()
+		if exact && root.Valid() {
+			sources = append(sources, ReturnIdentityCondition[bool]{Root: root, Condition: true})
+		}
+	}
 	for laneIndex := range coordinate {
 		for familyIndex, skeleton := range coordinate[laneIndex].skeletons {
 			if err := in.Domain.VisitCoordinateReturnIdentitySkeletonObservations(skeleton, func(observation state.CoordinateReturnIdentityObservation) bool {
 				switch observation.Role() {
 				case state.CoordinateReturnIdentitySeed:
-					seedRoots[observation.Root()] = true
+					admissions = append(admissions, ReturnIdentityCondition[bool]{Root: observation.Root(), Condition: true})
 				case state.CoordinateReturnIdentitySkeletonEdge:
-					adjacent[observation.Root()] = append(adjacent[observation.Root()], observation.Target())
+					edges = append(edges, ReturnIdentityEdgeCondition[bool]{From: observation.Root(), To: observation.Target(), Condition: true})
 				}
 				return true
 			}); err != nil {
@@ -293,7 +251,7 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 			for _, scalar := range coordinate[laneIndex].scalars[familyIndex] {
 				if err := in.Domain.VisitCoordinateReturnIdentityScalarObservations(scalar, func(observation state.CoordinateReturnIdentityObservation) bool {
 					if observation.Role() == state.CoordinateReturnIdentityScalarEdge {
-						adjacent[observation.Root()] = append(adjacent[observation.Root()], observation.Target())
+						edges = append(edges, ReturnIdentityEdgeCondition[bool]{From: observation.Root(), To: observation.Target(), Condition: true})
 					}
 					return true
 				}); err != nil {
@@ -302,36 +260,18 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 			}
 		}
 	}
-	queue := make([]identity.Term, 0, len(seedValues))
-	for _, value := range seedValues {
-		root, exact := product.Get(reg, value, identity.Key).Term()
-		if !exact || !root.Valid() || reachable[root] {
-			continue
-		}
-		if seedRoots[root] {
-			reachable[root] = true
-			queue = append(queue, root)
-		}
+	closed, err := CloseReturnIdentities(ctx, ReturnBooleanAlgebra[bool]{
+		False: false,
+		And:   func(left, right bool) (bool, error) { return left && right, nil },
+		Or:    func(left, right bool) (bool, error) { return left || right, nil },
+		Not:   func(value bool) (bool, error) { return !value, nil },
+		Equal: func(left, right bool) bool { return left == right },
+	}, sources, admissions, edges)
+	if err != nil {
+		return fail(err)
 	}
-	for head := 0; head < len(queue); head++ {
-		if head&255 == 0 {
-			if err := ctx.Err(); err != nil {
-				return fail(err)
-			}
-		}
-		for _, to := range adjacent[queue[head]] {
-			if !reachable[to] {
-				reachable[to] = true
-				queue = append(queue, to)
-			}
-		}
-	}
-	identities := make([]identity.Term, 0, len(reachable))
-	for root := range reachable {
-		identities = append(identities, root)
-	}
-	sort.Slice(identities, func(i, j int) bool { return identity.Less(identities[i], identities[j]) })
-	for _, root := range identities {
+	for _, reached := range closed {
+		root := reached.Root
 		for laneIndex := range coordinate {
 			for familyIndex, family := range coordinate[laneIndex].families {
 				roles, err := in.Domain.CoordinateReturnIdentityRoles(family)
@@ -378,22 +318,7 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 		}
 	}
 
-	if len(targets) >= 2 {
-		rows := make([]CallReturnPresenceRowTarget, 0, len(targets))
-		for index := 0; index < in.Return.ResultTargetCount(); index++ {
-			target, _ := in.Return.ResultTarget(index)
-			value := product.Bottom(reg)
-			if values.Top {
-				value = product.Top()
-			} else if found, ok := values.Values[targets[target].Slot]; ok {
-				value = found
-			}
-			rows = append(rows, CallReturnPresenceRowTarget{Index: target, Path: targets[target].Path, Value: value})
-		}
-		plan, err := authority.paths.PrepareCallReturnPresenceRowInKeySpace(reg, in.Keys, in.Return.Point(), rows)
-		if err != nil {
-			return fail(err)
-		}
+	if len(in.Targets) >= 2 {
 		family, ok := in.Domain.PathEvidenceCoordinateFamily()
 		if !ok {
 			return fail(fmt.Errorf("factapply: return presence has no registered coordinate authority"))
@@ -413,12 +338,18 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 		if laneIndex < 0 || familyIndex < 0 {
 			return fail(fmt.Errorf("factapply: return presence coordinate family is outside the product"))
 		}
-		coordinate[laneIndex].skeletons[familyIndex], coordinate[laneIndex].scalars[familyIndex], err = plan.ApplyCoordinates(
-			in.Domain, coordinate[laneIndex].skeletons[familyIndex], coordinate[laneIndex].scalars[familyIndex],
+		factor, err := in.Domain.SealCoordinateFamilyFactor(
+			coordinate[laneIndex].skeletons[familyIndex], coordinate[laneIndex].scalars[familyIndex],
 		)
 		if err != nil {
 			return fail(err)
 		}
+		factor, err = ApplyReturnPresenceFactor(authority, in.Keys, in.Return, in.Targets, values, in.Domain, factor)
+		if err != nil {
+			return fail(err)
+		}
+		coordinate[laneIndex].skeletons[familyIndex] = factor.Skeleton()
+		coordinate[laneIndex].scalars[familyIndex] = factor.Scalars()
 	}
 
 	for index := range coordinate {
@@ -438,51 +369,26 @@ func ApplyReturnFactorTransaction[K comparable](ctx context.Context, authority *
 	return ReturnFactorResult[K]{Values: values, Lanes: lanes}, nil
 }
 
-func projectReturnContainerFromFactors(authority *ReturnAuthority, domain state.ProductDomain, lanes []returnCoordinateLane, value product.Value) (product.Value, error) {
-	reg := domain.Registry()
-	rootTerm, exact := product.Get(reg, value, identity.Key).Term()
-	if !exact || !rootTerm.Valid() {
-		return value, nil
-	}
+func returnContainerFactorFromCoordinates(domain state.ProductDomain, lanes []returnCoordinateLane) (state.CoordinateFamilyFactor, error) {
 	owner, ok := domain.ReturnIdentityContainerFamily()
 	if !ok {
-		return value, nil
+		return state.CoordinateFamilyFactor{}, nil
 	}
 	for laneIndex := range lanes {
 		for familyIndex, family := range lanes[laneIndex].families {
 			if family != owner {
 				continue
 			}
-			skeleton := lanes[laneIndex].skeletons[familyIndex]
-			for _, scalar := range lanes[laneIndex].scalars[familyIndex] {
-				var container product.Value
-				found := false
-				if err := domain.VisitCoordinateReturnIdentityScalarObservations(scalar, func(observation state.CoordinateReturnIdentityObservation) bool {
-					if observation.Role() == state.CoordinateReturnIdentityContainer && observation.Root() == rootTerm {
-						container, found = observation.Value(), true
-						return false
-					}
-					return true
-				}); err != nil {
-					return product.Value{}, err
-				}
-				if !found {
-					continue
-				}
-				var visitErr error
-				projected, projectedOK := authority.ProjectFactoredHeapContainer(reg, value, container, func(visit func(fact dynamicindex.Fact)) {
-					_, visitErr = domain.VisitCoordinateReturnContainerFacts(skeleton, rootTerm, visit)
-				})
-				if visitErr != nil {
-					return product.Value{}, visitErr
-				}
-				if projectedOK {
-					return projected, nil
-				}
+			factor, err := domain.SealCoordinateFamilyFactor(
+				lanes[laneIndex].skeletons[familyIndex], lanes[laneIndex].scalars[familyIndex],
+			)
+			if err != nil {
+				return state.CoordinateFamilyFactor{}, err
 			}
+			return factor, nil
 		}
 	}
-	return value, nil
+	return state.CoordinateFamilyFactor{}, fmt.Errorf("factapply: return-container family is outside the product")
 }
 
 func returnCoordinatePosition(domain state.ProductDomain, scalars []state.CoordinateScalarFactor, slot state.CoordinateSlot) (int, bool, error) {
