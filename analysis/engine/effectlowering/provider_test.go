@@ -318,6 +318,49 @@ func TestAmbientChannelLifecycleOutcomeProviderClosedReceiveReturnsOptionalPaylo
 	assertTypeWitness(t, reg, got.Results[1].Value, typ.Boolean)
 }
 
+func TestAmbientChannelLifecycleOutcomeProviderWithoutTypestateKeepsReceiveCorrelation(t *testing.T) {
+	reg := standard.Registry()
+	domain, err := state.TryRegisteredProductDomainWithLanes(reg, state.DefaultLaneSet().Without(state.LaneTypestates).IDs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverRef := factflow.ExprRef(924)
+	channelType := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	provider := AmbientChannelLifecycleOutcomeProvider(AmbientChannelLifecycleOutcomeProviderConfig{
+		KeySpace: keyspace.New(),
+		Domain:   domain,
+	})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		MethodName:        "receive",
+		HasReceiverSource: true,
+		ReceiverSource:    factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: receiverRef, HasExpr: true},
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 0, 0, 0, path.Path{}),
+			factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 1, 1, 0, path.Path{}),
+		},
+	})
+	ctx := transfer.NodeContext{Registry: reg}
+	capability := testPrepareCallOutcome(t, provider, ctx, site.View()).Capability()
+	if queries := capability.TypestateResourceQueries(); len(queries) != 0 {
+		t.Fatalf("restricted receive typestate queries = %#v, want none", queries)
+	}
+	if lanes := capability.PrimaryInputLanes(); lanes.Len() != 0 {
+		t.Fatalf("restricted receive primary lanes = %v, want none", lanes.IDs())
+	}
+	if correlations := capability.CorrelationShapes(); len(correlations) != 2 {
+		t.Fatalf("restricted receive correlations = %#v, want payload-presence pair", correlations)
+	}
+
+	in := state.State{}.WriteValue(reg, key.ExpressionValue(uint32(receiverRef)), typevalue.WithWitness(reg, typevalue.FromType(reg, channelType), channelType))
+	got := testEvaluateCallOutcome(t, provider, ctx, site.View(), testCallOutcomeInput(t, provider, ctx, site.View(), in, nil))
+	if len(got.NormalReturnFacts.LifecycleFacts) != 0 {
+		t.Fatalf("restricted receive lifecycle facts = %#v, want none", got.NormalReturnFacts.LifecycleFacts)
+	}
+	if len(got.ReturnConditionSlots) != 2 {
+		t.Fatalf("restricted receive correlations = %#v, want payload-presence pair", got.ReturnConditionSlots)
+	}
+}
+
 func TestChannelLifecycleDefinitionDeclaresRuntimeTransitions(t *testing.T) {
 	if err := ChannelLifecycleDefinition.Validate(); err != nil {
 		t.Fatalf("ChannelLifecycleDefinition.Validate: %v", err)

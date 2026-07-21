@@ -115,13 +115,28 @@ func AmbientChannelSendOutcomeProvider(config AmbientChannelSendOutcomeProviderC
 // escape is handled by AmbientTypestateEscapeOutcomeProvider.
 func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcomeProviderConfig) callpayload.CallOutcomeProgram {
 	nameForSite := config.NameForSite
-	typestateQuery, queryErr := config.Domain.SealTypestateQueryCapability(config.KeySpace)
-	if queryErr != nil {
-		panic(queryErr)
+	// The lifecycle observation is a composite typestate/path-equality law.
+	// Either axis may be deliberately absent from a restricted product, in
+	// which case lifecycle publication and its query must be absent too.  The
+	// receive result correlation is independent of that law and remains useful.
+	var typestateQuery state.TypestateQueryCapability
+	hasTypestateQuery := false
+	if _, hasTypestate := config.Domain.ProductLane(state.LaneTypestates); hasTypestate {
+		if _, hasPathEvidence := config.Domain.PathValueFamily(); hasPathEvidence {
+			var queryErr error
+			typestateQuery, queryErr = config.Domain.SealTypestateQueryCapability(config.KeySpace)
+			if queryErr != nil {
+				panic(queryErr)
+			}
+			hasTypestateQuery = true
+		}
 	}
 	shape := func(ctx transfer.NodeContext, site factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
 		if name, ok := channelSignatureName(ctx, site, nameForSite); ok {
 			if isChannelNewSignatureName(name) {
+				if !hasTypestateQuery {
+					return callpayload.CallOutcomeSiteShape{}, nil
+				}
 				return callpayload.CallOutcomeSiteShape{FieldNames: []string{"SuspensionKnown", "NormalReturnFacts"}}, nil
 			}
 			if isChannelKnownModuleSignatureName(name) {
@@ -130,6 +145,9 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 		}
 		switch site.MethodName() {
 		case "send", "close":
+			if !hasTypestateQuery {
+				return callpayload.CallOutcomeSiteShape{}, nil
+			}
 			if _, present := site.ReceiverSource(); !present {
 				return callpayload.CallOutcomeSiteShape{}, nil
 			}
@@ -139,13 +157,15 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 				return callpayload.CallOutcomeSiteShape{}, nil
 			}
 			var queries []state.TypestateResourceQuery
-			if receiver, present := site.ReceiverPath(); present && !receiver.IsEmpty() {
-				if receiverKey, resolved := channelReceiverTypestateStateKey(ctx.Point, config.Resolver, receiver); resolved {
-					query, err := state.SealTypestateResourceQuery(config.Domain, typestateQuery, receiverKey, ChannelLifecycleProtocol)
-					if err != nil {
-						return callpayload.CallOutcomeSiteShape{}, err
+			if hasTypestateQuery {
+				if receiver, present := site.ReceiverPath(); present && !receiver.IsEmpty() {
+					if receiverKey, resolved := channelReceiverTypestateStateKey(ctx.Point, config.Resolver, receiver); resolved {
+						query, err := state.SealTypestateResourceQuery(config.Domain, typestateQuery, receiverKey, ChannelLifecycleProtocol)
+						if err != nil {
+							return callpayload.CallOutcomeSiteShape{}, err
+						}
+						queries = []state.TypestateResourceQuery{query}
 					}
-					queries = []state.TypestateResourceQuery{query}
 				}
 			}
 			return callpayload.CallOutcomeSiteShape{
@@ -161,6 +181,9 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 	evaluate := func(ctx transfer.NodeContext, site factflow.CallSiteView, input callpayload.CallOutcomeInput, query state.TypestateResourceQuery) (callpayload.CallOutcome, error) {
 		if name, ok := channelSignatureName(ctx, site, nameForSite); ok {
 			if isChannelNewSignatureName(name) {
+				if !hasTypestateQuery {
+					return callpayload.CallOutcome{}, nil
+				}
 				return channelLifecycleOutcome(callboundary.LifecycleFact{
 					Target:   pathdom.Path{Root: "ret[0]"},
 					Kind:     callboundary.LifecycleAcquire,
@@ -186,6 +209,9 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 			if receiverIsChannel {
 				switch site.MethodName() {
 				case "send":
+					if !hasTypestateQuery {
+						return callpayload.CallOutcome{}, nil
+					}
 					return channelLifecycleOutcome(callboundary.LifecycleFact{
 						Target:   pathdom.NewPlaceholder(0),
 						Kind:     callboundary.LifecycleTransition,
@@ -194,6 +220,9 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 						To:       ChannelStateOpen,
 					}), nil
 				case "close":
+					if !hasTypestateQuery {
+						return callpayload.CallOutcome{}, nil
+					}
 					return channelLifecycleOutcome(callboundary.LifecycleFact{
 						Target:   pathdom.NewPlaceholder(0),
 						Kind:     callboundary.LifecycleTransition,
@@ -203,6 +232,9 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 					}), nil
 				case "receive":
 					correlation := channelReceiveCorrelationOutcome(ctx)
+					if !hasTypestateQuery {
+						return correlation, nil
+					}
 					slot, ok := channelReceiverLifecycleSlot(input, query)
 					if ok &&
 						slot.Current == ChannelStateClosed &&
