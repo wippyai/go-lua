@@ -9,6 +9,7 @@ import "fmt"
 // operand tuple.
 type formalRelationStepOperands struct {
 	Flow               formalRelationTemplateInput
+	HasFlow            bool
 	NodeEntry          formalRelationTemplateInput
 	HasNodeEntry       bool
 	PublishedReads     []formalRelationTemplateInput
@@ -21,25 +22,36 @@ type formalRelationStepOperands struct {
 // exactly one control-flow predecessor and at most one node-entry dependency;
 // all other cardinalities are owned by the frozen equation-completeness proof.
 func partitionFormalRelationStepOperands(equation formalRelationEquation) (formalRelationStepOperands, error) {
-	var out formalRelationStepOperands
 	if !equation.Cell.valid() || equation.Cell.cell.Kind != formalRelationCellStep ||
 		equation.Operator.kind != formalRelationCellStep {
-		return out, fmt.Errorf("transformer: formal Step operand row is unowned")
+		return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step operand row is unowned")
 	}
-	flow := false
 	for _, input := range equation.Inputs {
 		if !input.valid(equation.Cell) {
 			return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step operand is malformed")
 		}
+	}
+	return freezeFormalRelationStageOperands(equation.Inputs, true)
+}
+
+// freezeFormalRelationStageOperands performs the same closed partition once at
+// template-freeze time. Internal Flow between stages is deliberately absent;
+// only the first stage owns an external Flow operand.
+func freezeFormalRelationStageOperands(inputs []formalRelationTemplateInput, requireFlow bool) (formalRelationStepOperands, error) {
+	var out formalRelationStepOperands
+	for _, input := range inputs {
+		if !input.Source.valid() {
+			return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step stage operand is malformed")
+		}
 		switch input.Influence {
 		case formalRelationInfluenceFlow:
-			if flow {
-				return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step has multiple Flow predecessors")
+			if out.HasFlow {
+				return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step stage has multiple Flow predecessors")
 			}
-			out.Flow, flow = input, true
+			out.Flow, out.HasFlow = input, true
 		case formalRelationInfluenceStepNodeEntry:
 			if out.HasNodeEntry {
-				return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step has multiple NodeEntry operands")
+				return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step stage has multiple NodeEntry operands")
 			}
 			out.NodeEntry, out.HasNodeEntry = input, true
 		case formalRelationInfluenceStepPublishedRead:
@@ -49,11 +61,11 @@ func partitionFormalRelationStepOperands(equation formalRelationEquation) (forma
 		case formalRelationInfluenceClosureDefinition:
 			out.ClosureDefinitions = append(out.ClosureDefinitions, input)
 		default:
-			return formalRelationStepOperands{}, fmt.Errorf("transformer: influence %d is not a Step operand", input.Influence)
+			return formalRelationStepOperands{}, fmt.Errorf("transformer: influence %d is not a Step stage operand", input.Influence)
 		}
 	}
-	if !flow {
-		return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step has no Flow predecessor")
+	if out.HasFlow != requireFlow {
+		return formalRelationStepOperands{}, fmt.Errorf("transformer: formal Step stage Flow ownership is malformed")
 	}
 	sortFormalStepPublishedReads(out.PublishedReads)
 	sortFormalStepSources(out.CalleeOutcomes)

@@ -62,8 +62,44 @@ type formalRelationEquation struct {
 	Cell              formalRelationCellRef
 	Operator          formalRelationOperatorRef
 	Inputs            []formalRelationTemplateInput
+	StepStages        []formalRelationStepStage
 	Seeds             []formalRelationTupleConstantRef
 	ApplyNonreturning []formalApplyNonreturningTransaction
+}
+
+func (e formalRelationEquation) terminalOperator() (formalRelationOperatorRef, bool) {
+	if e.Cell.cell.Kind != formalRelationCellStep {
+		return e.Operator, e.Operator.kind == e.Cell.cell.Kind
+	}
+	if len(e.StepStages) == 0 {
+		return formalRelationOperatorRef{}, false
+	}
+	operator := e.StepStages[len(e.StepStages)-1].Operator
+	return operator, operator.kind == formalRelationCellStep
+}
+
+func (e formalRelationEquation) stepInputCount() int {
+	count := 0
+	for _, stage := range e.StepStages {
+		if stage.Operands.HasFlow {
+			count++
+		}
+		if stage.Operands.HasNodeEntry {
+			count++
+		}
+		count += len(stage.Operands.PublishedReads) + len(stage.Operands.CalleeOutcomes) + len(stage.Operands.ClosureDefinitions)
+	}
+	return count
+}
+
+// formalRelationStepStage is one existing lexical Step inside a retained
+// observable equation. Operator is the canonical frozen transaction; Operands
+// are partitioned and sorted once at freeze time. No runtime syntax or operand
+// discovery is permitted.
+type formalRelationStepStage struct {
+	Cell     formalRelationCell
+	Operator formalRelationOperatorRef
+	Operands formalRelationStepOperands
 }
 
 // formalApplyNonreturningTransaction is one freeze-time paired call terminal.
@@ -285,6 +321,87 @@ func bindFormalRelationStepCapability(operator *formalRelationOperatorRef, step 
 	}
 }
 
+// freezeFormalCanonicalStepOperator binds one lexical Step to the existing
+// canonical semantic transaction. Both standalone and absorbed Steps pass
+// through this function, so quotienting cannot create a parallel evaluator.
+func freezeFormalCanonicalStepOperator(program *RelationProgram, owner relationVar, operator formalRelationOperatorRef) (formalRelationOperatorRef, error) {
+	step, ok := formalRelationStepOperator(operator)
+	if !ok {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation Step operator is malformed")
+	}
+	if owner == 0 || int(owner) > len(program.bodies) || program.bodies[owner-1].relation.code != operator.code {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation Step operator has no lexical owner")
+	}
+	var err error
+	if operator.pathReplacement, err = freezeFormalPathReplacementStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation Effect operator: %w", err)
+	}
+	if operator.pathInvalidation, err = freezeFormalPathInvalidationStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation PathInvalidation operator: %w", err)
+	}
+	if operator.indexMutation, err = freezeFormalIndexMutationStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation IndexMutation operator: %w", err)
+	}
+	if operator.allocationTemplate, err = freezeFormalAllocationTemplateStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation AllocationTemplate operator: %w", err)
+	}
+	if operator.objectMaterialization, err = freezeFormalObjectMaterializationStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation ObjectMaterialization operator: %w", err)
+	}
+	if operator.apply, err = freezeFormalApplyStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal Apply operator: %w", err)
+	}
+	if operator.environmentWrite, err = freezeFormalEnvironmentWriteStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation EnvironmentWrite operator: %w", err)
+	}
+	if operator.channelSelect, err = freezeFormalChannelSelectStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal ChannelSelect operator: %w", err)
+	}
+	if operator.branchRelations, err = freezeFormalBranchRelationsStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal BranchRelations operator: %w", err)
+	}
+	if operator.callResults, err = freezeFormalCallResultsStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal CallResults N3 operator: %w", err)
+	}
+	if operator.presenceImplications, err = freezeFormalPresenceImplicationStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal PresenceImplications N2 operator: %w", err)
+	}
+	if operator.genericFor, err = freezeFormalGenericForStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal GenericFor operator: %w", err)
+	}
+	if operator.rootAssignment, err = freezeFormalRootAssignmentStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal RootAssignment N4 operator: %w", err)
+	}
+	if operator.covariantExposure, err = freezeFormalCovariantExposureStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal CovariantExposure N6 operator: %w", err)
+	}
+	if operator.contribution, err = freezeFormalContributionStep(program, owner, operator); err != nil {
+		return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal Contribution operator: %w", err)
+	}
+	if step.kind != boundaryStepExternalCall {
+		if err := bindFormalRelationStepCapability(&operator, step); err != nil {
+			return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal relation Step operator: %w", err)
+		}
+	}
+	if step.kind == boundaryStepEffect {
+		access, groups, reads, writes, err := freezeFormalEffectTransferAccess(program, owner, operator)
+		if err != nil {
+			return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal Effect access: %w", err)
+		}
+		operator.effectAccess, operator.effectGroups = access, groups
+		operator.effectReadOrdinals, operator.effectWriteOrdinals = reads, writes
+		span, owned := program.formalFibers.span(owner)
+		if !owned {
+			return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal Effect lift has no frozen product span")
+		}
+		operator.effectLift, err = sealFormalClosedFactorLift(span, [][]formalFiberOrdinal{reads}, writes)
+		if err != nil {
+			return formalRelationOperatorRef{}, fmt.Errorf("transformer: formal Effect lift: %w", err)
+		}
+	}
+	return operator, nil
+}
+
 func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemplate, error) {
 	if program == nil || program.formalRegion == nil || program.formalRegion.plan == nil ||
 		!program.formalRegion.plan.Matches(program.formalRegion.cells) {
@@ -352,105 +469,9 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 			operator.scope = scopes[cell.Root]
 		}
 		if cell.Kind == formalRelationCellStep {
-			step, stepOK := formalRelationStepOperator(operator)
-			if !stepOK {
-				return nil, fmt.Errorf("transformer: formal relation Step operator is malformed")
-			}
-			pathReplacement, freezeErr := freezeFormalPathReplacementStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal relation Effect operator: %w", freezeErr)
-			}
-			operator.pathReplacement = pathReplacement
-			pathInvalidation, freezeErr := freezeFormalPathInvalidationStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal relation PathInvalidation operator: %w", freezeErr)
-			}
-			operator.pathInvalidation = pathInvalidation
-			indexMutation, freezeErr := freezeFormalIndexMutationStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal relation IndexMutation operator: %w", freezeErr)
-			}
-			operator.indexMutation = indexMutation
-			allocationTemplate, freezeErr := freezeFormalAllocationTemplateStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal relation AllocationTemplate operator: %w", freezeErr)
-			}
-			operator.allocationTemplate = allocationTemplate
-			objectMaterialization, freezeErr := freezeFormalObjectMaterializationStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal relation ObjectMaterialization operator: %w", freezeErr)
-			}
-			operator.objectMaterialization = objectMaterialization
-			apply, freezeErr := freezeFormalApplyStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal Apply operator: %w", freezeErr)
-			}
-			operator.apply = apply
-			environmentWrite, freezeErr := freezeFormalEnvironmentWriteStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal relation EnvironmentWrite operator: %w", freezeErr)
-			}
-			operator.environmentWrite = environmentWrite
-			channelSelect, freezeErr := freezeFormalChannelSelectStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal ChannelSelect operator: %w", freezeErr)
-			}
-			operator.channelSelect = channelSelect
-			branchRelations, freezeErr := freezeFormalBranchRelationsStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal BranchRelations operator: %w", freezeErr)
-			}
-			operator.branchRelations = branchRelations
-			callResults, freezeErr := freezeFormalCallResultsStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal CallResults N3 operator: %w", freezeErr)
-			}
-			operator.callResults = callResults
-			presenceImplications, freezeErr := freezeFormalPresenceImplicationStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal PresenceImplications N2 operator: %w", freezeErr)
-			}
-			operator.presenceImplications = presenceImplications
-			genericFor, freezeErr := freezeFormalGenericForStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal GenericFor operator: %w", freezeErr)
-			}
-			operator.genericFor = genericFor
-			rootAssignment, freezeErr := freezeFormalRootAssignmentStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal RootAssignment N4 operator: %w", freezeErr)
-			}
-			operator.rootAssignment = rootAssignment
-			covariantExposure, freezeErr := freezeFormalCovariantExposureStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal CovariantExposure N6 operator: %w", freezeErr)
-			}
-			operator.covariantExposure = covariantExposure
-			contribution, freezeErr := freezeFormalContributionStep(program, cell.Variable, operator)
-			if freezeErr != nil {
-				return nil, fmt.Errorf("transformer: formal Contribution operator: %w", freezeErr)
-			}
-			operator.contribution = contribution
-			if step.kind != boundaryStepExternalCall {
-				if capabilityErr := bindFormalRelationStepCapability(&operator, step); capabilityErr != nil {
-					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)
-				}
-			}
-			if step.kind == boundaryStepEffect {
-				access, groups, reads, writes, accessErr := freezeFormalEffectTransferAccess(program, cell.Variable, operator)
-				if accessErr != nil {
-					return nil, fmt.Errorf("transformer: formal Effect access: %w", accessErr)
-				}
-				operator.effectAccess, operator.effectGroups = access, groups
-				operator.effectReadOrdinals, operator.effectWriteOrdinals = reads, writes
-				span, owned := program.formalFibers.span(cell.Variable)
-				if !owned {
-					return nil, fmt.Errorf("transformer: formal Effect lift has no frozen product span")
-				}
-				operator.effectLift, accessErr = sealFormalClosedFactorLift(span, [][]formalFiberOrdinal{reads}, writes)
-				if accessErr != nil {
-					return nil, fmt.Errorf("transformer: formal Effect lift: %w", accessErr)
-				}
+			operator, err = freezeFormalCanonicalStepOperator(program, cell.Variable, operator)
+			if err != nil {
+				return nil, err
 			}
 		}
 		template.equations[index] = formalRelationEquation{Cell: cellRef, Operator: operator}
@@ -487,7 +508,7 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 				}
 				input.Site = formalRelationCellRef{region: region, cell: influence.Site, index: siteIndex}
 			}
-			if !input.valid(cellRef) || !formalRelationInfluenceLegal(template, input, cellRef, operator) {
+			if !input.valid(cellRef) || (cell.Kind != formalRelationCellStep && !formalRelationInfluenceLegal(template, input, cellRef, operator)) {
 				return nil, fmt.Errorf("transformer: formal relation template input has invalid operator semantics")
 			}
 			inputs[inputIndex] = input
@@ -515,6 +536,11 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 					return nil, fmt.Errorf("transformer: formal relation Step operator: %w", capabilityErr)
 				}
 			}
+			stages, stageErr := freezeFormalRelationStepStages(program, template, template.equations[index])
+			if stageErr != nil {
+				return nil, stageErr
+			}
+			template.equations[index].StepStages = stages
 		}
 		if !formalRelationEquationComplete(template, template.equations[index]) {
 			return nil, fmt.Errorf("transformer: formal relation template equation is incomplete or duplicated")
@@ -525,8 +551,97 @@ func freezeFormalRelationTemplate(program *RelationProgram) (*formalRelationTemp
 		}
 		template.equations[index].ApplyNonreturning = transactions
 	}
+	// The stage vector is the sole executable Step authority. Scalar operator
+	// and input fields belong only to the other equation kinds; clear the
+	// temporary construction row after every cross-cell legality check is done.
+	for index := range template.equations {
+		if template.equations[index].Cell.cell.Kind != formalRelationCellStep {
+			continue
+		}
+		template.equations[index].Operator = formalRelationOperatorRef{}
+		template.equations[index].Inputs = nil
+	}
 	template.sealed = true
 	return template, nil
+}
+
+func freezeFormalRelationStepStages(
+	program *RelationProgram,
+	template *formalRelationTemplate,
+	equation formalRelationEquation,
+) ([]formalRelationStepStage, error) {
+	if program == nil || template == nil || template.region == nil || equation.Cell.cell.Kind != formalRelationCellStep {
+		return nil, fmt.Errorf("transformer: formal Step segment is unowned")
+	}
+	segments := template.region.stepSegments[equation.Cell.cell]
+	if len(segments) == 0 {
+		// Standalone inventory tests may freeze an unquotiented region. Preserve
+		// the exact one-Step equation shape there.
+		segments = []formalRelationStepSegment{{cell: equation.Cell.cell}}
+	}
+	stages := make([]formalRelationStepStage, len(segments))
+	for stageIndex, segment := range segments {
+		stageCell := segment.cell
+		if stageCell.Kind != formalRelationCellStep || stageCell.Variable != equation.Cell.cell.Variable || stageCell.Root != equation.Cell.cell.Root {
+			return nil, fmt.Errorf("transformer: formal Step segment crosses a lexical owner")
+		}
+		operator := equation.Operator
+		if stageCell != equation.Cell.cell {
+			var err error
+			operator, err = freezeFormalRelationOperator(program, template.region, template.rootInputs, stageCell)
+			if err != nil {
+				return nil, fmt.Errorf("transformer: absorbed Step %+v: %w", stageCell, err)
+			}
+			operator.scope = template.scopes[stageCell.Variable-1][stageCell.Root]
+			operator, err = freezeFormalCanonicalStepOperator(program, stageCell.Variable, operator)
+			if err != nil {
+				return nil, fmt.Errorf("transformer: absorbed Step %+v: %w", stageCell, err)
+			}
+		}
+		contract, present := template.region.stepInputs[stageCell]
+		if !present || len(contract.inputs) == 0 {
+			return nil, fmt.Errorf("transformer: formal Step segment stage %+v has no operand contract", stageCell)
+		}
+		inputs := make([]formalRelationTemplateInput, 0, len(contract.inputs))
+		for _, influence := range contract.inputs {
+			source, sourcePresent := template.region.representativeCell(influence.Source)
+			if !sourcePresent {
+				// Unquotiented test inventories use identity representatives.
+				source = influence.Source
+			}
+			if influence.Kind == formalRelationInfluenceFlow && source == equation.Cell.cell {
+				// The previous stage's normalized tuple is the physical operand.
+				continue
+			}
+			sourceIndex, declared := template.region.plan.CanonicalIndex(source)
+			if !declared {
+				return nil, fmt.Errorf("transformer: formal Step stage source %+v did not survive quotient", influence.Source)
+			}
+			input := formalRelationTemplateInput{
+				Source:    formalRelationCellRef{region: template.region, cell: source, index: sourceIndex},
+				Influence: influence.Kind,
+				ReadPoint: influence.ReadPoint,
+			}
+			if influence.Site.valid() {
+				site, sitePresent := template.region.representativeCell(influence.Site)
+				if !sitePresent {
+					site = influence.Site
+				}
+				siteIndex, declared := template.region.plan.CanonicalIndex(site)
+				if !declared {
+					return nil, fmt.Errorf("transformer: formal Step stage Site %+v did not survive quotient", influence.Site)
+				}
+				input.Site = formalRelationCellRef{region: template.region, cell: site, index: siteIndex}
+			}
+			inputs = append(inputs, input)
+		}
+		operands, err := freezeFormalRelationStageOperands(inputs, stageIndex == 0)
+		if err != nil {
+			return nil, fmt.Errorf("transformer: formal Step segment stage %+v: %w", stageCell, err)
+		}
+		stages[stageIndex] = formalRelationStepStage{Cell: stageCell, Operator: operator, Operands: operands}
+	}
+	return stages, nil
 }
 
 func freezeFormalApplyNonreturningTransactions(
@@ -594,9 +709,9 @@ func (t *formalRelationTemplate) sourceOperator(input formalRelationTemplateInpu
 		input.Source.index < 0 || input.Source.index >= len(t.equations) {
 		return formalRelationOperatorRef{}, 0, false
 	}
-	operator := t.equations[input.Source.index].Operator
+	operator, present := t.equations[input.Source.index].terminalOperator()
 	cell := input.Source.cell
-	if operator.kind != cell.Kind || cell.Variable == 0 || int(cell.Variable) > len(t.scopes) {
+	if !present || operator.kind != cell.Kind || cell.Variable == 0 || int(cell.Variable) > len(t.scopes) {
 		return formalRelationOperatorRef{}, 0, false
 	}
 	return operator, operator.scope, true
@@ -610,7 +725,37 @@ func (t *formalRelationTemplate) equation(cell formalRelationCell) (formalRelati
 	if !ok || index < 0 || index >= len(t.equations) || t.equations[index].Cell.cell != cell {
 		return formalRelationEquation{}, false
 	}
-	return t.equations[index], true
+	equation := t.equations[index]
+	if cell.Kind == formalRelationCellStep && len(equation.StepStages) != 0 {
+		// Return a detached scalar view for callers that inspect one equation.
+		// The stored template retains only the stage vector as its authority.
+		equation.Operator = equation.StepStages[len(equation.StepStages)-1].Operator
+		if len(equation.StepStages) == 1 {
+			equation.Inputs = formalRelationStageInputs(equation.StepStages[0].Operands)
+		}
+	}
+	return equation, true
+}
+
+func formalRelationStageInputs(operands formalRelationStepOperands) []formalRelationTemplateInput {
+	capacity := len(operands.PublishedReads) + len(operands.CalleeOutcomes) + len(operands.ClosureDefinitions)
+	if operands.HasFlow {
+		capacity++
+	}
+	if operands.HasNodeEntry {
+		capacity++
+	}
+	inputs := make([]formalRelationTemplateInput, 0, capacity)
+	if operands.HasFlow {
+		inputs = append(inputs, operands.Flow)
+	}
+	if operands.HasNodeEntry {
+		inputs = append(inputs, operands.NodeEntry)
+	}
+	inputs = append(inputs, operands.PublishedReads...)
+	inputs = append(inputs, operands.CalleeOutcomes...)
+	inputs = append(inputs, operands.ClosureDefinitions...)
+	return inputs
 }
 
 func (i formalRelationTemplateInput) valid(target formalRelationCellRef) bool {
@@ -844,6 +989,40 @@ func formalRelationEquationComplete(template *formalRelationTemplate, equation f
 	}
 	if equation.Cell.cell.Kind == formalRelationCellStep && equation.Operator.stepCapability == formalRelationStepCapabilityInvalid {
 		return false
+	}
+	if equation.Cell.cell.Kind == formalRelationCellStep && template.region.quotiented {
+		if len(equation.StepStages) == 0 || equation.StepStages[len(equation.StepStages)-1].Cell != equation.Cell.cell {
+			return false
+		}
+		incoming := template.region.incoming[equation.Cell.cell]
+		if len(equation.Inputs) != len(incoming) {
+			return false
+		}
+		used := make([]bool, len(incoming))
+		for _, input := range equation.Inputs {
+			matched := -1
+			for index, influence := range incoming {
+				if !used[index] && input.Source.cell == influence.Source && input.Influence == influence.Kind &&
+					input.ReadPoint == influence.ReadPoint && input.Site.cell == influence.Site {
+					matched = index
+					break
+				}
+			}
+			if matched < 0 {
+				return false
+			}
+			used[matched] = true
+		}
+		for index, stage := range equation.StepStages {
+			if stage.Cell.Kind != formalRelationCellStep || stage.Operator.kind != formalRelationCellStep ||
+				stage.Operator.stepCapability == formalRelationStepCapabilityInvalid ||
+				(index > 0 && (stage.Cell.Variable != equation.StepStages[index-1].Cell.Variable ||
+					stage.Cell.Root != equation.StepStages[index-1].Cell.Root || stage.Cell.Step != equation.StepStages[index-1].Cell.Step+1)) ||
+				stage.Operands.HasFlow != (index == 0) {
+				return false
+			}
+		}
+		return true
 	}
 	var actual formalRelationInfluenceCounts
 	for index, input := range equation.Inputs {

@@ -162,22 +162,23 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 	// incoming Apply-site inventory once per body publication so every point
 	// reuses the same deterministic caller environment set.
 	for _, equation := range program.formalTemplate.equations {
-		if equation.Operator.apply != nil {
-			if equation.Operator.apply.owner == variable && equation.Operator.apply.linked != nil {
-				point := equation.Operator.apply.linked.point
+		operator, operatorPresent := equation.terminalOperator()
+		if operatorPresent && operator.apply != nil {
+			if operator.apply.owner == variable && operator.apply.linked != nil {
+				point := operator.apply.linked.point
 				view.callSites[point] = append(view.callSites[point], equation.Cell.cell)
-				target := equation.Operator.apply.target
+				target := operator.apply.target
 				if target == 0 || int(target) > len(program.bodies) {
 					return FormalRelationPublicationView{}, fmt.Errorf("transformer: formal publication has a foreign Apply target")
 				}
 				view.calls = append(view.calls, FormalLexicalCallDependency{
-					Point: point, Occurrence: equation.Operator.apply.linked.occurrence,
+					Point: point, Occurrence: operator.apply.linked.occurrence,
 					Target: program.bodies[target-1].body,
 				})
 			}
 			continue
 		}
-		step, present := formalRelationStepOperator(equation.Operator)
+		step, present := formalRelationStepOperator(operator)
 		if !present || equation.Cell.cell.Variable != variable {
 			continue
 		}

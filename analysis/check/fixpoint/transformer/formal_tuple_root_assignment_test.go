@@ -54,8 +54,10 @@ func TestFormalRootAssignmentExecutesCanonicalSparseN4(t *testing.T) {
 	var equation formalRelationEquation
 	found := false
 	for _, candidate := range program.formalTemplate.equations {
-		if candidate.Operator.stepCapability == formalRelationStepCapabilityRootAssignment {
+		operator, present := candidate.terminalOperator()
+		if present && operator.stepCapability == formalRelationStepCapabilityRootAssignment {
 			equation, found = candidate, true
+			equation.Operator = operator
 			break
 		}
 	}

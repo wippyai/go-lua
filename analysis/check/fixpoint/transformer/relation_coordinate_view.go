@@ -31,7 +31,8 @@ func (v StabilizedRelationView) FunctionalApplyInstantiations() int {
 	}
 	count := 0
 	for _, equation := range v.program.formalTemplate.equations {
-		if equation.Operator.apply != nil {
+		operator, present := equation.terminalOperator()
+		if present && operator.apply != nil {
 			count++
 		}
 	}

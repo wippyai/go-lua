@@ -30,8 +30,13 @@ func TestFormalEffectPathReplacementPreservesLexicalRepeatedWriteOrder(t *testin
 	}
 	firstCell := formalRelationCell{Variable: 1, Root: 1, Step: 1, Kind: formalRelationCellStep}
 	secondCell := formalRelationCell{Variable: 1, Root: 1, Step: 2, Kind: formalRelationCellStep}
-	formalEffectTestPathValue(t, result, program.formalTemplate.equations[firstCellIndex(t, program, firstCell)].Operator, result.values[firstCell], first)
-	formalEffectTestPathValue(t, result, program.formalTemplate.equations[firstCellIndex(t, program, secondCell)].Operator, result.values[secondCell], second)
+	firstEquation, firstOK := program.formalTemplate.equation(firstCell)
+	secondEquation, secondOK := program.formalTemplate.equation(secondCell)
+	if !firstOK || !secondOK {
+		t.Fatal("published repeated writes did not retain their observable cells")
+	}
+	formalEffectTestPathValue(t, result, firstEquation.Operator, result.values[firstCell], first)
+	formalEffectTestPathValue(t, result, secondEquation.Operator, result.values[secondCell], second)
 }
 
 func TestFormalEffectPathReplacementBottomStaysBottom(t *testing.T) {

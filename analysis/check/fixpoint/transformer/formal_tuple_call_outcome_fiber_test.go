@@ -80,7 +80,8 @@ func formalCallOutcomeFiberFixtureWithProvider(t *testing.T, provider callpayloa
 		t.Fatal("formal call-outcome fixture has no point fiber")
 	}
 	for _, equation := range program.formalTemplate.equations {
-		step, exact := formalRelationStepOperator(equation.Operator)
+		operator, _ := equation.terminalOperator()
+		step, exact := formalRelationStepOperator(operator)
 		if exact && step.kind == boundaryStepExternalCall && step.point == point {
 			return program, algebra, equation.Cell.cell, fiber
 		}

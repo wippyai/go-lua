@@ -124,7 +124,22 @@ type formalRelationRegionInventory struct {
 	resources    []formalRelationResource
 	stepInputs   map[formalRelationCell]formalRelationStepDependencyContract
 	widen        map[formalRelationCell]bool
-	plan         *solve.WTOPlan[formalRelationCell]
+	// representative and stepSegments are sealed when the lexical graph is
+	// quotiented after coordinate/identity footprint closure. At that point
+	// cells/incoming/successors become the sole solver graph; the full lexical
+	// graph is discarded rather than retained as a peer authority.
+	representative map[formalRelationCell]formalRelationCell
+	stepSegments   map[formalRelationCell][]formalRelationStepSegment
+	quotiented     bool
+	plan           *solve.WTOPlan[formalRelationCell]
+}
+
+// formalRelationStepSegment is the minimal lexical metadata needed to execute
+// one absorbed Step after the full pre-quotient graph has been discarded.
+// Inputs exclude the segment's internal Flow edge; every source is already
+// rewritten to its retained representative.
+type formalRelationStepSegment struct {
+	cell formalRelationCell
 }
 
 type formalRelationLoopTarget struct {
@@ -145,13 +160,15 @@ func freezeFormalRelationRegionInventory(program *RelationProgram) (*formalRelat
 		return nil, fmt.Errorf("transformer: formal relation inventory is unowned")
 	}
 	inventory := &formalRelationRegionInventory{
-		incoming:     make(map[formalRelationCell][]formalRelationInfluence),
-		successors:   make(map[formalRelationCell][]formalRelationCell),
-		stepInputs:   make(map[formalRelationCell]formalRelationStepDependencyContract),
-		roots:        make([]formalRelationCell, len(program.bodies)),
-		outcomes:     make([][]formalRelationCell, len(program.bodies)),
-		nonreturning: make([]formalRelationCell, len(program.bodies)),
-		widen:        make(map[formalRelationCell]bool),
+		incoming:       make(map[formalRelationCell][]formalRelationInfluence),
+		successors:     make(map[formalRelationCell][]formalRelationCell),
+		stepInputs:     make(map[formalRelationCell]formalRelationStepDependencyContract),
+		roots:          make([]formalRelationCell, len(program.bodies)),
+		outcomes:       make([][]formalRelationCell, len(program.bodies)),
+		nonreturning:   make([]formalRelationCell, len(program.bodies)),
+		widen:          make(map[formalRelationCell]bool),
+		representative: make(map[formalRelationCell]formalRelationCell),
+		stepSegments:   make(map[formalRelationCell][]formalRelationStepSegment),
 	}
 	declared := make(map[formalRelationCell]struct{})
 	for bodyIndex := range program.bodies {
@@ -651,6 +668,181 @@ func (i *formalRelationRegionInventory) addInfluence(influence formalRelationInf
 	}
 	i.successors[influence.Source] = append(i.successors[influence.Source], influence.Target)
 	return nil
+}
+
+// freezeObservableStepQuotient removes only fixed-point variables whose value
+// is not observable outside one acyclic lexical Step chain. The semantic Steps
+// themselves survive in stepSegments and are executed in their original order
+// by the retained terminal equation.
+//
+// This runs after formal coordinate/identity footprints have been frozen from
+// the complete lexical graph. On return cells/incoming/successors/plan are the
+// one canonical solver graph; the pre-quotient edge graph is unreachable.
+func (i *formalRelationRegionInventory) freezeObservableStepQuotient(program *RelationProgram) error {
+	if i == nil || program == nil || i.quotiented || len(i.cells) == 0 || i.plan == nil {
+		return fmt.Errorf("transformer: observable Step quotient is unowned or already sealed")
+	}
+	lexicalCells := append([]formalRelationCell(nil), i.cells...)
+	outgoing := make(map[formalRelationCell][]formalRelationInfluence, len(lexicalCells))
+	for _, row := range i.incoming {
+		for _, influence := range row {
+			outgoing[influence.Source] = append(outgoing[influence.Source], influence)
+		}
+	}
+
+	retained := make(map[formalRelationCell]bool, len(lexicalCells))
+	for _, cell := range lexicalCells {
+		if cell.Kind != formalRelationCellStep {
+			retained[cell] = true
+		}
+		if i.widen[cell] {
+			retained[cell] = true
+		}
+		i.representative[cell] = cell
+	}
+	// Point/edge publication and nodeReads all name the same sealed output-cell
+	// vocabulary. Retain every such Step even when it would otherwise be a
+	// linear intermediate.
+	for bodyIndex := range program.bodies {
+		variable := relationVar(bodyIndex + 1)
+		code := program.bodies[bodyIndex].relation.code
+		if code == nil {
+			return fmt.Errorf("transformer: observable Step quotient body %d has no relation code", variable)
+		}
+		markPublication := func(ref relationRootRef) {
+			cell := formalPublicationOutputCell(program, variable, ref)
+			if cell.Kind == formalRelationCellStep {
+				retained[cell] = true
+			}
+			// Published-read dependencies use the point-local output rather than
+			// terminal reduction. Preserve that identity as well.
+			if local, dependency, valid := formalRelationPublishedOutputCell(variable, code, ref); valid && dependency && local.Kind == formalRelationCellStep {
+				retained[local] = true
+			}
+		}
+		for _, publication := range code.publication.points {
+			markPublication(publication.ref)
+		}
+		for _, publication := range code.publication.edges {
+			markPublication(publication.ref)
+		}
+		for root := relationRootRef(1); int(root) < len(code.nodes); root++ {
+			node := code.nodes[root]
+			if node.kind != relationNodeSequence || len(node.steps) == 0 {
+				continue
+			}
+			last := formalRelationCell{Variable: variable, Root: root, Step: uint32(len(node.steps)), Kind: formalRelationCellStep}
+			retained[last] = true
+			for index, step := range node.steps {
+				if step.kind == boundaryStepApply || step.kind == boundaryStepExternalCall ||
+					step.kind == boundaryStepLoopFeedback || step.kind == boundaryStepLoopExit {
+					retained[formalRelationCell{Variable: variable, Root: root, Step: uint32(index + 1), Kind: formalRelationCellStep}] = true
+					// Call/control cutpoints own external observation and pairing.
+					// Keep their immediate predecessor outside the same pipeline so
+					// their operand row remains a self-contained named boundary.
+					if index > 0 {
+						retained[formalRelationCell{Variable: variable, Root: root, Step: uint32(index), Kind: formalRelationCellStep}] = true
+					}
+				}
+			}
+		}
+	}
+
+	// A non-terminal Step is absorbable exactly when nobody can distinguish its
+	// result: its sole outgoing influence is immediate lexical Flow.
+	for bodyIndex := range program.bodies {
+		variable := relationVar(bodyIndex + 1)
+		code := program.bodies[bodyIndex].relation.code
+		for root := relationRootRef(1); int(root) < len(code.nodes); root++ {
+			node := code.nodes[root]
+			if node.kind != relationNodeSequence {
+				continue
+			}
+			for index := len(node.steps) - 2; index >= 0; index-- {
+				cell := formalRelationCell{Variable: variable, Root: root, Step: uint32(index + 1), Kind: formalRelationCellStep}
+				next := formalRelationCell{Variable: variable, Root: root, Step: uint32(index + 2), Kind: formalRelationCellStep}
+				row := outgoing[cell]
+				if retained[cell] || len(row) != 1 || row[0].Kind != formalRelationInfluenceFlow || row[0].Target != next {
+					retained[cell] = true
+					continue
+				}
+				representative := i.representative[next]
+				if !representative.valid() || !retained[representative] {
+					return fmt.Errorf("transformer: observable Step quotient has no retained terminal for %+v", cell)
+				}
+				i.representative[cell] = representative
+			}
+		}
+	}
+
+	for _, cell := range lexicalCells {
+		representative, present := i.representative[cell]
+		if !present || !representative.valid() || !retained[representative] {
+			return fmt.Errorf("transformer: lexical cell %+v has no unique observable representative", cell)
+		}
+		if cell.Kind == formalRelationCellStep {
+			i.stepSegments[representative] = append(i.stepSegments[representative], formalRelationStepSegment{cell: cell})
+		}
+	}
+
+	quotientIncoming := make(map[formalRelationCell][]formalRelationInfluence)
+	quotientSuccessors := make(map[formalRelationCell][]formalRelationCell)
+	for _, row := range i.incoming {
+		for _, influence := range row {
+			source := i.representative[influence.Source]
+			target := i.representative[influence.Target]
+			if source == target && influence.Kind == formalRelationInfluenceFlow {
+				continue
+			}
+			influence.Source, influence.Target = source, target
+			duplicate := false
+			for _, prior := range quotientIncoming[target] {
+				if prior == influence {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				quotientIncoming[target] = append(quotientIncoming[target], influence)
+			}
+			seenSuccessor := false
+			for _, prior := range quotientSuccessors[source] {
+				if prior == target {
+					seenSuccessor = true
+					break
+				}
+			}
+			if !seenSuccessor {
+				quotientSuccessors[source] = append(quotientSuccessors[source], target)
+			}
+		}
+	}
+	quotientCells := make([]formalRelationCell, 0, len(lexicalCells))
+	for _, cell := range lexicalCells {
+		if i.representative[cell] == cell {
+			quotientCells = append(quotientCells, cell)
+		}
+	}
+	for cell := range quotientSuccessors {
+		sort.Slice(quotientSuccessors[cell], func(left, right int) bool {
+			return formalRelationCellLess(quotientSuccessors[cell][left], quotientSuccessors[cell][right])
+		})
+	}
+	i.cells, i.incoming, i.successors = quotientCells, quotientIncoming, quotientSuccessors
+	i.plan = solve.NewWTOPlan(i.cells, func(cell formalRelationCell) []formalRelationCell { return i.successors[cell] })
+	if i.plan == nil || !i.plan.Matches(i.cells) {
+		return fmt.Errorf("transformer: observable Step quotient WTO does not cover retained cells")
+	}
+	i.quotiented = true
+	return i.validateTypedWidenHeads()
+}
+
+func (i *formalRelationRegionInventory) representativeCell(cell formalRelationCell) (formalRelationCell, bool) {
+	if i == nil || !i.quotiented {
+		return formalRelationCell{}, false
+	}
+	representative, present := i.representative[cell]
+	return representative, present && representative.valid()
 }
 
 func formalRelationCellLess(left, right formalRelationCell) bool {

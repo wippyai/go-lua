@@ -1243,6 +1243,12 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 		return nil, err
 	}
 	program.formalFibers = formalFibers
+	// Coordinate and identity footprint closure deliberately sees every lexical
+	// Step. Once those semantic operators are frozen, collapse unobservable
+	// acyclic Step chains before any WTO/template authority is published.
+	if err := formalRegion.freezeObservableStepQuotient(program); err != nil {
+		return nil, err
+	}
 	formalComponents, err := freezeFormalComponentTerminalSchema(program)
 	if err != nil {
 		return nil, err

@@ -27,7 +27,8 @@ func TestFormalRelationTemplateFreezesAcyclicCellsAndOperators(t *testing.T) {
 		t.Fatalf("template equation coverage = %d/%d", len(template.equations), len(program.formalRegion.cells))
 	}
 	for index, equation := range template.equations {
-		if !equation.Cell.valid() || equation.Cell.index != index || equation.Operator.kind != equation.Cell.cell.Kind {
+		operator, operatorPresent := equation.terminalOperator()
+		if !equation.Cell.valid() || equation.Cell.index != index || !operatorPresent || operator.kind != equation.Cell.cell.Kind {
 			t.Fatalf("equation %d is malformed: %#v", index, equation)
 		}
 		for _, input := range equation.Inputs {

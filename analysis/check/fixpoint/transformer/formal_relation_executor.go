@@ -272,18 +272,38 @@ func evaluateFormalRelationStepEquation(
 	equation formalRelationEquation,
 	read func(formalRelationCell) formalRelationTuple,
 ) formalRelationTuple {
-	if equation.Operator.stepCapability == formalRelationStepCapabilityApply {
+	if len(equation.StepStages) == 0 {
+		algebra.fail(fmt.Errorf("transformer: formal Step equation has no frozen stage vector"))
+		return formalRelationTuple{}
+	}
+	if equation.StepStages[len(equation.StepStages)-1].Operator.stepCapability == formalRelationStepCapabilityApply {
 		delete(algebra.applyObservations, equation.Cell.cell)
 	}
-	operands, err := partitionFormalRelationStepOperands(equation)
-	if err != nil {
-		algebra.fail(err)
-		return formalRelationTuple{}
+	var current formalRelationTuple
+	for index, stage := range equation.StepStages {
+		predecessor := current
+		if index == 0 {
+			predecessor = read(stage.Operands.Flow.Source.cell)
+			if predecessor.bottom() {
+				return formalRelationTuple{}
+			}
+		}
+		current = evaluateFormalRelationStepStage(algebra, equation.Cell.cell, stage, predecessor, read)
+		if current.bottom() || algebra.err() != nil {
+			return formalRelationTuple{}
+		}
 	}
-	predecessor := read(operands.Flow.Source.cell)
-	if predecessor.bottom() {
-		return formalRelationTuple{}
-	}
+	return current
+}
+
+func evaluateFormalRelationStepStage(
+	algebra *formalTupleAlgebra,
+	owner formalRelationCell,
+	stage formalRelationStepStage,
+	predecessor formalRelationTuple,
+	read func(formalRelationCell) formalRelationTuple,
+) formalRelationTuple {
+	operands, operator := stage.Operands, stage.Operator
 	// Every non-flow operand is part of the closed dependency equation.  Bottom
 	// means its producer has not established the transaction yet.
 	ready := func(inputs []formalRelationTemplateInput) ([]formalRelationTuple, bool) {
@@ -316,10 +336,11 @@ func evaluateFormalRelationStepEquation(
 	}
 
 	var result formalRelationTuple
-	switch equation.Operator.stepCapability {
+	var err error
+	switch operator.stepCapability {
 	case formalRelationStepCapabilityApply:
 		var observation formalApplyObservation
-		result, observation, err = algebra.applyOutcome(equation.Operator, predecessor, outcomes)
+		result, observation, err = algebra.applyOutcome(operator, predecessor, outcomes)
 		if err == nil {
 			witness := formalApplyObservationWitness{
 				predecessorCell: operands.Flow.Source.cell, predecessorValue: predecessor,
@@ -329,50 +350,50 @@ func evaluateFormalRelationStepEquation(
 			for index, input := range operands.CalleeOutcomes {
 				witness.outcomeCells[index] = input.Source.cell
 			}
-			algebra.applyObservations[equation.Cell.cell] = witness
+			algebra.applyObservations[owner] = witness
 		}
 	case formalRelationStepCapabilityPathReplacement:
-		result, err = algebra.applyFormalPathReplacement(equation.Operator, predecessor)
+		result, err = algebra.applyFormalPathReplacement(operator, predecessor)
 	case formalRelationStepCapabilityPathInvalidation:
-		result, err = algebra.applyFormalPathInvalidation(equation.Operator, predecessor)
+		result, err = algebra.applyFormalPathInvalidation(operator, predecessor)
 	case formalRelationStepCapabilityIndexMutation:
-		result, err = algebra.applyFormalIndexMutation(equation.Operator, predecessor)
+		result, err = algebra.applyFormalIndexMutation(operator, predecessor)
 	case formalRelationStepCapabilityAllocationTemplate:
-		result, err = algebra.applyFormalAllocationTemplate(equation.Operator, predecessor)
+		result, err = algebra.applyFormalAllocationTemplate(operator, predecessor)
 	case formalRelationStepCapabilityObjectMaterialization:
-		result, err = algebra.applyFormalObjectMaterialization(equation.Operator, predecessor)
+		result, err = algebra.applyFormalObjectMaterialization(operator, predecessor)
 	case formalRelationStepCapabilityEnvironmentWrite:
-		result, err = algebra.applyFormalEnvironmentWrite(equation.Operator, predecessor)
+		result, err = algebra.applyFormalEnvironmentWrite(operator, predecessor)
 	case formalRelationStepCapabilityChannelSelect:
-		result, err = algebra.applyFormalChannelSelect(equation.Operator, predecessor)
+		result, err = algebra.applyFormalChannelSelect(operator, predecessor)
 	case formalRelationStepCapabilityBranchRelations:
-		result, err = algebra.applyFormalBranchRelations(equation.Operator, predecessor)
+		result, err = algebra.applyFormalBranchRelations(operator, predecessor)
 	case formalRelationStepCapabilityCallResults:
-		result, err = algebra.applyFormalCallResults(equation.Operator, predecessor)
+		result, err = algebra.applyFormalCallResults(operator, predecessor)
 	case formalRelationStepCapabilityPresenceImplications:
-		result, err = algebra.applyFormalPresenceImplications(equation.Operator, predecessor)
+		result, err = algebra.applyFormalPresenceImplications(operator, predecessor)
 	case formalRelationStepCapabilityLoopControl:
 		// Loop Steps publish their predecessor unchanged. Their outgoing typed
 		// control influence is the sole owner of feedback closure versus exact
 		// exit preservation, so the distinction cannot be duplicated here.
 		result = predecessor
 	case formalRelationStepCapabilityGenericFor:
-		result, err = algebra.applyFormalGenericFor(equation.Operator, predecessor, nodeEntry)
+		result, err = algebra.applyFormalGenericFor(operator, predecessor, nodeEntry)
 	case formalRelationStepCapabilityRootAssignment:
-		result, err = algebra.applyFormalRootAssignmentPlan(equation.Operator, predecessor, nodeEntry)
+		result, err = algebra.applyFormalRootAssignmentPlan(operator, predecessor, nodeEntry)
 	case formalRelationStepCapabilityCovariantExposure:
-		result, err = algebra.applyFormalCovariantExposure(equation.Operator, equation.Operator.covariantExposure, predecessor, nodeEntry)
+		result, err = algebra.applyFormalCovariantExposure(operator, operator.covariantExposure, predecessor, nodeEntry)
 	case formalRelationStepCapabilityContribution:
-		result, err = algebra.applyFormalContribution(equation.Operator, predecessor)
+		result, err = algebra.applyFormalContribution(operator, predecessor)
 	case formalRelationStepCapabilityExternalCall:
-		result, err = algebra.applyFormalExternalCall(equation.Operator, predecessor, published)
+		result, err = algebra.applyFormalExternalCall(operator, predecessor, published)
 	default:
-		step, _ := formalRelationStepOperator(equation.Operator)
-		err = fmt.Errorf("transformer: sealed formal Step has invalid capability %d for boundary kind %d at cell %+v", equation.Operator.stepCapability, step.kind, equation.Cell.cell)
+		step, _ := formalRelationStepOperator(operator)
+		err = fmt.Errorf("transformer: sealed formal Step has invalid capability %d for boundary kind %d at cell %+v", operator.stepCapability, step.kind, stage.Cell)
 	}
 	if err != nil {
-		step, _ := formalRelationStepOperator(equation.Operator)
-		algebra.fail(fmt.Errorf("transformer: formal Step capability=%d boundary=%d point=%d: %w", equation.Operator.stepCapability, step.kind, step.point, err))
+		step, _ := formalRelationStepOperator(operator)
+		algebra.fail(fmt.Errorf("transformer: formal Step capability=%d boundary=%d point=%d: %w", operator.stepCapability, step.kind, step.point, err))
 		return formalRelationTuple{}
 	}
 	return algebra.normalize(result)

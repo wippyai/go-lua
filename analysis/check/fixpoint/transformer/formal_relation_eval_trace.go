@@ -447,11 +447,12 @@ func formatFormalRelationEquationTrace(algebra *formalTupleAlgebra, equation for
 		body = algebra.program.bodies[cell.Variable-1].body.String()
 	}
 	boundary, point := boundaryStepInvalid, 0
-	if step, ok := formalRelationStepOperator(equation.Operator); ok {
+	operator, _ := equation.terminalOperator()
+	if step, ok := formalRelationStepOperator(operator); ok {
 		boundary, point = step.kind, int(step.point)
 	}
 	shape := ""
-	if plan := equation.Operator.outcomeTransaction; plan != nil {
+	if plan := operator.outcomeTransaction; plan != nil {
 		reads, writes, components := 0, 0, 0
 		for _, lift := range []formalClosedFactorLift{plan.bindingLift, plan.presenceLift, plan.covariantLift} {
 			if !lift.sealed {
@@ -467,5 +468,5 @@ func formatFormalRelationEquationTrace(algebra *formalTupleAlgebra, equation for
 			reads, writes, len(plan.demands), len(plan.sources), components)
 	}
 	return fmt.Sprintf("body=%s cell=%+v capability=%d boundary=%d point=%d inputs=%d seeds=%d nonreturning=%d%s",
-		body, cell, equation.Operator.stepCapability, boundary, point, len(equation.Inputs), len(equation.Seeds), len(equation.ApplyNonreturning), shape)
+		body, cell, operator.stepCapability, boundary, point, equation.stepInputCount()+len(equation.Inputs), len(equation.Seeds), len(equation.ApplyNonreturning), shape)
 }

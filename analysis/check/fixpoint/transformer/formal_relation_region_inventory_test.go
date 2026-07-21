@@ -36,6 +36,40 @@ func hasFormalInfluence(incoming []formalRelationInfluence, source formalRelatio
 	return false
 }
 
+func TestFormalRelationObservableStepQuotientRemovesOnlyLinearIntermediates(t *testing.T) {
+	code := formalRegionTestCode([]relationNode{{}, {
+		kind: relationNodeSequence,
+		steps: []boundaryStep{
+			{kind: boundaryStepContribution}, {kind: boundaryStepContribution},
+			{kind: boundaryStepContribution}, {kind: boundaryStepContribution},
+		},
+		next: 2,
+	}, {kind: relationNodeOutcome, outcome: 1}}, 1)
+	program := formalRegionTestProgram(code)
+	region, err := freezeFormalRelationRegionInventory(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.formalRegion = region
+	before := len(region.cells)
+	if err := region.freezeObservableStepQuotient(program); err != nil {
+		t.Fatal(err)
+	}
+	terminal := formalRelationCell{Variable: 1, Root: 1, Step: 4, Kind: formalRelationCellStep}
+	if got := len(region.cells); got != before-3 {
+		t.Fatalf("quotient cells = %d, want %d", got, before-3)
+	}
+	if segment := region.stepSegments[terminal]; len(segment) != 4 || segment[0].cell.Step != 1 || segment[3].cell.Step != 4 {
+		t.Fatalf("quotient lexical stage order = %#v", segment)
+	}
+	for step := uint32(1); step < 4; step++ {
+		cell := formalRelationCell{Variable: 1, Root: 1, Step: step, Kind: formalRelationCellStep}
+		if _, retained := region.plan.CanonicalIndex(cell); retained {
+			t.Fatalf("linear intermediate Step %d retained a solver cell", step)
+		}
+	}
+}
+
 func TestFormalRelationRegionEveryWTOComponentOwnsTypedWidenHead(t *testing.T) {
 	outer, inner := loopMuTerm(1), loopMuTerm(2)
 	loopBody := formalRegionTestCode([]relationNode{
