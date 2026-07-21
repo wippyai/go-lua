@@ -9,14 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -49,27 +47,6 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		lane.project(projectCtx, &out)
 	}
 	return out, nil
-}
-
-func dynamicIndexSourcePlaceholderPath(
-	result ResultReader,
-	params []path.Path,
-	site dynamicindex.Site,
-	sourceOf func(factflow.DynamicIndexWrite) factflow.ValueSource,
-) (path.Path, bool) {
-	writeReader, ok := result.(dynamicIndexWriteReader)
-	if !ok {
-		return path.Path{}, false
-	}
-	rawPoint, ok := dynamicindex.PointFromSite(site)
-	if !ok {
-		return path.Path{}, false
-	}
-	write, ok := writeReader.DynamicIndexWrite(cfg.Point(rawPoint))
-	if !ok {
-		return path.Path{}, false
-	}
-	return dynamicIndexValueSourcePlaceholderPath(result, params, sourceOf(write))
 }
 
 func dynamicIndexKeyPlaceholderPath(result ResultReader, params []path.Path, write factflow.DynamicIndexWrite) (path.Path, bool) {
@@ -754,122 +731,6 @@ func returnSlotPath(index int) path.Path {
 	return path.Path{Root: "ret[" + strconv.Itoa(index) + "]"}
 }
 
-func frozenTablePlaceholderPaths(reg *axis.Registry, ks *keyspace.KeySpace, exit state.State, params []path.Path) map[identity.ID][]path.Path {
-	out := make(map[identity.ID][]path.Path)
-	boundary := newBoundaryPathProjector(ks, params, nil, nil)
-	var queue []frozenTablePathCandidate
-	for i, param := range params {
-		if param.Symbol == 0 {
-			continue
-		}
-		value := exit.ReadValue(reg, key.SymbolValue(param.Symbol))
-		id, ok := productIdentityID(reg, value)
-		if !ok {
-			continue
-		}
-		if addFrozenTablePlaceholderPath(out, id, path.NewPlaceholder(i)) {
-			queue = append(queue, newFrozenTablePathCandidate(id, path.NewPlaceholder(i), nil))
-		}
-	}
-	exit.ForEachPathRefinement(func(pathKey keyspace.Key, value product.Value) bool {
-		id, ok := productIdentityID(reg, value)
-		if !ok {
-			return true
-		}
-		target, ok := boundary.KeyspacePlaceholderPath(pathKey)
-		if !ok {
-			return true
-		}
-		if addFrozenTablePlaceholderPath(out, id, target) {
-			queue = append(queue, newFrozenTablePathCandidate(id, target, nil))
-		}
-		return true
-	})
-	exit.ForEachPathStaticMember(func(pathKey keyspace.Key, value product.Value) bool {
-		id, ok := productIdentityID(reg, value)
-		if !ok {
-			return true
-		}
-		target, ok := boundary.KeyspacePlaceholderPath(pathKey)
-		if !ok {
-			return true
-		}
-		if addFrozenTablePlaceholderPath(out, id, target) {
-			queue = append(queue, newFrozenTablePathCandidate(id, target, nil))
-		}
-		return true
-	})
-	heap := exit.HeapTableObjectsSnapshot()
-	if heap.Top || len(heap.Objects) == 0 {
-		return out
-	}
-	for len(queue) != 0 {
-		candidate := queue[0]
-		queue = queue[1:]
-		object, ok := heap.Objects[candidate.id]
-		if !ok {
-			continue
-		}
-		for suffix, value := range object.StaticMembers() {
-			childID, ok := productIdentityID(reg, value)
-			if !ok || candidate.hasSeen(childID) {
-				continue
-			}
-			segments, ok := ks.SuffixSegmentsView(suffix)
-			if !ok {
-				continue
-			}
-			childPath := candidate.path.AppendSegments(segments)
-			if addFrozenTablePlaceholderPath(out, childID, childPath) {
-				queue = append(queue, newFrozenTablePathCandidate(childID, childPath, candidate.seen))
-			}
-		}
-	}
-	return out
-}
-
-type frozenTablePathCandidate struct {
-	id   identity.ID
-	path path.Path
-	seen map[identity.ID]struct{}
-}
-
-func newFrozenTablePathCandidate(id identity.ID, target path.Path, seen map[identity.ID]struct{}) frozenTablePathCandidate {
-	nextSeen := make(map[identity.ID]struct{}, len(seen)+1)
-	for seenID := range seen {
-		nextSeen[seenID] = struct{}{}
-	}
-	nextSeen[id] = struct{}{}
-	return frozenTablePathCandidate{id: id, path: target, seen: nextSeen}
-}
-
-func (c frozenTablePathCandidate) hasSeen(id identity.ID) bool {
-	_, ok := c.seen[id]
-	return ok
-}
-
-func productIdentityID(reg *axis.Registry, value product.Value) (identity.ID, bool) {
-	id, ok := product.Get(reg, value, identity.Key).ID()
-	if !ok || id == (identity.ID{}) {
-		return identity.ID{}, false
-	}
-	return id, true
-}
-
-func addFrozenTablePlaceholderPath(paths map[identity.ID][]path.Path, id identity.ID, target path.Path) bool {
-	if id == (identity.ID{}) || target.IsEmpty() {
-		return false
-	}
-	key := target.Key()
-	for _, existing := range paths[id] {
-		if existing.Key() == key {
-			return false
-		}
-	}
-	paths[id] = append(paths[id], target)
-	return true
-}
-
 func portableBoundaryValue(reg *axis.Registry, value product.Value) product.Value {
 	return product.ProjectBoundary(reg, value)
 }
@@ -937,19 +798,6 @@ func projectBranchProofKind(kind pathevidence.BranchProofKind) (pathevidence.Bra
 		return pathevidence.BranchProofPathNotEqual, true
 	case pathevidence.BranchProofIndexInRange:
 		return pathevidence.BranchProofIndexInRange, true
-	default:
-		return 0, false
-	}
-}
-
-func projectChannelSelectKind(kind channelselectfact.Kind) (channelselectfact.Kind, bool) {
-	switch kind {
-	case channelselectfact.FactSelect:
-		return channelselectfact.FactSelect, true
-	case channelselectfact.FactReceive:
-		return channelselectfact.FactReceive, true
-	case channelselectfact.FactCase:
-		return channelselectfact.FactCase, true
 	default:
 		return 0, false
 	}

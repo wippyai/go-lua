@@ -5,13 +5,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -821,11 +817,4 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if conditionInner.Kind != factflow.ValueSourceCall || conditionInner.CallPoint != ifPoints[0] || !conditionInner.HasCallPoint {
 		t.Fatalf("condition assertion inner source = %#v, want call source at point %d", conditionInner, ifPoints[0])
 	}
-}
-
-func typevalueWithExplicitAny(reg *axis.Registry, t typ.Type) product.Value {
-	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
-	value = product.Set(reg, value, assertion.Key, assertion.Any())
-	return typevalue.WithWitness(reg, value, t)
 }

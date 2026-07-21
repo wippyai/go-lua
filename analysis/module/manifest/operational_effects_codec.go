@@ -594,10 +594,6 @@ func canonicalizeOperationalEffectsWireContext(ctx context.Context, w *operation
 	return nil
 }
 
-func encodePathPresenceImplication(fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
-	return encodePathPresenceImplicationContext(context.Background(), fact)
-}
-
 func encodePathPresenceImplicationContext(ctx context.Context, fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
 	trigger, err := encodeBoundaryPath(fact.Trigger)
 	if err != nil {
@@ -758,10 +754,6 @@ func compareBranchProofWire(a, b branchProofWire) int {
 	return strings.Compare(a.Presence, b.Presence)
 }
 
-func encodeDynamicIndexFact(fact signature.DynamicIndexFact) (dynamicIndexFactWire, error) {
-	return encodeDynamicIndexFactContext(context.Background(), fact)
-}
-
 func encodeDynamicIndexFactContext(ctx context.Context, fact signature.DynamicIndexFact) (dynamicIndexFactWire, error) {
 	if fact.Site == "" {
 		return dynamicIndexFactWire{}, fmt.Errorf("missing site")
@@ -794,10 +786,6 @@ func encodeDynamicIndexFactContext(ctx context.Context, fact signature.DynamicIn
 		Value:       value,
 		Admission:   admission,
 	}, nil
-}
-
-func encodeDynamicIndexOperand(operand signature.DynamicIndexOperand) (dynamicIndexOperandWire, error) {
-	return encodeDynamicIndexOperandContext(context.Background(), operand)
 }
 
 func encodeDynamicIndexOperandContext(ctx context.Context, operand signature.DynamicIndexOperand) (dynamicIndexOperandWire, error) {
@@ -1132,10 +1120,6 @@ func encodeReturnAllocationTemplateContext(ctx context.Context, template signatu
 		out.Objects = append(out.Objects, encoded)
 	}
 	return out, nil
-}
-
-func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (allocationObjectWire, error) {
-	return encodeAllocationObjectTemplateContext(context.Background(), object)
 }
 
 func encodeAllocationObjectTemplateContext(ctx context.Context, object signature.AllocationObjectTemplate) (allocationObjectWire, error) {

@@ -7,7 +7,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -15,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -620,23 +618,12 @@ func assertConcreteCastRefinementProduct(t *testing.T, value product.Value, want
 	}
 }
 
-func concreteCastRefinementValue(reg *axis.Registry, t typ.Type) product.Value {
-	return product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, t), t), assertion.Key, concreteCastAssertionForType(t))
-}
-
 func concreteCastAssertionForType(t typ.Type) assertion.Value {
 	t = unwrap.Alias(t)
 	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
 		return assertion.Type()
 	}
 	return assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim)
-}
-
-func applyConcreteCastRefinement(reg *axis.Registry, value product.Value, t typ.Type) product.Value {
-	declared := concreteCastRefinementValue(reg, t)
-	merged := valueref.MergeDeclaredContract(reg, value, declared)
-	currentClaim := product.Get(reg, merged, assertion.Key)
-	return product.Set(reg, merged, assertion.Key, assertion.Combine(currentClaim, concreteCastAssertionForType(t)))
 }
 
 func assertClaimRefinementProduct(t *testing.T, value product.Value, want assertion.Value) {
@@ -942,52 +929,6 @@ type valueRefinementExpectation struct {
 
 	runtimeKind    runtimekind.Value
 	hasRuntimeKind bool
-}
-
-type testLowerSparseAxis uint8
-
-const (
-	testLowerSparseAxisBottom testLowerSparseAxis = iota
-	testLowerSparseAxisLow
-	testLowerSparseAxisTop
-)
-
-var testLowerSparseAxisKey = axis.NewKey[testLowerSparseAxis]("transferfacts.test.sparse")
-
-func testLowerSparseAxisSpec() axis.Spec[testLowerSparseAxis] {
-	return axis.Spec[testLowerSparseAxis]{
-		Key:    testLowerSparseAxisKey,
-		Bottom: func() testLowerSparseAxis { return testLowerSparseAxisBottom },
-		Top:    func() testLowerSparseAxis { return testLowerSparseAxisTop },
-		Equal:  func(a, b testLowerSparseAxis) bool { return a == b },
-		LessOrEq: func(a, b testLowerSparseAxis) bool {
-			return a <= b
-		},
-		Join: func(a, b testLowerSparseAxis) testLowerSparseAxis {
-			if a > b {
-				return a
-			}
-			return b
-		},
-		Meet: func(a, b testLowerSparseAxis) testLowerSparseAxis {
-			if a < b {
-				return a
-			}
-			return b
-		},
-		Widen: func(prev, next testLowerSparseAxis) testLowerSparseAxis {
-			if prev > next {
-				return prev
-			}
-			return next
-		},
-		Hash: func(v testLowerSparseAxis) uint64 {
-			return uint64(v) + 1
-		},
-		Boundary:  axis.PortableIdentity,
-		Retention: axis.ImmutableRetention[testLowerSparseAxis](),
-		Canonical: axis.PendingCanonical[testLowerSparseAxis]("test-only axis"),
-	}
 }
 
 func fieldSuffix(name string) path.Path {

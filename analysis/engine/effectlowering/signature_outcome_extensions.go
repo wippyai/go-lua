@@ -163,8 +163,6 @@ func ComposeSignatureReturnValuePrograms(programs ...SignatureReturnValueProgram
 	return out
 }
 
-func (p SignatureReturnValueProgram) Empty() bool { return len(p.extensions) == 0 }
-
 func (p SignatureReturnValueProgram) maximumInputProgram() (SignatureOutcomeInputProgram, error) {
 	inputs := make([]SignatureOutcomeInputProgram, 0, len(p.extensions))
 	for _, extension := range p.extensions {

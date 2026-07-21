@@ -5,10 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -145,48 +142,6 @@ func operationalReturnParamMemberValue(
 		panic(err)
 	}
 	return value, present
-}
-
-func appendReturnFlowPath(prefix, suffix []segment.Segment) []segment.Segment {
-	if len(prefix) == 0 {
-		return suffix
-	}
-	out := make([]segment.Segment, 0, len(prefix)+len(suffix))
-	out = append(out, prefix...)
-	out = append(out, suffix...)
-	return out
-}
-
-func operationalReturnFlowSourcePath(facts factflow.Facts, providerKeySpace *keyspace.KeySpace, source factflow.ValueSource) (pathdom.Path, bool) {
-	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
-		p, ok := facts.ExpressionPathRef(source.ExprRef)
-		if ok && p.Symbol != 0 {
-			return p, true
-		}
-	}
-	if source.Kind != factflow.ValueSourcePath || source.PathKey == "" {
-		return pathdom.Path{}, false
-	}
-	if sym, segments, ok := pathaddr.ParseSymbolPathKey(source.PathKey); ok {
-		return pathdom.Path{Symbol: sym, Segments: segments}, true
-	}
-	if providerKeySpace == nil {
-		return pathdom.Path{}, false
-	}
-	stateKey, ok := pathaddr.StateKeyFromPathKey(source.PathKey)
-	if !ok {
-		return pathdom.Path{}, false
-	}
-	key, ok := providerKeySpace.InternStateKey(stateKey)
-	if !ok || key.Sym == 0 {
-		return pathdom.Path{}, false
-	}
-	switch key.Kind {
-	case keyspace.KindResolverSym, keyspace.KindUnversionedSym:
-		return pathdom.Path{Symbol: key.Sym, Segments: providerKeySpace.Segments(key)}, true
-	default:
-		return pathdom.Path{}, false
-	}
 }
 
 func operationalDeclaredReturnValue(

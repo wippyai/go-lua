@@ -20,15 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// ResolvedEffectSummaryResolver returns the canonical inactive lowering seam
-// for a frozen relation. It emits only the existing Summary.NormalReturnFacts
-// schema; caller State application remains owned by the call adapter.
-func ResolvedEffectSummaryResolver(reg *axis.Registry) transformer.EffectSummaryResolver {
-	return func(effects []transformer.ResolvedEffect) (transformer.EffectResolution, bool) {
-		return LowerResolvedEffects(reg, effects)
-	}
-}
-
 // LowerResolvedEffects lowers the proven boundary-table mutation slice. The
 // complete ordered sequence is admitted before any fragment is built. Anything
 // outside the slice rejects the whole row:

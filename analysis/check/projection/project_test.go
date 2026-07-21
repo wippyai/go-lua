@@ -1427,22 +1427,6 @@ func projectRootAssignmentDebug(fact factflow.RootAssignment) string {
 	return fact.TargetPathRef().String() + " source=" + strconv.Itoa(int(fact.Source().Kind)) + flags
 }
 
-func projectAssertParamObligationKind(
-	t *testing.T,
-	reg *axis.Registry,
-	got summary.Summary,
-	param int,
-	want runtimekind.Value,
-) {
-	t.Helper()
-	if len(got.ParamObligations) <= param {
-		t.Fatalf("param obligations = %#v, want obligation at %d", got.ParamObligations, param)
-	}
-	if kind := product.Get(reg, got.ParamObligations[param], runtimekind.Key); !runtimekind.Equal(kind, want) {
-		t.Fatalf("param obligation %d runtime kind = %s, want %s", param, kind, want)
-	}
-}
-
 func projectAssertReturnPresenceRelation(
 	t *testing.T,
 	relations []summary.ReturnPresenceRelation,

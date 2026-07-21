@@ -4414,27 +4414,6 @@ func signatureOutcomeProviderFacts(point cfg.Point, args []factflow.ValueSource)
 	})
 }
 
-func assertValue(t *testing.T, reg *axis.Registry, st state.State, slot key.Value, want product.Value) {
-	t.Helper()
-	if got := st.ReadValue(reg, slot); !product.Equal(reg, got, want) {
-		t.Fatalf("state[%v] = %v, want %v", slot, got, want)
-	}
-}
-
-func assertStatePresence(t *testing.T, reg *axis.Registry, st state.State, slot key.Value, want presence.Value) {
-	t.Helper()
-	if got := product.PresenceOf(st.ReadValue(reg, slot)); !presence.Equal(got, want) {
-		t.Fatalf("state[%v] presence = %s, want %s", slot, got, want)
-	}
-}
-
-func assertPathValue(t *testing.T, reg *axis.Registry, ks *keyspace.KeySpace, st state.State, pathKey path.PathKey, want product.Value) {
-	t.Helper()
-	if got := st.ReadPathKey(reg, ks, pathKey); !product.Equal(reg, got, want) {
-		t.Fatalf("state path[%s] = %v, want %v", pathKey, got, want)
-	}
-}
-
 func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want runtimekind.Value) {
 	t.Helper()
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {

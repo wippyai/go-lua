@@ -308,10 +308,6 @@ func decodeNormalReturnPresenceRefinement(w pathPresenceRefinementWire) (signatu
 	return signature.PathPresenceRefinement{Path: p, Presence: pr}, nil
 }
 
-func encodeNormalReturnTypeRefinement(refinement signature.PathTypeRefinement) (pathTypeRefinementWire, error) {
-	return encodeNormalReturnTypeRefinementContext(context.Background(), refinement)
-}
-
 func encodeNormalReturnTypeRefinementContext(ctx context.Context, refinement signature.PathTypeRefinement) (pathTypeRefinementWire, error) {
 	p, err := encodePlaceholderPath(refinement.Path)
 	if err != nil {
@@ -350,10 +346,6 @@ func decodeNormalReturnTypeRefinement(w pathTypeRefinementWire) (signature.PathT
 	return signature.PathTypeRefinement{Path: p, Type: t, Assertion: assertionClaim}, nil
 }
 
-func encodePathStaticMember(member signature.PathStaticMemberFact) (pathStaticMemberWire, error) {
-	return encodePathStaticMemberContext(context.Background(), member)
-}
-
 func encodePathStaticMemberContext(ctx context.Context, member signature.PathStaticMemberFact) (pathStaticMemberWire, error) {
 	p, err := encodePlaceholderPath(member.Path)
 	if err != nil {
@@ -382,10 +374,6 @@ func decodePathStaticMember(w pathStaticMemberWire) (signature.PathStaticMemberF
 		return signature.PathStaticMemberFact{}, fmt.Errorf("path static member type: missing")
 	}
 	return signature.PathStaticMemberFact{Path: p, Type: t}, nil
-}
-
-func encodePathStaticMemberDelta(delta signature.PathStaticMemberDelta) (pathStaticMemberDeltaWire, error) {
-	return encodePathStaticMemberDeltaContext(context.Background(), delta)
 }
 
 func encodePathStaticMemberDeltaContext(ctx context.Context, delta signature.PathStaticMemberDelta) (pathStaticMemberDeltaWire, error) {

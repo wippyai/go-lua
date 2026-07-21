@@ -190,16 +190,6 @@ func FromResultContext(ctx context.Context, result ResultReader) (summary.Summar
 	return summary.NormalizeOwned(reg, out), nil
 }
 
-// noNormalExitSummary builds the summary for a function whose body never returns
-// normally (an unreachable exit). The exit-dependent facts (normal-return facts,
-// param-sink exposures, heap objects at return) are correctly empty, but the
-// exit-independent param obligations and the declared return signature still hold
-// and are the contract callers rely on.
-func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summary {
-	projected, _ := noNormalExitSummaryContext(context.Background(), reg, result)
-	return projected
-}
-
 func noNormalExitSummaryContext(ctx context.Context, reg *axis.Registry, result ResultReader) (summary.Summary, error) {
 	paramObligations, capturedPathObligations, paramSinkExposures, err := projectDiagnosticOutput(reg, result.DiagnosticOutput(), len(parameterValuePaths(result)))
 	if err != nil {
