@@ -38,10 +38,11 @@ type formalRootAssignmentStep struct {
 	targetMember formalFiberGroupMember
 	fresh        []formalRootAssignmentFreshQuery
 
-	current []formalRootAssignmentLaneBinding
-	point   []formalRootAssignmentLaneBinding
-	writes  []formalRootAssignmentLaneBinding
-	lift    formalClosedFactorLift
+	current    []formalRootAssignmentLaneBinding
+	point      []formalRootAssignmentLaneBinding
+	writes     []formalRootAssignmentLaneBinding
+	lift       formalClosedFactorLift
+	components []formalRootAssignmentFactorComponent
 
 	currentOrdinals    []formalFiberOrdinal
 	pointOrdinals      []formalFiberOrdinal
@@ -49,6 +50,14 @@ type formalRootAssignmentStep struct {
 	pathReadAuthority  state.CoordinatePathEvidenceAuthority[statekey.Value]
 	pathWriteAuthority state.CoordinatePathEvidenceAuthority[statekey.Value]
 	sealed             bool
+}
+
+type formalRootAssignmentFactorComponent struct {
+	component  factapply.RootAssignmentFactorComponent
+	current    formalProductFactorFrameBinding
+	pointEntry formalProductFactorFrameBinding
+	outputs    formalProductFactorFrameBinding
+	lift       formalClosedFactorLift
 }
 
 type formalRootAssignmentLaneBinding struct {
@@ -64,7 +73,7 @@ type formalRootAssignmentFreshQuery struct {
 func (p *formalRootAssignmentStep) valid(operator formalRelationOperatorRef) bool {
 	return p != nil && p.sealed && p.variable != 0 && p.code == operator.code &&
 		p.scope == operator.scope && p.plan.Valid() && p.factor.Valid() && len(p.sources) != 0 &&
-		p.values.valid() && len(p.currentOrdinals) != 0 && len(p.affectedOrdinals) != 0 && p.lift.sealed
+		p.values.valid() && len(p.components) != 0
 }
 
 func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationVar, operator formalRelationOperatorRef) (*formalRootAssignmentStep, error) {
@@ -280,6 +289,52 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 	if err != nil {
 		return nil, fmt.Errorf("RootAssignment closed factor lift: %w", err)
 	}
+	componentSourceValues := make([]statekey.Value, 0, len(sourceSlots))
+	for slot := range sourceSlots {
+		componentSourceValues = append(componentSourceValues, slot)
+	}
+	factorComponents, err := factor.RootAssignmentFactorComponents(factapply.RootAssignmentFactorComponentInventory{
+		Coordinates: span.coordinates, SourceValues: componentSourceValues,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("RootAssignment factor components: %w", err)
+	}
+	valueSlot := func(slot statekey.Value) (FormalSlot, bool) {
+		return formalMiddleSlotForStateKey(program, body, slot)
+	}
+	components := make([]formalRootAssignmentFactorComponent, len(factorComponents))
+	for index, component := range factorComponents {
+		currentSelection, currentOK := component.CurrentInputs()
+		pointSelection, pointOK := component.PointEntryInputs()
+		outputSelection, outputOK := component.Outputs()
+		if !currentOK || !pointOK || !outputOK {
+			return nil, fmt.Errorf("RootAssignment factor component %d is unsealed", index)
+		}
+		currentBinding, bindErr := sealFormalProductFactorFrameBinding(body.productDomain, span, currentSelection, valueSlot, true, false)
+		if bindErr != nil {
+			return nil, fmt.Errorf("RootAssignment component %d current binding: %w", index, bindErr)
+		}
+		pointBinding, bindErr := sealFormalProductFactorFrameBinding(body.productDomain, span, pointSelection, valueSlot, true, false)
+		if bindErr != nil {
+			return nil, fmt.Errorf("RootAssignment component %d point binding: %w", index, bindErr)
+		}
+		outputBinding, bindErr := sealFormalProductFactorFrameBinding(body.productDomain, span, outputSelection, valueSlot, true, true)
+		if bindErr != nil {
+			return nil, fmt.Errorf("RootAssignment component %d output binding: %w", index, bindErr)
+		}
+		componentLift, bindErr := sealFormalClosedFactorLift(
+			span,
+			[][]formalFiberOrdinal{outputBinding.ordinals, currentBinding.ordinals, pointBinding.ordinals},
+			outputBinding.writeOrdinals,
+		)
+		if bindErr != nil {
+			return nil, fmt.Errorf("RootAssignment component %d closed lift: %w", index, bindErr)
+		}
+		components[index] = formalRootAssignmentFactorComponent{
+			component: component, current: currentBinding, pointEntry: pointBinding,
+			outputs: outputBinding, lift: componentLift,
+		}
+	}
 	emptyCoordinates, err := body.productDomain.SealCoordinateFactorInventory(span.keys, nil)
 	if err != nil {
 		return nil, err
@@ -306,6 +361,7 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 		current: current, point: point, writes: writes,
 		lift: lift, currentOrdinals: currentOrdinals, pointOrdinals: pointOrdinals,
 		affectedOrdinals:  affectedOrdinals,
+		components:        components,
 		pathReadAuthority: pathReadAuthority, pathWriteAuthority: pathWriteAuthority,
 		sealed: true,
 	}, nil
@@ -408,6 +464,139 @@ func (f formalRootAssignmentFactors) changed(domain state.ProductDomain, lane st
 }
 
 func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelationOperatorRef, predecessor, pointEntry formalRelationTuple) (formalRelationTuple, error) {
+	plan := operator.rootAssignment
+	if a == nil || !plan.valid(operator) {
+		return formalRelationTuple{}, fmt.Errorf("transformer: formal RootAssignment has no complete factor components")
+	}
+	if err := a.validateTuple(predecessor); err != nil {
+		return formalRelationTuple{}, err
+	}
+	if err := a.validateTuple(pointEntry); err != nil {
+		return formalRelationTuple{}, err
+	}
+	if predecessor.bottom() || pointEntry.bottom() || predecessor.variable != pointEntry.variable {
+		return formalRelationTuple{}, errFormalComponentForeignOwner
+	}
+	_, directory, authority, ok := a.span(predecessor.variable)
+	if !ok || predecessor.root.owner != directory || pointEntry.root.owner != directory || authority.code != operator.code {
+		return formalRelationTuple{}, errFormalComponentForeignOwner
+	}
+	mark := a.decisions.checkpoint()
+	fail := func(err error) (formalRelationTuple, error) {
+		a.decisions.rollback(mark)
+		return formalRelationTuple{}, err
+	}
+	execute := decisionTrue
+	if plan.guard != 0 {
+		var err error
+		execute, err = a.decisionForGuard(plan.variable, plan.scope, plan.code.terms, plan.guard)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	terms := make([]ValueTerm, len(plan.sources))
+	for index, source := range plan.sources {
+		if source.value.owner != plan.variable || source.value.arena != plan.code.terms || source.scope != plan.scope {
+			return fail(errFormalComponentForeignOwner)
+		}
+		terms[index] = source.value.term
+	}
+	derived, err := a.compileFormalValueTermDecisions(predecessor, plan.code.terms, plan.scope, terms...)
+	if err != nil {
+		return fail(err)
+	}
+	current := predecessor
+	var traceDetail *formalRelationEvalTraceDetail
+	if a.evalTrace != nil {
+		traceDetail = a.evalTrace.active
+	}
+	if traceDetail != nil {
+		currentRoots, pointRoots, writeRoots := 0, 0, 0
+		for _, component := range plan.components {
+			currentRoots += len(component.outputs.ordinals) + len(component.current.ordinals)
+			pointRoots += len(component.pointEntry.ordinals)
+			writeRoots += len(component.outputs.writeOrdinals)
+		}
+		traceDetail.rootAssignmentCurrentRoots = currentRoots
+		traceDetail.rootAssignmentPointRoots = pointRoots
+		traceDetail.rootAssignmentWriteRoots = writeRoots
+	}
+	for componentIndex := range plan.components {
+		component := &plan.components[componentIndex]
+		current, err = a.applyFormalClosedFactorLiftWithDerived(
+			component.lift,
+			[]formalRelationTuple{current, predecessor, pointEntry},
+			nil,
+			derived,
+			execute,
+			func(_ decisionRef, views []formalSparseLeafView) ([]formalClosedFactorLeafWrite, error) {
+				if len(views) != 3 || len(views[0].derived) != len(plan.sources) {
+					return nil, errFormalComponentMalformed
+				}
+				leafStarted := time.Time{}
+				if traceDetail != nil {
+					leafStarted = time.Now()
+				}
+				outputBase, leafErr := a.materializeFormalProductFactorFrame(views[0], component.outputs)
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				currentFrame, leafErr := a.materializeFormalProductFactorFrame(views[1], component.current)
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				pointFrame, leafErr := a.materializeFormalProductFactorFrame(views[2], component.pointEntry)
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				sources := make([]product.Value, len(views[0].derived))
+				for index, leaf := range views[0].derived {
+					sources[index], leafErr = formalGroundValueDecisionLeaf(views[0].authority, leaf)
+					if leafErr != nil {
+						return nil, leafErr
+					}
+				}
+				output, leafErr := component.component.ApplyComponent(factapply.RootAssignmentFactorComponentInput{
+					Current: currentFrame, PointEntry: pointFrame, OutputBase: outputBase,
+					Sources: sources, Context: a.ctx,
+				})
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				writes, leafErr := a.factorFormalProductFactorFrame(views[0], component.outputs, output)
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				changed := writes[:0]
+				for _, write := range writes {
+					prior, present := views[0].leaf(write.ordinal)
+					if !present {
+						return nil, errFormalComponentMalformed
+					}
+					if prior != write.leaf {
+						changed = append(changed, write)
+					}
+				}
+				if traceDetail != nil {
+					traceDetail.rootAssignmentRegions++
+					traceDetail.rootAssignmentLeafTime += time.Since(leafStarted)
+					traceDetail.rootAssignmentLeafWrites += len(changed)
+				}
+				return changed, nil
+			},
+		)
+		if err != nil {
+			return fail(fmt.Errorf("transformer: formal RootAssignment component %d (%d): %w", componentIndex, component.component.Kind(), err))
+		}
+	}
+	if current.root == predecessor.root {
+		a.decisions.rollback(mark)
+		return predecessor, nil
+	}
+	return current, nil
+}
+
+func (a *formalTupleAlgebra) applyFormalRootAssignmentPlanLegacy(operator formalRelationOperatorRef, predecessor, pointEntry formalRelationTuple) (formalRelationTuple, error) {
 	plan := operator.rootAssignment
 	if a == nil || !plan.valid(operator) {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal RootAssignment has no complete factor transaction")

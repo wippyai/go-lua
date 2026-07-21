@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"reflect"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -69,8 +70,34 @@ func TestFormalRootAssignmentExecutesCanonicalSparseN4(t *testing.T) {
 	if !ok {
 		t.Fatal("formal RootAssignment span")
 	}
-	sparseWidth := len(plan.currentOrdinals) + len(plan.pointOrdinals) + len(plan.demands)
-	fullWidth := 2*span.count + len(plan.demands)
+	seenKinds := make(map[factapply.RootAssignmentFactorComponentKind]bool)
+	sparseWidth := 0
+	for index, component := range plan.components {
+		if !component.component.Valid() || !component.lift.sealed || len(component.lift.roles) != 3 {
+			t.Fatalf("RootAssignment component %d is not bound through the generic lift", index)
+		}
+		if !reflect.DeepEqual(component.lift.roles[0].reads, component.outputs.ordinals) ||
+			!reflect.DeepEqual(component.lift.roles[1].reads, component.current.ordinals) ||
+			!reflect.DeepEqual(component.lift.roles[2].reads, component.pointEntry.ordinals) ||
+			!reflect.DeepEqual(component.lift.writes, component.outputs.writeOrdinals) {
+			t.Fatalf("RootAssignment component %d lift differs from its exact frame bindings", index)
+		}
+		seenKinds[component.component.Kind()] = true
+		for _, role := range component.lift.roles {
+			sparseWidth += len(role.reads)
+		}
+	}
+	for _, kind := range []factapply.RootAssignmentFactorComponentKind{
+		factapply.RootAssignmentFactorComponentSource,
+		factapply.RootAssignmentFactorComponentPath,
+		factapply.RootAssignmentFactorComponentScalar,
+		factapply.RootAssignmentFactorComponentCompletion,
+	} {
+		if !seenKinds[kind] {
+			t.Fatalf("RootAssignment omitted N4 hyperedge kind %d", kind)
+		}
+	}
+	fullWidth := len(plan.components) * 3 * span.count
 	if sparseWidth >= fullWidth {
 		t.Fatalf("RootAssignment sparse correlation width=%d full=%d", sparseWidth, fullWidth)
 	}
