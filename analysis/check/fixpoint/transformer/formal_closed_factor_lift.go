@@ -239,6 +239,15 @@ func (a *formalTupleAlgebra) applyFormalClosedFactorLiftWithDerived(
 					derived: input[derivedOffset:demandOffset],
 				}
 			}
+			// Correlating the role projections has produced exact sparse rows.
+			// Publish every complete lane row here, at that producer boundary,
+			// before the component's strict factor lookup consumes it.  A role may
+			// omit unrelated lanes; those remain absent rather than being invented.
+			for _, view := range views {
+				if cacheErr := a.cacheFormalSparseFactorSpellings(view); cacheErr != nil {
+					return nil, cacheErr
+				}
+			}
 			writes, err := apply(regionGuard, views)
 			if err != nil {
 				return nil, err

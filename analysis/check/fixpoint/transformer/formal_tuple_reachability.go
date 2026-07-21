@@ -560,3 +560,47 @@ func (a *formalTupleAlgebra) cacheFormalTupleLeafEvaluatorFactorSpellings(evalua
 	}
 	return nil
 }
+
+// cacheFormalSparseFactorSpellings publishes the complete lane rows exposed by
+// one sparse correlation partition. Unselected lanes are structural carry, not
+// Bottom, so only fully selected lane groups may receive a producer entry.
+func (a *formalTupleAlgebra) cacheFormalSparseFactorSpellings(view formalSparseLeafView) error {
+	if a == nil || view.algebra != a || view.authority == nil || view.body == nil ||
+		view.variable == 0 || view.span.variable != view.variable {
+		return errFormalComponentForeignOwner
+	}
+	for _, group := range view.authority.body.factors.nonValues {
+		leaves := make([]decisionLeaf, len(group.members))
+		complete := true
+		for index, ordinal := range group.members {
+			leaf, present := view.leaf(ordinal)
+			if !present {
+				complete = false
+				break
+			}
+			leaves[index] = leaf
+		}
+		if !complete {
+			continue
+		}
+		var (
+			factor state.LaneFactor
+			err    error
+		)
+		switch group.kind {
+		case formalFiberGroupOrdinaryLane:
+			factor, err = a.materializeOrdinaryGroup(view.authority, group, leaves)
+		case formalFiberGroupCoordinateLane:
+			factor, err = a.materializeCoordinateGroup(view.authority, view.span, group, leaves)
+		default:
+			return errFormalComponentMalformed
+		}
+		if err != nil {
+			return err
+		}
+		if err = a.cacheFormalFactorReachability(view.authority, group, leaves, factor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
