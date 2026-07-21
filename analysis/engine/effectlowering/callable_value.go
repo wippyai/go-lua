@@ -81,7 +81,10 @@ func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) cal
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out, nil
 	}
-	return callpayload.SealCallOutcomeProgram("callable-value outcome", []string{"Results", "PostReturnAuthority"}, state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate)
+	return callpayload.SealObservedCallOutcomeProgram(
+		"callable-value outcome", []string{"Results", "PostReturnAuthority"},
+		state.LaneSet{}, state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(true, false), shape, nil, evaluate,
+	)
 }
 
 func callResultIndexObserved(site factflow.CallSiteView, index int) bool {

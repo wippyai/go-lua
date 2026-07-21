@@ -72,5 +72,8 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out, nil
 	}
-	return callpayload.SealCallOutcomeProgram("module-load outcome", []string{"Results", "PostReturnAuthority"}, state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate)
+	return callpayload.SealObservedCallOutcomeProgram(
+		"module-load outcome", []string{"Results", "PostReturnAuthority"},
+		state.LaneSet{}, state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(false, false, 0), shape, nil, evaluate,
+	)
 }

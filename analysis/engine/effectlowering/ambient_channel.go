@@ -104,7 +104,10 @@ func AmbientChannelSendOutcomeProvider(config AmbientChannelSendOutcomeProviderC
 			},
 		}, nil
 	}
-	return callpayload.SealCallOutcomeProgram("ambient channel send outcome", []string{"SuspensionKnown", "MaySuspend", "NormalReturnFacts"}, state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate)
+	return callpayload.SealObservedCallOutcomeProgram(
+		"ambient channel send outcome", []string{"SuspensionKnown", "MaySuspend", "NormalReturnFacts"},
+		state.LaneSet{}, state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(false, true), shape, nil, evaluate,
+	)
 }
 
 // AmbientChannelLifecycleOutcomeProvider lowers the ambient channel runtime
@@ -233,10 +236,10 @@ func AmbientChannelLifecycleOutcomeProvider(config AmbientChannelLifecycleOutcom
 			},
 		}, nil
 	}
-	return callpayload.SealPreparedCallOutcomeProgram(
+	return callpayload.SealObservedPreparedCallOutcomeProgram(
 		"ambient channel lifecycle outcome",
 		[]string{"Results", "PostReturnAuthority", "SuspensionKnown", "NormalReturnFacts", "ReturnConditionSlots"},
-		typestateQuery.Lanes(), state.LaneSet{}, prepare,
+		typestateQuery.Lanes(), state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(false, true), prepare,
 	)
 }
 

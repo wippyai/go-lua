@@ -140,7 +140,7 @@ func (r *Result) sendSafetyOccurrence(point cfg.Point, site factflow.CallSiteVie
 	if occ.HasIdentity && factStateOK {
 		occ.Placement = factState.ReadPlacement(occ.Identity)
 		occ.HasPlacement = true
-		occ.Frozen = r.sendSafetyFrozenAtInput(point, occ.Identity, factState)
+		occ.Frozen = r.sendSafetyFrozenAtInput(point, occ.Identity)
 	}
 
 	if len(event.Target.Segments) != 0 {
@@ -190,18 +190,13 @@ func (r *Result) sendSafetyFactState(point cfg.Point) (state.State, bool) {
 	return r.StateAt(point)
 }
 
-// sendSafetyFrozenAtInput accepts only must-frozen evidence that holds before
-// the send. The state lane is authoritative when populated. Some solved
-// boundary plans retain a frozen-table normal-return fact per call without
-// materializing that lane at its successor; a dominating normal-return fact
-// for the same exact identity is equally a must fact at this point. This never
-// reads the send boundary output, so the send cannot prove itself immutable.
-func (r *Result) sendSafetyFrozenAtInput(point cfg.Point, id identity.ID, in state.State) bool {
+// sendSafetyFrozenAtInput accepts only an unconditionally-dominating
+// normal-return frozen-table fact. The point state may retain a conditional
+// frozen-table declaration, so it is not sufficient evidence for a send.
+// The send's own boundary is excluded: a send never proves itself immutable.
+func (r *Result) sendSafetyFrozenAtInput(point cfg.Point, id identity.ID) bool {
 	if r == nil || id == (identity.ID{}) {
 		return false
-	}
-	if in.IsTableFrozen(id) {
-		return true
 	}
 	graph := r.Graph()
 	if graph == nil {

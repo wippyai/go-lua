@@ -326,9 +326,9 @@ func explicitAnyReceiverMethodOutcomeProvider(
 		}
 		return callpayload.CallOutcome{Results: results}, nil
 	}
-	return callpayload.SealCallOutcomeProgram(
+	return callpayload.SealObservedCallOutcomeProgram(
 		"explicit any-receiver method outcome", []string{"Results"},
-		state.LaneSet{}, state.LaneSet{}, shape, nil, evaluate,
+		state.LaneSet{}, state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(false, true), shape, nil, evaluate,
 	)
 }
 

@@ -159,7 +159,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 			shape = callpayload.CallOutcomeSiteShape{
 				FieldNames: signatureOutcomeFields(frozenSignature, !frozenReturnValues.Empty()),
 				InputLanes: frozenInputProgram.Lanes(), Correlations: correlations,
-				ProofSeeds: signatureOutcomeProofSeeds(frozenSignature),
+				ProofSeeds: signatureOutcomeProofSeeds(freezeCtx.Registry, typeValues, frozenSignature),
 			}
 		}
 		// Both possible formal argument orderings are structural properties of
@@ -393,13 +393,28 @@ func maximumReturnPresenceShapes(site factflow.CallSiteView) []callpayload.CallO
 	return out
 }
 
-func signatureOutcomeProofSeeds(sig signature.Function) []callpayload.CallOutcomeProofSeed {
+func signatureOutcomeProofSeeds(reg *axis.Registry, typeValues *typevalue.Cache, sig signature.Function) []callpayload.CallOutcomeProofSeed {
 	if sig.OperationalEffects == nil {
 		return nil
 	}
-	seeds := make([]callpayload.CallOutcomeProofSeed, 0, len(sig.OperationalEffects.NormalReturnPresenceRefinements))
+	seeds := make([]callpayload.CallOutcomeProofSeed, 0,
+		len(sig.OperationalEffects.NormalReturnPresenceRefinements)+len(sig.OperationalEffects.NormalReturnTypeRefinements),
+	)
 	for _, refinement := range sig.OperationalEffects.NormalReturnPresenceRefinements {
 		seeds = append(seeds, callpayload.NormalReturnPathPresenceProofSeed(refinement.Path, refinement.Presence))
+	}
+	if reg == nil {
+		return seeds
+	}
+	for _, refinement := range sig.OperationalEffects.NormalReturnTypeRefinements {
+		if refinement.Type == nil {
+			continue
+		}
+		value := returnValueFromTypeCached(reg, typeValues, refinement.Type)
+		presenceValue := product.PresenceOf(value)
+		if presence.Equal(presenceValue, presence.Present()) || presence.Equal(presenceValue, presence.Absent()) {
+			seeds = append(seeds, callpayload.NormalReturnPathPresenceProofSeed(refinement.Path, presenceValue))
+		}
 	}
 	return seeds
 }
