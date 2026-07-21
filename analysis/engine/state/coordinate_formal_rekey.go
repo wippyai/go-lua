@@ -302,7 +302,11 @@ func (d ProductDomain) SealCoordinateFormalPublicationProjection(
 	// while allocation templates must survive until the subsequent allocation
 	// quotient gives them their invocation identity. Structural coordinates
 	// remain restricted to the point-expressible inverse selected above.
-	selection, err := SealBoundaryFactorSelection(inverse.from, nil, nil, true)
+	structuralRoots := make([]BoundaryFactorRoot, len(inverse.roots))
+	for index, binding := range inverse.roots {
+		structuralRoots[index] = BoundaryFactorRoot{Path: binding.from}
+	}
+	selection, err := SealBoundaryFactorSelection(inverse.from, structuralRoots, nil, true)
 	if err != nil {
 		return CoordinateFormalPublicationProjection{}, err
 	}

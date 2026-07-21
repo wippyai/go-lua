@@ -475,6 +475,62 @@ func TestOrdinaryFormalPublicationProjectsUnselectedStructuralFactsBeforeRekey(t
 	}
 }
 
+func TestOrdinaryFormalPublicationPreservesSelectedStructuralFactsBeforeRekey(t *testing.T) {
+	reg := standard.Registry()
+	domain, err := TryRegisteredProductDomainWithLanes(reg, []LaneID{LaneChannelSelect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	concrete, formalKeys := keyspace.New(), keyspace.New()
+	lexical := concrete.FromPath(pathdom.NewPath(symbol.ID(720), ""))
+	owner := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte(t.Name())), 1)
+	input := formal.NewRoot(owner, 1, formal.Input)
+	forward, err := domain.SealCoordinateFormalRootRekey(owner, concrete, formalKeys, []CoordinateFormalRootBinding{
+		{Source: lexical, Target: input},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	formalPath, err := domain.RekeyStructuralKeyFormal(forward, lexical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formalState, ok := pathaddr.StateKeyFromPathKey(formalKeys.FormatReadOnly(formalPath))
+	if !ok {
+		t.Fatal("formal StateKey")
+	}
+	source := State{}.AddChannelSelectFact(channelselectfact.Fact{
+		Select: "publication-projection", Kind: channelselectfact.FactCase,
+		Result: formalState, Case: formalState,
+	})
+	lane, _ := domain.ProductLane(LaneChannelSelect)
+	factors, err := domain.DecomposeLanes(source, []ProductLane{lane})
+	if err != nil || len(factors) != 1 {
+		t.Fatalf("decompose = %d, %v", len(factors), err)
+	}
+	empty, err := domain.SealCoordinateFactorInventory(formalKeys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := domain.SealCoordinateFormalPublicationProjection(forward, empty, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := domain.RekeyOrdinaryLaneFactorFormalPublication(projection, factors[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := domain.ComposeSparse([]LaneFactor{published})
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := result.ChannelSelectFactsSnapshot().Facts
+	if len(facts) != 1 || facts[0].Result != pathaddr.StateKey(concrete.FormatReadOnly(lexical)) ||
+		facts[0].Case != pathaddr.StateKey(concrete.FormatReadOnly(lexical)) {
+		t.Fatalf("selected formal fact = %#v", facts)
+	}
+}
+
 func TestCoordinateFormalLaneFactorCrossOwnerIsInjectiveAndRoundTrips(t *testing.T) {
 	reg := standard.Registry()
 	domain, err := TryRegisteredProductDomainWithLanes(reg, []LaneID{LanePathEvidence})
