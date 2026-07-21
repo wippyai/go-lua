@@ -350,6 +350,20 @@ func freezeFormalEffectCoordinateSlots(body *relationProgramBody, formalKeys *ke
 			if err != nil {
 				return nil, err
 			}
+			var source keyspace.Key
+			if effect.pathStoreAssignment.HasSourcePath && !effect.pathStoreAssignment.SuppressProof {
+				source, err = freezeFormalEffectPathKey(body, formalFiberDescriptorSpan{keys: formalKeys, rekey: rekey}, effect.pathStoreAssignment.SourcePath)
+				if err != nil {
+					return nil, err
+				}
+			}
+			capability, capabilityErr := body.productDomain.SealPathReplacementCoordinateCapability(
+				formalKeys, target, source, source.Kind != keyspace.KindInvalid,
+			)
+			if capabilityErr != nil {
+				return nil, capabilityErr
+			}
+			slots = append(slots, capability.EmittedSlots()...)
 			root, exact := formalKeys.StructuralRoot(target)
 			owner, ownerExact := body.productDomain.PathValueFamily()
 			if !exact || !ownerExact {
