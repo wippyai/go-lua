@@ -194,14 +194,39 @@ func readLocalPathKeyWithFieldCanonicalAlias(reg *axis.Registry, ks *keyspace.Ke
 		return value, true
 	}
 	canonical, ok := ks.FieldCanonical(pathKey)
+	if ok {
+		value = in.ReadLocalPathKey(reg, canonical)
+		if !product.Equal(reg, value, product.Bottom(reg)) {
+			return value, true
+		}
+	}
+	if unversioned, ok := unversionedResolverPathKey(ks, pathKey); ok {
+		value = in.ReadLocalPathKey(reg, unversioned)
+		if !product.Equal(reg, value, product.Bottom(reg)) {
+			return value, true
+		}
+		if canonical, ok := ks.FieldCanonical(unversioned); ok {
+			value = in.ReadLocalPathKey(reg, canonical)
+			if !product.Equal(reg, value, product.Bottom(reg)) {
+				return value, true
+			}
+		}
+	}
+	return product.Value{}, false
+}
+
+// unversionedResolverPathKey recovers the version-insensitive spelling used by
+// path facts. A dynamic or bracket-key write records its durable fact at that
+// spelling so it remains valid after later SSA versions of the local.
+func unversionedResolverPathKey(ks *keyspace.KeySpace, key keyspace.Key) (keyspace.Key, bool) {
+	if ks == nil || key.Kind != keyspace.KindResolverSym || key.Sym == 0 {
+		return keyspace.Key{}, false
+	}
+	segments, ok := ks.SegmentsView(key)
 	if !ok {
-		return product.Value{}, false
+		return keyspace.Key{}, false
 	}
-	value = in.ReadLocalPathKey(reg, canonical)
-	if product.Equal(reg, value, product.Bottom(reg)) {
-		return product.Value{}, false
-	}
-	return value, true
+	return ks.LookupResolverKey(key.Sym, 0, segments)
 }
 
 func readStaticMemberWithFieldCanonicalAlias(ks *keyspace.KeySpace, object heapidentity.TableObject, key keyspace.Key, suffix []segment.Segment) (product.Value, bool) {

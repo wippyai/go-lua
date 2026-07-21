@@ -62,6 +62,16 @@ func readStaticMemberLocalValue(config Config, localKey keyspace.Key, in state.S
 			return value, true
 		}
 	}
+	if unversioned, ok := unversionedStaticMemberKey(ks, localKey); ok {
+		if value, ok := in.ReadLocalPathStaticMember(unversioned); ok {
+			return value, true
+		}
+		if canonical, ok := ks.FieldCanonical(unversioned); ok {
+			if value, ok := in.ReadLocalPathStaticMember(canonical); ok {
+				return value, true
+			}
+		}
+	}
 	if stable, ok := stableStaticMemberKey(ks, localKey); ok {
 		if value, ok := in.ReadLocalPathStaticMember(stable); ok {
 			return value, true
@@ -71,6 +81,17 @@ func readStaticMemberLocalValue(config Config, localKey keyspace.Key, in state.S
 		}
 	}
 	return product.Value{}, false
+}
+
+func unversionedStaticMemberKey(ks *keyspace.KeySpace, localKey keyspace.Key) (keyspace.Key, bool) {
+	if ks == nil || localKey.Kind != keyspace.KindResolverSym || localKey.Sym == 0 {
+		return keyspace.Key{}, false
+	}
+	segments, ok := ks.SegmentsView(localKey)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return ks.LookupResolverKey(localKey.Sym, 0, segments)
 }
 
 func stableStaticMemberKey(ks *keyspace.KeySpace, localKey keyspace.Key) (keyspace.Key, bool) {

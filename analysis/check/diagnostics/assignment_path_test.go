@@ -5,10 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
 
 func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(t *testing.T) {
-	diags := runDiagnostics(t, `
+	result := runDiagnosticsResult(t, `
 		type FileSlot = {
 			kind: "file",
 			path: string,
@@ -34,6 +38,22 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(
 			local stale_path: string = slots.active.value.path
 		end
 	`)
+	for _, point := range result.Graph().RPO() {
+		if st, ok := result.StateAt(point); ok {
+			st.ForEachDynamicIndexFact(func(key dynamicindex.Key, fact dynamicindex.Fact) bool {
+				keyType, _ := typevalue.TypeOf(result.Registry(), fact.KeyValue)
+				valueType, _ := typevalue.TypeOf(result.Registry(), fact.Value)
+				t.Logf("point=%d dynamic table=%s key=%v value=%v admission=%d", point, result.KeySpace().FormatReadOnly(key.Table), keyType, valueType, fact.Admission)
+				return true
+			})
+			st.ForEachPathStaticMember(func(key keyspace.Key, value product.Value) bool {
+				valueType, _ := typevalue.TypeOf(result.Registry(), value)
+				t.Logf("point=%d static=%s value=%v", point, result.KeySpace().FormatReadOnly(key), valueType)
+				return true
+			})
+		}
+	}
+	diags := Produce(result)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want stale dynamic path assignment error: %#v", len(diags), diags)
 	}
@@ -302,14 +322,14 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "is nil, not string") {
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	assertAssignmentPathEvidence(t, d,
-		"box.value has type nil",
+		"box.value can be string or nil here",
 		"after is declared as string",
-		"no proof on this path shows box.value is string",
-		"Use a value compatible with the expected type",
+		"no guard on this path proves box.value is non-nil",
+		"Guard `box.value` with a nil check",
 	)
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
 		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
@@ -466,7 +486,7 @@ func TestAssignmentAllowsNilDynamicIndexDeletionForArraySlots(t *testing.T) {
 }
 
 func TestAssignmentUsesStaticBracketStringKeyAsStaticMemberProof(t *testing.T) {
-	diags := runDiagnostics(t, `
+	result := runDiagnosticsResult(t, `
 		type Box = {
 			value: string?,
 		}
@@ -477,6 +497,7 @@ func TestAssignmentUsesStaticBracketStringKeyAsStaticMemberProof(t *testing.T) {
 			local after: string = box.value
 		end
 	`)
+	diags := Produce(result)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want static bracket string write to prove the static member", diags)
 	}

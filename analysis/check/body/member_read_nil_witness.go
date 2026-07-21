@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -252,7 +251,11 @@ func (r *Result) memberReadHasExactPathProof(point cfg.Point, expr ast.Expr) boo
 	if !ok {
 		return false
 	}
-	return readCanonicalPathStaticMember(st, r.KeySpace(), p.Key())
+	key, ok := valueSourcePathKeyspaceKey(r.visibility, point, p)
+	if !ok {
+		return false
+	}
+	return readCanonicalPathStaticMember(st, r.KeySpace(), key)
 }
 
 func (r *Result) memberReadReceiverMayBeNil(point cfg.Point, expr ast.Expr) bool {
@@ -415,12 +418,8 @@ func memberReadSuffix(attr *ast.AttrGetExpr) ([]segment.Segment, bool) {
 	}
 }
 
-func readCanonicalPathStaticMember(st statePathStaticMemberReader, ks *keyspace.KeySpace, pathKey pathdom.PathKey) bool {
-	if ks == nil || pathKey == "" {
-		return false
-	}
-	localKey, ok := ks.FromPathKey(pathKey)
-	if !ok {
+func readCanonicalPathStaticMember(st statePathStaticMemberReader, ks *keyspace.KeySpace, localKey keyspace.Key) bool {
+	if ks == nil || localKey.Kind == keyspace.KindInvalid {
 		return false
 	}
 	if _, ok := st.ReadLocalPathStaticMember(localKey); ok {
@@ -429,6 +428,16 @@ func readCanonicalPathStaticMember(st statePathStaticMemberReader, ks *keyspace.
 	if canonical, ok := ks.FieldCanonical(localKey); ok {
 		if _, ok := st.ReadLocalPathStaticMember(canonical); ok {
 			return true
+		}
+	}
+	if unversioned, ok := unversionedStaticMemberKey(ks, localKey); ok {
+		if _, ok := st.ReadLocalPathStaticMember(unversioned); ok {
+			return true
+		}
+		if canonical, ok := ks.FieldCanonical(unversioned); ok {
+			if _, ok := st.ReadLocalPathStaticMember(canonical); ok {
+				return true
+			}
 		}
 	}
 	if stable, ok := stableStaticMemberKey(ks, localKey); ok {
@@ -446,6 +455,17 @@ func readCanonicalPathStaticMember(st statePathStaticMemberReader, ks *keyspace.
 
 type statePathStaticMemberReader interface {
 	ReadLocalPathStaticMember(keyspace.Key) (product.Value, bool)
+}
+
+func unversionedStaticMemberKey(ks *keyspace.KeySpace, localKey keyspace.Key) (keyspace.Key, bool) {
+	if ks == nil || localKey.Kind != keyspace.KindResolverSym || localKey.Sym == 0 {
+		return keyspace.Key{}, false
+	}
+	segments, ok := ks.SegmentsView(localKey)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return ks.LookupResolverKey(localKey.Sym, 0, segments)
 }
 
 func stableStaticMemberKey(ks *keyspace.KeySpace, localKey keyspace.Key) (keyspace.Key, bool) {
