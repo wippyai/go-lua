@@ -297,5 +297,14 @@ func (a *formalTupleAlgebra) applyFormalClosedFactorLiftWithDerived(
 	if err != nil {
 		return formalRelationTuple{}, err
 	}
-	return a.normalize(formalRelationTuple{variable: base.variable, root: root}), nil
+	result := a.normalize(formalRelationTuple{variable: base.variable, root: root})
+	// A closed-factor lift is a producer boundary: its sparse writes combine
+	// with the base tuple's structural carry into complete registered lane
+	// spellings. Register those exact spellings here, while they remain owned
+	// by the producer. Consumers retain the fail-closed lookup and never
+	// reconstruct a carrier from individual leaves.
+	if err := a.cacheFormalTupleFactorSpellings(result); err != nil {
+		return formalRelationTuple{}, err
+	}
+	return result, nil
 }

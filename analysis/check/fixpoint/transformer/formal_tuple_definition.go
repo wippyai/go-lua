@@ -437,6 +437,13 @@ func (a *formalTupleAlgebra) formalDefinitionCorrelatedRegions(
 		if evalErr != nil {
 			return nil, evalErr
 		}
+		// The definition correlation owns this exact target product row. Publish
+		// its canonical lane spellings before the shared Apply executor consumes
+		// them; that executor remains a strict lookup and never rebuilds a factor
+		// from its leaves.
+		if cacheErr := a.cacheFormalTupleLeafEvaluatorFactorSpellings(callee); cacheErr != nil {
+			return nil, cacheErr
+		}
 		// Boundary composition and the joint owner/target Care can produce a
 		// canonical product vector that does not occur in the broad-Care Outcome.
 		// Freeze that exact row with the Definition operator's sole registered

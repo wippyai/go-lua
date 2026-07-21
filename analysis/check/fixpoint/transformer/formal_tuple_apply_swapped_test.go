@@ -507,7 +507,7 @@ func prepareFormalApplyTestProgram(t *testing.T, program *RelationProgram, frame
 
 func formalApplyTestExposeOutcome(t *testing.T, algebra *formalTupleAlgebra, tuple formalRelationTuple, outcome boundaryOutcomeRef) formalRelationTuple {
 	t.Helper()
-	if err := algebra.cacheFormalOutcomeFactorSpellings(tuple); err != nil {
+	if err := algebra.cacheFormalTupleFactorSpellings(tuple); err != nil {
 		t.Fatal(err)
 	}
 	span, _, authority, ok := algebra.span(tuple.variable)

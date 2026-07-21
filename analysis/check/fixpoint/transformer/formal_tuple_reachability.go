@@ -470,13 +470,13 @@ func (a *formalTupleAlgebra) formalApplySelectedFactorExecutionCapabilityRef(e f
 	return formalFactorExecutionCapability{}, fmt.Errorf("transformer: Apply target product vector has no prefrozen execution capability")
 }
 
-// cacheFormalOutcomeFactorSpellings records each stabilized lane spelling at
-// the Outcome producer boundary. Coordinate members can be joined independently
-// into a physical lane spelling that no earlier transfer factored, so Apply
-// must not reconstruct it. Each lane is partitioned independently: capability
-// construction remains owned by the exact caller/target region and no product
+// cacheFormalTupleFactorSpellings records each stabilized lane spelling at a
+// complete tuple producer boundary. Coordinate members can be joined
+// independently into a physical lane spelling that no earlier transfer
+// factored, so every consumer retains the exact producer-owned spelling rather
+// than reconstructing it. Each lane is partitioned independently: no product
 // Cartesian partition is formed here.
-func (a *formalTupleAlgebra) cacheFormalOutcomeFactorSpellings(tuple formalRelationTuple) error {
+func (a *formalTupleAlgebra) cacheFormalTupleFactorSpellings(tuple formalRelationTuple) error {
 	if err := a.validateTuple(tuple); err != nil || tuple.bottom() {
 		if err != nil {
 			return err
@@ -524,6 +524,38 @@ func (a *formalTupleAlgebra) cacheFormalOutcomeFactorSpellings(tuple formalRelat
 			default:
 				return errFormalComponentMalformed
 			}
+		}
+	}
+	return nil
+}
+
+// cacheFormalTupleLeafEvaluatorFactorSpellings publishes the complete lane
+// spellings created by a canonical correlation partition. The partition owns a
+// new, exact product row (without rebuilding any carrier), so this is its
+// producer boundary before later Apply stages consume the row.
+func (a *formalTupleAlgebra) cacheFormalTupleLeafEvaluatorFactorSpellings(evaluator formalTupleLeafEvaluator) error {
+	if a == nil || evaluator.algebra != a || !evaluator.valid() {
+		return errFormalComponentForeignOwner
+	}
+	for _, group := range evaluator.layout.nonValues {
+		leaves, err := evaluator.leaves.group(group)
+		if err != nil {
+			return err
+		}
+		var factor state.LaneFactor
+		switch group.kind {
+		case formalFiberGroupOrdinaryLane:
+			factor, err = a.materializeOrdinaryGroup(evaluator.authority, group, leaves)
+		case formalFiberGroupCoordinateLane:
+			factor, err = a.materializeCoordinateGroup(evaluator.authority, evaluator.span, group, leaves)
+		default:
+			return errFormalComponentMalformed
+		}
+		if err != nil {
+			return err
+		}
+		if err = a.cacheFormalFactorReachability(evaluator.authority, group, leaves, factor); err != nil {
+			return err
 		}
 	}
 	return nil

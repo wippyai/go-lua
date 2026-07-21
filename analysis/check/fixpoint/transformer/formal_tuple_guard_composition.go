@@ -273,6 +273,13 @@ func (a *formalTupleAlgebra) composeGuardBoundary(tuple formalRelationTuple, bou
 	}
 	if len(writes) == 0 {
 		a.decisions.rollback(mark)
+		// Even an identity guard closure is a producer boundary for Apply. The
+		// complete tuple survives unchanged, but its exact lane spellings still
+		// need registration before the downstream correlation transaction reads
+		// them.
+		if err := a.cacheFormalTupleFactorSpellings(tuple); err != nil {
+			return fail(err)
+		}
 		return tuple, nil
 	}
 	var publishMark formalRelationEvalTracePhaseMark
@@ -299,7 +306,7 @@ func (a *formalTupleAlgebra) composeGuardBoundary(tuple formalRelationTuple, bou
 	// does not necessarily coincide with a spelling factored by either input.
 	// Register the correlated per-lane rows here, before Apply can consume the
 	// closed target; a consumer must never reconstruct a missing spelling.
-	if err := a.cacheFormalOutcomeFactorSpellings(result); err != nil {
+	if err := a.cacheFormalTupleFactorSpellings(result); err != nil {
 		return fail(err)
 	}
 	if traceDetail != nil {

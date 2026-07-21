@@ -290,6 +290,13 @@ func (a *formalTupleAlgebra) formalApplyCorrelatedTargetRegions(
 			if evalErr != nil {
 				return nil, evalErr
 			}
+			// The correlation partition has produced the exact target product row
+			// that all Apply stages consume. Register its complete canonical lane
+			// spellings at that producer boundary; consumers keep their fail-closed
+			// spelling lookup and do not rebuild a factor from partial leaves.
+			if cacheErr := a.cacheFormalTupleLeafEvaluatorFactorSpellings(targetEvaluator); cacheErr != nil {
+				return nil, cacheErr
+			}
 			// Guard composition plus the caller/target Care intersection is itself a
 			// product-producing operator law. The narrower correlated region can have
 			// a canonical target vector distinct from the callee Outcome's broad-Care

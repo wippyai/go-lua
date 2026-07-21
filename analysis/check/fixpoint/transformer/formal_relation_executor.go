@@ -249,13 +249,12 @@ func evaluateFormalRelationEquation(
 		return formalRelationTuple{}
 	}
 	result := algebra.normalize(candidate)
-	if equation.Cell.cell.Kind == formalRelationCellOutcome && !result.bottom() {
-		// The Outcome equation—not an individual occurrence—is the canonical
-		// producer consumed by Apply. Multiple CFG returns may join here, so its
-		// stabilized per-lane spellings must be registered after that join. Lanes
-		// are registered independently: execution capability remains owned by the
-		// exact Apply/Definition region and no cross-lane product is formed here.
-		if err := algebra.cacheFormalOutcomeFactorSpellings(result); err != nil {
+	if !result.bottom() {
+		// Each relation cell is a complete tuple producer. Its stabilized lanes
+		// may be consumed by RootAssignment, Definition, or Apply before an N5
+		// Outcome is reached, so register exact per-lane spellings after every
+		// cell join. Lanes remain independent: no cross-lane product is formed.
+		if err := algebra.cacheFormalTupleFactorSpellings(result); err != nil {
 			algebra.fail(err)
 			return formalRelationTuple{}
 		}
