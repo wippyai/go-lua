@@ -17,6 +17,12 @@ type CallOutcomeSiteShape struct {
 	InputLanes               state.LaneSet
 	TypestateResourceQueries []state.TypestateResourceQuery
 	Correlations             []CallOutcomeCorrelationShape
+	// InputObservation is the leaf-owned authority for CallOutcomeInput value
+	// roles.  It is deliberately separate from output fields and proof seeds:
+	// neither can prove which source values an evaluator may observe.  A zero
+	// observation inherits the program's sealed default; use
+	// ObserveNoCallOutcomeOperands for an explicit empty declaration.
+	InputObservation CallOutcomeInputObservation
 	// ProofSeeds are the provider leaf's finite declarations for normal-return
 	// proof facts which may require sibling return coordinates. They are not a
 	// capability field: composition retains them at the declaring leaf so an
@@ -24,6 +30,81 @@ type CallOutcomeSiteShape struct {
 	// authority.
 	ProofSeeds []CallOutcomeProofSeed
 }
+
+// CallOutcomeInputObservation is an exhaustive, immutable declaration of the
+// value roles an evaluator may inspect.  Lanes and keyed queries remain in the
+// capability because their identities are supplied by the State domain; this
+// declaration controls the source-term/read-point authority which cannot be
+// inferred from an evaluator callback.
+type CallOutcomeInputObservation struct {
+	declared     bool
+	callee       bool
+	receiver     bool
+	arguments    []int
+	allArguments bool
+}
+
+// ObserveCallOutcomeOperands declares exactly the selected source roles.  A
+// negative argument ordinal is rejected while sealing the site program.
+func ObserveCallOutcomeOperands(callee, receiver bool, arguments ...int) CallOutcomeInputObservation {
+	return CallOutcomeInputObservation{
+		declared: true, callee: callee, receiver: receiver,
+		arguments: append([]int(nil), arguments...),
+	}
+}
+
+// ObserveAllCallOutcomeOperands is the compatibility-safe declaration for a
+// provider that genuinely observes the complete call operand tuple.
+func ObserveAllCallOutcomeOperands() CallOutcomeInputObservation {
+	return CallOutcomeInputObservation{declared: true, callee: true, receiver: true, allArguments: true}
+}
+
+// ObserveNoCallOutcomeOperands explicitly declares a provider which reads no
+// value role.  It differs from the zero value, which inherits the program
+// default so existing providers remain source compatible.
+func ObserveNoCallOutcomeOperands() CallOutcomeInputObservation {
+	return CallOutcomeInputObservation{declared: true}
+}
+
+func (o CallOutcomeInputObservation) canonical() (CallOutcomeInputObservation, error) {
+	if !o.declared {
+		return o, nil
+	}
+	out := o
+	out.arguments = append([]int(nil), o.arguments...)
+	sort.Ints(out.arguments)
+	write := 0
+	for _, index := range out.arguments {
+		if index < 0 {
+			return CallOutcomeInputObservation{}, fmt.Errorf("callpayload: negative call-outcome argument observation")
+		}
+		if write == 0 || out.arguments[write-1] != index {
+			out.arguments[write], write = index, write+1
+		}
+	}
+	out.arguments = out.arguments[:write]
+	if out.allArguments {
+		out.arguments = nil
+	}
+	return out, nil
+}
+
+// ObservesCallee, ObservesReceiver, and ObservesArgument expose the frozen
+// certificate without lending its backing storage to a provider.
+func (o CallOutcomeInputObservation) ObservesCallee() bool   { return o.callee }
+func (o CallOutcomeInputObservation) ObservesReceiver() bool { return o.receiver }
+func (o CallOutcomeInputObservation) ObservesArgument(index int) bool {
+	if index < 0 {
+		return false
+	}
+	if o.allArguments {
+		return true
+	}
+	position := sort.SearchInts(o.arguments, index)
+	return position < len(o.arguments) && o.arguments[position] == index
+}
+func (o CallOutcomeInputObservation) AllArguments() bool { return o.allArguments }
+func (o CallOutcomeInputObservation) Declared() bool     { return o.declared }
 
 func canonicalTypestateResourceQueries(in []state.TypestateResourceQuery) ([]state.TypestateResourceQuery, error) {
 	out := append([]state.TypestateResourceQuery(nil), in...)

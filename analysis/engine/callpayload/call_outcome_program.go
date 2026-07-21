@@ -46,19 +46,22 @@ type CallOutcomeSitePrepareFunc func(ctx transfer.NodeContext, site factflow.Cal
 // both execution and the exhaustive upper bound of CallOutcome fields that
 // execution can produce. The zero value is the absent program.
 type CallOutcomeProgram struct {
-	evaluate callOutcomeEvaluator
-	maximum  []CallOutcomeFieldRole
-	primary  state.LaneSet
-	history  state.LaneSet
-	shape    callOutcomeShape
-	read     callOutcomeReadShape
-	prepare  callOutcomeSitePreparer
+	owner       string
+	evaluate    callOutcomeEvaluator
+	maximum     []CallOutcomeFieldRole
+	primary     state.LaneSet
+	history     state.LaneSet
+	observation CallOutcomeInputObservation
+	shape       callOutcomeShape
+	read        callOutcomeReadShape
+	prepare     callOutcomeSitePreparer
 }
 
 // CallOutcomeSiteProgram is one fully validated, immutable site specialization.
 // Site-shape work is paid once while freezing the caller; Evaluate is the sole
 // runtime provider entry and never rebuilds the capability.
 type CallOutcomeSiteProgram struct {
+	owner      string
 	capability CallOutcomeCapability
 	// proofSeeds belong to this exact leaf. They must not be lifted into the
 	// composed capability because that would let a sibling provider authorize a
@@ -80,6 +83,7 @@ type CallOutcomeCapability struct {
 	primaryInputLanes        state.LaneSet
 	typestateResourceQueries []state.TypestateResourceQuery
 	readInputLanes           func(cfg.Point) (state.LaneSet, error)
+	observation              CallOutcomeInputObservation
 }
 
 // SealCallOutcomeProgram binds an evaluator to its exhaustive possible field
@@ -94,8 +98,44 @@ func SealCallOutcomeProgram(
 	readShape callOutcomeReadShape,
 	evaluate callOutcomeEvaluator,
 ) CallOutcomeProgram {
+	return sealCallOutcomeProgram(owner, fieldNames, primaryInputLanes, historicalInputLanes,
+		ObserveAllCallOutcomeOperands(), shape, readShape, evaluate)
+}
+
+// SealObservedCallOutcomeProgram is SealCallOutcomeProgram with an explicit
+// leaf input-observation certificate.  It is the preferred constructor for
+// new providers: the freezer can then retain only the selected source terms
+// and their reachable historical wires.
+func SealObservedCallOutcomeProgram(
+	owner string,
+	fieldNames []string,
+	primaryInputLanes state.LaneSet,
+	historicalInputLanes state.LaneSet,
+	observation CallOutcomeInputObservation,
+	shape callOutcomeShape,
+	readShape callOutcomeReadShape,
+	evaluate callOutcomeEvaluator,
+) CallOutcomeProgram {
+	return sealCallOutcomeProgram(owner, fieldNames, primaryInputLanes, historicalInputLanes,
+		observation, shape, readShape, evaluate)
+}
+
+func sealCallOutcomeProgram(
+	owner string,
+	fieldNames []string,
+	primaryInputLanes state.LaneSet,
+	historicalInputLanes state.LaneSet,
+	observation CallOutcomeInputObservation,
+	shape callOutcomeShape,
+	readShape callOutcomeReadShape,
+	evaluate callOutcomeEvaluator,
+) CallOutcomeProgram {
 	if evaluate == nil {
 		panic(fmt.Sprintf("callpayload: %s has nil call-outcome evaluator", programOwner(owner)))
+	}
+	observation, observationErr := observation.canonical()
+	if observationErr != nil || !observation.declared {
+		panic(fmt.Sprintf("callpayload: %s has invalid input observation: %v", programOwner(owner), observationErr))
 	}
 	if err := state.DefaultLaneCatalog().ValidateLaneSet(primaryInputLanes); err != nil {
 		panic(fmt.Sprintf("callpayload: %s has invalid primary input lanes: %v", programOwner(owner), err))
@@ -127,12 +167,14 @@ func SealCallOutcomeProgram(
 		return callOutcomeRoleOrdinal(roles, selected[i].FieldName) < callOutcomeRoleOrdinal(roles, selected[j].FieldName)
 	})
 	return CallOutcomeProgram{
-		evaluate: evaluate,
-		maximum:  selected,
-		primary:  state.NewLaneSet(primaryInputLanes.IDs()...),
-		history:  state.NewLaneSet(historicalInputLanes.IDs()...),
-		shape:    shape,
-		read:     readShape,
+		owner:       programOwner(owner),
+		evaluate:    evaluate,
+		maximum:     selected,
+		primary:     state.NewLaneSet(primaryInputLanes.IDs()...),
+		history:     state.NewLaneSet(historicalInputLanes.IDs()...),
+		observation: observation,
+		shape:       shape,
+		read:        readShape,
 	}
 }
 
@@ -148,12 +190,29 @@ func SealPreparedCallOutcomeProgram(
 	historicalInputLanes state.LaneSet,
 	prepare CallOutcomeSitePrepareFunc,
 ) CallOutcomeProgram {
+	return SealObservedPreparedCallOutcomeProgram(
+		owner, fieldNames, primaryInputLanes, historicalInputLanes,
+		ObserveAllCallOutcomeOperands(), prepare,
+	)
+}
+
+// SealObservedPreparedCallOutcomeProgram is SealPreparedCallOutcomeProgram
+// with an explicit leaf input-observation certificate. Prepared providers use
+// the same frozen observation contract as ordinary providers.
+func SealObservedPreparedCallOutcomeProgram(
+	owner string,
+	fieldNames []string,
+	primaryInputLanes state.LaneSet,
+	historicalInputLanes state.LaneSet,
+	observation CallOutcomeInputObservation,
+	prepare CallOutcomeSitePrepareFunc,
+) CallOutcomeProgram {
 	if prepare == nil {
 		panic(fmt.Sprintf("callpayload: %s has nil call-outcome site preparer", programOwner(owner)))
 	}
-	program := SealCallOutcomeProgram(
+	program := SealObservedCallOutcomeProgram(
 		owner, fieldNames, primaryInputLanes, historicalInputLanes,
-		nil, nil,
+		observation, nil, nil,
 		func(transfer.NodeContext, factflow.CallSiteView, CallOutcomeInput) (CallOutcome, error) {
 			panic("callpayload: prepared call-outcome evaluator was not bound")
 		},
@@ -172,7 +231,7 @@ func SealPreparedCallOutcomeProgram(
 		if err != nil {
 			return CallOutcomeSiteProgram{}, err
 		}
-		return CallOutcomeSiteProgram{capability: capability, proofSeeds: proofSeeds, evaluate: prepared.Evaluate}, nil
+		return CallOutcomeSiteProgram{owner: program.owner, capability: capability, proofSeeds: proofSeeds, evaluate: prepared.Evaluate}, nil
 	}
 	return program
 }
@@ -223,12 +282,14 @@ func ComposeCallOutcomePrograms(programs []CallOutcomeProgram, merge func(transf
 			return CallOutcomeSiteProgram{}, err
 		}
 		return CallOutcomeSiteProgram{
+			owner:      "composed call outcome",
 			capability: capability,
 			children:   children,
 			merge:      merge,
 		}, nil
 	}
 	return CallOutcomeProgram{
+		owner:   "composed call outcome",
 		maximum: selectedCallOutcomeRoles(allRoles, present),
 		primary: maximumPrimary,
 		history: maximumHistory,
@@ -253,6 +314,7 @@ func (p CallOutcomeProgram) PrepareSite(ctx transfer.NodeContext, site factflow.
 		return CallOutcomeSiteProgram{}, err
 	}
 	return CallOutcomeSiteProgram{
+		owner:      p.owner,
 		capability: capability,
 		proofSeeds: proofSeeds,
 		evaluate: func(evalCtx transfer.NodeContext, input CallOutcomeInput) (CallOutcome, error) {
@@ -263,6 +325,11 @@ func (p CallOutcomeProgram) PrepareSite(ctx transfer.NodeContext, site factflow.
 
 // Capability returns the already-validated immutable site capability.
 func (p CallOutcomeSiteProgram) Capability() CallOutcomeCapability { return p.capability }
+
+// Owner returns the frozen provider identity for diagnostics and structural
+// counter attribution. Composition nodes intentionally retain their own owner;
+// leaves retain the declaring program's owner.
+func (p CallOutcomeSiteProgram) Owner() string { return p.owner }
 
 // ProofSeedCount reports the number of declarations sealed by this exact
 // provider leaf. Composed nodes intentionally expose none; callers must walk
@@ -375,6 +442,7 @@ func (p CallOutcomeSiteProgram) validate(_ transfer.NodeContext, out CallOutcome
 func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site factflow.CallSiteView) (CallOutcomeCapability, []CallOutcomeProofSeed, error) {
 	roles := append([]CallOutcomeFieldRole(nil), p.maximum...)
 	primaryInputLanes := state.NewLaneSet(p.primary.IDs()...)
+	observation := p.observation
 	var correlations []CallOutcomeCorrelationShape
 	var proofSeedDeclarations []CallOutcomeProofSeed
 	var typestateResourceQueries []state.TypestateResourceQuery
@@ -382,6 +450,12 @@ func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site fac
 		shape, err := p.shape(ctx, site)
 		if err != nil {
 			return CallOutcomeCapability{}, nil, err
+		}
+		if shape.InputObservation.declared {
+			observation, err = shape.InputObservation.canonical()
+			if err != nil {
+				return CallOutcomeCapability{}, nil, err
+			}
 		}
 		names, selectedInputs := shape.FieldNames, shape.InputLanes
 		present := make(map[string]struct{}, len(names))
@@ -444,7 +518,7 @@ func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site fac
 		if err != nil {
 			return CallOutcomeCapability{}, nil, err
 		}
-		return CallOutcomeCapability{roles: roles, correlations: correlations, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes}, proofSeeds, nil
+		return CallOutcomeCapability{roles: roles, correlations: correlations, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes, observation: observation}, proofSeeds, nil
 	}
 	indices := make([]int, 0, site.ResultTargetCount())
 	seen := make(map[int]struct{}, site.ResultTargetCount())
@@ -487,7 +561,7 @@ func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site fac
 	if err != nil {
 		return CallOutcomeCapability{}, nil, err
 	}
-	return CallOutcomeCapability{roles: roles, correlations: correlations, resultIndices: indices, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes}, proofSeeds, nil
+	return CallOutcomeCapability{roles: roles, correlations: correlations, resultIndices: indices, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes, observation: observation}, proofSeeds, nil
 }
 
 // FieldRoles returns a detached copy in canonical CallOutcome field order.
@@ -540,6 +614,12 @@ func (c CallOutcomeCapability) PrimaryInputLanes() state.LaneSet {
 	return state.NewLaneSet(c.primaryInputLanes.IDs()...)
 }
 
+// InputObservation returns the exact frozen source-role certificate for this
+// leaf site specialization.
+func (c CallOutcomeCapability) InputObservation() CallOutcomeInputObservation {
+	return c.observation
+}
+
 // TypestateResourceQueries returns the exact site-prepared keyed lifecycle
 // observations. Their source lanes are compilation authority, not raw provider
 // inputs.
@@ -562,6 +642,7 @@ func composeCallOutcomeCapabilities(programs []CallOutcomeSiteProgram) (CallOutc
 	var correlations []CallOutcomeCorrelationShape
 	var indices []int
 	var typestateResourceQueries []state.TypestateResourceQuery
+	observation := ObserveNoCallOutcomeOperands()
 	for _, program := range programs {
 		capability := program.capability
 		for _, role := range capability.roles {
@@ -571,6 +652,12 @@ func composeCallOutcomeCapabilities(programs []CallOutcomeSiteProgram) (CallOutc
 		correlations = append(correlations, capability.correlations...)
 		indices = append(indices, capability.resultIndices...)
 		typestateResourceQueries = append(typestateResourceQueries, capability.typestateResourceQueries...)
+		observation.callee = observation.callee || capability.observation.callee
+		observation.receiver = observation.receiver || capability.observation.receiver
+		observation.allArguments = observation.allArguments || capability.observation.allArguments
+		if !observation.allArguments {
+			observation.arguments = append(observation.arguments, capability.observation.arguments...)
+		}
 	}
 	roles := selectedCallOutcomeRoles(allRoles, present)
 	var err error
@@ -601,9 +688,13 @@ func composeCallOutcomeCapabilities(programs []CallOutcomeSiteProgram) (CallOutc
 		}
 		return lanes, nil
 	}
+	observation, err = observation.canonical()
+	if err != nil {
+		return CallOutcomeCapability{}, err
+	}
 	return CallOutcomeCapability{
 		roles: roles, correlations: correlations, resultIndices: indices,
-		primaryInputLanes: primary, typestateResourceQueries: typestateResourceQueries, readInputLanes: read,
+		primaryInputLanes: primary, typestateResourceQueries: typestateResourceQueries, readInputLanes: read, observation: observation,
 	}, nil
 }
 

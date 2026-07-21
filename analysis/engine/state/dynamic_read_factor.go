@@ -527,6 +527,64 @@ type DynamicReadAdvance struct {
 	Complete bool
 }
 
+// DynamicReadDemandCursor is the borrowed execution form of the registered
+// dynamic-read demand law.  It deliberately owns no selection policy: every
+// round is still produced by PlanDynamicRead/AdvanceDynamicRead.  Consumers
+// keep the cursor on their execution scratch and answer the current demand
+// synchronously, which makes a guarded evaluator able to refine its carrier
+// before asking the binder to resume.
+//
+// The cursor has no iteration budget.  The registration contract guarantees
+// that seed/advance demands are monotone, finite, and structurally terminating.
+type DynamicReadDemandCursor struct {
+	domain  ProductDomain
+	advance DynamicReadAdvance
+}
+
+// BeginDynamicReadDemandCursor starts one exact registered demand transaction.
+// The returned cursor borrows the immutable ProductDomain; callers must not
+// substitute an independently reconstructed query plan.
+func (d ProductDomain) BeginDynamicReadDemandCursor(query DynamicReadQuery) (DynamicReadDemandCursor, error) {
+	advance, err := d.PlanDynamicRead(query)
+	if err != nil {
+		return DynamicReadDemandCursor{}, err
+	}
+	return DynamicReadDemandCursor{domain: d, advance: advance}, nil
+}
+
+// Complete reports whether the registered binder has accepted every demanded
+// observation and produced final evidence.
+func (c DynamicReadDemandCursor) Complete() bool { return c.advance.Complete }
+
+// Demands borrows the exact current demand set.  It is meaningful only until
+// the next Resume call; callers must answer it directly instead of retaining
+// detached per-region demand envelopes.
+func (c DynamicReadDemandCursor) Demands() DynamicReadDemandSet { return c.advance.Demands }
+
+// Evidence returns the final registered evidence after Complete becomes true.
+func (c DynamicReadDemandCursor) Evidence() (DynamicReadEvidence, bool) {
+	if !c.advance.Complete {
+		return DynamicReadEvidence{}, false
+	}
+	return c.advance.Evidence, true
+}
+
+// Resume consumes exactly the cursor's current demand and advances the
+// registration-owned state machine.  A caller that omits a demanded slot gets
+// the same hard error as the direct AdvanceDynamicRead API; omission can never
+// be interpreted as a coordinate default.
+func (c *DynamicReadDemandCursor) Resume(batch DynamicReadEvidenceBatch) error {
+	if c == nil || !c.domain.Valid() || c.advance.Complete || c.advance.Demands.Empty() {
+		return fmt.Errorf("%w: invalid dynamic-read demand cursor", ErrInvalidLaneFactor)
+	}
+	next, err := c.domain.AdvanceDynamicRead(c.advance.Plan, batch)
+	if err != nil {
+		return err
+	}
+	c.advance = next
+	return nil
+}
+
 type dynamicReadBuilder struct {
 	facts          dynamicIndexLane
 	hasFacts       bool
@@ -1074,27 +1132,28 @@ func (d ProductDomain) ProjectDynamicReadEvidenceFromFactorProjection(
 	if projection == nil || !projection.plan.ValidFor(d, query.KeySpace) {
 		return DynamicReadEvidence{}, fmt.Errorf("%w: foreign dynamic-read factor projection", ErrInvalidLaneFactor)
 	}
-	advance, err := d.PlanDynamicRead(query)
+	cursor, err := d.BeginDynamicReadDemandCursor(query)
 	if err != nil {
 		return DynamicReadEvidence{}, err
 	}
-	for !advance.Complete {
-		if advance.Demands.Empty() {
+	for !cursor.Complete() {
+		demands := cursor.Demands()
+		if demands.Empty() {
 			return DynamicReadEvidence{}, fmt.Errorf("%w: empty incomplete dynamic-read demand", ErrIncompleteLaneFactors)
 		}
 		batch := DynamicReadEvidenceBatch{}
-		for _, lane := range advance.Demands.OrdinaryLanes() {
+		for _, lane := range demands.OrdinaryLanes() {
 			factor, ok := projection.byOrdinal[lane.ordinal]
 			if !ok {
 				return DynamicReadEvidence{}, fmt.Errorf("%w: missing dynamic-read lane %q", ErrIncompleteLaneFactors, lane.id)
 			}
-			projected, projectErr := d.ProjectDynamicReadLane(advance.Plan, lane, factor)
+			projected, projectErr := d.ProjectDynamicReadLane(cursor.advance.Plan, lane, factor)
 			if projectErr != nil {
 				return DynamicReadEvidence{}, projectErr
 			}
 			batch.Ordinary = append(batch.Ordinary, projected)
 		}
-		for _, demand := range advance.Demands.CoordinateDemands() {
+		for _, demand := range demands.CoordinateDemands() {
 			var prepared *dynamicReadProjectedCoordinateFamily
 			for index := range projection.coordinate {
 				if projection.coordinate[index].family == demand.family {
@@ -1169,12 +1228,15 @@ func (d ProductDomain) ProjectDynamicReadEvidenceFromFactorProjection(
 			}
 			batch.Coordinate = append(batch.Coordinate, answer)
 		}
-		advance, err = d.AdvanceDynamicRead(advance.Plan, batch)
-		if err != nil {
+		if err := cursor.Resume(batch); err != nil {
 			return DynamicReadEvidence{}, err
 		}
 	}
-	return advance.Evidence, nil
+	evidence, complete := cursor.Evidence()
+	if !complete {
+		return DynamicReadEvidence{}, fmt.Errorf("%w: incomplete dynamic-read demand cursor", ErrIncompleteLaneFactors)
+	}
+	return evidence, nil
 }
 
 // ProjectDynamicReadEvidenceWithProof projects value evidence from input and
