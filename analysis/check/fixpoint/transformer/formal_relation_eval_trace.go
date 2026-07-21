@@ -13,12 +13,17 @@ import (
 
 // formalRelationEvalTrace is diagnostic authority for one execution. It is
 // absent unless GOLUA_TRACE_FORMAL_EQUATIONS names a positive slow-equation
-// threshold (for example "500ms"), so production evaluation has no timer,
-// counter, formatting, or allocation cost.
+// threshold (for example "500ms"). The exact historical reproducer sets the
+// variable to "1". That spelling keeps the one-second active-equation timer
+// while forcing completed ExternalCall traces, so its point-local structural
+// counters are available even after a fix makes the equation fast. Production
+// evaluation has no timer, counter, formatting, or allocation cost when the
+// variable is absent.
 type formalRelationEvalTrace struct {
-	threshold time.Duration
-	sequence  uint64
-	active    *formalRelationEvalTraceDetail
+	threshold  time.Duration
+	forceCalls bool
+	sequence   uint64
+	active     *formalRelationEvalTraceDetail
 }
 
 type formalRelationEvalTraceDetail struct {
@@ -75,13 +80,19 @@ type formalRelationEvalTraceDetail struct {
 	externalCallDiagnostics, externalCallLedger                formalRelationEvalTracePhase
 	externalCallPublication                                    formalRelationEvalTracePhase
 	externalCallProviderComponents                             []formalExternalCallProviderEvalTrace
+
+	// Per-leaf structural counters. These stay separate so adding them does
+	// not perturb the compact layout of the broader equation trace.
+	externalCallProviderMaxChildRoots int
+	externalCallProviderChildEvals    int
 }
 
 type formalExternalCallProviderEvalTrace struct {
-	path, capability              string
-	inputs, roots, regions, evals int
-	distinct                      int
-	support                       []uint32
+	path, owner, capability                                                               string
+	inputs, wires, valueRoots, laneGroups, ordinals, guards, occurrenceRoots, uniqueRoots int
+	regions, evals                                                                        int
+	distinct                                                                              int
+	support                                                                               []uint32
 }
 
 type formalBranchRelationEvalTraceFactor struct {
@@ -149,6 +160,9 @@ func newFormalRelationEvalTrace() *formalRelationEvalTrace {
 	if raw == "" {
 		return nil
 	}
+	if raw == "1" {
+		return &formalRelationEvalTrace{threshold: time.Second, forceCalls: true}
+	}
 	threshold, err := time.ParseDuration(raw)
 	if err != nil || threshold <= 0 {
 		fmt.Fprintf(os.Stderr, "FORMAL_EQUATION_TRACE_CONFIG value=%s error=%v\n", strconv.Quote(raw), err)
@@ -208,13 +222,18 @@ func (t *formalRelationEvalTrace) evaluate(
 	close(done)
 	timer.Stop()
 	elapsed := time.Since(started)
-	if elapsed < t.threshold {
+	forceExternalCall := t.forceCalls && detail.externalCallPlan != nil
+	if elapsed < t.threshold && !forceExternalCall {
 		return result
 	}
 	after := snapshotFormalRelationEvaluation(algebra)
+	traceKind := "FORMAL_EQUATION_SLOW"
+	if forceExternalCall && elapsed < t.threshold {
+		traceKind = "FORMAL_EQUATION_TRACE"
+	}
 	fmt.Fprintf(os.Stderr,
-		"FORMAL_EQUATION_SLOW seq=%d elapsed=%s %s dd_nodes=%+d dd_terminals=%+d dd_unique=%+d dd_apply_memo=%+d dd_ite_memo=%+d dd_care_memo=%+d dd_care_apply_memo=%+d dd_apply_ops=%+d component_terminals=%+d directory_nodes=%+d mallocs=%+d bytes=%+d outcome_read_roots=%d outcome_nonterminal_roots=%d outcome_distinct_roots=%d outcome_distinct_top_variables=%d outcome_support_nodes=%d outcome_support_variables=%d outcome_regions=%d outcome_writes=%d\n",
-		sequence, elapsed.Round(time.Millisecond), formatFormalRelationEquationTrace(algebra, equation),
+		"%s seq=%d elapsed=%s %s dd_nodes=%+d dd_terminals=%+d dd_unique=%+d dd_apply_memo=%+d dd_ite_memo=%+d dd_care_memo=%+d dd_care_apply_memo=%+d dd_apply_ops=%+d component_terminals=%+d directory_nodes=%+d mallocs=%+d bytes=%+d outcome_read_roots=%d outcome_nonterminal_roots=%d outcome_distinct_roots=%d outcome_distinct_top_variables=%d outcome_support_nodes=%d outcome_support_variables=%d outcome_regions=%d outcome_writes=%d\n",
+		traceKind, sequence, elapsed.Round(time.Millisecond), formatFormalRelationEquationTrace(algebra, equation),
 		after.decisionNodes-before.decisionNodes,
 		after.decisionTerminals-before.decisionTerminals,
 		after.decisionUnique-before.decisionUnique,
@@ -271,11 +290,12 @@ func (t *formalRelationEvalTrace) evaluate(
 	}
 	if detail.externalCallPlan != nil {
 		fmt.Fprintf(os.Stderr,
-			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_support=%v provider_regions=%d distinct_provider_inputs=%d provider_evals=%d raw_provider_terminals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
+			"FORMAL_EXTERNAL_CALL seq=%d point=%d provider_inputs=%d provider_roots=%d provider_max_child_roots=%d provider_support=%v provider_regions=%d distinct_provider_inputs=%d provider_evals=%d provider_child_evals=%d raw_provider_terminals=%d outcome_support=%v commit_roots=%d commit_support=%v commit_regions=%d publication_conditions=%d delta_writes=%d input=%s provider=%s provider_outcome=%s commit_partition=%s outer=%s normal=%s correlation=%s diagnostics=%s ledger=%s publication=%s\n",
 			sequence, detail.externalCallPlan.point,
 			detail.externalCallProviderInputs, detail.externalCallProviderRoots,
-			detail.externalCallProviderSupport, detail.externalCallProviderRegions,
+			detail.externalCallProviderMaxChildRoots, detail.externalCallProviderSupport, detail.externalCallProviderRegions,
 			detail.externalCallDistinctProviderInputs, detail.externalCallProviderEvals,
+			detail.externalCallProviderChildEvals,
 			detail.externalCallRawProviderTerminals,
 			detail.externalCallOutcomeSupport,
 			detail.externalCallCommitRoots, detail.externalCallCommitSupport,
@@ -294,9 +314,9 @@ func (t *formalRelationEvalTrace) evaluate(
 		)
 		for _, component := range detail.externalCallProviderComponents {
 			fmt.Fprintf(os.Stderr,
-				"FORMAL_EXTERNAL_CALL_PROVIDER_COMPONENT seq=%d path=%s capability=%s inputs=%d roots=%d support=%v regions=%d distinct_inputs=%d evals=%d\n",
-				sequence, component.path, component.capability, component.inputs, component.roots,
-				component.support, component.regions, component.distinct, component.evals,
+				"FORMAL_EXTERNAL_CALL_PROVIDER_COMPONENT seq=%d path=%s owner=%q capability=%s inputs=%d wires=%d value_roots=%d lane_groups=%d ordinals=%d guards=%d occurrence_roots=%d unique_roots=%d support=%v regions=%d distinct_inputs=%d evals=%d\n",
+				sequence, component.path, component.owner, component.capability, component.inputs, component.wires, component.valueRoots, component.laneGroups, component.ordinals, component.guards,
+				component.occurrenceRoots, component.uniqueRoots, component.support, component.regions, component.distinct, component.evals,
 			)
 		}
 	}

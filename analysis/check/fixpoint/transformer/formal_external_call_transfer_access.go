@@ -20,11 +20,25 @@ func externalCallTransferAccess(
 	inputCount, primary int,
 	capability callpayload.CallOutcomeCapability,
 ) (state.TransferAccess, error) {
+	return externalCallTransferAccessWithAccess(body, step, step.access, inputPoints, inputCount, primary, capability)
+}
+
+// externalCallTransferAccessWithAccess seals one leaf-owned subset of the
+// compiler-frozen source access row.  The public helper above remains the
+// whole-site authority used by output/commit preparation.
+func externalCallTransferAccessWithAccess(
+	body *relationProgramBody,
+	step boundaryPrefixStep,
+	access []valueAccessTerm,
+	inputPoints []cfg.Point,
+	inputCount, primary int,
+	capability callpayload.CallOutcomeCapability,
+) (state.TransferAccess, error) {
 	if body == nil || step.kind != boundaryPrefixExternalCall ||
 		inputCount <= 0 || primary < 0 || primary >= inputCount || len(inputPoints) != inputCount {
 		return state.TransferAccess{}, fmt.Errorf("transformer: external-call transfer access is unowned")
 	}
-	inputs, err := externalCallTransferInputs(body, step.access, inputPoints, inputCount, primary)
+	inputs, err := externalCallTransferInputs(body, access, inputPoints, inputCount, primary)
 	if err != nil {
 		return state.TransferAccess{}, err
 	}

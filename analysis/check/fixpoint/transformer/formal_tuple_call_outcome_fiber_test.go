@@ -132,9 +132,11 @@ func TestFormalExternalCallPreparesOnceAndPublishesOneAtomicProviderOutcome(t *t
 }
 
 func TestFormalExternalCallComposesRawProviderResultsBeforeNormalization(t *testing.T) {
+	firstEvals, secondEvals := 0, 0
 	first := callpayload.SealCallOutcomeProgram(
 		"raw composition first", []string{"ParamObligations"}, state.NewLaneSet(), state.NewLaneSet(), nil, nil,
 		func(ctx transfer.NodeContext, _ factflow.CallSiteView, _ callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+			firstEvals++
 			value := product.Absent(ctx.Registry)
 			obligation := callpayload.CallParamObligation{ParamIndex: 0, Value: value}
 			return callpayload.CallOutcome{ParamObligations: []callpayload.CallParamObligation{obligation, obligation}}, nil
@@ -143,6 +145,7 @@ func TestFormalExternalCallComposesRawProviderResultsBeforeNormalization(t *test
 	second := callpayload.SealCallOutcomeProgram(
 		"raw composition second", []string{"SuspensionKnown", "MaySuspend"}, state.NewLaneSet(), state.NewLaneSet(), nil, nil,
 		func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+			secondEvals++
 			return callpayload.CallOutcome{}, nil
 		},
 	)
@@ -161,9 +164,33 @@ func TestFormalExternalCallComposesRawProviderResultsBeforeNormalization(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	var plan *formalExternalCallStep
+	for _, equation := range program.formalTemplate.equations {
+		for _, stage := range equation.StepStages {
+			if stage.Operator.externalCall != nil {
+				plan = stage.Operator.externalCall
+				break
+			}
+		}
+		if plan != nil {
+			break
+		}
+	}
+	if plan == nil || len(plan.provider.children) != 2 || plan.provider.input.Valid() || len(plan.provider.wires) != 0 {
+		t.Fatalf("composed provider retained a whole-site evaluator: %#v", plan)
+	}
+	for index := range plan.provider.children {
+		child := &plan.provider.children[index]
+		if len(child.children) != 0 || !child.input.Valid() || len(child.wires) != child.input.InputCount() {
+			t.Fatalf("provider child %d is not an independently frozen leaf: %#v", index, child)
+		}
+	}
 	diagnostics, reachable, err := execution.algebra.formalDiagnosticOutput(context.Background(), execution.values[site])
 	if err != nil || !reachable || !diagnostics.SuspensionKnown || !diagnostics.MaySuspend {
 		t.Fatalf("raw composition diagnostics = %#v reachable=%v err=%v", diagnostics, reachable, err)
+	}
+	if firstEvals != 1 || secondEvals != 1 {
+		t.Fatalf("per-site evaluator counts = first:%d second:%d, want one each", firstEvals, secondEvals)
 	}
 }
 
