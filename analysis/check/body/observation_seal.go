@@ -46,23 +46,6 @@ func (p ObservationPlan) Edges() []ResultEdge {
 	return out
 }
 
-func (p ObservationPlan) clone() ObservationPlan {
-	out := ObservationPlan{
-		boundaryPoints:   append([]cfg.Point(nil), p.boundaryPoints...),
-		nodePoints:       append([]cfg.Point(nil), p.nodePoints...),
-		edgeReachability: append([]observationEdge(nil), p.edgeReachability...),
-		boundarySet:      make(map[cfg.Point]struct{}, len(p.boundarySet)),
-		nodeSet:          make(map[cfg.Point]struct{}, len(p.nodeSet)),
-	}
-	for point := range p.boundarySet {
-		out.boundarySet[point] = struct{}{}
-	}
-	for point := range p.nodeSet {
-		out.nodeSet[point] = struct{}{}
-	}
-	return out
-}
-
 // PublishedFacts is the immutable projection of stabilized relation output.
 // It retains a compact reachability boolean for every solved point, while full
 // node states exist only for planned boundary consumers. This keeps ordinary

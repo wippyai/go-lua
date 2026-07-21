@@ -9,7 +9,6 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -22,8 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -161,35 +158,4 @@ func resultVersionHeapStates(t *testing.T, reg *axis.Registry, keys *keyspace.Ke
 	})
 	return state.State{}.WriteHeapTableObject(reg, id, leftObject),
 		state.State{}.WriteHeapTableObject(reg, id, rightObject)
-}
-
-func resultVersionManifest(reverse bool) *manifest.Manifest {
-	effects := []signature.PathPresenceRefinement{
-		{Path: pathdom.NewPlaceholder(0).Field("ready"), Presence: presence.Present()},
-		{Path: pathdom.NewPlaceholder(0).Field("failed"), Presence: presence.Absent()},
-	}
-	states := []typestate.State{"active", "finished"}
-	transitions := []typestate.TransitionDecl{
-		{From: "active", To: "finished"},
-		{From: "finished", To: "active"},
-	}
-	if reverse {
-		effects[0], effects[1] = effects[1], effects[0]
-		states[0], states[1] = states[1], states[0]
-		transitions[0], transitions[1] = transitions[1], transitions[0]
-	}
-	m := manifest.New("result-version-canonical")
-	m.TypestateProtocols["transaction"] = typestate.Definition{
-		Protocol:    "transaction",
-		States:      states,
-		FinalStates: []typestate.State{"finished"},
-		Transitions: transitions,
-	}
-	m.DefineFunctionSignature("f", signature.Function{
-		Type: typ.Func().Param("value", typ.Any).Build(),
-		OperationalEffects: &signature.OperationalEffects{
-			NormalReturnPresenceRefinements: effects,
-		},
-	})
-	return m
 }

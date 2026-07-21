@@ -14,9 +14,7 @@ import (
 	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -512,10 +510,6 @@ func (w *bodyDigestWriter) writeType(label string, t typ.Type) {
 	}
 	w.writeUint64(label+":hash", h)
 	w.writeString(label+":display", t.String())
-}
-
-func (w *bodyDigestWriter) writeProduct(label string, value product.Value) {
-	w.writeUint64(label, w.stableProductHash(value))
 }
 
 func (w *bodyDigestWriter) stableProductHash(value product.Value) uint64 {
@@ -1133,32 +1127,6 @@ func (w *bodyDigestWriter) writeWideBool(label string, value bool) {
 		w.writeWideRaw("false")
 	}
 	w.writeWideRaw(";")
-}
-
-func (w *bodyDigestWriter) valueSlotString(slot statekey.Value) string {
-	if index, ok := statekey.ParseReturnSlot(slot); ok {
-		return fmt.Sprintf("ret:%d", index)
-	}
-	if sym, ok := statekey.ParseSymbolValue(slot); ok {
-		return "sym:" + w.symbolString(sym)
-	}
-	return fmt.Sprintf("slot:%d", uint64(slot))
-}
-
-func (w *bodyDigestWriter) keyspaceKeyString(key keyspace.Key) string {
-	ks := w.static.KeySpace()
-	if p, ok := ks.StatePath(key); ok {
-		return w.pathString(p)
-	}
-	if key.Kind == keyspace.KindStableSym || key.Kind == keyspace.KindResolverSym || key.Kind == keyspace.KindUnversionedSym {
-		segments, _ := ks.SegmentsView(key)
-		return fmt.Sprintf("ks:%d:%s@%d%s:canon=%t", key.Kind, w.symbolString(key.Sym), key.Ver, segment.FormatSegments(segments), key.Canon)
-	}
-	if segments, ok := ks.SuffixSegmentsView(key); ok {
-		return "suffix:" + segment.FormatSegments(segments)
-	}
-	segments, _ := ks.SegmentsView(key)
-	return fmt.Sprintf("ks:%d:%d:%d%s:canon=%t", key.Kind, key.Root, key.Ver, segment.FormatSegments(segments), key.Canon)
 }
 
 func (w *bodyDigestWriter) writePath(label string, p pathdom.Path) {

@@ -267,14 +267,6 @@ func (r *Result) proofPathValueForSourceMode(mode sourceValueReadMode, point cfg
 	return product.Value{}, false
 }
 
-func (r *Result) sourceValueHasType(value product.Value) bool {
-	if r == nil || r.registry == nil {
-		return false
-	}
-	t, ok := r.typeValues.TypeOf(r.registry, value)
-	return ok && t != nil
-}
-
 func (r *Result) sourceValueHasSpecificType(value product.Value) bool {
 	if r == nil || r.registry == nil {
 		return false
@@ -282,15 +274,4 @@ func (r *Result) sourceValueHasSpecificType(value product.Value) bool {
 	t, ok := r.typeValues.TypeOf(r.registry, value)
 	t = typ.UnwrapTransparentWrappers(t)
 	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
-}
-
-func (r *Result) declaredPathValueForDynamicIndexKey(point cfg.Point, p pathdom.Path) (product.Value, bool) {
-	if r == nil || r.registry == nil || r.typeValues == nil || p.IsEmpty() {
-		return product.Value{}, false
-	}
-	declared, ok := r.DeclaredPathTypeAt(point, p, true)
-	if !ok || declared == nil {
-		return product.Value{}, false
-	}
-	return r.typeValues.FromTypeWithWitness(r.registry, declared), true
 }

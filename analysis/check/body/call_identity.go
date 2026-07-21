@@ -258,24 +258,6 @@ func (r *signatureIdentityResolver) nameForIndexedCallSiteView(site factflow.Cal
 	return r.nameForCallSiteView(ctx, site)
 }
 
-func (r *signatureIdentityResolver) nameForIndexedIteratorCallSiteView(site factflow.CallSiteView) (string, bool) {
-	point, ok := r.pointForSiteView(site)
-	if !ok {
-		return "", false
-	}
-	ctx := transfer.NodeContext{
-		Graph: r.graph,
-		Point: point,
-	}
-	if r.graph != nil {
-		ctx.Node = r.graph.Node(point)
-	}
-	if name, ok := r.nameForCallSiteView(ctx, site); ok {
-		return name, true
-	}
-	return r.implicitBuiltinIteratorName(site.CalleeSymbol(), site.CalleePathRef())
-}
-
 func (r *signatureIdentityResolver) pointForSiteView(site factflow.CallSiteView) (cfg.Point, bool) {
 	return site.Point()
 }
@@ -381,26 +363,6 @@ func globalTableFieldRootSymbol(bindings *bind.Result, p path.Path) (symbol.ID, 
 	}
 	global, ok := bindings.GlobalSymbol(name)
 	return global, ok && global != 0
-}
-
-func (r *signatureIdentityResolver) implicitBuiltinIteratorName(callee symbol.ID, calleePath path.Path) (string, bool) {
-	if r == nil || r.bindings == nil || len(calleePath.Segments) != 0 {
-		return "", false
-	}
-	root := callee
-	if calleePath.Symbol != 0 {
-		root = calleePath.Symbol
-	}
-	if root == 0 || !r.bindings.IsImplicitGlobalSymbol(root) {
-		return "", false
-	}
-	name := r.bindings.Name(root)
-	switch name {
-	case "pairs", "ipairs":
-		return name, true
-	default:
-		return "", false
-	}
 }
 
 func (r *signatureIdentityResolver) implicitGlobalCalleeName(callee symbol.ID, calleePath path.Path) (string, bool) {

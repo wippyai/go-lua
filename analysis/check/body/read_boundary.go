@@ -827,11 +827,6 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 	})
 }
 
-func (r *Result) computePathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
-	value, ok := r.computePathValue(sourceValueReadBoundary, point, p, r.boundaryStateAt)
-	return r.refinePathValueAtBoundary(point, p, value, ok)
-}
-
 func (r *Result) refinePathValueAtBoundary(point cfg.Point, p pathdom.Path, value product.Value, ok bool) (product.Value, bool) {
 	if ok {
 		if recovered, recoveredOK := r.dominatingLocalAssignmentRootPathValueAtBoundary(point, p, value); recoveredOK {

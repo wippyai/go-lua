@@ -85,17 +85,6 @@ func TestValueSourcePathParsesUnversionedStructuralSymbolKey(t *testing.T) {
 	}
 }
 
-func requirePathAssignmentPoint(t *testing.T, result *Result, stmt *ast.AssignStmt) cfg.Point {
-	t.Helper()
-	for _, point := range result.cfg.StmtPoints.PointsFor(stmt) {
-		if _, ok := result.PathAssignment(point); ok {
-			return point
-		}
-	}
-	t.Fatalf("missing factflow path assignment point for %T", stmt)
-	return 0
-}
-
 func TestSourceValueBeforeBoundarySkipsUnreachablePoint(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(17)

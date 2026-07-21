@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -394,12 +392,6 @@ func functionValueCallSitePathResult(t *testing.T, reg *axis.Registry, point cfg
 	}
 }
 
-func heapTableValue(reg *axis.Registry, id identity.ID) product.Value {
-	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	return product.Set(reg, value, identity.Key, identity.Singleton(id))
-}
-
 func runtimeValue(reg *axis.Registry, p presence.Value, tag runtimekind.Tag) product.Value {
 	value := product.NewWithPresence(reg, product.ShapeTop, p)
 	return product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(tag))
@@ -408,13 +400,4 @@ func runtimeValue(reg *axis.Registry, p presence.Value, tag runtimekind.Tag) pro
 func identityValue(reg *axis.Registry, id identity.ID) product.Value {
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	return product.Set(reg, value, identity.Key, identity.Singleton(id))
-}
-
-func nameStaticKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {
-	t.Helper()
-	k, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: name}})
-	if !ok {
-		t.Fatalf("FromRootlessSuffix(%q) failed", name)
-	}
-	return k
 }
