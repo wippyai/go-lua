@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -158,13 +157,16 @@ func applyCallResultValueForTest(t *testing.T, reg *axis.Registry, point cfg.Poi
 			point: factflow.NewCallResultValueSet(factflow.NewCallResultValue(0, fixed)),
 		},
 	}), point)
-	input := state.State{}.WriteValue(reg, key.CallResult(uint32(point), 0), current)
-	result := ApplyConcreteCallResultTransaction(ConcreteCallResultRequest{
-		Context:     transfer.NodeContext{Context: context.Background(), Registry: reg, Point: point},
-		Transaction: transaction, Phase: ConcreteCallResultPhaseMaterialize, Output: input,
+	slot := key.CallResult(uint32(point), 0)
+	program, err := PrepareCallResultMaterializeFactorProgram(reg, transaction, func(point, result uint32) (key.Value, bool) {
+		return key.CallResult(point, result), true
 	})
-	if result.Canceled {
-		t.Fatal("canonical call-result materialization was canceled")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return result.Output
+	values, err := program.Apply(context.Background(), nil, state.ValueFactor[key.Value]{Values: map[key.Value]product.Value{slot: current}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state.State{}.WriteValue(reg, slot, values.Values[slot])
 }

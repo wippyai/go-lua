@@ -13,7 +13,7 @@ import (
 // CallResults phase transaction. Materialization changes only Values;
 // postconditions additionally own their registered factor lanes.
 type formalCallResultsStep struct {
-	phase         factapply.ConcreteCallResultPhase
+	phase         factapply.CallResultPhase
 	materialize   factapply.CallResultMaterializeFactorProgram[FormalSlot]
 	program       factapply.CallResultPostconditionFactorProgram[FormalSlot]
 	values        formalFiberGroupDescriptor
@@ -30,7 +30,7 @@ func freezeFormalCallResultsStep(program *RelationProgram, variable relationVar,
 	}
 	step := operator.code.nodes[operator.root].steps[operator.step-1]
 	if step.kind != boundaryStepCallResults ||
-		(step.resultPhase != factapply.ConcreteCallResultPhaseMaterialize && step.resultPhase != factapply.ConcreteCallResultPhasePostconditions) {
+		(step.resultPhase != factapply.CallResultPhaseMaterialize && step.resultPhase != factapply.CallResultPhasePostconditions) {
 		return nil, nil
 	}
 	body := &program.bodies[variable-1]
@@ -39,7 +39,7 @@ func freezeFormalCallResultsStep(program *RelationProgram, variable relationVar,
 		return nil, fmt.Errorf("CallResults has no formal product ownership")
 	}
 	inventory := span.coordinates
-	if step.resultPhase == factapply.ConcreteCallResultPhasePostconditions &&
+	if step.resultPhase == factapply.CallResultPhasePostconditions &&
 		(body.pathSemantics == nil || !body.pathSemantics.Valid() || !inventory.ValidFor(body.productDomain, span.keys)) {
 		return nil, fmt.Errorf("CallResults N3 has no frozen coordinate inventory")
 	}
@@ -48,7 +48,7 @@ func freezeFormalCallResultsStep(program *RelationProgram, variable relationVar,
 		return nil, fmt.Errorf("CallResults has no formal Values group")
 	}
 	plan := formalCallResultsStep{phase: step.resultPhase, values: values.descriptor}
-	if step.resultPhase == factapply.ConcreteCallResultPhaseMaterialize {
+	if step.resultPhase == factapply.CallResultPhaseMaterialize {
 		prepared, err := factapply.PrepareCallResultMaterializeFactorProgram(body.productDomain.Registry(), step.result, func(point, result uint32) (FormalSlot, bool) {
 			return formalMiddleSlotForStateKey(program, body, statekey.CallResult(point, result))
 		})
@@ -159,9 +159,9 @@ func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOpera
 		nextValues := values
 		nextFactors := factors
 		switch plan.phase {
-		case factapply.ConcreteCallResultPhaseMaterialize:
+		case factapply.CallResultPhaseMaterialize:
 			nextValues, leafErr = plan.materialize.Apply(a.ctx, nil, values)
-		case factapply.ConcreteCallResultPhasePostconditions:
+		case factapply.CallResultPhasePostconditions:
 			var next factapply.CallResultPostconditionFactorFrame[FormalSlot]
 			next, leafErr = plan.program.Apply(a.ctx, nil, factapply.CallResultPostconditionFactorFrame[FormalSlot]{Values: values, Factors: factors, Reachable: true})
 			nextValues, nextFactors = next.Values, next.Factors

@@ -209,7 +209,7 @@ func (p *PreparedPlanCompiler) freezeStructuralWorldProgramSurface(direct frozen
 		resultTransaction := factapply.PlanCallResultTransaction(p.base.facts, point)
 		if resultTransaction.HasMaterializeSteps() {
 			node.instructions = append(node.instructions, freezer.appendInstruction(instructionNode{
-				kind: instructionCallResults, result: resultTransaction, resultPhase: factapply.ConcreteCallResultPhaseMaterialize,
+				kind: instructionCallResults, result: resultTransaction, resultPhase: factapply.CallResultPhaseMaterialize,
 			}))
 		}
 		// N1 is an actual terminal in the frozen circuit. It cannot be represented
@@ -227,7 +227,7 @@ func (p *PreparedPlanCompiler) freezeStructuralWorldProgramSurface(direct frozen
 		}
 		if resultTransaction.HasPostconditionSteps() {
 			node.instructions = append(node.instructions, freezer.appendInstruction(instructionNode{
-				kind: instructionCallResults, result: resultTransaction, resultPhase: factapply.ConcreteCallResultPhasePostconditions,
+				kind: instructionCallResults, result: resultTransaction, resultPhase: factapply.CallResultPhasePostconditions,
 			}))
 		}
 		channelTransaction := factapply.PlanChannelSelectTransaction(p.base.facts, point)

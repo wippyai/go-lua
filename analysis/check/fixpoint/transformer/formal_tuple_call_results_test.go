@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -68,7 +67,7 @@ func TestFormalCallResultsUsesCanonicalCombinedN3Program(t *testing.T) {
 
 	program := formalRelationExecutorTestProgramFromBase(t, base, []relationNode{
 		{},
-		{kind: relationNodeSequence, steps: []boundaryStep{{kind: boundaryStepCallResults, result: transaction, resultPhase: factapply.ConcreteCallResultPhasePostconditions}}, next: 2},
+		{kind: relationNodeSequence, steps: []boundaryStep{{kind: boundaryStepCallResults, result: transaction, resultPhase: factapply.CallResultPhasePostconditions}}, next: 2},
 		{kind: relationNodeOutcome, outcome: 1},
 	})
 	cell := formalRelationCell{Variable: 1, Kind: formalRelationCellStep, Root: 1, Step: 1}
@@ -98,17 +97,15 @@ func TestFormalCallResultsUsesCanonicalCombinedN3Program(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := factapply.ApplyConcreteCallResultTransaction(factapply.ConcreteCallResultRequest{
-		Context: transfer.NodeContext{Context: context.Background(), Registry: reg, Point: point}, Resolver: resolver,
-		Transaction: transaction, Phase: factapply.ConcreteCallResultPhasePostconditions, Output: input,
-	})
-	if want.Canceled || want.Err != nil {
-		t.Fatalf("concrete N3: canceled=%t err=%v", want.Canceled, want.Err)
-	}
 	for _, pair := range []struct {
 		name string
 		slot statekey.Value
-	}{{"param", statekey.SymbolValue(leftID)}, {"capture", statekey.SymbolValue(rightID)}, {"global", statekey.SymbolValue(targetID)}} {
+		want product.Value
+	}{
+		{"param", statekey.SymbolValue(leftID), present},
+		{"capture", statekey.SymbolValue(rightID), present},
+		{"global", statekey.SymbolValue(targetID), present},
+	} {
 		formalSlot, found := formalMiddleSlotForStateKey(program, body, pair.slot)
 		if !found {
 			t.Fatal("formal Values slot")
@@ -119,8 +116,8 @@ func TestFormalCallResultsUsesCanonicalCombinedN3Program(t *testing.T) {
 		} else if value, present := formalValues.Values[formalSlot]; present {
 			got = value
 		}
-		if expected := want.Output.ReadValue(reg, pair.slot); !product.Equal(reg, got, expected) {
-			t.Fatalf("formal/concrete Values mismatch for %s: presence=%v/%v formalTop=%t", pair.name, product.PresenceOf(got), product.PresenceOf(expected), formalValues.Top)
+		if !product.Equal(reg, got, pair.want) {
+			t.Fatalf("formal N3 Values mismatch for %s: presence=%v/%v formalTop=%t", pair.name, product.PresenceOf(got), product.PresenceOf(pair.want), formalValues.Top)
 		}
 	}
 	owned := make(map[state.LaneID]struct{})

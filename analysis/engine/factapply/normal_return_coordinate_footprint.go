@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -57,6 +58,126 @@ type NormalReturnPresenceProofSeed struct {
 	TriggerPresence presence.Value
 	Target          pathdom.Path
 	TargetPresence  presence.Value
+	// TriggerKey and TargetKey are the already-imaged CallResult carrier
+	// endpoints for one producer occurrence.  They are used together, never
+	// mixed with boundary syntax, so a consumer can transport only the exact
+	// earlier result topology that supplied its proof-seed argument.
+	TriggerKey keyspace.Key
+	TargetKey  keyspace.Key
+}
+
+// NormalReturnVisibleKey resolves one already-bound normal-return path at its
+// occurrence point. It is the same visibility projection used by the codec's
+// path-refinement decoder, exposed here so formal pre-schema preparation can
+// bind transported proof topology to the consuming parameter coordinate.
+func (a *PathSemanticAuthority) NormalReturnVisibleKey(point cfg.Point, path pathdom.Path) (keyspace.Key, bool) {
+	if a == nil || !a.Valid() || point == 0 || path.IsEmpty() {
+		return keyspace.Key{}, false
+	}
+	return visibility.AddressAt(a.resolver, point, path).RootOrVisibleKeyspaceKey()
+}
+
+// CallResultPresenceCarrier is the minimal point-owned carrier needed to
+// transport a return-presence consequence into a later proof-seed occurrence.
+// Its roots are supplied by the transformer through its sealed boundary/image
+// authority; this type never discovers result paths from syntax.
+type CallResultPresenceCarrier struct {
+	point cfg.Point
+	roots map[int]keyspace.Key
+}
+
+// NewCallResultPresenceCarrier seals exact result roots for one call point.
+// Only CallResult roots for that point are admitted.
+func NewCallResultPresenceCarrier(point cfg.Point, roots state.BoundaryRoots) (CallResultPresenceCarrier, error) {
+	if point == 0 || len(roots) == 0 {
+		return CallResultPresenceCarrier{}, fmt.Errorf("factapply: call-result presence carrier is unowned")
+	}
+	out := CallResultPresenceCarrier{point: point, roots: make(map[int]keyspace.Key, len(roots))}
+	for index, root := range roots {
+		owner, result, exact := statekey.ParseCallResult(root.Slot)
+		if !exact || owner != uint32(point) || root.Path.Kind == keyspace.KindInvalid {
+			return CallResultPresenceCarrier{}, fmt.Errorf("factapply: call-result presence carrier root %d is malformed", index)
+		}
+		ordinal := int(result)
+		if prior, duplicate := out.roots[ordinal]; duplicate && prior != root.Path {
+			return CallResultPresenceCarrier{}, fmt.Errorf("factapply: call-result presence carrier result %d is ambiguous", ordinal)
+		}
+		out.roots[ordinal] = root.Path
+	}
+	return out, nil
+}
+
+// ProofSeeds returns only relations whose trigger is the exact source result
+// consumed by one proof seed. Sibling occurrences and unrelated result slots
+// are deliberately absent from this transport surface.
+func (c CallResultPresenceCarrier) ProofSeeds(
+	transaction CallResultTransaction,
+	triggerIndex int,
+	triggerPresence presence.Value,
+) ([]NormalReturnPresenceProofSeed, error) {
+	if c.point == 0 || transaction.Point() != c.point || triggerIndex < 0 ||
+		(!presence.Equal(triggerPresence, presence.Present()) && !presence.Equal(triggerPresence, presence.Absent())) {
+		return nil, fmt.Errorf("factapply: call-result presence carrier query is unowned")
+	}
+	trigger, present := c.roots[triggerIndex]
+	if !present {
+		return nil, fmt.Errorf("factapply: call-result presence trigger %d is absent", triggerIndex)
+	}
+	var out []NormalReturnPresenceProofSeed
+	for index := 0; index < transaction.Len(); index++ {
+		step, exact := transaction.Step(index)
+		if !exact {
+			return nil, fmt.Errorf("factapply: call-result presence transaction step %d is absent", index)
+		}
+		relation, publication := step.ReturnPresenceRelation()
+		if !publication || relation.TriggerIndex() != triggerIndex || !presence.Equal(relation.TriggerPresence(), triggerPresence) {
+			continue
+		}
+		target, targetPresent := c.roots[relation.TargetIndex()]
+		if !targetPresent {
+			return nil, fmt.Errorf("factapply: call-result presence target %d is absent", relation.TargetIndex())
+		}
+		out = append(out, NormalReturnPresenceProofSeed{
+			TriggerPresence: relation.TriggerPresence(), TargetPresence: relation.TargetPresence(),
+			TriggerKey: trigger, TargetKey: target,
+		})
+	}
+	return out, nil
+}
+
+// CorrelationProofSeeds selects the capability-declared return-presence
+// topology for exactly one producer result. Unlike fact-flow return rows,
+// these shapes are owned by a provider's sealed CallResult carrier and are
+// available only through that occurrence's prepared capability.
+func (c CallResultPresenceCarrier) CorrelationProofSeeds(
+	shapes []callpayload.CallOutcomeCorrelationShape,
+	triggerIndex int,
+	triggerPresence presence.Value,
+) ([]NormalReturnPresenceProofSeed, error) {
+	if c.point == 0 || triggerIndex < 0 ||
+		(!presence.Equal(triggerPresence, presence.Present()) && !presence.Equal(triggerPresence, presence.Absent())) {
+		return nil, fmt.Errorf("factapply: call-result presence correlation query is unowned")
+	}
+	trigger, present := c.roots[triggerIndex]
+	if !present {
+		return nil, fmt.Errorf("factapply: call-result presence correlation trigger %d is absent", triggerIndex)
+	}
+	var out []NormalReturnPresenceProofSeed
+	for _, shape := range shapes {
+		if shape.Kind != callpayload.CallOutcomeReturnPresence || shape.ReturnIndex != triggerIndex ||
+			!presence.Equal(shape.TriggerPresence, triggerPresence) || shape.TargetIndex < 0 {
+			continue
+		}
+		target, targetPresent := c.roots[shape.TargetIndex]
+		if !targetPresent {
+			return nil, fmt.Errorf("factapply: call-result presence correlation target %d is absent", shape.TargetIndex)
+		}
+		out = append(out, NormalReturnPresenceProofSeed{
+			TriggerPresence: shape.TriggerPresence, TargetPresence: shape.TargetPresence,
+			TriggerKey: trigger, TargetKey: target,
+		})
+	}
+	return out, nil
 }
 
 // NormalReturnPresenceProofSeedFootprint closes only the coordinates required
@@ -87,15 +208,27 @@ func (a *PathSemanticAuthority) NormalReturnPresenceProofSeedFootprint(
 	var out []state.CoordinateSlot
 	seedAccess := branchAtomAccess{}
 	for index, seed := range seeds {
-		if seed.Trigger.IsEmpty() || seed.Target.IsEmpty() ||
-			(!presence.Equal(seed.TriggerPresence, presence.Present()) && !presence.Equal(seed.TriggerPresence, presence.Absent())) ||
+		if (!presence.Equal(seed.TriggerPresence, presence.Present()) && !presence.Equal(seed.TriggerPresence, presence.Absent())) ||
 			(!presence.Equal(seed.TargetPresence, presence.Present()) && !presence.Equal(seed.TargetPresence, presence.Absent())) {
 			return nil, fmt.Errorf("factapply: normal-return proof seed %d is malformed", index)
 		}
-		trigger, triggerOK := visibility.AddressAt(a.resolver, point, seed.Trigger).RootOrVisibleKeyspaceKey()
-		target, targetOK := visibility.AddressAt(a.resolver, point, seed.Target).RootOrVisibleKeyspaceKey()
-		if !triggerOK || !targetOK {
-			return nil, fmt.Errorf("factapply: normal-return proof seed %d has no keyspace binding", index)
+		trigger, target := seed.TriggerKey, seed.TargetKey
+		keyBound := trigger.Kind != keyspace.KindInvalid || target.Kind != keyspace.KindInvalid
+		if keyBound {
+			if trigger.Kind == keyspace.KindInvalid || target.Kind == keyspace.KindInvalid ||
+				a.KeySpace().FormatReadOnly(trigger) == "" || a.KeySpace().FormatReadOnly(target) == "" {
+				return nil, fmt.Errorf("factapply: normal-return proof seed %d has malformed carrier roots", index)
+			}
+		} else {
+			if seed.Trigger.IsEmpty() || seed.Target.IsEmpty() {
+				return nil, fmt.Errorf("factapply: normal-return proof seed %d is malformed", index)
+			}
+			var triggerOK, targetOK bool
+			trigger, triggerOK = visibility.AddressAt(a.resolver, point, seed.Trigger).RootOrVisibleKeyspaceKey()
+			target, targetOK = visibility.AddressAt(a.resolver, point, seed.Target).RootOrVisibleKeyspaceKey()
+			if !triggerOK || !targetOK {
+				return nil, fmt.Errorf("factapply: normal-return proof seed %d has no keyspace binding", index)
+			}
 		}
 		seedAccess.predicateActivations = append(seedAccess.predicateActivations, pathPredicateActivation{
 			path: trigger, kind: pathPredicateActivationTruthiness,

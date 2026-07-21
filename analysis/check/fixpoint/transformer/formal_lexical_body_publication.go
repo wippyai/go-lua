@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -28,8 +31,13 @@ type FormalLexicalBodyCoordinates struct {
 	NodeOutputReachable map[cfg.Point]bool
 	EdgeNormal          map[cfg.Edge]bool
 	CallOutcomes        map[cfg.Point]callpayload.CallOutcome
-	DiagnosticOutput    callpayload.DiagnosticOutput
-	Calls               []FormalLexicalCallDependency
+	// ReturnSlots is the N5 normal-exit observation projected directly from
+	// the formal terminal Values fibers. It is not reconstructed from a
+	// materialized point State at the Result boundary.
+	ReturnSlots      map[int]product.Value
+	PathValue        func(cfg.Point, pathdom.Path, bool) (product.Value, bool)
+	DiagnosticOutput callpayload.DiagnosticOutput
+	Calls            []FormalLexicalCallDependency
 }
 
 // FormalLexicalCallDependency is one frozen lexical Apply edge. Occurrence is
@@ -102,6 +110,8 @@ func (v *FormalRelationPublicationView) ProjectLexicalBody(ctx context.Context) 
 		NodeOutputReachable: make(map[cfg.Point]bool, len(v.pointOutput)),
 		EdgeNormal:          make(map[cfg.Edge]bool, len(v.edgeNormal)),
 		CallOutcomes:        make(map[cfg.Point]callpayload.CallOutcome),
+		ReturnSlots:         make(map[int]product.Value),
+		PathValue:           v.formalPathValueObservation(),
 		Calls:               append([]FormalLexicalCallDependency(nil), v.calls...),
 	}
 
@@ -181,6 +191,11 @@ func (v *FormalRelationPublicationView) ProjectLexicalBody(ctx context.Context) 
 		}
 		out.CallOutcomes[point] = outcome
 	}
+	returnSlots, err := v.returnSlotsFromFormalOutputs(ctx, out.NodeOutputReachable)
+	if err != nil {
+		return FormalLexicalBodyCoordinates{}, err
+	}
+	out.ReturnSlots = returnSlots
 
 	terminal, err := v.execution.bodyTerminalRelation(ctx, v.body.body)
 	if err != nil {
@@ -192,6 +207,106 @@ func (v *FormalRelationPublicationView) ProjectLexicalBody(ctx context.Context) 
 	}
 	out.DiagnosticOutput = diagnostics.Clone()
 	return out, nil
+}
+
+func (v *FormalRelationPublicationView) formalPathValueObservation() func(cfg.Point, pathdom.Path, bool) (product.Value, bool) {
+	if v == nil {
+		return nil
+	}
+	return func(point cfg.Point, p pathdom.Path, boundary bool) (product.Value, bool) {
+		coordinates := v.pointInput[point]
+		if boundary {
+			coordinates = v.pointOutput[point]
+		}
+		value, present, err := v.formalPathValueAtObservation(context.Background(), point, boundary, coordinates, p)
+		if err != nil {
+			return product.Value{}, false
+		}
+		return value, present
+	}
+}
+
+func (v *FormalRelationPublicationView) formalPathValueAtObservation(
+	ctx context.Context,
+	point cfg.Point,
+	boundary bool,
+	coordinates []formalPublishedCoordinate,
+	p pathdom.Path,
+) (product.Value, bool, error) {
+	if v == nil || v.pathFactors == nil || v.body == nil || v.body.keys == nil || p.IsEmpty() {
+		return product.Value{}, false, nil
+	}
+	key, exact := v.body.keys.FromPathKey(p.Key())
+	if !exact {
+		return product.Value{}, false, nil
+	}
+	cacheKey := formalPathObservationCacheKey{point: point, boundary: boundary}
+	v.pathFactors.mu.Lock()
+	factor := v.pathFactors.factors[cacheKey]
+	present, known := v.pathFactors.present[cacheKey]
+	v.pathFactors.mu.Unlock()
+	if !known {
+		var err error
+		factor, present, err = v.joinPublishedPathFactor(ctx, coordinates)
+		if err != nil {
+			return product.Value{}, false, err
+		}
+		v.pathFactors.mu.Lock()
+		if cachedFactor, already := v.pathFactors.factors[cacheKey]; already {
+			factor, present = cachedFactor, v.pathFactors.present[cacheKey]
+		} else {
+			v.pathFactors.factors[cacheKey], v.pathFactors.present[cacheKey] = factor, present
+		}
+		v.pathFactors.mu.Unlock()
+	}
+	if !present {
+		return product.Value{}, false, nil
+	}
+	value, present, err := v.body.productDomain.ReadPathValueFactor(factor, v.body.keys, key)
+	if err != nil || !present {
+		return product.Value{}, false, err
+	}
+	return value, true, nil
+}
+
+// returnSlotsFromFormalOutputs projects only the N5 Values observation at
+// terminal return points. Unlike the retired Result-side reconstruction, this
+// never composes a State or scans an already-materialized State's Value lane.
+func (v *FormalRelationPublicationView) returnSlotsFromFormalOutputs(
+	ctx context.Context,
+	reachable map[cfg.Point]bool,
+) (map[int]product.Value, error) {
+	if v == nil || v.body == nil || v.body.graph == nil {
+		return nil, fmt.Errorf("transformer: formal return-slot observation is unowned")
+	}
+	joined := make(map[int]product.Value)
+	for _, point := range cfg.RPOReadOnly(v.body.graph) {
+		if _, terminal := v.body.plan.Facts().Return(point); !terminal || !reachable[point] {
+			continue
+		}
+		values, live, err := v.joinPublishedValues(ctx, v.pointOutput[point])
+		if err != nil {
+			return nil, err
+		}
+		if !live {
+			continue
+		}
+		if values.Top {
+			return nil, fmt.Errorf("transformer: formal N5 return point %d has a non-finite Values observation", point)
+		}
+		for slot, value := range values.Values {
+			index, returnSlot := statekey.ParseReturnSlot(slot)
+			if !returnSlot {
+				continue
+			}
+			if prior, present := joined[index]; present {
+				joined[index] = product.Join(v.execution.algebra.program.registry, prior, value)
+			} else {
+				joined[index] = value
+			}
+		}
+	}
+	return joined, nil
 }
 
 func formalLexicalCallDependencyLess(left, right FormalLexicalCallDependency) bool {
@@ -234,4 +349,120 @@ func (v *FormalRelationPublicationView) joinPublishedCoordinates(
 		}
 	}
 	return state.NormalizeForDomain(v.body.domain, joined), reachable, nil
+}
+
+// joinPublishedValues is the selected Values-only publication seam. It keeps
+// N5 and value consumers out of State composition; non-Values factors remain
+// formal artifacts until one of the retained relation-completion readers asks
+// for its own class-specific observation.
+func (v *FormalRelationPublicationView) joinPublishedValues(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+) (state.ValueLaneFactor, bool, error) {
+	if len(coordinates) == 0 {
+		return state.ValueLaneFactor{}, false, nil
+	}
+	if v == nil || v.body == nil || v.execution == nil || v.execution.algebra == nil {
+		return state.ValueLaneFactor{}, false, fmt.Errorf("transformer: formal Values publication is unowned")
+	}
+	valuesDomain := state.ValueFactorLattice[statekey.Value](v.execution.algebra.program.registry)
+	joined := valuesDomain.Bottom()
+	live := false
+	for _, coordinate := range coordinates {
+		coordinate.view = v
+		if coordinate.inverseErr != nil {
+			return state.ValueLaneFactor{}, false, coordinate.inverseErr
+		}
+		tuple, present := v.execution.values[coordinate.cell]
+		if !present || tuple.bottom() {
+			continue
+		}
+		ordinals, valuesProjection, err := v.publicationProductProjection(ctx, tuple)
+		if err != nil {
+			return state.ValueLaneFactor{}, false, err
+		}
+		partitions, err := v.execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: tuple, ordinals: ordinals}}, nil)
+		if err != nil {
+			return state.ValueLaneFactor{}, false, err
+		}
+		cache := formalPublicationProjectionCache{
+			factors: make(map[formalPublicationProjectionFactorKey][]formalPublicationProjectionFactorEntry),
+			values:  make(map[uint64][]formalPublicationProjectionValuesEntry),
+		}
+		for _, partition := range partitions {
+			if err := ctx.Err(); err != nil {
+				return state.ValueLaneFactor{}, false, err
+			}
+			if len(partition.views) != 1 || partition.guard == decisionFalse {
+				return state.ValueLaneFactor{}, false, errDecisionMalformed
+			}
+			values, err := v.projectLeafValues(ctx, partition.views[0], &cache, valuesProjection)
+			if err != nil {
+				return state.ValueLaneFactor{}, false, err
+			}
+			if !live {
+				joined, live = values, true
+			} else {
+				joined = valuesDomain.Join(joined, values)
+			}
+		}
+	}
+	return joined, live, nil
+}
+
+func (v *FormalRelationPublicationView) joinPublishedPathFactor(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+) (state.LaneFactor, bool, error) {
+	if v == nil || v.body == nil || v.execution == nil || v.execution.algebra == nil {
+		return state.LaneFactor{}, false, fmt.Errorf("transformer: formal path observation is unowned")
+	}
+	family, owned := v.body.productDomain.PathValueFamily()
+	if !owned {
+		return state.LaneFactor{}, false, nil
+	}
+	joined := state.LaneFactor{}
+	present := false
+	for _, coordinate := range coordinates {
+		coordinate.view = v
+		if coordinate.inverseErr != nil {
+			return state.LaneFactor{}, false, coordinate.inverseErr
+		}
+		tuple, live := v.execution.values[coordinate.cell]
+		if !live || tuple.bottom() {
+			continue
+		}
+		ordinals, valuesProjection, err := v.publicationProductProjection(ctx, tuple)
+		if err != nil {
+			return state.LaneFactor{}, false, err
+		}
+		partitions, err := v.execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: tuple, ordinals: ordinals}}, nil)
+		if err != nil {
+			return state.LaneFactor{}, false, err
+		}
+		cache := formalPublicationProjectionCache{factors: make(map[formalPublicationProjectionFactorKey][]formalPublicationProjectionFactorEntry), values: make(map[uint64][]formalPublicationProjectionValuesEntry)}
+		for _, partition := range partitions {
+			if len(partition.views) != 1 || partition.guard == decisionFalse {
+				return state.LaneFactor{}, false, errDecisionMalformed
+			}
+			_, factors, err := v.projectLeafFactorTuple(ctx, partition.views[0], coordinate.inverse, &cache, valuesProjection)
+			if err != nil {
+				return state.LaneFactor{}, false, err
+			}
+			for _, factor := range factors {
+				if factor.Lane() != family.Lane() {
+					continue
+				}
+				if present {
+					joined, err = v.body.productDomain.LaneJoin(joined, factor)
+					if err != nil {
+						return state.LaneFactor{}, false, err
+					}
+				} else {
+					joined, present = factor, true
+				}
+			}
+		}
+	}
+	return joined, present, nil
 }

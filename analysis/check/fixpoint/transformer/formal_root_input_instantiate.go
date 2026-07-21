@@ -19,11 +19,14 @@ func (a *formalTupleAlgebra) instantiateRootEquation(equation formalRelationEqua
 	if err := a.validateRootInputEquation(root, equation); err != nil {
 		return formalRelationTuple{}, err
 	}
-	if a.rootEntry != nil && a.rootEntry.variable == root.variable {
-		if !a.rootEntry.validFor(a.program) {
-			return formalRelationTuple{}, fmt.Errorf("transformer: formal root entry has foreign ownership")
+	if a.entrySubstitution != nil {
+		substituted, applies, substitutionErr := a.entrySubstitution.substitute(a, root)
+		if substitutionErr != nil {
+			return formalRelationTuple{}, substitutionErr
 		}
-		return a.instantiatePreparedConstant(a.rootEntry.constant)
+		if applies {
+			return substituted, nil
+		}
 	}
 	span, directory, authority, ok := a.span(root.variable)
 	if !ok || span.forest != a.program.formalFibers {

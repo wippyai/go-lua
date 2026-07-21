@@ -151,6 +151,40 @@ func TestPathValueAtBoundaryCachesSolvedReadModelProjection(t *testing.T) {
 	}
 }
 
+func TestPathValueAtBoundaryUsesFormalObservationWithoutState(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(81)
+	sym := symbol.ID(8101)
+	p := pathdom.NewPath(sym, "formal")
+	want := typevalue.FromType(reg, typ.String)
+	builder := visibility.NewBuilder()
+	builder.Define(point, sym, "formal")
+	calls := 0
+	result := &Result{
+		registry:   reg,
+		visibility: visibility.NewResolver(builder.Build()),
+		formalPathValue: func(gotPoint cfg.Point, gotPath pathdom.Path, boundary bool) (product.Value, bool) {
+			calls++
+			if gotPoint != point || !gotPath.Equal(p) || boundary {
+				t.Fatalf("formal observation = (%d, %s, boundary=%t), want (%d, %s, false)", gotPoint, gotPath, boundary, point, p)
+			}
+			return want, true
+		},
+	}
+
+	first, ok := result.PathValueAtBoundary(point, p)
+	if !ok || !product.Equal(reg, first, want) {
+		t.Fatalf("formal PathValueAtBoundary = %v/%t, want %v/true", first, ok, want)
+	}
+	second, ok := result.PathValueAtBoundary(point, p)
+	if !ok || !product.Equal(reg, second, want) {
+		t.Fatalf("cached formal PathValueAtBoundary = %v/%t, want %v/true", second, ok, want)
+	}
+	if calls != 1 {
+		t.Fatalf("formal observation calls = %d, want 1", calls)
+	}
+}
+
 func TestDistinctPathsShareExactIdentityAtBoundary(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(19)

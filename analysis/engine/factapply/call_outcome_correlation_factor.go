@@ -223,6 +223,32 @@ func (p CallOutcomeCorrelationFactorProgram) CoordinateSlots() []state.Coordinat
 	return append([]state.CoordinateSlot(nil), p.slots...)
 }
 
+// ReturnPresenceCoordinateSlots selects only the implication coordinates
+// owned by one producer-result/presence consequence.  It is the structural
+// counterpart of a CallResult carrier query: callers may transport these
+// slots to a consuming occurrence without admitting sibling correlation
+// shapes from the same call.
+func (p CallOutcomeCorrelationFactorProgram) ReturnPresenceCoordinateSlots(
+	returnIndex int,
+	triggerPresence presence.Value,
+) []state.CoordinateSlot {
+	if returnIndex < 0 || (!presence.Equal(triggerPresence, presence.Present()) && !presence.Equal(triggerPresence, presence.Absent())) {
+		return nil
+	}
+	var out []state.CoordinateSlot
+	for address, index := range p.index {
+		if address.kind != callpayload.CallOutcomeReturnPresence || address.returnIndex != returnIndex ||
+			!presence.Equal(address.triggerPresence, triggerPresence) || index < 0 || index >= len(p.bindings) {
+			continue
+		}
+		out = append(out, p.bindings[index].slot)
+	}
+	if len(out) > 1 {
+		_ = sortPresenceCoordinateSlots(p.domain, out)
+	}
+	return out
+}
+
 func (p CallOutcomeCorrelationFactorProgram) Apply(factor state.LaneFactor, outcome callpayload.CallOutcome) (state.LaneFactor, error) {
 	if !p.domain.Valid() || p.keys == nil || factor.Lane() != p.lane {
 		return state.LaneFactor{}, fmt.Errorf("factapply: invalid call correlation factor")

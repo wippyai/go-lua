@@ -29,7 +29,7 @@ func TestCallResultReductionPublishesNonreturningStateThenNormalBottomAfterN0(t 
 		t.Fatal(err)
 	}
 	freezer.programs[1] = programNode{kind: programSequence, point: point, instructions: []instructionRef{
-		freezer.appendInstruction(instructionNode{kind: instructionCallResults, result: transaction, resultPhase: factapply.ConcreteCallResultPhaseMaterialize}),
+		freezer.appendInstruction(instructionNode{kind: instructionCallResults, result: transaction, resultPhase: factapply.CallResultPhaseMaterialize}),
 		freezer.appendInstruction(instructionNode{kind: instructionNoNormalReturn}),
 	}}
 	program, err := freezer.seal(1)
@@ -42,7 +42,7 @@ func TestCallResultReductionPublishesNonreturningStateThenNormalBottomAfterN0(t 
 	}
 	node := code.nodes[root]
 	if node.kind != relationNodeSequence || len(node.steps) != 1 || node.steps[0].kind != boundaryStepCallResults ||
-		node.steps[0].resultPhase != factapply.ConcreteCallResultPhaseMaterialize || node.next == 0 || code.nodes[node.next].kind != relationNodeNonreturning {
+		node.steps[0].resultPhase != factapply.CallResultPhaseMaterialize || node.next == 0 || code.nodes[node.next].kind != relationNodeNonreturning {
 		t.Fatalf("N0 -> Bottom reduction = %#v next=%#v", node, code.nodes[node.next])
 	}
 	if len(code.outcomes) != 1 {
@@ -72,7 +72,7 @@ func TestCallResultReductionKeepsN3BeforeN5TerminalPublication(t *testing.T) {
 	}
 	ret := freezer.appendReturn(returnPayload{resultPublication: transaction, returnTransaction: testReturnTransactionTerm(t, point)})
 	freezer.programs[1] = programNode{kind: programSequence, point: point, instructions: []instructionRef{
-		freezer.appendInstruction(instructionNode{kind: instructionCallResults, result: transaction, resultPhase: factapply.ConcreteCallResultPhasePostconditions}),
+		freezer.appendInstruction(instructionNode{kind: instructionCallResults, result: transaction, resultPhase: factapply.CallResultPhasePostconditions}),
 		freezer.appendInstruction(instructionNode{kind: instructionReturn, ret: ret}),
 	}}
 	program, err := freezer.seal(1)
@@ -84,7 +84,7 @@ func TestCallResultReductionKeepsN3BeforeN5TerminalPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := code.nodes[root]
-	if node.kind != relationNodeSequence || len(node.steps) != 1 || node.steps[0].resultPhase != factapply.ConcreteCallResultPhasePostconditions ||
+	if node.kind != relationNodeSequence || len(node.steps) != 1 || node.steps[0].resultPhase != factapply.CallResultPhasePostconditions ||
 		node.next == 0 || code.nodes[node.next].kind != relationNodeOutcome {
 		t.Fatalf("N3 -> N5 reduction = %#v", node)
 	}

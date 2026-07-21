@@ -13,14 +13,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
-func TestCallResultPostconditionFactorProgramMatchesConcreteRefinementEqualityPresence(t *testing.T) {
+func TestCallResultPostconditionFactorProgramAppliesRefinementEqualityPresence(t *testing.T) {
 	reg := standard.Registry()
 	domain := state.RegisteredProductDomain(reg)
 	point := cfg.Point(1911)
@@ -57,18 +56,15 @@ func TestCallResultPostconditionFactorProgramMatchesConcreteRefinementEqualityPr
 		WriteValue(reg, statekey.SymbolValue(targetID), product.Top()).
 		AddPathPresenceImplication(row)
 
-	program, frame := prepareConcreteCallResultPostconditionFactorTest(t, authority, domain, transaction, input)
+	program, frame := prepareCallResultPostconditionFactorTest(t, authority, domain, transaction, input)
 	gotFrame, err := program.Apply(context.Background(), nil, frame)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := composeCallResultPostconditionFactorTest(t, domain, input, program, gotFrame)
-	want := ApplyConcreteCallResultTransaction(ConcreteCallResultRequest{
-		Context:  transfer.NodeContext{Context: context.Background(), Registry: reg, Point: point},
-		Resolver: resolver, Transaction: transaction, Phase: ConcreteCallResultPhasePostconditions, Output: input,
-	})
-	if want.Canceled || !domain.Lattice().Equal(got, want.Output) {
-		t.Fatal("carrier-neutral N3 differs from canonical concrete refinement/equality/presence result")
+	if !presence.Equal(product.PresenceOf(got.ReadValue(reg, statekey.SymbolValue(leftID))), presence.Present()) ||
+		!presence.Equal(product.PresenceOf(got.ReadValue(reg, statekey.SymbolValue(targetID))), presence.Present()) {
+		t.Fatal("N3 did not apply its declared refinement/equality/presence semantics")
 	}
 	programLanes := make(map[state.LaneID]struct{}, len(program.Lanes()))
 	programLanes[state.LaneValues] = struct{}{}
@@ -109,7 +105,7 @@ func TestCallResultPostconditionFactorProgramCancellationIsAtomic(t *testing.T) 
 		},
 	}), point)
 	input := state.Reachable(domain.Lattice().Bottom()).WriteValue(reg, statekey.SymbolValue(targetID), product.Top())
-	program, frame := prepareConcreteCallResultPostconditionFactorTest(t, authority, domain, transaction, input)
+	program, frame := prepareCallResultPostconditionFactorTest(t, authority, domain, transaction, input)
 	ctx, session := cancellation.Attach(context.Background())
 	session.Token().Cancel(context.Canceled)
 	got, err := program.Apply(ctx, session.Token(), frame)
@@ -127,7 +123,7 @@ func TestCallResultPostconditionFactorProgramCancellationIsAtomic(t *testing.T) 
 	}
 }
 
-func prepareConcreteCallResultPostconditionFactorTest(
+func prepareCallResultPostconditionFactorTest(
 	t *testing.T,
 	authority *PathSemanticAuthority,
 	domain state.ProductDomain,

@@ -1,16 +1,10 @@
 package factapply
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -115,26 +109,4 @@ func (r ResolvedModuleLoadTransaction) PostReturnAuthority() bool { return r.pos
 // ResultTransaction returns the detached exact N0 payload for boundary syntax.
 func (r ResolvedModuleLoadTransaction) ResultTransaction() CallResultTransaction {
 	return r.result.Clone()
-}
-
-// ApplyResolvedModuleLoadTransaction is the callback-free concrete N0 executor.
-// Cancellation rolls back to input and never publishes a partially materialized
-// return slot.
-func ApplyResolvedModuleLoadTransaction(ctx context.Context, reg *axis.Registry, resolved ResolvedModuleLoadTransaction, input state.State) (state.State, error) {
-	if ctx == nil || reg == nil || !resolved.Valid(reg) {
-		return input, fmt.Errorf("factapply: invalid resolved module-load transaction")
-	}
-	result := ApplyConcreteCallResultTransaction(ConcreteCallResultRequest{
-		Context: transfer.NodeContext{
-			Context: ctx, Session: cancellation.FromContext(ctx), Registry: reg, Point: resolved.point,
-		},
-		Transaction: resolved.result, Phase: ConcreteCallResultPhaseMaterialize, Output: input,
-	})
-	if result.Canceled {
-		if err := ctx.Err(); err != nil {
-			return input, err
-		}
-		return input, context.Canceled
-	}
-	return result.Output, nil
 }

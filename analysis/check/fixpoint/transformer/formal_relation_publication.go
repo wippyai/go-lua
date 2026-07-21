@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -92,6 +93,21 @@ type FormalRelationPublicationView struct {
 	pointInput  map[cfg.Point][]formalPublishedCoordinate
 	pointOutput map[cfg.Point][]formalPublishedCoordinate
 	edgeNormal  map[cfg.Edge][]formalPublishedCoordinate
+	pathFactors *formalPathObservationCache
+}
+
+type formalPathObservationCacheKey struct {
+	point    cfg.Point
+	boundary bool
+}
+
+// formalPathObservationCache keeps only the selected path-evidence factor for
+// an observation coordinate. It is intentionally not a State cache: values,
+// heap, and all unrelated lanes remain unmaterialized for the read-model.
+type formalPathObservationCache struct {
+	mu      sync.Mutex
+	factors map[formalPathObservationCacheKey]state.LaneFactor
+	present map[formalPathObservationCacheKey]bool
 }
 
 // Publication returns a route-free body publication capability. It does not
@@ -152,6 +168,10 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 		calls:      make([]FormalLexicalCallDependency, 0),
 		pointInput: make(map[cfg.Point][]formalPublishedCoordinate), pointOutput: make(map[cfg.Point][]formalPublishedCoordinate),
 		edgeNormal: make(map[cfg.Edge][]formalPublishedCoordinate),
+		pathFactors: &formalPathObservationCache{
+			factors: make(map[formalPathObservationCacheKey]state.LaneFactor),
+			present: make(map[formalPathObservationCacheKey]bool),
+		},
 	}
 	// The prepared call-site census is the publication inventory. Equation
 	// syntax identifies each reachable producer, but cannot define the census:
@@ -694,7 +714,7 @@ func (v *FormalRelationPublicationView) joinState(ctx context.Context, coordinat
 	if !v.body.productDomain.OwnsCoordinateFormalPublicationProjection(coordinate.inverse) {
 		return state.State{}, fmt.Errorf("transformer: formal publication has no exact cell inverse")
 	}
-	if v.execution.algebra.rootEntry == nil {
+	if v.execution.algebra.entrySubstitution == nil {
 		return state.State{}, fmt.Errorf("transformer: formal point publication has no selected root environment")
 	}
 	tuple, present := v.execution.values[coordinate.cell]
@@ -745,6 +765,63 @@ func (v *FormalRelationPublicationView) joinState(ctx context.Context, coordinat
 	return state.NormalizeForDomain(v.body.domain, concrete), nil
 }
 
+// projectLeafValues materializes exactly the selected Values group. It is the
+// direct-observation counterpart of projectLeafFactorTuple: callers that need
+// a scalar return or path value must not pay to rekey every retained relation
+// completion lane only to discard it before a State is composed.
+func (v *FormalRelationPublicationView) projectLeafValues(
+	ctx context.Context,
+	leaf formalSparseLeafView,
+	cache *formalPublicationProjectionCache,
+	valuesProjection formalPublicationValuesProjection,
+) (state.ValueLaneFactor, error) {
+	if cache == nil || cache.values == nil {
+		return state.ValueLaneFactor{}, errFormalComponentForeignOwner
+	}
+	if err := ctx.Err(); err != nil {
+		return state.ValueLaneFactor{}, err
+	}
+	for _, group := range v.groups {
+		if group.kind != formalFiberGroupValues {
+			continue
+		}
+		leaves := make([]decisionLeaf, len(group.members))
+		for index, ordinal := range group.members {
+			value, present := leaf.leaf(ordinal)
+			if !present {
+				value, present = valuesProjection.collapsed[ordinal]
+			}
+			if !present {
+				return state.ValueLaneFactor{}, errFormalComponentMalformed
+			}
+			leaves[index] = value
+		}
+		hash := formalFactorLeafHash(leaves)
+		for _, entry := range cache.values[hash] {
+			if formalFactorLeavesEqual(entry.leaves, leaves) {
+				return entry.values, nil
+			}
+		}
+		formalValues, err := leaf.algebra.materializeValuesGroup(leaf.authority, group, leaves)
+		if err != nil {
+			return state.ValueLaneFactor{}, fmt.Errorf("transformer: publish Values factor: %w", err)
+		}
+		formalValues, err = formalStateValues(formalValues)
+		if err != nil {
+			return state.ValueLaneFactor{}, err
+		}
+		values, err := leaf.span.valueRekey.Apply(formalValues)
+		if err != nil {
+			return state.ValueLaneFactor{}, err
+		}
+		cache.values[hash] = append(cache.values[hash], formalPublicationProjectionValuesEntry{
+			leaves: append([]decisionLeaf(nil), leaves...), values: values,
+		})
+		return values, nil
+	}
+	return state.ValueLaneFactor{}, errFormalComponentMalformed
+}
+
 // projectLeafFactorTuple projects one complete correlated decision leaf into
 // the concrete point product without constructing State. Allocation quotient
 // precedes the caller's componentwise fold because its universal must fibers
@@ -764,7 +841,7 @@ func (v *FormalRelationPublicationView) projectLeafFactorTuple(
 	// partitions every registered product root under shared Care, which retains
 	// their exact correlation while existentially eliminating binder-only
 	// distinctions. A syntax-only execution still cannot publish: joinState
-	// requires a selected rootEntry before this boundary is reached.
+	// requires a selected entry substitution before this boundary is reached.
 	groups := v.groups
 	if len(groups) == 0 {
 		return state.ValueLaneFactor{}, nil, errFormalComponentMalformed

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -171,10 +170,4 @@ func callResultValueHasTrustedEvidence(reg *axis.Registry, value product.Value) 
 func callResultValueHasUntrustedTopEvidence(reg *axis.Registry, value product.Value) bool {
 	ev := product.Get(reg, value, evidence.Key)
 	return ev.IsExplicitTop() || ev.IsGradualTop()
-}
-
-func prepareConcreteCallResultMaterializeFactorProgram(reg *axis.Registry, transaction CallResultTransaction) (CallResultMaterializeFactorProgram[statekey.Value], error) {
-	return PrepareCallResultMaterializeFactorProgram(reg, transaction, func(point, result uint32) (statekey.Value, bool) {
-		return statekey.CallResult(point, result), true
-	})
 }

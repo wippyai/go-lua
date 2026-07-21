@@ -72,6 +72,9 @@ func TestFormalRootEntrySeedMatchesCanonicalCoordinateSeedAcrossFullProduct(t *t
 	if err != nil || execution == nil {
 		t.Fatalf("formal root invocation = %#v, %v", execution, err)
 	}
+	if execution.algebra.entrySubstitution == nil || !execution.algebra.entrySubstitution.validFor(program) {
+		t.Fatal("formal root invocation did not install an owned entry substitution")
+	}
 	rootCell := program.formalRegion.roots[body.variable-1]
 	rootTuple := execution.values[rootCell]
 	if rootTuple.bottom() {
@@ -115,6 +118,33 @@ func TestFormalRootEntrySeedMatchesCanonicalCoordinateSeedAcrossFullProduct(t *t
 				t.Fatalf("production root retained symbolic/template input in group %d", group.group.global)
 			}
 		}
+	}
+}
+
+func TestFormalRootEntrySubstitutionOnlyAppliesToItsSelectedRoot(t *testing.T) {
+	program := formalRelationExecutorTestProgram(t, []relationNode{
+		{}, {kind: relationNodeSequence, next: 2}, {kind: relationNodeBottom},
+	})
+	seed, err := freezeFormalRootEntrySeed(program, program.bodies[0].body, state.State{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	algebra, err := newFormalTupleAlgebra(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := &program.formalTemplate.rootInputs[0]
+	if tuple, applies, err := substitution.substitute(algebra, root); err != nil || !applies || tuple.bottom() {
+		t.Fatalf("selected root substitution = bottom:%t applies:%t err:%v", tuple.bottom(), applies, err)
+	}
+	foreign := *root
+	foreign.variable++
+	if tuple, applies, err := substitution.substitute(algebra, &foreign); err != nil || applies || !tuple.bottom() {
+		t.Fatalf("foreign root substitution = %#v/%t/%v", tuple, applies, err)
 	}
 }
 

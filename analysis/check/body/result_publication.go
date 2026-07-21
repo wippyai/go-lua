@@ -42,6 +42,10 @@ type StabilizedResultCoordinates struct {
 	// PublishResult validates completeness and never consults a provider to fill
 	// a missing point.
 	CallOutcomes map[cfg.Point]callpayload.CallOutcome
+	// ReturnSlots is the explicit N5 normal-exit observation. The formal
+	// publisher owns its projection; Result publication only installs it at the
+	// public exit coordinate and never reconstructs it from terminal States.
+	ReturnSlots map[int]product.Value
 	// DiagnosticOutput is the body-level diagnostic component projected from
 	// the exact same stabilized tuple as PointInputs and CallOutcomes. It is
 	// detached during publication; Result never recovers it from Lua syntax.
@@ -54,6 +58,7 @@ type StabilizedResultCoordinates struct {
 // transfer.
 type ResultPublicationConfig struct {
 	Coordinates             StabilizedResultCoordinates
+	FormalPathValue         FormalPathValueObservation
 	Solve                   SolveConfig
 	SeededEntry             state.State
 	Initial                 transfer.InitialState
@@ -85,6 +90,7 @@ func (f *ExecutionFactory) publishResult(
 		return nil, fmt.Errorf("body: stabilized result has no entry input")
 	}
 	result := f.newResult(config.Coordinates.PointInputs, plan)
+	result.formalPathValue = config.FormalPathValue
 	return f.completeResultPublication(result, config.Solve, config.SeededEntry, config.Initial, config.Coordinates, config.ApplicationDependencies, stats)
 }
 
@@ -211,7 +217,7 @@ func (r *Result) publishStabilizedCoordinates(coordinates StabilizedResultCoordi
 	if !diagnostics.Valid(r.registry) {
 		return fmt.Errorf("body: stabilized result has malformed diagnostic output")
 	}
-	if err := r.publishN5ReturnSlots(flow, coordinates); err != nil {
+	if err := r.publishFormalReturnSlots(flow, coordinates.ReturnSlots); err != nil {
 		return err
 	}
 	r.flow = flow
@@ -230,52 +236,19 @@ func observationContextErr(ctx context.Context) error {
 	return cancellation.FromContext(ctx).Token().Err()
 }
 
-// publishN5ReturnSlots derives the public normal-exit return lane solely from
-// already-executed N5 node outputs. It never re-reads return expressions or
-// invokes a source provider. Clearing the exit inventory first also prevents a
-// transient call-result ReturnSlot from becoming a function return.
-func (r *Result) publishN5ReturnSlots(flow transfer.Result, coordinates StabilizedResultCoordinates) error {
+// publishFormalReturnSlots installs the already-projected N5 return
+// observation at the public normal-exit coordinate. It deliberately receives
+// no point outputs: scanning terminal States here would recreate the retired
+// N5 reconstruction bridge.
+func (r *Result) publishFormalReturnSlots(flow transfer.Result, slots map[int]product.Value) error {
 	if r == nil || r.registry == nil || r.cfg == nil || r.cfg.Graph == nil {
-		return fmt.Errorf("body: N5 return publication is unowned")
+		return fmt.Errorf("body: formal return-slot publication is unowned")
 	}
 	exit := r.cfg.Graph.Exit()
 	exitState, normalExit := flow[exit]
 	if !normalExit {
 		return nil
 	}
-	joined := make(map[int]product.Value)
-	for _, point := range cfg.RPOReadOnly(r.cfg.Graph) {
-		if _, terminal := r.facts.Return(point); !terminal {
-			continue
-		}
-		output, ok := coordinates.PlannedNodeOutputs[point]
-		if !ok {
-			return fmt.Errorf("body: N5 return point %d has no stabilized output", point)
-		}
-		reachable, ok := coordinates.NodeOutputReachable[point]
-		if !ok {
-			return fmt.Errorf("body: N5 return point %d has no stabilized reachability", point)
-		}
-		if !reachable {
-			continue
-		}
-		values := output.ValuesSnapshot()
-		if values.Top {
-			return fmt.Errorf("body: N5 return point %d has a non-finite value lane", point)
-		}
-		for slot, value := range values.Values {
-			index, returnSlot := statekey.ParseReturnSlot(slot)
-			if !returnSlot {
-				continue
-			}
-			if prior, seen := joined[index]; seen {
-				joined[index] = product.Join(r.registry, prior, value)
-			} else {
-				joined[index] = value
-			}
-		}
-	}
-
 	exitValues := exitState.ValuesSnapshot()
 	if exitValues.Top {
 		return fmt.Errorf("body: normal exit has a non-finite value lane")
@@ -286,7 +259,7 @@ func (r *Result) publishN5ReturnSlots(flow transfer.Result, coordinates Stabiliz
 			edit.WriteReturnSlot(index, product.Bottom(r.registry))
 		}
 	}
-	for index, value := range joined {
+	for index, value := range slots {
 		edit.WriteReturnSlot(index, value)
 	}
 	flow[exit] = edit.DoneOn(exitState)

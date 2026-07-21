@@ -814,6 +814,14 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 	if !ok {
 		return product.Value{}, false
 	}
+	if r.formalPathValue != nil {
+		// Values/path evidence are a direct formal observation. This is the
+		// read-model projection for ordinary value consumers; it must not first
+		// materialize State and then recover the same value through an adapter.
+		return r.queries.pathValue(key, func() (product.Value, bool) {
+			return r.formalPathValue(point, p, r.needsBoundaryNodeOutput(point))
+		})
+	}
 	var sealed product.Value
 	var sealedOK bool
 	return r.queries.boundaryPathValue(key, func() (product.Value, bool) {

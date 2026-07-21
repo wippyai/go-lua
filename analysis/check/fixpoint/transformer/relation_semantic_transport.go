@@ -22,7 +22,7 @@ type boundaryPrefixStep struct {
 	contribution   semanticContribution
 	branch         factapply.BranchRelationTransaction
 	result         factapply.CallResultTransaction
-	resultPhase    factapply.ConcreteCallResultPhase
+	resultPhase    factapply.CallResultPhase
 	presence       factapply.PathValuePresenceImplicationTransaction
 	channel        factapply.ChannelSelectTransaction
 	covariant      factapply.CovariantExposureTransaction

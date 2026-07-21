@@ -327,6 +327,7 @@ type Result struct {
 	funcTypes             FunctionValueTypes
 	callExprPts           map[*ast.FuncCallExpr]cfg.Point
 	diagnosticOutput      callpayload.DiagnosticOutput
+	formalPathValue       FormalPathValueObservation
 
 	queries resultQueryCache
 
@@ -342,6 +343,12 @@ type Result struct {
 	resultVersion uint64
 	resultLineage ResultVersionLineage
 }
+
+// FormalPathValueObservation is the selected formal read-model observation
+// for one point-local path. boundary selects the sealed node-output coordinate
+// when the consumer needs same-point boundary facts. It intentionally exposes
+// a product value, never a State-shaped compatibility carrier.
+type FormalPathValueObservation func(point cfg.Point, p pathdom.Path, boundary bool) (product.Value, bool)
 
 type CallOutcomeContext struct {
 	LexicalBodyID               lexicalidentity.StableLexicalBodyID

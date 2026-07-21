@@ -6,10 +6,17 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // formalOperatorCoordinateFootprint is the one immutable scalar-coordinate
@@ -332,6 +339,47 @@ func freezeFormalStepCoordinateFootprint(
 					return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall production certificate is empty")
 				}
 				slots = append(slots, proofSlots...)
+				// A normal-return proof may consume one earlier CallResult result.
+				// Transport only that point-owned sibling topology into this exact
+				// provider occurrence. The carrier roots are rekeyed through the
+				// same registered structural image as the ordinary formal boundary;
+				// no path/name scan can borrow another occurrence's rows.
+				carrier, seedErr := formalExternalCallProofSeedCarrier(
+					forest, body, rekey, formalKeys, step, binding,
+				)
+				if seedErr != nil {
+					return state.CoordinateFactorInventory{}, seedErr
+				}
+				if len(carrier.seeds) == 0 {
+					continue
+				}
+				var transportedRows []state.CoordinateSlot
+				for _, seed := range carrier.seeds {
+					row := pathevidence.NewPathPresenceImplication(seed.TriggerKey, seed.TriggerPresence, seed.TargetKey, seed.TargetPresence)
+					slot, slotErr := body.productDomain.PresenceImplicationCoordinateSlot(formalKeys, row)
+					if slotErr != nil {
+						return state.CoordinateFactorInventory{}, slotErr
+					}
+					transportedRows = append(transportedRows, slot)
+				}
+				// Seal the consumer-keyed consequence together with its normal-return
+				// proof production before schema closure. The codec reuses this exact
+				// inventory through the registered DynamicRead projection; no local
+				// correlation publisher is introduced here.
+				transportCarrier, transportErr := body.productDomain.SealCoordinateFactorInventory(
+					formalKeys, append(append(append([]state.CoordinateSlot(nil), certificateCarrier.Slots()...), proofSlots...), transportedRows...),
+				)
+				if transportErr != nil {
+					return state.CoordinateFactorInventory{}, transportErr
+				}
+				consequenceSlots, consequenceErr := formalAuthority.NormalReturnPresenceProofSeedFootprint(
+					body.productDomain, step.point, normalLanes, transportCarrier, carrier.seeds,
+				)
+				if consequenceErr != nil {
+					return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall proof consequence footprint: %w", consequenceErr)
+				}
+				slots = append(slots, transportedRows...)
+				slots = append(slots, consequenceSlots...)
 			}
 		}
 	case boundaryStepRootAssignment:
@@ -358,6 +406,195 @@ func freezeFormalStepCoordinateFootprint(
 		return state.CoordinateFactorInventory{}, err
 	}
 	return body.productDomain.CloseCoordinateFactorInventory(formalKeys, owned)
+}
+
+// formalExternalCallProofSeedCarrier follows the one provider argument named
+// by a leaf proof seed back to an earlier point-owned CallResult register. It
+// then imports only ReturnPresence rows triggered by that exact register. The
+// CallResult carrier is the producer-entry transport authority; a same-named
+// local, a sibling provider leaf, or a different call point cannot enter it.
+type formalProofSeedCarrierTransport struct {
+	seeds []factapply.NormalReturnPresenceProofSeed
+}
+
+func formalExternalCallProofSeedCarrier(
+	forest *formalFiberInventory,
+	body *relationProgramBody,
+	rekey state.CoordinateFormalRootRekey,
+	formalKeys *keyspace.KeySpace,
+	step boundaryStep,
+	binding formalExternalCallProofSeedBinding,
+) (formalProofSeedCarrierTransport, error) {
+	if forest == nil || body == nil || body.relation.arena == nil || body.plan == nil || body.keys == nil || !body.keys.Valid() ||
+		formalKeys == nil || !formalKeys.Valid() || step.kind != boundaryStepExternalCall || step.point != binding.point || !binding.valid() {
+		return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal proof-seed CallResult carrier is unowned")
+	}
+	placeholder := binding.seed.Path.PlaceholderIndex()
+	if placeholder < 0 {
+		return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal proof-seed has no parameter occurrence")
+	}
+	argument := placeholder
+	if step.operands.hasReceiver {
+		if argument == 0 {
+			return formalProofSeedCarrierTransport{}, nil
+		}
+		argument--
+	}
+	if argument < 0 || argument >= len(step.operands.arguments) {
+		return formalProofSeedCarrierTransport{}, nil
+	}
+	producerPoint, producerResult, sourced := formalValueCallResultSource(body.relation.arena, step.operands.arguments[argument], make(map[ValueTerm]bool))
+	if !sourced {
+		if node := body.relation.arena.values[step.operands.arguments[argument]]; node.op == valueEnvironment {
+			if symbol, symbolSource := statekey.ParseSymbolValue(node.slot); symbolSource {
+				producerPoint, producerResult, sourced = formalExternalCallSymbolCallResultSource(body, step.point, symbol)
+			}
+		}
+	}
+	if !sourced || producerPoint == 0 || producerPoint >= step.point || producerResult < 0 {
+		return formalProofSeedCarrierTransport{}, nil
+	}
+	producer, prepared := forest.externalCallSite(binding.variable, producerPoint)
+	if !prepared {
+		return formalProofSeedCarrierTransport{}, nil
+	}
+	// First select only the exact capability-declared endpoints.  The provider
+	// owns these rows; static fact-flow rows are a different carrier.
+	wanted := map[int]struct{}{producerResult: {}}
+	for _, shape := range producer.capability.CorrelationShapes() {
+		if shape.Kind == callpayload.CallOutcomeReturnPresence && shape.ReturnIndex == producerResult &&
+			presence.Equal(shape.TriggerPresence, binding.seed.Presence) && shape.TargetIndex >= 0 {
+			wanted[shape.TargetIndex] = struct{}{}
+		}
+	}
+	if len(wanted) == 1 {
+		return formalProofSeedCarrierTransport{}, nil
+	}
+	roots := make(state.BoundaryRoots, 0, len(wanted))
+	for result := range wanted {
+		if result < 0 {
+			return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal CallResult carrier has a negative result")
+		}
+		slot, concrete, concreteErr := frameCallResultCarrier(body.keys, body.body, producerPoint, uint32(result))
+		if concreteErr != nil {
+			return formalProofSeedCarrierTransport{}, concreteErr
+		}
+		formal, formalErr := body.productDomain.RekeyStructuralKeyFormal(rekey, concrete)
+		if formalErr != nil || formal.Kind == keyspace.KindInvalid || formalKeys.FormatReadOnly(formal) == "" {
+			return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal CallResult carrier result %d has no registered image", result)
+		}
+		roots = append(roots, state.BoundaryRoot{Slot: slot, Path: formal})
+	}
+	carrier, carrierErr := factapply.NewCallResultPresenceCarrier(producerPoint, roots)
+	if carrierErr != nil {
+		return formalProofSeedCarrierTransport{}, carrierErr
+	}
+	seeds, seedErr := carrier.CorrelationProofSeeds(producer.capability.CorrelationShapes(), producerResult, binding.seed.Presence)
+	if seedErr != nil {
+		return formalProofSeedCarrierTransport{}, seedErr
+	}
+	seedIndex := 0
+	for _, shape := range producer.capability.CorrelationShapes() {
+		if shape.Kind != callpayload.CallOutcomeReturnPresence || shape.ReturnIndex != producerResult ||
+			!presence.Equal(shape.TriggerPresence, binding.seed.Presence) {
+			continue
+		}
+		if seedIndex >= len(seeds) {
+			return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal CallResult carrier proof topology is malformed")
+		}
+		seedIndex++
+	}
+	if seedIndex != len(seeds) {
+		return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal CallResult carrier proof topology is incomplete")
+	}
+	formalAuthority, authorityErr := body.pathSemantics.ProjectFormal(body.productDomain, rekey, formalKeys)
+	if authorityErr != nil {
+		return formalProofSeedCarrierTransport{}, authorityErr
+	}
+	trigger, triggerOK := formalAuthority.NormalReturnVisibleKey(step.point, binding.refinement)
+	if !triggerOK {
+		return formalProofSeedCarrierTransport{}, fmt.Errorf("transformer: formal CallResult carrier proof trigger has no consuming image")
+	}
+	for index := range seeds {
+		// The producer row is transported through this exact proof occurrence:
+		// its trigger becomes the consumer's normal-return parameter image while
+		// its sibling target remains the producer result carrier. The codec later
+		// publishes this presealed row with its registered normal-return program.
+		seeds[index].Trigger = binding.refinement.Clone()
+		seeds[index].TriggerKey = trigger
+	}
+	return formalProofSeedCarrierTransport{
+		seeds: seeds,
+	}, nil
+}
+
+// formalExternalCallSymbolCallResultSource resolves a consumer's sealed
+// invocation-local symbol through the exact result-target edge that created
+// it. Ambiguous reassignments deliberately have no carrier transport.
+func formalExternalCallSymbolCallResultSource(
+	body *relationProgramBody,
+	consumer cfg.Point,
+	symbol symbol.ID,
+) (cfg.Point, int, bool) {
+	if body == nil || body.plan == nil || body.relation.code == nil || consumer == 0 || symbol == 0 {
+		return 0, 0, false
+	}
+	type source struct {
+		point  cfg.Point
+		result int
+	}
+	var candidates []source
+	seen := make(map[source]struct{})
+	for root := relationRootRef(1); int(root) < len(body.relation.code.nodes); root++ {
+		for _, candidate := range body.relation.code.nodes[root].steps {
+			if candidate.kind != boundaryStepExternalCall || candidate.point == 0 || candidate.point >= consumer {
+				continue
+			}
+			site, present := body.plan.Facts().CallSiteView(candidate.point)
+			if !present {
+				return 0, 0, false
+			}
+			site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+				if target.TargetSymbol() != symbol || target.ResultIndex() < 0 {
+					return true
+				}
+				value := source{point: candidate.point, result: target.ResultIndex()}
+				if _, duplicate := seen[value]; !duplicate {
+					seen[value] = struct{}{}
+					candidates = append(candidates, value)
+				}
+				return true
+			})
+		}
+	}
+	if len(candidates) != 1 {
+		return 0, 0, false
+	}
+	return candidates[0].point, candidates[0].result, true
+}
+
+// formalValueCallResultSource accepts only transparent value forwarding on
+// the way to one point-owned CallResult register. Joins and arbitrary local
+// expressions are intentionally not a transport authority.
+func formalValueCallResultSource(arena *Arena, term ValueTerm, visiting map[ValueTerm]bool) (cfg.Point, int, bool) {
+	if arena == nil || term == 0 || int(term) >= len(arena.values) || visiting[term] {
+		return 0, 0, false
+	}
+	visiting[term] = true
+	defer delete(visiting, term)
+	node := arena.values[term]
+	switch node.op {
+	case valueEnvironment:
+		point, result, exact := statekey.ParseCallResult(node.slot)
+		return cfg.Point(point), int(result), exact
+	case valueCallResult, valueRefinement, valueFalsyAbsentRefinement, valueExpressionRefinement, valuePredicateObservation:
+		if len(node.args) != 1 {
+			return 0, 0, false
+		}
+		return formalValueCallResultSource(arena, node.args[0], visiting)
+	default:
+		return 0, 0, false
+	}
 }
 
 func freezeFormalEffectCoordinateSlots(body *relationProgramBody, formalKeys *keyspace.KeySpace, rekey state.CoordinateFormalRootRekey, current state.CoordinateFactorInventory, step boundaryStep) ([]state.CoordinateSlot, error) {

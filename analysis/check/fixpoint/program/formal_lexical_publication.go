@@ -82,7 +82,7 @@ func publishFormalLexicalProgram(
 		publishedCoordinates := body.StabilizedResultCoordinates{
 			PointInputs: lexical.PointInputs, PlannedNodeOutputs: lexical.PlannedNodeOutputs,
 			PointReachable: lexical.PointReachable, NodeOutputReachable: lexical.NodeOutputReachable,
-			EdgeNormal:   make(map[body.ResultEdge]bool, len(lexical.EdgeNormal)),
+			EdgeNormal: make(map[body.ResultEdge]bool, len(lexical.EdgeNormal)), ReturnSlots: lexical.ReturnSlots,
 			CallOutcomes: lexical.CallOutcomes, DiagnosticOutput: lexical.DiagnosticOutput,
 		}
 		for edge, normal := range lexical.EdgeNormal {
@@ -108,6 +108,7 @@ func publishFormalLexicalProgram(
 		}
 		result, err := factory.PublishResult(body.ResultPublicationConfig{
 			Coordinates:             publishedCoordinates,
+			FormalPathValue:         lexical.PathValue,
 			Solve:                   relationResultSolveConfig(config),
 			SeededEntry:             seededEntry,
 			Initial:                 initial,

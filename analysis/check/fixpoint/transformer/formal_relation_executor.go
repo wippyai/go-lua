@@ -69,7 +69,11 @@ func executeFormalRelationWithRootEntry(ctx context.Context, program *RelationPr
 		if !rootEntry.validFor(program) {
 			return nil, fmt.Errorf("transformer: formal relation execution has an invalid root entry")
 		}
-		algebra.rootEntry = rootEntry
+		substitution, substitutionErr := newFormalRootEntrySubstitution(*rootEntry)
+		if substitutionErr != nil {
+			return nil, substitutionErr
+		}
+		algebra.entrySubstitution = &substitution
 	}
 	template, region := program.formalTemplate, program.formalRegion
 	evalTrace := newFormalRelationEvalTrace()

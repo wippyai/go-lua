@@ -122,7 +122,7 @@ type instructionNode struct {
 	route           uint32
 	branch          factapply.BranchRelationTransaction
 	result          factapply.CallResultTransaction
-	resultPhase     factapply.ConcreteCallResultPhase
+	resultPhase     factapply.CallResultPhase
 	presence        factapply.PathValuePresenceImplicationTransaction
 	channel         factapply.ChannelSelectTransaction
 	covariant       factapply.CovariantExposureTransaction
@@ -478,8 +478,8 @@ func (p WorldProgram) valid(requireSealed bool) bool {
 				return false
 			}
 		case instructionCallResults:
-			phaseValid := node.resultPhase == factapply.ConcreteCallResultPhaseMaterialize && node.result.HasMaterializeSteps() ||
-				node.resultPhase == factapply.ConcreteCallResultPhasePostconditions && node.result.HasPostconditionSteps()
+			phaseValid := node.resultPhase == factapply.CallResultPhaseMaterialize && node.result.HasMaterializeSteps() ||
+				node.resultPhase == factapply.CallResultPhasePostconditions && node.result.HasPostconditionSteps()
 			if !node.result.Valid(p.terms.reg) || !phaseValid || node.effect != 0 || node.call != 0 || node.ret != 0 || node.slot != 0 || node.value != 0 || node.binder != 0 || node.route != 0 {
 				return false
 			}
@@ -496,7 +496,7 @@ func (p WorldProgram) valid(requireSealed bool) bool {
 				return false
 			}
 		case instructionNoNormalReturn:
-			if node.effect != 0 || node.call != 0 || node.ret != 0 || node.slot != 0 || node.value != 0 || node.binder != 0 || node.route != 0 || node.result.Len() != 0 || node.resultPhase != factapply.ConcreteCallResultPhaseInvalid {
+			if node.effect != 0 || node.call != 0 || node.ret != 0 || node.slot != 0 || node.value != 0 || node.binder != 0 || node.route != 0 || node.result.Len() != 0 || node.resultPhase != factapply.CallResultPhaseInvalid {
 				return false
 			}
 		default:
@@ -713,8 +713,8 @@ func (p WorldProgram) validFlow() bool {
 					return false
 				}
 			case instructionCallResults:
-				phaseValid := instruction.resultPhase == factapply.ConcreteCallResultPhaseMaterialize && instruction.result.HasMaterializeSteps() ||
-					instruction.resultPhase == factapply.ConcreteCallResultPhasePostconditions && instruction.result.HasPostconditionSteps()
+				phaseValid := instruction.resultPhase == factapply.CallResultPhaseMaterialize && instruction.result.HasMaterializeSteps() ||
+					instruction.resultPhase == factapply.CallResultPhasePostconditions && instruction.result.HasPostconditionSteps()
 				if terminal || !instruction.result.Valid(p.terms.reg) || !phaseValid || instruction.result.Point() != node.point {
 					return false
 				}

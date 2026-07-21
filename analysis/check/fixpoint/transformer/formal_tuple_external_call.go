@@ -646,9 +646,19 @@ func freezeFormalExternalCallStep(
 		}
 		return bytes.Compare(left[:], right[:]) < 0
 	})
+	var normalProofSeeds []factapply.NormalReturnPresenceProofSeed
+	for _, binding := range preparedSite.proofSeeds {
+		carrier, carrierErr := formalExternalCallProofSeedCarrier(
+			program.formalFibers, body, span.rekey, span.keys, step, binding,
+		)
+		if carrierErr != nil {
+			return nil, carrierErr
+		}
+		normalProofSeeds = append(normalProofSeeds, carrier.seeds...)
+	}
 	normal, err := factapply.PrepareNormalReturnFactorCodec(
 		formalAuthority, body.productDomain, contract, step.point, boundaryPaths,
-		operator.footprint.inventory, heapRoots, normalValueDependencies,
+		operator.footprint.inventory, heapRoots, normalValueDependencies, normalProofSeeds,
 		func(dependency statekey.ValueDependency) (FormalSlot, bool) {
 			return formalLiveValueSlotForDependency(program, body, dependency)
 		},

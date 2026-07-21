@@ -30,10 +30,11 @@ func (r formalApplyCoordinateSelectorRef) valid() bool {
 // region cell order. Equality is the ProductDomain's exact coordinate-slot
 // equality; hashes are deliberately absent from both interning and identity.
 type formalApplyCoordinateSelectorCatalog struct {
-	forest *formalFiberInventory
-	byBody [][]state.CoordinateFactorInventory
-	refs   [][]formalApplyCoordinateSelectorRef
-	byCell map[formalRelationCell]formalApplyCoordinateSelectorRef
+	forest      *formalFiberInventory
+	byBody      [][]state.CoordinateFactorInventory
+	refs        [][]formalApplyCoordinateSelectorRef
+	byInventory []map[state.CoordinateFactorInventory]formalApplyCoordinateSelectorRef
+	byCell      map[formalRelationCell]formalApplyCoordinateSelectorRef
 }
 
 func newFormalApplyCoordinateSelectorCatalog(forest *formalFiberInventory, bodyCount int) (*formalApplyCoordinateSelectorCatalog, error) {
@@ -41,9 +42,11 @@ func newFormalApplyCoordinateSelectorCatalog(forest *formalFiberInventory, bodyC
 		return nil, fmt.Errorf("transformer: Apply coordinate selector catalog is unowned")
 	}
 	return &formalApplyCoordinateSelectorCatalog{
-		forest: forest, byBody: make([][]state.CoordinateFactorInventory, bodyCount),
-		refs:   make([][]formalApplyCoordinateSelectorRef, bodyCount),
-		byCell: make(map[formalRelationCell]formalApplyCoordinateSelectorRef),
+		forest:      forest,
+		byBody:      make([][]state.CoordinateFactorInventory, bodyCount),
+		refs:        make([][]formalApplyCoordinateSelectorRef, bodyCount),
+		byInventory: make([]map[state.CoordinateFactorInventory]formalApplyCoordinateSelectorRef, bodyCount),
+		byCell:      make(map[formalRelationCell]formalApplyCoordinateSelectorRef),
 	}, nil
 }
 
@@ -56,6 +59,15 @@ func (c *formalApplyCoordinateSelectorCatalog) intern(target relationVar, invent
 	if spanKeys == nil || !inventory.ValidFor(body.productDomain, spanKeys) {
 		return formalApplyCoordinateSelectorRef{}, fmt.Errorf("transformer: Apply coordinate selector is malformed")
 	}
+	// CoordinateFactorInventory is an immutable, comparable authority. Most
+	// selector cones arrive here by structural sharing from coordinate closure,
+	// so preserve that identity as a zero-scan fast path. Inventories sealed
+	// independently remain lawful: they still use the exact domain equality
+	// fallback below before receiving the same ordinal.
+	identities := c.byInventory[target-1]
+	if ref, found := identities[inventory]; found {
+		return ref, nil
+	}
 	entries := c.byBody[target-1]
 	for index, prior := range entries {
 		equal, err := formalCoordinateInventoriesEqual(body.productDomain, prior, inventory)
@@ -63,12 +75,23 @@ func (c *formalApplyCoordinateSelectorCatalog) intern(target relationVar, invent
 			return formalApplyCoordinateSelectorRef{}, err
 		}
 		if equal {
-			return formalApplyCoordinateSelectorRef{catalog: c, target: target, ordinal: formalApplyCoordinateSelectorOrdinal(index + 1)}, nil
+			ref := formalApplyCoordinateSelectorRef{catalog: c, target: target, ordinal: formalApplyCoordinateSelectorOrdinal(index + 1)}
+			if identities == nil {
+				identities = make(map[state.CoordinateFactorInventory]formalApplyCoordinateSelectorRef)
+				c.byInventory[target-1] = identities
+			}
+			identities[inventory] = ref
+			return ref, nil
 		}
 	}
 	ref := formalApplyCoordinateSelectorRef{catalog: c, target: target, ordinal: formalApplyCoordinateSelectorOrdinal(len(entries) + 1)}
 	c.byBody[target-1] = append(entries, inventory)
 	c.refs[target-1] = append(c.refs[target-1], ref)
+	if identities == nil {
+		identities = make(map[state.CoordinateFactorInventory]formalApplyCoordinateSelectorRef)
+		c.byInventory[target-1] = identities
+	}
+	identities[inventory] = ref
 	return ref, nil
 }
 

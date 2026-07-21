@@ -1,17 +1,12 @@
 package factapply
 
 import (
-	"context"
-	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -45,14 +40,11 @@ func TestModuleLoadTransactionResolvesEvaluatedArgumentIntoExactN0(t *testing.T)
 	if result.Point() != point || result.Len() != 1 || !result.HasMaterializeSteps() || result.HasPostconditionSteps() || result.HasPublicationSteps() {
 		t.Fatalf("resolved N0 payload = %#v", result)
 	}
-	input := state.Domain(reg).Bottom()
-	got, err := ApplyResolvedModuleLoadTransaction(context.Background(), reg, resolved, input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resultSlot := key.CallResult(uint32(point), 0)
-	if want := typevalue.FromType(reg, typ.Number); !product.Equal(reg, got.ReadValue(reg, resultSlot), want) {
-		t.Fatalf("module N0 result = %v, want %v", got.ReadValue(reg, resultSlot), want)
+	step, present := result.Step(0)
+	value, isValue := step.ResultValue()
+	if !present || !isValue || value.Index() != operationplan.ModuleLoadResultIndex ||
+		!product.Equal(reg, value.Value(), typevalue.FromType(reg, typ.Number)) {
+		t.Fatalf("module N0 syntax = %#v/%t", step, present)
 	}
 	for name, value := range map[string]product.Value{
 		"dynamic":   typevalue.String(reg),
@@ -94,27 +86,6 @@ func TestModuleLoadTransactionFencesExportTableVersion(t *testing.T) {
 	resolved, ok := first.Resolve(reg, typevalue.LiteralString(reg, "alpha"))
 	if !ok || resolved.Matches(second) {
 		t.Fatal("resolved N0 crossed export-table versions")
-	}
-}
-
-func TestResolvedModuleLoadTransactionCancellationRollsBackN0(t *testing.T) {
-	reg := standard.Registry()
-	point := cfg.Point(2)
-	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
-	argument, _ := factflow.NewStringLiteralValueSource("alpha", 0, 0, 0, shape)
-	operation, _ := operationplan.NewModuleLoadOperation(reg, argument, []operationplan.ModuleLoadExport{{
-		Path: "alpha", Value: typevalue.String(reg), PostReturnAuthority: true,
-	}})
-	plan := operationplan.New(moduleLoadTransactionGraph(), factflow.FactsInput{}).
-		WithModuleLoads(map[cfg.Point]operationplan.ModuleLoadOperation{point: operation})
-	transaction, _ := PlanModuleLoadTransaction(reg, plan, point)
-	resolved, _ := transaction.Resolve(reg, typevalue.LiteralString(reg, "alpha"))
-	input := state.Domain(reg).Bottom().WriteValue(reg, key.CallResult(uint32(point), 0), product.Top())
-	ctx, session := cancellation.Attach(context.Background())
-	session.Token().Cancel(context.Canceled)
-	got, err := ApplyResolvedModuleLoadTransaction(ctx, reg, resolved, input)
-	if !errors.Is(err, context.Canceled) || !state.Domain(reg).Equal(got, input) {
-		t.Fatalf("canceled N0 = state:%v err:%v", got, err)
 	}
 }
 

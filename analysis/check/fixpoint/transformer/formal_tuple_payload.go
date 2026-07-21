@@ -24,14 +24,14 @@ func (t formalRelationTuple) bottom() bool {
 // reported before any result is published; lattice callbacks cannot return an
 // error directly.
 type formalTupleAlgebra struct {
-	ctx         context.Context
-	program     *RelationProgram
-	rootEntry   *formalRootEntrySeed
-	components  *formalComponentTerminalArena
-	decisions   decisionKernel
-	directories []*formalFiberDirectoryArena
-	constants   map[formalRelationTupleConstantRef]formalRelationTuple
-	guards      map[formalScopedGuardKey]decisionRef
+	ctx               context.Context
+	program           *RelationProgram
+	entrySubstitution *formalRootEntrySubstitution
+	components        *formalComponentTerminalArena
+	decisions         decisionKernel
+	directories       []*formalFiberDirectoryArena
+	constants         map[formalRelationTupleConstantRef]formalRelationTuple
+	guards            map[formalScopedGuardKey]decisionRef
 	// factorReachability is populated whenever a complete factor is factored
 	// into terminal leaves. Apply retrieves the immutable program by that exact
 	// leaf vector; it never scans a factor or seals a program in leaf execution.

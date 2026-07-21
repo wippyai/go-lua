@@ -17,6 +17,45 @@ type formalRootEntrySeed struct {
 	constant formalRelationTupleConstant
 }
 
+// formalRootEntrySubstitution is the sole invocation-owned operation over a
+// frozen relation.  It deliberately owns only the already-frozen formal
+// constant for one selected root: the template and its recursive equations
+// remain entry-free syntax.  Keeping this as a capability, rather than an
+// algebra field named after an entry tuple, makes the eventual summary path
+// explicit: a stabilized relation will consume this operation after, not
+// during, its fixed point.
+//
+// Today the executor still installs the result at the root equation before
+// solving.  That compatibility bridge is intentionally narrow and is not a
+// summary cache: relation completion must first make every root-reading factor
+// law symbolic.  In particular, no caller may turn this into a second solve
+// or a concrete fallback.
+type formalRootEntrySubstitution struct {
+	seed formalRootEntrySeed
+}
+
+func newFormalRootEntrySubstitution(seed formalRootEntrySeed) (formalRootEntrySubstitution, error) {
+	if !seed.validFor(seed.program) {
+		return formalRootEntrySubstitution{}, fmt.Errorf("transformer: formal root substitution is unowned")
+	}
+	return formalRootEntrySubstitution{seed: seed}, nil
+}
+
+func (s formalRootEntrySubstitution) validFor(program *RelationProgram) bool {
+	return s.seed.validFor(program)
+}
+
+func (s formalRootEntrySubstitution) substitute(a *formalTupleAlgebra, root *formalRootInputTemplate) (formalRelationTuple, bool, error) {
+	if a == nil || root == nil || !s.validFor(a.program) {
+		return formalRelationTuple{}, false, fmt.Errorf("transformer: formal root substitution is foreign")
+	}
+	if s.seed.variable != root.variable {
+		return formalRelationTuple{}, false, nil
+	}
+	tuple, err := a.instantiatePreparedConstant(s.seed.constant)
+	return tuple, true, err
+}
+
 func (s formalRootEntrySeed) validFor(program *RelationProgram) bool {
 	return program != nil && s.program == program && s.variable != 0 &&
 		int(s.variable) <= len(program.bodies) && s.constant.valid() &&

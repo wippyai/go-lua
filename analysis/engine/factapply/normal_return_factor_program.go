@@ -41,20 +41,36 @@ type NormalReturnFactorFrame[K comparable] struct {
 // seals the complete address/factor vocabulary; Decode receives the actual
 // provider outcome as scratch and never discovers State, inventory, or routes.
 type NormalReturnFactorCodec[K comparable] struct {
-	authority  *PathSemanticAuthority
-	domain     state.ProductDomain
-	keys       *keyspace.KeySpace
-	point      cfg.Point
-	paths      callboundary.PathBindings
-	lanes      []state.ProductLane
-	ordinals   map[state.ProductLane]int
-	inventory  state.CoordinateFactorInventory
-	heapRoots  []state.HeapObjectRootSlot
-	valueRoots map[statekey.ValueDependency]K
-	valueOrder []K
-	rootSet    map[K]struct{}
-	typestates state.TypestateQueryCapability
-	seal       *normalReturnFactorCodecSeal
+	authority           *PathSemanticAuthority
+	domain              state.ProductDomain
+	keys                *keyspace.KeySpace
+	point               cfg.Point
+	paths               callboundary.PathBindings
+	lanes               []state.ProductLane
+	ordinals            map[state.ProductLane]int
+	inventory           state.CoordinateFactorInventory
+	refinementInventory state.CoordinateFactorInventory
+	heapRoots           []state.HeapObjectRootSlot
+	valueRoots          map[statekey.ValueDependency]K
+	valueOrder          []K
+	rootSet             map[K]struct{}
+	typestates          state.TypestateQueryCapability
+	proofSeeds          []normalReturnPresenceProofProgram[K]
+	seal                *normalReturnFactorCodecSeal
+}
+
+type normalReturnPresenceProofProgram[K comparable] struct {
+	path     pathdom.Path
+	presence presence.Value
+	plan     PresenceImplicationDependencyPlan
+	roots    PresenceImplicationRootBinding[normalReturnPresenceRoot[K]]
+}
+
+// normalReturnPresenceRoot keeps occurrence-distinct dependency identities
+// separate even when formal transport maps them to one Values fiber.
+type normalReturnPresenceRoot[K comparable] struct {
+	root       K
+	dependency statekey.ValueDependency
 }
 
 type normalReturnFactorCodecSeal struct{}
@@ -352,6 +368,7 @@ func PrepareNormalReturnFactorCodec[K comparable](
 	inventory state.CoordinateFactorInventory,
 	heapRoots []state.HeapObjectRootSlot,
 	extraValueRoots []statekey.ValueDependency,
+	proofSeeds []NormalReturnPresenceProofSeed,
 	bind func(statekey.ValueDependency) (K, bool),
 ) (NormalReturnFactorCodec[K], error) {
 	if authority == nil || !authority.Valid() || !domain.Valid() || !access.Valid() ||
@@ -375,7 +392,7 @@ func PrepareNormalReturnFactorCodec[K comparable](
 	}
 	codec := NormalReturnFactorCodec[K]{
 		authority: authority, domain: domain, keys: authority.KeySpace(), point: point, paths: boundaryPaths,
-		ordinals: make(map[state.ProductLane]int), inventory: inventory,
+		ordinals: make(map[state.ProductLane]int), inventory: inventory, refinementInventory: inventory,
 		heapRoots:  append([]state.HeapObjectRootSlot(nil), heapRoots...),
 		valueRoots: make(map[statekey.ValueDependency]K), rootSet: make(map[K]struct{}),
 		seal: new(normalReturnFactorCodecSeal),
@@ -445,6 +462,63 @@ func PrepareNormalReturnFactorCodec[K comparable](
 	if err != nil {
 		return NormalReturnFactorCodec[K]{}, err
 	}
+	for index, seed := range proofSeeds {
+		if seed.Trigger.IsEmpty() || seed.TriggerKey.Kind == keyspace.KindInvalid || seed.TargetKey.Kind == keyspace.KindInvalid ||
+			(!presence.Equal(seed.TriggerPresence, presence.Present()) && !presence.Equal(seed.TriggerPresence, presence.Absent())) ||
+			(!presence.Equal(seed.TargetPresence, presence.Present()) && !presence.Equal(seed.TargetPresence, presence.Absent())) {
+			return NormalReturnFactorCodec[K]{}, fmt.Errorf("factapply: invalid normal-return proof seed %d", index)
+		}
+		publication := pathevidence.NewPathPresenceImplication(seed.TriggerKey, seed.TriggerPresence, seed.TargetKey, seed.TargetPresence)
+		source, planErr := authority.PreparePresenceImplicationPlan(
+			domain.Registry(), point, []pathevidence.PathPresenceImplication{publication}, ConcretePresenceImplicationTrailingBarrier,
+		)
+		if planErr != nil {
+			return NormalReturnFactorCodec[K]{}, planErr
+		}
+		plan, planErr := source.DependencyBlocks(domain, inventory)
+		if planErr != nil {
+			return NormalReturnFactorCodec[K]{}, planErr
+		}
+		roots, bindErr := SealPresenceImplicationRootBinding(plan,
+			func(dependency statekey.ValueDependency) (normalReturnPresenceRoot[K], bool) {
+				root, ok := codec.valueRoots[dependency]
+				return normalReturnPresenceRoot[K]{root: root, dependency: dependency}, ok
+			},
+			func(root normalReturnPresenceRoot[K]) bool { _, ok := codec.rootSet[root.root]; return ok },
+		)
+		if bindErr != nil {
+			return NormalReturnFactorCodec[K]{}, bindErr
+		}
+		codec.proofSeeds = append(codec.proofSeeds, normalReturnPresenceProofProgram[K]{
+			path: seed.Trigger.Clone(), presence: seed.TriggerPresence, plan: plan, roots: roots,
+		})
+	}
+	if len(proofSeeds) != 0 {
+		filtered := make([]state.CoordinateSlot, 0, inventory.Len())
+		for _, candidate := range inventory.Slots() {
+			transported := false
+			for _, seed := range proofSeeds {
+				row := pathevidence.NewPathPresenceImplication(seed.TriggerKey, seed.TriggerPresence, seed.TargetKey, seed.TargetPresence)
+				slot, slotErr := domain.PresenceImplicationCoordinateSlot(codec.keys, row)
+				if slotErr != nil {
+					return NormalReturnFactorCodec[K]{}, slotErr
+				}
+				equal, equalErr := domain.CoordinateSlotEqual(candidate, slot)
+				if equalErr != nil {
+					return NormalReturnFactorCodec[K]{}, equalErr
+				}
+				transported = transported || equal
+			}
+			if !transported {
+				filtered = append(filtered, candidate)
+			}
+		}
+		filteredInventory, inventoryErr := domain.SealCoordinateFactorInventory(codec.keys, filtered)
+		if inventoryErr != nil {
+			return NormalReturnFactorCodec[K]{}, inventoryErr
+		}
+		codec.refinementInventory = filteredInventory
+	}
 	return codec, nil
 }
 
@@ -508,6 +582,11 @@ func (p NormalReturnFactorCodec[K]) Decode(
 			}
 			if err := p.decodeLane(ctx, token, resolve, binding.ID, &out); err != nil {
 				return input, fmt.Errorf("factapply: decode normal-return %s: %w", binding.ID, err)
+			}
+		}
+		if phase == normalReturnApplyBeforeParamFacts {
+			if err := p.decodeProofSeedConsequences(ctx, token, resolve, &out); err != nil {
+				return input, fmt.Errorf("factapply: decode normal-return proof consequences: %w", err)
 			}
 		}
 	}
@@ -1836,6 +1915,63 @@ func (p NormalReturnFactorCodec[K]) decodePathReplacement(frame *NormalReturnFac
 	return nil
 }
 
+func (p NormalReturnFactorCodec[K]) decodeProofSeedConsequences(
+	ctx context.Context,
+	token *cancellation.Token,
+	resolve normalReturnApplyContext,
+	frame *NormalReturnFactorFrame[K],
+) error {
+	for _, proof := range p.proofSeeds {
+		active := false
+		for _, fact := range resolve.normalFacts.PathRefinements {
+			path, substituted := p.paths.Substitute(fact.Path)
+			if substituted && path.Equal(proof.path) && presence.Equal(product.PresenceOf(fact.Value), proof.presence) {
+				active = true
+				break
+			}
+		}
+		if !active {
+			continue
+		}
+		roots := make(map[statekey.ValueDependency]normalReturnPresenceRoot[K], len(proof.roots.roots))
+		rootSet := make(map[normalReturnPresenceRoot[K]]struct{}, len(proof.roots.roots))
+		values := state.ValueFactor[normalReturnPresenceRoot[K]]{Top: frame.Values.Top}
+		if !values.Top {
+			values.Values = make(map[normalReturnPresenceRoot[K]]product.Value, len(proof.roots.roots))
+		}
+		for dependency, transported := range proof.roots.roots {
+			roots[dependency], rootSet[transported] = transported, struct{}{}
+			if value, present := frame.Values.Values[transported.root]; present && !values.Top {
+				values.Values[transported] = value
+			}
+		}
+		program := CallResultPostconditionFactorProgram[normalReturnPresenceRoot[K]]{
+			domain: p.domain, keys: p.keys, lanes: p.lanes, roots: roots, rootSet: rootSet,
+			presence: proof.plan, presenceRoots: proof.roots,
+		}
+		next, err := program.applyPresence(ctx, token, CallResultPostconditionFactorFrame[normalReturnPresenceRoot[K]]{
+			Values: values, Factors: frame.Factors, Reachable: frame.Reachable,
+		})
+		if err != nil {
+			return err
+		}
+		if !frame.Values.Top {
+			for _, transported := range roots {
+				if value, present := next.Values.Values[transported]; present {
+					frame.Values.Values[transported.root] = value
+				} else {
+					delete(frame.Values.Values, transported.root)
+				}
+			}
+		}
+		frame.Factors, frame.Reachable = next.Factors, next.Reachable
+		if !frame.Reachable {
+			return nil
+		}
+	}
+	return nil
+}
+
 func (p NormalReturnFactorCodec[K]) decodePathRefinements(ctx context.Context, token *cancellation.Token, resolve normalReturnApplyContext, frame *NormalReturnFactorFrame[K]) error {
 	transaction := CallResultTransaction{point: p.point, steps: make([]CallResultStep, 0, len(resolve.normalFacts.PathRefinements))}
 	for _, fact := range resolve.normalFacts.PathRefinements {
@@ -1849,7 +1985,7 @@ func (p NormalReturnFactorCodec[K]) decodePathRefinements(ctx context.Context, t
 		return nil
 	}
 	program, err := PrepareCallResultPostconditionFactorProgram(
-		p.authority, p.domain, transaction, p.inventory,
+		p.authority, p.domain, transaction, p.refinementInventory,
 		func(dependency statekey.ValueDependency) (K, bool) {
 			root, ok := p.valueRoots[dependency]
 			return root, ok

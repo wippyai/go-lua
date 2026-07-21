@@ -62,7 +62,7 @@ type boundaryStep struct {
 	route           uint32
 	branch          factapply.BranchRelationTransaction
 	result          factapply.CallResultTransaction
-	resultPhase     factapply.ConcreteCallResultPhase
+	resultPhase     factapply.CallResultPhase
 	presence        factapply.PathValuePresenceImplicationTransaction
 	channel         factapply.ChannelSelectTransaction
 	covariant       factapply.CovariantExposureTransaction
@@ -683,8 +683,8 @@ func validateRelationFlow(code *relationCode, root relationRootRef, topology []r
 						return false
 					}
 				case boundaryStepCallResults:
-					phaseValid := step.resultPhase == factapply.ConcreteCallResultPhaseMaterialize && step.result.HasMaterializeSteps() ||
-						step.resultPhase == factapply.ConcreteCallResultPhasePostconditions && step.result.HasPostconditionSteps()
+					phaseValid := step.resultPhase == factapply.CallResultPhaseMaterialize && step.result.HasMaterializeSteps() ||
+						step.resultPhase == factapply.CallResultPhasePostconditions && step.result.HasPostconditionSteps()
 					if !step.result.Valid(code.terms.reg) || !phaseValid {
 						return false
 					}

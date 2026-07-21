@@ -1,18 +1,9 @@
 package factapply
 
 import (
-	"context"
-	"fmt"
-
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -185,140 +176,12 @@ func (t CallResultTransaction) Valid(reg *axis.Registry) bool {
 	return true
 }
 
-type ConcreteCallResultPhase uint8
+// CallResultPhase separates materialization from N3 postcondition application.
+// It is shared immutable formal syntax, not a State execution mode.
+type CallResultPhase uint8
 
 const (
-	ConcreteCallResultPhaseInvalid ConcreteCallResultPhase = iota
-	ConcreteCallResultPhaseMaterialize
-	ConcreteCallResultPhasePostconditions
+	CallResultPhaseInvalid CallResultPhase = iota
+	CallResultPhaseMaterialize
+	CallResultPhasePostconditions
 )
-
-type ConcreteCallResultRequest struct {
-	Context     transfer.NodeContext
-	Resolver    *visibility.Resolver
-	ProjectPath PathTypeProjector
-	TypeValues  *typevalue.Cache
-	Transaction CallResultTransaction
-	Phase       ConcreteCallResultPhase
-	Output      state.State
-}
-
-type ConcreteCallResultResult struct {
-	Output   state.State
-	Canceled bool
-	Err      error
-}
-
-// ApplyConcreteCallResultTransaction is the sole State executor for this
-// semantic family. Return-presence members are publication syntax and are
-// deliberately not interpreted as State updates.
-func ApplyConcreteCallResultTransaction(req ConcreteCallResultRequest) ConcreteCallResultResult {
-	out := req.Output
-	if req.Context.Registry == nil || req.Context.Point != req.Transaction.point || !req.Transaction.Valid(req.Context.Registry) {
-		return ConcreteCallResultResult{Output: out}
-	}
-	materialize := req.Phase == ConcreteCallResultPhaseMaterialize
-	postconditions := req.Phase == ConcreteCallResultPhasePostconditions
-	if !materialize && !postconditions {
-		return ConcreteCallResultResult{Output: out}
-	}
-	if materialize {
-		program, err := prepareConcreteCallResultMaterializeFactorProgram(req.Context.Registry, req.Transaction)
-		if err != nil {
-			return ConcreteCallResultResult{Output: out}
-		}
-		residual, values := state.DecomposeValueLane(state.Domain(req.Context.Registry), out)
-		ctx := req.Context.Context
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		next, err := program.Apply(ctx, tokenOf(req.Context.Session), values)
-		if err != nil {
-			return ConcreteCallResultResult{Output: req.Output, Canceled: err == context.Canceled || ctx.Err() != nil}
-		}
-		return ConcreteCallResultResult{Output: state.RecomposeValueLane(req.Context.Registry, state.Domain(req.Context.Registry), residual, next)}
-	}
-	if postconditions {
-		return applyConcreteCallResultPostconditionFactors(req)
-	}
-	return ConcreteCallResultResult{Output: out}
-}
-
-func applyConcreteCallResultPostconditionFactors(req ConcreteCallResultRequest) ConcreteCallResultResult {
-	if req.Resolver == nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: fmt.Errorf("factapply: call-result N3 requires exact path authority")}
-	}
-	domain := state.RegisteredProductDomain(req.Context.Registry)
-	authority := NewPathSemanticAuthority(req.Resolver, req.ProjectPath, req.TypeValues)
-	seed, err := authority.CoordinateFactorInventoryFromPreparedState(domain, req.Output)
-	if err != nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: err}
-	}
-	inventory, err := authority.CloseCoordinateFactorInventory(domain, seed)
-	if err != nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: err}
-	}
-	program, err := PrepareCallResultPostconditionFactorProgram(
-		authority, domain, req.Transaction, inventory,
-		func(dependency statekey.ValueDependency) (statekey.Value, bool) { return dependency.Concrete() },
-		req.TypeValues, req.ProjectPath,
-	)
-	if err != nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: err}
-	}
-	residual, values := state.DecomposeValueLane(domain.Lattice(), req.Output)
-	factors, err := domain.DecomposeLanes(residual, program.Lanes())
-	if err != nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: err}
-	}
-	ctx := req.Context.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	frame, err := program.Apply(ctx, tokenOf(req.Context.Session), CallResultPostconditionFactorFrame[statekey.Value]{
-		Values: values, Factors: factors, Reachable: !domain.Lattice().Equal(req.Output, domain.Lattice().Bottom()),
-	})
-	if err != nil {
-		canceled := err == context.Canceled || ctx.Err() != nil || req.Context.Session != nil && req.Context.Session.Token().Canceled()
-		return ConcreteCallResultResult{Output: req.Output, Canceled: canceled, Err: err}
-	}
-	if !frame.Reachable {
-		return ConcreteCallResultResult{Output: domain.Lattice().Bottom()}
-	}
-	delta, err := domain.ComposeSparse(frame.Factors)
-	if err != nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: err}
-	}
-	ids := make([]state.LaneID, len(program.Lanes()))
-	for index, lane := range program.Lanes() {
-		ids[index] = lane.ID()
-	}
-	residual, err = domain.PatchFactors(residual, delta, state.NewLaneSet(ids...))
-	if err != nil {
-		return ConcreteCallResultResult{Output: req.Output, Err: err}
-	}
-	return ConcreteCallResultResult{Output: state.RecomposeValueLane(req.Context.Registry, domain.Lattice(), residual, frame.Values)}
-}
-
-func (a *PathSemanticAuthority) ApplyCallResultPhase(ctx context.Context, reg *axis.Registry, transaction CallResultTransaction, phase ConcreteCallResultPhase, input state.State) (state.State, error) {
-	if ctx == nil || reg == nil || !a.Valid() || !transaction.Valid(reg) ||
-		phase != ConcreteCallResultPhaseMaterialize && phase != ConcreteCallResultPhasePostconditions {
-		return state.State{}, fmt.Errorf("factapply: invalid call-result path authority")
-	}
-	session := cancellation.FromContext(ctx)
-	result := ApplyConcreteCallResultTransaction(ConcreteCallResultRequest{
-		Context:  transfer.NodeContext{Context: ctx, Session: session, Registry: reg, Point: transaction.point},
-		Resolver: a.resolver, ProjectPath: a.projectPath, Transaction: transaction,
-		TypeValues: a.typeValues, Phase: phase, Output: input,
-	})
-	if result.Err != nil {
-		return input, result.Err
-	}
-	if result.Canceled {
-		if err := ctx.Err(); err != nil {
-			return input, err
-		}
-		return input, context.Canceled
-	}
-	return result.Output, nil
-}
