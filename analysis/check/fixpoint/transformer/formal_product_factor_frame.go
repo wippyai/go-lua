@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -273,6 +274,17 @@ func (a *formalTupleAlgebra) materializeFormalProductFactorFrame(
 			coordinates[index], err = view.authority.product.SealCoordinateFamilyFactor(skeleton, nil)
 		} else {
 			shape, shapeErr := view.authority.product.SealCoordinateFamilyShape(skeleton, selected.slots)
+			if errors.Is(shapeErr, state.ErrIncompleteLaneFactors) {
+				bottom, projectErr := view.authority.product.CoordinateSkeletonBottom(selected.family.family, view.span.keys)
+				if projectErr != nil {
+					return state.ProductFactorFrame{}, projectErr
+				}
+				selectedSkeleton, projectErr := view.authority.product.OverlaySelectedCoordinateSkeleton(selected.overlay, bottom, skeleton, nil)
+				if projectErr != nil {
+					return state.ProductFactorFrame{}, projectErr
+				}
+				shape, shapeErr = view.authority.product.SealCoordinateFamilyShape(selectedSkeleton, selected.slots)
+			}
 			if shapeErr != nil {
 				return state.ProductFactorFrame{}, shapeErr
 			}

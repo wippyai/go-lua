@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -268,6 +269,17 @@ func (d ProductDomain) ProjectProductFactorFrame(value State, selection ProductF
 				continue
 			}
 			shape, familyErr := d.SealCoordinateFamilyShape(skeleton, bucket.slots)
+			if errors.Is(familyErr, ErrIncompleteLaneFactors) {
+				bottom, projectErr := d.CoordinateSkeletonBottom(bucket.family, selection.coordinates.keys)
+				if projectErr != nil {
+					return ProductFactorFrame{}, projectErr
+				}
+				selectedSkeleton, projectErr := d.OverlaySelectedCoordinateSkeleton(bucket.overlay, bottom, skeleton, nil)
+				if projectErr != nil {
+					return ProductFactorFrame{}, projectErr
+				}
+				shape, familyErr = d.SealCoordinateFamilyShape(selectedSkeleton, bucket.slots)
+			}
 			if familyErr != nil {
 				return ProductFactorFrame{}, familyErr
 			}

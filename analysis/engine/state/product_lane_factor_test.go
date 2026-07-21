@@ -262,6 +262,70 @@ func TestProductFactorFrameRejectsHeapRootRetractionWithCarriedMember(t *testing
 	}
 }
 
+func TestProductFactorFrameProjectsSelectedSkeletonWithoutUnselectedCompletion(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	keys := keyspace.New()
+	field, ok := keys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "field"}})
+	if !ok {
+		t.Fatal("heap member suffix")
+	}
+	lane, _ := domain.ProductLane(LaneHeapTableIdentity)
+	families, err := domain.CoordinateFamilies(lane)
+	if err != nil || len(families) != 1 {
+		t.Fatalf("heap coordinate family = %d, err=%v", len(families), err)
+	}
+	selectedID := identity.ID{Kind: "table", Site: t.Name(), Index: 1}
+	unselectedID := identity.ID{Kind: "table", Site: t.Name(), Index: 2}
+	selectedRoot := CoordinateSlot{
+		family: families[0], keys: keys,
+		key: wrapHeapCoordinateKey(heapCoordinateRootKey(identity.ConcreteTerm(selectedID))),
+	}
+	inventory, err := domain.SealCoordinateFactorInventory(keys, []CoordinateSlot{selectedRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err = domain.CloseCoordinateFactorInventory(keys, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := domain.SealProductFactorSelection(nil, inventory, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := domain.Lattice().Bottom().
+		WriteHeapTableObject(reg, selectedID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: identityvalue.Present(reg, selectedID),
+		})).
+		WriteHeapTableObject(reg, unselectedID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: identityvalue.Present(reg, unselectedID),
+			StaticMembers: map[keyspace.Key]product.Value{
+				field: identityvalue.Present(reg, unselectedID),
+			},
+		}))
+	frame, err := domain.ProjectProductFactorFrame(base, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundHeap := false
+	for _, factor := range frame.CoordinateFactors() {
+		if factor.Family() == families[0] {
+			foundHeap = true
+			break
+		}
+	}
+	if !foundHeap {
+		t.Fatalf("selected frame omitted heap factor: %#v", frame.CoordinateFactors())
+	}
+	got, err := domain.PatchProductFactorFrame(base, selection, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domain.Lattice().Equal(got, base) {
+		t.Fatal("selected frame round trip changed unselected required support")
+	}
+}
+
 func TestProductFactorFrameSkeletonOnlyPublicationReconcilesScalars(t *testing.T) {
 	reg := standard.Registry()
 	domain := RegisteredProductDomain(reg)
