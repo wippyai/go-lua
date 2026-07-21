@@ -91,7 +91,272 @@ func (o CallOutcome) HasPostReturnEvidence() bool {
 // provider merge laws must see the exact child results before the completed
 // composition is normalized into the semantic CallOutcome lattice.
 func CallOutcomeRepresentationEqual(left, right CallOutcome) bool {
+	// The common provider payload contains only the direct call-outcome lanes.
+	// Compare that representation explicitly: reflect.DeepEqual allocates its
+	// pointer-visit map even when every product value is already interned.
+	//
+	// NormalReturnFacts and non-empty heap objects remain on the exact
+	// reflection fallback for now. Those boundary carriers own map-backed,
+	// nested representations in other packages; duplicating their private
+	// representation rules here would make this comparison silently diverge.
+	if !callOutcomeRepresentationNormalReturnFactsEmpty(left.NormalReturnFacts) || !callOutcomeRepresentationNormalReturnFactsEmpty(right.NormalReturnFacts) ||
+		!left.ProtectedCallTypestate.Empty() || !right.ProtectedCallTypestate.Empty() ||
+		len(left.HeapTableObjects) != 0 || len(right.HeapTableObjects) != 0 {
+		return callOutcomeRepresentationEqualSlow(left, right)
+	}
+	if left.PostReturnAuthority != right.PostReturnAuthority ||
+		left.SuspensionKnown != right.SuspensionKnown ||
+		left.MaySuspend != right.MaySuspend ||
+		(left.HeapTableObjects == nil) != (right.HeapTableObjects == nil) ||
+		(left.Placements == nil) != (right.Placements == nil) ||
+		len(left.Placements) != len(right.Placements) {
+		return false
+	}
+	for key, value := range left.Placements {
+		if other, ok := right.Placements[key]; !ok || value != other {
+			return false
+		}
+	}
+	return callOutcomeRepresentationEqualResults(left.Results, right.Results) &&
+		callOutcomeRepresentationEqualParamObligations(left.ParamObligations, right.ParamObligations) &&
+		callOutcomeRepresentationEqualPathObligations(left.PathObligations, right.PathObligations) &&
+		callOutcomeRepresentationEqualTypestateRequirements(left.TypestateRequirements, right.TypestateRequirements) &&
+		callOutcomeRepresentationEqualParamPathRefinements(left.ParamPathRefinements, right.ParamPathRefinements) &&
+		callOutcomeRepresentationEqualParamPathWrites(left.ParamPathWrites, right.ParamPathWrites) &&
+		callOutcomeRepresentationEqualParamLengthFloors(left.ParamLengthFloors, right.ParamLengthFloors) &&
+		callOutcomeRepresentationEqualParamPathInvalidations(left.ParamPathInvalidations, right.ParamPathInvalidations) &&
+		callOutcomeRepresentationEqualParamConditions(left.ParamConditions, right.ParamConditions) &&
+		callOutcomeRepresentationEqualParamPathRelations(left.ParamPathRelations, right.ParamPathRelations) &&
+		callOutcomeRepresentationEqualReturnConditionRefinements(left.ReturnConditionRefinements, right.ReturnConditionRefinements) &&
+		callOutcomeRepresentationEqualReturnConditionSlots(left.ReturnConditionSlots, right.ReturnConditionSlots) &&
+		callOutcomeRepresentationEqualReturnPresenceRelations(left.ReturnPresenceRelations, right.ReturnPresenceRelations) &&
+		callOutcomeRepresentationEqualParamExposures(left.ParamExposures, right.ParamExposures)
+}
+
+func callOutcomeRepresentationEqualSlow(left, right CallOutcome) bool {
 	return reflect.DeepEqual(left, right)
+}
+
+// callOutcomeRepresentationNormalReturnFactsEmpty is deliberately stricter
+// than NormalReturnFacts.Empty: raw representation equality distinguishes a
+// nil lane from an allocated-but-empty lane, while semantic emptiness does not.
+func callOutcomeRepresentationNormalReturnFactsEmpty(f callboundary.NormalReturnFacts) bool {
+	return f.PathRefinements == nil &&
+		f.PersistentPathWrites == nil &&
+		f.PathStaticMembers == nil &&
+		f.PathStaticMemberDeltas == nil &&
+		f.PathInvalidations == nil &&
+		f.DynamicIndexFacts == nil &&
+		f.KeyMemberships == nil &&
+		f.DynamicValueKeys == nil &&
+		f.DynamicAllValues == nil &&
+		f.BranchProofs == nil &&
+		f.PathPresenceImplications == nil &&
+		f.ChannelSelects == nil &&
+		f.FrozenTables == nil &&
+		f.EffectDeltas == nil &&
+		f.EscapeEvents == nil &&
+		f.StoreRelations == nil &&
+		f.LifecycleFacts == nil &&
+		f.NumFloors == nil &&
+		f.NumCeils == nil &&
+		f.RelConstraints == nil
+}
+
+func callOutcomeRepresentationEqualPath(left, right pathdom.Path) bool {
+	if left.Root != right.Root || left.Symbol != right.Symbol || left.Version != right.Version ||
+		(left.Segments == nil) != (right.Segments == nil) || len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for index := range left.Segments {
+		if left.Segments[index] != right.Segments[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualResults(left, right []CallResult) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Index != right[index].Index || left[index].Value != right[index].Value {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamObligationOrigin(left, right CallParamObligationOrigin) bool {
+	return left.HasOrigin == right.HasOrigin && left.ReceiverParam == right.ReceiverParam &&
+		left.ReceiverPath == right.ReceiverPath && left.Member == right.Member && left.ArgParam == right.ArgParam &&
+		left.MemberParamIndex == right.MemberParamIndex && left.SubjectLabel == right.SubjectLabel && left.ProviderLabel == right.ProviderLabel
+}
+
+func callOutcomeRepresentationEqualParamObligations(left, right []CallParamObligation) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if a.ParamIndex != b.ParamIndex || a.Value != b.Value || a.SignatureSurface != b.SignatureSurface ||
+			!callOutcomeRepresentationEqualParamObligationOrigin(a.Origin, b.Origin) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualPathObligations(left, right []CallPathObligation) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Value != right[index].Value || !callOutcomeRepresentationEqualPath(left[index].Path, right[index].Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualTypestateRequirements(left, right []CallTypestateRequirement) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if a.Protocol != b.Protocol || a.State != b.State || !callOutcomeRepresentationEqualPath(a.Target, b.Target) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamPathRefinements(left, right []CallParamPathRefinement) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Value != right[index].Value || !callOutcomeRepresentationEqualPath(left[index].Path, right[index].Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamPathWrites(left, right []CallParamPathWrite) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Value != right[index].Value || !callOutcomeRepresentationEqualPath(left[index].Path, right[index].Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamLengthFloors(left, right []CallParamLengthFloor) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Floor != right[index].Floor || !callOutcomeRepresentationEqualPath(left[index].Path, right[index].Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamPathInvalidations(left, right []CallParamPathInvalidation) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].PreserveStructuralWitness != right[index].PreserveStructuralWitness ||
+			!callOutcomeRepresentationEqualPath(left[index].Path, right[index].Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamConditions(left, right []CallParamCondition) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamPathRelations(left, right []CallParamPathRelation) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if a.Kind != b.Kind || !callOutcomeRepresentationEqualPath(a.Left, b.Left) || !callOutcomeRepresentationEqualPath(a.Right, b.Right) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualReturnConditionRefinements(left, right []CallReturnConditionRefinement) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if a.ReturnIndex != b.ReturnIndex || a.ReturnValue != b.ReturnValue || a.Value != b.Value ||
+			!callOutcomeRepresentationEqualPath(a.Target, b.Target) {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualReturnConditionSlots(left, right []CallReturnConditionSlotRefinement) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if a.ReturnIndex != b.ReturnIndex || a.ReturnValue != b.ReturnValue || a.TargetIndex != b.TargetIndex || a.Value != b.Value {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualReturnPresenceRelations(left, right []CallReturnPresenceRelation) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomeRepresentationEqualParamExposures(left, right []CallParamExposure) bool {
+	if (left == nil) != (right == nil) || len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if a.Contract != b.Contract || a.Kind != b.Kind || !callOutcomeRepresentationEqualPath(a.Source, b.Source) {
+			return false
+		}
+	}
+	return true
 }
 
 // FingerprintCallOutcomeRepresentation is a collision-tolerant accelerator
