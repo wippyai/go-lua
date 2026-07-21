@@ -1,5 +1,5 @@
 {
-  "description": "SEND-SAFETY admission gate distinguishes isolated, refuted escaped, and unknown transfers; frozen tables remain Unknown until the frozen-table fact reaches the send input state.",
+  "description": "SEND-SAFETY admission gate distinguishes isolated, immutable, refuted escaped, and unknown transfers.",
   "packages": ["process", "ownership"],
   "check": {
     "diagnostic_rules": [
@@ -27,10 +27,10 @@
         "line": 11,
         "severity": "hint",
         "code": "send.isolation",
-        "message_contains": ["not proven", "runtime will copy"],
-        "evidence_contains": ["copy fallback"],
+        "message_contains": ["proven immutable"],
+        "evidence_contains": ["immutable proof", "exact identity is frozen"],
         "min_evidence": 2,
-        "render_contains": ["runtime will copy"],
+        "render_contains": ["proven immutable"],
         "help_contains": ["runtime copy fallback"],
         "label_contains": ["send payload"]
       },

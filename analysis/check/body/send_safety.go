@@ -140,12 +140,7 @@ func (r *Result) sendSafetyOccurrence(point cfg.Point, site factflow.CallSiteVie
 	if occ.HasIdentity && factStateOK {
 		occ.Placement = factState.ReadPlacement(occ.Identity)
 		occ.HasPlacement = true
-		occ.Frozen = factState.IsTableFrozen(occ.Identity)
-	}
-	if occ.HasIdentity && !occ.Frozen {
-		if callState, ok := r.StateAt(point); ok && callState.IsTableFrozen(occ.Identity) {
-			occ.Frozen = true
-		}
+		occ.Frozen = r.sendSafetyFrozenAtInput(point, occ.Identity, factState)
 	}
 
 	if len(event.Target.Segments) != 0 {
@@ -193,6 +188,50 @@ func (r *Result) sendSafetyFactState(point cfg.Point) (state.State, bool) {
 		return state.State{}, false
 	}
 	return r.StateAt(point)
+}
+
+// sendSafetyFrozenAtInput accepts only must-frozen evidence that holds before
+// the send. The state lane is authoritative when populated. Some solved
+// boundary plans retain a frozen-table normal-return fact per call without
+// materializing that lane at its successor; a dominating normal-return fact
+// for the same exact identity is equally a must fact at this point. This never
+// reads the send boundary output, so the send cannot prove itself immutable.
+func (r *Result) sendSafetyFrozenAtInput(point cfg.Point, id identity.ID, in state.State) bool {
+	if r == nil || id == (identity.ID{}) {
+		return false
+	}
+	if in.IsTableFrozen(id) {
+		return true
+	}
+	graph := r.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == point || !r.PointDominates(candidate, point) {
+			continue
+		}
+		outcome, ok := r.CallOutcomeAt(candidate)
+		if !ok || len(outcome.NormalReturnFacts.FrozenTables) == 0 {
+			continue
+		}
+		bindings := r.callGuardCallBindingsAt(candidate)
+		for _, fact := range outcome.NormalReturnFacts.FrozenTables {
+			target, ok := fact.Target.Substitute(bindings)
+			if !ok || target.IsEmpty() {
+				continue
+			}
+			value, ok := r.PathValueBeforeBoundary(candidate, target)
+			if !ok {
+				continue
+			}
+			frozenID, exact := identityvalue.ExactID(r.Registry(), value)
+			if exact && frozenID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sendSafetyHasPriorEscape accepts only must escape facts already present at

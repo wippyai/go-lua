@@ -84,10 +84,10 @@ func allocationSiteSchemaSurface() []string {
 }
 
 const expectedSendSafetySchemaVersion1Hash = "1df75fbd66ac98165c35bb81f6dff6369e73fcafd0470843aa3787e1e57335bd"
-const expectedSendSafetySchemaVersion2Hash = expectedSendSafetySchemaVersion1Hash
+const expectedSendSafetySchemaVersion2Hash = "a290516f97d068d6460104c7538be77a8ff0e49cf170fcd6a1e0c13c31a8027c"
 
 func TestSendSafetySchemaVersionPinsCurrentSurface(t *testing.T) {
-	surface := recordShape(reflect.TypeOf(SendSafety{}))
+	surface := sendSafetySchemaSurface()
 	got := hashSchemaSurface(surface)
 	want := map[int]string{
 		1: expectedSendSafetySchemaVersion1Hash,
@@ -100,6 +100,18 @@ func TestSendSafetySchemaVersionPinsCurrentSurface(t *testing.T) {
 		t.Fatalf("send-safety schema surface changed: bump version constant + journal a D-entry\nversion: %d\nwant hash: %s\ngot hash:  %s\nsurface:\n%s",
 			SendSafetySchemaVersion, want, got, strings.Join(surface, "\n"))
 	}
+}
+
+func sendSafetySchemaSurface() []string {
+	out := recordShape(reflect.TypeOf(SendSafety{}))
+	out = append(out,
+		"enum:SendSafetyVerdict|value:0|name:copy-fallback",
+		"enum:SendSafetyVerdict|value:1|name:isolated",
+		"enum:SendSafetyVerdict|value:2|name:immutable",
+		"enum:SendSafetyVerdict|value:3|name:escaped",
+	)
+	sort.Strings(out)
+	return out
 }
 
 func TestSendSafetyUnknownSchemaFailsClosed(t *testing.T) {

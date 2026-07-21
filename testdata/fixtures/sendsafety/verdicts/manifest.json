@@ -164,38 +164,29 @@
         "line": 16,
         "severity": "hint",
         "code": "send.isolation",
-        "message_contains": ["not proven", "runtime will copy"],
-        "min_evidence": 2,
-        "evidence_contains": ["copy fallback", "placement is owned-heap"],
+        "message_contains": ["proven escaping alias", "zero-copy transfer is rejected"],
+        "min_evidence": 1,
+        "evidence_contains": ["escape proof", "retaining boundary"],
         "evidence": [
           {
             "line": 16,
             "column": 29,
             "kind": "abstract fact",
-            "trust": "unknown",
+            "trust": "proven",
             "reason": "unspecified",
-            "contains": ["copy fallback: placement is owned-heap"]
-          },
-          {
-            "line": 16,
-            "column": 29,
-            "kind": "missing proof",
-            "trust": "unknown",
-            "reason": "unspecified",
-            "contains": ["copy fallback: placement is owned-heap"]
+            "contains": ["escape proof: payload has already crossed a retaining boundary"]
           }
         ],
-        "render_contains": ["hint[send.isolation]", "runtime will copy"],
+        "render_contains": ["hint[send.isolation]", "zero-copy transfer is rejected"],
         "render_ordered_contains": [
-          "hint[send.isolation]: send payload is not proven isolated or immutable; runtime will copy",
+          "hint[send.isolation]: send payload has a proven escaping alias; zero-copy transfer is rejected",
           "--> main.lua:16:29",
           "16 | process.send(pid, \"stored\", stored)",
           "because:",
-          "1. fact: copy fallback: placement is owned-heap",
-          "2. missing proof: copy fallback: placement is owned-heap",
+          "1. proven: escape proof: payload has already crossed a retaining boundary",
           "help: No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
         ],
-        "render_not_contains": ["proven isolated for zero-copy transfer"],
+        "render_not_contains": ["proven isolated for zero-copy transfer", "not proven isolated or immutable"],
         "help_contains": ["runtime copy fallback"],
         "label_contains": ["send payload"],
         "min_labels": 1,
