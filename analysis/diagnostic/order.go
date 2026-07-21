@@ -86,6 +86,7 @@ func diagnosticExactEqual(a, b Diagnostic) bool {
 		a.Message == b.Message &&
 		a.Severity == b.Severity &&
 		a.Help == b.Help &&
+		a.Explanation.WitnessTrace() == b.Explanation.WitnessTrace() &&
 		labelsExactEqual(a.Labels, b.Labels) &&
 		evidenceExactEqual(a.Explanation.evidence, b.Explanation.evidence)
 }

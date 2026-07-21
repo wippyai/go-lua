@@ -361,7 +361,7 @@ func TestRenderDiagnosticDeduplicatesExactEvidenceOnly(t *testing.T) {
 	}
 }
 
-func TestOrderWitnessTraceEvidenceMovesFactsBeforeClaimsAndMissingProofs(t *testing.T) {
+func TestOrderWitnessTraceEvidenceUsesStrictSourceOrder(t *testing.T) {
 	items := []Evidence{
 		{
 			Kind:    EvidenceUserAssertion,
@@ -392,13 +392,13 @@ func TestOrderWitnessTraceEvidenceMovesFactsBeforeClaimsAndMissingProofs(t *test
 	got := orderWitnessTraceEvidence(items, "main.lua")
 	assertEvidenceMessages(t, got,
 		"source is born nil",
-		"source reaches the return",
 		"target is declared string",
 		"no proof shows source is string",
+		"source reaches the return",
 	)
 }
 
-func TestOrderWitnessTraceEvidenceUsesCauseKindWhenPresent(t *testing.T) {
+func TestOrderWitnessTraceEvidenceUsesSourceOrderBeforeCauseKind(t *testing.T) {
 	items := []Evidence{
 		{
 			Kind:    EvidenceMissingProof,
@@ -432,10 +432,10 @@ func TestOrderWitnessTraceEvidenceUsesCauseKindWhenPresent(t *testing.T) {
 
 	got := orderWitnessTraceEvidence(items, "main.lua")
 	assertEvidenceMessages(t, got,
-		"source is born nil",
-		"source crosses call",
 		"target is declared string",
+		"source crosses call",
 		"no proof shows source is string",
+		"source is born nil",
 	)
 }
 
@@ -539,6 +539,44 @@ func TestRenderDiagnosticWitnessTraceOrdersEvidenceWhenEnabled(t *testing.T) {
 		"1. proven: value is born nil",
 		"2. claimed: return type is declared string",
 		"3. missing proof: no proof shows value is string",
+	)
+}
+
+func TestRenderDiagnosticWitnessTraceUsesExplanationPresentationMarker(t *testing.T) {
+	d := Diagnostic{
+		Position: Position{File: "main.lua", Line: 10, Column: 12},
+		Span:     Span{StartLine: 10, StartCol: 12},
+		Code:     Code("type.nil.unsafe_use"),
+		Message:  "value may be nil at method call",
+		Severity: SeverityError,
+		Explanation: NewExplanation(
+			Evidence{Kind: EvidenceAbstractFact, Trust: TrustProven, Span: Span{StartLine: 10, StartCol: 12}, Message: "value reaches call"},
+			Evidence{Kind: EvidenceAbstractFact, Trust: TrustProven, Span: Span{StartLine: 3, StartCol: 5}, Message: "nil enters"},
+			Evidence{Kind: EvidenceAbstractFact, Trust: TrustProven, Span: Span{StartLine: 7, StartCol: 5}, Message: "nil survives join"},
+		).WithWitnessTrace(),
+	}
+
+	rendered := Render(d, RenderOptions{})
+	containsInOrder(t, rendered,
+		"because:",
+		"1. proven: nil enters",
+		"2. proven: nil survives join",
+		"3. proven: value reaches call",
+	)
+}
+
+func TestSourceOrderedEvidenceTraceDeduplicatesRepeatedOriginContent(t *testing.T) {
+	items := SourceOrderedEvidenceTrace([]Evidence{
+		{Kind: EvidenceAbstractFact, Trust: TrustProven, Cause: EvidenceCause{Kind: EvidenceCauseJoin}, Span: Span{StartLine: 7, StartCol: 5}, Message: "nil survives join"},
+		{Kind: EvidencePrecisionBoundary, Trust: TrustUnknown, Cause: EvidenceCause{Kind: EvidenceCauseWiden}, Span: Span{StartLine: 7, StartCol: 5}, Message: "nil survives join"},
+		{Kind: EvidenceAbstractFact, Trust: TrustProven, Cause: EvidenceCause{Kind: EvidenceCauseBirth}, Span: Span{StartLine: 3, StartCol: 5}, Message: "nil enters"},
+		{Kind: EvidenceAbstractFact, Trust: TrustProven, Cause: EvidenceCause{Kind: EvidenceCauseJoin}, Span: Span{StartLine: 7, StartCol: 5}, Message: "different fact at this origin remains visible"},
+	}, "main.lua")
+
+	assertEvidenceMessages(t, items,
+		"nil enters",
+		"nil survives join",
+		"different fact at this origin remains visible",
 	)
 }
 

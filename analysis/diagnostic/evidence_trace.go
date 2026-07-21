@@ -13,7 +13,7 @@ type EvidenceLine struct {
 // rendering remains Render's responsibility, while the proof ordering and
 // proven/claimed/missing-proof vocabulary stay identical.
 func EvidenceTrace(items []Evidence) []EvidenceLine {
-	ordered := renderEvidence(items, "", RenderOptions{WitnessTrace: true})
+	ordered := SourceOrderedEvidenceTrace(items, "")
 	if len(ordered) == 0 {
 		return nil
 	}

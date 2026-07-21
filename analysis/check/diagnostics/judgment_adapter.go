@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
@@ -66,11 +68,7 @@ func RenderJudgments(items []judgment.Judgment, config Config) []diagnostic.Diag
 		if !ok {
 			continue
 		}
-		render, ok := judgmentDiagnosticRenderers[spec.Render]
-		if !ok {
-			continue
-		}
-		d, ok := render(ctx, item, judgmentPolicy.Policy, judgmentPolicy.Strictness)
+		d, ok := ctx.renderOne(item, judgmentPolicy.Policy, judgmentPolicy.Strictness)
 		if !ok || !config.Policy.Enabled(d.Code, spec.DiagnosticDefault == judgment.DiagnosticDefaultEnabled) {
 			continue
 		}
@@ -95,19 +93,14 @@ func RenderJudgments(items []judgment.Judgment, config Config) []diagnostic.Diag
 // policy: proof consumers need the cause chain even for an opt-in diagnostic.
 // It neither runs obligation producers nor performs checker analysis.
 func EvidenceForJudgment(item judgment.Judgment) []diagnostic.Evidence {
-	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if _, ok := judgment.DefaultRegistry().Lookup(item.Code); !ok {
+		return nil
+	}
+	diagnosticItem, ok := newJudgmentRenderContext().renderOne(item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
 	if !ok {
 		return nil
 	}
-	render, ok := judgmentDiagnosticRenderers[spec.Render]
-	if !ok {
-		return nil
-	}
-	diagnosticItem, ok := render(newJudgmentRenderContext(), item, judgment.DefaultPolicy(), judgment.StrictnessDefault)
-	if !ok {
-		return nil
-	}
-	return diagnosticItem.Explanation.Evidence()
+	return diagnostic.SourceOrderedEvidenceTrace(diagnosticItem.Explanation.Evidence(), diagnosticItem.Position.File)
 }
 
 func (ctx judgmentRenderContext) render(items []judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) []diagnostic.Diagnostic {
@@ -117,19 +110,63 @@ func (ctx judgmentRenderContext) render(items []judgment.Judgment, policy judgme
 	policy = normalizedJudgmentPolicy(policy)
 	out := make([]diagnostic.Diagnostic, 0, len(items))
 	for _, item := range items {
-		spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
-		if !ok {
-			continue
-		}
-		render, ok := judgmentDiagnosticRenderers[spec.Render]
-		if !ok {
-			continue
-		}
-		if d, ok := render(ctx, item, policy, mode); ok {
+		if d, ok := ctx.renderOne(item, policy, mode); ok {
 			out = append(out, d)
 		}
 	}
 	return out
+}
+
+func (ctx judgmentRenderContext) renderOne(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
+	spec, ok := judgment.DefaultRegistry().Lookup(item.Code)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	render, ok := judgmentDiagnosticRenderers[spec.Render]
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	if item.Verdict == judgment.VerdictRefuted {
+		item = deduplicateWitnessOrigins(item)
+	}
+	d, ok := render(ctx, item, policy, mode)
+	if !ok || item.Verdict != judgment.VerdictRefuted {
+		return d, ok
+	}
+	d.Explanation = d.Explanation.WithWitnessTrace()
+	return d, true
+}
+
+func deduplicateWitnessOrigins(item judgment.Judgment) judgment.Judgment {
+	if len(item.Evidence) < 2 {
+		return item
+	}
+	out := make(judgment.EvidenceChain, 0, len(item.Evidence))
+	for _, evidence := range item.Evidence {
+		origin := evidence.Origin
+		if origin == (judgment.OriginRef{}) {
+			origin = evidence.Detail.Cause.Origin
+		}
+		duplicate := false
+		if origin != (judgment.OriginRef{}) {
+			for _, prior := range out {
+				priorOrigin := prior.Origin
+				if priorOrigin == (judgment.OriginRef{}) {
+					priorOrigin = prior.Detail.Cause.Origin
+				}
+				if priorOrigin == origin && reflect.DeepEqual(prior, evidence) {
+					duplicate = true
+					break
+				}
+			}
+		}
+		if duplicate {
+			continue
+		}
+		out = append(out, evidence)
+	}
+	item.Evidence = out
+	return item
 }
 
 func diagnosticSeverityForJudgment(item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Severity, bool) {

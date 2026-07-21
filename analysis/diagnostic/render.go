@@ -126,7 +126,8 @@ func Render(d Diagnostic, opts RenderOptions) string {
 		}
 	}
 
-	if evidence := renderEvidence(d.Explanation.Evidence(), primaryFile, opts); len(evidence) > 0 {
+	witnessTrace := opts.WitnessTrace || d.Explanation.WitnessTrace()
+	if evidence := renderEvidence(d.Explanation.Evidence(), primaryFile, witnessTrace); len(evidence) > 0 {
 		b.WriteString("\n")
 		b.WriteString(p.blue)
 		b.WriteString(style.text.evidenceSection)
@@ -426,127 +427,63 @@ func uniqueEvidence(items []Evidence, defaultFile string) []Evidence {
 	return out
 }
 
-func renderEvidence(items []Evidence, primaryFile string, opts RenderOptions) []Evidence {
-	items = uniqueEvidence(items, primaryFile)
-	if !opts.WitnessTrace {
+type witnessTraceEvidenceKey struct {
+	file    string
+	span    Span
+	message string
+}
+
+func uniqueWitnessTraceEvidence(items []Evidence, defaultFile string) []Evidence {
+	if len(items) < 2 {
 		return items
 	}
-	return orderWitnessTraceEvidence(items, primaryFile)
+	seen := make(map[witnessTraceEvidenceKey]struct{}, len(items))
+	out := make([]Evidence, 0, len(items))
+	for _, item := range items {
+		key := witnessTraceEvidenceKey{
+			file:    evidenceFile(defaultFile, item),
+			span:    item.Span,
+			message: evidenceMessage(item),
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func renderEvidence(items []Evidence, primaryFile string, witnessTrace bool) []Evidence {
+	if witnessTrace {
+		return SourceOrderedEvidenceTrace(items, primaryFile)
+	}
+	return uniqueEvidence(items, primaryFile)
+}
+
+// SourceOrderedEvidenceTrace returns the renderer-visible evidence chain in
+// source order. Repeated source origins with the same content are collapsed;
+// distinct content at one source location remains visible.
+func SourceOrderedEvidenceTrace(items []Evidence, primaryFile string) []Evidence {
+	return orderWitnessTraceEvidence(uniqueWitnessTraceEvidence(items, primaryFile), primaryFile)
 }
 
 func orderWitnessTraceEvidence(items []Evidence, primaryFile string) []Evidence {
 	if len(items) < 2 {
 		return append([]Evidence(nil), items...)
 	}
-	if allEvidenceHaveCause(items) {
-		return orderWitnessTraceEvidenceByCause(items, primaryFile)
-	}
-	var facts, claims, missing []Evidence
-	for _, item := range items {
-		switch {
-		case item.Kind == EvidenceMissingProof:
-			missing = append(missing, item)
-		case item.Kind == EvidenceUserAssertion || item.Trust == TrustClaimed:
-			claims = append(claims, item)
-		default:
-			facts = append(facts, item)
-		}
-	}
-	out := make([]Evidence, 0, len(items))
-	out = append(out, orderWitnessTraceEvidenceGroup(facts, primaryFile)...)
-	out = append(out, orderWitnessTraceEvidenceGroup(claims, primaryFile)...)
-	out = append(out, orderWitnessTraceEvidenceGroup(missing, primaryFile)...)
-	return out
-}
-
-func allEvidenceHaveCause(items []Evidence) bool {
-	for _, item := range items {
-		if item.Cause.IsZero() {
-			return false
-		}
-	}
-	return len(items) != 0
-}
-
-func orderWitnessTraceEvidenceByCause(items []Evidence, primaryFile string) []Evidence {
 	out := append([]Evidence(nil), items...)
 	sort.SliceStable(out, func(i, j int) bool {
-		leftRank := evidenceCauseRank(out[i].Cause.Kind)
-		rightRank := evidenceCauseRank(out[j].Cause.Kind)
-		if leftRank != rightRank {
-			return leftRank < rightRank
+		leftSpanned := out[i].Span.Valid()
+		rightSpanned := out[j].Span.Valid()
+		if leftSpanned != rightSpanned {
+			return leftSpanned
+		}
+		if !leftSpanned {
+			return false
 		}
 		return witnessTraceSpanBefore(out[i], out[j], primaryFile)
 	})
-	return out
-}
-
-func evidenceCauseRank(kind EvidenceCauseKind) int {
-	switch kind {
-	case EvidenceCauseBirth:
-		return 10
-	case EvidenceCauseFlowAssign, EvidenceCauseFlowCall:
-		return 20
-	case EvidenceCauseJoin:
-		return 20
-	case EvidenceCauseGuard:
-		return 25
-	case EvidenceCauseClaim:
-		return 30
-	case EvidenceCauseWiden:
-		return 40
-	case EvidenceCauseUse:
-		return 45
-	case EvidenceCauseDeclaration:
-		return 46
-	case EvidenceCauseMissingProof:
-		return 50
-	default:
-		return 100
-	}
-}
-
-type witnessTraceEvidenceItem struct {
-	item    Evidence
-	ordinal int
-}
-
-type witnessTraceUnspannedItem struct {
-	item          Evidence
-	anchorOrdinal int
-}
-
-func orderWitnessTraceEvidenceGroup(items []Evidence, primaryFile string) []Evidence {
-	if len(items) < 2 {
-		return append([]Evidence(nil), items...)
-	}
-	spanned := make([]witnessTraceEvidenceItem, 0, len(items))
-	unspanned := make([]witnessTraceUnspannedItem, 0, len(items))
-	lastSpannedOrdinal := -1
-	for i, item := range items {
-		if item.Span.Valid() {
-			spanned = append(spanned, witnessTraceEvidenceItem{item: item, ordinal: i})
-			lastSpannedOrdinal = i
-			continue
-		}
-		unspanned = append(unspanned, witnessTraceUnspannedItem{item: item, anchorOrdinal: lastSpannedOrdinal})
-	}
-	if len(spanned) == 0 {
-		return append([]Evidence(nil), items...)
-	}
-	sort.SliceStable(spanned, func(i, j int) bool {
-		return witnessTraceSpanBefore(spanned[i].item, spanned[j].item, primaryFile)
-	})
-	anchored := make(map[int][]Evidence, len(unspanned))
-	for _, item := range unspanned {
-		anchored[item.anchorOrdinal] = append(anchored[item.anchorOrdinal], item.item)
-	}
-	out := make([]Evidence, 0, len(items))
-	out = append(out, anchored[-1]...)
-	for _, item := range spanned {
-		out = append(out, item.item)
-		out = append(out, anchored[item.ordinal]...)
-	}
 	return out
 }
 

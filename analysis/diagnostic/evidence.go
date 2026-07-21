@@ -167,7 +167,8 @@ type Evidence struct {
 
 // Explanation is a copy-safe diagnostic explanation value.
 type Explanation struct {
-	evidence []Evidence
+	evidence     []Evidence
+	witnessTrace bool
 }
 
 // NewExplanation builds an explanation from evidence items.
@@ -178,6 +179,19 @@ func NewExplanation(items ...Evidence) Explanation {
 // Evidence returns a defensive copy of explanation items.
 func (e Explanation) Evidence() []Evidence {
 	return append([]Evidence(nil), e.evidence...)
+}
+
+// WithWitnessTrace marks this explanation for source-ordered trace rendering.
+// It is presentation metadata: the evidence itself remains unchanged.
+func (e Explanation) WithWitnessTrace() Explanation {
+	e.witnessTrace = true
+	return e
+}
+
+// WitnessTrace reports whether renderers should present this explanation as a
+// source-ordered witness trace.
+func (e Explanation) WitnessTrace() bool {
+	return e.witnessTrace
 }
 
 // String renders explanation items deterministically.

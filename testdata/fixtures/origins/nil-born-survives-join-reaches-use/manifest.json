@@ -65,8 +65,9 @@
           "return x:upper()",
           "because:",
           "1. proven: x born nil at main.lua:6 (else branch had no assignment)",
-          "2. proven: x survives the if/else join at main.lua:9 (no else assignment)",
-          "3. proven: x reaches use at main.lua:10 (method call on possibly-nil value)",
+          "2. claimed: x declared with optional type string?",
+          "3. proven: x survives the if/else join at main.lua:9 (no else assignment)",
+          "4. proven: x reaches use at main.lua:10 (method call on possibly-nil value)",
           "help: Guard x against nil before the method call, or assign it on every branch."
         ],
         "render_not_contains": [

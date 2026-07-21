@@ -1,4 +1,4 @@
-# origins — pending origin-chain witness-trace fixtures
+# origins — source-ordered witness-trace fixtures
 
 These fixtures encode diagnostics that cite ORIGIN CHAINS: a value (nil) is born at
 some line, survives one or more control-flow joins, and reaches a use where it causes
@@ -6,18 +6,11 @@ an error. The diagnostic is expected to render an ORIGIN-ORDERED evidence trace 
 walks the causal chain from birth, through the joins where the value survived, to the
 use site.
 
-## Pending status
+## Status
 
-All fixtures are pending on task **13897ee5** (evidence-with-origins + origin-ordered
-witness traces). Origin-ordered trace rendering does not fully exist yet, so each
-manifest sets BOTH:
-
-- `check.skip = "pending: origin-chain witness traces (task 13897ee5) not yet rendered"`
-- `run.skip = "diagnostic-only fixture"`
-
-`check.skip` makes the whole check phase inert, so the `diagnostics[]` block acts as a
-frozen oracle. Remove both skips to un-pend a fixture once origin-ordered trace
-rendering lands.
+Refuted judgments render these fixtures as source-ordered witness traces without a
+per-fixture renderer flag. The `run.skip = "diagnostic-only fixture"` setting remains:
+the fixtures verify checker diagnostics rather than Lua runtime output.
 
 Two halves of the oracle:
 
@@ -43,11 +36,12 @@ Expected diagnostic code: `type.nil.unsafe_use` at `main.lua:10:12`.
 arm (L8); there is no `else`, so after the join it may still be nil. The method call
 `x:upper()` (L10) is a nil-unsafe use.
 
-Origin-ordered witness trace (born -> survives join -> use):
+Source-ordered witness trace (born -> declaration -> survives join -> use):
 
 1. proven: x born nil at main.lua:6 (else branch had no assignment)
-2. proven: x survives the if/else join at main.lua:9 (no else assignment)
-3. proven: x reaches use at main.lua:10 (method call on possibly-nil value)
+2. claimed: x declared with optional type string?
+3. proven: x survives the if/else join at main.lua:9 (no else assignment)
+4. proven: x reaches use at main.lua:10 (method call on possibly-nil value)
 
 Expected evidence entries:
 - abstract fact / proven — birth at L6:11 ("x born nil ... else branch had no assignment")
@@ -84,15 +78,26 @@ then a second `if q` may assign (L15). Neither branch is exhaustive, so the nil 
 BOTH joins before the method call `x:upper()` (L17). The trace has two "survives join"
 hops in origin order.
 
-Origin-ordered witness trace (born -> survives join #1 -> survives join #2 -> use):
+Source-ordered witness trace (born -> declaration -> survives join #1 -> survives join #2 -> use):
 
 1. proven: x born nil at main.lua:10 (else branch had no assignment)
-2. proven: x survives the if/else join at main.lua:13 (no else assignment)
-3. proven: x survives the if/else join at main.lua:16 (no else assignment)
-4. proven: x reaches use at main.lua:17 (method call on possibly-nil value)
+2. claimed: x declared with optional type string?
+3. proven: x survives the if/else join at main.lua:13 (no else assignment)
+4. proven: x survives the if/else join at main.lua:16 (no else assignment)
+5. proven: x reaches use at main.lua:17 (method call on possibly-nil value)
 
 Expected evidence entries:
 - abstract fact / proven — birth at L10:11
 - abstract fact / proven — survival at first join L13:5
 - abstract fact / proven — survival at second join L16:5
 - user assertion / claimed — optional type at L10:14
+
+---
+
+## 4. nil-through-three-joins
+
+Expected diagnostic code: `type.nil.unsafe_use` at `main.lua:21:12`.
+
+The nil born at L10 crosses three non-exhaustive joins at L13, L16, and L19
+before reaching the method call at L21. This locks a trace with origins on more
+than three distinct source lines, including the optional declaration at L10.

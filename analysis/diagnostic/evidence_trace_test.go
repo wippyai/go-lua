@@ -4,9 +4,9 @@ import "testing"
 
 func TestEvidenceTraceUsesTerminalWitnessVocabularyAndOrder(t *testing.T) {
 	items := EvidenceTrace([]Evidence{
-		{Kind: EvidenceMissingProof, Trust: TrustRefuted, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Message: "guard is absent"},
-		{Kind: EvidenceUserAssertion, Trust: TrustClaimed, Cause: EvidenceCause{Kind: EvidenceCauseClaim}, Message: "user asserted a type"},
-		{Kind: EvidenceAbstractFact, Trust: TrustProven, Cause: EvidenceCause{Kind: EvidenceCauseBirth}, Message: "value was born here"},
+		{Kind: EvidenceMissingProof, Trust: TrustRefuted, Cause: EvidenceCause{Kind: EvidenceCauseMissingProof}, Span: Span{StartLine: 8, StartCol: 2}, Message: "guard is absent"},
+		{Kind: EvidenceUserAssertion, Trust: TrustClaimed, Cause: EvidenceCause{Kind: EvidenceCauseClaim}, Span: Span{StartLine: 4, StartCol: 2}, Message: "user asserted a type"},
+		{Kind: EvidenceAbstractFact, Trust: TrustProven, Cause: EvidenceCause{Kind: EvidenceCauseBirth}, Span: Span{StartLine: 2, StartCol: 2}, Message: "value was born here"},
 	})
 	if len(items) != 3 {
 		t.Fatalf("EvidenceTrace length = %d, want 3", len(items))
