@@ -345,25 +345,59 @@ func freezeFormalEffectCoordinateSlots(body *relationProgramBody, formalKeys *ke
 	switch effect.kind {
 	case EffectPathStore:
 		var slots []state.CoordinateSlot
+		span := formalFiberDescriptorSpan{keys: formalKeys, rekey: rekey}
+		writes := make([]state.PathReplacementCoordinateWrite, 0, 2+len(effect.pathStoreObject.Entries))
+		if effect.pathStoreHasAssignment {
+			target, err := freezeFormalEffectPathKey(body, span, effect.pathStoreAssignment.Target)
+			if err != nil {
+				return nil, err
+			}
+			write := state.PathReplacementCoordinateWrite{Target: target}
+			if effect.pathStoreAssignment.HasSourcePath && !effect.pathStoreAssignment.SuppressProof {
+				write.Source, err = freezeFormalEffectPathKey(body, span, effect.pathStoreAssignment.SourcePath)
+				if err != nil {
+					return nil, err
+				}
+				write.HasSource = true
+			}
+			writes = append(writes, write)
+		}
+		if effect.pathStoreHasStatic {
+			staticTarget, err := freezeFormalEffectPathKey(body, span, effect.pathStoreStatic.Target)
+			if err != nil {
+				return nil, err
+			}
+			// A literal-key index write emits its target refinement but no
+			// source equality in the static-member transaction.
+			writes = append(writes, state.PathReplacementCoordinateWrite{Target: staticTarget})
+		}
+		for _, entry := range effect.pathStoreObject.Entries {
+			entryTarget, err := freezeFormalEffectPathKey(body, span, entry.Target)
+			if err != nil {
+				return nil, err
+			}
+			write := state.PathReplacementCoordinateWrite{Target: entryTarget}
+			if entry.HasSourcePath && !entry.SuppressProof {
+				write.Source, err = freezeFormalEffectPathKey(body, span, entry.SourcePath)
+				if err != nil {
+					return nil, err
+				}
+				write.HasSource = true
+			}
+			writes = append(writes, write)
+		}
+		if len(writes) != 0 {
+			capability, err := body.productDomain.SealPathReplacementCoordinateCapabilityForWrites(formalKeys, writes)
+			if err != nil {
+				return nil, err
+			}
+			slots = append(slots, capability.EmittedSlots()...)
+		}
 		if effect.pathStoreHasAssignment {
 			target, err := freezeFormalEffectPathKey(body, formalFiberDescriptorSpan{keys: formalKeys, rekey: rekey}, effect.pathStoreAssignment.Target)
 			if err != nil {
 				return nil, err
 			}
-			var source keyspace.Key
-			if effect.pathStoreAssignment.HasSourcePath && !effect.pathStoreAssignment.SuppressProof {
-				source, err = freezeFormalEffectPathKey(body, formalFiberDescriptorSpan{keys: formalKeys, rekey: rekey}, effect.pathStoreAssignment.SourcePath)
-				if err != nil {
-					return nil, err
-				}
-			}
-			capability, capabilityErr := body.productDomain.SealPathReplacementCoordinateCapability(
-				formalKeys, target, source, source.Kind != keyspace.KindInvalid,
-			)
-			if capabilityErr != nil {
-				return nil, capabilityErr
-			}
-			slots = append(slots, capability.EmittedSlots()...)
 			root, exact := formalKeys.StructuralRoot(target)
 			owner, ownerExact := body.productDomain.PathValueFamily()
 			if !exact || !ownerExact {
