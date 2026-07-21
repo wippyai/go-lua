@@ -951,6 +951,16 @@ func TestModuleLoadOutcomeProviderIsRequireNameBound(t *testing.T) {
 		t.Fatalf("PostReturnAuthority = false, want true for exact module export")
 	}
 	assertTypeWitness(t, reg, got.Results[0].Value, typ.Number)
+
+	missingPath := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralString("missing")), typ.LiteralString("missing"))
+	missingInput := state.State{}.WriteValue(reg, key.ExpressionValue(uint32(argRef)), missingPath)
+	missing := testEvaluateCallOutcome(t, providerFor("require"), transfer.NodeContext{Registry: reg, Point: point}, site, testCallOutcomeInput(t, providerFor("require"), transfer.NodeContext{Registry: reg, Point: point}, site, missingInput, nil))
+	if len(missing.Results) != 1 || missing.PostReturnAuthority {
+		t.Fatalf("missing module load outcome = %#v, want one non-authoritative any result", missing)
+	}
+	if evidence := product.Get(reg, missing.Results[0].Value, evidence.Key); !evidence.IsExplicitTop() {
+		t.Fatalf("missing result evidence = %s, want explicit top", evidence)
+	}
 }
 
 func TestSignatureOutcomeProviderLowersTableMutatorValueToElementRefinement(t *testing.T) {

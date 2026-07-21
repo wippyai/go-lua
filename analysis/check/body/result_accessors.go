@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -117,6 +118,35 @@ func (r *Result) CallCalleeValueAtBoundary(point cfg.Point, site factflow.CallSi
 		ctx.Node = graph.Node(point)
 	}
 	return r.calleeValue(ctx, site, in, r.boundaryRead)
+}
+
+// UnresolvedStaticCalleeCall reports a direct static-member call which has no
+// resolved call outcome or callable contract. It is structural and does not
+// recover a signature from the callee's spelling.
+func (r *Result) UnresolvedStaticCalleeCall(call *ast.FuncCallExpr) bool {
+	if r == nil || call == nil {
+		return false
+	}
+	point, ok := r.callExprPoint(call)
+	if !ok {
+		return false
+	}
+	site, ok := r.CallSiteView(point)
+	if !ok || !site.CalleeMemberAccess() || site.CalleePathRef().IsEmpty() {
+		return false
+	}
+	if outcome, hasOutcome := r.CallOutcomeAt(point); hasOutcome && !outcome.Empty() {
+		return false
+	}
+	if _, hasSignature := r.CallSignatureTypeAtPoint(point); hasSignature {
+		return false
+	}
+	if root, hasRoot := r.currentRootValueForCallableFallback(point, site.CalleePathRef()); hasRoot &&
+		product.Get(r.registry, root, evidence.Key).IsExplicitTop() {
+		return false
+	}
+	_, hasCallable := r.FunctionValueTypeForCallSiteAtBoundary(point, site)
+	return !hasCallable
 }
 
 // PointReachable reports whether point has a solved non-bottom input state in

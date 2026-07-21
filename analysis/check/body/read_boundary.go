@@ -1627,11 +1627,33 @@ func (r *Result) CallExprResultValue(call *ast.FuncCallExpr, resultIndex int) (p
 	if value, ok := r.callExprSignatureResultValue(point, resultIndex); ok {
 		return value, true
 	}
+	if value, ok := r.explicitAnyStaticCalleeResult(point, resultIndex); ok {
+		return value, true
+	}
 	source, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, resultIndex, point, factflow.ValueSourceShape{})
 	if !ok {
 		return product.Value{}, false
 	}
 	return r.SourceValueAtBoundary(point, source)
+}
+
+// explicitAnyStaticCalleeResult retains an explicit any import boundary for a
+// direct member call after all exact callable contracts have failed. It never
+// looks up a manifest by name; exact signatures return above this fallback.
+func (r *Result) explicitAnyStaticCalleeResult(point cfg.Point, resultIndex int) (product.Value, bool) {
+	if r == nil || r.registry == nil || r.typeValues == nil || resultIndex != 0 {
+		return product.Value{}, false
+	}
+	site, ok := r.CallSiteView(point)
+	if !ok || !site.CalleeMemberAccess() || site.CalleePathRef().IsEmpty() {
+		return product.Value{}, false
+	}
+	root, ok := r.currentRootValueForCallableFallback(point, site.CalleePathRef())
+	if !ok || !product.Get(r.registry, root, evidence.Key).IsExplicitTop() {
+		return product.Value{}, false
+	}
+	value := r.typeValues.FromTypeWithWitness(r.registry, typ.Any)
+	return enginesourcevalue.InheritTopOriginEvidence(r.registry, value, root), true
 }
 
 func (r *Result) callExprSignatureResultValue(point cfg.Point, resultIndex int) (product.Value, bool) {

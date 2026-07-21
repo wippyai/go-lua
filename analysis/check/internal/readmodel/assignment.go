@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // ForEachAssignment visits annotated local assignments in deterministic RPO
@@ -248,6 +249,9 @@ func (r Reader) forEachLocalAssignment(
 }
 
 func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssignmentFact) (product.Value, bool) {
+	if call, ok := fact.Expr.(*ast.FuncCallExpr); ok && r.result.UnresolvedStaticCalleeCall(call) {
+		return product.Value{}, false
+	}
 	var value product.Value
 	var ok bool
 	explanation, explanationOK := r.result.LocalAssignmentSourceValueForExplanationAtBoundary(point, fact.Source)

@@ -26,8 +26,10 @@ type ModuleLoadOutcomeProviderConfig struct {
 }
 
 // ModuleLoadOutcomeProvider materializes require("exact-path") slot zero from
-// manifest export metadata. Non-require calls, non-single-argument calls,
-// dynamic paths, and missing manifests fail closed with no result.
+// manifest export metadata. Only an exact literal path may rehydrate a manifest
+// export. A literal miss returns untrusted any without post-return authority;
+// dynamic paths still produce no result so the require signature can reject an
+// unproven argument.
 func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpayload.CallOutcomeProgram {
 	exports := config.Exports
 	nameFor := config.NameFor
@@ -59,9 +61,12 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) callpaylo
 		if !ok {
 			return callpayload.CallOutcome{}, nil
 		}
-		exportType, ok := exports.LookupExport(path)
-		if !ok || exportType == nil {
-			return callpayload.CallOutcome{}, nil
+		exportType, exact := exports.LookupExport(path)
+		if !exact || exportType == nil {
+			return callpayload.CallOutcome{Results: []callpayload.CallResult{{
+				Index: 0,
+				Value: returnValueFromTypeCached(ctx.Registry, typeValues, typ.Any),
+			}}}, nil
 		}
 		out := callpayload.CallOutcome{
 			Results: []callpayload.CallResult{{
