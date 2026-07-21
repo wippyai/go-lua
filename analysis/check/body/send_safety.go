@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/escapeevent"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -22,6 +23,7 @@ const (
 	SendSafetyUnknown SendSafetyVerdict = iota
 	SendSafetyProvenIsolated
 	SendSafetyProvenImmutable
+	SendSafetyRefutedEscaped
 )
 
 // SendSafetyOccurrence is the body-owned semantic candidate for one send
@@ -134,7 +136,7 @@ func (r *Result) sendSafetyOccurrence(point cfg.Point, site factflow.CallSiteVie
 		}
 	}
 
-	factState, factStateOK := r.sendSafetyFactState(point, source)
+	factState, factStateOK := r.sendSafetyFactState(point)
 	if occ.HasIdentity && factStateOK {
 		occ.Placement = factState.ReadPlacement(occ.Identity)
 		occ.HasPlacement = true
@@ -160,6 +162,11 @@ func (r *Result) sendSafetyOccurrence(point cfg.Point, site factflow.CallSiteVie
 		occ.Reason = "isolation proof: direct fresh object literal has no retained graph identity"
 		return occ
 	}
+	if factStateOK && r.sendSafetyHasPriorEscape(point, source, factState) {
+		occ.Verdict = SendSafetyRefutedEscaped
+		occ.Reason = "escape proof: payload has already crossed a retaining boundary"
+		return occ
+	}
 	occ.Reason = sendSafetyUnknownReason(occ)
 	return occ
 }
@@ -181,16 +188,45 @@ func (r *Result) directObjectLiteralSource(source factflow.ValueSource) (factflo
 	return r.ObjectLiteralView(source.ExprRef)
 }
 
-func (r *Result) sendSafetyFactState(point cfg.Point, source factflow.ValueSource) (state.State, bool) {
+func (r *Result) sendSafetyFactState(point cfg.Point) (state.State, bool) {
 	if r == nil {
 		return state.State{}, false
 	}
-	if source.HasSourcePoint && source.SourcePoint != 0 && source.SourcePoint != point {
-		if st, ok := r.StateAtBoundary(source.SourcePoint); ok {
-			return st, true
+	return r.StateAt(point)
+}
+
+// sendSafetyHasPriorEscape accepts only must escape facts already present at
+// the call input. The current send is produced by the call outcome and is not
+// part of this state, so it cannot refute every boundary by itself.
+func (r *Result) sendSafetyHasPriorEscape(point cfg.Point, source factflow.ValueSource, factState state.State) bool {
+	p, ok := r.valueSourcePath(source)
+	if !ok || r.KeySpace() == nil {
+		return false
+	}
+	target, ok := valueSourcePathStateKey(r.visibility, point, p)
+	if !ok {
+		return false
+	}
+	keys := r.KeySpace()
+	targetKey, ok := keys.FromStateKey(target.PathKey())
+	if !ok {
+		return false
+	}
+	for _, event := range factState.EscapeEventsSnapshot().Facts {
+		// Borrow is not a retained alias. Retain and stronger events are
+		// must facts that prevent treating this value as iso.
+		if event.Kind < escapeevent.KindRetain {
+			continue
+		}
+		eventKey, ok := keys.FromStateKey(event.Target.PathKey())
+		if !ok {
+			continue
+		}
+		if targetKey == eventKey || (event.Recursive && keys.HasPrefix(targetKey, eventKey)) {
+			return true
 		}
 	}
-	return r.StateAt(point)
+	return false
 }
 
 func (r *Result) objectLiteralGraphHasIdentityChild(point cfg.Point, root factflow.ValueSource, literal factflow.ObjectLiteralView) (bool, bool) {

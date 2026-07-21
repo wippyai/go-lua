@@ -31,6 +31,7 @@ const (
 	SendSafetyUnknown            = readapi.SendSafetyUnknown
 	SendSafetyProvenIsolated     = readapi.SendSafetyProvenIsolated
 	SendSafetyProvenImmutable    = readapi.SendSafetyProvenImmutable
+	SendSafetyRefutedEscaped     = readapi.SendSafetyRefutedEscaped
 )
 
 type CallGenericInferenceConflict = readapi.CallGenericInferenceConflict

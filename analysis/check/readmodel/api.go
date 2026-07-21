@@ -1300,6 +1300,7 @@ const (
 	SendSafetyUnknown SendSafetyVerdict = iota
 	SendSafetyProvenIsolated
 	SendSafetyProvenImmutable
+	SendSafetyRefutedEscaped
 )
 
 func (v SendSafetyVerdict) String() string {
@@ -1308,6 +1309,8 @@ func (v SendSafetyVerdict) String() string {
 		return "isolated"
 	case SendSafetyProvenImmutable:
 		return "immutable"
+	case SendSafetyRefutedEscaped:
+		return "escaped"
 	case SendSafetyUnknown:
 		return "copy-fallback"
 	default:
@@ -1315,7 +1318,7 @@ func (v SendSafetyVerdict) String() string {
 	}
 }
 
-const SendSafetySchemaVersion = 1
+const SendSafetySchemaVersion = 2
 
 // SendSafety is the solved read model for a send/spawn payload admission check.
 // Unknown is a successful checker outcome: the runtime copies/promotes instead

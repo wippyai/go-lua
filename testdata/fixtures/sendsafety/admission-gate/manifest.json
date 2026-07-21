@@ -1,0 +1,66 @@
+{
+  "description": "SEND-SAFETY admission gate distinguishes isolated, refuted escaped, and unknown transfers; frozen tables remain Unknown until the frozen-table fact reaches the send input state.",
+  "packages": ["process", "ownership"],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "send.isolation",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["proven isolated"],
+        "evidence_contains": ["isolation proof"],
+        "min_evidence": 2,
+        "render_contains": ["proven isolated"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 11,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["not proven", "runtime will copy"],
+        "evidence_contains": ["copy fallback"],
+        "min_evidence": 2,
+        "render_contains": ["runtime will copy"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 16,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["zero-copy transfer is rejected"],
+        "evidence_contains": ["escape proof"],
+        "min_evidence": 1,
+        "render_contains": ["zero-copy transfer is rejected"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      },
+      {
+        "file": "main.lua",
+        "line": 19,
+        "severity": "hint",
+        "code": "send.isolation",
+        "message_contains": ["not proven", "runtime will copy"],
+        "evidence_contains": ["copy fallback"],
+        "min_evidence": 2,
+        "render_contains": ["runtime will copy"],
+        "help_contains": ["runtime copy fallback"],
+        "label_contains": ["send payload"]
+      }
+    ]
+  },
+  "run": {
+    "skip": "checker-only send-safety fixture"
+  }
+}

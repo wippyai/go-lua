@@ -39,6 +39,10 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 		verdict = judgment.VerdictProven
 		trust = judgment.EvidenceTrustProven
 	}
+	if report.Verdict == readmodel.SendSafetyRefutedEscaped {
+		verdict = judgment.VerdictRefuted
+		trust = judgment.EvidenceTrustProven
+	}
 
 	evidence := judgment.EvidenceChain{
 		abstractEvidence(
@@ -74,6 +78,8 @@ func sendSafetyJudgment(ctx Context, functionKey string, report readmodel.SendSa
 			},
 			spanFromReadModel(ctx.SourceFile, sendSafetyBirthSpanOrArg(report)),
 		))
+	case readmodel.SendSafetyRefutedEscaped:
+		// The proven escape fact already carries the refutation evidence.
 	case readmodel.SendSafetyUnknown:
 		evidence = append(evidence, judgment.Evidence{
 			Kind:  judgment.EvidenceMissingProof,

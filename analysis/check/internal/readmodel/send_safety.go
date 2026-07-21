@@ -62,6 +62,8 @@ func sendSafetyVerdictFromBody(verdict body.SendSafetyVerdict) SendSafetyVerdict
 		return SendSafetyProvenIsolated
 	case body.SendSafetyProvenImmutable:
 		return SendSafetyProvenImmutable
+	case body.SendSafetyRefutedEscaped:
+		return SendSafetyRefutedEscaped
 	default:
 		return SendSafetyUnknown
 	}

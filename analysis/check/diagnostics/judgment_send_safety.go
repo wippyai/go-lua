@@ -37,6 +37,8 @@ func sendSafetyMessage(item judgment.Judgment) string {
 		return "send payload is proven isolated for zero-copy transfer"
 	case "immutable":
 		return "send payload is proven immutable for zero-copy sharing"
+	case "escaped":
+		return "send payload has a proven escaping alias; zero-copy transfer is rejected"
 	default:
 		return "send payload is not proven isolated or immutable; runtime will copy"
 	}

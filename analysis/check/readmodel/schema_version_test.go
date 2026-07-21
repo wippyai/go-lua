@@ -84,11 +84,15 @@ func allocationSiteSchemaSurface() []string {
 }
 
 const expectedSendSafetySchemaVersion1Hash = "1df75fbd66ac98165c35bb81f6dff6369e73fcafd0470843aa3787e1e57335bd"
+const expectedSendSafetySchemaVersion2Hash = expectedSendSafetySchemaVersion1Hash
 
 func TestSendSafetySchemaVersionPinsCurrentSurface(t *testing.T) {
 	surface := recordShape(reflect.TypeOf(SendSafety{}))
 	got := hashSchemaSurface(surface)
-	want := map[int]string{1: expectedSendSafetySchemaVersion1Hash}[SendSafetySchemaVersion]
+	want := map[int]string{
+		1: expectedSendSafetySchemaVersion1Hash,
+		2: expectedSendSafetySchemaVersion2Hash,
+	}[SendSafetySchemaVersion]
 	if want == "" {
 		t.Fatalf("no expected send-safety schema hash for version %d: bump version constant + journal a D-entry", SendSafetySchemaVersion)
 	}
