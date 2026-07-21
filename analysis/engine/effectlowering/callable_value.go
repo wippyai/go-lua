@@ -25,7 +25,17 @@ func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) cal
 	typeValues := config.TypeValues
 	shape := func(_ transfer.NodeContext, site factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
 		if _, present := site.CalleeSource(); !present {
-			return callpayload.CallOutcomeSiteShape{}, nil
+			// Method calls represent their resolved callee through separate
+			// receiver/method evidence. The input builder can therefore supply a
+			// callable value even though CalleeSource is absent.
+			if site.MethodName() == "" {
+				return callpayload.CallOutcomeSiteShape{}, nil
+			}
+			if _, receiverSource := site.ReceiverSource(); !receiverSource {
+				if _, receiverPath := site.ReceiverPath(); !receiverPath {
+					return callpayload.CallOutcomeSiteShape{}, nil
+				}
+			}
 		}
 		return callpayload.CallOutcomeSiteShape{
 			FieldNames: []string{"Results", "PostReturnAuthority"},
