@@ -1,8 +1,12 @@
 package projection
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -41,6 +45,21 @@ func projectReturnSlotsFromExit(
 	returns := make([]product.Value, arity)
 	for i := range returns {
 		returns[i] = exit.ReadValue(reg, key.ReturnSlot(i))
+		if os.Getenv("GOLUA_TRACE_APPLY_COORDINATES") != "" {
+			term, exact := product.Get(reg, returns[i], identity.Key).Term()
+			if exact {
+				id, concrete := term.Concrete()
+				if concrete {
+					object := exit.ReadHeapTableObject(reg, id)
+					fmt.Fprintf(os.Stderr, "APPLY_COORD_RETURN slot=%d term=%v exact=true heapBottom=%t members=%d\n", i, term, heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)), len(object.StaticMembers()))
+				} else {
+					fmt.Fprintf(os.Stderr, "APPLY_COORD_RETURN slot=%d term=%v exact=true heap=relational-unqueried\n", i, term)
+				}
+				traceExitHeapIdentityRegistry(reg, result, exit)
+			} else {
+				fmt.Fprintf(os.Stderr, "APPLY_COORD_RETURN slot=%d term=%v exact=false heap=unqueried\n", i, term)
+			}
+		}
 		returns[i] = enrichReturnSlotFromHeapIdentity(reg, result, exit, returns[i])
 		if i < len(declared) {
 			returns[i] = joinDeclaredReturnValueIfUseful(reg, returns[i], declared[i])
@@ -49,6 +68,45 @@ func projectReturnSlotsFromExit(
 		}
 	}
 	return returns
+}
+
+// traceExitHeapIdentityRegistry is a temporary Phase-1 probe. It deliberately
+// factor-decomposes the registered heap carrier instead of consulting the
+// concrete-ID facade, so relational boundary images remain observable.
+func traceExitHeapIdentityRegistry(reg *axis.Registry, result ResultReader, exit state.State) {
+	if reg == nil || result == nil || result.KeySpace() == nil || !result.KeySpace().Valid() {
+		fmt.Fprintln(os.Stderr, "APPLY_COORD_HEAP_REGISTRY unavailable")
+		return
+	}
+	domain := state.RegisteredProductDomain(reg)
+	lane, ok := domain.ProductLane(state.LaneHeapTableIdentity)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "APPLY_COORD_HEAP_REGISTRY heap-lane-unavailable")
+		return
+	}
+	factor, err := domain.DecomposeLane(exit, lane)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "APPLY_COORD_HEAP_REGISTRY decompose-lane-error=%v\n", err)
+		return
+	}
+	skeleton, roots, members, err := domain.DecomposeHeapTableIdentity(factor, result.KeySpace())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "APPLY_COORD_HEAP_REGISTRY decompose-heap-error=%v\n", err)
+		return
+	}
+	terms, err := domain.HeapTableIdentitySkeletonTerms(skeleton)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "APPLY_COORD_HEAP_REGISTRY terms-error=%v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "APPLY_COORD_HEAP_REGISTRY terms=%v roots=%d members=%d\n", terms, len(roots), len(members))
+	for _, member := range members {
+		suffix, ok := result.KeySpace().SuffixSegmentsView(member.Key())
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "APPLY_COORD_HEAP_MEMBER term=%v suffix=%s\n", member.IdentityTerm(), segment.FormatSegments(suffix))
+	}
 }
 
 func enrichReturnSlotFromHeapIdentity(reg *axis.Registry, result ResultReader, exit state.State, value product.Value) product.Value {

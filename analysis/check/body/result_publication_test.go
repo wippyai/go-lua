@@ -7,13 +7,19 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -223,6 +229,109 @@ func TestPublishResultCancellationExposesNoCallOutcome(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatal("canceled exact publication exposed a Result")
+	}
+}
+
+func TestPublishN5NormalExitJoinsCompleteNormalTerminals(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	returned := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), returned, false)
+	graph.AddEdge(graph.Entry(), graph.Exit(), false)
+
+	returnID := identity.LuaTableLiteralAtSite("normal-exit-test", 1)
+	fallthroughID := identity.LuaTableLiteralAtSite("normal-exit-test", 2)
+	returnValue := identityvalue.Present(reg, returnID)
+	fallthroughValue := identityvalue.Present(reg, fallthroughID)
+	returnObject := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: returnValue})
+	fallthroughObject := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: fallthroughValue})
+	base := state.NormalizeForDomain(state.Domain(reg), state.Reachable(state.State{}))
+	fallthroughState := base.WriteReturnSlot(reg, 7, typevalue.LiteralString(reg, "transient-call-result")).WriteHeapTableObject(reg, fallthroughID, fallthroughObject)
+	terminal := base.WriteReturnSlot(reg, 0, returnValue).WriteReturnSlot(reg, 7, typevalue.LiteralString(reg, "transient-call-result")).WriteHeapTableObject(reg, returnID, returnObject)
+	result := &Result{
+		registry: reg,
+		cfg:      &cfgbuild.Result{Graph: graph},
+		facts: factflow.NewFacts(factflow.FactsInput{Returns: map[cfg.Point]factflow.Return{
+			returned: factflow.NewReturn([]factflow.ValueSource{{TargetIndex: 0}}),
+		}}),
+	}
+	flow := transfer.Result{graph.Exit(): fallthroughState}
+	coordinates := StabilizedResultCoordinates{
+		PointReachable:      map[cfg.Point]bool{graph.Exit(): true},
+		PlannedNodeOutputs:  map[cfg.Point]state.State{returned: terminal},
+		NodeOutputReachable: map[cfg.Point]bool{returned: true},
+	}
+	if err := result.publishN5NormalExit(flow, coordinates); err != nil {
+		t.Fatal(err)
+	}
+
+	wantFallthrough := fallthroughState.WriteReturnSlot(reg, 7, product.Bottom(reg))
+	wantTerminal := terminal.WriteReturnSlot(reg, 7, product.Bottom(reg))
+	want := state.RegisteredProductDomain(reg).Lattice().Join(wantFallthrough, wantTerminal)
+	got := flow[graph.Exit()]
+	if !state.RegisteredProductDomain(reg).Lattice().Equal(got, want) {
+		t.Fatalf("public normal exit differs from complete terminal join\ngot:  %#v\nwant: %#v", got, want)
+	}
+	if transient := got.ReadReturnSlot(reg, 7); !product.Equal(reg, transient, product.Bottom(reg)) {
+		t.Fatalf("public normal exit retained transient ReturnSlot(7): %#v", transient)
+	}
+	if returnedValue := got.ReadReturnSlot(reg, 0); !product.Equal(reg, returnedValue, returnValue) {
+		t.Fatalf("public normal exit ReturnSlot(0) = %#v, want %#v", returnedValue, returnValue)
+	}
+	if object := got.ReadHeapTableObject(reg, returnID); heapidentity.ObjectDomain(reg).Equal(object, heapidentity.BottomObject(reg)) || !heapidentity.ObjectDomain(reg).Equal(object, returnObject) {
+		t.Fatalf("public normal exit heap object = %#v, want returned non-bottom object %#v", object, returnObject)
+	}
+}
+
+func TestPublishN5NormalExitJoinsDifferentReturnedTables(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	first := graph.AddNode(cfg.NodeReturn)
+	second := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), first, false)
+	graph.AddEdge(graph.Entry(), second, false)
+
+	firstID := identity.LuaTableLiteralAtSite("normal-exit-test", 11)
+	secondID := identity.LuaTableLiteralAtSite("normal-exit-test", 12)
+	firstValue := identityvalue.Present(reg, firstID)
+	secondValue := identityvalue.Present(reg, secondID)
+	firstObject := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: firstValue})
+	secondObject := heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: secondValue})
+	base := state.NormalizeForDomain(state.Domain(reg), state.Reachable(state.State{}))
+	firstTerminal := base.WriteReturnSlot(reg, 0, firstValue).WriteHeapTableObject(reg, firstID, firstObject)
+	secondTerminal := base.WriteReturnSlot(reg, 0, secondValue).WriteHeapTableObject(reg, secondID, secondObject)
+	result := &Result{
+		registry: reg,
+		cfg:      &cfgbuild.Result{Graph: graph},
+		facts: factflow.NewFacts(factflow.FactsInput{Returns: map[cfg.Point]factflow.Return{
+			first:  factflow.NewReturn([]factflow.ValueSource{{TargetIndex: 0}}),
+			second: factflow.NewReturn([]factflow.ValueSource{{TargetIndex: 0}}),
+		}}),
+	}
+	flow := transfer.Result{}
+	coordinates := StabilizedResultCoordinates{
+		PointReachable: map[cfg.Point]bool{graph.Exit(): false},
+		PlannedNodeOutputs: map[cfg.Point]state.State{
+			first: firstTerminal, second: secondTerminal,
+		},
+		NodeOutputReachable: map[cfg.Point]bool{first: true, second: true},
+	}
+	if err := result.publishN5NormalExit(flow, coordinates); err != nil {
+		t.Fatal(err)
+	}
+
+	want := state.RegisteredProductDomain(reg).Lattice().Join(firstTerminal, secondTerminal)
+	got := flow[graph.Exit()]
+	if !state.RegisteredProductDomain(reg).Lattice().Equal(got, want) {
+		t.Fatalf("public normal exit differs from two-return join\ngot:  %#v\nwant: %#v", got, want)
+	}
+	for _, item := range []struct {
+		id     identity.ID
+		object heapidentity.TableObject
+	}{{firstID, firstObject}, {secondID, secondObject}} {
+		if gotObject := got.ReadHeapTableObject(reg, item.id); !heapidentity.ObjectDomain(reg).Equal(gotObject, item.object) {
+			t.Fatalf("public normal exit heap object %s = %#v, want %#v", item.id, gotObject, item.object)
+		}
 	}
 }
 

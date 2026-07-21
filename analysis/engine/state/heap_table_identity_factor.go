@@ -300,6 +300,21 @@ func (d ProductDomain) DecomposeHeapTableIdentity(
 	return skeleton, roots, members, nil
 }
 
+// HeapTableIdentitySkeletonTerms returns every identity coordinate registered
+// by a finite heap skeleton, including Bottom object placeholders. The result
+// is in the carrier's canonical identity-term order.
+func (d ProductDomain) HeapTableIdentitySkeletonTerms(
+	skeleton HeapTableIdentitySkeletonFactor,
+) ([]identity.Term, error) {
+	if _, err := d.validateHeapTableIdentitySkeleton(skeleton, skeleton.keys); err != nil {
+		return nil, err
+	}
+	if skeleton.top {
+		return nil, nil
+	}
+	return append([]identity.Term(nil), sortedHeapSkeletonIdentities(skeleton.objects)...), nil
+}
+
 // ComposeHeapTableIdentity is the exact inverse of
 // DecomposeHeapTableIdentity. It validates the complete root and member
 // inventories before constructing any lane value, so duplicate, missing,

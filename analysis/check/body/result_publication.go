@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -211,7 +211,7 @@ func (r *Result) publishStabilizedCoordinates(coordinates StabilizedResultCoordi
 	if !diagnostics.Valid(r.registry) {
 		return fmt.Errorf("body: stabilized result has malformed diagnostic output")
 	}
-	if err := r.publishN5ReturnSlots(flow, coordinates); err != nil {
+	if err := r.publishN5NormalExit(flow, coordinates); err != nil {
 		return err
 	}
 	r.flow = flow
@@ -230,22 +230,37 @@ func observationContextErr(ctx context.Context) error {
 	return cancellation.FromContext(ctx).Token().Err()
 }
 
-// publishN5ReturnSlots derives the public normal-exit return lane solely from
-// already-executed N5 node outputs. It never re-reads return expressions or
-// invokes a source provider. Clearing the exit inventory first also prevents a
-// transient call-result ReturnSlot from becoming a function return.
-func (r *Result) publishN5ReturnSlots(flow transfer.Result, coordinates StabilizedResultCoordinates) error {
+// publishN5NormalExit constructs the one public normal-exit state from every
+// already-projected normal terminal. A return point's output is the completed
+// N5 state, including its heap and other product lanes; it must not be split
+// from the return tuple when published at the synthetic exit.
+func (r *Result) publishN5NormalExit(flow transfer.Result, coordinates StabilizedResultCoordinates) error {
 	if r == nil || r.registry == nil || r.cfg == nil || r.cfg.Graph == nil {
 		return fmt.Errorf("body: N5 return publication is unowned")
 	}
 	exit := r.cfg.Graph.Exit()
-	exitState, normalExit := flow[exit]
-	if !normalExit {
-		return nil
+	domain := state.RegisteredProductDomain(r.registry)
+	lattice := domain.Lattice()
+	var normalExit state.State
+	published := false
+	if reachable, ok := coordinates.PointReachable[exit]; !ok {
+		return fmt.Errorf("body: normal exit has no stabilized reachability")
+	} else if reachable {
+		exitState, ok := flow[exit]
+		if !ok {
+			return fmt.Errorf("body: reachable normal exit has no stabilized state")
+		}
+		var err error
+		normalExit, err = r.sanitizeNormalExitReturnSlots(exitState, nil)
+		if err != nil {
+			return fmt.Errorf("body: normal exit return-slot sanitization: %w", err)
+		}
+		normalExit = lattice.Join(lattice.Bottom(), normalExit)
+		published = true
 	}
-	joined := make(map[int]product.Value)
 	for _, point := range cfg.RPOReadOnly(r.cfg.Graph) {
-		if _, terminal := r.facts.Return(point); !terminal {
+		fact, terminal := r.facts.Return(point)
+		if !terminal {
 			continue
 		}
 		output, ok := coordinates.PlannedNodeOutputs[point]
@@ -259,38 +274,54 @@ func (r *Result) publishN5ReturnSlots(flow transfer.Result, coordinates Stabiliz
 		if !reachable {
 			continue
 		}
-		values := output.ValuesSnapshot()
-		if values.Top {
-			return fmt.Errorf("body: N5 return point %d has a non-finite value lane", point)
+		terminalState, err := r.sanitizeNormalExitReturnSlots(output, n5ReturnTupleSlots(fact))
+		if err != nil {
+			return fmt.Errorf("body: N5 return point %d return-slot sanitization: %w", point, err)
 		}
-		for slot, value := range values.Values {
-			index, returnSlot := statekey.ParseReturnSlot(slot)
-			if !returnSlot {
-				continue
-			}
-			if prior, seen := joined[index]; seen {
-				joined[index] = product.Join(r.registry, prior, value)
-			} else {
-				joined[index] = value
-			}
+		if !published {
+			normalExit = lattice.Join(lattice.Bottom(), terminalState)
+			published = true
+		} else {
+			normalExit = lattice.Join(normalExit, terminalState)
 		}
 	}
-
-	exitValues := exitState.ValuesSnapshot()
-	if exitValues.Top {
-		return fmt.Errorf("body: normal exit has a non-finite value lane")
+	if published {
+		flow[exit] = normalExit
 	}
-	edit := exitState.EditValues(r.registry)
-	for slot := range exitValues.Values {
-		if index, returnSlot := statekey.ParseReturnSlot(slot); returnSlot {
-			edit.WriteReturnSlot(index, product.Bottom(r.registry))
-		}
-	}
-	for index, value := range joined {
-		edit.WriteReturnSlot(index, value)
-	}
-	flow[exit] = edit.DoneOn(exitState)
 	return nil
+}
+
+// n5ReturnTupleSlots returns the exact tuple owned by one N5 terminal. The
+// terminal may also carry transient call-result ReturnSlots inherited from its
+// path; those are deliberately excluded from the public function result.
+func n5ReturnTupleSlots(fact factflow.Return) map[int]struct{} {
+	sources := fact.Sources()
+	slots := make(map[int]struct{}, len(sources))
+	for ordinal, source := range sources {
+		index := source.TargetIndex
+		if index < 0 {
+			index = ordinal
+		}
+		slots[index] = struct{}{}
+	}
+	return slots
+}
+
+func (r *Result) sanitizeNormalExitReturnSlots(input state.State, keep map[int]struct{}) (state.State, error) {
+	values := input.ValuesSnapshot()
+	if values.Top {
+		return state.State{}, fmt.Errorf("has a non-finite value lane")
+	}
+	edit := input.EditValues(r.registry)
+	for slot := range values.Values {
+		if index, returnSlot := statekey.ParseReturnSlot(slot); returnSlot {
+			edit.WriteReturnSlot(index, state.RegisteredProductDomain(r.registry).ValueBottom())
+		}
+	}
+	for index := range keep {
+		edit.WriteReturnSlot(index, input.ReadReturnSlot(r.registry, index))
+	}
+	return edit.DoneOn(input), nil
 }
 
 // DiagnosticOutput returns detached body-level diagnostic evidence published
