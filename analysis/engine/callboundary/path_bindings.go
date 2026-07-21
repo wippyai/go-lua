@@ -16,6 +16,18 @@ type PathBindings struct {
 	returns []pathdom.Path
 }
 
+// ParameterRoots returns the exact caller paths bound to parameter boundary
+// roots. Empty entries preserve an unbound boundary ordinal.
+func (b PathBindings) ParameterRoots() []pathdom.Path {
+	return clonePaths(b.params)
+}
+
+// ReturnRoots returns the exact caller paths bound to return boundary roots.
+// Empty entries preserve an unbound boundary ordinal.
+func (b PathBindings) ReturnRoots() []pathdom.Path {
+	return clonePaths(b.returns)
+}
+
 // NewPathBindings creates a call-boundary path resolver. The slices are copied
 // so callers can build bindings incrementally without sharing mutable state.
 func NewPathBindings(params, returns []pathdom.Path) PathBindings {

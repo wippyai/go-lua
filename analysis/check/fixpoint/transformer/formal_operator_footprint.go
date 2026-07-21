@@ -219,6 +219,7 @@ func freezeFormalStepCoordinateFootprint(
 	rekey state.CoordinateFormalRootRekey,
 	pointwise relationCoordinateFactorInventory,
 	current state.CoordinateFactorInventory,
+	normalReturnIdentities formalIdentitySupport,
 	step boundaryStep,
 ) (state.CoordinateFactorInventory, error) {
 	var slots []state.CoordinateSlot
@@ -263,6 +264,36 @@ func freezeFormalStepCoordinateFootprint(
 		if site, ok := forest.externalCallSite(variable, step.point); ok {
 			slots = append(slots, site.correlation.CoordinateSlots()...)
 		}
+		formalAuthority, authorityErr := body.pathSemantics.ProjectFormal(body.productDomain, rekey, formalKeys)
+		if authorityErr != nil {
+			return state.CoordinateFactorInventory{}, authorityErr
+		}
+		callSite, present := body.plan.Facts().CallSiteView(step.point)
+		if !present {
+			return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall point %d has no call-site payload", step.point)
+		}
+		bindings, bindingErr := formalAuthority.CallBoundaryPathBindings(body.plan.Facts(), callSite)
+		if bindingErr != nil {
+			return state.CoordinateFactorInventory{}, bindingErr
+		}
+		normalLanes := state.NewLaneSet()
+		if prepared, present := forest.externalCallSite(variable, step.point); present {
+			normalLanes, authorityErr = factapply.ExternalCallTransactionLanes(body.productDomain, prepared.capability)
+			if authorityErr != nil {
+				return state.CoordinateFactorInventory{}, authorityErr
+			}
+		}
+		normalCarrier, carrierErr := body.productDomain.SealCoordinateFactorInventory(formalKeys,
+			append(current.Slots(), forest.externalCallCoordinateSlots(variable)...),
+		)
+		if carrierErr != nil {
+			return state.CoordinateFactorInventory{}, carrierErr
+		}
+		normalSlots, normalErr := formalAuthority.NormalReturnCoordinateFootprint(body.productDomain, step.point, bindings, normalLanes, normalReturnIdentities, normalCarrier)
+		if normalErr != nil {
+			return state.CoordinateFactorInventory{}, normalErr
+		}
+		slots = append(slots, normalSlots...)
 	case boundaryStepRootAssignment:
 		more, err := freezeFormalRootAssignmentCoordinateSlots(body, formalKeys, rekey, current, step)
 		if err != nil {

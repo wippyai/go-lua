@@ -25,14 +25,9 @@ func SealExternalCallTransferAccess(
 	if len(inputs) == 0 || len(inputPoints) != len(inputs) || primary < 0 || primary >= len(inputs) {
 		return state.TransferAccess{}, fmt.Errorf("factapply: external-call transfer has invalid input roles")
 	}
-	transactionLanes := capability.TransactionLanes()
-	for _, lane := range domain.CallBoundaryFactorLanes() {
-		transactionLanes = transactionLanes.With(lane.ID())
-	}
-	for _, lane := range transactionLanes.IDs() {
-		if !domain.Lanes().Has(lane) {
-			return state.TransferAccess{}, fmt.Errorf("factapply: external-call field requires unregistered lane %q", lane)
-		}
+	transactionLanes, err := ExternalCallTransactionLanes(domain, capability)
+	if err != nil {
+		return state.TransferAccess{}, err
 	}
 	inputs = cloneTransferInputs(inputs)
 	inputs[primary].Lanes = inputs[primary].Lanes.With(capability.PrimaryInputLanes().IDs()...)
@@ -59,6 +54,37 @@ func SealExternalCallTransferAccess(
 		ValueCarry: primary, LaneCarry: primary, DiagnosticCarry: primary, ReachableCarry: -1,
 		ReachableWrites: true,
 	})
+}
+
+// ExternalCallTransactionLanes returns the exact residual carrier owned by a
+// prepared external-call site. It is shared by transfer sealing and formal
+// footprint declaration so neither side can infer a wider lane inventory.
+func ExternalCallTransactionLanes(
+	domain state.ProductDomain,
+	capability callpayload.CallOutcomeCapability,
+) (state.LaneSet, error) {
+	if !domain.Valid() {
+		return state.LaneSet{}, fmt.Errorf("factapply: external-call transaction has no product domain")
+	}
+	lanes := state.NewLaneSet()
+	for _, lane := range capability.TransactionLanes().IDs() {
+		// A provider can describe every optional analysis axis, while a product
+		// domain intentionally carries only the enabled subset.
+		if domain.Lanes().Has(lane) {
+			lanes = lanes.With(lane)
+		}
+	}
+	if capability.HasField("NormalReturnFacts") {
+		lanes = lanes.With(NormalReturnTransactionLanes(domain).IDs()...)
+	}
+	for _, lane := range domain.CallBoundaryFactorLanes() {
+		// Boundary companions are optional analysis axes. A reduced domain
+		// omits the axis rather than making an otherwise-valid call unusable.
+		if domain.Lanes().Has(lane.ID()) {
+			lanes = lanes.With(lane.ID())
+		}
+	}
+	return lanes, nil
 }
 
 // SealGenericForTransferAccess binds the exact generic-for target transaction

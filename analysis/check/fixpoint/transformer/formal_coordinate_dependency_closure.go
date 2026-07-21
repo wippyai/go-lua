@@ -675,7 +675,7 @@ func (c *formalCoordinateDependencyClosure) evaluateCell(index int) (bool, error
 			}
 		}
 	}
-	base, err := c.freezeCellBase(index, cell, c.bodies[bodyIndex])
+	base, err := c.freezeCellBase(index, cell, c.bodies[bodyIndex], nextIdentity)
 	if err != nil {
 		return false, err
 	}
@@ -735,13 +735,30 @@ func (c *formalCoordinateDependencyClosure) evaluateCell(index int) (bool, error
 	return true, nil
 }
 
-func (c *formalCoordinateDependencyClosure) freezeCellBase(index int, cell formalRelationCell, current state.CoordinateFactorInventory) (state.CoordinateFactorInventory, error) {
+func (c *formalCoordinateDependencyClosure) freezeCellBase(index int, cell formalRelationCell, current state.CoordinateFactorInventory, identities formalIdentityEnvironment) (state.CoordinateFactorInventory, error) {
 	body := &c.program.bodies[cell.Variable-1]
 	keys := c.keys[cell.Variable-1]
 	switch cell.Kind {
 	case formalRelationCellStep:
 		node := body.relation.code.nodes[cell.Root]
-		return freezeFormalStepCoordinateFootprint(c.forest, body, cell.Variable, keys, c.rekeys[cell.Variable-1], c.pointwise[cell.Variable-1], current, node.steps[cell.Step-1])
+		step := node.steps[cell.Step-1]
+		var normalReturnIdentities formalIdentitySupport
+		if step.kind == boundaryStepExternalCall {
+			var identityErr error
+			step.operands.each(func(value ValueTerm) bool {
+				var support formalIdentitySupport
+				support, identityErr = c.identityValueSupport(int(cell.Variable-1), identities, value, make(map[ValueTerm]bool))
+				if identityErr != nil {
+					return false
+				}
+				normalReturnIdentities = unionFormalIdentitySupport(normalReturnIdentities, support)
+				return true
+			})
+			if identityErr != nil {
+				return state.CoordinateFactorInventory{}, identityErr
+			}
+		}
+		return freezeFormalStepCoordinateFootprint(c.forest, body, cell.Variable, keys, c.rekeys[cell.Variable-1], c.pointwise[cell.Variable-1], current, normalReturnIdentities, step)
 	case formalRelationCellOutcome:
 		outcome := body.relation.code.outcomes[cell.Outcome]
 		identityTerms, err := c.identityValuesSupport(int(cell.Variable-1), c.cellIdentity[index], outcome.returnTransaction.sources)

@@ -317,6 +317,27 @@ var normalReturnFactorLanePlans = callboundary.BindNormalReturnFactLanes(
 	func(plan normalReturnFactorLanePlan) bool { return plan.phase <= normalReturnApplyFinalWrites },
 )
 
+// NormalReturnTransactionLanes is the complete residual lane envelope owned
+// by the normal-return codec. A site capability may omit a serialized outcome
+// field while a prepared boundary still carries derived normal-return facts;
+// callers therefore share this codec-owned declaration instead of inferring
+// the envelope from outcome field presence.
+func NormalReturnTransactionLanes(domain state.ProductDomain) state.LaneSet {
+	lanes := state.NewLaneSet()
+	for _, lane := range []state.LaneID{
+		state.LanePathEvidence, state.LaneDynamicIndex, state.LaneHeapTableIdentity,
+		state.LaneFrozenTables, state.LaneEffectDeltas, state.LaneEscapeEvents,
+		state.LaneChannelSelect, state.LaneStoreRelations, state.LaneKeyMemberships,
+		state.LaneTypestates, state.LanePlacement, state.LaneLenFloors,
+		state.LaneNumFloors, state.LaneNumCeils, state.LaneDiffRelations,
+	} {
+		if domain.Lanes().Has(lane) {
+			lanes = lanes.With(lane)
+		}
+	}
+	return lanes
+}
+
 // PrepareNormalReturnFactorCodec seals every authority required by either
 // direction. inventory is the operation's already-sealed exact coordinate
 // footprint, not a body-wide inventory. The codec validates that declaration
