@@ -18,9 +18,9 @@ import (
 // a call boundary.
 // NormalReturnFacts carries a full NumFloors lane end to end (LaneNumFloors in
 // normal_return_lanes.go, its algebra in normal_return_num_floor_algebra.go,
-// projectStateNumFloors in projected_state_facts.go, and
-// factapply.applyNormalReturnNumFloors), but NormalReturnFactLaneID has no
-// NumCeils counterpart anywhere, even though journal #1761 unified NumFloor
+// and projectStateNumFloors in projected_state_facts.go), but
+// NormalReturnFactLaneID has no NumCeils counterpart anywhere, even though
+// journal #1761 unified NumFloor
 // and NumCeil into one direction-parametric coordinate family inside
 // analysis/engine/state (see numCeilsLaneSpec/numFloorsLaneSpec and
 // state/numbound). That unification stayed intraprocedural: it never reached

@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -356,69 +355,6 @@ func dynamicIndexWriteSourcePath(resolver *visibility.Resolver, facts factflow.F
 		return pathdom.Path{}, false
 	}
 	return sourcePath, true
-}
-
-func writeHeapTableDynamicIndexFact(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	tablePath pathdom.Path,
-	key dynamicindex.Key,
-	value dynamicindex.Fact,
-) state.State {
-	table, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, tablePath, nil)
-	if !ok {
-		return out
-	}
-	id, ok := product.Get(ctx.Registry, table.value, identity.Key).ID()
-	if !ok {
-		return out
-	}
-	object := out.ReadHeapTableObject(ctx.Registry, id)
-	if heapidentity.ObjectDomain(ctx.Registry).Equal(object, heapidentity.BottomObject(ctx.Registry)) {
-		return out
-	}
-	dynamic := object.DynamicIndexFacts()
-	if dynamic == nil {
-		dynamic = make(map[dynamicindex.Key]dynamicindex.Fact, 1)
-	}
-	if existing, ok := dynamic[key]; ok {
-		dynamic[key] = dynamicindex.Domain(ctx.Registry).Join(existing, value)
-	} else {
-		dynamic[key] = value
-	}
-	return out.WriteHeapTableObject(ctx.Registry, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root:              object.Root(),
-		StaticMembers:     object.StaticMembers(),
-		DynamicIndexFacts: dynamic,
-	}))
-}
-
-func applyStoredDynamicIndexPlacement(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	out state.State,
-	tablePath pathdom.Path,
-	value product.Value,
-) state.State {
-	if resolver == nil || tablePath.IsEmpty() {
-		return out
-	}
-	table, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, tablePath, nil)
-	if !ok {
-		return out
-	}
-	tableID, ok := product.Get(ctx.Registry, table.value, identity.Key).ID()
-	if !ok {
-		return out
-	}
-	ownerPlacement := out.ReadPlacement(tableID)
-	switch ownerPlacement {
-	case placement.OwnedHeap, placement.SharedHeap, placement.Unknown:
-		return markReachableHeapValuePlacement(ctx.Registry, out, value, ownerPlacement, map[identity.ID]struct{}{})
-	default:
-		return out
-	}
 }
 
 func dynamicIndexFact(

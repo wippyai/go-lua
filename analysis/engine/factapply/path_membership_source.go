@@ -3,22 +3,9 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
-
-func pathMembershipSourceTablesAt(st state.State, resolver *visibility.Resolver, point cfg.Point, p pathdom.Path) []pathaddr.StateKey {
-	var out []pathaddr.StateKey
-	for _, sourceKey := range pathMembershipSourceStateKeysAt(resolver, point, p) {
-		for _, table := range st.PathKeyMembershipTables(sourceKey) {
-			if !stateKeyIn(out, table) {
-				out = append(out, table)
-			}
-		}
-	}
-	return out
-}
 
 func pathMembershipSourceStateKeysAt(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path) []pathaddr.StateKey {
 	if resolver == nil || p.IsEmpty() {
