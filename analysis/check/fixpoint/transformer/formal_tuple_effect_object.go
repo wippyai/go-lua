@@ -23,11 +23,20 @@ type formalObjectMaterializationObject struct {
 // EffectObjectMaterialization node to ObjectConstructorPlan. It carries no
 // mutation semantics and introduces no second Effect language.
 type formalObjectMaterializationStep struct {
-	objects     []formalObjectMaterializationObject
-	demands     []formalQualifiedGuardDemand
-	valueAccess state.TransferInputAccess
-	valueGroups []formalFiberGroupDescriptor
-	variable    relationVar
+	objects    []formalObjectMaterializationObject
+	components []formalObjectMaterializationComponent
+	variable   relationVar
+}
+
+type formalObjectMaterializationComponent struct {
+	objectIndex  int
+	memberIndex  int
+	memberSource int
+	constructor  state.ObjectConstructorPlan
+	frame        formalProductFactorFrameBinding
+	lift         formalClosedFactorLift
+	valueAccess  state.TransferInputAccess
+	valueGroups  []formalFiberGroupDescriptor
 }
 
 func freezeFormalObjectMaterializationStep(program *RelationProgram, variable relationVar, operator formalRelationOperatorRef) (*formalObjectMaterializationStep, error) {
@@ -61,18 +70,12 @@ func freezeFormalObjectMaterializationStep(program *RelationProgram, variable re
 	if len(templates) != len(objects) {
 		return nil, fmt.Errorf("transformer: object materialization allocation schema width %d, want %d", len(templates), len(objects))
 	}
-	var guards []Guard
 	rootObjects := make(map[ValueTerm]int, len(node.pathStoreObject.Heaps))
 	for objectIndex, object := range node.pathStoreObject.Heaps {
 		if object.Root == 0 {
 			return nil, fmt.Errorf("transformer: object materialization root is absent")
 		}
 		rootObjects[object.Root] = objectIndex
-		rootGuards, err := reachableValueTermGuards(operator.code.terms, object.Root)
-		if err != nil {
-			return nil, err
-		}
-		guards = append(guards, rootGuards...)
 		frozen := formalObjectMaterializationObject{
 			identity: identity.AllocationTerm(templates[objectIndex]), root: object.Root, members: make([]ValueTerm, len(object.Members)),
 			memberRoots: make([]int, len(object.Members)), suffixes: make([][]segment.Segment, len(object.Members)), stableShape: object.StableShape,
@@ -86,11 +89,6 @@ func freezeFormalObjectMaterializationStep(program *RelationProgram, variable re
 			}
 			frozen.members[memberIndex] = member.Value
 			frozen.suffixes[memberIndex] = append([]segment.Segment(nil), member.Suffix...)
-			memberGuards, err := reachableValueTermGuards(operator.code.terms, member.Value)
-			if err != nil {
-				return nil, err
-			}
-			guards = append(guards, memberGuards...)
 		}
 		objects[objectIndex] = frozen
 	}
@@ -101,95 +99,279 @@ func freezeFormalObjectMaterializationStep(program *RelationProgram, variable re
 			}
 		}
 	}
-	valueTerms := make([]ValueTerm, 0)
-	for _, object := range objects {
-		valueTerms = append(valueTerms, object.root)
-		valueTerms = append(valueTerms, object.members...)
+	sealComponents := func(objectIndex, memberIndex int) ([]formalObjectMaterializationComponent, error) {
+		object := objects[objectIndex]
+		terms := []ValueTerm{object.root}
+		shape := state.ObjectConstructorShape{Identity: object.identity, StableShape: object.stableShape}
+		memberSource := -1
+		if memberIndex >= 0 {
+			shape.MemberSuffixes = [][]segment.Segment{object.suffixes[memberIndex]}
+			memberSource = object.memberRoots[memberIndex]
+			memberTerm := object.members[memberIndex]
+			if memberSource >= 0 {
+				memberTerm = objects[memberSource].root
+			}
+			terms = append(terms, memberTerm)
+		}
+		valueAccess, valueGroups, componentErr := freezeFormalValueFactorAccess(program, variable, terms...)
+		if componentErr != nil {
+			return nil, componentErr
+		}
+		constructor, componentErr := body.productDomain.PrepareObjectConstructorPlan(span.keys, []state.ObjectConstructorShape{shape})
+		if componentErr != nil {
+			return nil, componentErr
+		}
+		coordinateWrites, componentErr := body.productDomain.ObjectConstructorCoordinateWrites(constructor)
+		if componentErr != nil {
+			return nil, componentErr
+		}
+		coordinates, componentErr := body.productDomain.SealCoordinateFactorInventory(span.keys, coordinateWrites)
+		if componentErr != nil {
+			return nil, componentErr
+		}
+		coordinates, componentErr = body.productDomain.CloseCoordinateFactorInventory(span.keys, coordinates)
+		if componentErr != nil {
+			return nil, componentErr
+		}
+		families := make([]state.CoordinateFamily, 0)
+		for _, slot := range coordinates.Slots() {
+			family := slot.Family()
+			if len(families) == 0 || families[len(families)-1] != family {
+				families = append(families, family)
+			}
+		}
+		familyIndex := make(map[state.CoordinateFamily]int, len(families))
+		parents := make([]int, len(families))
+		for index, family := range families {
+			familyIndex[family], parents[index] = index, index
+		}
+		var find func(int) int
+		find = func(index int) int {
+			if parents[index] != index {
+				parents[index] = find(parents[index])
+			}
+			return parents[index]
+		}
+		union := func(left, right int) {
+			left, right = find(left), find(right)
+			if left != right {
+				parents[right] = left
+			}
+		}
+		for index, family := range families {
+			slots, slotErr := coordinates.FamilySlots(family)
+			if slotErr != nil || len(slots) == 0 {
+				if slotErr == nil {
+					slotErr = errFormalComponentMalformed
+				}
+				return nil, slotErr
+			}
+			seed, closeErr := body.productDomain.SealCoordinateFactorInventory(span.keys, slots)
+			if closeErr == nil {
+				seed, closeErr = body.productDomain.CloseCoordinateFactorInventory(span.keys, seed)
+			}
+			if closeErr != nil {
+				return nil, closeErr
+			}
+			for _, selected := range seed.Slots() {
+				other, present := familyIndex[selected.Family()]
+				if !present {
+					return nil, errFormalComponentMalformed
+				}
+				union(index, other)
+			}
+		}
+		components := make([]formalObjectMaterializationComponent, 0, len(families))
+		for index := range families {
+			if find(index) != index {
+				continue
+			}
+			var slots []state.CoordinateSlot
+			for candidate, family := range families {
+				if find(candidate) != index {
+					continue
+				}
+				owned, slotErr := coordinates.FamilySlots(family)
+				if slotErr != nil {
+					return nil, slotErr
+				}
+				slots = append(slots, owned...)
+			}
+			familyCoordinates, familyErr := body.productDomain.SealCoordinateFactorInventory(span.keys, slots)
+			if familyErr == nil {
+				familyCoordinates, familyErr = body.productDomain.CloseCoordinateFactorInventory(span.keys, familyCoordinates)
+			}
+			if familyErr != nil {
+				return nil, familyErr
+			}
+			selection, familyErr := body.productDomain.SealProductFactorSelection(nil, familyCoordinates, nil, false)
+			if familyErr != nil {
+				return nil, familyErr
+			}
+			frame, familyErr := sealFormalProductFactorFrameBinding(body.productDomain, span, selection, nil, false, true)
+			if familyErr != nil {
+				return nil, familyErr
+			}
+			lift, familyErr := sealFormalClosedFactorLift(span, [][]formalFiberOrdinal{frame.ordinals}, frame.ordinals)
+			if familyErr != nil {
+				return nil, familyErr
+			}
+			components = append(components, formalObjectMaterializationComponent{
+				objectIndex: objectIndex, memberIndex: memberIndex, memberSource: memberSource,
+				constructor: constructor, frame: frame, lift: lift,
+				valueAccess: valueAccess, valueGroups: valueGroups,
+			})
+		}
+		return components, nil
 	}
-	valueAccess, valueGroups, err := freezeFormalValueFactorAccess(program, variable, valueTerms...)
-	if err != nil {
-		return nil, err
+	components := make([]formalObjectMaterializationComponent, 0, len(objects))
+	for objectIndex := range objects {
+		sealed, componentErr := sealComponents(objectIndex, -1)
+		if componentErr != nil {
+			return nil, componentErr
+		}
+		components = append(components, sealed...)
 	}
-	if step.guard != 0 {
-		guards = append(guards, step.guard)
+	for objectIndex, object := range objects {
+		for memberIndex := range object.members {
+			sealed, componentErr := sealComponents(objectIndex, memberIndex)
+			if componentErr != nil {
+				return nil, componentErr
+			}
+			components = append(components, sealed...)
+		}
 	}
-	demands := make([]formalQualifiedGuardDemand, len(guards))
-	for index, guard := range guards {
-		demands[index] = formalQualifiedGuardDemand{owner: variable, scope: operator.scope, arena: operator.code.terms, guard: guard}
-	}
-	return &formalObjectMaterializationStep{
-		objects: objects, demands: demands,
-		valueAccess: valueAccess, valueGroups: valueGroups, variable: variable,
-	}, nil
+	return &formalObjectMaterializationStep{objects: objects, components: components, variable: variable}, nil
 }
 
 func (a *formalTupleAlgebra) applyFormalObjectMaterialization(operator formalRelationOperatorRef, predecessor formalRelationTuple) (formalRelationTuple, error) {
 	plan := operator.objectMaterialization
-	if plan == nil || plan.variable != predecessor.variable {
+	if plan == nil || plan.variable != predecessor.variable || len(plan.components) == 0 {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal object materialization is unbound")
 	}
-	return a.applyFormalEffectStep(operator, predecessor, plan.demands,
-		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
-			return a.applyFormalObjectMaterializationLeaf(operator, span, evaluator, plan, values, factors)
-		})
+	mark := a.decisions.checkpoint()
+	current := predecessor
+	stable := make(map[ValueTerm]bool)
+	stableDecisions := make(map[ValueTerm]decisionRef)
+	isStable := func(term ValueTerm) (bool, error) {
+		if value, present := stable[term]; present {
+			return value, nil
+		}
+		access, err := a.program.bodies[predecessor.variable-1].valueTermLaneFactorAccess(term)
+		if err != nil {
+			return false, err
+		}
+		value := access.Lanes.Len() == 0
+		stable[term] = value
+		return value, nil
+	}
+	for componentIndex := range plan.components {
+		component := &plan.components[componentIndex]
+		object := plan.objects[component.objectIndex]
+		terms := []ValueTerm{object.root}
+		if component.memberIndex >= 0 {
+			memberTerm := object.members[component.memberIndex]
+			if component.memberSource >= 0 {
+				memberTerm = plan.objects[component.memberSource].root
+			}
+			terms = append(terms, memberTerm)
+		}
+		derived := make([]decisionRef, len(terms))
+		for index, term := range terms {
+			stableTerm, err := isStable(term)
+			if err != nil {
+				a.decisions.rollback(mark)
+				return formalRelationTuple{}, err
+			}
+			if stableTerm {
+				if prior, present := stableDecisions[term]; present {
+					derived[index] = prior
+					continue
+				}
+			}
+			compiled, err := a.compileFormalValueTermDecisions(current, operator.code.terms, operator.scope, term)
+			if err != nil || len(compiled) != 1 {
+				if err == nil {
+					err = errFormalComponentMalformed
+				}
+				a.decisions.rollback(mark)
+				return formalRelationTuple{}, err
+			}
+			derived[index] = compiled[0]
+			if stableTerm {
+				stableDecisions[term] = compiled[0]
+			}
+		}
+		var err error
+		current, err = a.applyFormalEffectDerivedLift(operator, current, nil, component.lift, derived,
+			func(view formalSparseLeafView) ([]formalClosedFactorLeafWrite, error) {
+				frame, err := a.materializeFormalProductFactorFrame(view, component.frame)
+				if err != nil {
+					return nil, err
+				}
+				frame, err = a.applyFormalObjectMaterializationLeaf(view, plan, component, frame)
+				if err != nil {
+					return nil, err
+				}
+				writes, err := a.factorFormalProductFactorFrame(view, component.frame, frame)
+				if err != nil {
+					return nil, err
+				}
+				changed := writes[:0]
+				for _, write := range writes {
+					prior, present := view.leaf(write.ordinal)
+					if !present {
+						return nil, errFormalComponentMalformed
+					}
+					if prior != write.leaf {
+						changed = append(changed, write)
+					}
+				}
+				return changed, nil
+			})
+		if err != nil {
+			a.decisions.rollback(mark)
+			return formalRelationTuple{}, err
+		}
+	}
+	return current, nil
 }
 
 func (a *formalTupleAlgebra) applyFormalObjectMaterializationLeaf(
-	operator formalRelationOperatorRef,
-	span formalFiberDescriptorSpan,
-	evaluator formalTupleLeafEvaluator,
+	view formalSparseLeafView,
 	plan *formalObjectMaterializationStep,
-	formalValues state.ValueFactor[FormalSlot],
-	factors []state.LaneFactor,
-) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
-	if plan == nil || plan.variable != span.variable || !evaluator.valid() || evaluator.variable != span.variable {
-		return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentForeignOwner
+	component *formalObjectMaterializationComponent,
+	frame state.ProductFactorFrame,
+) (state.ProductFactorFrame, error) {
+	if plan == nil || component == nil || plan.variable != view.variable || view.authority == nil ||
+		component.objectIndex < 0 || component.objectIndex >= len(plan.objects) {
+		return state.ProductFactorFrame{}, errFormalComponentForeignOwner
 	}
-	shapes := make([]state.ObjectConstructorShape, len(plan.objects))
-	values := make([]state.ObjectConstructorValues, len(plan.objects))
-	capability, err := evaluator.materializeValueFactorAccess(plan.valueAccess, plan.valueGroups)
+	object := plan.objects[component.objectIndex]
+	if len(view.derived) != 1 && (component.memberIndex < 0 || len(view.derived) != 2) {
+		return state.ProductFactorFrame{}, errFormalComponentMalformed
+	}
+	root, err := formalGroundValueDecisionLeaf(view.authority, view.derived[0])
 	if err != nil {
-		return state.ValueFactor[FormalSlot]{}, nil, err
+		return state.ProductFactorFrame{}, err
 	}
-	for objectIndex, object := range plan.objects {
-		root, exact := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, object.root, operator.scope, formalApplyTermView{}, capability)
-		if !exact {
-			return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal object root is unresolved")
+	root = identityvalue.WithExactTerm(a.program.registry, root, object.identity)
+	row := state.ObjectConstructorValues{Root: root}
+	if component.memberIndex >= 0 {
+		if component.memberIndex >= len(object.members) {
+			return state.ProductFactorFrame{}, errFormalComponentMalformed
 		}
-		root = identityvalue.WithExactTerm(a.program.registry, root, object.identity)
-		term := object.identity
-		shapes[objectIndex] = state.ObjectConstructorShape{
-			Identity: term, MemberSuffixes: object.suffixes, StableShape: object.stableShape,
+		member, memberErr := formalGroundValueDecisionLeaf(view.authority, view.derived[1])
+		if memberErr != nil {
+			return state.ProductFactorFrame{}, memberErr
 		}
-		values[objectIndex] = state.ObjectConstructorValues{Root: root, Members: make([]product.Value, len(object.members))}
-	}
-	for objectIndex, object := range plan.objects {
-		for memberIndex, member := range object.members {
-			if sourceObject := object.memberRoots[memberIndex]; sourceObject >= 0 {
-				if sourceObject >= len(values) {
-					return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal object member root is outside allocation schema")
-				}
-				values[objectIndex].Members[memberIndex] = values[sourceObject].Root
-				continue
+		if component.memberSource >= 0 {
+			if component.memberSource >= len(plan.objects) {
+				return state.ProductFactorFrame{}, errFormalComponentMalformed
 			}
-			value, resolved := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, member, operator.scope, formalApplyTermView{}, capability)
-			if !resolved {
-				return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal object member is unresolved")
-			}
-			values[objectIndex].Members[memberIndex] = value
+			member = identityvalue.WithExactTerm(a.program.registry, member, plan.objects[component.memberSource].identity)
 		}
+		row.Members = []product.Value{member}
 	}
-	domain := evaluator.authority.product
-	transaction, err := domain.PrepareObjectConstructorPlan(span.keys, shapes)
-	if err != nil {
-		return state.ValueFactor[FormalSlot]{}, nil, err
-	}
-	for index, current := range factors {
-		next, applyErr := domain.ApplyObjectConstructorFactor(transaction, values, current)
-		if applyErr != nil {
-			return state.ValueFactor[FormalSlot]{}, nil, applyErr
-		}
-		factors[index] = next
-	}
-	return formalValues, factors, nil
+	return view.authority.product.ApplyObjectConstructorFrame(component.constructor, []state.ObjectConstructorValues{row}, component.frame.selection, frame)
 }

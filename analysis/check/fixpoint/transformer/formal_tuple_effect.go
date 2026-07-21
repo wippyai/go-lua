@@ -72,7 +72,9 @@ func formalEffectTransferLaneSets(domain state.ProductDomain, operator formalRel
 		}
 		writes = addProduct(writes, domain.ObjectMutationParticipantLanes())
 		reads = reads.With(writes.IDs()...).With(state.LaneValues)
-		reads = reads.With(operator.objectMaterialization.valueAccess.Lanes.IDs()...)
+		for _, component := range operator.objectMaterialization.components {
+			reads = reads.With(component.valueAccess.Lanes.IDs()...)
+		}
 	case EffectPathStore:
 		plan := operator.pathReplacement
 		if plan == nil {
@@ -438,10 +440,94 @@ func (a *formalTupleAlgebra) applyFormalPathReplacement(operator formalRelationO
 		})
 }
 
-// applyFormalEffectStep owns the guard-exact relationCode composition shared
-// by every factor-native Effect adapter. Individual effects only supply their
-// registered leaf transaction; none may duplicate decision partitioning,
-// rollback, false-guard carry, or tuple publication.
+// applyFormalEffectLift owns the guard-exact relationCode composition shared
+// by every factor-native Effect adapter. The supplied lift may be whole-lane
+// or exact-frame, but decision partitioning and tuple publication stay here.
+func (a *formalTupleAlgebra) applyFormalEffectLift(
+	operator formalRelationOperatorRef,
+	predecessor formalRelationTuple,
+	demands []formalQualifiedGuardDemand,
+	lift formalClosedFactorLift,
+	applyLeaf func(formalSparseLeafView) ([]formalClosedFactorLeafWrite, error),
+) (formalRelationTuple, error) {
+	return a.applyFormalEffectDerivedLift(operator, predecessor, demands, lift, nil, applyLeaf)
+}
+
+func (a *formalTupleAlgebra) applyFormalEffectDerivedLift(
+	operator formalRelationOperatorRef,
+	predecessor formalRelationTuple,
+	demands []formalQualifiedGuardDemand,
+	lift formalClosedFactorLift,
+	derived []decisionRef,
+	applyLeaf func(formalSparseLeafView) ([]formalClosedFactorLeafWrite, error),
+) (formalRelationTuple, error) {
+	if a == nil || applyLeaf == nil || operator.kind != formalRelationCellStep || operator.code == nil ||
+		!lift.sealed {
+		return formalRelationTuple{}, fmt.Errorf("transformer: invalid formal Effect step")
+	}
+	if err := a.validateTuple(predecessor); err != nil {
+		return formalRelationTuple{}, err
+	}
+	if predecessor.bottom() {
+		return predecessor, nil
+	}
+	_, directory, authority, ok := a.span(predecessor.variable)
+	if !ok || authority.code != operator.code || predecessor.root.owner != directory {
+		return formalRelationTuple{}, fmt.Errorf("transformer: formal Effect predecessor has foreign ownership")
+	}
+	mark := a.decisions.checkpoint()
+	fail := func(err error) (formalRelationTuple, error) {
+		a.decisions.rollback(mark)
+		return formalRelationTuple{}, err
+	}
+	uniqueDemands := make([]formalQualifiedGuardDemand, 0, len(demands))
+	seenDemands := make(map[formalScopedGuardKey]struct{}, len(demands))
+	for _, demand := range demands {
+		key := formalScopedGuardKey{variable: demand.owner, scope: demand.scope, arena: demand.arena, guard: demand.guard}
+		if _, duplicate := seenDemands[key]; duplicate {
+			continue
+		}
+		seenDemands[key] = struct{}{}
+		uniqueDemands = append(uniqueDemands, demand)
+	}
+	step := operator.code.nodes[operator.root].steps[operator.step-1]
+	execute := decisionTrue
+	if step.guard != 0 {
+		if a.program.formalGuards == nil || !a.program.formalGuards.valid() {
+			return fail(fmt.Errorf("transformer: formal Effect guard has no frozen vocabulary"))
+		}
+		var err error
+		execute, err = a.decisionForGuard(predecessor.variable, operator.scope, operator.code.terms, step.guard)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	result, err := a.applyFormalClosedFactorLiftWithDerived(
+		lift,
+		[]formalRelationTuple{predecessor},
+		uniqueDemands,
+		derived,
+		execute,
+		func(_ decisionRef, views []formalSparseLeafView) ([]formalClosedFactorLeafWrite, error) {
+			if len(views) != 1 {
+				return nil, errFormalComponentMalformed
+			}
+			return applyLeaf(views[0])
+		},
+	)
+	if err != nil {
+		return fail(err)
+	}
+	if result.root == predecessor.root {
+		a.decisions.rollback(mark)
+		return predecessor, nil
+	}
+	return result, nil
+}
+
+// applyFormalEffectStep binds a conventional complete-lane Effect transaction
+// through the shared closed lift. Effects with an exact ProductFactorFrame use
+// applyFormalEffectLift directly and therefore do not inflate their cone.
 func (a *formalTupleAlgebra) applyFormalEffectStep(
 	operator formalRelationOperatorRef,
 	predecessor formalRelationTuple,

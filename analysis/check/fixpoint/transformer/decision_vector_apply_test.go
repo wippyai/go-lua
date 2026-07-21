@@ -106,6 +106,41 @@ func TestDecisionVectorApplyMatchesPointwiseCareLaws(t *testing.T) {
 	}
 }
 
+func TestDecisionNaryApplyReturnsOnlyMappedResult(t *testing.T) {
+	kernel := newDecisionKernel()
+	kernel.resetBoolean()
+	left := kernel.branch(0, kernel.terminal(2), kernel.terminal(3))
+	right := kernel.branch(1, kernel.terminal(5), kernel.terminal(7))
+	care := kernel.branch(2, decisionFalse, decisionTrue)
+	root, err := kernel.applyNaryUnderCare(context.Background(), care, []decisionRef{left, right},
+		func(leaves []decisionLeaf) (decisionLeaf, error) {
+			if len(leaves) != 2 {
+				return 0, errDecisionMalformed
+			}
+			return leaves[0]*10 + leaves[1], nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for bits := 0; bits < 8; bits++ {
+		valuation := map[uint32]bool{0: bits&1 != 0, 1: bits&2 != 0, 2: bits&4 != 0}
+		if !valuation[2] {
+			continue
+		}
+		leftLeaf := decisionLeaf(2)
+		if valuation[0] {
+			leftLeaf = 3
+		}
+		rightLeaf := decisionLeaf(5)
+		if valuation[1] {
+			rightLeaf = 7
+		}
+		if got, want := decisionTestLeafAt(t, &kernel, root, valuation), leftLeaf*10+rightLeaf; got != want {
+			t.Fatalf("valuation %03b = %d, want %d", bits, got, want)
+		}
+	}
+}
+
 func TestDecisionVectorApplyDoesNotCrossIndependentCarriers(t *testing.T) {
 	kernel := newDecisionKernel()
 	kernel.resetBoolean()

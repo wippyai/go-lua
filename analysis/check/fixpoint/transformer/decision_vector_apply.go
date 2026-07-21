@@ -259,6 +259,140 @@ type decisionVectorApplyKey struct {
 	left, right         decisionVectorRef
 }
 
+// applyNaryUnderCare maps one dependent vector to one decision root. Unlike
+// applyVectorUnderCare it does not retain or reconstruct the input members as
+// outputs; memoization therefore tracks only exact input cofactors and the
+// single semantic result. This is the canonical carrier for pure n-ary nodes
+// such as ObjectLiteralPlan after their operands have been quotiented to the
+// observations that node can distinguish.
+func (k *decisionKernel) applyNaryUnderCare(
+	ctx context.Context,
+	care decisionRef,
+	roots []decisionRef,
+	leaves func([]decisionLeaf) (decisionLeaf, error),
+) (decisionRef, error) {
+	if ctx == nil || leaves == nil || care == decisionFalse || len(roots) == 0 || int(care) >= len(k.nodes) {
+		return 0, errDecisionMalformed
+	}
+	for _, root := range roots {
+		if int(root) >= len(k.nodes) {
+			return 0, errDecisionMalformed
+		}
+	}
+	vectors := newDecisionVectorArena(k)
+	vector, err := vectors.Build(roots)
+	if err != nil {
+		return 0, err
+	}
+	type key struct {
+		care   decisionRef
+		vector decisionVectorRef
+	}
+	type frame struct {
+		key       key
+		expanded  bool
+		variable  uint32
+		low, high key
+		lowLive   bool
+		highLive  bool
+	}
+	root := key{care: care, vector: vector}
+	memo := make(map[key]decisionRef)
+	stack := []frame{{key: root}}
+	for len(stack) != 0 {
+		current := &stack[len(stack)-1]
+		if _, done := memo[current.key]; done {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		k.applyOps++
+		if k.applyOps&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
+		careNode := k.nodes[current.key.care]
+		if careNode.terminal && careNode.leaf > 1 {
+			return 0, errDecisionMalformed
+		}
+		if !current.expanded {
+			minimum, minimumErr := vectors.MinVariable(current.key.vector)
+			if minimumErr != nil {
+				return 0, minimumErr
+			}
+			current.variable = minimum
+			if !careNode.terminal && careNode.variable < current.variable {
+				current.variable = careNode.variable
+			}
+			if current.variable == decisionNoVariable {
+				if !careNode.terminal || careNode.leaf != 1 {
+					return 0, errDecisionMalformed
+				}
+				values, flattenErr := vectors.Flatten(current.key.vector)
+				if flattenErr != nil || len(values) != len(roots) {
+					if flattenErr == nil {
+						flattenErr = errDecisionMalformed
+					}
+					return 0, flattenErr
+				}
+				terminalLeaves := make([]decisionLeaf, len(values))
+				for index, value := range values {
+					node := k.nodes[value]
+					if !node.terminal {
+						return 0, errDecisionMalformed
+					}
+					terminalLeaves[index] = node.leaf
+				}
+				leaf, leafErr := leaves(terminalLeaves)
+				if leafErr != nil {
+					return 0, leafErr
+				}
+				memo[current.key] = k.terminal(leaf)
+				stack = stack[:len(stack)-1]
+				continue
+			}
+			current.expanded = true
+			lowCare, highCare := current.key.care, current.key.care
+			if !careNode.terminal && careNode.variable == current.variable {
+				lowCare, highCare = careNode.low, careNode.high
+			}
+			lowVector, highVector, splitErr := vectors.SplitAt(current.key.vector, current.variable)
+			if splitErr != nil {
+				return 0, splitErr
+			}
+			current.lowLive, current.highLive = lowCare != decisionFalse, highCare != decisionFalse
+			current.low = key{care: lowCare, vector: lowVector}
+			current.high = key{care: highCare, vector: highVector}
+		}
+		if current.lowLive {
+			if _, done := memo[current.low]; !done {
+				stack = append(stack, frame{key: current.low})
+				continue
+			}
+		}
+		if current.highLive {
+			if _, done := memo[current.high]; !done {
+				stack = append(stack, frame{key: current.high})
+				continue
+			}
+		}
+		switch {
+		case !current.lowLive:
+			memo[current.key] = memo[current.high]
+		case !current.highLive:
+			memo[current.key] = memo[current.low]
+		default:
+			memo[current.key] = k.branch(current.variable, memo[current.low], memo[current.high])
+		}
+		stack = stack[:len(stack)-1]
+	}
+	result, present := memo[root]
+	if !present {
+		return 0, errDecisionMalformed
+	}
+	return result, nil
+}
+
 // applyVectorUnderCare is the direct multi-output analogue of applyUnderCare.
 // It aligns exactly one dependent carrier under resultCare and reconstructs
 // its roots bottom-up. It never materializes leaf-region rows and never forms

@@ -55,10 +55,7 @@ func sealFormalClosedFactorLift(
 	for index := range reads {
 		var err error
 		roles[index].reads, roles[index].positions, err = seal(reads[index])
-		if err != nil || len(roles[index].reads) == 0 {
-			if err == nil {
-				err = errFormalComponentMalformed
-			}
+		if err != nil {
 			return formalClosedFactorLift{}, err
 		}
 	}
@@ -107,6 +104,20 @@ func (a *formalTupleAlgebra) applyFormalClosedFactorLift(
 	plan formalClosedFactorLift,
 	providers []formalRelationTuple,
 	demands []formalQualifiedGuardDemand,
+	execute decisionRef,
+	apply func(decisionRef, []formalSparseLeafView) ([]formalClosedFactorLeafWrite, error),
+) (formalRelationTuple, error) {
+	return a.applyFormalClosedFactorLiftWithDerived(plan, providers, demands, nil, execute, apply)
+}
+
+// applyFormalClosedFactorLiftWithDerived retains the generic closed-factor
+// transaction while admitting already-lifted semantic operands. Derived roots
+// are correlated as read-only leaves and can never enter the publication set.
+func (a *formalTupleAlgebra) applyFormalClosedFactorLiftWithDerived(
+	plan formalClosedFactorLift,
+	providers []formalRelationTuple,
+	demands []formalQualifiedGuardDemand,
+	derived []decisionRef,
 	execute decisionRef,
 	apply func(decisionRef, []formalSparseLeafView) ([]formalClosedFactorLeafWrite, error),
 ) (formalRelationTuple, error) {
@@ -170,7 +181,15 @@ func (a *formalTupleAlgebra) applyFormalClosedFactorLift(
 			return formalRelationTuple{}, err
 		}
 	}
-	transactionRoots := append(append([]decisionRef(nil), projectionRoots...), demandRoots...)
+	for _, root := range derived {
+		if int(root) >= len(a.decisions.nodes) {
+			return formalRelationTuple{}, errDecisionMalformed
+		}
+	}
+	derivedOffset := len(projectionRoots)
+	transactionRoots := append(append([]decisionRef(nil), projectionRoots...), derived...)
+	demandOffset := len(transactionRoots)
+	transactionRoots = append(transactionRoots, demandRoots...)
 	assignmentOffset := len(transactionRoots)
 	transactionRoots = append(transactionRoots, make([]decisionRef, len(plan.writes))...)
 	transformed, err := a.decisions.applyVectorUnderCare(
@@ -182,7 +201,7 @@ func (a *formalTupleAlgebra) applyFormalClosedFactorLift(
 			regionGuard := decisionTrue
 			var leafErr error
 			for index, root := range demandRoots {
-				leaf := input[len(projectionRoots)+index]
+				leaf := input[demandOffset+index]
 				if leaf > 1 {
 					return nil, errDecisionMalformed
 				}
@@ -217,7 +236,7 @@ func (a *formalTupleAlgebra) applyFormalClosedFactorLift(
 					algebra: a, variable: plan.variable, span: span, authority: authority,
 					body: &a.program.bodies[plan.variable-1], guard: regionGuard,
 					ordinals: role.reads, positions: role.positions, leaves: leaves,
-					derived: input[len(projectionRoots):assignmentOffset],
+					derived: input[derivedOffset:demandOffset],
 				}
 			}
 			writes, err := apply(regionGuard, views)
