@@ -64,7 +64,7 @@ type ProductFactorSelection struct {
 	coordinates        CoordinateFactorInventory
 	coordinateLanes    []ProductLane
 	coordinateSelected []bool
-	coordinateOverlays []CoordinateSkeletonOverlayPlan
+	coordinateFactors  []productCoordinateFactorSelection
 	coordinateGroups   []productCoordinateSelectionGroup
 	values             []statekey.Value
 	valuesTop          bool
@@ -75,6 +75,13 @@ type productFactorSelectionSeal struct{}
 type productCoordinateSelectionGroup struct {
 	lane         ProductLane
 	first, count int
+}
+
+type productCoordinateFactorSelection struct {
+	family       CoordinateFamily
+	slots        []CoordinateSlot
+	overlay      CoordinateSkeletonOverlayPlan
+	skeletonOnly bool
 }
 
 type productLaneRuntime struct {
@@ -244,6 +251,7 @@ func (d ProductDomain) SealProductFactorSelection(
 	coordinates CoordinateFactorInventory,
 	values []statekey.Value,
 	valuesTop bool,
+	skeletonFamilies ...CoordinateFamily,
 ) (ProductFactorSelection, error) {
 	keys := coordinates.KeySpace()
 	if !d.Valid() || keys == nil || !keys.Valid() || !coordinates.ValidFor(d, keys) {
@@ -269,22 +277,50 @@ func (d ProductDomain) SealProductFactorSelection(
 		}
 		selection.selected[ordinal] = true
 	}
+	coordinateFactors := make([]productCoordinateFactorSelection, 0, len(coordinates.set.families)+len(skeletonFamilies))
+	seenFamilies := make(map[CoordinateFamily]struct{}, len(coordinates.set.families)+len(skeletonFamilies))
 	for _, bucket := range coordinates.set.families {
-		ordinal := int(bucket.family.lane.ordinal)
+		overlay, err := d.SealCoordinateSkeletonOverlayPlan(bucket.slots)
+		if err != nil {
+			return ProductFactorSelection{}, err
+		}
+		coordinateFactors = append(coordinateFactors, productCoordinateFactorSelection{
+			family: bucket.family, slots: bucket.slots, overlay: overlay,
+		})
+		seenFamilies[bucket.family] = struct{}{}
+	}
+	for index, family := range skeletonFamilies {
+		coordinate, err := d.validateCoordinateFamily(family)
+		if err != nil {
+			return ProductFactorSelection{}, fmt.Errorf("%w: skeleton-only coordinate family %d", ErrInvalidProductLane, index)
+		}
+		if _, duplicate := seenFamilies[coordinate.family]; duplicate {
+			return ProductFactorSelection{}, fmt.Errorf("%w: duplicate coordinate family %q", ErrInvalidProductLane, coordinate.family.id)
+		}
+		overlay, err := d.sealCoordinateSkeletonOverlayPlan(coordinate.family, keys, nil, true)
+		if err != nil {
+			return ProductFactorSelection{}, err
+		}
+		coordinateFactors = append(coordinateFactors, productCoordinateFactorSelection{
+			family: coordinate.family, overlay: overlay, skeletonOnly: true,
+		})
+		seenFamilies[coordinate.family] = struct{}{}
+	}
+	sort.Slice(coordinateFactors, func(left, right int) bool {
+		return coordinateFamilyLess(coordinateFactors[left].family, coordinateFactors[right].family)
+	})
+	selection.coordinateFactors = coordinateFactors
+	for factorIndex, factor := range selection.coordinateFactors {
+		ordinal := int(factor.family.lane.ordinal)
 		if ordinal < 0 || ordinal >= len(d.factorLanes) || selection.selected[ordinal] {
 			return ProductFactorSelection{}, fmt.Errorf("%w: coordinate factor overlaps ordinary factor", ErrInvalidProductLane)
 		}
 		if !selection.coordinateSelected[ordinal] {
 			selection.coordinateSelected[ordinal] = true
 		}
-		overlay, err := d.SealCoordinateSkeletonOverlayPlan(bucket.slots)
-		if err != nil {
-			return ProductFactorSelection{}, err
-		}
-		selection.coordinateOverlays = append(selection.coordinateOverlays, overlay)
-		if len(selection.coordinateGroups) == 0 || selection.coordinateGroups[len(selection.coordinateGroups)-1].lane != bucket.family.lane {
+		if len(selection.coordinateGroups) == 0 || selection.coordinateGroups[len(selection.coordinateGroups)-1].lane != factor.family.lane {
 			selection.coordinateGroups = append(selection.coordinateGroups, productCoordinateSelectionGroup{
-				lane: bucket.family.lane, first: len(selection.coordinateOverlays) - 1, count: 1,
+				lane: factor.family.lane, first: factorIndex, count: 1,
 			})
 		} else {
 			selection.coordinateGroups[len(selection.coordinateGroups)-1].count++
@@ -327,6 +363,18 @@ func (s ProductFactorSelection) CoordinateFactors() CoordinateFactorInventory {
 // through CoordinateFactors before semantic evaluation.
 func (s ProductFactorSelection) CoordinateLanes() []ProductLane {
 	return append([]ProductLane(nil), s.coordinateLanes...)
+}
+
+// CoordinateSkeletonFamilies returns the registered families whose complete
+// structural skeleton, but no scalar coordinate, belongs to the selection.
+func (s ProductFactorSelection) CoordinateSkeletonFamilies() []CoordinateFamily {
+	out := make([]CoordinateFamily, 0)
+	for _, factor := range s.coordinateFactors {
+		if factor.skeletonOnly {
+			out = append(out, factor.family)
+		}
+	}
+	return out
 }
 
 // ValueFactors returns the detached, canonical finite Values inventory.
@@ -488,7 +536,7 @@ func (d ProductDomain) validateTupleLaneSelection(lanes LaneSet) error {
 func (d ProductDomain) validateFactorSelection(selection ProductFactorSelection) error {
 	if !d.Valid() || selection.seal == nil || selection.seal != d.seal || selection.authority == nil || selection.coordinates.KeySpace() == nil ||
 		!selection.coordinates.ValidFor(d, selection.coordinates.KeySpace()) || len(selection.selected) != len(d.factorLanes) ||
-		len(selection.coordinateSelected) != len(d.factorLanes) || len(selection.coordinateOverlays) != len(selection.coordinates.set.families) ||
+		len(selection.coordinateSelected) != len(d.factorLanes) || len(selection.coordinateFactors) < len(selection.coordinates.set.families) ||
 		len(selection.coordinateGroups) != len(selection.coordinateLanes) {
 		return fmt.Errorf("%w: foreign factor selection", ErrInvalidProductLane)
 	}

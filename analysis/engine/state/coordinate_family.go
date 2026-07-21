@@ -86,6 +86,7 @@ type CoordinateSkeletonOverlayPlan struct {
 	family  CoordinateFamily
 	keys    *keyspace.KeySpace
 	payload coordinateSkeletonOverlayPlanPayload
+	whole   bool
 }
 
 func (f CoordinateScalarFactor) Slot() CoordinateSlot { return f.slot }
@@ -450,11 +451,28 @@ func (d ProductDomain) SealCoordinateSkeletonOverlayPlan(selected []CoordinateSl
 	if !d.Valid() || len(selected) == 0 || selected[0].keys == nil {
 		return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: coordinate skeleton overlay plan", ErrInvalidLaneFactor)
 	}
-	coordinate, err := d.validateCoordinateFamily(selected[0].family)
+	return d.sealCoordinateSkeletonOverlayPlan(selected[0].family, selected[0].keys, selected, false)
+}
+
+func (d ProductDomain) sealCoordinateSkeletonOverlayPlan(
+	family CoordinateFamily,
+	keys *keyspace.KeySpace,
+	selected []CoordinateSlot,
+	whole bool,
+) (CoordinateSkeletonOverlayPlan, error) {
+	if !d.Valid() || keys == nil || !keys.Valid() || whole && len(selected) != 0 {
+		return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: coordinate skeleton overlay plan", ErrInvalidLaneFactor)
+	}
+	coordinate, err := d.validateCoordinateFamily(family)
 	if err != nil {
 		return CoordinateSkeletonOverlayPlan{}, err
 	}
-	keys := selected[0].keys
+	if whole {
+		return CoordinateSkeletonOverlayPlan{seal: d.seal, family: coordinate.family, keys: keys, whole: true}, nil
+	}
+	if len(selected) == 0 {
+		return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: empty scalar coordinate overlay", ErrInvalidLaneFactor)
+	}
 	keysPayload := make([]coordinateKeyPayload, len(selected))
 	for index, slot := range selected {
 		if d.validateCoordinateSlotFor(coordinate, slot, keys) != nil {
@@ -478,8 +496,11 @@ func (d ProductDomain) OverlaySelectedCoordinateSkeleton(
 	currentScalars []CoordinateScalarFactor,
 ) (CoordinateFamilySkeleton, error) {
 	coordinate, err := d.validateCoordinateSkeletonPair(current, image)
-	if err != nil || plan.seal != d.seal || plan.family != current.family || plan.keys != current.keys || plan.payload == nil {
+	if err != nil || plan.seal != d.seal || plan.family != current.family || plan.keys != current.keys || !plan.whole && plan.payload == nil {
 		return CoordinateFamilySkeleton{}, fmt.Errorf("%w: coordinate skeleton overlay plan authority", ErrInvalidLaneFactor)
+	}
+	if plan.whole {
+		return image, nil
 	}
 	payload, ok := coordinate.ops.overlaySelectedSkeleton(plan.payload, current.payload, image.payload, currentScalars, current.keys)
 	if !ok || payload == nil {

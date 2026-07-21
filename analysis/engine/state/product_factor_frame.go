@@ -32,7 +32,7 @@ func (d ProductDomain) sealProductFactorFrame(
 	valuesTop bool,
 ) (ProductFactorFrame, error) {
 	if err := d.validateFactorSelection(selection); err != nil || len(ordinary) != len(selection.ordinary) ||
-		len(coordinates) != len(selection.coordinates.set.families) || len(values) != len(selection.values) {
+		len(coordinates) != len(selection.coordinateFactors) || len(values) != len(selection.values) {
 		return ProductFactorFrame{}, fmt.Errorf("%w: incomplete product factor frame", ErrIncompleteLaneFactors)
 	}
 	ownedOrdinary := append([]LaneFactor(nil), ordinary...)
@@ -46,9 +46,18 @@ func (d ProductDomain) sealProductFactorFrame(
 	}
 	ownedCoordinates := append([]CoordinateFamilyFactor(nil), coordinates...)
 	for index, factor := range ownedCoordinates {
-		bucket := selection.coordinates.set.families[index]
+		bucket := selection.coordinateFactors[index]
 		if factor.Family() != bucket.family || factor.Skeleton().keys != selection.coordinates.keys {
 			return ProductFactorFrame{}, fmt.Errorf("%w: coordinate frame factor %d", ErrInvalidLaneFactor, index)
+		}
+		if bucket.skeletonOnly {
+			if len(factor.scalars) != 0 {
+				return ProductFactorFrame{}, fmt.Errorf("%w: skeleton-only coordinate frame carries scalars", ErrInvalidLaneFactor)
+			}
+			if _, err := d.validateCoordinateSkeleton(factor.Skeleton()); err != nil {
+				return ProductFactorFrame{}, err
+			}
+			continue
 		}
 		shape, err := d.SealCoordinateFamilyShape(factor.Skeleton(), bucket.slots)
 		if err != nil {
@@ -128,13 +137,20 @@ func (t *ProductFactorFrameTransaction) WriteCoordinate(family CoordinateFamily,
 	if t == nil || t.used || factor.Family() != family {
 		return fmt.Errorf("%w: coordinate frame transaction write", ErrInvalidLaneFactor)
 	}
-	for index, bucket := range t.selection.coordinates.set.families {
+	for index, bucket := range t.selection.coordinateFactors {
 		if bucket.family == family {
 			t.frame.coordinates[index] = factor
 			return nil
 		}
 	}
 	return fmt.Errorf("%w: coordinate frame write is undeclared", ErrInvalidLaneFactor)
+}
+
+// OwnsProductFactorFrame reports whether frame was sealed by selection. It is
+// the constant-time component handoff check; full structural validation is
+// paid only when a frame is projected, written, or finished.
+func (d ProductDomain) OwnsProductFactorFrame(selection ProductFactorSelection, frame ProductFactorFrame) bool {
+	return d.validateFactorSelection(selection) == nil && frame.authority != nil && frame.authority == selection.authority
 }
 
 // WriteValue replaces one selection-owned finite Values factor.
@@ -218,10 +234,18 @@ func (d ProductDomain) ProjectProductFactorFrame(value State, selection ProductF
 			return ProductFactorFrame{}, fmt.Errorf("%w: coordinate carrier projection", ErrInvalidLaneFactor)
 		}
 		for familyIndex := group.first; familyIndex < group.first+group.count; familyIndex++ {
-			bucket := selection.coordinates.set.families[familyIndex]
+			bucket := selection.coordinateFactors[familyIndex]
 			skeleton, scalars, familyErr := d.DecomposeCoordinateFamily(laneFactor, bucket.family, selection.coordinates.keys)
 			if familyErr != nil {
 				return ProductFactorFrame{}, familyErr
+			}
+			if bucket.skeletonOnly {
+				factor, sealErr := d.SealCoordinateFamilyFactor(skeleton, nil)
+				if sealErr != nil {
+					return ProductFactorFrame{}, sealErr
+				}
+				frame.coordinates = append(frame.coordinates, factor)
+				continue
 			}
 			shape, familyErr := d.SealCoordinateFamilyShape(skeleton, bucket.slots)
 			if familyErr != nil {
@@ -259,7 +283,7 @@ func (d ProductDomain) ProjectProductFactorFrame(value State, selection ProductF
 // Top remains absorbing unless the selection explicitly owns that bit.
 func (d ProductDomain) PatchProductFactorFrame(base State, selection ProductFactorSelection, frame ProductFactorFrame) (State, error) {
 	if err := d.validateFactorSelection(selection); err != nil || frame.authority == nil || frame.authority != selection.authority ||
-		len(frame.ordinary) != len(selection.ordinary) || len(frame.coordinates) != len(selection.coordinates.set.families) ||
+		len(frame.ordinary) != len(selection.ordinary) || len(frame.coordinates) != len(selection.coordinateFactors) ||
 		len(frame.values) != len(selection.values) {
 		return State{}, fmt.Errorf("%w: product factor frame authority", ErrInvalidLaneFactor)
 	}
@@ -279,11 +303,11 @@ func (d ProductDomain) PatchProductFactorFrame(base State, selection ProductFact
 			return State{}, fmt.Errorf("%w: coordinate frame carrier", ErrInvalidLaneFactor)
 		}
 		for familyIndex := group.first; familyIndex < group.first+group.count; familyIndex++ {
-			bucket, image := selection.coordinates.set.families[familyIndex], frame.coordinates[familyIndex]
+			bucket, image := selection.coordinateFactors[familyIndex], frame.coordinates[familyIndex]
 			if image.Family() != bucket.family {
 				return State{}, fmt.Errorf("%w: coordinate frame factor %d", ErrInvalidLaneFactor, familyIndex)
 			}
-			currentCoordinateFactor, err = d.patchSelectedCoordinateFamily(currentCoordinateFactor, bucket.slots, selection.coordinateOverlays[familyIndex], image)
+			currentCoordinateFactor, err = d.patchSelectedCoordinateFamily(currentCoordinateFactor, bucket.slots, bucket.overlay, image)
 			if err != nil {
 				return State{}, err
 			}
