@@ -18,11 +18,7 @@ func (s *Static) stateSignatureArgumentType(input effectlowering.SignatureOutcom
 	}
 	input, err := input.WithPathValueQuery()
 	if err != nil {
-		// Path-value observation is optional.  A restricted State lane set
-		// cannot lawfully run this supplemental signature extension, so omit
-		// it rather than constructing a partial query or turning a disabled
-		// analysis axis into a checker panic.
-		return effectlowering.SignatureArgumentTypeProgram{}
+		panic(err)
 	}
 	program, err := effectlowering.SealSignatureArgumentTypeProgram(input, func(ctx effectlowering.SignatureArgumentTypeContext) (typ.Type, bool) {
 		source := ctx.Source

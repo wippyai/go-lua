@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -1809,22 +1808,6 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderWithDynamicEviden
 	if a == nil || provider == nil {
 		return callpayload.CallOutcome{}, errFormalComponentMalformed
 	}
-	// A provider path identifies a leaf only within one ExternalCall step.  It
-	// is deliberately reused by every step's retained composition tree, so the
-	// evaluation-local cache must also bind the owning relation variable and
-	// call point.  Demand-driven callers have already materialized their exact
-	// evidence into views; the legacy complete-frame caller may still discover
-	// dynamic evidence, and is therefore not cacheable before that discovery.
-	cacheable := resolveDynamic != nil
-	cacheHash := uint64(0)
-	if cacheable {
-		cacheHash = formalExternalCallLeafOutcomeCacheHash(plan, provider, views)
-		for _, entry := range a.externalCallLeafOutcomes[cacheHash] {
-			if formalExternalCallLeafOutcomeCacheEqual(entry, plan, provider, views) {
-				return entry.outcome, nil
-			}
-		}
-	}
 	frame, err := a.bindFormalExternalCallInput(plan, provider, views)
 	if err != nil {
 		return callpayload.CallOutcome{}, err
@@ -1860,12 +1843,6 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderWithDynamicEviden
 	outcome, err := provider.site.Evaluate(node, input)
 	if err != nil {
 		return callpayload.CallOutcome{}, err
-	}
-	if cacheable {
-		if a.externalCallLeafOutcomes == nil {
-			a.externalCallLeafOutcomes = make(map[uint64][]formalExternalCallLeafOutcomeCacheEntry)
-		}
-		a.externalCallLeafOutcomes[cacheHash] = append(a.externalCallLeafOutcomes[cacheHash], formalExternalCallLeafOutcomeCacheEntryFor(plan, provider, views, outcome))
 	}
 	return outcome, nil
 }
@@ -1932,71 +1909,6 @@ func (a *formalTupleAlgebra) countDistinctFormalExternalCallInputs(
 type formalExternalCallProviderRelation struct {
 	care    decisionRef
 	outcome decisionRef
-}
-
-type formalExternalCallLeafOutcomeCacheView struct {
-	variable relationVar
-	ordinals []formalFiberOrdinal
-	leaves   []decisionLeaf
-	derived  []decisionLeaf
-}
-
-type formalExternalCallLeafOutcomeCacheEntry struct {
-	body     *relationProgramBody
-	variable relationVar
-	point    cfg.Point
-	path     []uint32
-	views    []formalExternalCallLeafOutcomeCacheView
-	outcome  callpayload.CallOutcome
-}
-
-func formalExternalCallLeafOutcomeCacheHash(plan *formalExternalCallStep, provider *formalExternalCallProvider, views []formalSparseLeafView) uint64 {
-	parts := make([]decisionLeaf, 0, 2+len(provider.path)+len(views)*2)
-	parts = append(parts, decisionLeaf(plan.variable), decisionLeaf(plan.point))
-	for _, part := range provider.path {
-		parts = append(parts, decisionLeaf(part))
-	}
-	for _, view := range views {
-		parts = append(parts, decisionLeaf(view.variable), decisionLeaf(len(view.ordinals)))
-		for index, ordinal := range view.ordinals {
-			parts = append(parts, decisionLeaf(ordinal), view.leaves[index])
-		}
-		parts = append(parts, decisionLeaf(len(view.derived)))
-		parts = append(parts, view.derived...)
-	}
-	return formalFactorLeafHash(parts)
-}
-
-func formalExternalCallLeafOutcomeCacheEqual(entry formalExternalCallLeafOutcomeCacheEntry, plan *formalExternalCallStep, provider *formalExternalCallProvider, views []formalSparseLeafView) bool {
-	if entry.body != plan.body || entry.variable != plan.variable || entry.point != plan.point || len(entry.path) != len(provider.path) || len(entry.views) != len(views) {
-		return false
-	}
-	for index := range entry.path {
-		if entry.path[index] != provider.path[index] {
-			return false
-		}
-	}
-	for index, view := range views {
-		cached := entry.views[index]
-		if cached.variable != view.variable || !slices.Equal(cached.ordinals, view.ordinals) ||
-			!formalFactorLeavesEqual(cached.leaves, view.leaves) || !formalFactorLeavesEqual(cached.derived, view.derived) {
-			return false
-		}
-	}
-	return true
-}
-
-func formalExternalCallLeafOutcomeCacheEntryFor(plan *formalExternalCallStep, provider *formalExternalCallProvider, views []formalSparseLeafView, outcome callpayload.CallOutcome) formalExternalCallLeafOutcomeCacheEntry {
-	entry := formalExternalCallLeafOutcomeCacheEntry{body: plan.body, variable: plan.variable, point: plan.point, path: append([]uint32(nil), provider.path...), outcome: outcome, views: make([]formalExternalCallLeafOutcomeCacheView, len(views))}
-	for index, view := range views {
-		entry.views[index] = formalExternalCallLeafOutcomeCacheView{
-			variable: view.variable,
-			ordinals: append([]formalFiberOrdinal(nil), view.ordinals...),
-			leaves:   append([]decisionLeaf(nil), view.leaves...),
-			derived:  append([]decisionLeaf(nil), view.derived...),
-		}
-	}
-	return entry
 }
 
 // evaluateFormalExternalCallProviderRelation lifts the retained provider
@@ -2338,8 +2250,6 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 	if err := a.validateTuple(predecessor); err != nil || predecessor.bottom() {
 		return predecessor, err
 	}
-	// Leaf outcomes are memoized only within this closed ExternalCall evaluation.
-	a.externalCallLeafOutcomes = make(map[uint64][]formalExternalCallLeafOutcomeCacheEntry)
 	for _, tuple := range published {
 		if tuple.variable != plan.variable {
 			return formalRelationTuple{}, errFormalComponentForeignOwner
