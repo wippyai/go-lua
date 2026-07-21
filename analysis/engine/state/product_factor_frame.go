@@ -115,6 +115,20 @@ func (d ProductDomain) BeginProductFactorFrameTransaction(
 	return &ProductFactorFrameTransaction{domain: d, selection: outputs, frame: sealed}, nil
 }
 
+// BindProductFactorFrame seals one already-factored, State-free carrier view.
+// It is the adapter boundary for decision-diagram and other transposed
+// evaluators: physical factors stay in their family-native spelling and no
+// sparse State is reconstructed merely to obtain a frame authority.
+func (d ProductDomain) BindProductFactorFrame(
+	selection ProductFactorSelection,
+	ordinary []LaneFactor,
+	coordinates []CoordinateFamilyFactor,
+	values []product.Value,
+	valuesTop bool,
+) (ProductFactorFrame, error) {
+	return d.sealProductFactorFrame(selection, ordinary, coordinates, values, valuesTop)
+}
+
 // WriteOrdinary replaces one selection-owned whole-lane factor.
 func (t *ProductFactorFrameTransaction) WriteOrdinary(lane ProductLane, factor LaneFactor) error {
 	if t == nil || t.used || lane.seal == nil || factor.lane != lane {
@@ -181,6 +195,12 @@ func (t *ProductFactorFrameTransaction) Finish() (ProductFactorFrame, error) {
 		return ProductFactorFrame{}, fmt.Errorf("%w: product factor frame transaction consumed", ErrInvalidLaneFactor)
 	}
 	t.used = true
+	if t.frame.valuesTop {
+		top := product.Top()
+		for index := range t.frame.values {
+			t.frame.values[index] = top
+		}
+	}
 	return t.domain.sealProductFactorFrame(
 		t.selection, t.frame.ordinary, t.frame.coordinates, t.frame.values, t.frame.valuesTop,
 	)
@@ -307,7 +327,11 @@ func (d ProductDomain) PatchProductFactorFrame(base State, selection ProductFact
 			if image.Family() != bucket.family {
 				return State{}, fmt.Errorf("%w: coordinate frame factor %d", ErrInvalidLaneFactor, familyIndex)
 			}
-			currentCoordinateFactor, err = d.patchSelectedCoordinateFamily(currentCoordinateFactor, bucket.slots, bucket.overlay, image)
+			if bucket.skeletonOnly {
+				currentCoordinateFactor, err = d.ReconcileCoordinateFamily(currentCoordinateFactor, image.Skeleton(), nil)
+			} else {
+				currentCoordinateFactor, err = d.patchSelectedCoordinateFamily(currentCoordinateFactor, bucket.slots, bucket.overlay, image)
+			}
 			if err != nil {
 				return State{}, err
 			}

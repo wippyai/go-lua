@@ -257,6 +257,13 @@ func (d ProductDomain) SealProductFactorSelection(
 	if !d.Valid() || keys == nil || !keys.Valid() || !coordinates.ValidFor(d, keys) {
 		return ProductFactorSelection{}, fmt.Errorf("%w: invalid product factor selection authority", ErrInvalidProductLane)
 	}
+	closedCoordinates, err := d.CloseCoordinateFactorInventory(keys, coordinates)
+	if err != nil {
+		return ProductFactorSelection{}, err
+	}
+	if closedCoordinates.set != coordinates.set {
+		return ProductFactorSelection{}, fmt.Errorf("%w: coordinate factor selection is not dependency-closed", ErrInvalidProductLane)
+	}
 	selection := ProductFactorSelection{
 		seal:               d.seal,
 		authority:          new(productFactorSelectionSeal),

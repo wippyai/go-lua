@@ -531,10 +531,10 @@ func completeVersionInsensitiveSymbolRoot(from, to *keyspace.KeySpace, path keys
 }
 
 func rebaseBoundaryStateKeys(ctx *boundaryRebaseContext, in pathaddr.StateKey) ([]pathaddr.StateKey, bool) {
+	if in == "" {
+		return []pathaddr.StateKey{""}, true
+	}
 	if ctx != nil && ctx.structuralIdentity {
-		if in == "" {
-			return []pathaddr.StateKey{""}, true
-		}
 		if _, ok := ctx.fromKeys.FromStateKey(pathdom.PathKey(in.String())); !ok || ctx.fromKeys != ctx.toKeys {
 			return nil, false
 		}

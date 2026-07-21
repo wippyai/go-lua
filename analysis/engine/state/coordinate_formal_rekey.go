@@ -318,7 +318,11 @@ func (d ProductDomain) RekeyOrdinaryLaneFactorFormalPublication(projection Coord
 	if !d.OwnsCoordinateFormalPublicationProjection(projection) {
 		return LaneFactor{}, fmt.Errorf("%w: ordinary formal publication projection", ErrInvalidLaneFactor)
 	}
-	return d.RekeyOrdinaryLaneFactorFormal(projection.inverse, source)
+	projected, err := d.ProjectBoundaryFactor(projection.selection, source)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return d.RekeyOrdinaryLaneFactorFormal(projection.inverse, projected)
 }
 
 // RekeyCoordinateLaneFactorFormalPublication first performs the registered

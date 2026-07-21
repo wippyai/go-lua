@@ -348,6 +348,133 @@ func TestOrdinaryFormalRekeyUsesRegisteredStateKeyBoundaryLaw(t *testing.T) {
 	}
 }
 
+func TestOrdinaryFormalRekeyPreservesOptionalChannelSelectEndpoints(t *testing.T) {
+	reg := standard.Registry()
+	domain, err := TryRegisteredProductDomainWithLanes(reg, []LaneID{LaneChannelSelect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, to := keyspace.New(), keyspace.New()
+	resultKey := from.FromPath(pathdom.Path{Symbol: 73, Version: 1})
+	caseKey := from.FromPath(pathdom.Path{Symbol: 74, Version: 1})
+	resultState, resultOK := pathaddr.StateKeyFromPathKey(from.FormatReadOnly(resultKey))
+	caseState, caseOK := pathaddr.StateKeyFromPathKey(from.FormatReadOnly(caseKey))
+	if !resultOK || !caseOK {
+		t.Fatal("source StateKey fixture")
+	}
+	source := State{}.
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: "formal-rekey-select", Kind: channelselectfact.FactSelect, Result: resultState,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: "formal-rekey-case", Kind: channelselectfact.FactCase, Case: caseState,
+		})
+	lane, _ := domain.ProductLane(LaneChannelSelect)
+	factors, err := domain.DecomposeLanes(source, []ProductLane{lane})
+	if err != nil || len(factors) != 1 {
+		t.Fatalf("decompose = %d, %v", len(factors), err)
+	}
+	owner := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte(t.Name())), 1)
+	resultRoot := formal.NewRoot(owner, 1, formal.Input)
+	caseRoot := formal.NewRoot(owner, 2, formal.Input)
+	plan, err := domain.SealCoordinateFormalRootRekey(owner, from, to, []CoordinateFormalRootBinding{
+		{Source: resultKey, Target: resultRoot}, {Source: caseKey, Target: caseRoot},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapped, err := domain.RekeyOrdinaryLaneFactorFormal(plan, factors[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := domain.ComposeSparse([]LaneFactor{mapped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := result.ChannelSelectFactsSnapshot().Facts
+	if len(facts) != 2 {
+		t.Fatalf("mapped optional facts = %#v", facts)
+	}
+	for _, fact := range facts {
+		var raw pathaddr.StateKey
+		var want formal.Root
+		switch fact.Kind {
+		case channelselectfact.FactSelect:
+			if fact.Case != "" {
+				t.Fatalf("select case endpoint = %q", fact.Case)
+			}
+			raw, want = fact.Result, resultRoot
+		case channelselectfact.FactCase:
+			if fact.Result != "" {
+				t.Fatalf("case result endpoint = %q", fact.Result)
+			}
+			raw, want = fact.Case, caseRoot
+		default:
+			t.Fatalf("unexpected channel-select fact: %#v", fact)
+		}
+		key, ok := to.FromStateKey(pathdom.PathKey(raw.String()))
+		got, exact := to.DescribeFormalRoot(key)
+		if !ok || !exact || got != want {
+			t.Fatalf("mapped optional StateKey = %q, descriptor %#v/%t/%t", raw, got, ok, exact)
+		}
+	}
+}
+
+func TestOrdinaryFormalPublicationProjectsUnselectedStructuralFactsBeforeRekey(t *testing.T) {
+	reg := standard.Registry()
+	domain, err := TryRegisteredProductDomainWithLanes(reg, []LaneID{LaneChannelSelect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	concrete, formalKeys := keyspace.New(), keyspace.New()
+	lexical := concrete.FromPath(pathdom.NewPath(symbol.ID(719), ""))
+	versioned := concrete.FromPath(pathdom.Path{Symbol: symbol.ID(719), Version: 1})
+	owner := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte(t.Name())), 1)
+	middle := formal.NewRoot(owner, 1, formal.Middle)
+	forward, err := domain.SealCoordinateFormalRootRekey(owner, concrete, formalKeys, []CoordinateFormalRootBinding{
+		{Source: lexical, Target: middle, ResolverVersions: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	formalVersion, err := domain.RekeyStructuralKeyFormal(forward, versioned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formalState, ok := pathaddr.StateKeyFromPathKey(formalKeys.FormatReadOnly(formalVersion))
+	if !ok {
+		t.Fatal("formal StateKey")
+	}
+	source := State{}.AddChannelSelectFact(channelselectfact.Fact{
+		Select: "publication-projection", Kind: channelselectfact.FactCase,
+		Result: formalState, Case: formalState,
+	})
+	lane, _ := domain.ProductLane(LaneChannelSelect)
+	factors, err := domain.DecomposeLanes(source, []ProductLane{lane})
+	if err != nil || len(factors) != 1 {
+		t.Fatalf("decompose = %d, %v", len(factors), err)
+	}
+	empty, err := domain.SealCoordinateFactorInventory(formalKeys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := domain.SealCoordinateFormalPublicationProjection(forward, empty, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := domain.RekeyOrdinaryLaneFactorFormalPublication(projection, factors[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := domain.ComposeSparse([]LaneFactor{published})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts := result.ChannelSelectFactsSnapshot().Facts; len(facts) != 0 {
+		t.Fatalf("unselected formal facts survived publication: %v", facts)
+	}
+}
+
 func TestCoordinateFormalLaneFactorCrossOwnerIsInjectiveAndRoundTrips(t *testing.T) {
 	reg := standard.Registry()
 	domain, err := TryRegisteredProductDomainWithLanes(reg, []LaneID{LanePathEvidence})

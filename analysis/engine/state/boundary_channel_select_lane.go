@@ -67,11 +67,11 @@ func rebaseChannelSelectBoundaryFactor(ctx *boundaryRebaseContext, source channe
 	}, func(fact channelselectfact.Fact) boundaryPair[pathaddr.StateKey, pathaddr.StateKey] {
 		return boundaryPair[pathaddr.StateKey, pathaddr.StateKey]{first: fact.Result, second: fact.Case}
 	}, func(fact channelselectfact.Fact) ([]boundaryPair[pathaddr.StateKey, pathaddr.StateKey], bool) {
-		results, valid := ctx.quotient.stateKeyPreimages(fact.Result)
+		results, valid := ctx.quotient.optionalStateKeyPreimages(fact.Result)
 		if !valid {
 			return nil, false
 		}
-		cases, valid := ctx.quotient.stateKeyPreimages(fact.Case)
+		cases, valid := ctx.quotient.optionalStateKeyPreimages(fact.Case)
 		if !valid {
 			return nil, false
 		}

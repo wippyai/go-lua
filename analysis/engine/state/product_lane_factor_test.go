@@ -7,11 +7,15 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -189,6 +193,151 @@ func TestProductFactorFrameOverlaysCoordinateSkeletonAndSelectedDefaults(t *test
 	base = assertPatch("create", base, domain.Lattice().Bottom().WritePlacement(target, placement.OwnedHeap), placement.OwnedHeap)
 	base = assertPatch("delete", base, domain.Lattice().Bottom(), placement.Bottom)
 	assertPatch("selected-top-default", base, domain.Lattice().Top(), placement.Unknown)
+}
+
+func TestProductFactorSelectionRejectsUnclosedCoordinateDependencies(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	keys := keyspace.New()
+	field, ok := keys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "field"}})
+	if !ok {
+		t.Fatal("heap member suffix")
+	}
+	lane, _ := domain.ProductLane(LaneHeapTableIdentity)
+	families, err := domain.CoordinateFamilies(lane)
+	if err != nil || len(families) != 1 {
+		t.Fatalf("heap coordinate family = %d, err=%v", len(families), err)
+	}
+	id := identity.ConcreteTerm(identity.ID{Kind: "table", Site: t.Name(), Index: 1})
+	member := CoordinateSlot{family: families[0], keys: keys, key: wrapHeapCoordinateKey(heapCoordinateKey{
+		kind: heapCoordinateMember, id: id, key: field,
+	})}
+	inventory, err := domain.SealCoordinateFactorInventory(keys, []CoordinateSlot{member})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := domain.SealProductFactorSelection(nil, inventory, nil, false); !errors.Is(err, ErrInvalidProductLane) {
+		t.Fatalf("unclosed exact selection error = %v", err)
+	}
+}
+
+func TestProductFactorFrameRejectsHeapRootRetractionWithCarriedMember(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	keys := keyspace.New()
+	field, ok := keys.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "field"}})
+	if !ok {
+		t.Fatal("heap member suffix")
+	}
+	lane, _ := domain.ProductLane(LaneHeapTableIdentity)
+	families, err := domain.CoordinateFamilies(lane)
+	if err != nil || len(families) != 1 {
+		t.Fatalf("heap coordinate family = %d, err=%v", len(families), err)
+	}
+	id := identity.ID{Kind: "table", Site: t.Name(), Index: 1}
+	term := identity.ConcreteTerm(id)
+	root := CoordinateSlot{family: families[0], keys: keys, key: wrapHeapCoordinateKey(heapCoordinateRootKey(term))}
+	inventory, err := domain.SealCoordinateFactorInventory(keys, []CoordinateSlot{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err = domain.CloseCoordinateFactorInventory(keys, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := domain.SealProductFactorSelection(nil, inventory, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := domain.ProjectProductFactorFrame(domain.Lattice().Bottom(), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := identityvalue.Present(reg, id)
+	base := domain.Lattice().Bottom().WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: present, StaticMembers: map[keyspace.Key]product.Value{field: present},
+	}))
+	if _, err := domain.PatchProductFactorFrame(base, selection, image); !errors.Is(err, ErrInvalidLaneFactor) {
+		t.Fatalf("heap root retraction error = %v", err)
+	}
+}
+
+func TestProductFactorFrameSkeletonOnlyPublicationReconcilesScalars(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	keys := keyspace.New()
+	path := pathaddr.StateKey("sym9981@1.skeleton")
+	empty, err := domain.SealCoordinateFactorInventory(keys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	family, ok := domain.LenFloorCoordinateFamily()
+	if !ok {
+		t.Fatal("LenFloor coordinate family")
+	}
+	selection, err := domain.SealProductFactorSelection(nil, empty, nil, false, family)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := domain.ProjectProductFactorFrame(domain.Lattice().Bottom(), selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := domain.Lattice().Bottom().WriteLenFloor(keys, path, 4)
+	got, err := domain.PatchProductFactorFrame(base, selection, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if floor, present := got.ReadLenFloor(keys, path); present || floor != 0 {
+		t.Fatalf("reconciled LenFloor = %d/%t", floor, present)
+	}
+}
+
+func TestProductFactorFrameFinishCanonicalizesValuesTop(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	keys := keyspace.New()
+	empty, err := domain.SealCoordinateFactorInventory(keys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := statekey.SymbolValue(9982)
+	selection, err := domain.SealProductFactorSelection(nil, empty, []statekey.Value{slot}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := domain.Lattice().Bottom().WriteValue(reg, slot, identityvalue.Present(reg, identity.ID{Kind: "table", Site: t.Name(), Index: 2}))
+	frame, err := domain.ProjectProductFactorFrame(base, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := domain.BeginProductFactorFrameTransaction(selection, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.WriteValuesTop(true); err != nil {
+		t.Fatal(err)
+	}
+	frame, err = transaction.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := frame.Values()
+	if !frame.ValuesTop() || len(values) != 1 || !product.Equal(reg, values[0], product.Top()) {
+		t.Fatalf("canonical Values Top frame = top:%t values:%v", frame.ValuesTop(), values)
+	}
+	patched, err := domain.PatchProductFactorFrame(base, selection, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reprojected, err := domain.ProjectProductFactorFrame(patched, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reprojectedValues := reprojected.Values()
+	if !reprojected.ValuesTop() || len(reprojectedValues) != 1 || !product.Equal(reg, reprojectedValues[0], values[0]) {
+		t.Fatal("Values Top publication did not round-trip through its sealed frame")
+	}
 }
 
 func TestLaneMaskInlineFastPathAndCanonicalUnboundedSpill(t *testing.T) {
