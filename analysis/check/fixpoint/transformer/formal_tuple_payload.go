@@ -45,6 +45,12 @@ type formalTupleAlgebra struct {
 	// are accepted only after WTO completion proves that every input tuple used
 	// by the witness is the stabilized solution tuple for that input cell.
 	applyObservations map[formalRelationCell]formalApplyObservationWitness
+	// externalCallLeafOutcomes is evaluation-local dirty scheduling for sealed
+	// ExternalCall leaves.  A leaf is keyed solely by its own frozen sparse
+	// input certificate, so a source outside that certificate cannot cause its
+	// provider evaluator to run again.  Parent composition remains outside this
+	// cache and therefore still observes an owning leaf's changed outcome.
+	externalCallLeafOutcomes map[uint64][]formalExternalCallLeafOutcomeCacheEntry
 	// evalTrace is nil outside explicit diagnostic runs. It carries no semantic
 	// state and is never consulted by an evaluator or lattice law.
 	evalTrace  *formalRelationEvalTrace
@@ -78,6 +84,7 @@ func newFormalTupleAlgebra(ctx context.Context, program *RelationProgram) (*form
 		factorReachability:          make(map[formalFactorReachabilityKey][]formalFactorReachabilityEntry),
 		factorExecutionCapabilities: make(map[formalFactorExecutionCapabilityKey][]formalFactorExecutionCapabilityEntry),
 		applyObservations:           make(map[formalRelationCell]formalApplyObservationWitness),
+		externalCallLeafOutcomes:    make(map[uint64][]formalExternalCallLeafOutcomeCacheEntry),
 	}
 	if err := algebra.prefreezeFormalBottomReachability(); err != nil {
 		return nil, err

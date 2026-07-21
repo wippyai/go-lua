@@ -41,20 +41,21 @@ type NormalReturnFactorFrame[K comparable] struct {
 // seals the complete address/factor vocabulary; Decode receives the actual
 // provider outcome as scratch and never discovers State, inventory, or routes.
 type NormalReturnFactorCodec[K comparable] struct {
-	authority  *PathSemanticAuthority
-	domain     state.ProductDomain
-	keys       *keyspace.KeySpace
-	point      cfg.Point
-	paths      callboundary.PathBindings
-	lanes      []state.ProductLane
-	ordinals   map[state.ProductLane]int
-	inventory  state.CoordinateFactorInventory
-	heapRoots  []state.HeapObjectRootSlot
-	valueRoots map[statekey.ValueDependency]K
-	valueOrder []K
-	rootSet    map[K]struct{}
-	typestates state.TypestateQueryCapability
-	seal       *normalReturnFactorCodecSeal
+	authority         *PathSemanticAuthority
+	domain            state.ProductDomain
+	keys              *keyspace.KeySpace
+	point             cfg.Point
+	paths             callboundary.PathBindings
+	lanes             []state.ProductLane
+	ordinals          map[state.ProductLane]int
+	inventory         state.CoordinateFactorInventory
+	heapRoots         []state.HeapObjectRootSlot
+	valueRoots        map[statekey.ValueDependency]K
+	valueOrder        []K
+	rootSet           map[K]struct{}
+	typestates        state.TypestateQueryCapability
+	hasTypestateQuery bool
+	seal              *normalReturnFactorCodecSeal
 }
 
 type normalReturnFactorCodecSeal struct{}
@@ -440,10 +441,18 @@ func PrepareNormalReturnFactorCodec[K comparable](
 			return NormalReturnFactorCodec[K]{}, fmt.Errorf("%w (lane=%s family=%s)", bindErr, family.Lane().ID(), family.ID())
 		}
 	}
-	var err error
-	codec.typestates, err = domain.SealTypestateQueryCapability(codec.keys)
-	if err != nil {
-		return NormalReturnFactorCodec[K]{}, err
+	// Lifecycle decoding is optional with the typestate axis.  Seal the
+	// composite read capability only when both registered factors exist; a
+	// restricted product must not retain an unusable half-query.
+	_, hasTypestate := domain.ProductLane(state.LaneTypestates)
+	_, hasPathEvidence := domain.PathValueFamily()
+	if hasTypestate && hasPathEvidence {
+		var err error
+		codec.typestates, err = domain.SealTypestateQueryCapability(codec.keys)
+		if err != nil {
+			return NormalReturnFactorCodec[K]{}, err
+		}
+		codec.hasTypestateQuery = true
 	}
 	return codec, nil
 }
@@ -451,7 +460,7 @@ func PrepareNormalReturnFactorCodec[K comparable](
 func (p NormalReturnFactorCodec[K]) valid() bool {
 	return p.seal != nil && p.authority != nil && p.authority.Valid() && p.domain.Valid() &&
 		p.keys != nil && p.inventory.ValidFor(p.domain, p.keys) && len(p.lanes) == len(p.ordinals) &&
-		p.typestates.ValidFor(p.domain)
+		(!p.hasTypestateQuery || p.typestates.ValidFor(p.domain))
 }
 
 func (p NormalReturnFactorCodec[K]) validateFrame(input NormalReturnFactorFrame[K]) error {
@@ -2042,6 +2051,9 @@ func (p NormalReturnFactorCodec[K]) decodeLifecycle(resolve normalReturnApplyCon
 	}
 	if !pathEnabled {
 		return nil
+	}
+	if !p.hasTypestateQuery {
+		return fmt.Errorf("factapply: lifecycle factors are present without a registered typestate query capability")
 	}
 	mutations := make([]state.CallOutcomeLifecycleMutation, 0, len(resolve.normalFacts.LifecycleFacts))
 	for _, fact := range resolve.normalFacts.LifecycleFacts {

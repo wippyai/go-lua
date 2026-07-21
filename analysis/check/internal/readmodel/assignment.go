@@ -222,7 +222,7 @@ func (r Reader) forEachLocalAssignment(
 	interfaceMismatch, hasInterfaceMismatch := r.result.RecordInterfaceMismatch(t, expected)
 	assignmentPlan := readapi.AssignmentCheckPlan{
 		Assignment:               assignment,
-		ValueAdmissible:          r.ValueProofAdmissible(value, expected),
+		ValueAdmissible:          r.ValueProofAdmissible(value, expected) || uncontractedUnknownCallResult(fact.Source, assignment),
 		ValueProvenMismatch:      r.ValueWitnessProvenMismatch(value, expected),
 		MayBeNil:                 assignmentTopLikeNilableAccess(assignment.TypeWithPresence, assignment.NilableAccesses),
 		MissingRequiredField:     missingField,
@@ -245,6 +245,16 @@ func (r Reader) forEachLocalAssignment(
 	r.recordRefutedAssignmentCascade(assignment, refutedTargets, refutedDynamicRoots)
 	*visited = true
 	return visit(assignment)
+}
+
+// uncontractedUnknownCallResult is the ordinary dynamic-call case: no
+// explicit any/unknown boundary crossed this call, so its absent return
+// contract cannot refute an annotated assignment. Explicit-top call results
+// remain untrusted and therefore fail closed through ValueProofAdmissible.
+func uncontractedUnknownCallResult(source sourceprovenance.ASTSource, assignment Assignment) bool {
+	return source.Kind == sourceprovenance.SourceCall &&
+		(assignment.TypeWithPresence == nil || typ.IsUnknown(assignment.TypeWithPresence)) &&
+		!assignment.UntrustedTopOrigin
 }
 
 func (r Reader) localAssignmentSourceValue(point cfg.Point, fact body.LocalAssignmentFact) (product.Value, bool) {

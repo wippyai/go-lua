@@ -51,7 +51,8 @@ func calleeValueProvider(
 			return methodCalleeValue(reg, typeValues, sources, ctx, site, in, read)
 		}
 		config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
-		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok && hasCalleeEvidence(reg, value) {
+		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok &&
+			(hasCalleeEvidence(reg, value) || product.Get(reg, value, evidence.Key).IsExplicitTop()) {
 			return value, true
 		}
 		if value, ok, authoritative := readablePrefixCalleeValue(reg, typeValues, config, ctx.Point, p, in); authoritative {
@@ -329,6 +330,54 @@ func explicitAnyReceiverMethodOutcomeProvider(
 	return callpayload.SealObservedCallOutcomeProgram(
 		"explicit any-receiver method outcome", []string{"Results"},
 		state.LaneSet{}, state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(false, true), shape, nil, evaluate,
+	)
+}
+
+// explicitAnyCalleeOutcomeProvider propagates an explicit any boundary through
+// ordinary direct and dotted calls. It deliberately relies on the callee value
+// and its provenance, never a callee spelling: a manifest signature can only
+// win through the separately resolved exact static path.
+func explicitAnyCalleeOutcomeProvider(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+) callpayload.CallOutcomeProgram {
+	shape := func(_ transfer.NodeContext, site factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
+		if site.MethodName() != "" {
+			return callpayload.CallOutcomeSiteShape{}, nil
+		}
+		if _, present := site.CalleeSource(); !present {
+			return callpayload.CallOutcomeSiteShape{}, nil
+		}
+		return callpayload.CallOutcomeSiteShape{FieldNames: []string{"Results"}}, nil
+	}
+	evaluate := func(ctx transfer.NodeContext, site factflow.CallSiteView, input callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+		if reg == nil || typeValues == nil || site.MethodName() != "" {
+			return callpayload.CallOutcome{}, nil
+		}
+		callee, ok := input.Callee()
+		if !ok || !product.Get(reg, callee, evidence.Key).IsExplicitTop() {
+			return callpayload.CallOutcome{}, nil
+		}
+		value := sourcevalue.InheritTopOriginEvidence(reg, typeValues.FromTypeWithWitness(reg, typ.Any), callee)
+		capacity := site.ResultTargetCount()
+		if capacity < 1 {
+			capacity = 1
+		}
+		results := make([]callpayload.CallResult, 0, capacity)
+		site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+			if target.ResultIndex() >= 0 {
+				results = append(results, callpayload.CallResult{Index: target.ResultIndex(), Value: value})
+			}
+			return true
+		})
+		if len(results) == 0 {
+			results = append(results, callpayload.CallResult{Index: 0, Value: value})
+		}
+		return callpayload.CallOutcome{Results: results}, nil
+	}
+	return callpayload.SealObservedCallOutcomeProgram(
+		"explicit any callee outcome", []string{"Results"},
+		state.LaneSet{}, state.LaneSet{}, callpayload.ObserveCallOutcomeOperands(true, false), shape, nil, evaluate,
 	)
 }
 

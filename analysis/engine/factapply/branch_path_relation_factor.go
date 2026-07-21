@@ -212,6 +212,9 @@ func branchPathRelationKernel(relation *branchPathRelationFactor) branchAtomFact
 			}
 			return applyBranchRelationRefinement(runtime, frame, relation.leftRefine, refinement)
 		case factflow.BranchPathRelationNotEqual:
+			if relation.channel != nil {
+				break
+			}
 			var err error
 			if relation.leftRefine != nil {
 				frame, err = applyBranchOriginInequality(runtime, frame, relation.left, relation.leftRoot, relation.right, relation.rightRoot, relation.leftRefine)
@@ -403,6 +406,7 @@ func applyBranchChannelSelectRelation(runtime branchAtomFactorRuntime, current B
 			}
 		}
 	}
+	fmt.Printf("select relation %d result=%s cases=%v matches=%d\\n", relation.kind, resultKey, caseKeys, len(facts))
 	if len(facts) == 0 {
 		return branchRelationIdentityPatch(current), current.reachable, nil
 	}

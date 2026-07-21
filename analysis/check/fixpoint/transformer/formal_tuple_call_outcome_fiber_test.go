@@ -14,6 +14,47 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func TestFormalExternalCallLeafOutcomeCacheIsolatesLeafCertificates(t *testing.T) {
+	provider := &formalExternalCallProvider{path: []uint32{7, 2}}
+	body := &relationProgramBody{}
+	plan := &formalExternalCallStep{body: body, variable: 1, point: 5}
+	base := []formalSparseLeafView{{variable: 1, ordinals: []formalFiberOrdinal{3, 8}, leaves: []decisionLeaf{11, 19}, derived: []decisionLeaf{23}}}
+	entry := formalExternalCallLeafOutcomeCacheEntryFor(plan, provider, base, callpayload.CallOutcome{SuspensionKnown: true})
+	cache := map[uint64][]formalExternalCallLeafOutcomeCacheEntry{formalExternalCallLeafOutcomeCacheHash(plan, provider, base): {entry}}
+	hit := func(candidatePlan *formalExternalCallStep, candidate *formalExternalCallProvider, views []formalSparseLeafView) bool {
+		for _, cached := range cache[formalExternalCallLeafOutcomeCacheHash(candidatePlan, candidate, views)] {
+			if formalExternalCallLeafOutcomeCacheEqual(cached, candidatePlan, candidate, views) {
+				return true
+			}
+		}
+		return false
+	}
+	clone := func() []formalSparseLeafView {
+		return []formalSparseLeafView{{variable: 1, ordinals: []formalFiberOrdinal{3, 8}, leaves: []decisionLeaf{11, 19}, derived: []decisionLeaf{23}}}
+	}
+
+	for _, test := range []struct {
+		name     string
+		plan     *formalExternalCallStep
+		provider *formalExternalCallProvider
+		views    []formalSparseLeafView
+		wantHit  bool
+	}{
+		{"outside-certificate", plan, provider, clone(), true},
+		{"owning-leaf-leaf-change", plan, provider, func() []formalSparseLeafView { v := clone(); v[0].leaves[1] = 29; return v }(), false},
+		{"owning-leaf-derived-change", plan, provider, func() []formalSparseLeafView { v := clone(); v[0].derived[0] = 31; return v }(), false},
+		{"owning-leaf-selection-change", plan, provider, func() []formalSparseLeafView { v := clone(); v[0].ordinals[1] = 9; return v }(), false},
+		{"sibling-provider", &formalExternalCallStep{body: &relationProgramBody{}, variable: 1, point: 5}, &formalExternalCallProvider{path: []uint32{7, 3}}, clone(), false},
+		{"sibling-input-certificate", plan, provider, []formalSparseLeafView{{variable: 1, ordinals: []formalFiberOrdinal{3}, leaves: []decisionLeaf{11}, derived: []decisionLeaf{23}}}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := hit(test.plan, test.provider, test.views); got != test.wantHit {
+				t.Fatalf("cache hit = %v, want %v", got, test.wantHit)
+			}
+		})
+	}
+}
+
 func formalCallOutcomeFiberFixture(t *testing.T) (*RelationProgram, *formalTupleAlgebra, formalRelationCell, formalCallOutcomeFiber) {
 	t.Helper()
 	return formalCallOutcomeFiberFixtureWithProvider(t, callpayload.CallOutcomeProgram{})

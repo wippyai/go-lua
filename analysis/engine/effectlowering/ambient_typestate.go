@@ -32,6 +32,17 @@ type AmbientTypestateEscapeOutcomeProviderConfig struct {
 // resource. This is protocol-independent and prevents an unmodeled callee from
 // being treated as preserving db, file, lock, or channel ownership.
 func AmbientTypestateEscapeOutcomeProvider(config AmbientTypestateEscapeOutcomeProviderConfig) callpayload.CallOutcomeProgram {
+	// Typestate is an optional analysis axis.  Do not manufacture a partial
+	// typestate/path-equality query when either half of its sealed capability is
+	// absent: the provider must be absent as well.  In particular, this keeps a
+	// caller that explicitly disables typestate fail-closed instead of panicking
+	// while its call-outcome program is being constructed.
+	if _, registered := config.Domain.ProductLane(state.LaneTypestates); !registered {
+		return callpayload.CallOutcomeProgram{}
+	}
+	if _, registered := config.Domain.PathValueFamily(); !registered {
+		return callpayload.CallOutcomeProgram{}
+	}
 	args := signatureArgumentReader{keySpace: config.KeySpace}
 	typestateQuery, queryErr := config.Domain.SealTypestateQueryCapability(config.KeySpace)
 	if queryErr != nil {
