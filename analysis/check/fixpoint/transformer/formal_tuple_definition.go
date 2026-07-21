@@ -444,6 +444,13 @@ func (a *formalTupleAlgebra) formalDefinitionCorrelatedRegions(
 		if cacheErr := a.cacheFormalTupleLeafEvaluatorFactorSpellings(callee); cacheErr != nil {
 			return nil, cacheErr
 		}
+		// Definition owns both halves of its correlated product row. Its shared
+		// Apply transaction also consumes the caller half, whose exact lane
+		// spellings must therefore be published here rather than reconstructed by
+		// that strict consumer.
+		if cacheErr := a.cacheFormalTupleLeafEvaluatorFactorSpellings(caller); cacheErr != nil {
+			return nil, cacheErr
+		}
 		// Boundary composition and the joint owner/target Care can produce a
 		// canonical product vector that does not occur in the broad-Care Outcome.
 		// Freeze that exact row with the Definition operator's sole registered
