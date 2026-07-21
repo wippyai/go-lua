@@ -360,6 +360,33 @@ func buildHeapCoordinateFamily(reg *axis.Registry, _ DomainOptions) coordinateFa
 			})
 			return wrapHeapCoordinateSkeleton(out), post, true
 		},
+		selectionSupport: func(skeletonPayload coordinateSkeletonPayload, selected []coordinateKeyPayload) ([]coordinateKeyPayload, bool) {
+			skeleton := heapCoordinateSkeletonValue(skeletonPayload)
+			if skeleton.top {
+				return nil, true
+			}
+			objects := make(map[identity.Term]struct{}, len(selected))
+			for _, payload := range selected {
+				key := heapCoordinateKeyValue(payload)
+				if !heapCoordinateKeyValid(key, skeleton.keys) {
+					return nil, false
+				}
+				if _, exists := skeleton.objects[key.id]; exists {
+					objects[key.id] = struct{}{}
+				}
+			}
+			out := make([]coordinateKeyPayload, 0, len(selected))
+			for _, id := range sortedHeapSkeletonIdentities(skeleton.objects) {
+				if _, selected := objects[id]; !selected || skeleton.objects[id].bottom {
+					continue
+				}
+				out = append(out, wrapHeapCoordinateKey(heapCoordinateRootKey(id)))
+				for _, key := range skeleton.objects[id].staticKeys {
+					out = append(out, wrapHeapCoordinateKey(heapCoordinateKey{kind: heapCoordinateMember, id: id, key: key}))
+				}
+			}
+			return out, true
+		},
 		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
 			plan := heapCoordinateOverlayPlan{selectedCount: len(selected), byObject: make(map[identity.Term]*heapSelectedSkeletonObject)}
 			for _, payload := range selected {

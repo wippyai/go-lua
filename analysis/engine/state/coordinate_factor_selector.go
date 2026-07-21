@@ -31,15 +31,18 @@ func (d ProductDomain) SelectCoordinateLaneFactor(
 		if slotsErr != nil {
 			return LaneFactor{}, slotsErr
 		}
+		coordinate, coordinateErr := d.validateCoordinateFamily(family)
+		if coordinateErr != nil {
+			return LaneFactor{}, coordinateErr
+		}
+		if err := d.requireCoordinateSelectionSupport(coordinate, skeleton, selectedSlots); err != nil {
+			return LaneFactor{}, err
+		}
 		shape, shapeErr := d.SealCoordinateFamilyShape(skeleton, selectedSlots)
 		if shapeErr != nil {
 			return LaneFactor{}, shapeErr
 		}
 		skeletons[familyIndex] = shape.Skeleton()
-		coordinate, coordinateErr := d.validateCoordinateFamily(family)
-		if coordinateErr != nil {
-			return LaneFactor{}, coordinateErr
-		}
 		// Both vectors are already sealed in this family's canonical key order.
 		// Intersect them once; per-scalar Inventory.Contains revalidated and
 		// rescanned the whole selector, turning wide identity families into O(n²).
@@ -58,4 +61,45 @@ func (d ProductDomain) SelectCoordinateLaneFactor(
 		}
 	}
 	return d.ComposeCoordinateFamilies(factor.lane, selector.KeySpace(), skeletons, scalars)
+}
+
+// requireCoordinateSelectionSupport prevents an exact coordinate selector
+// from passing an incomplete structural component to a family's narrowing
+// law. Families that carry dependent structure register their support law;
+// the generic selector owns validation and never interprets family payloads.
+func (d ProductDomain) requireCoordinateSelectionSupport(
+	coordinate *coordinateFamilyRuntime,
+	skeleton CoordinateFamilySkeleton,
+	selected []CoordinateSlot,
+) error {
+	if coordinate == nil || coordinate.ops.selectionSupport == nil {
+		return nil
+	}
+	keys := make([]coordinateKeyPayload, len(selected))
+	for index, slot := range selected {
+		if d.validateCoordinateSlotFor(coordinate, slot, skeleton.keys) != nil {
+			return fmt.Errorf("%w: coordinate selection support slot %d", ErrInvalidLaneFactor, index)
+		}
+		keys[index] = slot.key
+	}
+	required, ok := coordinate.ops.selectionSupport(skeleton.payload, keys)
+	if !ok {
+		return fmt.Errorf("%w: coordinate selection support in family %q", ErrInvalidLaneFactor, coordinate.family.id)
+	}
+	for _, key := range required {
+		if key == nil || !coordinate.ops.keyValid(key, skeleton.keys) {
+			return fmt.Errorf("%w: coordinate selection support in family %q", ErrInvalidLaneFactor, coordinate.family.id)
+		}
+		found := false
+		for _, slot := range selected {
+			if coordinate.ops.keyEqual(slot.key, key) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("%w: coordinate selection in family %q omits required structural support", ErrIncompleteLaneFactors, coordinate.family.id)
+		}
+	}
+	return nil
 }

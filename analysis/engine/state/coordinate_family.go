@@ -198,6 +198,12 @@ type coordinateFamilyOps struct {
 	// conservative post witness returned with the skeleton. The law is
 	// deliberately not expressed as <=: family skeleton orders differ.
 	sealSkeletonInventory func(coordinateSkeletonPayload, []coordinateKeyPayload, *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, bool)
+	// selectionSupport declares the complete structural support required to
+	// retain an exact selected component. Nil means scalar selection has no
+	// additional structural dependency beyond the selected keys themselves.
+	// The selector validates this before applying the family's narrowing law so
+	// a missing component cannot be silently reclassified as absent.
+	selectionSupport func(coordinateSkeletonPayload, []coordinateKeyPayload) ([]coordinateKeyPayload, bool)
 	// overlaySelectedSkeleton is the family-owned exact carrier law used when a
 	// sparse factor image is patched back onto a complete carrier. For every
 	// selected key, support and omission come from image; support for every
