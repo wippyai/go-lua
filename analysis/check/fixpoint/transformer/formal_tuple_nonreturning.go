@@ -66,7 +66,11 @@ func (a *formalTupleAlgebra) applyNonreturning(
 		target.variable != operator.apply.target {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal nonreturning Apply operand has foreign ownership")
 	}
-	regions, err := a.formalApplyCorrelatedRegions(operator, predecessor, []formalRelationTuple{target})
+	// The nonreturning terminal crosses one live callee product before any N5
+	// outcome occurrence exists.  Use the shared Apply correlation primitive
+	// that preserves that product without imposing normal-return occurrence
+	// publication.
+	regions, err := a.formalApplyCorrelatedTargetRegions(operator, predecessor, []formalRelationTuple{target})
 	if err != nil {
 		return formalRelationTuple{}, err
 	}
