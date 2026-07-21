@@ -259,10 +259,11 @@ func (f BranchRelationFactors) BindDynamicPresenceKey(
 	if err != nil || len(drafts) > 1 {
 		return BranchRelationFactors{}, false
 	}
-	replacement := branchAtom{seal: f.seal, dynamic: true, apply: branchIdentityKernel}
+	replacement := branchAtom{seal: f.seal, dynamic: true, factor: branchIdentityFactorKernel, source: BranchRelationStepDynamicPresence}
 	if len(drafts) == 1 {
 		draft := drafts[0]
 		replacement.apply = draft.apply
+		replacement.factor = draft.factor
 		replacement.access = cloneBranchAtomAccess(draft.access)
 		replacement.dependencyID = f.prepared.atoms[f.prepared.dynamicAtom].dependencyID
 		if draft.dependency {
@@ -277,6 +278,12 @@ func (f BranchRelationFactors) BindDynamicPresenceKey(
 	prepared.transaction = transaction
 	prepared.atoms = append([]branchAtom(nil), f.prepared.atoms...)
 	prepared.atoms[f.prepared.dynamicAtom] = replacement
+	prepared.factorPlans = append([]*branchAtomFactorPlan(nil), f.prepared.factorPlans...)
+	factorPlan, factorErr := sealBranchAtomFactorPlan(prepared.domain, prepared.authority.resolver.KeySpace(), replacement, f.seal)
+	if factorErr != nil {
+		return BranchRelationFactors{}, false
+	}
+	prepared.factorPlans[f.prepared.dynamicAtom] = factorPlan
 	prepared.coordinates = append([]state.CoordinateSlot(nil), f.prepared.coordinates...)
 	prepared.dynamicBound = cloneBranchRelationStep(template)
 	return BranchRelationFactors{prepared: prepared, seal: f.seal}, true
@@ -1172,9 +1179,11 @@ func (b *branchProgramBuilder) dynamicPresenceAtoms(step BranchRelationStep) ([]
 			dependency: true,
 			dynamic:    true,
 			access:     branchAtomAccess{laneReads: lane, laneWrites: lane},
-			apply: func(_ branchAtomRuntime, out state.State) (state.State, bool, error) {
-				return out, false, fmt.Errorf("factapply: unbound dynamic-presence declaration is not executable")
-			},
+			// The unbound declaration is a sealed carrier dependency.  The
+			// concrete key is supplied by BindDynamicPresenceKey before a proof
+			// can be published, but the formal program must still carry this
+			// component through its canonical factor interface.
+			factor: branchCarrierIdentityFactorKernel,
 		}}, nil
 	}
 	member, ok := typevalue.ExactScalarKeySegment(b.domain.Registry(), b.authority.typeValues, step.dynamic.key)
@@ -1194,8 +1203,13 @@ func (b *branchProgramBuilder) dynamicPresenceAtoms(step BranchRelationStep) ([]
 	action := branchAtomDraft{
 		seed: state.CoordinateDependencySeed{AddCoordinates: []state.CoordinateSlot{slot}}, dependency: true,
 		dynamic: true,
-		apply: func(_ branchAtomRuntime, out state.State) (state.State, bool, error) {
-			return out.AddBranchProof(proof), true, nil
+		// Dynamic presence is an exact, bound path-evidence proof.  It must use
+		// the same factor-native carrier law as static evidence, not retain a
+		// State-only adapter that formal execution cannot represent.
+		factor: branchPathProofKernel(proof),
+		access: branchAtomAccess{
+			coordinateFamilyReads:  []state.CoordinateFamily{slot.Family()},
+			coordinateFamilyWrites: []state.CoordinateFamily{slot.Family()},
 		},
 	}
 	return []branchAtomDraft{action}, nil

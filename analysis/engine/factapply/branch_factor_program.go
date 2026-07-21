@@ -630,6 +630,17 @@ func branchIdentityFactorKernel(_ branchAtomFactorRuntime, _ BranchRelationFacto
 	return BranchRelationFactorPatch{plan: current.plan, reachable: current.reachable}, current.reachable, nil
 }
 
+// branchCarrierIdentityFactorKernel carries an unresolved factor declaration
+// through a declared whole-lane component.  Unlike semantic identity (which
+// has no component operands), this must return the registered carrier so the
+// formal publisher can preserve its canonical terminal spelling until the
+// concrete boundary key specializes it to a proof kernel.
+func branchCarrierIdentityFactorKernel(_ branchAtomFactorRuntime, _ BranchRelationFactorFrame, current BranchRelationFactorFrame) (BranchRelationFactorPatch, bool, error) {
+	return BranchRelationFactorPatch{
+		plan: current.plan, lanes: append([]state.LaneFactor(nil), current.lanes...), reachable: current.reachable,
+	}, current.reachable, nil
+}
+
 func sealBranchAtomFactorPlan(domain state.ProductDomain, keys *keyspace.KeySpace, atom branchAtom, seal *branchProgramSeal) (*branchAtomFactorPlan, error) {
 	if atom.factor == nil {
 		return nil, nil

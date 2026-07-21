@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -411,9 +412,21 @@ func freezeFormalExternalCallStep(
 	if err != nil {
 		return nil, err
 	}
+	normalValueDependencies := make([]statekey.ValueDependency, 0, len(span.liveValues))
+	for dependency := range span.liveValues {
+		normalValueDependencies = append(normalValueDependencies, dependency)
+	}
+	sort.Slice(normalValueDependencies, func(i, j int) bool {
+		left, leftOK := span.liveValues[normalValueDependencies[i]].CanonicalBytes()
+		right, rightOK := span.liveValues[normalValueDependencies[j]].CanonicalBytes()
+		if !leftOK || !rightOK {
+			return leftOK
+		}
+		return bytes.Compare(left[:], right[:]) < 0
+	})
 	normal, err := factapply.PrepareNormalReturnFactorCodec(
 		formalAuthority, body.productDomain, contract, step.point, boundaryPaths,
-		operator.footprint.inventory, heapRoots,
+		operator.footprint.inventory, heapRoots, normalValueDependencies,
 		func(dependency statekey.ValueDependency) (FormalSlot, bool) {
 			return formalLiveValueSlotForDependency(program, body, dependency)
 		},

@@ -330,6 +330,7 @@ func PrepareNormalReturnFactorCodec[K comparable](
 	boundaryPaths callboundary.PathBindings,
 	inventory state.CoordinateFactorInventory,
 	heapRoots []state.HeapObjectRootSlot,
+	extraValueRoots []statekey.ValueDependency,
 	bind func(statekey.ValueDependency) (K, bool),
 ) (NormalReturnFactorCodec[K], error) {
 	if authority == nil || !authority.Valid() || !domain.Valid() || !access.Valid() ||
@@ -392,6 +393,15 @@ func PrepareNormalReturnFactorCodec[K comparable](
 	}
 	for _, slot := range append(provider.Values, access.ValueWrites()...) {
 		if err := remember(statekey.ConcreteDependency(slot)); err != nil {
+			return NormalReturnFactorCodec[K]{}, err
+		}
+	}
+	// Normal-return payloads can carry a postcondition over any already-sealed
+	// caller boundary root.  These roots are supplied by the owning boundary
+	// adapter at freeze time; retaining their exact bindings here keeps Decode
+	// closed while avoiding a solve-time Values-root lookup.
+	for _, dependency := range extraValueRoots {
+		if err := remember(dependency); err != nil {
 			return NormalReturnFactorCodec[K]{}, err
 		}
 	}
