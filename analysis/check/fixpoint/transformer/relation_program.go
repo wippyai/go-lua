@@ -88,6 +88,17 @@ type frozenLexicalCallTarget struct {
 	boundary DirectCallBoundary
 }
 
+// frozenDirectDefinition is the owner-local declaration coordinate selected
+// by one exact lexical call surface.  It is deliberately not a call frame:
+// direct declarations create a closure in the owner body rather than consume
+// the result of an earlier Apply.
+type frozenDirectDefinition struct {
+	target relationVar
+	point  cfg.Point
+}
+
+func (d frozenDirectDefinition) valid() bool { return d.target != 0 && d.point != 0 }
+
 func (t frozenLexicalCallTarget) valid() bool {
 	return t.variable != 0
 }
@@ -97,8 +108,9 @@ type frozenLexicalCallSurface interface {
 }
 
 type frozenLexicalCallCandidate struct {
-	identity identity.ID
-	target   frozenLexicalCallTarget
+	identity         identity.ID
+	target           frozenLexicalCallTarget
+	directDefinition frozenDirectDefinition
 }
 
 type frozenLexicalCallSite struct {
@@ -113,6 +125,9 @@ func (s frozenLexicalCallSite) valid() bool {
 	for index, candidate := range s.candidates {
 		if !candidate.target.valid() || index == 0 && candidate.identity == (identity.ID{}) && (len(s.candidates) != 1 || s.residual) ||
 			index != 0 && candidate.identity == (identity.ID{}) {
+			return false
+		}
+		if candidate.directDefinition.valid() && candidate.directDefinition.target != candidate.target.variable {
 			return false
 		}
 		if index > 0 && !relationCallIdentityLess(s.candidates[index-1].identity, candidate.identity) {
@@ -264,16 +279,20 @@ type linkedRelationFrame struct {
 	shape           Shape
 	rootCircuit     []linkedFrameRoot
 	closureProducer callFrameTerm
-	ambientCircuit  []linkedFrameAmbientRoot
-	outboundRoots   state.BoundaryRoots
-	exitBridges     []linkedFrameExitBridge
-	resultSelectors []linkedFrameResult
-	resultSources   []linkedFrameResultSource
-	boundary        linkedFrameBoundaryTopology
-	route           linkedFrameRouteAuthority
-	existentials    state.BoundaryExistentialNamespace
-	allocations     *state.BoundaryAllocationAuthority
-	control         linkedCallControl
+	// directDefinition is the exact owner-local declaration coordinate for an
+	// exact lexical Apply. It is disjoint from closureProducer: the latter is
+	// an earlier Apply result, while this is a lexical Definition artifact.
+	directDefinition cfg.Point
+	ambientCircuit   []linkedFrameAmbientRoot
+	outboundRoots    state.BoundaryRoots
+	exitBridges      []linkedFrameExitBridge
+	resultSelectors  []linkedFrameResult
+	resultSources    []linkedFrameResultSource
+	boundary         linkedFrameBoundaryTopology
+	route            linkedFrameRouteAuthority
+	existentials     state.BoundaryExistentialNamespace
+	allocations      *state.BoundaryAllocationAuthority
+	control          linkedCallControl
 }
 
 type relationEnvironmentRoot struct {
@@ -928,6 +947,26 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 	targetIdentities := make(map[lexicalidentity.StableLexicalBodyID]identity.ID)
 	for index, unit := range ordered {
 		surface := programCallSurface{targets: make(map[cfg.Point]frozenLexicalCallSite)}
+		// A direct lexical Apply has Definition provenance only when its owner
+		// contains one exact declaration for the target body. Keep this identity
+		// at the call-surface boundary; later freezer stages must not rediscover
+		// it from mutable State or merely from a target relation variable.
+		definitions := make(map[lexicalidentity.StableLexicalBodyID]frozenDirectDefinition, len(unit.Definitions))
+		ambiguousDefinitions := make(map[lexicalidentity.StableLexicalBodyID]struct{})
+		for _, definition := range unit.Definitions {
+			if definition.Target == (lexicalidentity.StableLexicalBodyID{}) || definition.Point == 0 {
+				return nil, fmt.Errorf("transformer: lexical body %s has malformed direct definition", unit.Body)
+			}
+			target, present := byBody[definition.Target]
+			if !present {
+				return nil, fmt.Errorf("transformer: lexical body %s defines missing body %s", unit.Body, definition.Target)
+			}
+			if _, duplicate := definitions[definition.Target]; duplicate {
+				ambiguousDefinitions[definition.Target] = struct{}{}
+				continue
+			}
+			definitions[definition.Target] = frozenDirectDefinition{target: target, point: definition.Point}
+		}
 		ownedSurface, _ := unit.Plan.CallSurface()
 		for _, site := range ownedSurface.Sites() {
 			targetBody, lexical := site.Target.LexicalBody()
@@ -947,7 +986,14 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 				return nil, fmt.Errorf("transformer: lexical target %s has no exact capture/global order", targetBody)
 			}
 			target := frozenLexicalCallTarget{variable: variable, shape: shapes[targetBody], results: uint32(planReturnArity(targetPlan)), boundary: DirectCallBoundary{Captures: targetPlan.BoundaryCaptures(), Globals: targetPlan.BoundaryGlobals()}}
-			surface.targets[site.Point] = frozenLexicalCallSite{candidates: []frozenLexicalCallCandidate{{target: target}}}
+			candidate := frozenLexicalCallCandidate{target: target}
+			if _, ambiguous := ambiguousDefinitions[targetBody]; ambiguous {
+				return nil, fmt.Errorf("transformer: lexical body %s has multiple direct definitions for target %s", unit.Body, targetBody)
+			}
+			if definition, present := definitions[targetBody]; present {
+				candidate.directDefinition = definition
+			}
+			surface.targets[site.Point] = frozenLexicalCallSite{candidates: []frozenLexicalCallCandidate{candidate}}
 		}
 		calls := callTopology.Sites(unit.Body)
 		for callIndex, call := range calls {
@@ -984,10 +1030,17 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 				if !targetPlan.BoundaryCapturesValid() || !targetPlan.BoundaryGlobalsValid() {
 					return nil, fmt.Errorf("transformer: finite lexical target %s has no exact capture/global order", candidate.Target)
 				}
-				frozen.candidates = append(frozen.candidates, frozenLexicalCallCandidate{identity: candidate.Identity, target: frozenLexicalCallTarget{
+				frozenCandidate := frozenLexicalCallCandidate{identity: candidate.Identity, target: frozenLexicalCallTarget{
 					variable: variable, shape: shapes[candidate.Target], results: uint32(planReturnArity(targetPlan)),
 					boundary: DirectCallBoundary{Captures: targetPlan.BoundaryCaptures(), Globals: targetPlan.BoundaryGlobals()},
-				}})
+				}}
+				if _, ambiguous := ambiguousDefinitions[candidate.Target]; ambiguous {
+					return nil, fmt.Errorf("transformer: lexical body %s has multiple direct definitions for target %s", unit.Body, candidate.Target)
+				}
+				if definition, present := definitions[candidate.Target]; present {
+					frozenCandidate.directDefinition = definition
+				}
+				frozen.candidates = append(frozen.candidates, frozenCandidate)
 			}
 			if !frozen.valid() {
 				return nil, fmt.Errorf("transformer: lexical body %s finite call point %d did not freeze", unit.Body, call.Point())
@@ -1517,7 +1570,7 @@ func (p *RelationProgram) linkFrozenFrames() error {
 				owner: caller.variable, target: frame.variable, term: frameTerm,
 				callerBody: caller.body, targetBody: targetBody, callerKeys: caller.keys, targetKeys: p.bodies[frame.variable-1].keys, targetRoots: p.bodies[frame.variable-1].roots,
 				point: frame.point, occurrence: frame.occurrence, shape: frame.shape,
-				rootCircuit: rootCircuit, closureProducer: frame.closureProducer, ambientCircuit: ambientCircuit, resultSelectors: results, resultSources: resultSources,
+				rootCircuit: rootCircuit, closureProducer: frame.closureProducer, directDefinition: frame.directDefinition, ambientCircuit: ambientCircuit, resultSelectors: results, resultSources: resultSources,
 				control:      linkedCallControlOrdinary,
 				route:        linkedFrameRouteAuthority{owner: caller.variable, target: frame.variable, frame: frameTerm},
 				existentials: frameExistentialNamespace(caller.body, frame.point, frame.occurrence), allocations: lens,

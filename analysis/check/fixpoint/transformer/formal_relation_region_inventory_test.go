@@ -325,3 +325,69 @@ func TestFormalRelationRegionLinksExactClosureDefinitionToApply(t *testing.T) {
 		t.Fatal("closure Apply bypassed its exact definition artifact")
 	}
 }
+
+func TestFormalRelationRegionClosureDefinitionProvenanceIsOccurrenceExact(t *testing.T) {
+	terms := &Arena{callFrames: []callFrameNode{
+		{},
+		{variable: 2},                     // carried producer
+		{variable: 3, closureProducer: 1}, // carried consumer
+		{variable: 2, directDefinition: cfg.Point(7)}, // direct consumer
+		{variable: 2}, // neither
+	}}
+	caller := formalRegionTestCode([]relationNode{{}, {kind: relationNodeSequence, steps: []boundaryStep{
+		{kind: boundaryStepApply, apply: relationApplyRef{variable: 2, frame: 1}},
+		{kind: boundaryStepApply, apply: relationApplyRef{variable: 3, frame: 2}},
+		{kind: boundaryStepApply, apply: relationApplyRef{variable: 2, frame: 3}},
+		{kind: boundaryStepApply, apply: relationApplyRef{variable: 2, frame: 4}},
+	}, next: 2}, {kind: relationNodeOutcome, outcome: 1}}, 1, relationPointPublication{point: 7, ref: 1})
+	caller.terms = terms
+	producer := formalRegionTestCode([]relationNode{{}, {kind: relationNodeOutcome, outcome: 1}}, 1)
+	carriedTarget := formalRegionTestCode([]relationNode{{}, {kind: relationNodeOutcome, outcome: 1}}, 1)
+	program := formalRegionTestProgram(caller, producer, carriedTarget)
+	program.definitions = []relationProgramDefinition{
+		{owner: 1, target: 2, point: 7, frame: 3},
+		{owner: 2, target: 3, point: 8, frame: 1, externallyReachable: true},
+	}
+	inventory, err := freezeFormalRelationRegionInventory(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionAt := func(owner, target relationVar, point cfg.Point) formalRelationCell {
+		t.Helper()
+		for _, definition := range inventory.definitions[1:] {
+			if definition.owner == owner && definition.target == target && definition.point == point {
+				return definition.cell
+			}
+		}
+		t.Fatalf("missing Definition owner=%d target=%d point=%d", owner, target, point)
+		return formalRelationCell{}
+	}
+	assertOperands := func(step uint32, want formalRelationCell) {
+		t.Helper()
+		cell := formalRelationCell{Variable: 1, Root: 1, Step: step, Kind: formalRelationCellStep}
+		got := 0
+		for _, influence := range inventory.incoming[cell] {
+			if influence.Kind == formalRelationInfluenceClosureDefinition {
+				got++
+				if want.valid() && influence.Source != want {
+					t.Fatalf("Apply %d ClosureDefinition source = %+v, want %+v", step, influence.Source, want)
+				}
+			}
+		}
+		if want.valid() && got != 1 || !want.valid() && got != 0 {
+			t.Fatalf("Apply %d ClosureDefinition operands = %d, want %d", step, got, map[bool]int{true: 1, false: 0}[want.valid()])
+		}
+		count, valid := formalRelationClosureDefinitionCount(inventory, caller, 1, caller.nodes[1].steps[step-1])
+		if !valid || count != got {
+			t.Fatalf("Apply %d ClosureDefinition count = %d/%t, want %d", step, count, valid, got)
+		}
+	}
+	assertOperands(2, definitionAt(2, 3, 8)) // carried(C)
+	assertOperands(3, definitionAt(1, 2, 7)) // directDefinition(C)
+	assertOperands(1, formalRelationCell{})  // producer itself: neither
+	assertOperands(4, formalRelationCell{})  // unrelated sibling: neither
+	if terms.callFrames[2].closureProducer == 0 || terms.callFrames[2].directDefinition != 0 ||
+		terms.callFrames[3].closureProducer != 0 || terms.callFrames[3].directDefinition == 0 {
+		t.Fatalf("ClosureDefinition provenance lost disjointness: %#v / %#v", terms.callFrames[2], terms.callFrames[3])
+	}
+}

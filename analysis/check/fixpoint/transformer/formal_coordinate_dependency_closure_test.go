@@ -97,6 +97,104 @@ func TestFormalCoordinateDependencyClosurePropagatesCellGrowthWithoutBodyGrowth(
 	assertFormalCoordinateDependent(t, closure, callerBodyNode, assignmentNode)
 }
 
+func TestFormalCoordinateDependencyClosureKeepsClosureDefinitionSelectorSupportProducerExact(t *testing.T) {
+	domain := state.RegisteredProductDomain(standard.Registry())
+	keys := keyspace.New()
+	terminalPath := keys.FromPath(pathdom.NewPath(symbol.ID(9411), "terminal"))
+	definitionPath := keys.FromPath(pathdom.NewPath(symbol.ID(9412), "definition"))
+	inventory := func(path keyspace.Key) state.CoordinateFactorInventory {
+		t.Helper()
+		slots, err := domain.BoundaryRootCoordinateSlots(keys, []keyspace.Key{path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := domain.SealCoordinateFactorInventory(keys, slots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	terminal, definition := inventory(terminalPath), inventory(definitionPath)
+	definitionCell := formalRelationCell{Variable: 1, Definition: 1, Kind: formalRelationCellDefinition}
+	consumerCell := formalRelationCell{Variable: 1, Root: 1, Step: 2, Kind: formalRelationCellStep}
+	code := &relationCode{nodes: make([]relationNode, 2)}
+	code.nodes[1].steps = []boundaryStep{{kind: boundaryStepApply, apply: relationApplyRef{frame: 1}}, {kind: boundaryStepApply, apply: relationApplyRef{frame: 2}}}
+	program := &RelationProgram{bodies: []relationProgramBody{{variable: 1, productDomain: domain, relation: Relation{code: code}}}}
+	closure := &formalCoordinateDependencyClosure{
+		program: program,
+		region: &formalRelationRegionInventory{incoming: map[formalRelationCell][]formalRelationInfluence{
+			consumerCell: {{Source: definitionCell, Target: consumerCell, Kind: formalRelationInfluenceClosureDefinition}},
+		}},
+		keys:      []*keyspace.KeySpace{keys},
+		bodies:    []state.CoordinateFactorInventory{terminal},
+		cells:     []formalRelationCell{definitionCell, consumerCell},
+		cellIndex: map[formalRelationCell]int{definitionCell: 0, consumerCell: 1},
+		cellValue: []formalOperatorCoordinateFootprint{{cell: definitionCell, inventory: definition}, {cell: consumerCell}},
+		cellBody:  [][]int{{0, 1}},
+		selectors: []state.CoordinateFactorInventory{terminal},
+		selectorMember: []map[int]struct{}{
+			{},
+		},
+		frames: []formalStaticApplyCoordinateFrame{
+			{caller: 0, target: 0, frame: &linkedRelationFrame{term: 1}},
+			{caller: 0, target: 0, frame: &linkedRelationFrame{term: 2, closureProducer: 1}},
+			{caller: 0, target: 0, frame: &linkedRelationFrame{term: 3}},
+		},
+		frameByOwnerTerm: map[formalFrameFootprintKey]int{
+			{variable: 1, frame: 1}: 0,
+			{variable: 1, frame: 2}: 1,
+			{variable: 1, frame: 3}: 2,
+		},
+	}
+	if err := closure.deriveClosureDefinitionSelectorSupport(); err != nil {
+		t.Fatal(err)
+	}
+	if got := closure.frames[0].selectorSupport; len(got) != 1 || got[0] != 0 {
+		t.Fatalf("producer selector support = %v, want definition cell 0", got)
+	}
+	if got := closure.frames[2].selectorSupport; len(got) != 0 {
+		t.Fatalf("sibling selector support = %v, want none", got)
+	}
+	closure.frameSelectorFolds = make([]formalCoordinateInventoryFold, len(closure.frames))
+	for frameIndex := range closure.frames {
+		fold, err := newFormalCoordinateInventoryFold(domain, keys, 1+len(closure.frames[frameIndex].selectorSupport))
+		if err != nil {
+			t.Fatal(err)
+		}
+		closure.frameSelectorFolds[frameIndex] = fold
+	}
+	producerSelector, err := closure.evaluateFrameSelector(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantProducer, err := domain.UnionCoordinateFactorInventories(keys, terminal, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantProducer, err = domain.CloseCoordinateFactorInventory(keys, wantProducer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal, err := domain.CoordinateFactorInventoriesEqual(producerSelector, wantProducer)
+	if err != nil || !equal {
+		t.Fatalf("producer selector exact membership = %v/%v, want terminal plus selected Definition", producerSelector, err)
+	}
+	siblingSelector, err := closure.evaluateFrameSelector(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSibling, err := domain.CloseCoordinateFactorInventory(keys, terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal, err = domain.CoordinateFactorInventoriesEqual(siblingSelector, wantSibling)
+	if err != nil || !equal {
+		t.Fatalf("sibling selector exact membership = %v/%v, want terminal selector without Definition", siblingSelector, err)
+	}
+	closure.sealDependencies()
+	assertFormalCoordinateDependent(t, closure, closure.cellNodeFirst, closure.frameNodeFirst)
+}
+
 func assertFormalCoordinateDependent(t *testing.T, closure *formalCoordinateDependencyClosure, from, want int) {
 	t.Helper()
 	for _, got := range closure.dependents[from] {
