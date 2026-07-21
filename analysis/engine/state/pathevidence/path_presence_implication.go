@@ -133,20 +133,46 @@ func NewPathEqualValueRefinementImplication(
 
 // AddPathPresenceImplication records a persistent must implication.
 func (l Lane) AddPathPresenceImplication(implication PathPresenceImplication) (Lane, bool) {
-	_, present := l.pathPresenceImplications[implication]
-	insert, establishesReachability := pathPresenceImplicationPublication(implication, present, l.pathPresenceImplicationsBottom)
-	if !insert {
+	return l.AddPathPresenceImplications([]PathPresenceImplication{implication})
+}
+
+// AddPathPresenceImplications records valid persistent must implications with
+// one copy-on-write set update. It is equivalent to repeated
+// AddPathPresenceImplication calls, but lets prepared coordinate builders keep
+// their immutable evidence set shared until the complete publication batch is
+// known.
+func (l Lane) AddPathPresenceImplications(additions []PathPresenceImplication) (Lane, bool) {
+	if len(additions) == 0 {
 		return l, false
 	}
-	implications := clonePathPresenceImplicationSet(l.pathPresenceImplications)
-	if implications == nil {
-		implications = make(map[PathPresenceImplication]struct{}, 1)
+	var implications map[PathPresenceImplication]struct{}
+	changed := false
+	for _, implication := range additions {
+		_, present := l.pathPresenceImplications[implication]
+		insert, _ := pathPresenceImplicationPublication(implication, present, l.pathPresenceImplicationsBottom)
+		if !insert {
+			continue
+		}
+		if implications == nil {
+			implications = clonePathPresenceImplicationSet(l.pathPresenceImplications)
+			if implications == nil {
+				implications = make(map[PathPresenceImplication]struct{}, len(additions))
+			}
+		}
+		if _, exists := implications[implication]; exists {
+			// Bottom ignores the retained set. Republishing a valid member must
+			// still establish reachability even when that member was retained
+			// beneath the Bottom marker.
+			changed = changed || l.pathPresenceImplicationsBottom
+			continue
+		}
+		implications[implication] = struct{}{}
+		changed = true
 	}
-	implications[implication] = struct{}{}
-	out := l
-	if establishesReachability {
-		out = out.Reachable()
+	if !changed {
+		return l, false
 	}
+	out := l.Reachable()
 	out.pathPresenceImplications = implications
 	return out, true
 }

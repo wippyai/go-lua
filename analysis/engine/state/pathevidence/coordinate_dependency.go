@@ -704,6 +704,8 @@ func coordinateDependencySeedValid(ks *keyspace.KeySpace, seed CoordinateDepende
 
 func coordinateDependencyMayLane(reg *axis.Registry, ks *keyspace.KeySpace, coordinates []CoordinateKey) (Lane, bool) {
 	lane := Lane{}
+	proofs := make([]BranchProof, 0, len(coordinates))
+	implications := make([]PathPresenceImplication, 0, len(coordinates))
 	for _, coordinate := range coordinates {
 		if !CoordinateKeyValid(coordinate, ks, reg) {
 			return Lane{}, false
@@ -714,13 +716,15 @@ func coordinateDependencyMayLane(reg *axis.Registry, ks *keyspace.KeySpace, coor
 		case coordinateStaticMember:
 			lane, _ = lane.WritePathStaticMember(coordinate.path, product.Top())
 		case coordinateBranchProof:
-			lane, _ = lane.AddBranchProof(coordinate.proof)
+			proofs = append(proofs, coordinate.proof)
 		case coordinatePathPresenceImplication:
-			lane, _ = lane.AddPathPresenceImplication(coordinate.implication)
+			implications = append(implications, coordinate.implication)
 		default:
 			return Lane{}, false
 		}
 	}
+	lane, _ = lane.AddBranchProofs(proofs)
+	lane, _ = lane.AddPathPresenceImplications(implications)
 	return lane, true
 }
 

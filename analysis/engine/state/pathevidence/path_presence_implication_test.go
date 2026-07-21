@@ -112,6 +112,37 @@ func TestInvalidateStableSymbolPreservingImplicationsIsOneAtomicRewrite(t *testi
 	}
 }
 
+func TestAddPathPresenceImplicationsMatchesRepeatedPublication(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	trigger := implicationTestKey(t, ks, "trigger@1")
+	first := implicationTestKey(t, ks, "first@1")
+	second := implicationTestKey(t, ks, "second@1")
+	rows := []PathPresenceImplication{
+		NewPathPresenceImplication(trigger, presence.Present(), first, presence.Present()),
+		NewPathPresenceImplication(trigger, presence.Present(), second, presence.Absent()),
+		NewPathPresenceImplication(trigger, presence.Present(), first, presence.Present()),
+	}
+	var repeated Lane
+	for _, row := range rows {
+		repeated, _ = repeated.AddPathPresenceImplication(row)
+	}
+	batched, changed := (Lane{}).AddPathPresenceImplications(rows)
+	if !changed {
+		t.Fatal("batched publication reported unchanged")
+	}
+	if !Domain(reg).Equal(repeated, batched) {
+		t.Fatalf("batched publication changed path-presence semantics\nrepeated=%#v\nbatched=%#v", repeated, batched)
+	}
+	bottom := Domain(reg).Bottom()
+	bottom.pathPresenceImplications = map[PathPresenceImplication]struct{}{rows[0]: {}}
+	repeatedBottom, repeatedChanged := bottom.AddPathPresenceImplication(rows[0])
+	batchedBottom, batchedChanged := bottom.AddPathPresenceImplications([]PathPresenceImplication{rows[0], rows[0]})
+	if !repeatedChanged || !batchedChanged || !Domain(reg).Equal(repeatedBottom, batchedBottom) {
+		t.Fatal("batched publication did not preserve Bottom-marker reachability")
+	}
+}
+
 func implicationTestKey(t *testing.T, ks *keyspace.KeySpace, raw pathdom.PathKey) keyspace.Key {
 	t.Helper()
 	key, ok := ks.FromStateKey(raw)
