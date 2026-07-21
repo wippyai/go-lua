@@ -172,7 +172,20 @@ func (d ProductDomain) ApplyRootAssignmentScalarTransfer(transaction RootAssignm
 					return State{}, ErrInvalidLaneFactor
 				}
 				currentSkeleton = nextSkeleton
-				currentEntries = replaceCoordinateEntryScalar(coordinate.ops, currentEntries, demand.target, nextScalar, transaction.transfer.keys)
+				support := coordinate.ops.scalarSupport(currentSkeleton, demand.target)
+				if !support.valid() {
+					return State{}, ErrInvalidLaneFactor
+				}
+				if support == CoordinateScalarForbidden {
+					for entryIndex := range currentEntries {
+						if coordinate.ops.keyEqual(currentEntries[entryIndex].key, demand.target) {
+							currentEntries = append(currentEntries[:entryIndex], currentEntries[entryIndex+1:]...)
+							break
+						}
+					}
+				} else {
+					currentEntries = replaceCoordinateEntryScalar(coordinate.ops, currentEntries, demand.target, nextScalar, transaction.transfer.keys)
+				}
 			}
 			next, err := coordinate.ops.replace(currentPayload, transaction.transfer.keys, currentSkeleton, currentEntries)
 			if err != nil {

@@ -369,19 +369,19 @@ func (d ProductDomain) patchSelectedCoordinateFamily(current LaneFactor, selecte
 	}
 	updates := make([]CoordinateScalarFactor, 0, len(selected))
 	for _, slot := range selected {
-		scalar, explicit := coordinateScalarAt(coordinate, imageScalars, slot.key, image.Skeleton().keys)
-		if !explicit {
-			scalar, err = d.CoordinateDefault(image.Skeleton(), slot)
-			if err != nil {
-				return LaneFactor{}, err
-			}
-		}
 		outputSupport, supportErr := d.CoordinateScalarSupport(overlaidSkeleton, slot)
 		if supportErr != nil {
 			return LaneFactor{}, supportErr
 		}
 		if outputSupport == CoordinateScalarForbidden {
 			continue
+		}
+		scalar, explicit := coordinateScalarAt(coordinate, imageScalars, slot.key, image.Skeleton().keys)
+		if !explicit {
+			scalar, err = d.CoordinateDefault(image.Skeleton(), slot)
+			if err != nil {
+				return LaneFactor{}, err
+			}
 		}
 		omitted, omittedErr := d.CoordinateScalarIsOmitted(overlaidSkeleton, scalar)
 		if omittedErr != nil {

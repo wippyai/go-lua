@@ -160,7 +160,7 @@ func (c RootAssignmentFactorComponent) ApplyComponent(input RootAssignmentFactor
 		if factorErr != nil {
 			return state.ProductFactorFrame{}, factorErr
 		}
-		nextScalars, factorErr = replaceRootAssignmentCoordinateFactor(domain, nextScalars, target)
+		nextScalars, factorErr = replaceRootAssignmentCoordinateFactor(domain, nextSkeleton, nextScalars, target)
 		if factorErr != nil {
 			return state.ProductFactorFrame{}, factorErr
 		}
@@ -196,9 +196,14 @@ func rootAssignmentCoordinateFactorAt(
 
 func replaceRootAssignmentCoordinateFactor(
 	domain state.ProductDomain,
+	skeleton state.CoordinateFamilySkeleton,
 	scalars []state.CoordinateScalarFactor,
 	update state.CoordinateScalarFactor,
 ) ([]state.CoordinateScalarFactor, error) {
+	support, err := domain.CoordinateScalarSupport(skeleton, update.Slot())
+	if err != nil {
+		return nil, err
+	}
 	out := append([]state.CoordinateScalarFactor(nil), scalars...)
 	for index, scalar := range out {
 		equal, err := domain.CoordinateSlotEqual(scalar.Slot(), update.Slot())
@@ -206,9 +211,15 @@ func replaceRootAssignmentCoordinateFactor(
 			return nil, err
 		}
 		if equal {
+			if support == state.CoordinateScalarForbidden {
+				return append(out[:index], out[index+1:]...), nil
+			}
 			out[index] = update
 			return out, nil
 		}
+	}
+	if support == state.CoordinateScalarForbidden {
+		return out, nil
 	}
 	out = append(out, update)
 	sort.Slice(out, func(i, j int) bool {
