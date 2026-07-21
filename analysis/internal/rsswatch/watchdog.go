@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 const (
 	defaultThreshold = uint64(4 << 30)
+	megabyte         = uint64(1 << 20)
 	exitCode         = 86
 )
 
@@ -32,7 +34,7 @@ func Start() {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			monitor(watchConfig{
-				threshold: defaultThreshold,
+				threshold: thresholdFromEnv(),
 				poll:      ticker.C,
 				query:     currentRSS,
 				stderr:    os.Stderr,
@@ -40,6 +42,14 @@ func Start() {
 			})
 		}()
 	})
+}
+
+func thresholdFromEnv() uint64 {
+	limitMB, err := strconv.ParseUint(os.Getenv("GOLUA_RSS_LIMIT_MB"), 10, 64)
+	if err != nil || limitMB == 0 || limitMB > ^uint64(0)/megabyte {
+		return defaultThreshold
+	}
+	return limitMB * megabyte
 }
 
 // Current returns this process's resident set size in bytes when the host

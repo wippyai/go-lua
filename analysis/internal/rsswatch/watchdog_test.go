@@ -73,3 +73,10 @@ func TestStartOnceLaunchesOneProcessMonitor(t *testing.T) {
 		t.Fatalf("watchdog launches = %d, want 1", launches)
 	}
 }
+
+func TestThresholdFromEnvDefaultsTo4GiB(t *testing.T) {
+	t.Setenv("GOLUA_RSS_LIMIT_MB", "")
+	if got, want := thresholdFromEnv(), defaultThreshold; got != want {
+		t.Fatalf("thresholdFromEnv() = %d, want %d", got, want)
+	}
+}
