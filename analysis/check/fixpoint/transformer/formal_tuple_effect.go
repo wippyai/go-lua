@@ -239,8 +239,7 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 	// Object construction owns a distinct graph mutation. The two ordered
 	// PathStore writes, however, are one lexical transaction: destructive path
 	// replacement followed by persistent static-member publication.
-	if !node.pathStoreHasAssignment && !node.pathStoreHasStatic || len(node.pathStoreObject.Heaps) != 0 ||
-		len(node.pathStoreObject.Entries) != 0 || node.pathStoreObject.ListFloor != 0 {
+	if !node.pathStoreHasAssignment && !node.pathStoreHasStatic || node.pathStoreObject.ListFloor != 0 {
 		return nil, nil
 	}
 	if operator.code.terms == nil || operator.code.terms != operator.code.effects.terms ||
@@ -433,6 +432,13 @@ func (v formalPathReplacementValues) ReadPathReplacementValue(dependency stateke
 func (a *formalTupleAlgebra) applyFormalPathReplacement(operator formalRelationOperatorRef, predecessor formalRelationTuple) (formalRelationTuple, error) {
 	if a == nil || operator.kind != formalRelationCellStep || operator.code == nil || operator.pathReplacement == nil {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal Effect has no complete factor transaction")
+	}
+	if operator.objectMaterialization != nil {
+		var err error
+		predecessor, err = a.applyFormalObjectMaterialization(operator, predecessor)
+		if err != nil {
+			return formalRelationTuple{}, fmt.Errorf("transformer: formal path replacement object component: %w", err)
+		}
 	}
 	return a.applyFormalEffectStep(operator, predecessor, operator.pathReplacement.demands,
 		func(span formalFiberDescriptorSpan, evaluator formalTupleLeafEvaluator, values state.ValueFactor[FormalSlot], factors []state.LaneFactor) (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {

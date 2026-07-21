@@ -50,10 +50,13 @@ func freezeFormalObjectMaterializationStep(program *RelationProgram, variable re
 		return nil, nil
 	}
 	node := operator.code.effects.nodes[step.effect]
-	if node.kind != EffectObjectMaterialization {
+	if node.kind != EffectObjectMaterialization && node.kind != EffectPathStore {
 		return nil, nil
 	}
-	if len(node.pathStoreObject.Heaps) == 0 || len(node.pathStoreObject.Entries) != 0 || node.pathStoreObject.ListFloor != 0 ||
+	if node.kind == EffectPathStore && len(node.pathStoreObject.Heaps) == 0 {
+		return nil, nil
+	}
+	if len(node.pathStoreObject.Heaps) == 0 || node.pathStoreObject.ListFloor != 0 ||
 		operator.code.terms == nil || operator.code.terms != operator.code.effects.terms {
 		return nil, fmt.Errorf("transformer: malformed formal object materialization")
 	}

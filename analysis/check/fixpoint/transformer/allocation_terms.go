@@ -22,7 +22,7 @@ import (
 func formalObjectMaterializationTemplates(relation Relation, effect EffectTerm) ([]identity.AllocationTemplate, error) {
 	if relation.arena == nil || relation.arena.owner == (lexicalidentity.StableLexicalBodyID{}) || relation.effects == nil ||
 		!relation.effects.Sealed() || effect == 0 || int(effect) >= len(relation.effects.nodes) ||
-		relation.effects.nodes[effect].kind != EffectObjectMaterialization {
+		(relation.effects.nodes[effect].kind != EffectObjectMaterialization && relation.effects.nodes[effect].kind != EffectPathStore) {
 		return nil, fmt.Errorf("transformer: formal object allocation is unowned")
 	}
 	base := uint64(len(relation.arena.allocations) - 1)
@@ -47,7 +47,8 @@ func relationObjectMaterializationTemplates(relation Relation) ([]identity.Alloc
 	}
 	var out []identity.AllocationTemplate
 	for effect := EffectTerm(1); int(effect) < len(relation.effects.nodes); effect++ {
-		if relation.effects.nodes[effect].kind != EffectObjectMaterialization {
+		node := relation.effects.nodes[effect]
+		if node.kind != EffectObjectMaterialization && (node.kind != EffectPathStore || len(node.pathStoreObject.Heaps) == 0) {
 			continue
 		}
 		templates, err := formalObjectMaterializationTemplates(relation, effect)

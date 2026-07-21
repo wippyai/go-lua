@@ -351,6 +351,39 @@ func freezeFormalEffectCoordinateSlots(body *relationProgramBody, formalKeys *ke
 			}
 			slots = append(slots, writes...)
 		}
+		if len(effect.pathStoreObject.Heaps) != 0 {
+			templates, err := formalObjectMaterializationTemplates(body.relation, step.effect)
+			if err != nil {
+				return nil, err
+			}
+			if len(templates) != len(effect.pathStoreObject.Heaps) {
+				return nil, fmt.Errorf("formal PathStore object allocation schema is incomplete")
+			}
+			shapes := make([]state.ObjectConstructorShape, len(effect.pathStoreObject.Heaps))
+			for index, object := range effect.pathStoreObject.Heaps {
+				shapes[index] = state.ObjectConstructorShape{Identity: identity.AllocationTerm(templates[index]), StableShape: object.StableShape}
+				for _, member := range object.Members {
+					shapes[index].MemberSuffixes = append(shapes[index].MemberSuffixes, member.Suffix)
+				}
+			}
+			plan, err := body.productDomain.PrepareObjectConstructorPlan(body.keys, shapes)
+			if err != nil {
+				return nil, err
+			}
+			writes, err := body.productDomain.ObjectConstructorCoordinateWrites(plan)
+			if err != nil {
+				return nil, err
+			}
+			concrete, err := body.productDomain.SealCoordinateFactorInventory(body.keys, writes)
+			if err != nil {
+				return nil, err
+			}
+			formal, err := rekeyFormalCoordinateFactorInventory(body.productDomain, formalKeys, rekey, concrete)
+			if err != nil {
+				return nil, err
+			}
+			slots = append(slots, formal.Slots()...)
+		}
 		return slots, nil
 	case EffectIndexMutation:
 		// Dynamic keys remain in the canonical dynamic-index/object carriers.
