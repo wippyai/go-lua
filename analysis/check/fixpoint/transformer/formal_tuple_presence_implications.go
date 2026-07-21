@@ -147,7 +147,11 @@ func freezeFormalPresenceImplicationDependency(
 	}
 	valueRootOrdinals := make(map[FormalSlot]formalFiberOrdinal)
 	pathSlotOrdinals := make(map[formalFiberOrdinal]state.CoordinateSlot)
-	readOrdinals := []formalFiberOrdinal{valuesTopOrdinal, pathFamily.skeleton}
+	// The path-evidence carrier is materialized and republished through its
+	// registered lane spelling.  Its semantic reducer may touch only selected
+	// family slots, but the physical carrier contract requires every member of
+	// that lane to be present in the formal projection.
+	readOrdinals := append([]formalFiberOrdinal{valuesTopOrdinal}, path.descriptor.members...)
 	writeOrdinals := make([]formalFiberOrdinal, 0)
 	bindValue := func(root FormalSlot, write bool) error {
 		member, present := values.slot(root)
