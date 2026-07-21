@@ -435,6 +435,101 @@ func (d ProductDomain) ApplyObjectConstructorFactor(plan ObjectConstructorPlan, 
 	return d.ApplyObjectGraphMutationFactor(mutation, input)
 }
 
+// ApplyObjectConstructorFrame evaluates the registered object-constructor law
+// over one exact selected carrier. Coordinate siblings outside selection are
+// represented only by their family Bottom while the law runs; publication is
+// left to the frame patch inverse, so those siblings retain their physical
+// carrier identity.
+func (d ProductDomain) ApplyObjectConstructorFrame(
+	plan ObjectConstructorPlan,
+	values []ObjectConstructorValues,
+	selection ProductFactorSelection,
+	input ProductFactorFrame,
+) (ProductFactorFrame, error) {
+	if !plan.Valid() || plan.seal != d.seal || !d.OwnsProductFactorFrame(selection, input) {
+		return ProductFactorFrame{}, fmt.Errorf("%w: object constructor frame authority", ErrInvalidLaneFactor)
+	}
+	transaction, err := d.BeginProductFactorFrameTransaction(selection, input)
+	if err != nil {
+		return ProductFactorFrame{}, err
+	}
+	for _, group := range selection.coordinateGroups {
+		families, familyErr := d.CoordinateFamilies(group.lane)
+		if familyErr != nil {
+			return ProductFactorFrame{}, familyErr
+		}
+		skeletons := make([]CoordinateFamilySkeleton, len(families))
+		scalars := make([][]CoordinateScalarFactor, len(families))
+		for familyIndex, family := range families {
+			skeletons[familyIndex], familyErr = d.CoordinateSkeletonBottom(family, plan.keys)
+			if familyErr != nil {
+				return ProductFactorFrame{}, familyErr
+			}
+			for selectionIndex := group.first; selectionIndex < group.first+group.count; selectionIndex++ {
+				bucket := selection.coordinateFactors[selectionIndex]
+				if bucket.family != family {
+					continue
+				}
+				factor := input.coordinates[selectionIndex]
+				skeletons[familyIndex], scalars[familyIndex] = factor.Skeleton(), factor.Scalars()
+				break
+			}
+		}
+		lane, composeErr := d.ComposeCoordinateFamilies(group.lane, plan.keys, skeletons, scalars)
+		if composeErr != nil {
+			return ProductFactorFrame{}, composeErr
+		}
+		lane, composeErr = d.ApplyObjectConstructorFactor(plan, values, lane)
+		if composeErr != nil {
+			return ProductFactorFrame{}, composeErr
+		}
+		for selectionIndex := group.first; selectionIndex < group.first+group.count; selectionIndex++ {
+			bucket := selection.coordinateFactors[selectionIndex]
+			skeleton, explicit, decomposeErr := d.DecomposeCoordinateFamily(lane, bucket.family, plan.keys)
+			if decomposeErr != nil {
+				return ProductFactorFrame{}, decomposeErr
+			}
+			if bucket.skeletonOnly {
+				factor, sealErr := d.SealCoordinateFamilyFactor(skeleton, nil)
+				if sealErr != nil {
+					return ProductFactorFrame{}, sealErr
+				}
+				if sealErr = transaction.WriteCoordinate(bucket.family, factor); sealErr != nil {
+					return ProductFactorFrame{}, sealErr
+				}
+				continue
+			}
+			shape, shapeErr := d.SealCoordinateFamilyShape(skeleton, bucket.slots)
+			if shapeErr != nil {
+				return ProductFactorFrame{}, shapeErr
+			}
+			selected := make([]CoordinateScalarFactor, 0, len(bucket.slots))
+			coordinate, _ := d.validateCoordinateFamily(bucket.family)
+			for scalarIndex, slotIndex := 0, 0; scalarIndex < len(explicit) && slotIndex < len(bucket.slots); {
+				scalar, slot := explicit[scalarIndex], bucket.slots[slotIndex]
+				switch {
+				case coordinate.ops.keyEqual(scalar.slot.key, slot.key):
+					selected = append(selected, scalar)
+					scalarIndex++
+					slotIndex++
+				case coordinate.ops.keyLess(scalar.slot.key, slot.key, plan.keys):
+					scalarIndex++
+				default:
+					slotIndex++
+				}
+			}
+			factor, sealErr := d.SealCoordinateFamilyFactor(shape.Skeleton(), selected)
+			if sealErr != nil {
+				return ProductFactorFrame{}, sealErr
+			}
+			if sealErr = transaction.WriteCoordinate(bucket.family, factor); sealErr != nil {
+				return ProductFactorFrame{}, sealErr
+			}
+		}
+	}
+	return transaction.Finish()
+}
+
 // ObjectGraphMutationLanes returns the exact registered dependent-product
 // groups touched by a sealed graph mutation.
 func (d ProductDomain) ObjectGraphMutationLanes(plan ObjectGraphMutationPlan) ([]ProductLane, error) {

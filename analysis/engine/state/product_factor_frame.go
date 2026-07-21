@@ -451,6 +451,21 @@ func (d ProductDomain) patchSelectedCoordinateFamily(current LaneFactor, selecte
 	return d.ReplaceCoordinateFamily(current, overlaidSkeleton, merged)
 }
 
+// PatchSelectedCoordinateFamilyLaneFactor applies one finite exact-selection image to an
+// already-factored physical lane. It is the State-free spelling of the same
+// registered overlay used by PatchProductFactorFrame.
+func (d ProductDomain) PatchSelectedCoordinateFamilyLaneFactor(
+	current LaneFactor,
+	selected []CoordinateSlot,
+	image CoordinateFamilyFactor,
+) (LaneFactor, error) {
+	overlay, err := d.SealCoordinateSkeletonOverlayPlan(selected)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	return d.patchSelectedCoordinateFamily(current, selected, overlay, image)
+}
+
 func coordinateScalarAt(runtime *coordinateFamilyRuntime, scalars []CoordinateScalarFactor, key coordinateKeyPayload, keys *keyspace.KeySpace) (CoordinateScalarFactor, bool) {
 	position := sort.Search(len(scalars), func(index int) bool {
 		return !runtime.ops.keyLess(scalars[index].slot.key, key, keys)
