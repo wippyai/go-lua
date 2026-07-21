@@ -9,9 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 )
 
-// formalCallResultsStep binds the formal tuple carrier to the one canonical
-// N3 factor program. It owns no refinement, equality, or presence semantics.
+// formalCallResultsStep binds the formal tuple carrier to the canonical
+// CallResults phase transaction. Materialization changes only Values;
+// postconditions additionally own their registered factor lanes.
 type formalCallResultsStep struct {
+	phase         factapply.ConcreteCallResultPhase
+	materialize   factapply.CallResultMaterializeFactorProgram[FormalSlot]
 	program       factapply.CallResultPostconditionFactorProgram[FormalSlot]
 	values        formalFiberGroupDescriptor
 	lanes         []formalFiberGroupDescriptor
@@ -26,43 +29,57 @@ func freezeFormalCallResultsStep(program *RelationProgram, variable relationVar,
 		return nil, nil
 	}
 	step := operator.code.nodes[operator.root].steps[operator.step-1]
-	if step.kind != boundaryStepCallResults || step.resultPhase != factapply.ConcreteCallResultPhasePostconditions {
+	if step.kind != boundaryStepCallResults ||
+		(step.resultPhase != factapply.ConcreteCallResultPhaseMaterialize && step.resultPhase != factapply.ConcreteCallResultPhasePostconditions) {
 		return nil, nil
 	}
 	body := &program.bodies[variable-1]
 	span, ok := program.formalFibers.span(variable)
-	if !ok || body.pathSemantics == nil || !body.pathSemantics.Valid() || !body.productDomain.Valid() || body.relation.code != operator.code {
-		return nil, fmt.Errorf("CallResults N3 has no formal product ownership")
+	if !ok || !body.productDomain.Valid() || body.relation.code != operator.code {
+		return nil, fmt.Errorf("CallResults has no formal product ownership")
 	}
 	inventory := span.coordinates
-	if !inventory.ValidFor(body.productDomain, span.keys) {
+	if step.resultPhase == factapply.ConcreteCallResultPhasePostconditions &&
+		(body.pathSemantics == nil || !body.pathSemantics.Valid() || !inventory.ValidFor(body.productDomain, span.keys)) {
 		return nil, fmt.Errorf("CallResults N3 has no frozen coordinate inventory")
-	}
-	prepared, err := factapply.PrepareFormalCallResultPostconditionFactorProgram(
-		body.pathSemantics, body.productDomain, step.result, inventory, span.rekey, span.keys,
-		func(dependency statekey.ValueDependency) (FormalSlot, bool) {
-			return formalLiveValueSlotForDependency(program, body, dependency)
-		},
-	)
-	if err != nil {
-		return nil, err
 	}
 	values, ok := span.valuesGroup()
 	if !ok {
-		return nil, fmt.Errorf("CallResults N3 has no formal Values group")
+		return nil, fmt.Errorf("CallResults has no formal Values group")
 	}
-	groups := span.groupDescriptors()
-	lanes := make([]formalFiberGroupDescriptor, len(prepared.Lanes()))
-	for index, lane := range prepared.Lanes() {
-		found := false
-		for _, group := range groups {
-			if group.kind != formalFiberGroupValues && group.lane == lane {
-				lanes[index], found = group, true
-				break
-			}
+	plan := formalCallResultsStep{phase: step.resultPhase, values: values.descriptor}
+	if step.resultPhase == factapply.ConcreteCallResultPhaseMaterialize {
+		prepared, err := factapply.PrepareCallResultMaterializeFactorProgram(body.productDomain.Registry(), step.result, func(point, result uint32) (FormalSlot, bool) {
+			return formalMiddleSlotForStateKey(program, body, statekey.CallResult(point, result))
+		})
+		if err != nil {
+			return nil, err
 		}
-		if !found {
-			return nil, fmt.Errorf("CallResults N3 lane %q is outside the formal product", lane.ID())
+		plan.materialize = prepared
+	} else {
+		prepared, err := factapply.PrepareFormalCallResultPostconditionFactorProgram(
+			body.pathSemantics, body.productDomain, step.result, inventory, span.rekey, span.keys,
+			func(dependency statekey.ValueDependency) (FormalSlot, bool) {
+				return formalLiveValueSlotForDependency(program, body, dependency)
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		plan.program = prepared
+		groups := span.groupDescriptors()
+		plan.lanes = make([]formalFiberGroupDescriptor, len(prepared.Lanes()))
+		for index, lane := range prepared.Lanes() {
+			found := false
+			for _, group := range groups {
+				if group.kind != formalFiberGroupValues && group.lane == lane {
+					plan.lanes[index], found = group, true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("CallResults N3 lane %q is outside the formal product", lane.ID())
+			}
 		}
 	}
 	seal := func(groups ...formalFiberGroupDescriptor) []formalFiberOrdinal {
@@ -79,9 +96,11 @@ func freezeFormalCallResultsStep(program *RelationProgram, variable relationVar,
 		}
 		return out[:write]
 	}
-	all := append([]formalFiberGroupDescriptor{values.descriptor}, lanes...)
+	all := append([]formalFiberGroupDescriptor{values.descriptor}, plan.lanes...)
 	ordinals := seal(all...)
-	return &formalCallResultsStep{program: prepared, values: values.descriptor, lanes: lanes, readOrdinals: ordinals, writeOrdinals: append([]formalFiberOrdinal(nil), ordinals...)}, nil
+	plan.readOrdinals = ordinals
+	plan.writeOrdinals = append([]formalFiberOrdinal(nil), ordinals...)
+	return &plan, nil
 }
 
 func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOperatorRef, predecessor formalRelationTuple) (formalRelationTuple, error) {
@@ -137,14 +156,25 @@ func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOpera
 				return fail(leafErr)
 			}
 		}
-		next, leafErr := plan.program.Apply(a.ctx, nil, factapply.CallResultPostconditionFactorFrame[FormalSlot]{Values: values, Factors: factors, Reachable: true})
+		nextValues := values
+		nextFactors := factors
+		switch plan.phase {
+		case factapply.ConcreteCallResultPhaseMaterialize:
+			nextValues, leafErr = plan.materialize.Apply(a.ctx, nil, values)
+		case factapply.ConcreteCallResultPhasePostconditions:
+			var next factapply.CallResultPostconditionFactorFrame[FormalSlot]
+			next, leafErr = plan.program.Apply(a.ctx, nil, factapply.CallResultPostconditionFactorFrame[FormalSlot]{Values: values, Factors: factors, Reachable: true})
+			nextValues, nextFactors = next.Values, next.Factors
+			if !next.Reachable {
+				continue
+			}
+		default:
+			return fail(errFormalComponentMalformed)
+		}
 		if leafErr != nil {
 			return fail(leafErr)
 		}
-		if !next.Reachable {
-			continue
-		}
-		valueLeaves, leafErr = a.factorValuesGroup(authority, plan.values, next.Values)
+		valueLeaves, leafErr = a.factorValuesGroup(authority, plan.values, nextValues)
 		if leafErr != nil {
 			return fail(leafErr)
 		}
@@ -163,7 +193,7 @@ func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOpera
 			}
 		}
 		for index, group := range plan.lanes {
-			leaves, factorErr := a.factorFormalSparseLane(authority, span, group, next.Factors[index])
+			leaves, factorErr := a.factorFormalSparseLane(authority, span, group, nextFactors[index])
 			if factorErr != nil {
 				return fail(factorErr)
 			}
