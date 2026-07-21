@@ -6,11 +6,13 @@ import (
 	"reflect"
 	"testing"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -75,75 +77,118 @@ func TestProductDomainNormalizeUsesExactScopeIdentity(t *testing.T) {
 	}
 }
 
-func TestSealedFactorSelectionProjectsAndPatchesWithoutAllocation(t *testing.T) {
+func TestProductFactorSelectionSealsExactCoordinatesAndValues(t *testing.T) {
 	reg := standard.Registry()
 	domain := RegisteredProductDomain(reg)
-	selection, err := domain.SealFactorSelection(NewLaneSet(LanePlacement))
+	keys := keyspace.New()
+	path := keys.FromPath(pathdom.NewPath(symbol.ID(9717), "selected"))
+	coordinate, err := domain.LenFloorCoordinateSlot(keys, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := identity.ID{Kind: "table", Site: "sealed-factor-selection", Index: 1}
-	slot := statekey.SymbolValue(17)
-	base := domain.Lattice().Bottom().
-		WriteValue(reg, slot, product.Top()).
-		WritePlacement(id, placement.Stack)
-	delta := domain.Lattice().Bottom().WritePlacement(id, placement.OwnedHeap)
-
-	projected, err := domain.ProjectSelectedFactors(base, selection)
+	inventory, err := domain.SealCoordinateFactorInventory(keys, []CoordinateSlot{coordinate})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := projected.ReadPlacement(id); got != placement.Stack {
-		t.Fatalf("projected placement = %v, want stack", got)
-	}
-	if got := projected.ReadValue(reg, slot); !product.Equal(reg, got, product.Bottom(reg)) {
-		t.Fatal("whole-lane projection retained unselected Values")
-	}
-
-	patched, err := domain.PatchSelectedFactors(base, delta, selection)
+	second, first := statekey.SymbolValue(72), statekey.SymbolValue(71)
+	selection, err := domain.SealProductFactorSelection(nil, inventory, []statekey.Value{second, first}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := patched.ReadPlacement(id); got != placement.OwnedHeap {
-		t.Fatalf("patched placement = %v, want heap", got)
+	if !domain.OwnsProductFactorSelection(selection) || len(selection.OrdinaryLanes()) != 0 ||
+		len(selection.CoordinateLanes()) != 1 || selection.CoordinateFactors().Len() != 1 || !selection.ValuesTop() {
+		t.Fatal("exact product selection lost sealed ownership")
 	}
-	if got := patched.ReadValue(reg, slot); !product.Equal(reg, got, product.Top()) {
-		t.Fatal("factor patch changed unselected Values")
+	values := selection.ValueFactors()
+	if len(values) != 2 || values[0] != first || values[1] != second {
+		t.Fatalf("canonical Values selection = %v", values)
 	}
-
-	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, projectErr := domain.ProjectSelectedFactors(base, selection); projectErr != nil {
-			panic(projectErr)
-		}
-	}); allocs > 1 {
-		t.Fatalf("sealed factor projection allocations = %.1f, want at most the escaped State result", allocs)
+	values[0] = 0
+	if selection.ValueFactors()[0] != first {
+		t.Fatal("caller mutation changed sealed Values selection")
 	}
-	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, patchErr := domain.PatchSelectedFactors(base, delta, selection); patchErr != nil {
-			panic(patchErr)
-		}
-	}); allocs > 1 {
-		t.Fatalf("sealed factor patch allocations = %.1f, want at most the escaped State result", allocs)
+	coordinateLane := selection.CoordinateLanes()[0]
+	if _, err := domain.SealProductFactorSelection([]ProductLane{coordinateLane}, inventory, nil, false); !errors.Is(err, ErrInvalidProductLane) {
+		t.Fatalf("coordinate-backed ordinary selection error = %v", err)
+	}
+	if _, err := domain.SealProductFactorSelection(nil, inventory, []statekey.Value{first, first}, false); !errors.Is(err, ErrInvalidProductLane) {
+		t.Fatalf("duplicate Values selection error = %v", err)
 	}
 }
 
-func TestSealedFactorSelectionRejectsValuesAndForeignDomain(t *testing.T) {
+func TestProductFactorFramePreservesValuesTopAndUnselectedCarrier(t *testing.T) {
 	reg := standard.Registry()
 	domain := RegisteredProductDomain(reg)
-	if _, err := domain.SealFactorSelection(NewLaneSet(LaneValues)); !errors.Is(err, ErrInvalidProductLane) {
-		t.Fatalf("Values selection error = %v, want ErrInvalidProductLane", err)
-	}
-	selection, err := domain.SealFactorSelection(NewLaneSet(LanePlacement))
+	keys := keyspace.New()
+	id := identity.ID{Kind: "table", Site: "exact-product-frame", Index: 1}
+	unrelated := identity.ID{Kind: "table", Site: "exact-product-frame-unrelated", Index: 2}
+	slot := statekey.SymbolValue(73)
+	base := domain.Lattice().Bottom().
+		WritePlacement(id, placement.Stack).
+		FreezeTable(unrelated)
+	inventory, err := domain.CoordinateFactorInventoryFromPreparedState(keys, base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := TryRegisteredProductDomainWithLanes(reg, DefaultLanes())
+	selection, err := domain.SealProductFactorSelection(nil, inventory, []statekey.Value{slot}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := foreign.ProjectSelectedFactors(foreign.Lattice().Bottom(), selection); !errors.Is(err, ErrInvalidProductLane) {
-		t.Fatalf("foreign selection error = %v, want ErrInvalidProductLane", err)
+	desired := domain.Lattice().Bottom().WritePlacement(id, placement.OwnedHeap)
+	frame, err := domain.ProjectProductFactorFrame(desired, selection)
+	if err != nil {
+		t.Fatal(err)
 	}
+	top := RecomposeValueLane(reg, domain.Lattice(), base, ValueLaneFactor{Top: true})
+	got, err := domain.PatchProductFactorFrame(top, selection, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReadPlacement(id) != placement.OwnedHeap || !got.IsTableFrozen(unrelated) {
+		t.Fatalf("frame patch placement=%v frozen=%t", got.ReadPlacement(id), got.IsTableFrozen(unrelated))
+	}
+	_, values := DecomposeValueLane(domain.Lattice(), got)
+	if !values.Top || len(values.Values) != 0 {
+		t.Fatalf("finite Values patch changed absorbing Top: %#v", values)
+	}
+}
+
+func TestProductFactorFrameOverlaysCoordinateSkeletonAndSelectedDefaults(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	keys := keyspace.New()
+	target := identity.ID{Kind: "table", Site: "coordinate-overlay-target", Index: 1}
+	unselected := identity.ID{Kind: "table", Site: "coordinate-overlay-carry", Index: 2}
+	implicit := identity.ID{Kind: "table", Site: "coordinate-overlay-implicit", Index: 3}
+	seed := domain.Lattice().Bottom().WritePlacement(target, placement.Stack)
+	inventory, err := domain.CoordinateFactorInventoryFromPreparedState(keys, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := domain.SealProductFactorSelection(nil, inventory, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertPatch := func(name string, base, image State, wantTarget placement.Value) State {
+		t.Helper()
+		frame, frameErr := domain.ProjectProductFactorFrame(image, selection)
+		if frameErr != nil {
+			t.Fatalf("%s project: %v", name, frameErr)
+		}
+		got, patchErr := domain.PatchProductFactorFrame(base, selection, frame)
+		if patchErr != nil {
+			t.Fatalf("%s patch: %v", name, patchErr)
+		}
+		if got.ReadPlacement(target) != wantTarget || got.ReadPlacement(unselected) != placement.Stack || got.ReadPlacement(implicit) != placement.Bottom {
+			t.Fatalf("%s target=%v carry=%v implicit=%v", name, got.ReadPlacement(target), got.ReadPlacement(unselected), got.ReadPlacement(implicit))
+		}
+		return got
+	}
+	base := domain.Lattice().Bottom().WritePlacement(unselected, placement.Stack)
+	base = assertPatch("create", base, domain.Lattice().Bottom().WritePlacement(target, placement.OwnedHeap), placement.OwnedHeap)
+	base = assertPatch("delete", base, domain.Lattice().Bottom(), placement.Bottom)
+	assertPatch("selected-top-default", base, domain.Lattice().Top(), placement.Unknown)
 }
 
 func TestLaneMaskInlineFastPathAndCanonicalUnboundedSpill(t *testing.T) {

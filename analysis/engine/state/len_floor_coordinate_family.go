@@ -22,6 +22,7 @@ type lenFloorCoordinateSkeleton struct {
 }
 type lenFloorCoordinateKey struct{ path keyspace.Key }
 type lenFloorCoordinateScalar struct{ floor lenbound.Floor }
+type lenFloorCoordinateOverlayPlan []keyspace.Key
 
 var lenFloorCoordinateFamilySpec = coordinateFamilySpec{
 	dynamicRead:   dynamicReadLenFloorCoordinates(),
@@ -183,6 +184,29 @@ func buildLenFloorCoordinateFamily(_ *axis.Registry, _ DomainOptions) coordinate
 				}
 			}
 			return wrapLenFloorCoordinateSkeleton(lenFloorCoordinateSkeleton{keys: keys, paths: paths}), nil, true
+		},
+		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
+			plan := make(lenFloorCoordinateOverlayPlan, len(selected))
+			for index, payload := range selected {
+				plan[index] = lenFloorCoordinateKeyValue(payload).path
+			}
+			return typedCoordinateSkeletonOverlayPlanPayload[lenFloorCoordinateOverlayPlan]{value: plan}, true
+		},
+		overlaySelectedSkeleton: func(payload coordinateSkeletonOverlayPlanPayload, current, image coordinateSkeletonPayload, _ []CoordinateScalarFactor, keys *keyspace.KeySpace) (coordinateSkeletonPayload, bool) {
+			left, right := lenFloorCoordinateSkeletonValue(current), lenFloorCoordinateSkeletonValue(image)
+			typed, ok := payload.(typedCoordinateSkeletonOverlayPlanPayload[lenFloorCoordinateOverlayPlan])
+			if !ok {
+				return nil, false
+			}
+			selected := typed.value
+			outPaths := overlaySelectedKeyspaceKeys(keys, left.paths, right.paths, selected)
+			if len(selected) == 0 {
+				left.keys = keys
+				return wrapLenFloorCoordinateSkeleton(left), true
+			}
+			return wrapLenFloorCoordinateSkeleton(lenFloorCoordinateSkeleton{
+				bottom: len(outPaths) == 0 && right.bottom, keys: keys, paths: outPaths,
+			}), true
 		},
 		decompose: func(payload laneFactorPayload, keys *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, error) {
 			lane := typedLaneFactorValue[lenFloorLane](payload)
@@ -377,6 +401,42 @@ func buildLenFloorCoordinateFamily(_ *axis.Registry, _ DomainOptions) coordinate
 		},
 		returnIdentity: noCoordinateReturnIdentity(), pathEvidence: noCoordinatePathEvidence(), pathValues: noCoordinatePathValues(), rootAssignment: lenFloorCoordinateRootAssignment(), pathMutation: lenFloorCoordinatePathMutation(), objectMutation: noCoordinateObjectMutation(),
 	})
+}
+
+func overlaySelectedKeyspaceKeys(keys *keyspace.KeySpace, current, image, selected []keyspace.Key) []keyspace.Key {
+	out := make([]keyspace.Key, 0, len(current)+len(selected))
+	currentIndex, imageIndex, selectedIndex := 0, 0, 0
+	imageHas := func(want keyspace.Key) bool {
+		for imageIndex < len(image) && keys.Less(image[imageIndex], want) {
+			imageIndex++
+		}
+		return imageIndex < len(image) && image[imageIndex] == want
+	}
+	for currentIndex < len(current) && selectedIndex < len(selected) {
+		switch {
+		case current[currentIndex] == selected[selectedIndex]:
+			if imageHas(selected[selectedIndex]) {
+				out = append(out, selected[selectedIndex])
+			}
+			currentIndex++
+			selectedIndex++
+		case keys.Less(current[currentIndex], selected[selectedIndex]):
+			out = append(out, current[currentIndex])
+			currentIndex++
+		default:
+			if imageHas(selected[selectedIndex]) {
+				out = append(out, selected[selectedIndex])
+			}
+			selectedIndex++
+		}
+	}
+	out = append(out, current[currentIndex:]...)
+	for ; selectedIndex < len(selected); selectedIndex++ {
+		if imageHas(selected[selectedIndex]) {
+			out = append(out, selected[selectedIndex])
+		}
+	}
+	return out
 }
 
 func lenFloorCoordinatePathMutation() coordinatePathMutationOps {

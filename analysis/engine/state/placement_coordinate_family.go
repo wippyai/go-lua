@@ -19,6 +19,7 @@ const placementCoordinateFamilyID CoordinateFamilyID = "identity-placement"
 type placementCoordinateSkeleton struct{ top bool }
 type placementCoordinateKey struct{ id identity.Term }
 type placementCoordinateScalar struct{ value placement.Value }
+type placementCoordinateOverlayPlan []placementCoordinateKey
 
 var placementCoordinateFamilySpec = coordinateFamilySpec{
 	dynamicRead:   dynamicReadCoordinateIndependent(),
@@ -111,6 +112,22 @@ func buildPlacementCoordinateFamily(_ *axis.Registry, _ DomainOptions) coordinat
 				return nil, nil, false
 			}
 			return skeleton, nil, true
+		},
+		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
+			plan := make(placementCoordinateOverlayPlan, len(selected))
+			for index, payload := range selected {
+				plan[index] = placementCoordinateKeyValue(payload)
+			}
+			return typedCoordinateSkeletonOverlayPlanPayload[placementCoordinateOverlayPlan]{value: plan}, true
+		},
+		overlaySelectedSkeleton: func(payload coordinateSkeletonOverlayPlanPayload, current, _ coordinateSkeletonPayload, _ []CoordinateScalarFactor, _ *keyspace.KeySpace) (coordinateSkeletonPayload, bool) {
+			_, ok := payload.(typedCoordinateSkeletonOverlayPlanPayload[placementCoordinateOverlayPlan])
+			if !ok {
+				return nil, false
+			}
+			// The Top/finite bit is the default for the unbounded identity
+			// universe, so no finite selection owns it.
+			return wrapPlacementCoordinateSkeleton(placementCoordinateSkeletonValue(current)), true
 		},
 		decompose: func(payload laneFactorPayload, _ *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, error) {
 			lane := typedLaneFactorValue[placementLane](payload)

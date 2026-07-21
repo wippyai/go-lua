@@ -38,6 +38,11 @@ type heapCoordinateKey struct {
 
 type heapCoordinateScalar struct{ value product.Value }
 
+type heapCoordinateOverlayPlan struct {
+	selectedCount int
+	byObject      map[identity.Term]*heapSelectedSkeletonObject
+}
+
 type heapCoordinateFiber struct {
 	kind heapCoordinateKind
 	id   identity.Term
@@ -354,6 +359,36 @@ func buildHeapCoordinateFamily(reg *axis.Registry, _ DomainOptions) coordinateFa
 				return heapCoordinateKeyLess(heapCoordinateKeyValue(post[i].key), heapCoordinateKeyValue(post[j].key), keys)
 			})
 			return wrapHeapCoordinateSkeleton(out), post, true
+		},
+		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
+			plan := heapCoordinateOverlayPlan{selectedCount: len(selected), byObject: make(map[identity.Term]*heapSelectedSkeletonObject)}
+			for _, payload := range selected {
+				key := heapCoordinateKeyValue(payload)
+				entry := plan.byObject[key.id]
+				if entry == nil {
+					entry = &heapSelectedSkeletonObject{}
+					plan.byObject[key.id] = entry
+				}
+				switch key.kind {
+				case heapCoordinateRoot:
+					entry.root = true
+				case heapCoordinateMember:
+					entry.members = append(entry.members, key.key)
+				default:
+					return nil, false
+				}
+			}
+			return typedCoordinateSkeletonOverlayPlanPayload[heapCoordinateOverlayPlan]{value: plan}, true
+		},
+		overlaySelectedSkeleton: func(payload coordinateSkeletonOverlayPlanPayload, current, image coordinateSkeletonPayload, _ []CoordinateScalarFactor, keys *keyspace.KeySpace) (coordinateSkeletonPayload, bool) {
+			typed, ok := payload.(typedCoordinateSkeletonOverlayPlanPayload[heapCoordinateOverlayPlan])
+			if !ok {
+				return nil, false
+			}
+			out, ok := overlaySelectedHeapCoordinateSkeleton(
+				heapCoordinateSkeletonValue(current), heapCoordinateSkeletonValue(image), typed.value, keys,
+			)
+			return wrapHeapCoordinateSkeleton(out), ok
 		},
 		decompose: func(payload laneFactorPayload, keys *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, error) {
 			if keys == nil || !keys.Valid() {
@@ -804,6 +839,90 @@ func cloneHeapCoordinateSkeleton(source heapCoordinateSkeleton) heapCoordinateSk
 		}
 	}
 	return out
+}
+
+type heapSelectedSkeletonObject struct {
+	root    bool
+	members []keyspace.Key
+}
+
+// overlaySelectedHeapCoordinateSkeleton overlays the object-existence/root
+// skeleton and exact static-member support owned by selected. Object metadata
+// belongs to the selected root; member support remains independently keyed.
+// A root cannot be removed while an unselected member remains supported,
+// because such a mixed skeleton has no representation in the heap family.
+func overlaySelectedHeapCoordinateSkeleton(
+	current, image heapCoordinateSkeleton,
+	plan heapCoordinateOverlayPlan,
+	keys *keyspace.KeySpace,
+) (heapCoordinateSkeleton, bool) {
+	if plan.selectedCount == 0 || current.top {
+		out := cloneHeapCoordinateSkeleton(current)
+		out.keys = keys
+		return out, true
+	}
+	out := cloneHeapCoordinateSkeleton(current)
+	out.keys = keys
+	for id, selection := range plan.byObject {
+		currentObject, hasCurrent := current.objects[id]
+		imageObject, hasImage := image.objects[id]
+		currentSupported := hasCurrent && !currentObject.bottom
+		imageSupported := hasImage && !imageObject.bottom
+
+		if !selection.root && currentSupported != imageSupported {
+			// The root is unselected, so member selection cannot change object
+			// existence as a side effect.
+			return heapCoordinateSkeleton{}, false
+		}
+		if selection.root && !imageSupported {
+			if currentSupported {
+				for _, key := range currentObject.staticKeys {
+					if !sortedHeapKeyContains(keys, selection.members, key) {
+						return heapCoordinateSkeleton{}, false
+					}
+				}
+			}
+			if out.objects != nil {
+				if hasImage {
+					out.objects[id] = cloneHeapCoordinateObject(imageObject)
+				} else {
+					delete(out.objects, id)
+				}
+			}
+			continue
+		}
+		if !currentSupported && !selection.root {
+			for _, key := range selection.members {
+				if imageSupported && sortedHeapKeyContains(keys, imageObject.staticKeys, key) {
+					return heapCoordinateSkeleton{}, false
+				}
+			}
+			continue
+		}
+
+		var object heapTableIdentityObjectSkeleton
+		switch {
+		case selection.root:
+			object = cloneHeapCoordinateObject(imageObject)
+		case hasCurrent:
+			object = cloneHeapCoordinateObject(currentObject)
+		default:
+			continue
+		}
+		object.staticKeys = overlayHeapStaticKeys(keys, currentObject.staticKeys, imageObject.staticKeys, selection.members)
+		if out.objects == nil {
+			out.objects = make(map[identity.Term]heapTableIdentityObjectSkeleton)
+		}
+		out.objects[id] = object
+	}
+	if len(out.objects) == 0 {
+		out.objects = nil
+	}
+	return out, true
+}
+
+func overlayHeapStaticKeys(keys *keyspace.KeySpace, current, image, selected []keyspace.Key) []keyspace.Key {
+	return overlaySelectedKeyspaceKeys(keys, current, image, selected)
 }
 
 func mapHeapCoordinateObjectValues(source heapTableIdentityObjectSkeleton, mapValue func(product.Value) (product.Value, bool)) heapTableIdentityObjectSkeleton {

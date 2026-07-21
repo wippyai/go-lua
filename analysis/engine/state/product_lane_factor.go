@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -51,12 +52,29 @@ type LaneFactor struct {
 // Lane returns the domain-owned descriptor for this component.
 func (f LaneFactor) Lane() ProductLane { return f.lane }
 
-// ProductFactorSelection is an immutable ProductDomain-owned ordinal mask for
-// non-Values State lanes. Values has a finer slot-level projection and can
-// never be represented by this whole-lane selector.
+// ProductFactorSelection is the singular exact physical vocabulary for one
+// product transaction. Ordinary lanes are indivisible; coordinate-backed
+// lanes are selected by an exact inventory; Values retain finite slots and an
+// independent Top bit.
 type ProductFactorSelection struct {
-	seal     *productDomainSeal
-	selected []bool
+	seal               *productDomainSeal
+	authority          *productFactorSelectionSeal
+	ordinary           []ProductLane
+	selected           []bool
+	coordinates        CoordinateFactorInventory
+	coordinateLanes    []ProductLane
+	coordinateSelected []bool
+	coordinateOverlays []CoordinateSkeletonOverlayPlan
+	coordinateGroups   []productCoordinateSelectionGroup
+	values             []statekey.Value
+	valuesTop          bool
+}
+
+type productFactorSelectionSeal struct{}
+
+type productCoordinateSelectionGroup struct {
+	lane         ProductLane
+	first, count int
 }
 
 type productLaneRuntime struct {
@@ -213,17 +231,116 @@ func (d ProductDomain) ProductLane(id LaneID) (ProductLane, bool) {
 	return ProductLane{}, false
 }
 
-// SealFactorSelection validates lane names once and compiles them to the exact
-// ProductDomain-local ordinal inventory used by hot projection and patching.
-func (d ProductDomain) SealFactorSelection(lanes LaneSet) (ProductFactorSelection, error) {
-	if err := d.validateTupleLaneSelection(lanes); err != nil {
-		return ProductFactorSelection{}, err
+// SealProductFactorSelection validates and freezes the exact physical factors
+// one semantic component may read or write. Ordinary lanes are selected as a
+// whole. Dependent coordinate lanes are selected only through inventory, and
+// Values is selected by finite slot plus its independent lifted Top bit.
+//
+// A physical lane cannot be selected both ordinarily and by coordinate. That
+// prohibition makes component composition unambiguous: structural carry of a
+// coordinate lane is owned by ProductDomain, never reconstructed by a caller.
+func (d ProductDomain) SealProductFactorSelection(
+	lanes []ProductLane,
+	coordinates CoordinateFactorInventory,
+	values []statekey.Value,
+	valuesTop bool,
+) (ProductFactorSelection, error) {
+	keys := coordinates.KeySpace()
+	if !d.Valid() || keys == nil || !keys.Valid() || !coordinates.ValidFor(d, keys) {
+		return ProductFactorSelection{}, fmt.Errorf("%w: invalid product factor selection authority", ErrInvalidProductLane)
 	}
-	selection := ProductFactorSelection{seal: d.seal, selected: make([]bool, len(d.factorLanes))}
-	for index := range d.factorLanes {
-		selection.selected[index] = lanes.Has(d.factorLanes[index].lane.id)
+	selection := ProductFactorSelection{
+		seal:               d.seal,
+		authority:          new(productFactorSelectionSeal),
+		selected:           make([]bool, len(d.factorLanes)),
+		coordinates:        coordinates,
+		coordinateSelected: make([]bool, len(d.factorLanes)),
+		values:             append([]statekey.Value(nil), values...),
+		valuesTop:          valuesTop,
+	}
+	for index, lane := range lanes {
+		runtime, err := d.validateLane(lane)
+		if err != nil || runtime.lane.slotFactored || len(runtime.coordinates) != 0 {
+			return ProductFactorSelection{}, fmt.Errorf("%w: ordinary factor %d is foreign or coordinate-backed", ErrInvalidProductLane, index)
+		}
+		ordinal := int(runtime.lane.ordinal)
+		if selection.selected[ordinal] {
+			return ProductFactorSelection{}, fmt.Errorf("%w: duplicate ordinary factor %q", ErrInvalidProductLane, runtime.lane.id)
+		}
+		selection.selected[ordinal] = true
+	}
+	for _, bucket := range coordinates.set.families {
+		ordinal := int(bucket.family.lane.ordinal)
+		if ordinal < 0 || ordinal >= len(d.factorLanes) || selection.selected[ordinal] {
+			return ProductFactorSelection{}, fmt.Errorf("%w: coordinate factor overlaps ordinary factor", ErrInvalidProductLane)
+		}
+		if !selection.coordinateSelected[ordinal] {
+			selection.coordinateSelected[ordinal] = true
+		}
+		overlay, err := d.SealCoordinateSkeletonOverlayPlan(bucket.slots)
+		if err != nil {
+			return ProductFactorSelection{}, err
+		}
+		selection.coordinateOverlays = append(selection.coordinateOverlays, overlay)
+		if len(selection.coordinateGroups) == 0 || selection.coordinateGroups[len(selection.coordinateGroups)-1].lane != bucket.family.lane {
+			selection.coordinateGroups = append(selection.coordinateGroups, productCoordinateSelectionGroup{
+				lane: bucket.family.lane, first: len(selection.coordinateOverlays) - 1, count: 1,
+			})
+		} else {
+			selection.coordinateGroups[len(selection.coordinateGroups)-1].count++
+		}
+	}
+	for ordinal, selected := range selection.coordinateSelected {
+		if selected {
+			selection.coordinateLanes = append(selection.coordinateLanes, d.factorLanes[ordinal].lane)
+		}
+	}
+	for ordinal, selected := range selection.selected {
+		if selected {
+			selection.ordinary = append(selection.ordinary, d.factorLanes[ordinal].lane)
+		}
+	}
+	sort.Slice(selection.values, func(left, right int) bool {
+		return selection.values[left] < selection.values[right]
+	})
+	for index, slot := range selection.values {
+		if slot == 0 || index > 0 && selection.values[index-1] == slot {
+			return ProductFactorSelection{}, fmt.Errorf("%w: zero or duplicate Values factor", ErrInvalidProductLane)
+		}
 	}
 	return selection, nil
+}
+
+// OrdinaryLanes returns the whole-lane factors in ProductDomain order.
+func (s ProductFactorSelection) OrdinaryLanes() []ProductLane {
+	return append([]ProductLane(nil), s.ordinary...)
+}
+
+// CoordinateFactors returns the immutable exact dependent-coordinate
+// inventory. The inventory itself retains ProductDomain and keyspace seals.
+func (s ProductFactorSelection) CoordinateFactors() CoordinateFactorInventory {
+	return s.coordinates
+}
+
+// CoordinateLanes returns the dependent physical carriers in ProductDomain
+// order. Each factor extracted from one of these lanes must still be reduced
+// through CoordinateFactors before semantic evaluation.
+func (s ProductFactorSelection) CoordinateLanes() []ProductLane {
+	return append([]ProductLane(nil), s.coordinateLanes...)
+}
+
+// ValueFactors returns the detached, canonical finite Values inventory.
+func (s ProductFactorSelection) ValueFactors() []statekey.Value {
+	return append([]statekey.Value(nil), s.values...)
+}
+
+// ValuesTop reports whether the lifted Values Top bit belongs to the component.
+func (s ProductFactorSelection) ValuesTop() bool { return s.valuesTop }
+
+// OwnsProductFactorSelection reports exact ProductDomain ownership. The
+// expensive slot/family validation was discharged at the sealing boundary.
+func (d ProductDomain) OwnsProductFactorSelection(selection ProductFactorSelection) bool {
+	return d.validateFactorSelection(selection) == nil
 }
 
 // Decompose returns the exact registry-ordered component representation of
@@ -268,6 +385,16 @@ func (d ProductDomain) DecomposeLanes(value State, lanes []ProductLane) ([]LaneF
 		out[index] = LaneFactor{lane: runtime.lane, payload: runtime.ops.extract(value)}
 	}
 	return out, nil
+}
+
+// DecomposeLane extracts one sealed factor without allocating an inventory.
+func (d ProductDomain) DecomposeLane(value State, lane ProductLane) (LaneFactor, error) {
+	runtime, err := d.validateLane(lane)
+	if err != nil {
+		return LaneFactor{}, err
+	}
+	value = d.Normalize(value)
+	return LaneFactor{lane: runtime.lane, payload: runtime.ops.extract(value)}, nil
 }
 
 // Compose is the inverse of Decompose. It accepts exactly one factor for every
@@ -321,101 +448,20 @@ func (d ProductDomain) ComposeSparse(factors []LaneFactor) (State, error) {
 	return d.Normalize(out), nil
 }
 
-// ProjectFactors retains exactly lanes from value and replaces every other
-// registered component with Bottom. Values is deliberately excluded: its
-// point-local slot projection is finer than a whole-lane factor operation.
-func (d ProductDomain) ProjectFactors(value State, lanes LaneSet) (State, error) {
-	selection, err := d.SealFactorSelection(lanes)
-	if err != nil {
-		return State{}, err
-	}
-	return d.ProjectSelectedFactors(value, selection)
-}
-
-// ProjectSelectedFactors retains exactly selection from value. The sealed
-// ordinal mask avoids allocating factor slices for every guarded tuple leaf.
-func (d ProductDomain) ProjectSelectedFactors(value State, selection ProductFactorSelection) (State, error) {
-	if err := d.validateFactorSelection(selection); err != nil {
-		return State{}, err
-	}
-	value = d.Normalize(value)
-	out := d.lattice.Bottom()
-	for index := range d.factorLanes {
-		if !selection.selected[index] {
-			continue
-		}
-		d.factorLanes[index].ops.copy(&out, value)
-	}
-	out.canonical = true
-	return d.Normalize(out), nil
-}
-
-// PatchFactors returns base with exactly the declared write lanes replaced by delta.
-// Both inputs remain opaque registered products; lane ownership and selection
-// are validated before any component is installed. Values is owned by the
-// separate exact slot patch and therefore fails closed here.
+// PatchFactors replaces the declared ordinary whole lanes in base.
 func (d ProductDomain) PatchFactors(base, delta State, writes LaneSet) (State, error) {
-	selection, err := d.SealFactorSelection(writes)
-	if err != nil {
-		return State{}, err
-	}
-	return d.PatchSelectedFactors(base, delta, selection)
-}
-
-// PatchSelectedFactors returns base with the selected registered components
-// installed directly from delta, without materializing factor inventories.
-func (d ProductDomain) PatchSelectedFactors(base, delta State, selection ProductFactorSelection) (State, error) {
-	if err := d.validateFactorSelection(selection); err != nil {
+	if err := d.validateTupleLaneSelection(writes); err != nil {
 		return State{}, err
 	}
 	out := d.Normalize(base)
 	delta = d.Normalize(delta)
 	for index := range d.factorLanes {
-		if !selection.selected[index] {
-			continue
+		if writes.Has(d.factorLanes[index].lane.id) {
+			d.factorLanes[index].ops.copy(&out, delta)
 		}
-		d.factorLanes[index].ops.copy(&out, delta)
 	}
 	out.canonical = true
 	return d.Normalize(out), nil
-}
-
-// ChangesOnlyFactors reports whether every changed non-Values component is
-// declared by writes. It is the fail-closed runtime check for a catalog effect
-// certificate; Values is intentionally checked by its slot-level owner.
-func (d ProductDomain) ChangesOnlyFactors(before, after State, writes LaneSet) (bool, error) {
-	selection, err := d.SealFactorSelection(writes)
-	if err != nil {
-		return false, err
-	}
-	return d.ChangesOnlySelectedFactors(before, after, selection)
-}
-
-// ChangesOnlySelectedFactors is ChangesOnlyFactors over a prevalidated ordinal
-// selection. It compares registered components directly without factor slices.
-func (d ProductDomain) ChangesOnlySelectedFactors(before, after State, selection ProductFactorSelection) (bool, error) {
-	if err := d.validateFactorSelection(selection); err != nil {
-		return false, err
-	}
-	before = d.Normalize(before)
-	after = d.Normalize(after)
-	for index := range d.factorLanes {
-		runtime := &d.factorLanes[index]
-		if runtime.lane.slotFactored || selection.selected[index] {
-			continue
-		}
-		if !runtime.ops.equalState(before, after) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func (d ProductDomain) validateFactorSelection(selection ProductFactorSelection) error {
-	if !d.Valid() || selection.seal == nil || selection.seal != d.seal || len(selection.selected) != len(d.factorLanes) {
-		return fmt.Errorf("%w: foreign factor selection", ErrInvalidProductLane)
-	}
-	return nil
 }
 
 func (d ProductDomain) validateTupleLaneSelection(lanes LaneSet) error {
@@ -435,6 +481,16 @@ func (d ProductDomain) validateTupleLaneSelection(lanes LaneSet) error {
 		if !ok || runtime.lane.slotFactored {
 			return fmt.Errorf("%w: lane %q requires slot-level projection", ErrInvalidProductLane, id)
 		}
+	}
+	return nil
+}
+
+func (d ProductDomain) validateFactorSelection(selection ProductFactorSelection) error {
+	if !d.Valid() || selection.seal == nil || selection.seal != d.seal || selection.authority == nil || selection.coordinates.KeySpace() == nil ||
+		!selection.coordinates.ValidFor(d, selection.coordinates.KeySpace()) || len(selection.selected) != len(d.factorLanes) ||
+		len(selection.coordinateSelected) != len(d.factorLanes) || len(selection.coordinateOverlays) != len(selection.coordinates.set.families) ||
+		len(selection.coordinateGroups) != len(selection.coordinateLanes) {
+		return fmt.Errorf("%w: foreign factor selection", ErrInvalidProductLane)
 	}
 	return nil
 }

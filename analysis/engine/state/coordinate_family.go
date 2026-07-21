@@ -37,14 +37,17 @@ func (f CoordinateFamily) Ordinal() CoordinateFamilyOrdinal { return f.ordinal }
 type coordinateSkeletonPayload interface{ isCoordinateSkeletonPayload() }
 type coordinateKeyPayload interface{ isCoordinateKeyPayload() }
 type coordinateScalarPayload interface{ isCoordinateScalarPayload() }
+type coordinateSkeletonOverlayPlanPayload interface{ isCoordinateSkeletonOverlayPlanPayload() }
 
 type typedCoordinateSkeletonPayload[T any] struct{ value T }
 type typedCoordinateKeyPayload[T any] struct{ value T }
 type typedCoordinateScalarPayload[T any] struct{ value T }
+type typedCoordinateSkeletonOverlayPlanPayload[T any] struct{ value T }
 
-func (typedCoordinateSkeletonPayload[T]) isCoordinateSkeletonPayload() {}
-func (typedCoordinateKeyPayload[T]) isCoordinateKeyPayload()           {}
-func (typedCoordinateScalarPayload[T]) isCoordinateScalarPayload()     {}
+func (typedCoordinateSkeletonPayload[T]) isCoordinateSkeletonPayload()                       {}
+func (typedCoordinateKeyPayload[T]) isCoordinateKeyPayload()                                 {}
+func (typedCoordinateScalarPayload[T]) isCoordinateScalarPayload()                           {}
+func (typedCoordinateSkeletonOverlayPlanPayload[T]) isCoordinateSkeletonOverlayPlanPayload() {}
 
 // CoordinateFamilySkeleton is the value-less quotient of one registered
 // family. It owns global family states such as map Top/Bottom; key scalars are
@@ -72,6 +75,17 @@ func (s CoordinateSlot) Family() CoordinateFamily { return s.family }
 type CoordinateScalarFactor struct {
 	slot    CoordinateSlot
 	payload coordinateScalarPayload
+}
+
+// CoordinateSkeletonOverlayPlan is one family-owned immutable sparse patch
+// plan. Selection membership and family-specific grouping are paid once at
+// seal time; DD leaf execution borrows canonical scalars and performs only a
+// linear merge.
+type CoordinateSkeletonOverlayPlan struct {
+	seal    *productDomainSeal
+	family  CoordinateFamily
+	keys    *keyspace.KeySpace
+	payload coordinateSkeletonOverlayPlanPayload
 }
 
 func (f CoordinateScalarFactor) Slot() CoordinateSlot { return f.slot }
@@ -183,6 +197,13 @@ type coordinateFamilyOps struct {
 	// conservative post witness returned with the skeleton. The law is
 	// deliberately not expressed as <=: family skeleton orders differ.
 	sealSkeletonInventory func(coordinateSkeletonPayload, []coordinateKeyPayload, *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, bool)
+	// overlaySelectedSkeleton is the family-owned exact carrier law used when a
+	// sparse factor image is patched back onto a complete carrier. For every
+	// selected key, support and omission come from image; support for every
+	// unselected key remains current. Family-global markers are recomputed from
+	// the selected image plus unselected explicit support.
+	sealSelectedSkeletonOverlay func(selected []coordinateKeyPayload, keys *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool)
+	overlaySelectedSkeleton     func(plan coordinateSkeletonOverlayPlanPayload, current, image coordinateSkeletonPayload, currentScalars []CoordinateScalarFactor, keys *keyspace.KeySpace) (coordinateSkeletonPayload, bool)
 
 	skeletonBottom   func() coordinateSkeletonPayload
 	skeletonTop      func() coordinateSkeletonPayload
@@ -403,7 +424,7 @@ func (c *coordinateFamilyRuntime) boundaryTargetRequiredFibers(
 
 func coordinateFamilyOpsComplete(ops coordinateFamilyOps) bool {
 	return ops.decompose != nil && ops.replace != nil && ops.inventoryCompletion.valid() &&
-		ops.requiredScalarKeys != nil && ops.sealSkeletonInventory != nil &&
+		ops.requiredScalarKeys != nil && ops.sealSkeletonInventory != nil && ops.sealSelectedSkeletonOverlay != nil && ops.overlaySelectedSkeleton != nil &&
 		ops.skeletonBottom != nil && ops.skeletonTop != nil && ops.skeletonEqual != nil && ops.skeletonLessOrEq != nil &&
 		ops.skeletonJoin != nil && ops.skeletonMeet != nil && ops.skeletonWiden != nil && ops.skeletonNarrow != nil && ops.importSkeleton != nil &&
 		ops.skeletonHash != nil && ops.skeletonRepresentationEqual != nil && ops.skeletonRepresentationHash != nil &&
@@ -418,6 +439,58 @@ func coordinateFamilyOpsComplete(ops coordinateFamilyOps) bool {
 		coordinateRootAssignmentOpsComplete(ops.rootAssignment) &&
 		coordinatePathMutationOpsComplete(ops.pathMutation) &&
 		coordinateObjectMutationOpsComplete(ops.objectMutation)
+}
+
+// OverlaySelectedCoordinateSkeleton returns the exact family skeleton formed
+// by taking support/omission for selected slots from image and structurally
+// carrying every unselected slot from current. The operation is dispatched
+// exclusively through the sealed family registration; ProductDomain never
+// switches on an axis or family identity.
+func (d ProductDomain) SealCoordinateSkeletonOverlayPlan(selected []CoordinateSlot) (CoordinateSkeletonOverlayPlan, error) {
+	if !d.Valid() || len(selected) == 0 || selected[0].keys == nil {
+		return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: coordinate skeleton overlay plan", ErrInvalidLaneFactor)
+	}
+	coordinate, err := d.validateCoordinateFamily(selected[0].family)
+	if err != nil {
+		return CoordinateSkeletonOverlayPlan{}, err
+	}
+	keys := selected[0].keys
+	keysPayload := make([]coordinateKeyPayload, len(selected))
+	for index, slot := range selected {
+		if d.validateCoordinateSlotFor(coordinate, slot, keys) != nil {
+			return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: selected coordinate skeleton slot %d", ErrInvalidLaneFactor, index)
+		}
+		if index != 0 && !coordinate.ops.keyLess(selected[index-1].key, slot.key, keys) {
+			return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: selected coordinate skeleton slots are not canonical", ErrInvalidLaneFactor)
+		}
+		keysPayload[index] = slot.key
+	}
+	payload, ok := coordinate.ops.sealSelectedSkeletonOverlay(keysPayload, keys)
+	if !ok || payload == nil {
+		return CoordinateSkeletonOverlayPlan{}, fmt.Errorf("%w: coordinate skeleton overlay plan sealing", ErrInvalidLaneFactor)
+	}
+	return CoordinateSkeletonOverlayPlan{seal: d.seal, family: coordinate.family, keys: keys, payload: payload}, nil
+}
+
+func (d ProductDomain) OverlaySelectedCoordinateSkeleton(
+	plan CoordinateSkeletonOverlayPlan,
+	current, image CoordinateFamilySkeleton,
+	currentScalars []CoordinateScalarFactor,
+) (CoordinateFamilySkeleton, error) {
+	coordinate, err := d.validateCoordinateSkeletonPair(current, image)
+	if err != nil || plan.seal != d.seal || plan.family != current.family || plan.keys != current.keys || plan.payload == nil {
+		return CoordinateFamilySkeleton{}, fmt.Errorf("%w: coordinate skeleton overlay plan authority", ErrInvalidLaneFactor)
+	}
+	payload, ok := coordinate.ops.overlaySelectedSkeleton(plan.payload, current.payload, image.payload, currentScalars, current.keys)
+	if !ok || payload == nil {
+		return CoordinateFamilySkeleton{}, fmt.Errorf("%w: selected coordinate skeleton overlay", ErrInvalidLaneFactor)
+	}
+	keys := current.keys
+	out := CoordinateFamilySkeleton{family: coordinate.family, keys: keys, payload: payload}
+	if err := d.validateCoordinateSkeletonFor(coordinate, out, keys); err != nil {
+		return CoordinateFamilySkeleton{}, err
+	}
+	return out, nil
 }
 
 func withSemanticSkeletonRepresentation(ops coordinateFamilyOps) coordinateFamilyOps {

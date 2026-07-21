@@ -14,6 +14,8 @@ import (
 
 const pathEvidenceCoordinateFamilyID CoordinateFamilyID = "coupled-path-evidence"
 
+type pathEvidenceCoordinateOverlayPlan []pathevidence.CoordinateKey
+
 var pathEvidenceCoordinateFamilySpec = coordinateFamilySpec{
 	dynamicRead:   dynamicReadPathCoordinates(),
 	identityImage: IdentityImageEmbeddedValue,
@@ -128,6 +130,21 @@ func buildPathEvidenceCoordinateFamily(reg *axis.Registry, _ DomainOptions) coor
 				return nil, nil, false
 			}
 			return skeleton, nil, true
+		},
+		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
+			plan := make(pathEvidenceCoordinateOverlayPlan, len(selected))
+			for index, payload := range selected {
+				plan[index] = pathEvidenceCoordinateKey(payload)
+			}
+			return typedCoordinateSkeletonOverlayPlanPayload[pathEvidenceCoordinateOverlayPlan]{value: plan}, true
+		},
+		overlaySelectedSkeleton: func(payload coordinateSkeletonOverlayPlanPayload, current, _ coordinateSkeletonPayload, _ []CoordinateScalarFactor, _ *keyspace.KeySpace) (coordinateSkeletonPayload, bool) {
+			if _, ok := payload.(typedCoordinateSkeletonOverlayPlanPayload[pathEvidenceCoordinateOverlayPlan]); !ok {
+				return nil, false
+			}
+			// The four Bottom markers are defaults for unbounded coordinate
+			// sub-universes and therefore remain current under finite patching.
+			return wrapPathEvidenceCoordinateSkeleton(pathEvidenceCoordinateSkeleton(current)), true
 		},
 		decompose: func(payload laneFactorPayload, keys *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, error) {
 			lane := typedLaneFactorValue[pathevidence.Lane](payload)

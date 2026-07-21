@@ -23,6 +23,7 @@ type numBoundCoordinateSkeleton struct {
 	keys   *keyspace.KeySpace
 }
 type numBoundCoordinateKey struct{ path keyspace.Key }
+type numBoundCoordinateOverlayPlan []numBoundCoordinateKey
 
 // numBoundCoordinateScalar is one fixed cell of the finite must-map. Presence
 // is semantic: an omitted key is map Top, while a present key whose element is
@@ -161,6 +162,22 @@ func buildNumBoundCoordinateFamily(direction numbound.Direction, options DomainO
 			}
 			value.keys = keys
 			return wrapNumBoundCoordinateSkeleton(value), nil, true
+		},
+		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
+			plan := make(numBoundCoordinateOverlayPlan, len(selected))
+			for index, payload := range selected {
+				plan[index] = numBoundCoordinateKeyValue(payload)
+			}
+			return typedCoordinateSkeletonOverlayPlanPayload[numBoundCoordinateOverlayPlan]{value: plan}, true
+		},
+		overlaySelectedSkeleton: func(payload coordinateSkeletonOverlayPlanPayload, current, _ coordinateSkeletonPayload, _ []CoordinateScalarFactor, keys *keyspace.KeySpace) (coordinateSkeletonPayload, bool) {
+			_, ok := payload.(typedCoordinateSkeletonOverlayPlanPayload[numBoundCoordinateOverlayPlan])
+			if !ok {
+				return nil, false
+			}
+			left := numBoundCoordinateSkeletonValue(current)
+			left.keys = keys
+			return wrapNumBoundCoordinateSkeleton(left), true
 		},
 		decompose: func(payload laneFactorPayload, keys *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, error) {
 			lane := typedLaneFactorValue[numBoundLane](payload)

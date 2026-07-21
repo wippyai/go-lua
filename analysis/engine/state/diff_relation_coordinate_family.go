@@ -47,6 +47,7 @@ type diffRelationCoordinateScalar struct {
 	bottom bool
 	bounds []int64
 }
+type diffRelationCoordinateOverlayPlan []diffRelationCoordinateKey
 
 var diffRelationCoordinateFamilySpec = coordinateFamilySpec{
 	id: diffRelationCoordinateFamilyID, dynamicRead: dynamicReadDiffRelationCoordinates(),
@@ -95,6 +96,26 @@ func buildDiffRelationCoordinateFamily(_ *axis.Registry, _ DomainOptions) coordi
 				}
 			}
 			return wrapDiffRelationCoordinateSkeleton(newDiffRelationCoordinateSkeleton(keys, false, kept)), nil, true
+		},
+		sealSelectedSkeletonOverlay: func(selected []coordinateKeyPayload, _ *keyspace.KeySpace) (coordinateSkeletonOverlayPlanPayload, bool) {
+			plan := make(diffRelationCoordinateOverlayPlan, len(selected))
+			for index, payload := range selected {
+				plan[index] = diffRelationCoordinateKeyValue(payload)
+			}
+			return typedCoordinateSkeletonOverlayPlanPayload[diffRelationCoordinateOverlayPlan]{value: plan}, true
+		},
+		overlaySelectedSkeleton: func(payload coordinateSkeletonOverlayPlanPayload, current, image coordinateSkeletonPayload, _ []CoordinateScalarFactor, keys *keyspace.KeySpace) (coordinateSkeletonPayload, bool) {
+			left, right := diffRelationCoordinateSkeletonValue(current), diffRelationCoordinateSkeletonValue(image)
+			typed, ok := payload.(typedCoordinateSkeletonOverlayPlanPayload[diffRelationCoordinateOverlayPlan])
+			if !ok {
+				return nil, false
+			}
+			selected := typed.value
+			shapes := overlayDiffRelationCoordinateShapes(keys, left.shapes, right.shapes, selected)
+			if len(selected) == 0 {
+				return wrapDiffRelationCoordinateSkeleton(newDiffRelationCoordinateSkeleton(keys, left.bottom, left.shapes)), true
+			}
+			return wrapDiffRelationCoordinateSkeleton(newDiffRelationCoordinateSkeleton(keys, left.bottom, shapes)), true
 		},
 		decompose: func(payload laneFactorPayload, keys *keyspace.KeySpace) (coordinateSkeletonPayload, []coordinateEntry, error) {
 			lane := typedLaneFactorValue[diffRelationLane](payload)
@@ -350,6 +371,45 @@ func buildDiffRelationCoordinateFamily(_ *axis.Registry, _ DomainOptions) coordi
 	// relation skeleton has a finer representation quotient above.
 	ops.scalarRepresentationEqual = ops.scalarEqual
 	return ops
+}
+
+func overlayDiffRelationCoordinateShapes(keys *keyspace.KeySpace, current, image, selected []diffRelationCoordinateKey) []diffRelationCoordinateKey {
+	less := func(left, right diffRelationCoordinateKey) bool {
+		return diffRelationCoordinateKeyLess(left, right, keys)
+	}
+	out := make([]diffRelationCoordinateKey, 0, len(current)+len(selected))
+	currentIndex, imageIndex, selectedIndex := 0, 0, 0
+	imageHas := func(want diffRelationCoordinateKey) bool {
+		for imageIndex < len(image) && less(image[imageIndex], want) {
+			imageIndex++
+		}
+		return imageIndex < len(image) && image[imageIndex] == want
+	}
+	for currentIndex < len(current) && selectedIndex < len(selected) {
+		switch {
+		case current[currentIndex] == selected[selectedIndex]:
+			if imageHas(selected[selectedIndex]) {
+				out = append(out, selected[selectedIndex])
+			}
+			currentIndex++
+			selectedIndex++
+		case less(current[currentIndex], selected[selectedIndex]):
+			out = append(out, current[currentIndex])
+			currentIndex++
+		default:
+			if imageHas(selected[selectedIndex]) {
+				out = append(out, selected[selectedIndex])
+			}
+			selectedIndex++
+		}
+	}
+	out = append(out, current[currentIndex:]...)
+	for ; selectedIndex < len(selected); selectedIndex++ {
+		if imageHas(selected[selectedIndex]) {
+			out = append(out, selected[selectedIndex])
+		}
+	}
+	return out
 }
 
 func applyDiffRelationCoordinateBranchConstraint(
