@@ -1,17 +1,31 @@
 package pathevidence
 
-import "github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+)
 
-// CloseBranchProofsAcrossKnownEqualities computes the exact finite closure of
-// Presence and IndexInRange proofs under every known path equality. It is pure,
-// deterministic and cap-free; both concrete execution and coordinate planning
-// use this one family-owned structural law.
+// CloseBranchProofsAcrossKnownEqualities computes the exact closure of the
+// supplied proof carrier under its equality equations. The carrier is finite:
+// an observed proof key may be translated only by retaining one of its
+// observed suffixes and replacing its observed equality-endpoint prefix with
+// another equality endpoint. Congruence decides which of those finite terms
+// are equal.
+//
+// Equality equations can otherwise define an infinite ground class (for
+// example a=b.child and b=a.child). Iterating Rebase over newly produced
+// proofs would intern a.child.child... without an ascending-chain condition;
+// it is neither a finite closure nor a sound representation of that class.
+// The finite observed carrier is complete for every proof scalar this API can
+// return, while arbitrary membership queries remain the responsibility of the
+// congruence query API.
 func CloseBranchProofsAcrossKnownEqualities(ks *keyspace.KeySpace, proofs []BranchProof) []BranchProof {
 	if ks == nil || !ks.Valid() || len(proofs) == 0 {
 		return append([]BranchProof(nil), proofs...)
 	}
 	set := make(map[BranchProof]struct{}, len(proofs))
 	equalities := make([]BranchProof, 0)
+	data := make([]BranchProof, 0)
 	for _, proof := range proofs {
 		if proof.Kind == 0 {
 			continue
@@ -20,68 +34,98 @@ func CloseBranchProofsAcrossKnownEqualities(ks *keyspace.KeySpace, proofs []Bran
 			continue
 		}
 		set[proof] = struct{}{}
-		if proof.Kind == BranchProofPathEqual {
+		switch proof.Kind {
+		case BranchProofPathEqual:
 			equalities = append(equalities, proof)
+		case BranchProofPathPresence, BranchProofIndexInRange:
+			data = append(data, proof)
 		}
 	}
-	for changed := true; changed; {
-		changed = false
-		current := make([]BranchProof, 0, len(set))
-		for proof := range set {
-			current = append(current, proof)
+	if len(equalities) == 0 || len(data) == 0 {
+		return branchProofsFromSet(ks, set)
+	}
+
+	lane, _ := (Lane{}).AddBranchProofs(equalities)
+	congruence := newPathCongruence(ks, lane)
+	for _, proof := range data {
+		paths := closeBranchProofKeyCarrier(ks, congruence, proof.Path, equalities)
+		others := []keyspace.Key{proof.Other}
+		if proof.Kind == BranchProofIndexInRange && proof.Other != (keyspace.Key{}) {
+			others = closeBranchProofKeyCarrier(ks, congruence, proof.Other, equalities)
 		}
-		for _, equality := range equalities {
-			for _, proof := range current {
-				for _, direction := range [][2]keyspace.Key{{equality.Path, equality.Other}, {equality.Other, equality.Path}} {
-					mirrored, ok := mirrorBranchProofAcrossEquality(ks, proof, direction[0], direction[1])
-					if !ok {
-						continue
-					}
-					if _, exists := set[mirrored]; !exists {
-						set[mirrored] = struct{}{}
-						changed = true
-					}
-				}
+		for _, path := range paths {
+			for _, other := range others {
+				mirrored := proof
+				mirrored.Path = path
+				mirrored.Other = other
+				set[mirrored] = struct{}{}
 			}
 		}
 	}
 	return branchProofsFromSet(ks, set)
 }
 
-func mirrorBranchProofAcrossEquality(ks *keyspace.KeySpace, proof BranchProof, fromKey, toKey keyspace.Key) (BranchProof, bool) {
-	rebasedPath, ok := rebaseBranchProofKey(ks, proof.Path, fromKey, toKey)
-	if !ok {
-		return BranchProof{}, false
+// closeBranchProofKeyCarrier returns exactly the finite observed-shape terms
+// congruent to source. It deliberately does not feed newly produced keys back
+// into Rebase: doing so expands cyclic equality classes forever.
+func closeBranchProofKeyCarrier(
+	ks *keyspace.KeySpace,
+	congruence *pathCongruence,
+	source keyspace.Key,
+	equalities []BranchProof,
+) []keyspace.Key {
+	if source.Kind == keyspace.KindInvalid {
+		return []keyspace.Key{source}
 	}
-	mirrored := proof
-	mirrored.Path = rebasedPath
-	switch proof.Kind {
-	case BranchProofPathPresence:
-		return mirrored, true
-	case BranchProofIndexInRange:
-		if proof.Other != (keyspace.Key{}) {
-			if rebasedOther, otherOK := rebaseBranchProofKey(ks, proof.Other, fromKey, toKey); otherOK {
-				mirrored.Other = rebasedOther
+	candidates := map[keyspace.Key]struct{}{source: {}}
+	endpoints := equalityClosureEndpoints(equalities)
+	for _, from := range endpoints {
+		suffix, ok := ks.ExactRemainderAfterPrefix(source, from)
+		if !ok {
+			continue
+		}
+		for _, to := range endpoints {
+			if candidate, valid := appendPathSegments(ks, to, suffix); valid {
+				candidates[candidate] = struct{}{}
 			}
 		}
-		return mirrored, true
-	default:
-		return BranchProof{}, false
 	}
+	sourceNormal, ok := congruence.normal(source)
+	if !ok {
+		return []keyspace.Key{source}
+	}
+	out := make([]keyspace.Key, 0, len(candidates))
+	for candidate := range candidates {
+		normal, valid := congruence.normal(candidate)
+		if valid && pathCongruenceNormalsEqual(sourceNormal, normal) {
+			out = append(out, candidate)
+		}
+	}
+	return out
 }
 
-func rebaseBranchProofKey(ks *keyspace.KeySpace, proofKey, fromKey, toKey keyspace.Key) (keyspace.Key, bool) {
-	if !branchProofKeysMayShareRoot(proofKey, fromKey) || !ks.HasPrefix(proofKey, fromKey) {
-		return keyspace.Key{}, false
+func equalityClosureEndpoints(equalities []BranchProof) []keyspace.Key {
+	set := make(map[keyspace.Key]struct{}, len(equalities)*2)
+	for _, equality := range equalities {
+		set[equality.Path] = struct{}{}
+		set[equality.Other] = struct{}{}
 	}
-	if ks.HasStrictPrefix(toKey, fromKey) && ks.HasPrefix(proofKey, toKey) {
-		return keyspace.Key{}, false
+	out := make([]keyspace.Key, 0, len(set))
+	for endpoint := range set {
+		out = append(out, endpoint)
 	}
-	rebased, ok := ks.Rebase(proofKey, fromKey, toKey)
-	if !ok || !ks.HasPrefix(rebased, toKey) || rebased == proofKey {
-		return keyspace.Key{}, false
+	return out
+}
+
+func appendPathSegments(ks *keyspace.KeySpace, key keyspace.Key, suffix []segment.Segment) (keyspace.Key, bool) {
+	for _, part := range suffix {
+		var ok bool
+		key, ok = ks.AppendPathSegment(key, part)
+		if !ok {
+			return keyspace.Key{}, false
+		}
 	}
-	return rebased, true
+	return key, true
 }
 
 func branchProofKeysMayShareRoot(key, prefix keyspace.Key) bool {

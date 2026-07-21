@@ -216,80 +216,31 @@ func (l Lane) PathKeyDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathK
 
 func expandSubtreeInvalidationPrefixes(ks *keyspace.KeySpace, seeds []pathdom.PathKey, proofs map[BranchProof]struct{}) []pathdom.PathKey {
 	seen := make(map[pathdom.PathKey]struct{}, len(seeds))
-	queue := make([]pathdom.PathKey, 0, len(seeds))
 	for _, seed := range seeds {
-		if seed == "" {
+		seedKey, ok := ks.FromStateKey(seed)
+		if !ok {
 			continue
 		}
-		if _, ok := seen[seed]; ok {
-			continue
-		}
-		seen[seed] = struct{}{}
-		queue = append(queue, seed)
-	}
-	for len(queue) != 0 {
-		prefix := queue[0]
-		queue = queue[1:]
-		for proof := range proofs {
-			if proof.Kind != BranchProofPathEqual {
-				continue
-			}
-			addSubtreeAliases(ks, prefix, proof.Path, proof.Other, seen, &queue)
-			addSubtreeAliases(ks, prefix, proof.Other, proof.Path, seen, &queue)
+		for _, alias := range finiteEqualityInvalidationAliases(ks, seedKey, proofs, false) {
+			seen[ks.Format(alias)] = struct{}{}
 		}
 	}
 	return sortedPathKeySet(seen)
 }
 
 func expandDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey, proofs map[BranchProof]struct{}) PathKeyDescendantInvalidationPrefixes {
-	descSeen := map[pathdom.PathKey]struct{}{pathKey: {}}
-	descQueue := []pathdom.PathKey{pathKey}
-	subtreeSeen := map[pathdom.PathKey]struct{}{}
-	var subtreeQueue []pathdom.PathKey
-
-	addDesc := func(pathKey pathdom.PathKey) {
-		if pathKey == "" {
-			return
-		}
-		if _, ok := descSeen[pathKey]; ok {
-			return
-		}
-		descSeen[pathKey] = struct{}{}
-		descQueue = append(descQueue, pathKey)
+	seed, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return PathKeyDescendantInvalidationPrefixes{}
 	}
-	addSubtree := func(pathKey pathdom.PathKey) {
-		if pathKey == "" {
-			return
-		}
-		if _, ok := subtreeSeen[pathKey]; ok {
-			return
-		}
-		subtreeSeen[pathKey] = struct{}{}
-		subtreeQueue = append(subtreeQueue, pathKey)
+	descSeen := make(map[pathdom.PathKey]struct{})
+	for _, alias := range finiteEqualityInvalidationAliases(ks, seed, proofs, true) {
+		descSeen[ks.Format(alias)] = struct{}{}
 	}
-
-	for len(descQueue) != 0 || len(subtreeQueue) != 0 {
-		for len(descQueue) != 0 {
-			prefix := descQueue[0]
-			descQueue = descQueue[1:]
-			for proof := range proofs {
-				if proof.Kind != BranchProofPathEqual {
-					continue
-				}
-				addDescendantAliases(ks, prefix, proof.Path, proof.Other, addDesc, addSubtree)
-				addDescendantAliases(ks, prefix, proof.Other, proof.Path, addDesc, addSubtree)
-			}
-		}
-		for len(subtreeQueue) != 0 {
-			prefix := subtreeQueue[0]
-			subtreeQueue = subtreeQueue[1:]
-			for proof := range proofs {
-				if proof.Kind != BranchProofPathEqual {
-					continue
-				}
-				addSubtreeAliases(ks, prefix, proof.Path, proof.Other, subtreeSeen, &subtreeQueue)
-				addSubtreeAliases(ks, prefix, proof.Other, proof.Path, subtreeSeen, &subtreeQueue)
-			}
+	subtreeSeen := make(map[pathdom.PathKey]struct{})
+	for _, alias := range finiteEqualityInvalidationAliases(ks, seed, proofs, false) {
+		if _, rootAlias := descSeen[ks.Format(alias)]; !rootAlias {
+			subtreeSeen[ks.Format(alias)] = struct{}{}
 		}
 	}
 	return PathKeyDescendantInvalidationPrefixes{
@@ -298,62 +249,144 @@ func expandDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom
 	}
 }
 
-func addSubtreeAliases(
-	ks *keyspace.KeySpace,
-	prefix pathdom.PathKey,
-	from keyspace.Key,
-	to keyspace.Key,
-	seen map[pathdom.PathKey]struct{},
-	queue *[]pathdom.PathKey,
-) {
-	prefixKey, ok := ks.FromStateKey(prefix)
+// finiteEqualityInvalidationAliases evaluates invalidation against the same
+// finite observed equality carrier as proof closure. Queueing every freshly
+// rebased prefix is unsound: cyclic equations manufacture endlessly longer
+// prefixes and force KeySpace to intern each one.
+//
+// rootsOnly reports aliases exactly equal to seed. Otherwise it also reports
+// aliases of observed strict descendants of those roots; callers use these as
+// inclusive subtree prefixes.
+func finiteEqualityInvalidationAliases(ks *keyspace.KeySpace, seed keyspace.Key, proofs map[BranchProof]struct{}, rootsOnly bool) []keyspace.Key {
+	equalities := equalityProofsFromSet(proofs)
+	if len(equalities) == 0 {
+		return []keyspace.Key{seed}
+	}
+	lane, _ := (Lane{}).AddBranchProofs(equalities)
+	congruence := newPathCongruence(ks, lane)
+	carrier := finiteEqualityInvalidationBaseCarrier(seed, equalities)
+	seedNormal, ok := congruence.normal(seed)
 	if !ok {
-		return
+		return []keyspace.Key{seed}
 	}
-	if rebased, ok := rebaseAcyclicAliasPathKey(ks, prefixKey, from, to); ok {
-		addPathKeyToQueue(ks.Format(rebased), seen, queue)
+	rootAliases := make([]keyspace.Key, 0)
+	for _, candidate := range carrier {
+		normal, valid := congruence.normal(candidate)
+		if valid && pathCongruenceNormalsEqual(seedNormal, normal) {
+			rootAliases = appendUniqueKey(rootAliases, candidate)
+		}
 	}
-	if ks.HasPathPrefix(from, prefixKey) {
-		addPathKeyToQueue(ks.Format(to), seen, queue)
+	carrier = finiteEqualityInvalidationCarrier(ks, seed, equalities, rootAliases)
+	if rootsOnly {
+		return rootAliases
 	}
+	anchors := make([]pathCongruenceNormal, 0)
+	for _, candidate := range carrier {
+		if !hasStrictPrefixIn(candidate, rootAliases, ks) {
+			continue
+		}
+		normal, valid := congruence.normal(candidate)
+		if valid {
+			anchors = append(anchors, normal)
+		}
+	}
+	out := append([]keyspace.Key(nil), rootAliases...)
+	for _, candidate := range carrier {
+		normal, valid := congruence.normal(candidate)
+		if valid && anyCongruenceNormalEqual(normal, anchors) {
+			out = appendUniqueKey(out, candidate)
+		}
+	}
+	return out
 }
 
-func addDescendantAliases(
-	ks *keyspace.KeySpace,
-	prefix pathdom.PathKey,
-	from keyspace.Key,
-	to keyspace.Key,
-	addDesc func(pathdom.PathKey),
-	addSubtree func(pathdom.PathKey),
-) {
-	prefixKey, ok := ks.FromStateKey(prefix)
-	if !ok {
-		return
+func equalityProofsFromSet(proofs map[BranchProof]struct{}) []BranchProof {
+	equalities := make([]BranchProof, 0)
+	for proof := range proofs {
+		if proof.Kind == BranchProofPathEqual {
+			equalities = append(equalities, proof)
+		}
 	}
-	if rebased, ok := rebaseAcyclicAliasPathKey(ks, prefixKey, from, to); ok {
-		addDesc(ks.Format(rebased))
-	}
-	if ks.HasStrictPrefix(from, prefixKey) {
-		addSubtree(ks.Format(to))
-	}
+	return equalities
 }
 
-func rebaseAcyclicAliasPathKey(ks *keyspace.KeySpace, pathKey, from, to keyspace.Key) (keyspace.Key, bool) {
-	if cyclicDescendantExpansion(ks, pathKey, from, to) {
-		return keyspace.Key{}, false
+func finiteEqualityInvalidationBaseCarrier(seed keyspace.Key, equalities []BranchProof) []keyspace.Key {
+	set := map[keyspace.Key]struct{}{seed: {}}
+	endpoints := equalityClosureEndpoints(equalities)
+	for _, endpoint := range endpoints {
+		set[endpoint] = struct{}{}
 	}
-	return ks.Rebase(pathKey, from, to)
+	out := make([]keyspace.Key, 0, len(set))
+	for candidate := range set {
+		out = append(out, candidate)
+	}
+	return out
 }
 
-func addPathKeyToQueue(pathKey pathdom.PathKey, seen map[pathdom.PathKey]struct{}, queue *[]pathdom.PathKey) {
-	if pathKey == "" {
-		return
+func finiteEqualityInvalidationCarrier(ks *keyspace.KeySpace, seed keyspace.Key, equalities []BranchProof, rootAliases []keyspace.Key) []keyspace.Key {
+	set := map[keyspace.Key]struct{}{}
+	endpoints := equalityClosureEndpoints(equalities)
+	observed := append([]keyspace.Key{seed}, endpoints...)
+	for _, candidate := range observed {
+		set[candidate] = struct{}{}
 	}
-	if _, ok := seen[pathKey]; ok {
-		return
+	for _, source := range observed {
+		if source != seed && containsKey(rootAliases, source) {
+			continue
+		}
+		for _, from := range endpoints {
+			suffix, ok := ks.ExactRemainderAfterPrefix(source, from)
+			if !ok {
+				continue
+			}
+			for _, to := range endpoints {
+				if candidate, valid := appendPathSegments(ks, to, suffix); valid {
+					set[candidate] = struct{}{}
+				}
+			}
+		}
 	}
-	seen[pathKey] = struct{}{}
-	*queue = append(*queue, pathKey)
+	out := make([]keyspace.Key, 0, len(set))
+	for candidate := range set {
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func containsKey(keys []keyspace.Key, candidate keyspace.Key) bool {
+	for _, key := range keys {
+		if key == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStrictPrefixIn(candidate keyspace.Key, prefixes []keyspace.Key, ks *keyspace.KeySpace) bool {
+	for _, prefix := range prefixes {
+		if ks.HasStrictPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyCongruenceNormalEqual(candidate pathCongruenceNormal, normals []pathCongruenceNormal) bool {
+	for _, normal := range normals {
+		if pathCongruenceNormalsEqual(candidate, normal) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueKey(keys []keyspace.Key, candidate keyspace.Key) []keyspace.Key {
+	for _, existing := range keys {
+		if existing == candidate {
+			return keys
+		}
+	}
+	return append(keys, candidate)
 }
 
 func sortedPathKeySet(in map[pathdom.PathKey]struct{}) []pathdom.PathKey {
