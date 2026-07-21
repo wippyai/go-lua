@@ -406,7 +406,6 @@ func applyBranchChannelSelectRelation(runtime branchAtomFactorRuntime, current B
 			}
 		}
 	}
-	fmt.Printf("select relation %d result=%s cases=%v matches=%d\\n", relation.kind, resultKey, caseKeys, len(facts))
 	if len(facts) == 0 {
 		return branchRelationIdentityPatch(current), current.reachable, nil
 	}
