@@ -6,8 +6,11 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -186,6 +189,99 @@ func TestCallOutcomeProgramRejectsUnknownInputLaneAtSeal(t *testing.T) {
 			return CallOutcome{}, nil
 		},
 	)
+}
+
+func TestCallOutcomeProofSeedsRemainOwnedByDeclaringLeaf(t *testing.T) {
+	a := NormalReturnPathPresenceProofSeed(pathdom.NewPlaceholder(0), presence.Absent())
+	b := NormalReturnPathPresenceProofSeed(pathdom.NewPlaceholder(1), presence.Present())
+	first := testProofSeedProgram(a)
+	second := testProofSeedProgram(b)
+	prepared := testPrepareCallOutcome(t, ComposeCallOutcomePrograms([]CallOutcomeProgram{first, second}, func(_ transfer.NodeContext, left, _ CallOutcome) CallOutcome {
+		return left
+	}), transfer.NodeContext{}, proofSeedSite())
+	if prepared.ProofSeedCount() != 0 {
+		t.Fatal("composed provider exposed aggregate proof seeds")
+	}
+	left, ok := prepared.Component(0)
+	if !ok {
+		t.Fatal("first provider leaf is absent")
+	}
+	if got, ok := left.ProofSeed(0); !ok || !proofSeedEqual(got, a) {
+		t.Fatalf("first leaf seed = %#v exact:%v, want %#v", got, ok, a)
+	}
+	if _, ok := left.ProofSeed(1); ok {
+		t.Fatal("first provider leaf borrowed second provider proof seed")
+	}
+	right, ok := prepared.Component(1)
+	if !ok {
+		t.Fatal("second provider leaf is absent")
+	}
+	if got, ok := right.ProofSeed(0); !ok || !proofSeedEqual(got, b) {
+		t.Fatalf("second leaf seed = %#v exact:%v, want %#v", got, ok, b)
+	}
+}
+
+func TestCallOutcomeProofSeedRejectsMalformedPath(t *testing.T) {
+	seed := NormalReturnPathPresenceProofSeed(pathdom.NewPath(1, "concrete"), presence.Present())
+	program := SealCallOutcomeProgram("malformed proof seed", []string{"NormalReturnFacts"}, state.LaneSet{}, state.LaneSet{},
+		func(transfer.NodeContext, factflow.CallSiteView) (CallOutcomeSiteShape, error) {
+			return CallOutcomeSiteShape{ProofSeeds: []CallOutcomeProofSeed{seed}}, nil
+		}, nil,
+		func(transfer.NodeContext, factflow.CallSiteView, CallOutcomeInput) (CallOutcome, error) {
+			return CallOutcome{}, nil
+		},
+	)
+	if _, err := program.PrepareSite(transfer.NodeContext{}, proofSeedSite()); err == nil {
+		t.Fatal("PrepareSite accepted a non-portable proof seed")
+	}
+}
+
+func TestCallOutcomeProofSeedValidationRejectsUnseededSiblingProof(t *testing.T) {
+	seed := NormalReturnPathPresenceProofSeed(pathdom.NewPlaceholder(0), presence.Absent())
+	prepared := testPrepareCallOutcome(t, testProofSeedProgram(seed), transfer.NodeContext{}, proofSeedSite())
+	if _, err := prepared.Evaluate(transfer.NodeContext{}, CallOutcomeInput{}); err == nil {
+		t.Fatal("Evaluate accepted a sibling presence proof not sealed by this provider leaf")
+	}
+}
+
+func BenchmarkCallOutcomeProofSeedValidation(b *testing.B) {
+	seed := NormalReturnPathPresenceProofSeed(pathdom.NewPlaceholder(0), presence.Absent())
+	prepared, err := testProofSeedProgram(seed).PrepareSite(transfer.NodeContext{}, proofSeedSite())
+	if err != nil {
+		b.Fatal(err)
+	}
+	out := CallOutcome{NormalReturnFacts: callboundary.NormalReturnFacts{BranchProofs: []callboundary.BranchProof{{
+		Kind: pathevidence.BranchProofPathPresence, Path: seed.Path, Presence: seed.Presence,
+	}}}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := prepared.validate(transfer.NodeContext{}, out); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func testProofSeedProgram(seed CallOutcomeProofSeed) CallOutcomeProgram {
+	return SealCallOutcomeProgram("proof seed test", []string{"NormalReturnFacts"}, state.LaneSet{}, state.LaneSet{},
+		func(transfer.NodeContext, factflow.CallSiteView) (CallOutcomeSiteShape, error) {
+			return CallOutcomeSiteShape{FieldNames: []string{"NormalReturnFacts"}, ProofSeeds: []CallOutcomeProofSeed{seed}}, nil
+		}, nil,
+		func(transfer.NodeContext, factflow.CallSiteView, CallOutcomeInput) (CallOutcome, error) {
+			return CallOutcome{NormalReturnFacts: callboundary.NormalReturnFacts{BranchProofs: []callboundary.BranchProof{{
+				Kind: pathevidence.BranchProofPathPresence, Path: pathdom.NewPlaceholder(1), Presence: seed.Presence,
+			}}}}, nil
+		},
+	)
+}
+
+func proofSeedSite() factflow.CallSiteView {
+	return factflow.NewCallSite(factflow.CallSiteConfig{ResultTargets: []factflow.CallResultTarget{
+		factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 0, 0, 0, pathdom.Path{}),
+		factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 1, 1, 0, pathdom.Path{}),
+		factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 2, 2, 0, pathdom.Path{}),
+		factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 3, 3, 0, pathdom.Path{}),
+	}}).View()
 }
 
 func assertProgramSealPanics(t *testing.T, fields []string, evaluator func(transfer.NodeContext, factflow.CallSiteView, CallOutcomeInput) (CallOutcome, error)) {

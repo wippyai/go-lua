@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"sort"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -62,6 +64,25 @@ type formalExternalCallValueOutput struct {
 	member formalFiberGroupMember
 }
 
+// formalExternalCallProofSeedBinding is the occurrence authority for one
+// provider-leaf proof declaration. It retains only the exact boundary roots
+// selected by that occurrence; no coordinate mapping survives preparation.
+// The tuple is intentionally provider-path-qualified so a declaration from a
+// sibling provider or sibling occurrence cannot witness this proof.
+type formalExternalCallProofSeedBinding struct {
+	variable relationVar
+	point    cfg.Point
+	path     []uint32
+	seed     callpayload.CallOutcomeProofSeed
+	trigger  pathdom.Path
+	target   pathdom.Path
+}
+
+func (b formalExternalCallProofSeedBinding) valid() bool {
+	return b.variable != 0 && b.point != 0 && len(b.path) != 0 &&
+		!b.trigger.IsEmpty() && !b.target.IsEmpty()
+}
+
 // formalPreparedExternalCallSite is the one forest-owned specialization of a
 // provider site. It is created before the product inventory seals so every
 // capability-declared correlation coordinate is part of the fixed tuple, and
@@ -71,6 +92,7 @@ type formalPreparedExternalCallSite struct {
 	provider    callpayload.CallOutcomeSiteProgram
 	capability  callpayload.CallOutcomeCapability
 	correlation factapply.CallOutcomeCorrelationFactorProgram
+	proofSeeds  []formalExternalCallProofSeedBinding
 }
 
 func (i *formalFiberInventory) externalCallSite(variable relationVar, point cfg.Point) (formalPreparedExternalCallSite, bool) {
@@ -168,15 +190,68 @@ func freezeFormalExternalCallSites(
 		if correlationErr != nil {
 			return correlationErr
 		}
+		proofSeeds, proofErr := freezeFormalExternalCallProofSeeds(variable, point, provider, boundaryPaths, nil)
+		if proofErr != nil {
+			return proofErr
+		}
 		key := formalExternalCallSiteKey{variable: variable, point: point}
 		if _, duplicate := inventory.externalCalls[key]; duplicate {
 			return fmt.Errorf("transformer: formal ExternalCall point %d was prepared twice", point)
 		}
 		inventory.externalCalls[key] = formalPreparedExternalCallSite{
-			provider: provider, capability: capability, correlation: correlation,
+			provider: provider, capability: capability, correlation: correlation, proofSeeds: proofSeeds,
 		}
 	}
 	return nil
+}
+
+func freezeFormalExternalCallProofSeeds(
+	variable relationVar,
+	point cfg.Point,
+	provider callpayload.CallOutcomeSiteProgram,
+	bindings callboundary.PathBindings,
+	path []uint32,
+) ([]formalExternalCallProofSeedBinding, error) {
+	if variable == 0 || point == 0 {
+		return nil, fmt.Errorf("transformer: formal ExternalCall proof seed is unowned")
+	}
+	components := provider.ComponentCount()
+	if components != 0 {
+		var out []formalExternalCallProofSeedBinding
+		for index := 0; index < components; index++ {
+			child, exact := provider.Component(index)
+			if !exact {
+				return nil, fmt.Errorf("transformer: formal ExternalCall proof provider component %d is absent", index)
+			}
+			childPath := append(append([]uint32(nil), path...), uint32(index))
+			childSeeds, err := freezeFormalExternalCallProofSeeds(variable, point, child, bindings, childPath)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, childSeeds...)
+		}
+		return out, nil
+	}
+	if len(path) == 0 {
+		path = []uint32{0}
+	}
+	seeds := make([]formalExternalCallProofSeedBinding, 0, provider.ProofSeedCount())
+	for index := 0; index < provider.ProofSeedCount(); index++ {
+		seed, exact := provider.ProofSeed(index)
+		bound, boundOK := bindings.Substitute(seed.Path)
+		if !exact || !boundOK || bound.IsEmpty() {
+			return nil, fmt.Errorf("transformer: formal ExternalCall proof seed %d is outside occurrence boundary bindings", index)
+		}
+		binding := formalExternalCallProofSeedBinding{
+			variable: variable, point: point, path: append([]uint32(nil), path...), seed: seed,
+			trigger: bound.Clone(), target: bound.Clone(),
+		}
+		if !binding.valid() {
+			return nil, fmt.Errorf("transformer: formal ExternalCall proof seed %d did not seal", index)
+		}
+		seeds = append(seeds, binding)
+	}
+	return seeds, nil
 }
 
 // formalExternalCallCorrelationRoots is the formal image of the canonical

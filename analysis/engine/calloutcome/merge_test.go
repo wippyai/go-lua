@@ -54,6 +54,54 @@ func testEvaluateCallOutcome(t *testing.T, program callpayload.CallOutcomeProgra
 	return outcome
 }
 
+func TestComposeSupplementalRetainsOrderedLeafProofSeeds(t *testing.T) {
+	first := callpayload.NormalReturnPathPresenceProofSeed(pathdom.NewPlaceholder(0), presence.Absent())
+	second := callpayload.NormalReturnPathPresenceProofSeed(pathdom.NewPlaceholder(1), presence.Present())
+	program := ComposeSupplemental(
+		ComposeSupplemental(supplementalProofSeedProgram(first), supplementalProofSeedProgram(second)),
+		supplementalProofSeedProgram(first),
+	)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{ResultTargets: []factflow.CallResultTarget{
+		factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 0, 0, 0, pathdom.Path{}),
+		factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 1, 1, 0, pathdom.Path{}),
+	}}).View()
+	prepared := testPrepareCallOutcome(t, program, transfer.NodeContext{}, site)
+	if prepared.ProofSeedCount() != 0 {
+		t.Fatal("MergeSupplemental exposed a merged proof footprint")
+	}
+	left, exact := prepared.Component(0)
+	if !exact || left.ProofSeedCount() != 0 {
+		t.Fatal("nested supplemental merge did not retain its provider tree")
+	}
+	leftFirst, exact := left.Component(0)
+	if !exact {
+		t.Fatal("first nested supplemental leaf is absent")
+	}
+	got, exact := leftFirst.ProofSeed(0)
+	if !exact || !got.Path.Equal(first.Path) || !presence.Equal(got.Presence, first.Presence) {
+		t.Fatalf("first leaf proof seed = %#v exact:%v, want %#v", got, exact, first)
+	}
+	right, exact := prepared.Component(1)
+	if !exact {
+		t.Fatal("right supplemental leaf is absent")
+	}
+	got, exact = right.ProofSeed(0)
+	if !exact || !got.Path.Equal(first.Path) || !presence.Equal(got.Presence, first.Presence) {
+		t.Fatalf("right leaf proof seed = %#v exact:%v, want %#v", got, exact, first)
+	}
+}
+
+func supplementalProofSeedProgram(seed callpayload.CallOutcomeProofSeed) callpayload.CallOutcomeProgram {
+	return callpayload.SealCallOutcomeProgram("supplemental proof seed", []string{"NormalReturnFacts"}, state.LaneSet{}, state.LaneSet{},
+		func(transfer.NodeContext, factflow.CallSiteView) (callpayload.CallOutcomeSiteShape, error) {
+			return callpayload.CallOutcomeSiteShape{FieldNames: []string{"NormalReturnFacts"}, ProofSeeds: []callpayload.CallOutcomeProofSeed{seed}}, nil
+		}, nil,
+		func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error) {
+			return callpayload.CallOutcome{}, nil
+		},
+	)
+}
+
 func testOutcomeProgram(
 	evaluate func(transfer.NodeContext, factflow.CallSiteView, callpayload.CallOutcomeInput) (callpayload.CallOutcome, error),
 	correlations ...callpayload.CallOutcomeCorrelationShape,

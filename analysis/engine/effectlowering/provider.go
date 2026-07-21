@@ -125,8 +125,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 				return callpayload.CallOutcomeSitePreparation{}, nil
 			}
 			shape = callpayload.CallOutcomeSiteShape{
-				FieldNames:   signatureOutcomeMaximumFields,
-				Correlations: maximumReturnPresenceShapes(site),
+				FieldNames: signatureOutcomeMaximumFields, Correlations: maximumReturnPresenceShapes(site),
 			}
 		} else {
 			var ok bool
@@ -156,10 +155,11 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 			if err != nil {
 				return callpayload.CallOutcomeSitePreparation{}, err
 			}
+			correlations := signatureOutcomeCorrelationShapes(frozenSignature, site)
 			shape = callpayload.CallOutcomeSiteShape{
-				FieldNames:   signatureOutcomeFields(frozenSignature, !frozenReturnValues.Empty()),
-				InputLanes:   frozenInputProgram.Lanes(),
-				Correlations: signatureOutcomeCorrelationShapes(frozenSignature, site),
+				FieldNames: signatureOutcomeFields(frozenSignature, !frozenReturnValues.Empty()),
+				InputLanes: frozenInputProgram.Lanes(), Correlations: correlations,
+				ProofSeeds: signatureOutcomeProofSeeds(frozenSignature),
 			}
 		}
 		// Both possible formal argument orderings are structural properties of
@@ -391,6 +391,17 @@ func maximumReturnPresenceShapes(site factflow.CallSiteView) []callpayload.CallO
 		}
 	}
 	return out
+}
+
+func signatureOutcomeProofSeeds(sig signature.Function) []callpayload.CallOutcomeProofSeed {
+	if sig.OperationalEffects == nil {
+		return nil
+	}
+	seeds := make([]callpayload.CallOutcomeProofSeed, 0, len(sig.OperationalEffects.NormalReturnPresenceRefinements))
+	for _, refinement := range sig.OperationalEffects.NormalReturnPresenceRefinements {
+		seeds = append(seeds, callpayload.NormalReturnPathPresenceProofSeed(refinement.Path, refinement.Presence))
+	}
+	return seeds
 }
 
 func signatureOutcomeFields(sig signature.Function, customReturn bool) []string {

@@ -17,6 +17,12 @@ type CallOutcomeSiteShape struct {
 	InputLanes               state.LaneSet
 	TypestateResourceQueries []state.TypestateResourceQuery
 	Correlations             []CallOutcomeCorrelationShape
+	// ProofSeeds are the provider leaf's finite declarations for normal-return
+	// proof facts which may require sibling return coordinates. They are not a
+	// capability field: composition retains them at the declaring leaf so an
+	// occurrence can bind the declaration without borrowing another provider's
+	// authority.
+	ProofSeeds []CallOutcomeProofSeed
 }
 
 func canonicalTypestateResourceQueries(in []state.TypestateResourceQuery) ([]state.TypestateResourceQuery, error) {

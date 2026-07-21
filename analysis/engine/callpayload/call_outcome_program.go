@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -57,6 +60,10 @@ type CallOutcomeProgram struct {
 // runtime provider entry and never rebuilds the capability.
 type CallOutcomeSiteProgram struct {
 	capability CallOutcomeCapability
+	// proofSeeds belong to this exact leaf. They must not be lifted into the
+	// composed capability because that would let a sibling provider authorize a
+	// proof it did not declare.
+	proofSeeds []CallOutcomeProofSeed
 	evaluate   func(transfer.NodeContext, CallOutcomeInput) (CallOutcome, error)
 	children   []CallOutcomeSiteProgram
 	merge      func(transfer.NodeContext, CallOutcome, CallOutcome) CallOutcome
@@ -161,11 +168,11 @@ func SealPreparedCallOutcomeProgram(
 		shaped.shape = func(transfer.NodeContext, factflow.CallSiteView) (CallOutcomeSiteShape, error) {
 			return prepared.Shape, nil
 		}
-		capability, err := shaped.prepareCapability(ctx, site)
+		capability, proofSeeds, err := shaped.prepareCapability(ctx, site)
 		if err != nil {
 			return CallOutcomeSiteProgram{}, err
 		}
-		return CallOutcomeSiteProgram{capability: capability, evaluate: prepared.Evaluate}, nil
+		return CallOutcomeSiteProgram{capability: capability, proofSeeds: proofSeeds, evaluate: prepared.Evaluate}, nil
 	}
 	return program
 }
@@ -241,12 +248,13 @@ func (p CallOutcomeProgram) PrepareSite(ctx transfer.NodeContext, site factflow.
 	if p.evaluate == nil {
 		return CallOutcomeSiteProgram{}, nil
 	}
-	capability, err := p.prepareCapability(ctx, site)
+	capability, proofSeeds, err := p.prepareCapability(ctx, site)
 	if err != nil {
 		return CallOutcomeSiteProgram{}, err
 	}
 	return CallOutcomeSiteProgram{
 		capability: capability,
+		proofSeeds: proofSeeds,
 		evaluate: func(evalCtx transfer.NodeContext, input CallOutcomeInput) (CallOutcome, error) {
 			return p.evaluate(evalCtx, site, input)
 		},
@@ -255,6 +263,26 @@ func (p CallOutcomeProgram) PrepareSite(ctx transfer.NodeContext, site factflow.
 
 // Capability returns the already-validated immutable site capability.
 func (p CallOutcomeSiteProgram) Capability() CallOutcomeCapability { return p.capability }
+
+// ProofSeedCount reports the number of declarations sealed by this exact
+// provider leaf. Composed nodes intentionally expose none; callers must walk
+// the retained ordered tree to preserve provider authority.
+func (p CallOutcomeSiteProgram) ProofSeedCount() int {
+	if len(p.children) != 0 {
+		return 0
+	}
+	return len(p.proofSeeds)
+}
+
+// ProofSeed returns one canonical declaration sealed by this exact provider
+// leaf. Its boundary-relative ordinals are portable; occurrence binding is
+// owned by ExternalCall freezing, never by runtime evaluation.
+func (p CallOutcomeSiteProgram) ProofSeed(index int) (CallOutcomeProofSeed, bool) {
+	if len(p.children) != 0 || index < 0 || index >= len(p.proofSeeds) {
+		return CallOutcomeProofSeed{}, false
+	}
+	return p.proofSeeds[index], true
+}
 
 // ComponentCount reports the number of ordered immediate children. A leaf has
 // zero children. The indexed surface preserves nested composition without
@@ -323,28 +351,47 @@ func (p CallOutcomeSiteProgram) validate(_ transfer.NodeContext, out CallOutcome
 	if err := validateOutcomeCorrelations(p.capability, out); err != nil {
 		return CallOutcome{}, err
 	}
+	// This is deliberately a small fixed scan plus binary search over the
+	// already-canonical leaf seed slice. It allocates neither a carrier nor an
+	// occurrence map on the fixed-point path.
+	if len(p.proofSeeds) != 0 {
+		for _, refinement := range out.NormalReturnFacts.PathRefinements {
+			value := product.PresenceOf(refinement.Value)
+			if (presence.Equal(value, presence.Present()) || presence.Equal(value, presence.Absent())) &&
+				!proofSeedsContain(p.proofSeeds, refinement.Path, value) {
+				return CallOutcome{}, fmt.Errorf("callpayload: evaluator emitted normal-return presence proof without a sealed provider seed")
+			}
+		}
+		for _, proof := range out.NormalReturnFacts.BranchProofs {
+			if proof.Kind == pathevidence.BranchProofPathPresence &&
+				!proofSeedsContain(p.proofSeeds, proof.Path, proof.Presence) {
+				return CallOutcome{}, fmt.Errorf("callpayload: evaluator emitted normal-return presence proof without a sealed provider seed")
+			}
+		}
+	}
 	return out, nil
 }
 
-func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site factflow.CallSiteView) (CallOutcomeCapability, error) {
+func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site factflow.CallSiteView) (CallOutcomeCapability, []CallOutcomeProofSeed, error) {
 	roles := append([]CallOutcomeFieldRole(nil), p.maximum...)
 	primaryInputLanes := state.NewLaneSet(p.primary.IDs()...)
 	var correlations []CallOutcomeCorrelationShape
+	var proofSeedDeclarations []CallOutcomeProofSeed
 	var typestateResourceQueries []state.TypestateResourceQuery
 	if p.shape != nil {
 		shape, err := p.shape(ctx, site)
 		if err != nil {
-			return CallOutcomeCapability{}, err
+			return CallOutcomeCapability{}, nil, err
 		}
 		names, selectedInputs := shape.FieldNames, shape.InputLanes
 		present := make(map[string]struct{}, len(names))
 		for _, name := range names {
 			if _, duplicate := present[name]; duplicate {
-				return CallOutcomeCapability{}, fmt.Errorf("callpayload: call-outcome shape declares duplicate field %q", name)
+				return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: call-outcome shape declares duplicate field %q", name)
 			}
 			present[name] = struct{}{}
 			if !hasCallOutcomeRole(p.maximum, name) {
-				return CallOutcomeCapability{}, fmt.Errorf("callpayload: call-outcome shape field %q exceeds sealed maximum", name)
+				return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: call-outcome shape field %q exceeds sealed maximum", name)
 			}
 		}
 		selected := roles[:0]
@@ -356,25 +403,26 @@ func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site fac
 		roles = selected
 		for _, lane := range selectedInputs.IDs() {
 			if !p.primary.Has(lane) {
-				return CallOutcomeCapability{}, fmt.Errorf("callpayload: call-outcome shape input lane %q exceeds sealed maximum", lane)
+				return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: call-outcome shape input lane %q exceeds sealed maximum", lane)
 			}
 		}
 		primaryInputLanes = state.NewLaneSet(selectedInputs.IDs()...)
 		typestateResourceQueries, err = canonicalTypestateResourceQueries(shape.TypestateResourceQueries)
 		if err != nil {
-			return CallOutcomeCapability{}, err
+			return CallOutcomeCapability{}, nil, err
 		}
 		for _, query := range typestateResourceQueries {
 			for _, lane := range query.SourceLanes() {
 				if !p.primary.Has(lane.ID()) {
-					return CallOutcomeCapability{}, fmt.Errorf("callpayload: typestate resource query source lane %q exceeds sealed maximum", lane.ID())
+					return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: typestate resource query source lane %q exceeds sealed maximum", lane.ID())
 				}
 			}
 		}
 		correlations, err = canonicalCorrelationShapes(roles, shape.Correlations)
 		if err != nil {
-			return CallOutcomeCapability{}, err
+			return CallOutcomeCapability{}, nil, err
 		}
+		proofSeedDeclarations = shape.ProofSeeds
 	}
 	readInputLanes := func(point cfg.Point) (state.LaneSet, error) {
 		if p.read == nil {
@@ -392,7 +440,11 @@ func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site fac
 		return state.NewLaneSet(selected.IDs()...), nil
 	}
 	if !hasCallOutcomeRole(roles, "Results") && len(correlations) == 0 {
-		return CallOutcomeCapability{roles: roles, correlations: correlations, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes}, nil
+		proofSeeds, err := canonicalProofSeeds(proofSeedDeclarations)
+		if err != nil {
+			return CallOutcomeCapability{}, nil, err
+		}
+		return CallOutcomeCapability{roles: roles, correlations: correlations, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes}, proofSeeds, nil
 	}
 	indices := make([]int, 0, site.ResultTargetCount())
 	seen := make(map[int]struct{}, site.ResultTargetCount())
@@ -418,20 +470,24 @@ func (p CallOutcomeProgram) prepareCapability(ctx transfer.NodeContext, site fac
 	}
 	for _, correlation := range correlations {
 		if !containsResult(correlation.ReturnIndex) {
-			return CallOutcomeCapability{}, fmt.Errorf("callpayload: correlation trigger result %d is outside site inventory", correlation.ReturnIndex)
+			return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: correlation trigger result %d is outside site inventory", correlation.ReturnIndex)
 		}
 		switch correlation.Kind {
 		case CallOutcomeReturnConditionPath:
 			if !correlation.Target.IsPlaceholder() || correlation.Target.PlaceholderIndex() >= site.ArgumentSourceCount() {
-				return CallOutcomeCapability{}, fmt.Errorf("callpayload: condition-refinement target is outside site parameter inventory")
+				return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: condition-refinement target is outside site parameter inventory")
 			}
 		case CallOutcomeReturnConditionSlot, CallOutcomeReturnPresence:
 			if !containsResult(correlation.TargetIndex) {
-				return CallOutcomeCapability{}, fmt.Errorf("callpayload: correlation target result %d is outside site inventory", correlation.TargetIndex)
+				return CallOutcomeCapability{}, nil, fmt.Errorf("callpayload: correlation target result %d is outside site inventory", correlation.TargetIndex)
 			}
 		}
 	}
-	return CallOutcomeCapability{roles: roles, correlations: correlations, resultIndices: indices, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes}, nil
+	proofSeeds, err := canonicalProofSeeds(proofSeedDeclarations)
+	if err != nil {
+		return CallOutcomeCapability{}, nil, err
+	}
+	return CallOutcomeCapability{roles: roles, correlations: correlations, resultIndices: indices, primaryInputLanes: primaryInputLanes, typestateResourceQueries: typestateResourceQueries, readInputLanes: readInputLanes}, proofSeeds, nil
 }
 
 // FieldRoles returns a detached copy in canonical CallOutcome field order.

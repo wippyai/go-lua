@@ -294,6 +294,23 @@ func freezeFormalStepCoordinateFootprint(
 			return state.CoordinateFactorInventory{}, normalErr
 		}
 		slots = append(slots, normalSlots...)
+		if prepared, present := forest.externalCallSite(variable, step.point); present && len(prepared.proofSeeds) != 0 {
+			proofSeeds := make([]factapply.NormalReturnPresenceProofSeed, len(prepared.proofSeeds))
+			for index, binding := range prepared.proofSeeds {
+				if binding.variable != variable || binding.point != step.point || !binding.valid() {
+					return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall proof seed authority is malformed")
+				}
+				proofSeeds[index] = factapply.NormalReturnPresenceProofSeed{
+					Trigger: binding.trigger, TriggerPresence: binding.seed.Presence,
+					Target: binding.target, TargetPresence: binding.seed.Presence,
+				}
+			}
+			proofSlots, proofErr := formalAuthority.NormalReturnPresenceProofSeedFootprint(body.productDomain, step.point, normalLanes, normalCarrier, proofSeeds)
+			if proofErr != nil {
+				return state.CoordinateFactorInventory{}, proofErr
+			}
+			slots = append(slots, proofSlots...)
+		}
 	case boundaryStepRootAssignment:
 		more, err := freezeFormalRootAssignmentCoordinateSlots(body, formalKeys, rekey, current, step)
 		if err != nil {
