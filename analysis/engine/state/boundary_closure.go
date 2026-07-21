@@ -404,6 +404,15 @@ func rebaseBoundaryIdentity(lens *BoundaryAllocationAuthority, term identity.Ter
 	return identity.ConcreteTerm(next), ok && next != (identity.ID{})
 }
 
+// boundaryAllocationTermAlreadyOutsideFrame identifies an allocation term
+// that was introduced by an inner sealed boundary. The current Apply cannot
+// mint a second image for another owner's template; the owning frame's
+// authority is the only authority permitted to do that.
+func boundaryAllocationTermAlreadyOutsideFrame(lens *BoundaryAllocationAuthority, term identity.Term) bool {
+	template, allocation := term.Allocation()
+	return allocation && lens != nil && template.Owner() != lens.target
+}
+
 // RebaseAllocation exposes the lens's typed allocation substitution. Concrete
 // identities never enter this authority.
 func (p *BoundaryAllocationAuthority) RebaseAllocation(template identity.AllocationTemplate) (identity.ID, bool) {

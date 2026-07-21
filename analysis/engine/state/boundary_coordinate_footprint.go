@@ -300,7 +300,6 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 		reg: d.domain.reg, fromKeys: d.sourceKeys, toKeys: d.destinationKeys,
 		roots: nextRoots, slots: d.slots, allocations: d.authority,
 		quotient: nextQuotient, fromClosure: nextSelection.closure, toClosure: nextDestination,
-		identityImaged: currentImage != nil,
 	}
 	projectCtx := boundaryProjectContext{reg: d.sourceDomain.reg, keys: d.sourceKeys, closure: nextSelection.closure}
 
@@ -322,7 +321,7 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 	waiters := make([]stagedWait, 0, completedDestinationDelta.Len())
 	identitySources := make([]stagedIdentitySource, 0)
 	immediate := make([]CoordinateSlot, 0)
-	stageIdentityKey := func(pair boundaryFootprintFamily, identityKey coordinateKeyPayload) error {
+	stageIdentityKey := func(pair boundaryFootprintFamily, identityKey coordinateKeyPayload, alreadyImaged bool) error {
 		if identityKey == nil || !pair.source.ops.keyValid(identityKey, d.sourceKeys) {
 			return fmt.Errorf("state: coordinate footprint identity image emitted invalid key in family %q", pair.source.family.id)
 		}
@@ -330,14 +329,16 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 		if fiber == nil {
 			return fmt.Errorf("state: coordinate footprint source fiber is empty in family %q", pair.source.family.id)
 		}
-		keys, mapped := pair.destination.boundary.rebaseKeys(&rebaseCtx, identityKey)
+		keyRebaseCtx := rebaseCtx
+		keyRebaseCtx.identityImaged = alreadyImaged
+		keys, mapped := pair.destination.boundary.rebaseKeys(&keyRebaseCtx, identityKey)
 		if !mapped {
 			var terms []string
 			pair.source.ops.returnIdentity.visitInventoryTerms(identityKey, func(term identity.Term) bool {
 				terms = append(terms, term.String())
 				return true
 			})
-			return fmt.Errorf("state: coordinate footprint key rebase failed in family %q terms=%v imaged=%t", pair.destination.family.id, terms, currentImage != nil)
+			return fmt.Errorf("state: coordinate footprint key rebase failed in family %q terms=%v imaged=%t", pair.destination.family.id, terms, alreadyImaged)
 		}
 		for _, key := range keys {
 			if key == nil || !pair.destination.ops.keyValid(key, d.destinationKeys) {
@@ -351,9 +352,17 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 		}
 		return nil
 	}
-	collectIdentityKeys := func(pair boundaryFootprintFamily, projected coordinateKeyPayload, image *CoordinateIdentityTermImage) ([]coordinateKeyPayload, error) {
+	collectIdentityKeys := func(pair boundaryFootprintFamily, projected coordinateKeyPayload, image *CoordinateIdentityTermImage) ([]coordinateKeyPayload, bool, error) {
 		if image == nil {
-			return []coordinateKeyPayload{projected}, nil
+			return []coordinateKeyPayload{projected}, false, nil
+		}
+		imaged := false
+		if !pair.source.ops.returnIdentity.visitInventoryTerms(projected, func(term identity.Term) bool {
+			_, formal := term.Formal()
+			imaged = imaged || formal
+			return true
+		}) {
+			return nil, false, fmt.Errorf("state: coordinate footprint identity provenance failed in family %q", pair.source.family.id)
 		}
 		keys := make([]coordinateKeyPayload, 0, 1)
 		if !pair.source.ops.returnIdentity.imageInventoryKey(projected, image, func(key coordinateKeyPayload) bool {
@@ -363,7 +372,7 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 			keys = append(keys, key)
 			return true
 		}) {
-			return nil, fmt.Errorf("state: coordinate footprint identity image failed in family %q", pair.source.family.id)
+			return nil, false, fmt.Errorf("state: coordinate footprint identity image failed in family %q", pair.source.family.id)
 		}
 		sort.SliceStable(keys, func(left, right int) bool {
 			return pair.source.ops.keyLess(keys[left], keys[right], d.sourceKeys)
@@ -374,15 +383,15 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 				unique = append(unique, key)
 			}
 		}
-		return unique, nil
+		return unique, imaged, nil
 	}
 	stageProjectedKey := func(pair boundaryFootprintFamily, projected coordinateKeyPayload, image *CoordinateIdentityTermImage) error {
-		keys, err := collectIdentityKeys(pair, projected, image)
+		keys, imaged, err := collectIdentityKeys(pair, projected, image)
 		if err != nil {
 			return err
 		}
 		for _, key := range keys {
-			if err := stageIdentityKey(pair, key); err != nil {
+			if err := stageIdentityKey(pair, key, imaged); err != nil {
 				return err
 			}
 		}
@@ -464,11 +473,11 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 					continue
 				}
 				replayed[bucket] = append(replayed[bucket], source.key)
-				currentKeys, currentErr := collectIdentityKeys(pair, source.key, currentImage)
+				currentKeys, currentImaged, currentErr := collectIdentityKeys(pair, source.key, currentImage)
 				if currentErr != nil {
 					return p, CoordinateFactorInventory{}, currentErr
 				}
-				priorKeys, priorErr := collectIdentityKeys(pair, source.key, priorImage)
+				priorKeys, _, priorErr := collectIdentityKeys(pair, source.key, priorImage)
 				if priorErr != nil {
 					return p, CoordinateFactorInventory{}, priorErr
 				}
@@ -479,7 +488,7 @@ func (p BoundaryCoordinateFootprintPlan) advance(
 					if priorIndex < len(priorKeys) && pair.source.ops.keyEqual(priorKeys[priorIndex], currentKeys[currentIndex]) {
 						continue
 					}
-					if err := stageIdentityKey(pair, currentKeys[currentIndex]); err != nil {
+					if err := stageIdentityKey(pair, currentKeys[currentIndex], currentImaged); err != nil {
 						return p, CoordinateFactorInventory{}, err
 					}
 				}

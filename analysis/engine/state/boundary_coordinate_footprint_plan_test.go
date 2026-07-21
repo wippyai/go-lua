@@ -601,16 +601,29 @@ func TestBoundaryCoordinateFootprintPlanReplaysOnlyMonotoneIdentityImageDelta(t 
 		t.Fatal("first image delta did not emit exactly its target")
 	}
 
-	// A failure after selective replay starts must not publish the candidate
-	// image. This allocation has no authority binding, so rebasing rejects it;
-	// a later extension which omits it remains monotone from the last success.
-	unmapped := identity.AllocationTerm(identity.ManifestAllocationTemplate(caller, 9, 1))
-	badImage, ok := NewCoordinateIdentityTermImage([]CoordinateIdentityTermBinding{{Source: variable, Images: []identity.Term{first, unmapped}}})
+	// A key produced by the identity image already belongs to the destination
+	// frame. In particular, a caller allocation must not be rebased again by
+	// this callee's allocation authority.
+	imagedAllocation := identity.AllocationTerm(identity.ManifestAllocationTemplate(caller, 9, 1))
+	imagedTarget := CoordinateSlot{family: family, keys: to, key: wrapPlacementCoordinateKey(imagedAllocation)}
+	badImage, ok := NewCoordinateIdentityTermImage([]CoordinateIdentityTermBinding{{Source: variable, Images: []identity.Term{first, imagedAllocation}}})
 	if !ok {
 		t.Fatal("unmapped identity image")
 	}
-	if _, _, err = plan.AdvanceWithIdentityImage(source, emptyDestination, badImage); err == nil {
-		t.Fatal("unmapped identity image accepted")
+	plan, added, err = plan.AdvanceWithIdentityImage(source, emptyDestination, badImage)
+	if err != nil || !inventoryContainsSlot(t, domain, added, imagedTarget) {
+		t.Fatalf("imaged destination allocation = %v, %v", added, err)
+	}
+
+	// A native source allocation still requires an authority binding. It has
+	// not crossed through the identity image, so the guard must reject it.
+	foreign := identity.AllocationTerm(identity.ManifestAllocationTemplate(callee, 9, 1))
+	nativeSource, err := domain.SealCoordinateFactorInventory(from, []CoordinateSlot{sourceSlot, {family: family, keys: from, key: wrapPlacementCoordinateKey(foreign)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = plan.AdvanceWithIdentityImage(nativeSource, emptyDestination, badImage); err == nil {
+		t.Fatal("unmapped native allocation accepted")
 	}
 
 	// A rejected shrink must likewise not consume either the old image or its
@@ -618,7 +631,7 @@ func TestBoundaryCoordinateFootprintPlanReplaysOnlyMonotoneIdentityImageDelta(t 
 	if _, _, err = plan.AdvanceWithIdentityImage(source, emptyDestination, emptyImage); err == nil {
 		t.Fatal("non-monotone identity image accepted")
 	}
-	bothImage, ok := NewCoordinateIdentityTermImage([]CoordinateIdentityTermBinding{{Source: variable, Images: []identity.Term{second, first}}})
+	bothImage, ok := NewCoordinateIdentityTermImage([]CoordinateIdentityTermBinding{{Source: variable, Images: []identity.Term{second, first, imagedAllocation}}})
 	if !ok {
 		t.Fatal("combined identity image")
 	}

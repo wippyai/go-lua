@@ -45,9 +45,8 @@ var placementCoordinateFamilySpec = coordinateFamilySpec{
 		},
 		rebaseKeys: func(ctx *boundaryRebaseContext, source coordinateKeyPayload) ([]coordinateKeyPayload, bool) {
 			id := placementCoordinateKeyValue(source).id
-			_, alreadyImaged := id.Formal()
 			var ok bool
-			if !ctx.identityImaged || !alreadyImaged {
+			if !ctx.identityImaged && !boundaryAllocationTermAlreadyOutsideFrame(ctx.allocations, id) {
 				id, ok = rebaseBoundaryIdentity(ctx.allocations, id)
 			} else {
 				ok = true
