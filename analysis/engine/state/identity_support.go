@@ -20,6 +20,22 @@ func visitProductIdentity(reg *axis.Registry, value product.Value, visit func(id
 	return true
 }
 
+// ValueHasIdentitySupport reports whether a product value contributes an
+// exact identity term to the registered substitution inventory. Values which
+// carry no such term are independent product components for identity-only
+// quotienting; Top and Bottom therefore report false.
+func (d ProductDomain) ValueHasIdentitySupport(value product.Value) (bool, error) {
+	if !d.Valid() || !product.BelongsToRegistry(d.reg, value) {
+		return false, fmt.Errorf("%w: product value identity support", ErrInvalidLaneFactor)
+	}
+	found := false
+	visitProductIdentity(d.reg, value, func(identity.Term) bool {
+		found = true
+		return false
+	})
+	return found, nil
+}
+
 func visitValuesLaneIdentities(reg *axis.Registry, source valueLane, visit func(identity.Term) bool) bool {
 	if source.top {
 		return true

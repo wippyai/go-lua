@@ -479,6 +479,12 @@ func (a *formalTupleAlgebra) combineGroupRoots(op formalComponentBinaryOp, span 
 	if physicalIdentity {
 		return leftRoots, nil
 	}
+	if group.kind == formalFiberGroupValues {
+		return a.combineValuesGroupRoots(op, authority, group, leftRoots, rightRoots, leftCare, rightCare, resultCare)
+	}
+	if group.kind == formalFiberGroupCoordinateLane {
+		return a.combineCoordinateGroupRoots(op, authority, span, group, leftRoots, rightRoots, leftCare, rightCare, resultCare)
+	}
 	return a.decisions.applyVectorUnderCare(a.ctx, resultCare, leftCare, rightCare, leftRoots, rightRoots, func(leftLeaves, rightLeaves []decisionLeaf) ([]decisionLeaf, error) {
 		switch {
 		case len(leftLeaves) != 0 && len(rightLeaves) != 0:
@@ -491,6 +497,352 @@ func (a *formalTupleAlgebra) combineGroupRoots(op formalComponentBinaryOp, span 
 			return nil, errDecisionMalformed
 		}
 	})
+}
+
+// combineCoordinateGroupRoots lifts the registered dependent-coordinate law
+// without constructing whole-family terminal rows. Every scalar is evaluated
+// with both operand skeletons, so implicit defaults and heap support remain
+// exact while unrelated scalar DDs never form a Cartesian product.
+func (a *formalTupleAlgebra) combineCoordinateGroupRoots(
+	op formalComponentBinaryOp,
+	authority *formalComponentTerminalAuthority,
+	span formalFiberDescriptorSpan,
+	group formalFiberGroupDescriptor,
+	leftRoots, rightRoots []decisionRef,
+	leftCare, rightCare, resultCare decisionRef,
+) ([]decisionRef, error) {
+	if a == nil || authority == nil || group.kind != formalFiberGroupCoordinateLane ||
+		len(leftRoots) != len(group.members) || len(rightRoots) != len(group.members) {
+		return nil, errFormalComponentMalformed
+	}
+	out := append([]decisionRef(nil), leftRoots...)
+	decodeSkeleton := func(family formalCoordinateFamilyFiberGroup, leaf decisionLeaf) (state.CoordinateFamilySkeleton, error) {
+		if leaf == 0 {
+			return authority.product.CoordinateSkeletonBottom(family.family, span.keys)
+		}
+		terminal, err := authority.terminal(leaf)
+		if err != nil || terminal.kind != formalComponentCoordinateSkeleton || terminal.skeleton.Family() != family.family {
+			if err != nil {
+				return state.CoordinateFamilySkeleton{}, err
+			}
+			return state.CoordinateFamilySkeleton{}, errFormalComponentMalformed
+		}
+		return terminal.skeleton, nil
+	}
+	combineSkeleton := func(left, right state.CoordinateFamilySkeleton) (state.CoordinateFamilySkeleton, error) {
+		switch op {
+		case formalComponentJoin:
+			return authority.product.CoordinateSkeletonJoin(left, right)
+		case formalComponentMeet:
+			return authority.product.CoordinateSkeletonMeet(left, right)
+		case formalComponentWiden:
+			return authority.product.CoordinateSkeletonWiden(left, right)
+		case formalComponentNarrow:
+			return authority.product.CoordinateSkeletonNarrow(left, right)
+		default:
+			return state.CoordinateFamilySkeleton{}, errFormalComponentMalformed
+		}
+	}
+	combineScalar := func(left, right state.CoordinateScalarFactor) (state.CoordinateScalarFactor, error) {
+		switch op {
+		case formalComponentJoin:
+			return authority.product.CoordinateScalarJoin(left, right)
+		case formalComponentMeet:
+			return authority.product.CoordinateScalarMeet(left, right)
+		case formalComponentWiden:
+			return authority.product.CoordinateScalarWiden(left, right)
+		case formalComponentNarrow:
+			return authority.product.CoordinateScalarNarrow(left, right)
+		default:
+			return state.CoordinateScalarFactor{}, errFormalComponentMalformed
+		}
+	}
+	oneSided := func(leftLeaves, rightLeaves []decisionLeaf) ([]decisionLeaf, bool, error) {
+		switch {
+		case len(leftLeaves) != 0 && len(rightLeaves) == 0 && (op == formalComponentJoin || op == formalComponentWiden || op == formalComponentNarrow):
+			return append([]decisionLeaf(nil), leftLeaves...), true, nil
+		case len(leftLeaves) == 0 && len(rightLeaves) != 0 && (op == formalComponentJoin || op == formalComponentWiden):
+			return append([]decisionLeaf(nil), rightLeaves...), true, nil
+		case len(leftLeaves) == 0 || len(rightLeaves) == 0:
+			return nil, true, errDecisionMalformed
+		default:
+			return nil, false, nil
+		}
+	}
+	for _, family := range group.coordinateFamilies {
+		position := family.skeletonPosition
+		if position < 0 || position >= len(group.members) {
+			return nil, errFormalComponentMalformed
+		}
+		var skeletonRoot decisionRef
+		if leftRoots[position] == rightRoots[position] {
+			skeletonRoot = leftRoots[position]
+		} else {
+			skeletonRoots, err := a.decisions.applyVectorUnderCare(
+				a.ctx, resultCare, leftCare, rightCare,
+				[]decisionRef{leftRoots[position]}, []decisionRef{rightRoots[position]},
+				func(leftLeaves, rightLeaves []decisionLeaf) ([]decisionLeaf, error) {
+					if result, handled, oneErr := oneSided(leftLeaves, rightLeaves); handled {
+						return result, oneErr
+					}
+					left, decodeErr := decodeSkeleton(family, leftLeaves[0])
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					right, decodeErr := decodeSkeleton(family, rightLeaves[0])
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					result, combineErr := combineSkeleton(left, right)
+					if combineErr != nil {
+						return nil, combineErr
+					}
+					leaf, combineErr := a.internFormalCoordinateSkeleton(authority, span, family.family, result)
+					return []decisionLeaf{leaf}, combineErr
+				},
+			)
+			if err != nil || len(skeletonRoots) != 1 {
+				if err == nil {
+					err = errDecisionMalformed
+				}
+				return nil, err
+			}
+			skeletonRoot = skeletonRoots[0]
+		}
+		out[position] = skeletonRoot
+		for _, scalarPosition := range family.scalarPositions {
+			if scalarPosition < 0 || scalarPosition >= len(group.members) {
+				return nil, errFormalComponentMalformed
+			}
+			ordinal := group.members[scalarPosition]
+			descriptor := span.forest.descriptors[span.first+int(ordinal)]
+			if descriptor.role != formalFiberCoordinate || descriptor.coordinateKind != formalFiberCoordinateFamilyScalar ||
+				descriptor.coordinate.Family() != family.family {
+				return nil, errFormalComponentMalformed
+			}
+			slot := descriptor.coordinate
+			if leftRoots[position] == rightRoots[position] && leftRoots[scalarPosition] == rightRoots[scalarPosition] {
+				out[scalarPosition] = leftRoots[scalarPosition]
+				continue
+			}
+			roots, scalarErr := a.decisions.applyVectorUnderCare(
+				a.ctx, resultCare, leftCare, rightCare,
+				[]decisionRef{leftRoots[position], leftRoots[scalarPosition]},
+				[]decisionRef{rightRoots[position], rightRoots[scalarPosition]},
+				func(leftLeaves, rightLeaves []decisionLeaf) ([]decisionLeaf, error) {
+					if result, handled, oneErr := oneSided(leftLeaves, rightLeaves); handled {
+						return result, oneErr
+					}
+					leftSkeleton, decodeErr := decodeSkeleton(family, leftLeaves[0])
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					rightSkeleton, decodeErr := decodeSkeleton(family, rightLeaves[0])
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					outputSkeleton, decodeErr := combineSkeleton(leftSkeleton, rightSkeleton)
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					decodeScalar := func(skeleton state.CoordinateFamilySkeleton, leaf decisionLeaf) (state.CoordinateScalarFactor, error) {
+						if leaf == 0 {
+							return authority.product.CoordinateDefault(skeleton, slot)
+						}
+						terminal, terminalErr := authority.terminal(leaf)
+						if terminalErr != nil || terminal.kind != formalComponentCoordinateScalar {
+							if terminalErr != nil {
+								return state.CoordinateScalarFactor{}, terminalErr
+							}
+							return state.CoordinateScalarFactor{}, errFormalComponentMalformed
+						}
+						equal, equalErr := authority.product.CoordinateSlotEqual(terminal.scalar.Slot(), slot)
+						if equalErr != nil || !equal {
+							if equalErr != nil {
+								return state.CoordinateScalarFactor{}, equalErr
+							}
+							return state.CoordinateScalarFactor{}, errFormalComponentMalformed
+						}
+						return terminal.scalar, nil
+					}
+					leftScalar, decodeErr := decodeScalar(leftSkeleton, leftLeaves[1])
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					rightScalar, decodeErr := decodeScalar(rightSkeleton, rightLeaves[1])
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					result, decodeErr := combineScalar(leftScalar, rightScalar)
+					if decodeErr != nil {
+						return nil, decodeErr
+					}
+					scalarLeaf := decisionLeaf(0)
+					omitted, omitErr := authority.product.CoordinateScalarIsOmitted(outputSkeleton, result)
+					if omitErr != nil {
+						return nil, omitErr
+					}
+					if !omitted {
+						scalarLeaf, omitErr = authority.internCoordinateScalar(result)
+						if omitErr != nil {
+							return nil, omitErr
+						}
+					}
+					// applyVectorUnderCare retains the operand width. The first
+					// result is intentionally dead; the family skeleton was lifted
+					// once above and is not re-interned per scalar valuation.
+					return []decisionLeaf{0, scalarLeaf}, nil
+				},
+			)
+			if scalarErr != nil || len(roots) != 2 {
+				if scalarErr == nil {
+					scalarErr = errFormalComponentMalformed
+				}
+				return nil, scalarErr
+			}
+			out[scalarPosition] = roots[1]
+		}
+	}
+	return out, nil
+}
+
+// combineValuesGroupRoots is the product-isomorphic Values lattice lift. Top
+// is shared by every coordinate, while finite slots are independent product
+// values. Correlating the complete sparse slot inventory would manufacture a
+// Cartesian terminal row that the registered ValueFactor lattice immediately
+// factors again; lifting each Top+slot component preserves the exact law and
+// the DD identity of every unrelated slot.
+func (a *formalTupleAlgebra) combineValuesGroupRoots(
+	op formalComponentBinaryOp,
+	authority *formalComponentTerminalAuthority,
+	group formalFiberGroupDescriptor,
+	leftRoots, rightRoots []decisionRef,
+	leftCare, rightCare, resultCare decisionRef,
+) ([]decisionRef, error) {
+	if a == nil || authority == nil || group.kind != formalFiberGroupValues ||
+		len(leftRoots) != len(group.members) || len(rightRoots) != len(group.members) ||
+		group.valueTopPosition < 0 || group.valueTopPosition >= len(group.members) {
+		return nil, errFormalComponentMalformed
+	}
+	// product.Value has no registered Narrow, so ValueFactor's total narrowing
+	// law retains the complete previous finite map unchanged.
+	if op == formalComponentNarrow {
+		return append([]decisionRef(nil), leftRoots...), nil
+	}
+	combineGround := func(left, right decisionLeaf) (decisionLeaf, error) {
+		switch op {
+		case formalComponentJoin, formalComponentWiden:
+			if left == 0 {
+				return right, nil
+			}
+			if right == 0 {
+				return left, nil
+			}
+		case formalComponentMeet:
+			if left == 0 || right == 0 {
+				return 0, nil
+			}
+		}
+		if left != 0 && right != 0 {
+			return authority.combine(a.ctx, op, left, right)
+		}
+		return 0, errFormalComponentMalformed
+	}
+	combine := func(left, right []decisionLeaf, slot *formalValueSlotFiber) ([]decisionLeaf, error) {
+		switch {
+		case len(left) != 0 && len(right) == 0 && (op == formalComponentJoin || op == formalComponentWiden):
+			return append([]decisionLeaf(nil), left...), nil
+		case len(left) == 0 && len(right) != 0 && (op == formalComponentJoin || op == formalComponentWiden):
+			return append([]decisionLeaf(nil), right...), nil
+		case len(left) != 0 && len(right) != 0:
+		default:
+			return nil, errDecisionMalformed
+		}
+		width := 1
+		if slot != nil {
+			width = 2
+		}
+		if len(left) != width || len(right) != width || left[0] > 1 || right[0] > 1 {
+			return nil, errDecisionMalformed
+		}
+		leaves := make([]decisionLeaf, width)
+		switch op {
+		case formalComponentJoin, formalComponentWiden:
+			if left[0] == 1 || right[0] == 1 {
+				leaves[0] = 1
+			}
+		case formalComponentMeet, formalComponentNarrow:
+			if left[0] == 1 && right[0] == 1 {
+				leaves[0] = 1
+			}
+		default:
+			return nil, errFormalComponentMalformed
+		}
+		if slot == nil || leaves[0] == 1 {
+			return leaves, nil
+		}
+		switch {
+		case left[0] == 1:
+			leaves[1] = right[1]
+		case right[0] == 1:
+			leaves[1] = left[1]
+		default:
+			var err error
+			leaves[1], err = combineGround(left[1], right[1])
+			if err != nil {
+				return nil, err
+			}
+		}
+		return leaves, nil
+	}
+	topPosition := group.valueTopPosition
+	apply := func(slot *formalValueSlotFiber, left, right []decisionRef) ([]decisionRef, error) {
+		return a.decisions.applyVectorUnderCare(a.ctx, resultCare, leftCare, rightCare, left, right,
+			func(leftLeaves, rightLeaves []decisionLeaf) ([]decisionLeaf, error) {
+				return combine(leftLeaves, rightLeaves, slot)
+			})
+	}
+	var top []decisionRef
+	var err error
+	if leftRoots[topPosition] == rightRoots[topPosition] {
+		top = []decisionRef{leftRoots[topPosition]}
+	} else {
+		top, err = apply(nil, []decisionRef{leftRoots[topPosition]}, []decisionRef{rightRoots[topPosition]})
+		if err != nil || len(top) != 1 {
+			if err == nil {
+				err = errDecisionMalformed
+			}
+			return nil, err
+		}
+	}
+	out := append([]decisionRef(nil), leftRoots...)
+	out[topPosition] = top[0]
+	for index := range group.valueSlots {
+		slot := &group.valueSlots[index]
+		if slot.position < 0 || slot.position >= len(out) {
+			return nil, errFormalComponentMalformed
+		}
+		if leftRoots[slot.position] == decisionFalse && rightRoots[slot.position] == decisionFalse {
+			out[slot.position] = decisionFalse
+			continue
+		}
+		if leftRoots[topPosition] == rightRoots[topPosition] && leftRoots[slot.position] == rightRoots[slot.position] {
+			out[slot.position] = leftRoots[slot.position]
+			continue
+		}
+		roots, err := apply(slot,
+			[]decisionRef{leftRoots[topPosition], leftRoots[slot.position]},
+			[]decisionRef{rightRoots[topPosition], rightRoots[slot.position]},
+		)
+		if err != nil || len(roots) != 2 || roots[0] != top[0] {
+			if err == nil {
+				err = errFormalComponentMalformed
+			}
+			return nil, err
+		}
+		out[slot.position] = roots[1]
+	}
+	return out, nil
 }
 
 func (a *formalTupleAlgebra) compareGroupRoots(span formalFiberDescriptorSpan, authority *formalComponentTerminalAuthority, group formalFiberGroupDescriptor, left, right formalRelationTuple, care decisionRef, order bool) (bool, error) {

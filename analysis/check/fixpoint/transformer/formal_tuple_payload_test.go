@@ -300,6 +300,68 @@ func TestFormalTupleValuesTopQuotientsUnobservableSlotSpelling(t *testing.T) {
 	}
 }
 
+func TestFormalTupleValuesJoinDoesNotCorrelateUnrelatedSlots(t *testing.T) {
+	program := formalTupleTestProgram(t, "values-pointwise-join")
+	algebra := formalTupleTestAlgebra(t, program)
+	span, directory, authority, _ := algebra.span(1)
+	group, ok := span.valuesGroup()
+	if !ok || len(group.descriptor.valueSlots) < 2 {
+		t.Fatal("formal Values group needs two slots")
+	}
+	left := formalTupleTestLive(t, algebra, 1)
+	right := formalTupleTestLive(t, algebra, 1)
+	leftRoots, err := algebra.groupRoots(left, group.descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightRoots := append([]decisionRef(nil), leftRoots...)
+	first, second := group.descriptor.valueSlots[0], group.descriptor.valueSlots[1]
+	firstLeaf, err := authority.internGroundValue(product.Top())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondLeaf := firstLeaf
+	leftRoots[first.position] = algebra.decisions.branch(17, decisionFalse, algebra.decisions.terminal(firstLeaf))
+	rightRoots[first.position] = algebra.decisions.branch(18, decisionFalse, algebra.decisions.terminal(firstLeaf))
+	leftRoots[second.position] = algebra.decisions.terminal(secondLeaf)
+	rightRoots[second.position] = algebra.decisions.terminal(secondLeaf)
+	leftRoot, err := algebra.applyGroupRoots(span, directory, left.root, authority, group.descriptor, leftRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightRoot, err := algebra.applyGroupRoots(span, directory, right.root, authority, group.descriptor, rightRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := algebra.combine(formalComponentJoin,
+		formalRelationTuple{variable: 1, root: leftRoot},
+		formalRelationTuple{variable: 1, root: rightRoot},
+	)
+	joinedRoots, err := algebra.groupRoots(joined, group.descriptor)
+	if err != nil || algebra.err() != nil {
+		t.Fatalf("Values pointwise join failed: %v/%v", err, algebra.err())
+	}
+	wantFirst, err := algebra.decisions.apply(algebra.ctx, uint8(formalComponentJoin), true,
+		leftRoots[first.position], rightRoots[first.position], func(left, right decisionLeaf) (decisionLeaf, error) {
+			if left == 0 {
+				return right, nil
+			}
+			if right == 0 {
+				return left, nil
+			}
+			return authority.combine(algebra.ctx, formalComponentJoin, left, right)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joinedRoots[first.position] != wantFirst {
+		t.Fatalf("first Values slot root = %d, want independent join %d", joinedRoots[first.position], wantFirst)
+	}
+	if joinedRoots[second.position] != leftRoots[second.position] {
+		t.Fatalf("unrelated Values slot root changed: got %d want identity %d", joinedRoots[second.position], leftRoots[second.position])
+	}
+}
+
 func TestFormalTupleFailureIsStationaryUntilTransactionRejects(t *testing.T) {
 	program := formalTupleTestProgram(t, "failed-transaction-stationary")
 	algebra := formalTupleTestAlgebra(t, program)

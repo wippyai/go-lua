@@ -35,6 +35,7 @@ type CoordinateFormalRootRekey struct {
 	from          *keyspace.KeySpace
 	to            *keyspace.KeySpace
 	roots         boundaryPathMap
+	inverseRoots  boundaryPathMap
 	rootIndex     map[keyspace.Key]keyspace.Key
 	resolverIndex map[keyspace.Key]keyspace.Key
 }
@@ -107,6 +108,8 @@ func (d ProductDomain) SealCoordinateFormalRootRekey(owner lexicalidentity.Stabl
 		targets[binding.Target] = root
 	}
 	sort.Slice(plan.roots, func(i, j int) bool { return from.Less(plan.roots[i].from, plan.roots[j].from) })
+	plan.inverseRoots = invertBoundaryPathMap(plan.roots)
+	sort.Slice(plan.inverseRoots, func(i, j int) bool { return to.Less(plan.inverseRoots[i].from, plan.inverseRoots[j].from) })
 	return plan, nil
 }
 
@@ -114,7 +117,8 @@ func (p CoordinateFormalRootRekey) validFor(d ProductDomain) bool {
 	return d.Valid() && p.seal == d.seal &&
 		(!p.formalTarget || p.targetOwner != (lexicalidentity.StableLexicalBodyID{})) &&
 		(!p.formalSource || p.sourceOwner != (lexicalidentity.StableLexicalBodyID{})) &&
-		p.from != nil && p.from.Valid() && p.to != nil && p.to.Valid() && p.roots != nil && p.rootIndex != nil && p.resolverIndex != nil &&
+		p.from != nil && p.from.Valid() && p.to != nil && p.to.Valid() && p.roots != nil && p.inverseRoots != nil &&
+		p.rootIndex != nil && p.resolverIndex != nil && len(p.inverseRoots) == len(p.roots) &&
 		len(p.rootIndex)+len(p.resolverIndex) == len(p.roots)
 }
 
@@ -254,6 +258,10 @@ func (d ProductDomain) sealCoordinateFormalPublicationInverse(plan CoordinateFor
 		return CoordinateFormalRootRekey{}, fmt.Errorf("%w: formal publication environment has foreign roots", ErrInvalidLaneFactor)
 	}
 	sort.Slice(inverse.roots, func(i, j int) bool { return inverse.from.Less(inverse.roots[i].from, inverse.roots[j].from) })
+	inverse.inverseRoots = invertBoundaryPathMap(inverse.roots)
+	sort.Slice(inverse.inverseRoots, func(i, j int) bool {
+		return inverse.to.Less(inverse.inverseRoots[i].from, inverse.inverseRoots[j].from)
+	})
 	if !inverse.validFor(d) {
 		return CoordinateFormalRootRekey{}, fmt.Errorf("%w: incomplete formal publication inverse", ErrInvalidLaneFactor)
 	}
@@ -372,20 +380,13 @@ func (d ProductDomain) RekeyOrdinaryLaneFactorFormal(plan CoordinateFormalRootRe
 	case laneFormalRekeyIndependent:
 		return source, nil
 	case laneFormalRekeyStructural:
-		roots := append(boundaryPathMap(nil), plan.roots...)
-		inverse := make(boundaryPathMap, len(plan.roots))
-		for index, binding := range plan.roots {
-			inverse[index] = boundaryPathBinding{from: binding.to, to: binding.from}
-		}
-		sort.Slice(roots, func(i, j int) bool { return plan.from.Less(roots[i].from, roots[j].from) })
-		sort.Slice(inverse, func(i, j int) bool { return plan.to.Less(inverse[i].from, inverse[j].from) })
 		ctx := boundaryRebaseContext{
-			reg: d.reg, fromKeys: plan.from, toKeys: plan.to, roots: roots,
+			reg: d.reg, fromKeys: plan.from, toKeys: plan.to, roots: plan.roots,
 			formalRekey: &plan,
 			quotient: boundaryInverseQuotient{
 				paths: make(map[keyspace.Key][]keyspace.Key), stateKeys: make(map[pathaddr.StateKey][]pathaddr.StateKey),
 				identities: make(map[identity.Term][]identity.Term), identityStructural: true,
-				inverseFrom: plan.to, inverseTo: plan.from, inverseRoots: inverse,
+				inverseFrom: plan.to, inverseTo: plan.from, inverseRoots: plan.inverseRoots,
 			},
 		}
 		payload, ok := runtime.ops.boundaryRebase(&ctx, source.payload)

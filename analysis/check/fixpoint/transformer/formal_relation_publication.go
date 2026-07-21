@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -83,6 +84,7 @@ type FormalRelationPublicationView struct {
 	body        *relationProgramBody
 	variable    relationVar
 	ordinals    []formalFiberOrdinal
+	groups      []formalFiberGroupDescriptor
 	unbound     []formalFiberOrdinal
 	diagnostic  formalFiberOrdinal
 	callSites   map[cfg.Point][]formalRelationCell
@@ -126,13 +128,17 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 			unbound = append(unbound, ordinal)
 		}
 	}
-	for _, group := range span.groupDescriptors() {
+	groups := span.groupDescriptors()
+	for _, group := range groups {
 		ordinals = append(ordinals, group.members...)
 	}
 	if diagnostic < 0 {
 		return FormalRelationPublicationView{}, fmt.Errorf("transformer: formal publication has no diagnostic coordinate")
 	}
-	ordinals = append(ordinals, unbound...)
+	// Product publication partitions the complete registered product roots
+	// under Care. Middle binding roots are existential syntax only: including
+	// them would merely subdivide identical product rows, because every product
+	// correlation is already retained by the shared DD partition.
 	sort.Slice(ordinals, func(i, j int) bool { return ordinals[i] < ordinals[j] })
 	for index := 1; index < len(ordinals); index++ {
 		if ordinals[index-1] >= ordinals[index] {
@@ -141,7 +147,7 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 	}
 	view := FormalRelationPublicationView{
 		execution: e, body: &program.bodies[variable-1], variable: variable,
-		ordinals: ordinals, unbound: unbound, diagnostic: diagnostic,
+		ordinals: ordinals, groups: groups, unbound: unbound, diagnostic: diagnostic,
 		callSites:  make(map[cfg.Point][]formalRelationCell),
 		calls:      make([]FormalLexicalCallDependency, 0),
 		pointInput: make(map[cfg.Point][]formalPublishedCoordinate), pointOutput: make(map[cfg.Point][]formalPublishedCoordinate),
@@ -515,6 +521,134 @@ type formalPublicationFactorAccumulator struct {
 	joined  bool
 }
 
+type formalPublicationProjectionFactorKey struct {
+	lane state.LaneOrdinal
+	hash uint64
+}
+
+type formalPublicationProjectionFactorEntry struct {
+	leaves []decisionLeaf
+	factor state.LaneFactor
+}
+
+type formalPublicationProjectionValuesEntry struct {
+	leaves []decisionLeaf
+	values state.ValueLaneFactor
+}
+
+// formalPublicationProjectionCache belongs to one exact point inverse. It
+// retains only already-projected registered factors; allocation quotienting
+// still consumes every complete correlated row below.
+type formalPublicationProjectionCache struct {
+	factors map[formalPublicationProjectionFactorKey][]formalPublicationProjectionFactorEntry
+	values  map[uint64][]formalPublicationProjectionValuesEntry
+}
+
+// formalPublicationValuesProjection removes only identity-independent Values
+// slots from the correlated publication row. Their existential join is exact
+// because allocation quotienting observes identity support only; slots which
+// can carry an identity remain correlated with every non-Values factor.
+type formalPublicationValuesProjection struct {
+	collapsed map[formalFiberOrdinal]decisionLeaf
+}
+
+func (v *FormalRelationPublicationView) publicationProductProjection(
+	ctx context.Context,
+	tuple formalRelationTuple,
+) ([]formalFiberOrdinal, formalPublicationValuesProjection, error) {
+	if ctx == nil || v == nil || v.execution == nil || v.execution.algebra == nil || tuple.bottom() {
+		return nil, formalPublicationValuesProjection{}, errFormalComponentForeignOwner
+	}
+	a := v.execution.algebra
+	span, directory, authority, ok := a.span(tuple.variable)
+	if !ok || tuple.root.owner != directory || span.variable != v.variable {
+		return nil, formalPublicationValuesProjection{}, errFormalComponentForeignOwner
+	}
+	var valuesGroup formalFiberGroupDescriptor
+	for _, group := range v.groups {
+		if group.kind == formalFiberGroupValues {
+			valuesGroup = group
+			break
+		}
+	}
+	if !valuesGroup.valid() || valuesGroup.valueTopPosition < 0 || valuesGroup.valueTopPosition >= len(valuesGroup.members) {
+		return nil, formalPublicationValuesProjection{}, errFormalComponentMalformed
+	}
+	care, err := a.care(tuple)
+	if err != nil {
+		return nil, formalPublicationValuesProjection{}, err
+	}
+	topOrdinal := valuesGroup.members[valuesGroup.valueTopPosition]
+	topValue, err := directory.valueAt(tuple.root, topOrdinal)
+	if err != nil {
+		return nil, formalPublicationValuesProjection{}, err
+	}
+	topRoot := decisionRef(topValue)
+	bottom := product.Bottom(authority.product.Registry())
+	domain := product.Domain(authority.product.Registry())
+	projection := formalPublicationValuesProjection{collapsed: make(map[formalFiberOrdinal]decisionLeaf)}
+	excluded := make(map[formalFiberOrdinal]struct{})
+	for _, slot := range valuesGroup.valueSlots {
+		if slot.position < 0 || slot.position >= len(valuesGroup.members) {
+			return nil, formalPublicationValuesProjection{}, errFormalComponentMalformed
+		}
+		ordinal := valuesGroup.members[slot.position]
+		value, readErr := directory.valueAt(tuple.root, ordinal)
+		if readErr != nil {
+			return nil, formalPublicationValuesProjection{}, readErr
+		}
+		rows, partitionErr := a.decisions.partitionLeafTuplesUnderCare(ctx, care, []decisionRef{topRoot, decisionRef(value)})
+		if partitionErr != nil {
+			return nil, formalPublicationValuesProjection{}, partitionErr
+		}
+		joined := bottom
+		identityBearing := false
+		for _, row := range rows {
+			if len(row.leaves) != 2 || row.leaves[0] > 1 || row.leaves[1] == 1 {
+				return nil, formalPublicationValuesProjection{}, errDecisionMalformed
+			}
+			current := bottom
+			if row.leaves[0] == 1 {
+				current = product.Top()
+			} else if row.leaves[1] != 0 {
+				terminal, terminalErr := authority.terminal(row.leaves[1])
+				if terminalErr != nil || terminal.kind != formalComponentGroundValue {
+					if terminalErr != nil {
+						return nil, formalPublicationValuesProjection{}, terminalErr
+					}
+					return nil, formalPublicationValuesProjection{}, errFormalComponentMalformed
+				}
+				current = terminal.ground
+			}
+			hasIdentity, identityErr := authority.product.ValueHasIdentitySupport(current)
+			if identityErr != nil {
+				return nil, formalPublicationValuesProjection{}, identityErr
+			}
+			identityBearing = identityBearing || hasIdentity
+			joined = domain.Join(joined, current)
+		}
+		if identityBearing {
+			continue
+		}
+		leaf := decisionLeaf(0)
+		if !product.Equal(authority.product.Registry(), joined, bottom) {
+			leaf, err = authority.internGroundValue(joined)
+			if err != nil {
+				return nil, formalPublicationValuesProjection{}, err
+			}
+		}
+		projection.collapsed[ordinal] = leaf
+		excluded[ordinal] = struct{}{}
+	}
+	ordinals := make([]formalFiberOrdinal, 0, len(v.ordinals)-len(excluded))
+	for _, ordinal := range v.ordinals {
+		if _, independent := excluded[ordinal]; !independent {
+			ordinals = append(ordinals, ordinal)
+		}
+	}
+	return ordinals, projection, nil
+}
+
 func (a *formalPublicationFactorAccumulator) join(values state.ValueLaneFactor, factors []state.LaneFactor) error {
 	if a == nil || !a.domain.Valid() || len(factors) != a.domain.NonValuesLaneCount() {
 		return state.ErrIncompleteLaneFactors
@@ -570,13 +704,21 @@ func (v *FormalRelationPublicationView) joinState(ctx context.Context, coordinat
 	// This is the explicit body-publication abstraction: Care restricts the
 	// selected root's concrete guard before any leaf is materialized. Only here
 	// may correlated concrete leaves be existentially joined.
+	ordinals, valuesProjection, err := v.publicationProductProjection(ctx, tuple)
+	if err != nil {
+		return state.State{}, err
+	}
 	partitions, err := v.execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{
-		tuple: tuple, ordinals: v.ordinals,
+		tuple: tuple, ordinals: ordinals,
 	}}, nil)
 	if err != nil {
 		return state.State{}, err
 	}
 	accumulator := formalPublicationFactorAccumulator{domain: v.body.productDomain}
+	cache := formalPublicationProjectionCache{
+		factors: make(map[formalPublicationProjectionFactorKey][]formalPublicationProjectionFactorEntry),
+		values:  make(map[uint64][]formalPublicationProjectionValuesEntry),
+	}
 	for _, partition := range partitions {
 		if err := ctx.Err(); err != nil {
 			return state.State{}, err
@@ -585,7 +727,7 @@ func (v *FormalRelationPublicationView) joinState(ctx context.Context, coordinat
 			return state.State{}, errDecisionMalformed
 		}
 		leaf := partition.views[0]
-		values, factors, projectErr := v.projectLeafFactorTuple(ctx, leaf, coordinate.inverse)
+		values, factors, projectErr := v.projectLeafFactorTuple(ctx, leaf, coordinate.inverse, &cache, valuesProjection)
 		if projectErr != nil {
 			return state.State{}, projectErr
 		}
@@ -611,22 +753,31 @@ func (v *FormalRelationPublicationView) projectLeafFactorTuple(
 	ctx context.Context,
 	leaf formalSparseLeafView,
 	inverse state.CoordinateFormalPublicationProjection,
+	cache *formalPublicationProjectionCache,
+	valuesProjection formalPublicationValuesProjection,
 ) (state.ValueLaneFactor, []state.LaneFactor, error) {
+	if cache == nil || cache.factors == nil || cache.values == nil {
+		return state.ValueLaneFactor{}, nil, errFormalComponentForeignOwner
+	}
 	span := leaf.span
-	// Middle binding fibers are the quantified syntax that correlates the
-	// registered product groups inside this leaf. They are intentionally not a
-	// State lane. Once Care has selected a complete leaf, publication
-	// existentially eliminates those binders and materializes only the product
-	// groups through the point-owned projection below. A syntax-only execution
-	// still cannot publish: joinState requires a selected rootEntry before this
-	// boundary is reached.
-	groups := span.groupDescriptors()
+	// Middle binding fibers are quantified syntax, not State lanes. The caller
+	// partitions every registered product root under shared Care, which retains
+	// their exact correlation while existentially eliminating binder-only
+	// distinctions. A syntax-only execution still cannot publish: joinState
+	// requires a selected rootEntry before this boundary is reached.
+	groups := v.groups
+	if len(groups) == 0 {
+		return state.ValueLaneFactor{}, nil, errFormalComponentMalformed
+	}
 	values := state.ValueLaneFactor{}
 	factors := make([]state.LaneFactor, 0, v.body.productDomain.NonValuesLaneCount())
 	for _, group := range groups {
 		leaves := make([]decisionLeaf, len(group.members))
 		for index, ordinal := range group.members {
 			value, present := leaf.leaf(ordinal)
+			if !present && group.kind == formalFiberGroupValues {
+				value, present = valuesProjection.collapsed[ordinal]
+			}
 			if !present {
 				return state.ValueLaneFactor{}, nil, errFormalComponentMalformed
 			}
@@ -634,6 +785,17 @@ func (v *FormalRelationPublicationView) projectLeafFactorTuple(
 		}
 		switch group.kind {
 		case formalFiberGroupValues:
+			hash := formalFactorLeafHash(leaves)
+			cached := false
+			for _, entry := range cache.values[hash] {
+				if formalFactorLeavesEqual(entry.leaves, leaves) {
+					values, cached = entry.values, true
+					break
+				}
+			}
+			if cached {
+				continue
+			}
 			formalValues, err := leaf.algebra.materializeValuesGroup(leaf.authority, group, leaves)
 			if err != nil {
 				return state.ValueLaneFactor{}, nil, fmt.Errorf("transformer: publish Values factor: %w", err)
@@ -646,23 +808,56 @@ func (v *FormalRelationPublicationView) projectLeafFactorTuple(
 			if err != nil {
 				return state.ValueLaneFactor{}, nil, err
 			}
+			cache.values[hash] = append(cache.values[hash], formalPublicationProjectionValuesEntry{
+				leaves: append([]decisionLeaf(nil), leaves...), values: values,
+			})
 		case formalFiberGroupOrdinaryLane:
-			factor, err := leaf.algebra.materializeOrdinaryGroup(leaf.authority, group, leaves)
+			key := formalPublicationProjectionFactorKey{lane: group.lane.Ordinal(), hash: formalFactorLeafHash(leaves)}
+			cached := false
+			for _, entry := range cache.factors[key] {
+				if formalFactorLeavesEqual(entry.leaves, leaves) {
+					factors = append(factors, entry.factor)
+					cached = true
+					break
+				}
+			}
+			if cached {
+				continue
+			}
+			factor, err := leaf.laneFactor(group)
 			if err == nil {
 				factor, err = v.body.productDomain.RekeyOrdinaryLaneFactorFormalPublication(inverse, factor)
 			}
 			if err != nil {
 				return state.ValueLaneFactor{}, nil, fmt.Errorf("transformer: publish ordinary lane %q: %w", group.lane.ID(), err)
 			}
+			cache.factors[key] = append(cache.factors[key], formalPublicationProjectionFactorEntry{
+				leaves: append([]decisionLeaf(nil), leaves...), factor: factor,
+			})
 			factors = append(factors, factor)
 		case formalFiberGroupCoordinateLane:
-			factor, err := leaf.algebra.materializeCoordinateGroup(leaf.authority, span, group, leaves)
+			key := formalPublicationProjectionFactorKey{lane: group.lane.Ordinal(), hash: formalFactorLeafHash(leaves)}
+			cached := false
+			for _, entry := range cache.factors[key] {
+				if formalFactorLeavesEqual(entry.leaves, leaves) {
+					factors = append(factors, entry.factor)
+					cached = true
+					break
+				}
+			}
+			if cached {
+				continue
+			}
+			factor, err := leaf.laneFactor(group)
 			if err == nil {
 				factor, err = v.body.productDomain.RekeyCoordinateLaneFactorFormalPublication(inverse, factor)
 			}
 			if err != nil {
 				return state.ValueLaneFactor{}, nil, fmt.Errorf("transformer: publish coordinate lane %q: %w", group.lane.ID(), err)
 			}
+			cache.factors[key] = append(cache.factors[key], formalPublicationProjectionFactorEntry{
+				leaves: append([]decisionLeaf(nil), leaves...), factor: factor,
+			})
 			factors = append(factors, factor)
 		default:
 			return state.ValueLaneFactor{}, nil, errFormalComponentMalformed

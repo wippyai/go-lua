@@ -294,6 +294,14 @@ func (a *formalTupleAlgebra) composeGuardBoundary(tuple formalRelationTuple, bou
 	if err := a.validateTuple(result); err != nil {
 		return fail(err)
 	}
+	// Guard closure is a registered product producer. Coordinate families are
+	// lifted independently above, so their resulting complete lane spelling
+	// does not necessarily coincide with a spelling factored by either input.
+	// Register the correlated per-lane rows here, before Apply can consume the
+	// closed target; a consumer must never reconstruct a missing spelling.
+	if err := a.cacheFormalOutcomeFactorSpellings(result); err != nil {
+		return fail(err)
+	}
 	if traceDetail != nil {
 		finishFormalRelationEvalTracePhase(a, &traceDetail.guardComposePublish, publishMark)
 	}
@@ -596,12 +604,28 @@ func (a *formalTupleAlgebra) joinGuardedGroupRoots(
 	if len(left) != len(group.members) || len(right) != len(group.members) {
 		return nil, errFormalComponentMalformed
 	}
+	physicalIdentity := true
+	for index := range left {
+		if left[index] != right[index] {
+			physicalIdentity = false
+			break
+		}
+	}
+	if physicalIdentity {
+		return append([]decisionRef(nil), left...), nil
+	}
 	resultCare, err := a.decisions.apply(a.ctx, uint8(decisionOr), true, leftCare, rightCare, decisionLeafOr)
 	if err != nil || resultCare == decisionFalse {
 		if err == nil {
 			err = errDecisionMalformed
 		}
 		return nil, err
+	}
+	if group.kind == formalFiberGroupValues {
+		return a.combineValuesGroupRoots(formalComponentJoin, authority, group, left, right, leftCare, rightCare, resultCare)
+	}
+	if group.kind == formalFiberGroupCoordinateLane {
+		return a.combineCoordinateGroupRoots(formalComponentJoin, authority, span, group, left, right, leftCare, rightCare, resultCare)
 	}
 	demands := make([]decisionRef, 0, 2+len(left)+len(right))
 	demands = append(demands, leftCare, rightCare)

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -36,6 +37,25 @@ func TestLaneCatalogRequiresExplicitIdentitySupportPolicy(t *testing.T) {
 			}()
 			_ = newLaneCatalog([]laneSpec{spec})
 		})
+	}
+}
+
+func TestProductDomainValueIdentitySupportSeparatesIndependentValues(t *testing.T) {
+	reg := standard.Registry()
+	domain := RegisteredProductDomain(reg)
+	for name, value := range map[string]product.Value{
+		"bottom": product.Bottom(reg),
+		"top":    product.Top(),
+	} {
+		has, err := domain.ValueHasIdentitySupport(value)
+		if err != nil || has {
+			t.Fatalf("%s identity support = %t, %v; want false", name, has, err)
+		}
+	}
+	id := identity.ID{Kind: "table", Site: t.Name(), Index: 1}
+	has, err := domain.ValueHasIdentitySupport(identityvalue.Present(reg, id))
+	if err != nil || !has {
+		t.Fatalf("exact identity support = %t, %v; want true", has, err)
 	}
 }
 
