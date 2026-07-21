@@ -61,7 +61,7 @@ func (d ProductDomain) PrepareDynamicReadSelection(query DynamicReadQuery) (Dyna
 	}
 	out.keySegment, out.exactKey = typevalue.ExactScalarKeySegment(d.reg, query.TypeValues, query.KeyValue)
 	if out.exactKey && query.TablePath.Kind != keyspace.KindInvalid {
-		member, ok := query.KeySpace.AppendSegment(query.TablePath, out.keySegment)
+		member, ok := query.KeySpace.AppendPathSegment(query.TablePath, out.keySegment)
 		if !ok {
 			return DynamicReadSelection{}, fmt.Errorf("%w: dynamic-read path member address", ErrInvalidLaneFactor)
 		}

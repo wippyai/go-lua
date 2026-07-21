@@ -100,7 +100,7 @@ func ResolveDynamicRead(request state.DynamicReadQuery, evidence state.DynamicRe
 	// An exact path coordinate is the freshest flow-sensitive authority.
 	if request.TablePath.Kind != keyspace.KindInvalid {
 		if keySegment, exact := typevalue.ExactScalarKeySegment(reg, typeValues, request.KeyValue); exact {
-			if member, ok := keys.AppendSegment(request.TablePath, keySegment); ok {
+			if member, ok := keys.AppendPathSegment(request.TablePath, keySegment); ok {
 				candidates := []keyspace.Key{member}
 				if canonical, canonicalOK := keys.FieldCanonical(member); canonicalOK && canonical != member {
 					candidates = append(candidates, canonical)

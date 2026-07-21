@@ -247,6 +247,22 @@ func (ks *KeySpace) AppendSegment(k Key, seg segment.Segment) (Key, bool) {
 	if ks == nil || !ks.validKey(k) || !k.isStructural() {
 		return Key{}, false
 	}
+	return ks.appendSegment(k, seg), true
+}
+
+// AppendPathSegment returns the descendant used by path-evidence consumers.
+// Unlike structural factor addresses, path evidence also owns unversioned
+// lexical symbol paths. Keeping that case separate preserves AppendSegment's
+// exact-frame structural boundary while allowing a read binder to name its
+// selected path member.
+func (ks *KeySpace) AppendPathSegment(k Key, seg segment.Segment) (Key, bool) {
+	if ks == nil || !ks.validKey(k) || !(k.isStructural() || k.Kind == KindUnversionedSym) {
+		return Key{}, false
+	}
+	return ks.appendSegment(k, seg), true
+}
+
+func (ks *KeySpace) appendSegment(k Key, seg segment.Segment) Key {
 	segs := ks.segments(k.Segs)
 	var next SegmentsID
 	switch len(segs) {
@@ -264,7 +280,7 @@ func (ks *KeySpace) AppendSegment(k Key, seg segment.Segment) (Key, bool) {
 	}
 	out := k
 	out.Segs = next
-	return ks.bindKey(out), true
+	return ks.bindKey(out)
 }
 
 // Rebase rewrites k from structural prefix from to prefix to, in the same
