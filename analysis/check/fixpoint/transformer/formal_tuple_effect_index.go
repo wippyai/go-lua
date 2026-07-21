@@ -7,10 +7,13 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -20,6 +23,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type formalIndexMutationStep struct {
@@ -36,6 +41,7 @@ type formalIndexMutationStep struct {
 	valueGroups               []formalFiberGroupDescriptor
 	effectDelta               state.EffectDeltaFactorPlan
 	variable                  relationVar
+	staticSuffix              []segment.Segment
 }
 
 func freezeFormalIndexMutationStep(program *RelationProgram, variable relationVar, operator formalRelationOperatorRef) (*formalIndexMutationStep, error) {
@@ -73,6 +79,9 @@ func freezeFormalIndexMutationStep(program *RelationProgram, variable relationVa
 		table: table, structural: structural, tableRoot: operator.code.terms.paths[node.table.path].root,
 		tableSymbol: tablePath.Symbol, key: node.key, value: node.value, admission: node.admission,
 		appendMode: node.appendMode, point: step.point, variable: variable,
+	}
+	if write, ok := body.plan.Facts().DynamicIndexWrite(step.point); ok {
+		plan.staticSuffix = append([]segment.Segment(nil), write.TargetSuffixRef()...)
 	}
 	plan.valueAccess, plan.valueGroups, err = freezeFormalValueFactorAccess(program, variable, node.key, node.value)
 	if err != nil {
@@ -264,6 +273,35 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 			return state.ValueFactor[FormalSlot]{}, nil, err
 		}
 	}
+	if len(plan.staticSuffix) != 0 {
+		if name, ok := formalStaticStringKey(domain.Registry(), keyValue); ok {
+			target, targetOK := span.keys.AppendSegment(plan.table, segment.Segment{Kind: segment.SegmentIndexString, Name: name})
+			for _, suffix := range plan.staticSuffix {
+				if !targetOK {
+					break
+				}
+				target, targetOK = span.keys.AppendSegment(target, suffix)
+			}
+			if targetOK {
+				staticPlan, prepareErr := domain.PrepareStaticMemberFactorPlan(span.keys, target, storedValue)
+				if prepareErr != nil {
+					return state.ValueFactor[FormalSlot]{}, nil, prepareErr
+				}
+				lane, laneErr := domain.StaticMemberFactorLane(staticPlan)
+				if laneErr != nil {
+					return state.ValueFactor[FormalSlot]{}, nil, laneErr
+				}
+				index, present := positions[lane]
+				if !present {
+					return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
+				}
+				current[index], err = domain.ApplyStaticMemberFactor(staticPlan, current[index])
+				if err != nil {
+					return state.ValueFactor[FormalSlot]{}, nil, err
+				}
+			}
+		}
+	}
 
 	factorMap := make(map[state.ProductLane]state.LaneFactor, len(current))
 	for _, factor := range current {
@@ -362,4 +400,17 @@ func (a *formalTupleAlgebra) applyFormalIndexMutationLeaf(operator formalRelatio
 		}
 	}
 	return values, current, nil
+}
+
+func formalStaticStringKey(reg *axis.Registry, value product.Value) (string, bool) {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok {
+		return "", false
+	}
+	lit, ok := t.(*typ.Literal)
+	if !ok || lit.Base != kind.String {
+		return "", false
+	}
+	name, ok := lit.Value.(string)
+	return name, ok
 }

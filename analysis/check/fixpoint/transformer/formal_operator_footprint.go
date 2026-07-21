@@ -283,9 +283,22 @@ func freezeFormalStepCoordinateFootprint(
 				return state.CoordinateFactorInventory{}, authorityErr
 			}
 		}
-		normalCarrier, carrierErr := body.productDomain.SealCoordinateFactorInventory(formalKeys,
-			append(current.Slots(), forest.externalCallCoordinateSlots(variable)...),
-		)
+		// The point-relative body inventory is the closed lookup universe for
+		// N3 certificate preparation. It is not itself a selector contribution:
+		// only the certificate below may enter this ExternalCall footprint.
+		pointCarrier, pointCarrierErr := pointwise.At(step.point)
+		if pointCarrierErr != nil {
+			return state.CoordinateFactorInventory{}, pointCarrierErr
+		}
+		formalPointCarrier, formalPointCarrierErr := rekeyFormalCoordinateFactorInventory(body.productDomain, formalKeys, rekey, pointCarrier)
+		if formalPointCarrierErr != nil {
+			return state.CoordinateFactorInventory{}, formalPointCarrierErr
+		}
+		carrierSlots := make([]state.CoordinateSlot, 0, current.Len()+formalPointCarrier.Len()+len(forest.externalCallCoordinateSlots(variable)))
+		carrierSlots = append(carrierSlots, current.Slots()...)
+		carrierSlots = append(carrierSlots, formalPointCarrier.Slots()...)
+		carrierSlots = append(carrierSlots, forest.externalCallCoordinateSlots(variable)...)
+		normalCarrier, carrierErr := body.productDomain.SealCoordinateFactorInventory(formalKeys, carrierSlots)
 		if carrierErr != nil {
 			return state.CoordinateFactorInventory{}, carrierErr
 		}
@@ -294,22 +307,32 @@ func freezeFormalStepCoordinateFootprint(
 			return state.CoordinateFactorInventory{}, normalErr
 		}
 		slots = append(slots, normalSlots...)
+		certificateCarrier, certificateCarrierErr := body.productDomain.SealCoordinateFactorInventory(
+			formalKeys, append(normalCarrier.Slots(), normalSlots...),
+		)
+		if certificateCarrierErr != nil {
+			return state.CoordinateFactorInventory{}, certificateCarrierErr
+		}
 		if prepared, present := forest.externalCallSite(variable, step.point); present && len(prepared.proofSeeds) != 0 {
-			proofSeeds := make([]factapply.NormalReturnPresenceProofSeed, len(prepared.proofSeeds))
-			for index, binding := range prepared.proofSeeds {
+			for _, binding := range prepared.proofSeeds {
 				if binding.variable != variable || binding.point != step.point || !binding.valid() {
 					return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall proof seed authority is malformed")
 				}
-				proofSeeds[index] = factapply.NormalReturnPresenceProofSeed{
-					Trigger: binding.trigger, TriggerPresence: binding.seed.Presence,
-					Target: binding.target, TargetPresence: binding.seed.Presence,
+				path, value, exact := binding.production.NormalReturnPathRefinement()
+				if !exact || !path.Equal(binding.seed.Path) {
+					return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall proof production is malformed")
 				}
+				proofSlots, proofErr := formalAuthority.NormalReturnPathRefinementProductionFootprint(
+					body.productDomain, step.point, certificateCarrier, binding.refinement, value,
+				)
+				if proofErr != nil {
+					return state.CoordinateFactorInventory{}, proofErr
+				}
+				if len(proofSlots) == 0 {
+					return state.CoordinateFactorInventory{}, fmt.Errorf("formal ExternalCall production certificate is empty")
+				}
+				slots = append(slots, proofSlots...)
 			}
-			proofSlots, proofErr := formalAuthority.NormalReturnPresenceProofSeedFootprint(body.productDomain, step.point, normalLanes, normalCarrier, proofSeeds)
-			if proofErr != nil {
-				return state.CoordinateFactorInventory{}, proofErr
-			}
-			slots = append(slots, proofSlots...)
 		}
 	case boundaryStepRootAssignment:
 		more, err := freezeFormalRootAssignmentCoordinateSlots(body, formalKeys, rekey, current, step)

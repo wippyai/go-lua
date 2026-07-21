@@ -5,14 +5,49 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
+
+// NormalReturnPathRefinementProductionFootprint prepares the same N3 program
+// that a normal-return path-refinement producer executes and returns its exact
+// coordinate dependency certificate. The supplied inventory is only the
+// closed lookup universe; callers add this certificate to the owning point's
+// selector and must not union that universe into the selector.
+func (a *PathSemanticAuthority) NormalReturnPathRefinementProductionFootprint(
+	domain state.ProductDomain,
+	point cfg.Point,
+	carrier state.CoordinateFactorInventory,
+	target pathdom.Path,
+	value presence.Value,
+) ([]state.CoordinateSlot, error) {
+	if a == nil || !a.Valid() || !domain.Valid() || !carrier.ValidFor(domain, a.KeySpace()) || point == 0 || target.IsEmpty() ||
+		(!presence.Equal(value, presence.Present()) && !presence.Equal(value, presence.Absent())) {
+		return nil, fmt.Errorf("factapply: normal-return production footprint is unowned")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{PostconditionRefinements: map[cfg.Point]factflow.PostconditionRefinementSet{
+		point: factflow.NewPostconditionRefinementSet(factflow.NewPostconditionRefinement(
+			target, factflow.NewValueConstraint(product.NewWithPresence(domain.Registry(), product.ShapeTop, value)),
+		)),
+	}})
+	program, err := PrepareCallResultPostconditionFactorProgram(
+		a, domain, PlanCallResultTransaction(facts, point), carrier,
+		func(dependency statekey.ValueDependency) (statekey.ValueDependency, bool) { return dependency, true },
+		a.typeValues, a.projectPath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return append(program.CoordinateReads(), program.CoordinateWrites()...), nil
+}
 
 // NormalReturnPresenceProofSeed is one occurrence-bound seed for a sibling
 // return presence consequence. The transformer binds its paths through the

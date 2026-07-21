@@ -496,6 +496,12 @@ func (c *formalCoordinateDependencyClosure) sealDependencies() {
 			if _, selected := c.selectorMember[bodyIndex][cellIndex]; selected {
 				add(c.cellNodeFirst+cellIndex, c.selectorNodeFirst+bodyIndex)
 			}
+			if cell.Kind == formalRelationCellStep {
+				step := c.program.bodies[bodyIndex].relation.code.nodes[cell.Root].steps[cell.Step-1]
+				if step.kind == boundaryStepExternalCall {
+					add(c.selectorNodeFirst+bodyIndex, c.cellNodeFirst+cellIndex)
+				}
+			}
 		}
 		for frameIndex := range c.frames {
 			if c.frames[frameIndex].caller == bodyIndex {
@@ -579,7 +585,12 @@ func formalCoordinateFootprintDependsOnBodyInventory(program *RelationProgram, c
 		return false
 	}
 	switch body.relation.code.nodes[cell.Root].steps[cell.Step-1].kind {
-	case boundaryStepPresenceImplications, boundaryStepRootAssignment, boundaryStepCovariantExposure:
+	case boundaryStepPresenceImplications, boundaryStepRootAssignment, boundaryStepCovariantExposure,
+		boundaryStepExternalCall:
+		// A typed ExternalCall production certificate is prepared against the
+		// point's closed body inventory. Revisit the cell when that lookup
+		// universe gains a registered producer; the cell still contributes only
+		// its provider-path-qualified certificate, never the body inventory.
 		return true
 	default:
 		return false
@@ -675,7 +686,20 @@ func (c *formalCoordinateDependencyClosure) evaluateCell(index int) (bool, error
 			}
 		}
 	}
-	base, err := c.freezeCellBase(index, cell, c.bodies[bodyIndex], nextIdentity)
+	current := c.bodies[bodyIndex]
+	if cell.Kind == formalRelationCellStep {
+		step := body.relation.code.nodes[cell.Root].steps[cell.Step-1]
+		if step.kind == boundaryStepExternalCall {
+			// The body selector is a closed lookup universe for typed provider
+			// production. This cell contributes only the derived N3 certificate,
+			// never that universe itself.
+			current, err = body.productDomain.UnionCoordinateFactorInventories(c.keys[bodyIndex], current, c.selectors[bodyIndex])
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+	base, err := c.freezeCellBase(index, cell, current, nextIdentity)
 	if err != nil {
 		return false, err
 	}

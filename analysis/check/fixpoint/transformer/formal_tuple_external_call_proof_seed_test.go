@@ -28,10 +28,10 @@ func TestFormalExternalCallProofSeedsKeepProvidersSeparate(t *testing.T) {
 	if len(got) != 2 || !reflect.DeepEqual(got[0].path, []uint32{0}) || !reflect.DeepEqual(got[1].path, []uint32{1}) {
 		t.Fatalf("provider paths = %#v", got)
 	}
-	if !got[0].trigger.Equal(pathdom.NewPath(101, "p")) || !got[0].target.Equal(pathdom.NewPath(101, "p")) {
+	if !got[0].refinement.Equal(pathdom.NewPath(101, "p")) {
 		t.Fatalf("provider A binding = %#v", got[0])
 	}
-	if !got[1].trigger.Equal(pathdom.NewPath(103, "q")) || !got[1].target.Equal(pathdom.NewPath(103, "q")) {
+	if !got[1].refinement.Equal(pathdom.NewPath(103, "q")) {
 		t.Fatalf("provider B binding = %#v", got[1])
 	}
 }
@@ -47,7 +47,7 @@ func TestFormalExternalCallProofSeedsKeepOccurrencesSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p) != 1 || len(q) != 1 || p[0].point == q[0].point || p[0].trigger.Equal(q[0].trigger) || p[0].target.Equal(q[0].target) {
+	if len(p) != 1 || len(q) != 1 || p[0].point == q[0].point || p[0].refinement.Equal(q[0].refinement) {
 		t.Fatalf("occurrence bindings leaked: p=%#v q=%#v", p, q)
 	}
 }

@@ -65,22 +65,24 @@ type formalExternalCallValueOutput struct {
 }
 
 // formalExternalCallProofSeedBinding is the occurrence authority for one
-// provider-leaf proof declaration. It retains only the exact boundary roots
-// selected by that occurrence; no coordinate mapping survives preparation.
+// provider-leaf production declaration. It retains the exact boundary binding
+// for the typed producer; its certificate is derived later by the registered
+// normal-return N3 program, never by treating a refinement as a direct proof.
 // The tuple is intentionally provider-path-qualified so a declaration from a
 // sibling provider or sibling occurrence cannot witness this proof.
 type formalExternalCallProofSeedBinding struct {
-	variable relationVar
-	point    cfg.Point
-	path     []uint32
-	seed     callpayload.CallOutcomeProofSeed
-	trigger  pathdom.Path
-	target   pathdom.Path
+	variable   relationVar
+	point      cfg.Point
+	path       []uint32
+	seed       callpayload.CallOutcomeProofSeed
+	production callpayload.CallOutcomeProductionProgram
+	refinement pathdom.Path
 }
 
 func (b formalExternalCallProofSeedBinding) valid() bool {
+	_, _, productionOK := b.production.NormalReturnPathRefinement()
 	return b.variable != 0 && b.point != 0 && len(b.path) != 0 &&
-		!b.trigger.IsEmpty() && !b.target.IsEmpty()
+		!b.refinement.IsEmpty() && productionOK
 }
 
 // formalPreparedExternalCallSite is the one forest-owned specialization of a
@@ -238,13 +240,15 @@ func freezeFormalExternalCallProofSeeds(
 	seeds := make([]formalExternalCallProofSeedBinding, 0, provider.ProofSeedCount())
 	for index := 0; index < provider.ProofSeedCount(); index++ {
 		seed, exact := provider.ProofSeed(index)
-		bound, boundOK := bindings.Substitute(seed.Path)
-		if !exact || !boundOK || bound.IsEmpty() {
+		production := seed.ProductionProgram()
+		productionPath, _, productionOK := production.NormalReturnPathRefinement()
+		bound, boundOK := bindings.Substitute(productionPath)
+		if !exact || !productionOK || !boundOK || bound.IsEmpty() {
 			return nil, fmt.Errorf("transformer: formal ExternalCall proof seed %d is outside occurrence boundary bindings", index)
 		}
 		binding := formalExternalCallProofSeedBinding{
 			variable: variable, point: point, path: append([]uint32(nil), path...), seed: seed,
-			trigger: bound.Clone(), target: bound.Clone(),
+			production: production, refinement: bound.Clone(),
 		}
 		if !binding.valid() {
 			return nil, fmt.Errorf("transformer: formal ExternalCall proof seed %d did not seal", index)
