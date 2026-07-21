@@ -1,0 +1,70 @@
+{
+  "description": "Advice should remove nil checks already proved by a dominating stable nil check and stay silent after an intervening write.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "advice.always_true_guard",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 8,
+        "severity": "hint",
+        "code": "advice.always_true_guard",
+        "message_contains": [
+          "condition is proven always true"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "condition is proven to be true on every reachable path"
+        ],
+        "render_contains": [
+          "hint[advice.always_true_guard]",
+          "condition is proven always true"
+        ],
+        "render_not_contains": [
+          "main.lua:13:8"
+        ],
+        "help_contains": [
+          "Remove the guard"
+        ],
+        "label_contains": [
+          "constant guard"
+        ],
+        "min_labels": 1
+      },
+      {
+        "file": "main.lua",
+        "line": 22,
+        "column": 8,
+        "severity": "hint",
+        "code": "advice.always_true_guard",
+        "message_contains": [
+          "condition is proven always true"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "condition is proven to be true on every reachable path"
+        ],
+        "render_contains": [
+          "hint[advice.always_true_guard]",
+          "condition is proven always true"
+        ],
+        "help_contains": [
+          "Remove the guard"
+        ],
+        "label_contains": [
+          "constant guard"
+        ],
+        "min_labels": 1
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

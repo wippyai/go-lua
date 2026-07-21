@@ -234,6 +234,7 @@ func diagnosticProducers() []diagnosticProducer {
 				judgment.CodeAdviceShapePolymorphic,
 			},
 			pass.AdviceRedundantClaims{},
+			pass.AdviceRedundantGuards{},
 			pass.AdviceAlwaysTrueGuards{},
 			pass.AdviceInvariantLoopReads{},
 			pass.AdviceSplitBirthDiscriminants{},
