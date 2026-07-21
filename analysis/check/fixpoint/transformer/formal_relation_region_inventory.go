@@ -352,31 +352,7 @@ func (i *formalRelationRegionInventory) linkClosureDefinitions(program *Relation
 					continue
 				}
 				frame := code.terms.callFrames[step.apply.frame]
-				if frame.closureProducer != 0 && frame.directDefinition != 0 {
-					return fmt.Errorf("transformer: Apply frame %d mixes closure-carried and direct Definition provenance", step.apply.frame)
-				}
 				if frame.closureProducer == 0 {
-					if frame.directDefinition == 0 {
-						continue
-					}
-					var selected formalRelationCell
-					for definitionRef := formalRelationDefinitionRef(1); int(definitionRef) < len(i.definitions); definitionRef++ {
-						definition := i.definitions[definitionRef]
-						if definition.owner != variable || definition.target != step.apply.variable || definition.point != frame.directDefinition {
-							continue
-						}
-						if selected.valid() {
-							return fmt.Errorf("transformer: direct Apply frame %d has multiple lexical Definition coordinates", step.apply.frame)
-						}
-						selected = definition.cell
-					}
-					if !selected.valid() {
-						return fmt.Errorf("transformer: direct Apply frame %d has no selected lexical Definition", step.apply.frame)
-					}
-					target := formalRelationCell{Variable: variable, Root: root, Step: uint32(stepIndex + 1), Kind: formalRelationCellStep}
-					if err := i.addStepDependency(target, formalRelationInfluence{Source: selected, Target: target, Kind: formalRelationInfluenceClosureDefinition}, declared); err != nil {
-						return err
-					}
 					continue
 				}
 				var producer relationVar

@@ -328,15 +328,7 @@ type formalFiberInventory struct {
 	operatorFootprints   *formalOperatorCoordinateFootprints
 	applySelectors       *formalApplyCoordinateSelectorCatalog
 	applyCoordinateTrace map[formalFrameFootprintKey]formalApplyCoordinateStaticTrace
-	// outcomeSourceIdentities retains the static identity-support solution in
-	// Outcome-source order.  The N5 executor consumes this frozen plan before
-	// result binding; it must not rediscover identities from coordinate facts.
-	outcomeSourceIdentities map[formalRelationCell][]formalOutcomeSourceIdentityPlan
-	// pathStoreOwnerIdentities is the occurrence-specific N4 owner authority
-	// for descendant heap-member writes. It is frozen from cell-input identity
-	// support before relation execution and is never rebuilt from leaf state.
-	pathStoreOwnerIdentities map[formalRelationCell]formalPathStoreOwnerIdentityPlan
-	operatorTopology         formalDefinitionResourceTopology
+	operatorTopology     formalDefinitionResourceTopology
 }
 
 type formalFiberGroupMembership struct {
@@ -513,10 +505,8 @@ func freezeFormalFiberInventoryWithSlots(program *RelationProgram, slots *SlotSp
 	}
 	inventory := &formalFiberInventory{
 		program: program, slots: slots, spans: make([]formalFiberDescriptorSpan, len(program.bodies)),
-		externalCalls:            make(map[formalExternalCallSiteKey]formalPreparedExternalCallSite),
-		outcomeSourceIdentities:  make(map[formalRelationCell][]formalOutcomeSourceIdentityPlan),
-		pathStoreOwnerIdentities: make(map[formalRelationCell]formalPathStoreOwnerIdentityPlan),
-		operatorTopology:         topology,
+		externalCalls:    make(map[formalExternalCallSiteKey]formalPreparedExternalCallSite),
+		operatorTopology: topology,
 	}
 	if formalApplyTraceConfigured() {
 		inventory.applyCoordinateTrace = make(map[formalFrameFootprintKey]formalApplyCoordinateStaticTrace)

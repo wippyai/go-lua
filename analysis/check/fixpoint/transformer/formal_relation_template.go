@@ -1109,7 +1109,7 @@ func formalRelationExpectedInfluenceCounts(template *formalRelationTemplate, equ
 			for range region.outcomes[step.apply.variable-1] {
 				add(formalRelationInfluenceCalleeOutcome)
 			}
-			closureDefinitions, valid := formalRelationClosureDefinitionCount(region, code, cell.Variable, step)
+			closureDefinitions, valid := formalRelationClosureDefinitionCount(region, code, step)
 			if !valid {
 				return counts, false
 			}
@@ -1196,28 +1196,14 @@ func (r *formalRelationRegionInventory) planIndex(cell formalRelationCell) int {
 	return index
 }
 
-func formalRelationClosureDefinitionCount(region *formalRelationRegionInventory, code *relationCode, owner relationVar, step boundaryStep) (int, bool) {
+func formalRelationClosureDefinitionCount(region *formalRelationRegionInventory, code *relationCode, step boundaryStep) (int, bool) {
 	if code == nil || code.terms == nil || step.apply.frame == 0 || int(step.apply.frame) >= len(code.terms.callFrames) {
 		return 0, true
 	}
-	frame := code.terms.callFrames[step.apply.frame]
-	if frame.closureProducer != 0 && frame.directDefinition != 0 {
-		return 0, false
-	}
-	if frame.closureProducer == 0 && frame.directDefinition == 0 {
+	producerFrame := code.terms.callFrames[step.apply.frame].closureProducer
+	if producerFrame == 0 {
 		return 0, true
 	}
-	if frame.directDefinition != 0 {
-		count := 0
-		for definitionRef := formalRelationDefinitionRef(1); int(definitionRef) < len(region.definitions); definitionRef++ {
-			definition := region.definitions[definitionRef]
-			if definition.owner == owner && definition.target == step.apply.variable && definition.point == frame.directDefinition {
-				count++
-			}
-		}
-		return count, count == 1
-	}
-	producerFrame := frame.closureProducer
 	var producer relationVar
 	for root := relationRootRef(1); int(root) < len(code.nodes); root++ {
 		for _, candidate := range code.nodes[root].steps {

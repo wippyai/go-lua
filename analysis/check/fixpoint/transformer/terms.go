@@ -116,16 +116,12 @@ type callFrameNode struct {
 	// provenance only: the resource itself remains the single State coordinate
 	// owned by the boundary application graph.
 	closureProducer callFrameTerm
-	// directDefinition is the owner-local lexical declaration coordinate for an
-	// exact direct Apply. It is never an Apply producer and is mutually
-	// exclusive with closureProducer.
-	directDefinition cfg.Point
-	point            cfg.Point
-	occurrence       uint32
-	shape            Shape
-	values           []ValueTerm
-	paths            []PathTerm
-	resultCount      uint32
+	point           cfg.Point
+	occurrence      uint32
+	shape           Shape
+	values          []ValueTerm
+	paths           []PathTerm
+	resultCount     uint32
 }
 
 type loopMuBackedge struct {
@@ -634,18 +630,14 @@ func (a *Arena) callFrame(target CellRef, point cfg.Point, occurrence uint32, sh
 }
 
 func (a *Arena) relationFrame(variable relationVar, point cfg.Point, occurrence uint32, shape Shape, values []ValueTerm, paths []PathTerm, resultCount uint32) callFrameTerm {
-	return a.relationFrameWithProvenance(variable, 0, 0, point, occurrence, shape, values, paths, resultCount)
+	return a.relationFrameWithClosureProducer(variable, 0, point, occurrence, shape, values, paths, resultCount)
 }
 
 func (a *Arena) relationFrameWithClosureProducer(variable relationVar, producer callFrameTerm, point cfg.Point, occurrence uint32, shape Shape, values []ValueTerm, paths []PathTerm, resultCount uint32) callFrameTerm {
-	return a.relationFrameWithProvenance(variable, producer, 0, point, occurrence, shape, values, paths, resultCount)
-}
-
-func (a *Arena) relationFrameWithProvenance(variable relationVar, producer callFrameTerm, directDefinition cfg.Point, point cfg.Point, occurrence uint32, shape Shape, values []ValueTerm, paths []PathTerm, resultCount uint32) callFrameTerm {
 	if a == nil || variable == 0 || len(values) != shape.InputCount() || len(paths) != len(values) {
 		return 0
 	}
-	if producer != 0 && int(producer) >= len(a.callFrames) || producer != 0 && directDefinition != 0 {
+	if producer != 0 && int(producer) >= len(a.callFrames) {
 		return 0
 	}
 	for i, value := range values {
@@ -653,7 +645,7 @@ func (a *Arena) relationFrameWithProvenance(variable relationVar, producer callF
 			return 0
 		}
 	}
-	node := callFrameNode{variable: variable, closureProducer: producer, directDefinition: directDefinition, point: point, occurrence: occurrence, shape: shape, values: append([]ValueTerm(nil), values...), paths: append([]PathTerm(nil), paths...), resultCount: resultCount}
+	node := callFrameNode{variable: variable, closureProducer: producer, point: point, occurrence: occurrence, shape: shape, values: append([]ValueTerm(nil), values...), paths: append([]PathTerm(nil), paths...), resultCount: resultCount}
 	key := a.maskFingerprint(callFrameFingerprint(node))
 	for _, term := range a.callFrameKeys[key] {
 		if callFrameNodeEqual(a.callFrames[term], node) {
@@ -1141,7 +1133,6 @@ func callFrameFingerprint(n callFrameNode) uint64 {
 	h = internalhash.MixHash(h, uint64(n.target.Slot))
 	h = internalhash.MixHash(h, uint64(n.variable))
 	h = internalhash.MixHash(h, uint64(n.closureProducer))
-	h = internalhash.MixHash(h, uint64(n.directDefinition))
 	h = internalhash.MixHash(h, uint64(n.point))
 	h = internalhash.MixHash(h, uint64(n.occurrence))
 	// Preserve the historical fingerprint of every body which has no ambient
@@ -1164,7 +1155,7 @@ func callFrameFingerprint(n callFrameNode) uint64 {
 }
 
 func callFrameNodeEqual(x, y callFrameNode) bool {
-	if x.target != y.target || x.variable != y.variable || x.closureProducer != y.closureProducer || x.directDefinition != y.directDefinition || x.point != y.point || x.occurrence != y.occurrence || x.shape != y.shape || x.resultCount != y.resultCount || len(x.values) != len(y.values) || len(x.paths) != len(y.paths) {
+	if x.target != y.target || x.variable != y.variable || x.closureProducer != y.closureProducer || x.point != y.point || x.occurrence != y.occurrence || x.shape != y.shape || x.resultCount != y.resultCount || len(x.values) != len(y.values) || len(x.paths) != len(y.paths) {
 		return false
 	}
 	for i := range x.values {
@@ -1628,7 +1619,7 @@ func (a *Arena) canonicalCallFrame(term callFrameTerm) string {
 	if n.shape.Ambients != 0 {
 		shape += fmt.Sprintf(";a=%d", n.shape.Ambients)
 	}
-	return fmt.Sprintf("%d.%d/v%d^%d~%d@%d.%d%s->%d(%s)", n.target.Function, n.target.Slot, n.variable, n.closureProducer, n.directDefinition, n.point, n.occurrence, shape, n.resultCount, strings.Join(bindings, ","))
+	return fmt.Sprintf("%d.%d/v%d^%d@%d.%d%s->%d(%s)", n.target.Function, n.target.Slot, n.variable, n.closureProducer, n.point, n.occurrence, shape, n.resultCount, strings.Join(bindings, ","))
 }
 
 func (a *Arena) validCallFrame(term callFrameTerm, caller Shape, available map[callFrameTerm]struct{}) bool {
@@ -1643,9 +1634,6 @@ func (a *Arena) validCallFrame(term callFrameTerm, caller Shape, available map[c
 		if !a.validValue(value, caller, make(map[ValueTerm]bool)) || !a.valueFramesOwned(value, available, make(map[ValueTerm]bool)) || (n.paths[i] != 0 && !a.validPath(n.paths[i], caller)) {
 			return false
 		}
-	}
-	if n.closureProducer != 0 && n.directDefinition != 0 {
-		return false
 	}
 	if n.closureProducer != 0 {
 		if _, owned := available[n.closureProducer]; !owned {

@@ -2,9 +2,7 @@ package transformer
 
 import (
 	"fmt"
-	"os"
 	"sort"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -398,35 +396,11 @@ func (c *formalCoordinateDependencyClosure) transferIdentityCell(index int, inpu
 		}
 		write(step.slot, support)
 	case boundaryStepRootAssignment:
-		// N4's source tuple is the recursive dependency inventory consumed by
-		// the factor program, not a set of alternative identities for the
-		// target root. A descendant write publishes member identity through its
-		// registered heap/dynamic producers and must leave the root binding
-		// alone. A whole-root write replaces that binding with its primary
-		// assigned value only.
-		targetPath, valid := step.rootAssignment.transaction.TargetPath()
-		if !valid {
-			return formalIdentityEnvironment{}, fmt.Errorf("transformer: RootAssignment identity target path is invalid")
+		support, err := c.identityValuesSupport(int(cell.Variable-1), input, step.rootAssignment.sources)
+		if err != nil {
+			return formalIdentityEnvironment{}, err
 		}
-		if len(targetPath.Segments) == 0 {
-			if len(step.rootAssignment.sources) == 0 {
-				return formalIdentityEnvironment{}, fmt.Errorf("transformer: RootAssignment identity has no primary source")
-			}
-			support, err := c.identityValueSupport(int(cell.Variable-1), input, step.rootAssignment.sources[0], make(map[ValueTerm]bool))
-			if err != nil {
-				return formalIdentityEnvironment{}, err
-			}
-			write(statekey.SymbolValue(step.rootAssignment.transaction.TargetSymbol()), support)
-			c.traceIdentityRootAssignment(cell, step.rootAssignment.sources[0], support, true)
-		} else {
-			var source ValueTerm
-			var support formalIdentitySupport
-			if len(step.rootAssignment.sources) != 0 {
-				source = step.rootAssignment.sources[0]
-				support, _ = c.identityValueSupport(int(cell.Variable-1), input, source, make(map[ValueTerm]bool))
-			}
-			c.traceIdentityRootAssignment(cell, source, support, false)
-		}
+		write(statekey.SymbolValue(step.rootAssignment.transaction.TargetSymbol()), support)
 	case boundaryStepGenericFor:
 		publication := step.genericIdentity
 		if !publication.sealed || publication.projectionIdentity != genericForProjectionIdentityNoFinite {
@@ -461,48 +435,7 @@ func (c *formalCoordinateDependencyClosure) transferIdentityCell(index int, inpu
 			return formalIdentityEnvironment{}, err
 		}
 	}
-	c.traceIdentityTransfer(index, cell, step.kind, input, out)
 	return out, nil
-}
-
-// traceIdentityTransfer is a temporary, opt-in audit probe.  It reports every
-// root binding after each Step transfer so a reproducer can identify the first
-// loss or widening of an object's finite identity support.
-func (c *formalCoordinateDependencyClosure) traceIdentityTransfer(index int, cell formalRelationCell, kind boundaryStepKind, input, output formalIdentityEnvironment) {
-	if os.Getenv("GOLUA_TRACE_IDENTITY_SUPPORT") == "" {
-		return
-	}
-	format := func(environment formalIdentityEnvironment) string {
-		slots := make([]int, 0, len(environment.values))
-		for slot := range environment.values {
-			slots = append(slots, int(slot))
-		}
-		sort.Ints(slots)
-		parts := make([]string, 0, len(slots))
-		for _, rawSlot := range slots {
-			slot := statekey.Value(rawSlot)
-			parts = append(parts, fmt.Sprintf("%d=%v", slot, environment.values[slot]))
-		}
-		return "{" + strings.Join(parts, ",") + "}"
-	}
-	fmt.Fprintf(os.Stderr, "IDENTITY_TRANSFER cell=%d variable=%d root=%d step=%d kind=%d input=%s output=%s\n",
-		index, cell.Variable, cell.Root, cell.Step, kind, format(input), format(output))
-}
-
-// traceIdentityRootAssignment verifies the N4 whole-root/descendant split:
-// sources[0] must itself be exact when it replaces a root, while descendant
-// writes must not alter the root binding.
-func (c *formalCoordinateDependencyClosure) traceIdentityRootAssignment(cell formalRelationCell, source ValueTerm, support formalIdentitySupport, wholeRoot bool) {
-	if os.Getenv("GOLUA_TRACE_IDENTITY_SUPPORT") == "" {
-		return
-	}
-	body := &c.program.bodies[cell.Variable-1]
-	canonical := ""
-	if source != 0 {
-		canonical = body.relation.arena.canonicalValue(source)
-	}
-	fmt.Fprintf(os.Stderr, "IDENTITY_ROOT_ASSIGNMENT variable=%d root=%d step=%d whole_root=%t source0=%s support=%v exact=%t\n",
-		cell.Variable, cell.Root, cell.Step, wholeRoot, canonical, support, len(support) == 1)
 }
 
 func (c *formalCoordinateDependencyClosure) identityValuesSupport(bodyIndex int, environment formalIdentityEnvironment, values []ValueTerm) (formalIdentitySupport, error) {
@@ -847,13 +780,6 @@ func (c *formalCoordinateDependencyClosure) evaluateFrameIdentity(index int, sel
 			}
 		}
 	}
-	// A Definition-declared ambient input is a freeze-time consumer of its
-	// caller-concrete image.  Add only the exact target input that owns a
-	// descendant static PathStore; this breaks the otherwise circular
-	// inventory/image demand without admitting a body-wide input set.
-	if err := c.requireDefinitionAmbientIdentityInputs(frame, required); err != nil {
-		return nil, nil, false, err
-	}
 	inputs := make([]formalIdentityEnvironment, 0, len(frame.cells))
 	for _, cellIndex := range frame.cells {
 		if c.cells[cellIndex].Variable == caller.variable {
@@ -868,7 +794,7 @@ func (c *formalCoordinateDependencyClosure) evaluateFrameIdentity(index int, sel
 	// coordinate/result currently demands it. The atom set is finite, so make
 	// the boundary image complete whenever producer provenance crosses it.
 	demandAllInputs := len(inputEnvironment.producers) != 0
-	bindings := make([]state.CoordinateIdentityTermBinding, 0, len(frame.frame.rootCircuit)+len(frame.frame.ambientCircuit))
+	bindings := make([]state.CoordinateIdentityTermBinding, len(frame.frame.rootCircuit))
 	for wireIndex, wire := range frame.frame.rootCircuit {
 		slot, present := c.program.formalSlots.Slot(target.body, wire.root)
 		if !present {
@@ -887,31 +813,10 @@ func (c *formalCoordinateDependencyClosure) evaluateFrameIdentity(index int, sel
 				return nil, nil, false, fmt.Errorf("transformer: formal Apply identity input %d: %w", wireIndex, err)
 			}
 		}
-		bindings = append(bindings, state.CoordinateIdentityTermBinding{
+		bindings[wireIndex] = state.CoordinateIdentityTermBinding{
 			Source: source,
 			Images: append([]identity.Term(nil), support...),
-		})
-	}
-	for ambientIndex, wire := range frame.frame.ambientCircuit {
-		targetRoot := Root{Kind: RootAmbient, Index: uint32(ambientIndex)}
-		slot, present := c.program.formalSlots.Slot(target.body, targetRoot)
-		if !present {
-			return nil, nil, false, fmt.Errorf("transformer: formal Apply identity ambient %d has no target root", ambientIndex)
 		}
-		formalRoot, present := slot.Root()
-		if !present {
-			return nil, nil, false, fmt.Errorf("transformer: formal Apply identity ambient %d is malformed", ambientIndex)
-		}
-		source := identity.FormalTerm(identity.NewFormalVarRoot(formalRoot))
-		var support formalIdentitySupport
-		if _, demanded := required[source]; demandAllInputs || demanded {
-			var err error
-			support, err = c.identityValueSupport(frame.caller, inputEnvironment, wire.value, make(map[ValueTerm]bool))
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("transformer: formal Apply identity ambient %d: %w", ambientIndex, err)
-			}
-		}
-		bindings = append(bindings, state.CoordinateIdentityTermBinding{Source: source, Images: append([]identity.Term(nil), support...)})
 	}
 	image, valid := state.NewCoordinateIdentityTermImage(bindings)
 	if !valid {
@@ -920,10 +825,6 @@ func (c *formalCoordinateDependencyClosure) evaluateFrameIdentity(index int, sel
 	results := make([]formalIdentitySupport, len(rawResults))
 	for resultIndex, support := range rawResults {
 		results[resultIndex] = imageFormalIdentitySupport(support, image)
-	}
-	if os.Getenv("GOLUA_TRACE_IDENTITY_SUPPORT") != "" {
-		fmt.Fprintf(os.Stderr, "IDENTITY_APPLY_RESULT frame=%d caller=%d target=%d raw=%v result=%v\n",
-			index, frame.caller, frame.target, rawResults, results)
 	}
 	inputIdentity, outputIdentity, err := c.transportFrameIdentityEnvironments(index, inputEnvironment, image)
 	if err != nil {
@@ -952,78 +853,4 @@ func (c *formalCoordinateDependencyClosure) evaluateFrameIdentity(index int, sel
 	}
 	frame.inputIdentity, frame.outputIdentity = inputIdentity, outputIdentity
 	return image, results, changed, nil
-}
-
-func (c *formalCoordinateDependencyClosure) requireDefinitionAmbientIdentityInputs(
-	frame *formalStaticApplyCoordinateFrame,
-	required map[identity.Term]struct{},
-) error {
-	if c == nil || frame == nil || frame.frame == nil || required == nil || frame.caller < 0 || frame.caller >= len(c.program.bodies) || frame.target < 0 || frame.target >= len(c.program.bodies) {
-		return nil
-	}
-	caller, target := &c.program.bodies[frame.caller], &c.program.bodies[frame.target]
-	if _, declared := caller.definitionFrames[frame.frame.term]; !declared || target.relation.arena == nil || target.relation.code == nil || target.relation.effects == nil {
-		return nil
-	}
-	requireRoot := func(root Root) error {
-		slot, present := c.program.formalSlots.Slot(target.body, root)
-		if !present {
-			return fmt.Errorf("transformer: Definition ambient identity input has no target root")
-		}
-		formalRoot, present := slot.Root()
-		if !present {
-			return fmt.Errorf("transformer: Definition ambient identity input root is malformed")
-		}
-		required[identity.FormalTerm(identity.NewFormalVarRoot(formalRoot))] = struct{}{}
-		return nil
-	}
-	for _, node := range target.relation.code.nodes {
-		for _, step := range node.steps {
-			if step.kind != boundaryStepEffect || step.effect == 0 || int(step.effect) >= len(target.relation.effects.nodes) {
-				continue
-			}
-			effect := target.relation.effects.nodes[step.effect]
-			if effect.kind != EffectPathStore || !effect.pathStoreHasStatic {
-				continue
-			}
-			source, _, err := formalPathStoreOwnerSource(target.relation.arena, effect.pathStoreStatic.Target)
-			if err != nil || source == 0 || int(source) >= len(target.relation.arena.values) {
-				if err != nil {
-					return err
-				}
-				continue
-			}
-			value := target.relation.arena.values[source]
-			switch value.op {
-			case valueRoot:
-				root := value.root
-				if root.Kind == RootMiddle {
-					for _, entry := range target.relation.arena.middle.entries {
-						if entry.middle == root {
-							root = entry.input
-							break
-						}
-					}
-				}
-				for _, wire := range frame.frame.rootCircuit {
-					if wire.root == root {
-						if err := requireRoot(root); err != nil {
-							return err
-						}
-						break
-					}
-				}
-			case valueEnvironment:
-				for ambientIndex, wire := range frame.frame.ambientCircuit {
-					if wire.target.slot == value.slot {
-						if err := requireRoot(Root{Kind: RootAmbient, Index: uint32(ambientIndex)}); err != nil {
-							return err
-						}
-						break
-					}
-				}
-			}
-		}
-	}
-	return nil
 }

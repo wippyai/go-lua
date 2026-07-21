@@ -2,7 +2,6 @@ package transformer
 
 import (
 	"fmt"
-	"os"
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -26,7 +25,6 @@ type formalOutcomeStep struct {
 	outcome           boundaryOutcomeRef
 	transaction       factapply.ReturnTransaction
 	sources           []formalQualifiedBinding
-	sourceIdentities  []formalOutcomeSourceIdentityPlan
 	valueAccess       state.TransferInputAccess
 	valueFactorGroups []formalFiberGroupDescriptor
 	bindingValues     formalValueAccessPlan
@@ -127,16 +125,6 @@ func freezeFormalOutcomeStep(program *RelationProgram, variable relationVar, ope
 		}
 		for _, guard := range guards {
 			demands = append(demands, formalQualifiedGuardDemand{owner: variable, scope: operator.scope, arena: operator.code.terms, guard: guard})
-		}
-	}
-	identityCell := formalRelationCell{Variable: variable, Outcome: operator.outcome, Kind: formalRelationCellOutcome}
-	sourceIdentities, ok := program.formalFibers.outcomeSourceIdentities[identityCell]
-	if !ok || len(sourceIdentities) != len(sources) {
-		return nil, fmt.Errorf("Outcome has no complete source identity plan")
-	}
-	for index, source := range outcome.returnTransaction.sources {
-		if !sourceIdentities[index].validFor(variable, operator.code.terms, source) {
-			return nil, fmt.Errorf("Outcome source %d identity plan is malformed", index)
 		}
 	}
 	valueAccess, valueFactorGroups, err := freezeFormalValueFactorAccess(program, variable, outcome.returnTransaction.sources...)
@@ -316,7 +304,7 @@ func freezeFormalOutcomeStep(program *RelationProgram, variable relationVar, ope
 	}
 	return &formalOutcomeStep{
 		variable: variable, code: operator.code, root: operator.root, scope: operator.scope, outcome: operator.outcome,
-		transaction: outcome.returnTransaction.transaction.Clone(), sources: sources, sourceIdentities: sourceIdentities,
+		transaction: outcome.returnTransaction.transaction.Clone(), sources: sources,
 		valueAccess: valueAccess, valueFactorGroups: valueFactorGroups,
 		bindingValues: bindingValues, bindingLift: bindingLift, bindingActive: bindingActive,
 		container: container, hasContainer: hasContainer, identity: identityPlan,
@@ -363,11 +351,7 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 				if evalErr != nil {
 					return nil, fmt.Errorf("transformer: formal Outcome source %d: %w", index, evalErr)
 				}
-				value, identityErr := plan.sourceIdentities[index].apply(evaluator, evaluated.value)
-				if identityErr != nil {
-					return nil, fmt.Errorf("transformer: formal Outcome source %d identity: %w", index, identityErr)
-				}
-				sources[index] = value
+				sources[index] = evaluated.value
 			}
 			var container state.CoordinateFamilyFactor
 			if plan.hasContainer {
@@ -376,24 +360,11 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 					return nil, fmt.Errorf("transformer: formal Outcome container: %w", err)
 				}
 			}
-			if os.Getenv("GOLUA_TRACE_APPLY_COORDINATES") != "" {
-				for index, value := range sources {
-					id, exact := product.Get(evaluator.authority.product.Registry(), value, identity.Key).ID()
-					fmt.Fprintf(os.Stderr, "APPLY_COORD_OUTCOME_SOURCE owner=%d source=%d identity=%v exact=%t\n", plan.variable, index, id, exact)
-				}
-			}
 			bound, sourceValues, err := factapply.ApplyReturnResultBindings(
 				evaluator.body.returns, evaluator.authority.product, plan.transaction, sources, plan.targets, values, container,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("transformer: formal Outcome result binding: %w", err)
-			}
-			if os.Getenv("GOLUA_TRACE_APPLY_COORDINATES") != "" {
-				for _, target := range plan.targets {
-					value := bound.Values[target.Slot]
-					id, exact := product.Get(evaluator.authority.product.Registry(), value, identity.Key).ID()
-					fmt.Fprintf(os.Stderr, "APPLY_COORD_OUTCOME_BIND owner=%d target=%d identity=%v exact=%t\n", plan.variable, target.Index, id, exact)
-				}
 			}
 			for _, value := range sourceValues {
 				root, exact := product.Get(evaluator.authority.product.Registry(), value, identity.Key).Term()

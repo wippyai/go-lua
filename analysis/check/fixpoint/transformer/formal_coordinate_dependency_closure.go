@@ -47,13 +47,12 @@ type formalCoordinateDependencyClosure struct {
 	selectorCells  [][]int
 	selectorMember []map[int]struct{}
 
-	frames             []formalStaticApplyCoordinateFrame
-	frameByOwnerTerm   map[formalFrameFootprintKey]int
-	bodyFolds          []formalCoordinateInventoryFold
-	selectorFolds      []formalCoordinateInventoryFold
-	frameSelectorFolds []formalCoordinateInventoryFold
-	cellFolds          []formalCoordinateInventoryFold
-	cellSourceFolds    []*formalCoordinateInventoryFold
+	frames           []formalStaticApplyCoordinateFrame
+	frameByOwnerTerm map[formalFrameFootprintKey]int
+	bodyFolds        []formalCoordinateInventoryFold
+	selectorFolds    []formalCoordinateInventoryFold
+	cellFolds        []formalCoordinateInventoryFold
+	cellSourceFolds  []*formalCoordinateInventoryFold
 
 	dependents [][]int
 	queued     []bool
@@ -212,22 +211,21 @@ func (f *formalCoordinateInventoryFold) contribution(value state.CoordinateFacto
 func (f *formalCoordinateInventoryFold) root() state.CoordinateFactorInventory { return f.tree.root() }
 
 type formalStaticApplyCoordinateFrame struct {
-	caller, target  int
-	frame           *linkedRelationFrame
-	cells           []int
-	wirePlans       []state.CoordinateFormalRootRekey
-	rootMap         state.BoundaryRootMap
-	sourceRoots     []state.BoundaryFactorRoot
-	footprint       state.BoundaryCoordinateFootprintPlan
-	mapped          state.CoordinateFactorInventory
-	sourceOwned     []state.CoordinateSlot
-	image           state.CoordinateFactorInventory
-	selector        state.CoordinateFactorInventory
-	selectorSupport []int
-	identityImage   *state.CoordinateIdentityTermImage
-	resultSupport   []formalIdentitySupport
-	inputIdentity   formalIdentityEnvironment
-	outputIdentity  formalIdentityEnvironment
+	caller, target int
+	frame          *linkedRelationFrame
+	cells          []int
+	wirePlans      []state.CoordinateFormalRootRekey
+	rootMap        state.BoundaryRootMap
+	sourceRoots    []state.BoundaryFactorRoot
+	footprint      state.BoundaryCoordinateFootprintPlan
+	mapped         state.CoordinateFactorInventory
+	sourceOwned    []state.CoordinateSlot
+	image          state.CoordinateFactorInventory
+	selector       state.CoordinateFactorInventory
+	identityImage  *state.CoordinateIdentityTermImage
+	resultSupport  []formalIdentitySupport
+	inputIdentity  formalIdentityEnvironment
+	outputIdentity formalIdentityEnvironment
 }
 
 func freezeFormalCoordinateDependencyClosure(
@@ -379,9 +377,6 @@ func newFormalCoordinateDependencyClosure(
 			c.bodies[frame.target] = c.bodySeeds[frame.target]
 		}
 	}
-	if err := c.deriveClosureDefinitionSelectorSupport(); err != nil {
-		return nil, err
-	}
 	if err := c.initializeContributionFolds(); err != nil {
 		return nil, err
 	}
@@ -389,70 +384,9 @@ func newFormalCoordinateDependencyClosure(
 	return c, nil
 }
 
-func (c *formalCoordinateDependencyClosure) deriveClosureDefinitionSelectorSupport() error {
-	if c == nil || c.program == nil || c.region == nil {
-		return fmt.Errorf("transformer: closure Definition selector support is unowned")
-	}
-	for consumer, incoming := range c.region.incoming {
-		if consumer.Kind != formalRelationCellStep || consumer.Variable == 0 || int(consumer.Variable) > len(c.program.bodies) {
-			continue
-		}
-		if _, present := c.cellIndex[consumer]; !present {
-			continue
-		}
-		body := &c.program.bodies[consumer.Variable-1]
-		if consumer.Root == 0 || int(consumer.Root) >= len(body.relation.code.nodes) || consumer.Step == 0 || int(consumer.Step) > len(body.relation.code.nodes[consumer.Root].steps) {
-			return fmt.Errorf("transformer: closure Definition consumer is malformed")
-		}
-		step := body.relation.code.nodes[consumer.Root].steps[consumer.Step-1]
-		if step.kind != boundaryStepApply {
-			continue
-		}
-		consumerFrame, present := c.frameByOwnerTerm[formalFrameFootprintKey{variable: consumer.Variable, frame: step.apply.frame}]
-		if !present {
-			continue
-		}
-		producerTerm := c.frames[consumerFrame].frame.closureProducer
-		if producerTerm == 0 {
-			continue
-		}
-		producerFrame, present := c.frameByOwnerTerm[formalFrameFootprintKey{variable: consumer.Variable, frame: producerTerm}]
-		if !present {
-			return fmt.Errorf("transformer: closure Definition has no producer Apply frame")
-		}
-		for _, influence := range incoming {
-			if influence.Kind != formalRelationInfluenceClosureDefinition {
-				continue
-			}
-			definitionIndex, present := c.cellIndex[influence.Source]
-			if !present {
-				return fmt.Errorf("transformer: closure Definition support is undeclared")
-			}
-			frame := &c.frames[producerFrame]
-			already := false
-			for _, prior := range frame.selectorSupport {
-				if prior == definitionIndex {
-					already = true
-					break
-				}
-			}
-			if !already {
-				frame.selectorSupport = append(frame.selectorSupport, definitionIndex)
-			}
-		}
-	}
-	for frameIndex := range c.frames {
-		sort.Slice(c.frames[frameIndex].selectorSupport, func(i, j int) bool {
-			return formalRelationCellLess(c.cells[c.frames[frameIndex].selectorSupport[i]], c.cells[c.frames[frameIndex].selectorSupport[j]])
-		})
-	}
-	return nil
-}
-
 func (c *formalCoordinateDependencyClosure) initializeContributionFolds() error {
 	c.bodyFolds = make([]formalCoordinateInventoryFold, len(c.program.bodies))
 	c.selectorFolds = make([]formalCoordinateInventoryFold, len(c.program.bodies))
-	c.frameSelectorFolds = make([]formalCoordinateInventoryFold, len(c.frames))
 	for bodyIndex := range c.program.bodies {
 		body := &c.program.bodies[bodyIndex]
 		var err error
@@ -464,15 +398,6 @@ func (c *formalCoordinateDependencyClosure) initializeContributionFolds() error 
 		if err != nil {
 			return err
 		}
-	}
-	for frameIndex := range c.frames {
-		frame := &c.frames[frameIndex]
-		target := &c.program.bodies[frame.target]
-		fold, err := newFormalCoordinateInventoryFold(target.productDomain, c.keys[frame.target], 1+len(frame.selectorSupport))
-		if err != nil {
-			return err
-		}
-		c.frameSelectorFolds[frameIndex] = fold
 	}
 	c.cellFolds = make([]formalCoordinateInventoryFold, len(c.cells))
 	c.cellSourceFolds = make([]*formalCoordinateInventoryFold, len(c.cells))
@@ -582,9 +507,6 @@ func (c *formalCoordinateDependencyClosure) sealDependencies() {
 		}
 	}
 	for frameIndex, frame := range c.frames {
-		for _, definitionIndex := range frame.selectorSupport {
-			add(c.cellNodeFirst+definitionIndex, c.frameNodeFirst+frameIndex)
-		}
 		for _, cellIndex := range frame.cells {
 			add(c.cellNodeFirst+cellIndex, c.frameNodeFirst+frameIndex)
 			add(c.frameNodeFirst+frameIndex, c.cellNodeFirst+cellIndex)
@@ -856,10 +778,7 @@ func (c *formalCoordinateDependencyClosure) evaluateSelector(index int) (bool, e
 func (c *formalCoordinateDependencyClosure) evaluateFrame(index int) (bool, error) {
 	frame := &c.frames[index]
 	caller, target := &c.program.bodies[frame.caller], &c.program.bodies[frame.target]
-	selector, err := c.evaluateFrameSelector(index)
-	if err != nil {
-		return false, err
-	}
+	selector := c.selectors[frame.target]
 	identityImage, resultSupport, identityChanged, err := c.evaluateFrameIdentity(index, selector)
 	if err != nil {
 		return false, err
@@ -913,39 +832,7 @@ func (c *formalCoordinateDependencyClosure) evaluateFrame(index int) (bool, erro
 	return true, nil
 }
 
-func (c *formalCoordinateDependencyClosure) evaluateFrameSelector(index int) (state.CoordinateFactorInventory, error) {
-	if c == nil || index < 0 || index >= len(c.frames) || index >= len(c.frameSelectorFolds) {
-		return state.CoordinateFactorInventory{}, fmt.Errorf("transformer: formal Apply frame selector is unowned")
-	}
-	frame := &c.frames[index]
-	if frame.target < 0 || frame.target >= len(c.program.bodies) {
-		return state.CoordinateFactorInventory{}, fmt.Errorf("transformer: formal Apply frame selector has foreign target")
-	}
-	fold := &c.frameSelectorFolds[index]
-	if err := fold.set(0, fold.contribution(c.selectors[frame.target])); err != nil {
-		return state.CoordinateFactorInventory{}, err
-	}
-	for contribution, definitionIndex := range frame.selectorSupport {
-		if definitionIndex < 0 || definitionIndex >= len(c.cellValue) {
-			return state.CoordinateFactorInventory{}, fmt.Errorf("transformer: formal Apply frame selector has foreign Definition support")
-		}
-		if err := fold.set(contribution+1, fold.contribution(c.cellValue[definitionIndex].inventory)); err != nil {
-			return state.CoordinateFactorInventory{}, err
-		}
-	}
-	target := &c.program.bodies[frame.target]
-	return target.productDomain.CloseCoordinateFactorInventory(c.keys[frame.target], fold.root())
-}
-
 func (c *formalCoordinateDependencyClosure) publish() error {
-	outcomeSourceIdentities, err := c.freezeOutcomeSourceIdentityPlans()
-	if err != nil {
-		return err
-	}
-	pathStoreOwnerIdentities, err := c.freezePathStoreOwnerIdentityPlans()
-	if err != nil {
-		return err
-	}
 	selectorCatalog, err := freezeFormalApplyCoordinateSelectorCatalog(c)
 	if err != nil {
 		return err
@@ -970,8 +857,6 @@ func (c *formalCoordinateDependencyClosure) publish() error {
 	}
 	c.forest.operatorFootprints = declarations
 	c.forest.applySelectors = selectorCatalog
-	c.forest.outcomeSourceIdentities = outcomeSourceIdentities
-	c.forest.pathStoreOwnerIdentities = pathStoreOwnerIdentities
 	if c.forest.applyCoordinateTrace != nil {
 		for index := range c.frames {
 			frame := &c.frames[index]

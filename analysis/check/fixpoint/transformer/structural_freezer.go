@@ -693,12 +693,11 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 	for cell, ok := cursor.Next(); ok; cell, ok = cursor.Next() {
 		handler := p.compiler.facts[cell.Kind()]
 		target, directCall := frozenLexicalCallTarget{}, false
-		directDefinition := frozenDirectDefinition{}
 		var finiteSite frozenLexicalCallSite
 		if cell.Kind() == operationplan.CallSite && direct != nil {
 			if site, found := direct.lookup(point); found {
 				if len(site.candidates) == 1 && site.candidates[0].identity == (identity.ID{}) && !site.residual {
-					target, directDefinition, directCall = site.candidates[0].target, site.candidates[0].directDefinition, true
+					target, directCall = site.candidates[0].target, true
 				} else {
 					finiteSite = site
 				}
@@ -719,7 +718,7 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 				if err != nil {
 					return structuralEnvironment{}, err
 				}
-				if err := p.deferStructuralCall(&env, candidate.target, candidate.directDefinition, bindings, site, guards[index], memberCall); err != nil {
+				if err := p.deferStructuralCall(&env, candidate.target, bindings, site, guards[index], memberCall); err != nil {
 					return structuralEnvironment{}, err
 				}
 				ctx.locals, ctx.rowSteps = env.values, &env.steps
@@ -748,7 +747,7 @@ func (p *PreparedPlanCompiler) lowerStructuralPoint(direct frozenLexicalCallSurf
 			if err != nil {
 				return structuralEnvironment{}, err
 			}
-			if err := p.deferStructuralCall(&env, target, directDefinition, bindings, site, 0, directMemberCallDiagnostic(ctx, point)); err != nil {
+			if err := p.deferStructuralCall(&env, target, bindings, site, 0, directMemberCallDiagnostic(ctx, point)); err != nil {
 				return structuralEnvironment{}, err
 			}
 			ctx.locals, ctx.rowSteps = env.values, &env.steps
@@ -783,7 +782,7 @@ func directMemberCallDiagnostic(ctx planCompileContext, point cfg.Point) boundar
 	return memberCall
 }
 
-func (p *PreparedPlanCompiler) deferStructuralCall(env *structuralEnvironment, target frozenLexicalCallTarget, directDefinition frozenDirectDefinition, bindings DirectCallBindings, site factflow.CallSiteView, guard Guard, memberCall boundaryMemberCallDiagnosticTerm) error {
+func (p *PreparedPlanCompiler) deferStructuralCall(env *structuralEnvironment, target frozenLexicalCallTarget, bindings DirectCallBindings, site factflow.CallSiteView, guard Guard, memberCall boundaryMemberCallDiagnosticTerm) error {
 	rootBindings, err := NewTermRootBindings(target.shape, p.shape, bindings.Values, bindings.Paths)
 	if err != nil {
 		return err
@@ -837,13 +836,7 @@ func (p *PreparedPlanCompiler) deferStructuralCall(env *structuralEnvironment, t
 		}
 	}
 	producer := p.exactClosureProducerFrame(site, env.resultRoots)
-	if directDefinition.valid() && directDefinition.target != target.variable {
-		return fmt.Errorf("structural call direct Definition has foreign target")
-	}
-	if producer != 0 && directDefinition.valid() {
-		return fmt.Errorf("structural call mixes closure-carried and direct Definition provenance")
-	}
-	frame := p.builder.arena.relationFrameWithProvenance(target.variable, producer, directDefinition.point, point, 0, target.shape, rootBindings.values, rootBindings.paths, width)
+	frame := p.builder.arena.relationFrameWithClosureProducer(target.variable, producer, point, 0, target.shape, rootBindings.values, rootBindings.paths, width)
 	if frame == 0 {
 		return fmt.Errorf("structural call frame is invalid")
 	}

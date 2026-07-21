@@ -85,10 +85,6 @@ func formalEffectTransferLaneSets(domain state.ProductDomain, operator formalRel
 		if plan.hasStatic {
 			reads = reads.With(plan.staticGroup.lane.ID())
 			writes = writes.With(plan.staticGroup.lane.ID())
-			if plan.hasOwnerIdentity && plan.heapGroup.valid() {
-				reads = reads.With(plan.heapGroup.lane.ID())
-				writes = writes.With(plan.heapGroup.lane.ID())
-			}
 		}
 		if plan.hasAssignment {
 			writes = writes.With(state.LaneValues)
@@ -207,24 +203,21 @@ func freezeFormalEffectTransferAccess(
 // algebra. Paths are resolved and rekeyed while the template is frozen; solve
 // time observes only an exact formal key and the symbolic value term.
 type formalPathReplacementStep struct {
-	hasAssignment    bool
-	target           keyspace.Key
-	source           keyspace.Key
-	hasSource        bool
-	value            ValueTerm
-	hasStatic        bool
-	staticValue      ValueTerm
-	staticPlan       state.StaticMemberFactorPlan
-	staticGroup      formalFiberGroupDescriptor
-	ownerIdentity    formalPathStoreOwnerIdentityPlan
-	hasOwnerIdentity bool
-	heapGroup        formalFiberGroupDescriptor
-	valueAccess      state.TransferInputAccess
-	valueGroups      []formalFiberGroupDescriptor
-	demands          []formalQualifiedGuardDemand
-	values           formalFiberGroupDescriptor
-	reads            []formalFiberGroupDescriptor
-	writes           []formalFiberGroupDescriptor
+	hasAssignment bool
+	target        keyspace.Key
+	source        keyspace.Key
+	hasSource     bool
+	value         ValueTerm
+	hasStatic     bool
+	staticValue   ValueTerm
+	staticPlan    state.StaticMemberFactorPlan
+	staticGroup   formalFiberGroupDescriptor
+	valueAccess   state.TransferInputAccess
+	valueGroups   []formalFiberGroupDescriptor
+	demands       []formalQualifiedGuardDemand
+	values        formalFiberGroupDescriptor
+	reads         []formalFiberGroupDescriptor
+	writes        []formalFiberGroupDescriptor
 }
 
 func freezeFormalPathReplacementStep(program *RelationProgram, variable relationVar, operator formalRelationOperatorRef) (*formalPathReplacementStep, error) {
@@ -301,16 +294,6 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 		if err := collectGuards(write.Value); err != nil {
 			return nil, err
 		}
-		identityCell := formalRelationCell{Variable: variable, Root: operator.root, Step: operator.step, Kind: formalRelationCellStep}
-		if ownerIdentity, ok := program.formalFibers.pathStoreOwnerIdentities[identityCell]; ok {
-			if !ownerIdentity.validFor(variable, operator.code.terms) {
-				return nil, fmt.Errorf("PathStore static write has malformed frozen owner identity certificate")
-			}
-			plan.ownerIdentity, plan.hasOwnerIdentity = ownerIdentity, true
-			if err := collectGuards(ownerIdentity.source); err != nil {
-				return nil, err
-			}
-		}
 	}
 	if step.guard != 0 {
 		guards = append(guards, step.guard)
@@ -354,15 +337,12 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 		writeGroups[index] = group
 	}
 	plan.demands, plan.values, plan.reads, plan.writes = demands, values, readGroups, writeGroups
-	valueTerms := make([]ValueTerm, 0, 3)
+	valueTerms := make([]ValueTerm, 0, 2)
 	if plan.hasAssignment {
 		valueTerms = append(valueTerms, plan.value)
 	}
 	if plan.hasStatic {
 		valueTerms = append(valueTerms, plan.staticValue)
-		if plan.hasOwnerIdentity {
-			valueTerms = append(valueTerms, plan.ownerIdentity.source)
-		}
 	}
 	plan.valueAccess, plan.valueGroups, err = freezeFormalValueFactorAccess(program, variable, valueTerms...)
 	if err != nil {
@@ -378,34 +358,12 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 			return nil, fmt.Errorf("static-member lane %s is outside the frozen product", staticLane.ID())
 		}
 		plan.staticGroup = group
-		if plan.hasOwnerIdentity {
-			heapLane, heapErr := body.productDomain.HeapStaticMemberWriteLane(firstPathStoreHeapPlan(plan.ownerIdentity))
-			if heapErr != nil {
-				// An empty support certificate is lawful: it has no positive heap
-				// publication. The heap group is still required only when a plan is
-				// available for a singleton leaf.
-				if len(plan.ownerIdentity.plans) != 0 {
-					return nil, heapErr
-				}
-			} else if group, present := byLane[heapLane]; present {
-				plan.heapGroup = group
-			} else {
-				return nil, fmt.Errorf("heap static-member lane %s is outside the frozen product", heapLane.ID())
-			}
-		}
 	}
 	if plan.hasAssignment && (plan.value == 0 || plan.target.Kind == keyspace.KindInvalid || plan.hasSource != (plan.source.Kind != keyspace.KindInvalid)) ||
-		plan.hasStatic && (plan.staticValue == 0 || !plan.staticPlan.Valid() || !plan.staticGroup.valid() || plan.hasOwnerIdentity && !plan.ownerIdentity.validFor(variable, operator.code.terms)) {
+		plan.hasStatic && (plan.staticValue == 0 || !plan.staticPlan.Valid() || !plan.staticGroup.valid()) {
 		return nil, fmt.Errorf("path replacement adapter is incomplete")
 	}
 	return plan, nil
-}
-
-func firstPathStoreHeapPlan(certificate formalPathStoreOwnerIdentityPlan) state.HeapStaticMemberWritePlan {
-	for _, plan := range certificate.plans {
-		return plan
-	}
-	return state.HeapStaticMemberWritePlan{}
 }
 
 func freezeEffectStructuralPath(body *relationProgramBody, term PathTerm) (pathdom.Path, error) {
@@ -788,28 +746,6 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 			return state.ValueFactor[FormalSlot]{}, nil, laneErr
 		}
 		factors[position] = next
-		if !plan.hasOwnerIdentity {
-			return values, factors, nil
-		}
-		owner, ownerExact := evaluator.evalArenaValueWithFactorAccess(span.variable, operator.code.terms, plan.ownerIdentity.source, operator.scope, formalApplyTermView{}, capability)
-		if !ownerExact {
-			return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: formal Effect static-member owner source is unsupported")
-		}
-		heapPlan, publish, ownerErr := plan.ownerIdentity.bind(evaluator, owner, value)
-		if ownerErr != nil {
-			return state.ValueFactor[FormalSlot]{}, nil, ownerErr
-		}
-		if publish {
-			heapPosition, present := factorIndex(plan.heapGroup.lane)
-			if !present || !plan.heapGroup.valid() {
-				return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
-			}
-			heapNext, heapErr := domain.ApplyHeapStaticMemberWriteFactor(heapPlan, factors[heapPosition])
-			if heapErr != nil {
-				return state.ValueFactor[FormalSlot]{}, nil, heapErr
-			}
-			factors[heapPosition] = heapNext
-		}
 	}
 	return values, factors, nil
 }
