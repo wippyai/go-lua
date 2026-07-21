@@ -1,6 +1,9 @@
 {
   "description": "A nil-born local passes through two successive if-joins, neither exhaustive, before a method-call use. The witness trace lists both join survivals in origin order: born nil -> survives join #1 -> survives join #2 -> reaches use.",
   "check": {
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",

@@ -1,6 +1,9 @@
 {
   "description": "A record field typed string? is read via a method call without a guard. The origin trace cites the field's optional declaration as the birth of the nil possibility, flowing to the unguarded read.",
   "check": {
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",

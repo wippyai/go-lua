@@ -488,6 +488,9 @@ func orderWitnessTraceEvidence(items []Evidence, primaryFile string) []Evidence 
 }
 
 func witnessTraceSpanBefore(left, right Evidence, primaryFile string) bool {
+	// Witness traces have one ordering law: source file, then start line, then
+	// start column. Equal or unavailable positions retain input order; evidence
+	// kind and trust never participate in the ordering.
 	leftFile := evidenceOrderFile(left, primaryFile)
 	rightFile := evidenceOrderFile(right, primaryFile)
 	if leftFile != rightFile {

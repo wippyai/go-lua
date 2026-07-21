@@ -1,10 +1,13 @@
 {
   "description": "A nil-born local crosses three non-exhaustive if joins before an unsafe method call. The automatic Refuted trace must retain every distinct source origin in source order: birth, declaration, joins, then use.",
   "check": {
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",
-        "line": 21,
+        "line": 20,
         "column": 12,
         "severity": "error",
         "code": "type.nil.unsafe_use",
@@ -19,7 +22,7 @@
           "x survives the if/else join at main.lua:13",
           "x survives the if/else join at main.lua:16",
           "x survives the if/else join at main.lua:19",
-          "x reaches use at main.lua:21"
+          "x reaches use at main.lua:20"
         ],
         "evidence": [
           {
@@ -29,14 +32,6 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": ["x born nil at main.lua:10", "else branch had no assignment"]
-          },
-          {
-            "file": "main.lua",
-            "line": 10,
-            "column": 14,
-            "kind": "user assertion",
-            "trust": "claimed",
-            "contains": ["x declared with optional type string?"]
           },
           {
             "file": "main.lua",
@@ -61,6 +56,14 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": ["x survives the if/else join at main.lua:19"]
+          },
+          {
+            "file": "main.lua",
+            "line": 10,
+            "column": 14,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": ["x declared with optional type string?"]
           }
         ],
         "render_contains": [
@@ -73,7 +76,7 @@
         ],
         "render_ordered_contains": [
           "error[type.nil.unsafe_use]: x may be nil at method call",
-          "--> main.lua:21:12",
+          "--> main.lua:20:12",
           "return x:upper()",
           "because:",
           "1. proven: x born nil at main.lua:10 (else branch had no assignment)",
@@ -81,7 +84,7 @@
           "3. proven: x survives the if/else join at main.lua:13 (no else assignment)",
           "4. proven: x survives the if/else join at main.lua:16 (no else assignment)",
           "5. proven: x survives the if/else join at main.lua:19 (no else assignment)",
-          "6. proven: x reaches use at main.lua:21 (method call on possibly-nil value)",
+          "6. proven: x reaches use at main.lua:20 (method call on possibly-nil value)",
           "help: Guard x against nil before the method call, or assign it on every branch."
         ],
         "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
@@ -91,7 +94,7 @@
         "labels": [
           {
             "file": "main.lua",
-            "line": 21,
+            "line": 20,
             "column": 12,
             "contains": ["possibly-nil value"]
           }

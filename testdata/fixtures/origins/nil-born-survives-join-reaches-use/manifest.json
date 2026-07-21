@@ -1,6 +1,9 @@
 {
   "description": "A local declared nil is assigned on only one arm of an if; after the join the possibly-nil value reaches a method-call use. The diagnostic renders an origin-ordered witness trace: born nil -> survives the if-join -> reaches the use.",
   "check": {
+    "render_options": {
+      "witness_trace": true
+    },
     "diagnostics": [
       {
         "file": "main.lua",

@@ -21,3 +21,13 @@ func TestEvidenceTraceUsesTerminalWitnessVocabularyAndOrder(t *testing.T) {
 		t.Fatalf("third heading = %q, want %q", got, want)
 	}
 }
+
+func TestSourceOrderedEvidenceTraceUsesSameLineColumnsBeforeTrust(t *testing.T) {
+	ordered := SourceOrderedEvidenceTrace([]Evidence{
+		{Kind: EvidenceAbstractFact, Trust: TrustProven, Span: Span{StartLine: 6, StartCol: 14}, Message: "later proven fact"},
+		{Kind: EvidenceUserAssertion, Trust: TrustClaimed, Span: Span{StartLine: 6, StartCol: 11}, Message: "earlier claim"},
+	}, "main.lua")
+	if got, want := ordered[0].Message, "earlier claim"; got != want {
+		t.Fatalf("first source-ordered evidence = %q, want %q", got, want)
+	}
+}
