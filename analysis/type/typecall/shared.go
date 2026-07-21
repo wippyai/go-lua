@@ -5,13 +5,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-// stopDepth reports whether a type-call resolution must stop without
-// descending further: the type is missing, or the recursion has exhausted
-// its depth budget. See typ.DefaultRecursionDepth: this budget bounds
-// non-cyclic chains that manufacture a new distinct node at every step,
-// which no cycle guard in this package can detect.
+// stopDepth reports whether a type-call resolution lacks a type to inspect.
+// Its depth argument remains for the shared helper call shape; structural
+// guards at each recursive query, rather than a finite budget, terminate
+// cyclic type graphs without truncating finite chains.
 func stopDepth(t typ.Type, depth int) bool {
-	return t == nil || depth > typ.DefaultRecursionDepth
+	return t == nil
 }
 
 func isNilType(t typ.Type) bool {

@@ -3,6 +3,7 @@ package typecall
 import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -132,47 +133,63 @@ type memberCallResult struct {
 }
 
 func memberCallDepth(t typ.Type, name string, depth int) memberCallResult {
+	return memberCallSeen(t, name, depth, &graph.Path{})
+}
+
+func memberCallSeen(t typ.Type, name string, depth int, active *graph.Path) memberCallResult {
 	if stopDepth(t, depth) {
 		return memberCallResult{status: MemberCallMissing}
 	}
+	if !active.Enter(t) {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	defer active.Leave(t)
 	if method, ok := ambientChannelMethod(t, name, depth+1); ok {
 		return memberCallResult{t: method, status: MemberCallOK}
 	}
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
-		return memberCallUnion(v, name, depth+1)
+		return memberCallUnionSeen(v, name, depth+1, active)
 	case *typ.Intersection:
-		return memberCallIntersection(v, name, depth+1)
+		return memberCallIntersectionSeen(v, name, depth+1, active)
 	case *typ.Optional:
-		return memberCallDepth(v.Inner, name, depth+1)
+		return memberCallSeen(v.Inner, name, depth+1, active)
 	case *typ.Alias:
-		return memberCallDepth(v.UnaliasedTarget(), name, depth+1)
+		return memberCallSeen(v.UnaliasedTarget(), name, depth+1, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
 		if expanded == nil || expanded == t {
 			return memberCallResult{status: MemberCallMissing}
 		}
-		return memberCallDepth(expanded, name, depth+1)
+		return memberCallSeen(expanded, name, depth+1, active)
 	default:
 		return memberCallSingle(t, name, depth+1)
 	}
 }
 
 func memberCallUnion(u *typ.Union, name string, depth int) memberCallResult {
+	return memberCallUnionSeen(u, name, depth, &graph.Path{})
+}
+
+func memberCallUnionSeen(u *typ.Union, name string, depth int, active *graph.Path) memberCallResult {
 	if u == nil || len(u.Members) == 0 {
 		return memberCallResult{status: MemberCallMissing}
 	}
 	return memberCallDistributeUnion(u.Members, depth, func(member typ.Type, depth int) memberCallResult {
-		return memberCallDepth(member, name, depth)
+		return memberCallSeen(member, name, depth, active)
 	})
 }
 
 func memberCallIntersection(in *typ.Intersection, name string, depth int) memberCallResult {
+	return memberCallIntersectionSeen(in, name, depth, &graph.Path{})
+}
+
+func memberCallIntersectionSeen(in *typ.Intersection, name string, depth int, active *graph.Path) memberCallResult {
 	if in == nil {
 		return memberCallResult{status: MemberCallMissing}
 	}
 	return memberCallDistributeIntersection(in.Members, depth, func(member typ.Type, depth int) memberCallResult {
-		return memberCallDepth(member, name, depth)
+		return memberCallSeen(member, name, depth, active)
 	})
 }
 
@@ -188,44 +205,60 @@ func memberCallSingle(t typ.Type, name string, depth int) memberCallResult {
 }
 
 func indexedMemberCallDepth(t typ.Type, key typ.Type, depth int) memberCallResult {
+	return indexedMemberCallSeen(t, key, depth, &graph.Path{})
+}
+
+func indexedMemberCallSeen(t typ.Type, key typ.Type, depth int, active *graph.Path) memberCallResult {
 	if stopDepth(t, depth) {
 		return memberCallResult{status: MemberCallMissing}
 	}
+	if !active.Enter(t) {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	defer active.Leave(t)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
-		return indexedMemberCallUnion(v, key, depth+1)
+		return indexedMemberCallUnionSeen(v, key, depth+1, active)
 	case *typ.Intersection:
-		return indexedMemberCallIntersection(v, key, depth+1)
+		return indexedMemberCallIntersectionSeen(v, key, depth+1, active)
 	case *typ.Optional:
-		return indexedMemberCallDepth(v.Inner, key, depth+1)
+		return indexedMemberCallSeen(v.Inner, key, depth+1, active)
 	case *typ.Alias:
-		return indexedMemberCallDepth(v.UnaliasedTarget(), key, depth+1)
+		return indexedMemberCallSeen(v.UnaliasedTarget(), key, depth+1, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
 		if expanded == nil || expanded == t {
 			return memberCallResult{status: MemberCallMissing}
 		}
-		return indexedMemberCallDepth(expanded, key, depth+1)
+		return indexedMemberCallSeen(expanded, key, depth+1, active)
 	default:
 		return indexedMemberCallSingle(t, key, depth+1)
 	}
 }
 
 func indexedMemberCallUnion(u *typ.Union, key typ.Type, depth int) memberCallResult {
+	return indexedMemberCallUnionSeen(u, key, depth, &graph.Path{})
+}
+
+func indexedMemberCallUnionSeen(u *typ.Union, key typ.Type, depth int, active *graph.Path) memberCallResult {
 	if u == nil || len(u.Members) == 0 {
 		return memberCallResult{status: MemberCallMissing}
 	}
 	return memberCallDistributeUnion(u.Members, depth, func(member typ.Type, depth int) memberCallResult {
-		return indexedMemberCallDepth(member, key, depth)
+		return indexedMemberCallSeen(member, key, depth, active)
 	})
 }
 
 func indexedMemberCallIntersection(in *typ.Intersection, key typ.Type, depth int) memberCallResult {
+	return indexedMemberCallIntersectionSeen(in, key, depth, &graph.Path{})
+}
+
+func indexedMemberCallIntersectionSeen(in *typ.Intersection, key typ.Type, depth int, active *graph.Path) memberCallResult {
 	if in == nil {
 		return memberCallResult{status: MemberCallMissing}
 	}
 	return memberCallDistributeIntersection(in.Members, depth, func(member typ.Type, depth int) memberCallResult {
-		return indexedMemberCallDepth(member, key, depth)
+		return indexedMemberCallSeen(member, key, depth, active)
 	})
 }
 
@@ -318,9 +351,17 @@ func AmbientChannelPayloadType(receiver typ.Type) (typ.Type, bool) {
 }
 
 func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
+	return channelPayloadTypeSeen(t, depth, &graph.Path{})
+}
+
+func channelPayloadTypeSeen(t typ.Type, depth int, active *graph.Path) (typ.Type, typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, nil, false
 	}
+	if !active.Enter(t) {
+		return nil, nil, false
+	}
+	defer active.Leave(t)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
 		payloads := make([]typ.Type, 0, len(v.Members))
@@ -328,7 +369,7 @@ func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 			if isNilType(member) || typ.IsNever(member) {
 				continue
 			}
-			_, payload, ok := channelPayloadType(member, depth+1)
+			_, payload, ok := channelPayloadTypeSeen(member, depth+1, active)
 			if !ok {
 				return nil, nil, false
 			}
@@ -339,9 +380,9 @@ func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 		}
 		return v, normalize.UnionForEvidence(payloads...), true
 	case *typ.Optional:
-		return channelPayloadType(v.Inner, depth+1)
+		return channelPayloadTypeSeen(v.Inner, depth+1, active)
 	case *typ.Alias:
-		return channelPayloadType(v.UnaliasedTarget(), depth+1)
+		return channelPayloadTypeSeen(v.UnaliasedTarget(), depth+1, active)
 	case *typ.Instantiated:
 		if payload, ok := ambient.ChannelPayloadType(v); ok {
 			return v, payload, true
@@ -350,58 +391,69 @@ func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
 		if expanded == nil || expanded == t {
 			return nil, nil, false
 		}
-		return channelPayloadType(expanded, depth+1)
+		return channelPayloadTypeSeen(expanded, depth+1, active)
 	default:
 		return nil, nil, false
 	}
 }
 
 func containsNil(t typ.Type, depth int) bool {
+	return containsNilSeen(t, depth, &graph.Path{})
+}
+
+func containsNilSeen(t typ.Type, depth int, active *graph.Path) bool {
 	if stopDepth(t, depth) {
-		// May-contain query (invariants.md Rule 1 dual): stopping without a
-		// definitive answer must assume nil is still reachable. callableValue
-		// requires !containsNil before it grants a definite "is callable"
-		// proof, so defaulting false here would let an unexplored nilable
-		// call target through as trusted callable.
 		return true
 	}
+	if !active.Enter(t) {
+		return false
+	}
+	defer active.Leave(t)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Optional:
 		return true
 	case *typ.Union:
 		for _, member := range v.Members {
-			if containsNil(member, depth+1) {
+			if containsNilSeen(member, depth+1, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return containsNil(v.UnaliasedTarget(), depth+1)
+		return containsNilSeen(v.UnaliasedTarget(), depth+1, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && containsNil(expanded, depth+1)
+		return expanded != nil && expanded != t && containsNilSeen(expanded, depth+1, active)
 	default:
 		return isNilType(t)
 	}
 }
 
 func callableValue(t typ.Type, depth int) bool {
+	return callableValueSeen(t, depth, &graph.Path{})
+}
+
+func callableValueSeen(t typ.Type, depth int, active *graph.Path) bool {
 	if stopDepth(t, depth) {
 		return false
 	}
+	if !active.Enter(t) {
+		return false
+	}
+	defer active.Leave(t)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Function:
 		return true
 	case *typ.Record:
 		call, ok := metamethodInRecord(v, "__call", depth+1)
-		return ok && !containsNil(call, depth+1) && callableValue(call, depth+1)
+		return ok && !containsNil(call, depth+1) && callableValueSeen(call, depth+1, active)
 	case *typ.Union:
 		checked := false
 		for _, member := range v.Members {
 			if typ.IsNever(member) {
 				continue
 			}
-			if isNilType(member) || !callableValue(member, depth+1) {
+			if isNilType(member) || !callableValueSeen(member, depth+1, active) {
 				return false
 			}
 			checked = true
@@ -409,16 +461,16 @@ func callableValue(t typ.Type, depth int) bool {
 		return checked
 	case *typ.Intersection:
 		for _, member := range v.Members {
-			if callableValue(member, depth+1) {
+			if callableValueSeen(member, depth+1, active) {
 				return true
 			}
 		}
 		return false
 	case *typ.Alias:
-		return callableValue(v.UnaliasedTarget(), depth+1)
+		return callableValueSeen(v.UnaliasedTarget(), depth+1, active)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && callableValue(expanded, depth+1)
+		return expanded != nil && expanded != t && callableValueSeen(expanded, depth+1, active)
 	default:
 		return false
 	}

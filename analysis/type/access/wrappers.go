@@ -17,11 +17,9 @@ func trueThunk() bool  { return true }
 // descendAccessWrappers unwraps Optional/Alias/TypeParam/Recursive/
 // Instantiated layers one at a time until it reaches a type descend can
 // handle directly. The loop is iterative (not recursive) so unwrapping costs
-// O(1) Go stack regardless of chain length; stopDepth's depth budget is
-// still consulted every iteration as the termination backstop for a
-// non-cyclic chain (invariants.md Rule 1), since bounding stack usage is not
-// the same as bounding total work. stopValue is called lazily, only on an
-// actual stop (missing type, depth exhaustion, a structural cycle, an
+// O(1) Go stack regardless of chain length. The active graph path stops only
+// a structural cycle, so a finite chain is traversed exactly. stopValue is
+// called lazily, only on an actual stop (missing type, a structural cycle, an
 // unconstrained type param, a self-recursive body, an unexpandable
 // instantiation); it is never invoked on the ordinary descend path, so a
 // caller whose fallback is expensive (e.g. allocates) pays nothing when the

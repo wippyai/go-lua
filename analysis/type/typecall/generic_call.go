@@ -218,9 +218,6 @@ func containsTypeParamOutsideShadow(t typ.Type, target *typ.TypeParam, shadowed 
 	if t == nil || target == nil {
 		return false
 	}
-	if depth > typ.DefaultRecursionDepth {
-		return true
-	}
 	if param, ok := t.(*typ.TypeParam); ok {
 		return !shadowed && param == target
 	}
@@ -275,13 +272,6 @@ func instantiatedArgumentAssignable(actual typ.Type, formal typ.Type, depth int)
 func instantiatedArgumentAssignableSeen(actual typ.Type, formal typ.Type, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil {
 		return true
-	}
-	if depth > typ.DefaultRecursionDepth {
-		// Positive assignability relation (invariants.md Rule 1): an
-		// exhausted budget must fail closed. Cycle-pair tracking (active,
-		// below) separately closes genuine coinductive repeats with true;
-		// this only bounds a non-repeating chain.
-		return false
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
@@ -374,9 +364,6 @@ func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
 func hasFreshPrecisionShapeSeen(actual typ.Type, formal typ.Type, depth int, active *graph.PairPath) bool {
 	if actual == nil || formal == nil {
 		return false
-	}
-	if depth > typ.DefaultRecursionDepth {
-		return true
 	}
 	actual = unwrap.Annotated(actual)
 	formal = unwrap.Annotated(formal)
@@ -485,9 +472,6 @@ func actualRecordForValidationSeen(actual typ.Type, depth int, active *graph.Pat
 	if actual == nil {
 		return nil, false
 	}
-	if depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
 	actual = unwrap.Annotated(actual)
 	if !active.Enter(actual) {
 		return nil, false
@@ -546,13 +530,6 @@ func providedRecordFieldsAssignableSeen(actual *typ.Record, formal *typ.Record, 
 
 func inferTypeParamBindingsSeen(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int, active *graph.PairPath) {
 	if formal == nil || actual == nil {
-		return
-	}
-	if depth > typ.DefaultRecursionDepth {
-		// Binding inference has no truth value to get wrong at exhaustion:
-		// stopping just leaves deeper type parameters unbound, which
-		// containsUnsubstitutedTypeParam's may-contain default (true) later
-		// reports as a constraint violation rather than silently accepting.
 		return
 	}
 

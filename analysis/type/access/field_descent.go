@@ -66,14 +66,12 @@ func SpecialAccessType(t typ.Type) (typ.Type, bool) {
 	return nil, false
 }
 
-// stopDepth reports whether a field/index resolution must stop without
-// descending further: the type is missing, or the recursion has exhausted
-// its depth budget. Beyond the O(1)-stack wrapper-unwind loop in
-// descendAccessWrappers, field()/index() re-enter themselves through
-// fieldInUnion/fieldInIntersection (and their index_* counterparts) via
-// ordinary Go recursion, one stack frame per union/intersection member
-// nesting level; a raw, non-normalized deeply nested union or intersection
-// costs one real frame per level and is not bounded by any cycle guard here.
+// stopDepth reports whether a field/index resolution lacks a type to inspect.
+//
+// The depth argument is retained while the query helpers share their existing
+// call shape, but it is deliberately not a semantic budget. query.enter and
+// descendAccessWrappers' graph.Path detect repeated interned type nodes, while
+// distinct finite chains are allowed to reach their exact leaf.
 func stopDepth(t typ.Type, depth int) bool {
-	return t == nil || depth > typ.DefaultRecursionDepth
+	return t == nil
 }

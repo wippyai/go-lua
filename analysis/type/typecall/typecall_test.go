@@ -308,6 +308,23 @@ func TestMemberCallUnionRequiresCallableMemberOnEveryAlternative(t *testing.T) {
 	))
 }
 
+func TestMemberCallTerminatesOnRecursiveUnion(t *testing.T) {
+	loop := typ.NewRecursivePlaceholder("CallableLoop")
+	loop.SetBody(typeexpr.Union(
+		loop,
+		typetable.NewRecord().Field("run", typ.Func().Returns(typ.String).Build()).Build(),
+	))
+
+	// The recursive arm has the same callable evidence as its record arm;
+	// access resolves the regular graph to that fixed point without a depth
+	// cutoff.
+	member, status := MemberCall(loop, "run")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(recursive union, run) status = %v, want ok", status)
+	}
+	assertType(t, member, typ.Func().Returns(typ.String).Build())
+}
+
 func TestMemberCallUsesTypeParameterConstraintSurface(t *testing.T) {
 	method := typ.Func().
 		Param("self", typ.Self).
@@ -1309,23 +1326,16 @@ func TestInstantiateGenericCallInfersThroughGenericCallbackAlias(t *testing.T) {
 	assertType(t, got.Returns[0], typeexpr.Optional(user))
 }
 
-// TestContainsTypeParamOutsideShadowDepthExhaustionMayContainParam proves
-// containsTypeParamOutsideShadow's invariants.md Rule 1 dual polarity.
-// target never actually occurs in deep, so the honest, unbounded answer is
-// "does not contain"; but deep is a non-cyclic chain of distinct *typ.Record
-// allocations deeper than the recursion budget, so cycle tracking (active)
-// never collapses the walk and only depth exhaustion can stop it. Exhaustion
-// must still report true (may still contain target), not false, since a
-// false negative here would silently clear a real unsubstituted-parameter
-// constraint violation in containsUnsubstitutedTypeParam's caller.
-func TestContainsTypeParamOutsideShadowDepthExhaustionMayContainParam(t *testing.T) {
+// TestContainsTypeParamOutsideShadowDeepFiniteChain verifies that a finite
+// record chain reaches its exact leaf instead of being conservatively cut off.
+func TestContainsTypeParamOutsideShadowDeepFiniteChain(t *testing.T) {
 	target := typ.NewTypeParam("T", nil)
 	var deep typ.Type = typ.String
 	for i := 0; i < 10000; i++ {
 		deep = typetable.NewRecord().Field("next", deep).Build()
 	}
-	if !containsTypeParamOutsideShadow(deep, target, false, nil, 0) {
-		t.Fatal("depth-exhausted search reported the type parameter definitely absent: may-contain query failed closed instead of open")
+	if containsTypeParamOutsideShadow(deep, target, false, nil, 0) {
+		t.Fatal("deep finite search reported an absent type parameter")
 	}
 }
 

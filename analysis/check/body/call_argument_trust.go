@@ -299,7 +299,7 @@ func (r *Result) CallerOwnedRootParameterContract(p pathdom.Path) (product.Value
 }
 
 func (r *Result) callerOwnedParameterSource(point cfg.Point, source factflow.ValueSource, active *callerOwnedParameterGuard, depth int) bool {
-	if r == nil || depth > typ.DefaultRecursionDepth {
+	if r == nil {
 		return false
 	}
 	if active == nil {
@@ -357,7 +357,7 @@ func (r *Result) callArgumentSourcePath(source factflow.ValueSource) (pathdom.Pa
 }
 
 func (r *Result) callerOwnedParameterDeclarationSource(point cfg.Point, p pathdom.Path, active *callerOwnedParameterGuard, depth int) bool {
-	if p.IsEmpty() || p.Symbol == 0 || point == 0 || r == nil || r.Graph() == nil || depth > typ.DefaultRecursionDepth {
+	if p.IsEmpty() || p.Symbol == 0 || point == 0 || r == nil || r.Graph() == nil {
 		return false
 	}
 	if active == nil {

@@ -813,16 +813,10 @@ func NumericForDefinitelyNotNumber(t typ.Type) bool {
 	return !numericForMayContainNumber(t, 0, nil)
 }
 
-// numericForMayContainNumber is existential over t's type graph, so a
-// repeated node on a genuine cycle contributes no new witness (active memo).
-// A non-cyclic chain of distinct nodes never repeats in active, so depth is
-// the independent termination backstop for that case (typ.DefaultRecursionDepth);
-// exhaustion resolves to true, the may-contain-number dual, so a pathological
-// chain fails closed instead of falsely proving the operand cannot be a number.
+// numericForMayContainNumber is existential over t's type graph. A repeated
+// interned node on the active path contributes no new witness; distinct finite
+// chains continue to their exact leaf without a semantic depth budget.
 func numericForMayContainNumber(t typ.Type, depth int, active map[typ.Type]struct{}) bool {
-	if depth > typ.DefaultRecursionDepth {
-		return true
-	}
 	if t == nil {
 		return true
 	}
