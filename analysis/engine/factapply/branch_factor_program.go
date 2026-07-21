@@ -563,6 +563,33 @@ func branchPathProofKernel(proof pathevidence.BranchProof) branchAtomFactorKerne
 	}
 }
 
+// branchPathRelationProofKernel is the canonical factor-native form of a
+// branch-evidence relation.  Channel-select result/case narrowing must happen
+// before the evidence is published; the following proof then feeds the same
+// prepared consequence barrier as the concrete transaction.
+func branchPathRelationProofKernel(relation *branchPathRelationFactor, proof pathevidence.BranchProof) branchAtomFactorKernel {
+	relationKernel := branchPathRelationKernel(relation)
+	proofKernel := branchPathProofKernel(proof)
+	return func(runtime branchAtomFactorRuntime, original, current BranchRelationFactorFrame) (BranchRelationFactorPatch, bool, error) {
+		patch, feasible, err := relationKernel(runtime, original, current)
+		if err != nil || !feasible {
+			return patch, feasible, err
+		}
+		related := branchRelationFrameFromPatch(current, patch)
+		proofPatch, proofFeasible, proofErr := proofKernel(runtime, original, related)
+		if proofErr != nil || !proofFeasible {
+			return proofPatch, proofFeasible, proofErr
+		}
+		// The proof kernel owns only the path-evidence coordinate family.  The
+		// relation's Values/lanes remain part of the same complete factor patch.
+		proofPatch.values = append([]product.Value(nil), related.values...)
+		proofPatch.valuesTop = related.valuesTop
+		proofPatch.lanes = append([]state.LaneFactor(nil), related.lanes...)
+		proofPatch.reachable = related.reachable
+		return proofPatch, proofFeasible, nil
+	}
+}
+
 func branchCoordinateMutationKernel(runtime branchAtomFactorRuntime, _ BranchRelationFactorFrame, current BranchRelationFactorFrame) (BranchRelationFactorPatch, bool, error) {
 	if current.plan == nil || len(current.coordinates) != 1 || len(current.coordinates[0].Scalars) != 1 {
 		return BranchRelationFactorPatch{}, false, fmt.Errorf("factapply: coordinate mutation operands are incomplete")

@@ -419,6 +419,7 @@ type branchAtomDraft struct {
 	refinement       *branchValueRefinementDraft
 	equality         *branchPathEqualityDraft
 	pathRelation     *branchPathRelationDraft
+	evidenceProof    *pathevidence.BranchProof
 	source           BranchRelationStepKind
 }
 
@@ -1012,6 +1013,37 @@ func (b *branchProgramBuilder) evidenceAtoms(proof factflow.BranchPathEvidence) 
 		return nil
 	}
 	factorNativeProof := proof.Kind() == factflow.BranchPathEvidencePresence
+	// Channel-select result/case comparisons have an existing factor-native
+	// relation law.  The State adapter below predates that law and therefore
+	// used to leave these evidence atoms apply-only; formal execution correctly
+	// rejects such an atom rather than reconstructing State.  Bind the same
+	// sealed path-relation transaction used by ordinary branch relations.
+	if proof.Kind() == factflow.BranchPathEvidenceEqual || proof.Kind() == factflow.BranchPathEvidenceNotEqual {
+		other, hasOther := proof.OtherPathRef()
+		_, leftSelect := channelSelectResultPathFromChannel(proof.PathRef())
+		_, rightSelect := channelSelectResultPathFromChannel(other)
+		if hasOther && (leftSelect || rightSelect) {
+			action.apply = nil
+			relationKind := factflow.BranchPathRelationEqual
+			if proof.Kind() == factflow.BranchPathEvidenceNotEqual {
+				relationKind = factflow.BranchPathRelationNotEqual
+			}
+			action.pathRelation = &branchPathRelationDraft{kind: relationKind, left: proof.PathRef(), right: other}
+			if ok {
+				proofCopy := stateProof
+				action.evidenceProof = &proofCopy
+				if err := bindPathProofFamily(); err != nil {
+					return nil, err
+				}
+			}
+			for _, path := range []pathdom.Path{proof.PathRef(), other} {
+				if role, roleOK := branchLexicalValueRoleSource(path.Symbol); roleOK {
+					action.valueRoleSources.currentReads = append(action.valueRoleSources.currentReads, role)
+					action.valueRoleSources.currentWrites = append(action.valueRoleSources.currentWrites, role)
+				}
+			}
+		}
+	}
 	if proof.Kind() == factflow.BranchPathEvidenceNotEqual {
 		_, leftSelect := channelSelectResultPathFromChannel(proof.PathRef())
 		other, hasOther := proof.OtherPathRef()
@@ -1270,6 +1302,9 @@ func (b *branchProgramBuilder) seal(inventory state.CoordinateFactorInventory) (
 					return preparedBranchTransaction{}, err
 				}
 				atom.factor = branchPathRelationKernel(atom.pathRelation)
+				if draft.evidenceProof != nil {
+					atom.factor = branchPathRelationProofKernel(atom.pathRelation, *draft.evidenceProof)
+				}
 			}
 			atom.mutation = draft.mutation
 			atom.valueRoles.currentReads, err = sealBranchValueRoleSources(draft.valueRoleSources.currentReads, seal)
