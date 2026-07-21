@@ -24,6 +24,30 @@ type externalCallOperandWire struct {
 	dynamicProjection *state.DynamicReadFactorProjection
 }
 
+// externalCallOperandSuspension is the deliberate hand-off between canonical
+// ValueTerm evaluation and the formal external-call adapter.  It is not an
+// evaluation failure: the adapter must partition the current guarded leaf by
+// exactly Query's next cursor demand, resume the cursor with that evidence,
+// and invoke the evaluator again.  Re-evaluation is safe because ValueTerms
+// are immutable and every DynamicReadDemandCursor round is monotone.
+//
+// The type stays private to keep the suspension protocol owned by the
+// transformer rather than leaking a second dynamic-read API to providers.
+type externalCallOperandSuspension struct {
+	point cfg.Point
+	query state.DynamicReadQuery
+}
+
+func (s externalCallOperandSuspension) Error() string {
+	return "transformer: external-call operand dynamic read suspended"
+}
+
+// externalCallDynamicEvidence resolves one exact DynamicRead query from the
+// current guarded formal leaf.  complete=false requests suspension; returning
+// an error is a malformed adapter/evidence failure.  The callback receives no
+// State and cannot widen the frozen read authority.
+type externalCallDynamicEvidence func(cfg.Point, state.DynamicReadQuery) (evidence state.DynamicReadEvidence, complete bool, err error)
+
 func (w externalCallOperandWire) value(slot statekey.Value) (product.Value, bool) {
 	ordinal, ok := w.layout.ValueOrdinal(slot)
 	if !ok {
@@ -42,6 +66,20 @@ func evaluateExternalCallOperands(
 	access []valueAccessTerm,
 	frame callpayload.ExternalCallInputFrame[statekey.Value],
 	dynamicQuery func(valueNode, []product.Value) (state.DynamicReadQuery, error),
+) (callpayload.CallOutcomeValueOperands, error) {
+	return evaluateExternalCallOperandsWithDynamicEvidence(body, terms, access, frame, dynamicQuery, nil)
+}
+
+// evaluateExternalCallOperandsWithDynamicEvidence is the resumable form used
+// by formal external-call execution.  The legacy direct projection remains
+// available for non-formal callers and focused evaluator tests.
+func evaluateExternalCallOperandsWithDynamicEvidence(
+	body *relationProgramBody,
+	terms callOutcomeOperandTerms,
+	access []valueAccessTerm,
+	frame callpayload.ExternalCallInputFrame[statekey.Value],
+	dynamicQuery func(valueNode, []product.Value) (state.DynamicReadQuery, error),
+	resolveDynamic externalCallDynamicEvidence,
 ) (callpayload.CallOutcomeValueOperands, error) {
 	if body == nil || body.relation.arena == nil || !frame.Domain().Valid() || dynamicQuery == nil {
 		return callpayload.CallOutcomeValueOperands{}, fmt.Errorf("transformer: external-call operand evaluator is unowned")
@@ -166,6 +204,22 @@ func evaluateExternalCallOperands(
 				if err != nil {
 					leafErr = err
 					return product.Value{}, false
+				}
+				if resolveDynamic != nil {
+					evidence, complete, resolveErr := resolveDynamic(current.layout.Point(), query)
+					if resolveErr != nil {
+						leafErr = resolveErr
+						return product.Value{}, false
+					}
+					if !complete {
+						leafErr = externalCallOperandSuspension{point: current.layout.Point(), query: query}
+						return product.Value{}, false
+					}
+					value, exact := sourcevalue.ResolveDynamicRead(query, evidence)
+					if !exact {
+						leafErr = fmt.Errorf("dynamic-read evidence did not resolve")
+					}
+					return value, exact
 				}
 				if current.dynamicProjection == nil {
 					if !projectionPlanSealed {

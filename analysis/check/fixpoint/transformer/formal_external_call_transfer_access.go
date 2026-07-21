@@ -59,6 +59,58 @@ func externalCallTransferAccessWithAccess(
 	)
 }
 
+// externalCallTransferAccessWithoutDynamicOperandLanes seals the provider
+// frame authority after removing only operand-owned dynamic-read lanes.  The
+// capability is still passed to factapply, so a provider that explicitly owns
+// a dynamic lane retains it.  This lets the formal adapter bind a complete
+// provider frame from static roots while the operand evaluator borrows the
+// dynamic lanes through its demand cursor.
+func externalCallTransferAccessWithoutDynamicOperandLanes(
+	body *relationProgramBody,
+	step boundaryPrefixStep,
+	access []valueAccessTerm,
+	inputPoints []cfg.Point,
+	inputCount, primary int,
+	capability callpayload.CallOutcomeCapability,
+) (state.TransferAccess, error) {
+	if body == nil || step.kind != boundaryPrefixExternalCall ||
+		inputCount <= 0 || primary < 0 || primary >= inputCount || len(inputPoints) != inputCount {
+		return state.TransferAccess{}, fmt.Errorf("transformer: external-call provider access is unowned")
+	}
+	inputs, err := externalCallTransferInputs(body, access, inputPoints, inputCount, primary)
+	if err != nil {
+		return state.TransferAccess{}, err
+	}
+	dynamic, err := body.productDomain.DynamicReadPotentialLanes()
+	if err != nil {
+		return state.TransferAccess{}, err
+	}
+	for index := range inputs {
+		kept := state.LaneSet{}
+		for _, lane := range inputs[index].Lanes.IDs() {
+			if !dynamic.Has(lane) {
+				kept = kept.With(lane)
+			}
+		}
+		inputs[index].Lanes = kept
+	}
+	writes, err := body.valueTermReadSlots(step.writes...)
+	if err != nil {
+		return state.TransferAccess{}, err
+	}
+	if step.memberCall.site != 0 {
+		memberReads, readErr := body.valueTermReadSlots(step.memberCall.receiver, step.memberCall.provider)
+		if readErr != nil {
+			return state.TransferAccess{}, readErr
+		}
+		inputs[primary].Values = append(inputs[primary].Values, memberReads...)
+		inputs[primary].Diagnostics = true
+	}
+	return factapply.SealExternalCallTransferAccess(
+		body.productDomain, inputs, inputPoints, primary, capability, writes,
+	)
+}
+
 func externalCallTransferInputs(
 	body *relationProgramBody,
 	access []valueAccessTerm,

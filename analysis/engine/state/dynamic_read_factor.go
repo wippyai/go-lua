@@ -585,6 +585,16 @@ func (c *DynamicReadDemandCursor) Resume(batch DynamicReadEvidenceBatch) error {
 	return nil
 }
 
+// ProjectOrdinaryDemand applies the cursor's own sealed projection to one
+// currently demanded ordinary lane.  Consumers must use this instead of
+// reconstructing a projection plan while answering sparse cursor rounds.
+func (c DynamicReadDemandCursor) ProjectOrdinaryDemand(lane ProductLane, factor LaneFactor) (LaneFactor, error) {
+	if !c.domain.Valid() || c.advance.Complete || c.advance.Demands.Empty() {
+		return LaneFactor{}, fmt.Errorf("%w: invalid dynamic-read demand cursor", ErrInvalidLaneFactor)
+	}
+	return c.domain.ProjectDynamicReadLane(c.advance.Plan, lane, factor)
+}
+
 type dynamicReadBuilder struct {
 	facts          dynamicIndexLane
 	hasFacts       bool

@@ -3,6 +3,7 @@ package transformer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -29,11 +30,157 @@ type formalExternalCallWire struct {
 	valuesTop        formalFiberGroupMember
 	hasValuesTop     bool
 	lanes            []formalExternalCallInputLane
+	dynamicDirectory []formalExternalCallDynamicDirectory
 	typestateQueries []formalExternalCallTypestateResourceQuery
 	diagnostics      formalFiberDescriptor
-	ordinals         []formalFiberOrdinal
-	readsDiag        bool
-	readsReach       bool
+	// staticOrdinals are sealed once and contain only value/guard-independent
+	// frame inputs. dynamicOrdinals remain owned by the demand adapter: they
+	// must not be pulled into the first sparse partition merely because the
+	// frozen input layout has a dynamic-read lane.
+	staticOrdinals  []formalFiberOrdinal
+	dynamicOrdinals []formalFiberOrdinal
+	ordinals        []formalFiberOrdinal
+	readsDiag       bool
+	readsReach      bool
+}
+
+// formalExternalCallDynamicDirectory is the freeze-time bridge from the
+// ProductDomain-owned demand vocabulary to this wire's physical directory.
+// It deliberately records no runtime demand: later execution must ask the
+// DynamicReadDemandCursor and fail if that cursor names a coordinate absent
+// from this sealed directory.
+type formalExternalCallDynamicDirectory struct {
+	lane       state.ProductLane
+	group      formalFiberGroupDescriptor
+	rekey      state.CoordinateFormalRootRekey
+	coordinate state.CoordinateFormalBoundaryFactorPlan
+	families   []formalExternalCallInputFamily
+}
+
+func formalExternalCallCanonicalOrdinals(in []formalFiberOrdinal) []formalFiberOrdinal {
+	out := append([]formalFiberOrdinal(nil), in...)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	write := 0
+	for _, ordinal := range out {
+		if write == 0 || out[write-1] != ordinal {
+			out[write], write = ordinal, write+1
+		}
+	}
+	return out[:write]
+}
+
+// formalExternalCallDynamicDemandSource follows a cursor slot backward through
+// the wire's sealed formal-boundary image.  The resulting position is a
+// frozen leaf coordinate, not a second runtime directory: absent or
+// non-unique images fail before a sparse leaf is selected.
+func formalExternalCallDynamicDemandSource(
+	domain state.ProductDomain,
+	span formalFiberDescriptorSpan,
+	directory formalExternalCallDynamicDirectory,
+	target state.CoordinateSlot,
+) (*formalExternalCallInputFamily, state.CoordinateSlot, int, error) {
+	for familyIndex := range directory.families {
+		family := &directory.families[familyIndex]
+		if family.family.family != target.Family() {
+			continue
+		}
+		source, found, err := domain.FormalBoundarySourceSlot(directory.coordinate, target)
+		if err != nil {
+			return nil, state.CoordinateSlot{}, -1, err
+		}
+		if !found {
+			source, err = domain.RekeyCoordinateSlotFormal(directory.rekey, target)
+			if err != nil {
+				return family, state.CoordinateSlot{}, -1, nil
+			}
+		}
+		for position, candidate := range family.slots {
+			equal, equalErr := domain.CoordinateSlotEqual(candidate, source)
+			if equalErr != nil {
+				return nil, state.CoordinateSlot{}, -1, equalErr
+			}
+			if equal {
+				if position >= len(family.positions) {
+					return nil, state.CoordinateSlot{}, -1, errFormalComponentMalformed
+				}
+				return family, source, family.positions[position], nil
+			}
+		}
+		position, exact := formalCoordinatePosition(domain, span, family.family, source)
+		if !exact {
+			// The rekey can identify a dynamic point-local slot whose formal
+			// spelling is not a materialized leaf fiber. Its only lawful answer
+			// is the registered scalar default under the selected skeleton; the
+			// caller still fails closed for a missing lane or family.
+			return family, source, -1, nil
+		}
+		return family, source, position, nil
+	}
+	return nil, state.CoordinateSlot{}, -1, nil
+}
+
+// demandOrdinals lowers one exact ProductDomain demand round through the
+// freeze-time directory. It intentionally has no fallback to wire.ordinals:
+// a missing lane, family, or slot is a malformed frozen adapter rather than a
+// request for a Bottom/default component.
+func (w formalExternalCallWire) demandOrdinals(domain state.ProductDomain, span formalFiberDescriptorSpan, demands state.DynamicReadDemandSet) ([]formalFiberOrdinal, error) {
+	if !domain.Valid() {
+		return nil, errFormalComponentMalformed
+	}
+	var out []formalFiberOrdinal
+	for _, lane := range demands.OrdinaryLanes() {
+		found := false
+		for _, directory := range w.dynamicDirectory {
+			if directory.lane != lane {
+				continue
+			}
+			found = true
+			out = append(out, directory.group.members...)
+		}
+		if !found {
+			return nil, fmt.Errorf("transformer: dynamic-read demand lane %q is outside frozen wire", lane.ID())
+		}
+	}
+	for _, demand := range demands.CoordinateDemands() {
+		familyFound := false
+		for _, directory := range w.dynamicDirectory {
+			for familyIndex := range directory.families {
+				inputFamily := &directory.families[familyIndex]
+				if inputFamily.family.family != demand.Family() {
+					continue
+				}
+				familyFound = true
+				// A scalar-only round still needs its formal skeleton to derive the
+				// registered omitted scalar when the image has no leaf fiber.
+				if demand.NeedsSkeleton() || len(demand.Slots()) != 0 {
+					out = append(out, inputFamily.family.skeleton)
+				}
+				for _, slot := range demand.Slots() {
+					_, _, position, err := formalExternalCallDynamicDemandSource(domain, span, directory, slot)
+					if err != nil {
+						return nil, err
+					}
+					if position < -1 || position >= len(inputFamily.family.scalars) {
+						return nil, fmt.Errorf("transformer: dynamic-read demand slot is outside frozen family %q", demand.Family().ID())
+					}
+					if position < 0 {
+						continue
+					}
+					if position < -1 || position >= len(inputFamily.family.scalars) {
+						return nil, errFormalComponentMalformed
+					}
+					if position < 0 {
+						continue
+					}
+					out = append(out, inputFamily.family.scalars[position])
+				}
+			}
+		}
+		if !familyFound {
+			return nil, fmt.Errorf("transformer: dynamic-read demand family %q is outside frozen wire", demand.Family().ID())
+		}
+	}
+	return formalExternalCallCanonicalOrdinals(out), nil
 }
 
 type formalExternalCallTypestateResourceQuery struct {
@@ -53,6 +200,7 @@ type formalExternalCallInputLane struct {
 type formalExternalCallInputFamily struct {
 	family    formalCoordinateFamilyFiberGroup
 	positions []int
+	slots     []state.CoordinateSlot
 }
 
 type formalExternalCallSiteKey struct {
@@ -713,22 +861,44 @@ func freezeFormalExternalCallProviderAtPath(
 	if err != nil {
 		return formalExternalCallProvider{}, err
 	}
-	contract, err := externalCallTransferAccessWithAccess(body, step, access, leafPoints, len(leafPoints), 0, capability)
+	operandContract, err := externalCallTransferAccessWithAccess(body, step, access, leafPoints, len(leafPoints), 0, capability)
+	if err != nil {
+		return formalExternalCallProvider{}, err
+	}
+	providerContract, err := externalCallTransferAccessWithoutDynamicOperandLanes(body, step, access, leafPoints, len(leafPoints), 0, capability)
 	if err != nil {
 		return formalExternalCallProvider{}, err
 	}
 	input, err := callpayload.PrepareExternalCallInputProgram(
-		body.productDomain, contract, leafPoints, 0,
+		body.productDomain, providerContract, leafPoints, 0,
 		func(slot statekey.Value) (statekey.Value, bool) { return slot, slot != 0 },
 	)
 	if err != nil {
 		return formalExternalCallProvider{}, err
+	}
+	operandInput, err := callpayload.PrepareExternalCallInputProgram(
+		body.productDomain, operandContract, leafPoints, 0,
+		func(slot statekey.Value) (statekey.Value, bool) { return slot, slot != 0 },
+	)
+	if err != nil || operandInput.InputCount() != input.InputCount() {
+		if err == nil {
+			err = errFormalComponentMalformed
+		}
+		return formalExternalCallProvider{}, err
+	}
+	dynamicLanes, err := body.productDomain.DynamicReadPotentialLanes()
+	if err != nil {
+		return formalExternalCallProvider{}, fmt.Errorf("dynamic-read lane directory: %w", err)
 	}
 	wires := make([]formalExternalCallWire, input.InputCount())
 	for wireIndex := range wires {
 		layout, exact := input.Layout(wireIndex)
 		if !exact {
 			return formalExternalCallProvider{}, fmt.Errorf("input wire %d is absent", wireIndex)
+		}
+		operandLayout, exact := operandInput.Layout(wireIndex)
+		if !exact || operandLayout.Point() != layout.Point() {
+			return formalExternalCallProvider{}, fmt.Errorf("operand input wire %d is absent", wireIndex)
 		}
 		environment := formalPublicationPointOutput
 		if layout.Point() == step.point {
@@ -784,10 +954,53 @@ func freezeFormalExternalCallProviderAtPath(
 						}
 						positions[slotIndex] = position
 					}
-					inputLane.families = append(inputLane.families, formalExternalCallInputFamily{family: family, positions: positions})
+					inputLane.families = append(inputLane.families, formalExternalCallInputFamily{family: family, positions: positions, slots: familyLayout.Slots()})
 				}
 			}
 			wire.lanes = append(wire.lanes, inputLane)
+		}
+		// Operand dynamic-read authority is deliberately separate from the
+		// complete provider frame.  The cursor below owns when these roots are
+		// selected; the provider input itself contains only static/capability
+		// lanes unless it explicitly declared one through its capability.
+		for _, lane := range operandLayout.Lanes() {
+			if !dynamicLanes.Has(lane.ID()) {
+				continue
+			}
+			group, exact := groups[lane.ID()]
+			if !exact || group.lane != lane {
+				return formalExternalCallProvider{}, fmt.Errorf("dynamic input lane %q is absent", lane.ID())
+			}
+			inputLane := formalExternalCallInputLane{group: group}
+			if group.kind == formalFiberGroupCoordinateLane {
+				inputLane.coordinate, err = body.productDomain.SealCoordinateFormalBoundaryFactorPlan(projection, group.lane)
+				if err != nil {
+					return formalExternalCallProvider{}, fmt.Errorf("dynamic input lane %q projection plan: %w", lane.ID(), err)
+				}
+				for _, familyLayout := range inputLane.coordinate.FamilyLayouts() {
+					var family formalCoordinateFamilyFiberGroup
+					found := false
+					for _, candidate := range group.coordinateFamilies {
+						if coordinateFamilySame(candidate.family, familyLayout.Family()) {
+							family, found = candidate, true
+							break
+						}
+					}
+					if !found {
+						return formalExternalCallProvider{}, fmt.Errorf("dynamic input family is outside lane %q", lane.ID())
+					}
+					positions := make([]int, len(familyLayout.Slots()))
+					for slotIndex, slot := range familyLayout.Slots() {
+						position, exact := formalCoordinatePosition(body.productDomain, span, family, slot)
+						if !exact {
+							return formalExternalCallProvider{}, fmt.Errorf("dynamic input coordinate is outside frozen family")
+						}
+						positions[slotIndex] = position
+					}
+					inputLane.families = append(inputLane.families, formalExternalCallInputFamily{family: family, positions: positions, slots: familyLayout.Slots()})
+				}
+			}
+			wire.dynamicDirectory = append(wire.dynamicDirectory, formalExternalCallDynamicDirectory{lane: lane, group: group, rekey: span.rekey, coordinate: inputLane.coordinate, families: inputLane.families})
 		}
 		for _, query := range layout.TypestateResourceQueries() {
 			queryPlan, queryErr := body.productDomain.SealTypestateResourceFormalQueryPlan(query, projection)
@@ -830,7 +1043,7 @@ func freezeFormalExternalCallProviderAtPath(
 					}
 					positions[slotIndex] = position
 				}
-				queryInput.path.families = append(queryInput.path.families, formalExternalCallInputFamily{family: family, positions: positions})
+				queryInput.path.families = append(queryInput.path.families, formalExternalCallInputFamily{family: family, positions: positions, slots: familyLayout.Slots()})
 			}
 			queryInput.ordinals = append(queryInput.ordinals, typestateGroup.members...)
 			for _, family := range queryInput.path.families {
@@ -843,22 +1056,41 @@ func freezeFormalExternalCallProviderAtPath(
 			wire.typestateQueries = append(wire.typestateQueries, queryInput)
 		}
 		if wire.hasValuesTop {
-			wire.ordinals = append(wire.ordinals, valuesTop.ordinal)
+			wire.staticOrdinals = append(wire.staticOrdinals, valuesTop.ordinal)
 		}
 		for _, member := range wire.values {
-			wire.ordinals = append(wire.ordinals, member.ordinal)
+			wire.staticOrdinals = append(wire.staticOrdinals, member.ordinal)
 		}
 		for _, lane := range wire.lanes {
+			target := &wire.staticOrdinals
 			if lane.group.kind == formalFiberGroupOrdinaryLane {
-				wire.ordinals = append(wire.ordinals, lane.group.members...)
+				*target = append(*target, lane.group.members...)
 				continue
 			}
 			for _, family := range lane.families {
-				wire.ordinals = append(wire.ordinals, family.family.skeleton)
+				*target = append(*target, family.family.skeleton)
 				for _, position := range family.positions {
-					wire.ordinals = append(wire.ordinals, family.family.scalars[position])
+					*target = append(*target, family.family.scalars[position])
 				}
 			}
+		}
+		for _, directory := range wire.dynamicDirectory {
+			if directory.group.kind == formalFiberGroupOrdinaryLane {
+				wire.dynamicOrdinals = append(wire.dynamicOrdinals, directory.group.members...)
+				continue
+			}
+			for _, family := range directory.families {
+				wire.dynamicOrdinals = append(wire.dynamicOrdinals, family.family.skeleton)
+				for _, position := range family.positions {
+					wire.dynamicOrdinals = append(wire.dynamicOrdinals, family.family.scalars[position])
+				}
+			}
+		}
+		// Typestate queries are independently sealed query programs rather than
+		// operand-owned DynamicRead reads; retain their historical behavior in
+		// the static materialization phase.
+		for _, query := range wire.typestateQueries {
+			wire.staticOrdinals = append(wire.staticOrdinals, query.ordinals...)
 		}
 		if wire.readsDiag {
 			wire.diagnostics = diagnostic
@@ -866,16 +1098,11 @@ func freezeFormalExternalCallProviderAtPath(
 			if !exact {
 				return formalExternalCallProvider{}, fmt.Errorf("diagnostics ordinal is absent")
 			}
-			wire.ordinals = append(wire.ordinals, ordinal)
+			wire.staticOrdinals = append(wire.staticOrdinals, ordinal)
 		}
-		sort.Slice(wire.ordinals, func(i, j int) bool { return wire.ordinals[i] < wire.ordinals[j] })
-		write := 0
-		for _, ordinal := range wire.ordinals {
-			if write == 0 || wire.ordinals[write-1] != ordinal {
-				wire.ordinals[write], write = ordinal, write+1
-			}
-		}
-		wire.ordinals = wire.ordinals[:write]
+		wire.staticOrdinals = formalExternalCallCanonicalOrdinals(wire.staticOrdinals)
+		wire.dynamicOrdinals = formalExternalCallCanonicalOrdinals(wire.dynamicOrdinals)
+		wire.ordinals = formalExternalCallCanonicalOrdinals(append(append([]formalFiberOrdinal(nil), wire.staticOrdinals...), wire.dynamicOrdinals...))
 		wires[wireIndex] = wire
 	}
 	var guardDemands []formalQualifiedGuardDemand
@@ -1194,6 +1421,373 @@ func (a *formalTupleAlgebra) bindFormalExternalCallInput(
 	return provider.input.BindFrame(operands)
 }
 
+// materializeFormalExternalCallDynamicDirectory answers one frozen dynamic
+// lane directory from a sparse view.  The caller must have selected every
+// requested ordinal first: absent is malformed, while a selected zero leaf is
+// the domain-owned Bottom/default spelling and is handled only through the
+// coordinate formal boundary plan.
+func (a *formalTupleAlgebra) materializeFormalExternalCallDynamicDirectory(
+	plan *formalExternalCallStep,
+	wire formalExternalCallWire,
+	view formalSparseLeafView,
+	directory formalExternalCallDynamicDirectory,
+) (state.LaneFactor, error) {
+	if a == nil || plan == nil || view.authority == nil || directory.group.lane != directory.lane {
+		return state.LaneFactor{}, errFormalComponentMalformed
+	}
+	if directory.group.kind == formalFiberGroupOrdinaryLane {
+		factor, err := view.laneFactor(directory.group)
+		if err != nil {
+			return state.LaneFactor{}, err
+		}
+		return plan.body.productDomain.RekeyOrdinaryLaneFactorFormalPublication(wire.projection, factor)
+	}
+	if directory.group.kind != formalFiberGroupCoordinateLane {
+		return state.LaneFactor{}, errFormalComponentMalformed
+	}
+	families := make([]state.CoordinateFormalBoundaryFamilyOperands, len(directory.families))
+	for familyIndex, familyPlan := range directory.families {
+		skeletonLeaf, present := view.leaf(familyPlan.family.skeleton)
+		if !present {
+			return state.LaneFactor{}, errFormalComponentMalformed
+		}
+		var err error
+		if skeletonLeaf == 0 {
+			families[familyIndex].Skeleton, err = view.authority.product.CoordinateSkeletonBottom(familyPlan.family.family, view.span.keys)
+		} else {
+			terminal, terminalErr := view.authority.terminal(skeletonLeaf)
+			if terminalErr != nil || terminal.kind != formalComponentCoordinateSkeleton ||
+				!coordinateFamilySame(terminal.skeleton.Family(), familyPlan.family.family) {
+				return state.LaneFactor{}, errFormalComponentMalformed
+			}
+			families[familyIndex].Skeleton = terminal.skeleton
+		}
+		if err != nil {
+			return state.LaneFactor{}, err
+		}
+		families[familyIndex].Scalars = make([]state.CoordinateScalarFactor, len(familyPlan.positions))
+		for scalarIndex, position := range familyPlan.positions {
+			if position < 0 || position >= len(familyPlan.family.scalars) {
+				return state.LaneFactor{}, errFormalComponentMalformed
+			}
+			leaf, present := view.leaf(familyPlan.family.scalars[position])
+			if !present {
+				return state.LaneFactor{}, errFormalComponentMalformed
+			}
+			if leaf == 0 {
+				continue
+			}
+			terminal, terminalErr := view.authority.terminal(leaf)
+			if terminalErr != nil || terminal.kind != formalComponentCoordinateScalar {
+				return state.LaneFactor{}, errFormalComponentMalformed
+			}
+			families[familyIndex].Scalars[scalarIndex] = terminal.scalar
+		}
+	}
+	return plan.body.productDomain.ApplyCoordinateFormalBoundaryFactorPlan(directory.coordinate, families)
+}
+
+// formalExternalCallDynamicEvidence preserves the existing complete-frame
+// behavior while routing it through the cursor callback.  It is intentionally
+// also the fail-closed bridge used by the staged evaluator: the next change
+// narrows its selected directories to cursor demands, but a missing directory
+// is already an error rather than a fabricated State/default.
+func (a *formalTupleAlgebra) formalExternalCallDynamicEvidence(
+	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
+	views []formalSparseLeafView,
+	point cfg.Point,
+	query state.DynamicReadQuery,
+) (state.DynamicReadEvidence, error) {
+	if a == nil || plan == nil || provider == nil || len(views) != len(provider.wires) {
+		return state.DynamicReadEvidence{}, errFormalComponentMalformed
+	}
+	var factors []state.LaneFactor
+	for index, wire := range provider.wires {
+		if wire.point != point {
+			continue
+		}
+		for _, directory := range wire.dynamicDirectory {
+			factor, err := a.materializeFormalExternalCallDynamicDirectory(plan, wire, views[index], directory)
+			if err != nil {
+				return state.DynamicReadEvidence{}, fmt.Errorf("transformer: materialize dynamic external-call lane %q: %w", directory.lane.ID(), err)
+			}
+			found := -1
+			for factorIndex := range factors {
+				if factors[factorIndex].Lane() == factor.Lane() {
+					found = factorIndex
+					break
+				}
+			}
+			if found < 0 {
+				factors = append(factors, factor)
+				continue
+			}
+			joined, err := plan.body.productDomain.LaneJoin(factors[found], factor)
+			if err != nil {
+				return state.DynamicReadEvidence{}, err
+			}
+			factors[found] = joined
+		}
+	}
+	if len(factors) == 0 {
+		return state.DynamicReadEvidence{}, fmt.Errorf("transformer: dynamic external-call point %d has no frozen directory", point)
+	}
+	return plan.body.productDomain.ProjectDynamicReadEvidenceFactors(query, factors)
+}
+
+func (a *formalTupleAlgebra) formalExternalCallDynamicBatch(
+	plan *formalExternalCallStep,
+	wire formalExternalCallWire,
+	view formalSparseLeafView,
+	cursor state.DynamicReadDemandCursor,
+) (state.DynamicReadEvidenceBatch, error) {
+	demands := cursor.Demands()
+	batch := state.DynamicReadEvidenceBatch{}
+	find := func(lane state.ProductLane) (*formalExternalCallDynamicDirectory, error) {
+		for index := range wire.dynamicDirectory {
+			if wire.dynamicDirectory[index].lane == lane {
+				return &wire.dynamicDirectory[index], nil
+			}
+		}
+		return nil, fmt.Errorf("transformer: dynamic-read demand lane %q is outside frozen wire", lane.ID())
+	}
+	for _, lane := range demands.OrdinaryLanes() {
+		directory, err := find(lane)
+		if err != nil {
+			return state.DynamicReadEvidenceBatch{}, err
+		}
+		factor, err := a.materializeFormalExternalCallDynamicDirectory(plan, wire, view, *directory)
+		if err != nil {
+			return state.DynamicReadEvidenceBatch{}, err
+		}
+		projected, projectErr := cursor.ProjectOrdinaryDemand(lane, factor)
+		if projectErr != nil {
+			return state.DynamicReadEvidenceBatch{}, projectErr
+		}
+		batch.Ordinary = append(batch.Ordinary, projected)
+	}
+	for _, demand := range demands.CoordinateDemands() {
+		var directory *formalExternalCallDynamicDirectory
+		var family *formalExternalCallInputFamily
+		for directoryIndex := range wire.dynamicDirectory {
+			candidate := &wire.dynamicDirectory[directoryIndex]
+			for familyIndex := range candidate.families {
+				if candidate.families[familyIndex].family.family == demand.Family() {
+					directory, family = candidate, &candidate.families[familyIndex]
+					break
+				}
+			}
+			if family != nil {
+				break
+			}
+		}
+		if directory == nil || family == nil {
+			return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: dynamic-read demand family %q is outside frozen wire", demand.Family().ID())
+		}
+		answer := state.DynamicReadCoordinateBatch{Family: demand.Family(), HasSkeleton: demand.NeedsSkeleton()}
+		leaf, present := view.leaf(family.family.skeleton)
+		if !present {
+			return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: demanded dynamic-read skeleton was not selected")
+		}
+		var sourceSkeleton state.CoordinateFamilySkeleton
+		if leaf == 0 {
+			var err error
+			sourceSkeleton, err = view.authority.product.CoordinateSkeletonBottom(family.family.family, view.span.keys)
+			if err != nil {
+				return state.DynamicReadEvidenceBatch{}, err
+			}
+		} else {
+			terminal, err := view.authority.terminal(leaf)
+			if err != nil || terminal.kind != formalComponentCoordinateSkeleton || terminal.skeleton.Family() != demand.Family() {
+				return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: demanded dynamic-read skeleton has malformed formal terminal")
+			}
+			sourceSkeleton = terminal.skeleton
+		}
+		sourceScalars := make([]state.CoordinateScalarFactor, len(demand.Slots()))
+		for slotIndex, target := range demand.Slots() {
+			mappedFamily, source, position, sourceErr := formalExternalCallDynamicDemandSource(plan.body.productDomain, view.span, *directory, target)
+			if sourceErr != nil {
+				return state.DynamicReadEvidenceBatch{}, sourceErr
+			}
+			if mappedFamily == nil || mappedFamily != family || position < -1 || position >= len(family.family.scalars) {
+				return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: demanded dynamic-read slot is outside frozen family")
+			}
+			if position < 0 {
+				defaultScalar, defaultErr := plan.body.productDomain.CoordinateDefault(sourceSkeleton, source)
+				if defaultErr != nil {
+					return state.DynamicReadEvidenceBatch{}, defaultErr
+				}
+				sourceScalars[slotIndex] = defaultScalar
+				continue
+			}
+			scalarLeaf, scalarPresent := view.leaf(family.family.scalars[position])
+			if !scalarPresent {
+				return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: demanded dynamic-read scalar was not selected")
+			}
+			if scalarLeaf == 0 {
+				defaultScalar, defaultErr := plan.body.productDomain.CoordinateDefault(sourceSkeleton, source)
+				if defaultErr != nil {
+					return state.DynamicReadEvidenceBatch{}, defaultErr
+				}
+				sourceScalars[slotIndex] = defaultScalar
+				continue
+			}
+			terminal, terminalErr := view.authority.terminal(scalarLeaf)
+			if terminalErr != nil || terminal.kind != formalComponentCoordinateScalar {
+				return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: demanded dynamic-read scalar has malformed formal terminal")
+			}
+			sourceScalars[slotIndex] = terminal.scalar
+		}
+		targetSkeleton, targetScalars, rekeyErr := plan.body.productDomain.RekeyFormalBoundaryCoordinateEvidence(
+			directory.coordinate, demand.Family(), sourceSkeleton, sourceScalars,
+		)
+		if rekeyErr != nil || len(targetScalars) != len(demand.Slots()) {
+			if rekeyErr == nil {
+				rekeyErr = errFormalComponentMalformed
+			}
+			return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: rekey dynamic-read coordinate evidence: %w", rekeyErr)
+		}
+		if demand.NeedsSkeleton() {
+			answer.Skeleton = targetSkeleton
+		}
+		for slotIndex, target := range demand.Slots() {
+			equal, equalErr := plan.body.productDomain.CoordinateSlotEqual(targetScalars[slotIndex].Slot(), target)
+			if equalErr != nil || !equal {
+				if equalErr == nil {
+					equalErr = errFormalComponentMalformed
+				}
+				return state.DynamicReadEvidenceBatch{}, fmt.Errorf("transformer: rekeyed dynamic-read coordinate does not match cursor demand: %w", equalErr)
+			}
+			answer.Scalars = append(answer.Scalars, targetScalars[slotIndex])
+		}
+		batch.Coordinate = append(batch.Coordinate, answer)
+	}
+	return batch, nil
+}
+
+type formalExternalCallDemandOutcome struct {
+	guard   decisionRef
+	outcome callpayload.CallOutcome
+}
+
+type formalExternalCallResolvedDemand struct {
+	point    cfg.Point
+	evidence state.DynamicReadEvidence
+}
+
+// evaluateFormalExternalCallProviderDemandDriven resumes one suspended
+// operand query under its parent guard.  Each cursor round adds only the
+// frozen ordinals named by that round; a demand miss is returned as an error
+// before the cursor can advance.  This is an acyclic finite traversal of the
+// registered demand protocol, not a solver iteration.
+func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderDemandDriven(
+	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
+	tuples []formalRelationTuple,
+	parent decisionRef,
+	ordinals [][]formalFiberOrdinal,
+	point cfg.Point,
+	cursor state.DynamicReadDemandCursor,
+	resolved []formalExternalCallResolvedDemand,
+) ([]formalExternalCallDemandOutcome, error) {
+	if len(tuples) != len(provider.wires) || len(ordinals) != len(provider.wires) || cursor.Complete() {
+		return nil, errFormalComponentMalformed
+	}
+	index := -1
+	for candidate, wire := range provider.wires {
+		if wire.point == point {
+			if index >= 0 {
+				return nil, fmt.Errorf("transformer: dynamic external-call point %d is ambiguous", point)
+			}
+			index = candidate
+		}
+	}
+	if index < 0 {
+		return nil, fmt.Errorf("transformer: dynamic external-call point %d is absent", point)
+	}
+	span, _, _, spanOK := a.span(plan.variable)
+	if !spanOK {
+		return nil, errFormalComponentForeignOwner
+	}
+	demanded, err := provider.wires[index].demandOrdinals(plan.body.productDomain, span, cursor.Demands())
+	if err != nil {
+		return nil, fmt.Errorf("transformer: lower dynamic-read demand ordinals: %w", err)
+	}
+	nextOrdinals := make([][]formalFiberOrdinal, len(ordinals))
+	for wireIndex := range ordinals {
+		nextOrdinals[wireIndex] = append([]formalFiberOrdinal(nil), ordinals[wireIndex]...)
+	}
+	nextOrdinals[index] = formalExternalCallCanonicalOrdinals(append(nextOrdinals[index], demanded...))
+	projections := make([]formalSparseTupleProjection, len(tuples))
+	for wireIndex := range tuples {
+		projections[wireIndex] = formalSparseTupleProjection{tuple: tuples[wireIndex], ordinals: nextOrdinals[wireIndex]}
+		for _, query := range provider.wires[wireIndex].typestateQueries {
+			root, queryErr := a.compileFormalTypestateResourceQuery(tuples[wireIndex], query)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			projections[wireIndex].derived = append(projections[wireIndex].derived, root)
+		}
+	}
+	regions, err := a.partitionSparseLeafViewsUnderGuard(projections, nil, parent)
+	if err != nil {
+		return nil, err
+	}
+	var out []formalExternalCallDemandOutcome
+	for _, region := range regions {
+		if len(region.views) != len(provider.wires) || region.guard == decisionFalse {
+			return nil, errDecisionMalformed
+		}
+		branch := cursor
+		batch, err := a.formalExternalCallDynamicBatch(plan, provider.wires[index], region.views[index], branch)
+		if err != nil {
+			return nil, fmt.Errorf("transformer: materialize dynamic-read demand batch: %w", err)
+		}
+		if err := branch.Resume(batch); err != nil {
+			return nil, fmt.Errorf("transformer: resume dynamic-read demand cursor: %w", err)
+		}
+		if !branch.Complete() {
+			next, err := a.evaluateFormalExternalCallProviderDemandDriven(plan, provider, tuples, region.guard, nextOrdinals, point, branch, resolved)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, next...)
+			continue
+		}
+		evidence, complete := branch.Evidence()
+		if !complete {
+			return nil, errFormalComponentMalformed
+		}
+		completed := append(append([]formalExternalCallResolvedDemand(nil), resolved...), formalExternalCallResolvedDemand{point: point, evidence: evidence})
+		used := 0
+		outcome, err := a.evaluateFormalExternalCallProviderWithDynamicEvidence(
+			plan, provider, region.views,
+			func(candidate cfg.Point, _ state.DynamicReadQuery) (state.DynamicReadEvidence, bool, error) {
+				if used >= len(completed) || candidate != completed[used].point {
+					return state.DynamicReadEvidence{}, false, nil
+				}
+				evidence := completed[used].evidence
+				used++
+				return evidence, true, nil
+			},
+		)
+		if err != nil {
+			var suspended externalCallOperandSuspension
+			if errors.As(err, &suspended) {
+				nested, nestedErr := plan.body.productDomain.BeginDynamicReadDemandCursor(suspended.query)
+				if nestedErr != nil {
+					return nil, nestedErr
+				}
+				return a.evaluateFormalExternalCallProviderDemandDriven(plan, provider, tuples, region.guard, nextOrdinals, suspended.point, nested, completed)
+			}
+			return nil, err
+		}
+		out = append(out, formalExternalCallDemandOutcome{guard: region.guard, outcome: outcome})
+	}
+	return out, nil
+}
+
 // evaluateFormalExternalCallProvider is the sole formal provider invocation.
 // It consumes a sealed factor frame and returns normalized scratch outcome
 // syntax; publication happens only after the complete factor transaction.
@@ -1202,6 +1796,18 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProvider(
 	provider *formalExternalCallProvider,
 	views []formalSparseLeafView,
 ) (callpayload.CallOutcome, error) {
+	return a.evaluateFormalExternalCallProviderWithDynamicEvidence(plan, provider, views, nil)
+}
+
+func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderWithDynamicEvidence(
+	plan *formalExternalCallStep,
+	provider *formalExternalCallProvider,
+	views []formalSparseLeafView,
+	resolveDynamic externalCallDynamicEvidence,
+) (callpayload.CallOutcome, error) {
+	if a == nil || provider == nil {
+		return callpayload.CallOutcome{}, errFormalComponentMalformed
+	}
 	frame, err := a.bindFormalExternalCallInput(plan, provider, views)
 	if err != nil {
 		return callpayload.CallOutcome{}, err
@@ -1213,8 +1819,15 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProvider(
 	// the complete provider frame. Operand dynamic reads must therefore use the
 	// same concrete address vocabulary as those factors; rebuilding a formal
 	// query here would split one observation across two keyspaces.
-	operands, err := evaluateExternalCallOperands(
+	if resolveDynamic == nil {
+		resolveDynamic = func(point cfg.Point, query state.DynamicReadQuery) (state.DynamicReadEvidence, bool, error) {
+			evidence, evidenceErr := a.formalExternalCallDynamicEvidence(plan, provider, views, point, query)
+			return evidence, evidenceErr == nil, evidenceErr
+		}
+	}
+	operands, err := evaluateExternalCallOperandsWithDynamicEvidence(
 		plan.body, provider.operands, provider.access, frame, concreteExternalCallDynamicQuery(plan.body),
+		resolveDynamic,
 	)
 	if err != nil {
 		return callpayload.CallOutcome{}, err
@@ -1419,6 +2032,8 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 		trace.externalCallProviderInputs += len(provider.wires)
 	}
 	projections := make([]formalSparseTupleProjection, len(provider.wires))
+	tuples := make([]formalRelationTuple, len(provider.wires))
+	initialOrdinals := make([][]formalFiberOrdinal, len(provider.wires))
 	usedPublished := make([]bool, len(published))
 	for index, wire := range provider.wires {
 		tuple := predecessor
@@ -1439,7 +2054,9 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 			}
 			usedPublished[found], tuple = true, published[found]
 		}
-		projections[index] = formalSparseTupleProjection{tuple: tuple, ordinals: wire.ordinals}
+		tuples[index] = tuple
+		initialOrdinals[index] = wire.staticOrdinals
+		projections[index] = formalSparseTupleProjection{tuple: tuple, ordinals: wire.staticOrdinals}
 		for _, query := range wire.typestateQueries {
 			root, err := a.compileFormalTypestateResourceQuery(tuple, query)
 			if err != nil {
@@ -1490,6 +2107,28 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 		return formalExternalCallProviderRelation{}, err
 	}
 	care, outcomeRoot := decisionFalse, decisionFalse
+	publishOutcome := func(guard decisionRef, outcome callpayload.CallOutcome) error {
+		var outcomeMark formalRelationEvalTracePhaseMark
+		if trace != nil {
+			outcomeMark = beginFormalRelationEvalTracePhase(a)
+		}
+		leaf, providerErr := authority.internRawCallOutcome(outcome)
+		if providerErr != nil {
+			return providerErr
+		}
+		outcomeRoot, providerErr = a.decisions.condition(a.ctx, guard, a.decisions.terminal(leaf), outcomeRoot)
+		if providerErr != nil {
+			return providerErr
+		}
+		care, providerErr = a.decisions.apply(a.ctx, uint8(decisionOr), true, care, guard, decisionLeafOr)
+		if providerErr != nil {
+			return providerErr
+		}
+		if trace != nil {
+			finishFormalRelationEvalTracePhase(a, &trace.externalCallProviderOutcome, outcomeMark)
+		}
+		return nil
+	}
 	for _, region := range regions {
 		if len(region.views) != len(provider.wires) || region.guard == decisionFalse {
 			return formalExternalCallProviderRelation{}, errDecisionMalformed
@@ -1497,35 +2136,50 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 		var providerMark formalRelationEvalTracePhaseMark
 		if trace != nil {
 			providerMark = beginFormalRelationEvalTracePhase(a)
+		}
+		outcome, providerErr := a.evaluateFormalExternalCallProviderWithDynamicEvidence(
+			plan, provider, region.views,
+			func(cfg.Point, state.DynamicReadQuery) (state.DynamicReadEvidence, bool, error) {
+				return state.DynamicReadEvidence{}, false, nil
+			},
+		)
+		if trace != nil {
+			finishFormalRelationEvalTracePhase(a, &trace.externalCallProvider, providerMark)
+		}
+		var suspended externalCallOperandSuspension
+		if errors.As(providerErr, &suspended) {
+			cursor, cursorErr := plan.body.productDomain.BeginDynamicReadDemandCursor(suspended.query)
+			if cursorErr != nil {
+				return formalExternalCallProviderRelation{}, cursorErr
+			}
+			outcomes, demandErr := a.evaluateFormalExternalCallProviderDemandDriven(
+				plan, provider, tuples, region.guard, initialOrdinals, suspended.point, cursor, nil,
+			)
+			if demandErr != nil {
+				return formalExternalCallProviderRelation{}, demandErr
+			}
+			for _, demanded := range outcomes {
+				if trace != nil {
+					trace.externalCallProviderEvals++
+					trace.externalCallProviderChildEvals++
+					componentTrace.evals++
+				}
+				if publishErr := publishOutcome(demanded.guard, demanded.outcome); publishErr != nil {
+					return formalExternalCallProviderRelation{}, publishErr
+				}
+			}
+			continue
+		}
+		if providerErr != nil {
+			return formalExternalCallProviderRelation{}, providerErr
+		}
+		if trace != nil {
 			trace.externalCallProviderEvals++
 			trace.externalCallProviderChildEvals++
 			componentTrace.evals++
 		}
-		outcome, providerErr := a.evaluateFormalExternalCallProvider(plan, provider, region.views)
-		if trace != nil {
-			finishFormalRelationEvalTracePhase(a, &trace.externalCallProvider, providerMark)
-		}
-		if providerErr != nil {
-			return formalExternalCallProviderRelation{}, providerErr
-		}
-		var outcomeMark formalRelationEvalTracePhaseMark
-		if trace != nil {
-			outcomeMark = beginFormalRelationEvalTracePhase(a)
-		}
-		leaf, providerErr := authority.internRawCallOutcome(outcome)
-		if providerErr != nil {
-			return formalExternalCallProviderRelation{}, providerErr
-		}
-		outcomeRoot, providerErr = a.decisions.condition(a.ctx, region.guard, a.decisions.terminal(leaf), outcomeRoot)
-		if providerErr != nil {
-			return formalExternalCallProviderRelation{}, providerErr
-		}
-		care, providerErr = a.decisions.apply(a.ctx, uint8(decisionOr), true, care, region.guard, decisionLeafOr)
-		if providerErr != nil {
-			return formalExternalCallProviderRelation{}, providerErr
-		}
-		if trace != nil {
-			finishFormalRelationEvalTracePhase(a, &trace.externalCallProviderOutcome, outcomeMark)
+		if publishErr := publishOutcome(region.guard, outcome); publishErr != nil {
+			return formalExternalCallProviderRelation{}, publishErr
 		}
 	}
 	return formalExternalCallProviderRelation{care: care, outcome: outcomeRoot}, nil

@@ -297,6 +297,18 @@ func (a *formalTupleAlgebra) partitionSparseLeafViewsUnderCare(
 	projections []formalSparseTupleProjection,
 	demands []formalQualifiedGuardDemand,
 ) ([]formalSparseLeafPartition, error) {
+	return a.partitionSparseLeafViewsUnderGuard(projections, demands, decisionTrue)
+}
+
+// partitionSparseLeafViewsUnderGuard is the streaming refinement primitive
+// used by cursor-driven dynamic reads.  additionalCare is an already guarded
+// parent row; the selected roots are therefore partitioned only below that
+// row rather than re-expanding unrelated DD alternatives.
+func (a *formalTupleAlgebra) partitionSparseLeafViewsUnderGuard(
+	projections []formalSparseTupleProjection,
+	demands []formalQualifiedGuardDemand,
+	additionalCare decisionRef,
+) ([]formalSparseLeafPartition, error) {
 	if a == nil || len(projections) == 0 {
 		return nil, errFormalComponentForeignOwner
 	}
@@ -305,7 +317,10 @@ func (a *formalTupleAlgebra) partitionSparseLeafViewsUnderCare(
 	if !ok {
 		return nil, errFormalComponentForeignOwner
 	}
-	care := decisionTrue
+	if additionalCare == decisionFalse {
+		return nil, nil
+	}
+	care := additionalCare
 	canonical := make([][]formalFiberOrdinal, len(projections))
 	positions := make([]formalOrdinalPositions, len(projections))
 	total := len(demands)
