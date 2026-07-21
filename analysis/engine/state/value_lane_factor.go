@@ -177,24 +177,20 @@ func (d ProductDomain) JoinFactorTuples(
 		if !ok || leftFactors[index].Lane() != lane || rightFactors[index].Lane() != lane {
 			return ValueLaneFactor{}, nil, ErrIncompleteLaneFactors
 		}
+		runtime, err := d.validateFactorPair(leftFactors[index], rightFactors[index])
+		if err != nil {
+			return ValueLaneFactor{}, nil, err
+		}
 		// Publication folds complete tuples whose terminal rows commonly share
 		// persistent lane carriers. Representation identity is a proof of exact
 		// equality, so retaining that carrier is the same componentwise join
 		// without repeating the lane's (often map- or product-heavy) lattice
 		// comparison and allocation work.
-		same, err := d.LaneSame(leftFactors[index], rightFactors[index])
-		if err != nil {
-			return ValueLaneFactor{}, nil, err
-		}
-		if same {
+		if runtime.ops.same(leftFactors[index].payload, rightFactors[index].payload) {
 			joined[index] = leftFactors[index]
 			continue
 		}
-		factor, err := d.LaneJoin(leftFactors[index], rightFactors[index])
-		if err != nil {
-			return ValueLaneFactor{}, nil, err
-		}
-		joined[index] = factor
+		joined[index] = LaneFactor{lane: runtime.lane, payload: runtime.ops.join(leftFactors[index].payload, rightFactors[index].payload)}
 	}
 	valueDomain := ValueFactorLattice[key.Value](d.reg)
 	values := leftValues

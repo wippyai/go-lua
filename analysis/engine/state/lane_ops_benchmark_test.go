@@ -54,6 +54,49 @@ func BenchmarkStateDomainJoinIdentical(b *testing.B) {
 	}
 }
 
+// BenchmarkJoinFactorTuplesMostlyShared models lexical-body publication: one
+// terminal differs in a narrow numeric fact while every other factor remains
+// on the same persistent carrier.
+func BenchmarkJoinFactorTuplesMostlyShared(b *testing.B) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	domain := RegisteredProductDomain(reg)
+	slot := key.SymbolValue(symbol.ID(43))
+	pathKey := pathdom.PathKey("sym43@1.value")
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		b.Fatalf("StateKeyFromPathKey(%q) failed", pathKey)
+	}
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		b.Fatalf("FromPathKey(%q) failed", pathKey)
+	}
+
+	left := domain.Lattice().Bottom().
+		WriteValue(reg, slot, presentValue(reg)).
+		WriteLocalPathKey(reg, localKey, presentValue(reg)).
+		FreezeTable(identity.ID{Kind: "table", Site: "factor-join", Index: 1})
+	right := left.WriteNumFloor(ks, stateKey, 1)
+	leftResidual, leftValues := DecomposeValueLane(domain.Lattice(), domain.Normalize(left))
+	leftFactors, err := domain.DecomposeLanes(leftResidual, domain.NonValuesLaneInventory())
+	if err != nil {
+		b.Fatal(err)
+	}
+	rightResidual, rightValues := DecomposeValueLane(domain.Lattice(), domain.Normalize(right))
+	rightFactors, err := domain.DecomposeLanes(rightResidual, domain.NonValuesLaneInventory())
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, err := domain.JoinFactorTuples(leftValues, leftFactors, rightValues, rightFactors); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkStateSeedValues(b *testing.B) {
 	reg := standard.Registry()
 	base := Domain(reg).Bottom()
