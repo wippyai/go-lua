@@ -509,6 +509,11 @@ func freezeFormalRootAssignmentCoordinateSlots(body *relationProgramBody, formal
 			return nil, err
 		}
 		slots = append(slots, rootSlots...)
+		completionSlots, completionErr := body.productDomain.RootAssignmentCompletionCoordinateTargetSlots(formalKeys, target)
+		if completionErr != nil {
+			return nil, completionErr
+		}
+		slots = append(slots, completionSlots...)
 	}
 	if proof, ok := plan.SourcePresenceProof(); ok {
 		slot, err := body.productDomain.PathBranchProofCoordinateSlot(formalKeys, proof)
