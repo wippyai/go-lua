@@ -26,6 +26,24 @@ func TestFreezeRelationProgramOwnsOneImmutableFormalTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFormalTemplateOwnedByProgram(t, program)
+	if !program.relationDependencyFreeze.validFor(program) ||
+		program.relationDependencyFreeze.version != relationDependencyFreezeResultVersion ||
+		len(program.relationDependencyFreeze.tier2.syntax) != len(program.syntax) ||
+		len(program.relationDependencyFreeze.tier2.links) != len(program.links) {
+		t.Fatal("frozen relation program has no sealed full-result-v1 dependency product")
+	}
+	for index := range program.syntax {
+		syntax, link := program.relationDependencyFreeze.tier2.syntax[index], program.relationDependencyFreeze.tier2.links[index]
+		if syntax.body != program.syntax[index].body || syntax.variable != program.syntax[index].variable ||
+			syntax.relation.code != program.syntax[index].relation.code || link.body != program.links[index].body ||
+			link.variable != program.links[index].variable || !link.validFor(syntax.body, syntax.variable) {
+			t.Fatalf("dependency freeze did not retain immutable tier-2 handle %d", index+1)
+		}
+	}
+	if program.relationDependencyFreeze.observability != program.formalRegion ||
+		!program.relationDependencyFreeze.evaluator.validFor(program) {
+		t.Fatal("full-result-v1 did not bind its observable quotient and evaluator")
+	}
 	want := cloneFormalRelationEquations(program.formalTemplate.equations)
 
 	// A run may only borrow frozen equations. Repeated equation lookup must not
@@ -57,6 +75,21 @@ func TestFreezeRelationProgramOwnsOneImmutableFormalTemplate(t *testing.T) {
 	}
 	if !reflect.DeepEqual(program.formalTemplate.equations, want) {
 		t.Fatal("a repeated program freeze mutated the first formal template")
+	}
+}
+
+func TestFreezeRelationProgramBracketsFullResultV1Telemetry(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("relation-program-dependency-freeze-telemetry"))
+	body := lexicalidentity.RootBody(namespace)
+	unit := formalTemplateFreezeUnit(t, body)
+	telemetry := &FreezeTelemetry{}
+	program, err := FreezeRelationProgramWithTelemetry([]RelationProgramUnit{unit}, testAcyclicCallTopology(t, body), telemetry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !program.relationDependencyFreeze.validFor(program) || telemetry.DependencyFreeze.Calls != 1 ||
+		telemetry.DependencyFreeze.Elapsed < 0 {
+		t.Fatalf("dependency-freeze telemetry = %#v, product valid = %t", telemetry.DependencyFreeze, program.relationDependencyFreeze.validFor(program))
 	}
 }
 

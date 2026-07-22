@@ -808,19 +808,17 @@ type RelationProgram struct {
 	tier1 RelationProgramManifest
 	// syntax and links are independently sealed products. They compose by dense
 	// body handle (their shared index/variable), never by a forest back-pointer.
-	syntax           []relationBodySyntaxArtifact
-	links            []relationSCCLinkArtifact
-	registry         *axis.Registry
-	bodies           []relationProgramBody
-	byBody           map[lexicalidentity.StableLexicalBodyID]relationVar
-	recursiveSCCs    [][]relationVar
-	definitions      []relationProgramDefinition
-	formalSlots      *SlotSpace
-	formalFibers     *formalFiberInventory
-	formalComponents *formalComponentTerminalSchema
-	formalRegion     *formalRelationRegionInventory
-	formalGuards     *formalGuardVocabulary
-	formalTemplate   *formalRelationTemplate
+	syntax        []relationBodySyntaxArtifact
+	links         []relationSCCLinkArtifact
+	registry      *axis.Registry
+	bodies        []relationProgramBody
+	byBody        map[lexicalidentity.StableLexicalBodyID]relationVar
+	recursiveSCCs [][]relationVar
+	definitions   []relationProgramDefinition
+	// relationDependencyFreeze is the sole tier-3 full-result-v1 product.
+	// Its promoted fields keep the formal executor's representation-neutral
+	// readers local while ownership remains one immutable dependency freeze.
+	relationDependencyFreeze
 }
 
 // Tier1Manifest returns a detached copy of the structural directory used at
@@ -1274,64 +1272,14 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 		return nil, linkErr
 	}
 	program.links = links
-	for index := range program.syntax {
-		body, bodyErr := program.syntax[index].materializeRelationProgramBody(links[index])
-		if bodyErr != nil {
-			return nil, bodyErr
-		}
-		program.bodies[index] = body
-	}
-	// The temporary SCC workspace is discarded before publication. The final
-	// body view was born complete; no post-seal link mutation remains.
 	telemetry.end(FreezePhaseSCCClosureLinking, sccLinkStarted)
 
-	regionStarted := telemetry.begin(FreezePhaseRegionWTO)
-	formalSlots, err := freezeSlotSpace(program)
-	if err != nil {
-		return nil, err
+	dependencyStarted := telemetry.begin(FreezePhaseDependencyFreeze)
+	dependencyErr := freezeRelationDependencyFreezeFullResultV1(program, telemetry)
+	telemetry.end(FreezePhaseDependencyFreeze, dependencyStarted)
+	if dependencyErr != nil {
+		return nil, dependencyErr
 	}
-	program.formalSlots = formalSlots
-	formalRegion, err := freezeFormalRelationRegionInventory(program)
-	if err != nil {
-		return nil, err
-	}
-	program.formalRegion = formalRegion
-	telemetry.end(FreezePhaseRegionWTO, regionStarted)
-
-	formalFibers, err := freezeFormalFiberInventoryWithSlotsTelemetry(program, formalSlots, telemetry)
-	if err != nil {
-		return nil, err
-	}
-	program.formalFibers = formalFibers
-	// Coordinate and identity footprint closure deliberately sees every lexical
-	// Step. Once those semantic operators are frozen, collapse unobservable
-	// acyclic Step chains before any WTO/template authority is published.
-	quotientStarted := telemetry.begin(FreezePhaseObservableQuotient)
-	if err := formalRegion.freezeObservableStepQuotient(program); err != nil {
-		return nil, err
-	}
-	telemetry.end(FreezePhaseObservableQuotient, quotientStarted)
-
-	templateStarted := telemetry.begin(FreezePhaseTemplateBinding)
-	formalComponents, err := freezeFormalComponentTerminalSchema(program)
-	if err != nil {
-		return nil, err
-	}
-	program.formalComponents = formalComponents
-	formalGuards, err := freezeFormalGuardVocabulary(program)
-	if err != nil {
-		return nil, err
-	}
-	if !formalGuards.valid() {
-		return nil, fmt.Errorf("transformer: formal guard vocabulary failed ownership validation")
-	}
-	program.formalGuards = formalGuards
-	formalTemplate, err := freezeFormalRelationTemplate(program)
-	if err != nil {
-		return nil, err
-	}
-	program.formalTemplate = formalTemplate
-	telemetry.end(FreezePhaseTemplateBinding, templateStarted)
 	return program, nil
 }
 
@@ -1360,7 +1308,7 @@ func linkedFrameEnvironmentRoot(arena *Arena, roots relationRootCarrier, id symb
 // published body views compose them.  In particular linkFrozenFrames never
 // receives program.bodies: cached syntax/body artifacts have no mutation path.
 func freezeRelationSCCLinkArtifacts(program *RelationProgram, ambientRoots [][]AmbientRoot, shapes []Shape) ([]relationSCCLinkArtifact, error) {
-	if program == nil || len(program.syntax) == 0 || len(program.syntax) != len(ambientRoots) || len(program.syntax) != len(shapes) || len(program.syntax) != len(program.bodies) {
+	if program == nil || len(program.syntax) == 0 || len(program.syntax) != len(ambientRoots) || len(program.syntax) != len(shapes) {
 		return nil, fmt.Errorf("transformer: SCC/link artifact has no complete sealed syntax inventory")
 	}
 	links := make([]relationSCCLinkArtifact, len(program.syntax))
