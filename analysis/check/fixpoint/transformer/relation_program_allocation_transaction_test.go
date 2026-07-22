@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -164,6 +165,32 @@ func TestRelationProgramExecutesAllocationAsOneFormalTransaction(t *testing.T) {
 	}
 	if !product.Equal(reg, object.Root(), got.ReadReturnSlot(reg, 0)) {
 		t.Fatal("return and heap root do not share one published identity value")
+	}
+	// The entry-free solve must publish the same allocation CallOutcome after
+	// its stabilized relation is specialized at the concrete root boundary.
+	symbolic, err := executeFormalRelation(t.Context(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, bodyID, state.Domain(reg).Bottom())
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(t.Context(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(bodyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedOutcome, specializedExact, err := specializedPublication.CallOutcome(t.Context(), callPoint)
+	if err != nil || !specializedExact || !callpayload.CallOutcomeRepresentationEqual(callOutcome, specializedOutcome) {
+		t.Fatalf("symbolic allocation CallOutcome = exact:%t equal:%t err:%v", specializedExact, callpayload.CallOutcomeRepresentationEqual(callOutcome, specializedOutcome), err)
 	}
 	factors, factorErr := body.productDomain.Decompose(got)
 	if factorErr != nil {
