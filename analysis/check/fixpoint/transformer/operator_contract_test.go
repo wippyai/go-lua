@@ -57,6 +57,13 @@ func TestFrozenOperatorContractCatalogCoversEveryFormalStepCapability(t *testing
 	}
 }
 
+func TestFrozenOperatorContractCatalogHasCanonicalContentIdentity(t *testing.T) {
+	first, second := FrozenOperatorContractCatalog(), FrozenOperatorContractCatalog()
+	if first.ContentID() != second.ContentID() || string(first.CanonicalBytes()) != string(second.CanonicalBytes()) {
+		t.Fatal("frozen operator catalog content is not deterministic")
+	}
+}
+
 func TestOperatorContractCanonicalContentIgnoresDeclarationOrder(t *testing.T) {
 	first := operatorContractFixture(t)
 	second := operatorContractFixture(t)

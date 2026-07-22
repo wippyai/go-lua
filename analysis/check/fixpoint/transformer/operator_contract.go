@@ -286,6 +286,31 @@ type operatorContractProfile struct {
 	operands []AccessRole
 }
 
+// OperatorContractCatalog is the immutable, representation-neutral catalog
+// that Stage-2 lowerings target. A change to the vocabulary or a required
+// operand role changes its content identity and therefore dependent artifacts.
+type OperatorContractCatalog struct{}
+
+func (OperatorContractCatalog) CanonicalBytes() []byte {
+	encoded := make([]byte, 0, 512)
+	encoded = appendCanonicalText(encoded, "operator-contract-catalog/content-v1")
+	encoded = appendCanonicalUint64(encoded, uint64(len(frozenOperatorContractProfiles)))
+	for _, profile := range frozenOperatorContractProfiles {
+		encoded = appendCanonicalText(encoded, string(profile.kind))
+		encoded = appendCanonicalUint64(encoded, uint64(len(profile.operands)))
+		for _, operand := range profile.operands {
+			encoded = appendCanonicalText(encoded, string(operand))
+		}
+	}
+	return encoded
+}
+
+func (catalog OperatorContractCatalog) ContentID() ContentID {
+	return contentID(catalog.CanonicalBytes())
+}
+
+func FrozenOperatorContractCatalog() OperatorContractCatalog { return OperatorContractCatalog{} }
+
 // frozenOperatorContractProfiles is the Stage-1 complete transfer vocabulary.
 // Adding a relation-step capability requires adding a profile in the same
 // commit; the catalog test makes an unowned semantic family a freeze failure.
@@ -361,7 +386,7 @@ func canonicalOperatorContract(contract OperatorContract) (OperatorContract, err
 	out.Outcomes = canonicalOutcomes(out.Outcomes)
 	out.Dependencies = canonicalDependencies(out.Dependencies)
 	out.DiagnosticOutputs = canonicalDiagnostics(out.DiagnosticOutputs)
-	if !sameAccessRoles(out.Operands, profile.operands) || !selectorsValid(out.Reads) || !selectorsValid(out.Writes) ||
+	if !sameAccessRoles(out.Operands, profile.operands) || !selectorsOwned(out.Reads, out.Occurrence.Owner()) || !selectorsOwned(out.Writes, out.Occurrence.Owner()) ||
 		!classesValid(out.Advances, out.Occurrence.Owner()) || !classesValid(out.AliasSupport, out.Occurrence.Owner()) ||
 		!rootsValid(out.WriteAlphabet, out.Occurrence.Owner()) || !outcomesValid(out.Outcomes) ||
 		!dependenciesValid(out.Dependencies) || !diagnosticsValid(out.DiagnosticOutputs) {
@@ -370,6 +395,11 @@ func canonicalOperatorContract(contract OperatorContract) (OperatorContract, err
 	for _, write := range out.Writes {
 		if write.Root.Valid() && !containsRoot(out.WriteAlphabet, write.Root) {
 			return OperatorContract{}, fmt.Errorf("transformer: operator contract write lies outside its occurrence alphabet")
+		}
+	}
+	for _, descriptor := range out.DiagnosticOutputs {
+		if !selectorsOwned(descriptor.ReadSet, out.Occurrence.Owner()) {
+			return OperatorContract{}, fmt.Errorf("transformer: diagnostic descriptor reads a foreign selector")
 		}
 	}
 	return out, nil
@@ -452,6 +482,18 @@ func stringsSortedUnique(values []string) bool {
 func selectorsValid(values []ContractSelector) bool {
 	for index, value := range values {
 		if !value.valid() || index != 0 && values[index-1].equal(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func selectorsOwned(values []ContractSelector, owner lexicalidentity.StableLexicalBodyID) bool {
+	if !selectorsValid(values) {
+		return false
+	}
+	for _, selector := range values {
+		if selector.Root.Valid() && selector.Root.Owner() != owner {
 			return false
 		}
 	}

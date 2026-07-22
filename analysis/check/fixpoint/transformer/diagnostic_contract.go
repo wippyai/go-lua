@@ -154,10 +154,14 @@ func (p DiagnosticPublication) Validate() error {
 	return nil
 }
 
-// DiagnosticDescriptorID returns the content identity of a portable candidate.
-func (d DiagnosticDescriptor) DiagnosticDescriptorID() ContentID {
+// CanonicalBytes returns a portable candidate spelling independent of input
+// slice ordering. A descriptor never includes a caller span or run-local fact
+// capability in its content identity.
+func (d DiagnosticDescriptor) CanonicalBytes() []byte {
+	d.GuardAtoms = canonicalStrings(d.GuardAtoms)
+	d.ReadSet = canonicalSelectors(d.ReadSet)
 	if !d.valid() {
-		return ContentID{}
+		return nil
 	}
 	encoded := make([]byte, 0, 256)
 	encoded = appendCanonicalText(encoded, "diagnostic-descriptor/content-v1")
@@ -175,5 +179,17 @@ func (d DiagnosticDescriptor) DiagnosticDescriptorID() ContentID {
 	encoded = appendCanonicalText(encoded, d.Predicate)
 	encoded = appendCanonicalText(encoded, d.EvidenceRecipe)
 	encoded = appendCanonicalText(encoded, d.BoundaryLens)
-	return contentID(encoded)
+	return encoded
 }
+
+// ContentID returns the canonical content identity of a portable candidate.
+func (d DiagnosticDescriptor) ContentID() ContentID {
+	if encoded := d.CanonicalBytes(); encoded != nil {
+		return contentID(encoded)
+	}
+	return ContentID{}
+}
+
+// DiagnosticDescriptorID is retained as the explicit candidate-identity name
+// at diagnostic publication call sites.
+func (d DiagnosticDescriptor) DiagnosticDescriptorID() ContentID { return d.ContentID() }
