@@ -67,8 +67,8 @@ local got: { id: string } = make()
 			"6 | local got: { id: string } = make()",
 			"↑ assigned value",
 			"because:",
-			"claimed: got is declared as {id: string}",
 			"proven: make(...) has type {id: 1}",
+			"claimed: got is declared as {id: string}",
 			"help: Use a value compatible with the expected type",
 		},
 		RenderNotContains: []string{
