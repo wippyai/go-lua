@@ -830,6 +830,21 @@ func (a *formalTupleAlgebra) applyFormalBranchRelationFactor(
 			}
 		}
 		currentEvaluator := region.views[currentIndex]
+		// BranchRelationFactors are concrete State kernels.  A symbolic Values
+		// operand is already a sealed entry-dependent term, so retain the
+		// current formal image unchanged until entry substitution instead of
+		// decoding it through product.Value here.
+		originalSymbolic, symbolicErr := formalBranchRelationRoleHasSymbolicValue(originalEvaluator, plan.original)
+		if symbolicErr != nil {
+			return formalBranchRelationFactorResult{}, symbolicErr
+		}
+		currentSymbolic, symbolicErr := formalBranchRelationRoleHasSymbolicValue(currentEvaluator, plan.current)
+		if symbolicErr != nil {
+			return formalBranchRelationFactorResult{}, symbolicErr
+		}
+		if originalSymbolic || currentSymbolic {
+			continue
+		}
 		originalFrame, bindErr := a.bindFormalBranchRelationFrame(step.factors, factorIndex, factapply.BranchRelationFactorOriginal, originalEvaluator, plan.original)
 		if bindErr != nil {
 			return formalBranchRelationFactorResult{}, fmt.Errorf("original frame: %w", bindErr)
@@ -1154,6 +1169,36 @@ func (a *formalTupleAlgebra) bindFormalBranchRelationFrame(factors factapply.Bra
 	return factors.BindFactorFrame(index, role, factapply.BranchRelationFactorOperands{
 		Values: values, ValuesTop: valuesTop, Lanes: lanes, Coordinates: coordinates, Reachable: true,
 	})
+}
+
+func formalBranchRelationRoleHasSymbolicValue(view formalSparseLeafView, plan formalBranchRelationRolePlan) (bool, error) {
+	if view.authority == nil {
+		return false, errFormalComponentForeignOwner
+	}
+	if len(plan.values) == 0 {
+		return false, nil
+	}
+	top, present := view.leaf(formalFiberOrdinal(plan.valueTop))
+	if !present || top > 1 {
+		return false, errFormalComponentMalformed
+	}
+	if top == 1 {
+		return false, nil
+	}
+	for _, valuePlan := range plan.values {
+		leaf, present := view.leaf(formalFiberOrdinal(valuePlan.position))
+		if !present {
+			return false, errFormalComponentMalformed
+		}
+		value, err := formalValueFromLeaf(view.authority, leaf)
+		if err != nil {
+			return false, err
+		}
+		if value.isSymbolic {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (a *formalTupleAlgebra) materializeFormalBranchCoordinateOperandsSparse(evaluator formalSparseLeafView, plan formalBranchRelationCoordinatePlan) (factapply.BranchRelationCoordinateOperands, error) {
