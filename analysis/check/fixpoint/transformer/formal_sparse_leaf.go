@@ -287,7 +287,13 @@ func (l formalSparseLeafView) symbolicValuesIn(ordinals []formalFiberOrdinal) (b
 		if err != nil {
 			return false, err
 		}
-		if terminal.kind == formalComponentBindings || terminal.kind == formalComponentSymbolicValue {
+		if terminal.kind == formalComponentBindings {
+			// Middle carriers retain their paired path binding. They are not
+			// themselves Values leaves, but their presence selects the symbolic
+			// transaction path that rebinds the value-only source term.
+			return true, nil
+		}
+		if terminal.kind == formalComponentSymbolicValue {
 			value, valueErr := formalValueFromLeaf(l.authority, leaf)
 			if valueErr != nil {
 				return false, valueErr

@@ -153,4 +153,32 @@ func TestIrreducibleRegionDirectBodyEntryPreservesPreHeadOutcome(t *testing.T) {
 	if !product.LessOrEq(reg, entryMarker, published.ReadValue(reg, key.ReturnSlot(0))) {
 		t.Fatal("E -> B lost the pre-H return outcome; the irreducible region was entered only through H")
 	}
+
+	// The entry-free relation must retain the direct E -> B alternative until
+	// specialization.  In particular N5 cannot read just the post-H MID
+	// spelling: the joined return has both the entry marker and after-H.
+	symbolic, err := executeFormalRelation(t.Context(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, bodyID, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(t.Context(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(bodyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedReturn, present, err := specializedPublication.PlannedNodeOutput(t.Context(), ret, 0)
+	if err != nil || !present || !product.Equal(reg, published.ReadValue(reg, key.ReturnSlot(0)), specializedReturn.ReadValue(reg, key.ReturnSlot(0))) {
+		t.Fatalf("symbolic irreducible return = present:%t err:%v equal:%t", present, err, product.Equal(reg, published.ReadValue(reg, key.ReturnSlot(0)), specializedReturn.ReadValue(reg, key.ReturnSlot(0))))
+	}
 }
