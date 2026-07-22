@@ -1,7 +1,6 @@
 package factapply
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
@@ -498,57 +496,4 @@ func (t ResolvedObjectLiteralTargetEntryTransaction) ObjectConstructor() (state.
 		values[index] = state.ObjectConstructorValues{Root: t.values[index].Root, Members: append([]product.Value(nil), t.values[index].Members...)}
 	}
 	return t.constructor, values, true
-}
-
-// ApplyConcreteObjectLiteralTargetEntryTransaction is the concrete adapter for
-// the semantic transaction. The constructor is applied by the registered
-// object law and ordered entries by the existing resolved path-store law.
-// Failure or cancellation returns the exact input, never a published prefix.
-func ApplyConcreteObjectLiteralTargetEntryTransaction(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	transaction ResolvedObjectLiteralTargetEntryTransaction,
-	input state.State,
-) (state.State, error) {
-	if ctx.Registry == nil || resolver == nil || ctx.Point != transaction.point || resolver.KeySpace() != transaction.keys || !transaction.Valid(ctx.Registry) {
-		return input, fmt.Errorf("factapply: invalid object-literal target-entry transaction")
-	}
-	if err := objectLiteralTransactionCanceled(ctx); err != nil {
-		return input, err
-	}
-	out := input
-	if transaction.constructor.Valid() {
-		domain := state.RegisteredProductDomain(ctx.Registry)
-		var err error
-		out, err = domain.ApplyObjectConstructor(transaction.constructor, transaction.values, input)
-		if err != nil {
-			return input, err
-		}
-	}
-	if err := objectLiteralTransactionCanceled(ctx); err != nil {
-		return input, err
-	}
-	object := ResolvedPathStoreObject{
-		Entries: append([]ResolvedPathStoreWrite(nil), transaction.entries...), ListFloor: transaction.listFloor,
-	}
-	req := ResolvedPathStoreRequest{Context: ctx, Resolver: resolver, Input: input, Output: out, Transaction: ResolvedPathStoreTransaction{
-		Point: transaction.point, Assignment: ResolvedPathStoreWrite{Target: transaction.target, Value: product.Bottom(ctx.Registry)}, HasAssignment: true,
-	}}
-	out = applyResolvedPathStoreObject(req, out, object)
-	if err := objectLiteralTransactionCanceled(ctx); err != nil {
-		return input, err
-	}
-	return out, nil
-}
-
-func objectLiteralTransactionCanceled(ctx transfer.NodeContext) error {
-	if ctx.Context != nil {
-		if err := ctx.Context.Err(); err != nil {
-			return err
-		}
-	}
-	if token := tokenOf(ctx.Session); token != nil && token.Canceled() {
-		return context.Canceled
-	}
-	return nil
 }

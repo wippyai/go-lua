@@ -3,11 +3,8 @@ package transformer
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -124,23 +121,6 @@ func (t returnTransactionTerm) framesOwnedBits(arena *Arena, owned []uint64) boo
 		}
 	}
 	return true
-}
-
-func (t returnTransactionTerm) resolveInto(reg *axis.Registry, arena *Arena, cursor BindingCursor, context SpecializationContext, values []product.Value) (factapply.ResolvedReturnTransaction, bool) {
-	if len(values) != len(t.sources) {
-		return factapply.ResolvedReturnTransaction{}, false
-	}
-	for index, source := range t.sources {
-		value, exact := arena.evalValue(source, cursor, context)
-		if !exact {
-			return factapply.ResolvedReturnTransaction{}, false
-		}
-		if context.HasEnvironment {
-			value = sourcevalue.PreferExactHeapRoot(reg, nil, context.Environment, value)
-		}
-		values[index] = value
-	}
-	return t.transaction.Bind(reg, values)
 }
 
 func (t returnTransactionTerm) canonical(arena *Arena) string {

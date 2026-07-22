@@ -1,7 +1,6 @@
 package factapply
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
@@ -164,87 +162,6 @@ func TestObjectLiteralTargetEntryTransactionMatchesConcreteOrderedPublication(t 
 		}
 	}
 
-	input := state.Reachable(state.State{})
-	written, writtenOK := writePathAt(reg, input, resolver, point, target, rootValue)
-	if !writtenOK {
-		t.Fatal("seed target write failed")
-	}
-	ctx := transfer.NodeContext{Context: context.Background(), Registry: reg, Point: point}
-	got, err := ApplyConcreteObjectLiteralTargetEntryTransaction(ctx, resolver, transaction, written)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantSources := &recordingSourceValues{values: values}
-	cache := newObjectLiteralSourceCache(point, wantSources, nil, written, written)
-	cache.seed(rootSource, rootValue)
-	want := materializeObjectLiteralHeapBatchWithCache(ctx, resolver, facts.ObjectLiteralView, written, []factflow.ValueSource{rootSource}, typeValues, cache)
-	legacyObject := ResolvedPathStoreObject{ListFloor: objectLiteralContiguousListLengthFloor(mustObjectLiteralView(t, facts, rootSource.ExprRef))}
-	mustObjectLiteralView(t, facts, rootSource.ExprRef).ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		entryTarget, appendOK := entry.AppendSuffixTo(target)
-		value, available := cache.value(entry.Source())
-		if appendOK && available {
-			legacyObject.Entries = append(legacyObject.Entries, ResolvedPathStoreWrite{Target: entryTarget, Value: objectEntryValue(reg, typeValues, entry, value)})
-		}
-		return true
-	})
-	want = applyResolvedPathStoreObject(ResolvedPathStoreRequest{Context: ctx, Resolver: resolver, Input: written, Output: want, Transaction: ResolvedPathStoreTransaction{
-		Point: point, Assignment: ResolvedPathStoreWrite{Target: target, Value: rootValue}, HasAssignment: true,
-	}}, want, legacyObject)
-	assertStateEqual(t, reg, got, want)
-	assertHeapStaticMember(t, reg, resolver.KeySpace(), got, nestedSource.ExprRef, ".left", values[rawSources[9]])
-	targetKey := mustStateKeyForPath(t, resolver, point, target)
-	if floor, ok := got.ReadLenFloor(resolver.KeySpace(), targetKey); !ok || floor != 2 {
-		t.Fatalf("list floor = %d/%t, want 2", floor, ok)
-	}
-}
-
-func TestObjectLiteralTargetEntryTransactionCancellationAndErrorPublishNothing(t *testing.T) {
-	reg := standard.Registry()
-	point := cfg.Point(921)
-	targetSymbol := symbol.ID(921)
-	target := pathdom.NewPath(targetSymbol, "target")
-	rootSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9210, HasExpr: true}
-	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: 9211, HasExpr: true}
-	rootID := testTableLiteralID(rootSource.ExprRef)
-	facts := factflow.NewFacts(factflow.FactsInput{ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
-		rootSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
-			factflow.NewObjectEntryWithMetadata(fieldSuffix("leaf"), entrySource, factflow.SourceSpan{}, ""),
-		}).WithIdentity(rootID),
-	}})
-	builder := visibility.NewBuilder()
-	builder.Define(point, targetSymbol, "target")
-	resolver := visibility.NewResolver(builder.Build())
-	plan, err := PrepareObjectLiteralTargetEntryPlan(reg, typevalue.NewCache(), resolver, facts, point, target, rootSource)
-	if err != nil {
-		t.Fatal(err)
-	}
-	row := make([]luasourcevalue.ObjectLiteralPlanValue, plan.ValueSourceCount())
-	for index := range row {
-		source, _ := plan.ValueSourceAt(index)
-		row[index] = luasourcevalue.ObjectLiteralPlanValue{Value: presentValue(reg), Available: true}
-		if source == rootSource {
-			row[index].Value = product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
-		}
-	}
-	transaction, err := ResolveObjectLiteralTargetEntryTransaction(reg, plan, row)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := state.Reachable(state.State{})
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	got, err := ApplyConcreteObjectLiteralTargetEntryTransaction(transfer.NodeContext{Context: canceled, Registry: reg, Point: point}, resolver, transaction, input)
-	if err == nil || !state.Domain(reg).Equal(got, input) {
-		t.Fatal("canceled transaction published a prefix")
-	}
-	foreign, registryErr := standard.RegistryWithAxes()
-	if registryErr != nil {
-		t.Fatal(registryErr)
-	}
-	got, err = ApplyConcreteObjectLiteralTargetEntryTransaction(transfer.NodeContext{Context: context.Background(), Registry: foreign, Point: point}, resolver, transaction, input)
-	if err == nil || !state.Domain(reg).Equal(got, input) {
-		t.Fatal("foreign transaction published a prefix")
-	}
 }
 
 func TestGuardedObjectConstructorImportsCanonicalPlanIntoInvocationKeySpace(t *testing.T) {

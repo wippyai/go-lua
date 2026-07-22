@@ -1,13 +1,11 @@
 package factapply
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -353,45 +351,4 @@ func (a *PathSemanticAuthority) PreparePathValuePresenceImplications(
 	return a.PreparePresenceImplicationPlan(
 		reg, transaction.point, publications, ConcretePresenceImplicationDescendantInvalidationBarriers,
 	)
-}
-
-// ApplyConcrete executes this plan through the sole concrete closure kernel.
-func (p PresenceImplicationPlan) ApplyConcrete(ctx context.Context, input, output state.State) (state.State, error) {
-	if ctx == nil || p.reg == nil || p.resolver == nil {
-		return input, fmt.Errorf("factapply: invalid path-value presence implication plan")
-	}
-	if len(p.publications) == 0 {
-		return output, nil
-	}
-	result := ApplyConcretePresenceImplications(ConcretePresenceImplicationRequest{
-		Registry: p.reg, Resolver: p.resolver, Point: p.point,
-		Input: input, Output: output, Publications: p.publications,
-		Token:        tokenOf(cancellation.FromContext(ctx)),
-		Cancellation: ConcretePresenceImplicationRollbackNode,
-		Barriers:     p.barriers,
-	})
-	if result.Err != nil {
-		return input, result.Err
-	}
-	if result.Canceled {
-		if err := ctx.Err(); err != nil {
-			return input, err
-		}
-		return input, context.Canceled
-	}
-	return result.Output, nil
-}
-
-// ApplyPathValuePresenceImplications publishes the frozen N2 batch and closes
-// it at the established descendant-invalidation barriers. Cancellation is
-// whole-node transactional: no prefix is returned to the boundary executor.
-func (a *PathSemanticAuthority) ApplyPathValuePresenceImplications(ctx context.Context, reg *axis.Registry, transaction PathValuePresenceImplicationTransaction, input, output state.State) (state.State, error) {
-	if ctx == nil {
-		return input, fmt.Errorf("factapply: invalid path-value presence implication context")
-	}
-	plan, err := a.PreparePathValuePresenceImplications(reg, transaction)
-	if err != nil {
-		return input, err
-	}
-	return plan.ApplyConcrete(ctx, input, output)
 }

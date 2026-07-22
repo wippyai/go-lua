@@ -1,18 +1,13 @@
 package factapply
 
 import (
-	"context"
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -52,36 +47,6 @@ func TestPathValuePresenceImplicationTransactionPublishesAndClosesN2(t *testing.
 	again, _ := immutableTransaction.Step(0)
 	if !again.Implication().TriggerPath().Equal(immutableTrigger) {
 		t.Fatal("N2 transaction exposed mutable trigger-path storage")
-	}
-	builder := visibility.NewBuilder()
-	builder.Define(point, trigger, "trigger")
-	builder.Define(point, target, "target")
-	resolver := visibility.NewResolver(builder.Build())
-	authority := NewPathSemanticAuthority(resolver, nil, nil)
-	input := state.Reachable(state.State{})
-	output := input.
-		WriteValue(reg, key.SymbolValue(trigger), falseValue).
-		WriteValue(reg, key.SymbolValue(target), product.Top())
-	got, err := authority.ApplyPathValuePresenceImplications(context.Background(), reg, transaction, input, output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	targetValue := got.ReadValue(reg, key.SymbolValue(target))
-	if !presence.Equal(product.PresenceOf(targetValue), presence.Present()) {
-		t.Fatalf("closed N2 target presence = %v, want present", product.PresenceOf(targetValue))
-	}
-	if got.PathPresenceImplicationsSnapshot(resolver.KeySpace()).Bottom {
-		t.Fatal("N2 transaction failed to publish implication evidence")
-	}
-
-	canceledContext, session := cancellation.Attach(context.Background())
-	session.Token().Cancel(context.Canceled)
-	rolledBack, err := authority.ApplyPathValuePresenceImplications(canceledContext, reg, transaction, input, output)
-	if err == nil {
-		t.Fatal("pre-canceled N2 authority did not report cancellation")
-	}
-	if !state.Domain(reg).Equal(rolledBack, input) {
-		t.Fatal("canceled N2 authority did not roll back to immutable point input")
 	}
 }
 

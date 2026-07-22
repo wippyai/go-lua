@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -267,83 +265,6 @@ func (p ExternalCallFactorProgram[K]) applyIdentityOutcomeFactors(
 		}
 	}
 	return nil
-}
-
-// prepareConcreteExternalCallFactorProgram is the concrete address adapter.
-// Call-site enumeration happens only at preparation; Apply sees the sealed
-// dense result inventory.
-func prepareConcreteExternalCallFactorProgram(
-	domain state.ProductDomain,
-	point cfg.Point,
-	site factflow.CallSiteView,
-) (ExternalCallFactorProgram[statekey.Value], error) {
-	indices := make([]int, 0, site.ResultTargetCount())
-	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
-		if target.ResultIndex() >= 0 {
-			indices = append(indices, target.ResultIndex())
-		}
-		return true
-	})
-	boundary := domain.CallBoundaryFactorLanes()
-	boundaryIDs := make([]state.LaneID, len(boundary))
-	for index, lane := range boundary {
-		boundaryIDs[index] = lane.ID()
-	}
-	access, err := state.SealTransferAccess(domain, state.TransferAccessConfig{
-		ProviderInputs: []state.TransferInputAccess{{}},
-		LaneCarryReads: state.NewLaneSet(boundaryIDs...), LaneWrites: state.NewLaneSet(boundaryIDs...),
-		ValueCarry: 0, LaneCarry: 0,
-		DiagnosticCarry: 0, ReachableCarry: 0,
-	})
-	if err != nil {
-		return ExternalCallFactorProgram[statekey.Value]{}, err
-	}
-	return PrepareExternalCallFactorProgram(domain, access, point, indices, func(point, result uint32) (statekey.Value, bool) {
-		return statekey.CallResult(point, result), true
-	})
-}
-
-// applyConcreteExternalCallFactorPrefix transposes concrete State into the
-// same factor program used by a formal carrier, then patches it only after the
-// whole transaction succeeds. DiagnosticOutput is returned separately
-// because it is a sibling fixpoint component, never a hidden State lane.
-func applyConcreteExternalCallFactorPrefix(
-	ctx context.Context,
-	token *cancellation.Token,
-	domain state.ProductDomain,
-	point cfg.Point,
-	site factflow.CallSiteView,
-	input state.State,
-	outcome callpayload.CallOutcome,
-) (state.State, callpayload.DiagnosticOutput, error) {
-	if domain.Lattice().Equal(input, domain.Lattice().Bottom()) {
-		// Concrete reachability lives in State; formal execution makes the same
-		// choice through Care before this factor transaction is invoked.
-		return input, callpayload.DiagnosticOutputFromCallOutcome(domain.Registry(), outcome), nil
-	}
-	program, err := prepareConcreteExternalCallFactorProgram(domain, point, site)
-	if err != nil {
-		return input, callpayload.DiagnosticOutput{}, err
-	}
-	factors, err := domain.DecomposeLanes(input, program.Lanes())
-	if err != nil {
-		return input, callpayload.DiagnosticOutput{}, err
-	}
-	output, err := program.Apply(ctx, token, ExternalCallFactorFrame[statekey.Value]{
-		Factors: factors,
-	}, outcome)
-	if err != nil {
-		return input, callpayload.DiagnosticOutput{}, err
-	}
-	out, err := domain.PatchLaneFactors(input, output.Factors)
-	if err != nil {
-		return input, callpayload.DiagnosticOutput{}, err
-	}
-	edit := out.EditValues(domain.Registry())
-	for _, mutation := range output.ResultMutations {
-		edit.Write(mutation.Root, mutation.Value)
-	}
-	return state.Reachable(edit.Done()), output.Diagnostics, nil
 }
 
 func externalCallFactorCanceled(ctx context.Context, token *cancellation.Token) error {

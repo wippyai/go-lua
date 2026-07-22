@@ -101,28 +101,9 @@ func TestFormalPresenceImplicationsUsesCanonicalTransitiveN2WithDescendantBarrie
 	if beforeErr != nil || afterErr != nil || len(beforeRegions) != 1 || len(afterRegions) != 1 {
 		t.Fatalf("formal regions before/after=%d/%d err=%v/%v", len(beforeRegions), len(afterRegions), beforeErr, afterErr)
 	}
-	want, err := body.pathSemantics.ApplyPathValuePresenceImplications(context.Background(), reg, transaction, input, input)
+	_, formalFactors, err := afterRegions[0].evaluator.productFactors()
 	if err != nil {
 		t.Fatal(err)
-	}
-	formalValues, formalFactors, err := afterRegions[0].evaluator.productFactors()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, slot := range []statekey.Value{statekey.SymbolValue(x), statekey.SymbolValue(y), statekey.SymbolValue(z)} {
-		formalSlot, found := formalMiddleSlotForStateKey(program, body, slot)
-		if !found {
-			t.Fatal("formal Values slot is absent")
-		}
-		got := product.Bottom(reg)
-		if formalValues.Top {
-			got = product.Top()
-		} else if value, present := formalValues.Values[formalSlot]; present {
-			got = value
-		}
-		if expected := want.ReadValue(reg, slot); !product.Equal(reg, got, expected) {
-			t.Fatalf("formal/concrete N2 Values mismatch at %v: %v/%v", slot, product.PresenceOf(got), product.PresenceOf(expected))
-		}
 	}
 	formalChild, err := body.productDomain.RekeyStructuralKeyFormal(program.formalFibers.spans[0].rekey, childKey)
 	if err != nil {
@@ -162,8 +143,8 @@ func TestFormalPresenceImplicationsUsesCanonicalTransitiveN2WithDescendantBarrie
 		t.Fatal(err)
 	}
 	gotChild, valid := carrier.ReadPath(formalChild)
-	if !valid || !product.Equal(reg, want.ReadLocalPathKey(reg, childKey), product.Bottom(reg)) || !product.Equal(reg, gotChild, product.Bottom(reg)) {
-		t.Fatalf("formal/concrete N2 descendant barrier retained stale child evidence: valid=%t formal=%v concrete=%v target=%v", valid, product.PresenceOf(gotChild), product.PresenceOf(want.ReadLocalPathKey(reg, childKey)), product.PresenceOf(want.ReadLocalPathKey(reg, absentKey)))
+	if !valid || !product.Equal(reg, gotChild, product.Bottom(reg)) {
+		t.Fatalf("formal N2 descendant barrier retained stale child evidence: valid=%t formal=%v", valid, product.PresenceOf(gotChild))
 	}
 	for _, group := range span.groupDescriptors() {
 		if group.kind == formalFiberGroupValues || group.lane == pathFamily.Lane() {
@@ -242,10 +223,6 @@ func TestFormalPresenceImplicationsContradictionStopsLaterBarrierStages(t *testi
 	}
 	if len(equation.Operator.presenceImplications.writeOrdinals) == 0 || equation.Operator.presenceImplications.writeOrdinals[0] != 0 {
 		t.Fatal("formal contradictory N2 did not declare Care")
-	}
-	want, err := body.pathSemantics.ApplyPathValuePresenceImplications(context.Background(), reg, transaction, input, input)
-	if err != nil || !state.IsBottom(reg, want) {
-		t.Fatalf("concrete contradictory N2 = bottom:%t z=%v rows=%d err:%v", state.IsBottom(reg, want), product.PresenceOf(want.ReadValue(reg, statekey.SymbolValue(z))), len(want.PathPresenceImplicationsSnapshot(resolver.KeySpace()).Implications), err)
 	}
 	execution, err := executeFormalRelation(context.Background(), program)
 	if err != nil {
