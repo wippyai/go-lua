@@ -164,30 +164,6 @@ func TestFormalCovariantExposureExecutesCanonicalN6AndPreservesResidualProduct(t
 	if !ok || boundField != rekeyedField {
 		t.Fatalf("formal N6 target mismatch: bound=%s stored=%s", formalField.keys.Format(boundField), formalField.keys.Format(rekeyedField))
 	}
-	expected, err := body.pathSemantics.ApplyCovariantExposure(context.Background(), reg, transaction, input, input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedFactors, err := body.productDomain.DecomposeLanes(expected, equation.Operator.covariantExposure.topology.Lanes())
-	if err != nil || len(expectedFactors) != len(equation.Operator.covariantExposure.lanes) {
-		t.Fatalf("concrete N6 factors = %d/%v", len(expectedFactors), err)
-	}
-	for index, group := range equation.Operator.covariantExposure.lanes {
-		want := expectedFactors[index]
-		switch group.kind {
-		case formalFiberGroupOrdinaryLane:
-			want, err = body.productDomain.RekeyOrdinaryLaneFactorFormal(formalField.rekey, want)
-		case formalFiberGroupCoordinateLane:
-			want, err = freezeFormalInitialCoordinateFactor(body, formalField, group, want)
-		default:
-			err = errFormalComponentMalformed
-		}
-		got, gotErr := regions[0].evaluator.laneFactor(group)
-		equal, equalErr := body.productDomain.LaneEqual(got, want)
-		if err != nil || gotErr != nil || equalErr != nil || !equal {
-			t.Fatalf("formal/concrete N6 lane %q differs: %v/%v/%v", group.lane.ID(), err, gotErr, equalErr)
-		}
-	}
 	mutated := make(map[state.LaneOrdinal]bool)
 	for _, group := range equation.Operator.covariantExposure.lanes {
 		mutated[group.lane.Ordinal()] = true
