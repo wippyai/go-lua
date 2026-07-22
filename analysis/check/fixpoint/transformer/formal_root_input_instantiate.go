@@ -19,15 +19,6 @@ func (a *formalTupleAlgebra) instantiateRootEquation(equation formalRelationEqua
 	if err := a.validateRootInputEquation(root, equation); err != nil {
 		return formalRelationTuple{}, err
 	}
-	if a.entrySubstitution != nil {
-		substituted, applies, substitutionErr := a.entrySubstitution.substitute(a, root)
-		if substitutionErr != nil {
-			return formalRelationTuple{}, substitutionErr
-		}
-		if applies {
-			return substituted, nil
-		}
-	}
 	span, directory, authority, ok := a.span(root.variable)
 	if !ok || span.forest != a.program.formalFibers {
 		return formalRelationTuple{}, fmt.Errorf("transformer: formal root input has no run-local span")

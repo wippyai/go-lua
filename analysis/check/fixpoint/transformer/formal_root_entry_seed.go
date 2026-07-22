@@ -27,12 +27,6 @@ type formalRootEntrySeed struct {
 // algebra field named after an entry tuple, makes the eventual summary path
 // explicit: a stabilized relation will consume this operation after, not
 // during, its fixed point.
-//
-// Today the executor still installs the result at the root equation before
-// solving.  That compatibility bridge is intentionally narrow and is not a
-// summary cache: relation completion must first make every root-reading factor
-// law symbolic.  In particular, no caller may turn this into a second solve
-// or a concrete fallback.
 type formalRootEntrySubstitution struct {
 	seed formalRootEntrySeed
 }
@@ -110,9 +104,7 @@ func (s formalRootEntrySubstitution) specializeStabilized(ctx context.Context, e
 		}
 		values[cell] = specialized
 	}
-	// Publication is authorized only on this completed concrete image.  The
-	// compatibility executor installs the same capability before solving; this
-	// is its deliberately later counterpart.
+	// Publication is authorized only on this completed concrete image.
 	applyObservations, err := s.specializeApplyObservations(ctx, execution, values)
 	if err != nil {
 		return nil, err
