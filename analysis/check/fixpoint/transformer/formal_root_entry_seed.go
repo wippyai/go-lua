@@ -113,9 +113,78 @@ func (s formalRootEntrySubstitution) specializeStabilized(ctx context.Context, e
 	// Publication is authorized only on this completed concrete image.  The
 	// compatibility executor installs the same capability before solving; this
 	// is its deliberately later counterpart.
+	applyObservations, err := s.specializeApplyObservations(ctx, execution, values)
+	if err != nil {
+		return nil, err
+	}
 	copy := s
 	a.entrySubstitution = &copy
-	return &formalRelationExecution{algebra: a, values: values, internalCallOutcomes: execution.internalCallOutcomes}, nil
+	specialized := &formalRelationExecution{algebra: a, values: values, applyObservations: applyObservations}
+	// Apply outcome DTOs are a completed-relation publication.  In particular,
+	// their Values operands must be read from the concrete product above, never
+	// from the symbolic WTO image retained by the entry-free executor.
+	internalCallOutcomes, err := specialized.detachFormalApplyCallOutcomes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	specialized.internalCallOutcomes = internalCallOutcomes
+	return specialized, nil
+}
+
+// specializeApplyObservations rebuilds only the correlated leaf views of the
+// already-observed Apply inputs.  It preserves the captured boundary
+// publication and does not execute Apply or another relation equation.
+func (s formalRootEntrySubstitution) specializeApplyObservations(
+	ctx context.Context,
+	execution *formalRelationExecution,
+	values map[formalRelationCell]formalRelationTuple,
+) (map[formalRelationCell]formalApplyObservationWitness, error) {
+	observations := cloneFormalApplyObservationWitnesses(execution.applyObservations)
+	if len(observations) == 0 {
+		return observations, nil
+	}
+	for site, witness := range observations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		predecessor, exact := values[witness.predecessorCell]
+		if !exact {
+			return nil, fmt.Errorf("transformer: specialized Apply observation predecessor is absent")
+		}
+		outcomes := make([]formalRelationTuple, len(witness.outcomeCells))
+		for index, cell := range witness.outcomeCells {
+			value, exact := values[cell]
+			if !exact {
+				return nil, fmt.Errorf("transformer: specialized Apply observation target %d is absent", index)
+			}
+			outcomes[index] = value
+		}
+		equation, exact := execution.algebra.program.formalTemplate.equation(site)
+		if !exact {
+			return nil, fmt.Errorf("transformer: specialized Apply observation has no equation")
+		}
+		operator, exact := equation.terminalOperator()
+		if !exact || operator.apply != witness.observation.step {
+			return nil, fmt.Errorf("transformer: specialized Apply observation has foreign ownership")
+		}
+		regions, err := execution.algebra.formalApplyCorrelatedRegions(operator, predecessor, outcomes)
+		if err != nil {
+			return nil, err
+		}
+		if len(regions) != len(witness.observation.regions) {
+			return nil, fmt.Errorf("transformer: specialized Apply observation region count changed")
+		}
+		for index := range regions {
+			if regions[index].guard != witness.observation.regions[index].region.guard {
+				return nil, fmt.Errorf("transformer: specialized Apply observation guard changed")
+			}
+			witness.observation.regions[index].region = regions[index]
+		}
+		witness.predecessorValue = predecessor
+		witness.outcomeValues = outcomes
+		observations[site] = witness
+	}
+	return observations, nil
 }
 
 // specializationEntry augments the prepared concrete tuple with its immutable

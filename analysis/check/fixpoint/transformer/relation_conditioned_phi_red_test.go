@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
@@ -191,6 +192,38 @@ func TestRelationProgramDirectCallPreservesConditionedPhi(t *testing.T) {
 	}
 	if !foundCaller {
 		t.Fatal("formal solve has no caller lexical publication")
+	}
+	bakedOutcome, bakedExact := callerPublication.CallOutcomes[call]
+	if !bakedExact {
+		t.Fatal("entry-baked solve has no direct-call outcome")
+	}
+	// The symbolic WTO product retains the caller's entry-dependent Values
+	// until specialization.  Detaching the Apply observation is therefore a
+	// completed-relation operation: its DTO must exactly match the normal
+	// entry-baked publication after that one specialization pass.
+	symbolic, err := executeFormalRelation(t.Context(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, callerID, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(t.Context(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(callerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedOutcome, specializedExact, err := specializedPublication.CallOutcome(t.Context(), call)
+	if err != nil || !specializedExact || !callpayload.CallOutcomeRepresentationEqual(bakedOutcome, specializedOutcome) {
+		t.Fatalf("specialized direct-call outcome = exact:%t equal:%t err:%v", specializedExact, callpayload.CallOutcomeRepresentationEqual(bakedOutcome, specializedOutcome), err)
 	}
 	output, ok := callerPublication.PlannedNodeOutputs[callerReturn]
 	if !ok || !callerPublication.NodeOutputReachable[callerReturn] {

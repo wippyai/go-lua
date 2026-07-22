@@ -42,6 +42,13 @@ func (e *formalRelationExecution) detachFormalApplyCallOutcomes(
 	program := e.algebra.program
 	out := make(map[formalRelationCell]callpayload.CallOutcomeAlternativeSet, len(program.formalTemplate.applyCells))
 	factorOrdinals := make(map[relationVar][]int)
+	observations := e.applyObservations
+	// Narrow test-only execution fixtures may construct an execution around a
+	// prepared algebra directly. Completed solver executions always carry their
+	// own snapshot so specialization cannot mutate the symbolic witness.
+	if observations == nil {
+		observations = e.algebra.applyObservations
+	}
 	for _, site := range program.formalTemplate.applyCells {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -50,7 +57,7 @@ func (e *formalRelationExecution) detachFormalApplyCallOutcomes(
 		if !present {
 			return nil, fmt.Errorf("transformer: formal Apply CallOutcome site is absent")
 		}
-		witness, witnessed := e.algebra.applyObservations[site.cell]
+		witness, witnessed := observations[site.cell]
 		if current.bottom() {
 			out[site.cell] = callpayload.CallOutcomeAlternativeSet{}
 			continue

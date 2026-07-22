@@ -16,6 +16,7 @@ import (
 type formalRelationExecution struct {
 	algebra              *formalTupleAlgebra
 	values               map[formalRelationCell]formalRelationTuple
+	applyObservations    map[formalRelationCell]formalApplyObservationWitness
 	internalCallOutcomes map[formalRelationCell]callpayload.CallOutcomeAlternativeSet
 }
 
@@ -33,7 +34,7 @@ type formalRelationExecution struct {
 // influence without one fails the entire transaction; no partial map or
 // fallback result is published.
 func executeFormalRelation(ctx context.Context, program *RelationProgram) (*formalRelationExecution, error) {
-	return executeFormalRelationWithRootEntry(ctx, program, nil)
+	return executeFormalRelationWithRootEntry(ctx, program, nil, false)
 }
 
 // executeFormalRootRelation invokes the frozen equation system for one
@@ -51,10 +52,10 @@ func executeFormalRootRelation(ctx context.Context, program *RelationProgram, bo
 	if err != nil {
 		return nil, err
 	}
-	return executeFormalRelationWithRootEntry(ctx, program, &rootEntry)
+	return executeFormalRelationWithRootEntry(ctx, program, &rootEntry, true)
 }
 
-func executeFormalRelationWithRootEntry(ctx context.Context, program *RelationProgram, rootEntry *formalRootEntrySeed) (*formalRelationExecution, error) {
+func executeFormalRelationWithRootEntry(ctx context.Context, program *RelationProgram, rootEntry *formalRootEntrySeed, detachCallOutcomes bool) (*formalRelationExecution, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("transformer: formal relation execution has no context")
 	}
@@ -114,13 +115,39 @@ func executeFormalRelationWithRootEntry(ctx context.Context, program *RelationPr
 	if err := algebra.err(); err != nil {
 		return nil, err
 	}
-	execution := &formalRelationExecution{algebra: algebra, values: values}
+	execution := &formalRelationExecution{
+		algebra:           algebra,
+		values:            values,
+		applyObservations: cloneFormalApplyObservationWitnesses(algebra.applyObservations),
+	}
+	if !detachCallOutcomes {
+		// The entry-free relation is a symbolic stabilized product.  Its Apply
+		// observations may still contain entry-dependent Values, so they are
+		// intentionally retained as interpreter input rather than materialized
+		// into caller CallOutcomes here.  Root specialization completes that
+		// product and performs the detached publication boundary.
+		return execution, nil
+	}
 	internalCallOutcomes, err := execution.detachFormalApplyCallOutcomes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	execution.internalCallOutcomes = internalCallOutcomes
 	return execution, nil
+}
+
+func cloneFormalApplyObservationWitnesses(in map[formalRelationCell]formalApplyObservationWitness) map[formalRelationCell]formalApplyObservationWitness {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[formalRelationCell]formalApplyObservationWitness, len(in))
+	for cell, witness := range in {
+		witness.outcomeCells = append([]formalRelationCell(nil), witness.outcomeCells...)
+		witness.outcomeValues = append([]formalRelationTuple(nil), witness.outcomeValues...)
+		witness.observation.regions = append([]formalApplyObservedRegion(nil), witness.observation.regions...)
+		out[cell] = witness
+	}
+	return out
 }
 
 func validateFormalRelationExecutionProgram(program *RelationProgram) error {
