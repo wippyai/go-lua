@@ -156,3 +156,41 @@ func TestRelationProgramCoverageGuardFailsClosedForLifecycleOutsideDeclaredClass
 		t.Fatalf("outside-closure access error = %#v", err)
 	}
 }
+
+func TestRelationProgramCoverageGuardFailsClosedForNilSafetyOutsideDeclaredClass(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("nil-safety-observation-class-coverage"))
+	body := lexicalidentity.RootBody(namespace)
+	demand, err := CanonicalizeObservationContracts(ObservationClassesV1Contract(
+		ObservationConsumerDiagnosticNilSafetyPresence,
+		ObservationClassCallOutcome,
+		ObservationClassEdgeReachability,
+		ObservationClassPointReachability,
+		ObservationClassPointState,
+		ObservationClassPathValue,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := FreezeRelationProgramWithObservation(
+		[]RelationProgramUnit{formalTemplateFreezeUnit(t, body)}, testAcyclicCallTopology(t, body), demand,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := program.RequireObservationClass(
+		ObservationConsumerDiagnosticNilSafetyPresence,
+		ObservationClassPathValue,
+		"nil-safety proof read model",
+	); err != nil {
+		t.Fatalf("declared class rejected: %v", err)
+	}
+	err = program.RequireObservationClass(
+		ObservationConsumerDiagnosticNilSafetyPresence,
+		ObservationClassNormalReturn,
+		"adversarial nil-safety return read",
+	)
+	var coverage *ObservationCoverageError
+	if !errors.As(err, &coverage) || !IsObservationCoverageError(err) || coverage.Consumer != ObservationConsumerDiagnosticNilSafetyPresence {
+		t.Fatalf("outside-closure access error = %#v", err)
+	}
+}

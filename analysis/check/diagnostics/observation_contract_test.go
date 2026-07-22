@@ -36,3 +36,20 @@ func TestLifecycleResourceObservationContractDeclaresOnlyItsReadClosure(t *testi
 		t.Fatalf("classes = %#v, want %#v", contract.Classes(), want)
 	}
 }
+
+func TestNilSafetyPresenceObservationContractDeclaresOnlyItsReadClosure(t *testing.T) {
+	contract := NilSafetyPresenceObservationContract()
+	if contract.FullResultV1() || contract.SummaryV1() {
+		t.Fatalf("nil-safety contract retained a coarse closure: %#v", contract)
+	}
+	want := []transformer.ObservationClass{
+		transformer.ObservationClassCallOutcome,
+		transformer.ObservationClassEdgeReachability,
+		transformer.ObservationClassPathValue,
+		transformer.ObservationClassPointReachability,
+		transformer.ObservationClassPointState,
+	}
+	if !reflect.DeepEqual(contract.Classes(), want) {
+		t.Fatalf("classes = %#v, want %#v", contract.Classes(), want)
+	}
+}
