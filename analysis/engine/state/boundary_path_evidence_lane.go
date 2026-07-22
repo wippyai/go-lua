@@ -12,7 +12,7 @@ func projectPathEvidenceBoundary(ctx *boundaryProjectContext, source State, out 
 	return true
 }
 func projectPathEvidenceBoundaryFactor(ctx *boundaryProjectContext, source pathevidence.Lane) (pathevidence.Lane, bool) {
-	return source.ProjectBoundary(ctx.keys, ctx.closure.ContainsPath, func(value product.Value) product.Value {
+	return source.ProjectBoundary(ctx.closure.ContainsPath, func(value product.Value) product.Value {
 		return product.ProjectBoundary(ctx.reg, value)
 	}), true
 }
@@ -22,7 +22,7 @@ func rebasePathEvidenceBoundary(ctx *boundaryRebaseContext, source State, out *S
 	return valid
 }
 func rebasePathEvidenceBoundaryFactor(ctx *boundaryRebaseContext, source pathevidence.Lane) (pathevidence.Lane, bool) {
-	return source.RebaseBoundary(ctx.fromKeys, ctx.toKeys, func(path keyspace.Key) ([]keyspace.Key, bool) {
+	return source.RebaseBoundary(func(path keyspace.Key) ([]keyspace.Key, bool) {
 		return boundaryRebasePaths(ctx, path)
 	}, func(path keyspace.Key) ([]keyspace.Key, bool) {
 		return ctx.quotient.pathPreimages(path)
@@ -31,7 +31,7 @@ func rebasePathEvidenceBoundaryFactor(ctx *boundaryRebaseContext, source pathevi
 	}, func(a, b product.Value) product.Value { return product.Join(ctx.reg, a, b) })
 }
 func applyPathEvidenceBoundaryLane(ctx *boundaryApplyContext, destination, fragment pathevidence.Lane) (pathevidence.Lane, bool) {
-	return destination.ApplyBoundary(ctx.keys, fragment, ctx.closure.ContainsPath), true
+	return destination.ApplyBoundary(fragment, ctx.closure.ContainsPath), true
 }
 func applyPathEvidenceBoundaryRoots(ctx *boundaryApplyContext, lane pathevidence.Lane, roots boundaryRootPlan) (pathevidence.Lane, bool) {
 	for _, root := range roots.paths {

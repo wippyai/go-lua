@@ -29,18 +29,18 @@ func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.Pa
 // InvalidateStableSymbolPreservingImplications atomically invalidates stable
 // evidence rooted at sym while retaining implications independently proven
 // valid by preserve. The implication must-set is traversed and rebuilt once.
-func (l Lane) InvalidateStableSymbolPreservingImplications(ks *keyspace.KeySpace, sym symbol.ID, preserve func(PathPresenceImplication) bool) Lane {
-	return l.invalidateStableSymbol(ks, sym, preserve, false)
+func (l Lane) InvalidateStableSymbolPreservingImplications(sym symbol.ID, preserve func(PathPresenceImplication) bool) Lane {
+	return l.invalidateStableSymbol(sym, preserve, false)
 }
 
 // InvalidateStableSymbolPreservingAllImplications invalidates non-implication
 // evidence for an idempotent root write. Because no implication proposition
 // changes, the persistent must-set is retained without traversal or copying.
-func (l Lane) InvalidateStableSymbolPreservingAllImplications(ks *keyspace.KeySpace, sym symbol.ID) Lane {
-	return l.invalidateStableSymbol(ks, sym, nil, true)
+func (l Lane) InvalidateStableSymbolPreservingAllImplications(sym symbol.ID) Lane {
+	return l.invalidateStableSymbol(sym, nil, true)
 }
 
-func (l Lane) invalidateStableSymbol(ks *keyspace.KeySpace, sym symbol.ID, preserve func(PathPresenceImplication) bool, preserveAll bool) Lane {
+func (l Lane) invalidateStableSymbol(sym symbol.ID, preserve func(PathPresenceImplication) bool, preserveAll bool) Lane {
 	if sym == 0 {
 		return l
 	}
@@ -48,9 +48,6 @@ func (l Lane) invalidateStableSymbol(ks *keyspace.KeySpace, sym symbol.ID, prese
 		return stableKeyBelongsToSymbol(candidate, sym)
 	}
 	return l.invalidatePathKeyEvidence(
-		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
-			return deleteMatchingPathHandles(ks, m, match)
-		},
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deleteMatchingPathKeys(m, match)
 		},
@@ -80,9 +77,6 @@ func (l Lane) InvalidatePathKeySubtreePrefixes(ks *keyspace.KeySpace, prefixes [
 		return pathKeyInAnyPrefix(ks, candidate, prefixKeys)
 	}
 	return l.invalidatePathKeyEvidence(
-		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
-			return deletePathKeyHandleSubtrees(ks, m, prefixKeys)
-		},
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeySubtrees(ks, m, prefixKeys)
 		},
@@ -111,15 +105,14 @@ func (l Lane) InvalidatePathKeySubtreePrefixesChanged(ks *keyspace.KeySpace, pre
 // such as an index-in-range proof can clear with different scope than
 // value-identity proofs.
 func (l Lane) invalidatePathKeyEvidence(
-	deleteRefinements func(map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool),
-	deleteStaticMembers func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
+	deleteFromMap func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
 	match func(candidate keyspace.Key) bool,
 	proofMatch func(proof BranchProof) bool,
 	preserveImplication func(PathPresenceImplication) bool,
 	preserveAllImplications bool,
 ) Lane {
-	refinements, changed := deleteRefinements(l.refinements)
-	staticMembers, staticChanged := deleteStaticMembers(l.staticMembers)
+	refinements, changed := deleteFromMap(l.refinements)
+	staticMembers, staticChanged := deleteFromMap(l.staticMembers)
 	proofs, proofChanged := deleteBranchProofsWhere(l.proofs, proofMatch)
 	implications, implicationChanged := l.pathPresenceImplications, false
 	if !preserveAllImplications {
@@ -162,9 +155,6 @@ func (l Lane) InvalidatePathKeyDescendantPrefixes(ks *keyspace.KeySpace, prefixe
 			pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
 	}
 	return l.invalidatePathKeyEvidence(
-		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
-			return deletePathKeyHandleDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
-		},
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeyDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
 		},
@@ -470,16 +460,6 @@ func deletePathKeySubtrees(
 	})
 }
 
-func deletePathKeyHandleSubtrees(
-	ks *keyspace.KeySpace,
-	in map[keyspace.KeyHandle]product.Value,
-	prefixKeys []keyspace.Key,
-) (map[keyspace.KeyHandle]product.Value, bool) {
-	return deleteMatchingPathHandles(ks, in, func(candidate keyspace.Key) bool {
-		return pathKeyInAnyPrefix(ks, candidate, prefixKeys)
-	})
-}
-
 func deletePathKeyDescendantPrefixes(
 	ks *keyspace.KeySpace,
 	in map[keyspace.Key]product.Value,
@@ -492,34 +472,11 @@ func deletePathKeyDescendantPrefixes(
 	})
 }
 
-func deletePathKeyHandleDescendantPrefixes(
-	ks *keyspace.KeySpace,
-	in map[keyspace.KeyHandle]product.Value,
-	descendantKeys []keyspace.Key,
-	subtreeKeys []keyspace.Key,
-) (map[keyspace.KeyHandle]product.Value, bool) {
-	return deleteMatchingPathHandles(ks, in, func(candidate keyspace.Key) bool {
-		return pathKeyInAnyStrictPrefix(ks, candidate, descendantKeys) ||
-			pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
-	})
-}
-
 func deleteMatchingPathKeys(
 	in map[keyspace.Key]product.Value,
 	match func(keyspace.Key) bool,
 ) (map[keyspace.Key]product.Value, bool) {
 	return mapedit.DeleteMatching(in, func(pathKey keyspace.Key, _ product.Value) bool {
 		return match(pathKey)
-	})
-}
-
-func deleteMatchingPathHandles(
-	ks *keyspace.KeySpace,
-	in map[keyspace.KeyHandle]product.Value,
-	match func(keyspace.Key) bool,
-) (map[keyspace.KeyHandle]product.Value, bool) {
-	return mapedit.DeleteMatching(in, func(handle keyspace.KeyHandle, _ product.Value) bool {
-		key, ok := ks.KeyByHandle(handle)
-		return ok && match(key)
 	})
 }

@@ -13,7 +13,7 @@ type Edit struct {
 	lane Lane
 	reg  *axis.Registry
 
-	refinements       map[keyspace.KeyHandle]product.Value
+	refinements       map[keyspace.Key]product.Value
 	refinementsCloned bool
 	staticMembers     map[keyspace.Key]product.Value
 	staticCloned      bool
@@ -31,7 +31,7 @@ func (e *Edit) ReadPathKey(pathKey keyspace.Key) product.Value {
 		return product.Bottom(e.reg)
 	}
 	if e.refinementsCloned {
-		if value, ok := e.refinements[pathKey.Handle()]; ok {
+		if value, ok := e.refinements[pathKey]; ok {
 			return value
 		}
 		return product.Bottom(e.reg)
@@ -52,7 +52,7 @@ func (e *Edit) WritePathKey(pathKey keyspace.Key, value product.Value) bool {
 			return false
 		}
 		e.ensureRefinements()
-		delete(e.refinements, pathKey.Handle())
+		delete(e.refinements, pathKey)
 		e.markReachable()
 		return true
 	}
@@ -61,9 +61,9 @@ func (e *Edit) WritePathKey(pathKey keyspace.Key, value product.Value) bool {
 	}
 	e.ensureRefinements()
 	if e.refinements == nil {
-		e.refinements = make(map[keyspace.KeyHandle]product.Value, 1)
+		e.refinements = make(map[keyspace.Key]product.Value, 1)
 	}
-	e.refinements[pathKey.Handle()] = value
+	e.refinements[pathKey] = value
 	e.markReachable()
 	return true
 }
@@ -110,7 +110,7 @@ func (e *Edit) ensureRefinements() {
 	if e.refinementsCloned {
 		return
 	}
-	e.refinements = cloneLocalValueHandleMap(e.lane.refinements)
+	e.refinements = cloneLocalValueMap(e.lane.refinements)
 	e.refinementsCloned = true
 }
 

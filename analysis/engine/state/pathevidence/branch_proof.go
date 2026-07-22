@@ -198,7 +198,7 @@ func (l Lane) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, start keyspace.Key) 
 	}
 	var out []keyspace.Key
 	var seen map[keyspace.Key]struct{}
-	l.forEachCongruenceObservation(ks, func(key keyspace.Key) {
+	l.forEachCongruenceObservation(func(key keyspace.Key) {
 		if key == start {
 			return
 		}
@@ -226,11 +226,9 @@ func (l Lane) EquivalentKeyspaceKeys(ks *keyspace.KeySpace, start keyspace.Key) 
 // explicit ground-term DAG exposed for enumeration. Only PathEqual facts are
 // equations; every other key is an observation whose normal form may be
 // compared without inserting all of its prefixes into the equation closure.
-func (l Lane) forEachCongruenceObservation(ks *keyspace.KeySpace, visit func(keyspace.Key)) {
-	for handle := range l.refinements {
-		if key, ok := ks.KeyByHandle(handle); ok {
-			visit(key)
-		}
+func (l Lane) forEachCongruenceObservation(visit func(keyspace.Key)) {
+	for key := range l.refinements {
+		visit(key)
 	}
 	for key := range l.staticMembers {
 		visit(key)

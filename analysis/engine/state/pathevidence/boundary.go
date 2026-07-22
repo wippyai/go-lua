@@ -8,13 +8,13 @@ import (
 
 // ProjectBoundary returns the exact finite facts selected by touches while
 // preserving each must sublane's independent Bottom/Top spelling.
-func (l Lane) ProjectBoundary(ks *keyspace.KeySpace, touches func(keyspace.Key) bool, projectValue func(product.Value) product.Value) Lane {
+func (l Lane) ProjectBoundary(touches func(keyspace.Key) bool, projectValue func(product.Value) product.Value) Lane {
 	out := Lane{
 		refinementsBottom: l.refinementsBottom, staticMembersBottom: l.staticMembersBottom,
 		proofsBottom: l.proofsBottom, pathPresenceImplicationsBottom: l.pathPresenceImplicationsBottom,
 	}
 	if !l.refinementsBottom {
-		out.refinements = filterHandleValueMap(l.refinements, ks, touches, projectValue)
+		out.refinements = filterValueMap(l.refinements, touches, projectValue)
 	}
 	if !l.staticMembersBottom {
 		out.staticMembers = filterValueMap(l.staticMembers, touches, projectValue)
@@ -49,7 +49,6 @@ func (l Lane) ProjectBoundary(ks *keyspace.KeySpace, touches func(keyspace.Key) 
 
 // RebaseBoundary atomically maps every retained path and product identity.
 func (l Lane) RebaseBoundary(
-	fromKeys, toKeys *keyspace.KeySpace,
 	mapPath func(keyspace.Key) ([]keyspace.Key, bool),
 	pathPreimages func(keyspace.Key) ([]keyspace.Key, bool),
 	mapValue func(product.Value) (product.Value, bool),
@@ -60,7 +59,7 @@ func (l Lane) RebaseBoundary(
 		proofsBottom: l.proofsBottom, pathPresenceImplicationsBottom: l.pathPresenceImplicationsBottom,
 	}
 	var ok bool
-	if out.refinements, ok = mapHandleValueMap(l.refinements, fromKeys, toKeys, mapPath, pathPreimages, mapValue, joinValue); !ok {
+	if out.refinements, ok = mapValueMap(l.refinements, mapPath, pathPreimages, mapValue, joinValue); !ok {
 		return Lane{}, false
 	}
 	if out.staticMembers, ok = mapValueMap(l.staticMembers, mapPath, pathPreimages, mapValue, joinValue); !ok {
@@ -185,9 +184,9 @@ func (l Lane) RebaseBoundary(
 
 // ApplyBoundary deletes destination facts touching the selected closure then
 // overlays fragment facts, independently for every must sublane.
-func (l Lane) ApplyBoundary(ks *keyspace.KeySpace, fragment Lane, touches func(keyspace.Key) bool) Lane {
+func (l Lane) ApplyBoundary(fragment Lane, touches func(keyspace.Key) bool) Lane {
 	out := Lane{}
-	out.refinements, out.refinementsBottom = applyHandleValueSublane(ks, l.refinements, l.refinementsBottom, fragment.refinements, fragment.refinementsBottom, touches)
+	out.refinements, out.refinementsBottom = applyValueSublane(l.refinements, l.refinementsBottom, fragment.refinements, fragment.refinementsBottom, touches)
 	out.staticMembers, out.staticMembersBottom = applyValueSublane(l.staticMembers, l.staticMembersBottom, fragment.staticMembers, fragment.staticMembersBottom, touches)
 	out.proofs, out.proofsBottom = applyProofSublane(l.proofs, l.proofsBottom, fragment.proofs, fragment.proofsBottom, touches)
 	out.pathPresenceImplications, out.pathPresenceImplicationsBottom = applyImplicationSublane(l.pathPresenceImplications, l.pathPresenceImplicationsBottom, fragment.pathPresenceImplications, fragment.pathPresenceImplicationsBottom, touches)
@@ -210,23 +209,6 @@ func filterValueMap(in map[keyspace.Key]product.Value, keep func(keyspace.Key) b
 	return out
 }
 
-func filterHandleValueMap(in map[keyspace.KeyHandle]product.Value, ks *keyspace.KeySpace, keep func(keyspace.Key) bool, project func(product.Value) product.Value) map[keyspace.KeyHandle]product.Value {
-	var out map[keyspace.KeyHandle]product.Value
-	for handle, value := range in {
-		key, ok := ks.KeyByHandle(handle)
-		if !ok {
-			continue
-		}
-		if keep(key) {
-			if out == nil {
-				out = make(map[keyspace.KeyHandle]product.Value)
-			}
-			out[handle] = project(value)
-		}
-	}
-	return out
-}
-
 func mapValueMap(
 	in map[keyspace.Key]product.Value,
 	mapPath func(keyspace.Key) ([]keyspace.Key, bool),
@@ -235,40 +217,6 @@ func mapValueMap(
 	joinValue func(product.Value, product.Value) product.Value,
 ) (map[keyspace.Key]product.Value, bool) {
 	return lift.QuotientMustMap(in, mapPath, mapValue, func(path keyspace.Key) keyspace.Key { return path }, pathPreimages, joinValue)
-}
-
-func mapHandleValueMap(
-	in map[keyspace.KeyHandle]product.Value,
-	fromKeys, toKeys *keyspace.KeySpace,
-	mapPath func(keyspace.Key) ([]keyspace.Key, bool),
-	pathPreimages func(keyspace.Key) ([]keyspace.Key, bool),
-	mapValue func(product.Value) (product.Value, bool),
-	joinValue func(product.Value, product.Value) product.Value,
-) (map[keyspace.KeyHandle]product.Value, bool) {
-	if fromKeys == nil || toKeys == nil || !fromKeys.Valid() || !toKeys.Valid() {
-		return nil, false
-	}
-	byKey := make(map[keyspace.Key]product.Value, len(in))
-	for handle, value := range in {
-		key, ok := fromKeys.KeyByHandle(handle)
-		if !ok {
-			return nil, false
-		}
-		byKey[key] = value
-	}
-	mapped, ok := mapValueMap(byKey, mapPath, pathPreimages, mapValue, joinValue)
-	if !ok {
-		return nil, false
-	}
-	out := make(map[keyspace.KeyHandle]product.Value, len(mapped))
-	for key, value := range mapped {
-		handle := key.Handle()
-		if handle == 0 {
-			return nil, false
-		}
-		out[handle] = value
-	}
-	return out, true
 }
 func mapOptionalPaths(path keyspace.Key, mapPath func(keyspace.Key) ([]keyspace.Key, bool)) ([]keyspace.Key, bool) {
 	if path.Kind == keyspace.KindInvalid {
@@ -295,32 +243,6 @@ func applyValueSublane(dst map[keyspace.Key]product.Value, dstBottom bool, frag 
 	}
 	for key, value := range frag {
 		out[key] = value
-	}
-	return out, false
-}
-
-func applyHandleValueSublane(ks *keyspace.KeySpace, dst map[keyspace.KeyHandle]product.Value, dstBottom bool, frag map[keyspace.KeyHandle]product.Value, fragBottom bool, touches func(keyspace.Key) bool) (map[keyspace.KeyHandle]product.Value, bool) {
-	if dstBottom || fragBottom {
-		return nil, true
-	}
-	var out map[keyspace.KeyHandle]product.Value
-	for handle, value := range dst {
-		key, ok := ks.KeyByHandle(handle)
-		if !ok {
-			continue
-		}
-		if !touches(key) {
-			if out == nil {
-				out = make(map[keyspace.KeyHandle]product.Value)
-			}
-			out[handle] = value
-		}
-	}
-	if out == nil && len(frag) != 0 {
-		out = make(map[keyspace.KeyHandle]product.Value, len(frag))
-	}
-	for handle, value := range frag {
-		out[handle] = value
 	}
 	return out, false
 }

@@ -23,7 +23,7 @@ func (l Lane) RekeyValueLanes(from, to *keyspace.KeySpace) (Lane, bool) {
 	}
 	out := l
 	var ok bool
-	if out.refinements, ok = rekeyHandleValueMap(from, to, l.refinements); !ok {
+	if out.refinements, ok = rekeyValueMap(from, to, l.refinements); !ok {
 		return l, false
 	}
 	if out.staticMembers, ok = rekeyValueMap(from, to, l.staticMembers); !ok {
@@ -53,25 +53,6 @@ func rekeyValueMap(from, to *keyspace.KeySpace, in map[keyspace.Key]product.Valu
 			return nil, false
 		}
 		out[rekeyed] = value
-	}
-	return out, true
-}
-
-func rekeyHandleValueMap(from, to *keyspace.KeySpace, in map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
-	if len(in) == 0 {
-		return nil, true
-	}
-	out := make(map[keyspace.KeyHandle]product.Value, len(in))
-	for handle, value := range in {
-		key, ok := from.KeyByHandle(handle)
-		if !ok {
-			return nil, false
-		}
-		rekeyed, ok := to.ImportKey(from, key)
-		if !ok || rekeyed.Handle() == 0 {
-			return nil, false
-		}
-		out[rekeyed.Handle()] = value
 	}
 	return out, true
 }

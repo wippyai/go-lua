@@ -57,9 +57,9 @@ func stableRootImplicationPreserved(mutation StableRootPathEvidenceMutation, can
 
 func applyStableRootPathEvidenceMutation(lane pathevidence.Lane, mutation StableRootPathEvidenceMutation) pathevidence.Lane {
 	if mutation.preserveAll {
-		return lane.InvalidateStableSymbolPreservingAllImplications(mutation.keys, mutation.target)
+		return lane.InvalidateStableSymbolPreservingAllImplications(mutation.target)
 	}
-	return lane.InvalidateStableSymbolPreservingImplications(mutation.keys, mutation.target, func(candidate pathevidence.PathPresenceImplication) bool {
+	return lane.InvalidateStableSymbolPreservingImplications(mutation.target, func(candidate pathevidence.PathPresenceImplication) bool {
 		return stableRootImplicationPreserved(mutation, candidate)
 	})
 }

@@ -290,11 +290,7 @@ func TestRekeyValueLanesImportsEveryKeyKindAcrossOppositeInternOrder(t *testing.
 	for _, key := range keys {
 		want[string(from.FormatReadOnly(key))] = key
 	}
-	for handle := range rekeyed.refinements {
-		key, ok := to.KeyByHandle(handle)
-		if !ok {
-			t.Fatalf("rekey produced invalid handle %d", handle)
-		}
+	for key := range rekeyed.refinements {
 		spelling := string(to.FormatReadOnly(key))
 		source, ok := want[spelling]
 		if !ok {
@@ -710,8 +706,8 @@ func TestRefinementMustJoinDropsOneSidedEntry(t *testing.T) {
 	domain := Domain(reg)
 	present := product.Top()
 	oneSided := Lane{
-		refinements: map[keyspace.KeyHandle]product.Value{
-			mustStructKey(t, ks, pathdom.PathKey("sym1@1.field")).Handle(): present,
+		refinements: map[keyspace.Key]product.Value{
+			mustStructKey(t, ks, pathdom.PathKey("sym1@1.field")): present,
 		},
 	}
 

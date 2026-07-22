@@ -102,7 +102,7 @@ func ApplyAllocationIdentityQuotient(
 	if err := ctx.Err(); err != nil {
 		return State{}, err
 	}
-	hasTemplate, err := stateContainsAllocationTemplate(ctx, reg, keys, input)
+	hasTemplate, err := stateContainsAllocationTemplate(ctx, reg, input)
 	if err != nil {
 		return State{}, err
 	}

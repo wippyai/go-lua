@@ -17,16 +17,13 @@ func (l Lane) CloseRefinementsAcrossTransientEquality(
 	if reg == nil || keys == nil || !keys.Valid() || left == right || allow == nil {
 		return l, false
 	}
+	snapshot := cloneLocalValueMap(l.refinements)
 	out, changed := l, false
-	for handle, value := range l.refinements {
-		source, ok := keys.KeyByHandle(handle)
-		if !ok {
-			continue
-		}
+	for source, value := range snapshot {
 		for _, direction := range [][2]keyspace.Key{{left, right}, {right, left}} {
-			target, valid := rebaseCoordinateRefinementAcrossEquality(keys, source, direction[0], direction[1])
-			authorized := valid && allow(target)
-			if !valid || target == source || !authorized || source != direction[0] && !memberSafe {
+			target, ok := rebaseCoordinateRefinementAcrossEquality(keys, source, direction[0], direction[1])
+			authorized := ok && allow(target)
+			if !ok || target == source || !authorized || source != direction[0] && !memberSafe {
 				continue
 			}
 			current := out.ReadPathKey(reg, target)

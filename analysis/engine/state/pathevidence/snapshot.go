@@ -12,50 +12,13 @@ type PathRefinementsSnapshot struct {
 	Refinements map[pathdom.PathKey]product.Value
 }
 
-// ForEachPathRefinementValue visits refinement payloads without requiring the
-// owning keyspace. It is used only by identity inventory, where the address is
-// irrelevant and the product payload is the semantic observation.
-func (l Lane) ForEachPathRefinementValue(fn func(product.Value) bool) {
-	if l.refinementsBottom || fn == nil {
-		return
-	}
-	for _, value := range l.refinements {
-		if !fn(value) {
-			return
-		}
-	}
-}
-
-func (l Lane) RefinementKeysValid(ks *keyspace.KeySpace) bool {
-	if l.refinementsBottom || ks == nil || !ks.Valid() {
-		return l.refinementsBottom
-	}
-	for handle := range l.refinements {
-		if _, ok := ks.KeyByHandle(handle); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func (l Lane) ForEachPathStaticMemberValue(fn func(product.Value) bool) {
-	if l.staticMembersBottom || fn == nil {
-		return
-	}
-	for _, value := range l.staticMembers {
-		if !fn(value) {
-			return
-		}
-	}
-}
-
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
 // explicit; Top means the reachable must lane contains no finite refinements.
 func (l Lane) PathRefinementsSnapshot(ks *keyspace.KeySpace) PathRefinementsSnapshot {
 	if l.refinementsBottom {
 		return PathRefinementsSnapshot{Bottom: true}
 	}
-	refinements := snapshotLocalHandleValueMap(ks, l.refinements)
+	refinements := snapshotLocalValueMap(ks, l.refinements)
 	return PathRefinementsSnapshot{
 		Top:         len(refinements) == 0,
 		Refinements: refinements,
@@ -64,15 +27,11 @@ func (l Lane) PathRefinementsSnapshot(ks *keyspace.KeySpace) PathRefinementsSnap
 
 // ForEachPathRefinement visits finite path-refinement facts in their native
 // keyspace form, avoiding the snapshot PathKey materialization path.
-func (l Lane) ForEachPathRefinement(ks *keyspace.KeySpace, fn func(keyspace.Key, product.Value) bool) {
-	if l.refinementsBottom || len(l.refinements) == 0 || ks == nil || fn == nil {
+func (l Lane) ForEachPathRefinement(fn func(keyspace.Key, product.Value) bool) {
+	if l.refinementsBottom || len(l.refinements) == 0 || fn == nil {
 		return
 	}
-	for handle, value := range l.refinements {
-		key, ok := ks.KeyByHandle(handle)
-		if !ok {
-			continue
-		}
+	for key, value := range l.refinements {
 		if !fn(key, value) {
 			return
 		}
@@ -117,20 +76,6 @@ func snapshotLocalValueMap(ks *keyspace.KeySpace, in map[keyspace.Key]product.Va
 	out := make(map[pathdom.PathKey]product.Value, len(in))
 	for k, v := range in {
 		out[ks.Format(k)] = v
-	}
-	return out
-}
-
-func snapshotLocalHandleValueMap(ks *keyspace.KeySpace, in map[keyspace.KeyHandle]product.Value) map[pathdom.PathKey]product.Value {
-	if len(in) == 0 || ks == nil {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]product.Value, len(in))
-	for handle, value := range in {
-		key, ok := ks.KeyByHandle(handle)
-		if ok {
-			out[ks.Format(key)] = value
-		}
 	}
 	return out
 }

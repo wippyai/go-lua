@@ -102,11 +102,10 @@ func (l IdentityImageLaw) valid() bool {
 // fail closed until a lane either proves independence or supplies its complete
 // finite identity visitor.
 type laneIdentitySupportPolicy struct {
-	kind           laneIdentitySupportKind
-	visit          func(*axis.Registry, laneFactorPayload, func(identity.Term) bool) bool
-	visitState     func(*axis.Registry, State, func(identity.Term) bool) bool
-	visitStateKeys func(*axis.Registry, State, *keyspace.KeySpace, func(identity.Term) bool) bool
-	image          IdentityImageLaw
+	kind       laneIdentitySupportKind
+	visit      func(*axis.Registry, laneFactorPayload, func(identity.Term) bool) bool
+	visitState func(*axis.Registry, State, func(identity.Term) bool) bool
+	image      IdentityImageLaw
 }
 
 // laneSemanticCapabilityID is the sealed operation vocabulary shared by every
