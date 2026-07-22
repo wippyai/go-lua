@@ -453,40 +453,10 @@ func (v *FormalRelationPublicationView) formalPathValueAtObservation(
 	coordinates []formalPublishedCoordinate,
 	p pathdom.Path,
 ) (product.Value, bool, error) {
-	if v == nil || v.pathFactors == nil || v.body == nil || v.body.keys == nil || p.IsEmpty() {
+	if v == nil || v.body == nil || v.body.keys == nil || p.IsEmpty() {
 		return product.Value{}, false, nil
 	}
-	key, exact := v.body.keys.FromPathKey(p.Key())
-	if !exact {
-		return product.Value{}, false, nil
-	}
-	cacheKey := formalPathObservationCacheKey{point: point, boundary: boundary}
-	v.pathFactors.mu.Lock()
-	factor := v.pathFactors.factors[cacheKey]
-	present, known := v.pathFactors.present[cacheKey]
-	v.pathFactors.mu.Unlock()
-	if !known {
-		var err error
-		factor, present, err = v.joinPublishedPathFactor(ctx, coordinates)
-		if err != nil {
-			return product.Value{}, false, err
-		}
-		v.pathFactors.mu.Lock()
-		if cachedFactor, already := v.pathFactors.factors[cacheKey]; already {
-			factor, present = cachedFactor, v.pathFactors.present[cacheKey]
-		} else {
-			v.pathFactors.factors[cacheKey], v.pathFactors.present[cacheKey] = factor, present
-		}
-		v.pathFactors.mu.Unlock()
-	}
-	if !present {
-		return product.Value{}, false, nil
-	}
-	value, present, err := v.body.productDomain.ReadPathValueFactor(factor, v.body.keys, key)
-	if err != nil || !present {
-		return product.Value{}, false, err
-	}
-	return value, true, nil
+	return v.projectFormalReadPath(ctx, point, boundary, coordinates, p)
 }
 
 // returnSlotsFromFormalOutputs projects only the N5 Values observation at
@@ -604,61 +574,4 @@ func (v *FormalRelationPublicationView) joinPublishedValues(
 		}
 	}
 	return joined, live, nil
-}
-
-func (v *FormalRelationPublicationView) joinPublishedPathFactor(
-	ctx context.Context,
-	coordinates []formalPublishedCoordinate,
-) (state.LaneFactor, bool, error) {
-	if v == nil || v.body == nil || v.execution == nil || v.execution.algebra == nil {
-		return state.LaneFactor{}, false, fmt.Errorf("transformer: formal path observation is unowned")
-	}
-	family, owned := v.body.productDomain.PathValueFamily()
-	if !owned {
-		return state.LaneFactor{}, false, nil
-	}
-	joined := state.LaneFactor{}
-	present := false
-	for _, coordinate := range coordinates {
-		coordinate.view = v
-		if coordinate.inverseErr != nil {
-			return state.LaneFactor{}, false, coordinate.inverseErr
-		}
-		tuple, live := v.execution.values[coordinate.cell]
-		if !live || tuple.bottom() {
-			continue
-		}
-		ordinals, valuesProjection, err := v.publicationProductProjection(ctx, tuple)
-		if err != nil {
-			return state.LaneFactor{}, false, err
-		}
-		partitions, err := v.execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: tuple, ordinals: ordinals}}, nil)
-		if err != nil {
-			return state.LaneFactor{}, false, err
-		}
-		cache := formalPublicationProjectionCache{factors: make(map[formalPublicationProjectionFactorKey][]formalPublicationProjectionFactorEntry), values: make(map[uint64][]formalPublicationProjectionValuesEntry)}
-		for _, partition := range partitions {
-			if len(partition.views) != 1 || partition.guard == decisionFalse {
-				return state.LaneFactor{}, false, errDecisionMalformed
-			}
-			_, factors, err := v.projectLeafFactorTuple(ctx, partition.views[0], coordinate.inverse, &cache, valuesProjection)
-			if err != nil {
-				return state.LaneFactor{}, false, err
-			}
-			for _, factor := range factors {
-				if factor.Lane() != family.Lane() {
-					continue
-				}
-				if present {
-					joined, err = v.body.productDomain.LaneJoin(joined, factor)
-					if err != nil {
-						return state.LaneFactor{}, false, err
-					}
-				} else {
-					joined, present = factor, true
-				}
-			}
-		}
-	}
-	return joined, present, nil
 }

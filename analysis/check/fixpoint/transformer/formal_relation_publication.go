@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -94,21 +93,6 @@ type FormalRelationPublicationView struct {
 	pointInput     map[cfg.Point][]formalPublishedCoordinate
 	pointOutput    map[cfg.Point][]formalPublishedCoordinate
 	edgeNormal     map[cfg.Edge][]formalPublishedCoordinate
-	pathFactors    *formalPathObservationCache
-}
-
-type formalPathObservationCacheKey struct {
-	point    cfg.Point
-	boundary bool
-}
-
-// formalPathObservationCache keeps only the selected path-evidence factor for
-// an observation coordinate. It is intentionally not a State cache: values,
-// heap, and all unrelated lanes remain unmaterialized for the read-model.
-type formalPathObservationCache struct {
-	mu      sync.Mutex
-	factors map[formalPathObservationCacheKey]state.LaneFactor
-	present map[formalPathObservationCacheKey]bool
 }
 
 // Publication returns the full route-free body publication capability. It does
@@ -182,10 +166,6 @@ func (e *formalRelationExecution) publication(bodyID lexicalidentity.StableLexic
 		calls:          make([]FormalLexicalCallDependency, 0),
 		pointInput:     make(map[cfg.Point][]formalPublishedCoordinate), pointOutput: make(map[cfg.Point][]formalPublishedCoordinate),
 		edgeNormal: make(map[cfg.Edge][]formalPublishedCoordinate),
-		pathFactors: &formalPathObservationCache{
-			factors: make(map[formalPathObservationCacheKey]state.LaneFactor),
-			present: make(map[formalPathObservationCacheKey]bool),
-		},
 	}
 	// The prepared call-site census is the publication inventory. Equation
 	// syntax identifies each reachable producer, but cannot define the census:
