@@ -264,47 +264,6 @@ func (a *formalTupleAlgebra) formalSelectedFactorSpelling(
 	return state.LaneFactor{}, fmt.Errorf("transformer: factor %q exact leaf spelling has no producer entry", group.lane.ID())
 }
 
-func (a *formalTupleAlgebra) formalFactorReachabilityProgram(
-	authority *formalComponentTerminalAuthority,
-	group formalFiberGroupDescriptor,
-	leaves []decisionLeaf,
-) (state.BoundaryReachabilityProgram, error) {
-	if a == nil || authority == nil || authority.body == nil || !group.valid() || group.kind == formalFiberGroupValues ||
-		len(leaves) != len(group.members) {
-		return state.BoundaryReachabilityProgram{}, errFormalComponentForeignOwner
-	}
-	key := formalFactorReachabilityKey{body: authority.body, lane: group.lane.Ordinal(), hash: formalFactorLeafHash(leaves)}
-	for _, entry := range a.factorReachability[key] {
-		if formalFactorLeavesEqual(entry.leaves, leaves) {
-			return entry.program, nil
-		}
-	}
-	return state.BoundaryReachabilityProgram{}, fmt.Errorf("transformer: factor %q has no prefrozen reachability program", group.lane.ID())
-}
-
-func (e formalTupleLeafEvaluator) factorReachabilityPrograms() ([]state.BoundaryReachabilityProgram, error) {
-	if e.algebra == nil || e.variable == 0 || e.authority == nil || e.span.variable != e.variable ||
-		!e.leaves.valid(e.span) {
-		return nil, errFormalComponentForeignOwner
-	}
-	programs := make([]state.BoundaryReachabilityProgram, len(e.layout.nonValues))
-	for index, group := range e.layout.nonValues {
-		leaves, err := e.leaves.group(group)
-		if err != nil {
-			return nil, err
-		}
-		program, err := e.algebra.formalFactorReachabilityProgram(e.authority, group, leaves)
-		if err != nil {
-			return nil, err
-		}
-		programs[index] = program
-	}
-	if len(programs) != e.authority.product.NonValuesLaneCount() {
-		return nil, fmt.Errorf("transformer: formal factor reachability inventory is incomplete")
-	}
-	return programs, nil
-}
-
 func formalFactorExecutionVector(e formalTupleLeafEvaluator) ([]decisionLeaf, error) {
 	if e.algebra == nil || e.authority == nil || e.span.variable != e.variable || !e.leaves.valid(e.span) {
 		return nil, errFormalComponentForeignOwner
