@@ -300,6 +300,28 @@ func (l formalSparseLeafView) symbolicValuesIn(ordinals []formalFiberOrdinal) (b
 	return false, nil
 }
 
+// symbolicMiddleValuesIn recognizes the paired MID binding carrier without
+// treating it as a Values leaf. MID bindings may own a correlated path, so
+// formalValueFromLeaf deliberately rejects them; they are only a selector for
+// the entry-free N5 alternative-preservation path.
+func (l formalSparseLeafView) symbolicMiddleValuesIn(ordinals []formalFiberOrdinal) (bool, error) {
+	for _, ordinal := range ordinals {
+		leaf, present := l.leaf(ordinal)
+		if !present || leaf < 2 {
+			continue
+		}
+		terminal, err := l.authority.terminal(leaf)
+		if err != nil {
+			return false, err
+		}
+		if terminal.kind == formalComponentBindings {
+			return true, nil
+		}
+		return false, errFormalComponentMalformed
+	}
+	return false, nil
+}
+
 func (l formalSparseLeafView) symbolicFactorOutput(binding formalQualifiedBinding, ordinals []formalFiberOrdinal) (formalValue, bool, error) {
 	symbolic, err := l.symbolicValuesIn(ordinals)
 	if err != nil || !symbolic {

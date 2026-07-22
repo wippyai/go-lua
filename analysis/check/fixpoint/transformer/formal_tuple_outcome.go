@@ -18,35 +18,37 @@ import (
 // outcome remains the syntax owner; this plan binds its already-sealed sources
 // and Output roots to the complete registered product layout exactly once.
 type formalOutcomeStep struct {
-	variable          relationVar
-	code              *relationCode
-	root              relationRootRef
-	scope             loopMuTerm
-	outcome           boundaryOutcomeRef
-	transaction       factapply.ReturnTransaction
-	sources           []formalQualifiedBinding
-	valueAccess       state.TransferInputAccess
-	valueFactorGroups []formalFiberGroupDescriptor
-	bindingValues     formalValueAccessPlan
-	bindingLift       formalClosedFactorLift
-	bindingActive     bool
-	container         formalCoordinateFamilyFiberGroup
-	hasContainer      bool
-	identity          formalReturnIdentityStep
-	targets           []factapply.ReturnFactorTarget[FormalSlot]
-	demands           []formalQualifiedGuardDemand
-	presence          formalCoordinateFamilyFiberGroup
-	presenceValues    formalValueAccessPlan
-	presenceLift      formalClosedFactorLift
-	presenceActive    bool
-	covariant         factapply.CovariantExposureTransaction
-	covariantBindings []factapply.CovariantFactorBinding[FormalSlot]
-	covariantValues   formalValueAccessPlan
-	covariantGroups   []formalFiberGroupDescriptor
-	covariantLift     formalClosedFactorLift
-	covariantTopology state.CovariantFactorTopology
-	terminal          formalFiberDescriptor
-	sealed            bool
+	variable             relationVar
+	code                 *relationCode
+	root                 relationRootRef
+	scope                loopMuTerm
+	outcome              boundaryOutcomeRef
+	transaction          factapply.ReturnTransaction
+	sources              []formalQualifiedBinding
+	valueAccess          state.TransferInputAccess
+	valueFactorGroups    []formalFiberGroupDescriptor
+	bindingValues        formalValueAccessPlan
+	bindingSymbolicReads []formalFiberOrdinal
+	bindingMiddleReads   []formalFiberDescriptor
+	bindingLift          formalClosedFactorLift
+	bindingActive        bool
+	container            formalCoordinateFamilyFiberGroup
+	hasContainer         bool
+	identity             formalReturnIdentityStep
+	targets              []factapply.ReturnFactorTarget[FormalSlot]
+	demands              []formalQualifiedGuardDemand
+	presence             formalCoordinateFamilyFiberGroup
+	presenceValues       formalValueAccessPlan
+	presenceLift         formalClosedFactorLift
+	presenceActive       bool
+	covariant            factapply.CovariantExposureTransaction
+	covariantBindings    []factapply.CovariantFactorBinding[FormalSlot]
+	covariantValues      formalValueAccessPlan
+	covariantGroups      []formalFiberGroupDescriptor
+	covariantLift        formalClosedFactorLift
+	covariantTopology    state.CovariantFactorTopology
+	terminal             formalFiberDescriptor
+	sealed               bool
 }
 
 func (p *formalOutcomeStep) valid(operator formalRelationOperatorRef) bool {
@@ -207,6 +209,36 @@ func freezeFormalOutcomeStep(program *RelationProgram, variable relationVar, ope
 		bindingReads = append(bindingReads, container.skeleton)
 		bindingReads = append(bindingReads, container.scalars...)
 	}
+	// Preserve the established symbolic-input projection separately. Middle
+	// carriers are read only by the entry-free stabilization path below; making
+	// them part of this projection would classify every normal MID source as
+	// symbolic and perturb concrete N5 publication.
+	bindingSymbolicReads := unionOrdinals(append([]formalFiberOrdinal(nil), bindingReads...))
+	bindingMiddleReads := make([]formalFiberDescriptor, len(sources))
+	for index, source := range sources {
+		if source.value.owner != variable || source.value.arena != operator.code.terms || source.value.term == 0 ||
+			int(source.value.term) >= len(operator.code.terms.values) {
+			return nil, fmt.Errorf("Outcome source %d has no owned value term", index)
+		}
+		node := operator.code.terms.values[source.value.term]
+		if node.op != valueRoot || node.root.Kind != RootMiddle {
+			continue
+		}
+		slot, present := program.formalSlots.Slot(body.body, node.root)
+		if !present {
+			return nil, fmt.Errorf("Outcome source %d Middle root has no formal slot", index)
+		}
+		for _, descriptor := range span.descriptors() {
+			if descriptor.role == formalFiberMiddleValue && descriptor.slot == slot {
+				bindingMiddleReads[index] = descriptor
+				bindingReads = append(bindingReads, formalFiberOrdinal(descriptor.global-span.first))
+				break
+			}
+		}
+		if bindingMiddleReads[index].role != formalFiberMiddleValue {
+			return nil, fmt.Errorf("Outcome source %d Middle root has no frozen carrier", index)
+		}
+	}
 	bindingActive := outcome.returnTransaction.transaction.ResultBindingCount() != 0
 	var bindingLift formalClosedFactorLift
 	if bindingActive {
@@ -306,7 +338,8 @@ func freezeFormalOutcomeStep(program *RelationProgram, variable relationVar, ope
 		variable: variable, code: operator.code, root: operator.root, scope: operator.scope, outcome: operator.outcome,
 		transaction: outcome.returnTransaction.transaction.Clone(), sources: sources,
 		valueAccess: valueAccess, valueFactorGroups: valueFactorGroups,
-		bindingValues: bindingValues, bindingLift: bindingLift, bindingActive: bindingActive,
+		bindingValues: bindingValues, bindingSymbolicReads: bindingSymbolicReads, bindingMiddleReads: bindingMiddleReads,
+		bindingLift: bindingLift, bindingActive: bindingActive,
 		container: container, hasContainer: hasContainer, identity: identityPlan,
 		targets: targets, demands: demands,
 		presence: presence, presenceValues: presenceValues, presenceLift: presenceLift, presenceActive: presenceActive,
@@ -338,10 +371,30 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 			// projection contains a symbolic leaf; the concrete N5 kernel only
 			// accepts product.Value operands and is therefore deliberately below
 			// this boundary.
-			if symbolic, symbolicErr := view.symbolicValuesIn(plan.bindingLift.roles[0].reads); symbolicErr != nil || symbolic {
+			symbolic, symbolicErr := view.symbolicValuesIn(plan.bindingSymbolicReads)
+			if symbolicErr != nil {
+				return nil, symbolicErr
+			}
+			// A stabilized entry-free relation retains the current Values result
+			// and the paired MID spelling for a direct source. At a joined region
+			// those are distinct alternatives: Values contains the post-write
+			// ground value while MID still names the entry alternative. Never take
+			// this path for entry-baked execution: its concrete result must remain
+			// byte-for-byte the existing N5 publication.
+			midSymbolic := false
+			if !symbolic && a.entrySubstitution == nil {
+				middleOrdinals := make([]formalFiberOrdinal, 0, len(plan.bindingMiddleReads))
+				for _, descriptor := range plan.bindingMiddleReads {
+					if descriptor.role == formalFiberMiddleValue {
+						middleOrdinals = append(middleOrdinals, formalFiberOrdinal(descriptor.global-view.span.first))
+					}
+				}
+				midSymbolic, symbolicErr = view.symbolicMiddleValuesIn(middleOrdinals)
 				if symbolicErr != nil {
 					return nil, symbolicErr
 				}
+			}
+			if symbolic || midSymbolic {
 				writes := make([]formalClosedFactorLeafWrite, 0, plan.transaction.ResultBindingCount())
 				for index := 0; index < plan.transaction.ResultBindingCount(); index++ {
 					source, target, exact := plan.transaction.ResultBinding(index)
@@ -352,7 +405,7 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 					if !owned || memberIndex < 0 || memberIndex >= len(plan.bindingValues.writes) {
 						return nil, errFormalComponentMalformed
 					}
-					leaf, internErr := view.authority.internBinding(plan.sources[source])
+					leaf, internErr := formalOutcomeSymbolicSourceLeaf(view, plan, source, midSymbolic)
 					if internErr != nil {
 						return nil, internErr
 					}
@@ -409,7 +462,49 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 			}
 			return writes, nil
 		})
-	return completed, seeds, err
+	if err != nil {
+		return completed, seeds, fmt.Errorf("N5 bindings lift: %w", err)
+	}
+	return completed, seeds, nil
+}
+
+// formalOutcomeSymbolicSourceLeaf preserves a direct MID source's joined
+// Values alternatives during entry-free stabilization. Composite sources and
+// ordinary symbolic N5 execution retain the established binding spelling.
+func formalOutcomeSymbolicSourceLeaf(view formalSparseLeafView, plan *formalOutcomeStep, source int, preserveMiddle bool) (decisionLeaf, error) {
+	if plan == nil || source < 0 || source >= len(plan.sources) {
+		return 0, errFormalComponentMalformed
+	}
+	binding := plan.sources[source]
+	if !preserveMiddle || source >= len(plan.bindingMiddleReads) || plan.bindingMiddleReads[source].role != formalFiberMiddleValue {
+		return view.authority.internBinding(binding)
+	}
+	node := binding.value.arena.values[binding.value.term]
+	slot, present := view.algebra.program.formalSlots.Slot(view.body.body, node.root)
+	if !present {
+		return 0, fmt.Errorf("N5 Middle source has no Values slot: %w", errFormalComponentMalformed)
+	}
+	member, present := (formalValuesFiberGroup{descriptor: plan.bindingValues.group}).slot(slot)
+	if !present {
+		return 0, fmt.Errorf("N5 Middle source is outside Values group: %w", errFormalComponentMalformed)
+	}
+	value, present := view.formalValue(member, plan.bindingValues.top)
+	if !present {
+		return 0, fmt.Errorf("N5 Middle source Values leaf is absent: %w", errFormalComponentMalformed)
+	}
+	current, err := view.authority.internFormalValue(value)
+	if err != nil {
+		return 0, fmt.Errorf("N5 Middle source current Values leaf: %w", err)
+	}
+	symbolic, err := view.authority.internBinding(binding)
+	if err != nil {
+		return 0, fmt.Errorf("N5 Middle source binding: %w", err)
+	}
+	joined, err := view.authority.joinFormalValueLeaves(current, symbolic)
+	if err != nil {
+		return 0, fmt.Errorf("N5 Middle source join: %w", err)
+	}
+	return joined, nil
 }
 
 func (a *formalTupleAlgebra) applyFormalOutcomePresence(plan *formalOutcomeStep, predecessor formalRelationTuple) (formalRelationTuple, error) {
