@@ -420,18 +420,15 @@ func (a *formalTupleAlgebra) groupRelation(authority *formalComponentTerminalAut
 		}
 		return authority.product.LaneEqual(leftFactor, rightFactor)
 	case formalFiberGroupValues:
-		leftFactor, err := a.materializeValuesGroup(authority, group, left)
+		leftFactor, err := a.materializeFormalValuesGroup(authority, group, left)
 		if err != nil {
 			return false, err
 		}
-		rightFactor, err := a.materializeValuesGroup(authority, group, right)
+		rightFactor, err := a.materializeFormalValuesGroup(authority, group, right)
 		if err != nil {
 			return false, err
 		}
-		if order {
-			return group.valueDomain.LessOrEq(leftFactor, rightFactor), nil
-		}
-		return group.valueDomain.Equal(leftFactor, rightFactor), nil
+		return formalValuesFactorRelation(authority, leftFactor, rightFactor, order)
 	case formalFiberGroupCoordinateLane:
 		leftFactor, err := a.materializeCoordinateGroup(authority, span, group, left)
 		if err != nil {

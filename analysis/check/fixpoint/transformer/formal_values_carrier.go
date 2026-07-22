@@ -87,6 +87,70 @@ func (s formalSymbolicValueSet) equal(registry *axis.Registry, other formalSymbo
 		formalQualifiedBindingsEqual(s.bindings, other.bindings)
 }
 
+// lessOrEq is the order of the formal Values sum. Ground alternatives retain
+// the registered product order; symbolic alternatives are compared by their
+// canonical spelling set, never by an entry-materialized value or term pointer.
+func (s formalSymbolicValueSet) lessOrEq(registry *axis.Registry, other formalSymbolicValueSet) bool {
+	if s.hasGround && (!other.hasGround || !product.LessOrEq(registry, s.ground, other.ground)) {
+		return false
+	}
+	return formalQualifiedBindingsSubset(s.bindings, other.bindings)
+}
+
+func formalValuesFactorRelation(authority *formalComponentTerminalAuthority, left, right formalValuesFactor, order bool) (bool, error) {
+	if authority == nil || left.Top && len(left.Values) != 0 || right.Top && len(right.Values) != 0 {
+		return false, errFormalComponentMalformed
+	}
+	if left.Top || right.Top {
+		if order {
+			return right.Top, nil
+		}
+		return left.Top == right.Top, nil
+	}
+	registry := authority.product.Registry()
+	bottom := product.Bottom(registry)
+	seen := make(map[FormalSlot]struct{}, len(left.Values)+len(right.Values))
+	for slot := range left.Values {
+		seen[slot] = struct{}{}
+	}
+	for slot := range right.Values {
+		seen[slot] = struct{}{}
+	}
+	for slot := range seen {
+		l, present := left.Values[slot]
+		if !present {
+			l = formalGroundValue(bottom)
+		}
+		r, present := right.Values[slot]
+		if !present {
+			r = formalGroundValue(bottom)
+		}
+		leftSet, err := formalSymbolicValueSetFromFormalValue(authority, l)
+		if err != nil {
+			return false, err
+		}
+		rightSet, err := formalSymbolicValueSetFromFormalValue(authority, r)
+		if err != nil {
+			return false, err
+		}
+		if order {
+			if !leftSet.lessOrEq(registry, rightSet) {
+				return false, nil
+			}
+		} else if !leftSet.equal(registry, rightSet) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func formalSymbolicValueSetFromFormalValue(authority *formalComponentTerminalAuthority, value formalValue) (formalSymbolicValueSet, error) {
+	if ground, concrete := value.concrete(); concrete {
+		return formalSymbolicValueSet{hasGround: true, ground: ground}, nil
+	}
+	return formalSymbolicValueSetFromLeaf(authority, value.symbolicLeaf)
+}
+
 func formalValueFromLeaf(authority *formalComponentTerminalAuthority, leaf decisionLeaf) (formalValue, error) {
 	if authority == nil {
 		return formalValue{}, errFormalComponentForeignOwner

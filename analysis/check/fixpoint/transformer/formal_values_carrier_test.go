@@ -138,3 +138,44 @@ func TestFormalValuesCarrierJoinsSymbolicTermsInArena(t *testing.T) {
 		t.Fatalf("symbolic join leaf = %d, want interned %d", joined.symbolicLeaf, joinedLeaf)
 	}
 }
+
+func TestFormalValuesCarrierOrdersSymbolicSumWithoutConcreteMaterialization(t *testing.T) {
+	program, _, _ := formalTupleConstantInstantiationFixture(t)
+	algebra, err := newFormalTupleAlgebra(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, authority, ok := algebra.span(1)
+	if !ok {
+		t.Fatal("missing formal authority")
+	}
+	group := authority.body.factors.values
+	if len(group.valueSlots) == 0 {
+		t.Fatal("fixture has no Values slot")
+	}
+	binding, err := authority.internBinding(formalQualifiedBinding{value: relationArenaValueRef{
+		owner: authority.variable, arena: authority.terms, term: authority.terms.Root(Root{Kind: RootParam}),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ground, err := authority.internGroundValue(product.Top())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := authority.joinFormalValueLeaves(binding, ground)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := group.valueSlots[0].slot
+	left := formalValuesFactor{Values: map[FormalSlot]formalValue{slot: formalSymbolicValue(binding)}}
+	right := formalValuesFactor{Values: map[FormalSlot]formalValue{slot: formalSymbolicValue(joined)}}
+	less, err := formalValuesFactorRelation(authority, left, right, true)
+	if err != nil || !less {
+		t.Fatalf("symbolic Values subset = %t, %v", less, err)
+	}
+	equal, err := formalValuesFactorRelation(authority, left, right, false)
+	if err != nil || equal {
+		t.Fatalf("distinct symbolic Values equality = %t, %v", equal, err)
+	}
+}
