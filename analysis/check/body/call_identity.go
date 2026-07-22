@@ -124,7 +124,7 @@ func (r *signatureIdentityResolver) luaTypePredicateChecksSealed() bool {
 // must know whether it may erase the runtime call, while point-local call
 // identity remains the later resolver's responsibility.
 func luaTypePredicateChecksSealedForLowering(bindings *bind.Result, signatures signaturelookup.Source, globalTypes map[string]typ.Type) bool {
-	if bindings == nil || !signatures.IncludeStdlib {
+	if bindings == nil {
 		return false
 	}
 	root, ok := bindings.GlobalSymbol("type")
@@ -186,10 +186,13 @@ func shadowedGlobalSignatureNames(globalTypes map[string]typ.Type, moduleExports
 }
 
 func implicitStdlibSignatureNames(signatures signaturelookup.Source) map[string]struct{} {
-	if !signatures.IncludeStdlib {
-		return nil
+	// Lua's global type is a language intrinsic, not an opt-in library
+	// signature.  Keep its binding/environment seal available even when callers
+	// deliberately omit the rest of the stdlib signature surface.
+	names := []string{"type"}
+	if signatures.IncludeStdlib {
+		names = signaturelookup.StdlibSignatureNames()
 	}
-	names := signaturelookup.StdlibSignatureNames()
 	out := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		out[name] = struct{}{}

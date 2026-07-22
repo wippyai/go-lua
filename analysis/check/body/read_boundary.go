@@ -1161,7 +1161,7 @@ func (r *Result) declaredRootPathValueAtBoundary(point cfg.Point, p pathdom.Path
 			return value, true
 		}
 		if runtimeType, ok := r.positiveRuntimeKindGuardType(point, p); ok {
-			return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, runtimeType), runtimeType), true
+			return r.runtimeGuardPathValue(point, p, runtimeType), true
 		}
 		return product.Value{}, false
 	}
@@ -1257,6 +1257,18 @@ func (r *Result) positiveRuntimeKindGuardType(point cfg.Point, p pathdom.Path) (
 		value = product.WithPresence(r.registry, value, presence.Present())
 	}
 	return proof.RuntimeKindType(r.registry, value, product.PresenceOf(value))
+}
+
+// runtimeGuardPathValue records a runtime-kind narrowing while retaining the
+// provenance of the guarded root. A type() test can narrow a declared union,
+// but it cannot turn an explicit any/unknown value (or one of its fields) into
+// a trusted declaration without a dedicated runtime cast/assertion contract.
+func (r *Result) runtimeGuardPathValue(point cfg.Point, p pathdom.Path, runtimeType typ.Type) product.Value {
+	value := typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, runtimeType), runtimeType)
+	if root, ok := r.rootPathValueAtBoundary(point, p.RootOnly()); ok {
+		value = enginesourcevalue.InheritTopOriginEvidence(r.registry, value, root)
+	}
+	return value
 }
 
 func (r *Result) declaredTypeNarrowedByDominatingTypeGuard(point cfg.Point, p pathdom.Path, declared typ.Type) (typ.Type, bool) {

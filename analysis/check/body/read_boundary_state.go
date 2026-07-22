@@ -4,8 +4,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -162,6 +162,16 @@ func (r *Result) sourceValueAtPoint(mode sourceValueReadMode, point cfg.Point, s
 	}
 	if value, ok := r.genericSourceValueAtPoint(mode, point, source, st, read); ok {
 		if sourcePath, pathOK := r.valueSourcePath(source); pathOK {
+			if rootEvidence, rootTop := r.declaredRootTopEvidence(point, sourcePath); rootTop {
+				value = product.Set(r.registry, value, evidence.Key, rootEvidence)
+				// Flow facts may give a descendant a concrete runtime kind while its
+				// declared root is explicit any/unknown. Keep that root provenance on
+				// the read: a guard narrows the observed kind, but does not validate a
+				// field's structural contract.
+				if declaredValue, declaredOK := r.rootDeclarationPathValue(point, sourcePath, st); declaredOK {
+					value = sourcevalue.InheritTopOriginEvidence(r.registry, value, declaredValue)
+				}
+			}
 			if pathValue, valueOK := r.solvedPathValueForSourceMode(mode, point, sourcePath); valueOK &&
 				r.sourceValueHasSpecificType(pathValue) &&
 				r.recoveredRootPathValueShouldReplace(value, pathValue) {
@@ -236,6 +246,26 @@ func (r *Result) genericSourceValueAtPoint(mode sourceValueReadMode, point cfg.P
 	return value, true
 }
 
+func (r *Result) declaredRootTopEvidence(point cfg.Point, p pathdom.Path) (evidence.Value, bool) {
+	if r == nil || p.IsEmpty() {
+		return evidence.Bottom(), false
+	}
+	if _, _, guarded := r.dominatingTypeGuardForPath(point, p); !guarded {
+		return evidence.Bottom(), false
+	}
+	declared, ok := r.DeclaredPathTypeAt(point, p.RootOnly(), true)
+	if !ok || declared == nil {
+		return evidence.Bottom(), false
+	}
+	if typ.IsAny(declared) {
+		return evidence.ExplicitTop(), true
+	}
+	if typ.IsUnknown(declared) {
+		return evidence.GradualTop(), true
+	}
+	return evidence.Bottom(), false
+}
+
 func (r *Result) pathValueForSourceMode(mode sourceValueReadMode, point cfg.Point, p pathdom.Path) (product.Value, bool) {
 	if p.IsEmpty() {
 		return product.Value{}, false
@@ -267,7 +297,7 @@ func (r *Result) proofPathValueForSourceMode(mode sourceValueReadMode, point cfg
 		return value, true
 	}
 	if runtimeType, ok := r.positiveRuntimeKindGuardType(point, p); ok {
-		return typevalue.WithWitness(r.registry, r.typeValues.FromType(r.registry, runtimeType), runtimeType), true
+		return r.runtimeGuardPathValue(point, p, runtimeType), true
 	}
 	return product.Value{}, false
 }
