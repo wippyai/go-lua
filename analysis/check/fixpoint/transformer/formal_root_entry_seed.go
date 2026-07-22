@@ -178,7 +178,16 @@ func (s formalRootEntrySubstitution) specializeApplyObservations(
 			if regions[index].guard != witness.observation.regions[index].region.guard {
 				return nil, fmt.Errorf("transformer: specialized Apply observation guard changed")
 			}
-			witness.observation.regions[index].region = regions[index]
+			publication, reachable, publicationErr := execution.algebra.formalApplyRegionPublication(
+				operator.apply, operator.footprint, regions[index], formalApplyTerminalNormal,
+			)
+			if publicationErr != nil {
+				return nil, fmt.Errorf("transformer: specialized Apply observation publication: %w", publicationErr)
+			}
+			if !reachable {
+				return nil, fmt.Errorf("transformer: specialized Apply observation became unreachable")
+			}
+			witness.observation.regions[index] = formalApplyObservedRegion{region: regions[index], publication: publication}
 		}
 		witness.predecessorValue = predecessor
 		witness.outcomeValues = outcomes

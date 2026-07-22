@@ -59,6 +59,21 @@ type formalValuesFactor struct {
 	Values map[FormalSlot]formalValue
 }
 
+// formalValuesNeedSpecialization reports whether a Values carrier still owns
+// an entry-dependent terminal. Callers use it to defer State-only transactions
+// without asking the concrete adapter to diagnose an expected symbolic input.
+func formalValuesNeedSpecialization(values formalValuesFactor) bool {
+	if values.Top {
+		return false
+	}
+	for _, value := range values.Values {
+		if _, concrete := value.concrete(); !concrete {
+			return true
+		}
+	}
+	return false
+}
+
 // formalSymbolicValueSet is the interned symbolic representation used when a
 // Values lattice operation joins concrete and symbolic alternatives. Concrete
 // alternatives are reduced with the product law; binding alternatives retain

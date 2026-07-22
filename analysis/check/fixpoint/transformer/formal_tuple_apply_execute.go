@@ -511,6 +511,26 @@ func (a *formalTupleAlgebra) formalApplyRegionPublication(
 	if mode != formalApplyTerminalNormal && mode != formalApplyTerminalNonreturning && mode != formalApplyTerminalDefinition {
 		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply terminal mode is unowned")
 	}
+	// Apply's boundary execution is a State transaction, but its correlated
+	// caller/target Values operands are part of the stabilized formal product.
+	// Keep an entry-dependent row intact during WTO. Root specialization rebuilds
+	// this exact observed region with ground Values before it publishes the
+	// CallOutcome boundary; no symbolic spelling crosses productFactors.
+	callerFormalValues, err := region.caller.formalValuesFactor()
+	if err != nil {
+		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply caller formal Values: %w", err)
+	}
+	targetFormalValues, err := region.target.formalValuesFactor()
+	if err != nil {
+		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply target formal Values: %w", err)
+	}
+	if a.entrySubstitution == nil && (formalValuesNeedSpecialization(callerFormalValues) || formalValuesNeedSpecialization(targetFormalValues)) {
+		leaves, leafErr := region.caller.completeLeaves()
+		if leafErr != nil {
+			return formalApplyLeafPublication{}, false, leafErr
+		}
+		return formalApplyLeafPublication{guard: region.guard, leaves: leaves}, true, nil
+	}
 	callerValues, callerFactors, err := region.caller.productFactors()
 	if err != nil {
 		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply caller factors: %w", err)
@@ -518,10 +538,6 @@ func (a *formalTupleAlgebra) formalApplyRegionPublication(
 	targetValues, targetFactors, err := region.target.productFactors()
 	if err != nil {
 		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply target factors: %w", err)
-	}
-	targetFormalValues, err := region.target.formalValuesFactor()
-	if err != nil {
-		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply target formal Values: %w", err)
 	}
 	for index, factor := range targetFactors {
 		families, familyErr := region.target.authority.product.CoordinateFamilies(factor.Lane())
