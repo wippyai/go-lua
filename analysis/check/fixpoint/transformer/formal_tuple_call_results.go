@@ -145,7 +145,7 @@ func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOpera
 			}
 			valueLeaves[index] = leaf
 		}
-		values, leafErr := a.materializeValuesGroup(authority, plan.values, valueLeaves)
+		values, leafErr := a.materializeFormalValuesGroup(authority, plan.values, valueLeaves)
 		if leafErr != nil {
 			return fail(leafErr)
 		}
@@ -156,27 +156,35 @@ func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOpera
 				return fail(leafErr)
 			}
 		}
-		nextValues := values
+		nextValueLeaves := valueLeaves
 		nextFactors := factors
-		switch plan.phase {
-		case factapply.CallResultPhaseMaterialize:
-			nextValues, leafErr = plan.materialize.Apply(a.ctx, nil, values)
-		case factapply.CallResultPhasePostconditions:
-			var next factapply.CallResultPostconditionFactorFrame[FormalSlot]
-			next, leafErr = plan.program.Apply(a.ctx, nil, factapply.CallResultPostconditionFactorFrame[FormalSlot]{Values: values, Factors: factors, Reachable: true})
-			nextValues, nextFactors = next.Values, next.Factors
-			if !next.Reachable {
-				continue
+		if a.entrySubstitution != nil || !formalValuesNeedSpecialization(values) {
+			concrete, concreteErr := formalConcreteValuesFactor(authority, values)
+			if concreteErr != nil {
+				return fail(concreteErr)
 			}
-		default:
-			return fail(errFormalComponentMalformed)
-		}
-		if leafErr != nil {
-			return fail(leafErr)
-		}
-		valueLeaves, leafErr = a.factorValuesGroup(authority, plan.values, nextValues)
-		if leafErr != nil {
-			return fail(leafErr)
+			nextValues := state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}
+			switch plan.phase {
+			case factapply.CallResultPhaseMaterialize:
+				nextValues, leafErr = plan.materialize.Apply(a.ctx, nil, nextValues)
+			case factapply.CallResultPhasePostconditions:
+				var next factapply.CallResultPostconditionFactorFrame[FormalSlot]
+				next, applyErr := plan.program.Apply(a.ctx, nil, factapply.CallResultPostconditionFactorFrame[FormalSlot]{Values: nextValues, Factors: factors, Reachable: true})
+				leafErr = applyErr
+				nextValues, nextFactors = next.Values, next.Factors
+				if !next.Reachable {
+					continue
+				}
+			default:
+				return fail(errFormalComponentMalformed)
+			}
+			if leafErr != nil {
+				return fail(leafErr)
+			}
+			nextValueLeaves, leafErr = a.factorValuesGroup(authority, plan.values, nextValues)
+			if leafErr != nil {
+				return fail(leafErr)
+			}
 		}
 		publish := func(ordinal formalFiberOrdinal, leaf decisionLeaf) error {
 			index := sort.Search(len(affected), func(i int) bool { return affected[i].ordinal >= ordinal })
@@ -188,7 +196,7 @@ func (a *formalTupleAlgebra) applyFormalCallResults(operator formalRelationOpera
 			return err
 		}
 		for index, ordinal := range plan.values.members {
-			if leafErr = publish(ordinal, valueLeaves[index]); leafErr != nil {
+			if leafErr = publish(ordinal, nextValueLeaves[index]); leafErr != nil {
 				return fail(leafErr)
 			}
 		}
