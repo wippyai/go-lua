@@ -333,6 +333,33 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 				return nil, errFormalComponentMalformed
 			}
 			view := views[0]
+			// Return binding is an entry-dependent Values transformation.  Keep the
+			// declared source terms at their result roots when its frozen input
+			// projection contains a symbolic leaf; the concrete N5 kernel only
+			// accepts product.Value operands and is therefore deliberately below
+			// this boundary.
+			if symbolic, symbolicErr := view.symbolicValuesIn(plan.bindingLift.roles[0].reads); symbolicErr != nil || symbolic {
+				if symbolicErr != nil {
+					return nil, symbolicErr
+				}
+				writes := make([]formalClosedFactorLeafWrite, 0, plan.transaction.ResultBindingCount())
+				for index := 0; index < plan.transaction.ResultBindingCount(); index++ {
+					source, target, exact := plan.transaction.ResultBinding(index)
+					if !exact || source < 0 || source >= len(plan.sources) {
+						return nil, errFormalComponentMalformed
+					}
+					memberIndex, owned := plan.bindingValues.writeSlots[plan.targets[target].Slot]
+					if !owned || memberIndex < 0 || memberIndex >= len(plan.bindingValues.writes) {
+						return nil, errFormalComponentMalformed
+					}
+					leaf, internErr := view.authority.internBinding(plan.sources[source])
+					if internErr != nil {
+						return nil, internErr
+					}
+					writes = append(writes, formalClosedFactorLeafWrite{ordinal: plan.bindingValues.writes[memberIndex].ordinal, leaf: leaf})
+				}
+				return writes, nil
+			}
 			evaluator, err := a.newSparseTupleLeafEvaluator(view)
 			if err != nil {
 				return nil, err
@@ -395,6 +422,9 @@ func (a *formalTupleAlgebra) applyFormalOutcomePresence(plan *formalOutcomeStep,
 				return nil, errFormalComponentMalformed
 			}
 			view := views[0]
+			if symbolic, symbolicErr := view.symbolicValuesIn(plan.presenceLift.roles[0].reads); symbolicErr != nil || symbolic {
+				return nil, symbolicErr
+			}
 			values, err := plan.presenceValues.materialize(view)
 			if err != nil {
 				return nil, err
@@ -433,6 +463,9 @@ func (a *formalTupleAlgebra) applyFormalOutcomeCovariant(plan *formalOutcomeStep
 				return nil, errFormalComponentMalformed
 			}
 			view := views[0]
+			if symbolic, symbolicErr := view.symbolicValuesIn(plan.covariantLift.roles[0].reads); symbolicErr != nil || symbolic {
+				return nil, symbolicErr
+			}
 			values, err := plan.covariantValues.materialize(view)
 			if err != nil {
 				return nil, err
