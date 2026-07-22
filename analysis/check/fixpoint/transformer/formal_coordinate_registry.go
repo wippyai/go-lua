@@ -26,6 +26,7 @@ func freezeFormalCoordinateRegistry(domain state.ProductDomain, rekey state.Coor
 			classes:   make(map[formal.Root]formal.LexicalClassID),
 			members:   make(map[formal.LexicalClassID][]formal.Root),
 			alphabets: make(map[formal.OccurrenceID]formalWriteAlphabet),
+			advances:  make(map[formal.OccurrenceID]formalClassAdvance),
 		}, nil
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i].Less(roots[j]) })
@@ -52,6 +53,7 @@ type formalCoordinateRegistry struct {
 	members   map[formal.LexicalClassID][]formal.Root
 	aliases   []formalGuardedAliasFact
 	alphabets map[formal.OccurrenceID]formalWriteAlphabet
+	advances  map[formal.OccurrenceID]formalClassAdvance
 }
 
 type formalGuardScope struct {
@@ -64,10 +66,19 @@ func (s formalGuardScope) valid() bool { return s.occurrence.Valid() && s.branch
 type formalGuardedAliasFact struct {
 	left, right formal.Root
 	guard       formalGuardScope
+	// support is the exact immutable lexical support of this runtime fact.
+	// Advances invalidate aliases by support intersection; no class-adjacent
+	// coordinate is inferred merely because it shares a class member.
+	support []formal.LexicalClassID
 }
 type formalWriteAlphabet struct {
 	occurrence formal.OccurrenceID
 	roots      []formal.Root
+}
+
+type formalClassAdvance struct {
+	occurrence formal.OccurrenceID
+	classes    []formal.LexicalClassID
 }
 
 func (a formalWriteAlphabet) contains(root formal.Root) bool {
@@ -81,10 +92,11 @@ type formalCoordinateRegistryBuilder struct {
 	members   map[formal.LexicalClassID][]formal.Root
 	aliases   []formalGuardedAliasFact
 	alphabets map[formal.OccurrenceID]formalWriteAlphabet
+	advances  map[formal.OccurrenceID]formalClassAdvance
 }
 
 func newFormalCoordinateRegistryBuilder(owner lexicalidentity.StableLexicalBodyID) *formalCoordinateRegistryBuilder {
-	return &formalCoordinateRegistryBuilder{owner: owner, classes: make(map[formal.Root]formal.LexicalClassID), members: make(map[formal.LexicalClassID][]formal.Root), alphabets: make(map[formal.OccurrenceID]formalWriteAlphabet)}
+	return &formalCoordinateRegistryBuilder{owner: owner, classes: make(map[formal.Root]formal.LexicalClassID), members: make(map[formal.LexicalClassID][]formal.Root), alphabets: make(map[formal.OccurrenceID]formalWriteAlphabet), advances: make(map[formal.OccurrenceID]formalClassAdvance)}
 }
 
 func (b *formalCoordinateRegistryBuilder) addClass(root formal.Root, class formal.LexicalClassID) error {
@@ -103,13 +115,33 @@ func (b *formalCoordinateRegistryBuilder) addClass(root formal.Root, class forma
 }
 
 func (b *formalCoordinateRegistryBuilder) addAlias(left, right formal.Root, guard formalGuardScope) error {
+	return b.addAliasSupported(left, right, guard, nil)
+}
+
+func (b *formalCoordinateRegistryBuilder) addAliasSupported(left, right formal.Root, guard formalGuardScope, support []formal.LexicalClassID) error {
 	if b == nil || !left.Valid() || !right.Valid() || left.Owner() != b.owner || right.Owner() != b.owner || !guard.valid() || guard.occurrence.Owner() != b.owner {
 		return fmt.Errorf("formal coordinate registry: invalid guarded alias")
+	}
+	if _, known := b.classes[left]; !known {
+		return fmt.Errorf("formal coordinate registry: guarded alias has an unregistered left root")
+	}
+	if _, known := b.classes[right]; !known {
+		return fmt.Errorf("formal coordinate registry: guarded alias has an unregistered right root")
 	}
 	if right.Less(left) {
 		left, right = right, left
 	}
-	b.aliases = append(b.aliases, formalGuardedAliasFact{left: left, right: right, guard: guard})
+	if len(support) == 0 {
+		support = []formal.LexicalClassID{b.classes[left], b.classes[right]}
+	}
+	support = append([]formal.LexicalClassID(nil), support...)
+	sort.Slice(support, func(i, j int) bool { return support[i].Ordinal() < support[j].Ordinal() })
+	for index, class := range support {
+		if !class.Valid() || class.Owner() != b.owner || len(b.members[class]) == 0 || index != 0 && support[index-1] == class {
+			return fmt.Errorf("formal coordinate registry: invalid guarded alias support")
+		}
+	}
+	b.aliases = append(b.aliases, formalGuardedAliasFact{left: left, right: right, guard: guard, support: support})
 	return nil
 }
 
@@ -125,6 +157,9 @@ func (b *formalCoordinateRegistryBuilder) addAlphabet(occurrence formal.Occurren
 		if !root.Valid() || root.Owner() != b.owner {
 			return fmt.Errorf("formal coordinate registry: foreign write alphabet root")
 		}
+		if _, known := b.classes[root]; !known {
+			return fmt.Errorf("formal coordinate registry: write alphabet has an unregistered root")
+		}
 	}
 	sort.Slice(owned, func(i, j int) bool { return owned[i].Less(owned[j]) })
 	for index := 1; index < len(owned); index++ {
@@ -133,6 +168,27 @@ func (b *formalCoordinateRegistryBuilder) addAlphabet(occurrence formal.Occurren
 		}
 	}
 	b.alphabets[occurrence] = formalWriteAlphabet{occurrence: occurrence, roots: owned}
+	return nil
+}
+
+func (b *formalCoordinateRegistryBuilder) addAdvance(occurrence formal.OccurrenceID, classes []formal.LexicalClassID) error {
+	if b == nil || !occurrence.Valid() || occurrence.Owner() != b.owner {
+		return fmt.Errorf("formal coordinate registry: invalid class advance")
+	}
+	if _, exists := b.advances[occurrence]; exists {
+		return fmt.Errorf("formal coordinate registry: duplicate class advance")
+	}
+	owned := append([]formal.LexicalClassID(nil), classes...)
+	if len(owned) == 0 {
+		return fmt.Errorf("formal coordinate registry: empty class advance")
+	}
+	sort.Slice(owned, func(i, j int) bool { return owned[i].Ordinal() < owned[j].Ordinal() })
+	for index, class := range owned {
+		if !class.Valid() || class.Owner() != b.owner || len(b.members[class]) == 0 || index != 0 && owned[index-1] == class {
+			return fmt.Errorf("formal coordinate registry: invalid class advance member")
+		}
+	}
+	b.advances[occurrence] = formalClassAdvance{occurrence: occurrence, classes: owned}
 	return nil
 }
 
@@ -163,12 +219,20 @@ func (b *formalCoordinateRegistryBuilder) freeze() (*formalCoordinateRegistry, e
 		}
 		return aliases[i].right.Less(aliases[j].right)
 	})
+	for index := range aliases {
+		aliases[index].support = append([]formal.LexicalClassID(nil), aliases[index].support...)
+	}
 	alphabets := make(map[formal.OccurrenceID]formalWriteAlphabet, len(b.alphabets))
 	for occurrence, alphabet := range b.alphabets {
 		alphabet.roots = append([]formal.Root(nil), alphabet.roots...)
 		alphabets[occurrence] = alphabet
 	}
-	return &formalCoordinateRegistry{owner: b.owner, classes: classes, members: members, aliases: aliases, alphabets: alphabets}, nil
+	advances := make(map[formal.OccurrenceID]formalClassAdvance, len(b.advances))
+	for occurrence, advance := range b.advances {
+		advance.classes = append([]formal.LexicalClassID(nil), advance.classes...)
+		advances[occurrence] = advance
+	}
+	return &formalCoordinateRegistry{owner: b.owner, classes: classes, members: members, aliases: aliases, alphabets: alphabets, advances: advances}, nil
 }
 
 func (r *formalCoordinateRegistry) class(root formal.Root) (formal.LexicalClassID, bool) {
@@ -206,4 +270,38 @@ func (r *formalCoordinateRegistry) alphabet(occurrence formal.OccurrenceID) (for
 	}
 	alphabet.roots = append([]formal.Root(nil), alphabet.roots...)
 	return alphabet, true
+}
+
+func (r *formalCoordinateRegistry) advance(occurrence formal.OccurrenceID) (formalClassAdvance, bool) {
+	if r == nil || !occurrence.Valid() || occurrence.Owner() != r.owner {
+		return formalClassAdvance{}, false
+	}
+	advance, ok := r.advances[occurrence]
+	if !ok {
+		return formalClassAdvance{}, false
+	}
+	advance.classes = append([]formal.LexicalClassID(nil), advance.classes...)
+	return advance, true
+}
+
+func (r *formalCoordinateRegistry) aliasInvalidated(alias formalGuardedAliasFact, advance formalClassAdvance) bool {
+	if r == nil || alias.guard.occurrence.Owner() != r.owner || advance.occurrence.Owner() != r.owner {
+		return false
+	}
+	for _, support := range alias.support {
+		for _, advanced := range advance.classes {
+			if support == advanced {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sortFormalRoots(roots []formal.Root) {
+	sort.Slice(roots, func(i, j int) bool { return roots[i].Less(roots[j]) })
+}
+
+func sortOccurrences(occurrences []formal.OccurrenceID) {
+	sort.Slice(occurrences, func(i, j int) bool { return occurrences[i].Ordinal() < occurrences[j].Ordinal() })
 }

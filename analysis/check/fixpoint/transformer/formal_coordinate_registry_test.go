@@ -114,3 +114,91 @@ func TestFormalCoordinateRegistryAllowsAnExplicitEmptyRootVocabulary(t *testing.
 		t.Fatalf("empty root vocabulary registry = %#v", registry)
 	}
 }
+
+func TestFormalCoordinateRegistryAdvanceInvalidatesOnlyAliasSupport(t *testing.T) {
+	owner := registryTestOwner(5)
+	left := formal.NewRoot(owner, 1, formal.Input)
+	right := formal.NewRoot(owner, 2, formal.Input)
+	other := formal.NewRoot(owner, 3, formal.Input)
+	leftClass := formal.NewLexicalClassID(owner, 1)
+	rightClass := formal.NewLexicalClassID(owner, 2)
+	otherClass := formal.NewLexicalClassID(owner, 3)
+	builder := newFormalCoordinateRegistryBuilder(owner)
+	for _, binding := range []struct {
+		root  formal.Root
+		class formal.LexicalClassID
+	}{{left, leftClass}, {right, rightClass}, {other, otherClass}} {
+		if err := builder.addClass(binding.root, binding.class); err != nil {
+			t.Fatal(err)
+		}
+	}
+	guard := formalGuardScope{occurrence: formal.NewOccurrenceID(owner, 1), branch: 1}
+	if err := builder.addAliasSupported(left, right, guard, []formal.LexicalClassID{leftClass, rightClass}); err != nil {
+		t.Fatal(err)
+	}
+	advanceOccurrence := formal.NewOccurrenceID(owner, 2)
+	if err := builder.addAdvance(advanceOccurrence, []formal.LexicalClassID{rightClass}); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := builder.freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := registry.aliasesAt(guard)[0]
+	advance, ok := registry.advance(advanceOccurrence)
+	if !ok || !registry.aliasInvalidated(alias, advance) {
+		t.Fatal("advance did not invalidate its supported alias")
+	}
+	if err := builder.addAdvance(formal.NewOccurrenceID(owner, 3), []formal.LexicalClassID{otherClass}); err != nil {
+		t.Fatal(err)
+	}
+	otherRegistry, err := builder.freeze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAdvance, _ := otherRegistry.advance(formal.NewOccurrenceID(owner, 3))
+	if otherRegistry.aliasInvalidated(otherRegistry.aliasesAt(guard)[0], otherAdvance) {
+		t.Fatal("advance globally closed a class-adjacent alias")
+	}
+}
+
+func TestFormalCoordinateRegistryCanonicalContentIgnoresConstructionOrder(t *testing.T) {
+	owner := registryTestOwner(6)
+	first := formal.NewRoot(owner, 1, formal.Input)
+	second := formal.NewRoot(owner, 2, formal.Output)
+	firstClass := formal.NewLexicalClassID(owner, 1)
+	secondClass := formal.NewLexicalClassID(owner, 2)
+	build := func(reverse bool) *formalCoordinateRegistry {
+		builder := newFormalCoordinateRegistryBuilder(owner)
+		bindings := []struct {
+			root  formal.Root
+			class formal.LexicalClassID
+		}{{first, firstClass}, {second, secondClass}}
+		if reverse {
+			bindings[0], bindings[1] = bindings[1], bindings[0]
+		}
+		for _, binding := range bindings {
+			if err := builder.addClass(binding.root, binding.class); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := builder.addAlias(first, second, formalGuardScope{occurrence: formal.NewOccurrenceID(owner, 1), branch: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := builder.addAlphabet(formal.NewOccurrenceID(owner, 2), []formal.Root{second}); err != nil {
+			t.Fatal(err)
+		}
+		if err := builder.addAdvance(formal.NewOccurrenceID(owner, 3), []formal.LexicalClassID{firstClass}); err != nil {
+			t.Fatal(err)
+		}
+		registry, err := builder.freeze()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return registry
+	}
+	left, right := build(false), build(true)
+	if string(left.CanonicalBytes()) != string(right.CanonicalBytes()) || left.ContentID() != right.ContentID() {
+		t.Fatal("canonical registry content depends on construction order")
+	}
+}
