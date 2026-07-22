@@ -233,3 +233,39 @@ func TestRelationProgramCoverageGuardFailsClosedForTypeAssignmentOutsideDeclared
 		t.Fatalf("outside-closure access error = %#v", err)
 	}
 }
+
+func TestRelationProgramCoverageGuardFailsClosedForExportOutsideDeclaredClass(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("export-observation-class-coverage"))
+	body := lexicalidentity.RootBody(namespace)
+	demand, err := CanonicalizeObservationContracts(ObservationClassesV1Contract(
+		ObservationConsumerExportCode,
+		ObservationClassNormalReturn,
+		ObservationClassPathValue,
+		ObservationClassPointState,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := FreezeRelationProgramWithObservation(
+		[]RelationProgramUnit{formalTemplateFreezeUnit(t, body)}, testAcyclicCallTopology(t, body), demand,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := program.RequireObservationClass(
+		ObservationConsumerExportCode,
+		ObservationClassPathValue,
+		"manifest export read model",
+	); err != nil {
+		t.Fatalf("declared class rejected: %v", err)
+	}
+	err = program.RequireObservationClass(
+		ObservationConsumerExportCode,
+		ObservationClassCallOutcome,
+		"adversarial manifest call-outcome read",
+	)
+	var coverage *ObservationCoverageError
+	if !errors.As(err, &coverage) || !IsObservationCoverageError(err) || coverage.Consumer != ObservationConsumerExportCode {
+		t.Fatalf("outside-closure access error = %#v", err)
+	}
+}
