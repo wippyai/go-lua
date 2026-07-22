@@ -94,6 +94,32 @@ func TestFormalRootEntrySeedMatchesCanonicalCoordinateSeedAcrossFullProduct(t *t
 	if err != nil || !present || !body.domain.Equal(published, want) {
 		t.Fatalf("formal root publication = equal:%t err:%v", body.domain.Equal(published, want), err)
 	}
+	// The post-WTO interpreter inherits the prepared full product before it
+	// applies stabilized deltas. This checks coordinate lanes as well as Values.
+	symbolic, err := executeFormalRelation(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, body.body, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(context.Background(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedInput, specializedPresent, err := specializedPublication.PointInput(context.Background(), 1, 0)
+	if err != nil || !specializedPresent || !body.domain.Equal(published, specializedInput) {
+		t.Fatalf("symbolic full-product root publication = present:%t equal:%t err:%v", specializedPresent, body.domain.Equal(published, specializedInput), err)
+	}
 	rootCoordinate, present := publication.node(body.relation.code.root)
 	if !present {
 		t.Fatal("formal publication omitted selected root diagnostics")

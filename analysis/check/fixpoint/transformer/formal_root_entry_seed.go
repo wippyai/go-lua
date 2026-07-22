@@ -100,7 +100,15 @@ func (s formalRootEntrySubstitution) specializeStabilized(ctx context.Context, e
 		if specializeErr != nil {
 			return nil, fmt.Errorf("transformer: specialize cell %+v: %w", cell, specializeErr)
 		}
-		values[cell] = specialized
+		// A stabilized formal tuple carries deltas from the symbolic root. Its
+		// concrete image is therefore completed against the prepared full-product
+		// entry, not just Values: coordinate families retain their registered
+		// skeletons, guarded equalities, advances, and alphabets when the formal
+		// relation left a lane structurally untouched.
+		values[cell] = a.combine(formalComponentJoin, entry, specialized)
+		if err := a.err(); err != nil {
+			return nil, fmt.Errorf("transformer: specialize cell %+v baseline: %w", cell, err)
+		}
 	}
 	// Publication is authorized only on this completed concrete image.  The
 	// compatibility executor installs the same capability before solving; this
