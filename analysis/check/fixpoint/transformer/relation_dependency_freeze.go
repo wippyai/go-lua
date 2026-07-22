@@ -3,9 +3,8 @@ package transformer
 import "fmt"
 
 // relationDependencyFreezeResultVersion is intentionally a structural-result
-// version, not a cache key. Stage 5 still freezes the complete relation
-// closure; stages 6--8 will introduce a demand contract before reducing it.
-const relationDependencyFreezeResultVersion = "full-result-v1"
+// version, not a cache key. The closure key is carried by demand.
+const relationDependencyFreezeResultVersion = "observation-v1"
 
 // relationTier2ArtifactHandle is the immutable hand-off from local syntax and
 // SCC/link sealing into tier 3. The slice headers are copied, while their
@@ -73,19 +72,15 @@ type relationDependencyFreeze struct {
 func (d relationDependencyFreeze) validFor(program *RelationProgram) bool {
 	return d.sealed && d.version == relationDependencyFreezeResultVersion && program != nil && len(program.bodies) == len(d.tier2.syntax) &&
 		d.formalSlots != nil && d.formalFibers != nil && d.formalComponents != nil && d.formalRegion != nil &&
-		d.demand.FullResultV1() && d.formalGuards != nil && d.formalGuards.valid() && d.formalTemplate != nil &&
+		d.demand.valid() && d.formalGuards != nil && d.formalGuards.valid() && d.formalTemplate != nil &&
 		d.observability == d.formalRegion && d.evaluator.validFor(program)
 }
 
-// freezeRelationDependencyFreezeFullResultV1 is the sole tier-3 construction
-// transaction. It first receives sealed tier-2 artifacts by immutable handle,
-// materializes fresh compatibility views for the complete closure, then seals
-// the formal topology and evaluator binding as one full-result-v1 product.
-//
-// The product is intentionally complete for this stage. In particular the
-// observable quotient is a new tier-3 product; it never rewrites tier-2 graph
-// syntax or link artifacts. No concrete root entry crosses this boundary.
-func freezeRelationDependencyFreezeFullResultV1(program *RelationProgram, demand ObservationContract, telemetry *FreezeTelemetry) error {
+// freezeRelationDependencyFreeze is the sole tier-3 construction transaction.
+// It receives sealed tier-2 artifacts and seals the exact closure named by
+// demand. Summary-v1 retains the same evaluator topology but its publication
+// path does not freeze the complete point-state surface.
+func freezeRelationDependencyFreeze(program *RelationProgram, demand ObservationContract, telemetry *FreezeTelemetry) error {
 	coverage, err := newObservationCoverageGuard(demand)
 	if err != nil {
 		return err
@@ -158,7 +153,7 @@ func freezeRelationDependencyFreezeFullResultV1(program *RelationProgram, demand
 
 	program.sealed = true
 	if !program.relationDependencyFreeze.validFor(program) {
-		return fmt.Errorf("transformer: full-result-v1 dependency freeze failed ownership validation")
+		return fmt.Errorf("transformer: observation dependency freeze failed ownership validation")
 	}
 	return nil
 }

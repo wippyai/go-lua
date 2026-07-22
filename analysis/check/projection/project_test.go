@@ -73,13 +73,25 @@ func TestFromResultContextReturnsCanceledForCanceledSolve(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got, err := summaryprojection.FromFormalArtifactsContext(ctx, result)
+	got, err := summaryprojection.FromFormalArtifactsContext(ctx, canceledFormalArtifactContract{Result: result})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("FromResultContext error = %v, want context cancellation", err)
 	}
 	if !reflect.DeepEqual(got, summary.Summary{}) {
 		t.Fatalf("FromResultContext result = %#v, want no partial summary", got)
 	}
+}
+
+// canceledFormalArtifactContract supplies the formal summary surface without
+// making this cancellation test depend on a particular solved observation.
+type canceledFormalArtifactContract struct{ *body.Result }
+
+func (canceledFormalArtifactContract) FormalNormalReturnParameters() ([]product.Value, []product.Value, bool) {
+	return nil, nil, false
+}
+
+func (canceledFormalArtifactContract) FormalNormalReturnReachability(cfg.Point) (bool, bool) {
+	return false, false
 }
 
 func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {

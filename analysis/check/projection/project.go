@@ -36,6 +36,16 @@ type formalNormalReturnReachabilityReader interface {
 	FormalNormalReturnReachability(cfg.Point) (bool, bool)
 }
 
+// FormalArtifactsSummaryContract is the closed read-model consumed by the
+// summary publisher after a formal solve. Its normal-return observations are
+// direct formal artifacts, so this path never falls back to arbitrary
+// point-state reads to reconstruct them.
+type FormalArtifactsSummaryContract interface {
+	ResultReader
+	formalNormalReturnParameterReader
+	formalNormalReturnReachabilityReader
+}
+
 type entryStateReader interface {
 	EntryState() (state.State, bool)
 }
@@ -118,12 +128,15 @@ func FromResult(result ResultReader) summary.Summary {
 	return projected
 }
 
-// FromFormalArtifactsContext projects a completed Result together with the
-// detached formal observations that replace its non-retained State reads.
-// Retained relation-completion classes continue to be read from Result by
-// their class-specific projectors.
-func FromFormalArtifactsContext(ctx context.Context, result ResultReader) (summary.Summary, error) {
-	return fromResultContext(ctx, result)
+// FromFormalArtifactsContext projects a completed formal summary contract.
+// The direct normal-return observations replace the retired EntryState and
+// graph-wide StateAt reconstruction path; retained classes continue to use
+// their explicit Result read-models.
+func FromFormalArtifactsContext(ctx context.Context, contract FormalArtifactsSummaryContract) (summary.Summary, error) {
+	if contract == nil {
+		return summary.Summary{}, nil
+	}
+	return fromResultContext(ctx, contract)
 }
 
 // fromResultContext projects a completed check result into a summary while

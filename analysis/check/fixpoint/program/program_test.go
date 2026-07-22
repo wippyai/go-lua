@@ -71,6 +71,65 @@ func TestProgramProductionUsesPreparedBodyAPI(t *testing.T) {
 	}
 }
 
+func TestRunChunkSummaryContractOmitsOrdinaryPointStatePublication(t *testing.T) {
+	stmts := parseChunk(t, `
+local value = "summary"
+if value == "summary" then
+	return value
+end
+return "fallback"
+`)
+	full, err := RunChunk(stmts, Config{
+		ObservationContracts: []transformer.ObservationContract{
+			transformer.FullResultV1ObservationContract(transformer.ObservationConsumerSummaryProjection),
+		},
+		Check: body.Config{Registry: standard.Registry()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, err := RunChunk(stmts, Config{
+		ObservationContracts: []transformer.ObservationContract{SummaryProjectionObservationContract()},
+		Check:                body.Config{Registry: standard.Registry()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := checked.RootResult()
+	if root == nil || root.Graph() == nil {
+		t.Fatal("summary contract did not publish a root summary reader")
+	}
+	if _, ok := root.EntryState(); !ok {
+		t.Fatal("summary contract omitted its entry closure")
+	}
+	if _, ok := root.ExitState(); !ok {
+		t.Fatal("summary contract omitted its normal-exit closure")
+	}
+	fullRoot := full.RootResult()
+	if fullRoot == nil || fullRoot.Graph() == nil {
+		t.Fatal("full-result contract did not publish a root result")
+	}
+	fullStates, summaryStates := 0, 0
+	for _, point := range cfg.RPOReadOnly(fullRoot.Graph()) {
+		if _, ok := fullRoot.StateAt(point); ok {
+			fullStates++
+		}
+	}
+	for _, point := range cfg.RPOReadOnly(root.Graph()) {
+		_, present := root.StateAt(point)
+		if present {
+			summaryStates++
+		}
+		if point != root.Graph().Entry() && point != root.Graph().Exit() && present {
+			t.Fatalf("summary contract published ordinary point state at %d", point)
+		}
+	}
+	if summaryStates >= fullStates {
+		t.Fatalf("summary point-state publication = %d, full-result = %d", summaryStates, fullStates)
+	}
+	t.Logf("summary freeze publication: full point states=%d, summary point states=%d, delta=%d", fullStates, summaryStates, summaryStates-fullStates)
+}
+
 func TestRunChunkRecordsFreezeArchitectureTelemetry(t *testing.T) {
 	stmts := parseChunk(t, `
 local record = {}

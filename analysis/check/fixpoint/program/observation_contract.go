@@ -3,8 +3,9 @@ package program
 import "github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 
 // SummaryProjectionObservationContract is owned by the summary/publication
-// consumer.  Stage 6 deliberately requests the complete full-result-v1
-// closure while installing the demand protocol for later scope reduction.
+// consumer. Summary-only program callers need no complete point-state
+// publication; mixed consumer sets canonically widen at the transformer
+// boundary.
 func SummaryProjectionObservationContract() transformer.ObservationContract {
-	return transformer.FullResultV1ObservationContract(transformer.ObservationConsumerSummaryProjection)
+	return transformer.SummaryV1ObservationContract()
 }

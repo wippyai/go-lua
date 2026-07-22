@@ -29,7 +29,8 @@ type Config struct {
 
 	// ObservationContracts are immutable consumer-owned demands.  They are
 	// unioned and canonicalized by runPreparedRelationProgram before tier 3.
-	// An omitted list means this direct program caller consumes summaries.
+	// A summary-only caller must declare SummaryProjectionObservationContract;
+	// an omitted list preserves the legacy complete Result surface.
 	ObservationContracts []transformer.ObservationContract
 
 	Stats *Stats
@@ -153,7 +154,9 @@ func configWithStats(config Config) Config {
 		config.Check.TypeValues = typevalue.NewCache()
 	}
 	if len(config.ObservationContracts) == 0 {
-		config.ObservationContracts = []transformer.ObservationContract{SummaryProjectionObservationContract()}
+		config.ObservationContracts = []transformer.ObservationContract{
+			transformer.FullResultV1ObservationContract(transformer.ObservationConsumerSummaryProjection),
+		}
 	} else {
 		config.ObservationContracts = append([]transformer.ObservationContract(nil), config.ObservationContracts...)
 	}

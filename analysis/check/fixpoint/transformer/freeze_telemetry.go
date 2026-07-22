@@ -18,8 +18,8 @@ const (
 	// FreezePhaseObservationContract brackets demand canonicalization before
 	// tier-3 construction.
 	FreezePhaseObservationContract
-	// FreezePhaseDependencyFreeze brackets tier-3 full-result-v1 construction.
-	// The component phases remain separately observable for later demand cuts.
+	// FreezePhaseDependencyFreeze brackets tier-3 demand-selected construction.
+	// The component phases remain separately observable across demand cuts.
 	FreezePhaseDependencyFreeze
 )
 

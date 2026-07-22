@@ -31,6 +31,27 @@ func TestCanonicalObservationContractUnionsClassesWithoutChangingFullResultKey(t
 	}
 }
 
+func TestCanonicalSummaryObservationContractNarrowsOnlyTheSummaryConsumer(t *testing.T) {
+	summaryDemand, err := CanonicalizeObservationContracts(SummaryV1ObservationContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summaryDemand.SummaryV1() || summaryDemand.FullResultV1() || summaryDemand.Key() != observationContractSummaryV1 {
+		t.Fatalf("summary demand = %#v", summaryDemand)
+	}
+	mixed, err := CanonicalizeObservationContracts(
+		SummaryV1ObservationContract(),
+		FullResultV1ObservationContract(ObservationConsumerDiagnosticRuleFamily),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mixed.FullResultV1() || mixed.SummaryV1() ||
+		!reflect.DeepEqual(mixed.Consumers(), []ObservationConsumer{ObservationConsumerDiagnosticRuleFamily, ObservationConsumerSummaryProjection}) {
+		t.Fatalf("mixed demand = %#v", mixed)
+	}
+}
+
 func TestRelationProgramCoverageGuardRejectsUndeclaredConsumerWithoutRetry(t *testing.T) {
 	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("observation-contract-coverage"))
 	body := lexicalidentity.RootBody(namespace)

@@ -18,12 +18,15 @@ const (
 	ObservationConsumerServiceIDEQueries    ObservationConsumer = "service-ide-queries"
 )
 
-const observationContractFullResultV1 = "full-result-v1"
+const (
+	observationContractSummaryV1    = "summary-v1"
+	observationContractFullResultV1 = "full-result-v1"
+)
 
 // ObservationContract is an immutable request for one closed observation
 // result.  Its representation deliberately has no exported mutable members;
-// consumers obtain a contract through FullResultV1ObservationContract and the
-// union is canonicalized before tier 3 is allowed to freeze.
+// consumers obtain a contract through one of the constructor functions and
+// the union is canonicalized before tier 3 is allowed to freeze.
 type ObservationContract struct {
 	key       string
 	consumers []ObservationConsumer
@@ -37,20 +40,34 @@ func FullResultV1ObservationContract(consumer ObservationConsumer) ObservationCo
 	return ObservationContract{key: observationContractFullResultV1, consumers: []ObservationConsumer{consumer}}
 }
 
+// SummaryV1ObservationContract requests the closed summary publication
+// surface. It is intentionally owned only by the summary consumer: combining
+// it with any other consumer canonically widens to full-result-v1.
+func SummaryV1ObservationContract() ObservationContract {
+	return ObservationContract{key: observationContractSummaryV1, consumers: []ObservationConsumer{ObservationConsumerSummaryProjection}}
+}
+
 // CanonicalizeObservationContracts unions enabled consumer requests.  The
 // demand key intentionally excludes entry values: entry substitution happens
 // only after the tier-3 dependency product is frozen.
 func CanonicalizeObservationContracts(contracts ...ObservationContract) (ObservationContract, error) {
 	consumers := make(map[ObservationConsumer]struct{}, len(contracts))
+	summaryOnly := len(contracts) != 0
 	for _, contract := range contracts {
-		if contract.key != observationContractFullResultV1 || len(contract.consumers) == 0 {
+		if (contract.key != observationContractSummaryV1 && contract.key != observationContractFullResultV1) || len(contract.consumers) == 0 {
 			return ObservationContract{}, fmt.Errorf("transformer: invalid observation contract")
 		}
 		for _, consumer := range contract.consumers {
 			if !validObservationConsumer(consumer) {
 				return ObservationContract{}, fmt.Errorf("transformer: invalid observation consumer %q", consumer)
 			}
+			if contract.key == observationContractSummaryV1 && consumer != ObservationConsumerSummaryProjection {
+				return ObservationContract{}, fmt.Errorf("transformer: summary observation contract has foreign consumer %q", consumer)
+			}
 			consumers[consumer] = struct{}{}
+		}
+		if contract.key != observationContractSummaryV1 {
+			summaryOnly = false
 		}
 	}
 	if len(consumers) == 0 {
@@ -61,6 +78,9 @@ func CanonicalizeObservationContracts(contracts ...ObservationContract) (Observa
 		canonical = append(canonical, consumer)
 	}
 	sort.Slice(canonical, func(i, j int) bool { return canonical[i] < canonical[j] })
+	if summaryOnly && len(canonical) == 1 && canonical[0] == ObservationConsumerSummaryProjection {
+		return ObservationContract{key: observationContractSummaryV1, consumers: canonical}, nil
+	}
 	return ObservationContract{key: observationContractFullResultV1, consumers: canonical}, nil
 }
 
@@ -106,6 +126,13 @@ func (c ObservationContract) FullResultV1() bool {
 	return c.valid() && c.key == observationContractFullResultV1
 }
 
+// SummaryV1 reports whether this contract requests only the closed summary
+// surface. A caller requiring any point-state reader must declare a wider
+// contract rather than relying on a retry.
+func (c ObservationContract) SummaryV1() bool {
+	return c.valid() && c.key == observationContractSummaryV1
+}
+
 // ObservationCoverageError is a shaped, non-retryable failure.  A provider or
 // evaluator must never widen demand by retrying a full freeze after this error.
 type ObservationCoverageError struct {
@@ -128,8 +155,8 @@ func IsObservationCoverageError(err error) bool {
 type observationCoverageGuard struct{ demand ObservationContract }
 
 func newObservationCoverageGuard(demand ObservationContract) (observationCoverageGuard, error) {
-	if !demand.FullResultV1() {
-		return observationCoverageGuard{}, fmt.Errorf("transformer: observation coverage has no complete declared closure")
+	if !demand.valid() {
+		return observationCoverageGuard{}, fmt.Errorf("transformer: observation coverage has no declared closure")
 	}
 	return observationCoverageGuard{demand: demand}, nil
 }

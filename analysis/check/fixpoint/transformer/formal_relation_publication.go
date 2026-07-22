@@ -81,19 +81,20 @@ func (c formalPublishedCoordinate) valid() bool {
 // body. A selected concrete root can publish directly; a symbolic body cell
 // fails structurally if a free formal root has no concrete edge binding.
 type FormalRelationPublicationView struct {
-	execution   *formalRelationExecution
-	body        *relationProgramBody
-	variable    relationVar
-	ordinals    []formalFiberOrdinal
-	groups      []formalFiberGroupDescriptor
-	unbound     []formalFiberOrdinal
-	diagnostic  formalFiberOrdinal
-	callSites   map[cfg.Point][]formalRelationCell
-	calls       []FormalLexicalCallDependency
-	pointInput  map[cfg.Point][]formalPublishedCoordinate
-	pointOutput map[cfg.Point][]formalPublishedCoordinate
-	edgeNormal  map[cfg.Edge][]formalPublishedCoordinate
-	pathFactors *formalPathObservationCache
+	execution      *formalRelationExecution
+	body           *relationProgramBody
+	variable       relationVar
+	fullPointState bool
+	ordinals       []formalFiberOrdinal
+	groups         []formalFiberGroupDescriptor
+	unbound        []formalFiberOrdinal
+	diagnostic     formalFiberOrdinal
+	callSites      map[cfg.Point][]formalRelationCell
+	calls          []FormalLexicalCallDependency
+	pointInput     map[cfg.Point][]formalPublishedCoordinate
+	pointOutput    map[cfg.Point][]formalPublishedCoordinate
+	edgeNormal     map[cfg.Edge][]formalPublishedCoordinate
+	pathFactors    *formalPathObservationCache
 }
 
 type formalPathObservationCacheKey struct {
@@ -110,9 +111,21 @@ type formalPathObservationCache struct {
 	present map[formalPathObservationCacheKey]bool
 }
 
-// Publication returns a route-free body publication capability. It does not
-// materialize a State until a named cell is requested.
+// Publication returns the full route-free body publication capability. It does
+// not materialize a State until a named cell is requested.
 func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexicalBodyID) (FormalRelationPublicationView, error) {
+	return e.publication(bodyID, true)
+}
+
+// summaryPublication returns only the formal coordinates required by the
+// summary closure. It deliberately leaves ordinary point-state projections
+// unfrozen; a reader outside this closure must be rejected by observation
+// coverage before it can ask for one.
+func (e *formalRelationExecution) summaryPublication(bodyID lexicalidentity.StableLexicalBodyID) (FormalRelationPublicationView, error) {
+	return e.publication(bodyID, false)
+}
+
+func (e *formalRelationExecution) publication(bodyID lexicalidentity.StableLexicalBodyID, fullPointState bool) (FormalRelationPublicationView, error) {
 	if e == nil || e.algebra == nil || e.algebra.program == nil || e.values == nil {
 		return FormalRelationPublicationView{}, fmt.Errorf("transformer: formal publication is unowned")
 	}
@@ -164,9 +177,10 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 	view := FormalRelationPublicationView{
 		execution: e, body: &program.bodies[variable-1], variable: variable,
 		ordinals: ordinals, groups: groups, unbound: unbound, diagnostic: diagnostic,
-		callSites:  make(map[cfg.Point][]formalRelationCell),
-		calls:      make([]FormalLexicalCallDependency, 0),
-		pointInput: make(map[cfg.Point][]formalPublishedCoordinate), pointOutput: make(map[cfg.Point][]formalPublishedCoordinate),
+		fullPointState: fullPointState,
+		callSites:      make(map[cfg.Point][]formalRelationCell),
+		calls:          make([]FormalLexicalCallDependency, 0),
+		pointInput:     make(map[cfg.Point][]formalPublishedCoordinate), pointOutput: make(map[cfg.Point][]formalPublishedCoordinate),
 		edgeNormal: make(map[cfg.Edge][]formalPublishedCoordinate),
 		pathFactors: &formalPathObservationCache{
 			factors: make(map[formalPathObservationCacheKey]state.LaneFactor),
@@ -232,12 +246,21 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 			}
 			continue
 		}
-		inputInverse, inputErr := freezeFormalPointPublicationInverse(view.body, span, publication.point, formalPublicationPointInput)
-		outputInverse, outputErr := freezeFormalPointPublicationInverse(view.body, span, publication.point, formalPublicationPointOutput)
 		input := formalRelationCell{Variable: variable, Root: publication.ref, Kind: formalRelationCellNode}
 		output := formalPublicationOutputCell(program, variable, publication.ref)
-		view.pointInput[publication.point] = append(view.pointInput[publication.point], formalPublishedCoordinate{view: &view, cell: input, inverse: inputInverse, inverseErr: inputErr})
-		view.pointOutput[publication.point] = append(view.pointOutput[publication.point], formalPublishedCoordinate{view: &view, cell: output, inverse: outputInverse, inverseErr: outputErr})
+		inputCoordinate := formalPublishedCoordinate{view: &view, cell: input}
+		outputCoordinate := formalPublishedCoordinate{view: &view, cell: output}
+		if fullPointState || publication.point == view.body.graph.Entry() || publication.point == view.body.graph.Exit() {
+			inputCoordinate.inverse, inputCoordinate.inverseErr = freezeFormalPointPublicationInverse(view.body, span, publication.point, formalPublicationPointInput)
+		}
+		if fullPointState || isFormalReturnPoint(view.body, publication.point) {
+			outputCoordinate.inverse, outputCoordinate.inverseErr = freezeFormalPointPublicationInverse(view.body, span, publication.point, formalPublicationPointOutput)
+		}
+		view.pointInput[publication.point] = append(view.pointInput[publication.point], inputCoordinate)
+		view.pointOutput[publication.point] = append(view.pointOutput[publication.point], outputCoordinate)
+	}
+	if !fullPointState {
+		return view, nil
 	}
 	for _, publication := range code.publication.edges {
 		if publication.ref == 0 {
@@ -270,6 +293,14 @@ func (e *formalRelationExecution) Publication(bodyID lexicalidentity.StableLexic
 		}
 	}
 	return view, nil
+}
+
+func isFormalReturnPoint(body *relationProgramBody, point cfg.Point) bool {
+	if body == nil || body.plan == nil {
+		return false
+	}
+	_, ok := body.plan.Facts().Return(point)
+	return ok
 }
 
 // node names a formal relation node for formal-only projections such as

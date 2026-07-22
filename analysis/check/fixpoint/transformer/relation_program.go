@@ -815,7 +815,7 @@ type RelationProgram struct {
 	byBody        map[lexicalidentity.StableLexicalBodyID]relationVar
 	recursiveSCCs [][]relationVar
 	definitions   []relationProgramDefinition
-	// relationDependencyFreeze is the sole tier-3 full-result-v1 product.
+	// relationDependencyFreeze is the sole tier-3 demand-selected product.
 	// Its promoted fields keep the formal executor's representation-neutral
 	// readers local while ownership remains one immutable dependency freeze.
 	relationDependencyFreeze
@@ -1294,7 +1294,7 @@ func FreezeRelationProgramWithObservationAndTelemetry(units []RelationProgramUni
 	telemetry.end(FreezePhaseSCCClosureLinking, sccLinkStarted)
 
 	dependencyStarted := telemetry.begin(FreezePhaseDependencyFreeze)
-	dependencyErr := freezeRelationDependencyFreezeFullResultV1(program, demand, telemetry)
+	dependencyErr := freezeRelationDependencyFreeze(program, demand, telemetry)
 	telemetry.end(FreezePhaseDependencyFreeze, dependencyStarted)
 	if dependencyErr != nil {
 		return nil, dependencyErr

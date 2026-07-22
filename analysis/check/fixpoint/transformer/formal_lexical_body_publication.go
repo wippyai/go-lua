@@ -25,7 +25,10 @@ import (
 // published transaction output. This value owns no route, equation, provider,
 // or replay capability.
 type FormalLexicalBodyCoordinates struct {
-	Body                lexicalidentity.StableLexicalBodyID
+	Body lexicalidentity.StableLexicalBodyID
+	// SummaryOnly records that point-state maps contain only the entry/exit
+	// summary closure, not the ordinary Result point surface.
+	SummaryOnly         bool
 	PointInputs         map[cfg.Point]state.State
 	PlannedNodeOutputs  map[cfg.Point]state.State
 	PointReachable      map[cfg.Point]bool
@@ -102,9 +105,16 @@ func formalLexicalPublicationViews(execution *formalRelationExecution) ([]Formal
 		return nil, fmt.Errorf("transformer: formal lexical publication is unowned")
 	}
 	p := execution.algebra.program
+	summaryOnly := p.ObservationContract().SummaryV1()
 	out := make([]FormalRelationPublicationView, len(p.bodies))
 	for index := range p.bodies {
-		view, err := execution.Publication(p.bodies[index].body)
+		var view FormalRelationPublicationView
+		var err error
+		if summaryOnly {
+			view, err = execution.summaryPublication(p.bodies[index].body)
+		} else {
+			view, err = execution.Publication(p.bodies[index].body)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -126,6 +136,7 @@ func (v *FormalRelationPublicationView) ProjectFormalLexicalBody(ctx context.Con
 	}
 	out := FormalLexicalBodyCoordinates{
 		Body:                v.body.body,
+		SummaryOnly:         !v.fullPointState,
 		PointInputs:         make(map[cfg.Point]state.State, len(v.pointInput)),
 		PlannedNodeOutputs:  make(map[cfg.Point]state.State, len(v.pointOutput)),
 		PointReachable:      make(map[cfg.Point]bool, len(v.pointInput)),
@@ -133,8 +144,10 @@ func (v *FormalRelationPublicationView) ProjectFormalLexicalBody(ctx context.Con
 		EdgeNormal:          make(map[cfg.Edge]bool, len(v.edgeNormal)),
 		CallOutcomes:        make(map[cfg.Point]callpayload.CallOutcome),
 		ReturnSlots:         make(map[int]product.Value),
-		PathValue:           v.formalPathValueObservation(),
 		Calls:               append([]FormalLexicalCallDependency(nil), v.calls...),
+	}
+	if v.fullPointState {
+		out.PathValue = v.formalPathValueObservation()
 	}
 	normalReturnParameters, err := v.NormalReturnParameters(ctx)
 	if err != nil {
@@ -147,69 +160,90 @@ func (v *FormalRelationPublicationView) ProjectFormalLexicalBody(ctx context.Con
 	out.NormalReturnParameters = normalReturnParameters
 	out.NormalReturnReachability = normalReturnReachability
 
-	// The structural freezer publishes every CFG point in canonical RPO. A map
-	// miss here is therefore malformed publication metadata, not unreachable
-	// flow. Unreachable points retain the exact owning-domain Bottom.
-	for _, point := range cfg.RPOReadOnly(v.body.graph) {
-		_, declared := v.pointInput[point]
-		if !declared {
-			return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no input cell for point %d", v.body.body, point)
-		}
-		value, reachable, err := v.PointInputAll(ctx, point)
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
-		}
-		out.PointInputs[point], out.PointReachable[point] = value, reachable
+	if v.fullPointState {
+		// The structural freezer publishes every CFG point in canonical RPO. A map
+		// miss here is therefore malformed publication metadata, not unreachable
+		// flow. Unreachable points retain the exact owning-domain Bottom.
+		for _, point := range cfg.RPOReadOnly(v.body.graph) {
+			_, declared := v.pointInput[point]
+			if !declared {
+				return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no input cell for point %d", v.body.body, point)
+			}
+			value, reachable, err := v.PointInputAll(ctx, point)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
+			out.PointInputs[point], out.PointReachable[point] = value, reachable
 
-		_, declared = v.pointOutput[point]
-		if !declared {
-			return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no output cell for point %d", v.body.body, point)
+			_, declared = v.pointOutput[point]
+			if !declared {
+				return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no output cell for point %d", v.body.body, point)
+			}
+			value, reachable, err = v.PlannedNodeOutputAll(ctx, point)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
+			out.PlannedNodeOutputs[point], out.NodeOutputReachable[point] = value, reachable
 		}
-		value, reachable, err = v.PlannedNodeOutputAll(ctx, point)
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
+	} else {
+		for _, point := range []cfg.Point{v.body.graph.Entry(), v.body.graph.Exit()} {
+			_, declared := v.pointInput[point]
+			if !declared {
+				if point == v.body.graph.Exit() {
+					// An unreachable normal exit remains absent, matching the
+					// Result.ExitState map-presence contract.
+					continue
+				}
+				return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal summary body %s has no input cell for point %d", v.body.body, point)
+			}
+			value, reachable, err := v.PointInputAll(ctx, point)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
+			out.PointInputs[point], out.PointReachable[point] = value, reachable
 		}
-		out.PlannedNodeOutputs[point], out.NodeOutputReachable[point] = value, reachable
 	}
 
-	edges := make([]cfg.Edge, 0, len(v.edgeNormal))
-	for edge := range v.edgeNormal {
-		edges = append(edges, edge)
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].From != edges[j].From {
-			return edges[i].From < edges[j].From
+	if v.fullPointState {
+		edges := make([]cfg.Edge, 0, len(v.edgeNormal))
+		for edge := range v.edgeNormal {
+			edges = append(edges, edge)
 		}
-		return edges[i].To < edges[j].To
-	})
-	for _, edge := range edges {
-		_, reachable, err := v.EdgeNormalAll(ctx, edge)
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
+		sort.Slice(edges, func(i, j int) bool {
+			if edges[i].From != edges[j].From {
+				return edges[i].From < edges[j].From
+			}
+			return edges[i].To < edges[j].To
+		})
+		for _, edge := range edges {
+			_, reachable, err := v.EdgeNormalAll(ctx, edge)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
+			out.EdgeNormal[edge] = reachable
 		}
-		out.EdgeNormal[edge] = reachable
-	}
 
-	callPoints := make([]cfg.Point, 0, len(v.callSites))
-	for point := range v.callSites {
-		callPoints = append(callPoints, point)
-	}
-	sort.Slice(callPoints, func(i, j int) bool { return callPoints[i] < callPoints[j] })
-	for _, point := range callPoints {
-		output, outputDeclared := out.PlannedNodeOutputs[point]
-		outputReachable, outputReachabilityDeclared := out.NodeOutputReachable[point]
-		pointReachable, pointReachabilityDeclared := out.PointReachable[point]
-		if !outputDeclared || !outputReachabilityDeclared || !pointReachabilityDeclared {
-			return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no call output for point %d", v.body.body, point)
+		callPoints := make([]cfg.Point, 0, len(v.callSites))
+		for point := range v.callSites {
+			callPoints = append(callPoints, point)
 		}
-		outcome, exact, err := v.callOutcomeFromPublishedOutput(ctx, point, output, pointReachable, outputReachable, v.callSites[point])
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
+		sort.Slice(callPoints, func(i, j int) bool { return callPoints[i] < callPoints[j] })
+		for _, point := range callPoints {
+			output, outputDeclared := out.PlannedNodeOutputs[point]
+			outputReachable, outputReachabilityDeclared := out.NodeOutputReachable[point]
+			pointReachable, pointReachabilityDeclared := out.PointReachable[point]
+			if !outputDeclared || !outputReachabilityDeclared || !pointReachabilityDeclared {
+				return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no call output for point %d", v.body.body, point)
+			}
+			outcome, exact, err := v.callOutcomeFromPublishedOutput(ctx, point, output, pointReachable, outputReachable, v.callSites[point])
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
+			if !exact {
+				return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no call-outcome fiber for point %d", v.body.body, point)
+			}
+			out.CallOutcomes[point] = outcome
 		}
-		if !exact {
-			return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no call-outcome fiber for point %d", v.body.body, point)
-		}
-		out.CallOutcomes[point] = outcome
 	}
 	returnSlots, err := v.returnSlotsFromFormalOutputs(ctx, out.NodeOutputReachable)
 	if err != nil {
@@ -463,7 +497,10 @@ func (v *FormalRelationPublicationView) returnSlotsFromFormalOutputs(
 	}
 	joined := make(map[int]product.Value)
 	for _, point := range cfg.RPOReadOnly(v.body.graph) {
-		if _, terminal := v.body.plan.Facts().Return(point); !terminal || !reachable[point] {
+		if _, terminal := v.body.plan.Facts().Return(point); !terminal {
+			continue
+		}
+		if v.fullPointState && !reachable[point] {
 			continue
 		}
 		values, live, err := v.joinPublishedValues(ctx, v.pointOutput[point])

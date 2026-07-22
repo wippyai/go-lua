@@ -57,7 +57,11 @@ type StabilizedResultCoordinates struct {
 // lineage/statistics; publication never constructs or invokes a point
 // transfer.
 type ResultPublicationConfig struct {
-	Coordinates             StabilizedResultCoordinates
+	Coordinates StabilizedResultCoordinates
+	// SummaryOnly permits the formal summary path to retain only its closed
+	// entry/exit state observations. Full point-state readers must request a
+	// wider observation contract before publication.
+	SummaryOnly             bool
 	FormalPathValue         FormalPathValueObservation
 	Solve                   SolveConfig
 	SeededEntry             state.State
@@ -91,7 +95,7 @@ func (f *ExecutionFactory) publishResult(
 	}
 	result := f.newResult(config.Coordinates.PointInputs, plan)
 	result.formalPathValue = config.FormalPathValue
-	return f.completeResultPublication(result, config.Solve, config.SeededEntry, config.Initial, config.Coordinates, config.ApplicationDependencies, stats)
+	return f.completeResultPublication(result, config.Solve, config.SeededEntry, config.Initial, config.Coordinates, config.ApplicationDependencies, stats, config.SummaryOnly)
 }
 
 func (f *ExecutionFactory) completeResultPublication(
@@ -102,11 +106,12 @@ func (f *ExecutionFactory) completeResultPublication(
 	coordinates StabilizedResultCoordinates,
 	applicationDependencies []ApplicationDependency,
 	observation ObservationStats,
+	summaryOnly bool,
 ) (*Result, error) {
 	if result == nil || f == nil || f.prepared == nil {
 		return nil, fmt.Errorf("body: result publication is incomplete")
 	}
-	if err := result.publishStabilizedCoordinates(coordinates); err != nil {
+	if err := result.publishStabilizedCoordinates(coordinates, summaryOnly); err != nil {
 		return nil, err
 	}
 	return f.finishResultPublication(result, config, entry, initial, applicationDependencies, observation)
@@ -136,13 +141,32 @@ func (f *ExecutionFactory) finishResultPublication(
 	return result, nil
 }
 
-func (r *Result) publishStabilizedCoordinates(coordinates StabilizedResultCoordinates) error {
+func (r *Result) publishStabilizedCoordinates(coordinates StabilizedResultCoordinates, summaryOnly bool) error {
 	if r == nil || r.cfg == nil || r.cfg.Graph == nil {
 		return fmt.Errorf("body: stabilized result has no prepared graph")
 	}
 	graph := r.cfg.Graph
 	plan := r.observationPlan
 	flow := make(transfer.Result, len(coordinates.PointInputs))
+	if summaryOnly {
+		for point, input := range coordinates.PointInputs {
+			flow[point] = input
+		}
+		if _, ok := flow[graph.Entry()]; !ok {
+			return fmt.Errorf("body: summary result has no entry input")
+		}
+		diagnostics := coordinates.DiagnosticOutput.Normalize(r.registry)
+		if !diagnostics.Valid(r.registry) {
+			return fmt.Errorf("body: summary result has malformed diagnostic output")
+		}
+		if err := r.publishFormalReturnSlots(flow, coordinates.ReturnSlots); err != nil {
+			return err
+		}
+		r.flow = flow
+		r.diagnosticOutput = diagnostics.Clone()
+		r.published = PublishedFacts{}
+		return nil
+	}
 	pointReachable := make(map[cfg.Point]bool, graph.Size())
 	for _, point := range cfg.RPOReadOnly(graph) {
 		reachable, ok := coordinates.PointReachable[point]

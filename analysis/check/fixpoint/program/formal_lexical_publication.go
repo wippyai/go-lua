@@ -113,6 +113,7 @@ func publishFormalLexicalProgram(
 		}
 		result, err := factory.PublishResult(body.ResultPublicationConfig{
 			Coordinates:             publishedCoordinates,
+			SummaryOnly:             lexical.SummaryOnly,
 			FormalPathValue:         lexical.PathValue,
 			Solve:                   relationResultSolveConfig(config),
 			SeededEntry:             seededEntry,
@@ -172,7 +173,7 @@ func (r formalSummaryResult) FormalNormalReturnParameters() ([]product.Value, []
 		r.lexical.NormalReturnParameters.HasNormalExit
 }
 
-func (r formalSummaryResult) formalNormalReturnReachability(point cfg.Point) (bool, bool) {
+func (r formalSummaryResult) FormalNormalReturnReachability(point cfg.Point) (bool, bool) {
 	reachable, ok := r.lexical.NormalReturnReachability[point]
 	return reachable, ok
 }
