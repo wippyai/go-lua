@@ -271,10 +271,30 @@ func (a *formalTupleAlgebra) applyFormalChannelSelectLeaf(operator formalRelatio
 		}
 		valuesLeaves[index] = leaf
 	}
-	values, err := a.materializeValuesGroup(evaluator.authority, plan.values, valuesLeaves)
+	formalValues, err := a.materializeFormalValuesGroup(evaluator.authority, plan.values, valuesLeaves)
 	if err != nil {
 		return nil, nil, err
 	}
+	// ChannelSelect's fact and result-write evaluator is State-only. Preserve the
+	// exact correlated formal row while WTO still carries an entry-dependent
+	// Values terminal; root specialization supplies the concrete image before a
+	// concrete ChannelSelect transaction may be observed.
+	if a.entrySubstitution == nil && formalValuesNeedSpecialization(formalValues) {
+		channelLeaves := make([]decisionLeaf, len(plan.channel.members))
+		for index, ordinal := range plan.channel.members {
+			leaf, present := evaluator.leaf(ordinal)
+			if !present {
+				return nil, nil, errFormalComponentMalformed
+			}
+			channelLeaves[index] = leaf
+		}
+		return valuesLeaves, channelLeaves, nil
+	}
+	concreteValues, err := formalConcreteValuesFactor(evaluator.authority, formalValues)
+	if err != nil {
+		return nil, nil, err
+	}
+	values := state.ValueFactor[FormalSlot]{Top: formalValues.Top, Values: concreteValues}
 	channel, err := evaluator.laneFactor(plan.channel)
 	if err != nil {
 		return nil, nil, err
