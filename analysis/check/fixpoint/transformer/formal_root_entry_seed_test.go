@@ -242,6 +242,90 @@ func TestFormalRootEntrySpecializationMatchesEntryBakedSolve(t *testing.T) {
 	}
 }
 
+func TestFormalRootEntrySpecializationProjectsInputValueAliases(t *testing.T) {
+	reg := standard.Registry()
+	base := formalRootInputTestProgram(t, reg)
+	program := formalRelationExecutorTestProgramFromBase(t, base, []relationNode{
+		{}, {kind: relationNodeSequence, next: 2}, {kind: relationNodeBottom},
+	})
+	body := &program.bodies[0]
+	entry := state.Reachable(body.productDomain.Lattice().Bottom()).
+		WriteValue(reg, statekey.SymbolValue(101), typevalue.LiteralString(reg, "entry-param")).
+		WriteValue(reg, statekey.SymbolValue(102), typevalue.LiteralString(reg, "entry-capture")).
+		WriteValue(reg, statekey.SymbolValue(103), typevalue.LiteralString(reg, "entry-global"))
+	baked, err := executeFormalRootRelation(context.Background(), program, body.body, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolic, err := executeFormalRelation(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The entry-free relation can retain an IN spelling while it evaluates an
+	// alias-heavy body. It is a private specialization operand, never a
+	// coordinate that the completed root product may publish.
+	root := &program.formalTemplate.rootInputs[body.variable-1]
+	input, ok := program.formalSlots.Slot(body.body, root.bindings[0].input)
+	if !ok {
+		t.Fatal("formal input slot")
+	}
+	span, _, _, ok := symbolic.algebra.span(body.variable)
+	if !ok {
+		t.Fatal("formal span")
+	}
+	group, ok := span.valuesGroup()
+	if !ok {
+		t.Fatal("formal Values group")
+	}
+	rootCell := program.formalRegion.roots[body.variable-1]
+	tuple := symbolic.values[rootCell]
+	tuple, err = symbolic.algebra.writeFormalValuesFactor(tuple, group, formalValuesFactor{
+		Values: map[FormalSlot]formalValue{input: formalGroundValue(typevalue.LiteralString(reg, "private-in-alias"))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolic.values[rootCell] = tuple
+
+	seed, err := freezeFormalRootEntrySeed(program, body.body, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(context.Background(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regions, err := specialized.algebra.tupleLeafRegions(specialized.values[rootCell])
+	if err != nil || len(regions) != 1 {
+		t.Fatalf("specialized root regions = %d/%v", len(regions), err)
+	}
+	values, err := regions[0].evaluator.valuesFactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := values.Values[input]; present {
+		t.Fatalf("specialized root retained private IN alias: %#v", values)
+	}
+	specializedPublication, err := specialized.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bakedPublication, err := baked.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, wantPresent, wantErr := bakedPublication.PointInput(context.Background(), body.graph.Entry(), 0)
+	got, gotPresent, gotErr := specializedPublication.PointInput(context.Background(), body.graph.Entry(), 0)
+	if wantErr != nil || gotErr != nil || wantPresent != gotPresent || !body.domain.Equal(want, got) {
+		t.Fatalf("input-alias specialization = present:%t err:%v, want present:%t err:%v equal:%t", gotPresent, gotErr, wantPresent, wantErr, body.domain.Equal(want, got))
+	}
+}
+
 func TestFormalRootEntrySpecializationMatchesEntryBakedEnvironmentWrite(t *testing.T) {
 	reg := standard.Registry()
 	base := formalRootInputTestProgram(t, reg)

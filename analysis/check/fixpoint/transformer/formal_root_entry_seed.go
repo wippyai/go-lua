@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
@@ -76,15 +77,22 @@ func (s formalRootEntrySubstitution) specializeStabilized(ctx context.Context, e
 		return nil, err
 	}
 	a := execution.algebra
-	entry, err := s.specializationEntry(a)
+	interpreter, err := s.specializationEntry(a)
 	if err != nil {
 		return nil, err
 	}
-	regions, err := a.tupleLeafRegions(entry)
+	regions, err := a.tupleLeafRegions(interpreter)
 	if err != nil || len(regions) != 1 {
 		if err == nil {
 			err = fmt.Errorf("transformer: prepared root entry is not one concrete region")
 		}
+		return nil, err
+	}
+	// specializationEntry carries IN aliases solely to evaluate the symbolic
+	// relation. The completed product baseline must remain the prepared
+	// constant, whose Values vocabulary contains only publishable coordinates.
+	baseline, err := a.instantiatePreparedConstant(s.seed.constant)
+	if err != nil {
 		return nil, err
 	}
 	values := make(map[formalRelationCell]formalRelationTuple, len(execution.values))
@@ -105,7 +113,7 @@ func (s formalRootEntrySubstitution) specializeStabilized(ctx context.Context, e
 		// entry, not just Values: coordinate families retain their registered
 		// skeletons, guarded equalities, advances, and alphabets when the formal
 		// relation left a lane structurally untouched.
-		values[cell] = a.combine(formalComponentJoin, entry, specialized)
+		values[cell] = a.combine(formalComponentJoin, baseline, specialized)
 		if err := a.err(); err != nil {
 			return nil, fmt.Errorf("transformer: specialize cell %+v baseline: %w", cell, err)
 		}
@@ -266,6 +274,18 @@ func (s formalRootEntrySubstitution) specializeValues(authority *formalComponent
 			return formalValuesFactor{}, err
 		}
 		values.Values[slot] = formalGroundValue(ground)
+	}
+	// IN slots are private aliases used only by the entry interpreter above.
+	// The concrete product is represented by resolver-backed MID slots (and
+	// result OUT slots), so retaining an IN spelling here would turn a
+	// substitution aid into a second published coordinate.
+	for slot := range values.Values {
+		if slot.Vocabulary() == formal.Input {
+			delete(values.Values, slot)
+		}
+	}
+	if len(values.Values) == 0 {
+		values.Values = nil
 	}
 	return values, nil
 }
