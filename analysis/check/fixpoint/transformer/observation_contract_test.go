@@ -269,3 +269,37 @@ func TestRelationProgramCoverageGuardFailsClosedForExportOutsideDeclaredClass(t 
 		t.Fatalf("outside-closure access error = %#v", err)
 	}
 }
+
+func TestRelationProgramCoverageGuardFailsClosedForIDEQueriesOutsideDeclaredClass(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("ide-query-observation-class-coverage"))
+	body := lexicalidentity.RootBody(namespace)
+	demand, err := CanonicalizeObservationContracts(ObservationClassesV1Contract(
+		ObservationConsumerServiceIDEQueries,
+		ObservationClassPointState,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := FreezeRelationProgramWithObservation(
+		[]RelationProgramUnit{formalTemplateFreezeUnit(t, body)}, testAcyclicCallTopology(t, body), demand,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := program.RequireObservationClass(
+		ObservationConsumerServiceIDEQueries,
+		ObservationClassPointState,
+		"IDE expression-type projection",
+	); err != nil {
+		t.Fatalf("declared class rejected: %v", err)
+	}
+	err = program.RequireObservationClass(
+		ObservationConsumerServiceIDEQueries,
+		ObservationClassPathValue,
+		"adversarial IDE path-value read",
+	)
+	var coverage *ObservationCoverageError
+	if !errors.As(err, &coverage) || !IsObservationCoverageError(err) || coverage.Consumer != ObservationConsumerServiceIDEQueries {
+		t.Fatalf("outside-closure access error = %#v", err)
+	}
+}
