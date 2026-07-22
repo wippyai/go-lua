@@ -1987,12 +1987,18 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 						return nil, errDecisionMalformed
 					}
 					leftTerminal, terminalErr := authority.terminal(left[0])
-					if terminalErr != nil || leftTerminal.kind != formalComponentRawCallOutcome {
+					if terminalErr != nil || (leftTerminal.kind != formalComponentRawCallOutcome && leftTerminal.kind != formalComponentSymbolicCallOutcome) {
 						return nil, errFormalComponentMalformed
 					}
 					rightTerminal, terminalErr := authority.terminal(right[0])
-					if terminalErr != nil || rightTerminal.kind != formalComponentRawCallOutcome {
+					if terminalErr != nil || (rightTerminal.kind != formalComponentRawCallOutcome && rightTerminal.kind != formalComponentSymbolicCallOutcome) {
 						return nil, errFormalComponentMalformed
+					}
+					if leftTerminal.kind == formalComponentSymbolicCallOutcome || rightTerminal.kind == formalComponentSymbolicCallOutcome {
+						if leftTerminal.kind == formalComponentSymbolicCallOutcome {
+							return []decisionLeaf{left[0]}, nil
+						}
+						return []decisionLeaf{right[0]}, nil
 					}
 					merged, mergeErr := provider.site.MergeComponentPrefix(
 						node, prefixCount, leftTerminal.rawCallOutcome, rightTerminal.rawCallOutcome,
@@ -2117,15 +2123,12 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 		return formalExternalCallProviderRelation{}, err
 	}
 	care, outcomeRoot := decisionFalse, decisionFalse
-	publishOutcome := func(guard decisionRef, outcome callpayload.CallOutcome) error {
+	publishOutcome := func(guard decisionRef, leaf decisionLeaf) error {
 		var outcomeMark formalRelationEvalTracePhaseMark
 		if trace != nil {
 			outcomeMark = beginFormalRelationEvalTracePhase(a)
 		}
-		leaf, providerErr := authority.internRawCallOutcome(outcome)
-		if providerErr != nil {
-			return providerErr
-		}
+		var providerErr error
 		outcomeRoot, providerErr = a.decisions.condition(a.ctx, guard, a.decisions.terminal(leaf), outcomeRoot)
 		if providerErr != nil {
 			return providerErr
@@ -2142,6 +2145,16 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 	for _, region := range regions {
 		if len(region.views) != len(provider.wires) || region.guard == decisionFalse {
 			return formalExternalCallProviderRelation{}, errDecisionMalformed
+		}
+		if formalExternalCallProviderHasSymbolicValue(provider, region.views) {
+			leaf, symbolicErr := authority.internSymbolicCallOutcome(formalExternalCallSymbolicResultBindings(plan))
+			if symbolicErr != nil {
+				return formalExternalCallProviderRelation{}, symbolicErr
+			}
+			if publishErr := publishOutcome(region.guard, leaf); publishErr != nil {
+				return formalExternalCallProviderRelation{}, publishErr
+			}
+			continue
 		}
 		var providerMark formalRelationEvalTracePhaseMark
 		if trace != nil {
@@ -2174,7 +2187,11 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 					trace.externalCallProviderChildEvals++
 					componentTrace.evals++
 				}
-				if publishErr := publishOutcome(demanded.guard, demanded.outcome); publishErr != nil {
+				leaf, internErr := authority.internRawCallOutcome(demanded.outcome)
+				if internErr != nil {
+					return formalExternalCallProviderRelation{}, internErr
+				}
+				if publishErr := publishOutcome(demanded.guard, leaf); publishErr != nil {
 					return formalExternalCallProviderRelation{}, publishErr
 				}
 			}
@@ -2188,11 +2205,51 @@ func (a *formalTupleAlgebra) evaluateFormalExternalCallProviderRelation(
 			trace.externalCallProviderChildEvals++
 			componentTrace.evals++
 		}
-		if publishErr := publishOutcome(region.guard, outcome); publishErr != nil {
+		leaf, internErr := authority.internRawCallOutcome(outcome)
+		if internErr != nil {
+			return formalExternalCallProviderRelation{}, internErr
+		}
+		if publishErr := publishOutcome(region.guard, leaf); publishErr != nil {
 			return formalExternalCallProviderRelation{}, publishErr
 		}
 	}
 	return formalExternalCallProviderRelation{care: care, outcome: outcomeRoot}, nil
+}
+
+// formalExternalCallProviderHasSymbolicValue identifies the residual path
+// before a concrete provider is invoked.  Registered factors remain concrete;
+// only Values are entry-dependent and therefore need the deferred result
+// carrier below.
+func formalExternalCallProviderHasSymbolicValue(provider *formalExternalCallProvider, views []formalSparseLeafView) bool {
+	if provider == nil || len(provider.wires) != len(views) {
+		return false
+	}
+	for index, wire := range provider.wires {
+		view := views[index]
+		for _, member := range wire.values {
+			value, exact := view.formalValue(member, wire.valuesTop)
+			if exact && value.isSymbolic {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func formalExternalCallSymbolicResultBindings(plan *formalExternalCallStep) []formalQualifiedBinding {
+	if plan == nil || plan.body == nil || plan.body.relation.arena == nil {
+		return nil
+	}
+	bindings := plan.factor.ResultBindings()
+	out := make([]formalQualifiedBinding, len(bindings))
+	for index, binding := range bindings {
+		term, exact := plan.body.relation.arena.callResultValue(plan.point, binding.Index)
+		if !exact || term == 0 {
+			return nil
+		}
+		out[index] = formalQualifiedBinding{value: relationArenaValueRef{owner: plan.variable, arena: plan.body.relation.arena, term: term}}
+	}
+	return out
 }
 
 func mergeFormalRelationTraceSupportRanks(left, right []uint32) []uint32 {
@@ -2304,8 +2361,11 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 				return nil, errDecisionMalformed
 			}
 			terminal, terminalErr := authority.terminal(left[0])
-			if terminalErr != nil || terminal.kind != formalComponentRawCallOutcome {
+			if terminalErr != nil || (terminal.kind != formalComponentRawCallOutcome && terminal.kind != formalComponentSymbolicCallOutcome) {
 				return nil, errFormalComponentMalformed
+			}
+			if terminal.kind == formalComponentSymbolicCallOutcome {
+				return []decisionLeaf{left[0]}, nil
 			}
 			leaf, terminalErr := authority.internCallOutcomes(callpayload.NewCallOutcomeAlternativeSet(
 				plan.program.registry, terminal.rawCallOutcome,
@@ -2398,11 +2458,39 @@ func (a *formalTupleAlgebra) applyFormalExternalCall(
 			leaves:    region.leaves[:len(plan.outputReads)],
 		}
 		outcomeTerminal, leafErr := authority.terminal(region.leaves[len(plan.outputReads)])
-		if leafErr != nil || outcomeTerminal.kind != formalComponentCallOutcomes {
+		if leafErr != nil || (outcomeTerminal.kind != formalComponentCallOutcomes && outcomeTerminal.kind != formalComponentSymbolicCallOutcome) {
 			if leafErr != nil {
 				return fail(leafErr)
 			}
 			return fail(errFormalComponentMalformed)
+		}
+		if outcomeTerminal.kind == formalComponentSymbolicCallOutcome {
+			bindings := plan.factor.ResultBindings()
+			if len(bindings) != len(outcomeTerminal.symbolicCallOutcome) {
+				return fail(errFormalComponentMalformed)
+			}
+			for index, binding := range bindings {
+				outputIndex, owned := plan.valueOutputByRoot[binding.Root]
+				if !owned || outputIndex < 0 || outputIndex >= len(plan.valueOutputs) {
+					return fail(errFormalComponentMalformed)
+				}
+				leaf, internErr := authority.internBinding(outcomeTerminal.symbolicCallOutcome[index])
+				if internErr != nil {
+					return fail(internErr)
+				}
+				ordinal, addressable := plan.valueOutputs[outputIndex].member.address(plan.valuesTop.group)
+				if !addressable {
+					return fail(errFormalComponentMalformed)
+				}
+				if publishErr := publish(region.care, ordinal, leaf); publishErr != nil {
+					return fail(publishErr)
+				}
+			}
+			liveCare, leafErr = a.decisions.apply(a.ctx, uint8(decisionOr), true, liveCare, region.care, decisionLeafOr)
+			if leafErr != nil {
+				return fail(leafErr)
+			}
+			continue
 		}
 		outcomes := outcomeTerminal.callOutcomes.Outcomes()
 		if len(outcomes) != 1 {

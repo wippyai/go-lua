@@ -40,6 +40,11 @@ const (
 	formalComponentCoordinateScalar
 	formalComponentGroundValue
 	formalComponentSymbolicValue
+	// formalComponentSymbolicCallOutcome is the residual ExternalCall result
+	// tuple.  It is intentionally transformer-local: CallOutcome remains the
+	// concrete provider DTO and this terminal may only survive until entry
+	// substitution selects concrete operands.
+	formalComponentSymbolicCallOutcome
 	formalComponentTypestateResourceObservation
 )
 
@@ -103,6 +108,7 @@ type formalComponentTerminal struct {
 	scalar                       state.CoordinateScalarFactor
 	ground                       product.Value
 	symbolicValue                formalSymbolicValueSet
+	symbolicCallOutcome          []formalQualifiedBinding
 	typestateResourceObservation state.TypestateResourceObservation
 	fingerprint                  uint64
 }
@@ -639,6 +645,29 @@ func (a *formalComponentTerminalAuthority) rawCallOutcomeTerminalCount() int {
 	return count
 }
 
+func (a *formalComponentTerminalAuthority) internSymbolicCallOutcome(values []formalQualifiedBinding) (decisionLeaf, error) {
+	if a == nil || len(values) == 0 {
+		return 0, errFormalComponentForeignOwner
+	}
+	values = append([]formalQualifiedBinding(nil), values...)
+	for _, value := range values {
+		if !value.validForAuthority(a) {
+			return 0, errFormalComponentForeignOwner
+		}
+	}
+	fingerprint := formalComponentSetFingerprint(formalComponentSymbolicCallOutcome, func(index int) uint64 {
+		return values[index].fingerprint()
+	}, len(values))
+	bucket := formalComponentBucket{owner: a.body, kind: formalComponentSymbolicCallOutcome, width: uint32(len(values)), fingerprint: fingerprint}
+	for _, leaf := range a.arena.buckets[bucket] {
+		prior := a.arena.terminals[leaf].terminal
+		if formalQualifiedBindingsEqual(prior.symbolicCallOutcome, values) {
+			return leaf, nil
+		}
+	}
+	return a.arena.append(a, formalComponentTerminal{kind: formalComponentSymbolicCallOutcome, symbolicCallOutcome: values, fingerprint: fingerprint}, bucket)
+}
+
 func (a *formalComponentTerminalAuthority) internTypestateResourceObservation(value state.TypestateResourceObservation) (decisionLeaf, error) {
 	if a == nil {
 		return 0, errFormalComponentForeignOwner
@@ -839,6 +868,8 @@ func (a *formalComponentTerminalAuthority) same(left, right decisionLeaf) (bool,
 		return product.Domain(a.product.Registry()).Same(l.ground, r.ground), nil
 	case formalComponentSymbolicValue:
 		return l.symbolicValue.equal(a.product.Registry(), r.symbolicValue), nil
+	case formalComponentSymbolicCallOutcome:
+		return formalQualifiedBindingsEqual(l.symbolicCallOutcome, r.symbolicCallOutcome), nil
 	case formalComponentTypestateResourceObservation:
 		return l.typestateResourceObservation.Equal(r.typestateResourceObservation), nil
 	default:
@@ -877,6 +908,8 @@ func (a *formalComponentTerminalAuthority) equal(left, right decisionLeaf) (bool
 		return product.Equal(a.product.Registry(), l.ground, r.ground), nil
 	case formalComponentSymbolicValue:
 		return l.symbolicValue.equal(a.product.Registry(), r.symbolicValue), nil
+	case formalComponentSymbolicCallOutcome:
+		return formalQualifiedBindingsEqual(l.symbolicCallOutcome, r.symbolicCallOutcome), nil
 	case formalComponentTypestateResourceObservation:
 		return l.typestateResourceObservation.Equal(r.typestateResourceObservation), nil
 	default:
@@ -912,6 +945,8 @@ func (a *formalComponentTerminalAuthority) lessOrEq(left, right decisionLeaf) (b
 		return product.LessOrEq(a.product.Registry(), l.ground, r.ground), nil
 	case formalComponentSymbolicValue:
 		return l.symbolicValue.equal(a.product.Registry(), r.symbolicValue), nil
+	case formalComponentSymbolicCallOutcome:
+		return formalQualifiedBindingsSubset(l.symbolicCallOutcome, r.symbolicCallOutcome), nil
 	default:
 		return false, errFormalComponentMalformed
 	}
@@ -1054,6 +1089,11 @@ func (a *formalComponentTerminalAuthority) combine(ctx context.Context, op forma
 		default:
 			return 0, errFormalSymbolicMeetUnproven
 		}
+	case formalComponentSymbolicCallOutcome:
+		if op != formalComponentJoin && op != formalComponentWiden {
+			return 0, errFormalSymbolicMeetUnproven
+		}
+		return a.internSymbolicCallOutcome(append(append([]formalQualifiedBinding(nil), l.symbolicCallOutcome...), r.symbolicCallOutcome...))
 	default:
 		return 0, errFormalComponentMalformed
 	}
