@@ -812,8 +812,11 @@ func (a *formalTupleAlgebra) validateDescriptorLeaf(authority *formalComponentTe
 			return errFormalComponentMalformed
 		}
 	case formalFiberGroundValue:
-		if terminal.kind != formalComponentGroundValue {
+		if terminal.kind != formalComponentGroundValue && terminal.kind != formalComponentBindings && terminal.kind != formalComponentSymbolicValue {
 			return errFormalComponentMalformed
+		}
+		if _, err := formalValueFromLeaf(authority, leaf); err != nil {
+			return err
 		}
 	default:
 		return errFormalComponentMalformed

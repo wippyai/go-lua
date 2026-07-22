@@ -8,7 +8,7 @@ import (
 )
 
 func TestFormalValuesCarrierPreservesOwnedSymbolicTerm(t *testing.T) {
-	program, _, _ := formalTupleConstantInstantiationFixture(t)
+	program, constant, _ := formalTupleConstantInstantiationFixture(t)
 	algebra, err := newFormalTupleAlgebra(context.Background(), program)
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +46,17 @@ func TestFormalValuesCarrierPreservesOwnedSymbolicTerm(t *testing.T) {
 	}
 	if got := factored[group.valueSlots[0].position]; got != leaf {
 		t.Fatalf("symbolic Values factor leaf = %d, want interned %d", got, leaf)
+	}
+	tuple, err := algebra.instantiateConstant(constant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := algebra.writeFormalValuesFactor(tuple, formalValuesFiberGroup{descriptor: group}, carrier)
+	if err != nil {
+		t.Fatalf("canonical symbolic Values seed: %v", err)
+	}
+	if err := algebra.validateTuple(seeded); err != nil {
+		t.Fatalf("canonical symbolic Values seed validation: %v", err)
 	}
 }
 

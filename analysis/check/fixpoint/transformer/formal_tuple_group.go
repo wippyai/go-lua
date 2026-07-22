@@ -944,6 +944,20 @@ func (a *formalTupleAlgebra) writeOrdinaryFactor(tuple formalRelationTuple, grou
 }
 
 func (a *formalTupleAlgebra) writeValuesFactor(tuple formalRelationTuple, group formalValuesFiberGroup, value state.ValueFactor[FormalSlot]) (formalRelationTuple, error) {
+	carrier := formalValuesFactor{Top: value.Top}
+	if len(value.Values) != 0 {
+		carrier.Values = make(map[FormalSlot]formalValue, len(value.Values))
+		for slot, ground := range value.Values {
+			carrier.Values[slot] = formalGroundValue(ground)
+		}
+	}
+	return a.writeFormalValuesFactor(tuple, group, carrier)
+}
+
+// writeFormalValuesFactor is the canonical seed/publication transaction for
+// the sum carrier. Concrete State callers use writeValuesFactor above; a
+// symbolic seed remains a typed Values leaf until entry specialization.
+func (a *formalTupleAlgebra) writeFormalValuesFactor(tuple formalRelationTuple, group formalValuesFiberGroup, value formalValuesFactor) (formalRelationTuple, error) {
 	if err := a.validateTuple(tuple); err != nil || tuple.bottom() || !group.valid() || group.descriptor.variable != tuple.variable {
 		if err != nil {
 			return formalRelationTuple{}, err
@@ -951,7 +965,7 @@ func (a *formalTupleAlgebra) writeValuesFactor(tuple formalRelationTuple, group 
 		return formalRelationTuple{}, errFormalComponentForeignOwner
 	}
 	span, directory, authority, _ := a.span(tuple.variable)
-	leaves, err := a.factorValuesGroup(authority, group.descriptor, value)
+	leaves, err := a.factorFormalValuesGroup(authority, group.descriptor, value)
 	if err != nil {
 		return formalRelationTuple{}, err
 	}
