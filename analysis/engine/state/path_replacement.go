@@ -535,7 +535,7 @@ func applyPathReplacementPathEvidence(d ProductDomain, lane pathevidence.Lane, t
 			key   keyspace.Key
 			value product.Value
 		}, 0)
-		lane.ForEachPathStaticMember(tx.keys, func(member keyspace.Key, value product.Value) bool {
+		lane.ForEachPathStaticMember(func(member keyspace.Key, value product.Value) bool {
 			suffix, ok := tx.keys.ExactRemainderAfterPrefix(member, tx.source)
 			if !ok || len(suffix) == 0 {
 				return true

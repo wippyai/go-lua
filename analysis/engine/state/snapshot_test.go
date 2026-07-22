@@ -125,7 +125,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("fresh static-member snapshot = %s, want present", formatValue(reg, got))
 	}
 	var iteratedMembers int
-	s.ForEachPathStaticMember(ks, func(key keyspace.Key, value product.Value) bool {
+	s.ForEachPathStaticMember(func(key keyspace.Key, value product.Value) bool {
 		iteratedMembers++
 		if key != memberHeapKey {
 			t.Fatalf("iterated static-member key = %+v, want %+v", key, memberHeapKey)

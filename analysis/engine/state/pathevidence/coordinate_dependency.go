@@ -808,7 +808,7 @@ func coordinateDependencyLaneHas(lane Lane, coordinate CoordinateKey) bool {
 		_, ok := lane.refinements[coordinate.path.Handle()]
 		return ok
 	case coordinateStaticMember:
-		_, ok := lane.staticMembers[coordinate.path.Handle()]
+		_, ok := lane.staticMembers[coordinate.path]
 		return ok
 	case coordinateBranchProof:
 		_, ok := lane.proofs[coordinate.proof]

@@ -17,7 +17,7 @@ func (l Lane) ProjectBoundary(ks *keyspace.KeySpace, touches func(keyspace.Key) 
 		out.refinements = filterHandleValueMap(l.refinements, ks, touches, projectValue)
 	}
 	if !l.staticMembersBottom {
-		out.staticMembers = filterHandleValueMap(l.staticMembers, ks, touches, projectValue)
+		out.staticMembers = filterValueMap(l.staticMembers, touches, projectValue)
 	}
 	if !l.proofsBottom {
 		for proof := range l.proofs {
@@ -63,7 +63,7 @@ func (l Lane) RebaseBoundary(
 	if out.refinements, ok = mapHandleValueMap(l.refinements, fromKeys, toKeys, mapPath, pathPreimages, mapValue, joinValue); !ok {
 		return Lane{}, false
 	}
-	if out.staticMembers, ok = mapHandleValueMap(l.staticMembers, fromKeys, toKeys, mapPath, pathPreimages, mapValue, joinValue); !ok {
+	if out.staticMembers, ok = mapValueMap(l.staticMembers, mapPath, pathPreimages, mapValue, joinValue); !ok {
 		return Lane{}, false
 	}
 	proofs, ok := lift.QuotientMustSet(l.proofs, func(proof BranchProof) ([]BranchProof, bool) {
@@ -188,7 +188,7 @@ func (l Lane) RebaseBoundary(
 func (l Lane) ApplyBoundary(ks *keyspace.KeySpace, fragment Lane, touches func(keyspace.Key) bool) Lane {
 	out := Lane{}
 	out.refinements, out.refinementsBottom = applyHandleValueSublane(ks, l.refinements, l.refinementsBottom, fragment.refinements, fragment.refinementsBottom, touches)
-	out.staticMembers, out.staticMembersBottom = applyHandleValueSublane(ks, l.staticMembers, l.staticMembersBottom, fragment.staticMembers, fragment.staticMembersBottom, touches)
+	out.staticMembers, out.staticMembersBottom = applyValueSublane(l.staticMembers, l.staticMembersBottom, fragment.staticMembers, fragment.staticMembersBottom, touches)
 	out.proofs, out.proofsBottom = applyProofSublane(l.proofs, l.proofsBottom, fragment.proofs, fragment.proofsBottom, touches)
 	out.pathPresenceImplications, out.pathPresenceImplicationsBottom = applyImplicationSublane(l.pathPresenceImplications, l.pathPresenceImplicationsBottom, fragment.pathPresenceImplications, fragment.pathPresenceImplicationsBottom, touches)
 	for proof := range out.proofs {

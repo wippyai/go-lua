@@ -10,7 +10,7 @@ func (l Lane) ReadPathStaticMember(pathKey keyspace.Key) (product.Value, bool) {
 	if pathKey.Kind == keyspace.KindInvalid || l.staticMembersBottom {
 		return product.Value{}, false
 	}
-	v, ok := l.staticMembers[pathKey.Handle()]
+	v, ok := l.staticMembers[pathKey]
 	return v, ok
 }
 
@@ -21,15 +21,15 @@ func (l Lane) WritePathStaticMember(pathKey keyspace.Key, value product.Value) (
 		return l, false
 	}
 	if !l.staticMembersBottom {
-		if existing, ok := l.staticMembers[pathKey.Handle()]; ok && existing == value {
+		if existing, ok := l.staticMembers[pathKey]; ok && existing == value {
 			return l, false
 		}
 	}
-	members := cloneLocalValueHandleMap(l.staticMembers)
+	members := cloneLocalValueMap(l.staticMembers)
 	if members == nil {
-		members = make(map[keyspace.KeyHandle]product.Value, 1)
+		members = make(map[keyspace.Key]product.Value, 1)
 	}
-	members[pathKey.Handle()] = value
+	members[pathKey] = value
 	out := l.Reachable()
 	out.staticMembers = members
 	return out, true

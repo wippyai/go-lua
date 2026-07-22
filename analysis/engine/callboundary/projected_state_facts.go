@@ -86,7 +86,7 @@ func NormalReturnFactSourceLanes() []state.LaneID {
 // alternate carriers supply lane observations rather than alternate semantics.
 type NormalReturnFactSource interface {
 	ForEachPathRefinement(*keyspace.KeySpace, func(keyspace.Key, product.Value) bool)
-	ForEachPathStaticMember(*keyspace.KeySpace, func(keyspace.Key, product.Value) bool)
+	ForEachPathStaticMember(func(keyspace.Key, product.Value) bool)
 	PathPresenceImplicationsSnapshot(*keyspace.KeySpace) pathevidence.PathPresenceImplicationsSnapshot
 	DynamicIndexFactsSnapshot() state.DynamicIndexFactsSnapshot
 	KeyMembershipsSnapshot() state.KeyMembershipsSnapshot
@@ -302,7 +302,7 @@ func projectStatePathRefinements(ctx projectedStateFactContext, out *NormalRetur
 
 func projectStatePathStaticMembers(ctx projectedStateFactContext, out *NormalReturnFacts) {
 	bottom := product.Bottom(ctx.reg)
-	ctx.world.ForEachPathStaticMember(ctx.keys, func(source keyspace.Key, value product.Value) bool {
+	ctx.world.ForEachPathStaticMember(func(source keyspace.Key, value product.Value) bool {
 		if product.Equal(ctx.reg, value, bottom) {
 			return true
 		}
@@ -642,7 +642,7 @@ func projectedFrozenTablePaths(ctx projectedStateFactContext) map[identity.ID][]
 		}
 		return true
 	})
-	ctx.world.ForEachPathStaticMember(ctx.keys, func(source keyspace.Key, value product.Value) bool {
+	ctx.world.ForEachPathStaticMember(func(source keyspace.Key, value product.Value) bool {
 		if target, ok := ctx.projector.key(source); ok {
 			addValue(target, value, nil)
 		}

@@ -12,7 +12,7 @@ import (
 // implication sublanes still carry path-key string spellings.
 type Lane struct {
 	refinements                    map[keyspace.KeyHandle]product.Value
-	staticMembers                  map[keyspace.KeyHandle]product.Value
+	staticMembers                  map[keyspace.Key]product.Value
 	proofs                         map[BranchProof]struct{}
 	pathPresenceImplications       map[PathPresenceImplication]struct{}
 	equalityRootMask               equalityRootMask
@@ -28,7 +28,7 @@ type equalityRootMask [4]uint64
 func (l Lane) Clone() Lane {
 	return Lane{
 		refinements:                    cloneLocalValueHandleMap(l.refinements),
-		staticMembers:                  cloneLocalValueHandleMap(l.staticMembers),
+		staticMembers:                  cloneLocalValueMap(l.staticMembers),
 		proofs:                         cloneBranchProofSet(l.proofs),
 		pathPresenceImplications:       clonePathPresenceImplicationSet(l.pathPresenceImplications),
 		equalityRootMask:               l.equalityRootMask,

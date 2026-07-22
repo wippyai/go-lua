@@ -141,9 +141,7 @@ func fingerprintPathEvidence(w *fingerprintWriter, st State) {
 	clear(refinements)
 	w.scratch.pathProducts = refinements[:0]
 
-	members := collectPathProducts(w.scratch.pathProducts[:0], func(visit func(keyspace.Key, product.Value) bool) {
-		st.pathEvidence.ForEachPathStaticMember(w.keys, visit)
-	})
+	members := collectPathProducts(w.scratch.pathProducts[:0], st.pathEvidence.ForEachPathStaticMember)
 	w.bool("members-bottom", st.pathEvidence.StaticMembersBottom())
 	w.bool("members-top", !st.pathEvidence.StaticMembersBottom() && len(members) == 0)
 	fingerprintPathProducts(w, "member", members, &w.scratch.pathMembers, &w.scratch.pathMemberNext)

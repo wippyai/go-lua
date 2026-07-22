@@ -46,7 +46,7 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(
 				t.Logf("point=%d dynamic table=%s key=%v value=%v admission=%d", point, result.KeySpace().FormatReadOnly(key.Table), keyType, valueType, fact.Admission)
 				return true
 			})
-			st.ForEachPathStaticMember(result.KeySpace(), func(key keyspace.Key, value product.Value) bool {
+			st.ForEachPathStaticMember(func(key keyspace.Key, value product.Value) bool {
 				valueType, _ := typevalue.TypeOf(result.Registry(), value)
 				t.Logf("point=%d static=%s value=%v", point, result.KeySpace().FormatReadOnly(key), valueType)
 				return true

@@ -49,18 +49,6 @@ func (l Lane) ForEachPathStaticMemberValue(fn func(product.Value) bool) {
 	}
 }
 
-func (l Lane) StaticMemberKeysValid(ks *keyspace.KeySpace) bool {
-	if l.staticMembersBottom || ks == nil || !ks.Valid() {
-		return l.staticMembersBottom
-	}
-	for handle := range l.staticMembers {
-		if _, ok := ks.KeyByHandle(handle); !ok {
-			return false
-		}
-	}
-	return true
-}
-
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
 // explicit; Top means the reachable must lane contains no finite refinements.
 func (l Lane) PathRefinementsSnapshot(ks *keyspace.KeySpace) PathRefinementsSnapshot {
@@ -102,7 +90,7 @@ func (l Lane) PathStaticMembersSnapshot(ks *keyspace.KeySpace) PathStaticMembers
 	if l.staticMembersBottom {
 		return PathStaticMembersSnapshot{Bottom: true}
 	}
-	members := snapshotLocalHandleValueMap(ks, l.staticMembers)
+	members := snapshotLocalValueMap(ks, l.staticMembers)
 	return PathStaticMembersSnapshot{
 		Top:     len(members) == 0,
 		Members: members,
@@ -111,15 +99,11 @@ func (l Lane) PathStaticMembersSnapshot(ks *keyspace.KeySpace) PathStaticMembers
 
 // ForEachPathStaticMember visits finite must-static-member facts in their
 // native keyspace form, avoiding the snapshot PathKey materialization path.
-func (l Lane) ForEachPathStaticMember(ks *keyspace.KeySpace, fn func(keyspace.Key, product.Value) bool) {
-	if l.staticMembersBottom || len(l.staticMembers) == 0 || ks == nil || fn == nil {
+func (l Lane) ForEachPathStaticMember(fn func(keyspace.Key, product.Value) bool) {
+	if l.staticMembersBottom || len(l.staticMembers) == 0 || fn == nil {
 		return
 	}
-	for handle, value := range l.staticMembers {
-		key, ok := ks.KeyByHandle(handle)
-		if !ok {
-			continue
-		}
+	for key, value := range l.staticMembers {
 		if !fn(key, value) {
 			return
 		}
