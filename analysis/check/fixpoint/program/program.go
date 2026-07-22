@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -35,6 +36,7 @@ type Stats struct {
 	Body              body.Stats
 	MaxFunctionCount  int
 	FunctionalSummary FunctionalSummaryStats
+	Freeze            transformer.FreezeTelemetry
 }
 
 // Result is the fixed-point result for one bound program.

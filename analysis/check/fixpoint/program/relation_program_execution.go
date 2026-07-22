@@ -81,7 +81,11 @@ func runPreparedRelationProgram(
 	if err != nil {
 		return formalLexicalPublishedProgram{}, err
 	}
-	program, err := transformer.FreezeRelationProgram(units, prepared.callTopology)
+	var freezeTelemetry *transformer.FreezeTelemetry
+	if stats != nil {
+		freezeTelemetry = &stats.Freeze
+	}
+	program, err := transformer.FreezeRelationProgramWithTelemetry(units, prepared.callTopology, freezeTelemetry)
 	if err != nil {
 		return formalLexicalPublishedProgram{}, err
 	}

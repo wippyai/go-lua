@@ -813,6 +813,20 @@ func planNeedsPathSemanticAuthority(plan *operationplan.Plan) bool {
 // FreezeRelationProgram validates the complete forest and freezes every body
 // exactly once. A lexical call may resolve only through its sealed CallSurface.
 func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationplan.CallTopology) (*RelationProgram, error) {
+	return FreezeRelationProgramWithTelemetry(units, callTopology, nil)
+}
+
+// FreezeRelationProgramWithTelemetry freezes the complete relation forest and
+// reports architectural phase costs to caller-owned telemetry when requested.
+// Telemetry is not retained by the resulting program.
+func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopology operationplan.CallTopology, telemetry *FreezeTelemetry) (*RelationProgram, error) {
+	inputStarted := telemetry.begin(FreezePhaseInputValidation)
+	inputComplete := false
+	defer func() {
+		if !inputComplete {
+			telemetry.end(FreezePhaseInputValidation, inputStarted)
+		}
+	}()
 	if len(units) == 0 {
 		return nil, fmt.Errorf("transformer: relation program has no lexical units")
 	}
@@ -996,6 +1010,10 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 		}
 		surfaces[index] = surface
 	}
+	telemetry.end(FreezePhaseInputValidation, inputStarted)
+	inputComplete = true
+
+	sccClosureStarted := telemetry.begin(FreezePhaseSCCClosureLinking)
 	environments, err := closeRelationEnvironments(ordered, surfaces, byBody)
 	if err != nil {
 		return nil, err
@@ -1030,7 +1048,9 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 			surfaces[owner].targets[point] = site
 		}
 	}
+	telemetry.end(FreezePhaseSCCClosureLinking, sccClosureStarted)
 
+	localSyntaxStarted := telemetry.begin(FreezePhaseLocalSyntax)
 	prepared := make([]*PreparedPlanCompiler, len(ordered))
 	rootCarriers := make([]relationRootCarrier, len(ordered))
 	for index, unit := range ordered {
@@ -1202,6 +1222,9 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 	for _, definition := range program.definitions {
 		program.bodies[definition.owner-1].definitionFrames[definition.frame] = definition.target
 	}
+	telemetry.end(FreezePhaseLocalSyntax, localSyntaxStarted)
+
+	sccLinkStarted := telemetry.begin(FreezePhaseSCCClosureLinking)
 	// Receiver assignments are part of the outbound frame lens: link them
 	// before frame transport is frozen so every call-result root owns its exact
 	// caller slot/path. They are not a post-link execution annotation.
@@ -1228,6 +1251,9 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 			}
 		}
 	}
+	telemetry.end(FreezePhaseSCCClosureLinking, sccLinkStarted)
+
+	regionStarted := telemetry.begin(FreezePhaseRegionWTO)
 	formalSlots, err := freezeSlotSpace(program)
 	if err != nil {
 		return nil, err
@@ -1238,7 +1264,9 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 		return nil, err
 	}
 	program.formalRegion = formalRegion
-	formalFibers, err := freezeFormalFiberInventoryWithSlots(program, formalSlots)
+	telemetry.end(FreezePhaseRegionWTO, regionStarted)
+
+	formalFibers, err := freezeFormalFiberInventoryWithSlotsTelemetry(program, formalSlots, telemetry)
 	if err != nil {
 		return nil, err
 	}
@@ -1246,9 +1274,13 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 	// Coordinate and identity footprint closure deliberately sees every lexical
 	// Step. Once those semantic operators are frozen, collapse unobservable
 	// acyclic Step chains before any WTO/template authority is published.
+	quotientStarted := telemetry.begin(FreezePhaseObservableQuotient)
 	if err := formalRegion.freezeObservableStepQuotient(program); err != nil {
 		return nil, err
 	}
+	telemetry.end(FreezePhaseObservableQuotient, quotientStarted)
+
+	templateStarted := telemetry.begin(FreezePhaseTemplateBinding)
 	formalComponents, err := freezeFormalComponentTerminalSchema(program)
 	if err != nil {
 		return nil, err
@@ -1267,6 +1299,7 @@ func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationpl
 		return nil, err
 	}
 	program.formalTemplate = formalTemplate
+	telemetry.end(FreezePhaseTemplateBinding, templateStarted)
 	return program, nil
 }
 

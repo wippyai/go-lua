@@ -20,11 +20,12 @@ import (
 // evaluation enqueues only exact dependents whose canonical set value may
 // change. There is no iteration budget and no solve-time WTO reuse.
 type formalCoordinateDependencyClosure struct {
-	program *RelationProgram
-	region  *formalRelationRegionInventory
-	forest  *formalFiberInventory
-	keys    []*keyspace.KeySpace
-	rekeys  []state.CoordinateFormalRootRekey
+	program   *RelationProgram
+	region    *formalRelationRegionInventory
+	forest    *formalFiberInventory
+	telemetry *FreezeTelemetry
+	keys      []*keyspace.KeySpace
+	rekeys    []state.CoordinateFormalRootRekey
 
 	bodySeeds []state.CoordinateFactorInventory
 	bodies    []state.CoordinateFactorInventory
@@ -235,8 +236,9 @@ func freezeFormalCoordinateDependencyClosure(
 	formalKeys []*keyspace.KeySpace,
 	rekeys []state.CoordinateFormalRootRekey,
 	inventories []state.CoordinateFactorInventory,
+	telemetry *FreezeTelemetry,
 ) error {
-	closure, err := newFormalCoordinateDependencyClosure(program, region, forest, formalKeys, rekeys, inventories)
+	closure, err := newFormalCoordinateDependencyClosure(program, region, forest, formalKeys, rekeys, inventories, telemetry)
 	if err != nil {
 		return err
 	}
@@ -254,13 +256,14 @@ func newFormalCoordinateDependencyClosure(
 	formalKeys []*keyspace.KeySpace,
 	rekeys []state.CoordinateFormalRootRekey,
 	inventories []state.CoordinateFactorInventory,
+	telemetry *FreezeTelemetry,
 ) (*formalCoordinateDependencyClosure, error) {
 	if program == nil || region == nil || forest == nil || len(formalKeys) != len(program.bodies) ||
 		len(rekeys) != len(program.bodies) || len(inventories) != len(program.bodies) {
 		return nil, fmt.Errorf("transformer: formal coordinate dependency closure is unowned")
 	}
 	c := &formalCoordinateDependencyClosure{
-		program: program, region: region, forest: forest, keys: formalKeys, rekeys: rekeys,
+		program: program, region: region, forest: forest, telemetry: telemetry, keys: formalKeys, rekeys: rekeys,
 		bodySeeds:                 append([]state.CoordinateFactorInventory(nil), inventories...),
 		bodies:                    append([]state.CoordinateFactorInventory(nil), inventories...),
 		pointwise:                 make([]relationCoordinateFactorInventory, len(program.bodies)),
@@ -782,14 +785,14 @@ func (c *formalCoordinateDependencyClosure) freezeCellBase(index int, cell forma
 				return state.CoordinateFactorInventory{}, identityErr
 			}
 		}
-		return freezeFormalStepCoordinateFootprint(c.forest, body, cell.Variable, keys, c.rekeys[cell.Variable-1], c.pointwise[cell.Variable-1], current, normalReturnIdentities, step)
+		return freezeFormalStepCoordinateFootprint(c.telemetry, c.forest, body, cell.Variable, keys, c.rekeys[cell.Variable-1], c.pointwise[cell.Variable-1], current, normalReturnIdentities, step)
 	case formalRelationCellOutcome:
 		outcome := body.relation.code.outcomes[cell.Outcome]
 		identityTerms, err := c.identityValuesSupport(int(cell.Variable-1), c.cellIdentity[index], outcome.returnTransaction.sources)
 		if err != nil {
 			return state.CoordinateFactorInventory{}, err
 		}
-		return freezeFormalOutcomeCoordinateFootprint(body, keys, c.rekeys[cell.Variable-1], cell.Outcome, current, identityTerms)
+		return freezeFormalOutcomeCoordinateFootprint(c.telemetry, body, keys, c.rekeys[cell.Variable-1], cell.Outcome, current, identityTerms)
 	default:
 		return body.productDomain.SealCoordinateFactorInventory(keys, nil)
 	}

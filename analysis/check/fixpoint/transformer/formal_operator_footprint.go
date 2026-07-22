@@ -219,6 +219,7 @@ func formalCoordinateInventoriesEqual(domain state.ProductDomain, left, right st
 }
 
 func freezeFormalStepCoordinateFootprint(
+	telemetry *FreezeTelemetry,
 	forest *formalFiberInventory,
 	body *relationProgramBody,
 	variable relationVar,
@@ -389,13 +390,13 @@ func freezeFormalStepCoordinateFootprint(
 		}
 		slots = append(slots, more...)
 	case boundaryStepCovariantExposure:
-		more, err := freezeFormalCovariantCoordinateSlots(body, formalKeys, rekey, current, step.covariant)
+		more, err := freezeFormalCovariantCoordinateSlots(telemetry, body, formalKeys, rekey, current, step.covariant)
 		if err != nil {
 			return state.CoordinateFactorInventory{}, err
 		}
 		slots = append(slots, more...)
 	case boundaryStepEffect:
-		more, err := freezeFormalEffectCoordinateSlots(body, formalKeys, rekey, current, step)
+		more, err := freezeFormalEffectCoordinateSlots(telemetry, body, formalKeys, rekey, current, step)
 		if err != nil {
 			return state.CoordinateFactorInventory{}, err
 		}
@@ -597,7 +598,7 @@ func formalValueCallResultSource(arena *Arena, term ValueTerm, visiting map[Valu
 	}
 }
 
-func freezeFormalEffectCoordinateSlots(body *relationProgramBody, formalKeys *keyspace.KeySpace, rekey state.CoordinateFormalRootRekey, current state.CoordinateFactorInventory, step boundaryStep) ([]state.CoordinateSlot, error) {
+func freezeFormalEffectCoordinateSlots(telemetry *FreezeTelemetry, body *relationProgramBody, formalKeys *keyspace.KeySpace, rekey state.CoordinateFormalRootRekey, current state.CoordinateFactorInventory, step boundaryStep) ([]state.CoordinateSlot, error) {
 	if step.effect == 0 || body.relation.effects == nil || int(step.effect) >= len(body.relation.effects.nodes) {
 		return nil, nil
 	}
@@ -668,9 +669,11 @@ func freezeFormalEffectCoordinateSlots(body *relationProgramBody, formalKeys *ke
 				return nil, err
 			}
 			const dependencyID state.CoordinateDependencyID = 1
+			pathStarted := telemetry.begin(FreezePhasePathDependencyPlanning)
 			dependencies, err := body.productDomain.PlanPathCoordinateDependencies(formalKeys, union, []state.CoordinateDependencySeed{{
 				ID: dependencyID, ResolvePaths: []keyspace.Key{target}, WritePaths: []keyspace.Key{target}, DescendantMutationRoots: []keyspace.Key{root},
 			}})
+			telemetry.end(FreezePhasePathDependencyPlanning, pathStarted)
 			if err != nil {
 				return nil, err
 			}
@@ -877,6 +880,7 @@ func freezeFormalRootAssignmentCoordinateSlots(body *relationProgramBody, formal
 }
 
 func freezeFormalOutcomeCoordinateFootprint(
+	telemetry *FreezeTelemetry,
 	body *relationProgramBody,
 	formalKeys *keyspace.KeySpace,
 	rekey state.CoordinateFormalRootRekey,
@@ -923,7 +927,7 @@ func freezeFormalOutcomeCoordinateFootprint(
 		slots = append(slots, formal.Slots()...)
 	}
 	if outcome.covariant.HasStateSteps() {
-		covariant, err := freezeFormalCovariantCoordinateSlots(body, formalKeys, rekey, current, outcome.covariant)
+		covariant, err := freezeFormalCovariantCoordinateSlots(telemetry, body, formalKeys, rekey, current, outcome.covariant)
 		if err != nil {
 			return state.CoordinateFactorInventory{}, err
 		}
@@ -951,6 +955,7 @@ func freezeFormalOutcomeCoordinateFootprint(
 // law; this certificate only prevents unrelated coordinate fibers from being
 // placed in the same symbolic product.
 func freezeFormalCovariantCoordinateSlots(
+	telemetry *FreezeTelemetry,
 	body *relationProgramBody,
 	formalKeys *keyspace.KeySpace,
 	rekey state.CoordinateFormalRootRekey,
@@ -997,7 +1002,9 @@ func freezeFormalCovariantCoordinateSlots(
 	if len(seeds) == 0 {
 		return nil, nil
 	}
+	pathStarted := telemetry.begin(FreezePhasePathDependencyPlanning)
 	dependencies, err := body.productDomain.PlanPathCoordinateDependencies(formalKeys, pathInventory, seeds)
+	telemetry.end(FreezePhasePathDependencyPlanning, pathStarted)
 	if err != nil {
 		return nil, err
 	}

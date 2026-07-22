@@ -489,6 +489,10 @@ func freezeFormalFiberInventory(program *RelationProgram) (*formalFiberInventory
 }
 
 func freezeFormalFiberInventoryWithSlots(program *RelationProgram, slots *SlotSpace) (*formalFiberInventory, error) {
+	return freezeFormalFiberInventoryWithSlotsTelemetry(program, slots, nil)
+}
+
+func freezeFormalFiberInventoryWithSlotsTelemetry(program *RelationProgram, slots *SlotSpace, telemetry *FreezeTelemetry) (*formalFiberInventory, error) {
 	if program == nil || len(program.bodies) == 0 || slots == nil {
 		return nil, fmt.Errorf("transformer: formal fiber inventory has no frozen forest")
 	}
@@ -499,6 +503,7 @@ func freezeFormalFiberInventoryWithSlots(program *RelationProgram, slots *SlotSp
 		}
 		program.formalRegion = region
 	}
+	coordinateStarted := telemetry.begin(FreezePhaseCoordinateClosure)
 	topology, err := freezeFormalDefinitionResourceTopology(program)
 	if err != nil {
 		return nil, err
@@ -534,9 +539,11 @@ func freezeFormalFiberInventoryWithSlots(program *RelationProgram, slots *SlotSp
 		}
 		coordinates[bodyIndex] = local
 	}
-	if err := freezeFormalCoordinateDependencyClosure(program, program.formalRegion, inventory, formalKeys, rekeys, coordinates); err != nil {
+	if err := freezeFormalCoordinateDependencyClosure(program, program.formalRegion, inventory, formalKeys, rekeys, coordinates, telemetry); err != nil {
 		return nil, err
 	}
+	telemetry.end(FreezePhaseCoordinateClosure, coordinateStarted)
+	fiberLayoutStarted := telemetry.begin(FreezePhaseFiberLayout)
 	for bodyIndex := range program.bodies {
 		variable := relationVar(bodyIndex + 1)
 		body := &program.bodies[bodyIndex]
@@ -627,6 +634,7 @@ func freezeFormalFiberInventoryWithSlots(program *RelationProgram, slots *SlotSp
 			return nil, err
 		}
 	}
+	telemetry.end(FreezePhaseFiberLayout, fiberLayoutStarted)
 	return inventory, nil
 }
 

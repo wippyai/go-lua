@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/projection"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -67,6 +68,38 @@ func TestProgramProductionUsesPreparedBodyAPI(t *testing.T) {
 	}
 	if strings.Contains(string(src), "body.CheckBound") {
 		t.Fatalf("program.go uses the removed direct body checker instead of the relation program")
+	}
+}
+
+func TestRunChunkRecordsFreezeArchitectureTelemetry(t *testing.T) {
+	stmts := parseChunk(t, `
+local record = {}
+record.value = "ok"
+local function read()
+    return record.value
+end
+local value: string = read()
+`)
+	stats := &Stats{}
+	if _, err := RunChunk(stmts, Config{Check: body.Config{Registry: standard.Registry()}, Stats: stats}); err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	for name, phase := range map[string]transformer.FreezePhaseStats{
+		"input validation":    stats.Freeze.InputValidation,
+		"local syntax":        stats.Freeze.LocalSyntax,
+		"SCC closure/linking": stats.Freeze.SCCClosureLinking,
+		"region/WTO":          stats.Freeze.RegionWTO,
+		"coordinate closure":  stats.Freeze.CoordinateClosure,
+		"fiber layout":        stats.Freeze.FiberLayout,
+		"observable quotient": stats.Freeze.ObservableQuotient,
+		"template binding":    stats.Freeze.TemplateBinding,
+	} {
+		if phase.Calls == 0 || phase.Elapsed <= 0 {
+			t.Errorf("%s telemetry = %+v, want completed timed phase", name, phase)
+		}
+	}
+	if stats.Freeze.PathDependencyPlanning.Calls == 0 || stats.Freeze.PathDependencyPlanning.Elapsed <= 0 {
+		t.Errorf("path dependency telemetry = %+v, want completed timed phase", stats.Freeze.PathDependencyPlanning)
 	}
 }
 
