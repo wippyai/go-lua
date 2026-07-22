@@ -1,9 +1,13 @@
 package transformer
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/formal"
-	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/domain/formal"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func registryTestOwner(seed byte) lexicalidentity.StableLexicalBodyID {
@@ -92,5 +96,21 @@ func TestFormalCoordinateRegistryWriteAlphabetsAreOccurrenceLocal(t *testing.T) 
 	}
 	if _, ok := registry.alphabet(formal.NewOccurrenceID(owner, 3)); ok {
 		t.Fatal("unregistered occurrence acquired alphabet")
+	}
+}
+
+func TestFormalCoordinateRegistryAllowsAnExplicitEmptyRootVocabulary(t *testing.T) {
+	domain := state.RegisteredProductDomain(standard.Registry())
+	owner := registryTestOwner(4)
+	rekey, err := domain.SealCoordinateFormalRootRekey(owner, keyspace.New(), keyspace.New(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := freezeFormalCoordinateRegistry(domain, rekey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry == nil || len(registry.classes) != 0 || len(registry.members) != 0 || len(registry.alphabets) != 0 {
+		t.Fatalf("empty root vocabulary registry = %#v", registry)
 	}
 }

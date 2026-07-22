@@ -14,8 +14,19 @@ import (
 // rekey tags; this registry never derives identity from selector adjacency.
 func freezeFormalCoordinateRegistry(domain state.ProductDomain, rekey state.CoordinateFormalRootRekey) (*formalCoordinateRegistry, error) {
 	roots, err := domain.CoordinateFormalRoots(rekey)
-	if err != nil || len(roots) == 0 {
+	if err != nil {
 		return nil, fmt.Errorf("formal coordinate registry: root vocabulary: %w", err)
+	}
+	// A sealed relation may lawfully have no coordinate roots: for example, a
+	// body with no inputs, middle registers, or results.  It still owns a
+	// complete (empty) vocabulary, so retain an explicit empty registry rather
+	// than treating that absence as a malformed rekey.
+	if len(roots) == 0 {
+		return &formalCoordinateRegistry{
+			classes:   make(map[formal.Root]formal.LexicalClassID),
+			members:   make(map[formal.LexicalClassID][]formal.Root),
+			alphabets: make(map[formal.OccurrenceID]formalWriteAlphabet),
+		}, nil
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i].Less(roots[j]) })
 	builder := newFormalCoordinateRegistryBuilder(roots[0].Owner())
