@@ -3491,7 +3491,7 @@ end
 		if ok && origin.Kind == bind.FunctionOriginMethod && origin.Method == "_route_errors" {
 			staticCount := 0
 			if entry, entryOK := child.EntryState(); entryOK {
-				entry.ForEachPathStaticMember(func(key keyspace.Key, _ product.Value) bool {
+				entry.ForEachPathStaticMember(child.KeySpace(), func(key keyspace.Key, _ product.Value) bool {
 					if strings.Contains(string(child.KeySpace().Format(key)), "data") {
 						staticCount++
 					}
@@ -3521,7 +3521,7 @@ end
 		if !ok {
 			var staticMembers []string
 			if st, stOK := routeResult.StateAt(point); stOK {
-				st.ForEachPathStaticMember(func(key keyspace.Key, member product.Value) bool {
+				st.ForEachPathStaticMember(routeResult.KeySpace(), func(key keyspace.Key, member product.Value) bool {
 					keyText := string(routeResult.KeySpace().Format(key))
 					if strings.Contains(keyText, "data") {
 						memberType, memberTypeOK := typevalue.TypeOf(reg, member)
@@ -3621,7 +3621,7 @@ func TestDeadlockDataflowRouteErrorsBoundaryKeepsSelfDataSurface(t *testing.T) {
 			beforeType, beforeTypeOK := typevalue.TypeOf(reg, before)
 			var staticMembers []string
 			if st, stOK := routeResult.StateAtBoundary(point); stOK {
-				st.ForEachPathStaticMember(func(key keyspace.Key, member product.Value) bool {
+				st.ForEachPathStaticMember(routeResult.KeySpace(), func(key keyspace.Key, member product.Value) bool {
 					keyText := fmt.Sprintf("%v", key)
 					if strings.Contains(keyText, "data") {
 						memberType, memberTypeOK := typevalue.TypeOf(reg, member)

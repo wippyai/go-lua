@@ -62,7 +62,7 @@ func visitPathEvidenceLaneIdentities(reg *axis.Registry, keys *keyspace.KeySpace
 	if !keepGoing {
 		return false
 	}
-	source.ForEachPathStaticMember(func(_ keyspace.Key, value product.Value) bool {
+	source.ForEachPathStaticMember(keys, func(_ keyspace.Key, value product.Value) bool {
 		keepGoing = visitProductIdentity(reg, value, visit)
 		return keepGoing
 	})

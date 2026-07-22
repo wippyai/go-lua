@@ -26,7 +26,7 @@ func (l Lane) RekeyValueLanes(from, to *keyspace.KeySpace) (Lane, bool) {
 	if out.refinements, ok = rekeyHandleValueMap(from, to, l.refinements); !ok {
 		return l, false
 	}
-	if out.staticMembers, ok = rekeyValueMap(from, to, l.staticMembers); !ok {
+	if out.staticMembers, ok = rekeyHandleValueMap(from, to, l.staticMembers); !ok {
 		return l, false
 	}
 	if out.proofs, ok = rekeyBranchProofs(from, to, l.proofs); !ok {

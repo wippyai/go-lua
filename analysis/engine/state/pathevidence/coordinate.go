@@ -663,7 +663,11 @@ func DecomposeCoordinates(lane Lane, ks *keyspace.KeySpace) (CoordinateSkeleton,
 		}
 	}
 	if !lane.staticMembersBottom {
-		for path, value := range lane.staticMembers {
+		for handle, value := range lane.staticMembers {
+			path, ok := ks.KeyByHandle(handle)
+			if !ok {
+				return CoordinateSkeleton{}, nil, false
+			}
 			entries = append(entries, CoordinateEntry{
 				Key:    CoordinateKey{kind: coordinateStaticMember, path: path},
 				Scalar: CoordinateScalar{present: true, valueBearing: true, value: value},
@@ -742,9 +746,13 @@ func ComposeCoordinates(skeleton CoordinateSkeleton, entries []CoordinateEntry, 
 			out.refinements[handle] = entry.Scalar.value
 		case coordinateStaticMember:
 			if out.staticMembers == nil {
-				out.staticMembers = make(map[keyspace.Key]product.Value)
+				out.staticMembers = make(map[keyspace.KeyHandle]product.Value)
 			}
-			out.staticMembers[entry.Key.path] = entry.Scalar.value
+			handle := entry.Key.path.Handle()
+			if handle == 0 {
+				return Lane{}, false
+			}
+			out.staticMembers[handle] = entry.Scalar.value
 		case coordinateBranchProof:
 			if out.proofs == nil {
 				out.proofs = make(map[BranchProof]struct{})

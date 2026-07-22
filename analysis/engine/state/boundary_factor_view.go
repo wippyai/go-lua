@@ -133,10 +133,10 @@ func (v BoundaryFactorView) ForEachPathRefinement(ks *keyspace.KeySpace, visit f
 	}
 }
 
-func (v BoundaryFactorView) ForEachPathStaticMember(visit func(keyspace.Key, product.Value) bool) {
+func (v BoundaryFactorView) ForEachPathStaticMember(ks *keyspace.KeySpace, visit func(keyspace.Key, product.Value) bool) {
 	lane, present := boundaryFactorViewLane[pathevidence.Lane](v, LanePathEvidence)
 	if present {
-		lane.ForEachPathStaticMember(visit)
+		lane.ForEachPathStaticMember(ks, visit)
 	}
 }
 

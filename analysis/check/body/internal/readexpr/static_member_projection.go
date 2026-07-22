@@ -137,7 +137,7 @@ func overlayStaticMemberWitness(config Config, point cfg.Point, root pathdom.Pat
 	selfIndexMember := false
 	builder := staticmemberwitness.NewBuilder()
 	poll := cancellation.NewPoller(config.Cancel, cancellation.EveryExpensive)
-	in.ForEachPathStaticMember(func(memberKey keyspace.Key, memberValue product.Value) bool {
+	in.ForEachPathStaticMember(ks, func(memberKey keyspace.Key, memberValue product.Value) bool {
 		if poll.Poll() {
 			return false
 		}

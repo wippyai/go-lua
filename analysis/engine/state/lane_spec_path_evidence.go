@@ -94,7 +94,7 @@ func visitPathEvidenceValueDependencies(source State, keys *keyspace.KeySpace, v
 		visitPath(path)
 		return true
 	})
-	source.pathEvidence.ForEachPathStaticMember(func(path keyspace.Key, _ product.Value) bool {
+	source.pathEvidence.ForEachPathStaticMember(keys, func(path keyspace.Key, _ product.Value) bool {
 		visitPath(path)
 		return true
 	})
@@ -118,7 +118,7 @@ func emitPathEvidenceReachability(program *boundaryReachabilityProgramBuilder, l
 		}
 		return true
 	})
-	lane.ForEachPathStaticMember(func(path keyspace.Key, value product.Value) bool {
+	lane.ForEachPathStaticMember(program.keys, func(path keyspace.Key, value product.Value) bool {
 		if program.pathCone(false, path) {
 			program.addValue(value)
 		}

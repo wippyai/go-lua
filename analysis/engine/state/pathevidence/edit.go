@@ -15,7 +15,7 @@ type Edit struct {
 
 	refinements       map[keyspace.KeyHandle]product.Value
 	refinementsCloned bool
-	staticMembers     map[keyspace.Key]product.Value
+	staticMembers     map[keyspace.KeyHandle]product.Value
 	staticCloned      bool
 	changed           bool
 }
@@ -75,18 +75,18 @@ func (e *Edit) WritePathStaticMember(pathKey keyspace.Key, value product.Value) 
 	}
 	if !e.lane.staticMembersBottom {
 		if e.staticCloned {
-			if existing, ok := e.staticMembers[pathKey]; ok && existing == value {
+			if existing, ok := e.staticMembers[pathKey.Handle()]; ok && existing == value {
 				return false
 			}
-		} else if existing, ok := e.lane.staticMembers[pathKey]; ok && existing == value {
+		} else if existing, ok := e.lane.staticMembers[pathKey.Handle()]; ok && existing == value {
 			return false
 		}
 	}
 	e.ensureStaticMembers()
 	if e.staticMembers == nil {
-		e.staticMembers = make(map[keyspace.Key]product.Value, 1)
+		e.staticMembers = make(map[keyspace.KeyHandle]product.Value, 1)
 	}
-	e.staticMembers[pathKey] = value
+	e.staticMembers[pathKey.Handle()] = value
 	e.markReachable()
 	return true
 }
@@ -118,7 +118,7 @@ func (e *Edit) ensureStaticMembers() {
 	if e.staticCloned {
 		return
 	}
-	e.staticMembers = cloneLocalValueMap(e.lane.staticMembers)
+	e.staticMembers = cloneLocalValueHandleMap(e.lane.staticMembers)
 	e.staticCloned = true
 }
 

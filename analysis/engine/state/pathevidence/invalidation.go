@@ -51,8 +51,8 @@ func (l Lane) invalidateStableSymbol(ks *keyspace.KeySpace, sym symbol.ID, prese
 		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
 			return deleteMatchingPathHandles(ks, m, match)
 		},
-		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
-			return deleteMatchingPathKeys(m, match)
+		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
+			return deleteMatchingPathHandles(ks, m, match)
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
@@ -83,8 +83,8 @@ func (l Lane) InvalidatePathKeySubtreePrefixes(ks *keyspace.KeySpace, prefixes [
 		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
 			return deletePathKeyHandleSubtrees(ks, m, prefixKeys)
 		},
-		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
-			return deletePathKeySubtrees(ks, m, prefixKeys)
+		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
+			return deletePathKeyHandleSubtrees(ks, m, prefixKeys)
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
@@ -112,7 +112,7 @@ func (l Lane) InvalidatePathKeySubtreePrefixesChanged(ks *keyspace.KeySpace, pre
 // value-identity proofs.
 func (l Lane) invalidatePathKeyEvidence(
 	deleteRefinements func(map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool),
-	deleteStaticMembers func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
+	deleteStaticMembers func(map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool),
 	match func(candidate keyspace.Key) bool,
 	proofMatch func(proof BranchProof) bool,
 	preserveImplication func(PathPresenceImplication) bool,
@@ -165,8 +165,8 @@ func (l Lane) InvalidatePathKeyDescendantPrefixes(ks *keyspace.KeySpace, prefixe
 		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
 			return deletePathKeyHandleDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
 		},
-		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
-			return deletePathKeyDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
+		func(m map[keyspace.KeyHandle]product.Value) (map[keyspace.KeyHandle]product.Value, bool) {
+			return deletePathKeyHandleDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
 		},
 		match,
 		func(proof BranchProof) bool {

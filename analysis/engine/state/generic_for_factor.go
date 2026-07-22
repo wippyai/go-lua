@@ -229,7 +229,7 @@ func observeGenericForPathEvidence(payload laneFactorPayload, config GenericForF
 		seen  map[segment.Segment]struct{}
 	}
 	copies := make(map[keyspace.Key]candidate)
-	lane.ForEachPathStaticMember(func(member keyspace.Key, value product.Value) bool {
+	lane.ForEachPathStaticMember(config.Keys, func(member keyspace.Key, value product.Value) bool {
 		remainder, ok := config.Keys.ExactRemainderAfterPrefix(member, config.SourceContainer)
 		if !ok || len(remainder) == 0 || remainder[0].Kind != segment.SegmentIndexInt {
 			return true

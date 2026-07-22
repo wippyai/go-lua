@@ -40,11 +40,11 @@ func (s State) PathStaticMembersSnapshot(ks *keyspace.KeySpace) pathevidence.Pat
 
 // ForEachPathStaticMember visits finite must-static-member facts without
 // materializing a PathKey snapshot. Bottom and disabled lanes visit nothing.
-func (s State) ForEachPathStaticMember(fn func(keyspace.Key, product.Value) bool) {
+func (s State) ForEachPathStaticMember(ks *keyspace.KeySpace, fn func(keyspace.Key, product.Value) bool) {
 	if !s.laneEnabled(lanePathEvidenceBit) {
 		return
 	}
-	s.pathEvidence.ForEachPathStaticMember(fn)
+	s.pathEvidence.ForEachPathStaticMember(ks, fn)
 }
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.

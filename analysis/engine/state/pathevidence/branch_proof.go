@@ -232,8 +232,10 @@ func (l Lane) forEachCongruenceObservation(ks *keyspace.KeySpace, visit func(key
 			visit(key)
 		}
 	}
-	for key := range l.staticMembers {
-		visit(key)
+	for handle := range l.staticMembers {
+		if key, ok := ks.KeyByHandle(handle); ok {
+			visit(key)
+		}
 	}
 	for proof := range l.proofs {
 		visit(proof.Path)

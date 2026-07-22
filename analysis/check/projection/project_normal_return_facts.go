@@ -325,7 +325,7 @@ func pathStaticMemberDeltaSameType(reg *axis.Registry, a, b product.Value) bool 
 func requiredPathStaticMemberPaths(reg *axis.Registry, exit state.State, boundary boundaryPathProjector) map[path.PathKey]bool {
 	out := make(map[path.PathKey]bool)
 	bottom := product.Bottom(reg)
-	exit.ForEachPathStaticMember(func(pathKey keyspace.Key, value product.Value) bool {
+	exit.ForEachPathStaticMember(boundary.ks, func(pathKey keyspace.Key, value product.Value) bool {
 		if product.Equal(reg, value, bottom) {
 			return true
 		}
