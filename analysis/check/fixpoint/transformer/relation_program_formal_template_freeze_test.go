@@ -60,6 +60,43 @@ func TestFreezeRelationProgramOwnsOneImmutableFormalTemplate(t *testing.T) {
 	}
 }
 
+func TestFreezeRelationProgramBuildsDetachedNonReusableTier1Manifest(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("relation-program-tier-1-manifest"))
+	body := lexicalidentity.RootBody(namespace)
+	unit := formalTemplateFreezeUnit(t, body)
+	topology := testAcyclicCallTopology(t, body)
+
+	program, err := FreezeRelationProgram([]RelationProgramUnit{unit}, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := program.tier1
+	if !manifest.Valid() || manifest.Reusable() {
+		t.Fatalf("tier-1 manifest validity/reuse = %v/%v, want valid and fail-closed", manifest.Valid(), manifest.Reusable())
+	}
+	if len(manifest.units) != 1 || manifest.units[0].body != body || manifest.units[0].graphID != unit.Graph.ID() {
+		t.Fatalf("tier-1 manifest body directory = %#v, want detached record for %s", manifest.units, body)
+	}
+	if len(manifest.missing) == 0 {
+		t.Fatal("tier-1 manifest silently treated opaque execution authorities as versioned")
+	}
+	exported, ok := program.Tier1Manifest()
+	if !ok || !reflect.DeepEqual(exported, manifest) {
+		t.Fatal("tier-1 manifest export is not an exact detached copy")
+	}
+	exported.units[0].domainLanes = append(exported.units[0].domainLanes, "foreign")
+	again, ok := program.Tier1Manifest()
+	if !ok || reflect.DeepEqual(exported, again) {
+		t.Fatal("tier-1 manifest export retained program-owned slice storage")
+	}
+	before := manifest
+	unit.NodeReads = append(unit.NodeReads, []cfg.Point{unit.Graph.Entry()})
+	unit.Definitions = append(unit.Definitions, RelationProgramDefinition{Target: body, Point: unit.Graph.Entry()})
+	if !reflect.DeepEqual(program.tier1, before) {
+		t.Fatal("tier-1 manifest retained mutable unit workspace")
+	}
+}
+
 func formalTemplateFreezeUnit(t *testing.T, body lexicalidentity.StableLexicalBodyID) RelationProgramUnit {
 	t.Helper()
 	reg := standard.Registry()

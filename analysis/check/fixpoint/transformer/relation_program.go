@@ -777,6 +777,7 @@ func freezeLinkedFrameBoundaryTopology(caller *relationProgramBody, frame *linke
 // are assigned by the byte order of stable lexical body IDs, independent of
 // input order, maps, CFG process IDs, or solve generations.
 type RelationProgram struct {
+	tier1            RelationProgramManifest
 	registry         *axis.Registry
 	bodies           []relationProgramBody
 	byBody           map[lexicalidentity.StableLexicalBodyID]relationVar
@@ -788,6 +789,16 @@ type RelationProgram struct {
 	formalRegion     *formalRelationRegionInventory
 	formalGuards     *formalGuardVocabulary
 	formalTemplate   *formalRelationTemplate
+}
+
+// Tier1Manifest returns a detached copy of the structural directory used at
+// the tier-1/tier-2 boundary. It is diagnostic metadata only in Stage 2 and
+// therefore never authorizes reuse or exposes program-owned workspaces.
+func (p *RelationProgram) Tier1Manifest() (RelationProgramManifest, bool) {
+	if p == nil || !p.tier1.Valid() {
+		return RelationProgramManifest{}, false
+	}
+	return p.tier1.clone(), true
 }
 
 func planNeedsPathSemanticAuthority(plan *operationplan.Plan) bool {
@@ -1085,7 +1096,11 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 		}
 		prepared[index] = compiler
 	}
-	program := &RelationProgram{registry: registry, bodies: make([]relationProgramBody, len(ordered)), byBody: byBody}
+	tier1, err := freezeRelationProgramManifest(ordered, callTopology)
+	if err != nil {
+		return nil, err
+	}
+	program := &RelationProgram{tier1: tier1, registry: registry, bodies: make([]relationProgramBody, len(ordered)), byBody: byBody}
 	program.recursiveSCCs = recursiveRelationSCCsFromTopology(callTopology, ordered, byBody)
 	// Freeze every lexical WorldProgram before any term/effect arena seals.
 	// Acyclic dependency closure owns this open-arena interval; only the final

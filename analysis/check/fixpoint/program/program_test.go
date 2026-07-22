@@ -101,6 +101,7 @@ local value: string = read()
 	if stats.Freeze.PathDependencyPlanning.Calls == 0 || stats.Freeze.PathDependencyPlanning.Elapsed <= 0 {
 		t.Errorf("path dependency telemetry = %+v, want completed timed phase", stats.Freeze.PathDependencyPlanning)
 	}
+	t.Logf("freeze telemetry raw: input=%+v local=%+v scc=%+v region=%+v coordinate=%+v path=%+v fiber=%+v quotient=%+v template=%+v", stats.Freeze.InputValidation, stats.Freeze.LocalSyntax, stats.Freeze.SCCClosureLinking, stats.Freeze.RegionWTO, stats.Freeze.CoordinateClosure, stats.Freeze.PathDependencyPlanning, stats.Freeze.FiberLayout, stats.Freeze.ObservableQuotient, stats.Freeze.TemplateBinding)
 }
 
 func TestRunChunkNestedFunctionReturnSlotEvaluatesRuntimeKindLengthComparison(t *testing.T) {
@@ -3491,6 +3492,10 @@ func TestDeadlockDataflowRouteErrorsBoundaryKeepsSelfDataSurface(t *testing.T) {
 	stmts := parseChunk(t, string(src))
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"setmetatable"}})
 	ctx := context.Background()
+	stats := &Stats{}
+	defer func() {
+		t.Logf("freeze telemetry raw: input=%+v local=%+v scc=%+v region=%+v coordinate=%+v path=%+v fiber=%+v quotient=%+v template=%+v", stats.Freeze.InputValidation, stats.Freeze.LocalSyntax, stats.Freeze.SCCClosureLinking, stats.Freeze.RegionWTO, stats.Freeze.CoordinateClosure, stats.Freeze.PathDependencyPlanning, stats.Freeze.FiberLayout, stats.Freeze.ObservableQuotient, stats.Freeze.TemplateBinding)
+	}()
 	var profileWindow time.Duration
 	if raw := os.Getenv("GO_LUA_TEST_PROFILE_WINDOW"); raw != "" {
 		profileWindow, err = time.ParseDuration(raw)
@@ -3502,7 +3507,7 @@ func TestDeadlockDataflowRouteErrorsBoundaryKeepsSelfDataSurface(t *testing.T) {
 		defer cancel()
 	}
 	result, err := RunBoundChunk(stmts, bindings, Config{
-		Context: ctx,
+		Context: ctx, Stats: stats,
 		Check: body.Config{
 			Registry: reg,
 			Globals:  []string{"setmetatable"},
