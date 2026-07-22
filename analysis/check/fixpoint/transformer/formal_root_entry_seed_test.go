@@ -149,6 +149,142 @@ func TestFormalRootEntrySubstitutionOnlyAppliesToItsSelectedRoot(t *testing.T) {
 	}
 }
 
+func TestFormalRootEntrySpecializationMatchesEntryBakedSolve(t *testing.T) {
+	reg := standard.Registry()
+	base := formalRootInputTestProgram(t, reg)
+	program := formalRelationExecutorTestProgramFromBase(t, base, []relationNode{
+		{}, {kind: relationNodeSequence, next: 2}, {kind: relationNodeBottom},
+	})
+	body := &program.bodies[0]
+	entry := state.Reachable(body.productDomain.Lattice().Bottom()).
+		WriteValue(reg, statekey.SymbolValue(101), typevalue.LiteralString(reg, "entry-param")).
+		WriteValue(reg, statekey.SymbolValue(102), typevalue.LiteralString(reg, "entry-capture")).
+		WriteValue(reg, statekey.SymbolValue(103), typevalue.LiteralString(reg, "entry-global"))
+
+	// The compatibility path remains the production default until step 3.
+	baked, err := executeFormalRootRelation(context.Background(), program, body.body, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This is the new path: solve the entry-free relation, then interpret its
+	// stabilized symbolic terms through the prepared entry tuple exactly once.
+	symbolic, err := executeFormalRelation(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, body.body, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(context.Background(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cell, tuple := range specialized.values {
+		if tuple.bottom() || tuple.variable != body.variable {
+			continue
+		}
+		regions, regionErr := specialized.algebra.tupleLeafRegions(tuple)
+		if regionErr != nil {
+			t.Fatalf("specialized cell %+v regions: %v", cell, regionErr)
+		}
+		for _, region := range regions {
+			if _, valuesErr := region.evaluator.valuesFactor(); valuesErr != nil {
+				t.Fatalf("specialized cell %+v retained symbolic Values: %v", cell, valuesErr)
+			}
+		}
+	}
+
+	bakedPublication, err := baked.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, point := range []cfg.Point{body.graph.Entry()} {
+		want, wantPresent, wantErr := bakedPublication.PointInput(context.Background(), point, 0)
+		got, gotPresent, gotErr := specializedPublication.PointInput(context.Background(), point, 0)
+		if wantErr != nil || gotErr != nil || wantPresent != gotPresent || !body.domain.Equal(want, got) {
+			t.Fatalf("point %d specialization = present:%t err:%v, want present:%t err:%v equal:%t", point, gotPresent, gotErr, wantPresent, wantErr, body.domain.Equal(want, got))
+		}
+	}
+}
+
+func TestFormalRootEntrySpecializationMatchesEntryBakedEnvironmentWrite(t *testing.T) {
+	reg := standard.Registry()
+	base := formalRootInputTestProgram(t, reg)
+	formalEnvironmentWriteSealRootCarrier(t, base)
+	arena := base.bodies[0].relation.code.terms
+	guard := arena.Truthy(arena.Root(Root{Kind: RootParam, Index: 0}))
+	value := arena.SelectValue(guard,
+		arena.Root(Root{Kind: RootCapture, Index: 0}),
+		arena.Root(Root{Kind: RootGlobal, Index: 0}),
+	)
+	program := formalRelationExecutorTestProgramFromBase(t, base, []relationNode{
+		{},
+		{kind: relationNodeSequence, steps: []boundaryStep{{
+			kind: boundaryStepEnvironmentWrite, slot: statekey.SymbolValue(101), value: value,
+		}}, next: 2},
+		{kind: relationNodeBottom},
+	})
+	body := &program.bodies[0]
+	entry := state.Reachable(body.productDomain.Lattice().Bottom()).
+		WriteValue(reg, statekey.SymbolValue(101), typevalue.LiteralBool(reg, true)).
+		WriteValue(reg, statekey.SymbolValue(102), typevalue.LiteralString(reg, "selected-capture")).
+		WriteValue(reg, statekey.SymbolValue(103), typevalue.LiteralString(reg, "unselected-global"))
+	baked, err := executeFormalRootRelation(context.Background(), program, body.body, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbolic, err := executeFormalRelation(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, body.body, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(context.Background(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bakedPublication, err := baked.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(body.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []struct {
+		name string
+		get  func(*FormalRelationPublicationView) (state.State, bool, error)
+	}{
+		{"input", func(view *FormalRelationPublicationView) (state.State, bool, error) {
+			return view.PointInput(context.Background(), body.graph.Entry(), 0)
+		}},
+		{"output", func(view *FormalRelationPublicationView) (state.State, bool, error) {
+			return view.PlannedNodeOutput(context.Background(), body.graph.Entry(), 0)
+		}},
+	} {
+		want, wantPresent, wantErr := output.get(&bakedPublication)
+		got, gotPresent, gotErr := output.get(&specializedPublication)
+		if wantErr != nil || gotErr != nil || wantPresent != gotPresent || !body.domain.Equal(want, got) {
+			t.Fatalf("%s specialization = present:%t err:%v, want present:%t err:%v equal:%t", output.name, gotPresent, gotErr, wantPresent, wantErr, body.domain.Equal(want, got))
+		}
+	}
+}
+
 func TestFormalPublicationWholeFamilyReadersFoldEveryCoordinate(t *testing.T) {
 	program := formalRelationExecutorTestProgram(t, []relationNode{{}, {kind: relationNodeSequence, next: 2}, {kind: relationNodeBottom}})
 	body := &program.bodies[0]
