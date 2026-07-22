@@ -126,10 +126,10 @@ func boundaryFactorViewLane[T any](view BoundaryFactorView, id LaneID) (T, bool)
 	return payload.value, true
 }
 
-func (v BoundaryFactorView) ForEachPathRefinement(visit func(keyspace.Key, product.Value) bool) {
+func (v BoundaryFactorView) ForEachPathRefinement(ks *keyspace.KeySpace, visit func(keyspace.Key, product.Value) bool) {
 	lane, present := boundaryFactorViewLane[pathevidence.Lane](v, LanePathEvidence)
 	if present {
-		lane.ForEachPathRefinement(visit)
+		lane.ForEachPathRefinement(ks, visit)
 	}
 }
 

@@ -39,6 +39,6 @@ func BenchmarkInvalidateSubtreeStructuralKey(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		deletePathKeySubtrees(ks, l.refinements, prefixKeys)
+		deletePathKeyHandleSubtrees(ks, l.refinements, prefixKeys)
 	}
 }

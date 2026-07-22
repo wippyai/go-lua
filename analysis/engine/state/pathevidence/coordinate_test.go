@@ -179,7 +179,7 @@ func TestCoordinateFamilyBoundaryApplyEqualsCanonicalLaneTransaction(t *testing.
 	if !ok {
 		t.Fatal("coordinate boundary result did not compose")
 	}
-	want := destination.ApplyBoundary(fragment, touches)
+	want := destination.ApplyBoundary(ks, fragment, touches)
 	if !Domain(reg).Equal(got, want) {
 		t.Fatal("factored boundary replacement differs from canonical Lane.ApplyBoundary")
 	}

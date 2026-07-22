@@ -22,11 +22,11 @@ func (s State) PathRefinementsSnapshot(ks *keyspace.KeySpace) pathevidence.PathR
 
 // ForEachPathRefinement visits finite path-refinement facts without
 // materializing a PathKey snapshot. Bottom and disabled lanes visit nothing.
-func (s State) ForEachPathRefinement(fn func(keyspace.Key, product.Value) bool) {
+func (s State) ForEachPathRefinement(ks *keyspace.KeySpace, fn func(keyspace.Key, product.Value) bool) {
 	if !s.laneEnabled(lanePathEvidenceBit) {
 		return
 	}
-	s.pathEvidence.ForEachPathRefinement(fn)
+	s.pathEvidence.ForEachPathRefinement(ks, fn)
 }
 
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is

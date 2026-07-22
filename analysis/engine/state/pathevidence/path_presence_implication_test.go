@@ -100,7 +100,7 @@ func TestInvalidateStableSymbolPreservingImplicationsIsOneAtomicRewrite(t *testi
 		}
 	}
 	visits := 0
-	got := lane.InvalidateStableSymbolPreservingImplications(target, func(implication PathPresenceImplication) bool {
+	got := lane.InvalidateStableSymbolPreservingImplications(ks, target, func(implication PathPresenceImplication) bool {
 		visits++
 		return implication == preserve
 	})

@@ -53,9 +53,9 @@ func visitValuesLaneIdentities(reg *axis.Registry, source valueLane, visit func(
 	return true
 }
 
-func visitPathEvidenceLaneIdentities(reg *axis.Registry, source pathevidence.Lane, visit func(identity.Term) bool) bool {
+func visitPathEvidenceLaneIdentities(reg *axis.Registry, keys *keyspace.KeySpace, source pathevidence.Lane, visit func(identity.Term) bool) bool {
 	keepGoing := true
-	source.ForEachPathRefinement(func(_ keyspace.Key, value product.Value) bool {
+	source.ForEachPathRefinement(keys, func(_ keyspace.Key, value product.Value) bool {
 		keepGoing = visitProductIdentity(reg, value, visit)
 		return keepGoing
 	})
@@ -83,6 +83,34 @@ func visitPathEvidenceLaneIdentities(reg *axis.Registry, source pathevidence.Lan
 			}
 		}
 		return true
+	})
+	return keepGoing
+}
+
+func visitPathEvidenceFactorIdentities(reg *axis.Registry, source pathevidence.Lane, visit func(identity.Term) bool) bool {
+	keepGoing := true
+	source.ForEachPathRefinementValue(func(value product.Value) bool {
+		keepGoing = visitProductIdentity(reg, value, visit)
+		return keepGoing
+	})
+	if !keepGoing {
+		return false
+	}
+	source.ForEachPathStaticMemberValue(func(value product.Value) bool {
+		keepGoing = visitProductIdentity(reg, value, visit)
+		return keepGoing
+	})
+	if !keepGoing {
+		return false
+	}
+	source.ForEachPathPresenceImplication(func(value pathevidence.PathPresenceImplication) bool {
+		if value.HasTriggerValue {
+			keepGoing = visitProductIdentity(reg, value.TriggerValue, visit)
+		}
+		if keepGoing && value.HasTargetValue {
+			keepGoing = visitProductIdentity(reg, value.TargetValue, visit)
+		}
+		return keepGoing
 	})
 	return keepGoing
 }
@@ -168,9 +196,9 @@ func visitPlacementLaneIdentities(_ *axis.Registry, source placementLane, visit 
 // collectStateIdentities folds the one mandatory catalog-owned identity policy
 // for every enabled lane. It intentionally performs no fingerprint encoding,
 // ordering, hashing, or KeySpace serialization.
-func collectStateIdentities(ctx context.Context, reg *axis.Registry, source State) (map[identity.Term]struct{}, error) {
+func collectStateIdentities(ctx context.Context, reg *axis.Registry, keys *keyspace.KeySpace, source State) (map[identity.Term]struct{}, error) {
 	out := make(map[identity.Term]struct{})
-	_, err := visitStateIdentities(ctx, reg, source, func(term identity.Term) bool {
+	_, err := visitStateIdentities(ctx, reg, keys, source, func(term identity.Term) bool {
 		if term.Valid() {
 			out[term] = struct{}{}
 		}
@@ -185,8 +213,8 @@ func collectStateIdentities(ctx context.Context, reg *axis.Registry, source Stat
 // stateContainsAllocationTemplate is the support-map-free common-path query.
 // It traverses the same mandatory policy as complete support collection and
 // stops at the first exact lexical template.
-func stateContainsAllocationTemplate(ctx context.Context, reg *axis.Registry, source State) (bool, error) {
-	complete, err := visitStateIdentities(ctx, reg, source, continueWithoutAllocationTemplate)
+func stateContainsAllocationTemplate(ctx context.Context, reg *axis.Registry, keys *keyspace.KeySpace, source State) (bool, error) {
+	complete, err := visitStateIdentities(ctx, reg, keys, source, continueWithoutAllocationTemplate)
 	return !complete, err
 }
 
@@ -198,6 +226,7 @@ func continueWithoutAllocationTemplate(term identity.Term) bool {
 func visitStateIdentities(
 	ctx context.Context,
 	reg *axis.Registry,
+	keys *keyspace.KeySpace,
 	source State,
 	visit func(identity.Term) bool,
 ) (bool, error) {
@@ -221,7 +250,13 @@ func visitStateIdentities(
 		case laneIdentitiesEnumerated:
 			// This zero-allocation adapter invokes the same typed visitor registered
 			// for factors. It never reconstructs a State from a factor.
-			if !spec.identitySupport.visitState(reg, source, visit) {
+			var keepGoing bool
+			if spec.identitySupport.visitStateKeys != nil {
+				keepGoing = spec.identitySupport.visitStateKeys(reg, source, keys, visit)
+			} else {
+				keepGoing = spec.identitySupport.visitState(reg, source, visit)
+			}
+			if !keepGoing {
 				return false, nil
 			}
 		default:

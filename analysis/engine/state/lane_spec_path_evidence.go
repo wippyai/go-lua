@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
@@ -23,8 +24,20 @@ var pathEvidenceLaneSpec = laneSpec{
 		s.pathEvidence = lane
 		return s, true
 	},
-	valueDependencies:  enumeratedValueDependencies(visitPathEvidenceValueDependencies),
-	identitySupport:    enumeratedIdentitySupport(visitPathEvidenceLaneIdentities, func(s State) pathevidence.Lane { return s.pathEvidence }, IdentityImageEmbeddedValue),
+	valueDependencies: enumeratedValueDependencies(visitPathEvidenceValueDependencies),
+	identitySupport: laneIdentitySupportPolicy{
+		kind: laneIdentitiesEnumerated,
+		visit: func(reg *axis.Registry, payload laneFactorPayload, visit func(identity.Term) bool) bool {
+			return visitPathEvidenceFactorIdentities(reg, typedLaneFactorValue[pathevidence.Lane](payload), visit)
+		},
+		visitState: func(reg *axis.Registry, source State, visit func(identity.Term) bool) bool {
+			return visitPathEvidenceLaneIdentities(reg, nil, source.pathEvidence, visit)
+		},
+		visitStateKeys: func(reg *axis.Registry, source State, keys *keyspace.KeySpace, visit func(identity.Term) bool) bool {
+			return visitPathEvidenceLaneIdentities(reg, keys, source.pathEvidence, visit)
+		},
+		image: IdentityImageEmbeddedValue,
+	},
 	numericConsistency: numericConsistencyIndependent(),
 	semanticLaws: []laneSemanticLaw{pathSubtreeMutationLane(
 		func(s State) pathevidence.Lane { return s.pathEvidence },
@@ -77,7 +90,7 @@ func visitPathEvidenceValueDependencies(source State, keys *keyspace.KeySpace, v
 			visit(dependency)
 		}
 	}
-	source.pathEvidence.ForEachPathRefinement(func(path keyspace.Key, _ product.Value) bool {
+	source.pathEvidence.ForEachPathRefinement(keys, func(path keyspace.Key, _ product.Value) bool {
 		visitPath(path)
 		return true
 	})
@@ -99,7 +112,7 @@ func visitPathEvidenceValueDependencies(source State, keys *keyspace.KeySpace, v
 }
 
 func emitPathEvidenceReachability(program *boundaryReachabilityProgramBuilder, lane pathevidence.Lane) {
-	lane.ForEachPathRefinement(func(path keyspace.Key, value product.Value) bool {
+	lane.ForEachPathRefinement(program.keys, func(path keyspace.Key, value product.Value) bool {
 		if program.pathCone(false, path) {
 			program.addValue(value)
 		}

@@ -128,7 +128,13 @@ func fingerprintValues(w *fingerprintWriter, st State) {
 }
 
 func fingerprintPathEvidence(w *fingerprintWriter, st State) {
-	refinements := collectPathProducts(w.scratch.pathProducts[:0], st.pathEvidence.ForEachPathRefinement)
+	if !st.pathEvidence.RefinementKeysValid(w.keys) {
+		w.errVal = fmt.Errorf("%w: refinement keyspace mismatch", ErrFingerprintKeySpace)
+		return
+	}
+	refinements := collectPathProducts(w.scratch.pathProducts[:0], func(visit func(keyspace.Key, product.Value) bool) {
+		st.pathEvidence.ForEachPathRefinement(w.keys, visit)
+	})
 	w.bool("refinements-bottom", st.pathEvidence.RefinementsBottom())
 	w.bool("refinements-top", !st.pathEvidence.RefinementsBottom() && len(refinements) == 0)
 	fingerprintPathProducts(w, "refinement", refinements, &w.scratch.pathRefinements, &w.scratch.pathRefinementNext)

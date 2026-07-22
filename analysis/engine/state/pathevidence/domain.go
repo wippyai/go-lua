@@ -19,7 +19,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[Lane] {
 func domainForRegistry(reg *axis.Registry) lattice.Lattice[Lane] {
 	valueDomain := product.Domain(reg)
 	ops := domainOps{
-		refinements:              lift.MustMap[keyspace.Key, product.Value](valueDomain),
+		refinements:              lift.MustMap[keyspace.KeyHandle, product.Value](valueDomain),
 		staticMembers:            lift.MustMap[keyspace.Key, product.Value](valueDomain),
 		proofs:                   lift.MustSet[BranchProof](),
 		pathPresenceImplications: lift.MustSet[PathPresenceImplication](),
@@ -82,15 +82,15 @@ func domainForRegistry(reg *axis.Registry) lattice.Lattice[Lane] {
 }
 
 type domainOps struct {
-	refinements              lattice.Lattice[lift.MustMapLane[keyspace.Key, product.Value]]
+	refinements              lattice.Lattice[lift.MustMapLane[keyspace.KeyHandle, product.Value]]
 	staticMembers            lattice.Lattice[lift.MustMapLane[keyspace.Key, product.Value]]
 	proofs                   lattice.Lattice[lift.MustSetLane[BranchProof]]
 	pathPresenceImplications lattice.Lattice[lift.MustSetLane[PathPresenceImplication]]
 }
 
-func (o domainOps) refinementLane(l Lane) lift.MustMapLane[keyspace.Key, product.Value] {
+func (o domainOps) refinementLane(l Lane) lift.MustMapLane[keyspace.KeyHandle, product.Value] {
 	if l.refinementsBottom {
-		return lift.MustMapBottom[keyspace.Key, product.Value]()
+		return lift.MustMapBottom[keyspace.KeyHandle, product.Value]()
 	}
 	return lift.MustMapValues(l.refinements)
 }
@@ -117,7 +117,7 @@ func (o domainOps) pathPresenceImplicationLane(l Lane) lift.MustSetLane[PathPres
 }
 
 func (o domainOps) fromLanes(
-	refinements lift.MustMapLane[keyspace.Key, product.Value],
+	refinements lift.MustMapLane[keyspace.KeyHandle, product.Value],
 	staticMembers lift.MustMapLane[keyspace.Key, product.Value],
 	proofs lift.MustSetLane[BranchProof],
 	pathPresenceImplications lift.MustSetLane[PathPresenceImplication],

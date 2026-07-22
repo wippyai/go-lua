@@ -99,7 +99,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("fresh path snapshot = %s, want present", formatValue(reg, got))
 	}
 	var iteratedRefinements int
-	s.ForEachPathRefinement(func(key keyspace.Key, value product.Value) bool {
+	s.ForEachPathRefinement(ks, func(key keyspace.Key, value product.Value) bool {
 		iteratedRefinements++
 		if key != pathHeapKey {
 			t.Fatalf("iterated path-refinement key = %+v, want %+v", key, pathHeapKey)

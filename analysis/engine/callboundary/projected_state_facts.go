@@ -85,7 +85,7 @@ func NormalReturnFactSourceLanes() []state.LaneID {
 // by State and BoundaryFactorView. Emitters are defined exactly once below;
 // alternate carriers supply lane observations rather than alternate semantics.
 type NormalReturnFactSource interface {
-	ForEachPathRefinement(func(keyspace.Key, product.Value) bool)
+	ForEachPathRefinement(*keyspace.KeySpace, func(keyspace.Key, product.Value) bool)
 	ForEachPathStaticMember(func(keyspace.Key, product.Value) bool)
 	PathPresenceImplicationsSnapshot(*keyspace.KeySpace) pathevidence.PathPresenceImplicationsSnapshot
 	DynamicIndexFactsSnapshot() state.DynamicIndexFactsSnapshot
@@ -287,7 +287,7 @@ func (p projectedStatePathProjector) stateKey(source pathaddr.StateKey) (pathdom
 }
 
 func projectStatePathRefinements(ctx projectedStateFactContext, out *NormalReturnFacts) {
-	ctx.world.ForEachPathRefinement(func(source keyspace.Key, value product.Value) bool {
+	ctx.world.ForEachPathRefinement(ctx.keys, func(source keyspace.Key, value product.Value) bool {
 		value, useful := ProjectPathRefinementValue(ctx.reg, value)
 		if !useful {
 			return true
@@ -636,7 +636,7 @@ func projectedFrozenTablePaths(ctx projectedStateFactContext) map[identity.ID][]
 		addValue(root.target, root.value, nil)
 		addValue(root.target, ctx.world.ReadLocalPathKey(ctx.reg, root.source), nil)
 	}
-	ctx.world.ForEachPathRefinement(func(source keyspace.Key, value product.Value) bool {
+	ctx.world.ForEachPathRefinement(ctx.keys, func(source keyspace.Key, value product.Value) bool {
 		if target, ok := ctx.projector.key(source); ok {
 			addValue(target, value, nil)
 		}

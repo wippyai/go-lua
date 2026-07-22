@@ -12,7 +12,7 @@ func (l Lane) ReadPathKey(reg *axis.Registry, pathKey keyspace.Key) product.Valu
 	if pathKey.Kind == keyspace.KindInvalid || l.refinementsBottom {
 		return product.Bottom(reg)
 	}
-	if v, ok := l.refinements[pathKey]; ok {
+	if v, ok := l.refinements[pathKey.Handle()]; ok {
 		return v
 	}
 	return product.Bottom(reg)
@@ -36,15 +36,15 @@ func (l Lane) WritePathKey(reg *axis.Registry, pathKey keyspace.Key, value produ
 		return out, true
 	}
 	if !l.refinementsBottom {
-		if existing, ok := l.refinements[pathKey]; ok && valueDomain.Equal(existing, value) {
+		if existing, ok := l.refinements[pathKey.Handle()]; ok && valueDomain.Equal(existing, value) {
 			return l, false
 		}
 	}
-	refinements := cloneLocalValueMap(l.refinements)
+	refinements := cloneLocalValueHandleMap(l.refinements)
 	if refinements == nil {
-		refinements = make(map[keyspace.Key]product.Value, 1)
+		refinements = make(map[keyspace.KeyHandle]product.Value, 1)
 	}
-	refinements[pathKey] = value
+	refinements[pathKey.Handle()] = value
 	out := l.Reachable()
 	out.refinements = refinements
 	return out, true
@@ -59,15 +59,15 @@ func (l Lane) UpdatePathKey(reg *axis.Registry, pathKey keyspace.Key, fn func(pr
 }
 
 func deletePathValueEntry(
-	in map[keyspace.Key]product.Value,
+	in map[keyspace.KeyHandle]product.Value,
 	pathKey keyspace.Key,
-) (map[keyspace.Key]product.Value, bool) {
-	if _, ok := in[pathKey]; !ok {
+) (map[keyspace.KeyHandle]product.Value, bool) {
+	if _, ok := in[pathKey.Handle()]; !ok {
 		return in, false
 	}
-	out := make(map[keyspace.Key]product.Value, len(in)-1)
+	out := make(map[keyspace.KeyHandle]product.Value, len(in)-1)
 	for k, v := range in {
-		if k != pathKey {
+		if k != pathKey.Handle() {
 			out[k] = v
 		}
 	}

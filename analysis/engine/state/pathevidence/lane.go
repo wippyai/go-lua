@@ -11,7 +11,7 @@ import (
 // (point-local resolver-symbol identities); the branch-proof and presence
 // implication sublanes still carry path-key string spellings.
 type Lane struct {
-	refinements                    map[keyspace.Key]product.Value
+	refinements                    map[keyspace.KeyHandle]product.Value
 	staticMembers                  map[keyspace.Key]product.Value
 	proofs                         map[BranchProof]struct{}
 	pathPresenceImplications       map[PathPresenceImplication]struct{}
@@ -27,7 +27,7 @@ type equalityRootMask [4]uint64
 // Clone returns an independent copy of the lane's finite evidence.
 func (l Lane) Clone() Lane {
 	return Lane{
-		refinements:                    cloneLocalValueMap(l.refinements),
+		refinements:                    cloneLocalValueHandleMap(l.refinements),
 		staticMembers:                  cloneLocalValueMap(l.staticMembers),
 		proofs:                         cloneBranchProofSet(l.proofs),
 		pathPresenceImplications:       clonePathPresenceImplicationSet(l.pathPresenceImplications),
@@ -74,6 +74,17 @@ func cloneLocalValueMap(in map[keyspace.Key]product.Value) map[keyspace.Key]prod
 		return nil
 	}
 	out := make(map[keyspace.Key]product.Value, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneLocalValueHandleMap(in map[keyspace.KeyHandle]product.Value) map[keyspace.KeyHandle]product.Value {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[keyspace.KeyHandle]product.Value, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

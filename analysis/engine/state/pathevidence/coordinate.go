@@ -651,7 +651,11 @@ func DecomposeCoordinates(lane Lane, ks *keyspace.KeySpace) (CoordinateSkeleton,
 	}
 	entries := make([]CoordinateEntry, 0, len(lane.refinements)+len(lane.staticMembers)+len(lane.proofs)+len(lane.pathPresenceImplications))
 	if !lane.refinementsBottom {
-		for path, value := range lane.refinements {
+		for handle, value := range lane.refinements {
+			path, ok := ks.KeyByHandle(handle)
+			if !ok {
+				return CoordinateSkeleton{}, nil, false
+			}
 			entries = append(entries, CoordinateEntry{
 				Key:    CoordinateKey{kind: coordinateRefinement, path: path},
 				Scalar: CoordinateScalar{present: true, valueBearing: true, value: value},
@@ -729,9 +733,13 @@ func ComposeCoordinates(skeleton CoordinateSkeleton, entries []CoordinateEntry, 
 		switch entry.Key.kind {
 		case coordinateRefinement:
 			if out.refinements == nil {
-				out.refinements = make(map[keyspace.Key]product.Value)
+				out.refinements = make(map[keyspace.KeyHandle]product.Value)
 			}
-			out.refinements[entry.Key.path] = entry.Scalar.value
+			handle := entry.Key.path.Handle()
+			if handle == 0 {
+				return Lane{}, false
+			}
+			out.refinements[handle] = entry.Scalar.value
 		case coordinateStaticMember:
 			if out.staticMembers == nil {
 				out.staticMembers = make(map[keyspace.Key]product.Value)

@@ -40,7 +40,7 @@ func (l Lane) SealEqualityQuotient(keys *keyspace.KeySpace) (EqualityQuotient, b
 	}
 	observations := make([]keyspace.Key, 0)
 	seen := make(map[keyspace.Key]struct{})
-	l.forEachCongruenceObservation(func(candidate keyspace.Key) {
+	l.forEachCongruenceObservation(keys, func(candidate keyspace.Key) {
 		// A lane can retain observations imported from another lexical
 		// keyspace.  They are not terms in this quotient's algebra and cannot
 		// affect any participant indexed by keys.  Filtering the carrier's
