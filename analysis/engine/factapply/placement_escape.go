@@ -108,19 +108,6 @@ func escapeEventTransition(kind callboundary.EscapeEventKind) placement.EscapeTr
 	return escapeEventTransitions[kind]
 }
 
-func applyPlacementTransition(
-	reg *axis.Registry,
-	out state.State,
-	value product.Value,
-	transition placement.EscapeTransition,
-) state.State {
-	target, ok := transition.Placement()
-	if !ok {
-		return out
-	}
-	return markReachableHeapObjectValuePlacement(reg, out, value, target, map[identity.ID]struct{}{})
-}
-
 func markReachableHeapPlacement(
 	reg *axis.Registry,
 	out state.State,

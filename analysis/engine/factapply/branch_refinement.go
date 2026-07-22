@@ -1,7 +1,6 @@
 package factapply
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -10,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
-	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -18,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -179,41 +176,6 @@ func applyBranchDiffConstraint(
 		coHi2 = 0
 	}
 	return out.WriteScaledConstraint(fact.CoHi(), hiKey, coHi2, hi2Key, loKey, fact.C())
-}
-
-func applyValueWriteAt(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	value product.Value,
-) state.State {
-	if targetPath.Symbol == 0 {
-		return out
-	}
-	if len(targetPath.Segments) == 0 {
-		slot := key.SymbolValue(targetPath.Symbol)
-		current := out.ReadValue(reg, slot)
-		currentID, currentExact := identityvalue.ExactID(reg, current)
-		writtenID, writtenExact := identityvalue.ExactID(reg, value)
-		if currentExact && writtenExact && currentID == writtenID {
-			object := out.ReadHeapTableObject(reg, currentID)
-			if !object.IsBottom() {
-				out = out.WriteHeapTableObject(reg, currentID, object.WithRoot(value))
-			}
-		}
-		out = out.WriteValue(reg, slot, value)
-		return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
-	}
-	if resolver == nil {
-		return out
-	}
-	written, ok := writePathAt(reg, out, resolver, point, targetPath, value)
-	if !ok {
-		return out
-	}
-	return activatePathPresenceImplicationsForPath(reg, resolver, point, written, targetPath)
 }
 
 func rootRefinementInvalidatesDescendants(reg *axis.Registry, refinement factflow.ValueRefinement) bool {

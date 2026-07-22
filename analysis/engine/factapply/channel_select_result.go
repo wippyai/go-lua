@@ -13,23 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func channelSelectCasePathPayloadType(
-	ctx transfer.NodeContext,
-	typeValues *typevalue.Cache,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	out state.State,
-	casePath pathdom.Path,
-) (typ.Type, bool) {
-	resolved, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Point, out, casePath, projectPath)
-	if ok {
-		if payload, ok := channelPayloadTypeFromValue(ctx.Registry, resolved.value); ok {
-			return payload, true
-		}
-	}
-	return channelSelectProjectedPayloadType(ctx, typeValues, resolver, projectPath, out, casePath)
-}
-
 func channelPayloadTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 	channelType, ok := valueWitnessType(reg, value)
 	if !ok {
