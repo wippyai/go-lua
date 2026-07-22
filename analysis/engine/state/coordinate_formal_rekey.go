@@ -14,6 +14,7 @@ import (
 type CoordinateFormalRootBinding struct {
 	Source           keyspace.Key
 	Target           formal.Root
+	Class            formal.LexicalClassID
 	ResolverVersions bool
 }
 
@@ -38,6 +39,7 @@ type CoordinateFormalRootRekey struct {
 	inverseRoots  boundaryPathMap
 	rootIndex     map[keyspace.Key]keyspace.Key
 	resolverIndex map[keyspace.Key]keyspace.Key
+	classes       map[keyspace.Key]formal.LexicalClassID
 }
 
 // CoordinateFormalPublicationProjection is the sealed existential boundary
@@ -58,7 +60,7 @@ func (d ProductDomain) SealCoordinateFormalRootRekey(owner lexicalidentity.Stabl
 	plan := CoordinateFormalRootRekey{
 		seal: d.seal, targetOwner: owner, formalTarget: true, from: from, to: to,
 		roots: make(boundaryPathMap, 0, len(bindings)), rootIndex: make(map[keyspace.Key]keyspace.Key, len(bindings)),
-		resolverIndex: make(map[keyspace.Key]keyspace.Key, len(bindings)),
+		resolverIndex: make(map[keyspace.Key]keyspace.Key, len(bindings)), classes: make(map[keyspace.Key]formal.LexicalClassID, len(bindings)),
 	}
 	type sourceMode struct {
 		root     keyspace.Key
@@ -67,6 +69,7 @@ func (d ProductDomain) SealCoordinateFormalRootRekey(owner lexicalidentity.Stabl
 	sources := make(map[sourceMode]struct{}, len(bindings))
 	targets := make(map[formal.Root]keyspace.Key, len(bindings))
 	var sourceModeSet bool
+	var classesTagged bool
 	for index, binding := range bindings {
 		root, ok := from.StructuralRoot(binding.Source)
 		if !ok || !binding.Target.Valid() || binding.Target.Owner() != owner {
@@ -78,6 +81,14 @@ func (d ProductDomain) SealCoordinateFormalRootRekey(owner lexicalidentity.Stabl
 			sourceModeSet = true
 		} else if plan.formalSource != formalSource {
 			return CoordinateFormalRootRekey{}, fmt.Errorf("%w: mixed concrete and formal coordinate source namespaces", ErrInvalidLaneFactor)
+		}
+		if index == 0 {
+			classesTagged = binding.Class.Valid()
+		} else if classesTagged != binding.Class.Valid() {
+			return CoordinateFormalRootRekey{}, fmt.Errorf("%w: mixed tagged and untagged formal lexical classes", ErrInvalidLaneFactor)
+		}
+		if classesTagged && binding.Class.Owner() != owner {
+			return CoordinateFormalRootRekey{}, fmt.Errorf("%w: foreign formal lexical class", ErrInvalidLaneFactor)
 		}
 		if formalSource {
 			if plan.sourceOwner == (lexicalidentity.StableLexicalBodyID{}) {
@@ -104,6 +115,9 @@ func (d ProductDomain) SealCoordinateFormalRootRekey(owner lexicalidentity.Stabl
 		} else {
 			plan.rootIndex[root] = target
 		}
+		if classesTagged {
+			plan.classes[target] = binding.Class
+		}
 		sources[mode] = struct{}{}
 		targets[binding.Target] = root
 	}
@@ -118,8 +132,8 @@ func (p CoordinateFormalRootRekey) validFor(d ProductDomain) bool {
 		(!p.formalTarget || p.targetOwner != (lexicalidentity.StableLexicalBodyID{})) &&
 		(!p.formalSource || p.sourceOwner != (lexicalidentity.StableLexicalBodyID{})) &&
 		p.from != nil && p.from.Valid() && p.to != nil && p.to.Valid() && p.roots != nil && p.inverseRoots != nil &&
-		p.rootIndex != nil && p.resolverIndex != nil && len(p.inverseRoots) == len(p.roots) &&
-		len(p.rootIndex)+len(p.resolverIndex) == len(p.roots)
+		p.rootIndex != nil && p.resolverIndex != nil && p.classes != nil && len(p.inverseRoots) == len(p.roots) &&
+		len(p.rootIndex)+len(p.resolverIndex) == len(p.roots) && (len(p.classes) == 0 || len(p.classes) == len(p.roots))
 }
 
 // OwnsCoordinateFormalRootRekey reports whether plan is a complete sealed
@@ -153,6 +167,21 @@ func (d ProductDomain) CoordinateFormalRoots(plan CoordinateFormalRootRekey) ([]
 		out[index] = root
 	}
 	return out, nil
+}
+
+// CoordinateFormalRootClass returns the immutable lexical class carried by a
+// tagged formal rekey. Untagged legacy transports deliberately report false;
+// callers may not infer a class from selector adjacency or runtime equality.
+func (d ProductDomain) CoordinateFormalRootClass(plan CoordinateFormalRootRekey, root formal.Root) (formal.LexicalClassID, bool) {
+	if !plan.validFor(d) || !plan.formalTarget || !root.Valid() || root.Owner() != plan.targetOwner || len(plan.classes) == 0 {
+		return formal.LexicalClassID{}, false
+	}
+	key, exact := plan.to.InternFormalRoot(root)
+	if !exact {
+		return formal.LexicalClassID{}, false
+	}
+	class, ok := plan.classes[key]
+	return class, ok
 }
 
 func (p CoordinateFormalRootRekey) rekey(source keyspace.Key) (keyspace.Key, bool) {
@@ -225,7 +254,7 @@ func (d ProductDomain) sealCoordinateFormalPublicationInverse(plan CoordinateFor
 	inverse := CoordinateFormalRootRekey{
 		seal: d.seal, sourceOwner: plan.targetOwner, formalSource: true,
 		from: plan.to, to: plan.from, roots: make(boundaryPathMap, 0, len(plan.roots)),
-		rootIndex: make(map[keyspace.Key]keyspace.Key, len(plan.roots)), resolverIndex: make(map[keyspace.Key]keyspace.Key),
+		rootIndex: make(map[keyspace.Key]keyspace.Key, len(plan.roots)), resolverIndex: make(map[keyspace.Key]keyspace.Key), classes: make(map[keyspace.Key]formal.LexicalClassID),
 	}
 	targets := make(map[keyspace.Key]formal.Root, len(plan.roots))
 	for _, binding := range plan.roots {

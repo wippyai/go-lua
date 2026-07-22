@@ -10,9 +10,8 @@ import (
 )
 
 // freezeFormalCoordinateRegistry records the complete root vocabulary before
-// any coordinate selector is built. Stage 0 deliberately assigns singleton
-// classes here; stage 1 replaces this constructor with the rekey's lexical
-// tags, without changing selector membership or runtime semantics.
+// any coordinate selector is built. Classes are read only from the sealed
+// rekey tags; this registry never derives identity from selector adjacency.
 func freezeFormalCoordinateRegistry(domain state.ProductDomain, rekey state.CoordinateFormalRootRekey) (*formalCoordinateRegistry, error) {
 	roots, err := domain.CoordinateFormalRoots(rekey)
 	if err != nil || len(roots) == 0 {
@@ -20,8 +19,12 @@ func freezeFormalCoordinateRegistry(domain state.ProductDomain, rekey state.Coor
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i].Less(roots[j]) })
 	builder := newFormalCoordinateRegistryBuilder(roots[0].Owner())
-	for index, root := range roots {
-		if err := builder.addClass(root, formal.NewLexicalClassID(root.Owner(), uint64(index+1))); err != nil {
+	for _, root := range roots {
+		class, tagged := domain.CoordinateFormalRootClass(rekey, root)
+		if !tagged {
+			return nil, fmt.Errorf("formal coordinate registry: root has no lexical class")
+		}
+		if err := builder.addClass(root, class); err != nil {
 			return nil, err
 		}
 	}

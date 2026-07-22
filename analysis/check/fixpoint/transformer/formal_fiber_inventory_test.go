@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -362,8 +363,9 @@ func testFormalFiberInventory(t *testing.T, bodies []lexicalidentity.StableLexic
 		if !arena.bindLexicalOwner(bodyID) {
 			t.Fatal("bind lexical owner")
 		}
-		// One stable symbol register exercises MID value/path descriptor order.
-		if arena.bindEnvironmentSymbol(symbol.ID(100+index)) == 0 {
+		// Bind the first durable parameter spelling into Middle so the registry
+		// must retain one lexical class across Input and resolver-Middle roots.
+		if arena.bindEnvironmentSymbol(symbol.ID(200+index*10)) == 0 {
 			t.Fatal("bind Middle register")
 		}
 		if err := arena.sealMiddleRegisterSchema(); err != nil {
@@ -432,4 +434,25 @@ func testFormalFiberInventory(t *testing.T, bodies []lexicalidentity.StableLexic
 		t.Fatal(err)
 	}
 	return inventory
+}
+
+func TestFormalCoordinateRegistryTagsInputAndMiddleOfOneBinding(t *testing.T) {
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte(t.Name())))
+	inventory := testFormalFiberInventory(t, []lexicalidentity.StableLexicalBodyID{owner}, false)
+	if len(inventory.coordinateRegistries) != 1 {
+		t.Fatalf("registry count = %d, want 1", len(inventory.coordinateRegistries))
+	}
+	registry := inventory.coordinateRegistries[0]
+	var paired bool
+	for _, members := range registry.members {
+		var input, middle bool
+		for _, root := range members {
+			input = input || root.Vocabulary() == formal.Input
+			middle = middle || root.Vocabulary() == formal.Middle
+		}
+		paired = paired || input && middle
+	}
+	if !paired {
+		t.Fatal("Input and Middle spellings of one lexical binding did not share a class")
+	}
 }

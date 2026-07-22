@@ -1187,6 +1187,25 @@ func freezeFormalCoordinateRootRekey(body *relationProgramBody, slots *SlotSpace
 		}
 		return bindings[i].Target.Less(bindings[j].Target)
 	})
+	// A lexical class is defined by the concrete structural root, never by
+	// value equality or selector incidence. Input and resolver-Middle spellings
+	// of one declared symbol therefore receive one immutable class; every other
+	// structural root receives its own class at this stage.
+	classes := make(map[keyspace.Key]formal.LexicalClassID, len(bindings))
+	var nextClass uint64
+	for index := range bindings {
+		concrete, exact := body.keys.StructuralRoot(bindings[index].Source)
+		if !exact {
+			return nil, state.CoordinateFormalRootRekey{}, fmt.Errorf("formal coordinate class has no structural root")
+		}
+		class, found := classes[concrete]
+		if !found {
+			nextClass++
+			class = formal.NewLexicalClassID(body.body, nextClass)
+			classes[concrete] = class
+		}
+		bindings[index].Class = class
+	}
 	formalKeys := keyspace.New()
 	plan, err := body.productDomain.SealCoordinateFormalRootRekey(body.body, body.keys, formalKeys, bindings)
 	if err != nil {
