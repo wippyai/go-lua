@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -15,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -315,4 +317,205 @@ func formalApplyEquationTestProgram(t *testing.T) *RelationProgram {
 		t.Fatal(err)
 	}
 	return program
+}
+
+func TestCompileEquationIRWalksChannelSelectThroughExistingKernel(t *testing.T) {
+	program := channelSelectEquationTestProgram(t)
+	compiler, err := equation.Skeleton().With("channel-select", equation.BindExistingKernel("transformer/formal-channel-select/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The representative relation ends in the existing nonreturning terminal;
+	// bind it only so the walk can reach the channel-select occurrence.
+	compiler, err = compiler.With("nonreturning", equation.BindExistingKernel("transformer/formal-nonreturning/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var channelContract OperatorContract
+	artifact, err := program.CompileEquationIR(compiler, func(occurrence RelationEquationOccurrence) (equation.Draft, error) {
+		contract, contractErr := channelSelectEquationContract(occurrence)
+		if contractErr != nil {
+			return equation.Draft{}, contractErr
+		}
+		if occurrence.Kind == OperatorChannelSelect {
+			channelContract = contract
+		}
+		return channelSelectEquationDraft(occurrence, contract), nil
+	})
+	if err != nil {
+		t.Fatalf("CompileEquationIR: %v", err)
+	}
+	if len(artifact.Equations) != 2 {
+		t.Fatalf("equation count = %d, want 2", len(artifact.Equations))
+	}
+	if !channelContract.ContentID().Valid() || len(channelContract.Operands) != 3 ||
+		len(channelContract.Reads) != 5 || len(channelContract.Writes) != 2 {
+		t.Fatalf("channel-select contract = %#v", channelContract)
+	}
+	var channel equation.Equation
+	for _, lowered := range artifact.Equations {
+		if lowered.Occurrence.Kind == string(OperatorChannelSelect) {
+			channel = lowered
+		}
+	}
+	if channel.KernelID != "transformer/formal-channel-select/v1" {
+		t.Fatalf("channel-select kernel = %q", channel.KernelID)
+	}
+	if len(channel.Guards) != 1 || string(channel.Guards[0].Encoding) != "select-guard" {
+		t.Fatalf("channel-select guards = %#v", channel.Guards)
+	}
+}
+
+func TestCompileEquationIRChannelSelectFailsWithoutLowering(t *testing.T) {
+	compiler, err := equation.Skeleton().With("nonreturning", equation.BindExistingKernel("transformer/formal-nonreturning/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = channelSelectEquationTestProgram(t).CompileEquationIR(compiler, func(occurrence RelationEquationOccurrence) (equation.Draft, error) {
+		contract, contractErr := channelSelectEquationContract(occurrence)
+		if contractErr != nil {
+			return equation.Draft{}, contractErr
+		}
+		return channelSelectEquationDraft(occurrence, contract), nil
+	})
+	if !errors.Is(err, equation.ErrUnimplementedLowering) {
+		t.Fatalf("error = %v, want unimplemented channel-select lowering", err)
+	}
+}
+
+func TestChannelSelectLoweringArtifactIdentityUsesSemanticBindings(t *testing.T) {
+	body := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("channel-select-equation-identity")))
+	occurrence := RelationEquationOccurrence{Body: body, Kind: OperatorChannelSelect}
+	contract, err := channelSelectEquationContract(occurrence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := channelSelectEquationDraft(occurrence, contract)
+	right := channelSelectEquationDraft(occurrence, contract)
+	for index := 0; index < len(right.Operands)/2; index++ {
+		other := len(right.Operands) - 1 - index
+		right.Operands[index], right.Operands[other] = right.Operands[other], right.Operands[index]
+	}
+	compiler, err := equation.Skeleton().With("channel-select", equation.BindExistingKernel("transformer/formal-channel-select/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftArtifact, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{left}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightArtifact, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{right}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftArtifact.ContentID() != rightArtifact.ContentID() {
+		t.Fatal("channel-select artifact retained operand declaration order")
+	}
+	for index := range right.Operands {
+		if right.Operands[index].Role == string(AccessState) {
+			right.Operands[index].Term = equation.ClosedTerm([]byte("different-state-binding"))
+			break
+		}
+	}
+	changedArtifact, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{right}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftArtifact.ContentID() == changedArtifact.ContentID() {
+		t.Fatal("channel-select artifact omitted a semantic operand binding")
+	}
+	changedGuard := left
+	changedGuard.Guards[0].Encoding = []byte("different-guard")
+	guardArtifact, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{changedGuard}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftArtifact.ContentID() == guardArtifact.ContentID() {
+		t.Fatal("channel-select artifact omitted a semantic guard")
+	}
+	changedContract := contract
+	changedContract.GuardAtoms = []string{"different-guard"}
+	contractDraft := channelSelectEquationDraft(occurrence, changedContract)
+	contractArtifact, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{contractDraft}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftArtifact.ContentID() == contractArtifact.ContentID() {
+		t.Fatal("channel-select artifact omitted its contract content")
+	}
+}
+
+func channelSelectEquationTestProgram(t *testing.T) *RelationProgram {
+	t.Helper()
+	reg := standard.Registry()
+	base := formalRootInputTestProgram(t, reg)
+	arena := base.bodies[0].relation.code.terms
+	guard := arena.Truthy(arena.Root(Root{Kind: RootParam, Index: 0}))
+	point := cfg.Point(41)
+	path := pathdom.NewPath(symbol.ID(101), "param").Field("channel")
+	facts := factflow.NewFacts(factflow.FactsInput{ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
+		point: factflow.NewChannelSelectSet(factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID: "equation-select", Kind: factflow.ChannelSelectReceive, Index: 2,
+			ResultPath: path, HasResultPath: true, CasePath: path, HasCasePath: true,
+			PayloadValue: typevalue.LiteralString(reg, "payload"), HasPayloadValue: true,
+		})),
+	}})
+	return formalRelationExecutorTestProgramFromBase(t, base, []relationNode{
+		{},
+		{kind: relationNodeSequence, steps: []boundaryStep{{
+			kind: boundaryStepChannelSelect, guard: guard,
+			channel: factapply.PlanChannelSelectTransaction(facts, point),
+		}}, next: 2},
+		{kind: relationNodeBottom},
+	})
+}
+
+func channelSelectEquationContract(occurrence RelationEquationOccurrence) (OperatorContract, error) {
+	ordinal := uint64(2)
+	if occurrence.Kind == OperatorChannelSelect {
+		ordinal = 1
+	}
+	contract, err := NewOperatorContract(occurrence.Kind, formal.NewOccurrenceID(occurrence.Body, ordinal))
+	if err != nil || occurrence.Kind != OperatorChannelSelect {
+		return contract, err
+	}
+	contract.Reads = []ContractSelector{
+		{Role: AccessFlow, Name: "predecessor"},
+		{Role: AccessState, Name: "channel-facts"},
+		{Role: AccessState, Name: "path-values"},
+		{Role: AccessState, Name: "values"},
+		{Role: AccessGuard, Name: "select-guard"},
+	}
+	contract.Writes = []ContractSelector{
+		{Role: AccessState, Name: "channel-facts"},
+		{Role: AccessState, Name: "result-values"},
+	}
+	contract.GuardAtoms = []string{"select-guard"}
+	return contract, nil
+}
+
+func channelSelectEquationDraft(occurrence RelationEquationOccurrence, contract OperatorContract) equation.Draft {
+	body := equation.BodyID(occurrence.Body)
+	entry := equation.EntryParameter{Body: body, Name: "entry"}
+	operands := make([]equation.Operand, 0, len(contract.Operands))
+	for _, role := range contract.Operands {
+		term := equation.ClosedTerm([]byte(role))
+		if role == AccessGuard && occurrence.Kind == OperatorChannelSelect {
+			term = equation.ClosedTerm([]byte("select-guard"))
+		}
+		operands = append(operands, equation.Operand{Role: string(role), Term: term})
+	}
+	draft := equation.Draft{
+		Target: equation.Coordinate{Body: body, Name: string(occurrence.Kind) + "-output"},
+		Entry:  entry,
+		Occurrence: equation.Occurrence{
+			Kind:       string(contract.Kind),
+			ContractID: equation.ContentID(contract.ContentID()),
+		},
+		Operands: operands,
+	}
+	if occurrence.Kind == OperatorChannelSelect {
+		draft.Guards = []equation.Guard{{Body: body, Encoding: []byte("select-guard")}}
+	}
+	return draft
 }

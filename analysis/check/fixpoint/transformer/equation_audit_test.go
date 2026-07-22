@@ -1,11 +1,19 @@
 package transformer
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestEnvironmentWriteLoweringAuditsRecordedExecution(t *testing.T) {
@@ -81,5 +89,73 @@ func TestApplyLoweringAuditsCompleteFactApplyAccess(t *testing.T) {
 	execution = equation.Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorApply, Occurrence: occurrence}}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("apply audit accepted partial publication")
+	}
+}
+
+func TestChannelSelectLoweringAuditsExistingFactapplyExecution(t *testing.T) {
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("channel-select-equation-audit")))
+	occurrence := formal.NewOccurrenceID(owner, 1)
+	contract, err := NewOperatorContract(OperatorChannelSelect, occurrence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract.Reads = []ContractSelector{
+		{Role: AccessFlow, Name: "predecessor"},
+		{Role: AccessState, Name: "channel-facts"},
+		{Role: AccessState, Name: "path-values"},
+		{Role: AccessState, Name: "values"},
+		{Role: AccessGuard, Name: "select-guard"},
+	}
+	contract.Writes = []ContractSelector{
+		{Role: AccessState, Name: "channel-facts"},
+		{Role: AccessState, Name: "result-values"},
+	}
+	contract.GuardAtoms = []string{"select-guard"}
+
+	reg := standard.Registry()
+	point := cfg.Point(17)
+	path := pathdom.NewPath(symbol.ID(17), "channel")
+	facts := factflow.NewFacts(factflow.FactsInput{ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
+		point: factflow.NewChannelSelectSet(factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID: "audit-select", Kind: factflow.ChannelSelectReceive, Index: 0,
+			CasePath: path, HasCasePath: true,
+		})),
+	}})
+	prepared, err := factapply.PrepareChannelSelectTransaction(reg, factapply.PlanChannelSelectTransaction(facts, point),
+		func(pathdom.Path) (pathaddr.StateKey, bool) { return pathaddr.StateKey("formal:channel"), true },
+		func(cfg.Point, int) (string, bool) { return "result", true },
+	)
+	if err != nil || !prepared.Complete() {
+		t.Fatalf("PrepareChannelSelectTransaction = %v, complete=%t", err, prepared.Complete())
+	}
+	evaluated, err := factapply.EvaluatePreparedChannelSelect(context.Background(), reg, nil, prepared, nil)
+	if err != nil || len(evaluated.Facts()) != 1 {
+		t.Fatalf("EvaluatePreparedChannelSelect = %v, facts=%d", err, len(evaluated.Facts()))
+	}
+
+	access := OperatorAccess{
+		Kind:       OperatorChannelSelect,
+		Occurrence: occurrence,
+		Reads: []ContractSelector{
+			{Role: AccessFlow, Name: "predecessor"},
+			{Role: AccessState, Name: "channel-facts"},
+			{Role: AccessGuard, Name: "select-guard"},
+		},
+		Writes: []ContractSelector{{Role: AccessState, Name: "channel-facts"}},
+	}
+	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
+		t.Fatalf("channel-select audit: %v", err)
+	}
+
+	access.Reads = append(access.Reads, ContractSelector{Role: AccessState, Name: "undeclared"})
+	execution.Access.Payload = access
+	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
+		t.Fatal("channel-select audit accepted undeclared read")
+	}
+
+	execution = equation.Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorChannelSelect, Occurrence: occurrence}}}
+	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
+		t.Fatal("channel-select lowering published a partial transaction")
 	}
 }
