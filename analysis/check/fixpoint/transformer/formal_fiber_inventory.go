@@ -320,6 +320,7 @@ type formalFiberDescriptorSpan struct {
 type formalFiberInventory struct {
 	program              *RelationProgram
 	slots                *SlotSpace
+	coordinateRegistries []*formalCoordinateRegistry
 	descriptors          []formalFiberDescriptor
 	spans                []formalFiberDescriptorSpan
 	groups               []formalFiberGroupDescriptor
@@ -509,7 +510,7 @@ func freezeFormalFiberInventoryWithSlotsTelemetry(program *RelationProgram, slot
 		return nil, err
 	}
 	inventory := &formalFiberInventory{
-		program: program, slots: slots, spans: make([]formalFiberDescriptorSpan, len(program.bodies)),
+		program: program, slots: slots, spans: make([]formalFiberDescriptorSpan, len(program.bodies)), coordinateRegistries: make([]*formalCoordinateRegistry, len(program.bodies)),
 		externalCalls:    make(map[formalExternalCallSiteKey]formalPreparedExternalCallSite),
 		operatorTopology: topology,
 	}
@@ -530,6 +531,11 @@ func freezeFormalFiberInventoryWithSlotsTelemetry(program *RelationProgram, slot
 			return nil, fmt.Errorf("transformer: freeze formal coordinate roots for relation %d: %w", variable, rekeyErr)
 		}
 		formalKeys[bodyIndex], rekeys[bodyIndex] = keys, rekey
+		registry, registryErr := freezeFormalCoordinateRegistry(body.productDomain, rekey)
+		if registryErr != nil {
+			return nil, fmt.Errorf("transformer: freeze formal coordinate registry for relation %d: %w", variable, registryErr)
+		}
+		inventory.coordinateRegistries[bodyIndex] = registry
 		if prepareErr := freezeFormalExternalCallSites(program, inventory, body, variable, keys, rekey); prepareErr != nil {
 			return nil, fmt.Errorf("transformer: freeze formal ExternalCall sites for relation %d: %w", variable, prepareErr)
 		}
