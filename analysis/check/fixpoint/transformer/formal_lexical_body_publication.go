@@ -7,6 +7,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -37,7 +38,27 @@ type FormalLexicalBodyCoordinates struct {
 	ReturnSlots      map[int]product.Value
 	PathValue        func(cfg.Point, pathdom.Path, bool) (product.Value, bool)
 	DiagnosticOutput callpayload.DiagnosticOutput
-	Calls            []FormalLexicalCallDependency
+	// NormalReturnParameters and NormalReturnReachability are direct
+	// observations of the formal artifacts used by summary projection. They
+	// deliberately remain separate from PointInputs: the latter is the legacy
+	// State-shaped publication which the next cut will remove.
+	NormalReturnParameters   FormalNormalReturnParameters
+	NormalReturnReachability map[cfg.Point]bool
+	Calls                    []FormalLexicalCallDependency
+}
+
+// FormalNormalReturnParameters is the Values-only input needed to decide
+// whether an unchanged parameter was refined on the normal exit. HasNormalExit
+// preserves the retiring Result.ExitState availability contract, whose result
+// map distinguishes an absent exit coordinate from a published Bottom value.
+//
+// Entry and Exit follow the body plan's ordered BoundaryParams inventory.
+// They are projected directly from the formal Values fibers; no State is
+// composed while reading them.
+type FormalNormalReturnParameters struct {
+	Entry         []product.Value
+	Exit          []product.Value
+	HasNormalExit bool
 }
 
 // FormalLexicalCallDependency is one frozen lexical Apply edge. Occurrence is
@@ -114,6 +135,16 @@ func (v *FormalRelationPublicationView) ProjectLexicalBody(ctx context.Context) 
 		PathValue:           v.formalPathValueObservation(),
 		Calls:               append([]FormalLexicalCallDependency(nil), v.calls...),
 	}
+	normalReturnParameters, err := v.NormalReturnParameters(ctx)
+	if err != nil {
+		return FormalLexicalBodyCoordinates{}, err
+	}
+	normalReturnReachability, err := v.NormalReturnReachability(ctx)
+	if err != nil {
+		return FormalLexicalBodyCoordinates{}, err
+	}
+	out.NormalReturnParameters = normalReturnParameters
+	out.NormalReturnReachability = normalReturnReachability
 
 	// The structural freezer publishes every CFG point in canonical RPO. A map
 	// miss here is therefore malformed publication metadata, not unreachable
@@ -207,6 +238,168 @@ func (v *FormalRelationPublicationView) ProjectLexicalBody(ctx context.Context) 
 	}
 	out.DiagnosticOutput = diagnostics.Clone()
 	return out, nil
+}
+
+// NormalReturnParameters projects the ordered boundary parameter Values at
+// entry and normal exit directly from the formal Values fibers. This is the
+// exact observation previously obtained by reading EntryState and ExitState
+// during summary projection, without constructing either State.
+func (v *FormalRelationPublicationView) NormalReturnParameters(
+	ctx context.Context,
+) (FormalNormalReturnParameters, error) {
+	if ctx == nil || v == nil || v.body == nil || v.body.graph == nil || v.body.plan == nil {
+		return FormalNormalReturnParameters{}, fmt.Errorf("transformer: formal normal-return parameter observation is unowned")
+	}
+	if err := ctx.Err(); err != nil {
+		return FormalNormalReturnParameters{}, err
+	}
+	params := v.body.plan.BoundaryParams()
+	entryCoordinates, entryDeclared := v.pointInput[v.body.graph.Entry()]
+	exitCoordinates, exitDeclared := v.pointInput[v.body.graph.Exit()]
+	out := FormalNormalReturnParameters{
+		Entry: make([]product.Value, len(params)),
+		Exit:  make([]product.Value, len(params)),
+		// Result.ExitState's old State-shaped contract is map-presence based.
+		// Keep that exact observation here; reachability itself is supplied by
+		// NormalReturnReachability below.
+		HasNormalExit: exitDeclared,
+	}
+	var entryValues, exitValues state.ValueLaneFactor
+	if entryDeclared {
+		var err error
+		entryValues, _, err = v.joinPublishedValues(ctx, entryCoordinates)
+		if err != nil {
+			return FormalNormalReturnParameters{}, err
+		}
+	}
+	if exitDeclared {
+		var err error
+		exitValues, _, err = v.joinPublishedValues(ctx, exitCoordinates)
+		if err != nil {
+			return FormalNormalReturnParameters{}, err
+		}
+	}
+	for index, param := range params {
+		slot := statekey.SymbolValue(param)
+		out.Entry[index] = formalPublishedValue(v.execution.algebra.program.registry, entryValues, slot)
+		out.Exit[index] = formalPublishedValue(v.execution.algebra.program.registry, exitValues, slot)
+	}
+	return out, nil
+}
+
+// NormalReturnReachability answers the old summary projection's
+// canCompleteNormally query from formal point Values/factors and the sealed
+// no-normal-return facts. It is intentionally a boolean read-model: it never
+// materializes a State merely to compare it with Bottom.
+func (v *FormalRelationPublicationView) NormalReturnReachability(
+	ctx context.Context,
+) (map[cfg.Point]bool, error) {
+	if ctx == nil || v == nil || v.body == nil || v.body.graph == nil || v.body.plan == nil {
+		return nil, fmt.Errorf("transformer: formal normal-return reachability observation is unowned")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	memo := make(map[cfg.Point]bool, v.body.graph.Size())
+	visiting := make(map[cfg.Point]struct{})
+	var canComplete func(cfg.Point) (bool, error)
+	canComplete = func(point cfg.Point) (bool, error) {
+		if value, present := memo[point]; present {
+			return value, nil
+		}
+		if _, cycle := visiting[point]; cycle {
+			return true, nil
+		}
+		coordinates, declared := v.pointInput[point]
+		if !declared {
+			memo[point] = false
+			return false, nil
+		}
+		if point == v.body.graph.Exit() {
+			memo[point] = true
+			return true, nil
+		}
+		reachable, err := v.publishedCoordinatesReachable(ctx, coordinates)
+		if err != nil || !reachable {
+			memo[point] = false
+			return false, err
+		}
+		if v.body.plan.Facts().NoNormalReturn(point) {
+			memo[point] = false
+			return false, nil
+		}
+		visiting[point] = struct{}{}
+		defer delete(visiting, point)
+		for _, successor := range cfg.SuccessorsReadOnly(v.body.graph, point) {
+			complete, successorErr := canComplete(successor)
+			if successorErr != nil {
+				return false, successorErr
+			}
+			if complete {
+				memo[point] = true
+				return true, nil
+			}
+		}
+		memo[point] = false
+		return false, nil
+	}
+	for _, point := range cfg.RPOReadOnly(v.body.graph) {
+		if _, err := canComplete(point); err != nil {
+			return nil, err
+		}
+	}
+	return memo, nil
+}
+
+func formalPublishedValue(registry *axis.Registry, values state.ValueLaneFactor, slot statekey.Value) product.Value {
+	if slot == 0 {
+		return product.Bottom(registry)
+	}
+	if values.Top {
+		return product.Top()
+	}
+	if value, present := values.Values[slot]; present {
+		return value
+	}
+	return product.Bottom(registry)
+}
+
+// publishedCoordinatesReachable is the formal-artifact equivalent of asking
+// whether the old joined State is Bottom. It joins no State: a surviving Care
+// partition is the formal reachability witness. This is the same selected
+// artifact partition used by projectLeafFactorTuple, without materializing
+// lane factors that a boolean query cannot consume.
+func (v *FormalRelationPublicationView) publishedCoordinatesReachable(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+) (bool, error) {
+	if v == nil || v.body == nil || v.execution == nil || v.execution.algebra == nil {
+		return false, fmt.Errorf("transformer: formal reachability observation is unowned")
+	}
+	for _, coordinate := range coordinates {
+		coordinate.view = v
+		if coordinate.inverseErr != nil {
+			return false, coordinate.inverseErr
+		}
+		tuple, present := v.execution.values[coordinate.cell]
+		if !present || tuple.bottom() {
+			continue
+		}
+		partitions, err := v.execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: tuple}}, nil)
+		if err != nil {
+			return false, err
+		}
+		for _, partition := range partitions {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			if len(partition.views) != 1 || partition.guard == decisionFalse {
+				return false, errDecisionMalformed
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (v *FormalRelationPublicationView) formalPathValueObservation() func(cfg.Point, pathdom.Path, bool) (product.Value, bool) {

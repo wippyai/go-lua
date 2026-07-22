@@ -9,11 +9,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -122,6 +125,149 @@ return left(), right()
 	if republished.root.ResultVersion() == firstRootVersion {
 		t.Fatal("callee coordinate change did not alter caller lexical lineage")
 	}
+}
+
+// This parity test intentionally keeps the retiring State-shaped publication
+// alive as its oracle. The direct normal-return readers must keep matching it
+// until the following slice removes that old path.
+func TestFormalNormalReturnReadersMatchStatePublication(t *testing.T) {
+	statements := parseRelationProgramInputChunk(t, `
+local function require_nonempty(value: string): string
+    if value == "" then
+        error("empty")
+    end
+    return value
+end
+return require_nonempty("ok")
+`)
+	bindings := bind.BindChunk(statements, bind.Options{Globals: []string{"error"}})
+	registry := standard.Registry()
+	check := body.Config{
+		Registry: registry, Context: context.Background(), Globals: []string{"error"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	}
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), registry, nil, check.ModuleExports, statements)
+	prepared, err := prepareBoundChunkBodies(statements, bindings, check, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, factories, err := newRelationProgramExecutionFactories(check.Context, prepared, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	units, err := relationProgramInput(prepared, factories, check.Initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formal, err := transformer.FreezeRelationProgram(units, prepared.callTopology)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBody := prepared.root.StableLexicalBodyID()
+	if len(prepared.functions) != 1 {
+		t.Fatalf("representative body count = %d, want one function", len(prepared.functions))
+	}
+	var targetBody lexicalidentity.StableLexicalBodyID
+	for _, static := range prepared.functions {
+		targetBody = static.StableLexicalBodyID()
+	}
+	if targetBody == (lexicalidentity.StableLexicalBodyID{}) {
+		t.Fatal("representative function has no lexical identity")
+	}
+	view, err := formal.Solve(ctx, rootBody, check.EntryState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var direct transformer.FormalLexicalBodyCoordinates
+	for _, lexical := range view.LexicalBodies() {
+		if lexical.Body == targetBody {
+			direct = lexical
+			break
+		}
+	}
+	if direct.Body == (lexicalidentity.StableLexicalBodyID{}) {
+		t.Fatal("formal root has no direct observations")
+	}
+	bodyKeys, err := relationProgramBodyKeys(prepared, prepared.root, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := publishFormalLexicalProgram(
+		ctx, view.LexicalBodies(), factories, rootBody, check.EntryState, check.Initial,
+		check, bodyKeys, prepared, keys,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateResult := legacy.results[targetBody]
+	if stateResult == nil {
+		t.Fatal("legacy State publication has no root result")
+	}
+	entry, entryOK := stateResult.EntryState()
+	exit, exitOK := stateResult.ExitState()
+	if !entryOK || !exitOK {
+		t.Fatal("representative body has no State-shaped entry or exit")
+	}
+	slots := stateResult.ParameterValueSlots()
+	if len(slots) == 0 || len(direct.NormalReturnParameters.Entry) != len(slots) || len(direct.NormalReturnParameters.Exit) != len(slots) {
+		t.Fatalf("direct parameter reader widths = entry:%d exit:%d slots:%d", len(direct.NormalReturnParameters.Entry), len(direct.NormalReturnParameters.Exit), len(slots))
+	}
+	for index, slot := range slots {
+		if got, want := direct.NormalReturnParameters.Entry[index], entry.ReadValue(registry, slot); !product.Equal(registry, got, want) {
+			t.Fatalf("direct normal-return entry parameter %d = %#v, want State value %#v", index, got, want)
+		}
+		if got, want := direct.NormalReturnParameters.Exit[index], exit.ReadValue(registry, slot); !product.Equal(registry, got, want) {
+			t.Fatalf("direct normal-return exit parameter %d = %#v, want State value %#v", index, got, want)
+		}
+	}
+	if got, want := direct.NormalReturnParameters.HasNormalExit, exitOK; got != want {
+		t.Fatalf("direct normal-exit availability = %t, want State-shaped %t", got, want)
+	}
+	for _, point := range cfg.RPOReadOnly(stateResult.Graph()) {
+		want := legacyCanCompleteNormally(registry, stateResult, point, make(map[cfg.Point]bool), make(map[cfg.Point]struct{}))
+		got, present := direct.NormalReturnReachability[point]
+		if !present || got != want {
+			t.Fatalf("direct normal-return reachability at point %d = %t/%t, want State-shaped %t", point, got, present, want)
+		}
+	}
+}
+
+func legacyCanCompleteNormally(
+	registry *axis.Registry,
+	result *body.Result,
+	point cfg.Point,
+	memo map[cfg.Point]bool,
+	visiting map[cfg.Point]struct{},
+) bool {
+	if got, present := memo[point]; present {
+		return got
+	}
+	if _, cycle := visiting[point]; cycle {
+		return true
+	}
+	at, present := result.StateAt(point)
+	if !present || state.Domain(registry).Equal(at, state.State{}) {
+		memo[point] = false
+		return false
+	}
+	if point == result.Graph().Exit() {
+		memo[point] = true
+		return true
+	}
+	if result.NoNormalReturn(point) {
+		memo[point] = false
+		return false
+	}
+	visiting[point] = struct{}{}
+	defer delete(visiting, point)
+	for _, successor := range cfg.SuccessorsReadOnly(result.Graph(), point) {
+		if legacyCanCompleteNormally(registry, result, successor, memo, visiting) {
+			memo[point] = true
+			return true
+		}
+	}
+	memo[point] = false
+	return false
 }
 
 func relationProgramStaticByBody(prepared preparedBodies, bodyID lexicalidentity.StableLexicalBodyID) *body.Static {
