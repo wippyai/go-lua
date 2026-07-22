@@ -538,6 +538,34 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 				if len(views) != 3 || len(views[0].derived) != len(plan.sources) {
 					return nil, errFormalComponentMalformed
 				}
+				// N4's State-factor program accepts product.Value operands.  Its
+				// formal adapter must therefore stop at the symbolic boundary rather
+				// than decode an entry-dependent source prematurely.  The Source
+				// hyperedge is the only Values producer: retain its already compiled
+				// sealed ValueTerm leaf at the target and leave the residual factor
+				// frames as structural carry for entry specialization.
+				symbolicSource := decisionLeaf(0)
+				for _, leaf := range views[0].derived {
+					value, valueErr := formalValueFromLeaf(views[0].authority, leaf)
+					if valueErr != nil {
+						return nil, valueErr
+					}
+					if value.isSymbolic {
+						symbolicSource = leaf
+						break
+					}
+				}
+				if symbolicSource != 0 {
+					if component.component.Kind() != factapply.RootAssignmentFactorComponentSource {
+						return nil, nil
+					}
+					for _, ordinal := range component.outputs.writeOrdinals {
+						if ordinal == plan.targetMember.ordinal {
+							return []formalClosedFactorLeafWrite{{ordinal: ordinal, leaf: symbolicSource}}, nil
+						}
+					}
+					return nil, errFormalComponentMalformed
+				}
 				leafStarted := time.Time{}
 				if traceDetail != nil {
 					leafStarted = time.Now()
