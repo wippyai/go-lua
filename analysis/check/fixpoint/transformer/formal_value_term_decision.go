@@ -240,6 +240,23 @@ func (a *formalTupleAlgebra) compileFormalValueTermDecisions(
 			if len(leaves) != len(roots) {
 				return 0, errDecisionMalformed
 			}
+			// A ValueTerm is already the canonical symbolic expression
+			// vocabulary.  If any value child is entry-dependent, retain this
+			// node as an owned binding instead of attempting to decode it through
+			// product.Value.  The concrete branch below remains allocation-free;
+			// only the symbolic branch reaches the interned terminal carrier.
+			for index := 0; index < len(node.args); index++ {
+				value, valueErr := formalValueFromLeaf(authority, leaves[index])
+				if valueErr != nil {
+					return 0, valueErr
+				}
+				if value.isSymbolic {
+					return authority.internBinding(formalQualifiedBinding{
+						value: relationArenaValueRef{owner: tuple.variable, arena: arena, term: term},
+						scope: scope,
+					})
+				}
+			}
 			args := make([]product.Value, len(node.args))
 			for index := range args {
 				value, valueErr := decode(leaves[index])
