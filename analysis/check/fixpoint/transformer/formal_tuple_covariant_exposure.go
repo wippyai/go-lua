@@ -232,34 +232,49 @@ func freezeFormalCovariantExposureStep(program *RelationProgram, variable relati
 	}, nil
 }
 
-func (l formalSparseLeafView) materializeCovariantValues(plan *formalCovariantExposureStep) (state.ValueFactor[FormalSlot], error) {
+func (l formalSparseLeafView) materializeFormalCovariantValues(plan *formalCovariantExposureStep) (formalValuesFactor, error) {
 	topOrdinal, ok := plan.valuesTop.address(plan.values)
 	if !ok {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+		return formalValuesFactor{}, errFormalComponentMalformed
 	}
 	topLeaf, present := l.leaf(topOrdinal)
 	if !present || topLeaf > 1 {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+		return formalValuesFactor{}, errFormalComponentMalformed
 	}
 	if topLeaf == 1 {
-		return state.ValueFactor[FormalSlot]{Top: true}, nil
+		return formalValuesFactor{Top: true}, nil
 	}
 	bottom := product.Bottom(l.authority.product.Registry())
-	var values map[FormalSlot]product.Value
+	var values map[FormalSlot]formalValue
 	for index, slot := range plan.valueSlots {
-		value, exact := l.value(plan.valueFibers[index], plan.valuesTop)
+		value, exact := l.formalValue(plan.valueFibers[index], plan.valuesTop)
 		if !exact {
-			return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+			return formalValuesFactor{}, errFormalComponentMalformed
 		}
-		if product.Equal(l.authority.product.Registry(), value, bottom) {
+		if ground, concrete := value.concrete(); concrete && product.Equal(l.authority.product.Registry(), ground, bottom) {
 			continue
 		}
 		if values == nil {
-			values = make(map[FormalSlot]product.Value, len(plan.valueSlots))
+			values = make(map[FormalSlot]formalValue, len(plan.valueSlots))
 		}
 		values[slot] = value
 	}
-	return state.ValueFactor[FormalSlot]{Values: values}, nil
+	return formalValuesFactor{Values: values}, nil
+}
+
+// materializeCovariantValues is the explicit concrete boundary for the N6
+// factapply kernel. WTO retains the formal carrier until its symbolic guard
+// has established that all selected Values are ground.
+func (l formalSparseLeafView) materializeCovariantValues(plan *formalCovariantExposureStep) (state.ValueFactor[FormalSlot], error) {
+	values, err := l.materializeFormalCovariantValues(plan)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	concrete, err := formalConcreteValuesFactor(l.authority, values)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	return state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}, nil
 }
 
 func (a *formalTupleAlgebra) applyFormalCovariantExposure(
