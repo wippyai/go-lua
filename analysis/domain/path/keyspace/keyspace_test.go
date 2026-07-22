@@ -113,6 +113,50 @@ func TestSpellingSealedByStructuralKey(t *testing.T) {
 	}
 }
 
+func TestKeyHandlesRoundTripAndAreCollisionFree(t *testing.T) {
+	ks := New()
+	keys := []Key{
+		ks.FromPath(pathdom.Path{Symbol: symbol.ID(1)}),
+		ks.FromPath(pathdom.Path{Symbol: symbol.ID(1), Segments: []segment.Segment{field("member")}}),
+		ks.FromPath(pathdom.Path{Root: "named", Segments: []segment.Segment{indexInt(2)}}),
+	}
+
+	seen := make(map[KeyHandle]Key, len(keys))
+	for _, key := range keys {
+		handle := key.Handle()
+		if handle == 0 {
+			t.Fatalf("key %#v has invalid handle", key)
+		}
+		if prior, exists := seen[handle]; exists && prior != key {
+			t.Fatalf("handle %d aliases distinct keys %#v and %#v", handle, prior, key)
+		}
+		seen[handle] = key
+		roundTrip, ok := ks.KeyByHandle(handle)
+		if !ok || roundTrip != key {
+			t.Fatalf("KeyByHandle(%d) = %#v/%v, want %#v", handle, roundTrip, ok, key)
+		}
+	}
+
+	again := ks.FromPath(pathdom.Path{Symbol: symbol.ID(1), Segments: []segment.Segment{field("member")}})
+	if again != keys[1] || again.Handle() != keys[1].Handle() {
+		t.Fatalf("equal keys received distinct handles: %#v and %#v", keys[1], again)
+	}
+	if _, ok := ks.KeyByHandle(0); ok {
+		t.Fatal("zero handle resolved to a key")
+	}
+	if _, ok := ks.KeyByHandle(KeyHandle(len(keys) + 1)); ok {
+		t.Fatal("out-of-range handle resolved to a key")
+	}
+
+	foreign := New().FromPath(pathdom.Path{Symbol: symbol.ID(1)})
+	if foreign.Handle() == 0 {
+		t.Fatal("foreign test key has invalid handle")
+	}
+	if foreign.Handle() == keys[0].Handle() && foreign == keys[0] {
+		t.Fatal("keys from distinct keyspaces compared equal")
+	}
+}
+
 func TestFormatCacheSeparatesCanonicalNamedSpellings(t *testing.T) {
 	ks := New()
 	p := pathdom.Path{Root: "sym42", Segments: []segment.Segment{field("x")}}

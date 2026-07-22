@@ -62,6 +62,10 @@ const (
 // SegmentsID is the interned id for an immutable segment list. 0 means empty.
 type SegmentsID uint32
 
+// KeyHandle is a dense, KeySpace-local reference to a bound Key. Zero is the
+// invalid handle. It is meaningful only with the KeySpace that minted it.
+type KeyHandle uint32
+
 // rootID is the interned id for a named-root spelling. 0 means none.
 type rootID uint32
 
@@ -70,6 +74,8 @@ type rootID uint32
 // KeySpace can mint a Key belonging to its universe.
 type keyUniverse struct {
 	space *KeySpace
+	keys  []Key
+	byKey map[keyShape]KeyHandle
 }
 
 // Key is a structural, comparable abstract-state key. It is usable directly as
@@ -102,6 +108,58 @@ type Key struct {
 	Segs  SegmentsID
 	Kind  KeyKind
 	Canon bool
+}
+
+// keyShape is the complete structural identity of a Key. It backs the
+// owner-side handle index without increasing Key's hot-map footprint.
+type keyShape struct {
+	Sym   symbol.ID
+	owner *keyUniverse
+	Ver   uint32
+	Root  uint32
+	Segs  SegmentsID
+	Kind  KeyKind
+	Canon bool
+}
+
+func keyShapeOf(k Key) keyShape {
+	return keyShape{
+		Sym: k.Sym, owner: k.owner, Ver: k.Ver, Root: k.Root, Segs: k.Segs,
+		Kind: k.Kind, Canon: k.Canon,
+	}
+}
+
+// Handle returns this key's dense, KeySpace-local handle. It returns zero for
+// an unbound or invalid key.
+func (k Key) Handle() KeyHandle {
+	if k.owner == nil {
+		return 0
+	}
+	handle, ok := k.owner.byKey[keyShapeOf(k)]
+	if !ok || handle == 0 {
+		return 0
+	}
+	canonical, ok := k.owner.KeyByHandle(handle)
+	if !ok || canonical != k {
+		return 0
+	}
+	return handle
+}
+
+// KeyByHandle resolves a KeySpace-local handle to its canonical bound Key.
+func (ks *KeySpace) KeyByHandle(handle KeyHandle) (Key, bool) {
+	if !ks.validSpace() {
+		return Key{}, false
+	}
+	return ks.owner.KeyByHandle(handle)
+}
+
+func (u *keyUniverse) KeyByHandle(handle KeyHandle) (Key, bool) {
+	if u == nil || handle == 0 || int(handle) >= len(u.keys) {
+		return Key{}, false
+	}
+	key := u.keys[handle]
+	return key, key.owner == u
 }
 
 // segmentsEntry holds an interned segment list together with its canonical
@@ -180,7 +238,7 @@ func New() *KeySpace {
 	ks.rootEntries = append(ks.rootEntries, rootEntry{})
 	ks.formalRootEntries = append(ks.formalRootEntries, formal.Root{})
 	ks.existentialEntries = append(ks.existentialEntries, boundaryExistentialDescriptor{})
-	ks.owner = &keyUniverse{space: ks}
+	ks.owner = &keyUniverse{space: ks, keys: []Key{{}}, byKey: make(map[keyShape]KeyHandle)}
 	return ks
 }
 
@@ -299,6 +357,9 @@ func (ks *KeySpace) validKey(k Key) bool {
 	if !ks.validSpace() || k.owner == nil || k.owner != ks.owner {
 		return false
 	}
+	if k.Handle() == 0 {
+		return false
+	}
 	if !ks.validSegmentsID(k.Segs) {
 		return false
 	}
@@ -336,9 +397,17 @@ func (ks *KeySpace) ownKey(k Key) Key {
 // mutating intern tables while avoiding a duplicate check on every hot mint.
 func (ks *KeySpace) bindKey(k Key) Key {
 	k.owner = ks.owner
-	if k.Kind != KindInvalid {
-		ks.sealSpelling(k)
+	if k.Kind == KindInvalid {
+		return Key{}
 	}
+	shape := keyShapeOf(k)
+	if handle, ok := ks.owner.byKey[shape]; ok {
+		return ks.owner.keys[handle]
+	}
+	handle := KeyHandle(len(ks.owner.keys))
+	ks.owner.keys = append(ks.owner.keys, k)
+	ks.owner.byKey[shape] = handle
+	ks.sealSpelling(k)
 	return k
 }
 

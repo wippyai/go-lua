@@ -14,8 +14,9 @@ var lessSink bool
 
 func TestExportedKeyMintingSurfaceIsCensused(t *testing.T) {
 	want := map[string]bool{
-		"AppendSegment": true, "FieldCanonical": true, "FromPath": true,
+		"AppendPathSegment": true, "AppendSegment": true, "FieldCanonical": true, "FromPath": true,
 		"InternFormalRoot": true,
+		"KeyByHandle":      true,
 		"FromPathKey":      true, "FromResolverKey": true, "FromRootlessSuffix": true,
 		"FromStableSymbol": true, "FromStateKey": true, "ImportExistential": true,
 		"ImportKey": true, "InternStateKey": true, "LookupResolverKey": true,
