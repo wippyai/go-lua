@@ -6,8 +6,9 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -15,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // formalReadexprFactorReader binds the same four factor roles used by the
@@ -79,36 +80,7 @@ func (r formalReadexprFactorReader) ReadRootValue(id symbol.ID) (product.Value, 
 	if !ok {
 		value = product.Bottom(r.domain.Registry())
 	}
-	return r.preferExactHeapRoot(value), true
-}
-
-// preferExactHeapRoot is the factor-native counterpart of the root refinement
-// at the end of readexpr.Project. A symbol slot carries table identity while
-// the selected heap factor carries the object's current literal shape.
-func (r formalReadexprFactorReader) preferExactHeapRoot(current product.Value) product.Value {
-	reg := r.domain.Registry()
-	term, exact := identityvalue.ExactTerm(reg, current)
-	if !exact {
-		return current
-	}
-	object, present := r.ReadHeapObject(term)
-	if !present {
-		return current
-	}
-	root := object.Root()
-	rootTerm, rootExact := identityvalue.ExactTerm(reg, root)
-	if !rootExact || rootTerm != term || product.Equal(reg, root, product.Bottom(reg)) {
-		return current
-	}
-	if product.LessOrEq(reg, root, current) {
-		return root
-	}
-	currentType, currentOK := typevalue.TypeOf(reg, current)
-	rootType, rootOK := typevalue.TypeOf(reg, root)
-	if currentOK && rootOK && subtype.IsSubtype(rootType, currentType) && !subtype.IsSubtype(currentType, rootType) {
-		return root
-	}
-	return current
+	return value, true
 }
 
 func (r formalReadexprFactorReader) ReadLocalPathValue(path keyspace.Key) (product.Value, bool) {
@@ -128,6 +100,34 @@ func (r formalReadexprFactorReader) ReadHeapObject(term identity.Term) (heapiden
 
 var _ factapply.ResolvedPathValueReader = formalReadexprFactorReader{}
 
+// directFormalPathValue keeps the conservative path-factor observation that
+// predates structural read projection. Joining this one factor across the
+// published observation is the established proof boundary: if it has an
+// entry for the requested syntax path, no weaker reconstruction may replace
+// it with heap or Values structure.
+func (v *FormalRelationPublicationView) directFormalPathValue(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+	p pathdom.Path,
+) (product.Value, bool, error) {
+	if v == nil || v.body == nil || v.body.keys == nil || v.execution == nil || v.execution.algebra == nil || p.IsEmpty() {
+		return product.Value{}, false, nil
+	}
+	key, exact := v.body.keys.FromPathKey(p.Key())
+	if !exact {
+		return product.Value{}, false, nil
+	}
+	factor, factorPresent, err := v.joinPublishedPathFactor(ctx, coordinates)
+	if err != nil || !factorPresent {
+		return product.Value{}, false, err
+	}
+	value, present, err := v.body.productDomain.ReadPathValueFactor(factor, v.body.keys, key)
+	if err != nil || !present {
+		return product.Value{}, false, err
+	}
+	return value, true, nil
+}
+
 // projectFormalReadPath is the formal equivalent of readexpr.Project's
 // concrete shape projection. Each formal leaf supplies the exact factor roles
 // required to resolve the read expression, then only the resulting product
@@ -142,6 +142,15 @@ func (v *FormalRelationPublicationView) projectFormalReadPath(
 ) (product.Value, bool, error) {
 	if v == nil || v.body == nil || v.body.keys == nil || v.execution == nil || v.execution.algebra == nil {
 		return product.Value{}, false, errFormalComponentForeignOwner
+	}
+	if direct, proven, err := v.directFormalPathValue(ctx, coordinates, p); err != nil || proven {
+		return direct, proven, err
+	}
+	// A root is not a structural projection. If its path factor did not record
+	// a proof, Values may be intentionally broad (for example a formal call
+	// parameter) and the ordinary read-model recovery remains authoritative.
+	if len(p.Segments) == 0 {
+		return product.Value{}, false, nil
 	}
 	if v.body.pathSemantics == nil || !v.body.pathSemantics.Valid() {
 		return product.Value{}, false, errFormalComponentForeignOwner
@@ -198,9 +207,19 @@ func (v *FormalRelationPublicationView) projectFormalReadPath(
 			if !readerOK {
 				return product.Value{}, false, errFormalComponentMalformed
 			}
+			root, rootOK := reader.ReadRootValue(p.Symbol)
+			if !rootOK || formalReadRootOpaque(reg, root) {
+				// A missing or top-like root cannot prove any descendant shape. Do
+				// not discard this leaf and join only the more precise siblings:
+				// that would turn a may-be-any path into a claimed record member.
+				return product.Value{}, false, nil
+			}
 			value, valueOK := factapply.ResolveStructuralPathFactorValue(reg, reader, structural)
 			if !valueOK || product.Equal(reg, value, product.Bottom(reg)) {
-				continue
+				// Every live correlated leaf must establish the same structural
+				// observation. An absent factor is not a license to recover stale
+				// heap/member evidence from a different leaf.
+				return product.Value{}, false, nil
 			}
 			if present {
 				joined = product.Join(reg, joined, value)
@@ -210,4 +229,12 @@ func (v *FormalRelationPublicationView) projectFormalReadPath(
 		}
 	}
 	return joined, present, nil
+}
+
+func formalReadRootOpaque(reg *axis.Registry, value product.Value) bool {
+	if reg == nil || product.Equal(reg, value, product.Bottom(reg)) || product.Get(reg, value, assertion.Key).Has(assertion.AnyClaim) {
+		return true
+	}
+	t, ok := typevalue.TypeOf(reg, value)
+	return !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t)
 }

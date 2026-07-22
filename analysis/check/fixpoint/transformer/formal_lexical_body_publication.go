@@ -575,3 +575,63 @@ func (v *FormalRelationPublicationView) joinPublishedValues(
 	}
 	return joined, live, nil
 }
+
+// joinPublishedPathFactor keeps the path-evidence observation separate from
+// Values and the other structural factors. Callers that have a direct path
+// proof must prefer this conservative join over reconstruction.
+func (v *FormalRelationPublicationView) joinPublishedPathFactor(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+) (state.LaneFactor, bool, error) {
+	if v == nil || v.body == nil || v.execution == nil || v.execution.algebra == nil {
+		return state.LaneFactor{}, false, fmt.Errorf("transformer: formal path observation is unowned")
+	}
+	family, owned := v.body.productDomain.PathValueFamily()
+	if !owned {
+		return state.LaneFactor{}, false, nil
+	}
+	joined := state.LaneFactor{}
+	present := false
+	for _, coordinate := range coordinates {
+		coordinate.view = v
+		if coordinate.inverseErr != nil {
+			return state.LaneFactor{}, false, coordinate.inverseErr
+		}
+		tuple, live := v.execution.values[coordinate.cell]
+		if !live || tuple.bottom() {
+			continue
+		}
+		ordinals, valuesProjection, err := v.publicationProductProjection(ctx, tuple)
+		if err != nil {
+			return state.LaneFactor{}, false, err
+		}
+		partitions, err := v.execution.algebra.partitionSparseLeafViewsUnderCare([]formalSparseTupleProjection{{tuple: tuple, ordinals: ordinals}}, nil)
+		if err != nil {
+			return state.LaneFactor{}, false, err
+		}
+		cache := formalPublicationProjectionCache{factors: make(map[formalPublicationProjectionFactorKey][]formalPublicationProjectionFactorEntry), values: make(map[uint64][]formalPublicationProjectionValuesEntry)}
+		for _, partition := range partitions {
+			if len(partition.views) != 1 || partition.guard == decisionFalse {
+				return state.LaneFactor{}, false, errDecisionMalformed
+			}
+			_, factors, err := v.projectLeafFactorTuple(ctx, partition.views[0], coordinate.inverse, &cache, valuesProjection)
+			if err != nil {
+				return state.LaneFactor{}, false, err
+			}
+			for _, factor := range factors {
+				if factor.Lane() != family.Lane() {
+					continue
+				}
+				if present {
+					joined, err = v.body.productDomain.LaneJoin(joined, factor)
+					if err != nil {
+						return state.LaneFactor{}, false, err
+					}
+				} else {
+					joined, present = factor, true
+				}
+			}
+		}
+	}
+	return joined, present, nil
+}
