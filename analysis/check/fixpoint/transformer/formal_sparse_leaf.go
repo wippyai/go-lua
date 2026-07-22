@@ -275,6 +275,43 @@ func (l formalSparseLeafView) formalValue(member formalFiberGroupMember, top for
 	return value, err == nil
 }
 
+// symbolicValuesIn reports whether a sealed sparse transaction reads a
+// symbolic Values leaf. It walks only the operation's frozen projection.
+func (l formalSparseLeafView) symbolicValuesIn(ordinals []formalFiberOrdinal) (bool, error) {
+	for _, ordinal := range ordinals {
+		leaf, present := l.leaf(ordinal)
+		if !present || leaf < 2 {
+			continue
+		}
+		terminal, err := l.authority.terminal(leaf)
+		if err != nil {
+			return false, err
+		}
+		if terminal.kind == formalComponentBindings || terminal.kind == formalComponentSymbolicValue {
+			value, valueErr := formalValueFromLeaf(l.authority, leaf)
+			if valueErr != nil {
+				return false, valueErr
+			}
+			if value.isSymbolic {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (l formalSparseLeafView) symbolicFactorOutput(binding formalQualifiedBinding, ordinals []formalFiberOrdinal) (formalValue, bool, error) {
+	symbolic, err := l.symbolicValuesIn(ordinals)
+	if err != nil || !symbolic {
+		return formalValue{}, symbolic, err
+	}
+	leaf, err := l.authority.internBinding(binding)
+	if err != nil {
+		return formalValue{}, false, err
+	}
+	return formalSymbolicValue(leaf), true, nil
+}
+
 func (l formalSparseLeafView) exactGuard(owner relationVar, arena *Arena, scope loopMuTerm, guard Guard) (bool, bool, bool) {
 	if l.algebra == nil || owner != l.variable || arena != l.authority.terms || guard == 0 {
 		return false, false, false

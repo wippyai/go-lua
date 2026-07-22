@@ -165,9 +165,12 @@ func freezeFormalEnvironmentWriteStep(program *RelationProgram, variable relatio
 	}, nil
 }
 
-func (l formalSparseLeafView) evaluateEnvironmentWrite(plan *formalEnvironmentWriteStep) (product.Value, error) {
+func (l formalSparseLeafView) evaluateEnvironmentWrite(plan *formalEnvironmentWriteStep) (formalValue, error) {
 	if plan == nil || plan.value.value.owner != l.variable || plan.value.value.arena != l.authority.terms {
-		return product.Value{}, errFormalComponentForeignOwner
+		return formalValue{}, errFormalComponentForeignOwner
+	}
+	if symbolic, present, err := l.symbolicFactorOutput(plan.value, plan.readOrdinals); err != nil || present {
+		return symbolic, err
 	}
 	arena := plan.value.value.arena
 	var resolver valueNodeLeafResolver
@@ -225,9 +228,9 @@ func (l formalSparseLeafView) evaluateEnvironmentWrite(plan *formalEnvironmentWr
 	}
 	value, exact := arena.evalValueCanonicalWithLeaves(plan.value.value.term, resolver)
 	if !exact || !product.BelongsToRegistry(l.authority.product.Registry(), value) {
-		return product.Value{}, fmt.Errorf("transformer: formal EnvironmentWrite value is unsupported")
+		return formalValue{}, fmt.Errorf("transformer: formal EnvironmentWrite value is unsupported")
 	}
-	return value, nil
+	return formalGroundValue(value), nil
 }
 
 func (a *formalTupleAlgebra) applyFormalEnvironmentWrite(operator formalRelationOperatorRef, predecessor formalRelationTuple) (formalRelationTuple, error) {
@@ -291,8 +294,9 @@ func (a *formalTupleAlgebra) applyFormalEnvironmentWrite(operator formalRelation
 			if evalErr != nil {
 				return fail(evalErr)
 			}
-			if !product.Equal(authority.product.Registry(), actual, bottom) {
-				leaf, evalErr = authority.internGroundValue(actual)
+			ground, concrete := actual.concrete()
+			if !concrete || !product.Equal(authority.product.Registry(), ground, bottom) {
+				leaf, evalErr = authority.internFormalValue(actual)
 				if evalErr != nil {
 					return fail(evalErr)
 				}

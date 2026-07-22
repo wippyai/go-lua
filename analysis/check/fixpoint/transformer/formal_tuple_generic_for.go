@@ -229,9 +229,12 @@ type formalGenericForLeafRegion struct {
 	source  formalSparseLeafView
 }
 
-func (l formalSparseLeafView) evaluateGenericFor(plan *formalGenericForStep) (product.Value, error) {
+func (l formalSparseLeafView) evaluateGenericFor(plan *formalGenericForStep) (formalValue, error) {
 	if plan == nil || plan.projection.value.owner != l.variable || plan.projection.value.arena != l.authority.terms {
-		return product.Value{}, errFormalComponentForeignOwner
+		return formalValue{}, errFormalComponentForeignOwner
+	}
+	if symbolic, present, err := l.symbolicFactorOutput(plan.projection, plan.sourceOrdinals); err != nil || present {
+		return symbolic, err
 	}
 	arena, term := plan.projection.value.arena, plan.projection.value.term
 	var resolver valueNodeLeafResolver
@@ -281,9 +284,9 @@ func (l formalSparseLeafView) evaluateGenericFor(plan *formalGenericForStep) (pr
 	}
 	value, exact := arena.evalValueCanonicalWithLeaves(term, resolver)
 	if !exact || !product.BelongsToRegistry(l.authority.product.Registry(), value) {
-		return product.Value{}, fmt.Errorf("transformer: formal GenericFor projection is unsupported")
+		return formalValue{}, fmt.Errorf("transformer: formal GenericFor projection is unsupported")
 	}
-	return value, nil
+	return formalGroundValue(value), nil
 }
 
 func (a *formalTupleAlgebra) formalGenericForLeafRegions(current, source formalRelationTuple, plan *formalGenericForStep) ([]formalGenericForLeafRegion, error) {
@@ -408,8 +411,9 @@ func (a *formalTupleAlgebra) applyFormalGenericFor(operator formalRelationOperat
 			targetLeaf := currentTarget
 			if currentTop == 0 {
 				targetLeaf = 0
-				if !product.Equal(authority.product.Registry(), actual, bottom) {
-					targetLeaf, factorErr = authority.internGroundValue(actual)
+				ground, concrete := actual.concrete()
+				if !concrete || !product.Equal(authority.product.Registry(), ground, bottom) {
+					targetLeaf, factorErr = authority.internFormalValue(actual)
 					if factorErr != nil {
 						return fail(factorErr)
 					}

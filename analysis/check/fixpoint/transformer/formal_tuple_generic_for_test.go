@@ -169,7 +169,8 @@ func TestFormalGenericForProjectionUsesRegisteredFactorAccess(t *testing.T) {
 		t.Fatalf("GenericFor projection regions = %#v, %v", regions, err)
 	}
 	got, err := regions[0].views[0].evaluateGenericFor(plan)
-	if err != nil || !product.BelongsToRegistry(fixture.reg, got) {
+	ground, concrete := got.concrete()
+	if err != nil || !concrete || !product.BelongsToRegistry(fixture.reg, ground) {
 		t.Fatalf("factor-backed GenericFor projection = %#v, %v", got, err)
 	}
 }
