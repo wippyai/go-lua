@@ -563,11 +563,3 @@ func (s *solveState[Cell, State]) materialize() map[Cell]State {
 	}
 	return out
 }
-
-func (s *solveState[Cell, State]) materializeVersions() map[Cell]uint64 {
-	out := make(map[Cell]uint64, len(s.order))
-	for c := range s.order {
-		out[c] = s.versions[c]
-	}
-	return out
-}

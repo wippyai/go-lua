@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
@@ -268,16 +267,6 @@ func (c BoundaryClosure) ContainsHeapSuffix(owner identity.ID, suffix keyspace.K
 func (c BoundaryClosure) ContainsHeapSuffixTerm(owner identity.Term, suffix keyspace.Key) bool {
 	_, ok := c.heapSuffixes[boundaryHeapSuffix{owner: owner, suffix: suffix}]
 	return ok
-}
-
-func (c *BoundaryClosure) addValueIdentity(reg *axis.Registry, value product.Value) {
-	if term, ok := identityvalue.ExactTerm(reg, value); ok {
-		c.identities[term] = struct{}{}
-		return
-	}
-	if identity.Equal(product.Get(reg, value, identity.Key), identity.Top()) {
-		c.allIdentities = true
-	}
 }
 
 func (c BoundaryClosure) hasPath(path keyspace.Key) bool {

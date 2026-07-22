@@ -233,14 +233,6 @@ func (q boundaryInverseQuotient) optionalStateKeyPreimages(target pathaddr.State
 	return q.stateKeyPreimages(target)
 }
 
-func (q boundaryInverseQuotient) slotPreimages(target key.Value) ([]key.Value, bool) {
-	if q.structuralIdentity && target != 0 {
-		return []key.Value{target}, true
-	}
-	sources := q.slots[target]
-	return sources, len(sources) != 0
-}
-
 func (q boundaryInverseQuotient) identityPreimages(target identity.Term) ([]identity.Term, bool) {
 	if !target.Valid() {
 		return []identity.Term{{}}, true

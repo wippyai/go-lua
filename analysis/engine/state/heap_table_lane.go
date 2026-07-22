@@ -50,14 +50,10 @@ func (l heapTableIdentityLane) readTerm(reg *axis.Registry, term identity.Term) 
 }
 
 func (l heapTableIdentityLane) hasFinite(id identity.ID) bool {
-	return l.hasFiniteTerm(identity.ConcreteTerm(id))
-}
-
-func (l heapTableIdentityLane) hasFiniteTerm(term identity.Term) bool {
 	if l.top {
 		return false
 	}
-	_, ok := l.values[term]
+	_, ok := l.values[identity.ConcreteTerm(id)]
 	return ok
 }
 

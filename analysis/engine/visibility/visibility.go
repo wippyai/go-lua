@@ -100,17 +100,6 @@ func (t *Table) set(point cfg.Point, sym symbol.ID, version ssa.Version) {
 	t.visible[lookup{point: point, symbol: sym}] = version
 }
 
-func (t *Table) setInput(point cfg.Point, sym symbol.ID, version ssa.Version) {
-	if sym == 0 || version.ID <= 0 {
-		return
-	}
-	if t.input == nil {
-		t.input = make(map[lookup]ssa.Version)
-	}
-	version.Symbol = sym
-	t.input[lookup{point: point, symbol: sym}] = version
-}
-
 // Builder creates explicit visibility tables without computing CFG flow.
 type Builder struct {
 	visible map[lookup]ssa.Version
