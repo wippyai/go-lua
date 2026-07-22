@@ -15,6 +15,13 @@ type RelationEquationOccurrence struct {
 	Body      lexicalidentity.StableLexicalBodyID
 	Kind      OperatorKind
 	CellLabel string
+
+	// cell and operator are the sealed source capability for an in-package
+	// family binder.  They are intentionally not exported: callers receive no
+	// dense cell reference or mutable source syntax, and CellLabel remains
+	// diagnostic routing only.
+	cell     formalRelationCell
+	operator formalRelationOperatorRef
 }
 
 // RelationEquationBinder binds a Stage-1 contract occurrence and its closed
@@ -35,8 +42,8 @@ func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind Re
 		return equation.Artifact{}, fmt.Errorf("transformer: equation compiler has no lowerer or occurrence binder")
 	}
 	drafts := make([]equation.Draft, 0, len(p.formalTemplate.equations))
-	appendOccurrence := func(body lexicalidentity.StableLexicalBodyID, kind OperatorKind, label string) error {
-		draft, err := bind(RelationEquationOccurrence{Body: body, Kind: kind, CellLabel: label})
+	appendOccurrence := func(body lexicalidentity.StableLexicalBodyID, kind OperatorKind, label string, source formalRelationCell, operator formalRelationOperatorRef) error {
+		draft, err := bind(RelationEquationOccurrence{Body: body, Kind: kind, CellLabel: label, cell: source, operator: operator})
 		if err != nil {
 			return err
 		}
@@ -63,7 +70,7 @@ func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind Re
 				if !present {
 					return equation.Artifact{}, fmt.Errorf("transformer: equation %s stage %d has no frozen operator kind", label, stageIndex)
 				}
-				if err := appendOccurrence(body, kind, fmt.Sprintf("%s-stage-%d", label, stageIndex)); err != nil {
+				if err := appendOccurrence(body, kind, fmt.Sprintf("%s-stage-%d", label, stageIndex), stage.Cell, stage.Operator); err != nil {
 					return equation.Artifact{}, err
 				}
 			}
@@ -84,7 +91,7 @@ func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind Re
 		default:
 			return equation.Artifact{}, fmt.Errorf("transformer: equation %s has unknown cell kind", label)
 		}
-		if err := appendOccurrence(body, kind, label); err != nil {
+		if err := appendOccurrence(body, kind, label, cell, relationEquation.Operator); err != nil {
 			return equation.Artifact{}, err
 		}
 	}
