@@ -3,6 +3,7 @@ package factapply
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -479,6 +480,12 @@ func (p ResolvedRootAssignmentPlan) TargetRootKey() (keyspace.Key, bool) {
 	return p.targetRoot, p.Valid() && p.hasTargetPath
 }
 
+// SourcePathKey exposes the already-rekeyed source spelling for freeze-time
+// identity contracts. It is absent for non-path sources.
+func (p ResolvedRootAssignmentPlan) SourcePathKey() (keyspace.Key, bool) {
+	return p.sourcePath, p.Valid() && p.hasSourcePath
+}
+
 func (p ResolvedRootAssignmentPlan) PathKeySpace() (*keyspace.KeySpace, bool) {
 	if !p.Valid() {
 		return nil, false
@@ -510,6 +517,15 @@ func (p ResolvedRootAssignmentPlan) PrepareFactorStablePathEvidence(
 	value product.Value,
 	idempotent bool,
 ) (state.StableRootPathEvidenceMutation, error) {
+	return p.PrepareFactorStablePathEvidenceWithFormalRoots(carrier, value, idempotent, nil)
+}
+
+func (p ResolvedRootAssignmentPlan) PrepareFactorStablePathEvidenceWithFormalRoots(
+	carrier *state.CoordinatePathEvidenceCarrier[statekey.Value],
+	value product.Value,
+	idempotent bool,
+	formalRoots []formal.Root,
+) (state.StableRootPathEvidenceMutation, error) {
 	if !p.Valid() || carrier == nil {
 		return state.StableRootPathEvidenceMutation{}, fmt.Errorf("factapply: invalid root-assignment stable-path plan")
 	}
@@ -517,9 +533,9 @@ func (p ResolvedRootAssignmentPlan) PrepareFactorStablePathEvidence(
 	if !ok {
 		return state.StableRootPathEvidenceMutation{}, fmt.Errorf("factapply: root-assignment stable-path snapshot unavailable")
 	}
-	return PrepareRootAssignmentStablePathEvidence(
+	return PrepareRootAssignmentStablePathEvidenceWithFormalRoots(
 		p.authority.domain.Registry(), p.authority.domain, p.keySpace(),
-		snapshot, p.target, value, idempotent,
+		snapshot, p.target, value, idempotent, formalRoots,
 	)
 }
 

@@ -244,6 +244,12 @@ func TestIntersectionForMeet(t *testing.T) {
 	}
 }
 
+func TestIntersectionForMeetCollapsesContradictoryBooleanScalars(t *testing.T) {
+	if got := IntersectionForMeet(typ.False, typ.True); got != typ.Never {
+		t.Fatalf("IntersectionForMeet(false, true) = %v, want never", got)
+	}
+}
+
 func TestIntersectionForMeetRawContainerPolicy(t *testing.T) {
 	rawNested := &typ.Intersection{
 		Members: []typ.Type{

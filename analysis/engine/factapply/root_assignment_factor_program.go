@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -224,12 +225,13 @@ func (p RootAssignmentFactorProgram) ApplyDynamicSource(transaction RootAssignme
 // canonical path phase. The adapter binds only registered coordinate slots;
 // it never supplies State or a semantic callback.
 type RootAssignmentPathFactorInput struct {
-	Factors    state.PathSubtreeMutationFactors
-	Authority  state.CoordinatePathEvidenceAuthority[statekey.Value]
-	OldValue   product.Value
-	Composed   product.Value
-	Dynamic    RootAssignmentDynamicSourceTransaction
-	HasDynamic bool
+	Factors           state.PathSubtreeMutationFactors
+	Authority         state.CoordinatePathEvidenceAuthority[statekey.Value]
+	OldValue          product.Value
+	Composed          product.Value
+	Dynamic           RootAssignmentDynamicSourceTransaction
+	HasDynamic        bool
+	FormalStableRoots []formal.Root
 }
 
 // RootAssignmentPathFactorResult is the atomic result of path replacement,
@@ -296,7 +298,7 @@ func (p RootAssignmentFactorProgram) ApplyPathMutation(input RootAssignmentPathF
 	if err != nil {
 		return RootAssignmentPathFactorResult{}, err
 	}
-	stable, err := p.plan.PrepareFactorStablePathEvidence(carrier, input.Composed, product.Equal(reg, input.OldValue, input.Composed))
+	stable, err := p.plan.PrepareFactorStablePathEvidenceWithFormalRoots(carrier, input.Composed, product.Equal(reg, input.OldValue, input.Composed), input.FormalStableRoots)
 	if err != nil {
 		return RootAssignmentPathFactorResult{}, err
 	}

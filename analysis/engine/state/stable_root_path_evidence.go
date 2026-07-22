@@ -2,7 +2,9 @@ package state
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -18,6 +20,7 @@ type StableRootPathEvidenceMutation struct {
 	target      symbol.ID
 	preserveAll bool
 	preserveSet map[pathevidence.PathPresenceImplication]struct{}
+	formalRoots []formal.Root
 }
 
 // SealStableRootPathEvidenceMutation validates and freezes one stable-root
@@ -30,6 +33,18 @@ func (d ProductDomain) SealStableRootPathEvidenceMutation(
 	preserveAll bool,
 	preserve []pathevidence.PathPresenceImplication,
 ) (StableRootPathEvidenceMutation, error) {
+	return d.SealStableRootPathEvidenceMutationWithFormalRoots(keys, target, preserveAll, preserve, nil)
+}
+
+// SealStableRootPathEvidenceMutationWithFormalRoots seals the rekeyed
+// members of one lexical class in addition to the concrete target spelling.
+func (d ProductDomain) SealStableRootPathEvidenceMutationWithFormalRoots(
+	keys *keyspace.KeySpace,
+	target symbol.ID,
+	preserveAll bool,
+	preserve []pathevidence.PathPresenceImplication,
+	formalRoots []formal.Root,
+) (StableRootPathEvidenceMutation, error) {
 	if !d.Valid() || keys == nil || !keys.Valid() || target == 0 || preserveAll && len(preserve) != 0 {
 		return StableRootPathEvidenceMutation{}, fmt.Errorf("state: invalid stable-root path-evidence mutation")
 	}
@@ -40,9 +55,16 @@ func (d ProductDomain) SealStableRootPathEvidenceMutation(
 	for _, implication := range preserve {
 		preserveSet[implication] = struct{}{}
 	}
+	roots := append([]formal.Root(nil), formalRoots...)
+	sort.Slice(roots, func(i, j int) bool { return roots[i].Less(roots[j]) })
+	for index, root := range roots {
+		if !root.Valid() || index != 0 && roots[index-1] == root {
+			return StableRootPathEvidenceMutation{}, fmt.Errorf("state: invalid formal stable-root mutation members")
+		}
+	}
 	return StableRootPathEvidenceMutation{
 		seal: d.seal, keys: keys, target: target, preserveAll: preserveAll,
-		preserveSet: preserveSet,
+		preserveSet: preserveSet, formalRoots: roots,
 	}, nil
 }
 
@@ -95,9 +117,9 @@ func (c *CoordinatePathEvidenceCarrier[K]) ApplyStableRootPathEvidence(mutation 
 	}
 	for _, entry := range c.baselineEntries {
 		key := pathEvidenceCoordinateKey(entry.key)
-		if !pathevidence.StableRootMutationRemovesCoordinate(key, mutation.target, mutation.preserveAll, func(candidate pathevidence.PathPresenceImplication) bool {
+		if !pathevidence.StableRootMutationRemovesCoordinateWithFormalRoots(key, mutation.target, mutation.preserveAll, func(candidate pathevidence.PathPresenceImplication) bool {
 			return stableRootImplicationPreserved(mutation, candidate)
-		}) {
+		}, mutation.keys, mutation.formalRoots) {
 			continue
 		}
 		if !c.coordinateWriteIndexContains(writeIndex, entry.key) {

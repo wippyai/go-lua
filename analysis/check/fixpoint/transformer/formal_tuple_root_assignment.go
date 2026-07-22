@@ -36,6 +36,7 @@ type formalRootAssignmentStep struct {
 	valuesTop    formalFiberGroupMember
 	target       FormalSlot
 	targetMember formalFiberGroupMember
+	epoch        formalRootAssignmentEpochContract
 	fresh        []formalRootAssignmentFreshQuery
 
 	current    []formalRootAssignmentLaneBinding
@@ -136,6 +137,10 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 	targetMember, ok := values.slot(target)
 	if !ok {
 		return nil, fmt.Errorf("RootAssignment target is outside Values carrier")
+	}
+	epoch, err := freezeFormalRootAssignmentEpochContract(program, body, variable, target)
+	if err != nil {
+		return nil, err
 	}
 
 	sources := make([]formalQualifiedBinding, len(step.rootAssignment.sources))
@@ -357,7 +362,7 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 		variable: variable, code: operator.code, scope: operator.scope, plan: plan, factor: factor, domain: body.productDomain,
 		term: step.rootAssignment, guard: step.guard, sources: sources, sourceSlots: sourceSlots,
 		sourceMembers: sourceMembers, demands: demands, values: values.descriptor, valuesTop: valuesTop,
-		target: target, targetMember: targetMember, fresh: fresh,
+		target: target, targetMember: targetMember, epoch: epoch, fresh: fresh,
 		current: current, point: point, writes: writes,
 		lift: lift, currentOrdinals: currentOrdinals, pointOrdinals: pointOrdinals,
 		affectedOrdinals:  affectedOrdinals,
@@ -558,7 +563,7 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 				}
 				output, leafErr := component.component.ApplyComponent(factapply.RootAssignmentFactorComponentInput{
 					Current: currentFrame, PointEntry: pointFrame, OutputBase: outputBase,
-					Sources: sources, Context: a.ctx,
+					Sources: sources, Context: a.ctx, FormalStableRoots: plan.epoch.stableRoots(),
 				})
 				if leafErr != nil {
 					return nil, leafErr
@@ -588,6 +593,10 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPlan(operator formalRelati
 		if err != nil {
 			return fail(fmt.Errorf("transformer: formal RootAssignment component %d (%d): %w", componentIndex, component.component.Kind(), err))
 		}
+	}
+	current, err = a.advanceFormalRootAssignmentEpoch(current, plan.epoch, execute)
+	if err != nil {
+		return fail(fmt.Errorf("transformer: formal RootAssignment epoch advance: %w", err))
 	}
 	if current.root == predecessor.root {
 		a.decisions.rollback(mark)
@@ -1157,6 +1166,7 @@ func (a *formalTupleAlgebra) applyFormalRootAssignmentPath(plan *formalRootAssig
 	result, err := plan.factor.ApplyPathMutation(factapply.RootAssignmentPathFactorInput{
 		Factors: factors, Authority: plan.pathWriteAuthority,
 		OldValue: oldValue, Composed: composed, Dynamic: dynamic, HasDynamic: hasDynamic,
+		FormalStableRoots: plan.epoch.stableRoots(),
 	})
 	if err != nil {
 		return factapply.RootAssignmentPathFactorResult{}, err

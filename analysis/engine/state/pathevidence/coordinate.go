@@ -3,6 +3,7 @@ package pathevidence
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -90,20 +91,53 @@ func StableRootMutationRemovesCoordinate(
 	preserveAll bool,
 	preserve func(PathPresenceImplication) bool,
 ) bool {
+	return StableRootMutationRemovesCoordinateWithFormalRoots(source, target, preserveAll, preserve, nil, nil)
+}
+
+// StableRootMutationRemovesCoordinateWithFormalRoots extends stable-root
+// invalidation with the exact rekeyed members of one lexical class.
+func StableRootMutationRemovesCoordinateWithFormalRoots(
+	source CoordinateKey,
+	target symbol.ID,
+	preserveAll bool,
+	preserve func(PathPresenceImplication) bool,
+	keys *keyspace.KeySpace,
+	formalRoots []formal.Root,
+) bool {
 	if target == 0 {
 		return false
 	}
-	matches := func(path keyspace.Key) bool { return stableKeyBelongsToSymbol(path, target) }
+	matchesConcrete := func(path keyspace.Key) bool {
+		return stableKeyBelongsToSymbol(path, target)
+	}
+	matchesEpochDependency := func(path keyspace.Key) bool {
+		if matchesConcrete(path) {
+			return true
+		}
+		if keys == nil || len(formalRoots) == 0 {
+			return false
+		}
+		root, exact := keys.DescribeFormalRoot(path)
+		if !exact {
+			return false
+		}
+		for _, candidate := range formalRoots {
+			if root == candidate {
+				return true
+			}
+		}
+		return false
+	}
 	switch source.kind {
 	case coordinateRefinement, coordinateStaticMember:
-		return matches(source.path)
+		return matchesEpochDependency(source.path)
 	case coordinateBranchProof:
-		return branchProofMatchesPath(source.proof, matches)
+		return branchProofMatchesPath(source.proof, matchesEpochDependency)
 	case coordinatePathPresenceImplication:
 		if preserveAll || preserve != nil && preserve(source.implication) {
 			return false
 		}
-		return pathPresenceImplicationMatchesPath(source.implication, matches)
+		return pathPresenceImplicationMatchesPath(source.implication, matchesEpochDependency)
 	default:
 		return false
 	}

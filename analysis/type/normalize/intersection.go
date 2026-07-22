@@ -49,6 +49,17 @@ func IntersectionForMeet(members ...typ.Type) typ.Type {
 	if hasNever {
 		return typ.Never
 	}
+	// Boolean literals are disjoint scalar singletons.  Retaining both here
+	// manufactures an impossible frame (false & true) that later assignment
+	// checks can mistake for a live declared target instead of Bottom.
+	hasTrue, hasFalse := false, false
+	for _, member := range flat {
+		hasTrue = hasTrue || typ.TypeEquals(member, typ.True)
+		hasFalse = hasFalse || typ.TypeEquals(member, typ.False)
+	}
+	if hasTrue && hasFalse {
+		return typ.Never
+	}
 
 	if hasNil {
 		if len(flat) == 0 {

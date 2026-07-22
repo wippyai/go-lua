@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func renderAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment.Judgment, policy judgment.Policy, mode judgment.StrictnessMode) (diagnostic.Diagnostic, bool) {
@@ -16,6 +17,12 @@ func renderAssignmentJudgmentWithPolicy(ctx judgmentRenderContext, item judgment
 	got := item.Actual.ProjectedType
 	want := item.Expected.Type
 	if got == nil || want == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	// A Bottom target is an impossible scalar frame, not a live assignment
+	// obligation. Emitting an error here would report a contradiction that the
+	// formal epoch transition has already made unreachable.
+	if typ.IsNever(want) {
 		return diagnostic.Diagnostic{}, false
 	}
 	span := diagnosticSpanFromJudgment(item.Spans[0])

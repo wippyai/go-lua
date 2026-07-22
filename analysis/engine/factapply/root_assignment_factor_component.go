@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -95,11 +96,12 @@ func (c RootAssignmentFactorComponent) Outputs() (state.ProductFactorSelection, 
 // frames of one component evaluation. OutputBase is the output projection of
 // the original current carrier; it is never inferred from a read frame.
 type RootAssignmentFactorComponentInput struct {
-	Current    state.ProductFactorFrame
-	PointEntry state.ProductFactorFrame
-	OutputBase state.ProductFactorFrame
-	Sources    []product.Value
-	Context    context.Context
+	Current           state.ProductFactorFrame
+	PointEntry        state.ProductFactorFrame
+	OutputBase        state.ProductFactorFrame
+	Sources           []product.Value
+	Context           context.Context
+	FormalStableRoots []formal.Root
 }
 
 // ApplyComponent executes one complete N4 dependency hyperedge. Sources are
@@ -375,6 +377,7 @@ func (c RootAssignmentFactorComponent) applyPathComponent(input RootAssignmentFa
 		pathResult, err = c.program.ApplyPathMutation(RootAssignmentPathFactorInput{
 			Factors: factors, Authority: c.pathWriteAuthority, OldValue: oldValue,
 			Composed: source.composed, Dynamic: source.dynamic, HasDynamic: source.hasDynamic,
+			FormalStableRoots: input.FormalStableRoots,
 		})
 		if err != nil {
 			return state.ProductFactorFrame{}, err

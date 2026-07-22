@@ -3,6 +3,7 @@ package factapply
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -25,20 +26,54 @@ func PrepareRootAssignmentStablePathEvidence(
 	value product.Value,
 	idempotent bool,
 ) (state.StableRootPathEvidenceMutation, error) {
+	return PrepareRootAssignmentStablePathEvidenceWithFormalRoots(reg, domain, keys, snapshot, target, value, idempotent, nil)
+}
+
+// PrepareRootAssignmentStablePathEvidenceWithFormalRoots preserves only
+// consequences whose target remains valid for the assigned lexical class.
+func PrepareRootAssignmentStablePathEvidenceWithFormalRoots(
+	reg *axis.Registry,
+	domain state.ProductDomain,
+	keys *keyspace.KeySpace,
+	snapshot pathevidence.PathPresenceImplicationsSnapshot,
+	target symbol.ID,
+	value product.Value,
+	idempotent bool,
+	formalRoots []formal.Root,
+) (state.StableRootPathEvidenceMutation, error) {
 	if reg == nil || !domain.Valid() || domain.Registry() != reg || keys == nil || !keys.Valid() || target == 0 || !product.BelongsToRegistry(reg, value) {
 		return state.StableRootPathEvidenceMutation{}, fmt.Errorf("factapply: invalid stable-root path-evidence input")
 	}
 	preserve := make([]pathevidence.PathPresenceImplication, 0)
 	if !idempotent && !snapshot.Bottom {
 		for _, implication := range snapshot.Implications {
-			matchesTrigger := stableRootImplicationEndpointMatchesSymbol(implication.Trigger, target)
-			matchesTarget := stableRootImplicationEndpointMatchesSymbol(implication.Target, target)
+			matchesTrigger := stableRootImplicationEndpointMatchesClass(keys, implication.Trigger, target, formalRoots)
+			matchesTarget := stableRootImplicationEndpointMatchesClass(keys, implication.Target, target, formalRoots)
 			if !matchesTrigger && matchesTarget && rootAssignmentValueSatisfiesImplicationTarget(reg, value, implication) {
 				preserve = append(preserve, implication)
 			}
 		}
 	}
-	return domain.SealStableRootPathEvidenceMutation(keys, target, idempotent, preserve)
+	return domain.SealStableRootPathEvidenceMutationWithFormalRoots(keys, target, idempotent, preserve, formalRoots)
+}
+
+func stableRootImplicationEndpointMatchesClass(keys *keyspace.KeySpace, candidate keyspace.Key, target symbol.ID, formalRoots []formal.Root) bool {
+	if stableRootImplicationEndpointMatchesSymbol(candidate, target) {
+		return true
+	}
+	if keys == nil {
+		return false
+	}
+	root, exact := keys.DescribeFormalRoot(candidate)
+	if !exact {
+		return false
+	}
+	for _, member := range formalRoots {
+		if root == member {
+			return true
+		}
+	}
+	return false
 }
 
 func stableRootImplicationEndpointMatchesSymbol(candidate keyspace.Key, target symbol.ID) bool {
