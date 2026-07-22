@@ -1,10 +1,13 @@
 package body
 
 import (
+	"sort"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 )
@@ -70,17 +73,59 @@ func (r *Result) LifecycleObligationProofs() []LifecycleObligationProof {
 	if r == nil || r.Graph() == nil {
 		return nil
 	}
-	exit, ok := r.ExitState()
-	if !ok {
+	// The synthetic CFG exit only receives fall-through control flow.  An
+	// explicit return is also a local-ownership terminal, though, and its
+	// resource obligations must participate in the same exit judgment.  In
+	// particular, a later close on the fall-through path cannot discharge an
+	// obligation on an earlier-return path.
+	var terminals []state.State
+	if exit, ok := r.ExitState(); ok {
+		terminals = append(terminals, exit)
+	}
+	for point := range r.returnFacts() {
+		if !r.PointNormallyReachable(point) {
+			continue
+		}
+		atReturn, ok := r.StateAt(point)
+		if !ok {
+			continue
+		}
+		terminals = append(terminals, atReturn)
+	}
+	if len(terminals) == 0 {
 		return nil
 	}
-	obligations := exit.OpenTypestateObligations()
+	domain, err := state.TryDomainWithOptionalLanes(r.registry, r.stateLanes)
+	if err != nil {
+		domain = state.Domain(r.registry)
+	}
+	joined := domain.Bottom()
+	for _, terminal := range terminals {
+		joined = domain.Join(joined, terminal)
+	}
+	obligations := make(map[typestate.Resource]typestate.OpenObligation)
+	for _, obligation := range joined.OpenTypestateObligations() {
+		// Joining all ownership terminals enforces conservation: a final state
+		// on one terminal cannot erase an open state on another.
+		obligations[obligation.Resource] = obligation
+	}
 	if len(obligations) == 0 {
 		return nil
 	}
 	trace := r.newLifecycleTrace()
-	var out []LifecycleObligationProof
-	for _, obligation := range obligations {
+	resources := make([]typestate.Resource, 0, len(obligations))
+	for resource := range obligations {
+		resources = append(resources, resource)
+	}
+	sort.Slice(resources, func(i, j int) bool {
+		if resources[i].ID != resources[j].ID {
+			return resources[i].ID < resources[j].ID
+		}
+		return resources[i].Protocol < resources[j].Protocol
+	})
+	out := make([]LifecycleObligationProof, 0, len(resources))
+	for _, resource := range resources {
+		obligation := obligations[resource]
 		if obligation.Resource.ID == "" || obligation.Resource.Protocol == "" || obligation.Obligation.Empty() {
 			continue
 		}
