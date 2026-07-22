@@ -82,20 +82,6 @@ func pathValuePresenceImplicationAt(
 	return implication, true
 }
 
-func activatePathPresenceImplicationsForPath(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-) state.State {
-	pathKey := factPathKeyAt(resolver, point, targetPath)
-	if pathKey == "" {
-		return out
-	}
-	return activatePathPresenceImplications(reg, resolver, point, out)
-}
-
 func activatePathPresenceImplications(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
