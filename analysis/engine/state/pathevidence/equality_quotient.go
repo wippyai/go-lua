@@ -39,7 +39,7 @@ func (l Lane) SealEqualityQuotient(keys *keyspace.KeySpace) (EqualityQuotient, b
 		return EqualityQuotient{}, false
 	}
 	observations := make([]keyspace.Key, 0)
-	seen := make(map[keyspace.KeyHandle]struct{})
+	seen := make(map[keyspace.Key]struct{})
 	l.forEachCongruenceObservation(keys, func(candidate keyspace.Key) {
 		// A lane can retain observations imported from another lexical
 		// keyspace.  They are not terms in this quotient's algebra and cannot
@@ -50,14 +50,10 @@ func (l Lane) SealEqualityQuotient(keys *keyspace.KeySpace) (EqualityQuotient, b
 		if !pathCongruenceGroundTermValid(keys, candidate) {
 			return
 		}
-		handle := candidate.Handle()
-		if handle == 0 {
+		if _, duplicate := seen[candidate]; duplicate {
 			return
 		}
-		if _, duplicate := seen[handle]; duplicate {
-			return
-		}
-		seen[handle] = struct{}{}
+		seen[candidate] = struct{}{}
 		observations = append(observations, candidate)
 	})
 	sort.Slice(observations, func(i, j int) bool { return keys.Less(observations[i], observations[j]) })
