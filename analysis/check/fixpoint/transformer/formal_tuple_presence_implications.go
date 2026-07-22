@@ -492,14 +492,38 @@ func (a *formalTupleAlgebra) applyFormalPresenceImplications(operator formalRela
 			return fail(careErr)
 		}
 		if trueCare != decisionFalse {
-			leaves, reachable, leafErr := a.applyFormalPresenceImplicationsLeaf(view, plan)
-			if leafErr != nil {
-				return fail(leafErr)
+			// N2 owns a concrete coordinate-path-evidence transaction.  Its
+			// Values inputs may still be entry-dependent, so preserve the sealed
+			// formal image until entry substitution supplies concrete operands
+			// instead of materializing a symbolic leaf as product.Value here.
+			symbolic, symbolicErr := view.symbolicValuesIn(plan.projectionOrdinals)
+			if symbolicErr != nil {
+				return fail(symbolicErr)
 			}
-			if reachable {
-				for index, leaf := range leaves {
-					if leafErr = publish(index, trueCare, leaf); leafErr != nil {
-						return fail(leafErr)
+			if symbolic {
+				for index, ordinal := range plan.writeOrdinals {
+					leaf := decisionLeaf(1)
+					if ordinal != 0 {
+						var present bool
+						leaf, present = view.leaf(ordinal)
+						if !present {
+							return fail(errFormalComponentMalformed)
+						}
+					}
+					if publishErr := publish(index, trueCare, leaf); publishErr != nil {
+						return fail(publishErr)
+					}
+				}
+			} else {
+				leaves, reachable, leafErr := a.applyFormalPresenceImplicationsLeaf(view, plan)
+				if leafErr != nil {
+					return fail(leafErr)
+				}
+				if reachable {
+					for index, leaf := range leaves {
+						if leafErr = publish(index, trueCare, leaf); leafErr != nil {
+							return fail(leafErr)
+						}
 					}
 				}
 			}
