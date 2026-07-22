@@ -777,7 +777,11 @@ func freezeLinkedFrameBoundaryTopology(caller *relationProgramBody, frame *linke
 // are assigned by the byte order of stable lexical body IDs, independent of
 // input order, maps, CFG process IDs, or solve generations.
 type RelationProgram struct {
-	tier1            RelationProgramManifest
+	tier1 RelationProgramManifest
+	// syntax is the sealed per-body tier-2 local syntax extracted by Stage 3.
+	// It is not a cache and has no forest back-pointer; bodies below remain the
+	// old transaction-facing view until Stage 4 extracts SCC/link artifacts.
+	syntax           []relationBodySyntaxArtifact
 	registry         *axis.Registry
 	bodies           []relationProgramBody
 	byBody           map[lexicalidentity.StableLexicalBodyID]relationVar
@@ -853,7 +857,6 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 	byBody := make(map[lexicalidentity.StableLexicalBodyID]relationVar, len(ordered))
 	shapes := make(map[lexicalidentity.StableLexicalBodyID]Shape, len(ordered))
 	var registry *axis.Registry
-	productDomains := make(map[lexicalidentity.StableLexicalBodyID]state.ProductDomain, len(ordered))
 	for index, unit := range ordered {
 		unitDomain := unit.Domain.Lattice()
 		if unit.Body == (lexicalidentity.StableLexicalBodyID{}) || index > 0 && unit.Body == ordered[index-1].Body {
@@ -868,7 +871,6 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 		if !unit.Domain.Valid() || unit.Domain.Registry() != unit.Registry || unitDomain.Bottom == nil || unitDomain.Equal == nil || unitDomain.LessOrEq == nil || unitDomain.Join == nil || unitDomain.Widen == nil {
 			return nil, fmt.Errorf("transformer: lexical body %s has no exact application State domain", unit.Body)
 		}
-		productDomains[unit.Body] = unit.Domain
 		if !unit.EntrySeedPlan.Valid() {
 			return nil, fmt.Errorf("transformer: lexical body %s has no prepared entry-seed authority", unit.Body)
 		}
@@ -1209,9 +1211,12 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 	if err := freezeRelationDefinitionGuardPlans(codes, program.definitions); err != nil {
 		return nil, err
 	}
-	// Seal owner arenas and link frame/tuple authority. relationCode is the sole
-	// retained executable representation; the invocation plan composes those
-	// immutable per-body relations directly at solve time.
+	// Seal owner arenas, then extract the local tier-2 syntax artifacts.  The
+	// forest-wide term closure above is deliberately outside this boundary: it
+	// still completes open cross-body frame/result syntax before any artifact
+	// exists.  The old relationProgramBody view is materialized unchanged below
+	// so SCC/link and formal-template work retain their public transaction.
+	syntax := make([]relationBodySyntaxArtifact, len(ordered))
 	for index, unit := range ordered {
 		if err := prepared[index].sealRelationProgramWorld(); err != nil {
 			return nil, fmt.Errorf("transformer: seal lexical body %s: %w", unit.Body, err)
@@ -1228,11 +1233,22 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 		if ambientErr != nil {
 			return nil, fmt.Errorf("transformer: seal lexical body %s ambient roots: %w", unit.Body, ambientErr)
 		}
-		reads := make([][]cfg.Point, len(unit.NodeReads))
-		for point := range unit.NodeReads {
-			reads[point] = append([]cfg.Point(nil), unit.NodeReads[point]...)
+		artifact, artifactErr := freezeRelationBodySyntaxArtifact(unit, relationVar(index+1), rootCarriers[index], ambient, prepared[index])
+		if artifactErr != nil {
+			return nil, artifactErr
 		}
-		program.bodies[index] = relationProgramBody{body: unit.Body, variable: relationVar(index + 1), keys: unit.KeySpace, roots: rootCarriers[index], ambient: ambient, relation: prepared[index].frozenRelation(), plan: unit.Plan, graph: unit.Graph, pathSemantics: unit.PathSemantics, rootAssignments: unit.RootAssignments, returns: unit.Returns, externalCalls: unit.ExternalCallOutcome, genericForMembership: unit.GenericForMembership, nodeReads: reads, domain: unit.Domain.Lattice(), productDomain: productDomains[unit.Body], entrySeedPlan: unit.EntrySeedPlan.Clone(), initialStatePlan: unit.InitialStatePlan.Clone(), definitionFrames: make(map[callFrameTerm]relationVar)}
+		syntax[index] = artifact
+	}
+	if err := validateDistinctRelationBodySyntaxArtifacts(syntax); err != nil {
+		return nil, err
+	}
+	program.syntax = syntax
+	for index := range program.syntax {
+		body, bodyErr := program.syntax[index].materializeRelationProgramBody()
+		if bodyErr != nil {
+			return nil, bodyErr
+		}
+		program.bodies[index] = body
 	}
 	for _, definition := range program.definitions {
 		program.bodies[definition.owner-1].definitionFrames[definition.frame] = definition.target
