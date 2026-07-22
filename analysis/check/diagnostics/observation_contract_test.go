@@ -13,6 +13,8 @@ func TestDiscriminatedUnionObservationContractDeclaresOnlyItsReadClosure(t *test
 		t.Fatalf("discriminated-union contract retained a coarse closure: %#v", contract)
 	}
 	want := []transformer.ObservationClass{
+		transformer.ObservationClassCallOutcome,
+		transformer.ObservationClassPathValue,
 		transformer.ObservationClassPointReachability,
 		transformer.ObservationClassPointState,
 	}
@@ -29,6 +31,8 @@ func TestLifecycleResourceObservationContractDeclaresOnlyItsReadClosure(t *testi
 	want := []transformer.ObservationClass{
 		transformer.ObservationClassCallOutcome,
 		transformer.ObservationClassEntryExitState,
+		transformer.ObservationClassNodeOutput,
+		transformer.ObservationClassPathValue,
 		transformer.ObservationClassPointReachability,
 		transformer.ObservationClassPointState,
 	}
@@ -45,6 +49,7 @@ func TestNilSafetyPresenceObservationContractDeclaresOnlyItsReadClosure(t *testi
 	want := []transformer.ObservationClass{
 		transformer.ObservationClassCallOutcome,
 		transformer.ObservationClassEdgeReachability,
+		transformer.ObservationClassNodeOutput,
 		transformer.ObservationClassPathValue,
 		transformer.ObservationClassPointReachability,
 		transformer.ObservationClassPointState,
@@ -62,6 +67,7 @@ func TestTypeAssignmentObservationContractDeclaresOnlyItsReadClosure(t *testing.
 	want := []transformer.ObservationClass{
 		transformer.ObservationClassCallOutcome,
 		transformer.ObservationClassEntryExitState,
+		transformer.ObservationClassNodeOutput,
 		transformer.ObservationClassNormalReturn,
 		transformer.ObservationClassPathValue,
 		transformer.ObservationClassPointReachability,

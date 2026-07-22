@@ -6,6 +6,7 @@ package diagnostics
 import (
 	"context"
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/check/judgment"
 	"github.com/wippyai/go-lua/analysis/check/obligation/pass"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
@@ -61,23 +62,26 @@ type producerContext struct {
 }
 
 type diagnosticProducer struct {
+	consumer       transformer.ObservationConsumer
 	codes          []diagnostic.Code
 	defaultEnabled bool
 	judgments      func(result *body.Result, context producerContext) []judgment.Judgment
 	produce        func(result *body.Result, context producerContext) []diagnostic.Diagnostic
 }
 
-func judgmentProducer(judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []judgment.Judgment {
+func judgmentProducer(consumer transformer.ObservationConsumer, judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments(consumer, judgmentCodes, func(result *body.Result, context producerContext) []judgment.Judgment {
 		return context.judgments(result, producers...)
 	})
 }
 
 func diagnosticProducerForJudgments(
+	consumer transformer.ObservationConsumer,
 	judgmentCodes []judgment.Code,
 	produce func(result *body.Result, context producerContext) []judgment.Judgment,
 ) diagnosticProducer {
 	out := diagnosticProducer{
+		consumer:       consumer,
 		codes:          diagnosticCodesForJudgments(judgmentCodes...),
 		defaultEnabled: defaultDiagnosticEnabledForJudgments(judgmentCodes...),
 		judgments:      produce,
@@ -133,20 +137,20 @@ func defaultDiagnosticEnabledForJudgments(judgmentCodes ...judgment.Code) bool {
 	return out
 }
 
-func parentJudgmentProducer(judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []judgment.Judgment {
+func parentJudgmentProducer(consumer transformer.ObservationConsumer, judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments(consumer, []judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []judgment.Judgment {
 		return context.judgmentsWithParent(result, context.parent, producers...)
 	})
 }
 
-func reachableJudgmentProducer(judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments([]judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []judgment.Judgment {
+func reachableJudgmentProducer(consumer transformer.ObservationConsumer, judgmentCode judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments(consumer, []judgment.Code{judgmentCode}, func(result *body.Result, context producerContext) []judgment.Judgment {
 		return context.reachableJudgments(result, producers...)
 	})
 }
 
-func parentStackJudgmentProducer(judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
-	return diagnosticProducerForJudgments(judgmentCodes, func(result *body.Result, context producerContext) []judgment.Judgment {
+func parentStackJudgmentProducer(consumer transformer.ObservationConsumer, judgmentCodes []judgment.Code, producers ...pass.Producer) diagnosticProducer {
+	return diagnosticProducerForJudgments(consumer, judgmentCodes, func(result *body.Result, context producerContext) []judgment.Judgment {
 		if result == nil {
 			return nil
 		}
@@ -155,7 +159,7 @@ func parentStackJudgmentProducer(judgmentCodes []judgment.Code, producers ...pas
 }
 
 func directCallContractJudgmentProducer() diagnosticProducer {
-	return diagnosticProducerForJudgments([]judgment.Code{
+	return diagnosticProducerForJudgments(transformer.ObservationConsumerDiagnosticTypeAssignment, []judgment.Code{
 		judgment.CodeCallCallee,
 		judgment.CodeCallArity,
 		judgment.CodeCallArgType,
@@ -181,9 +185,10 @@ func (p diagnosticProducer) shouldRun(policy diagnostic.Policy) bool {
 
 func diagnosticProducers() []diagnosticProducer {
 	return []diagnosticProducer{
-		parentJudgmentProducer(judgment.CodeUnresolvedType, pass.UnresolvedTypes{}),
-		judgmentProducer([]judgment.Code{judgment.CodeUnresolvedValue}, pass.UnresolvedValues{}),
+		parentJudgmentProducer(transformer.ObservationConsumerDiagnosticTypeAssignment, judgment.CodeUnresolvedType, pass.UnresolvedTypes{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticTypeAssignment, []judgment.Code{judgment.CodeUnresolvedValue}, pass.UnresolvedValues{}),
 		judgmentProducer(
+			transformer.ObservationConsumerDiagnosticTypeAssignment,
 			[]judgment.Code{
 				judgment.CodeAssignment,
 				judgment.CodeAssignmentTarget,
@@ -195,18 +200,20 @@ func diagnosticProducers() []diagnosticProducer {
 			pass.ConcatOperands{},
 		),
 		directCallContractJudgmentProducer(),
-		judgmentProducer([]judgment.Code{judgment.CodeNumericForOperand}, pass.NumericForOperands{}),
-		judgmentProducer([]judgment.Code{judgment.CodeNonNilAssertion}, pass.NonNilAssertions{}),
-		reachableJudgmentProducer(judgment.CodeMemberRead, pass.MemberReads{}),
-		judgmentProducer([]judgment.Code{judgment.CodeChannelSelect}, pass.ChannelSelects{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticTypeAssignment, []judgment.Code{judgment.CodeNumericForOperand}, pass.NumericForOperands{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticNilSafetyPresence, []judgment.Code{judgment.CodeNonNilAssertion}, pass.NonNilAssertions{}),
+		reachableJudgmentProducer(transformer.ObservationConsumerDiagnosticNilSafetyPresence, judgment.CodeMemberRead, pass.MemberReads{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticLifecycleResource, []judgment.Code{judgment.CodeChannelSelect}, pass.ChannelSelects{}),
 		judgmentProducer(
+			transformer.ObservationConsumerDiagnosticLifecycleResource,
 			[]judgment.Code{judgment.CodeChannelSendClosed, judgment.CodeChannelDoubleClose},
 			pass.ChannelLifecycles{},
 		),
-		judgmentProducer([]judgment.Code{judgment.CodeUnusedLocal}, pass.UnusedLocals{}),
-		judgmentProducer([]judgment.Code{judgment.CodeDeadAssignment}, pass.DeadAssignments{}),
-		parentStackJudgmentProducer([]judgment.Code{judgment.CodeRedundantCondition}, pass.RedundantConditions{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticTypeAssignment, []judgment.Code{judgment.CodeUnusedLocal}, pass.UnusedLocals{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticTypeAssignment, []judgment.Code{judgment.CodeDeadAssignment}, pass.DeadAssignments{}),
+		parentStackJudgmentProducer(transformer.ObservationConsumerDiagnosticNilSafetyPresence, []judgment.Code{judgment.CodeRedundantCondition}, pass.RedundantConditions{}),
 		parentStackJudgmentProducer(
+			transformer.ObservationConsumerDiagnosticDiscriminatedUnion,
 			[]judgment.Code{
 				judgment.CodeDiscriminatedUnion,
 				judgment.CodeOptional,
@@ -220,12 +227,13 @@ func diagnosticProducers() []diagnosticProducer {
 			pass.Registrations{},
 			pass.TableDispatches{},
 		),
-		judgmentProducer([]judgment.Code{judgment.CodeFrozenTable}, pass.FrozenTableMutations{}),
-		judgmentProducer([]judgment.Code{judgment.CodeTypestateInvalidTransition}, pass.TypestateInvalidTransitions{}),
-		judgmentProducer([]judgment.Code{judgment.CodeTypestateInvalidRequirement, judgment.CodeTypestateUnprovenRequirement}, pass.TypestateRequirements{}),
-		judgmentProducer([]judgment.Code{judgment.CodeLifecycle}, pass.LifecycleObligations{}),
-		judgmentProducer([]judgment.Code{judgment.CodeSendIsolation}, pass.SendSafety{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticLifecycleResource, []judgment.Code{judgment.CodeFrozenTable}, pass.FrozenTableMutations{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticLifecycleResource, []judgment.Code{judgment.CodeTypestateInvalidTransition}, pass.TypestateInvalidTransitions{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticLifecycleResource, []judgment.Code{judgment.CodeTypestateInvalidRequirement, judgment.CodeTypestateUnprovenRequirement}, pass.TypestateRequirements{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticLifecycleResource, []judgment.Code{judgment.CodeLifecycle}, pass.LifecycleObligations{}),
+		judgmentProducer(transformer.ObservationConsumerDiagnosticLifecycleResource, []judgment.Code{judgment.CodeSendIsolation}, pass.SendSafety{}),
 		judgmentProducer(
+			transformer.ObservationConsumerDiagnosticNilSafetyPresence,
 			[]judgment.Code{
 				judgment.CodeAdviceRedundantClaim,
 				judgment.CodeAdviceAlwaysTrueGuard,
@@ -306,7 +314,11 @@ func produceJudgmentsWithParents(
 		if producer.judgments == nil {
 			continue
 		}
-		out = append(out, producer.judgments(result, context)...)
+		var items []judgment.Judgment
+		body.WithObservationAuditConsumer(result, string(producer.consumer), func() {
+			items = producer.judgments(result, context)
+		})
+		out = append(out, items...)
 	}
 	if result == nil {
 		return out
@@ -331,7 +343,11 @@ func produceJudgmentsWithContext(ctx context.Context, result *body.Result, sourc
 		if context.canceled() || producer.judgments == nil {
 			break
 		}
-		out = append(out, producer.judgments(result, context)...)
+		var items []judgment.Judgment
+		body.WithObservationAuditConsumer(result, string(producer.consumer), func() {
+			items = producer.judgments(result, context)
+		})
+		out = append(out, items...)
 	}
 	if result == nil || context.canceled() {
 		return out
@@ -376,7 +392,11 @@ func produceOne(result *body.Result, config Config, context producerContext) []d
 		if !producer.shouldRun(config.Policy) {
 			continue
 		}
-		out = append(out, producer.produce(result, context)...)
+		var items []diagnostic.Diagnostic
+		body.WithObservationAuditConsumer(result, string(producer.consumer), func() {
+			items = producer.produce(result, context)
+		})
+		out = append(out, items...)
 	}
 	return out
 }

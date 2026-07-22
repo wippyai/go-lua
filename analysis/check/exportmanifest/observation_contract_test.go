@@ -13,6 +13,7 @@ func TestObservationContractDeclaresOnlyExportReadClosure(t *testing.T) {
 		t.Fatalf("export contract retained a coarse closure: %#v", contract)
 	}
 	want := []transformer.ObservationClass{
+		transformer.ObservationClassCallOutcome,
 		transformer.ObservationClassNormalReturn,
 		transformer.ObservationClassPathValue,
 		transformer.ObservationClassPointState,

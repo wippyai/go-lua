@@ -94,6 +94,7 @@ func (r *Result) KeySpace() *keyspace.KeySpace {
 }
 
 func (r *Result) StateAt(point cfg.Point) (state.State, bool) {
+	r.auditObservation("point-state", int(point))
 	st, ok := r.solvedStateAt(point)
 	if !ok {
 		return state.State{}, false
@@ -152,6 +153,7 @@ func (r *Result) UnresolvedStaticCalleeCall(call *ast.FuncCallExpr) bool {
 // PointReachable reports whether point has a solved non-bottom input state in
 // this body's active state domain.
 func (r *Result) PointReachable(point cfg.Point) bool {
+	r.auditObservation("point-reachability", int(point))
 	if r == nil || r.registry == nil {
 		return false
 	}
@@ -175,6 +177,7 @@ func (r *Result) PointReachable(point cfg.Point) bool {
 // branch, so post-solve consumers that enumerate user-facing obligations should
 // use this query to avoid reading resurrected unreachable nodes.
 func (r *Result) PointNormallyReachable(point cfg.Point) bool {
+	r.auditObservation("point-reachability", int(point))
 	if r == nil || r.cfg == nil || r.cfg.Graph == nil {
 		return false
 	}
@@ -210,6 +213,7 @@ func (r *Result) computeNormalReachability() map[cfg.Point]bool {
 // a non-bottom state in this solved body. Branch normality is an immutable
 // stabilized coordinate; this query never replays node or edge semantics.
 func (r *Result) EdgeCanCompleteNormally(from, to cfg.Point) bool {
+	r.auditObservation("edge-reachability", int(from))
 	if normal, ok := r.publishedEdgeNormal(from, to); ok {
 		return normal
 	}
@@ -249,7 +253,12 @@ func (r *Result) ExitState() (state.State, bool) {
 	if graph == nil {
 		return state.State{}, false
 	}
-	return r.StateAt(graph.Exit())
+	r.auditObservation("entry-exit-state", int(graph.Exit()))
+	st, ok := r.solvedStateAt(graph.Exit())
+	if !ok {
+		return state.State{}, false
+	}
+	return st.Snapshot(), true
 }
 
 func (r *Result) EntryState() (state.State, bool) {
@@ -257,7 +266,12 @@ func (r *Result) EntryState() (state.State, bool) {
 	if graph == nil {
 		return state.State{}, false
 	}
-	return r.StateAt(graph.Entry())
+	r.auditObservation("entry-exit-state", int(graph.Entry()))
+	st, ok := r.solvedStateAt(graph.Entry())
+	if !ok {
+		return state.State{}, false
+	}
+	return st.Snapshot(), true
 }
 
 func (r *Result) ReturnFact(point cfg.Point) (ReturnFact, bool) {

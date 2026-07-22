@@ -85,6 +85,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	if err != nil {
 		return Result{}, err
 	}
+	body.AttachObservationAuditTree(published.root, observationAudit(config.ObservationContracts))
 	return Result{
 		snapshot:     published.snapshot,
 		rootKey:      keys.rootKey,
@@ -93,6 +94,24 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 		pathKeys:     maps.Clone(keys.pathKeys),
 		rootResult:   published.root,
 	}, nil
+}
+
+func observationAudit(contracts []transformer.ObservationContract) *body.ObservationAudit {
+	specs := make([]body.ObservationAuditContract, 0, len(contracts))
+	for _, contract := range contracts {
+		classes := contract.Classes()
+		for _, consumer := range contract.Consumers() {
+			spec := body.ObservationAuditContract{
+				Consumer: string(consumer),
+				Classes:  make([]string, len(classes)),
+			}
+			for index, class := range classes {
+				spec.Classes[index] = string(class)
+			}
+			specs = append(specs, spec)
+		}
+	}
+	return body.NewObservationAudit(specs...)
 }
 
 // RunFunction binds fn once and runs fixed-point summary equations over that

@@ -71,6 +71,11 @@ func (r *Result) boundaryStateAt(point cfg.Point) (state.State, bool) {
 // materializes facts needed by same-point consumers, such as object-literal heap
 // entries for a call argument.
 func (r *Result) StateAtBoundary(point cfg.Point) (state.State, bool) {
+	if r.needsBoundaryNodeOutput(point) {
+		r.auditObservation("node-output", int(point))
+	} else {
+		r.auditObservation("point-state", int(point))
+	}
 	st, ok := r.boundaryStateAt(point)
 	if !ok {
 		return state.State{}, false

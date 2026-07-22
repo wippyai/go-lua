@@ -130,18 +130,18 @@ func WithStats(stats *program.Stats) Option {
 }
 
 func Check(src string, opts ...Option) Result {
-	return checkSource(src, "test.lua", opts...)
+	return checkSource(src, "test.lua", false, opts...)
 }
 
 func CheckFile(src, filename string, opts ...Option) Result {
 	if filename == "" {
 		filename = "test.lua"
 	}
-	return checkSource(src, filename, opts...)
+	return checkSource(src, filename, false, opts...)
 }
 
 func CheckAndExport(src, name string, opts ...Option) *ModuleResult {
-	result := checkSource(src, name, opts...)
+	result := checkSource(src, name, true, opts...)
 	return moduleResultFromCheck(name, result)
 }
 
@@ -149,7 +149,7 @@ func CheckFileAndExport(src, name, filename string, opts ...Option) *ModuleResul
 	if filename == "" {
 		filename = name
 	}
-	result := checkSource(src, filename, opts...)
+	result := checkSource(src, filename, true, opts...)
 	return moduleResultFromCheck(name, result)
 }
 
@@ -263,7 +263,7 @@ func ProcessManifest() *manifest.Manifest {
 	return m
 }
 
-func checkSource(src, filename string, opts ...Option) Result {
+func checkSource(src, filename string, exportResult bool, opts ...Option) Result {
 	cfg := applyOptions(opts)
 	stmts, err := parse.ParseString(src, filename)
 	if err != nil {
@@ -287,11 +287,15 @@ func checkSource(src, filename string, opts ...Option) Result {
 			globals = append(globals, m.Globals...)
 		}
 	}
+	contracts := append([]transformer.ObservationContract{
+		program.SummaryProjectionObservationContract(),
+	}, diagnostics.ObservationContracts()...)
+	if exportResult {
+		contracts = append(contracts, exportmanifest.ObservationContract())
+	}
 	checked, err := program.RunChunk(stmts, program.Config{
-		Context: cfg.context,
-		ObservationContracts: append([]transformer.ObservationContract{
-			program.SummaryProjectionObservationContract(),
-		}, diagnostics.ObservationContracts()...),
+		Context:              cfg.context,
+		ObservationContracts: contracts,
 		Check: body.Config{
 			Registry:      reg,
 			Globals:       globals,

@@ -328,6 +328,8 @@ type Result struct {
 	callExprPts           map[*ast.FuncCallExpr]cfg.Point
 	diagnosticOutput      callpayload.DiagnosticOutput
 	formalPathValue       FormalPathValueObservation
+	observationAudit      *ObservationAudit
+	observationConsumer   string
 
 	queries resultQueryCache
 

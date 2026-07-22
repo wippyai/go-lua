@@ -807,6 +807,7 @@ func (r *Result) beforeBoundarySourceRead(point cfg.Point) func(cfg.Point) state
 // PathValueAtBoundary projects a path's product value at the diagnostic read
 // boundary for point.
 func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	r.auditObservation("path-value", int(point))
 	if r == nil || p.IsEmpty() {
 		return product.Value{}, false
 	}
@@ -1109,6 +1110,7 @@ func (r *Result) pathValueNeedsBoundaryProof(value product.Value, p pathdom.Path
 // PathValueBeforeBoundary projects a path from the solved point input, without
 // applying same-node boundary transfer effects.
 func (r *Result) PathValueBeforeBoundary(point cfg.Point, p pathdom.Path) (product.Value, bool) {
+	r.auditObservation("path-value", int(point))
 	return r.cachedPathValue(sourceValueReadBeforeBoundary, point, p, func() (product.Value, bool) {
 		return r.computePathValueBeforeBoundary(point, p)
 	})
@@ -1603,6 +1605,7 @@ func (r *Result) UninitializedLocalDeclarationValueAtBoundary(point cfg.Point, i
 // stabilized relation. An absent map entry means the point is not a lexical
 // call site; an executed call with no effects is an explicit empty entry.
 func (r *Result) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) {
+	r.auditObservation("call-outcome", int(point))
 	if r == nil {
 		return callpayload.CallOutcome{}, false
 	}

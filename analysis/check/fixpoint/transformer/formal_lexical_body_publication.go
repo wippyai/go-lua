@@ -3,6 +3,7 @@ package transformer
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -105,7 +106,10 @@ func formalLexicalPublicationViews(execution *formalRelationExecution) ([]Formal
 		return nil, fmt.Errorf("transformer: formal lexical publication is unowned")
 	}
 	p := execution.algebra.program
-	summaryOnly := p.ObservationContract().SummaryV1()
+	// Contract audit deliberately keeps publication complete. It evaluates the
+	// same declared demand consumers will use for scoping, but must never make
+	// an omitted class disappear before the read-model recorder can report it.
+	summaryOnly := p.ObservationContract().SummaryV1() && os.Getenv("GOLUA_CONTRACT_AUDIT") != "1"
 	out := make([]FormalRelationPublicationView, len(p.bodies))
 	for index := range p.bodies {
 		var view FormalRelationPublicationView

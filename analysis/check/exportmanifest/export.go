@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -22,6 +23,14 @@ import (
 // definitions, directly recovered function signatures, ambient globals, and
 // framework callback protocols.
 func FromProgramResult(path string, result program.Result) *manifest.Manifest {
+	var out *manifest.Manifest
+	body.WithObservationAuditConsumer(result.RootResult(), string(transformer.ObservationConsumerExportCode), func() {
+		out = fromProgramResult(path, result)
+	})
+	return out
+}
+
+func fromProgramResult(path string, result program.Result) *manifest.Manifest {
 	m := manifest.New(path)
 	publishFunctionSignatures(m, path, result)
 	if export, ok := exportType(result); ok {

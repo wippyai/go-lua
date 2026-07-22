@@ -204,7 +204,9 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 	summaryDigests := digestSummaries(checked.RootResult(), snapshot)
 	var semantic *semanticQuerySnapshot
 	if semanticProjection {
-		semantic = projectSemanticQueries(input, stmts, checked.RootResult(), items, placement)
+		body.WithObservationAuditConsumer(checked.RootResult(), string(transformer.ObservationConsumerServiceIDEQueries), func() {
+			semantic = projectSemanticQueries(input, stmts, checked.RootResult(), items, placement)
+		})
 	}
 	// completedSnapshot owns only compact projections. Drop the solved CFG
 	// states, transfer closures, query caches, and nested result tree before
