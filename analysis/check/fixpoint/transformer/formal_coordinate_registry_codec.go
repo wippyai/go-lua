@@ -19,29 +19,39 @@ func (r *formalCoordinateRegistry) CanonicalBytes() []byte {
 	encoded := make([]byte, 0, 256)
 	encoded = appendCanonicalText(encoded, formalCoordinateRegistryCodecVersion)
 	encoded = appendCanonicalOwner(encoded, r.owner)
-	for _, root := range r.sortedRoots() {
+	roots := r.sortedRoots()
+	encoded = appendCanonicalUint64(encoded, uint64(len(roots)))
+	for _, root := range roots {
 		encoded = appendCanonicalRoot(encoded, root)
 		encoded = appendCanonicalClass(encoded, r.classes[root])
 	}
+	encoded = appendCanonicalUint64(encoded, uint64(len(r.aliases)))
 	for _, alias := range r.aliases {
 		encoded = appendCanonicalRoot(encoded, alias.left)
 		encoded = appendCanonicalRoot(encoded, alias.right)
 		encoded = appendCanonicalOccurrence(encoded, alias.guard.occurrence)
 		encoded = appendCanonicalUint32(encoded, alias.guard.branch)
+		encoded = appendCanonicalUint64(encoded, uint64(len(alias.support)))
 		for _, support := range alias.support {
 			encoded = appendCanonicalClass(encoded, support)
 		}
 	}
-	for _, occurrence := range r.sortedAlphabetOccurrences() {
+	alphabetOccurrences := r.sortedAlphabetOccurrences()
+	encoded = appendCanonicalUint64(encoded, uint64(len(alphabetOccurrences)))
+	for _, occurrence := range alphabetOccurrences {
 		alphabet := r.alphabets[occurrence]
 		encoded = appendCanonicalOccurrence(encoded, occurrence)
+		encoded = appendCanonicalUint64(encoded, uint64(len(alphabet.roots)))
 		for _, root := range alphabet.roots {
 			encoded = appendCanonicalRoot(encoded, root)
 		}
 	}
-	for _, occurrence := range r.sortedAdvanceOccurrences() {
+	advanceOccurrences := r.sortedAdvanceOccurrences()
+	encoded = appendCanonicalUint64(encoded, uint64(len(advanceOccurrences)))
+	for _, occurrence := range advanceOccurrences {
 		advance := r.advances[occurrence]
 		encoded = appendCanonicalOccurrence(encoded, occurrence)
+		encoded = appendCanonicalUint64(encoded, uint64(len(advance.classes)))
 		for _, class := range advance.classes {
 			encoded = appendCanonicalClass(encoded, class)
 		}
