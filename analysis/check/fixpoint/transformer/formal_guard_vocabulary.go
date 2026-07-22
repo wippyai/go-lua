@@ -452,12 +452,12 @@ func sealFormalGuardBoundary(vocabulary *formalGuardVocabulary, draft formalGuar
 	}
 	pairs := make([]formalGuardRankPair, 0, len(draft.sources))
 	var closeRanks []uint32
-	var domainRanks []uint32
-	for key, rank := range vocabulary.ranks {
-		if key.variable == draft.target && key.root == 0 && key.definition == 0 {
-			domainRanks = append(domainRanks, rank)
-		}
-	}
+	// A boundary's domain is the exact source alphabet named by its frozen
+	// substitution plan, not every lexical guard owned by the callee. A callee
+	// may have guards that are only introduced after this invocation's entry;
+	// treating those unrelated ranks as boundary inputs makes the closure proof
+	// demand substitutions which deliberately do not exist.
+	domainRanks := make([]uint32, 0, len(draft.sources))
 	for source, target := range draft.sources {
 		sourceRank, sourceOK := vocabulary.ranks[source]
 		targetRank, targetOK := vocabulary.ranks[target]
@@ -465,6 +465,7 @@ func sealFormalGuardBoundary(vocabulary *formalGuardVocabulary, draft formalGuar
 			return formalGuardBoundary{}, fmt.Errorf("transformer: formal guard boundary contains an unranked atom")
 		}
 		pairs = append(pairs, formalGuardRankPair{source: sourceRank, target: targetRank})
+		domainRanks = append(domainRanks, sourceRank)
 		if target.root != 0 || target.definition != 0 {
 			closeRanks = append(closeRanks, targetRank)
 		}

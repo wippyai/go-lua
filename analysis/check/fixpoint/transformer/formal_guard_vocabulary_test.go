@@ -135,6 +135,33 @@ func TestFormalGuardVocabularySubstitutesAndClosesExactLifetimes(t *testing.T) {
 	}
 }
 
+func TestSealFormalGuardBoundaryDomainsOnlyMappedCalleeAtoms(t *testing.T) {
+	fixture := formalGuardLifetimeTestFixture(t, false)
+	source := formalGuardRankKey{
+		variable: 2, scope: fixture.targetLoop, arena: fixture.targetArena, term: fixture.targetParam,
+	}
+	target := formalGuardRankKey{
+		variable: 1, scope: fixture.callerLoop, arena: fixture.callerArena, term: fixture.callerParam,
+	}
+	boundary, err := sealFormalGuardBoundary(fixture.vocabulary, formalGuardBoundaryDraft{
+		target:  2,
+		sources: map[formalGuardRankKey]formalGuardRankKey{source: target},
+	})
+	if err != nil || !boundary.validateClosure() {
+		t.Fatalf("boundary = %#v, err = %v", boundary, err)
+	}
+	sourceRank, ok := fixture.vocabulary.ranks[source]
+	if !ok || !boundary.domain.contains(sourceRank) {
+		t.Fatalf("boundary domain = %#v, want mapped source rank %d", boundary.domain.ranks, sourceRank)
+	}
+	localRank, ok := fixture.vocabulary.ranks[formalGuardRankKey{
+		variable: 2, scope: fixture.targetLoop, arena: fixture.targetArena, term: fixture.targetLocal,
+	}]
+	if !ok || boundary.domain.contains(localRank) {
+		t.Fatalf("boundary domain = %#v, must exclude unrelated callee rank %d", boundary.domain.ranks, localRank)
+	}
+}
+
 func formalGuardTestDeepSealRejectsMalformedRanks(t *testing.T, fixture formalGuardLifetimeFixture) {
 	t.Helper()
 	keys := make([]formalGuardRankKey, 0, 2)
