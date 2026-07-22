@@ -69,6 +69,7 @@ func runPreparedRelationProgram(
 	rootStatic *body.Static,
 	config body.Config,
 	keys programKeys,
+	contracts []transformer.ObservationContract,
 	stats *Stats,
 ) (formalLexicalPublishedProgram, error) {
 	if rootStatic == nil || config.Registry == nil {
@@ -86,12 +87,18 @@ func runPreparedRelationProgram(
 	if stats != nil {
 		freezeTelemetry = &stats.Freeze
 	}
-	program, err := transformer.FreezeRelationProgramWithTelemetry(units, prepared.callTopology, freezeTelemetry)
+	// Canonicalize at the check/program boundary, before tier 3 receives the
+	// request.  The resulting key contains no entry State.
+	demand, err := transformer.CanonicalizeObservationContracts(contracts...)
+	if err != nil {
+		return formalLexicalPublishedProgram{}, err
+	}
+	program, err := transformer.FreezeRelationProgramWithObservationAndTelemetry(units, prepared.callTopology, demand, freezeTelemetry)
 	if err != nil {
 		return formalLexicalPublishedProgram{}, err
 	}
 	if stats != nil && os.Getenv("GO_LUA_FREEZE_TELEMETRY_RAW") != "" {
-		fmt.Printf("freeze telemetry raw: input=%+v local=%+v scc=%+v region=%+v coordinate=%+v path=%+v fiber=%+v quotient=%+v template=%+v\n", stats.Freeze.InputValidation, stats.Freeze.LocalSyntax, stats.Freeze.SCCClosureLinking, stats.Freeze.RegionWTO, stats.Freeze.CoordinateClosure, stats.Freeze.PathDependencyPlanning, stats.Freeze.FiberLayout, stats.Freeze.ObservableQuotient, stats.Freeze.TemplateBinding)
+		fmt.Printf("freeze telemetry raw: demand=%+v input=%+v local=%+v scc=%+v region=%+v coordinate=%+v path=%+v fiber=%+v quotient=%+v template=%+v\n", stats.Freeze.ObservationContract, stats.Freeze.InputValidation, stats.Freeze.LocalSyntax, stats.Freeze.SCCClosureLinking, stats.Freeze.RegionWTO, stats.Freeze.CoordinateClosure, stats.Freeze.PathDependencyPlanning, stats.Freeze.FiberLayout, stats.Freeze.ObservableQuotient, stats.Freeze.TemplateBinding)
 	}
 	rootBody := rootStatic.StableLexicalBodyID()
 	if rootBody == (lexicalidentity.StableLexicalBodyID{}) {

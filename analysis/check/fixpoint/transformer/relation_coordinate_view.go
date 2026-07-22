@@ -81,6 +81,9 @@ func (p *RelationProgram) Solve(ctx context.Context, bodyID lexicalidentity.Stab
 	if _, present := p.byBody[bodyID]; !present {
 		return StabilizedRelationView{}, fmt.Errorf("transformer: formal relation solve has no body %s", bodyID)
 	}
+	if err := p.RequireObservation(ObservationConsumerSummaryProjection, "formal relation evaluator"); err != nil {
+		return StabilizedRelationView{}, err
+	}
 	execution, err := executeFormalRootRelation(ctx, p, bodyID, entry)
 	if err != nil {
 		return StabilizedRelationView{}, err
@@ -93,4 +96,22 @@ func (p *RelationProgram) Solve(ctx context.Context, bodyID lexicalidentity.Stab
 		return StabilizedRelationView{}, fmt.Errorf("transformer: formal relation solve published %d lexical bodies, want %d", len(lexicalBodies), len(p.bodies))
 	}
 	return StabilizedRelationView{lexicalBodies: lexicalBodies, program: p}, nil
+}
+
+// ObservationContract returns the immutable, canonical demand retained by the
+// tier-3 product.  The returned value has no mutable exported representation.
+func (p *RelationProgram) ObservationContract() ObservationContract {
+	if p == nil {
+		return ObservationContract{}
+	}
+	return ObservationContract{key: p.relationDependencyFreeze.demand.key, consumers: append([]ObservationConsumer(nil), p.relationDependencyFreeze.demand.consumers...)}
+}
+
+// RequireObservation is the coverage guard used by evaluators and providers.
+// It never retries with a wider freeze.
+func (p *RelationProgram) RequireObservation(consumer ObservationConsumer, provider string) error {
+	if p == nil || !p.relationDependencyFreeze.validFor(p) {
+		return fmt.Errorf("transformer: observation coverage has no sealed dependency product")
+	}
+	return p.relationDependencyFreeze.evaluator.coverage.require(consumer, provider)
 }

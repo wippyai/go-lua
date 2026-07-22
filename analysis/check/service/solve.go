@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
@@ -158,7 +159,9 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 		globals = append(globals, item.Globals...)
 	}
 	globals = normalizedStrings(globals)
-	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, Check: body.Config{
+	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, ObservationContracts: []transformer.ObservationContract{
+		program.SummaryProjectionObservationContract(), diagnostics.ObservationContract(), exportmanifest.ObservationContract(), observationContract(),
+	}, Check: body.Config{
 		Registry:      checkerRegistry,
 		UnitNamespace: unitLexicalNamespace(input),
 		Globals:       globals,

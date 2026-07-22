@@ -854,13 +854,32 @@ func planNeedsPathSemanticAuthority(plan *operationplan.Plan) bool {
 // FreezeRelationProgram validates the complete forest and freezes every body
 // exactly once. A lexical call may resolve only through its sealed CallSurface.
 func FreezeRelationProgram(units []RelationProgramUnit, callTopology operationplan.CallTopology) (*RelationProgram, error) {
-	return FreezeRelationProgramWithTelemetry(units, callTopology, nil)
+	return FreezeRelationProgramWithObservationAndTelemetry(units, callTopology, FullResultV1ObservationContract(ObservationConsumerSummaryProjection), nil)
 }
 
 // FreezeRelationProgramWithTelemetry freezes the complete relation forest and
 // reports architectural phase costs to caller-owned telemetry when requested.
 // Telemetry is not retained by the resulting program.
 func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopology operationplan.CallTopology, telemetry *FreezeTelemetry) (*RelationProgram, error) {
+	return FreezeRelationProgramWithObservationAndTelemetry(units, callTopology, FullResultV1ObservationContract(ObservationConsumerSummaryProjection), telemetry)
+}
+
+// FreezeRelationProgramWithObservation freezes the full stage-6 closure for a
+// canonicalized demand contract.
+func FreezeRelationProgramWithObservation(units []RelationProgramUnit, callTopology operationplan.CallTopology, demand ObservationContract) (*RelationProgram, error) {
+	return FreezeRelationProgramWithObservationAndTelemetry(units, callTopology, demand, nil)
+}
+
+// FreezeRelationProgramWithObservationAndTelemetry is the demand-aware tier-3
+// entry point. Demand is validated before any tier-3 product can be built.
+func FreezeRelationProgramWithObservationAndTelemetry(units []RelationProgramUnit, callTopology operationplan.CallTopology, demand ObservationContract, telemetry *FreezeTelemetry) (*RelationProgram, error) {
+	demandStarted := telemetry.begin(FreezePhaseObservationContract)
+	canonicalDemand, demandErr := CanonicalizeObservationContracts(demand)
+	telemetry.end(FreezePhaseObservationContract, demandStarted)
+	if demandErr != nil {
+		return nil, demandErr
+	}
+	demand = canonicalDemand
 	inputStarted := telemetry.begin(FreezePhaseInputValidation)
 	inputComplete := false
 	defer func() {
@@ -1275,7 +1294,7 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 	telemetry.end(FreezePhaseSCCClosureLinking, sccLinkStarted)
 
 	dependencyStarted := telemetry.begin(FreezePhaseDependencyFreeze)
-	dependencyErr := freezeRelationDependencyFreezeFullResultV1(program, telemetry)
+	dependencyErr := freezeRelationDependencyFreezeFullResultV1(program, demand, telemetry)
 	telemetry.end(FreezePhaseDependencyFreeze, dependencyStarted)
 	if dependencyErr != nil {
 		return nil, dependencyErr

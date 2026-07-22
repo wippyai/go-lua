@@ -27,6 +27,11 @@ type Config struct {
 
 	RootKey summary.SummaryKey
 
+	// ObservationContracts are immutable consumer-owned demands.  They are
+	// unioned and canonicalized by runPreparedRelationProgram before tier 3.
+	// An omitted list means this direct program caller consumes summaries.
+	ObservationContracts []transformer.ObservationContract
+
 	Stats *Stats
 }
 
@@ -75,7 +80,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
-	published, err := runPreparedRelationProgram(config.Context, prepared, prepared.root, config.Check, keys, config.Stats)
+	published, err := runPreparedRelationProgram(config.Context, prepared, prepared.root, config.Check, keys, config.ObservationContracts, config.Stats)
 	if err != nil {
 		return Result{}, err
 	}
@@ -119,7 +124,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		return Result{}, err
 	}
 	rootPrepared := prepared.function(fn)
-	published, err := runPreparedRelationProgram(config.Context, prepared, rootPrepared, config.Check, keys, config.Stats)
+	published, err := runPreparedRelationProgram(config.Context, prepared, rootPrepared, config.Check, keys, config.ObservationContracts, config.Stats)
 	if err != nil {
 		return Result{}, err
 	}
@@ -146,6 +151,11 @@ func configWithStats(config Config) Config {
 	}
 	if config.Check.TypeValues == nil {
 		config.Check.TypeValues = typevalue.NewCache()
+	}
+	if len(config.ObservationContracts) == 0 {
+		config.ObservationContracts = []transformer.ObservationContract{SummaryProjectionObservationContract()}
+	} else {
+		config.ObservationContracts = append([]transformer.ObservationContract(nil), config.ObservationContracts...)
 	}
 	return config
 }

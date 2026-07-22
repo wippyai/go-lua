@@ -15,6 +15,9 @@ const (
 	FreezePhaseFiberLayout
 	FreezePhaseObservableQuotient
 	FreezePhaseTemplateBinding
+	// FreezePhaseObservationContract brackets demand canonicalization before
+	// tier-3 construction.
+	FreezePhaseObservationContract
 	// FreezePhaseDependencyFreeze brackets tier-3 full-result-v1 construction.
 	// The component phases remain separately observable for later demand cuts.
 	FreezePhaseDependencyFreeze
@@ -39,6 +42,7 @@ type FreezeTelemetry struct {
 	FiberLayout            FreezePhaseStats
 	ObservableQuotient     FreezePhaseStats
 	TemplateBinding        FreezePhaseStats
+	ObservationContract    FreezePhaseStats
 	DependencyFreeze       FreezePhaseStats
 }
 
@@ -65,6 +69,8 @@ func (t *FreezeTelemetry) phase(phase FreezePhase) *FreezePhaseStats {
 		return &t.ObservableQuotient
 	case FreezePhaseTemplateBinding:
 		return &t.TemplateBinding
+	case FreezePhaseObservationContract:
+		return &t.ObservationContract
 	case FreezePhaseDependencyFreeze:
 		return &t.DependencyFreeze
 	default:

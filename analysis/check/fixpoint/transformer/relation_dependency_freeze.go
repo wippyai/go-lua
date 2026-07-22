@@ -38,11 +38,12 @@ func freezeRelationTier2ArtifactHandle(program *RelationProgram) (relationTier2A
 type relationDependencyEvaluatorBinding struct {
 	program  *RelationProgram
 	template *formalRelationTemplate
+	coverage observationCoverageGuard
 	sealed   bool
 }
 
 func (b relationDependencyEvaluatorBinding) validFor(program *RelationProgram) bool {
-	return b.sealed && b.program == program && b.template != nil && b.template.validFor(program)
+	return b.sealed && b.program == program && b.template != nil && b.template.validFor(program) && b.coverage.demand.valid()
 }
 
 // relationDependencyFreeze is tier 3. It owns the complete dependency closure
@@ -56,6 +57,7 @@ func (b relationDependencyEvaluatorBinding) validFor(program *RelationProgram) b
 // field selectors; it is the sole owner of those promoted products.
 type relationDependencyFreeze struct {
 	version          string
+	demand           ObservationContract
 	tier2            relationTier2ArtifactHandle
 	formalSlots      *SlotSpace
 	formalFibers     *formalFiberInventory
@@ -71,7 +73,7 @@ type relationDependencyFreeze struct {
 func (d relationDependencyFreeze) validFor(program *RelationProgram) bool {
 	return d.sealed && d.version == relationDependencyFreezeResultVersion && program != nil && len(program.bodies) == len(d.tier2.syntax) &&
 		d.formalSlots != nil && d.formalFibers != nil && d.formalComponents != nil && d.formalRegion != nil &&
-		d.formalGuards != nil && d.formalGuards.valid() && d.formalTemplate != nil &&
+		d.demand.FullResultV1() && d.formalGuards != nil && d.formalGuards.valid() && d.formalTemplate != nil &&
 		d.observability == d.formalRegion && d.evaluator.validFor(program)
 }
 
@@ -83,13 +85,18 @@ func (d relationDependencyFreeze) validFor(program *RelationProgram) bool {
 // The product is intentionally complete for this stage. In particular the
 // observable quotient is a new tier-3 product; it never rewrites tier-2 graph
 // syntax or link artifacts. No concrete root entry crosses this boundary.
-func freezeRelationDependencyFreezeFullResultV1(program *RelationProgram, telemetry *FreezeTelemetry) error {
+func freezeRelationDependencyFreezeFullResultV1(program *RelationProgram, demand ObservationContract, telemetry *FreezeTelemetry) error {
+	coverage, err := newObservationCoverageGuard(demand)
+	if err != nil {
+		return err
+	}
 	handle, err := freezeRelationTier2ArtifactHandle(program)
 	if err != nil {
 		return err
 	}
 	program.relationDependencyFreeze = relationDependencyFreeze{
 		version: relationDependencyFreezeResultVersion,
+		demand:  demand,
 		tier2:   handle,
 	}
 	program.bodies = make([]relationProgramBody, len(handle.syntax))
@@ -146,7 +153,7 @@ func freezeRelationDependencyFreezeFullResultV1(program *RelationProgram, teleme
 		return err
 	}
 	program.formalTemplate = formalTemplate
-	program.evaluator = relationDependencyEvaluatorBinding{program: program, template: formalTemplate, sealed: true}
+	program.evaluator = relationDependencyEvaluatorBinding{program: program, template: formalTemplate, coverage: coverage, sealed: true}
 	telemetry.end(FreezePhaseTemplateBinding, templateStarted)
 
 	program.sealed = true

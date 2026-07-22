@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -288,6 +289,9 @@ func checkSource(src, filename string, opts ...Option) Result {
 	}
 	checked, err := program.RunChunk(stmts, program.Config{
 		Context: cfg.context,
+		ObservationContracts: []transformer.ObservationContract{
+			program.SummaryProjectionObservationContract(), diagnostics.ObservationContract(),
+		},
 		Check: body.Config{
 			Registry:      reg,
 			Globals:       globals,

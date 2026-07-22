@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -39,7 +40,7 @@ func solveCanonicalExportedFieldConcat(t *testing.T, source string) canonicalCon
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, err := runPreparedRelationProgram(check.Context, prepared, prepared.root, check, keys, nil)
+	published, err := runPreparedRelationProgram(check.Context, prepared, prepared.root, check, keys, []transformer.ObservationContract{SummaryProjectionObservationContract()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
