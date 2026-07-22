@@ -578,6 +578,19 @@ func (a *formalTupleAlgebra) applyFormalEffectStep(
 				return nil, errFormalComponentMalformed
 			}
 			view := views[0]
+			// PathReplacement is a concrete State transaction.  A symbolic Values
+			// input is a sealed entry-dependent term, so leave its formal image
+			// intact until entry substitution specializes the transaction rather
+			// than passing that term through product.Value materialization.
+			if operator.pathReplacement != nil {
+				symbolic, symbolicErr := view.symbolicValuesIn(operator.effectReadOrdinals)
+				if symbolicErr != nil {
+					return nil, symbolicErr
+				}
+				if symbolic {
+					return nil, nil
+				}
+			}
 			evaluator, evaluatorErr := a.newSparseTupleLeafEvaluator(view)
 			if evaluatorErr != nil {
 				return nil, evaluatorErr
