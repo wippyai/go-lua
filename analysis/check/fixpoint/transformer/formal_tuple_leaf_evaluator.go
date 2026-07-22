@@ -405,37 +405,43 @@ func (e formalTupleLeafEvaluator) evalArenaRootValue(owner relationVar, arena *A
 }
 
 func (e formalTupleLeafEvaluator) valueAtRoot(root Root) (product.Value, bool) {
-	if !e.valid() || e.algebra.program.formalSlots == nil {
+	value, exact := e.formalValueAtRoot(root)
+	if !exact {
 		return product.Value{}, false
+	}
+	return value.concrete()
+}
+
+// formalValueAtRoot is the root-read half of the Values sum boundary.  It
+// returns an owned symbolic term for an entry-dependent root; concrete callers
+// continue through valueAtRoot and therefore retain today's zero-allocation
+// product.Value fast path until the specialization interpreter is enabled.
+func (e formalTupleLeafEvaluator) formalValueAtRoot(root Root) (formalValue, bool) {
+	if !e.valid() || e.algebra.program.formalSlots == nil {
+		return formalValue{}, false
 	}
 	slot, ok := e.algebra.program.formalSlots.Slot(e.body.body, root)
 	if !ok {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
 	index, ok := e.values.valueSlotPosition[slot]
 	if !ok || index < 0 || index >= len(e.values.valueSlots) {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
 	top, present := e.leaves.leaf(e.values.valueTop)
 	if !present {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
 	if top == 1 {
-		return product.Top(), true
+		return formalGroundValue(product.Top()), true
 	}
 	entry := e.values.valueSlots[index]
 	leaf, present := e.leaves.leaf(entry.ordinal)
 	if !present {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
-	if leaf == 0 {
-		return product.Bottom(e.authority.product.Registry()), true
-	}
-	terminal, err := e.authority.terminal(leaf)
-	if err != nil || terminal.kind != formalComponentGroundValue || !product.BelongsToRegistry(e.authority.product.Registry(), terminal.ground) {
-		return product.Value{}, false
-	}
-	return terminal.ground, true
+	value, err := formalValueFromLeaf(e.authority, leaf)
+	return value, err == nil
 }
 
 func (e formalTupleLeafEvaluator) evalQualifiedPath(binding formalQualifiedBinding) (pathdom.Path, bool) {

@@ -243,31 +243,36 @@ func (l *formalSparseLeafView) setLeaf(ordinal formalFiberOrdinal, leaf decision
 }
 
 func (l formalSparseLeafView) value(member formalFiberGroupMember, top formalFiberGroupMember) (product.Value, bool) {
+	value, exact := l.formalValue(member, top)
+	if !exact {
+		return product.Value{}, false
+	}
+	return value.concrete()
+}
+
+// formalValue is the sparse Values materialization edge.  It intentionally
+// distinguishes an unselected fiber from a selected symbolic leaf; the latter
+// is a first-class Values result and must survive to the entry specialization
+// seam instead of being collapsed to a product.Value here.
+func (l formalSparseLeafView) formalValue(member formalFiberGroupMember, top formalFiberGroupMember) (formalValue, bool) {
 	topOrdinal, topOK := top.address(top.group)
 	ordinal, memberOK := member.address(member.group)
 	if !topOK || !memberOK {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
 	if leaf, present := l.leaf(topOrdinal); !present {
-		return product.Value{}, false
+		return formalValue{}, false
 	} else if leaf == 1 {
-		return product.Top(), true
+		return formalGroundValue(product.Top()), true
 	} else if leaf > 1 {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
 	leaf, present := l.leaf(ordinal)
 	if !present {
-		return product.Value{}, false
+		return formalValue{}, false
 	}
-	if leaf == 0 {
-		return product.Bottom(l.authority.product.Registry()), true
-	}
-	terminal, err := l.authority.terminal(leaf)
-	if err != nil || terminal.kind != formalComponentGroundValue ||
-		!product.BelongsToRegistry(l.authority.product.Registry(), terminal.ground) {
-		return product.Value{}, false
-	}
-	return terminal.ground, true
+	value, err := formalValueFromLeaf(l.authority, leaf)
+	return value, err == nil
 }
 
 func (l formalSparseLeafView) exactGuard(owner relationVar, arena *Arena, scope loopMuTerm, guard Guard) (bool, bool, bool) {

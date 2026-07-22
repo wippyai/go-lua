@@ -39,6 +39,7 @@ const (
 	formalComponentCoordinateSkeleton
 	formalComponentCoordinateScalar
 	formalComponentGroundValue
+	formalComponentSymbolicValue
 	formalComponentTypestateResourceObservation
 )
 
@@ -101,6 +102,7 @@ type formalComponentTerminal struct {
 	skeleton                     state.CoordinateFamilySkeleton
 	scalar                       state.CoordinateScalarFactor
 	ground                       product.Value
+	symbolicValue                formalSymbolicValueSet
 	typestateResourceObservation state.TypestateResourceObservation
 	fingerprint                  uint64
 }
@@ -835,6 +837,8 @@ func (a *formalComponentTerminalAuthority) same(left, right decisionLeaf) (bool,
 		return a.product.CoordinateScalarRepresentationEqual(l.scalar, r.scalar)
 	case formalComponentGroundValue:
 		return product.Domain(a.product.Registry()).Same(l.ground, r.ground), nil
+	case formalComponentSymbolicValue:
+		return l.symbolicValue.equal(a.product.Registry(), r.symbolicValue), nil
 	case formalComponentTypestateResourceObservation:
 		return l.typestateResourceObservation.Equal(r.typestateResourceObservation), nil
 	default:
@@ -871,6 +875,8 @@ func (a *formalComponentTerminalAuthority) equal(left, right decisionLeaf) (bool
 		return false, errFormalCoordinateGroupRequired
 	case formalComponentGroundValue:
 		return product.Equal(a.product.Registry(), l.ground, r.ground), nil
+	case formalComponentSymbolicValue:
+		return l.symbolicValue.equal(a.product.Registry(), r.symbolicValue), nil
 	case formalComponentTypestateResourceObservation:
 		return l.typestateResourceObservation.Equal(r.typestateResourceObservation), nil
 	default:
@@ -904,6 +910,8 @@ func (a *formalComponentTerminalAuthority) lessOrEq(left, right decisionLeaf) (b
 		return false, errFormalCoordinateGroupRequired
 	case formalComponentGroundValue:
 		return product.LessOrEq(a.product.Registry(), l.ground, r.ground), nil
+	case formalComponentSymbolicValue:
+		return l.symbolicValue.equal(a.product.Registry(), r.symbolicValue), nil
 	default:
 		return false, errFormalComponentMalformed
 	}
@@ -1037,6 +1045,15 @@ func (a *formalComponentTerminalAuthority) combine(ctx context.Context, op forma
 		return 0, errFormalCoordinateGroupRequired
 	case formalComponentGroundValue:
 		return a.combineGround(op, left, right, l.ground, r.ground)
+	case formalComponentSymbolicValue:
+		switch op {
+		case formalComponentJoin, formalComponentWiden:
+			return a.joinFormalValueLeaves(left, right)
+		case formalComponentNarrow:
+			return left, nil
+		default:
+			return 0, errFormalSymbolicMeetUnproven
+		}
 	default:
 		return 0, errFormalComponentMalformed
 	}

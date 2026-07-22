@@ -35,43 +35,63 @@ func (a *formalTupleAlgebra) groupRoots(tuple formalRelationTuple, group formalF
 }
 
 func (a *formalTupleAlgebra) materializeValuesGroup(authority *formalComponentTerminalAuthority, group formalFiberGroupDescriptor, leaves []decisionLeaf) (state.ValueFactor[FormalSlot], error) {
+	carrier, err := a.materializeFormalValuesGroup(authority, group, leaves)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	concrete, err := formalConcreteValuesFactor(authority, carrier)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	return state.ValueFactor[FormalSlot]{Top: carrier.Top, Values: concrete}, nil
+}
+
+// materializeFormalValuesGroup is the formal Values boundary.  Unlike the
+// concrete State adapter above it preserves entry-dependent ValueTerms, so a
+// sparse formal transaction can carry them through stabilization.
+func (a *formalTupleAlgebra) materializeFormalValuesGroup(authority *formalComponentTerminalAuthority, group formalFiberGroupDescriptor, leaves []decisionLeaf) (formalValuesFactor, error) {
 	if group.kind != formalFiberGroupValues || len(leaves) != len(group.members) {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+		return formalValuesFactor{}, errFormalComponentMalformed
 	}
 	if group.valueTopPosition < 0 || group.valueTopPosition >= len(leaves) || leaves[group.valueTopPosition] > 1 {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+		return formalValuesFactor{}, errFormalComponentMalformed
 	}
 	if leaves[group.valueTopPosition] == 1 {
-		return state.ValueFactor[FormalSlot]{Top: true}, nil
+		return formalValuesFactor{Top: true}, nil
 	}
-	var values map[FormalSlot]product.Value
+	var values map[FormalSlot]formalValue
 	bottom := product.Bottom(authority.product.Registry())
 	for _, slot := range group.valueSlots {
 		if slot.position < 0 || slot.position >= len(leaves) {
-			return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+			return formalValuesFactor{}, errFormalComponentMalformed
 		}
-		leaf := leaves[slot.position]
-		if leaf == 0 {
-			continue
+		value, err := formalValueFromLeaf(authority, leaves[slot.position])
+		if err != nil {
+			return formalValuesFactor{}, err
 		}
-		terminal, err := authority.terminal(leaf)
-		if err != nil || terminal.kind != formalComponentGroundValue {
-			if err != nil {
-				return state.ValueFactor[FormalSlot]{}, err
-			}
-			return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
-		}
-		if !product.Equal(authority.product.Registry(), terminal.ground, bottom) {
+		ground, concrete := value.concrete()
+		if !concrete || !product.Equal(authority.product.Registry(), ground, bottom) {
 			if values == nil {
-				values = make(map[FormalSlot]product.Value)
+				values = make(map[FormalSlot]formalValue)
 			}
-			values[slot.slot] = terminal.ground
+			values[slot.slot] = value
 		}
 	}
-	return state.ValueFactor[FormalSlot]{Values: values}, nil
+	return formalValuesFactor{Values: values}, nil
 }
 
 func (a *formalTupleAlgebra) factorValuesGroup(authority *formalComponentTerminalAuthority, group formalFiberGroupDescriptor, value state.ValueFactor[FormalSlot]) ([]decisionLeaf, error) {
+	carrier := formalValuesFactor{Top: value.Top}
+	if len(value.Values) != 0 {
+		carrier.Values = make(map[FormalSlot]formalValue, len(value.Values))
+		for slot, ground := range value.Values {
+			carrier.Values[slot] = formalGroundValue(ground)
+		}
+	}
+	return a.factorFormalValuesGroup(authority, group, carrier)
+}
+
+func (a *formalTupleAlgebra) factorFormalValuesGroup(authority *formalComponentTerminalAuthority, group formalFiberGroupDescriptor, value formalValuesFactor) ([]decisionLeaf, error) {
 	if group.kind != formalFiberGroupValues || value.Top && len(value.Values) != 0 {
 		return nil, errFormalComponentMalformed
 	}
@@ -91,13 +111,14 @@ func (a *formalTupleAlgebra) factorValuesGroup(authority *formalComponentTermina
 			continue
 		}
 		consumed++
-		if product.Equal(authority.product.Registry(), coordinate, bottom) {
+		ground, concrete := coordinate.concrete()
+		if concrete && product.Equal(authority.product.Registry(), ground, bottom) {
 			continue
 		}
 		if slot.position < 0 || slot.position >= len(leaves) {
 			return nil, errFormalComponentMalformed
 		}
-		leaf, err := authority.internGroundValue(coordinate)
+		leaf, err := authority.internFormalValue(coordinate)
 		if err != nil {
 			return nil, err
 		}
@@ -744,6 +765,9 @@ func (a *formalTupleAlgebra) combineValuesGroupRoots(
 			}
 		}
 		if left != 0 && right != 0 {
+			if op == formalComponentJoin || op == formalComponentWiden {
+				return authority.joinFormalValueLeaves(left, right)
+			}
 			return authority.combine(a.ctx, op, left, right)
 		}
 		return 0, errFormalComponentMalformed
