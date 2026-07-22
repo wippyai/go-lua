@@ -194,3 +194,42 @@ func TestRelationProgramCoverageGuardFailsClosedForNilSafetyOutsideDeclaredClass
 		t.Fatalf("outside-closure access error = %#v", err)
 	}
 }
+
+func TestRelationProgramCoverageGuardFailsClosedForTypeAssignmentOutsideDeclaredClass(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("type-assignment-observation-class-coverage"))
+	body := lexicalidentity.RootBody(namespace)
+	demand, err := CanonicalizeObservationContracts(ObservationClassesV1Contract(
+		ObservationConsumerDiagnosticTypeAssignment,
+		ObservationClassCallOutcome,
+		ObservationClassEntryExitState,
+		ObservationClassNormalReturn,
+		ObservationClassPointReachability,
+		ObservationClassPointState,
+		ObservationClassPathValue,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := FreezeRelationProgramWithObservation(
+		[]RelationProgramUnit{formalTemplateFreezeUnit(t, body)}, testAcyclicCallTopology(t, body), demand,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := program.RequireObservationClass(
+		ObservationConsumerDiagnosticTypeAssignment,
+		ObservationClassNormalReturn,
+		"type-assignment return read model",
+	); err != nil {
+		t.Fatalf("declared class rejected: %v", err)
+	}
+	err = program.RequireObservationClass(
+		ObservationConsumerDiagnosticTypeAssignment,
+		ObservationClassNodeOutput,
+		"adversarial type-assignment node-output read",
+	)
+	var coverage *ObservationCoverageError
+	if !errors.As(err, &coverage) || !IsObservationCoverageError(err) || coverage.Consumer != ObservationConsumerDiagnosticTypeAssignment {
+		t.Fatalf("outside-closure access error = %#v", err)
+	}
+}

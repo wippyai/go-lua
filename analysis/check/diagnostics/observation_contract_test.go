@@ -53,3 +53,21 @@ func TestNilSafetyPresenceObservationContractDeclaresOnlyItsReadClosure(t *testi
 		t.Fatalf("classes = %#v, want %#v", contract.Classes(), want)
 	}
 }
+
+func TestTypeAssignmentObservationContractDeclaresOnlyItsReadClosure(t *testing.T) {
+	contract := TypeAssignmentObservationContract()
+	if contract.FullResultV1() || contract.SummaryV1() {
+		t.Fatalf("type-assignment contract retained a coarse closure: %#v", contract)
+	}
+	want := []transformer.ObservationClass{
+		transformer.ObservationClassCallOutcome,
+		transformer.ObservationClassEntryExitState,
+		transformer.ObservationClassNormalReturn,
+		transformer.ObservationClassPathValue,
+		transformer.ObservationClassPointReachability,
+		transformer.ObservationClassPointState,
+	}
+	if !reflect.DeepEqual(contract.Classes(), want) {
+		t.Fatalf("classes = %#v, want %#v", contract.Classes(), want)
+	}
+}

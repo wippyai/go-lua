@@ -41,11 +41,27 @@ func NilSafetyPresenceObservationContract() transformer.ObservationContract {
 	)
 }
 
+// TypeAssignmentObservationContract retains the boundary values, return
+// slots, and call facts used to prove assignment and callable compatibility.
+// It does not retain generic node-output observations.
+func TypeAssignmentObservationContract() transformer.ObservationContract {
+	return transformer.ObservationClassesV1Contract(
+		transformer.ObservationConsumerDiagnosticTypeAssignment,
+		transformer.ObservationClassCallOutcome,
+		transformer.ObservationClassEntryExitState,
+		transformer.ObservationClassNormalReturn,
+		transformer.ObservationClassPointReachability,
+		transformer.ObservationClassPointState,
+		transformer.ObservationClassPathValue,
+	)
+}
+
 // ObservationContracts is the canonical diagnostic demand inventory.
 func ObservationContracts() []transformer.ObservationContract {
 	return []transformer.ObservationContract{
 		DiscriminatedUnionObservationContract(),
 		LifecycleResourceObservationContract(),
 		NilSafetyPresenceObservationContract(),
+		TypeAssignmentObservationContract(),
 	}
 }

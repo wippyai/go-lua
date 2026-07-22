@@ -17,6 +17,7 @@ const (
 	ObservationConsumerDiagnosticDiscriminatedUnion ObservationConsumer = "diagnostic-discriminated-union"
 	ObservationConsumerDiagnosticLifecycleResource  ObservationConsumer = "diagnostic-lifecycle-resource"
 	ObservationConsumerDiagnosticNilSafetyPresence  ObservationConsumer = "diagnostic-nil-safety-presence"
+	ObservationConsumerDiagnosticTypeAssignment     ObservationConsumer = "diagnostic-type-assignment"
 	ObservationConsumerExportCode                   ObservationConsumer = "export-code"
 	ObservationConsumerServiceIDEQueries            ObservationConsumer = "service-ide-queries"
 )
@@ -153,7 +154,7 @@ func validObservationConsumer(consumer ObservationConsumer) bool {
 	switch consumer {
 	case ObservationConsumerSummaryProjection, ObservationConsumerDiagnosticRuleFamily,
 		ObservationConsumerDiagnosticDiscriminatedUnion, ObservationConsumerDiagnosticLifecycleResource,
-		ObservationConsumerDiagnosticNilSafetyPresence,
+		ObservationConsumerDiagnosticNilSafetyPresence, ObservationConsumerDiagnosticTypeAssignment,
 		ObservationConsumerExportCode, ObservationConsumerServiceIDEQueries:
 		return true
 	default:
