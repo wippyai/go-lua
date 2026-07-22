@@ -37,7 +37,7 @@ func TestJudgmentRenderersCoverDefaultRegistry(t *testing.T) {
 	}
 }
 
-func TestRefutedJudgmentPresentationIsSourceOrderedWitnessTrace(t *testing.T) {
+func TestRefutedJudgmentPresentationPreservesExplicitWitnessTraceOptIn(t *testing.T) {
 	detail := judgment.ArityTooFewEvidenceDetail(2, 1)
 	item := judgment.Judgment{
 		Code:    judgment.CodeCallArity,
@@ -75,8 +75,8 @@ func TestRefutedJudgmentPresentationIsSourceOrderedWitnessTrace(t *testing.T) {
 	if len(diags) != 1 {
 		t.Fatalf("RenderJudgments diagnostics = %#v, want one", diags)
 	}
-	if !diags[0].Explanation.WitnessTrace() {
-		t.Fatalf("refuted judgment explanation is not marked as a witness trace: %#v", diags[0])
+	if diags[0].Explanation.WitnessTrace() {
+		t.Fatalf("refuted judgment explanation enabled witness trace without an explicit render option: %#v", diags[0])
 	}
 	evidence := diags[0].Explanation.Evidence()
 	if len(evidence) != 3 || evidence[0].Span.StartLine != 41 || evidence[1].Span.StartLine != 12 || evidence[2].Span.StartLine != 41 {

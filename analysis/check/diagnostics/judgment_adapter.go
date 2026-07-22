@@ -130,11 +130,7 @@ func (ctx judgmentRenderContext) renderOne(item judgment.Judgment, policy judgme
 		item = deduplicateWitnessOrigins(item)
 	}
 	d, ok := render(ctx, item, policy, mode)
-	if !ok || item.Verdict != judgment.VerdictRefuted {
-		return d, ok
-	}
-	d.Explanation = d.Explanation.WithWitnessTrace()
-	return d, true
+	return d, ok
 }
 
 func deduplicateWitnessOrigins(item judgment.Judgment) judgment.Judgment {
