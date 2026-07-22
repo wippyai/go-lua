@@ -34,6 +34,28 @@ type formalRelationExecution struct {
 // influence without one fails the entire transaction; no partial map or
 // fallback result is published.
 func executeFormalRelation(ctx context.Context, program *RelationProgram) (*formalRelationExecution, error) {
+	return executeFormalRelationWithRootEntry(ctx, program, nil, false)
+}
+
+// executeFormalRootRelation invokes the frozen equation system for one
+// selected production root. The concrete entry is consumed at this boundary
+// and immediately transposed into run-owned formal factors; neither the
+// execution nor the sealed template retains State.
+func executeFormalRootRelation(ctx context.Context, program *RelationProgram, bodyID lexicalidentity.StableLexicalBodyID, entry state.State) (*formalRelationExecution, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("transformer: formal relation execution has no context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rootEntry, err := freezeFormalRootEntrySeed(program, bodyID, entry)
+	if err != nil {
+		return nil, err
+	}
+	return executeFormalRelationWithRootEntry(ctx, program, &rootEntry, true)
+}
+
+func executeFormalRelationWithRootEntry(ctx context.Context, program *RelationProgram, rootEntry *formalRootEntrySeed, detachCallOutcomes bool) (*formalRelationExecution, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("transformer: formal relation execution has no context")
 	}
@@ -43,6 +65,16 @@ func executeFormalRelation(ctx context.Context, program *RelationProgram) (*form
 	algebra, err := newFormalTupleAlgebra(ctx, program)
 	if err != nil {
 		return nil, err
+	}
+	if rootEntry != nil {
+		if !rootEntry.validFor(program) {
+			return nil, fmt.Errorf("transformer: formal relation execution has an invalid root entry")
+		}
+		substitution, substitutionErr := newFormalRootEntrySubstitution(*rootEntry)
+		if substitutionErr != nil {
+			return nil, substitutionErr
+		}
+		algebra.entrySubstitution = &substitution
 	}
 	template, region := program.formalTemplate, program.formalRegion
 	evalTrace := newFormalRelationEvalTrace()
@@ -83,37 +115,25 @@ func executeFormalRelation(ctx context.Context, program *RelationProgram) (*form
 	if err := algebra.err(); err != nil {
 		return nil, err
 	}
-	return &formalRelationExecution{
+	execution := &formalRelationExecution{
 		algebra:           algebra,
 		values:            values,
 		applyObservations: cloneFormalApplyObservationWitnesses(algebra.applyObservations),
-	}, nil
-}
-
-// executeFormalRootRelation invokes the frozen equation system for one
-// selected production root. The concrete entry is consumed at this boundary
-// and immediately transposed into run-owned formal factors; neither the
-// execution nor the sealed template retains State.
-func executeFormalRootRelation(ctx context.Context, program *RelationProgram, bodyID lexicalidentity.StableLexicalBodyID, entry state.State) (*formalRelationExecution, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("transformer: formal relation execution has no context")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if !detachCallOutcomes {
+		// The entry-free relation is a symbolic stabilized product.  Its Apply
+		// observations may still contain entry-dependent Values, so they are
+		// intentionally retained as interpreter input rather than materialized
+		// into caller CallOutcomes here.  Root specialization completes that
+		// product and performs the detached publication boundary.
+		return execution, nil
 	}
-	rootEntry, err := freezeFormalRootEntrySeed(program, bodyID, entry)
+	internalCallOutcomes, err := execution.detachFormalApplyCallOutcomes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	substitution, err := newFormalRootEntrySubstitution(rootEntry)
-	if err != nil {
-		return nil, err
-	}
-	execution, err := executeFormalRelation(ctx, program)
-	if err != nil {
-		return nil, err
-	}
-	return substitution.specializeStabilized(ctx, execution)
+	execution.internalCallOutcomes = internalCallOutcomes
+	return execution, nil
 }
 
 func cloneFormalApplyObservationWitnesses(in map[formalRelationCell]formalApplyObservationWitness) map[formalRelationCell]formalApplyObservationWitness {
