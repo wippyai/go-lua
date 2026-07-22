@@ -223,18 +223,32 @@ func (e formalTupleLeafEvaluator) completeLeaves() ([]decisionLeaf, error) {
 	return e.leaves.complete()
 }
 
-// valuesFactor exposes the complete registered Values carrier for this exact
-// correlated leaf.  Apply and Definition share this one materialization edge;
-// neither may reconstruct per-slot state or interpret Values independently.
-func (e formalTupleLeafEvaluator) valuesFactor() (state.ValueFactor[FormalSlot], error) {
+// formalValuesFactor exposes the complete registered Values carrier for this
+// exact correlated leaf without crossing the State boundary.
+func (e formalTupleLeafEvaluator) formalValuesFactor() (formalValuesFactor, error) {
 	if !e.valid() {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentForeignOwner
+		return formalValuesFactor{}, errFormalComponentForeignOwner
 	}
 	leaves, err := e.leaves.group(e.values)
 	if err != nil {
+		return formalValuesFactor{}, err
+	}
+	return e.algebra.materializeFormalValuesGroup(e.authority, e.values, leaves)
+}
+
+// valuesFactor exposes the completed registered Values carrier for a concrete
+// consumer. Apply and Definition share this one materialization edge; neither
+// may reconstruct per-slot state or interpret Values independently.
+func (e formalTupleLeafEvaluator) valuesFactor() (state.ValueFactor[FormalSlot], error) {
+	values, err := e.formalValuesFactor()
+	if err != nil {
 		return state.ValueFactor[FormalSlot]{}, err
 	}
-	return e.algebra.materializeValuesGroup(e.authority, e.values, leaves)
+	concrete, err := formalConcreteValuesFactor(e.authority, values)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	return state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}, nil
 }
 
 // laneFactor exposes one complete registered non-Values carrier for this

@@ -1,6 +1,7 @@
 package transformer
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -30,12 +31,14 @@ type formalFactorExecutionCapabilityEntry struct {
 }
 
 // formalFactorExecutionCapability is the single immutable authority attached
-// to a published complete product spelling. Reachability and identity support
-// are observed together at the producer boundary, so Apply has exactly one
-// dense-vector lookup and cannot drift into parallel discovery paths.
+// to a published complete product spelling. Values stays in its formal carrier
+// at this producer seam; identity support is rebuilt from the completed,
+// specialized observation that consumes the capability. This prevents a WTO
+// producer from turning an entry-dependent Value into State merely to freeze
+// an Apply capability.
 type formalFactorExecutionCapability struct {
 	reachability state.BoundaryReachabilityProgramSet
-	identities   state.IdentitySubstitutionSupport
+	values       formalValuesFactor
 }
 
 // formalProductLeafEvaluator is the compact producer-side view used to freeze
@@ -49,14 +52,14 @@ type formalProductLeafEvaluator struct {
 	leaves    []decisionLeaf
 }
 
-func (e formalProductLeafEvaluator) productFactors() (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
+func (e formalProductLeafEvaluator) formalProductFactors() (formalValuesFactor, []state.LaneFactor, error) {
 	if e.algebra == nil || e.authority == nil || e.layout == nil || len(e.leaves) != len(e.layout.members) {
-		return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: outcome product vector ownership: %w", errFormalComponentForeignOwner)
+		return formalValuesFactor{}, nil, fmt.Errorf("transformer: outcome product vector ownership: %w", errFormalComponentForeignOwner)
 	}
 	valuesWidth := len(e.layout.values.members)
-	values, err := e.algebra.materializeValuesGroup(e.authority, e.layout.values, e.leaves[:valuesWidth])
+	values, err := e.algebra.materializeFormalValuesGroup(e.authority, e.layout.values, e.leaves[:valuesWidth])
 	if err != nil {
-		return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: outcome Values materialization: %w", err)
+		return formalValuesFactor{}, nil, fmt.Errorf("transformer: outcome formal Values materialization: %w", err)
 	}
 	factors := make([]state.LaneFactor, len(e.layout.nonValues))
 	for index, group := range e.layout.nonValues {
@@ -71,10 +74,50 @@ func (e formalProductLeafEvaluator) productFactors() (state.ValueFactor[FormalSl
 			err = errFormalComponentMalformed
 		}
 		if err != nil {
-			return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: outcome lane %s materialization: %w", group.lane.ID(), err)
+			return formalValuesFactor{}, nil, fmt.Errorf("transformer: outcome lane %s materialization: %w", group.lane.ID(), err)
 		}
 	}
 	return values, factors, nil
+}
+
+func (e formalProductLeafEvaluator) productFactors() (state.ValueFactor[FormalSlot], []state.LaneFactor, error) {
+	values, factors, err := e.formalProductFactors()
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, nil, err
+	}
+	concrete, err := formalConcreteValuesFactor(e.authority, values)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, nil, fmt.Errorf("transformer: outcome Values materialization: %w", err)
+	}
+	return state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}, factors, nil
+}
+
+// specializedIdentitySupport rebuilds the State-only identity support from
+// the observation that has crossed root specialization. The capability's
+// retained Values are intentionally not materialized here: they establish the
+// producer spelling while the supplied observation establishes the concrete
+// consumer image.
+func (c formalFactorExecutionCapability) specializedIdentitySupport(
+	ctx context.Context,
+	authority *formalComponentTerminalAuthority,
+	values formalValuesFactor,
+	factors []state.LaneFactor,
+) (state.IdentitySubstitutionSupport, error) {
+	if authority == nil {
+		return state.IdentitySubstitutionSupport{}, errFormalComponentForeignOwner
+	}
+	equal, err := formalValuesFactorRelation(authority, c.values, values, false)
+	if err != nil {
+		return state.IdentitySubstitutionSupport{}, err
+	}
+	if !equal {
+		return state.IdentitySubstitutionSupport{}, fmt.Errorf("transformer: specialized execution capability Values observation changed")
+	}
+	concrete, err := formalConcreteValuesFactor(authority, values)
+	if err != nil {
+		return state.IdentitySubstitutionSupport{}, fmt.Errorf("transformer: specialized execution capability Values: %w", err)
+	}
+	return state.PrepareIdentitySubstitutionSupport(ctx, authority.product, state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}, factors)
 }
 
 // prefreezeFormalBottomReachability admits the physical-zero spelling used by
@@ -325,9 +368,9 @@ func (a *formalTupleAlgebra) internSelectedFormalProductExecutionCapabilityRef(
 			return entry.capability, nil
 		}
 	}
-	values, factors, err := e.productFactors()
+	values, factors, err := e.formalProductFactors()
 	if err != nil {
-		return formalFactorExecutionCapability{}, fmt.Errorf("transformer: execution capability product materialization: %w", err)
+		return formalFactorExecutionCapability{}, fmt.Errorf("transformer: execution capability formal product materialization: %w", err)
 	}
 	programs := make([]state.BoundaryReachabilityProgram, len(factors))
 	for index, factor := range factors {
@@ -351,11 +394,7 @@ func (a *formalTupleAlgebra) internSelectedFormalProductExecutionCapabilityRef(
 	if err != nil {
 		return formalFactorExecutionCapability{}, err
 	}
-	support, err := state.PrepareIdentitySubstitutionSupport(a.ctx, e.authority.product, values, factors)
-	if err != nil {
-		return formalFactorExecutionCapability{}, fmt.Errorf("transformer: execution capability identity support: %w", err)
-	}
-	capability := formalFactorExecutionCapability{reachability: set, identities: support}
+	capability := formalFactorExecutionCapability{reachability: set, values: values}
 	a.factorExecutionCapabilities[key] = append(a.factorExecutionCapabilities[key], formalFactorExecutionCapabilityEntry{
 		leaves: append([]decisionLeaf(nil), vector...), capability: capability,
 	})

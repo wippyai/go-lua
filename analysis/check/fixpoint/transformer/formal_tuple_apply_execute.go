@@ -519,6 +519,10 @@ func (a *formalTupleAlgebra) formalApplyRegionPublication(
 	if err != nil {
 		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply target factors: %w", err)
 	}
+	targetFormalValues, err := region.target.formalValuesFactor()
+	if err != nil {
+		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply target formal Values: %w", err)
+	}
 	for index, factor := range targetFactors {
 		families, familyErr := region.target.authority.product.CoordinateFamilies(factor.Lane())
 		if familyErr != nil {
@@ -550,9 +554,13 @@ func (a *formalTupleAlgebra) formalApplyRegionPublication(
 		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply execution capability: %w", err)
 	}
 	phase = "identity substitution"
+	identitySupport, err := capability.specializedIdentitySupport(a.ctx, region.target.authority, targetFormalValues, targetFactors)
+	if err != nil {
+		return formalApplyLeafPublication{}, false, fmt.Errorf("transformer: formal Apply specialized execution capability: %w", err)
+	}
 	identityPlan, unreachable, err := state.SealIdentitySubstitutionPlanWithSupport(
 		a.ctx, region.target.authority.product, region.target.authority.coordinateKeys,
-		identityAuthority, capability.identities,
+		identityAuthority, identitySupport,
 	)
 	if err != nil || unreachable {
 		if err != nil {

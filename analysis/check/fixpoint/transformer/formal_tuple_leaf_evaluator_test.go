@@ -181,6 +181,45 @@ func TestFormalTupleLeafEvaluatorDynamicReadUsesRegisteredFactorCapability(t *te
 	}
 }
 
+func TestFormalProductExecutionCapabilityRetainsSymbolicValuesUntilObservationSpecializes(t *testing.T) {
+	fixture := newFormalTupleLeafEvaluatorFixture(t)
+	leaf := fixture.callerLeaf(t)
+	binding := formalQualifiedBinding{value: relationArenaValueRef{owner: leaf.variable, arena: fixture.callerArena, term: fixture.callerValues[0]}}
+	symbolicLeaf, err := leaf.authority.internBinding(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Model the exact producer row the entry-free WTO can retain. The
+	// capability must accept this formal spelling; asking the concrete adapter
+	// to consume it is reserved for the later specialized observation.
+	symbolic := leaf
+	symbolic.leaves.dense = append([]decisionLeaf(nil), leaf.leaves.dense...)
+	ordinal := leaf.values.valueSlots[0].ordinal
+	symbolic.leaves.dense[ordinal] = symbolicLeaf
+	vector, err := formalFactorExecutionVector(symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	producer := formalProductLeafEvaluator{
+		algebra: fixture.algebra, authority: leaf.authority, span: leaf.span, layout: leaf.layout, leaves: vector,
+	}
+	values, factors, err := producer.formalProductFactors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value := values.Values[leaf.values.valueSlots[0].slot]; !value.isSymbolic || value.symbolicLeaf != symbolicLeaf {
+		t.Fatalf("producer Values carrier = %#v", values)
+	}
+	capability := formalFactorExecutionCapability{values: values}
+	if _, err := capability.specializedIdentitySupport(t.Context(), leaf.authority, values, factors); err == nil {
+		t.Fatal("symbolic execution capability rebuilt State identity support before specialization")
+	}
+	if _, _, err := producer.productFactors(); err == nil {
+		t.Fatal("symbolic producer row crossed the generic concrete adapter")
+	}
+}
+
 func TestFormalTupleLeafEvaluatorDirectRootAllocations(t *testing.T) {
 	fixture := newFormalTupleLeafEvaluatorFixture(t)
 	leaf := fixture.callerLeaf(t)
