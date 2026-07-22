@@ -346,6 +346,17 @@ func (a *formalTupleAlgebra) applyFormalCovariantExposure(
 			return fail(careErr)
 		}
 		if runCare != decisionFalse {
+			// N6 consumes concrete product.Value operands.  Preserve an
+			// entry-dependent Values leaf and the correlated lane image as the
+			// residual formal transaction; entry substitution concretizes it before
+			// any State observation.
+			symbolic, symbolicErr := current.symbolicValuesIn(plan.currentOrdinals)
+			if symbolicErr != nil {
+				return fail(symbolicErr)
+			}
+			if symbolic {
+				continue
+			}
 			values, factorErr := current.materializeCovariantValues(plan)
 			if factorErr != nil {
 				return fail(factorErr)
