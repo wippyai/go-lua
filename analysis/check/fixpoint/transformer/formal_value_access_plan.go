@@ -204,45 +204,60 @@ func (p formalValueAccessPlan) valid() bool {
 	return sort.SliceIsSorted(p.readOrdinals, func(i, j int) bool { return p.readOrdinals[i] < p.readOrdinals[j] })
 }
 
-// materialize reads only the plan's exact scalar dependency set. Missing map
+// materializeFormal reads only the plan's exact scalar dependency set without
+// collapsing an entry-dependent Values leaf into product.Value. Missing map
 // coordinates denote Bottom; an unselected declared coordinate is an error.
-func (p formalValueAccessPlan) materialize(view formalSparseLeafView) (state.ValueFactor[FormalSlot], error) {
+func (p formalValueAccessPlan) materializeFormal(view formalSparseLeafView) (formalValuesFactor, error) {
 	if !p.valid() {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentForeignOwner
+		return formalValuesFactor{}, errFormalComponentForeignOwner
 	}
 	if !p.group.valid() {
-		return state.ValueFactor[FormalSlot]{}, nil
+		return formalValuesFactor{}, nil
 	}
 	if view.authority == nil || view.variable != p.group.variable {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentForeignOwner
+		return formalValuesFactor{}, errFormalComponentForeignOwner
 	}
 	top, present := view.leaf(p.top.ordinal)
 	if !present || top > 1 {
-		return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+		return formalValuesFactor{}, errFormalComponentMalformed
 	}
 	if top == 1 {
-		return state.ValueFactor[FormalSlot]{Top: true}, nil
+		return formalValuesFactor{Top: true}, nil
 	}
 	bottom := product.Bottom(view.authority.product.Registry())
-	var out map[FormalSlot]product.Value
+	var out map[FormalSlot]formalValue
 	for _, member := range p.reads {
-		value, exact := view.value(member, p.top)
+		value, exact := view.formalValue(member, p.top)
 		if !exact {
-			return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+			return formalValuesFactor{}, errFormalComponentMalformed
 		}
-		if product.Equal(view.authority.product.Registry(), value, bottom) {
+		if ground, concrete := value.concrete(); concrete && product.Equal(view.authority.product.Registry(), ground, bottom) {
 			continue
 		}
 		if out == nil {
-			out = make(map[FormalSlot]product.Value, len(p.reads))
+			out = make(map[FormalSlot]formalValue, len(p.reads))
 		}
 		slot, ok := formalValueSlotForMember(p.group, member)
 		if !ok {
-			return state.ValueFactor[FormalSlot]{}, errFormalComponentMalformed
+			return formalValuesFactor{}, errFormalComponentMalformed
 		}
 		out[slot] = value
 	}
-	return state.ValueFactor[FormalSlot]{Values: out}, nil
+	return formalValuesFactor{Values: out}, nil
+}
+
+// materialize is the explicit State boundary for concrete factapply kernels.
+// WTO-side callers retain materializeFormal until their input is known ground.
+func (p formalValueAccessPlan) materialize(view formalSparseLeafView) (state.ValueFactor[FormalSlot], error) {
+	values, err := p.materializeFormal(view)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	concrete, err := formalConcreteValuesFactor(view.authority, values)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	return state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}, nil
 }
 
 // factorPublication validates that a kernel changed no undeclared coordinate
