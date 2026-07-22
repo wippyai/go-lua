@@ -21,11 +21,26 @@ func DiscriminatedUnionObservationContract() transformer.ObservationContract {
 	)
 }
 
+// LifecycleResourceObservationContract retains the exit obligation state, the
+// reachable call outcomes that explain it, and the boundary states used to
+// resolve lifecycle resources. It does not read ordinary node outputs, edges,
+// path-value projections, or summary return slots.
+func LifecycleResourceObservationContract() transformer.ObservationContract {
+	return transformer.ObservationClassesV1Contract(
+		transformer.ObservationConsumerDiagnosticLifecycleResource,
+		transformer.ObservationClassCallOutcome,
+		transformer.ObservationClassEntryExitState,
+		transformer.ObservationClassPointReachability,
+		transformer.ObservationClassPointState,
+	)
+}
+
 // ObservationContracts is the canonical diagnostic demand inventory. Keep the
 // remaining full closure explicit until each legacy family has its own commit.
 func ObservationContracts() []transformer.ObservationContract {
 	return []transformer.ObservationContract{
 		RemainingObservationContract(),
 		DiscriminatedUnionObservationContract(),
+		LifecycleResourceObservationContract(),
 	}
 }

@@ -119,3 +119,40 @@ func TestRelationProgramCoverageGuardFailsClosedOutsideDeclaredClass(t *testing.
 		t.Fatalf("coverage provider = %q", coverage.Provider)
 	}
 }
+
+func TestRelationProgramCoverageGuardFailsClosedForLifecycleOutsideDeclaredClass(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("lifecycle-observation-class-coverage"))
+	body := lexicalidentity.RootBody(namespace)
+	demand, err := CanonicalizeObservationContracts(ObservationClassesV1Contract(
+		ObservationConsumerDiagnosticLifecycleResource,
+		ObservationClassCallOutcome,
+		ObservationClassEntryExitState,
+		ObservationClassPointReachability,
+		ObservationClassPointState,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := FreezeRelationProgramWithObservation(
+		[]RelationProgramUnit{formalTemplateFreezeUnit(t, body)}, testAcyclicCallTopology(t, body), demand,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := program.RequireObservationClass(
+		ObservationConsumerDiagnosticLifecycleResource,
+		ObservationClassCallOutcome,
+		"lifecycle obligation read model",
+	); err != nil {
+		t.Fatalf("declared class rejected: %v", err)
+	}
+	err = program.RequireObservationClass(
+		ObservationConsumerDiagnosticLifecycleResource,
+		ObservationClassEdgeReachability,
+		"adversarial lifecycle edge read",
+	)
+	var coverage *ObservationCoverageError
+	if !errors.As(err, &coverage) || !IsObservationCoverageError(err) || coverage.Consumer != ObservationConsumerDiagnosticLifecycleResource {
+		t.Fatalf("outside-closure access error = %#v", err)
+	}
+}

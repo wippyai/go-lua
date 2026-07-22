@@ -20,3 +20,19 @@ func TestDiscriminatedUnionObservationContractDeclaresOnlyItsReadClosure(t *test
 		t.Fatalf("classes = %#v, want %#v", contract.Classes(), want)
 	}
 }
+
+func TestLifecycleResourceObservationContractDeclaresOnlyItsReadClosure(t *testing.T) {
+	contract := LifecycleResourceObservationContract()
+	if contract.FullResultV1() || contract.SummaryV1() {
+		t.Fatalf("lifecycle contract retained a coarse closure: %#v", contract)
+	}
+	want := []transformer.ObservationClass{
+		transformer.ObservationClassCallOutcome,
+		transformer.ObservationClassEntryExitState,
+		transformer.ObservationClassPointReachability,
+		transformer.ObservationClassPointState,
+	}
+	if !reflect.DeepEqual(contract.Classes(), want) {
+		t.Fatalf("classes = %#v, want %#v", contract.Classes(), want)
+	}
+}
