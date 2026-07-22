@@ -321,6 +321,84 @@ func (v *FormalRelationPublicationView) EdgeNormal(ctx context.Context, edge cfg
 	return value, true, err
 }
 
+// PointInputAll reads every formal producer for a point input. Point readers
+// must not select coordinate zero: other producers carry independent product
+// payloads such as implication, numeric, placement, effect, and evidence
+// facts.
+func (v *FormalRelationPublicationView) PointInputAll(ctx context.Context, point cfg.Point) (state.State, bool, error) {
+	if v == nil || v.body == nil {
+		return state.State{}, false, fmt.Errorf("transformer: formal point-input publication is unowned")
+	}
+	coordinates, declared := v.pointInput[point]
+	if !declared {
+		return state.State{}, false, fmt.Errorf("transformer: formal point-input %d is undeclared", point)
+	}
+	if len(coordinates) == 0 {
+		return v.body.domain.Bottom(), false, nil
+	}
+	return v.joinPublishedCoordinates(ctx, coordinates)
+}
+
+// PlannedNodeOutputAll reads every formal producer for a point output.
+func (v *FormalRelationPublicationView) PlannedNodeOutputAll(ctx context.Context, point cfg.Point) (state.State, bool, error) {
+	if v == nil || v.body == nil {
+		return state.State{}, false, fmt.Errorf("transformer: formal point-output publication is unowned")
+	}
+	coordinates, declared := v.pointOutput[point]
+	if !declared {
+		return state.State{}, false, fmt.Errorf("transformer: formal point-output %d is undeclared", point)
+	}
+	if len(coordinates) == 0 {
+		return v.body.domain.Bottom(), false, nil
+	}
+	return v.joinPublishedCoordinates(ctx, coordinates)
+}
+
+// EdgeNormalAll reads every formal producer for a normal edge.
+func (v *FormalRelationPublicationView) EdgeNormalAll(ctx context.Context, edge cfg.Edge) (state.State, bool, error) {
+	if v == nil || v.body == nil {
+		return state.State{}, false, fmt.Errorf("transformer: formal normal-edge publication is unowned")
+	}
+	coordinates, declared := v.edgeNormal[edge]
+	if !declared {
+		return state.State{}, false, fmt.Errorf("transformer: formal normal edge %d->%d is undeclared", edge.From, edge.To)
+	}
+	if len(coordinates) == 0 {
+		return v.body.domain.Bottom(), false, nil
+	}
+	return v.joinPublishedCoordinates(ctx, coordinates)
+}
+
+// joinPublishedCoordinates is the Result read-model's only correlation
+// forgetting boundary. Summary projection consumes direct formal readers and
+// never calls this State-bearing helper.
+func (v *FormalRelationPublicationView) joinPublishedCoordinates(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+) (state.State, bool, error) {
+	if len(coordinates) == 0 {
+		return state.State{}, false, fmt.Errorf("transformer: formal result publication has no named coordinate")
+	}
+	joined := v.body.domain.Bottom()
+	reachable := false
+	for _, coordinate := range coordinates {
+		coordinate.view = v
+		value, err := v.joinState(ctx, coordinate)
+		if err != nil {
+			return state.State{}, false, err
+		}
+		if v.body.domain.Equal(value, v.body.domain.Bottom()) {
+			continue
+		}
+		if !reachable {
+			joined, reachable = value, true
+		} else {
+			joined = v.body.domain.Join(joined, value)
+		}
+	}
+	return state.NormalizeForDomain(v.body.domain, joined), reachable, nil
+}
+
 // CallOutcome publishes the exact alternatives produced at one lexical call
 // point and collapses them only at the DTO boundary. The semantic fiber keeps
 // physical absence distinct from an executed call whose sole alternative is

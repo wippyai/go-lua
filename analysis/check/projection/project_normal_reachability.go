@@ -10,6 +10,7 @@ type normalReturnReachability struct {
 	reg      *axis.Registry
 	graph    cfg.Graph
 	states   stateAtReader
+	formal   formalNormalReturnReachabilityReader
 	noNormal noNormalReturnReader
 	equal    func(state.State, state.State) bool
 	memo     map[cfg.Point]bool
@@ -21,6 +22,12 @@ func newNormalReturnReachability(
 	result ResultReader,
 	graph cfg.Graph,
 ) (normalReturnReachability, bool) {
+	if formal, ok := result.(formalNormalReturnReachabilityReader); ok {
+		return normalReturnReachability{
+			reg: reg, graph: graph, formal: formal,
+			memo: make(map[cfg.Point]bool), visiting: make(map[cfg.Point]struct{}),
+		}, true
+	}
 	states, ok := result.(stateAtReader)
 	if !ok {
 		return normalReturnReachability{}, false
@@ -45,10 +52,18 @@ func (r normalReturnReachability) canCompleteNormally(point cfg.Point) bool {
 	if _, ok := r.visiting[point]; ok {
 		return true
 	}
-	st, ok := r.states.StateAt(point)
-	if !ok || r.equal(st, state.State{}) {
-		r.memo[point] = false
-		return false
+	if r.formal != nil {
+		reachable, ok := r.formal.FormalNormalReturnReachability(point)
+		if !ok || !reachable {
+			r.memo[point] = false
+			return false
+		}
+	} else {
+		st, ok := r.states.StateAt(point)
+		if !ok || r.equal(st, state.State{}) {
+			r.memo[point] = false
+			return false
+		}
 	}
 	if point == r.graph.Exit() {
 		r.memo[point] = true
