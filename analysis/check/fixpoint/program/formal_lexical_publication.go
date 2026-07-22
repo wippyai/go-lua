@@ -2,6 +2,7 @@ package program
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
@@ -61,11 +62,15 @@ func publishFormalLexicalProgram(
 		if factory == nil {
 			return formalLexicalPublishedProgram{}, fmt.Errorf("program: formal lexical body %s has no execution authority", lexical.Body)
 		}
-		version, err := formalArtifactSemanticVersion(ctx, factory, lexical)
+		identity, err := formalStructuralPublicationIdentity(ctx, factory)
 		if err != nil {
 			return formalLexicalPublishedProgram{}, err
 		}
-		versions[lexical.Body] = version
+		// A partial manifest is never a cache key. The compatibility value only
+		// preserves ResultVersion's legacy non-zero dependency field within this
+		// one publication; ResultVersionLineage remains incomplete and therefore
+		// cannot authorize reuse.
+		versions[lexical.Body] = identity.publicationDependencyVersion()
 	}
 	results := make(map[lexicalidentity.StableLexicalBodyID]*body.Result, len(coordinates))
 	summaries := make(map[summary.SummaryKey]summary.Summary, len(coordinates))
@@ -172,11 +177,97 @@ func (r formalSummaryResult) formalNormalReturnReachability(point cfg.Point) (bo
 	return reachable, ok
 }
 
-// formalArtifactSemanticVersion derives lineage from the immutable formal
-// observations, never from a correlation-forgotten State reconstruction.
-// Every field consumed by summary construction or lexical Apply lineage is
-// included in a canonical order.
-func formalArtifactSemanticVersion(
+// formalStructuralPublicationIdentity is the hot-path identity seam. It
+// reads only immutable preparation inputs and never asks a formal observation
+// reader to freeze a coordinate dependency. A complete forest manifest also
+// needs canonical identities for the remaining unit authorities (keyspace,
+// product domain/lanes, entry/initial plans, providers, definitions, and call
+// topology). Those identities do not exist yet, so this seam deliberately
+// reports unavailable rather than constructing a partial cache key.
+//
+// The versioned components are retained in the diagnostic fingerprint so the
+// missing-input ledger is explicit and future manifest work has one owner.
+func formalStructuralPublicationIdentity(
+	ctx context.Context,
+	factory *body.ExecutionFactory,
+) (formalStructuralIdentity, error) {
+	if ctx == nil || factory == nil || factory.Registry() == nil {
+		return formalStructuralIdentity{}, fmt.Errorf("program: formal structural identity has no input authority")
+	}
+	source, err := factory.StructuralSourceIdentityContext(ctx)
+	if err != nil {
+		return formalStructuralIdentity{}, err
+	}
+	plan := factory.OperationPlan()
+	if plan == nil {
+		return formalStructuralIdentity{}, fmt.Errorf("program: formal structural identity has no operation plan")
+	}
+	surface, surfaceOK := plan.CallSurface()
+	registryPlan, registryErr := factory.Registry().CanonicalPlan()
+	if registryErr != nil {
+		return formalStructuralIdentity{}, registryErr
+	}
+	schema, schemaOK := registryPlan.AuthorityIdentity()
+
+	h := sha256.New()
+	_, _ = h.Write([]byte("wippy.formal.structural-publication.v1"))
+	_, _ = h.Write(source[:])
+	if schemaOK {
+		_, _ = h.Write(schema[:])
+	}
+	if surfaceOK {
+		digest := surface.Digest()
+		_, _ = h.Write(digest[:])
+	}
+	var fingerprint [sha256.Size]byte
+	copy(fingerprint[:], h.Sum(nil))
+	missing := []string{
+		"operation-plan-full", "keyspace", "product-domain-and-lanes", "entry-seed-plan", "initial-state-plan",
+		"path-n4-n5-and-provider-authorities", "node-reads-definitions-and-call-topology", "root-entry-state",
+	}
+	return formalStructuralIdentity{
+		fingerprint: fingerprint,
+		available:   schemaOK && surfaceOK && len(missing) == 0,
+		missing:     missing,
+	}, nil
+}
+
+// formalStructuralIdentity is unavailable until every frozen relation-program
+// input has a canonical versioned identity. Unavailable means no observation
+// cache adoption and a full recomputation; it never means "reuse the closest
+// known fingerprint".
+type formalStructuralIdentity struct {
+	fingerprint [sha256.Size]byte
+	available   bool
+	missing     []string
+}
+
+func (identity formalStructuralIdentity) publicationDependencyVersion() uint64 {
+	// This is not a structural identity and must never key a cache. It exists
+	// only because the legacy Result publication API still requires a compact,
+	// non-zero application-dependency field. The false branch is intentionally
+	// explicit: unavailable structural authority forces a fresh forest solve;
+	// it does not promote this value to a reuse key.
+	if !identity.available {
+		return identity.compatibilityVersion()
+	}
+	return identity.compatibilityVersion()
+}
+
+func (identity formalStructuralIdentity) compatibilityVersion() uint64 {
+	value := binary.LittleEndian.Uint64(identity.fingerprint[:8])
+	if value == 0 {
+		return 1
+	}
+	return value
+}
+
+// formalArtifactDigestForCrossVersionValidation is the artifact tier. It is
+// intentionally uncalled by normal publication: callers may use it only for
+// an explicit cross-version validation/export request after observations have
+// already been produced. Keeping it separate makes it impossible for cache
+// identity construction to trigger formal freezing.
+func formalArtifactDigestForCrossVersionValidation(
 	ctx context.Context,
 	factory *body.ExecutionFactory,
 	lexical transformer.FormalLexicalBodyCoordinates,

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -247,6 +248,25 @@ func (f *ExecutionFactory) KeySpace() *keyspace.KeySpace {
 		return nil
 	}
 	return f.prepared.visibility.KeySpace()
+}
+
+// StructuralSourceIdentityContext exposes only the frozen source/environment
+// identity required to assemble a structural computation manifest. It never
+// enters a solve or asks the formal engine for an observation.
+func (f *ExecutionFactory) StructuralSourceIdentityContext(ctx context.Context) (StructuralSourceIdentity, error) {
+	if f == nil || f.prepared == nil {
+		return StructuralSourceIdentity{}, fmt.Errorf("body: structural source identity requires an execution factory")
+	}
+	return f.prepared.StructuralSourceIdentityContext(ctx)
+}
+
+// OperationPlan returns the immutable plan owned by this execution factory.
+// It is exposed here solely for structural-manifest inspection.
+func (f *ExecutionFactory) OperationPlan() *operationplan.Plan {
+	if f == nil || f.prepared == nil {
+		return nil
+	}
+	return f.prepared.operationPlan
 }
 
 // RootAssignmentAuthority freezes the sole N4 root/value/object transaction

@@ -119,10 +119,9 @@ return left(), right()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if formalRepublished.root.ResultVersion() == firstRootVersion {
-		t.Fatal("formal normal-return observation did not alter caller lexical lineage")
+	if formalRepublished.root.ResultVersion() != firstRootVersion {
+		t.Fatal("solved formal observation altered structural publication lineage")
 	}
-	firstRootVersion = formalRepublished.root.ResultVersion()
 	coordinates[targetIndex].DiagnosticOutput = callpayload.DiagnosticOutput{SuspensionKnown: true}
 	republished, err := publishFormalLexicalProgram(
 		ctx, coordinates, factories, rootBody, check.EntryState, check.Initial,
@@ -131,8 +130,33 @@ return left(), right()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if republished.root.ResultVersion() == firstRootVersion {
-		t.Fatal("callee coordinate change did not alter caller lexical lineage")
+	if republished.root.ResultVersion() != firstRootVersion {
+		t.Fatal("solved formal artifact altered structural publication lineage")
+	}
+}
+
+func TestFormalStructuralPublicationIdentityFailsClosedForUnversionedInputs(t *testing.T) {
+	stmts := parseRelationProgramInputChunk(t, `return 1`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	check := body.Config{Registry: standard.Registry(), Context: context.Background()}
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), check.Registry, nil, check.ModuleExports, stmts)
+	prepared, err := prepareBoundChunkBodies(stmts, bindings, check, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, factories, err := newRelationProgramExecutionFactories(check.Context, prepared, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := formalStructuralPublicationIdentity(ctx, factories[prepared.root.StableLexicalBodyID()])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.available {
+		t.Fatal("partial relation-program input chain became reusable structural authority")
+	}
+	if len(identity.missing) == 0 {
+		t.Fatal("unversioned relation-program inputs were not recorded")
 	}
 }
 

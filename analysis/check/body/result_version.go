@@ -239,6 +239,29 @@ func staticResultVersionPrefix(s *Static, ctx context.Context) (internalhash.Wri
 // identities cannot drift onto a parallel notion of environment equality.
 type BoundaryEnvironmentDigest [sha256.Size]byte
 
+// StructuralSourceIdentity is the full-width, immutable source/environment
+// portion of a prepared body's identity. It deliberately excludes solve-local
+// State, callbacks, and interprocedural inputs. Those owners must contribute
+// their own canonical identities before a caller can treat a larger
+// computation manifest as reusable.
+type StructuralSourceIdentity [sha256.Size]byte
+
+// StructuralSourceIdentityContext returns the already memoized body-source
+// encoding used by ResultVersion. It performs no solve, formal read, or State
+// reconstruction.
+func (s *Static) StructuralSourceIdentityContext(ctx context.Context) (StructuralSourceIdentity, error) {
+	if s == nil {
+		return StructuralSourceIdentity{}, nil
+	}
+	_, wide, err := staticResultVersionPrefix(s, ctx)
+	if err != nil {
+		return StructuralSourceIdentity{}, err
+	}
+	var identity StructuralSourceIdentity
+	copy(identity[:], wide.Sum(nil))
+	return identity, nil
+}
+
 // BoundaryEnvironmentDigest returns the prepared body's canonical boundary
 // environment identity. It is stable across distinct bodies prepared against
 // the same environment. Callers needing cancellation should use the Context
