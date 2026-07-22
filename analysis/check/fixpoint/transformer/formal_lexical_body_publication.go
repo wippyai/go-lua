@@ -89,7 +89,7 @@ func projectFormalLexicalBodies(
 	for index := range views {
 		view := views[index]
 		var publicationErr error
-		out[index], publicationErr = view.ProjectFormalLexicalBody(ctx)
+		out[index], publicationErr = view.ProjectLexicalBody(ctx)
 		if publicationErr != nil {
 			return nil, publicationErr
 		}
@@ -113,11 +113,10 @@ func formalLexicalPublicationViews(execution *formalRelationExecution) ([]Formal
 	return out, nil
 }
 
-// ProjectFormalLexicalBody publishes the direct formal observations consumed
-// by Result and summary readers. Correlation is forgotten only at the owning
-// Result read-model boundary; this projection neither evaluates an equation
-// nor constructs a summary-shaped State adapter.
-func (v *FormalRelationPublicationView) ProjectFormalLexicalBody(ctx context.Context) (FormalLexicalBodyCoordinates, error) {
+// ProjectLexicalBody forgets correlation independently at each named Result
+// publication coordinate. It never enumerates invocation routes and never
+// evaluates an equation or transfer.
+func (v *FormalRelationPublicationView) ProjectLexicalBody(ctx context.Context) (FormalLexicalBodyCoordinates, error) {
 	if ctx == nil || v == nil || v.execution == nil || v.body == nil || v.body.graph == nil {
 		return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body publication is unowned")
 	}
@@ -151,23 +150,31 @@ func (v *FormalRelationPublicationView) ProjectFormalLexicalBody(ctx context.Con
 	// miss here is therefore malformed publication metadata, not unreachable
 	// flow. Unreachable points retain the exact owning-domain Bottom.
 	for _, point := range cfg.RPOReadOnly(v.body.graph) {
-		_, declared := v.pointInput[point]
+		coordinates, declared := v.pointInput[point]
 		if !declared {
 			return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no input cell for point %d", v.body.body, point)
 		}
-		value, reachable, err := v.PointInputAll(ctx, point)
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
+		value, reachable := v.body.domain.Bottom(), false
+		if len(coordinates) != 0 {
+			var err error
+			value, reachable, err = v.joinPublishedCoordinates(ctx, coordinates)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
 		}
 		out.PointInputs[point], out.PointReachable[point] = value, reachable
 
-		_, declared = v.pointOutput[point]
+		outputs, declared := v.pointOutput[point]
 		if !declared {
 			return FormalLexicalBodyCoordinates{}, fmt.Errorf("transformer: formal lexical body %s has no output cell for point %d", v.body.body, point)
 		}
-		value, reachable, err = v.PlannedNodeOutputAll(ctx, point)
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
+		value, reachable = v.body.domain.Bottom(), false
+		if len(outputs) != 0 {
+			var err error
+			value, reachable, err = v.joinPublishedCoordinates(ctx, outputs)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
 		}
 		out.PlannedNodeOutputs[point], out.NodeOutputReachable[point] = value, reachable
 	}
@@ -183,9 +190,13 @@ func (v *FormalRelationPublicationView) ProjectFormalLexicalBody(ctx context.Con
 		return edges[i].To < edges[j].To
 	})
 	for _, edge := range edges {
-		_, reachable, err := v.EdgeNormalAll(ctx, edge)
-		if err != nil {
-			return FormalLexicalBodyCoordinates{}, err
+		reachable := false
+		if coordinates := v.edgeNormal[edge]; len(coordinates) != 0 {
+			var err error
+			_, reachable, err = v.joinPublishedCoordinates(ctx, coordinates)
+			if err != nil {
+				return FormalLexicalBodyCoordinates{}, err
+			}
 		}
 		out.EdgeNormal[edge] = reachable
 	}
@@ -504,6 +515,33 @@ func formalLexicalCallDependencyLess(left, right FormalLexicalCallDependency) bo
 		}
 	}
 	return false
+}
+
+func (v *FormalRelationPublicationView) joinPublishedCoordinates(
+	ctx context.Context,
+	coordinates []formalPublishedCoordinate,
+) (state.State, bool, error) {
+	if len(coordinates) == 0 {
+		return state.State{}, false, fmt.Errorf("transformer: formal lexical publication has no named coordinate")
+	}
+	joined := v.body.domain.Bottom()
+	reachable := false
+	for _, coordinate := range coordinates {
+		coordinate.view = v
+		value, err := v.joinState(ctx, coordinate)
+		if err != nil {
+			return state.State{}, false, err
+		}
+		if v.body.domain.Equal(value, v.body.domain.Bottom()) {
+			continue
+		}
+		if !reachable {
+			joined, reachable = value, true
+		} else {
+			joined = v.body.domain.Join(joined, value)
+		}
+	}
+	return state.NormalizeForDomain(v.body.domain, joined), reachable, nil
 }
 
 // joinPublishedValues is the selected Values-only publication seam. It keeps

@@ -12,13 +12,6 @@ import (
 )
 
 func projectNormalReturnParams(reg *axis.Registry, result ResultReader, exit state.State) []product.Value {
-	if formal, ok := result.(formalNormalReturnParameterReader); ok {
-		entry, normalExit, hasNormalExit := formal.FormalNormalReturnParameters()
-		if !hasNormalExit {
-			return nil
-		}
-		return projectFormalNormalReturnParams(reg, result, entry, normalExit)
-	}
 	entryReader, ok := result.(entryStateReader)
 	if !ok {
 		return nil
@@ -59,38 +52,6 @@ func projectNormalReturnParams(reg *axis.Registry, result ResultReader, exit sta
 			continue
 		}
 		out[i] = portableBoundaryValue(reg, value)
-	}
-	return out
-}
-
-func projectFormalNormalReturnParams(reg *axis.Registry, result ResultReader, entry, exit []product.Value) []product.Value {
-	if len(entry) == 0 || len(entry) != len(exit) {
-		return nil
-	}
-	multiPathNormalReturn := normalReturnHasMultiPathChoice(reg, result)
-	var reassigned map[key.Value]struct{}
-	if reassignedReader, ok := result.(reassignedParameterValueSlotReader); ok {
-		reassigned = reassignedReader.ReassignedParameterValueSlots()
-	}
-	slots := []key.Value(nil)
-	if slotReader, ok := result.(parameterValueSlotReader); ok {
-		slots = slotReader.ParameterValueSlots()
-	}
-	out := make([]product.Value, len(entry))
-	for i := range out {
-		out[i] = product.Top()
-		if multiPathNormalReturn {
-			continue
-		}
-		if i < len(slots) {
-			if _, changed := reassigned[slots[i]]; changed {
-				continue
-			}
-		}
-		value, exact := normalReturnParamConstraint(reg, entry[i], exit[i])
-		if exact {
-			out[i] = portableBoundaryValue(reg, value)
-		}
 	}
 	return out
 }

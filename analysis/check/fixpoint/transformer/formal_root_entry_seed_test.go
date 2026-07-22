@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -147,44 +146,6 @@ func TestFormalRootEntrySubstitutionOnlyAppliesToItsSelectedRoot(t *testing.T) {
 	if tuple, applies, err := substitution.substitute(algebra, &foreign); err != nil || applies || !tuple.bottom() {
 		t.Fatalf("foreign root substitution = %#v/%t/%v", tuple, applies, err)
 	}
-}
-
-func TestFormalPublicationWholeFamilyReadersFoldEveryCoordinate(t *testing.T) {
-	program := formalRelationExecutorTestProgram(t, []relationNode{{}, {kind: relationNodeSequence, next: 2}, {kind: relationNodeBottom}})
-	body := &program.bodies[0]
-	execution, err := executeFormalRootRelation(context.Background(), program, body.body, state.State{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	publication, err := execution.Publication(body.body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	point := cfg.Point(1)
-	input := append([]formalPublishedCoordinate(nil), publication.pointInput[point]...)
-	output := append([]formalPublishedCoordinate(nil), publication.pointOutput[point]...)
-	if len(input) == 0 || len(output) == 0 {
-		t.Fatal("fixture has no publication coordinate")
-	}
-	second := output[0]
-	second.inverse, second.inverseErr = input[0].inverse, input[0].inverseErr
-	publication.pointInput[point] = append(input, second)
-	publication.pointOutput[point] = append(output, second)
-	edge := cfg.Edge{From: point, To: point}
-	publication.edgeNormal[edge] = []formalPublishedCoordinate{input[0], second}
-	assertWhole := func(name string, got state.State, live bool, gotErr error, coordinates []formalPublishedCoordinate) {
-		t.Helper()
-		want, wantLive, wantErr := publication.joinPublishedCoordinates(context.Background(), coordinates)
-		if gotErr != nil || wantErr != nil || live != wantLive || !body.domain.Equal(got, want) {
-			t.Fatalf("%s = live:%t err:%v, want live:%t err:%v equal:%t", name, live, gotErr, wantLive, wantErr, body.domain.Equal(got, want))
-		}
-	}
-	got, live, err := publication.PointInputAll(context.Background(), point)
-	assertWhole("point input", got, live, err, publication.pointInput[point])
-	got, live, err = publication.PlannedNodeOutputAll(context.Background(), point)
-	assertWhole("point output", got, live, err, publication.pointOutput[point])
-	got, live, err = publication.EdgeNormalAll(context.Background(), edge)
-	assertWhole("normal edge", got, live, err, publication.edgeNormal[edge])
 }
 
 func TestFormalPublicationPartitionsOneCorrelatedLeafVectorWithoutCrossProduct(t *testing.T) {

@@ -2,19 +2,14 @@ package program
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"hash/fnv"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/projection"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -61,7 +56,12 @@ func publishFormalLexicalProgram(
 		if factory == nil {
 			return formalLexicalPublishedProgram{}, fmt.Errorf("program: formal lexical body %s has no execution authority", lexical.Body)
 		}
-		version, err := formalArtifactSemanticVersion(ctx, factory, lexical)
+		version, err := stabilizedCoordinateSemanticVersion(ctx, factory, "formal lexical body "+lexical.Body.String(), stabilizedCoordinateFingerprint{
+			pointInputs: lexical.PointInputs, pointOutputs: lexical.PlannedNodeOutputs,
+			pointReachable: lexical.PointReachable, outputReachable: lexical.NodeOutputReachable,
+			edgeNormal: lexical.EdgeNormal, callOutcomes: lexical.CallOutcomes,
+			diagnostics: lexical.DiagnosticOutput,
+		})
 		if err != nil {
 			return formalLexicalPublishedProgram{}, err
 		}
@@ -117,7 +117,7 @@ func publishFormalLexicalProgram(
 		if err != nil {
 			return formalLexicalPublishedProgram{}, fmt.Errorf("program: publish formal lexical body %s: %w", lexical.Body, err)
 		}
-		projected, err := summaryprojection.FromFormalArtifactsContext(ctx, formalSummaryResult{Result: result, lexical: lexical})
+		projected, err := summaryprojection.FromResultContext(ctx, result)
 		if err != nil {
 			return formalLexicalPublishedProgram{}, err
 		}
@@ -151,110 +151,6 @@ func publishFormalLexicalProgram(
 		body.WithOwnedFunctionValueTypes(result, functionTypes)
 	}
 	return formalLexicalPublishedProgram{root: rootResult, results: results, snapshot: snapshot}, nil
-}
-
-// formalSummaryResult carries only the two non-retained summary observations
-// published directly by the formal solve. Result remains the read-model for
-// the five explicitly retained relation-completion classes.
-type formalSummaryResult struct {
-	*body.Result
-	lexical transformer.FormalLexicalBodyCoordinates
-}
-
-func (r formalSummaryResult) FormalNormalReturnParameters() ([]product.Value, []product.Value, bool) {
-	return append([]product.Value(nil), r.lexical.NormalReturnParameters.Entry...),
-		append([]product.Value(nil), r.lexical.NormalReturnParameters.Exit...),
-		r.lexical.NormalReturnParameters.HasNormalExit
-}
-
-func (r formalSummaryResult) formalNormalReturnReachability(point cfg.Point) (bool, bool) {
-	reachable, ok := r.lexical.NormalReturnReachability[point]
-	return reachable, ok
-}
-
-// formalArtifactSemanticVersion derives lineage from the immutable formal
-// observations, never from a correlation-forgotten State reconstruction.
-// Every field consumed by summary construction or lexical Apply lineage is
-// included in a canonical order.
-func formalArtifactSemanticVersion(
-	ctx context.Context,
-	factory *body.ExecutionFactory,
-	lexical transformer.FormalLexicalBodyCoordinates,
-) (uint64, error) {
-	if ctx == nil || factory == nil || factory.Registry() == nil || factory.KeySpace() == nil {
-		return 0, fmt.Errorf("program: formal lexical body %s has no artifact identity authority", lexical.Body)
-	}
-	h := fnv.New64a()
-	var scratch [8]byte
-	write := func(value uint64) { binary.LittleEndian.PutUint64(scratch[:], value); _, _ = h.Write(scratch[:]) }
-	writeValue := func(value product.Value) {
-		write(uint64(summary.NormalizedPayloadDigest(factory.Registry(), summary.Summary{Returns: []product.Value{value}})))
-	}
-	for _, value := range lexical.NormalReturnParameters.Entry {
-		writeValue(value)
-	}
-	write(uint64(len(lexical.NormalReturnParameters.Entry)))
-	for _, value := range lexical.NormalReturnParameters.Exit {
-		writeValue(value)
-	}
-	write(uint64(len(lexical.NormalReturnParameters.Exit)))
-	if lexical.NormalReturnParameters.HasNormalExit {
-		write(1)
-	} else {
-		write(0)
-	}
-	points := make([]int, 0, len(lexical.NormalReturnReachability))
-	for point := range lexical.NormalReturnReachability {
-		points = append(points, int(point))
-	}
-	sort.Ints(points)
-	write(uint64(len(points)))
-	for _, raw := range points {
-		write(uint64(raw))
-		if lexical.NormalReturnReachability[cfg.Point(raw)] {
-			write(1)
-		} else {
-			write(0)
-		}
-	}
-	returns := make([]int, 0, len(lexical.ReturnSlots))
-	for slot := range lexical.ReturnSlots {
-		returns = append(returns, slot)
-	}
-	sort.Ints(returns)
-	write(uint64(len(returns)))
-	for _, slot := range returns {
-		write(uint64(slot))
-		writeValue(lexical.ReturnSlots[slot])
-	}
-	callPoints := make([]int, 0, len(lexical.CallOutcomes))
-	for point := range lexical.CallOutcomes {
-		callPoints = append(callPoints, int(point))
-	}
-	sort.Ints(callPoints)
-	write(uint64(len(callPoints)))
-	for _, raw := range callPoints {
-		write(uint64(raw))
-		digest, err := summary.CanonicalCallOutcomeDigestContext(ctx, factory.Registry(), factory.KeySpace(), lexical.CallOutcomes[cfg.Point(raw)])
-		if err != nil {
-			return 0, err
-		}
-		write(uint64(digest))
-	}
-	writeUint32 := func(value uint32) { write(uint64(value)) }
-	for _, call := range lexical.Calls {
-		write(uint64(call.Point))
-		writeUint32(call.Occurrence)
-		for _, value := range call.Target {
-			write(uint64(value))
-		}
-	}
-	write(uint64(lexical.DiagnosticOutput.Fingerprint(factory.Registry())))
-	version := h.Sum64()
-	if version == 0 {
-		return 0, fmt.Errorf("program: formal lexical body %s has zero artifact identity", lexical.Body)
-	}
-	return version, nil
 }
 
 // attachFormalLexicalFunctionResults mirrors lexical nesting exactly. There is

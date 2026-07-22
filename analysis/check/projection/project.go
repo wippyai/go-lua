@@ -23,19 +23,6 @@ type ResultReader interface {
 	DiagnosticOutput() callpayload.DiagnosticOutput
 }
 
-// formalNormalReturnParameterReader is the formal artifact read-model for the
-// one summary observation that previously required EntryState and ExitState.
-// The values are ordered by the prepared boundary parameter inventory.
-type formalNormalReturnParameterReader interface {
-	FormalNormalReturnParameters() (entry, exit []product.Value, hasNormalExit bool)
-}
-
-// formalNormalReturnReachabilityReader is the formal artifact read-model for
-// normal-completion reachability. It deliberately exposes no State.
-type formalNormalReturnReachabilityReader interface {
-	FormalNormalReturnReachability(cfg.Point) (bool, bool)
-}
-
 type entryStateReader interface {
 	EntryState() (state.State, bool)
 }
@@ -114,22 +101,14 @@ type stableShapeSourceReader interface {
 
 // FromResult projects one completed check result into a fixed-point summary.
 func FromResult(result ResultReader) summary.Summary {
-	projected, _ := fromResultContext(context.Background(), result)
+	projected, _ := FromResultContext(context.Background(), result)
 	return projected
 }
 
-// FromFormalArtifactsContext projects a completed Result together with the
-// detached formal observations that replace its non-retained State reads.
-// Retained relation-completion classes continue to be read from Result by
-// their class-specific projectors.
-func FromFormalArtifactsContext(ctx context.Context, result ResultReader) (summary.Summary, error) {
-	return fromResultContext(ctx, result)
-}
-
-// fromResultContext projects a completed check result into a summary while
+// FromResultContext projects a completed check result into a summary while
 // observing cancellation during graph-sized projection passes. A canceled
 // projection never publishes its partially accumulated summary.
-func fromResultContext(ctx context.Context, result ResultReader) (summary.Summary, error) {
+func FromResultContext(ctx context.Context, result ResultReader) (summary.Summary, error) {
 	if err := projectionContextErr(ctx); err != nil {
 		return summary.Summary{}, err
 	}

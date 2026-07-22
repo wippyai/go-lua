@@ -73,7 +73,7 @@ func TestFromResultContextReturnsCanceledForCanceledSolve(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got, err := summaryprojection.FromFormalArtifactsContext(ctx, result)
+	got, err := summaryprojection.FromResultContext(ctx, result)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("FromResultContext error = %v, want context cancellation", err)
 	}
