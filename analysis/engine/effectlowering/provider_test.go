@@ -361,6 +361,21 @@ func TestAmbientChannelLifecycleOutcomeProviderWithoutTypestateKeepsReceiveCorre
 	}
 }
 
+func TestAmbientTypestateEscapeOutcomeProviderWithoutTypestateIsAbsent(t *testing.T) {
+	reg := standard.Registry()
+	domain, err := state.TryRegisteredProductDomainWithLanes(reg, state.DefaultLaneSet().Without(state.LaneTypestates).IDs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := AmbientTypestateEscapeOutcomeProvider(AmbientTypestateEscapeOutcomeProviderConfig{
+		KeySpace: keyspace.New(),
+		Domain:   domain,
+	})
+	if !provider.Empty() {
+		t.Fatal("typestate escape provider is present without the typestate capability")
+	}
+}
+
 func TestChannelLifecycleDefinitionDeclaresRuntimeTransitions(t *testing.T) {
 	if err := ChannelLifecycleDefinition.Validate(); err != nil {
 		t.Fatalf("ChannelLifecycleDefinition.Validate: %v", err)
