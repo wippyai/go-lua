@@ -104,7 +104,11 @@ func (p *RelationProgram) ObservationContract() ObservationContract {
 	if p == nil {
 		return ObservationContract{}
 	}
-	return ObservationContract{key: p.relationDependencyFreeze.demand.key, consumers: append([]ObservationConsumer(nil), p.relationDependencyFreeze.demand.consumers...)}
+	return ObservationContract{
+		key:       p.relationDependencyFreeze.demand.key,
+		consumers: append([]ObservationConsumer(nil), p.relationDependencyFreeze.demand.consumers...),
+		classes:   append([]ObservationClass(nil), p.relationDependencyFreeze.demand.classes...),
+	}
 }
 
 // RequireObservation is the coverage guard used by evaluators and providers.
@@ -114,4 +118,13 @@ func (p *RelationProgram) RequireObservation(consumer ObservationConsumer, provi
 		return fmt.Errorf("transformer: observation coverage has no sealed dependency product")
 	}
 	return p.relationDependencyFreeze.evaluator.coverage.require(consumer, provider)
+}
+
+// RequireObservationClass rejects a provider that tries to read a result
+// surface outside the closure declared by its consumer contract.
+func (p *RelationProgram) RequireObservationClass(consumer ObservationConsumer, class ObservationClass, provider string) error {
+	if p == nil || !p.relationDependencyFreeze.validFor(p) {
+		return fmt.Errorf("transformer: observation coverage has no sealed dependency product")
+	}
+	return p.relationDependencyFreeze.evaluator.coverage.requireClass(consumer, class, provider)
 }

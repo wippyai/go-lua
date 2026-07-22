@@ -81,3 +81,41 @@ func TestRelationProgramCoverageGuardRejectsUndeclaredConsumerWithoutRetry(t *te
 		t.Fatalf("retained canonical demand = %#v, want %#v", got, demand)
 	}
 }
+
+func TestRelationProgramCoverageGuardFailsClosedOutsideDeclaredClass(t *testing.T) {
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("observation-class-coverage"))
+	body := lexicalidentity.RootBody(namespace)
+	demand, err := CanonicalizeObservationContracts(ObservationClassesV1Contract(
+		ObservationConsumerDiagnosticDiscriminatedUnion,
+		ObservationClassPointReachability,
+		ObservationClassPointState,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := FreezeRelationProgramWithObservation(
+		[]RelationProgramUnit{formalTemplateFreezeUnit(t, body)}, testAcyclicCallTopology(t, body), demand,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := program.RequireObservationClass(
+		ObservationConsumerDiagnosticDiscriminatedUnion,
+		ObservationClassPointState,
+		"discriminated-union read model",
+	); err != nil {
+		t.Fatalf("declared class rejected: %v", err)
+	}
+	err = program.RequireObservationClass(
+		ObservationConsumerDiagnosticDiscriminatedUnion,
+		ObservationClassCallOutcome,
+		"adversarial call-outcome read",
+	)
+	var coverage *ObservationCoverageError
+	if !errors.As(err, &coverage) || !IsObservationCoverageError(err) || coverage.Consumer != ObservationConsumerDiagnosticDiscriminatedUnion {
+		t.Fatalf("outside-closure access error = %#v", err)
+	}
+	if coverage.Provider != "adversarial call-outcome read" {
+		t.Fatalf("coverage provider = %q", coverage.Provider)
+	}
+}

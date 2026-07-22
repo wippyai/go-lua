@@ -73,9 +73,9 @@ func (c *Checker) checkChunk(chunk []ast.Stmt, entryID string, imports map[strin
 	manifests := append(c.canonicalManifests(), currentImportManifests(imports)...)
 	globalTypes := mergedGlobalTypes(c.deps.GlobalTypes, importedAliasGlobalTypes(imports), importedAmbientGlobalTypes(manifests))
 	checked, err := program.RunChunk(chunk, program.Config{
-		ObservationContracts: []transformer.ObservationContract{
-			program.SummaryProjectionObservationContract(), diagnostics.ObservationContract(), exportmanifest.ObservationContract(),
-		},
+		ObservationContracts: append(append([]transformer.ObservationContract{
+			program.SummaryProjectionObservationContract(),
+		}, diagnostics.ObservationContracts()...), exportmanifest.ObservationContract()),
 		Check: body.Config{
 			Registry:    standard.Registry(),
 			Globals:     configuredGlobals(globalTypes, manifests, imports),

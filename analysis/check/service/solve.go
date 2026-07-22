@@ -159,9 +159,11 @@ func solveUnit(ctx context.Context, unit retainedUnit, profile string, documentV
 		globals = append(globals, item.Globals...)
 	}
 	globals = normalizedStrings(globals)
-	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, ObservationContracts: []transformer.ObservationContract{
-		program.SummaryProjectionObservationContract(), diagnostics.ObservationContract(), exportmanifest.ObservationContract(), observationContract(),
-	}, Check: body.Config{
+	contracts := append([]transformer.ObservationContract{
+		program.SummaryProjectionObservationContract(),
+	}, diagnostics.ObservationContracts()...)
+	contracts = append(contracts, exportmanifest.ObservationContract(), observationContract())
+	checked, err := program.RunChunk(stmts, program.Config{Context: ctx, ObservationContracts: contracts, Check: body.Config{
 		Registry:      checkerRegistry,
 		UnitNamespace: unitLexicalNamespace(input),
 		Globals:       globals,

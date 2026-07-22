@@ -289,9 +289,9 @@ func checkSource(src, filename string, opts ...Option) Result {
 	}
 	checked, err := program.RunChunk(stmts, program.Config{
 		Context: cfg.context,
-		ObservationContracts: []transformer.ObservationContract{
-			program.SummaryProjectionObservationContract(), diagnostics.ObservationContract(),
-		},
+		ObservationContracts: append([]transformer.ObservationContract{
+			program.SummaryProjectionObservationContract(),
+		}, diagnostics.ObservationContracts()...),
 		Check: body.Config{
 			Registry:      reg,
 			Globals:       globals,
