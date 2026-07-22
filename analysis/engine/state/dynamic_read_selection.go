@@ -19,7 +19,7 @@ import (
 type DynamicReadSelection struct {
 	seal        *productDomainSeal
 	keys        *keyspace.KeySpace
-	tables      map[keyspace.KeyHandle]struct{}
+	tables      map[keyspace.Key]struct{}
 	pathMembers []keyspace.Key
 	heapMembers []keyspace.Key
 	keySegment  segment.Segment
@@ -43,7 +43,7 @@ func (d ProductDomain) PrepareDynamicReadSelection(query DynamicReadQuery) (Dyna
 		!product.BelongsToRegistry(d.reg, query.TableValue) || !product.BelongsToRegistry(d.reg, query.KeyValue) {
 		return DynamicReadSelection{}, fmt.Errorf("%w: invalid dynamic-read selection", ErrInvalidLaneFactor)
 	}
-	out := DynamicReadSelection{seal: d.seal, keys: query.KeySpace, tables: make(map[keyspace.KeyHandle]struct{}, len(query.TableKeys)), query: query}
+	out := DynamicReadSelection{seal: d.seal, keys: query.KeySpace, tables: make(map[keyspace.Key]struct{}, len(query.TableKeys)), query: query}
 	if len(query.KeyKeys) != 0 && len(query.TableKeys) != 0 {
 		out.membership = DynamicReadMembershipConditional
 	} else {
@@ -57,11 +57,7 @@ func (d ProductDomain) PrepareDynamicReadSelection(query DynamicReadQuery) (Dyna
 		if !ok {
 			return DynamicReadSelection{}, fmt.Errorf("%w: foreign dynamic-read table key %d", ErrInvalidLaneFactor, index)
 		}
-		handle := table.Handle()
-		if handle == 0 {
-			return DynamicReadSelection{}, fmt.Errorf("%w: unbound dynamic-read table key %d", ErrInvalidLaneFactor, index)
-		}
-		out.tables[handle] = struct{}{}
+		out.tables[table] = struct{}{}
 	}
 	out.keySegment, out.exactKey = typevalue.ExactScalarKeySegment(d.reg, query.TypeValues, query.KeyValue)
 	if out.exactKey && query.TablePath.Kind != keyspace.KindInvalid {
@@ -108,7 +104,7 @@ func (s DynamicReadSelection) HeapMembers(available []keyspace.Key) []keyspace.K
 }
 
 func (s DynamicReadSelection) SelectsTable(table keyspace.Key) bool {
-	_, selected := s.tables[table.Handle()]
+	_, selected := s.tables[table]
 	return selected
 }
 
