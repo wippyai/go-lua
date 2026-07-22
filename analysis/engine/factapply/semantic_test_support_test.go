@@ -33,7 +33,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 const testObjectLiteralGraphID uint64 = 9001
@@ -85,15 +84,6 @@ func assertPlacement(t *testing.T, gotState state.State, id identity.ID, want pl
 	if got := gotState.ReadPlacement(id); got != want {
 		t.Fatalf("placement[%v] = %s, want %s", id, got, want)
 	}
-}
-
-func mustStateKeyForPath(t *testing.T, resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) pathaddr.StateKey {
-	t.Helper()
-	key, ok := visibility.AddressAt(resolver, point, path).RootOrVisibleStateKey()
-	if !ok {
-		t.Fatalf("missing state key for %s at point %d", path.String(), point)
-	}
-	return key
 }
 
 func testTaintSpec(id userlattice.AxisID) userlattice.Spec {
@@ -195,23 +185,6 @@ func branchEdgeTransactionResolver(point cfg.Point, symbols ...symbol.ID) *visib
 		builder.Define(point, sym, "branch-edge")
 	}
 	return visibility.NewResolver(builder.Build())
-}
-
-func testCovariantRecordWiden(sourceWitness, contract typ.Type, segments []segment.Segment) (typ.Type, [][]segment.Segment, bool) {
-	if len(segments) != 0 {
-		return nil, nil, false
-	}
-	sourceRecord, sourceOK := sourceWitness.(*typ.Record)
-	contractRecord, contractOK := contract.(*typ.Record)
-	if !sourceOK || !contractOK {
-		return nil, nil, false
-	}
-	sourceField := sourceRecord.GetField("x")
-	contractField := contractRecord.GetField("x")
-	if sourceField == nil || contractField == nil || typ.TypeEquals(sourceField.Type, contractField.Type) {
-		return nil, nil, false
-	}
-	return contract, [][]segment.Segment{{{Kind: segment.SegmentField, Name: "x"}}}, true
 }
 
 type nodePointSourceValues struct {

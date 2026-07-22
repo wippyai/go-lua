@@ -317,12 +317,3 @@ func TestPrepareObjectLiteralTargetEntryPlanRejectsUnconstructableGraph(t *testi
 		})
 	}
 }
-
-func mustObjectLiteralView(t *testing.T, facts factflow.Facts, ref factflow.ExprRef) factflow.ObjectLiteralView {
-	t.Helper()
-	literal, ok := facts.ObjectLiteralView(ref)
-	if !ok {
-		t.Fatalf("missing object literal %d", ref)
-	}
-	return literal
-}
