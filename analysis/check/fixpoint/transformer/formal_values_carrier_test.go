@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -39,6 +40,9 @@ func TestFormalValuesCarrierPreservesOwnedSymbolicTerm(t *testing.T) {
 	}
 	if _, err := formalConcreteValuesFactor(authority, carrier); err == nil {
 		t.Fatal("symbolic Values carrier crossed concrete boundary")
+	}
+	if _, err := formalPublicationConcreteValues(algebra, authority, group, leaves); !errors.Is(err, errFormalPublicationSymbolicValues) {
+		t.Fatalf("publication symbolic Values assertion = %v", err)
 	}
 	factored, err := algebra.factorFormalValuesGroup(authority, group, carrier)
 	if err != nil {

@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -17,6 +18,31 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 )
+
+// errFormalPublicationSymbolicValues marks an internal sequencing violation:
+// a relation may only cross into State after root specialization has made its
+// Values carrier concrete.
+var errFormalPublicationSymbolicValues = errors.New("transformer: publication received symbolic Values carrier")
+
+func formalPublicationConcreteValues(
+	algebra *formalTupleAlgebra,
+	authority *formalComponentTerminalAuthority,
+	group formalFiberGroupDescriptor,
+	leaves []decisionLeaf,
+) (state.ValueFactor[FormalSlot], error) {
+	if algebra == nil || authority == nil {
+		return state.ValueFactor[FormalSlot]{}, errFormalComponentForeignOwner
+	}
+	values, err := algebra.materializeFormalValuesGroup(authority, group, leaves)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, err
+	}
+	concrete, err := formalConcreteValuesFactor(authority, values)
+	if err != nil {
+		return state.ValueFactor[FormalSlot]{}, fmt.Errorf("%w: %v", errFormalPublicationSymbolicValues, err)
+	}
+	return state.ValueFactor[FormalSlot]{Top: values.Top, Values: concrete}, nil
+}
 
 // formalPublishedCoordinate is one body-owned cell in a completed formal
 // execution. Concrete callers cannot name it directly: publication must first
@@ -891,7 +917,7 @@ func (v *FormalRelationPublicationView) projectLeafValues(
 				return entry.values, nil
 			}
 		}
-		formalValues, err := leaf.algebra.materializeValuesGroup(leaf.authority, group, leaves)
+		formalValues, err := formalPublicationConcreteValues(leaf.algebra, leaf.authority, group, leaves)
 		if err != nil {
 			return state.ValueLaneFactor{}, fmt.Errorf("transformer: publish Values factor: %w", err)
 		}
@@ -962,7 +988,7 @@ func (v *FormalRelationPublicationView) projectLeafFactorTuple(
 			if cached {
 				continue
 			}
-			formalValues, err := leaf.algebra.materializeValuesGroup(leaf.authority, group, leaves)
+			formalValues, err := formalPublicationConcreteValues(leaf.algebra, leaf.authority, group, leaves)
 			if err != nil {
 				return state.ValueLaneFactor{}, nil, fmt.Errorf("transformer: publish Values factor: %w", err)
 			}
