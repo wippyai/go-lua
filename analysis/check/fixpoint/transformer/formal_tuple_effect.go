@@ -446,19 +446,6 @@ func (a *formalTupleAlgebra) applyFormalPathReplacement(operator formalRelationO
 		})
 }
 
-// applyFormalEffectLift owns the guard-exact relationCode composition shared
-// by every factor-native Effect adapter. The supplied lift may be whole-lane
-// or exact-frame, but decision partitioning and tuple publication stay here.
-func (a *formalTupleAlgebra) applyFormalEffectLift(
-	operator formalRelationOperatorRef,
-	predecessor formalRelationTuple,
-	demands []formalQualifiedGuardDemand,
-	lift formalClosedFactorLift,
-	applyLeaf func(formalSparseLeafView) ([]formalClosedFactorLeafWrite, error),
-) (formalRelationTuple, error) {
-	return a.applyFormalEffectDerivedLift(operator, predecessor, demands, lift, nil, applyLeaf)
-}
-
 func (a *formalTupleAlgebra) applyFormalEffectDerivedLift(
 	operator formalRelationOperatorRef,
 	predecessor formalRelationTuple,
@@ -532,8 +519,7 @@ func (a *formalTupleAlgebra) applyFormalEffectDerivedLift(
 }
 
 // applyFormalEffectStep binds a conventional complete-lane Effect transaction
-// through the shared closed lift. Effects with an exact ProductFactorFrame use
-// applyFormalEffectLift directly and therefore do not inflate their cone.
+// through the shared closed lift.
 func (a *formalTupleAlgebra) applyFormalEffectStep(
 	operator formalRelationOperatorRef,
 	predecessor formalRelationTuple,
