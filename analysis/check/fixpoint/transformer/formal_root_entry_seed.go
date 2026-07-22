@@ -104,19 +104,11 @@ func (s formalRootEntrySubstitution) specializeStabilized(ctx context.Context, e
 			values[cell] = tuple
 			continue
 		}
-		specialized, specializeErr := s.specializeTuple(a, tuple, regions[0].evaluator)
+		specialized, specializeErr := s.specializeTuple(a, tuple, regions[0].evaluator, baseline)
 		if specializeErr != nil {
 			return nil, fmt.Errorf("transformer: specialize cell %+v: %w", cell, specializeErr)
 		}
-		// A stabilized formal tuple carries deltas from the symbolic root. Its
-		// concrete image is therefore completed against the prepared full-product
-		// entry, not just Values: coordinate families retain their registered
-		// skeletons, guarded equalities, advances, and alphabets when the formal
-		// relation left a lane structurally untouched.
-		values[cell] = a.combine(formalComponentJoin, baseline, specialized)
-		if err := a.err(); err != nil {
-			return nil, fmt.Errorf("transformer: specialize cell %+v baseline: %w", cell, err)
-		}
+		values[cell] = specialized
 	}
 	// Publication is authorized only on this completed concrete image.  The
 	// compatibility executor installs the same capability before solving; this
@@ -185,7 +177,7 @@ func (s formalRootEntrySubstitution) specializationEntry(a *formalTupleAlgebra) 
 	return a.writeValuesFactor(entry, group, values)
 }
 
-func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, source formalRelationTuple, entry formalTupleLeafEvaluator) (formalRelationTuple, error) {
+func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, source formalRelationTuple, entry formalTupleLeafEvaluator, baseline formalRelationTuple) (formalRelationTuple, error) {
 	regions, err := a.tupleLeafRegions(source)
 	if err != nil {
 		return formalRelationTuple{}, err
@@ -194,6 +186,21 @@ func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, sour
 	if !ok {
 		return formalRelationTuple{}, errFormalComponentForeignOwner
 	}
+	baselineRegions, err := a.tupleLeafRegions(baseline)
+	if err != nil || len(baselineRegions) != 1 || baseline.variable != source.variable {
+		if err == nil {
+			err = errFormalComponentMalformed
+		}
+		return formalRelationTuple{}, err
+	}
+	baselineValues, err := baselineRegions[0].evaluator.valuesFactor()
+	if err != nil {
+		return formalRelationTuple{}, err
+	}
+	valuesGroup, ok := span.valuesGroup()
+	if !ok {
+		return formalRelationTuple{}, errFormalComponentMalformed
+	}
 	var out formalRelationTuple
 	for _, region := range regions {
 		row := formalRelationTuple{variable: source.variable, root: directory.defaultRoot()}
@@ -201,6 +208,7 @@ func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, sour
 		if err != nil {
 			return formalRelationTuple{}, err
 		}
+		var completedValues formalValuesFactor
 		for _, group := range span.groupDescriptors() {
 			leaves, leafErr := region.evaluator.leaves.group(group)
 			if leafErr != nil {
@@ -213,6 +221,10 @@ func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, sour
 					return formalRelationTuple{}, valuesErr
 				}
 				values, valuesErr = s.specializeValues(region.evaluator.authority, entry, values)
+				if valuesErr != nil {
+					return formalRelationTuple{}, valuesErr
+				}
+				completedValues, valuesErr = overlaySpecializedValues(baselineValues, values)
 				if valuesErr != nil {
 					return formalRelationTuple{}, valuesErr
 				}
@@ -235,6 +247,18 @@ func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, sour
 			if err != nil {
 				return formalRelationTuple{}, err
 			}
+		}
+		// A stabilized row is a delta over the selected entry. Registered
+		// non-Values factors inherit that full-product baseline through their
+		// normal join law, while Values uses its overwrite law: an N4 literal
+		// write must replace the entry value, not join with it.
+		row = a.combine(formalComponentJoin, baseline, row)
+		if err := a.err(); err != nil {
+			return formalRelationTuple{}, err
+		}
+		row, err = a.writeFormalValuesFactor(row, valuesGroup, completedValues)
+		if err != nil {
+			return formalRelationTuple{}, err
 		}
 		for ordinal, descriptor := range span.descriptors() {
 			if descriptor.role == formalFiberCare || descriptor.role == formalFiberMiddleValue || descriptor.role == formalFiberMiddlePath {
@@ -262,6 +286,29 @@ func (s formalRootEntrySubstitution) specializeTuple(a *formalTupleAlgebra, sour
 		}
 	}
 	return out, a.validateTuple(out)
+}
+
+func overlaySpecializedValues(baseline state.ValueFactor[FormalSlot], specialized formalValuesFactor) (formalValuesFactor, error) {
+	if baseline.Top {
+		if len(baseline.Values) != 0 {
+			return formalValuesFactor{}, errFormalComponentMalformed
+		}
+		return formalValuesFactor{Top: true}, nil
+	}
+	if specialized.Top {
+		return formalValuesFactor{Top: true}, nil
+	}
+	values := make(map[FormalSlot]formalValue, len(baseline.Values)+len(specialized.Values))
+	for slot, value := range baseline.Values {
+		values[slot] = formalGroundValue(value)
+	}
+	for slot, value := range specialized.Values {
+		values[slot] = value
+	}
+	if len(values) == 0 {
+		return formalValuesFactor{}, nil
+	}
+	return formalValuesFactor{Values: values}, nil
 }
 
 func (s formalRootEntrySubstitution) specializeValues(authority *formalComponentTerminalAuthority, entry formalTupleLeafEvaluator, values formalValuesFactor) (formalValuesFactor, error) {

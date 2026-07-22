@@ -123,6 +123,36 @@ func TestFormalRootAssignmentExecutesCanonicalSparseN4(t *testing.T) {
 	if got := output.ReadValue(reg, statekey.SymbolValue(marker)); !product.Equal(reg, got, untouched) {
 		t.Fatalf("formal RootAssignment changed unrelated Values slot: %#v", got)
 	}
+	// N4's literal source is entry-independent. Entry-free stabilization must
+	// retain that concrete target transaction until the selected root is
+	// specialized, producing the same publication as the entry-baked path.
+	symbolic, err := executeFormalRelation(t.Context(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := freezeFormalRootEntrySeed(program, bodyID, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	substitution, err := newFormalRootEntrySubstitution(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specialized, err := substitution.specializeStabilized(t.Context(), symbolic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedPublication, err := specialized.Publication(bodyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specializedOutput, specializedPresent, err := specializedPublication.PlannedNodeOutput(t.Context(), ret, 0)
+	if err != nil || !specializedPresent || !program.bodies[0].domain.Equal(output, specializedOutput) {
+		t.Fatalf("symbolic RootAssignment publication = present:%t equal:%t err:%v", specializedPresent, program.bodies[0].domain.Equal(output, specializedOutput), err)
+	}
+	if got := specializedOutput.ReadValue(reg, statekey.SymbolValue(target)); !product.Equal(reg, got, want) {
+		t.Fatalf("symbolic RootAssignment target=%#v want=%#v", got, want)
+	}
 }
 
 func TestFormalRootAssignmentOmitsPersistentUnchangedLane(t *testing.T) {
