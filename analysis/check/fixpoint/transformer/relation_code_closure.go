@@ -16,33 +16,27 @@ import (
 // reachable scalar, path, guard, frame and effect reference before sealing.
 // The result uses only declared IN roots and sealed body-owned MID roots; there
 // is no runtime callback or Apply fallback for a term which cannot be closed.
-func closeRelationProgramTerms(prepared []*PreparedPlanCompiler, units []RelationProgramUnit, definitions []relationProgramDefinition) error {
+func closeRelationProgramTerms(prepared []*PreparedPlanCompiler, units []RelationProgramUnit, definitions []relationProgramDefinition) ([]Shape, error) {
 	if len(prepared) != len(units) {
-		return fmt.Errorf("transformer: relation closure has no complete lexical seed inventory")
+		return nil, fmt.Errorf("transformer: relation closure has no complete lexical seed inventory")
 	}
 	codes := make([]*relationCode, len(prepared))
 	for index := range prepared {
 		if prepared[index] == nil || prepared[index].codeBase == nil {
-			return fmt.Errorf("transformer: relation closure forest contains an unprepared body")
+			return nil, fmt.Errorf("transformer: relation closure forest contains an unprepared body")
 		}
 		codes[index] = prepared[index].codeBase
 	}
 	if err := closeRelationEntrySeedMiddleSchemas(prepared, units); err != nil {
-		return err
+		return nil, err
 	}
 	if err := closeRelationCallResultMiddleSchemas(prepared, codes, definitions); err != nil {
-		return err
-	}
-	// Call-result closure is also the sole authority for demanded callee Output
-	// width. Publish that closed shape back to the forest units before SlotSpace
-	// and coordinate inventories are frozen.
-	for index := range units {
-		units[index].Shape = prepared[index].shape
+		return nil, err
 	}
 	for index := range prepared {
 		for _, target := range unsealedRelationTargets(codes[index]) {
 			if target == 0 || int(target) > len(codes) {
-				return fmt.Errorf("transformer: relation closure has foreign target %d", target)
+				return nil, fmt.Errorf("transformer: relation closure has foreign target %d", target)
 			}
 		}
 		closure, err := newRelationTermClosure(
@@ -53,13 +47,20 @@ func closeRelationProgramTerms(prepared []*PreparedPlanCompiler, units []Relatio
 			nil,
 		)
 		if err != nil {
-			return fmt.Errorf("transformer: relation %d term closure: %w", index+1, err)
+			return nil, fmt.Errorf("transformer: relation %d term closure: %w", index+1, err)
 		}
 		if err := closeRelationCodeTerms(codes[index], closure, prepared[index].plan, codes); err != nil {
-			return fmt.Errorf("transformer: relation %d term closure: %w", index+1, err)
+			return nil, fmt.Errorf("transformer: relation %d term closure: %w", index+1, err)
 		}
 	}
-	return nil
+	// Shape is a link product, not a field written back into a caller-owned
+	// unit.  The arena closures above consume the draft while it is open; every
+	// later phase consumes this returned sealed inventory by dense body handle.
+	shapes := make([]Shape, len(prepared))
+	for index := range prepared {
+		shapes[index] = prepared[index].shape
+	}
+	return shapes, nil
 }
 
 // closeRelationEntrySeedMiddleSchemas admits the complete lexical seed

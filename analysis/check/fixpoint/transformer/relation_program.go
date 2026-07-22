@@ -167,6 +167,34 @@ type relationProgramBody struct {
 	callReceiverAssignments map[cfg.Point]struct{}
 }
 
+// relationSCCLinkArtifact is the sealed forest product for one lexical body.
+// It deliberately owns every fact discovered only after bodies meet: ambient
+// closure, declaration-frame ownership, receiver routes, allocation lenses and
+// linked Apply frames.  It contains handles and value-owned circuits only; no
+// forest/body back-pointer can reopen a syntax artifact.
+//
+// The compatibility relationProgramBody is materialized from this product in
+// one copy after sealing.  No cached body is ever used as the link workspace.
+type relationSCCLinkArtifact struct {
+	body                    lexicalidentity.StableLexicalBodyID
+	variable                relationVar
+	shape                   Shape
+	ambient                 []relationEnvironmentRoot
+	guardPlans              []relationApplicationGuardPlan
+	definitionFrames        map[callFrameTerm]relationVar
+	rootAllocations         *state.BoundaryAllocationAuthority
+	frames                  []linkedRelationFrame
+	callReceivers           map[cfg.Point][]rootAssignmentTerm
+	callReceiverAssignments map[cfg.Point]struct{}
+	sealed                  bool
+}
+
+func (a relationSCCLinkArtifact) validFor(body lexicalidentity.StableLexicalBodyID, variable relationVar) bool {
+	return a.sealed && a.body == body && a.variable == variable && a.definitionFrames != nil &&
+		a.callReceivers != nil && a.callReceiverAssignments != nil && a.rootAllocations != nil &&
+		a.rootAllocations.MatchesRoot(body)
+}
+
 // rootValueSlot resolves the sole concrete storage spelling used by the
 // current registered leaf kernels. IN roots use the sealed boundary carrier;
 // MID roots use their typed lexical register. The formal root identity itself
@@ -778,10 +806,10 @@ func freezeLinkedFrameBoundaryTopology(caller *relationProgramBody, frame *linke
 // input order, maps, CFG process IDs, or solve generations.
 type RelationProgram struct {
 	tier1 RelationProgramManifest
-	// syntax is the sealed per-body tier-2 local syntax extracted by Stage 3.
-	// It is not a cache and has no forest back-pointer; bodies below remain the
-	// old transaction-facing view until Stage 4 extracts SCC/link artifacts.
+	// syntax and links are independently sealed products. They compose by dense
+	// body handle (their shared index/variable), never by a forest back-pointer.
 	syntax           []relationBodySyntaxArtifact
+	links            []relationSCCLinkArtifact
 	registry         *axis.Registry
 	bodies           []relationProgramBody
 	byBody           map[lexicalidentity.StableLexicalBodyID]relationVar
@@ -1181,13 +1209,20 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 			return nil, fmt.Errorf("transformer: reduce lexical body %s: %w", unit.Body, err)
 		}
 	}
-	if err := closeRelationProgramTerms(prepared, ordered, program.definitions); err != nil {
-		return nil, err
+	closedShapes, closureErr := closeRelationProgramTerms(prepared, ordered, program.definitions)
+	if closureErr != nil {
+		return nil, closureErr
+	}
+	// ordered is the private compile draft, not a sealed body artifact. Keep its
+	// downstream local builders aligned with the link-owned closed shape while
+	// the link artifact retains the authoritative immutable copy.
+	for index := range ordered {
+		ordered[index].Shape = closedShapes[index]
 	}
 	for index := range rootCarriers {
 		// Result closure cannot change an input namespace, but the carrier retains
 		// the complete callable Shape as its ownership certificate.
-		rootCarriers[index].shape = ordered[index].Shape
+		rootCarriers[index].shape = closedShapes[index]
 	}
 	codes := make([]*relationCode, len(ordered))
 	for index := range ordered {
@@ -1221,19 +1256,7 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 		if err := prepared[index].sealRelationProgramWorld(); err != nil {
 			return nil, fmt.Errorf("transformer: seal lexical body %s: %w", unit.Body, err)
 		}
-		ambientSymbols := make([]symbol.ID, len(prepared[index].ambientRoots))
-		mutableAmbient := make(map[symbol.ID]struct{})
-		for rootIndex, root := range prepared[index].ambientRoots {
-			ambientSymbols[rootIndex] = root.Symbol
-			if root.Mutable {
-				mutableAmbient[root.Symbol] = struct{}{}
-			}
-		}
-		ambient, ambientErr := sealRelationEnvironmentRoots(unit.KeySpace, ambientSymbols, mutableAmbient)
-		if ambientErr != nil {
-			return nil, fmt.Errorf("transformer: seal lexical body %s ambient roots: %w", unit.Body, ambientErr)
-		}
-		artifact, artifactErr := freezeRelationBodySyntaxArtifact(unit, relationVar(index+1), rootCarriers[index], ambient, prepared[index])
+		artifact, artifactErr := freezeRelationBodySyntaxArtifact(unit, relationVar(index+1), rootCarriers[index], prepared[index])
 		if artifactErr != nil {
 			return nil, artifactErr
 		}
@@ -1243,45 +1266,23 @@ func FreezeRelationProgramWithTelemetry(units []RelationProgramUnit, callTopolog
 		return nil, err
 	}
 	program.syntax = syntax
+	telemetry.end(FreezePhaseLocalSyntax, localSyntaxStarted)
+
+	sccLinkStarted := telemetry.begin(FreezePhaseSCCClosureLinking)
+	links, linkErr := freezeRelationSCCLinkArtifacts(program, ambientRoots, closedShapes)
+	if linkErr != nil {
+		return nil, linkErr
+	}
+	program.links = links
 	for index := range program.syntax {
-		body, bodyErr := program.syntax[index].materializeRelationProgramBody()
+		body, bodyErr := program.syntax[index].materializeRelationProgramBody(links[index])
 		if bodyErr != nil {
 			return nil, bodyErr
 		}
 		program.bodies[index] = body
 	}
-	for _, definition := range program.definitions {
-		program.bodies[definition.owner-1].definitionFrames[definition.frame] = definition.target
-	}
-	telemetry.end(FreezePhaseLocalSyntax, localSyntaxStarted)
-
-	sccLinkStarted := telemetry.begin(FreezePhaseSCCClosureLinking)
-	// Receiver assignments are part of the outbound frame lens: link them
-	// before frame transport is frozen so every call-result root owns its exact
-	// caller slot/path. They are not a post-link execution annotation.
-	for index := range program.bodies {
-		program.bodies[index].callReceivers = indexRelationCallReceivers(program.bodies[index].relation.code)
-	}
-	if err := program.linkFrozenFrames(); err != nil {
-		return nil, err
-	}
-	for index := range program.bodies {
-		if len(program.bodies[index].callReceivers) != 0 {
-			surface, _ := program.bodies[index].plan.CallSurface()
-			for callPoint, receivers := range program.bodies[index].callReceivers {
-				site, exact := surface.Site(callPoint)
-				if !exact || site.Target.Kind() != operationplan.CallSurfaceTargetLexical {
-					continue
-				}
-				if program.bodies[index].callReceiverAssignments == nil {
-					program.bodies[index].callReceiverAssignments = make(map[cfg.Point]struct{})
-				}
-				for _, receiver := range receivers {
-					program.bodies[index].callReceiverAssignments[receiver.transaction.Point()] = struct{}{}
-				}
-			}
-		}
-	}
+	// The temporary SCC workspace is discarded before publication. The final
+	// body view was born complete; no post-seal link mutation remains.
 	telemetry.end(FreezePhaseSCCClosureLinking, sccLinkStarted)
 
 	regionStarted := telemetry.begin(FreezePhaseRegionWTO)
@@ -1352,6 +1353,78 @@ func linkedFrameEnvironmentRoot(arena *Arena, roots relationRootCarrier, id symb
 	value, exact := arena.environmentValue(id)
 	path := arena.EnvironmentPath(id)
 	return value, path, exact && value != 0 && path != 0
+}
+
+// freezeRelationSCCLinkArtifacts computes all cross-body products in a private
+// workspace, seals them as value-owned artifacts, and only then lets the
+// published body views compose them.  In particular linkFrozenFrames never
+// receives program.bodies: cached syntax/body artifacts have no mutation path.
+func freezeRelationSCCLinkArtifacts(program *RelationProgram, ambientRoots [][]AmbientRoot, shapes []Shape) ([]relationSCCLinkArtifact, error) {
+	if program == nil || len(program.syntax) == 0 || len(program.syntax) != len(ambientRoots) || len(program.syntax) != len(shapes) || len(program.syntax) != len(program.bodies) {
+		return nil, fmt.Errorf("transformer: SCC/link artifact has no complete sealed syntax inventory")
+	}
+	links := make([]relationSCCLinkArtifact, len(program.syntax))
+	for index, syntax := range program.syntax {
+		ambientSymbols := make([]symbol.ID, len(ambientRoots[index]))
+		mutable := make(map[symbol.ID]struct{})
+		for rootIndex, root := range ambientRoots[index] {
+			ambientSymbols[rootIndex] = root.Symbol
+			if root.Mutable {
+				mutable[root.Symbol] = struct{}{}
+			}
+		}
+		ambient, err := sealRelationEnvironmentRoots(syntax.keys, ambientSymbols, mutable)
+		if err != nil {
+			return nil, fmt.Errorf("transformer: seal SCC/link ambient %s: %w", syntax.body, err)
+		}
+		links[index] = relationSCCLinkArtifact{
+			body: syntax.body, variable: syntax.variable, shape: shapes[index], ambient: ambient,
+			definitionFrames: make(map[callFrameTerm]relationVar),
+			callReceivers:    make(map[cfg.Point][]rootAssignmentTerm), callReceiverAssignments: make(map[cfg.Point]struct{}),
+		}
+	}
+	for _, definition := range program.definitions {
+		if definition.owner == 0 || int(definition.owner) > len(links) || definition.target == 0 || int(definition.target) > len(links) || definition.frame == 0 {
+			return nil, fmt.Errorf("transformer: SCC/link artifact has malformed definition frame")
+		}
+		owner := &links[definition.owner-1]
+		if _, duplicate := owner.definitionFrames[definition.frame]; duplicate {
+			return nil, fmt.Errorf("transformer: SCC/link artifact repeats definition frame %d", definition.frame)
+		}
+		owner.definitionFrames[definition.frame] = definition.target
+	}
+	workspace := *program
+	workspace.bodies = make([]relationProgramBody, len(program.syntax))
+	for index := range program.syntax {
+		workspace.bodies[index] = program.syntax[index].materializeRelationProgramBodyWorkspace(links[index])
+		workspace.bodies[index].callReceivers = indexRelationCallReceivers(workspace.bodies[index].relation.code)
+		for callPoint, receivers := range workspace.bodies[index].callReceivers {
+			surface, _ := workspace.bodies[index].plan.CallSurface()
+			site, exact := surface.Site(callPoint)
+			if !exact || site.Target.Kind() != operationplan.CallSurfaceTargetLexical {
+				continue
+			}
+			for _, receiver := range receivers {
+				workspace.bodies[index].callReceiverAssignments[receiver.transaction.Point()] = struct{}{}
+			}
+		}
+	}
+	if err := workspace.linkFrozenFrames(); err != nil {
+		return nil, err
+	}
+	for index := range links {
+		body := workspace.bodies[index]
+		links[index].rootAllocations = body.rootAllocations
+		links[index].guardPlans = append([]relationApplicationGuardPlan(nil), body.relation.code.applicationGuards...)
+		links[index].frames = append([]linkedRelationFrame(nil), body.frames...)
+		links[index].callReceivers = cloneRelationCallReceivers(body.callReceivers)
+		links[index].callReceiverAssignments = cloneRelationCallReceiverAssignments(body.callReceiverAssignments)
+		links[index].sealed = true
+		if !links[index].validFor(body.body, body.variable) {
+			return nil, fmt.Errorf("transformer: SCC/link artifact %d did not seal", index+1)
+		}
+	}
+	return links, nil
 }
 
 // linkFrozenFrames binds every structural ApplyRef to its target relation and

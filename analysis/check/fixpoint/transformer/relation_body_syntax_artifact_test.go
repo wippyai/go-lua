@@ -21,6 +21,10 @@ func TestFreezeRelationProgramExtractsSealedPerBodySyntaxArtifacts(t *testing.T)
 	if len(program.syntax) != 2 || !program.syntax[0].valid() || !program.syntax[1].valid() {
 		t.Fatalf("syntax artifacts = %#v, want two sealed body artifacts", program.syntax)
 	}
+	if len(program.links) != len(program.syntax) || !program.links[0].validFor(program.syntax[0].body, program.syntax[0].variable) ||
+		!program.links[1].validFor(program.syntax[1].body, program.syntax[1].variable) {
+		t.Fatalf("SCC/link artifacts = %#v, want sealed products matching local syntax handles", program.links)
+	}
 	if program.syntax[0].relation.code == program.syntax[1].relation.code ||
 		program.syntax[0].relation.arena == program.syntax[1].relation.arena ||
 		program.syntax[0].relation.effects == program.syntax[1].relation.effects {

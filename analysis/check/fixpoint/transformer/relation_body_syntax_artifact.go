@@ -28,7 +28,6 @@ type relationBodySyntaxArtifact struct {
 	variable             relationVar
 	keys                 *keyspace.KeySpace
 	roots                relationRootCarrier
-	ambient              []relationEnvironmentRoot
 	relation             Relation
 	plan                 *operationplan.Plan
 	graph                cfg.Graph
@@ -54,7 +53,6 @@ func freezeRelationBodySyntaxArtifact(
 	unit RelationProgramUnit,
 	variable relationVar,
 	roots relationRootCarrier,
-	ambient []relationEnvironmentRoot,
 	compiler *PreparedPlanCompiler,
 ) (relationBodySyntaxArtifact, error) {
 	if compiler == nil || !compiler.frozen || compiler.builder == nil || compiler.builder.arena == nil ||
@@ -77,8 +75,8 @@ func freezeRelationBodySyntaxArtifact(
 	}
 	return relationBodySyntaxArtifact{
 		body: unit.Body, variable: variable, keys: unit.KeySpace, roots: roots,
-		ambient: append([]relationEnvironmentRoot(nil), ambient...), relation: relation,
-		plan: unit.Plan, graph: unit.Graph, pathSemantics: unit.PathSemantics,
+		relation: relation,
+		plan:     unit.Plan, graph: unit.Graph, pathSemantics: unit.PathSemantics,
 		rootAssignments: unit.RootAssignments, returns: unit.Returns,
 		externalCalls: unit.ExternalCallOutcome, genericForMembership: unit.GenericForMembership,
 		nodeReads: reads, domain: unit.Domain.Lattice(), productDomain: unit.Domain,
@@ -99,18 +97,51 @@ func (a relationBodySyntaxArtifact) valid() bool {
 // shape.  Only SCC/link fields are born after this point; local syntax remains
 // the sealed artifact above and is never mutated through this compatibility
 // body view.
-func (a relationBodySyntaxArtifact) materializeRelationProgramBody() (relationProgramBody, error) {
-	if !a.valid() {
+func (a relationBodySyntaxArtifact) materializeRelationProgramBody(link relationSCCLinkArtifact) (relationProgramBody, error) {
+	if !a.valid() || !link.validFor(a.body, a.variable) {
 		return relationProgramBody{}, fmt.Errorf("transformer: malformed sealed lexical syntax artifact")
 	}
+	return a.materializeRelationProgramBodyWorkspace(link), nil
+}
+
+// materializeRelationProgramBodyWorkspace is private construction plumbing for
+// the SCC linker. Its result is discarded after the link artifact seals; it is
+// never published as a cached body artifact.
+func (a relationBodySyntaxArtifact) materializeRelationProgramBodyWorkspace(link relationSCCLinkArtifact) relationProgramBody {
 	return relationProgramBody{
-		body: a.body, variable: a.variable, keys: a.keys, roots: a.roots, ambient: append([]relationEnvironmentRoot(nil), a.ambient...),
+		body: a.body, variable: a.variable, keys: a.keys, roots: a.roots, ambient: append([]relationEnvironmentRoot(nil), link.ambient...),
 		relation: a.relation, plan: a.plan, graph: a.graph, pathSemantics: a.pathSemantics,
 		rootAssignments: a.rootAssignments, returns: a.returns, externalCalls: a.externalCalls,
 		genericForMembership: a.genericForMembership, nodeReads: cloneRelationNodeReads(a.nodeReads),
 		domain: a.domain, productDomain: a.productDomain, entrySeedPlan: a.entrySeedPlan.Clone(),
-		initialStatePlan: a.initialStatePlan.Clone(), definitionFrames: make(map[callFrameTerm]relationVar),
-	}, nil
+		initialStatePlan: a.initialStatePlan.Clone(), rootAllocations: link.rootAllocations,
+		frames: append([]linkedRelationFrame(nil), link.frames...), definitionFrames: cloneRelationDefinitionFrames(link.definitionFrames),
+		callReceivers: cloneRelationCallReceivers(link.callReceivers), callReceiverAssignments: cloneRelationCallReceiverAssignments(link.callReceiverAssignments),
+	}
+}
+
+func cloneRelationDefinitionFrames(in map[callFrameTerm]relationVar) map[callFrameTerm]relationVar {
+	out := make(map[callFrameTerm]relationVar, len(in))
+	for frame, target := range in {
+		out[frame] = target
+	}
+	return out
+}
+
+func cloneRelationCallReceivers(in map[cfg.Point][]rootAssignmentTerm) map[cfg.Point][]rootAssignmentTerm {
+	out := make(map[cfg.Point][]rootAssignmentTerm, len(in))
+	for point, receivers := range in {
+		out[point] = append([]rootAssignmentTerm(nil), receivers...)
+	}
+	return out
+}
+
+func cloneRelationCallReceiverAssignments(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {
+	out := make(map[cfg.Point]struct{}, len(in))
+	for point := range in {
+		out[point] = struct{}{}
+	}
+	return out
 }
 
 func cloneRelationNodeReads(reads [][]cfg.Point) [][]cfg.Point {
