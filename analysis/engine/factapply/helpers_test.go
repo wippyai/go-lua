@@ -10,13 +10,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 type sourceValueCall struct {
@@ -44,17 +41,6 @@ func (r *recordingSourceValues) ValueOfSource(
 	return value, ok
 }
 
-type panicSourceValues struct{}
-
-func (panicSourceValues) ValueOfSource(
-	cfg.Point,
-	factflow.ValueSource,
-	state.State,
-	func(cfg.Point) state.State,
-) (product.Value, bool) {
-	panic("ValueOfSource should not be called")
-}
-
 func assertValue(t *testing.T, reg *axis.Registry, gotState state.State, slot key.Value, want product.Value) {
 	t.Helper()
 	if got := gotState.ReadValue(reg, slot); !product.Equal(reg, got, want) {
@@ -76,29 +62,12 @@ func assertPathValue(t *testing.T, reg *axis.Registry, ks *keyspace.KeySpace, go
 	}
 }
 
-func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want runtimekind.Value) {
-	t.Helper()
-	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
-		t.Fatalf("runtime kind = %s in %s, want %s", kind, formatValue(reg, got), want)
-	}
-}
-
 func presentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 }
 
 func absentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
-}
-
-// nilSourceValue is the value a nil ValueSource resolves to: presence-absent
-// carrying the typ.Nil witness, so it joins identically to an explicit `= nil`.
-func nilSourceValue(reg *axis.Registry) product.Value {
-	return typevalue.Nil(reg)
-}
-
-func runtimeKindConstraint(value runtimekind.Value) product.Value {
-	return product.Set(standard.Registry(), product.Top(), runtimekind.Key, value)
 }
 
 func formatValue(reg *axis.Registry, v product.Value) string {

@@ -187,18 +187,6 @@ func branchEdgeTransactionResolver(point cfg.Point, symbols ...symbol.ID) *visib
 	return visibility.NewResolver(builder.Build())
 }
 
-type nodePointSourceValues struct {
-	value product.Value
-	apply func(cfg.Point, factflow.ValueSource, state.State, func(cfg.Point) state.State)
-}
-
-func (s nodePointSourceValues) ValueOfSource(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
-	if s.apply != nil {
-		s.apply(point, source, in, read)
-	}
-	return s.value, true
-}
-
 func mustCoordinateFactorInventory(
 	t testing.TB,
 	authority *PathSemanticAuthority,
