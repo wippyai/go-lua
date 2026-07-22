@@ -302,7 +302,11 @@ func (d ProductDomain) PlanDynamicReadIdentityTopologyProducers(selection Dynami
 	for _, path := range selection.pathMembers {
 		out = append(out, index.pathMembers[path]...)
 	}
-	for table := range selection.tables {
+	for handle := range selection.tables {
+		table, ok := selection.keys.KeyByHandle(handle)
+		if !ok {
+			return nil, fmt.Errorf("%w: invalid dynamic-read table handle", ErrInvalidLaneFactor)
+		}
 		for _, producer := range index.pathDynamic[table] {
 			if selection.membership == DynamicReadMembershipConditional || dynamicReadIdentityKeyClassMatches(selection, producer.key) {
 				out = append(out, producer)
