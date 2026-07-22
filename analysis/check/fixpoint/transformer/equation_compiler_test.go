@@ -1,11 +1,20 @@
 package transformer
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
@@ -59,4 +68,251 @@ func TestCompileEquationIRWalksEnvironmentWriteThroughExemplar(t *testing.T) {
 	if environment.KernelID != "transformer/formal-environment-write/v1" {
 		t.Fatalf("environment kernel = %q", environment.KernelID)
 	}
+}
+
+func TestCompileEquationIRWalksApplyThroughExistingFactApplyKernel(t *testing.T) {
+	program := formalApplyEquationTestProgram(t)
+	compiler, err := equation.Skeleton().With("apply", equation.BindExistingKernel("transformer/formal-apply/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The representative relation has caller and callee Outcome terminals in
+	// addition to its Apply step. They are bound mechanically so the test can
+	// reach the Apply occurrence without making Skeleton permissive.
+	compiler, err = compiler.With("outcome", equation.BindExistingKernel("transformer/formal-outcome/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err = compiler.With("nonreturning", equation.BindExistingKernel("transformer/formal-nonreturning/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	binder := func(occurrence RelationEquationOccurrence) (equation.Draft, error) {
+		calls++
+		contract, contractErr := NewOperatorContract(occurrence.Kind, formal.NewOccurrenceID(occurrence.Body, uint64(calls)))
+		if contractErr != nil {
+			return equation.Draft{}, contractErr
+		}
+		if occurrence.Kind == OperatorApply {
+			contract.Reads = []ContractSelector{
+				{Role: AccessFlow, Name: "caller-predecessor"},
+				{Role: AccessCalleeOutcome, Name: "stabilized-callee-outcome"},
+				{Role: AccessGuard, Name: "application-guard"},
+				{Role: AccessBoundary, Name: "apply-frame"},
+				{Role: AccessAllocation, Name: "boundary-allocation"},
+			}
+			contract.Writes = []ContractSelector{
+				{Role: AccessState, Name: "caller-result"},
+				{Role: AccessState, Name: "caller-heap"},
+				{Role: AccessDiagnostic, Name: "boundary-diagnostic"},
+			}
+			contract.Outcomes = []OutcomeKind{OutcomeNormal}
+			contract.Dependencies = []ContractDependency{{Kind: "operator-contract-catalog", ID: FrozenOperatorContractCatalog().ContentID()}}
+		}
+		body := equation.BodyID(occurrence.Body)
+		entry := equation.EntryParameter{Body: body, Name: "entry"}
+		operands := make([]equation.Operand, 0, len(contract.Operands))
+		for _, role := range contract.Operands {
+			operands = append(operands, equation.Operand{Role: string(role), Term: equation.ClosedTerm([]byte("apply/" + string(role)))})
+		}
+		return equation.Draft{
+			Target:     equation.Coordinate{Body: body, Name: string(occurrence.Kind) + "-output"},
+			Entry:      entry,
+			Occurrence: equation.Occurrence{Kind: string(contract.Kind), ContractID: equation.ContentID(contract.ContentID())},
+			Operands:   operands,
+		}, nil
+	}
+	artifact, err := program.CompileEquationIR(compiler, binder)
+	if err != nil {
+		t.Fatalf("CompileEquationIR: %v", err)
+	}
+	if calls != 5 || len(artifact.Equations) != 5 {
+		t.Fatalf("walker calls/artifact = %d/%d, want 5/5", calls, len(artifact.Equations))
+	}
+	for _, lowered := range artifact.Equations {
+		if lowered.Occurrence.Kind == string(OperatorApply) {
+			if lowered.KernelID != "transformer/formal-apply/v1" {
+				t.Fatalf("apply kernel = %q", lowered.KernelID)
+			}
+			return
+		}
+	}
+	t.Fatal("relation-template walk omitted Apply")
+}
+
+func TestApplyLoweringIsFailClosedUntilItsHookIsInstalled(t *testing.T) {
+	body := equation.BodyID(lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("apply-missing-hook"))))
+	draft := equation.Draft{
+		Target:     equation.Coordinate{Body: body, Name: "apply-output"},
+		Entry:      equation.EntryParameter{Body: body, Name: "entry"},
+		Occurrence: equation.Occurrence{Kind: string(OperatorApply), ContractID: equation.ContentID(FrozenOperatorContractCatalog().ContentID())},
+		Operands: []equation.Operand{
+			{Role: string(AccessFlow), Term: equation.ClosedTerm([]byte("caller-flow"))},
+			{Role: string(AccessCalleeOutcome), Term: equation.ClosedTerm([]byte("callee-outcome"))},
+			{Role: string(AccessBoundary), Term: equation.ClosedTerm([]byte("apply-frame"))},
+		},
+	}
+	_, err := equation.Skeleton().Compile(equation.Source{Drafts: []equation.Draft{draft}})
+	if !errors.Is(err, equation.ErrUnimplementedLowering) {
+		t.Fatalf("missing Apply hook error = %v", err)
+	}
+}
+
+func TestApplyEquationArtifactIdentityTracksOnlySemanticBindings(t *testing.T) {
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("apply-equation-identity")))
+	contract, err := NewOperatorContract(OperatorApply, formal.NewOccurrenceID(owner, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := equation.Skeleton().With("apply", equation.BindExistingKernel("transformer/formal-apply/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := equation.BodyID(owner)
+	entry := equation.EntryParameter{Body: body, Name: "entry"}
+	draft := func(name string, contractID equation.ContentID, flow string, guards []equation.Guard) equation.Draft {
+		return equation.Draft{
+			Target: equation.Coordinate{Body: body, Name: name}, Entry: entry, Guards: guards,
+			Occurrence: equation.Occurrence{Kind: string(OperatorApply), ContractID: contractID},
+			Operands: []equation.Operand{
+				{Role: string(AccessFlow), Term: equation.ClosedTerm([]byte(flow))},
+				{Role: string(AccessCalleeOutcome), Term: equation.ClosedTerm([]byte("callee-outcome"))},
+				{Role: string(AccessBoundary), Term: equation.ClosedTerm([]byte("apply-frame"))},
+			},
+		}
+	}
+	contractID := equation.ContentID(contract.ContentID())
+	left := draft("left", contractID, "caller-flow", nil)
+	right := draft("right", contractID, "caller-flow", nil)
+	first, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{left, right}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{right, left}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ContentID() != reordered.ContentID() {
+		t.Fatal("reordering Apply declarations changed the equation artifact identity")
+	}
+	for _, changed := range []equation.Draft{
+		draft("left", contractID, "different-caller-flow", nil),
+		draft("left", contractID, "caller-flow", []equation.Guard{{Body: body, Encoding: []byte("application-guard")}}),
+	} {
+		artifact, compileErr := compiler.Compile(equation.Source{Drafts: []equation.Draft{changed, right}})
+		if compileErr != nil || artifact.ContentID() == first.ContentID() {
+			t.Fatalf("semantic Apply binding did not change identity: %v", compileErr)
+		}
+	}
+	changedContract, err := NewOperatorContract(OperatorApply, formal.NewOccurrenceID(owner, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{draft("left", equation.ContentID(changedContract.ContentID()), "caller-flow", nil), right}})
+	if err != nil || artifact.ContentID() == first.ContentID() {
+		t.Fatalf("Apply contract identity did not affect artifact: %v", err)
+	}
+}
+
+func formalApplyEquationTestProgram(t *testing.T) *RelationProgram {
+	t.Helper()
+	registry := standard.Registry()
+	namespace := lexicalidentity.UnitNamespaceFromContent([]byte(t.Name()))
+	callerID, calleeID := lexicalidentity.RootBody(namespace), lexicalidentity.FunctionBody(namespace, 1)
+	callerTerms, calleeTerms := NewArena(registry), NewArena(registry)
+	if !callerTerms.bindLexicalOwner(callerID) || !calleeTerms.bindLexicalOwner(calleeID) {
+		t.Fatal("bind lexical owners")
+	}
+	shape := Shape{Params: 1, Results: 1}
+	callerValue := callerTerms.Root(Root{Kind: RootParam})
+	callerPath := callerTerms.Path(Root{Kind: RootParam})
+	point := cfg.Point(17)
+	if callerValue == 0 || callerPath == 0 || callerTerms.bindCallResult(point, 0) == 0 {
+		t.Fatal("bind caller Apply vocabulary")
+	}
+	frame := callerTerms.relationFrame(2, point, 1, shape, []ValueTerm{callerValue}, []PathTerm{callerPath}, 1)
+	if frame == 0 {
+		t.Fatal("bind Apply frame")
+	}
+	bindFormalApplyTestEnvironment(t, callerTerms, shape, 100)
+	bindFormalApplyTestEnvironment(t, calleeTerms, shape, 110)
+	if err := callerTerms.sealMiddleRegisterSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := calleeTerms.sealMiddleRegisterSchema(); err != nil {
+		t.Fatal(err)
+	}
+	bindFormalApplyTestInputs(t, callerTerms, shape, 100)
+	bindFormalApplyTestInputs(t, calleeTerms, shape, 110)
+
+	callerEffects, calleeEffects := NewEffectArena(callerTerms), NewEffectArena(calleeTerms)
+	callerReturn, exact := factapply.PlanReturnTransactionSources(factflow.Facts{}, 1, nil)
+	if !exact {
+		t.Fatal("freeze caller Outcome transaction")
+	}
+	callerCode := &relationCode{
+		terms: callerTerms, effects: callerEffects, descriptors: DefaultDescriptorRegistry(), shape: shape, root: 1,
+		nodes:    []relationNode{{}, {kind: relationNodeSequence, steps: []boundaryStep{{kind: boundaryStepApply, apply: relationApplyRef{variable: 2, frame: frame}}}, next: 2}, {kind: relationNodeOutcome, outcome: 1}},
+		outcomes: []boundaryOutcomeTuple{{}, {returnTransaction: returnTransactionTerm{transaction: callerReturn}}}, contributions: []semanticContribution{{}},
+	}
+	calleeValue := calleeTerms.Root(Root{Kind: RootParam})
+	calleeCode := &relationCode{
+		terms: calleeTerms, effects: calleeEffects, descriptors: DefaultDescriptorRegistry(), shape: shape, root: 1,
+		nodes:    []relationNode{{}, {kind: relationNodeOutcome, outcome: 1}},
+		outcomes: []boundaryOutcomeTuple{{}, {returnTransaction: testReturnTransactionTerm(t, 1, calleeValue)}}, contributions: []semanticContribution{{}},
+	}
+	closeAndFreezeRelationGuardTestForest(t, []*relationCode{callerCode, calleeCode})
+	callerTerms.Seal()
+	calleeTerms.Seal()
+	callerEffects.Seal()
+	calleeEffects.Seal()
+	callerCode.sealed, calleeCode.sealed = true, true
+
+	productDomain := state.RegisteredProductDomain(registry)
+	program := &RelationProgram{
+		registry: registry,
+		bodies: []relationProgramBody{
+			{body: callerID, variable: 1, keys: keyspace.New(), relation: Relation{shape: shape, arena: callerTerms, effects: callerEffects, descriptors: callerCode.descriptors, code: callerCode, root: 1}, productDomain: productDomain},
+			{body: calleeID, variable: 2, keys: keyspace.New(), relation: Relation{shape: shape, arena: calleeTerms, effects: calleeEffects, descriptors: calleeCode.descriptors, code: calleeCode, root: 1}, productDomain: productDomain},
+		},
+		byBody: map[lexicalidentity.StableLexicalBodyID]relationVar{callerID: 1, calleeID: 2},
+	}
+	for index := range program.bodies {
+		body := &program.bodies[index]
+		resolver := visibility.NewResolver(visibility.NewTable(nil))
+		paths := factapply.NewPathSemanticAuthority(resolver, nil, typevalue.NewCache())
+		body.keys = resolver.KeySpace()
+		body.domain = state.Domain(registry)
+		body.pathSemantics = paths
+		body.returns = factapply.NewReturnAuthority(paths, factflow.Facts{})
+	}
+	prepareFormalApplyTestProgram(t, program, frame)
+	for index := range program.bodies {
+		body := &program.bodies[index]
+		body.initialStatePlan = testInitialStatePlan(t, body.body, body.graph)
+	}
+	slots, err := freezeSlotSpace(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.formalSlots = slots
+	program.formalFibers, err = freezeFormalFiberInventoryWithSlots(program, slots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.formalComponents, err = freezeFormalComponentTerminalSchema(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.formalRegion, err = freezeFormalRelationRegionInventory(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.formalTemplate, err = freezeFormalRelationTemplate(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return program
 }
