@@ -280,16 +280,6 @@ func cloneBodyCallRelations(item BodyCallRelations) BodyCallRelations {
 	return item
 }
 
-func repairActionsForCodes(defaultFile string, items []judgment.Judgment, allowed map[judgment.Code]struct{}) []RepairAction {
-	filtered := make([]judgment.Judgment, 0, len(items))
-	for _, item := range items {
-		if _, ok := allowed[item.Code]; ok {
-			filtered = append(filtered, item)
-		}
-	}
-	return repairActionsFromJudgments(defaultFile, filtered)
-}
-
 func cloneRepairAction(item RepairAction) RepairAction {
 	item.Payload.Edits = append([]RepairEdit(nil), item.Payload.Edits...)
 	return item

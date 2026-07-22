@@ -1131,9 +1131,3 @@ func (index sourceLineIndex) wholeSourceSpan(length int) source.Span {
 func offsetAt(data []byte, line, column int) (int, bool) {
 	return newSourceLineIndex(data).offsetAt(data, line, column)
 }
-
-func identifierByte(value byte) bool {
-	return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
-}
-func bytesIndex(data, needle []byte) int         { return strings.Index(string(data), string(needle)) }
-func bytesIndexByte(data []byte, value byte) int { return strings.IndexByte(string(data), value) }
