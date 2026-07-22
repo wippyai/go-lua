@@ -47,7 +47,7 @@ type FingerprintConfig struct {
 	Workspace *FingerprintWorkspace
 	// keyEncodings is shared only by one solve-scoped product fingerprint
 	// session. Ordinary callers retain an isolated per-call cache.
-	keyEncodings map[keyspace.Key]string
+	keyEncodings map[keyspace.KeyHandle]string
 	// scratch is shared only by a serial, solve-scoped fingerprint session. It
 	// changes allocation behavior, never ordering or the encoded byte stream.
 	scratch *fingerprintScratch
@@ -59,7 +59,7 @@ type FingerprintConfig struct {
 // published semantic results.
 type FingerprintWorkspace struct {
 	keys         *keyspace.KeySpace
-	keyEncodings map[keyspace.Key]string
+	keyEncodings map[keyspace.KeyHandle]string
 	scratch      fingerprintScratch
 }
 
@@ -68,7 +68,7 @@ func NewFingerprintWorkspace(keys *keyspace.KeySpace) (*FingerprintWorkspace, er
 	if keys == nil || !keys.Valid() {
 		return nil, fmt.Errorf("%w: workspace requires a valid keyspace", ErrFingerprintKeySpace)
 	}
-	return &FingerprintWorkspace{keys: keys, keyEncodings: make(map[keyspace.Key]string)}, nil
+	return &FingerprintWorkspace{keys: keys, keyEncodings: make(map[keyspace.KeyHandle]string)}, nil
 }
 
 // SemanticFingerprint returns a deterministic digest of every selected State
@@ -121,7 +121,7 @@ type fingerprintWriter struct {
 	ctx          context.Context
 	reg          *axis.Registry
 	keys         *keyspace.KeySpace
-	keyEncodings map[keyspace.Key]string
+	keyEncodings map[keyspace.KeyHandle]string
 	steps        uint64
 	errVal       error
 	scratch      *fingerprintScratch
@@ -140,7 +140,7 @@ func newFingerprintWriter(config FingerprintConfig) *fingerprintWriter {
 		}
 	}
 	if keyEncodings == nil {
-		keyEncodings = make(map[keyspace.Key]string)
+		keyEncodings = make(map[keyspace.KeyHandle]string)
 	}
 	if scratch == nil {
 		scratch = &fingerprintScratch{}
@@ -258,8 +258,15 @@ func (w *fingerprintWriter) product(label string, value product.Value) {
 // FreezeKey decoder. This consumer records only the solve-independent scalar
 // snapshot and therefore cannot drift when KeySpace adds an internal kind.
 func keyspaceEncoding(w *fingerprintWriter, key keyspace.Key) string {
-	if encoded, ok := w.keyEncodings[key]; ok {
-		return encoded
+	handle := key.Handle()
+	if handle == 0 {
+		w.errVal = fmt.Errorf("%w: unbound key", ErrFingerprintKeySpace)
+		return ""
+	}
+	if handle != 0 {
+		if encoded, ok := w.keyEncodings[handle]; ok {
+			return encoded
+		}
 	}
 	if !w.checkpoint() {
 		return ""
@@ -295,7 +302,9 @@ func keyspaceEncoding(w *fingerprintWriter, key keyspace.Key) string {
 		appendFingerprintInt(&encoded, int64(segment.Index))
 	}
 	out := encoded.String()
-	w.keyEncodings[key] = out
+	if handle != 0 {
+		w.keyEncodings[handle] = out
+	}
 	return out
 }
 
