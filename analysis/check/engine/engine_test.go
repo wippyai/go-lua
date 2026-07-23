@@ -30,6 +30,19 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	if got := valuesByName(result.Diagnostics)["type.assignment/op-00000002"]; got != "cannot assign value because it is number, not string" {
 		t.Fatalf("assignment diagnostics = %#v, want proven mismatch", result.Diagnostics)
 	}
+	if len(result.PublishedDiagnostics) != 1 {
+		t.Fatalf("published diagnostics = %#v, want one projected assignment", result.PublishedDiagnostics)
+	}
+	published := result.PublishedDiagnostics[0]
+	if published.Code != "type.assignment" || published.Message != "cannot assign value because it is number, not string" || !published.Span.Valid() {
+		t.Fatalf("published assignment = %#v, want code, message, and WIR span", published)
+	}
+	if len(published.Evidence) != 2 || published.Evidence[0].Kind != "abstract fact" || published.Evidence[0].Trust != "proven" || !strings.Contains(published.Evidence[0].Message, "value has literal value 42") || published.Evidence[1].Kind != "user assertion" || published.Evidence[1].Trust != "claimed" || !strings.Contains(published.Evidence[1].Message, "value is declared as string") {
+		t.Fatalf("assignment evidence = %#v, want closed value and annotation claim", published.Evidence)
+	}
+	if len(published.Labels) != 2 || !strings.Contains(published.Help, "change the target type") {
+		t.Fatalf("assignment labels/help = %#v / %q", published.Labels, published.Help)
+	}
 }
 
 func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {

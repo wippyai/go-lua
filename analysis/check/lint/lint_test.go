@@ -50,6 +50,13 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 	if got, want := RenderDiagnostic(diag), "app/consumer.lua:2:7: error[type.assignment]: cannot assign text because it is number, not string"; got != want {
 		t.Fatalf("RenderDiagnostic = %q, want %q", got, want)
 	}
+	evidence := diag.Explanation.Evidence()
+	if len(evidence) != 2 || evidence[0].Kind.String() != "abstract fact" || evidence[0].Trust.String() != "proven" || !strings.Contains(evidence[0].Message, "text has literal value 1") || evidence[1].Kind.String() != "user assertion" || evidence[1].Trust.String() != "claimed" || !strings.Contains(evidence[1].Message, "text is declared as string") {
+		t.Fatalf("assignment explanation = %#v", evidence)
+	}
+	if len(diag.Labels) != 2 || !strings.Contains(diag.Help, "change the target type") {
+		t.Fatalf("assignment labels/help = %#v / %q", diag.Labels, diag.Help)
+	}
 	if consumer.Timings.ParseBindLowerNS <= 0 || consumer.Timings.EvaluateNS <= 0 || result.Timings.ProjectRenderNS <= 0 {
 		t.Fatalf("structured timings missing: entry=%#v project=%#v", consumer.Timings, result.Timings)
 	}

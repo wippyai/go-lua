@@ -56,12 +56,48 @@ type Result struct {
 	Values      []equation.Fact
 	Outcomes    []equation.Fact
 	Diagnostics []equation.Fact
+	// PublishedDiagnostics is the source-facing projection of diagnostic facts.
+	// Diagnostics remains the canonical equation publication; this companion
+	// projection attaches only information already present in the closed
+	// artifact and closure so hosts do not need to re-run analysis to render a
+	// useful diagnostic.
+	PublishedDiagnostics []PublishedDiagnostic
 	// DiagnosticSpans maps an operation-scoped diagnostic fact key to the WIR
 	// source span that produced it. It is intentionally source-only metadata:
 	// equation facts remain portable and position-free.
 	DiagnosticSpans map[string]wir.Span
 	Transactions    int
 	Timings         Timings
+}
+
+// PublishedDiagnostic enriches one equation diagnostic fact at the public
+// publication boundary.  Its evidence is deliberately a projection of the
+// closed claim operation and its abstract value, rather than a second
+// diagnostic analysis pass.
+type PublishedDiagnostic struct {
+	Fact     equation.Fact
+	Code     string
+	Span     wir.Span
+	Message  string
+	Evidence []DiagnosticEvidence
+	Labels   []DiagnosticLabel
+	Help     string
+}
+
+// DiagnosticEvidence is engine-neutral evidence data consumed by host
+// adapters. Kind and Trust use the diagnostic package's stable display
+// vocabulary without making the equation kernel depend on presentation types.
+type DiagnosticEvidence struct {
+	Span    wir.Span
+	Kind    string
+	Trust   string
+	Message string
+}
+
+// DiagnosticLabel is a source annotation emitted with a published diagnostic.
+type DiagnosticLabel struct {
+	Span    wir.Span
+	Message string
 }
 
 // Timings records the two engine-owned phases. Hosts add loading/resolution
@@ -144,12 +180,14 @@ func Check(source string) (result Result, err error) {
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
+	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, closure.Diagnostics)
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		DiagnosticSpans: diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, closure.Diagnostics),
-		Transactions:    transactions,
-		Timings:         Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
+		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans),
+		DiagnosticSpans:      diagnosticSpans,
+		Transactions:         transactions,
+		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
 	}
 	return result, nil
 }
@@ -181,6 +219,176 @@ func diagnosticSpans(claimSpans, callSpans map[string]wir.Span, diagnostics []eq
 		}
 	}
 	return out
+}
+
+// publishedDiagnostics is the sole rich-diagnostic projection.  Kernels still
+// publish equation facts; this function only joins each published fact to the
+// claim operation that produced it and to the abstract value already closed by
+// the VM.  In particular, it neither evaluates source nor manufactures a
+// diagnostic that is absent from closure.Diagnostics.
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans map[string]wir.Span) []PublishedDiagnostic {
+	if len(closure.Diagnostics) == 0 {
+		return nil
+	}
+	claims := make(map[string]equation.Equation)
+	applies := make(map[string]equation.Equation)
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind == "claim" {
+			claims[operation.Target.Name] = operation
+		}
+		if operation.Occurrence.Kind == "apply" {
+			applies[operation.Target.Name] = operation
+		}
+	}
+	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
+	for _, fact := range closure.Diagnostics {
+		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: string(fact.Value)}
+		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.argument_type/") {
+			out = append(out, enrichCallArgumentDiagnostic(item, operation))
+			continue
+		}
+		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
+		if !assignment {
+			out = append(out, item)
+			continue
+		}
+		operation, found := claims[name]
+		if !found {
+			out = append(out, item)
+			continue
+		}
+		operands, err := artifactOperandsByRole(operation.Operands, "target", "value", "type")
+		if err != nil {
+			out = append(out, item)
+			continue
+		}
+		display := strings.TrimPrefix(string(operands["target"]), "path/")
+		for _, operand := range operation.Operands {
+			if operand.Role == "display" && len(operand.Term.Encoding) != 0 {
+				display = string(operand.Term.Encoding)
+				break
+			}
+		}
+		value, available := claimDiagnosticValue(operands["value"], operation, closure)
+		if !available {
+			out = append(out, item)
+			continue
+		}
+		declared, unquoteErr := strconv.Unquote(strings.TrimPrefix(string(operands["type"]), "claim-type/"))
+		if unquoteErr != nil {
+			out = append(out, item)
+			continue
+		}
+		valueDescription := assignmentEvidenceValue(value)
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", display, valueDescription)},
+			{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+		}
+		item.Labels = []DiagnosticLabel{
+			{Span: item.Span, Message: "assigned value " + valueDescription},
+			{Span: item.Span, Message: "declared type " + declared},
+		}
+		item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
+		out = append(out, item)
+	}
+	return out
+}
+
+func claimDiagnosticValue(term []byte, operation equation.Equation, closure equation.OutputClosure) ([]byte, bool) {
+	if strings.HasPrefix(string(term), "scalar/") {
+		return append([]byte(nil), term...), true
+	}
+	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
+		return nil, false
+	}
+	prefix := "value/" + string(term) + "/"
+	// The claim's own refinement is also a value fact. Its dependencies are
+	// the closed input facts the kernel read before that refinement, so prefer
+	// those facts when explaining a mismatch.
+	for _, dependency := range operation.Dependencies {
+		for _, fact := range closure.Values {
+			if fact.Key == prefix+dependency.Name {
+				return append([]byte(nil), fact.Value...), true
+			}
+		}
+	}
+	return nil, false
+}
+
+func diagnosticOperationName(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[1]
+}
+
+func enrichCallArgumentDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	operands := make(map[string]string, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		operands[operand.Role] = string(operand.Term.Encoding)
+	}
+	callee := operands["callee-display"]
+	if callee == "" {
+		callee = strings.TrimPrefix(operands["callee"], "path/")
+	}
+	if callee == "" {
+		return item
+	}
+	message := item.Message
+	start := strings.Index(message, " is ")
+	end := strings.LastIndex(message, ", not ")
+	if start < 0 || end <= start+4 {
+		return item
+	}
+	parts := strings.Split(strings.TrimPrefix(item.Fact.Key, "type.call.direct.argument_type/"), "/")
+	if len(parts) != 2 {
+		return item
+	}
+	argument := strings.TrimPrefix(parts[1], "argument-")
+	argument = strings.TrimLeft(argument, "0")
+	if argument == "" {
+		argument = "0"
+	}
+	argumentIndex, err := strconv.Atoi(argument)
+	if err != nil {
+		return item
+	}
+	argumentIndex++
+	value, expected := message[start+4:end], message[end+6:]
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("argument %d has literal value %s", argumentIndex, value)},
+		{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value " + value}}
+	item.Help = fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature.", argumentIndex)
+	return item
+}
+
+func cloneFact(fact equation.Fact) equation.Fact {
+	return equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)}
+}
+
+func diagnosticCode(key string) string {
+	switch {
+	case strings.HasPrefix(key, "type.assignment/"):
+		return "type.assignment"
+	case strings.HasPrefix(key, "claim/unproven/"):
+		return "lint.claim.unproven"
+	case strings.HasPrefix(key, "type.call.direct."):
+		if slash := strings.IndexByte(key, '/'); slash >= 0 {
+			return key[:slash]
+		}
+	}
+	return "lint." + strings.ReplaceAll(key, "/", ".")
+}
+
+func assignmentEvidenceValue(value []byte) string {
+	display, err := displayValue(value)
+	if err == nil {
+		return string(display)
+	}
+	return assignmentValueType(value)
 }
 
 // diagnosticResult is the whole-file recovery boundary for source-driven

@@ -304,8 +304,16 @@ func manifestForPath(manifests []*manifest.Manifest, path string) *manifest.Mani
 func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.Diagnostic) ([]diagnostic.Diagnostic, time.Duration) {
 	started := time.Now()
 	out := append([]diagnostic.Diagnostic(nil), initial...)
+	published := make(map[string]engine.PublishedDiagnostic, len(result.PublishedDiagnostics))
+	for _, item := range result.PublishedDiagnostics {
+		published[item.Fact.Key] = item
+	}
 	for _, fact := range result.Diagnostics {
+		projection, enriched := published[fact.Key]
 		span := spanForFact(entry.Source, result.DiagnosticSpans[fact.Key])
+		if enriched && projection.Span.Valid() {
+			span = spanForFact(entry.Source, projection.Span)
+		}
 		if fact.Key == "analysis/front" {
 			if _, err := parse.ParseString(entry.Source, entry.Path); err != nil {
 				if parseError, ok := err.(*parse.Error); ok {
@@ -314,6 +322,11 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 			}
 		}
 		code := diagnostic.Code("lint." + strings.ReplaceAll(fact.Key, "/", "."))
+		message := string(fact.Value)
+		if enriched {
+			code = diagnostic.Code(projection.Code)
+			message = projection.Message
+		}
 		if strings.HasPrefix(fact.Key, "claim/unproven/") {
 			code = "lint.claim.unproven"
 		} else if strings.HasPrefix(fact.Key, "type.call.direct.") {
@@ -324,10 +337,56 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 		if strings.HasPrefix(fact.Key, "type.assignment/") {
 			code = "type.assignment"
 		}
-		out = append(out, newDiagnostic(entry, span, code, string(fact.Value)))
+		if enriched {
+			out = append(out, newEnrichedDiagnostic(entry, span, code, message, projection))
+			continue
+		}
+		out = append(out, newDiagnostic(entry, span, code, message))
 	}
 	diagnostic.Sort(out)
 	return diagnostic.CoalesceSamePrimary(out), time.Since(started)
+}
+
+func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, message string, projection engine.PublishedDiagnostic) diagnostic.Diagnostic {
+	evidence := make([]diagnostic.Evidence, 0, len(projection.Evidence))
+	for _, item := range projection.Evidence {
+		evidence = append(evidence, diagnostic.Evidence{
+			Kind: evidenceKind(item.Kind), Trust: evidenceTrust(item.Trust),
+			Span: spanForFact(entry.Source, item.Span), Message: item.Message,
+		})
+	}
+	labels := make([]diagnostic.Label, 0, len(projection.Labels))
+	for _, item := range projection.Labels {
+		labelSpan := spanForFact(entry.Source, item.Span)
+		labels = append(labels, diagnostic.Label{File: entry.Path, Span: labelSpan, Message: item.Message})
+	}
+	return newDiagnosticSpec(entry, span, code, message, diagnostic.NewExplanation(evidence...), projection.Help, labels)
+}
+
+func evidenceKind(kind string) diagnostic.EvidenceKind {
+	switch kind {
+	case "abstract fact":
+		return diagnostic.EvidenceAbstractFact
+	case "user assertion":
+		return diagnostic.EvidenceUserAssertion
+	case "missing proof":
+		return diagnostic.EvidenceMissingProof
+	default:
+		return diagnostic.EvidencePrecisionBoundary
+	}
+}
+
+func evidenceTrust(trust string) diagnostic.TrustKind {
+	switch trust {
+	case "proven":
+		return diagnostic.TrustProven
+	case "claimed":
+		return diagnostic.TrustClaimed
+	case "refuted":
+		return diagnostic.TrustRefuted
+	default:
+		return diagnostic.TrustUnknown
+	}
 }
 
 func moduleDiagnostic(entry Entry, imported string) diagnostic.Diagnostic {
@@ -365,6 +424,10 @@ func spanFromOffsets(content string, start, end int) source.Span {
 }
 
 func newDiagnostic(entry Entry, span source.Span, code diagnostic.Code, message string) diagnostic.Diagnostic {
+	return newDiagnosticSpec(entry, span, code, message, diagnostic.Explanation{}, "", nil)
+}
+
+func newDiagnosticSpec(entry Entry, span source.Span, code diagnostic.Code, message string, explanation diagnostic.Explanation, help string, labels []diagnostic.Label) diagnostic.Diagnostic {
 	start := byteOffset(entry.Source, span.StartLine, span.StartCol)
 	end := byteOffset(entry.Source, span.EndLine, span.EndCol)
 	if end < start {
@@ -379,7 +442,7 @@ func newDiagnostic(entry Entry, span source.Span, code diagnostic.Code, message 
 		EndLine:       span.EndLine,
 		EndColumn:     span.EndCol,
 	}
-	return diagnostic.New(diagnostic.DiagnosticSpec{Location: location, File: entry.Path, Span: span, Code: code, Message: message, Severity: diagnostic.SeverityError})
+	return diagnostic.New(diagnostic.DiagnosticSpec{Location: location, File: entry.Path, Span: span, Code: code, Message: message, Severity: diagnostic.SeverityError, Explanation: explanation, Help: help, Labels: labels})
 }
 
 func lineColumn(content string, offset int) (line, column int) {
