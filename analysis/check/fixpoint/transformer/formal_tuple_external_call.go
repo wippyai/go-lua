@@ -868,7 +868,7 @@ func freezeFormalExternalCallProviderAtPath(
 	capability := provider.Capability()
 	observation := capability.InputObservation()
 	operands := step.operands.selectObservation(observation)
-	access := selectFormalExternalCallProviderAccess(step.access, operands, observation)
+	access := selectFormalExternalCallProviderAccess(body.relation.arena, step.access, operands, observation)
 	leafPoints, err := selectFormalExternalCallProviderPoints(inputPoints, step.point, access, capability)
 	if err != nil {
 		return formalExternalCallProvider{}, err
@@ -1143,14 +1143,11 @@ func freezeFormalExternalCallProviderAtPath(
 // already frozen by the relation compiler; this is a stable subset, not a
 // runtime scan or a newly allocated semantic plan.
 func selectFormalExternalCallProviderAccess(
+	arena *Arena,
 	access []valueAccessTerm,
 	operands callOutcomeOperandTerms,
 	observation callpayload.CallOutcomeInputObservation,
 ) []valueAccessTerm {
-	// The compatibility declaration is intentionally the whole compiler-sealed
-	// DAG row.  Its internal ValueTerms include transitive read nodes which are
-	// not themselves public CallOutcomeInput roles; filtering those by top-term
-	// identity would silently sever dynamic operand evaluation.
 	if observation.ObservesCallee() && observation.ObservesReceiver() && observation.AllArguments() {
 		return cloneValueAccessTerms(access)
 	}

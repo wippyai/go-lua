@@ -71,9 +71,7 @@ func (a *Arena) evalValueCanonicalWithLeaves(term ValueTerm, resolver valueNodeL
 		return product.Value{}, false
 	}
 	if resolver.scope != nil {
-		scope := resolver.scope
-		resolver = scope(term, resolver)
-		resolver.scope = scope
+		resolver = resolver.scope(term, resolver)
 	}
 	node := a.values[term]
 	if node.op == valueSelect {
