@@ -29,3 +29,16 @@ func TestArtifactRejectsUnboundEntryTerm(t *testing.T) {
 		t.Fatal("artifact accepted an unbound entry parameter")
 	}
 }
+
+func TestArtifactCanonicalContentRetainsReadinessDependencies(t *testing.T) {
+	body := testBody(7)
+	entry := EntryParameter{Body: body, Name: "entry"}
+	base := func(name string, dependencies []Coordinate) Equation {
+		return Equation{Target: Coordinate{Body: body, Name: name}, Entry: entry, Dependencies: dependencies, Occurrence: Occurrence{Kind: "entry", ContractID: testID(7)}, KernelID: "kernel", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}}
+	}
+	without := Artifact{Equations: []Equation{base("a", nil), base("b", nil)}}
+	with := Artifact{Equations: []Equation{base("a", nil), base("b", []Coordinate{{Body: body, Name: "a"}})}}
+	if without.ContentID() == with.ContentID() {
+		t.Fatal("readiness dependency did not affect artifact content")
+	}
+}

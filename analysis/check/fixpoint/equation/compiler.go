@@ -3,6 +3,7 @@ package equation
 import (
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // FrozenKinds is duplicated deliberately as stable wire vocabulary, not as an
@@ -23,15 +24,16 @@ var ErrUnimplementedLowering = errors.New("equation: lowering is not implemented
 // deliberately has no State field.  Terms and guards were sealed by the
 // source program before this compiler was called.
 type Draft struct {
-	Target     Coordinate
-	Entry      EntryParameter
-	Guards     []Guard
-	Occurrence Occurrence
-	Operands   []Operand
+	Target       Coordinate
+	Entry        EntryParameter
+	Guards       []Guard
+	Dependencies []Coordinate
+	Occurrence   Occurrence
+	Operands     []Operand
 }
 
 func (d Draft) valid() error {
-	probe := Equation{Target: d.Target, Entry: d.Entry, Guards: d.Guards, Occurrence: d.Occurrence, Operands: d.Operands, KernelID: "draft"}
+	probe := Equation{Target: d.Target, Entry: d.Entry, Guards: d.Guards, Dependencies: d.Dependencies, Occurrence: d.Occurrence, Operands: d.Operands, KernelID: "draft"}
 	return probe.valid()
 }
 
@@ -128,7 +130,7 @@ func (c *Compiler) Compile(source Source) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, fmt.Errorf("equation: lower %s at %s: %w", draft.Occurrence.Kind, draft.Target.Name, err)
 		}
-		if lowered.Target != draft.Target || lowered.Entry != draft.Entry || lowered.Occurrence != draft.Occurrence || lowered.KernelID == "" {
+		if lowered.Target != draft.Target || lowered.Entry != draft.Entry || lowered.Occurrence != draft.Occurrence || !sameCoordinates(lowered.Dependencies, draft.Dependencies) || lowered.KernelID == "" {
 			return Artifact{}, fmt.Errorf("equation: lowering %q changed occurrence identity or omitted its kernel", draft.Occurrence.Kind)
 		}
 		if _, err := canonicalEquation(lowered); err != nil {
@@ -143,6 +145,22 @@ func (c *Compiler) Compile(source Source) (Artifact, error) {
 	return artifact, nil
 }
 
+func sameCoordinates(left, right []Coordinate) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	left = append([]Coordinate(nil), left...)
+	right = append([]Coordinate(nil), right...)
+	sort.Slice(left, func(i, j int) bool { return left[i].less(left[j]) })
+	sort.Slice(right, func(i, j int) bool { return right[i].less(right[j]) })
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 // BindExistingKernel creates a mechanical lowering hook.  The only semantic
 // choice is the pre-existing kernel identifier supplied by the owner; this
 // helper has no evaluation logic.
@@ -151,6 +169,6 @@ func BindExistingKernel(kernelID string) Lowerer {
 		if kernelID == "" {
 			return Equation{}, fmt.Errorf("equation: empty canonical kernel binding")
 		}
-		return Equation{Target: draft.Target, Entry: draft.Entry, Guards: append([]Guard(nil), draft.Guards...), Occurrence: draft.Occurrence, Operands: append([]Operand(nil), draft.Operands...), KernelID: kernelID}, nil
+		return Equation{Target: draft.Target, Entry: draft.Entry, Guards: append([]Guard(nil), draft.Guards...), Dependencies: append([]Coordinate(nil), draft.Dependencies...), Occurrence: draft.Occurrence, Operands: append([]Operand(nil), draft.Operands...), KernelID: kernelID}, nil
 	})
 }

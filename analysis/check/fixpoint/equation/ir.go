@@ -114,12 +114,17 @@ func (o Operand) less(other Operand) bool            { return o.Role < other.Rol
 // explicitly retains its body's formal entry parameter; it has no concrete
 // entry value and no implicit State operand.
 type Equation struct {
-	Target     Coordinate
-	Entry      EntryParameter
-	Guards     []Guard
-	Occurrence Occurrence
-	Operands   []Operand
-	KernelID   string
+	Target Coordinate
+	Entry  EntryParameter
+	Guards []Guard
+	// Dependencies are readiness edges to already-complete equation targets.
+	// They are not operand values: operands remain closed when a transaction
+	// is invoked.  The Stage-3 evaluator uses these edges solely to reject
+	// cyclic bodies and select its deterministic acyclic schedule.
+	Dependencies []Coordinate
+	Occurrence   Occurrence
+	Operands     []Operand
+	KernelID     string
 }
 
 func (e Equation) valid() error {
@@ -129,6 +134,11 @@ func (e Equation) valid() error {
 	for _, guard := range e.Guards {
 		if !guard.valid() || guard.Body != e.Target.Body {
 			return fmt.Errorf("equation: foreign or malformed guard")
+		}
+	}
+	for _, dependency := range e.Dependencies {
+		if !dependency.valid() || dependency.Body != e.Target.Body || dependency == e.Target {
+			return fmt.Errorf("equation: foreign, malformed, or self dependency")
 		}
 	}
 	for _, operand := range e.Operands {
@@ -145,12 +155,19 @@ func canonicalEquation(in Equation) (Equation, error) {
 	}
 	out := in
 	out.Guards = append([]Guard(nil), in.Guards...)
+	out.Dependencies = append([]Coordinate(nil), in.Dependencies...)
 	out.Operands = append([]Operand(nil), in.Operands...)
 	sort.Slice(out.Guards, func(i, j int) bool { return out.Guards[i].less(out.Guards[j]) })
+	sort.Slice(out.Dependencies, func(i, j int) bool { return out.Dependencies[i].less(out.Dependencies[j]) })
 	sort.Slice(out.Operands, func(i, j int) bool { return out.Operands[i].less(out.Operands[j]) })
 	for i := 1; i < len(out.Guards); i++ {
 		if !out.Guards[i-1].less(out.Guards[i]) {
 			return Equation{}, fmt.Errorf("equation: duplicate guard")
+		}
+	}
+	for i := 1; i < len(out.Dependencies); i++ {
+		if !out.Dependencies[i-1].less(out.Dependencies[i]) {
+			return Equation{}, fmt.Errorf("equation: duplicate dependency")
 		}
 	}
 	for i := 1; i < len(out.Operands); i++ {
@@ -207,6 +224,11 @@ func appendEquation(out []byte, equation Equation) []byte {
 	for _, guard := range equation.Guards {
 		out = append(out, guard.Body[:]...)
 		out = appendBytes(out, guard.Encoding)
+	}
+	out = appendU64(out, uint64(len(equation.Dependencies)))
+	for _, dependency := range equation.Dependencies {
+		out = append(out, dependency.Body[:]...)
+		out = appendText(out, dependency.Name)
 	}
 	out = appendU64(out, uint64(len(equation.Operands)))
 	for _, operand := range equation.Operands {
