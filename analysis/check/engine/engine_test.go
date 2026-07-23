@@ -264,6 +264,80 @@ func TestCheckUnknownCallPublishesExplicitUnknownResult(t *testing.T) {
 	}
 }
 
+func TestCheckMethodCallUsesSealedMemberCallable(t *testing.T) {
+	result, err := engine.Check(`
+type Object = {
+    method: (self: Object, value: number) -> number
+}
+local object: Object = {
+    method = function(self: Object, value: number): number
+        return value
+    end,
+}
+local result = object:method("wrong")
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "claim/unproven/") {
+			t.Fatalf("closed callable record emitted an unproven annotation: %#v", result.Diagnostics)
+		}
+		if strings.HasPrefix(fact.Key, "type.call.direct.argument_type/") && strings.Contains(string(fact.Value), `argument 1 is "wrong", not number`) {
+			return
+		}
+	}
+	t.Fatalf("method argument mismatch was not proven: %#v", result.Diagnostics)
+}
+
+func TestCheckMethodCallProvesNonCallableSealedMember(t *testing.T) {
+	result, err := engine.Check(`
+local object = { method = false }
+object:method()
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "type.call.direct.not_callable/") && strings.Contains(string(fact.Value), "false, not callable") {
+			return
+		}
+	}
+	t.Fatalf("non-callable method member was not proven: %#v", result.Diagnostics)
+}
+
+func TestCheckMethodCallLeavesUnknownReceiverUnreported(t *testing.T) {
+	result, err := engine.Check(`
+local object = provider()
+object:method(1)
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "type.call.direct.") {
+			t.Fatalf("unknown method receiver produced a call diagnostic: %#v", result.Diagnostics)
+		}
+	}
+}
+
+func TestCheckMethodCallUsesLaterMemberWriteOverClosedAbsence(t *testing.T) {
+	result, err := engine.Check(`
+local object = {}
+object.method = false
+object:method()
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "type.call.direct.not_callable/") && strings.Contains(string(fact.Value), "false, not callable") {
+			return
+		}
+	}
+	t.Fatalf("later member write did not replace closed absence: %#v", result.Diagnostics)
+}
+
 func TestCheckDynamicIndexReadsPublishConservativeUnknown(t *testing.T) {
 	for name, source := range map[string]string{
 		"path destination":      `local key = "missing"; local result = record[key]; local observed = result`,

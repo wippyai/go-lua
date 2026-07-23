@@ -1049,7 +1049,13 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	if !strings.HasPrefix(string(operands["target"]), "path/") || len(operands["display"]) == 0 || len(operands["value"]) == 0 {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed path replacement")
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	value, err := resolveCurrentValue(operands["value"], partition)
+	if err != nil {
+		value = []byte("scalar/top")
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
+	}}}}, nil
 }
 
 // dynamicIndexReadKernel has no closed heap fact to project at this stage.
@@ -1104,6 +1110,11 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 			break
 		}
 	}
+	// A sealed table whose declared record includes callable members retains a
+	// concrete dispatch witness even when function-variance proof is outside
+	// this scalar relation. Do not turn that missing compatibility proof into a
+	// diagnostic; apply can still emit only a proven call-contract violation.
+	callableRecordShape := shapefact.IsTable(value) && strings.Contains(targetType, "fun(")
 	if available && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if kind == "claim-kind/1" {
@@ -1134,7 +1145,7 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 			Key:   "type.assignment/" + operation.Target.Name,
 			Value: []byte(message),
 		}}
-	} else if !claimTypeIsAny(targetType) {
+	} else if !claimTypeIsAny(targetType) && !callableRecordShape {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
@@ -1596,9 +1607,6 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	if hasCallee == (hasReceiver && hasMethod) || hasReceiver != hasMethod {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed call application shape")
 	}
-	if !hasCallee {
-		return equation.TransactionResult{Complete: true}, nil
-	}
 	operands, err := callOperands(operation.Operands)
 	if err != nil {
 		return equation.TransactionResult{}, err
@@ -1609,6 +1617,25 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 		}
 	}
 	callee, known := resolveKnownCurrentValue(operands.callee, partition)
+	if !hasCallee {
+		receiver, receiverKnown := resolveKnownCurrentValue(operands.receiver, partition)
+		if !receiverKnown {
+			return equation.TransactionResult{Complete: true}, nil
+		}
+		callee, known = currentMethodCallable(operands.receiver, receiver, operands.method, partition)
+		if !known && isClaimRefinement(receiver) {
+			// An unproven annotation is a downstream assumption, not a new
+			// runtime value. Walk only its contiguous predecessor claims back
+			// to the immediately underlying sealed shape; a real intervening
+			// write stops dispatch and therefore cannot create a stale proof.
+			if sealed, found := priorSealedTableValue(operands.receiver, partition); found {
+				callee, known = currentMethodCallable(operands.receiver, sealed, operands.method, partition)
+			}
+		}
+		if !known {
+			return equation.TransactionResult{Complete: true}, nil
+		}
+	}
 	if !known {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -1618,6 +1645,17 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	signature, known := callableSignature(callee)
 	if !known || operands.spread {
 		return equation.TransactionResult{Complete: true}, nil
+	}
+	if !hasCallee {
+		// Lua colon calls always pass the receiver in the first position. Once
+		// dispatch has proved the method member, the remaining signature is
+		// the exact explicit-argument contract at this call site.
+		if len(signature.Params) > 0 {
+			signature.Params = signature.Params[1:]
+		}
+		if signature.Required > 0 {
+			signature.Required--
+		}
 	}
 	if len(operands.arguments) < signature.Required {
 		return callDiagnostic(operation, "too_few_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, signature.Required, len(operands.arguments))), nil
@@ -1640,6 +1678,8 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 
 type directCallOperands struct {
 	callee    []byte
+	receiver  []byte
+	method    string
 	display   string
 	arguments [][]byte
 	spread    bool
@@ -1655,6 +1695,20 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 				return directCallOperands{}, fmt.Errorf("engine: duplicate call callee")
 			}
 			result.callee = operand.Value
+		case operand.Role == "receiver":
+			if result.receiver != nil {
+				return directCallOperands{}, fmt.Errorf("engine: duplicate call receiver")
+			}
+			result.receiver = operand.Value
+		case operand.Role == "method":
+			if result.method != "" {
+				return directCallOperands{}, fmt.Errorf("engine: duplicate call method")
+			}
+			name, ok := callMethodName(operand.Value)
+			if !ok {
+				return directCallOperands{}, fmt.Errorf("engine: malformed call method")
+			}
+			result.method = name
 		case operand.Role == "callee-display":
 			if result.display != "target" || len(operand.Value) == 0 {
 				return directCallOperands{}, fmt.Errorf("engine: malformed call display")
@@ -1676,8 +1730,10 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 			arguments[index] = operand.Value
 		}
 	}
-	if result.callee == nil {
-		return directCallOperands{}, fmt.Errorf("engine: missing call callee")
+	hasCallee := result.callee != nil
+	hasMethod := result.receiver != nil && result.method != ""
+	if hasCallee == hasMethod || (result.receiver != nil) != (result.method != "") {
+		return directCallOperands{}, fmt.Errorf("engine: incomplete call dispatch")
 	}
 	result.arguments = make([][]byte, len(arguments))
 	for index := range result.arguments {
@@ -1687,6 +1743,82 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 		result.arguments[index] = arguments[index]
 	}
 	return result, nil
+}
+
+func callMethodName(value []byte) (string, bool) {
+	encoded := strings.TrimPrefix(string(value), "method/")
+	if encoded == string(value) || encoded == "" {
+		return "", false
+	}
+	name, err := strconv.Unquote(encoded)
+	return name, err == nil && name != ""
+}
+
+// methodCallable extracts only an exact member from a sealed table shape.
+// Unknown/non-table receivers may have a metatable or later mutation outside
+// the fact model, so they deliberately yield no callable proof or diagnostic.
+func methodCallable(receiver []byte, method string) ([]byte, bool) {
+	table, ok := shapefact.DecodeTable(receiver)
+	if !ok || method == "" {
+		return nil, false
+	}
+	member, found := table.Lookup("." + method)
+	if !found {
+		return nil, false
+	}
+	if !member.Present {
+		return []byte("scalar/nil"), true
+	}
+	return []byte(member.Value), true
+}
+
+// currentMethodCallable gives an explicit member write precedence over a
+// constructor shape. A later method definition or assignment therefore
+// invalidates the constructor's closed-absence proof before apply decides
+// whether the member is callable.
+func currentMethodCallable(receiverTerm, receiver []byte, method string, partition equation.Partition) ([]byte, bool) {
+	if strings.HasPrefix(string(receiverTerm), "path/") {
+		memberTerm := []byte(string(receiverTerm) + "." + method)
+		if value, known := resolveKnownCurrentValue(memberTerm, partition); known {
+			return value, true
+		}
+	}
+	return methodCallable(receiver, method)
+}
+
+func isClaimRefinement(value []byte) bool {
+	return strings.HasPrefix(string(value), "scalar/claim/")
+}
+
+// priorSealedTableValue follows only a contiguous sequence of claim outputs
+// for one value term. A claim is a refinement of its preceding source fact;
+// any non-claim output is a real value boundary and must itself be a sealed
+// table before method dispatch can proceed.
+func priorSealedTableValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
+		return nil, false
+	}
+	prefix := "value/" + string(term) + "/"
+	facts := make([]equation.Fact, 0)
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) {
+			facts = append(facts, fact)
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool { return facts[i].Key > facts[j].Key })
+	if len(facts) < 2 || !isClaimRefinement(facts[0].Value) {
+		return nil, false
+	}
+	for _, fact := range facts[1:] {
+		if isClaimRefinement(fact.Value) {
+			continue
+		}
+		if shapefact.IsTable(fact.Value) {
+			return append([]byte(nil), fact.Value...), true
+		}
+		return nil, false
+	}
+	return nil, false
 }
 
 func callArgumentIndex(role string) (int, error) {
