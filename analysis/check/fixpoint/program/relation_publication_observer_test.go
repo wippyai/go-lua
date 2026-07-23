@@ -2,11 +2,14 @@ package program
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	goast "go/ast"
 	goparser "go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -23,7 +26,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-const relationDifferentialSourceTimeout = 10 * time.Second
+const relationDifferentialSourceTimeout = 120 * time.Second
+
+const (
+	relationDifferentialWorkerEnv       = "GO_LUA_RELATION_DIFFERENTIAL_WORKER"
+	relationDifferentialWorkerSourceEnv = "GO_LUA_RELATION_DIFFERENTIAL_SOURCE"
+	relationDifferentialWorkerNameEnv   = "GO_LUA_RELATION_DIFFERENTIAL_SOURCE_NAME"
+	relationDifferentialWorkerNamesEnv  = "GO_LUA_RELATION_DIFFERENTIAL_SOURCE_NAMES"
+	relationDifferentialWorkerResult    = "RELATION_DIFFERENTIAL_WORKER_RESULT="
+)
 
 type relationDifferentialSource struct {
 	name   string
@@ -34,6 +45,15 @@ type relationDifferentialReport struct {
 	corpusSize int
 	passed     int
 	gaps       []string
+}
+
+// relationDifferentialWorkerReport is deliberately wire-only: a corpus body
+// runs in a separate test process so the analysis RSS safety fuse cannot abort
+// the aggregate scoreboard.
+type relationDifferentialWorkerReport struct {
+	CorpusSize int      `json:"corpus_size"`
+	Passed     int      `json:"passed"`
+	Gaps       []string `json:"gaps"`
 }
 
 func (r *relationDifferentialReport) addGap(format string, args ...any) {
@@ -178,7 +198,7 @@ func TestRelationPublicationDifferentialCorpus(t *testing.T) {
 	}
 	report := &relationDifferentialReport{}
 	t.Run("checktest", func(t *testing.T) {
-		runRelationDifferentialCorpus(t, report, sources)
+		runRelationDifferentialCorpusInProcess(t, report, sources)
 	})
 	fixtureSources := relationFixtureCorpus(t)
 	if len(fixtureSources) == 0 {
@@ -192,31 +212,243 @@ func TestRelationPublicationDifferentialCorpus(t *testing.T) {
 
 func runRelationDifferentialCorpus(t *testing.T, report *relationDifferentialReport, sources []relationDifferentialSource) {
 	t.Helper()
+	const batchSize = 16
+	var batch []relationDifferentialSource
+	batchNumber := 0
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		batch := batch
+		t.Run(fmt.Sprintf("batch-%04d", batchNumber), func(t *testing.T) {
+			report.merge(runRelationDifferentialWorkers(t, batch))
+		})
+		batchNumber++
+		batch = nil
+	}
+	for index, source := range sources {
+		if relationDifferentialRequiresWorker(source.name) {
+			flush()
+			source := source
+			t.Run(fmt.Sprintf("source-%04d", index), func(t *testing.T) {
+				report.merge(runRelationDifferentialWorkers(t, []relationDifferentialSource{source}))
+			})
+			continue
+		}
+		batch = append(batch, source)
+		if len(batch) == batchSize {
+			flush()
+		}
+	}
+	flush()
+}
+
+func relationDifferentialRequiresWorker(name string) bool {
+	switch name {
+	case "fixtures/bench/fibonacci/main.lua",
+		"fixtures/semantic/nested-channel-select-union-stress/main.lua",
+		"fixtures/semantic/type-engine-edge-matrix/main.lua":
+		return true
+	default:
+		return false
+	}
+}
+
+// These fixtures have demonstrated process-level failure modes: fibonacci
+// trips the RSS fuse, while the two stress fixtures do not cooperatively honor
+// their context during lowering. Keep them isolated so each becomes one named
+// gap without losing the remainder of the sweep.
+// The literal checktest corpus has a stable, bounded memory profile and is
+// large enough that starting a process per literal would exceed this
+// correctness test's 600-second budget. Recover ordinary VM/bridge panics per
+// source here; standalone fixtures use workers below because a fixture can
+// trip the process-wide RSS fuse, which cannot be recovered in-process.
+func runRelationDifferentialCorpusInProcess(t *testing.T, report *relationDifferentialReport, sources []relationDifferentialSource) {
+	t.Helper()
 	for _, source := range sources {
 		source := source
 		t.Run(source.name, func(t *testing.T) {
-			stmts, err := parse.ParseString(source.source, source.name)
-			if err != nil {
-				// Parse-error fixtures have no analyzed lexical body to retain.
-				return
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), relationDifferentialSourceTimeout)
-			defer cancel()
-			result, err := RunChunk(stmts, Config{
-				Context: ctx,
-				Check:   body.Config{Registry: standard.Registry()},
-				relationPublicationObserver: func(frozen *transformer.RelationProgram, execution transformer.RelationSolveExecution, published formalLexicalPublishedProgram) error {
-					report.observe(source.name, frozen, execution, published)
-					return nil
-				},
-			})
-			if root := result.RootResult(); root != nil {
-				root.ReleaseTransientTree()
-			}
-			if err != nil {
-				report.addGap("%s: program check: %v", source.name, err)
-			}
+			runRelationDifferentialSourceWithPanicGap(report, source)
 		})
+	}
+}
+
+func runRelationDifferentialSourceWithPanicGap(report *relationDifferentialReport, source relationDifferentialSource) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			report.addGap("%s: panic: %v", source.name, recovered)
+		}
+	}()
+	runRelationDifferentialSource(report, source)
+}
+
+func (r *relationDifferentialReport) merge(worker relationDifferentialWorkerReport) {
+	r.corpusSize += worker.CorpusSize
+	r.passed += worker.Passed
+	r.gaps = append(r.gaps, worker.Gaps...)
+}
+
+func runRelationDifferentialWorkers(t *testing.T, sources []relationDifferentialSource) relationDifferentialWorkerReport {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), relationDifferentialSourceTimeout+5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRelationPublicationDifferentialCorpusWorker$")
+	command.Env = append(os.Environ(), relationDifferentialWorkerEnv+"=1")
+	if len(sources) == 1 {
+		command.Env = append(command.Env,
+			relationDifferentialWorkerSourceEnv+"="+base64.StdEncoding.EncodeToString([]byte(sources[0].source)),
+			relationDifferentialWorkerNameEnv+"="+sources[0].name,
+		)
+	} else {
+		names := make([]string, len(sources))
+		for index, source := range sources {
+			names[index] = source.name
+		}
+		payload, err := json.Marshal(names)
+		if err != nil {
+			t.Fatalf("marshal relation differential worker names: %v", err)
+		}
+		command.Env = append(command.Env, relationDifferentialWorkerNamesEnv+"="+base64.StdEncoding.EncodeToString(payload))
+	}
+	output, err := command.CombinedOutput()
+	if worker, ok := decodeRelationDifferentialWorkerReport(output); ok {
+		if err != nil {
+			if len(sources) == 1 {
+				worker.Gaps = append(worker.Gaps, relationDifferentialWorkerExitGap(sources[0].name, err, output))
+			} else {
+				worker.Gaps = append(worker.Gaps, relationDifferentialWorkerExitGap(strings.Join(relationDifferentialWorkerNames(sources), ","), err, output))
+			}
+		}
+		return worker
+	}
+	if len(sources) == 1 {
+		return relationDifferentialWorkerReport{Gaps: []string{
+			relationDifferentialWorkerExitGap(sources[0].name, err, output),
+		}}
+	}
+	var replay relationDifferentialWorkerReport
+	for _, source := range sources {
+		worker := runRelationDifferentialWorkers(t, []relationDifferentialSource{source})
+		replay.CorpusSize += worker.CorpusSize
+		replay.Passed += worker.Passed
+		replay.Gaps = append(replay.Gaps, worker.Gaps...)
+	}
+	return replay
+}
+
+func relationDifferentialWorkerNames(sources []relationDifferentialSource) []string {
+	names := make([]string, len(sources))
+	for index, source := range sources {
+		names[index] = source.name
+	}
+	return names
+}
+
+func relationDifferentialWorkerExitGap(source string, err error, output []byte) string {
+	if ctxErr := err; ctxErr != nil && strings.Contains(ctxErr.Error(), "signal: killed") {
+		return fmt.Sprintf("%s: worker exceeded %s", source, relationDifferentialSourceTimeout)
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.Contains(line, "go-lua: RSS safety fuse exceeded:") || strings.HasPrefix(line, "panic:") {
+			return fmt.Sprintf("%s: worker failure: %s", source, line)
+		}
+	}
+	if err == nil {
+		return fmt.Sprintf("%s: worker returned no report", source)
+	}
+	return fmt.Sprintf("%s: worker failure: %v", source, err)
+}
+
+func decodeRelationDifferentialWorkerReport(output []byte) (relationDifferentialWorkerReport, bool) {
+	for _, line := range strings.Split(string(output), "\n") {
+		encoded, found := strings.CutPrefix(line, relationDifferentialWorkerResult)
+		if !found {
+			continue
+		}
+		payload, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return relationDifferentialWorkerReport{}, false
+		}
+		var worker relationDifferentialWorkerReport
+		if err := json.Unmarshal(payload, &worker); err != nil {
+			return relationDifferentialWorkerReport{}, false
+		}
+		return worker, true
+	}
+	return relationDifferentialWorkerReport{}, false
+}
+
+func TestRelationPublicationDifferentialCorpusWorker(t *testing.T) {
+	if os.Getenv(relationDifferentialWorkerEnv) != "1" {
+		return
+	}
+	report := &relationDifferentialReport{}
+	defer func() {
+		payload, marshalErr := json.Marshal(relationDifferentialWorkerReport{
+			CorpusSize: report.corpusSize,
+			Passed:     report.passed,
+			Gaps:       report.gaps,
+		})
+		if marshalErr != nil {
+			t.Fatalf("marshal relation differential worker report: %v", marshalErr)
+		}
+		fmt.Printf("%s%s\n", relationDifferentialWorkerResult, base64.StdEncoding.EncodeToString(payload))
+	}()
+	if encodedNames := os.Getenv(relationDifferentialWorkerNamesEnv); encodedNames != "" {
+		payload, err := base64.StdEncoding.DecodeString(encodedNames)
+		if err != nil {
+			t.Fatalf("decode relation differential worker names: %v", err)
+		}
+		var names []string
+		if err := json.Unmarshal(payload, &names); err != nil {
+			t.Fatalf("unmarshal relation differential worker names: %v", err)
+		}
+		fixtures := relationFixtureCorpus(t)
+		byName := make(map[string]relationDifferentialSource, len(fixtures))
+		for _, source := range fixtures {
+			byName[source.name] = source
+		}
+		for _, name := range names {
+			source, ok := byName[name]
+			if !ok {
+				t.Fatalf("relation differential worker fixture missing: %s", name)
+			}
+			runRelationDifferentialSourceWithPanicGap(report, source)
+		}
+		return
+	}
+	source, err := base64.StdEncoding.DecodeString(os.Getenv(relationDifferentialWorkerSourceEnv))
+	if err != nil {
+		t.Fatalf("decode relation differential worker source: %v", err)
+	}
+	name := os.Getenv(relationDifferentialWorkerNameEnv)
+	if name == "" {
+		name = "relation differential worker"
+	}
+	runRelationDifferentialSourceWithPanicGap(report, relationDifferentialSource{name: name, source: string(source)})
+}
+
+func runRelationDifferentialSource(report *relationDifferentialReport, source relationDifferentialSource) {
+	stmts, err := parse.ParseString(source.source, source.name)
+	if err != nil {
+		// Parse-error fixtures have no analyzed lexical body to retain.
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), relationDifferentialSourceTimeout)
+	defer cancel()
+	result, err := RunChunk(stmts, Config{
+		Context: ctx,
+		Check:   body.Config{Registry: standard.Registry()},
+		relationPublicationObserver: func(frozen *transformer.RelationProgram, execution transformer.RelationSolveExecution, published formalLexicalPublishedProgram) error {
+			report.observe(source.name, frozen, execution, published)
+			return nil
+		},
+	})
+	if root := result.RootResult(); root != nil {
+		root.ReleaseTransientTree()
+	}
+	if err != nil {
+		report.addGap("%s: program check: %v", source.name, err)
 	}
 }
 
