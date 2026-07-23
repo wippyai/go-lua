@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -21,10 +22,15 @@ import (
 var ErrUnsupportedInstruction = errors.New("front: unsupported WIR instruction")
 
 const (
-	entryKernel  = "front/entry/v1"
-	writeKernel  = "front/environment-write/v1"
-	branchKernel = "front/branch-relations/v1"
-	entryName    = "entry"
+	entryKernel                 = "front/entry/v1"
+	writeKernel                 = "front/environment-write/v1"
+	allocationTemplateKernel    = "front/allocation-template/v1"
+	objectMaterializationKernel = "front/object-materialization/v1"
+	pathReplacementKernel       = "front/path-replacement/v1"
+	pathInvalidationKernel      = "front/path-invalidation/v1"
+	indexMutationKernel         = "front/index-mutation/v1"
+	branchKernel                = "front/branch-relations/v1"
+	entryName                   = "entry"
 )
 
 // CompileBody parses source and lowers its chunk through bind, cfgbuild, and
@@ -49,8 +55,10 @@ func CompileBody(source string) (equation.Artifact, error) {
 }
 
 type operation struct {
-	instruction wir.Instruction
-	target      equation.Coordinate
+	instruction    wir.Instruction
+	target         equation.Coordinate
+	family         string
+	allocationSite string
 }
 
 func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
@@ -67,11 +75,26 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		switch instruction.Op {
-		case wir.OpEntry, wir.OpAssign, wir.OpBranch:
+		case wir.OpEntry, wir.OpAssign, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 			if instruction.Op == wir.OpEntry {
 				entries++
 			}
+		case wir.OpDynamicIndexWrite:
+			// A dynamic store has two inseparable semantic occurrences: the
+			// mutation itself and the invalidation of every path below the
+			// dynamically addressed container.  Keep both occurrences or fail
+			// the whole body; emitting only either half would be unsound.
+			operations = append(operations,
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, family: "path-invalidation"},
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, family: "index-mutation"},
+			)
+		case wir.OpMakeTable, wir.OpClosure:
+			site := operationName(len(operations))
+			operations = append(operations,
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: site}, family: "allocation-template", allocationSite: site},
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, family: "object-materialization", allocationSite: site},
+			)
 		case wir.OpExit, wir.OpNoop:
 			// These WIR operations carry no transfer occurrence. They are CFG
 			// structure, so retaining them as equations would invent semantics.
@@ -98,11 +121,52 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 		if index != 0 {
 			draft.Dependencies = []equation.Coordinate{operations[index-1].target}
 		}
-		switch instruction.Op {
-		case wir.OpEntry:
+		switch {
+		case operation.family == "allocation-template" || operation.family == "object-materialization":
+			terms, err := allocationOperands(body, instruction, operation.allocationSite)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: %s %s: %w", operation.family, operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence(operation.family)
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			if operation.family == "allocation-template" {
+				draft.Operands = terms.template
+			} else {
+				draft.Operands = terms.materialization
+			}
+		case operation.family == "path-invalidation" || operation.family == "index-mutation":
+			container, _, err := pathTerm(body, instruction.Dst)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: %w", operation.target.Name, err)
+			}
+			key, err := pathStoreTerm(body, instruction.A)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: key: %w", operation.target.Name, err)
+			}
+			value, err := pathStoreTerm(body, instruction.B)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: value: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence(operation.family)
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			if operation.family == "path-invalidation" {
+				draft.Operands = []equation.Operand{
+					{Role: "container", Term: container},
+					{Role: "key", Term: key},
+					{Role: "suffix", Term: suffixTerm(body, instruction.DynamicSuffix)},
+				}
+			} else {
+				draft.Operands = []equation.Operand{
+					{Role: "container", Term: container},
+					{Role: "key", Term: key},
+					{Role: "suffix", Term: suffixTerm(body, instruction.DynamicSuffix)},
+					{Role: "value", Term: value},
+				}
+			}
+		case instruction.Op == wir.OpEntry:
 			draft.Occurrence = occurrence("entry")
 			draft.Operands = []equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}}
-		case wir.OpAssign:
+		case instruction.Op == wir.OpAssign:
 			target, display, err := pathTerm(body, instruction.Dst)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
@@ -130,17 +194,51 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				{Role: "read-before", Term: readBefore},
 				{Role: "absence", Term: equation.ClosedTerm([]byte(absence))},
 			}
-		case wir.OpBranch:
-			if body.Check(instruction.Check).Kind != wir.CheckNone {
-				return equation.Artifact{}, fmt.Errorf("front: branch %s: normalized check kind %d is outside the scalar slice", operation.target.Name, body.Check(instruction.Check).Kind)
+		case instruction.Op == wir.OpStaticMemberWrite:
+			target, display, err := memberPathTerm(body, instruction.Dst)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: static member write %s: %w", operation.target.Name, err)
 			}
-			condition, err := scalarTerm(body, instruction.A)
+			value, err := pathStoreTerm(body, instruction.A)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: static member write %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("path-replacement")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = []equation.Operand{
+				{Role: "target", Term: target},
+				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
+				{Role: "value", Term: value},
+			}
+		case instruction.Op == wir.OpDynamicIndexRead:
+			target, display, err := pathTerm(body, instruction.Dst)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: dynamic index read %s: %w", operation.target.Name, err)
+			}
+			container, err := pathStoreTerm(body, instruction.A)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: dynamic index read %s: container: %w", operation.target.Name, err)
+			}
+			key, err := pathStoreTerm(body, instruction.B)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: dynamic index read %s: key: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("path-replacement")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = []equation.Operand{
+				{Role: "target", Term: target},
+				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
+				{Role: "container", Term: container},
+				{Role: "key", Term: key},
+			}
+		case instruction.Op == wir.OpBranch:
+			draft.Occurrence = occurrence("branch-relations")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			operands, err := branchOperands(body, instruction)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
 			}
-			draft.Occurrence = occurrence("branch-relations")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
-			draft.Operands = []equation.Operand{{Role: "condition", Term: condition}}
+			draft.Operands = operands
 		default:
 			return equation.Artifact{}, fmt.Errorf("%w: %d", ErrUnsupportedInstruction, instruction.Op)
 		}
@@ -153,6 +251,26 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	compiler, err = compiler.With("environment-write", equation.BindExistingKernel(writeKernel))
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure assignment compiler: %w", err)
+	}
+	compiler, err = compiler.With("allocation-template", equation.BindExistingKernel(allocationTemplateKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure allocation template compiler: %w", err)
+	}
+	compiler, err = compiler.With("object-materialization", equation.BindExistingKernel(objectMaterializationKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure object materialization compiler: %w", err)
+	}
+	compiler, err = compiler.With("path-replacement", equation.BindExistingKernel(pathReplacementKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure path replacement compiler: %w", err)
+	}
+	compiler, err = compiler.With("path-invalidation", equation.BindExistingKernel(pathInvalidationKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure path invalidation compiler: %w", err)
+	}
+	compiler, err = compiler.With("index-mutation", equation.BindExistingKernel(indexMutationKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure index mutation compiler: %w", err)
 	}
 	compiler, err = compiler.With("branch-relations", equation.BindExistingKernel(branchKernel))
 	if err != nil {
@@ -252,7 +370,7 @@ func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 // kernels; unknown kinds deliberately have no binding.
 func ContractID(kind string) (equation.ContentID, bool) {
 	switch kind {
-	case "entry", "environment-write", "branch-relations":
+	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations":
 		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
 	default:
 		return equation.ContentID{}, false
@@ -267,6 +385,16 @@ func KernelID(kind string) (string, bool) {
 		return entryKernel, true
 	case "environment-write":
 		return writeKernel, true
+	case "allocation-template":
+		return allocationTemplateKernel, true
+	case "object-materialization":
+		return objectMaterializationKernel, true
+	case "path-replacement":
+		return pathReplacementKernel, true
+	case "path-invalidation":
+		return pathInvalidationKernel, true
+	case "index-mutation":
+		return indexMutationKernel, true
 	case "branch-relations":
 		return branchKernel, true
 	default:
@@ -283,6 +411,43 @@ func pathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string, error
 		return equation.Term{}, "", fmt.Errorf("empty assignment target path")
 	}
 	return equation.ClosedTerm([]byte("path/" + path.Key())), path.String(), nil
+}
+
+// memberPathTerm rejects a root target: a static member write is never a
+// disguised environment write.  Nil remains a valid value operand elsewhere;
+// an absent target is always rejected.
+func memberPathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string, error) {
+	term, display, err := pathTerm(body, operand)
+	if err != nil {
+		return equation.Term{}, "", err
+	}
+	path := body.Path(wir.PathRef(operand.Ref))
+	if len(path.Segments) == 0 {
+		return equation.Term{}, "", fmt.Errorf("static member target has no member path")
+	}
+	return term, display, nil
+}
+
+// pathStoreTerm preserves every operand shape this family can consume.  In
+// particular, scalar/nil is a real Lua value, while OperandNone is absence and
+// therefore an error.  A temp is a closed body-local reference, not a guessed
+// fallback value.
+func pathStoreTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
+	switch operand.Kind {
+	case wir.OperandTemp:
+		if operand.Ref == 0 {
+			return equation.Term{}, fmt.Errorf("zero temporary operand")
+		}
+		return equation.ClosedTerm([]byte("temporary/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
+	case wir.OperandVararg:
+		return equation.ClosedTerm([]byte("vararg")), nil
+	default:
+		return scalarTerm(body, operand)
+	}
+}
+
+func suffixTerm(body *wir.Body, suffix wir.SegmentRange) equation.Term {
+	return equation.ClosedTerm([]byte("suffix/" + segment.FormatSegments(body.Segments(suffix))))
 }
 
 func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
@@ -310,6 +475,167 @@ func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 	default:
 		return equation.Term{}, fmt.Errorf("operand kind %d is outside the scalar slice", operand.Kind)
 	}
+}
+
+type allocationOperandSets struct {
+	template        []equation.Operand
+	materialization []equation.Operand
+}
+
+// allocationOperands seals the whole syntactic allocation before either of its
+// equation occurrences is emitted.  In particular, an open table tail has no
+// exact finite object graph, so it is rejected instead of being silently
+// represented as an absent field, nil, Bottom, or an invented unknown value.
+func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationSite string) (allocationOperandSets, error) {
+	result, err := allocationValueTerm(body, instruction.Dst)
+	if err != nil {
+		return allocationOperandSets{}, fmt.Errorf("destination: %w", err)
+	}
+	if allocationSite == "" {
+		return allocationOperandSets{}, fmt.Errorf("missing allocation site")
+	}
+	site := equation.ClosedTerm([]byte("allocation-site/" + allocationSite))
+	sets := allocationOperandSets{
+		template: []equation.Operand{
+			{Role: "site", Term: site},
+			{Role: "result", Term: result},
+		},
+		materialization: []equation.Operand{
+			{Role: "site", Term: site},
+			{Role: "result", Term: result},
+		},
+	}
+	switch instruction.Op {
+	case wir.OpMakeTable:
+		if instruction.ListSpread {
+			return allocationOperandSets{}, fmt.Errorf("table constructor has an open final value tail")
+		}
+		if !instruction.StaticStringKeysComplete {
+			return allocationOperandSets{}, fmt.Errorf("table constructor has a non-exact key")
+		}
+		typeTerm, err := allocationTypeTerm(body, instruction.Type)
+		if err != nil {
+			return allocationOperandSets{}, err
+		}
+		sets.template = append(sets.template,
+			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("allocation-kind/table"))},
+			equation.Operand{Role: "type", Term: typeTerm},
+		)
+		sets.materialization = append(sets.materialization,
+			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("object-kind/table"))},
+			equation.Operand{Role: "list-floor", Term: listFloorTerm(body, instruction)},
+		)
+		for index, entry := range body.TableEntries(instruction.TableEntries) {
+			if len(entry.Suffix.Segments) == 0 {
+				return allocationOperandSets{}, fmt.Errorf("table entry %d has no exact suffix", index)
+			}
+			value, err := allocationValueTerm(body, entry.Value)
+			if err != nil {
+				return allocationOperandSets{}, fmt.Errorf("table entry %d: %w", index, err)
+			}
+			if isNilConstant(body, entry.Value) {
+				// Lua removes a key assigned nil.  Do not encode an object member
+				// for it: absence is a distinct state, not a Bottom value.
+				continue
+			}
+			sets.materialization = append(sets.materialization, equation.Operand{
+				Role: fmt.Sprintf("member-%08d", index),
+				Term: equation.ClosedTerm([]byte("member/" + segment.FormatSegments(entry.Suffix.Segments) + "/" + string(value.Encoding))),
+			})
+		}
+		for index, valueOperand := range body.Operands(instruction.List) {
+			value, err := allocationValueTerm(body, valueOperand)
+			if err != nil {
+				return allocationOperandSets{}, fmt.Errorf("table value %d: %w", index, err)
+			}
+			sets.template = append(sets.template, equation.Operand{
+				Role: fmt.Sprintf("value-%08d", index), Term: value,
+			})
+		}
+	case wir.OpClosure:
+		proto := body.Proto(instruction.Func)
+		if instruction.Func == 0 || proto.Body == nil || proto.Graph == nil || proto.Name == "" {
+			return allocationOperandSets{}, fmt.Errorf("closure has no complete nested prototype")
+		}
+		sets.template = append(sets.template,
+			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("allocation-kind/closure"))},
+			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + proto.Name))},
+		)
+		sets.materialization = append(sets.materialization,
+			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("object-kind/closure"))},
+			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + proto.Name))},
+		)
+		for index, capture := range body.Operands(instruction.List) {
+			value, err := allocationValueTerm(body, capture)
+			if err != nil {
+				return allocationOperandSets{}, fmt.Errorf("closure capture %d: %w", index, err)
+			}
+			sets.materialization = append(sets.materialization, equation.Operand{
+				Role: fmt.Sprintf("capture-%08d", index), Term: value,
+			})
+		}
+	default:
+		return allocationOperandSets{}, fmt.Errorf("instruction %d does not allocate an object", instruction.Op)
+	}
+	return sets, nil
+}
+
+func allocationValueTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
+	if term, err := scalarTerm(body, operand); err == nil {
+		return term, nil
+	}
+	switch operand.Kind {
+	case wir.OperandTemp:
+		return equation.ClosedTerm([]byte(fmt.Sprintf("temp/%08d", operand.Ref))), nil
+	case wir.OperandVararg:
+		return equation.ClosedTerm([]byte("vararg")), nil
+	default:
+		return equation.Term{}, fmt.Errorf("operand kind %d is not a sealed value", operand.Kind)
+	}
+}
+
+func allocationTypeTerm(body *wir.Body, ref wir.TypeRef) (equation.Term, error) {
+	if ref == 0 {
+		return equation.ClosedTerm([]byte("type/none")), nil
+	}
+	display := body.TypeDisplay(ref)
+	if display == "" {
+		return equation.Term{}, fmt.Errorf("unknown table type")
+	}
+	return equation.ClosedTerm([]byte("type/" + display)), nil
+}
+
+func isNilConstant(body *wir.Body, operand wir.Operand) bool {
+	return operand.Kind == wir.OperandConst && body.Const(wir.ConstRef(operand.Ref)).Kind == wir.ConstNil
+}
+
+// listFloorTerm reports only a proven contiguous prefix.  It never treats a
+// missing, nil, or non-positive element as a list member, preserving the
+// distinction between an absent key and a present nil value.
+func listFloorTerm(body *wir.Body, instruction wir.Instruction) equation.Term {
+	floor := 0
+	entries := body.TableEntries(instruction.TableEntries)
+	for {
+		found := false
+		for _, entry := range entries {
+			if !exactPositiveIndex(entry, floor+1) || isNilConstant(body, entry.Value) {
+				continue
+			}
+			found = true
+			break
+		}
+		if !found {
+			break
+		}
+		floor++
+	}
+	return equation.ClosedTerm([]byte(fmt.Sprintf("list-floor/%d", floor)))
+}
+
+func exactPositiveIndex(entry wir.TableEntry, index int) bool {
+	return len(entry.Suffix.Segments) == 1 &&
+		entry.Suffix.Segments[0].Kind == segment.SegmentIndexInt &&
+		entry.Suffix.Segments[0].Index == index
 }
 
 func guardsForPoint(graph cfg.Graph, point cfg.Point, body equation.BodyID, branches map[cfg.Point]equation.Coordinate) []equation.Guard {

@@ -152,6 +152,18 @@ local greeting = "hello"
 			Expect: Expectation{Published: []PublishedOutcome{value("greeting", `"hello"`)}},
 		},
 		{
+			Name: "branch/absent-global-is-nil-at-runtime",
+			Source: `
+local result
+if definitely_absent_global then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"else"`)}},
+		},
+		{
 			Name: "branch/false-is-falsy",
 			Source: `
 local result
@@ -164,6 +176,48 @@ end
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"else"`)}},
 		},
 		{
+			Name: "branch/literal-equality-selects-matching-arm",
+			Source: `
+local status = "ready"
+local result
+if status == "ready" then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+		},
+		{
+			Name: "branch/literal-inequality-selects-matching-arm",
+			Source: `
+local status = "ready"
+local result
+if status ~= "closed" then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+		},
+		{
+			Name: "branch/nested-guards-require-every-selected-edge",
+			Source: `
+local outer = true
+local inner = false
+local result = "before"
+if outer then
+    if inner then
+        result = "wrong"
+    else
+        result = "nested-else"
+    end
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"nested-else"`)}},
+		},
+		{
 			Name: "branch/nil-is-falsy",
 			Source: `
 local result
@@ -174,6 +228,18 @@ else
 end
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"else"`)}},
+		},
+		{
+			Name: "branch/not-flips-truthiness",
+			Source: `
+local result
+if not false then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
 		},
 		{
 			Name: "branch/number-zero-is-truthy",
@@ -198,6 +264,47 @@ else
 end
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"selected"`)}},
+		},
+		{
+			Name: "branch/path-equality-selects-matching-arm",
+			Source: `
+local left = 7
+local right = 7
+local result
+if left == right then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+		},
+		{
+			Name: "branch/path-inequality-selects-matching-arm",
+			Source: `
+local left = 7
+local right = 8
+local result
+if left ~= right then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+		},
+		{
+			Name: "branch/uninitialized-local-is-nil",
+			Source: `
+local absent
+local result
+if absent == nil then
+    result = "nil"
+else
+    result = "not-nil"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"nil"`)}},
 		},
 		{
 			Name: "branch/empty-string-is-truthy",
@@ -332,6 +439,81 @@ while false do
 end
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"before"`)}},
+		},
+		{
+			Name: "pathstore/absent-index-read-is-nil",
+			Source: `
+local record = {}
+local result = record["missing"]
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name: "pathstore/dynamic-index-write-preserves-unrelated-member",
+			Source: `
+local record = { fixed = "kept" }
+local key = "dynamic"
+record[key] = "stored"
+local result = record.fixed
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"kept"`)}},
+		},
+		{
+			Name: "pathstore/dynamic-parameter-key-preserves-known-member",
+			Source: `
+local function write(record, key)
+    record[key] = "dynamic"
+    return record.fixed
+end
+local result = write({ fixed = "kept" }, "other")
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"kept"`)}},
+		},
+		{
+			Name: "pathstore/false-value-is-not-absent",
+			Source: `
+local record = {}
+record["present"] = false
+local result = record.present
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "false")}},
+		},
+		{
+			Name: "pathstore/nil-write-removes-member",
+			Source: `
+local record = { present = "value" }
+record.present = nil
+local result = record.present
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name: "pathstore/numeric-index-is-distinct-from-string-index",
+			Source: `
+local record = {}
+record[1] = "number"
+record["1"] = "string"
+local result = record[1]
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"number"`)}},
+		},
+		{
+			Name: "pathstore/static-member-write-overwrites-prior-value",
+			Source: `
+local record = { status = "old" }
+record.status = "new"
+local result = record.status
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"new"`)}},
+		},
+		{
+			Name: "pathstore/static-string-index-aliases-dot-member",
+			Source: `
+local record = {}
+record["status"] = "ready"
+local result = record.status
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"ready"`)}},
 		},
 	}
 	for index := range cases {

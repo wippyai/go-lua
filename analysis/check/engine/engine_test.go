@@ -38,6 +38,86 @@ end
 	}
 }
 
+func TestCheckLiteralBranchSelectsOnlyMatchingArm(t *testing.T) {
+	result, err := engine.Check(`
+local status = "ready"
+local selected
+if status == "ready" then
+    selected = "then"
+else
+    selected = "else"
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["selected"]; got != `"then"` {
+		t.Fatalf("published selected = %q, want Lua string spelling; values = %#v", got, result.Values)
+	}
+}
+
+func TestCheckPathAndNilPredicates(t *testing.T) {
+	result, err := engine.Check(`
+local left = 3
+local right = 3
+local absent
+local selected
+if left == right then
+    selected = "path"
+end
+if absent == nil then
+    selected = "nil"
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["selected"]; got != `"nil"` {
+		t.Fatalf("published selected = %q, want Lua string spelling; values = %#v", got, result.Values)
+	}
+}
+
+func TestCheckNumericBranchPredicate(t *testing.T) {
+	result, err := engine.Check(`
+local count = 3
+local selected
+if count >= 3 then
+    selected = "then"
+else
+    selected = "else"
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["selected"]; got != `"then"` {
+		t.Fatalf("published selected = %q, want Lua string spelling; values = %#v", got, result.Values)
+	}
+}
+
+func TestCheckDoesNotTurnAnAbsentPathIntoFalse(t *testing.T) {
+	_, err := engine.Check(`
+if not_bound_here then
+    local selected = true
+end
+`)
+	if err == nil {
+		t.Fatal("Check accepted an absent branch path as a falsy value")
+	}
+}
+
+func TestCheckEvaluatesClosedAllocationPairs(t *testing.T) {
+	result, err := engine.Check(`
+local object = { first = 1, child = { second = 2 } }
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Transactions != 5 { // entry plus template/materialization for each table
+		t.Fatalf("transactions = %d, want complete allocation pairs", result.Transactions)
+	}
+}
+
 func valuesByName(values []equation.Fact) map[string]string {
 	result := make(map[string]string, len(values))
 	for _, value := range values {
