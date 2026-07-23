@@ -3,7 +3,6 @@ package equation
 import (
 	"errors"
 	"fmt"
-	"unsafe"
 )
 
 // ErrEvaluatorScratchOverflow means that a caller attempted a nested
@@ -276,12 +275,9 @@ func (a CompiledArtifact) arenaBytes(offset, length uint32) ([]byte, bool) {
 }
 
 func (a CompiledArtifact) arenaString(offset, length uint32) (string, bool) {
-	bytes, ok := a.arenaBytes(offset, length)
-	if !ok {
+	if _, ok := a.arenaBytes(offset, length); !ok {
 		return "", false
 	}
-	if len(bytes) == 0 {
-		return "", true
-	}
-	return unsafe.String(unsafe.SliceData(bytes), len(bytes)), true
+	value, ok := a.text[compiledRange{offset: offset, length: length}]
+	return value, ok
 }

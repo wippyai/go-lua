@@ -41,6 +41,135 @@ type DiagnosticCandidate struct {
 func StarterCorpus() []Case {
 	cases := []Case{
 		{
+			Name:   "adversarial/coercion-arithmetic-string-number-is-conservative",
+			Source: `local result = "12" + 3`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
+			Name:   "adversarial/coercion-concat-number-string-is-lua-string",
+			Source: `local result = 12 .. "3"`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"123"`)}},
+		},
+		{
+			Name:   "adversarial/coercion-concat-string-number-is-lua-string",
+			Source: `local result = "id-" .. 4`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"id-4"`)}},
+		},
+		{
+			Name:   "adversarial/coercion-subtraction-string-number-is-conservative",
+			Source: `local result = "12" - 3`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/metatable-index-chain-read-is-conservative",
+			Source: `
+local fallback = { answer = 42 }
+local middle = setmetatable({}, { __index = fallback })
+local object = setmetatable({}, { __index = middle })
+local result = object.answer
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("middle", "unknown"), value("object", "unknown"), value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/metatable-index-read-is-conservative",
+			Source: `
+local fallback = { answer = 42 }
+local object = setmetatable({}, { __index = fallback })
+local result = object.answer
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("object", "unknown"), value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/metatable-newindex-write-routing-is-conservative",
+			Source: `
+local sink = {}
+local object = setmetatable({}, { __newindex = sink })
+object.answer = 42
+local result = sink.answer
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("object", "unknown"), value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/multi-return-last-call-expands-assignment-tail-conservatively",
+			Source: `
+local function f() return 1, 2 end
+local first, second, third = 0, f()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "0"), value("second", "unknown"), value("third", "unknown")}},
+		},
+		{
+			Name:   "adversarial/multi-return-last-provider-call-expands-assignment-tail",
+			Source: `local first, second, third = 0, string.find("abc", "b")`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "0"), value("second", "unknown"), value("third", "unknown")}},
+		},
+		{
+			Name: "adversarial/multi-return-nonfinal-call-truncates-assignment-list-conservatively",
+			Source: `
+local function f() return 1, 2 end
+local first, second = f(), 3
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+		},
+		{
+			Name:   "adversarial/multi-return-nonfinal-provider-call-truncates-assignment-list",
+			Source: `local first, second = string.find("abc", "b"), 3`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+		},
+		{
+			Name: "adversarial/multi-return-parenthesized-call-truncates-to-one-conservatively",
+			Source: `
+local function f() return 1, 2 end
+local first, second = (f()), 3
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+		},
+		{
+			Name:   "adversarial/multi-return-parenthesized-provider-call-truncates-to-one",
+			Source: `local first, second = (string.find("abc", "b")), 3`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+		},
+		{
+			Name: "adversarial/vararg-boundary-counts-nil-and-false-conservatively",
+			Source: `
+local function count(...) return select("#", ...) end
+local result = count(nil, false, 3)
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/vararg-boundary-empty-list-is-conservative",
+			Source: `
+local function count(...) return select("#", ...) end
+local result = count()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/vararg-forwarding-through-function-boundary-is-conservative",
+			Source: `
+local function count(...) return select("#", ...) end
+local function forward(...) return count(...) end
+local result = forward(nil, false, 3)
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/vararg-parenthesized-forwarding-truncates-conservatively",
+			Source: `
+local function first(...) return (...) end
+local result = first(nil, false, 3)
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
+			Name: "adversarial/vararg-select-preserves-lua-arity-through-boundary-conservatively",
+			Source: `
+local function relay(...) return select("#", ...) end
+local result = relay("one", nil, "three")
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
+		},
+		{
 			Name: "allocation/array-constructor-has-contiguous-prefix",
 			Source: `
 local values = { "first", "second" }

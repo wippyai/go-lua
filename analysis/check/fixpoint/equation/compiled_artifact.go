@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 )
@@ -75,13 +76,18 @@ type CompiledArtifact struct {
 	body      BodyID
 	entryName string
 	bytes     []byte
-	ops       []CompiledOp
-	operands  []CompiledOperand
-	guards    []compiledRange
-	deps      []uint32
-	blocks    []CompiledBlock
-	layout    CompiledCellLayout
-	runtime   RuntimeProjection
+	// text interns every string field decoded from bytes during admission.  The
+	// evaluator must not manufacture strings from the retained byte arena: a
+	// normal conversion would allocate on each cached application. These are
+	// immutable copies made once here.
+	text     map[compiledRange]string
+	ops      []CompiledOp
+	operands []CompiledOperand
+	guards   []compiledRange
+	deps     []uint32
+	blocks   []CompiledBlock
+	layout   CompiledCellLayout
+	runtime  RuntimeProjection
 }
 
 type compiledRange struct{ offset, length uint32 }
@@ -132,7 +138,7 @@ func compileArtifact(artifact Artifact, ordered []Equation, body BodyID, entry E
 	}
 	result := CompiledArtifact{
 		id: contentID(canonical), canonical: append([]byte(nil), canonical...), body: body, entryName: entry.Name,
-		ops: make([]CompiledOp, 0, len(ordered)), blocks: []CompiledBlock{{OpStart: 0, OpCount: uint32(len(ordered))}},
+		text: make(map[compiledRange]string), ops: make([]CompiledOp, 0, len(ordered)), blocks: []CompiledBlock{{OpStart: 0, OpCount: uint32(len(ordered))}},
 	}
 	byTarget := make(map[Coordinate]uint32, len(ordered))
 	for index, equation := range ordered {
@@ -143,15 +149,22 @@ func compileArtifact(artifact Artifact, ordered []Equation, body BodyID, entry E
 		result.bytes = append(result.bytes, value...)
 		return offset, uint32(len(value))
 	}
+	appendText := func(value string) (uint32, uint32) {
+		offset, length := appendBytes([]byte(value))
+		// Clone makes the admission-time decode an owned copy even when the
+		// source happens to share storage with a caller-owned string.
+		result.text[compiledRange{offset: offset, length: length}] = strings.Clone(value)
+		return offset, length
+	}
 	for _, equation := range ordered {
-		targetOffset, targetLength := appendBytes([]byte(equation.Target.Name))
-		occurrenceOffset, occurrenceLength := appendBytes([]byte(equation.Occurrence.Kind))
-		kernelOffset, kernelLength := appendBytes([]byte(equation.KernelID))
+		targetOffset, targetLength := appendText(equation.Target.Name)
+		occurrenceOffset, occurrenceLength := appendText(equation.Occurrence.Kind)
+		kernelOffset, kernelLength := appendText(equation.KernelID)
 		op := CompiledOp{TargetOffset: targetOffset, TargetLength: targetLength, OccurrenceOffset: occurrenceOffset, OccurrenceLength: occurrenceLength,
 			KernelOffset: kernelOffset, KernelLength: kernelLength, ContractID: equation.Occurrence.ContractID,
 			OperandStart: uint32(len(result.operands)), GuardStart: uint32(len(result.guards)), DependencyStart: uint32(len(result.deps))}
 		for _, operand := range equation.Operands {
-			roleOffset, roleLength := appendBytes([]byte(operand.Role))
+			roleOffset, roleLength := appendText(operand.Role)
 			valueOffset, valueLength := appendBytes(operand.Term.Encoding)
 			kind := OperandCanonicalConstant
 			if operand.Term.Entry {

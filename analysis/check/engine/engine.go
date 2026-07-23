@@ -1307,7 +1307,15 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 	for _, fact := range stored {
 		storedByKey[fact.Key] = fact.Value
 	}
-	byDisplay := make(map[string]equation.Fact)
+	type candidate struct {
+		fact       equation.Fact
+		display    string
+		coordinate equation.Coordinate
+	}
+	// A stored fact key is canonical kernel output, so it is the publication
+	// identity.  Display names deliberately do not participate in identity:
+	// several source operations may display as the same local variable.
+	byIdentity := make(map[string]candidate)
 	for _, operation := range artifact.Equations {
 		var target, display []byte
 		switch operation.Occurrence.Kind {
@@ -1329,21 +1337,76 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 		if strings.HasPrefix(string(display), "front/hidden/") {
 			continue
 		}
-		prefix := "value/" + string(target) + "/"
-		latestKey := ""
-		for key, value := range storedByKey {
-			if strings.HasPrefix(key, prefix) && key > latestKey {
-				latestKey = key
-				decoded, err := displayValue(value)
-				if err == nil {
-					byDisplay[string(display)] = equation.Fact{Key: string(display), Value: decoded}
+		key := "value/" + string(target) + "/" + operation.Target.Name
+		value, found := storedByKey[key]
+		if !found {
+			continue
+		}
+		decoded, err := displayValue(value)
+		if err != nil {
+			continue
+		}
+		byIdentity[key] = candidate{fact: equation.Fact{Key: key, Value: decoded}, display: string(display), coordinate: operation.Target}
+	}
+
+	dependencies := make(map[equation.Coordinate][]equation.Coordinate, len(artifact.Equations))
+	for _, operation := range artifact.Equations {
+		dependencies[operation.Target] = operation.Dependencies
+	}
+	dependsOn := func(from, want equation.Coordinate) bool {
+		seen := make(map[equation.Coordinate]bool)
+		var visit func(equation.Coordinate) bool
+		visit = func(current equation.Coordinate) bool {
+			if current == want {
+				return true
+			}
+			if seen[current] {
+				return false
+			}
+			seen[current] = true
+			for _, dependency := range dependencies[current] {
+				if visit(dependency) {
+					return true
 				}
 			}
+			return false
 		}
+		return visit(from)
+	}
+	byDisplay := make(map[string][]candidate)
+	for _, value := range byIdentity {
+		byDisplay[value.display] = append(byDisplay[value.display], value)
 	}
 	values := make([]equation.Fact, 0, len(byDisplay))
-	for _, value := range byDisplay {
-		values = append(values, value)
+	for display, candidates := range byDisplay {
+		var selected *candidate
+		for index := range candidates {
+			latest := true
+			for other := range candidates {
+				if index != other && !dependsOn(candidates[index].coordinate, candidates[other].coordinate) {
+					latest = false
+					break
+				}
+			}
+			if latest {
+				selected = &candidates[index]
+				break
+			}
+		}
+		if selected != nil {
+			values = append(values, equation.Fact{Key: display, Value: selected.fact.Value})
+			continue
+		}
+		value := candidates[0].fact.Value
+		for _, candidate := range candidates[1:] {
+			if !bytes.Equal(value, candidate.fact.Value) {
+				// Incomparable writes are alternate facts.  Publishing a concrete
+				// winner from their display or sort order would be unsound.
+				value = []byte("unknown")
+				break
+			}
+		}
+		values = append(values, equation.Fact{Key: display, Value: value})
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].Key < values[j].Key })
 	return values

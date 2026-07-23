@@ -32,6 +32,8 @@ func TestNewOracleCorpus(t *testing.T) {
 	}
 
 	started := time.Now()
+	runner := newCorpusRunner(corpusFileTimeout)
+	defer runner.close()
 	timings := make([]time.Duration, 0, len(files))
 	maxFile := ""
 	maxDuration := time.Duration(0)
@@ -42,7 +44,7 @@ func TestNewOracleCorpus(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("read corpus input %s: %v", file, readErr)
 		}
-		duration, err, panicked, timedOut := checkCorpusFile(string(source), corpusFileTimeout)
+		duration, err, panicked, timedOut := runner.check(string(source))
 		timings = append(timings, duration)
 		rel, relErr := filepath.Rel(fixtures, file)
 		if relErr != nil {
@@ -91,7 +93,28 @@ type corpusCheckResult struct {
 	panicked any
 }
 
-func checkCorpusFile(source string, timeout time.Duration) (time.Duration, error, any, bool) {
+// corpusRunner owns one timer for the sequential corpus sweep.  Reusing it
+// avoids an otherwise short-lived timer allocation for every source file.
+type corpusRunner struct {
+	timeout time.Duration
+	timer   *time.Timer
+}
+
+func newCorpusRunner(timeout time.Duration) *corpusRunner {
+	timer := time.NewTimer(timeout)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	return &corpusRunner{timeout: timeout, timer: timer}
+}
+
+func (r *corpusRunner) close() {
+	if r != nil && r.timer != nil {
+		r.timer.Stop()
+	}
+}
+
+func (r *corpusRunner) check(source string) (time.Duration, error, any, bool) {
 	started := time.Now()
 	result := make(chan corpusCheckResult, 1)
 	go func() {
@@ -104,12 +127,25 @@ func checkCorpusFile(source string, timeout time.Duration) (time.Duration, error
 		}()
 		_, outcome.err = engine.Check(source)
 	}()
+	r.timer.Reset(r.timeout)
 	select {
 	case outcome := <-result:
+		if !r.timer.Stop() {
+			select {
+			case <-r.timer.C:
+			default:
+			}
+		}
 		return time.Since(started), outcome.err, outcome.panicked, false
-	case <-time.After(timeout):
+	case <-r.timer.C:
 		return time.Since(started), nil, nil, true
 	}
+}
+
+func checkCorpusFile(source string, timeout time.Duration) (time.Duration, error, any, bool) {
+	runner := newCorpusRunner(timeout)
+	defer runner.close()
+	return runner.check(source)
 }
 
 func corpusLuaFiles(root string) ([]string, error) {

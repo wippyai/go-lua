@@ -1,6 +1,14 @@
 package equation
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrPartialExecution means a kernel returned a partial Execution without an
+// error.  That violates the execution boundary: callers may only observe a
+// complete result or an explicit failure.
+var ErrPartialExecution = errors.New("equation: partial execution without error")
 
 // AccessRecord is the dynamic audit payload recorded by an existing bound
 // kernel.  The compiler never inspects it to influence evaluation.
@@ -32,8 +40,8 @@ func RunAndVerify(run func() (Execution, error), verify func(AccessRecord) error
 	if err != nil {
 		return err
 	}
-	if !execution.Complete && execution.Published {
-		return fmt.Errorf("equation: partial transaction published")
+	if !execution.Complete {
+		return ErrPartialExecution
 	}
 	if err := verify(execution.Access); err != nil {
 		return fmt.Errorf("equation: access audit: %w", err)

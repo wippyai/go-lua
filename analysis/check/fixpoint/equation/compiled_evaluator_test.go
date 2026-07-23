@@ -155,6 +155,22 @@ func TestFastEvaluatorWarmPathAllocs(t *testing.T) {
 	}
 }
 
+func TestCompiledArtifactInternsArenaTextAtAdmission(t *testing.T) {
+	compiled, entry, _, scratch := compiledNoOutputFixture(t)
+	op := compiled.ops[0]
+	compiled.bytes[op.TargetOffset] = 'X'
+	compiled.bytes[op.KernelOffset] = 'X'
+	compiled.bytes[compiled.operands[op.OperandStart].RoleOffset] = 'X'
+
+	bound, err := compiled.bindOperation(op, entry, &scratch.frames[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Target.Name != "hot" || bound.KernelID != "hot/no-output" || bound.Operands[0].Role != "entry" {
+		t.Fatalf("compiled text aliases mutable arena: %#v", bound)
+	}
+}
+
 func BenchmarkFastEvaluatorWarmNoOutput(b *testing.B) {
 	compiled, entry, evaluator, scratch := compiledNoOutputFixture(b)
 	if _, err := evaluator.Evaluate(compiled, entry, scratch); err != nil {

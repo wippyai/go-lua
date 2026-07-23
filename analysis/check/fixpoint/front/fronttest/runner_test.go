@@ -11,8 +11,8 @@ import (
 
 func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 	cases := StarterCorpus()
-	if len(cases) != 126 {
-		t.Fatalf("starter corpus has %d cases, want 126", len(cases))
+	if len(cases) != 144 {
+		t.Fatalf("starter corpus has %d cases, want 144", len(cases))
 	}
 	families := map[string]int{}
 	for index, test := range cases {
@@ -34,6 +34,25 @@ func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 		if families[family] < 8 {
 			t.Fatalf("%s harness cases = %d, want at least 8", family, families[family])
 		}
+	}
+}
+
+func TestProductionRunnerExecutesAdversarialLuaSemanticsCases(t *testing.T) {
+	var adversarial []Case
+	for _, test := range StarterCorpus() {
+		if strings.HasPrefix(test.Name, "adversarial/") {
+			adversarial = append(adversarial, test)
+		}
+	}
+	if len(adversarial) < 16 {
+		t.Fatalf("adversarial Lua semantics cases = %d, want at least 16", len(adversarial))
+	}
+	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(adversarial)
+	if err != nil {
+		t.Fatalf("adversarial Lua semantics production harness: %v", err)
+	}
+	if len(reports) != len(adversarial) {
+		t.Fatalf("adversarial Lua semantics reports = %d, want %d", len(reports), len(adversarial))
 	}
 }
 
