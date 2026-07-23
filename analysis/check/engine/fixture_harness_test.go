@@ -234,13 +234,11 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
 	for _, file := range files {
 		entries = append(entries, lint.Entry{Path: file, ModulePath: strings.TrimSuffix(file, ".lua"), Source: readFixtureFile(s.Dir, file)})
 	}
-	input := lint.ProjectInput{Entries: entries, Targets: []string{strings.TrimSuffix(files[len(files)-1], ".lua")}, DiagnosticRules: make(map[diag.Code]bool)}
-	if s.Suite.Check != nil {
-		for _, rule := range s.Suite.Check.DiagnosticRules {
-			if rule.Enabled != nil && *rule.Enabled {
-				input.DiagnosticRules[diag.Code(rule.Code)] = true
-			}
-		}
+	input := lint.ProjectInput{Entries: entries, Targets: []string{strings.TrimSuffix(files[len(files)-1], ".lua")}}
+	if policy, err := fixtureDiagnosticPolicy(s.Suite.Check); err != nil {
+		return nil, files[len(files)-1], fmt.Errorf("diagnostic_rules: %w", err)
+	} else {
+		input.DiagnosticPolicy = policy
 	}
 	// The legacy package list supplies host modules. The current lint adapter's
 	// conservative Any exports preserve import availability without claiming the
@@ -255,6 +253,39 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
 		return nil, files[len(files)-1], err
 	}
 	return result.Diagnostics, files[len(files)-1], nil
+}
+
+func fixtureDiagnosticPolicy(check *fixtureCheck) (diag.Policy, error) {
+	policy := diag.Policy{Rules: make(map[diag.Code]diag.Rule)}
+	if check == nil {
+		return policy, nil
+	}
+	for index, spec := range check.DiagnosticRules {
+		code := diag.Code(strings.TrimSpace(spec.Code))
+		if code == "" {
+			return diag.Policy{}, fmt.Errorf("rule %d code is required", index+1)
+		}
+		if spec.Enabled == nil && strings.TrimSpace(spec.Severity) == "" {
+			return diag.Policy{}, fmt.Errorf("rule %d must set enabled or severity", index+1)
+		}
+		var rule diag.Rule
+		if spec.Enabled != nil {
+			if *spec.Enabled {
+				rule = diag.Enable()
+			} else {
+				rule = diag.Disable()
+			}
+		}
+		if severity := strings.TrimSpace(spec.Severity); severity != "" {
+			value, ok := diagnosticSeverity(severity)
+			if !ok {
+				return diag.Policy{}, fmt.Errorf("rule %d has unknown severity %q", index+1, spec.Severity)
+			}
+			rule = rule.WithSeverity(value)
+		}
+		policy.Rules[code] = rule
+	}
+	return policy, nil
 }
 
 type fixtureExpectationVerdict struct {

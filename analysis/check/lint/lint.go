@@ -42,9 +42,14 @@ type Entry struct {
 type ProjectInput struct {
 	Entries   []Entry
 	Manifests []*manifest.Manifest
-	// DiagnosticRules opt in to hint families emitted by the equation closure.
-	// A nil map leaves all optional hints disabled.
+	// DiagnosticRules is the compatibility opt-in surface for hint families
+	// emitted by the equation closure. A nil map leaves optional hints disabled.
 	DiagnosticRules map[diagnostic.Code]bool
+	// DiagnosticPolicy applies the manifest-facing enablement and severity
+	// policy after the engine has projected its diagnostic facts. It is kept
+	// separate from DiagnosticRules so callers can configure every diagnostic
+	// code without treating absent optional hints as enabled by default.
+	DiagnosticPolicy diagnostic.Policy
 	// Targets limits checking to named modules plus their transitive local
 	// imports. An empty list checks every discovered entry.
 	Targets []string
@@ -231,7 +236,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
 		}
 		diagnostics, renderElapsed := projectDiagnostics(entry, result, preDiagnostics)
-		diagnostics = filterOptionalHints(diagnostics, input.DiagnosticRules)
+		diagnostics = applyDiagnosticPolicy(diagnostics, input.DiagnosticRules, input.DiagnosticPolicy)
 		summary := manifest.New(entry.ModulePath)
 		// The current engine publishes runtime facts rather than a static export
 		// type. Any is an explicit, conservative module boundary until its
@@ -276,19 +281,37 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 	return out, nil
 }
 
-func filterOptionalHints(in []diagnostic.Diagnostic, enabled map[diagnostic.Code]bool) []diagnostic.Diagnostic {
+func applyDiagnosticPolicy(in []diagnostic.Diagnostic, enabled map[diagnostic.Code]bool, policy diagnostic.Policy) []diagnostic.Diagnostic {
 	optional := map[diagnostic.Code]bool{
 		"lint.condition.redundant": true,
 		"advice.always_true_guard": true,
 		"advice.redundant_claim":   true,
 		"send.isolation":           true,
 	}
-	out := in[:0]
-	for _, item := range in {
-		if optional[item.Code] && !enabled[item.Code] {
+	rules := make(map[diagnostic.Code]diagnostic.Rule, len(enabled)+len(policy.Rules))
+	for code, rule := range policy.Rules {
+		rules[code] = rule
+	}
+	for code, isEnabled := range enabled {
+		if _, configured := rules[code]; configured {
 			continue
 		}
-		out = append(out, item)
+		if isEnabled {
+			rules[code] = diagnostic.Enable()
+		} else {
+			rules[code] = diagnostic.Disable()
+		}
+	}
+	configured := diagnostic.Policy{Rules: rules}
+	out := make([]diagnostic.Diagnostic, 0, len(in))
+	for _, item := range in {
+		if !configured.Enabled(item.Code, !optional[item.Code]) {
+			continue
+		}
+		item, keep := configured.ApplyOne(item)
+		if keep {
+			out = append(out, item)
+		}
 	}
 	return out
 }

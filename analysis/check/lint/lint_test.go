@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -59,6 +60,38 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 	}
 	if consumer.Timings.ParseBindLowerNS <= 0 || consumer.Timings.EvaluateNS <= 0 || result.Timings.ProjectRenderNS <= 0 {
 		t.Fatalf("structured timings missing: entry=%#v project=%#v", consumer.Timings, result.Timings)
+	}
+}
+
+func TestDiagnosticPolicyConfiguresOptionalHintsAndSeverity(t *testing.T) {
+	input := []diagnostic.Diagnostic{
+		{Code: "lint.condition.redundant", Severity: diagnostic.SeverityError},
+		{Code: "type.assignment", Severity: diagnostic.SeverityError},
+	}
+	policy := diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		"lint.condition.redundant": diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
+		"type.assignment":          diagnostic.Disable(),
+	}}
+	got := applyDiagnosticPolicy(input, nil, policy)
+	if len(got) != 1 {
+		t.Fatalf("policy diagnostics = %#v, want one", got)
+	}
+	if got[0].Code != "lint.condition.redundant" || got[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("configured optional hint = %#v, want redundant hint", got[0])
+	}
+	if input[0].Severity != diagnostic.SeverityError {
+		t.Fatalf("policy mutated input diagnostic: %#v", input[0])
+	}
+}
+
+func TestDiagnosticRulesCompatibilityOptInRemainsSupported(t *testing.T) {
+	input := []diagnostic.Diagnostic{{Code: "send.isolation", Severity: diagnostic.SeverityHint}}
+	if got := applyDiagnosticPolicy(input, nil, diagnostic.Policy{}); len(got) != 0 {
+		t.Fatalf("unconfigured optional hint = %#v, want suppressed", got)
+	}
+	got := applyDiagnosticPolicy(input, map[diagnostic.Code]bool{"send.isolation": true}, diagnostic.Policy{})
+	if len(got) != 1 || got[0].Code != "send.isolation" {
+		t.Fatalf("compatibility opt-in = %#v, want send-isolation hint", got)
 	}
 }
 
