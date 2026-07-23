@@ -187,6 +187,53 @@ func TestIntegrationGateInvalidationRacesSourceChangeMidFlight(t *testing.T) {
 	}
 }
 
+// TestIntegrationGateCrossModuleCodecTransport seals module A's cached
+// result, treats its bytes as a module boundary, and applies the decoded
+// closure in module B. Caller-only entry coordinates are deliberately loud so
+// their absence from the sealed artifact is an executable ownership check.
+func TestIntegrationGateCrossModuleCodecTransport(t *testing.T) {
+	h := newIntegrationGateHarness(t)
+	callerNoise := "caller-span:module-b.lua:17"
+	site := "caller-anchor:require-A"
+	entry := gateEntry(t, "strict", "number", callerNoise, site)
+	sealedA, err := (interproc.DirectCall{Table: h.table, Runner: h.runner()}).Resolve(context.Background(), h.moduleA, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := sealedA.CanonicalBytes()
+	if bytes.Contains(wire, []byte(callerNoise)) || bytes.Contains(wire, []byte(site)) {
+		t.Fatal("sealed module-A outcome retained caller context")
+	}
+
+	inProcess, err := h.applyModuleB(context.Background(), h.moduleB, entry, sealedA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedA, err := summaryinstance.Decode(context.Background(), h.schema, summaryinstance.CanonicalArtifact{
+		Bytes: wire, Schema: h.schema.ID(), Semantic: interproc.ContentIDFromCanonicalBytes(wire),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodedA.DemandedArtifactID != h.moduleA.ContentID() || gateFact(decodedA.Values, "module") == nil ||
+		bytes.Contains(gateFact(decodedA.Values, "callee-result"), []byte(callerNoise)) {
+		t.Fatalf("transported module-A closure is not caller-context-free: %#v", decodedA)
+	}
+	transported, err := h.sealedOutcome(context.Background(), h.moduleB, entry, []summaryinstance.Fact{
+		{Key: "module", Value: []byte("B")},
+		{Key: "caller-result", Value: gateFact(decodedA.Values, "callee-result")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(transported.CanonicalBytes(), inProcess.CanonicalBytes()) {
+		t.Fatalf("cross-module codec application differs from in-process application\ntransport: %x\nin-process: %x", transported.CanonicalBytes(), inProcess.CanonicalBytes())
+	}
+	if metrics := h.table.Metrics(); metrics.Cells != 1 || metrics.Executions != 1 {
+		t.Fatalf("module-A transport check did not use one cached specialized instance: %+v", metrics)
+	}
+}
+
 type integrationGateHarness struct {
 	schema  summaryinstance.FormatSchema
 	moduleA interproc.DemandedBodyArtifact
