@@ -157,10 +157,38 @@ func bodyID(source string) equation.BodyID {
 }
 
 func occurrence(kind string) equation.Occurrence {
-	return equation.Occurrence{Kind: kind, ContractID: equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind)))}
+	contract, _ := ContractID(kind)
+	return equation.Occurrence{Kind: kind, ContractID: contract}
 }
 
 func operationName(index int) string { return fmt.Sprintf("op/%08d", index) }
+
+// ContractID returns the contract identity admitted by this front for kind.
+// The engine uses this exact content identity when registering its canonical
+// kernels; unknown kinds deliberately have no binding.
+func ContractID(kind string) (equation.ContentID, bool) {
+	switch kind {
+	case "entry", "environment-write", "branch-relations":
+		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
+	default:
+		return equation.ContentID{}, false
+	}
+}
+
+// KernelID returns the canonical kernel identity admitted by this walking
+// front for kind. It has no fallback for unsupported equation families.
+func KernelID(kind string) (string, bool) {
+	switch kind {
+	case "entry":
+		return entryKernel, true
+	case "environment-write":
+		return writeKernel, true
+	case "branch-relations":
+		return branchKernel, true
+	default:
+		return "", false
+	}
+}
 
 func pathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string, error) {
 	if operand.Kind != wir.OperandPath {
