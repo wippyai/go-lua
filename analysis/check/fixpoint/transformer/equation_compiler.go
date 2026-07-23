@@ -15,6 +15,10 @@ type RelationEquationOccurrence struct {
 	Body      lexicalidentity.StableLexicalBodyID
 	Kind      OperatorKind
 	CellLabel string
+	// Ordinal is the canonical template-walk position of this occurrence.  It
+	// is semantic occurrence identity, unlike CellLabel, and is only assigned
+	// while walking the sealed template.
+	Ordinal uint64
 
 	// cell and operator are the sealed source capability for an in-package
 	// family binder.  They are intentionally not exported: callers receive no
@@ -35,6 +39,23 @@ type RelationEquationBinder func(RelationEquationOccurrence) (equation.Draft, er
 // transformer execution is not invoked, replaced, or given a symbolic State
 // path.  Node cells have no transfer occurrence and are intentionally absent.
 func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind RelationEquationBinder) (equation.Artifact, error) {
+	return p.compileEquationIR(compiler, bind, lexicalidentity.StableLexicalBodyID{}, false)
+}
+
+// CompileBodyEquationIR lowers only body while preserving the sealed
+// whole-template occurrence ordinals. It is the production bridge entry for a
+// per-body VM artifact; it does not re-freeze or re-plan the relation program.
+func (p *RelationProgram) CompileBodyEquationIR(body lexicalidentity.StableLexicalBodyID, compiler *equation.Compiler, bind RelationEquationBinder) (equation.Artifact, error) {
+	if p == nil || p.byBody == nil {
+		return equation.Artifact{}, fmt.Errorf("transformer: equation compiler has no relation program")
+	}
+	if _, ok := p.byBody[body]; !ok {
+		return equation.Artifact{}, fmt.Errorf("transformer: equation compiler has no body %s", body)
+	}
+	return p.compileEquationIR(compiler, bind, body, true)
+}
+
+func (p *RelationProgram) compileEquationIR(compiler *equation.Compiler, bind RelationEquationBinder, selected lexicalidentity.StableLexicalBodyID, selectedOnly bool) (equation.Artifact, error) {
 	if p == nil || p.formalTemplate == nil || !p.formalTemplate.validFor(p) {
 		return equation.Artifact{}, fmt.Errorf("transformer: equation compiler has no sealed relation template")
 	}
@@ -42,8 +63,9 @@ func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind Re
 		return equation.Artifact{}, fmt.Errorf("transformer: equation compiler has no lowerer or occurrence binder")
 	}
 	drafts := make([]equation.Draft, 0, len(p.formalTemplate.equations))
+	var ordinal uint64
 	appendOccurrence := func(body lexicalidentity.StableLexicalBodyID, kind OperatorKind, label string, source formalRelationCell, operator formalRelationOperatorRef) error {
-		draft, err := bind(RelationEquationOccurrence{Body: body, Kind: kind, CellLabel: label, cell: source, operator: operator})
+		draft, err := bind(RelationEquationOccurrence{Body: body, Kind: kind, CellLabel: label, Ordinal: ordinal, cell: source, operator: operator})
 		if err != nil {
 			return err
 		}
@@ -70,6 +92,10 @@ func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind Re
 				if !present {
 					return equation.Artifact{}, fmt.Errorf("transformer: equation %s stage %d has no frozen operator kind", label, stageIndex)
 				}
+				ordinal++
+				if selectedOnly && body != selected {
+					continue
+				}
 				if err := appendOccurrence(body, kind, fmt.Sprintf("%s-stage-%d", label, stageIndex), stage.Cell, stage.Operator); err != nil {
 					return equation.Artifact{}, err
 				}
@@ -90,6 +116,10 @@ func (p *RelationProgram) CompileEquationIR(compiler *equation.Compiler, bind Re
 			continue
 		default:
 			return equation.Artifact{}, fmt.Errorf("transformer: equation %s has unknown cell kind", label)
+		}
+		ordinal++
+		if selectedOnly && body != selected {
+			continue
 		}
 		if err := appendOccurrence(body, kind, label, cell, relationEquation.Operator); err != nil {
 			return equation.Artifact{}, err
