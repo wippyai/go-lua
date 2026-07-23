@@ -59,8 +59,13 @@ const (
 // present; Cyclic is present exactly when the source CFG has a recurrence and
 // carries the source-frozen WTO certificate for that same artifact.
 type Compilation struct {
-	Artifact         equation.Artifact
-	Cyclic           *equation.CyclicArtifact
+	Artifact equation.Artifact
+	Cyclic   *equation.CyclicArtifact
+	// Nested holds the independently admitted lexical bodies owned by closure
+	// allocations in Artifact. They retain the same WIR-derived equation form
+	// and publication path as the enclosing body; a caller decides which body
+	// entries are available to evaluate.
+	Nested           []Compilation
 	ClaimSpans       map[string]wir.Span
 	ClaimTargetSpans map[string]wir.Span
 	CallSpans        map[string]wir.Span
@@ -102,7 +107,53 @@ func Compile(source string) (Compilation, error) {
 		}
 		compilation.Cyclic = &cyclic
 	}
+	nested, err := compileNestedBodies(body)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Nested = nested
 	return compilation, nil
+}
+
+// compileNestedBodies admits every complete WIR lexical child through the
+// ordinary equation front. The parent WIR already owns the child body and CFG,
+// so this is neither a second source traversal nor a child evaluator.
+func compileNestedBodies(parent *wir.Body) ([]Compilation, error) {
+	if parent == nil {
+		return nil, nil
+	}
+	protos := parent.Protos()
+	children := make([]Compilation, 0, len(protos))
+	for _, proto := range protos {
+		if proto.Body == nil || proto.Graph == nil || proto.Name == "" {
+			return nil, fmt.Errorf("front: nested prototype is incomplete")
+		}
+		artifact, err := compileWIR(proto.Name, proto.Body, proto.Graph, nil)
+		if err != nil {
+			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
+		}
+		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
+		child := Compilation{
+			Artifact:         artifact,
+			ClaimSpans:       claimSpans,
+			ClaimTargetSpans: claimTargetSpans,
+			CallSpans:        callSpans(proto.Body, artifact),
+			BranchSpans:      branchSpans(proto.Body, artifact),
+		}
+		if graphHasCycle(proto.Graph) {
+			cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
+			if err != nil {
+				return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
+			}
+			child.Cyclic = &cyclic
+		}
+		child.Nested, err = compileNestedBodies(proto.Body)
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, child)
+	}
+	return children, nil
 }
 
 // callSpans binds source call anchors to their apply operations.  The apply
@@ -740,7 +791,19 @@ func assignmentSnapshotStarts(stmts []ast.Stmt, built *cfgbuild.Result) map[cfg.
 func readBeforeTerm(current operation, operations []operation, snapshots map[cfg.Point]cfg.Point) (equation.Term, error) {
 	start, found := snapshots[current.instruction.Point]
 	if !found {
-		return equation.Term{}, fmt.Errorf("missing assignment snapshot boundary at CFG point %d", current.instruction.Point)
+		// Nested WIR bodies are already source-normalized but intentionally do
+		// not retain an AST statement-point sidecar. Their assignment point is
+		// therefore the exact snapshot boundary; its predecessor remains the
+		// same admitted operation-order seam used by root-body assignments.
+		for index, candidate := range operations {
+			if candidate.target == current.target {
+				if index == 0 {
+					return equation.Term{}, fmt.Errorf("assignment snapshot has no predecessor")
+				}
+				return equation.ClosedTerm([]byte("front/read-before/" + operations[index-1].target.Name)), nil
+			}
+		}
+		return equation.Term{}, fmt.Errorf("assignment operation %s is absent", current.target.Name)
 	}
 	for index, candidate := range operations {
 		if candidate.instruction.Point != start {
@@ -1391,9 +1454,10 @@ type allocationOperandSets struct {
 }
 
 // allocationOperands seals the whole syntactic allocation before either of its
-// equation occurrences is emitted.  In particular, an open table tail has no
-// exact finite object graph, so it is rejected instead of being silently
-// represented as an absent field, nil, Bottom, or an invented unknown value.
+// equation occurrences is emitted. An open table tail is admitted as its
+// source-owned final producer, but deliberately cannot certify a finite object
+// graph: materialization receives its exact open-tail marker and the front
+// withholds closed-table shape facts.
 func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationSite string) (allocationOperandSets, error) {
 	result, err := allocationValueTerm(body, instruction.Dst)
 	if err != nil {
@@ -1415,9 +1479,6 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 	}
 	switch instruction.Op {
 	case wir.OpMakeTable:
-		if instruction.ListSpread {
-			return allocationOperandSets{}, fmt.Errorf("table constructor has an open final value tail")
-		}
 		if !instruction.StaticStringKeysComplete {
 			return allocationOperandSets{}, fmt.Errorf("table constructor has a non-exact key")
 		}
@@ -1433,6 +1494,30 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("object-kind/table"))},
 			equation.Operand{Role: "list-floor", Term: listFloorTerm(body, instruction)},
 		)
+		if instruction.ListSpread {
+			values := body.Operands(instruction.List)
+			if len(values) == 0 {
+				return allocationOperandSets{}, fmt.Errorf("table constructor has an empty open final value tail")
+			}
+			tail, err := allocationValueTerm(body, values[len(values)-1])
+			if err != nil {
+				return allocationOperandSets{}, fmt.Errorf("table constructor open tail: %w", err)
+			}
+			// The marker is part of both frozen allocation occurrences. The
+			// materializer can retain the exact source producer without treating
+			// unknown arity as an absent member or a closed array bound.
+			sets.template = append(sets.template,
+				equation.Operand{Role: "open-tail", Term: boolTerm(true)},
+				equation.Operand{Role: "tail", Term: tail},
+			)
+			sets.materialization = append(sets.materialization,
+				equation.Operand{Role: "open-tail", Term: boolTerm(true)},
+				equation.Operand{Role: "tail", Term: tail},
+			)
+		} else {
+			sets.template = append(sets.template, equation.Operand{Role: "open-tail", Term: boolTerm(false)})
+			sets.materialization = append(sets.materialization, equation.Operand{Role: "open-tail", Term: boolTerm(false)})
+		}
 		for index, entry := range body.TableEntries(instruction.TableEntries) {
 			if len(entry.Suffix.Segments) == 0 {
 				return allocationOperandSets{}, fmt.Errorf("table entry %d has no exact suffix", index)

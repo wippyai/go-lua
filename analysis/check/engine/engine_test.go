@@ -531,11 +531,12 @@ return "fallthrough"
 
 func TestCheckPublishesFrontAndConservativeFailuresAsDiagnostics(t *testing.T) {
 	tests := []struct {
-		name   string
-		source string
-		code   string
+		name       string
+		source     string
+		code       string
+		wantAbsent bool
 	}{
-		{name: "front", source: `local values = { provider() }`, code: "analysis/front"},
+		{name: "admitted open table tail", source: `local values = { provider() }`, wantAbsent: true},
 		{name: "conservative", source: `local missing = absent_name + 1`, code: "analysis/conservative"},
 	}
 	for _, test := range tests {
@@ -543,6 +544,12 @@ func TestCheckPublishesFrontAndConservativeFailuresAsDiagnostics(t *testing.T) {
 			result, err := engine.Check(test.source)
 			if err != nil {
 				t.Fatalf("Check: %v", err)
+			}
+			if test.wantAbsent {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("diagnostics = %#v, want none for admitted open table tail", result.Diagnostics)
+				}
+				return
 			}
 			if got := valuesByName(result.Diagnostics)[test.code]; got == "" {
 				t.Fatalf("diagnostics = %#v, missing %q", result.Diagnostics, test.code)

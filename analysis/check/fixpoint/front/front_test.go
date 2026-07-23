@@ -472,6 +472,56 @@ local object = { seed, enabled = false, child = { answer = 42 } }
 	}
 }
 
+func TestCompileBodyAdmitsOpenTableTailWithoutClaimingClosedShape(t *testing.T) {
+	artifact, err := front.CompileBody(`local values = { provider() }`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	byKind := equationsByKind(artifact)
+	for _, kind := range []string{"allocation-template", "object-materialization"} {
+		if len(byKind[kind]) != 1 {
+			t.Fatalf("%s lowering = %#v", kind, byKind[kind])
+		}
+		roles := operands(byKind[kind][0])
+		if roles["open-tail"] != "scalar/bool/true" || roles["tail"] == "" {
+			t.Fatalf("%s open-tail operands = %#v", kind, roles)
+		}
+	}
+	for _, write := range byKind["environment-write"] {
+		roles := operands(write)
+		if roles["target"] == "" || roles["value"] != "scalar/table" {
+			continue
+		}
+		return
+	}
+	t.Fatalf("open-tail table was given a finite shape: %#v", byKind["environment-write"])
+}
+
+func TestCompileAdmitsNestedVarargTableBody(t *testing.T) {
+	compilation, err := front.Compile(`
+local function collect(...)
+    local values = { ... }
+    return values
+end
+`)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(compilation.Nested) != 1 {
+		t.Fatalf("nested compilations = %d, want one", len(compilation.Nested))
+	}
+	byKind := equationsByKind(compilation.Nested[0].Artifact)
+	if len(byKind["allocation-template"]) != 1 || len(byKind["object-materialization"]) != 1 {
+		t.Fatalf("nested allocation lowering = %#v", byKind)
+	}
+	for _, kind := range []string{"allocation-template", "object-materialization"} {
+		roles := operands(byKind[kind][0])
+		if roles["open-tail"] != "scalar/bool/true" || roles["tail"] != "vararg" {
+			t.Fatalf("nested %s tail = %#v", kind, roles)
+		}
+	}
+}
+
 func TestTableAllocationKeepsTemplateAndMaterializationOnOneSite(t *testing.T) {
 	artifact, err := front.CompileBody(`local object = { answer = 42 }`)
 	if err != nil {
