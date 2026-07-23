@@ -10,7 +10,7 @@ import (
 // import of transformer.  Transformer owns the catalog; this list lets the
 // lowerer frame reject a missing hook before it could silently skip a family.
 var FrozenKinds = []string{
-	"apply", "path-replacement", "path-invalidation", "index-mutation",
+	"apply", "path-replacement", "dynamic-index-read", "path-invalidation", "index-mutation",
 	"allocation-template", "object-materialization", "environment-write",
 	"channel-select", "branch-relations", "call-results", "presence-implications",
 	"loop-control", "generic-for", "root-assignment", "covariant-exposure",

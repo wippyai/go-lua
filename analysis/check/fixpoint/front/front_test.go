@@ -98,6 +98,54 @@ end
 	}
 }
 
+func TestCompileFreezesCyclesContainingClaims(t *testing.T) {
+	for name, source := range map[string]string{
+		"typed local": `
+local i = 0
+while i < 1 do
+    local value: number = i
+    i = i + 1
+end`,
+		"non-nil assertion": `
+local i = 0
+while i < 1 do
+    local value = i!
+    i = i + 1
+end`,
+		"typed table": `
+local i = 0
+while i < 1 do
+    type Counter = {value: number}
+    local value: Counter = {value = i}
+    i = i + 1
+end`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			compilation, err := front.Compile(source)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if compilation.Cyclic == nil || compilation.Cyclic.Plan == nil {
+				t.Fatalf("cyclic claim body has no frozen certificate: %#v", compilation)
+			}
+		})
+	}
+}
+
+func TestCompileBodyLowersNumericForBoundsAndBinding(t *testing.T) {
+	for name, source := range map[string]string{
+		"implicit step":   `for i = 1, 3 do local value = i end`,
+		"explicit step":   `for i = 1, 6, 2 do local value = i end`,
+		"computed bounds": `local limit = 3; for i = 1, limit do local value = i end`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := front.CompileBody(source); err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+		})
+	}
+}
+
 func TestCompileBodyLowersCallsAndTheirResultCarriers(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -541,27 +589,89 @@ end
 }
 
 func TestCompileBodyLowersDynamicIndexReadWithoutTreatingNilAsAbsence(t *testing.T) {
-	artifact, err := front.CompileBody(`
-local key = "missing"
-local result = record[key]
-`)
-	if err != nil {
-		t.Fatalf("CompileBody: %v", err)
+	for name, source := range map[string]string{
+		"path destination":      `local key = "missing"; local result = record[key]`,
+		"temporary destination": `local key = "missing"; local result = record[key].field`,
+		"nested dynamic key":    `local first = "one"; local second = "two"; local result = record[first][second]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			artifact, err := front.CompileBody(source)
+			if err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+			for _, lowered := range artifact.Equations {
+				if lowered.Occurrence.Kind != "dynamic-index-read" {
+					continue
+				}
+				got := operands(lowered)
+				if got["container"] == "" || got["key"] == "" || got["target"] == "" {
+					t.Fatalf("dynamic read omitted an operand: %#v", got)
+				}
+				if _, hasValue := got["value"]; hasValue {
+					t.Fatalf("dynamic read invented a concrete value: %#v", got)
+				}
+				return
+			}
+			t.Fatal("missing dynamic-index-read occurrence")
+		})
 	}
-	for _, equation := range artifact.Equations {
-		if equation.Occurrence.Kind != "path-replacement" {
-			continue
-		}
-		got := operands(equation)
-		if got["container"] == "" || got["key"] == "" || got["target"] == "" {
-			t.Fatalf("dynamic read omitted an operand: %#v", got)
-		}
-		if _, hasValue := got["value"]; hasValue {
-			t.Fatalf("dynamic read invented a replacement value instead of preserving lookup semantics: %#v", got)
-		}
-		return
+}
+
+func TestCompileBodyKeepsUntargetedCallResultsAsWholeTuples(t *testing.T) {
+	for name, source := range map[string]string{
+		"pairs iterator":   `for key, value in pairs(record) do end`,
+		"ipairs iterator":  `for key, value in ipairs(record) do end`,
+		"generic iterator": `for value in iterator() do end`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			artifact, err := front.CompileBody(source)
+			if err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+			for _, lowered := range artifact.Equations {
+				if lowered.Occurrence.Kind != "call-results" {
+					continue
+				}
+				got := operands(lowered)
+				if got["application"] == "" || got["result-00000000"] == "" {
+					t.Fatalf("untargeted call lost result tuple: %#v", got)
+				}
+				if _, partialTarget := got["target-00000000"]; partialTarget {
+					t.Fatalf("untargeted call emitted partial target metadata: %#v", got)
+				}
+				return
+			}
+			t.Fatal("missing call-results occurrence")
+		})
 	}
-	t.Fatal("missing path replacement for dynamic index read")
+}
+
+func TestCompileBodyAdmitsTemporaryAssignmentDestinations(t *testing.T) {
+	for name, source := range map[string]string{
+		"call member chain":    `local result = provider().field`,
+		"nested dynamic read":  `local key = "field"; local result = record[key].field`,
+		"logical member chain": `local result = (primary or fallback).field`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := front.CompileBody(source); err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileBodyAdmitsUnknownDynamicIndexWriteContainers(t *testing.T) {
+	for name, source := range map[string]string{
+		"call result":         `factory()["key"] = 1`,
+		"call member":         `factory().items["key"] = 1`,
+		"dynamic then member": `factory()["key"].field = 1`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := front.CompileBody(source); err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+		})
+	}
 }
 
 func operands(equation equation.Equation) map[string]string {

@@ -30,6 +30,7 @@ const (
 	allocationTemplateKernel    = "front/allocation-template/v1"
 	objectMaterializationKernel = "front/object-materialization/v1"
 	pathReplacementKernel       = "front/path-replacement/v1"
+	dynamicIndexReadKernel      = "front/dynamic-index-read/v1"
 	pathInvalidationKernel      = "front/path-invalidation/v1"
 	indexMutationKernel         = "front/index-mutation/v1"
 	branchKernel                = "front/branch-relations/v1"
@@ -130,16 +131,21 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			loopBindingPoints[binding.point] = true
 		}
 	}
+	for point := range numericForBindingPoints(body) {
+		loopBindingPoints[point] = true
+	}
 	operations := make([]operation, 0, body.Len())
 	entries := 0
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		switch instruction.Op {
-		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpLogical:
+		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpLogical:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 			if instruction.Op == wir.OpEntry {
 				entries++
 			}
+		case wir.OpDynamicIndexRead:
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, family: "dynamic-index-read"})
 		case wir.OpAssign:
 			if instruction.A.Kind == wir.OperandNone {
 				if loopBindingPoints[instruction.Point] {
@@ -149,11 +155,11 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			}
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 		case wir.OpIterate:
-			if instruction.Iter != wir.IterGeneric {
-				return equation.Artifact{}, fmt.Errorf("front: iterate at point %d has kind %d, want generic", instruction.Point, instruction.Iter)
-			}
-			if len(loopBindings[instruction.Point]) == 0 {
+			if instruction.Iter == wir.IterGeneric && len(loopBindings[instruction.Point]) == 0 {
 				return equation.Artifact{}, fmt.Errorf("front: generic-for at point %d has no bound variables", instruction.Point)
+			}
+			if instruction.Iter != wir.IterGeneric && instruction.Iter != wir.IterNumeric {
+				return equation.Artifact{}, fmt.Errorf("front: iterate at point %d has unknown kind %d", instruction.Point, instruction.Iter)
 			}
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 		case wir.OpDynamicIndexWrite:
@@ -254,9 +260,13 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case operation.family == "path-invalidation" || operation.family == "index-mutation":
-			container, _, err := pathTerm(body, instruction.Dst)
-			if err != nil {
-				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: %w", operation.target.Name, err)
+			container := equation.ClosedTerm([]byte("scalar/top"))
+			if instruction.Dst.Kind != wir.OperandNone {
+				var err error
+				container, err = pathStoreTerm(body, instruction.Dst)
+				if err != nil {
+					return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: %w", operation.target.Name, err)
+				}
 			}
 			key, err := pathStoreTerm(body, instruction.A)
 			if err != nil {
@@ -286,9 +296,16 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			draft.Occurrence = occurrence("entry")
 			draft.Operands = []equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}}
 		case instruction.Op == wir.OpAssign:
-			target, display, err := pathTerm(body, instruction.Dst)
+			target, err := scalarTerm(body, instruction.Dst)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
+			}
+			display := string(target.Encoding)
+			if instruction.Dst.Kind == wir.OperandPath {
+				_, display, err = pathTerm(body, instruction.Dst)
+				if err != nil {
+					return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
+				}
 			}
 			value, err := scalarTerm(body, instruction.A)
 			if err != nil {
@@ -297,6 +314,12 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			draft.Occurrence = occurrence("environment-write")
 			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
 			readBefore, err := readBeforeTerm(operation, operations, snapshots)
+			if instruction.Dst.Kind == wir.OperandTemp {
+				// Temporary assignments are expression-internal steps, not Lua
+				// statement targets. They must read the immediately preceding
+				// operation rather than demand a statement snapshot they cannot own.
+				readBefore, err = precedingReadBoundary(operation, operations)
+			}
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
 			}
@@ -325,7 +348,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				{Role: "value", Term: value},
 			}
 		case instruction.Op == wir.OpDynamicIndexRead:
-			target, display, err := pathTerm(body, instruction.Dst)
+			target, err := scalarTerm(body, instruction.Dst)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: dynamic index read %s: %w", operation.target.Name, err)
 			}
@@ -337,11 +360,10 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: dynamic index read %s: key: %w", operation.target.Name, err)
 			}
-			draft.Occurrence = occurrence("path-replacement")
+			draft.Occurrence = occurrence("dynamic-index-read")
 			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
 				{Role: "target", Term: target},
-				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
 				{Role: "container", Term: container},
 				{Role: "key", Term: key},
 			}
@@ -422,7 +444,13 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case instruction.Op == wir.OpIterate:
-			operands, err := genericForOperands(body, instruction, loopBindings[instruction.Point])
+			var operands []equation.Operand
+			var err error
+			if instruction.Iter == wir.IterNumeric {
+				operands, err = numericForOperands(body, instruction)
+			} else {
+				operands, err = genericForOperands(body, instruction, loopBindings[instruction.Point])
+			}
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: generic-for %s: %w", operation.target.Name, err)
 			}
@@ -473,6 +501,10 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	compiler, err = compiler.With("path-replacement", equation.BindExistingKernel(pathReplacementKernel))
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure path replacement compiler: %w", err)
+	}
+	compiler, err = compiler.With("dynamic-index-read", equation.BindExistingKernel(dynamicIndexReadKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure dynamic index read compiler: %w", err)
 	}
 	compiler, err = compiler.With("path-invalidation", equation.BindExistingKernel(pathInvalidationKernel))
 	if err != nil {
@@ -626,7 +658,7 @@ func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 // kernels; unknown kinds deliberately have no binding.
 func ContractID(kind string) (equation.ContentID, bool) {
 	switch kind {
-	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication", "claim", "expression":
+	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "dynamic-index-read", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication", "claim", "expression":
 		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
 	default:
 		return equation.ContentID{}, false
@@ -647,6 +679,8 @@ func KernelID(kind string) (string, bool) {
 		return objectMaterializationKernel, true
 	case "path-replacement":
 		return pathReplacementKernel, true
+	case "dynamic-index-read":
+		return dynamicIndexReadKernel, true
 	case "path-invalidation":
 		return pathInvalidationKernel, true
 	case "index-mutation":
@@ -729,12 +763,33 @@ func genericForBindings(body *wir.Body, graph cfg.Graph) (map[cfg.Point][]loopBi
 	return bindings, nil
 }
 
+func numericForBindingPoints(body *wir.Body) map[cfg.Point]bool {
+	points := make(map[cfg.Point]bool)
+	if body == nil {
+		return points
+	}
+	bindings := make(map[wir.Operand]bool)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpIterate || instruction.Iter != wir.IterNumeric {
+			continue
+		}
+		for _, result := range body.Operands(instruction.Results) {
+			bindings[result] = true
+		}
+	}
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpAssign && instruction.A.Kind == wir.OperandNone && bindings[instruction.Dst] {
+			points[instruction.Point] = true
+		}
+	}
+	return points
+}
+
 func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []loopBinding) ([]equation.Operand, error) {
 	if instruction.Iter != wir.IterGeneric {
 		return nil, fmt.Errorf("iterator kind %d is not generic", instruction.Iter)
-	}
-	if instruction.ListSpread {
-		return nil, fmt.Errorf("open iterator result tail has no closed generic-for tuple")
 	}
 	sources := body.Operands(instruction.List)
 	if len(sources) == 0 {
@@ -744,6 +799,11 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 	operands := make([]equation.Operand, 0, len(roles)+2*len(bindings))
 	for index, role := range roles {
 		term := equation.ClosedTerm([]byte("scalar/nil"))
+		// An open iterator tail carries no closed state/control coordinates. It
+		// is not nil: retain Top so the loop cannot manufacture a finite tuple.
+		if instruction.ListSpread {
+			term = equation.ClosedTerm([]byte("scalar/top"))
+		}
 		if index < len(sources) {
 			resolved, err := scalarTerm(body, sources[index])
 			if err != nil {
@@ -761,6 +821,33 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 		)
 	}
 	return operands, nil
+}
+
+func numericForOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
+	if instruction.Iter != wir.IterNumeric {
+		return nil, fmt.Errorf("iterator kind %d is not numeric", instruction.Iter)
+	}
+	sources := body.Operands(instruction.List)
+	results := body.Operands(instruction.Results)
+	if len(sources) != 3 || len(results) != 1 {
+		return nil, fmt.Errorf("numeric-for has %d bounds and %d bindings, want 3 and 1", len(sources), len(results))
+	}
+	operands := make([]equation.Operand, 0, 5)
+	for index, role := range []string{"iterator", "state", "control"} {
+		term, err := scalarTerm(body, sources[index])
+		if err != nil {
+			return nil, fmt.Errorf("%s bound: %w", role, err)
+		}
+		operands = append(operands, equation.Operand{Role: role, Term: term})
+	}
+	result, display, err := pathTerm(body, results[0])
+	if err != nil {
+		return nil, fmt.Errorf("numeric binding: %w", err)
+	}
+	return append(operands,
+		equation.Operand{Role: "result-00000000", Term: result},
+		equation.Operand{Role: "display-00000000", Term: equation.ClosedTerm([]byte(display))},
+	), nil
 }
 
 func selectResultTerm(operand wir.Operand) (equation.Term, error) {
@@ -832,6 +919,13 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 		operands = append(operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
 	}
 	appendOperand := func(role string, value wir.Operand) error {
+		if value.Kind == wir.OperandNone {
+			// This is an unrepresentable source operand, not Lua nil. Keep the
+			// expression transaction complete with Top so it cannot invent a
+			// concrete value or decide a branch from missing syntax evidence.
+			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("scalar/top"))})
+			return nil
+		}
 		term, err := scalarTerm(body, value)
 		if err != nil {
 			return fmt.Errorf("%s: %w", role, err)
@@ -1081,10 +1175,20 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 
 func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equation.Coordinate) ([]equation.Operand, error) {
 	results := body.Operands(instruction.Results)
-	targets := body.CallResultTargets(instruction.Point)
-	if len(targets) != len(results) {
-		return nil, fmt.Errorf("result target count %d, want %d", len(targets), len(results))
+	targets := make([]wir.CallResultTarget, len(results))
+	completeTargets := len(results) != 0
+	for index := range results {
+		target, ok := body.CallResultTarget(instruction.Point, index)
+		if !ok {
+			completeTargets = false
+			continue
+		}
+		targets[index] = target
 	}
+	// A call result carrier is useful even when syntax has no representable
+	// consumer (for example, generic-for iterator tuple setup).  Preserve every
+	// result as Top, but only emit target metadata when it is complete: a partial
+	// target tuple would incorrectly certify a selective result flow.
 	operands := make([]equation.Operand, 1, 1+len(results)*2)
 	operands[0] = equation.Operand{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))}
 	for index, result := range results {
@@ -1092,14 +1196,14 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 		if err != nil {
 			return nil, fmt.Errorf("result %d: %w", index, err)
 		}
-		target, err := callResultTargetTerm(targets[index])
-		if err != nil {
-			return nil, fmt.Errorf("result target %d: %w", index, err)
+		operands = append(operands, equation.Operand{Role: indexedRole("result", index), Term: term})
+		if completeTargets {
+			target, err := callResultTargetTerm(targets[index])
+			if err != nil {
+				return nil, fmt.Errorf("result target %d: %w", index, err)
+			}
+			operands = append(operands, equation.Operand{Role: indexedRole("target", index), Term: target})
 		}
-		operands = append(operands,
-			equation.Operand{Role: indexedRole("result", index), Term: term},
-			equation.Operand{Role: indexedRole("target", index), Term: target},
-		)
 	}
 	return operands, nil
 }
@@ -1510,6 +1614,9 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 			loopBindingPoints[binding.point] = true
 		}
 	}
+	for point := range numericForBindingPoints(body) {
+		loopBindingPoints[point] = true
+	}
 	bodyID := artifact.Equations[0].Target.Body
 	points := make(map[cfg.Point][]equation.CellID)
 	index := 0
@@ -1529,13 +1636,18 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 		instruction := body.Instr(instructionIndex)
 		count := 0
 		switch instruction.Op {
-		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpSelect, wir.OpAssign, wir.OpIterate, wir.OpReturn:
+		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpLogical, wir.OpAssign, wir.OpIterate, wir.OpReturn:
 			count = 1
 			if instruction.Op == wir.OpAssign && instruction.A.Kind == wir.OperandNone && loopBindingPoints[instruction.Point] {
 				count = 0
 			}
-		case wir.OpDynamicIndexWrite, wir.OpMakeTable, wir.OpClosure:
+		case wir.OpDynamicIndexWrite:
 			count = 2
+		case wir.OpMakeTable, wir.OpClosure:
+			count = 3
+			if instruction.Op == wir.OpMakeTable && instruction.Dst.Kind == wir.OperandPath {
+				count += len(body.TableEntries(instruction.TableEntries))
+			}
 		case wir.OpCall:
 			count = 2
 			if _, external := externalProvider(body, instruction); external {

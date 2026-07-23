@@ -72,6 +72,42 @@ end
 	}
 }
 
+func TestCheckBinaryComparisons(t *testing.T) {
+	for name, source := range map[string]string{
+		"equal numbers":    `local result = 2 == 2`,
+		"unequal strings":  `local result = "left" ~= "right"`,
+		"numeric ordering": `local result = 2 < 3`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := engine.Check(source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if got := valuesByName(result.Values)["result"]; got != "true" {
+				t.Fatalf("comparison = %q, want true; values = %#v", got, result.Values)
+			}
+		})
+	}
+}
+
+func TestCheckUnknownBranchSelectsNoArm(t *testing.T) {
+	for name, source := range map[string]string{
+		"truthiness":       `local input = provider(); if input then local selected = true end`,
+		"numeric relation": `local input = provider(); if input >= 1 then local selected = true end`,
+		"index relation":   `local input = provider(); if input[1] then local selected = true end`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := engine.Check(source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if _, selected := valuesByName(result.Values)["selected"]; selected {
+				t.Fatalf("unknown selector chose an arm: %#v", result.Values)
+			}
+		})
+	}
+}
+
 func TestCheckPathAndNilPredicates(t *testing.T) {
 	result, err := engine.Check(`
 local left = 3
@@ -144,6 +180,24 @@ func TestCheckUnknownCallPublishesExplicitUnknownResult(t *testing.T) {
 	}
 	if result.Transactions != 5 { // entry, apply, external boundary, call-results, assignment
 		t.Fatalf("transactions = %d, want entry plus complete provider call sequence and assignment", result.Transactions)
+	}
+}
+
+func TestCheckDynamicIndexReadsPublishConservativeUnknown(t *testing.T) {
+	for name, source := range map[string]string{
+		"path destination":      `local key = "missing"; local result = record[key]; local observed = result`,
+		"temporary destination": `local key = "missing"; local result = record[key].field; local observed = result`,
+		"nested dynamic key":    `local first = "one"; local second = "two"; local result = record[first][second]; local observed = result`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := engine.Check(source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if got := valuesByName(result.Values)["observed"]; got != "unknown" {
+				t.Fatalf("dynamic result = %q, want conservative unknown; values = %#v", got, result.Values)
+			}
+		})
 	}
 }
 

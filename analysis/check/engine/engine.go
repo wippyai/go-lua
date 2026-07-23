@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -184,6 +185,10 @@ func registry() (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
+	dynamicIndexRead, err := binding("dynamic-index-read", equation.KernelFunc(dynamicIndexReadKernel))
+	if err != nil {
+		return nil, err
+	}
 	pathInvalidation, err := binding("path-invalidation", equation.KernelFunc(pathInvalidationKernel))
 	if err != nil {
 		return nil, err
@@ -202,7 +207,7 @@ func registry() (*equation.KernelRegistry, error) {
 	}
 	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{
 		entry, allocationTemplate, objectMaterialization, write,
-		pathReplacement, pathInvalidation, indexMutation,
+		pathReplacement, dynamicIndexRead, pathInvalidation, indexMutation,
 		branch, apply, external, results, genericFor, channelSelect, publication, claim, expression,
 	})
 	if err != nil {
@@ -282,6 +287,10 @@ func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
+	dynamicIndexRead, err := binding("dynamic-index-read", equation.KernelFunc(dynamicIndexReadKernel))
+	if err != nil {
+		return nil, err
+	}
 	pathInvalidation, err := binding("path-invalidation", equation.KernelFunc(pathInvalidationKernel))
 	if err != nil {
 		return nil, err
@@ -320,7 +329,7 @@ func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
 	}
 	registry, err := equation.NewCyclicKernelRegistry([]equation.CyclicKernelBinding{
 		entry, allocationTemplate, objectMaterialization, write,
-		pathReplacement, pathInvalidation, indexMutation,
+		pathReplacement, dynamicIndexRead, pathInvalidation, indexMutation,
 		branch, apply, external, results, genericFor, channelSelect, publication, claim, expression,
 	})
 	if err != nil {
@@ -476,7 +485,8 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			} else if strings.HasPrefix(string(v), "scalar/number/") {
 				s = strings.TrimPrefix(string(v), "scalar/number/")
 			} else {
-				er = fmt.Errorf("engine: concat operand is not string or number")
+				value = []byte("scalar/top")
+				break
 			}
 			if er != nil {
 				err = er
@@ -514,13 +524,19 @@ func numberValue(v float64) []byte {
 	return []byte("scalar/number/" + strconv.FormatFloat(v, 'g', -1, 64))
 }
 func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
+	switch op {
+	case wir.BinEq:
+		return []byte("scalar/bool/" + strconv.FormatBool(bytes.Equal(a, b))), nil
+	case wir.BinNe:
+		return []byte("scalar/bool/" + strconv.FormatBool(!bytes.Equal(a, b))), nil
+	}
 	x, e := scalarNumber(a)
 	if e != nil {
-		return nil, e
+		return []byte("scalar/top"), nil
 	}
 	y, e := scalarNumber(b)
 	if e != nil {
-		return nil, e
+		return []byte("scalar/top"), nil
 	}
 	switch op {
 	case wir.BinAdd:
@@ -537,8 +553,16 @@ func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 		return numberValue(x - math.Floor(x/y)*y), nil
 	case wir.BinPow:
 		return numberValue(math.Pow(x, y)), nil
+	case wir.BinLt:
+		return []byte("scalar/bool/" + strconv.FormatBool(x < y)), nil
+	case wir.BinLe:
+		return []byte("scalar/bool/" + strconv.FormatBool(x <= y)), nil
+	case wir.BinGt:
+		return []byte("scalar/bool/" + strconv.FormatBool(x > y)), nil
+	case wir.BinGe:
+		return []byte("scalar/bool/" + strconv.FormatBool(x >= y)), nil
 	default:
-		return nil, fmt.Errorf("engine: unsupported binary operator")
+		return []byte("scalar/top"), nil
 	}
 }
 
@@ -558,6 +582,26 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed path replacement")
 	}
 	return equation.TransactionResult{Complete: true}, nil
+}
+
+// dynamicIndexReadKernel has no closed heap fact to project at this stage.
+// It nevertheless publishes an explicit Top for the result, so a dynamic read
+// never masquerades as an absent value and never selects a branch by accident.
+func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	operands, err := requiredOperandsByRole(operation.Operands, "target", "container", "key")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	target := string(operands["target"])
+	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || len(operands["container"]) == 0 || len(operands["key"]) == 0 {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed dynamic index read")
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+		Key: "value/" + target + "/" + operation.Target.Name, Value: []byte("scalar/top"),
+	}}}}, nil
 }
 
 // claimKernel makes user claims explicit checked refinements. An unproven
@@ -683,7 +727,18 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	if _, err := requiredOperandsByRole(operation.Operands, "iterator", "state", "control"); err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	values := make([]equation.Fact, 0)
+	for _, operand := range operation.Operands {
+		if !strings.HasPrefix(operand.Role, "result-") {
+			continue
+		}
+		result := string(operand.Value)
+		if !strings.HasPrefix(result, "path/") {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
+		}
+		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: []byte("scalar/top")})
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
 func channelSelectKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -812,12 +867,12 @@ func callResultsKernel(operation equation.BoundEquation, partition equation.Part
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result role %q", operand.Role)
 		}
 	}
-	if !hasApplication || len(resultTerms) != len(targetTerms) {
+	if !hasApplication || (len(targetTerms) != 0 && len(resultTerms) != len(targetTerms)) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: incomplete call result transaction")
 	}
 	values := make([]equation.Fact, 0, len(resultTerms))
 	for key, result := range resultTerms {
-		if len(result) == 0 || len(targetTerms[key]) == 0 || !strings.HasPrefix(string(result), "temp/") {
+		if len(result) == 0 || !strings.HasPrefix(string(result), "temp/") || (len(targetTerms) != 0 && len(targetTerms[key]) == 0) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
 		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: []byte("scalar/top")})
@@ -988,7 +1043,10 @@ func evaluateBranchPredicate(encoded []byte, partition equation.Partition) (bool
 		}
 		result = number <= float64(predicate.NumCeil)
 	case "index-in-range", "frozen-table":
-		return false, fmt.Errorf("engine: branch predicate %q has no scalar evaluator", predicate.Kind)
+		// Heap/index evidence is outside this scalar evaluator. Treat it as an
+		// unavailable selector: neither branch is selected until a dedicated
+		// heap-domain evaluator can prove one.
+		return false, errUnknownScalar
 	default:
 		return false, fmt.Errorf("engine: unknown branch predicate %q", predicate.Kind)
 	}
