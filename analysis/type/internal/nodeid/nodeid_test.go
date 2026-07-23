@@ -19,8 +19,20 @@ func TestPointer(t *testing.T) {
 	if got := Pointer(opt); got == 0 {
 		t.Fatalf("Pointer(optional) = 0, want stable pointer")
 	}
-	if got := Pointer(typ.String); got != 0 {
-		t.Fatalf("Pointer(scalar singleton) = %d, want 0", got)
+	for name, singleton := range map[string]typ.Type{
+		"nil":     typ.Nil,
+		"boolean": typ.Boolean,
+		"number":  typ.Number,
+		"integer": typ.Integer,
+		"string":  typ.String,
+		"any":     typ.Any,
+		"unknown": typ.Unknown,
+		"never":   typ.Never,
+		"self":    typ.Self,
+	} {
+		if got := Pointer(singleton); got != 0 {
+			t.Fatalf("Pointer(%s singleton) = %d, want 0", name, got)
+		}
 	}
 }
 

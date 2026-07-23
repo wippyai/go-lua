@@ -910,6 +910,19 @@ type lexicalEvaluator struct {
 	active          map[equation.BodyID]bool
 }
 
+func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
+	child, exists := l.byPrototype[prototype]
+	if !exists {
+		return false
+	}
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg {
+			return true
+		}
+	}
+	return false
+}
+
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), active: make(map[equation.BodyID]bool)}
 	var add func(front.Compilation)
@@ -2201,9 +2214,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if lexical.requiresBody[handle.Prototype] {
 				if outcome, err := lexical.applyKnown(operation, operands, handle, partition); err == nil {
 					return outcome, nil
-				} else if strings.Contains(err.Error(), "unsupported exact lexical boundary") {
-					// A missing certified selector is an admission failure: preserve
-					// atomicity rather than exposing a partial child result.
+				} else if strings.Contains(err.Error(), "unsupported exact lexical boundary") && !lexical.hasVarargBoundary(handle.Prototype) {
+					// An admitted fixed-arity boundary must be atomic: a failed exact
+					// selector is not allowed to fall through to a partial projection.
 					return equation.TransactionResult{}, err
 				}
 			}
@@ -3049,7 +3062,7 @@ func scalarType(value []byte) (string, error) {
 		return "string", nil
 	case string(value) == "scalar/table":
 		return "table", nil
-	case string(value) == "scalar/function":
+	case string(value) == "scalar/function", strings.HasPrefix(string(value), "scalar/function/"):
 		return "function", nil
 	default:
 		return "", fmt.Errorf("engine: malformed scalar value %q", value)
@@ -3296,7 +3309,7 @@ func luaTruthy(value []byte) (bool, error) {
 	case "scalar/bool/true":
 		return true, nil
 	default:
-		if strings.HasPrefix(string(value), "scalar/number/") || strings.HasPrefix(string(value), "scalar/string/") || string(value) == "scalar/table" || string(value) == "scalar/function" {
+		if strings.HasPrefix(string(value), "scalar/number/") || strings.HasPrefix(string(value), "scalar/string/") || string(value) == "scalar/table" || string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/") {
 			return true, nil
 		}
 		return false, fmt.Errorf("engine: malformed scalar value %q", value)

@@ -198,7 +198,12 @@ else
     result = "else"
 end
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+			// Lua functions, like tables, are truthy; this branch is therefore a
+			// selected arm with a proven constant-guard diagnostic.
+			Expect: Expectation{
+				Published:   []PublishedOutcome{value("result", `"then"`)},
+				Diagnostics: []DiagnosticCandidate{{Code: "advice.always_true_guard/op-00000005", Detail: "proven constant guard"}},
+			},
 		},
 		{
 			Name: "allocation/constructor-nested-member-has-completed-write",
@@ -227,7 +232,12 @@ else
     result = "else"
 end
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+			// Lua treats every table as truthy, including an empty constructor, so
+			// this guard is both selected and a proven constant guard.
+			Expect: Expectation{
+				Published:   []PublishedOutcome{value("result", `"then"`)},
+				Diagnostics: []DiagnosticCandidate{{Code: "advice.always_true_guard/op-00000005", Detail: "proven constant guard"}},
+			},
 		},
 		{
 			Name: "allocation/dynamic-key-materializes-the-runtime-key",
@@ -865,9 +875,11 @@ local selected = channel.select { first:case_receive(), second:case_receive() }
 		{
 			Name:   "claim/annotation-mismatch-is-diagnostic-refinement",
 			Source: `local value: string = 1`,
+			// Lua numbers and strings have distinct runtime tags; a concrete number
+			// therefore refutes this typed assignment instead of merely lacking proof.
 			Expect: Expectation{
 				Published:   []PublishedOutcome{value("value", "unknown")},
-				Diagnostics: []DiagnosticCandidate{{Code: "claim/unproven", Subject: "", Detail: `claim "string" is not proven`}},
+				Diagnostics: []DiagnosticCandidate{{Code: "type.assignment/op-00000002", Detail: "cannot assign value because it is number, not string"}},
 			},
 		},
 		{
@@ -879,8 +891,8 @@ local count: number = "one"
 			Expect: Expectation{
 				Published: []PublishedOutcome{value("count", "unknown"), value("text", "unknown")},
 				Diagnostics: []DiagnosticCandidate{
-					{Code: "claim/unproven", Detail: `claim "number" is not proven`},
-					{Code: "claim/unproven", Detail: `claim "string" is not proven`},
+					{Code: "type.assignment/op-00000002", Detail: "cannot assign text because it is number, not string"},
+					{Code: "type.assignment/op-00000004", Detail: "cannot assign count because it is string, not number"},
 				},
 			},
 		},
@@ -908,7 +920,7 @@ local label: string = 1
 			Expect: Expectation{
 				Published: []PublishedOutcome{value("label", "unknown"), value("required", "unknown"), value("source", "nil")},
 				Diagnostics: []DiagnosticCandidate{
-					{Code: "claim/unproven", Detail: `claim "string" is not proven`},
+					{Code: "type.assignment/op-00000004", Detail: "cannot assign label because it is number, not string"},
 					{Code: "claim/unproven", Detail: "claim non-nil is not proven"},
 				},
 			},
