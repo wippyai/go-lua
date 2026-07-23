@@ -188,6 +188,11 @@ type valueNodeLeafResolver struct {
 	dynamicRead        func(valueNode, []product.Value) (product.Value, bool)
 	iteratorProjection func(valueNode, product.Value) (product.Value, bool)
 	allocationResult   func(valueNode) (product.Value, bool)
+	// completeImpossibleConcat preserves a formally completed leaf whose concat
+	// has no normal continuation. The concrete evaluator leaves it unsupported;
+	// a formal tuple leaf may materialize bottom so its diagnostic survives
+	// without publishing a string result.
+	completeImpossibleConcat func() (product.Value, bool)
 }
 
 // resolveValueNodeProduct is the single stateless per-node value semantics.
@@ -282,11 +287,15 @@ func resolveValueNodeProduct(reg *axis.Registry, typeValues *typevalue.Cache, no
 				return value, true
 			}
 		}
-		// Concatenation still has a string-valued continuation when an operand
-		// is statically impossible. The operand obligation owns that diagnostic;
-		// refusing to materialize the expression here would turn an already
-		// diagnosed composite return into an unsupported formal tuple leaf.
-		// Keep the result conservative and do not manufacture literal evidence.
+		// A conservative string result is valid only for a possibly normal
+		// continuation. Invalid operands may still produce a diagnostic, but
+		// they do not publish a normal concat result.
+		if !possibleConcatOperand(reg, args[0]) || !possibleConcatOperand(reg, args[1]) {
+			if resolver.completeImpossibleConcat != nil {
+				return resolver.completeImpossibleConcat()
+			}
+			return product.Value{}, false
+		}
 		return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), true
 	case valueUnaryOperation:
 		if len(args) != 1 || !isPureUnaryOperator(node.operator) {

@@ -53,6 +53,10 @@ type formalEvaluatedBinding struct {
 	value       product.Value
 	path        pathdom.Path
 	pathPresent bool
+	// normal is false when a completed leaf denotes no normal continuation.
+	// Consumers must retain its diagnostic path without publishing it as an
+	// ordinary outcome.
+	normal bool
 }
 
 // tupleLeafRegions aligns Care and every descriptor once. Consumers such as
@@ -197,7 +201,7 @@ func (e formalTupleLeafEvaluator) evaluateWithFactorAccess(binding formalQualifi
 		return formalEvaluatedBinding{}, fmt.Errorf("transformer: formal tuple leaf value is unsupported (owner=%d term=%d op=%d slot=%d)",
 			binding.value.owner, binding.value.term, op, slot)
 	}
-	out := formalEvaluatedBinding{value: value, pathPresent: binding.pathPresent}
+	out := formalEvaluatedBinding{value: value, pathPresent: binding.pathPresent, normal: !product.Equal(e.authority.product.Registry(), value, product.Bottom(e.authority.product.Registry()))}
 	if binding.pathPresent {
 		out.path, exact = e.evalQualifiedPath(binding)
 		if !exact || out.path.IsEmpty() {
@@ -370,6 +374,18 @@ func (e formalTupleLeafEvaluator) evalArenaValueWithFactorAccess(owner relationV
 		allocationResult: func(candidate valueNode) (product.Value, bool) {
 			return arena.allocationResult(candidate.allocation, candidate.resultIndex)
 		},
+		completeImpossibleConcat: func() (product.Value, bool) {
+			return product.Bottom(e.authority.product.Registry()), true
+		},
+	}
+	resolver.scope = func(current ValueTerm, inherited valueNodeLeafResolver) valueNodeLeafResolver {
+		// Completion belongs to the published leaf itself. Descendant concats
+		// retain ordinary evaluation semantics rather than borrowing this leaf's
+		// bottom materialization.
+		if current != term {
+			inherited.completeImpossibleConcat = nil
+		}
+		return inherited
 	}
 	return arena.evalValueCanonicalWithLeaves(term, resolver)
 }

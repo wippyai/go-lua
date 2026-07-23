@@ -431,6 +431,9 @@ func (a *formalTupleAlgebra) applyFormalOutcomeBindings(
 				if evalErr != nil {
 					return nil, fmt.Errorf("transformer: formal Outcome source %d: %w", index, evalErr)
 				}
+				if !evaluated.normal {
+					return nil, nil
+				}
 				sources[index] = evaluated.value
 			}
 			var container state.CoordinateFamilyFactor
