@@ -1,6 +1,8 @@
 package interproc
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sort"
@@ -268,6 +270,58 @@ func (p EntryProjection) ContentID() ContentID {
 		return ContentID{}
 	}
 	return contentID(encoded)
+}
+
+// ValidateEntryProjectionCanonicalBytes verifies a retained entry projection
+// without reconstructing a complete entry binding. Portable instance codecs use
+// this to keep the exact projection bytes beside their digest for collision
+// confirmation while remaining unable to inspect any non-projected entry data.
+func ValidateEntryProjectionCanonicalBytes(encoded []byte) error {
+	readBytes := func(at *int) ([]byte, error) {
+		if len(encoded)-*at < 8 {
+			return nil, fmt.Errorf("interproc: truncated entry projection")
+		}
+		length := binary.BigEndian.Uint64(encoded[*at:])
+		*at += 8
+		if length > uint64(len(encoded)-*at) {
+			return nil, fmt.Errorf("interproc: truncated entry projection")
+		}
+		value := encoded[*at : *at+int(length)]
+		*at += int(length)
+		return value, nil
+	}
+	at := 0
+	domain, err := readBytes(&at)
+	if err != nil || !bytes.Equal(domain, []byte("interproc-entry-projection/content-v1")) {
+		return fmt.Errorf("interproc: malformed entry projection")
+	}
+	if len(encoded)-at < 8 {
+		return fmt.Errorf("interproc: truncated entry projection")
+	}
+	count := binary.BigEndian.Uint64(encoded[at:])
+	at += 8
+	if count > uint64((len(encoded)-at)/16) {
+		return fmt.Errorf("interproc: malformed entry projection count")
+	}
+	previous := EntrySelector("")
+	for index := uint64(0); index < count; index++ {
+		rawSelector, err := readBytes(&at)
+		if err != nil {
+			return err
+		}
+		selector := EntrySelector(rawSelector)
+		if !selector.valid() || index != 0 && previous >= selector {
+			return fmt.Errorf("interproc: malformed entry projection selector")
+		}
+		if _, err := readBytes(&at); err != nil {
+			return err
+		}
+		previous = selector
+	}
+	if at != len(encoded) {
+		return fmt.Errorf("interproc: malformed entry projection trailing bytes")
+	}
+	return nil
 }
 
 // Project selects exactly the certified entry coordinates. A missing selected

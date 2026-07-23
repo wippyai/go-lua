@@ -56,6 +56,12 @@ func TestReadProjectionSelectsOnlyCertifiedEntryCoordinates(t *testing.T) {
 	if string(left.CanonicalBytes()) == string(changed.CanonicalBytes()) {
 		t.Fatal("guard selector was omitted from projection")
 	}
+	if err := ValidateEntryProjectionCanonicalBytes(left.CanonicalBytes()); err != nil {
+		t.Fatalf("canonical projection rejected: %v", err)
+	}
+	if err := ValidateEntryProjectionCanonicalBytes(append(left.CanonicalBytes(), 0)); err == nil {
+		t.Fatal("projection with trailing bytes was accepted")
+	}
 }
 
 func TestReadProjectionAuditFailsClosed(t *testing.T) {
