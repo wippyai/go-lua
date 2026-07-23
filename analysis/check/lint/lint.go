@@ -316,6 +316,13 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 		code := diagnostic.Code("lint." + strings.ReplaceAll(fact.Key, "/", "."))
 		if strings.HasPrefix(fact.Key, "claim/unproven/") {
 			code = "lint.claim.unproven"
+		} else if strings.HasPrefix(fact.Key, "type.call.direct.") {
+			// The trailing operation name is equation identity only. The fact's
+			// stable prefix is the public call-rule code.
+			code = diagnostic.Code(fact.Key[:strings.IndexByte(fact.Key, '/')])
+		}
+		if strings.HasPrefix(fact.Key, "type.assignment/") {
+			code = "type.assignment"
 		}
 		out = append(out, newDiagnostic(entry, span, code, string(fact.Value)))
 	}

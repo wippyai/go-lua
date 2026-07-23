@@ -2,10 +2,13 @@ package front
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -16,6 +19,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -56,6 +61,7 @@ type Compilation struct {
 	Artifact   equation.Artifact
 	Cyclic     *equation.CyclicArtifact
 	ClaimSpans map[string]wir.Span
+	CallSpans  map[string]wir.Span
 }
 
 // Compile parses and lowers one complete body, retaining cyclic control-flow
@@ -84,7 +90,7 @@ func Compile(source string) (Compilation, error) {
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans(body, artifact)}
+	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans(body, artifact), CallSpans: callSpans(body, artifact)}
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -93,6 +99,47 @@ func Compile(source string) (Compilation, error) {
 		compilation.Cyclic = &cyclic
 	}
 	return compilation, nil
+}
+
+// callSpans binds source call anchors to their apply operations.  The apply
+// occurrence is the equation point that proves call-contract violations; WIR
+// remains the sole source authority for its position.
+func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	calls := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpCall {
+			calls = append(calls, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(calls))
+	callIndex := 0
+	for _, item := range artifact.Equations {
+		if item.Occurrence.Kind != "apply" || callIndex >= len(calls) {
+			continue
+		}
+		call := calls[callIndex]
+		span := call.CallSpan
+		if !span.Valid() {
+			span = call.CalleeSpan
+		}
+		if span.Valid() {
+			out[item.Target.Name+"/call"] = span
+		}
+		if call.CalleeSpan.Valid() {
+			out[item.Target.Name+"/callee"] = call.CalleeSpan
+		}
+		for index, argument := range body.CallArgumentMeta(call.CallArgs) {
+			if argument.Span.Valid() {
+				out[item.Target.Name+"/"+indexedRole("argument", index)] = argument.Span
+			}
+		}
+		callIndex++
+	}
+	return out
 }
 
 // claimSpans retains the source anchors needed to render claim failures after
@@ -1077,6 +1124,12 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 			return nil, fmt.Errorf("callee: %w", err)
 		}
 		operands = append(operands, equation.Operand{Role: "callee", Term: callee})
+		if instruction.Call.Callee.Kind == wir.OperandPath {
+			calleePath := body.Path(wir.PathRef(instruction.Call.Callee.Ref)).String()
+			if calleePath != "" {
+				operands = append(operands, equation.Operand{Role: "callee-display", Term: equation.ClosedTerm([]byte(calleePath))})
+			}
+		}
 	}
 	for index, argument := range body.Operands(instruction.List) {
 		term, err := scalarTerm(body, argument)
@@ -1403,7 +1456,8 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 	}
 	value := "scalar/table"
 	if instruction.Op == wir.OpClosure {
-		value = "scalar/function"
+		proto := body.Proto(instruction.Func)
+		value = functionValue(proto.Type)
 	}
 	readBefore, err := precedingReadBoundary(current, operations)
 	if err != nil {
@@ -1416,6 +1470,40 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 		{Role: "read-before", Term: readBefore},
 		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
 	}, nil
+}
+
+// functionValue seals the callable shape into the constructor's ordinary
+// value fact.  It is deliberately a closed transport term: apply later reads
+// that fact through the equation partition, rather than consulting WIR or
+// re-analysing source.
+func functionValue(t typ.Type) string {
+	fn, ok := unwrap.Alias(t).(*typ.Function)
+	if !ok || fn == nil {
+		return "scalar/function"
+	}
+	type signature struct {
+		Params   []string `json:"params"`
+		Required int      `json:"required"`
+		Variadic bool     `json:"variadic"`
+	}
+	wire := signature{Params: make([]string, len(fn.Params)), Variadic: fn.Variadic != nil}
+	for index, param := range fn.Params {
+		if param.Type == nil {
+			return "scalar/function"
+		}
+		wire.Params[index] = param.Type.String()
+		// Lua's annotated optional parameter surface (T?) is callable with an
+		// omitted trailing argument even when the parser has no default-value
+		// marker on the parameter slot.
+		if !param.Optional && !strings.HasSuffix(wire.Params[index], "?") {
+			wire.Required++
+		}
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return "scalar/function"
+	}
+	return "scalar/function/" + base64.RawURLEncoding.EncodeToString(encoded)
 }
 
 // allocationEntryWriteOperands projects a closed constructor entry onto its

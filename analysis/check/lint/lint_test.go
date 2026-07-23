@@ -41,13 +41,13 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 		t.Fatalf("module summary was not resolved through importlookup: %#v", consumer.Imports[0])
 	}
 	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one claim diagnostic", result.Diagnostics)
+		t.Fatalf("diagnostics = %#v, want one assignment diagnostic", result.Diagnostics)
 	}
 	diag := result.Diagnostics[0]
-	if diag.Code != "lint.claim.unproven" || diag.Position.File != "app/consumer.lua" || diag.Position.Line != 2 || diag.Position.Column != 7 {
+	if diag.Code != "type.assignment" || diag.Position.File != "app/consumer.lua" || diag.Position.Line != 2 || diag.Position.Column != 7 {
 		t.Fatalf("positional diagnostic = %#v", diag)
 	}
-	if got, want := RenderDiagnostic(diag), "app/consumer.lua:2:7: error[lint.claim.unproven]: claim \"string\" is not proven"; got != want {
+	if got, want := RenderDiagnostic(diag), "app/consumer.lua:2:7: error[type.assignment]: cannot assign text because it is number, not string"; got != want {
 		t.Fatalf("RenderDiagnostic = %q, want %q", got, want)
 	}
 	if consumer.Timings.ParseBindLowerNS <= 0 || consumer.Timings.EvaluateNS <= 0 || result.Timings.ProjectRenderNS <= 0 {

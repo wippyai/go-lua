@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,23 +147,35 @@ func Check(source string) (result Result, err error) {
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		DiagnosticSpans: diagnosticSpans(compilation.ClaimSpans, closure.Diagnostics),
+		DiagnosticSpans: diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, closure.Diagnostics),
 		Transactions:    transactions,
 		Timings:         Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
 	}
 	return result, nil
 }
 
-func diagnosticSpans(claimSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
-	if len(claimSpans) == 0 || len(diagnostics) == 0 {
+func diagnosticSpans(claimSpans, callSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+	if (len(claimSpans) == 0 && len(callSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
 	out := make(map[string]wir.Span)
 	for _, item := range diagnostics {
-		if !strings.HasPrefix(item.Key, "claim/unproven/") {
+		var name string
+		switch {
+		case strings.HasPrefix(item.Key, "claim/unproven/"):
+			name = strings.TrimPrefix(item.Key, "claim/unproven/")
+		case strings.HasPrefix(item.Key, "type.assignment/"):
+			name = strings.TrimPrefix(item.Key, "type.assignment/")
+		case strings.HasPrefix(item.Key, "type.call.direct."):
+			if slash := strings.IndexByte(item.Key, '/'); slash >= 0 {
+				if span, ok := callSpans[item.Key[slash+1:]]; ok {
+					out[item.Key] = span
+				}
+			}
+			continue
+		default:
 			continue
 		}
-		name := strings.TrimPrefix(item.Key, "claim/unproven/")
 		if span, ok := claimSpans[name]; ok {
 			out[item.Key] = span
 		}
@@ -670,6 +683,13 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 		return equation.TransactionResult{}, err
 	}
 	target, source, kind, targetType := string(operands["target"]), operands["value"], string(operands["kind"]), string(operands["type"])
+	display := strings.TrimPrefix(target, "path/")
+	for _, operand := range operation.Operands {
+		if operand.Role == "display" && len(operand.Value) != 0 {
+			display = string(operand.Value)
+			break
+		}
+	}
 	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || !validClaimKind(kind) || !validClaimType(kind, targetType) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed claim")
 	}
@@ -683,13 +703,82 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 		}}}}, nil
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
-		Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}},
+	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
+	// An annotation is an assignment contract.  Only a concrete scalar that
+	// the equation has already derived can refute it; top and refinements stay
+	// unproven and deliberately publish no assignment failure.  This keeps the
+	// diagnostic in the operation that owns both the guard and abstract value.
+	if kind == "claim-kind/3" && available && assignmentMismatchProven(value, targetType) {
+		closure.Diagnostics = []equation.Fact{{
+			Key:   "type.assignment/" + operation.Target.Name,
+			Value: []byte(assignmentMismatchMessage(display, value, targetType)),
+		}}
+	} else {
 		// The closure keys facts by identity, so separate unproven claims must
-		// retain their operation identity. The public adapter intentionally
-		// presents this family under the stable claim/unproven code.
-		Diagnostics: []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}},
-	}}, nil
+		// retain their operation identity.
+		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
+	}
+	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// assignmentMismatchProven is intentionally narrower than incompatibility in
+// general.  The scalar lattice is the evidence available at this equation;
+// when it says top or a prior claim, the relation is unknown rather than a
+// proven failure.  Type-shape and richer subtype evidence can extend this
+// predicate as those axes become available to this kernel.
+func assignmentMismatchProven(value []byte, targetType string) bool {
+	if isUnknownScalar(value) {
+		return false
+	}
+	target, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	if err != nil {
+		return false
+	}
+	switch target {
+	case "nil":
+		return string(value) != "scalar/nil"
+	case "boolean":
+		return !strings.HasPrefix(string(value), "scalar/bool/")
+	case "string":
+		return !strings.HasPrefix(string(value), "scalar/string/")
+	case "number":
+		return !strings.HasPrefix(string(value), "scalar/number/")
+	case "integer":
+		if !strings.HasPrefix(string(value), "scalar/number/") {
+			return true
+		}
+		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
+		return err != nil
+	default:
+		return false
+	}
+}
+
+func assignmentMismatchMessage(target string, value []byte, targetType string) string {
+	declared, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	if err != nil {
+		declared = strings.TrimPrefix(targetType, "claim-type/")
+	}
+	return "cannot assign " + target + " because it is " + assignmentValueType(value) + ", not " + declared
+}
+
+func assignmentValueType(value []byte) string {
+	switch {
+	case string(value) == "scalar/nil":
+		return "nil"
+	case strings.HasPrefix(string(value), "scalar/bool/"):
+		return "boolean"
+	case strings.HasPrefix(string(value), "scalar/string/"):
+		return "string"
+	case strings.HasPrefix(string(value), "scalar/number/"):
+		return "number"
+	case string(value) == "scalar/table":
+		return "table"
+	case string(value) == "scalar/function":
+		return "function"
+	default:
+		return "unknown"
+	}
 }
 
 func validClaimKind(kind string) bool {
@@ -845,8 +934,9 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	}}}, nil
 }
 
-// applyKernel validates the sealed direct or method-call shape without
-// inventing a callee outcome.
+// applyKernel validates the sealed direct or method-call shape and publishes
+// proven call-contract failures at this equation point. Unknown values are not
+// violations: diagnostics are proof outputs, never speculative findings.
 func applyKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
@@ -865,7 +955,192 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	if hasCallee == (hasReceiver && hasMethod) || hasReceiver != hasMethod {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed call application shape")
 	}
+	if !hasCallee {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	operands, err := callOperands(operation.Operands)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	callee, known := resolveKnownCurrentValue(operands.callee, partition)
+	if !known {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	if !isUnknownScalar(callee) && !isCallableValue(callee) {
+		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
+	}
+	signature, known := callableSignature(callee)
+	if !known || operands.spread {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	if len(operands.arguments) < signature.Required {
+		return callDiagnostic(operation, "too_few_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, signature.Required, len(operands.arguments))), nil
+	}
+	if !signature.Variadic && len(operands.arguments) > len(signature.Params) {
+		return callDiagnostic(operation, "too_many_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, len(signature.Params), len(operands.arguments))), nil
+	}
+	for index, term := range operands.arguments {
+		if index >= len(signature.Params) {
+			break
+		}
+		argument, known := resolveKnownCurrentValue(term, partition)
+		if !known || !provenScalarNotSubtype(argument, signature.Params[index]) {
+			continue
+		}
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), signature.Params[index])), nil
+	}
 	return equation.TransactionResult{Complete: true}, nil
+}
+
+type directCallOperands struct {
+	callee    []byte
+	display   string
+	arguments [][]byte
+	spread    bool
+}
+
+func callOperands(operands []equation.BoundOperand) (directCallOperands, error) {
+	result := directCallOperands{display: "target"}
+	arguments := make(map[int][]byte)
+	for _, operand := range operands {
+		switch {
+		case operand.Role == "callee":
+			if result.callee != nil {
+				return directCallOperands{}, fmt.Errorf("engine: duplicate call callee")
+			}
+			result.callee = operand.Value
+		case operand.Role == "callee-display":
+			if result.display != "target" || len(operand.Value) == 0 {
+				return directCallOperands{}, fmt.Errorf("engine: malformed call display")
+			}
+			result.display = string(operand.Value)
+		case operand.Role == "list-spread":
+			if string(operand.Value) == "scalar/bool/true" {
+				result.spread = true
+			} else if string(operand.Value) != "scalar/bool/false" {
+				return directCallOperands{}, fmt.Errorf("engine: malformed call argument spread")
+			}
+		case strings.HasPrefix(operand.Role, "argument-"):
+			index, err := callArgumentIndex(operand.Role)
+			if err != nil || arguments[index] != nil {
+				return directCallOperands{}, fmt.Errorf("engine: malformed call argument role %q", operand.Role)
+			}
+			arguments[index] = operand.Value
+		}
+	}
+	if result.callee == nil {
+		return directCallOperands{}, fmt.Errorf("engine: missing call callee")
+	}
+	result.arguments = make([][]byte, len(arguments))
+	for index := range result.arguments {
+		if arguments[index] == nil {
+			return directCallOperands{}, fmt.Errorf("engine: non-contiguous call arguments")
+		}
+		result.arguments[index] = arguments[index]
+	}
+	return result, nil
+}
+
+func callArgumentIndex(role string) (int, error) {
+	text := strings.TrimPrefix(role, "argument-")
+	if len(text) != 8 {
+		return 0, fmt.Errorf("invalid index")
+	}
+	return strconv.Atoi(text)
+}
+
+func callDiagnostic(operation equation.BoundEquation, code, subject, message string) equation.TransactionResult {
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+		Key: "type.call.direct." + code + "/" + operation.Target.Name + "/" + subject, Value: []byte(message),
+	}}}}
+}
+
+func indexedCallSubject(prefix string, index int) string {
+	return fmt.Sprintf("%s-%08d", prefix, index)
+}
+
+type callableShape struct {
+	Params   []string `json:"params"`
+	Required int      `json:"required"`
+	Variadic bool     `json:"variadic"`
+}
+
+func isCallableValue(value []byte) bool {
+	return string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/")
+}
+
+func callableSignature(value []byte) (callableShape, bool) {
+	encoded := strings.TrimPrefix(string(value), "scalar/function/")
+	if encoded == string(value) || encoded == "" {
+		return callableShape{}, false
+	}
+	wire, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return callableShape{}, false
+	}
+	var signature callableShape
+	if err := json.Unmarshal(wire, &signature); err != nil || signature.Required < 0 || signature.Required > len(signature.Params) {
+		return callableShape{}, false
+	}
+	for _, parameter := range signature.Params {
+		if parameter == "" {
+			return callableShape{}, false
+		}
+	}
+	return signature, true
+}
+
+func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	if strings.HasPrefix(string(term), "scalar/") {
+		return append([]byte(nil), term...), true
+	}
+	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
+		return nil, false
+	}
+	prefix := "value/" + string(term) + "/"
+	var value []byte
+	latestKey := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latestKey) {
+			value, latestKey = fact.Value, fact.Key
+		}
+	}
+	return append([]byte(nil), value...), value != nil
+}
+
+func provenScalarNotSubtype(value []byte, expected string) bool {
+	if isUnknownScalar(value) || expected == "any" || expected == "unknown" {
+		return false
+	}
+	if strings.HasSuffix(expected, "?") {
+		return string(value) != "scalar/nil" && provenScalarNotSubtype(value, strings.TrimSuffix(expected, "?"))
+	}
+	switch expected {
+	case "nil":
+		return string(value) != "scalar/nil"
+	case "boolean":
+		return !strings.HasPrefix(string(value), "scalar/bool/")
+	case "string":
+		return !strings.HasPrefix(string(value), "scalar/string/")
+	case "number":
+		return !strings.HasPrefix(string(value), "scalar/number/")
+	case "integer":
+		if !strings.HasPrefix(string(value), "scalar/number/") {
+			return true
+		}
+		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
+		return err != nil
+	default:
+		return false
+	}
+}
+
+func callDisplayValue(value []byte) string {
+	display, err := displayValue(value)
+	if err != nil {
+		return "unknown"
+	}
+	return string(display)
 }
 
 // externalCallKernel is a sealed provider-boundary factor.  It intentionally

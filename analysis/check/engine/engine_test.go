@@ -22,6 +22,26 @@ func TestCheckPublishesScalarAssignment(t *testing.T) {
 	}
 }
 
+func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
+	result, err := engine.Check(`local value: string = 42`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Diagnostics)["type.assignment/op-00000002"]; got != "cannot assign value because it is number, not string" {
+		t.Fatalf("assignment diagnostics = %#v, want proven mismatch", result.Diagnostics)
+	}
+}
+
+func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
+	result, err := engine.Check(`local value: string = provider()`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Diagnostics)["type.assignment/op-00000002"]; got != "" {
+		t.Fatalf("unknown value emitted assignment mismatch: %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckRoutesWhileThroughFrozenCyclicVM(t *testing.T) {
 	result, err := engine.Check(`
 local total = 0
@@ -253,7 +273,7 @@ func TestCheckPublishesEmptyReturnTuple(t *testing.T) {
 	}
 }
 
-func TestCheckRetainsDistinctUnprovenClaimDiagnostics(t *testing.T) {
+func TestCheckRetainsDistinctProvenAssignmentDiagnostics(t *testing.T) {
 	result, err := engine.Check(`
 local text: string = 1
 local count: number = "one"
@@ -263,17 +283,20 @@ local count: number = "one"
 	}
 	got := valuesByName(result.Diagnostics)
 	if len(got) != 2 {
-		t.Fatalf("claim diagnostics = %#v, want two distinct facts", result.Diagnostics)
+		t.Fatalf("assignment diagnostics = %#v, want two distinct facts", result.Diagnostics)
 	}
-	for _, want := range []string{`claim "number" is not proven`, `claim "string" is not proven`} {
+	for _, want := range []string{
+		"cannot assign text because it is number, not string",
+		"cannot assign count because it is string, not number",
+	} {
 		found := false
 		for key, detail := range got {
-			if strings.HasPrefix(key, "claim/unproven/op-") && detail == want {
+			if strings.HasPrefix(key, "type.assignment/op-") && detail == want {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("claim diagnostics = %#v, missing %q", result.Diagnostics, want)
+			t.Errorf("assignment diagnostics = %#v, missing %q", result.Diagnostics, want)
 		}
 	}
 }
