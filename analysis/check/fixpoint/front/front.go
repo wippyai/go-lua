@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
@@ -509,6 +510,9 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				{Role: "value", Term: value},
 				{Role: "kind", Term: equation.ClosedTerm([]byte("claim-kind/" + strconv.Itoa(int(instruction.Claim))))},
 				{Role: "type", Term: claimType},
+			}
+			if target, ok := shapefact.EncodeTarget(body.Type(instruction.Type)); ok {
+				draft.Operands = append(draft.Operands, equation.Operand{Role: "shape-target", Term: equation.ClosedTerm(target)})
 			}
 			if instruction.Dst.Kind == wir.OperandPath {
 				display := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
@@ -1508,6 +1512,10 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 	if instruction.Op == wir.OpClosure {
 		proto := body.Proto(instruction.Func)
 		value = functionValue(proto.Type)
+	} else if shape, ok, err := tableShapeTerm(body, instruction); err != nil {
+		return nil, err
+	} else if ok {
+		value = string(shape)
 	}
 	readBefore, err := precedingReadBoundary(current, operations)
 	if err != nil {
@@ -1520,6 +1528,38 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 		{Role: "read-before", Term: readBefore},
 		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
 	}, nil
+}
+
+// tableShapeTerm turns the WIR constructor inventory into a closed, finite
+// value fact. It deliberately declines an open tail or unclassified key: those
+// shapes have no complete member-presence proof.
+func tableShapeTerm(body *wir.Body, instruction wir.Instruction) ([]byte, bool, error) {
+	if instruction.Op != wir.OpMakeTable || !instruction.StaticStringKeysComplete || instruction.ListSpread {
+		return nil, false, nil
+	}
+	bySuffix := make(map[string]shapefact.Member)
+	for _, entry := range body.TableEntries(instruction.TableEntries) {
+		suffix := segment.FormatSegments(entry.Suffix.Segments)
+		if suffix == "" {
+			return nil, false, fmt.Errorf("table member has no suffix")
+		}
+		member := shapefact.Member{Suffix: suffix}
+		if !isNilConstant(body, entry.Value) {
+			value, err := allocationValueTerm(body, entry.Value)
+			if err != nil {
+				return nil, false, err
+			}
+			member.Present, member.Value = true, string(value.Encoding)
+		}
+		// Lua constructor writes are ordered; the final duplicate key wins.
+		bySuffix[suffix] = member
+	}
+	members := make([]shapefact.Member, 0, len(bySuffix))
+	for _, member := range bySuffix {
+		members = append(members, member)
+	}
+	shape, ok := shapefact.EncodeTable(shapefact.Table{Closed: true, Members: members})
+	return shape, ok, nil
 }
 
 // functionValue seals the callable shape into the constructor's ordinary

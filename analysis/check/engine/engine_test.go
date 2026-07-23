@@ -55,6 +55,37 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 }
 
+func TestCheckProvesSealedRecordAndUnionLiteralAssignments(t *testing.T) {
+	result, err := engine.Check(`
+local record: {name: string, nested: {count: number}} = {name = "ok", nested = {count = 1}}
+local member: {tag: string} | number = {tag = "member"}
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "claim/unproven/") || strings.HasPrefix(fact.Key, "type.assignment/") {
+			t.Fatalf("sealed record/union assignment was not proven: %#v", result.Diagnostics)
+		}
+	}
+}
+
+func TestCheckProjectsExplicitNilLiteralMember(t *testing.T) {
+	result, err := engine.Check(`
+local table = {value = nil}
+local value: number = table.value
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "type.assignment/") && strings.Contains(string(fact.Value), "nil, not number") {
+			return
+		}
+	}
+	t.Fatalf("explicit nil member did not refute number assignment: %#v", result.Diagnostics)
+}
+
 func TestCheckRoutesWhileThroughFrozenCyclicVM(t *testing.T) {
 	result, err := engine.Check(`
 local total = 0

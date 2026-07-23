@@ -15,7 +15,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 const entryValue = "front/closed-entry/v1"
@@ -815,9 +819,43 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	value, err = sealShapeValue(value, partition)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
 		Key: "value/" + target + "/" + operation.Target.Name, Value: value,
 	}}}}, nil
+}
+
+// sealShapeValue resolves a literal's members when that literal is made. This
+// prevents a later source-path write from retroactively changing its fact.
+func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok {
+		return append([]byte(nil), value...), nil
+	}
+	for index := range table.Members {
+		member := &table.Members[index]
+		if !member.Present {
+			continue
+		}
+		resolved, err := resolveCurrentValue([]byte(member.Value), partition)
+		if err != nil {
+			member.Value = "scalar/top"
+			continue
+		}
+		resolved, err = sealShapeValue(resolved, partition)
+		if err != nil {
+			return nil, err
+		}
+		member.Value = string(resolved)
+	}
+	sealed, ok := shapefact.EncodeTable(table)
+	if !ok {
+		return nil, fmt.Errorf("engine: malformed table shape")
+	}
+	return sealed, nil
 }
 
 func expressionKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -1059,7 +1097,14 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	if available && claimProven(value, kind, targetType) {
+	shapeRelation := shapeUnknown
+	for _, operand := range operation.Operands {
+		if operand.Role == "shape-target" {
+			shapeRelation = assignmentShapeRelation(value, operand.Value)
+			break
+		}
+	}
+	if available && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if kind == "claim-kind/1" {
 			closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
@@ -1080,7 +1125,7 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 		}
 	}
 	anySource := isExplicitAnyValue(value) || sourceHasExplicitAny(source, partition.Values())
-	if kind == "claim-kind/3" && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType)) {
+	if kind == "claim-kind/3" && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
 		if anySource {
 			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
@@ -1095,6 +1140,170 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+type shapeRelation uint8
+
+const (
+	shapeUnknown shapeRelation = iota
+	shapeProven
+	shapeRefuted
+)
+
+// assignmentShapeRelation is deliberately proof-oriented: a malformed or
+// unsupported target/type member is unknown, never a compatibility result.
+func assignmentShapeRelation(value, encodedTarget []byte) shapeRelation {
+	target, ok := shapefact.DecodeTarget(encodedTarget)
+	if !ok {
+		return shapeUnknown
+	}
+	return valueAgainstType(value, target)
+}
+
+func valueAgainstType(value []byte, target typ.Type) shapeRelation {
+	if target == nil || isUnknownScalar(value) {
+		return shapeUnknown
+	}
+	target = unwrap.Alias(target)
+	if target == nil {
+		return shapeUnknown
+	}
+	switch target.Kind() {
+	case kind.Optional:
+		optional, ok := target.(*typ.Optional)
+		if !ok || optional.Inner == nil {
+			return shapeUnknown
+		}
+		if string(value) == "scalar/nil" {
+			return shapeProven
+		}
+		return valueAgainstType(value, optional.Inner)
+	case kind.Union:
+		union, ok := target.(*typ.Union)
+		if !ok || len(union.Members) == 0 {
+			return shapeUnknown
+		}
+		unknown := false
+		for _, member := range union.Members {
+			relation := valueAgainstType(value, member)
+			if relation == shapeProven {
+				return shapeProven
+			}
+			unknown = unknown || relation == shapeUnknown
+		}
+		if unknown {
+			return shapeUnknown
+		}
+		return shapeRefuted
+	case kind.Intersection:
+		intersection, ok := target.(*typ.Intersection)
+		if !ok || len(intersection.Members) == 0 {
+			return shapeUnknown
+		}
+		unknown := false
+		for _, member := range intersection.Members {
+			relation := valueAgainstType(value, member)
+			if relation == shapeRefuted {
+				return shapeRefuted
+			}
+			unknown = unknown || relation == shapeUnknown
+		}
+		if unknown {
+			return shapeUnknown
+		}
+		return shapeProven
+	case kind.Record:
+		return tableAgainstRecord(value, target)
+	case kind.Nil:
+		return scalarRelation(value, func() bool { return string(value) == "scalar/nil" })
+	case kind.Boolean:
+		return scalarRelation(value, func() bool { return strings.HasPrefix(string(value), "scalar/bool/") })
+	case kind.String:
+		return scalarRelation(value, func() bool { return strings.HasPrefix(string(value), "scalar/string/") })
+	case kind.Number:
+		return scalarRelation(value, func() bool { return strings.HasPrefix(string(value), "scalar/number/") })
+	case kind.Integer:
+		if !strings.HasPrefix(string(value), "scalar/number/") {
+			return knownScalarRelation(value, false)
+		}
+		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
+		return scalarRelation(value, func() bool { return err == nil })
+	case kind.Literal:
+		literal, ok := target.(*typ.Literal)
+		if !ok {
+			return shapeUnknown
+		}
+		return scalarRelation(value, func() bool { return string(value) == literalValue(literal) })
+	default:
+		return shapeUnknown
+	}
+}
+
+func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok {
+		if string(value) == "scalar/table" {
+			return shapeUnknown
+		}
+		return knownScalarRelation(value, false)
+	}
+	record, ok := unwrap.Alias(target).(*typ.Record)
+	if !ok {
+		return shapeUnknown
+	}
+	unknown := false
+	for _, field := range record.Fields {
+		member, found := table.Lookup("." + field.Name)
+		if !found || !member.Present {
+			if field.Optional {
+				continue
+			}
+			if table.Closed {
+				return shapeRefuted
+			}
+			unknown = true
+			continue
+		}
+		relation := valueAgainstType([]byte(member.Value), field.Type)
+		if relation == shapeRefuted {
+			return shapeRefuted
+		}
+		unknown = unknown || relation == shapeUnknown
+	}
+	if unknown {
+		return shapeUnknown
+	}
+	return shapeProven
+}
+
+func scalarRelation(value []byte, compatible func() bool) shapeRelation {
+	return knownScalarRelation(value, compatible())
+}
+
+func knownScalarRelation(value []byte, compatible bool) shapeRelation {
+	if shapefact.IsTable(value) || string(value) == "scalar/table" || !strings.HasPrefix(string(value), "scalar/") || isUnknownScalar(value) {
+		return shapeUnknown
+	}
+	if compatible {
+		return shapeProven
+	}
+	return shapeRefuted
+}
+
+func literalValue(literal *typ.Literal) string {
+	if literal == nil {
+		return ""
+	}
+	switch literal.Base {
+	case kind.Boolean:
+		return "scalar/bool/" + literal.String()
+	case kind.Integer, kind.Number:
+		return "scalar/number/" + literal.String()
+	case kind.String:
+		return "scalar/string/" + literal.String()
+	default:
+		return ""
+	}
 }
 
 // assignmentMismatchProven is intentionally narrower than incompatibility in
@@ -1191,6 +1400,8 @@ func assignmentMismatchMessage(target string, value []byte, targetType string) s
 
 func assignmentValueType(value []byte) string {
 	switch {
+	case shapefact.IsTable(value):
+		return "table"
 	case string(value) == "scalar/nil":
 		return "nil"
 	case strings.HasPrefix(string(value), "scalar/bool/"):
@@ -1223,21 +1434,17 @@ func resolveClaimValue(term []byte, partition equation.Partition) ([]byte, bool,
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), true, nil
 	}
+	if shapefact.IsTable(term) {
+		return append([]byte(nil), term...), true, nil
+	}
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, false, fmt.Errorf("engine: unsupported claim value %q", term)
 	}
-	prefix := "value/" + string(term) + "/"
-	var value []byte
-	latestKey := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latestKey) {
-			value, latestKey = fact.Value, fact.Key
-		}
-	}
-	if value == nil {
+	value, err := resolveCurrentValue(term, partition)
+	if err != nil {
 		return nil, false, nil
 	}
-	return append([]byte(nil), value...), true, nil
+	return value, true, nil
 }
 
 func claimProven(value []byte, kind, targetType string) bool {
@@ -1847,6 +2054,8 @@ func scalarType(value []byte) (string, error) {
 		return "", errUnknownScalar
 	}
 	switch {
+	case shapefact.IsTable(value):
+		return "table", nil
 	case string(value) == "scalar/nil":
 		return "nil", nil
 	case strings.HasPrefix(string(value), "scalar/bool/"):
@@ -1967,6 +2176,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), nil
 	}
+	if shapefact.IsTable(term) {
+		return append([]byte(nil), term...), nil
+	}
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
@@ -2010,6 +2222,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), nil
 	}
+	if shapefact.IsTable(term) {
+		return append([]byte(nil), term...), nil
+	}
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
@@ -2023,6 +2238,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		}
 	}
 	if value == nil {
+		if member, found := shapeMemberValue(term, partition); found {
+			return member, nil
+		}
 		// A member/index path has a concrete Lua source but its heap write can
 		// be outside this scalar model. Root paths remain strict so an absent
 		// variable is never fabricated as a truthy or falsy value.
@@ -2034,9 +2252,58 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	return append([]byte(nil), value...), nil
 }
 
+// shapeMemberValue projects a member only from a prior, sealed literal fact.
+// It never guesses through an unrecorded heap object: absence is available
+// only when the literal itself recorded that member path as absent (or closed).
+func shapeMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	if !strings.HasPrefix(string(term), "path/") {
+		return nil, false
+	}
+	key := strings.TrimPrefix(string(term), "path/")
+	for cut := len(key); cut > 0; {
+		cut = strings.LastIndexAny(key[:cut], ".[")
+		if cut < 0 {
+			return nil, false
+		}
+		ancestor, suffix := key[:cut], key[cut:]
+		value, found := latestValue([]byte("path/"+ancestor), partition)
+		if !found {
+			continue
+		}
+		table, ok := shapefact.DecodeTable(value)
+		if !ok {
+			continue
+		}
+		member, found := table.Lookup(suffix)
+		if !found {
+			return nil, false
+		}
+		if !member.Present {
+			return []byte("scalar/nil"), true
+		}
+		return []byte(member.Value), true
+	}
+	return nil, false
+}
+
+func latestValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := "value/" + string(term) + "/"
+	var value []byte
+	latestKey := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latestKey) {
+			value, latestKey = fact.Value, fact.Key
+		}
+	}
+	return append([]byte(nil), value...), value != nil
+}
+
 func luaTruthy(value []byte) (bool, error) {
 	if isUnknownScalar(value) {
 		return false, errUnknownScalar
+	}
+	if shapefact.IsTable(value) {
+		return true, nil
 	}
 	switch string(value) {
 	case "scalar/nil", "scalar/bool/false":
