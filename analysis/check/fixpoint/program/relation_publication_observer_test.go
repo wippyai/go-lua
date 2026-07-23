@@ -13,6 +13,7 @@ import (
 
 func TestRelationPublicationObserverRetainsOnlyThePublicationBoundary(t *testing.T) {
 	calls := 0
+	corpusSize, passed := 0, 0
 	_, err := RunChunk(parseChunk(t, `
 local value = "retained"
 return value
@@ -34,6 +35,7 @@ return value
 				if !plan.Acyclic {
 					continue
 				}
+				corpusSize++
 				result := published.results[plan.Body]
 				entry, ok := result.EntryState()
 				if !ok {
@@ -83,6 +85,7 @@ return value
 				if !production.ToOutputClosure().Equal(evaluated.Closure) {
 					t.Fatalf("closure mismatch for acyclic body %s", plan.Body)
 				}
+				passed++
 			}
 			return nil
 		},
@@ -93,4 +96,8 @@ return value
 	if calls != 1 {
 		t.Fatalf("publication observer calls = %d, want 1", calls)
 	}
+	if corpusSize == 0 || passed != corpusSize {
+		t.Fatalf("CORPUS SIZE %d; PASS RATE %d/%d", corpusSize, passed, corpusSize)
+	}
+	t.Logf("CORPUS SIZE %d; PASS RATE %d/%d", corpusSize, passed, corpusSize)
 }
