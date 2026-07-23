@@ -390,20 +390,34 @@ func (d ProductDomain) RekeyFormalBoundaryCoordinateEvidence(
 		}
 		seen[position] = true
 		support := coordinate.ops.scalarSupport(selected, scalar.slot.key)
-		if !support.valid() || support == CoordinateScalarForbidden {
+		if !support.valid() {
 			return CoordinateFamilySkeleton{}, nil, fmt.Errorf("%w: formal boundary source support", ErrInvalidLaneFactor)
 		}
 		projectedKey, keep, valid := coordinate.boundary.projectKey(&projectCtx, scalar.slot.key)
 		if !valid || !keep {
 			return CoordinateFamilySkeleton{}, nil, fmt.Errorf("%w: formal boundary source scalar is outside image", ErrInvalidLaneFactor)
 		}
-		projectedScalar, valid := coordinate.boundary.projectScalar(&projectCtx, projectedKey, scalar.payload)
-		if !valid || projectedScalar == nil {
-			return CoordinateFamilySkeleton{}, nil, fmt.Errorf("state: formal boundary scalar projection failed in family %q", family.id)
-		}
 		targetKey, mapped := coordinate.ops.formalRekey.key(projectedKey, plan.projection.inverse)
 		if !mapped || targetKey == nil || !coordinate.ops.keyValid(targetKey, targetSkeleton.keys) {
 			return CoordinateFamilySkeleton{}, nil, fmt.Errorf("state: formal boundary key rekey failed in family %q", family.id)
+		}
+		if support == CoordinateScalarForbidden {
+			// A sparse demand round represents a missing source leaf with its
+			// registered default. If selection removes that leaf, full-factor
+			// publication omits it and dynamic-read observation supplies the
+			// destination default. Keep that law in the State kernel.
+			targetDefault, defaultErr := d.CoordinateDefault(targetSkeleton, CoordinateSlot{
+				family: family, keys: targetSkeleton.keys, key: targetKey,
+			})
+			if defaultErr != nil {
+				return CoordinateFamilySkeleton{}, nil, defaultErr
+			}
+			out[scalarIndex] = targetDefault
+			continue
+		}
+		projectedScalar, valid := coordinate.boundary.projectScalar(&projectCtx, projectedKey, scalar.payload)
+		if !valid || projectedScalar == nil {
+			return CoordinateFamilySkeleton{}, nil, fmt.Errorf("state: formal boundary scalar projection failed in family %q", family.id)
 		}
 		targetScalar, imported := coordinate.ops.importScalar(projectedScalar)
 		if !imported || targetScalar == nil || !coordinate.ops.scalarValid(targetKey, targetScalar) {
