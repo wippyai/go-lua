@@ -441,6 +441,9 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	if code == "effect.freeze.mutation" || code == "effect.lifecycle.unreleased" {
 		result.Severity = diagnostic.SeverityWarning
 	}
+	if code == "channel.select.exhaustiveness" || code == "lint.union.exhaustiveness" {
+		result.Severity = diagnostic.SeverityWarning
+	}
 	return result
 }
 

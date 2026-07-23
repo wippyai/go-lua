@@ -64,6 +64,10 @@ const (
 type Compilation struct {
 	Artifact equation.Artifact
 	Cyclic   *equation.CyclicArtifact
+	// WIR is the immutable lowered body that owns source topology.  Consumers
+	// may inspect it only as descriptive input; evaluation remains exclusively
+	// owned by Artifact and the engine kernels.
+	WIR *wir.Body
 	// Body is the stable lexical identity for this independently admitted WIR
 	// body. Evaluation still starts exclusively at the root artifact.
 	Body          equation.BodyID
@@ -167,7 +171,7 @@ func Compile(source string) (Compilation, error) {
 
 func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, wirBody *wir.Body, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
 	return Compilation{
-		Artifact: artifact, Body: body, Prototype: prototype, PrototypeName: prototypeName,
+		Artifact: artifact, WIR: wirBody, Body: body, Prototype: prototype, PrototypeName: prototypeName,
 		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary, RebindsBoundary: bodyRebindsBoundary(wirBody, boundary),
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
 		BranchSpans: branches, EffectSpans: effects,

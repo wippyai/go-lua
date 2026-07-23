@@ -197,7 +197,7 @@ func Check(source string) (result Result, err error) {
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, lexical.lifecycleEvidence),
+		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, lexical.lifecycleEvidence, lexical.selectEvidence),
 		DiagnosticSpans:      diagnosticSpans,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
@@ -281,7 +281,7 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans map[string]wir.Span, lifecycleEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
@@ -303,6 +303,18 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if isChannelLifecycleDiagnostic(fact.Key) {
 			out = append(out, enrichChannelLifecycleDiagnostic(item))
+			continue
+		}
+		if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "channel.select.exhaustiveness/") || strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
+			item.Evidence = append([]DiagnosticEvidence(nil), selectEvidence[fact.Key]...)
+			if strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
+				item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "union case check"}}
+				item.Help = "Handle each missing case, or add an else branch when a fallback is valid."
+			} else {
+				item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel case check"}}
+				item.Help = "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
+			}
+			out = append(out, item)
 			continue
 		}
 		if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "effect.lifecycle.unreleased/") {
@@ -637,6 +649,10 @@ func diagnosticCode(key string) string {
 		return "channel.send.closed"
 	case strings.HasPrefix(key, "channel.close.closed/"):
 		return "channel.close.closed"
+	case strings.HasPrefix(key, "channel.select.exhaustiveness/"):
+		return "channel.select.exhaustiveness"
+	case strings.HasPrefix(key, "lint.union.exhaustiveness/"):
+		return "lint.union.exhaustiveness"
 	case strings.HasPrefix(key, "claim/unproven/"):
 		return "lint.claim.unproven"
 	case strings.HasPrefix(key, "type.call.direct."):
@@ -1009,6 +1025,7 @@ type lexicalEvaluator struct {
 	requiresBody      map[string]bool
 	diagnosticSpans   map[string]wir.Span
 	lifecycleEvidence map[string][]DiagnosticEvidence
+	selectEvidence    map[string][]DiagnosticEvidence
 	active            map[equation.BodyID]bool
 }
 
@@ -1057,7 +1074,7 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 }
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), active: make(map[equation.BodyID]bool)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), active: make(map[equation.BodyID]bool)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		if compilation.PrototypeName != "" {
@@ -1766,6 +1783,16 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 		}
 	}
+	if child.Cyclic == nil && childHasSelect(child) {
+		body := fmt.Sprintf("%x", child.Body)
+		consumers := append(channelSelectCoverageConsumers(child), channelSelectUnionConsumers(child)...)
+		for _, consumer := range consumers {
+			key := "child/" + body + "/" + consumer.Key
+			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: []byte(consumer.Message)})
+			lexical.diagnosticSpans[key] = consumer.Span
+			lexical.selectEvidence[key] = consumer.Evidence
+		}
+	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
 }
 
@@ -1778,6 +1805,15 @@ func childHasChannelLifecycle(child front.Compilation) bool {
 			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "channel.new" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func childHasSelect(child front.Compilation) bool {
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind == "channel-select" {
+			return true
 		}
 	}
 	return false
