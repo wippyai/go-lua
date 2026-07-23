@@ -214,6 +214,52 @@ func TestCompileBodyLowersCallInsteadOfRejectingIt(t *testing.T) {
 	}
 }
 
+func TestCompileBodyExternalCallAddsBoundaryFactorWithoutForkingCallPair(t *testing.T) {
+	artifact, err := front.CompileBody(`
+local library = require("catalog")
+local kind = type(nil)
+local row = library:fetch(kind)
+collectgarbage("collect")
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	counts := occurrenceCounts(artifact)
+	if counts["apply"] != 4 || counts["call-results"] != 4 || counts["external-call"] != 4 {
+		t.Fatalf("external call ownership counts = %#v, want four apply/result pairs and four factors", counts)
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "external-call" {
+			continue
+		}
+		roles := operands(operation)
+		if !strings.HasPrefix(roles["application"], "call/op-") || !strings.HasPrefix(roles["provider"], "provider/") {
+			t.Fatalf("external boundary operands = %#v", roles)
+		}
+		if _, ownsSlot := roles["result-00000000"]; ownsSlot {
+			t.Fatalf("external factor owns a result slot: %#v", roles)
+		}
+	}
+}
+
+func TestCompileBodyLowersExactPublicationSlots(t *testing.T) {
+	artifact, err := front.CompileBody(`return 7, nil, false`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		roles := operands(operation)
+		if len(roles) != 3 || roles["return-value-00000000"] != "scalar/number/7" || roles["return-value-00000001"] != "scalar/nil" || roles["return-value-00000002"] != "scalar/bool/false" {
+			t.Fatalf("publication slots = %#v", roles)
+		}
+		return
+	}
+	t.Fatal("publication occurrence missing")
+}
+
 func TestCompileBodyLowersCompleteTableAllocationGraph(t *testing.T) {
 	artifact, err := front.CompileBody(`
 local seed = 1

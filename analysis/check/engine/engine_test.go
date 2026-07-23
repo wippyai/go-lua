@@ -126,8 +126,63 @@ func TestCheckUnknownCallPublishesExplicitUnknownResult(t *testing.T) {
 	if got := valuesByName(result.Values)["value"]; got != "unknown" {
 		t.Fatalf("published value = %q, want explicit unknown; values = %#v", got, result.Values)
 	}
-	if result.Transactions != 4 { // entry, apply, call-results, assignment
-		t.Fatalf("transactions = %d, want entry plus complete call sequence and assignment", result.Transactions)
+	if result.Transactions != 5 { // entry, apply, external boundary, call-results, assignment
+		t.Fatalf("transactions = %d, want entry plus complete provider call sequence and assignment", result.Transactions)
+	}
+}
+
+func TestCheckPublishesOrderedReturnTuple(t *testing.T) {
+	result, err := engine.Check(`
+local answer = 42
+return answer, nil, false
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	got := valuesByName(result.Outcomes)
+	for key, want := range map[string]string{
+		"return/arity": "3",
+		"return/0":     "42",
+		"return/1":     "nil",
+		"return/2":     "false",
+	} {
+		if got[key] != want {
+			t.Errorf("published %s = %q, want %q; outcomes = %#v", key, got[key], want, result.Outcomes)
+		}
+	}
+}
+
+func TestCheckPublishesEmptyReturnTuple(t *testing.T) {
+	result, err := engine.Check("return")
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	got := valuesByName(result.Outcomes)
+	if got["return/arity"] != "0" {
+		t.Fatalf("published return arity = %q, want 0; outcomes = %#v", got["return/arity"], result.Outcomes)
+	}
+	if _, found := got["return/0"]; found {
+		t.Fatalf("empty return published a first value: %#v", result.Outcomes)
+	}
+}
+
+// This is the slot-retention regression: the false-arm transaction contributes
+// nothing, while the selected arm's same-named slot must survive VM closure
+// merging intact.
+func TestCheckGuardedReturnRetainsSelectedSlotAtMerge(t *testing.T) {
+	result, err := engine.Check(`
+if false then
+    return "then"
+else
+    return "else"
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	got := valuesByName(result.Outcomes)
+	if got["return/arity"] != "1" || got["return/0"] != `"else"` {
+		t.Fatalf("guarded return outcomes = %#v, want the selected else slot", result.Outcomes)
 	}
 }
 

@@ -11,8 +11,8 @@ import (
 
 func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 	cases := StarterCorpus()
-	if len(cases) != 77 {
-		t.Fatalf("starter corpus has %d cases, want 77", len(cases))
+	if len(cases) != 95 {
+		t.Fatalf("starter corpus has %d cases, want 95", len(cases))
 	}
 	families := map[string]int{}
 	for index, test := range cases {
@@ -25,9 +25,14 @@ func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 		}
 		families[family]++
 	}
-	for _, family := range []string{"allocation", "assignment", "branch", "call", "channel-select", "diagnostic", "loop", "pathstore"} {
+	for _, family := range []string{"allocation", "assignment", "branch", "call", "channel-select", "diagnostic", "loop", "outcome", "pathstore", "provider"} {
 		if families[family] == 0 {
 			t.Fatalf("starter corpus has no %s case", family)
+		}
+	}
+	for _, family := range []string{"outcome", "provider"} {
+		if families[family] < 8 {
+			t.Fatalf("%s harness cases = %d, want at least 8", family, families[family])
 		}
 	}
 }

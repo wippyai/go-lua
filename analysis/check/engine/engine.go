@@ -74,7 +74,7 @@ func Check(source string) (Result, error) {
 	}
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, evaluation.Closure.Values),
-		Outcomes: evaluation.Closure.Outcomes, Diagnostics: evaluation.Closure.Diagnostics,
+		Outcomes: publishedOutcomes(evaluation.Closure.Outcomes), Diagnostics: evaluation.Closure.Diagnostics,
 		Transactions: evaluation.Transactions,
 	}, nil
 }
@@ -116,7 +116,15 @@ func registry() (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{entry, allocationTemplate, objectMaterialization, write, branch, apply, results})
+	external, err := binding("external-call", equation.KernelFunc(externalCallKernel))
+	if err != nil {
+		return nil, err
+	}
+	publication, err := binding("publication", equation.KernelFunc(publicationKernel))
+	if err != nil {
+		return nil, err
+	}
+	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{entry, allocationTemplate, objectMaterialization, write, branch, apply, external, results, publication})
 	if err != nil {
 		return nil, fmt.Errorf("engine: build kernel registry: %w", err)
 	}
@@ -229,6 +237,36 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	return equation.TransactionResult{Complete: true}, nil
 }
 
+// externalCallKernel is a sealed provider-boundary factor.  It intentionally
+// owns no result term: call-results remains the sole result-slot owner for
+// every call, whether the callee is local or external.
+func externalCallKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	operands, err := requiredOperandsByRole(operation.Operands, "application", "provider", "argument-spread", "result-arity", "result-spread", "context")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	if !strings.HasPrefix(string(operands["application"]), "call/") ||
+		(!strings.HasPrefix(string(operands["provider"]), "provider/global/") && !strings.HasPrefix(string(operands["provider"]), "provider/module/")) ||
+		(string(operands["argument-spread"]) != "scalar/bool/true" && string(operands["argument-spread"]) != "scalar/bool/false") ||
+		(string(operands["result-spread"]) != "scalar/bool/true" && string(operands["result-spread"]) != "scalar/bool/false") ||
+		!strings.HasPrefix(string(operands["context"]), "call-context/") {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call boundary")
+	}
+	if _, err := strconv.Atoi(string(operands["result-arity"])); err != nil {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external result arity")
+	}
+	for _, operand := range operation.Operands {
+		if strings.HasPrefix(operand.Role, "argument-") || operand.Role == "receiver" || operand.Role == "method" || operand.Role == "application" || operand.Role == "provider" || operand.Role == "argument-spread" || operand.Role == "result-arity" || operand.Role == "result-spread" || operand.Role == "context" {
+			continue
+		}
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call role %q", operand.Role)
+	}
+	return equation.TransactionResult{Complete: true}, nil
+}
+
 // callResultsKernel publishes explicit Top facts for unresolved owned result
 // slots, never a missing slot or an invented concrete value.
 func callResultsKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -264,6 +302,46 @@ func callResultsKernel(operation equation.BoundEquation, partition equation.Part
 		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: []byte("scalar/top")})
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// publicationKernel resolves every selected return slot before publishing any
+// output.  A false or unknown guard contributes no tuple; a selected guard
+// contributes the complete indexed tuple, including nil-valued slots.
+func publicationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	values := make([][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		const prefix = "return-value-"
+		if !strings.HasPrefix(operand.Role, prefix) {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
+		}
+		indexText := strings.TrimPrefix(operand.Role, prefix)
+		if len(indexText) != 8 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
+		}
+		index, err := strconv.Atoi(indexText)
+		if err != nil || index < 0 || index >= len(values) || values[index] != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
+		}
+		value, err := resolveCurrentValue(operand.Value, partition)
+		if err != nil {
+			return equation.TransactionResult{}, err
+		}
+		values[index] = value
+	}
+	for index, value := range values {
+		if value == nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: missing return value %d", index)
+		}
+	}
+	outcomes := make([]equation.Fact, 0, len(values)+1)
+	outcomes = append(outcomes, equation.Fact{Key: "return/arity", Value: []byte(strconv.Itoa(len(values)))})
+	for index, value := range values {
+		outcomes = append(outcomes, equation.Fact{Key: "return/" + strconv.Itoa(index), Value: value})
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Outcomes: outcomes}}, nil
 }
 
 // branchTruth evaluates exactly one selector.  An unavailable selector is an
@@ -626,6 +704,22 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].Key < values[j].Key })
 	return values
+}
+
+func publishedOutcomes(stored []equation.Fact) []equation.Fact {
+	outcomes := make([]equation.Fact, 0, len(stored))
+	for _, storedOutcome := range stored {
+		outcome := equation.Fact{Key: storedOutcome.Key, Value: append([]byte(nil), storedOutcome.Value...)}
+		if strings.HasPrefix(outcome.Key, "return/") && outcome.Key != "return/arity" {
+			decoded, err := displayValue(outcome.Value)
+			if err == nil {
+				outcome.Value = decoded
+			}
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].Key < outcomes[j].Key })
+	return outcomes
 }
 
 func artifactOperandsByRole(operands []equation.Operand, roles ...string) (map[string][]byte, error) {

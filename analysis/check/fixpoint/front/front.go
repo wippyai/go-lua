@@ -32,8 +32,10 @@ const (
 	branchKernel                = "front/branch-relations/v1"
 	applyKernel                 = "front/apply/v1"
 	resultsKernel               = "front/call-results/v1"
+	externalCallKernel          = "front/external-call/v1"
 	genericForKernel            = "front/generic-for/v1"
 	selectKernel                = "front/channel-select/v1"
+	publicationKernel           = "front/publication/v1"
 	entryName                   = "entry"
 )
 
@@ -70,6 +72,8 @@ type operation struct {
 	family         string
 	allocationSite string
 	callResults    bool
+	callApply      equation.Coordinate
+	external       equation.Term
 }
 
 func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
@@ -133,12 +137,17 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, family: "object-materialization", allocationSite: site},
 			)
 		case wir.OpCall:
-			// Application and result materialization are an inseparable ordered
-			// pair: a partial application cannot expose an unowned result.
-			operations = append(operations,
-				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}},
-				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, callResults: true},
-			)
+			// Calls exclusively own their application/result pair.  An external
+			// provider contributes one sealed boundary factor between those two
+			// occurrences; it never manufactures or owns result slots.
+			apply := equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}
+			operations = append(operations, operation{instruction: instruction, target: apply})
+			if provider, ok := externalProvider(body, instruction); ok {
+				operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, callApply: apply, external: provider})
+			}
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, callResults: true, callApply: apply})
+		case wir.OpReturn:
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 		case wir.OpExit, wir.OpNoop:
 			// These WIR operations carry no transfer occurrence. They are CFG
 			// structure, so retaining them as equations would invent semantics.
@@ -284,7 +293,15 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			}
 			draft.Operands = operands
 		case instruction.Op == wir.OpCall:
-			if !operation.callResults {
+			if operation.external.Encoding != nil {
+				operands, err := externalCallOperands(body, instruction, operation.callApply, operation.external)
+				if err != nil {
+					return equation.Artifact{}, fmt.Errorf("front: external call %s: %w", operation.target.Name, err)
+				}
+				draft.Occurrence = occurrence("external-call")
+				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+				draft.Operands = operands
+			} else if !operation.callResults {
 				operands, err := applyOperands(body, instruction)
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: call %s: %w", operation.target.Name, err)
@@ -293,8 +310,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
 			} else {
-				apply := operations[index-1]
-				operands, err := callResultOperands(body, instruction, apply.target)
+				operands, err := callResultOperands(body, instruction, operation.callApply)
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: call results %s: %w", operation.target.Name, err)
 				}
@@ -302,6 +318,14 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
 			}
+		case instruction.Op == wir.OpReturn:
+			operands, err := publicationOperands(body, instruction)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: return %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("publication")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = operands
 		case instruction.Op == wir.OpIterate:
 			operands, err := genericForOperands(body, instruction, loopBindings[instruction.Point])
 			if err != nil {
@@ -375,6 +399,10 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure call-results compiler: %w", err)
 	}
+	compiler, err = compiler.With("external-call", equation.BindExistingKernel(externalCallKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure external call compiler: %w", err)
+	}
 	compiler, err = compiler.With("generic-for", equation.BindExistingKernel(genericForKernel))
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure generic-for compiler: %w", err)
@@ -382,6 +410,10 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	compiler, err = compiler.With("channel-select", equation.BindExistingKernel(selectKernel))
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure channel-select compiler: %w", err)
+	}
+	compiler, err = compiler.With("publication", equation.BindExistingKernel(publicationKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure publication compiler: %w", err)
 	}
 	artifact, err := compiler.Compile(equation.Source{Drafts: drafts})
 	if err != nil {
@@ -477,7 +509,7 @@ func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 // kernels; unknown kinds deliberately have no binding.
 func ContractID(kind string) (equation.ContentID, bool) {
 	switch kind {
-	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "generic-for", "channel-select":
+	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication":
 		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
 	default:
 		return equation.ContentID{}, false
@@ -508,10 +540,14 @@ func KernelID(kind string) (string, bool) {
 		return applyKernel, true
 	case "call-results":
 		return resultsKernel, true
+	case "external-call":
+		return externalCallKernel, true
 	case "generic-for":
 		return genericForKernel, true
 	case "channel-select":
 		return selectKernel, true
+	case "publication":
+		return publicationKernel, true
 	default:
 		return "", false
 	}
@@ -767,6 +803,98 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 		equation.Operand{Role: "open-tail", Term: boolTerm(instruction.CallOpenTail)},
 		equation.Operand{Role: "condition-negated", Term: boolTerm(instruction.CallConditionNegated)},
 	)
+	return operands, nil
+}
+
+// externalProvider recognizes providers whose callable identity lives outside
+// this body.  Local closures deliberately remain ordinary calls: converting
+// them into an external boundary would erase their body-local identity.
+func externalProvider(body *wir.Body, instruction wir.Instruction) (equation.Term, bool) {
+	if body == nil || instruction.Op != wir.OpCall {
+		return equation.Term{}, false
+	}
+	operand := instruction.Call.Callee
+	if instruction.Call.Method != 0 {
+		operand = instruction.Call.Receiver
+	}
+	if operand.Kind != wir.OperandPath {
+		return equation.Term{}, false
+	}
+	path := body.Path(wir.PathRef(operand.Ref))
+	if path.IsEmpty() || path.Symbol == 0 {
+		return equation.Term{}, false
+	}
+	root := path.RootOnly()
+	if module, ok := body.SymbolRequireModulePath(root.Symbol); ok {
+		return equation.ClosedTerm([]byte("provider/module/" + strconv.Quote(module))), true
+	}
+	kind, global := body.SymbolKind(root.Symbol)
+	if !global && kind != wir.SymbolGlobal && !body.IsImplicitGlobalSymbol(root.Symbol) {
+		return equation.Term{}, false
+	}
+	name := path.String()
+	if name == "" {
+		return equation.Term{}, false
+	}
+	return equation.ClosedTerm([]byte("provider/global/" + strconv.Quote(name))), true
+}
+
+// externalCallOperands closes the external boundary's entire source-side
+// input.  Result ownership stays with call-results; this factor proves the
+// provider boundary and preserves argument/result-shape distinctions for its
+// eventual provider implementation.
+func externalCallOperands(body *wir.Body, instruction wir.Instruction, apply equation.Coordinate, provider equation.Term) ([]equation.Operand, error) {
+	if provider.Entry || len(provider.Encoding) == 0 || apply.Name == "" {
+		return nil, fmt.Errorf("incomplete external call boundary")
+	}
+	operands := []equation.Operand{
+		{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))},
+		{Role: "provider", Term: provider},
+		{Role: "argument-spread", Term: boolTerm(instruction.ListSpread)},
+		{Role: "result-arity", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Results.Len))))},
+		{Role: "result-spread", Term: boolTerm(instruction.ResultSpread)},
+		{Role: "context", Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
+	}
+	for index, argument := range body.Operands(instruction.List) {
+		term, err := scalarTerm(body, argument)
+		if err != nil {
+			return nil, fmt.Errorf("argument %d: %w", index, err)
+		}
+		operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
+	}
+	if instruction.Call.Method != 0 {
+		receiver, err := scalarTerm(body, instruction.Call.Receiver)
+		if err != nil {
+			return nil, fmt.Errorf("receiver: %w", err)
+		}
+		method := body.Const(instruction.Call.Method)
+		if method.Kind != wir.ConstString || method.Str == "" {
+			return nil, fmt.Errorf("malformed method selector")
+		}
+		operands = append(operands,
+			equation.Operand{Role: "receiver", Term: receiver},
+			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
+		)
+	}
+	return operands, nil
+}
+
+// publicationOperands resolves the syntactically sealed return inventory to
+// stable slots.  Open tails have no exact slot inventory and are rejected
+// before the VM can publish a partial tuple.
+func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
+	if instruction.ListSpread {
+		return nil, fmt.Errorf("open result tail has no exact publication slots")
+	}
+	values := body.Operands(instruction.List)
+	operands := make([]equation.Operand, 0, len(values))
+	for index, value := range values {
+		term, err := scalarTerm(body, value)
+		if err != nil {
+			return nil, fmt.Errorf("value %d: %w", index, err)
+		}
+		operands = append(operands, equation.Operand{Role: indexedRole("return-value", index), Term: term})
+	}
 	return operands, nil
 }
 

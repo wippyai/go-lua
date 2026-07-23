@@ -860,6 +860,96 @@ local result = record.status
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"ready"`)}},
 		},
+		{
+			Name:   "provider/global-call-with-false",
+			Source: `local result = type(false)`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"boolean"`)}},
+		},
+		{
+			Name:   "provider/global-call-with-nil",
+			Source: `local result = type(nil)`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"nil"`)}},
+		},
+		{
+			Name:   "provider/global-call-with-zero",
+			Source: `local result = type(0)`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"number"`)}},
+		},
+		{
+			Name:   "provider/global-statement-results-are-absent",
+			Source: `collectgarbage("collect")`,
+			Expect: Expectation{},
+		},
+		{
+			Name:   "provider/select-counts-nil-values",
+			Source: `local result = select("#", nil, false)`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "2")}},
+		},
+		{
+			Name:   "provider/select-without-values-is-zero",
+			Source: `local result = select("#")`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "0")}},
+		},
+		{
+			Name:   "provider/string-find-returns-two-results",
+			Source: `local first, second = string.find("abc", "b")`,
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "2"), value("second", "2")}},
+		},
+		{
+			Name:   "provider/tonumber-nil-remains-nil",
+			Source: `local result = tonumber(nil)`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name:   "outcome/bare-return-has-zero-results",
+			Source: `return`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "0")}},
+		},
+		{
+			Name:   "outcome/empty-string-is-a-result",
+			Source: `return ""`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", `""`)}},
+		},
+		{
+			Name:   "outcome/false-is-a-result",
+			Source: `return false`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "false")}},
+		},
+		{
+			Name:   "outcome/local-value-is-published",
+			Source: "local result = \"ready\"\nreturn result",
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", `"ready"`)}},
+		},
+		{
+			Name:   "outcome/missing-local-is-explicit-nil",
+			Source: "local missing\nreturn missing",
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "nil")}},
+		},
+		{
+			Name:   "outcome/multiple-results-preserve-order",
+			Source: `return 7, nil, "tail"`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "3"), outcome("return/0", "7"), outcome("return/1", "nil"), outcome("return/2", `"tail"`)}},
+		},
+		{
+			Name:   "outcome/nil-guard-selects-else-return",
+			Source: "if nil then return \"then\" else return \"else\" end",
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", `"else"`)}},
+		},
+		{
+			Name:   "outcome/nil-is-distinct-from-no-result",
+			Source: `return nil`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "nil")}},
+		},
+		{
+			Name:   "outcome/selected-true-arm-publishes-only-its-return",
+			Source: "if true then return \"selected\" else return \"not-selected\" end",
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", `"selected"`)}},
+		},
+		{
+			Name:   "outcome/zero-is-a-result",
+			Source: `return 0`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "0")}},
+		},
 	}
 	for index := range cases {
 		cases[index].Expect.Published = canonicalPublished(cases[index].Expect.Published)
@@ -871,4 +961,8 @@ local result = record.status
 
 func value(subject, result string) PublishedOutcome {
 	return PublishedOutcome{Channel: "value", Subject: subject, Value: result}
+}
+
+func outcome(subject, result string) PublishedOutcome {
+	return PublishedOutcome{Channel: "outcome", Subject: subject, Value: result}
 }
