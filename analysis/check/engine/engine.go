@@ -42,6 +42,17 @@ const branchPredicatePrefix = "front/branch-predicate/v1/"
 
 const memberMissingPrefix = "shape/member-missing/v1/"
 
+// Heap facts are deliberately keyed by a sealed allocation identity, never by
+// a source path.  Paths are merely lenses: assignments copy an identity and
+// member/index writes update the object reached by every such lens.  Keeping
+// the identity separate from a shape avoids letting a stale root.field value
+// outrank a write made through an alias.
+const (
+	heapTableIdentityPrefix  = "heap/table-identity/"
+	heapMemberPrefix         = "heap/member/"
+	heapMemberIdentityPrefix = "heap/member-identity/"
+)
+
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
 // It intentionally contains only resolved WIR data, never an AST expression or
 // an evaluator callback.
@@ -2167,6 +2178,30 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		}
 	}
+	identity, hasIdentity := tableIdentityForTerm(operands["value"], partition)
+	if !hasIdentity && (shapefact.IsTable(value) || string(value) == "scalar/table") {
+		identity, hasIdentity = sealedTableIdentity(operation), true
+	}
+	if hasIdentity {
+		values = append(values, heapIdentityFact(target, operation.Target.Name, identity))
+		if table, ok := shapefact.DecodeTable(value); ok {
+			for _, member := range table.Members {
+				memberValue := []byte("scalar/nil")
+				if member.Present {
+					memberValue = []byte(member.Value)
+				}
+				values = append(values, heapMemberFact(identity, member.Suffix, operation.Target.Name, memberValue))
+			}
+		}
+	}
+	if root, suffix, ok := tableAddress([]byte(target)); ok && suffix != "" {
+		if parent, found := tableIdentityForTerm(root, partition); found {
+			values = append(values, heapMemberFact(parent, suffix, operation.Target.Name, value))
+			if hasIdentity {
+				values = append(values, heapMemberIdentityFact(parent, suffix, operation.Target.Name, identity))
+			}
+		}
+	}
 	if isChannelIdentity(value) {
 		values = append(values, equation.Fact{
 			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
@@ -2425,6 +2460,14 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
 	})
+	if root, suffix, ok := tableAddress(operands["target"]); ok && suffix != "" {
+		if identity, found := tableIdentityForTerm(root, partition); found {
+			result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
+			if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
+				result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+			}
+		}
+	}
 	if isChannelIdentity(value) {
 		result.Closure.Values = append(result.Closure.Values, equation.Fact{
 			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
@@ -2434,9 +2477,8 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	return result, nil
 }
 
-// dynamicIndexReadKernel has no closed heap fact to project at this stage.
-// It nevertheless publishes an explicit Top for the result, so a dynamic read
-// never masquerades as an absent value and never selects a branch by accident.
+// dynamicIndexReadKernel projects only an exact-key heap fact.  Unknown keys
+// retain Top: selecting an arbitrary member from a sealed table is not proof.
 func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
@@ -2449,9 +2491,20 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || len(operands["container"]) == 0 || len(operands["key"]) == 0 {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed dynamic index read")
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-		Key: "value/" + target + "/" + operation.Target.Name, Value: []byte("scalar/top"),
-	}}}}, nil
+	value := []byte("scalar/top")
+	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}, {Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)}}
+	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
+		key, keyErr := resolveCurrentValue(operands["key"], partition)
+		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact {
+			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
+				values[0].Value = member
+			}
+			if memberIdentity, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, suffix, partition); found {
+				values = append(values, heapIdentityFact(target, operation.Target.Name, memberIdentity))
+			}
+		}
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
 // claimKernel makes user claims explicit checked refinements. An unproven
@@ -3013,10 +3066,27 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	if _, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix", "value"); err != nil {
+	operands, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix", "value")
+	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return frozenMutationDiagnostic(operation, partition, "assignment")
+	result, err := frozenMutationDiagnostic(operation, partition, "assignment")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
+		key, keyErr := resolveCurrentValue(operands["key"], partition)
+		if suffix, exact := tableMemberSuffix(key, operands["suffix"]); keyErr == nil && exact {
+			value, valueErr := resolveCurrentValue(operands["value"], partition)
+			if valueErr == nil {
+				result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
+				if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
+					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+				}
+			}
+		}
+	}
+	return result, nil
 }
 
 func genericForKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -3429,6 +3499,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	if closure, recognized := tableInsertEpoch(operation, operands, partition); recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if closure, recognized := channelLifecycleEpoch(operation, operands, partition); recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -3666,7 +3739,62 @@ func freezeCallEpoch(operation equation.BoundEquation, partition equation.Partit
 		Key:   "effect.freeze/" + strings.TrimPrefix(string(subject), "path/") + "/" + operation.Target.Name,
 		Value: []byte(value),
 	})
+	if table, err := resolveCurrentValue(subject, partition); err == nil {
+		closure.Values = append(closure.Values, equation.Fact{Key: "call-result/" + operation.Target.Name + "/00000000", Value: table})
+		if identity, found := tableIdentityForTerm(subject, partition); found {
+			closure.Values = append(closure.Values, equation.Fact{Key: "call-heap-identity/" + operation.Target.Name + "/00000000", Value: identity})
+		}
+	}
 	return closure, true, nil
+}
+
+// tableInsertEpoch handles only the exact table.insert(array, value) form.
+// Its append index is derived from already published members of the sealed
+// identity; an unknown receiver or an unsupported overload remains untouched.
+func tableInsertEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
+	if operands.display != "table.insert" || operands.spread || len(operands.arguments) != 2 {
+		return equation.OutputClosure{}, false
+	}
+	if freeze, guarded := frozenProof(operation, operands.arguments[0], partition); freeze != "" || guarded {
+		proof := freeze
+		if guarded {
+			proof = "guard"
+		}
+		return equation.OutputClosure{Diagnostics: []equation.Fact{{
+			Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
+			Value: []byte(fmt.Sprintf("cannot call mutator on frozen table %q", callArgumentDisplay(operation.Operands, 0))),
+		}}}, true
+	}
+	identity, found := tableIdentityForTerm(operands.arguments[0], partition)
+	if !found {
+		return equation.OutputClosure{}, true
+	}
+	value, err := resolveCurrentValue(operands.arguments[1], partition)
+	if err != nil {
+		return equation.OutputClosure{}, true
+	}
+	next := 1
+	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(fact.Key, prefix), "/")
+		if len(parts) != 2 {
+			continue
+		}
+		suffixBytes, decodeErr := base64.RawURLEncoding.DecodeString(parts[0])
+		if decodeErr != nil {
+			continue
+		}
+		segments, valid := segment.ParseFormattedSegments(string(suffixBytes))
+		if !valid || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt || segments[0].Index < next {
+			continue
+		}
+		next = segments[0].Index + 1
+	}
+	suffix := segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentIndexInt, Index: next}})
+	return equation.OutputClosure{Values: []equation.Fact{heapMemberFact(identity, suffix, operation.Target.Name, value)}}, true
 }
 
 const channelLifecyclePrefix = "effect.lifecycle.channel/"
@@ -3836,6 +3964,162 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 		}
 	}
 	return nil, false
+}
+
+func sealedTableIdentity(operation equation.BoundEquation) []byte {
+	// Target coordinates are frozen by the artifact compiler.  Their body
+	// identity prevents equal operation ordinals in distinct lexical bodies
+	// from aliasing each other.
+	return []byte(fmt.Sprintf("sealed-table/%x/%s", operation.Target.Body, operation.Target.Name))
+}
+
+func heapIdentityFact(term, operation string, identity []byte) equation.Fact {
+	return equation.Fact{Key: heapTableIdentityPrefix + string(term) + "/" + operation, Value: append([]byte(nil), identity...)}
+}
+
+func heapFactKey(prefix string, identity []byte, suffix, operation string) string {
+	return prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/" + operation
+}
+
+func heapMemberFact(identity []byte, suffix, operation string, value []byte) equation.Fact {
+	return equation.Fact{Key: heapFactKey(heapMemberPrefix, identity, suffix, operation), Value: append([]byte(nil), value...)}
+}
+
+func heapMemberIdentityFact(identity []byte, suffix, operation string, memberIdentity []byte) equation.Fact {
+	return equation.Fact{Key: heapFactKey(heapMemberIdentityPrefix, identity, suffix, operation), Value: append([]byte(nil), memberIdentity...)}
+}
+
+func heapMemberCurrent(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, bool) {
+	want := prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, want) && (value == nil || fact.Key > latest) {
+			value, latest = fact.Value, fact.Key
+		}
+	}
+	return append([]byte(nil), value...), value != nil
+}
+
+// tableAddress splits a source path into the root table lens and its static
+// suffix.  A dynamic read is represented by its own result term, so only the
+// WIR's canonical static path spelling is admitted here.
+func tableAddress(term []byte) ([]byte, string, bool) {
+	path := strings.TrimPrefix(string(term), "path/")
+	if path == string(term) || path == "" {
+		return nil, "", false
+	}
+	cut := strings.IndexAny(path, ".[")
+	if cut < 0 {
+		return []byte("path/" + path), "", true
+	}
+	root, suffix := path[:cut], path[cut:]
+	if root == "" || !segment.ValidFormattedSegments(suffix) {
+		return nil, "", false
+	}
+	return []byte("path/" + root), suffix, true
+}
+
+func tableIdentityForTerm(term []byte, partition equation.Partition) ([]byte, bool) {
+	if identity, ok := currentEpochFact(heapTableIdentityPrefix, term, partition); ok {
+		return identity, true
+	}
+	root, suffix, ok := tableAddress(term)
+	if !ok || suffix == "" {
+		return nil, false
+	}
+	identity, ok := currentEpochFact(heapTableIdentityPrefix, root, partition)
+	if !ok {
+		return nil, false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 {
+		return nil, false
+	}
+	for len(segments) != 0 {
+		matched := false
+		for count := len(segments); count > 0; count-- {
+			prefix := segment.FormatSegments(segments[:count])
+			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
+			if !found {
+				continue
+			}
+			identity, segments, matched = next, segments[count:], true
+			break
+		}
+		if !matched {
+			return nil, false
+		}
+	}
+	return identity, true
+}
+
+func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	root, suffix, ok := tableAddress(term)
+	if !ok || suffix == "" {
+		return nil, false
+	}
+	identity, ok := tableIdentityForTerm(root, partition)
+	if !ok {
+		return nil, false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 {
+		return nil, false
+	}
+	for len(segments) != 0 {
+		whole := segment.FormatSegments(segments)
+		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
+			return value, true
+		}
+		matched := false
+		for count := len(segments) - 1; count > 0; count-- {
+			prefix := segment.FormatSegments(segments[:count])
+			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
+			if !found {
+				continue
+			}
+			identity, segments, matched = next, segments[count:], true
+			break
+		}
+		if !matched {
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func tableMemberSuffix(key, suffix []byte) (string, bool) {
+	if !strings.HasPrefix(string(suffix), "suffix/") {
+		return "", false
+	}
+	tail := strings.TrimPrefix(string(suffix), "suffix/")
+	if !segment.ValidFormattedSegments(tail) {
+		return "", false
+	}
+	if text, err := scalarString(key); err == nil {
+		if tableFieldName(text) {
+			return segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentField, Name: text}}) + tail, true
+		}
+		return segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentIndexString, Name: text}}) + tail, true
+	}
+	if number, err := scalarNumber(key); err == nil && number == math.Trunc(number) {
+		return segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentIndexInt, Index: int(number)}}) + tail, true
+	}
+	return "", false
+}
+
+func tableFieldName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' || (index > 0 && ch >= '0' && ch <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func channelDisplay(partition equation.Partition, receiver []byte) string {
@@ -4429,7 +4713,17 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
 			value = []byte("scalar/boolean")
 		}
-		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value})
+		values = append(values,
+			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
+			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+		)
+		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
+		for _, fact := range partition.Values() {
+			if fact.Key == heapKey {
+				values = append(values, heapIdentityFact(string(result), operation.Target.Name, fact.Value))
+				break
+			}
+		}
 		closureKey := "call-closure/" + strings.TrimPrefix(string(application), "call/") + "/" + key
 		for _, fact := range partition.Values() {
 			if fact.Key == closureKey {
@@ -4819,6 +5113,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if value, found := selectPayloadValue(term, partition); found {
 		return value, nil
 	}
+	if value, found := heapMemberValue(term, partition); found {
+		return value, nil
+	}
 	if value, found := typedPathValue(term, partition); found {
 		return value, nil
 	}
@@ -4864,6 +5161,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
 	if value, found := selectPayloadValue(term, partition); found {
+		return value, nil
+	}
+	if value, found := heapMemberValue(term, partition); found {
 		return value, nil
 	}
 	prefix := "value/" + string(term) + "/"

@@ -155,6 +155,44 @@ local value: number = table.value
 	t.Fatalf("explicit nil member did not refute number assignment: %#v", result.Diagnostics)
 }
 
+func TestCheckDynamicAliasWriteUpdatesSealedTableMember(t *testing.T) {
+	result, err := engine.Check(`
+type Box = { value: string? }
+local box: Box = { value = "ready" }
+local alias = box
+local key = "value"
+if box.value then
+    alias[key] = nil
+    local after: string = box.value
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "type.assignment/") && strings.Contains(string(item.Value), "box.value because it is nil, not string") {
+			return
+		}
+	}
+	t.Fatalf("alias heap write did not update box.value: %#v", result.Diagnostics)
+}
+
+func TestCheckTableInsertPublishesExactHeapElement(t *testing.T) {
+	result, err := engine.Check(`
+local values = {}
+table.insert(values, 7)
+local first: number = values[1]
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "type.assignment/") || strings.HasPrefix(item.Key, "claim/unproven/") {
+			t.Fatalf("table.insert element was not retained: %#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckRoutesWhileThroughFrozenCyclicVM(t *testing.T) {
 	result, err := engine.Check(`
 local total = 0
