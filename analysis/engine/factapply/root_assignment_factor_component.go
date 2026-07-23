@@ -57,8 +57,9 @@ type rootAssignmentFactorFreshQuery struct {
 // coordinate universe plus the exact Values terms read by the canonical
 // source program. It contains topology only; no runtime State is admitted.
 type RootAssignmentFactorComponentInventory struct {
-	Coordinates  state.CoordinateFactorInventory
-	SourceValues []statekey.Value
+	Coordinates       state.CoordinateFactorInventory
+	SourceValues      []statekey.Value
+	FormalStableRoots []formal.Root
 }
 
 func (c RootAssignmentFactorComponent) Valid() bool {
@@ -790,7 +791,7 @@ func (p RootAssignmentFactorProgram) RootAssignmentFactorComponents(
 		if familyErr != nil {
 			return nil, familyErr
 		}
-		schedule, scheduleErr := p.plan.PathDependencies(domain, familySlots)
+		schedule, scheduleErr := p.plan.PathDependenciesWithFormalRoots(domain, familySlots, inventory.FormalStableRoots)
 		if scheduleErr != nil {
 			return nil, scheduleErr
 		}

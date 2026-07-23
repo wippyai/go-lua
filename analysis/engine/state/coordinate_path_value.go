@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -34,6 +35,7 @@ type coordinateDependencySeedPayload struct {
 	id                                                               uint64
 	readPaths, resolvePaths, writePaths, mutationRoots, subtreeRoots []keyspace.Key
 	stableRootMutations                                              []symbol.ID
+	formalStableRoots                                                []formal.Root
 	transientEqualities                                              []coordinateDependencyEqualityPayload
 	readCoordinates, add                                             []coordinateKeyPayload
 }
@@ -137,6 +139,9 @@ type CoordinateDependencySeed struct {
 	// mutation region into exact coordinate reads/writes; operation executors
 	// never enumerate coordinate kinds or axes.
 	StableRootMutations []symbol.ID
+	// FormalStableRoots are the rekeyed members governed by the same
+	// stable-root mutation.
+	FormalStableRoots []formal.Root
 	// TransientEqualities describe equality closure used by an operation without
 	// publishing the equality itself. The path family certifies all proof and
 	// refinement reads plus derived writes while keeping the equality absent
@@ -271,6 +276,7 @@ func (d ProductDomain) PlanPathCoordinateDependencies(
 			writePaths: append([]keyspace.Key(nil), seed.WritePaths...), mutationRoots: append([]keyspace.Key(nil), seed.DescendantMutationRoots...),
 			subtreeRoots:        append([]keyspace.Key(nil), seed.SubtreeMutationRoots...),
 			stableRootMutations: append([]symbol.ID(nil), seed.StableRootMutations...),
+			formalStableRoots:   append([]formal.Root(nil), seed.FormalStableRoots...),
 			transientEqualities: equalities, readCoordinates: readCoordinates, add: add,
 		}
 	}

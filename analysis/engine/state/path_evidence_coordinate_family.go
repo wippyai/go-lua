@@ -330,6 +330,7 @@ func buildPathEvidenceCoordinateFamily(reg *axis.Registry, _ DomainOptions) coor
 						WritePaths: seed.writePaths, DescendantMutationRoots: seed.mutationRoots,
 						SubtreeMutationRoots: seed.subtreeRoots,
 						StableRootMutations:  seed.stableRootMutations,
+						FormalStableRoots:    seed.formalStableRoots,
 						TransientEqualities:  equalities, ReadCoordinates: readCoordinates, AddCoordinates: add,
 					}
 				}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -37,6 +38,9 @@ type CoordinateDependencySeed struct {
 	// may be removed or retained by one atomic mutation. The coordinate family
 	// owns the exact affected inventory; callers do not classify coordinates.
 	StableRootMutations []symbol.ID
+	// FormalStableRoots are the rekeyed class members governed by the same
+	// mutation. They expand only its finite coordinate certificate.
+	FormalStableRoots []formal.Root
 	// TransientEqualities close existing data proofs and path refinements across
 	// an operation-local equality without publishing an equality proof.
 	TransientEqualities []CoordinateDependencyEquality
@@ -391,7 +395,7 @@ func buildCoordinateDependency(
 		out.LocationWrites = appendCoordinateDependencyLocation(out.LocationWrites, location)
 		out.MutationRegions = appendCoordinateDependencyLocation(out.MutationRegions, location)
 		for _, coordinate := range coordinates {
-			if !StableRootMutationRemovesCoordinate(coordinate, root, false, nil) {
+			if !StableRootMutationRemovesCoordinateWithFormalRoots(coordinate, root, false, nil, ks, seed.FormalStableRoots) {
 				continue
 			}
 			out.CoordinateReads = appendCoordinateDependencyKey(out.CoordinateReads, coordinate)

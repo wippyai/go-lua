@@ -299,7 +299,7 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 		componentSourceValues = append(componentSourceValues, slot)
 	}
 	factorComponents, err := factor.RootAssignmentFactorComponents(factapply.RootAssignmentFactorComponentInventory{
-		Coordinates: span.coordinates, SourceValues: componentSourceValues,
+		Coordinates: span.coordinates, SourceValues: componentSourceValues, FormalStableRoots: epoch.stableRoots(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("RootAssignment factor components: %w", err)

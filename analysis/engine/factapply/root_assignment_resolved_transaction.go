@@ -644,6 +644,13 @@ func (p ResolvedRootAssignmentPlan) FactorCompletionFreshEmptyPaths() ([]pathdom
 // transaction. Destructive target replacement, source observation, normalized
 // Values access and optional equality publication are one certificate.
 func (p ResolvedRootAssignmentPlan) PathDependencies(domain state.ProductDomain, slots []state.CoordinateSlot) (PathDependencySchedule, error) {
+	return p.PathDependenciesWithFormalRoots(domain, slots, nil)
+}
+
+// PathDependenciesWithFormalRoots derives the one path-mutation footprint for
+// concrete State and rekeyed formal carriers. Formal roots only expand the
+// finite certificate for the same stable-root mutation law.
+func (p ResolvedRootAssignmentPlan) PathDependenciesWithFormalRoots(domain state.ProductDomain, slots []state.CoordinateSlot, formalRoots []formal.Root) (PathDependencySchedule, error) {
 	if !p.Valid() || !p.hasTargetPath || !domain.Valid() || p.authority.domain.Registry() != domain.Registry() {
 		return PathDependencySchedule{}, fmt.Errorf("factapply: root-assignment plan has no path dependency component")
 	}
@@ -655,7 +662,7 @@ func (p ResolvedRootAssignmentPlan) PathDependencies(domain state.ProductDomain,
 	const dependencyID state.CoordinateDependencyID = 1
 	seed := state.CoordinateDependencySeed{
 		ID: dependencyID, WritePaths: []keyspace.Key{p.targetPath}, DescendantMutationRoots: []keyspace.Key{p.targetRoot},
-		StableRootMutations: []symbol.ID{p.target},
+		StableRootMutations: []symbol.ID{p.target}, FormalStableRoots: append([]formal.Root(nil), formalRoots...),
 	}
 	if p.hasSourcePath {
 		seed.ReadPaths = []keyspace.Key{p.sourcePath}
