@@ -224,6 +224,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			branchTargets[operation.instruction.Point] = operation.target
 		}
 	}
+	guardReachability := newReachabilityCache(graph)
 	for index, operation := range operations {
 		instruction := operation.instruction
 		draft := equation.Draft{Target: operation.target, Entry: entry}
@@ -237,7 +238,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: %s %s: %w", operation.family, operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence(operation.family)
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			if operation.family == "allocation-template" {
 				draft.Operands = terms.template
 			} else {
@@ -249,7 +250,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: allocation write %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("environment-write")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case operation.family == "allocation-entry-write":
 			operands, err := allocationEntryWriteOperands(body, instruction, operation, operations)
@@ -257,7 +258,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: allocation entry write %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("environment-write")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case operation.family == "path-invalidation" || operation.family == "index-mutation":
 			container := equation.ClosedTerm([]byte("scalar/top"))
@@ -277,7 +278,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: value: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence(operation.family)
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			if operation.family == "path-invalidation" {
 				draft.Operands = []equation.Operand{
 					{Role: "container", Term: container},
@@ -312,7 +313,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("environment-write")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			readBefore, err := readBeforeTerm(operation, operations, snapshots)
 			if instruction.Dst.Kind == wir.OperandTemp {
 				// Temporary assignments are expression-internal steps, not Lua
@@ -341,7 +342,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: static member write %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("path-replacement")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
 				{Role: "target", Term: target},
 				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
@@ -361,7 +362,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: dynamic index read %s: key: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("dynamic-index-read")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
 				{Role: "target", Term: target},
 				{Role: "container", Term: container},
@@ -381,7 +382,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: claim %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("claim")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
 				{Role: "target", Term: target},
 				{Role: "value", Term: value},
@@ -400,10 +401,10 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: expression %s: %w", operation.target.Name, err)
 			}
-			draft.Occurrence, draft.Guards, draft.Operands = occurrence("expression"), guardsForPoint(graph, instruction.Point, bodyID, branchTargets), operands
+			draft.Occurrence, draft.Guards, draft.Operands = occurrence("expression"), guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets), operands
 		case instruction.Op == wir.OpBranch:
 			draft.Occurrence = occurrence("branch-relations")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			operands, err := branchOperands(body, instruction)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
@@ -416,7 +417,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 					return equation.Artifact{}, fmt.Errorf("front: external call %s: %w", operation.target.Name, err)
 				}
 				draft.Occurrence = occurrence("external-call")
-				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
 			} else if !operation.callResults {
 				operands, err := applyOperands(body, instruction)
@@ -424,7 +425,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 					return equation.Artifact{}, fmt.Errorf("front: call %s: %w", operation.target.Name, err)
 				}
 				draft.Occurrence = occurrence("apply")
-				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
 			} else {
 				operands, err := callResultOperands(body, instruction, operation.callApply)
@@ -432,7 +433,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 					return equation.Artifact{}, fmt.Errorf("front: call results %s: %w", operation.target.Name, err)
 				}
 				draft.Occurrence = occurrence("call-results")
-				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
 			}
 		case instruction.Op == wir.OpReturn:
@@ -441,7 +442,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: return %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("publication")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case instruction.Op == wir.OpIterate:
 			var operands []equation.Operand
@@ -455,7 +456,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: generic-for %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("generic-for")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case instruction.Op == wir.OpSelect:
 			result, err := selectResultTerm(instruction.Dst)
@@ -475,7 +476,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				operands = append(operands, equation.Operand{Role: fmt.Sprintf("case-%08d", caseIndex), Term: channel})
 			}
 			draft.Occurrence = occurrence("channel-select")
-			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		default:
 			return equation.Artifact{}, fmt.Errorf("%w: %d", ErrUnsupportedInstruction, instruction.Op)
@@ -1490,7 +1491,7 @@ func exactPositiveIndex(entry wir.TableEntry, index int) bool {
 		entry.Suffix.Segments[0].Index == index
 }
 
-func guardsForPoint(graph cfg.Graph, point cfg.Point, body equation.BodyID, branches map[cfg.Point]equation.Coordinate) []equation.Guard {
+func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.Point, body equation.BodyID, branches map[cfg.Point]equation.Coordinate) []equation.Guard {
 	guards := make([]equation.Guard, 0, len(branches))
 	for branch, target := range branches {
 		if branch == point {
@@ -1499,7 +1500,7 @@ func guardsForPoint(graph cfg.Graph, point cfg.Point, body equation.BodyID, bran
 		trueReach, falseReach := false, false
 		for _, successor := range graph.Successors(branch) {
 			condition, isBranchEdge := graph.EdgeCond(branch, successor)
-			if !isBranchEdge || !reachable(graph, successor, point) {
+			if !isBranchEdge || !reachability.reaches(successor, point) {
 				continue
 			}
 			if condition {
@@ -1688,20 +1689,33 @@ func cyclicReachableOperationCells(graph cfg.Graph, start cfg.Point, points map[
 	return cells
 }
 
-func reachable(graph cfg.Graph, from, target cfg.Point) bool {
-	seen := make(map[cfg.Point]bool, graph.Size())
-	stack := []cfg.Point{from}
-	for len(stack) != 0 {
-		point := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if point == target {
-			return true
+// reachabilityCache shares each successor's graph walk across every operation
+// that needs branch guards. Large straight-line fixtures otherwise repeat the
+// same O(branches*points) traversal for every draft.
+type reachabilityCache struct {
+	graph cfg.Graph
+	from  map[cfg.Point]map[cfg.Point]bool
+}
+
+func newReachabilityCache(graph cfg.Graph) *reachabilityCache {
+	return &reachabilityCache{graph: graph, from: make(map[cfg.Point]map[cfg.Point]bool)}
+}
+
+func (cache *reachabilityCache) reaches(from, target cfg.Point) bool {
+	reachable, found := cache.from[from]
+	if !found {
+		reachable = make(map[cfg.Point]bool, cache.graph.Size())
+		stack := []cfg.Point{from}
+		for len(stack) != 0 {
+			point := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if reachable[point] {
+				continue
+			}
+			reachable[point] = true
+			stack = append(stack, cache.graph.Successors(point)...)
 		}
-		if seen[point] {
-			continue
-		}
-		seen[point] = true
-		stack = append(stack, graph.Successors(point)...)
+		cache.from[from] = reachable
 	}
-	return false
+	return reachable[target]
 }

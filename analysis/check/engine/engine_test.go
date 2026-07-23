@@ -148,13 +148,16 @@ end
 }
 
 func TestCheckDoesNotTurnAnAbsentPathIntoFalse(t *testing.T) {
-	_, err := engine.Check(`
+	result, err := engine.Check(`
 if not_bound_here then
     local selected = true
 end
 `)
-	if err == nil {
-		t.Fatal("Check accepted an absent branch path as a falsy value")
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Values) != 0 || valuesByName(result.Diagnostics)["analysis/conservative"] == "" {
+		t.Fatalf("absent branch path was not published as a conservative diagnostic: %#v", result)
 	}
 }
 
@@ -352,6 +355,44 @@ end
 	got := valuesByName(result.Outcomes)
 	if got["return/arity"] != "1" || got["return/0"] != `"else"` {
 		t.Fatalf("guarded return outcomes = %#v, want the selected else slot", result.Outcomes)
+	}
+}
+
+func TestCheckMultipleReachableReturnsJoinConservatively(t *testing.T) {
+	result, err := engine.Check(`
+for i = 1, 1 do
+    return "loop"
+end
+return "fallthrough"
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	got := valuesByName(result.Outcomes)
+	if got["return/arity"] != "1" || got["return/0"] != "unknown" {
+		t.Fatalf("multiple return outcomes = %#v, want one conservative return slot", result.Outcomes)
+	}
+}
+
+func TestCheckPublishesFrontAndConservativeFailuresAsDiagnostics(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		code   string
+	}{
+		{name: "front", source: `local values = { provider() }`, code: "analysis/front"},
+		{name: "conservative", source: `local missing = absent_name + 1`, code: "analysis/conservative"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := engine.Check(test.source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if got := valuesByName(result.Diagnostics)[test.code]; got == "" {
+				t.Fatalf("diagnostics = %#v, missing %q", result.Diagnostics, test.code)
+			}
+		})
 	}
 }
 

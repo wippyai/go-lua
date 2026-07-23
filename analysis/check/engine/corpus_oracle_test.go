@@ -33,6 +33,8 @@ func TestNewOracleCorpus(t *testing.T) {
 
 	started := time.Now()
 	timings := make([]time.Duration, 0, len(files))
+	maxFile := ""
+	maxDuration := time.Duration(0)
 	completed := 0
 	failures := make([]corpusFailure, 0)
 	for _, file := range files {
@@ -45,6 +47,10 @@ func TestNewOracleCorpus(t *testing.T) {
 		rel, relErr := filepath.Rel(fixtures, file)
 		if relErr != nil {
 			t.Fatalf("relativize corpus input %s: %v", file, relErr)
+		}
+		if duration > maxDuration {
+			maxDuration = duration
+			maxFile = filepath.ToSlash(rel)
 		}
 		if !timedOut {
 			completed++
@@ -69,6 +75,9 @@ func TestNewOracleCorpus(t *testing.T) {
 	p50, p95, max := corpusPercentiles(timings)
 	t.Logf("NEW_ORACLE total=%d completed=%d named_failures=%d", len(files), completed, len(failures))
 	t.Logf("NEW_ORACLE WALL TIME total=%s p50=%s p95=%s max=%s", time.Since(started), p50, p95, max)
+	if maxDuration > 2*time.Second {
+		t.Logf("NEW_ORACLE PERF file=%s duration=%s exceeds=2s", maxFile, maxDuration)
+	}
 }
 
 type corpusFailure struct {

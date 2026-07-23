@@ -69,7 +69,7 @@ func Check(source string) (result Result, err error) {
 	}()
 	compilation, err := front.Compile(source)
 	if err != nil {
-		return Result{}, fmt.Errorf("engine: compile whole file: %w", err)
+		return diagnosticResult("analysis/front", err), nil
 	}
 	artifact := compilation.Artifact
 	if len(artifact.Equations) == 0 {
@@ -94,7 +94,7 @@ func Check(source string) (result Result, err error) {
 		}
 		evaluation, evaluateErr := vm.Evaluate(bound)
 		if evaluateErr != nil {
-			return Result{}, fmt.Errorf("engine: evaluate: %w", evaluateErr)
+			return diagnosticResult("analysis/conservative", evaluateErr), nil
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	} else {
@@ -117,7 +117,7 @@ func Check(source string) (result Result, err error) {
 		}
 		evaluation, evaluateErr := vm.Evaluate(context.Background(), bound, []string{"published"})
 		if evaluateErr != nil {
-			return Result{}, fmt.Errorf("engine: evaluate cyclic: %w", evaluateErr)
+			return diagnosticResult("analysis/conservative", evaluateErr), nil
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
@@ -126,6 +126,19 @@ func Check(source string) (result Result, err error) {
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
 		Transactions: transactions,
 	}, nil
+}
+
+// diagnosticResult is the whole-file recovery boundary for source-driven
+// limitations.  The front and equation VM deliberately reject incomplete
+// representations rather than fabricate a precise fact.  At the public API
+// boundary those rejections are published as a diagnostic result, so malformed
+// or currently-unmodelled Lua remains an analysable input instead of an engine
+// failure.  Invariant failures still use ErrInternalPanic above.
+func diagnosticResult(code string, cause error) Result {
+	return Result{Diagnostics: []equation.Fact{{
+		Key:   code,
+		Value: []byte(cause.Error()),
+	}}}
 }
 
 func registry() (*equation.KernelRegistry, error) {
@@ -912,10 +925,15 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			return equation.TransactionResult{}, fmt.Errorf("engine: missing return value %d", index)
 		}
 	}
+	// Every return occurrence owns its internal tuple.  A file can have more
+	// than one reachable return (for example, a loop return plus the fallthrough
+	// return), and those alternatives must not collide in the equation fact map.
+	// publishedOutcomes joins them conservatively back into the public slots.
+	prefix := "return-candidate/" + operation.Target.Name + "/"
 	outcomes := make([]equation.Fact, 0, len(values)+1)
-	outcomes = append(outcomes, equation.Fact{Key: "return/arity", Value: []byte(strconv.Itoa(len(values)))})
+	outcomes = append(outcomes, equation.Fact{Key: prefix + "arity", Value: []byte(strconv.Itoa(len(values)))})
 	for index, value := range values {
-		outcomes = append(outcomes, equation.Fact{Key: "return/" + strconv.Itoa(index), Value: value})
+		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Outcomes: outcomes}}, nil
 }
@@ -1332,8 +1350,19 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 }
 
 func publishedOutcomes(stored []equation.Fact) []equation.Fact {
+	// Candidate tuples are operation-scoped inside the equation closure.  Join
+	// alternatives only at publication: identical alternatives retain their
+	// scalar result, while any disagreement becomes Top/unknown.
+	returnCandidates := make(map[string][][]byte)
 	outcomes := make([]equation.Fact, 0, len(stored))
 	for _, storedOutcome := range stored {
+		if strings.HasPrefix(storedOutcome.Key, "return-candidate/") {
+			parts := strings.Split(storedOutcome.Key, "/")
+			if len(parts) == 3 && parts[2] != "" {
+				returnCandidates[parts[2]] = append(returnCandidates[parts[2]], append([]byte(nil), storedOutcome.Value...))
+			}
+			continue
+		}
 		outcome := equation.Fact{Key: storedOutcome.Key, Value: append([]byte(nil), storedOutcome.Value...)}
 		if strings.HasPrefix(outcome.Key, "return/") && outcome.Key != "return/arity" {
 			decoded, err := displayValue(outcome.Value)
@@ -1342,6 +1371,25 @@ func publishedOutcomes(stored []equation.Fact) []equation.Fact {
 			}
 		}
 		outcomes = append(outcomes, outcome)
+	}
+	for slot, candidates := range returnCandidates {
+		value := candidates[0]
+		for _, candidate := range candidates[1:] {
+			if !bytes.Equal(value, candidate) {
+				value = []byte("scalar/top")
+				break
+			}
+		}
+		key := "return/" + slot
+		if slot == "arity" {
+			outcomes = append(outcomes, equation.Fact{Key: key, Value: value})
+			continue
+		}
+		decoded, err := displayValue(value)
+		if err == nil {
+			value = decoded
+		}
+		outcomes = append(outcomes, equation.Fact{Key: key, Value: value})
 	}
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].Key < outcomes[j].Key })
 	return outcomes
