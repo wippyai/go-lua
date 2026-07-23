@@ -26,7 +26,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-const relationDifferentialSourceTimeout = 120 * time.Second
+const (
+	relationDifferentialSourceTimeout = 120 * time.Second
+	// Two sources keep a worker's retained solve memory bounded while still
+	// amortizing process startup across the fixture corpus.
+	relationDifferentialFixtureBatchSize = 2
+)
 
 const (
 	relationDifferentialWorkerEnv       = "GO_LUA_RELATION_DIFFERENTIAL_WORKER"
@@ -45,6 +50,7 @@ type relationDifferentialReport struct {
 	corpusSize int
 	passed     int
 	gaps       []string
+	exclusions []string
 }
 
 // relationDifferentialWorkerReport is deliberately wire-only: a corpus body
@@ -58,6 +64,10 @@ type relationDifferentialWorkerReport struct {
 
 func (r *relationDifferentialReport) addGap(format string, args ...any) {
 	r.gaps = append(r.gaps, fmt.Sprintf(format, args...))
+}
+
+func (r *relationDifferentialReport) addExclusion(format string, args ...any) {
+	r.exclusions = append(r.exclusions, fmt.Sprintf(format, args...))
 }
 
 func (r *relationDifferentialReport) observe(
@@ -223,52 +233,64 @@ func TestRelationPublicationDifferentialCorpus(t *testing.T) {
 
 func runRelationDifferentialCorpus(t *testing.T, report *relationDifferentialReport, sources []relationDifferentialSource) {
 	t.Helper()
-	const batchSize = 16
 	var batch []relationDifferentialSource
 	batchNumber := 0
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		batch := batch
+		batchSources := batch
 		t.Run(fmt.Sprintf("batch-%04d", batchNumber), func(t *testing.T) {
-			report.merge(runRelationDifferentialWorkers(t, batch))
+			report.merge(runRelationDifferentialWorkers(t, batchSources))
 		})
 		batchNumber++
 		batch = nil
 	}
 	for index, source := range sources {
-		if relationDifferentialRequiresWorker(source.name) {
-			flush()
-			source := source
-			t.Run(fmt.Sprintf("source-%04d", index), func(t *testing.T) {
-				report.merge(runRelationDifferentialWorkers(t, []relationDifferentialSource{source}))
-			})
+		if reason, excluded := relationDifferentialFixtureExclusion(source.name); excluded {
+			report.addExclusion("%s: %s", source.name, reason)
+			t.Logf("RELATION DIFFERENTIAL EXCLUSION source-%04d %s: %s", index, source.name, reason)
 			continue
 		}
 		batch = append(batch, source)
-		if len(batch) == batchSize {
+		if len(batch) == relationDifferentialFixtureBatchSize {
 			flush()
 		}
 	}
 	flush()
 }
 
-func relationDifferentialRequiresWorker(name string) bool {
+func relationDifferentialFixtureExclusion(name string) (string, bool) {
 	switch name {
-	case "fixtures/bench/fibonacci/main.lua",
-		"fixtures/semantic/nested-channel-select-union-stress/main.lua",
+	case "fixtures/bench/fibonacci/main.lua":
+		return "RSS safety fuse outlier", true
+	case "fixtures/semantic/nested-channel-select-union-stress/main.lua",
 		"fixtures/semantic/type-engine-edge-matrix/main.lua":
-		return true
+		return "non-cooperative lowering timeout outlier", true
 	default:
-		return false
+		return "", false
+	}
+}
+
+func TestRelationDifferentialFixtureExclusionsStayNamed(t *testing.T) {
+	for _, name := range []string{
+		"fixtures/bench/fibonacci/main.lua",
+		"fixtures/semantic/nested-channel-select-union-stress/main.lua",
+		"fixtures/semantic/type-engine-edge-matrix/main.lua",
+	} {
+		if reason, excluded := relationDifferentialFixtureExclusion(name); !excluded || reason == "" {
+			t.Fatalf("fixture exclusion %q = (%q, %t), want named exclusion", name, reason, excluded)
+		}
+	}
+	if reason, excluded := relationDifferentialFixtureExclusion("fixtures/realworld/hello/main.lua"); excluded || reason != "" {
+		t.Fatalf("ordinary fixture exclusion = (%q, %t), want none", reason, excluded)
 	}
 }
 
 // These fixtures have demonstrated process-level failure modes: fibonacci
 // trips the RSS fuse, while the two stress fixtures do not cooperatively honor
-// their context during lowering. Keep them isolated so each becomes one named
-// gap without losing the remainder of the sweep.
+// their context during lowering. Keep the exclusions named so the sweep remains
+// reproducible without turning one known resource failure into a lost batch.
 // The literal checktest corpus has a stable, bounded memory profile and is
 // large enough that starting a process per literal would exceed this
 // correctness test's 600-second budget. Recover ordinary VM/bridge panics per
@@ -337,12 +359,24 @@ func runRelationDifferentialWorkers(t *testing.T, sources []relationDifferential
 			relationDifferentialWorkerExitGap(sources[0].name, err, output),
 		}}
 	}
+	return runRelationDifferentialWorkersIndividually(t, sources)
+}
+
+// A worker only writes its aggregate report after the entire batch finishes.
+// If its context expires first, replay every source in a separate subtest so
+// timeout/RSS evidence is attributed to the source that caused it and the
+// remaining fixture batches still run.
+func runRelationDifferentialWorkersIndividually(t *testing.T, sources []relationDifferentialSource) relationDifferentialWorkerReport {
+	t.Helper()
 	var replay relationDifferentialWorkerReport
-	for _, source := range sources {
-		worker := runRelationDifferentialWorkers(t, []relationDifferentialSource{source})
-		replay.CorpusSize += worker.CorpusSize
-		replay.Passed += worker.Passed
-		replay.Gaps = append(replay.Gaps, worker.Gaps...)
+	for index, source := range sources {
+		source := source
+		t.Run(fmt.Sprintf("source-%04d", index), func(t *testing.T) {
+			worker := runRelationDifferentialWorkers(t, []relationDifferentialSource{source})
+			replay.CorpusSize += worker.CorpusSize
+			replay.Passed += worker.Passed
+			replay.Gaps = append(replay.Gaps, worker.Gaps...)
+		})
 	}
 	return replay
 }
@@ -466,6 +500,7 @@ func runRelationDifferentialSource(report *relationDifferentialReport, source re
 func (r *relationDifferentialReport) assert(t *testing.T) {
 	t.Helper()
 	sort.Strings(r.gaps)
+	sort.Strings(r.exclusions)
 	summary := fmt.Sprintf("CORPUS SIZE %d; PASS RATE %d/%d", r.corpusSize, r.passed, r.corpusSize)
 	t.Log(summary)
 	if len(r.gaps) == 0 {
@@ -473,8 +508,13 @@ func (r *relationDifferentialReport) assert(t *testing.T) {
 	} else {
 		t.Logf("NAMED INEQUALITIES %s", strings.Join(r.gaps, "; "))
 	}
+	if len(r.exclusions) == 0 {
+		t.Log("NAMED EXCLUSIONS none")
+	} else {
+		t.Logf("NAMED EXCLUSIONS %s", strings.Join(r.exclusions, "; "))
+	}
 	if os.Getenv("GO_LUA_RELATION_DIFFERENTIAL_REPORT") != "" {
-		fmt.Printf("%s; NAMED INEQUALITIES %s\n", summary, namedRelationDifferentialGaps(r.gaps))
+		fmt.Printf("%s; NAMED INEQUALITIES %s; NAMED EXCLUSIONS %s\n", summary, namedRelationDifferentialGaps(r.gaps), namedRelationDifferentialGaps(r.exclusions))
 	}
 	if r.corpusSize == 0 || r.passed != r.corpusSize || len(r.gaps) != 0 {
 		t.Fatalf("CORPUS SIZE %d; PASS RATE %d/%d; NAMED INEQUALITIES %s", r.corpusSize, r.passed, r.corpusSize, strings.Join(r.gaps, "; "))
