@@ -239,3 +239,98 @@ func (a CyclicArtifact) RestrictPlan(selectorIDs []string) (*solve.WTOPlan[CellI
 	}
 	return solve.RestrictWTOPlan(a.Plan, demand)
 }
+
+// CanonicalBytes returns the complete frozen cyclic certificate.  In
+// particular it retains the cell directory and WTO nesting: Artifact alone is
+// insufficient authority for a caller to select a different fixed-point
+// schedule.  The result contains no solve generation or process-local map
+// iteration order.
+func (a CyclicArtifact) CanonicalBytes() []byte {
+	// Re-run the constructor's closed-world checks before publishing an
+	// identity.  CyclicArtifact has exported fields for the benefit of the VM,
+	// so an invalid manually-built value must never acquire a content ID.
+	canonical, err := NewCyclicArtifact(a.Artifact, a.CellForTarget, a.Plan, a.Dependencies, a.Selectors, a.ParameterCells, a.WidenCells)
+	if err != nil {
+		return nil
+	}
+	a = canonical
+	artifact := a.Artifact.CanonicalBytes()
+	if artifact == nil {
+		return nil
+	}
+	out := appendText(nil, "cyclic-equation-artifact/content-v1")
+	out = appendBytes(out, artifact)
+
+	type cellTarget struct {
+		target Coordinate
+		cell   CellID
+	}
+	targets := make([]cellTarget, 0, len(a.CellForTarget))
+	for target, cell := range a.CellForTarget {
+		targets = append(targets, cellTarget{target: target, cell: cell})
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].target.less(targets[j].target) })
+	out = appendU64(out, uint64(len(targets)))
+	for _, item := range targets {
+		out = append(out, item.target.Body[:]...)
+		out = appendText(out, item.target.Name)
+		out = appendText(out, string(item.cell))
+	}
+
+	var appendElements func([]solve.WTOElement[CellID])
+	appendElements = func(elements []solve.WTOElement[CellID]) {
+		out = appendU64(out, uint64(len(elements)))
+		for _, element := range elements {
+			out = appendText(out, string(element.Vertex))
+			if element.Body == nil {
+				out = append(out, 0)
+				continue
+			}
+			out = append(out, 1)
+			appendElements(element.Body)
+		}
+	}
+	appendElements(a.Plan.Elements())
+	influences := a.Plan.Influences()
+	out = appendU64(out, uint64(len(influences)))
+	for _, influence := range influences {
+		out = appendText(out, string(influence.From))
+		out = appendText(out, string(influence.To))
+	}
+
+	out = appendU64(out, uint64(len(a.Dependencies)))
+	for _, dependency := range a.Dependencies {
+		out = appendText(out, string(dependency.From))
+		out = appendText(out, string(dependency.To))
+		out = appendText(out, string(dependency.Reason))
+		out = appendText(out, dependency.Evidence)
+	}
+	out = appendU64(out, uint64(len(a.Selectors)))
+	for _, selector := range a.Selectors {
+		out = appendText(out, selector.ID)
+		out = appendU64(out, uint64(len(selector.Cells)))
+		for _, cell := range selector.Cells {
+			out = appendText(out, string(cell))
+		}
+	}
+	out = appendCellIDs(out, a.ParameterCells)
+	return appendCellIDs(out, a.WidenCells)
+}
+
+// ContentID identifies the complete frozen graph and schedule, not merely its
+// equation syntax.
+func (a CyclicArtifact) ContentID() ContentID {
+	encoded := a.CanonicalBytes()
+	if encoded == nil {
+		return ContentID{}
+	}
+	return contentID(encoded)
+}
+
+func appendCellIDs(out []byte, cells []CellID) []byte {
+	out = appendU64(out, uint64(len(cells)))
+	for _, cell := range cells {
+		out = appendText(out, string(cell))
+	}
+	return out
+}

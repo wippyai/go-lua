@@ -3,6 +3,7 @@ package solve
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 )
@@ -57,6 +58,27 @@ func (p *WTOPlan[Cell]) Elements() []WTOElement[Cell] {
 		return out
 	}
 	return clone(p.elements)
+}
+
+// Influences returns the complete frozen scheduling-edge inventory in
+// canonical plan order.  This is an immutable certificate surface for codecs;
+// callers must not derive a replacement WTO from it.
+func (p *WTOPlan[Cell]) Influences() []WTOInfluence[Cell] {
+	if p == nil {
+		return nil
+	}
+	out := make([]WTOInfluence[Cell], 0, len(p.edges))
+	for item := range p.edges {
+		out = append(out, WTOInfluence[Cell]{From: item.from, To: item.to})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		fromI, fromJ := p.rank[out[i].From], p.rank[out[j].From]
+		if fromI != fromJ {
+			return fromI < fromJ
+		}
+		return p.rank[out[i].To] < p.rank[out[j].To]
+	})
+	return out
 }
 
 // CoversInfluence reports whether a dependency read is scheduled by the
