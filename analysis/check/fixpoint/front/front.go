@@ -64,10 +64,11 @@ type Compilation struct {
 	Cyclic   *equation.CyclicArtifact
 	// Body is the stable lexical identity for this independently admitted WIR
 	// body. Evaluation still starts exclusively at the root artifact.
-	Body        equation.BodyID
-	Prototype   wir.FunctionSymbolID
-	LexicalPath []uint32
-	Boundary    wir.BodyBoundary
+	Body          equation.BodyID
+	Prototype     wir.FunctionSymbolID
+	PrototypeName string
+	LexicalPath   []uint32
+	Boundary      wir.BodyBoundary
 	// Nested holds the independently admitted lexical bodies owned by closure
 	// allocations in Artifact. They retain the same WIR-derived equation form
 	// and publication path as the enclosing body; a caller decides which body
@@ -100,12 +101,13 @@ type BodyCatalog map[equation.BodyID]BodyCatalogEntry
 // BodyCatalogEntry retains the frozen body data for later demand-driven
 // admission. No incomplete child is inserted into a returned catalog.
 type BodyCatalogEntry struct {
-	Body        equation.BodyID
-	Prototype   wir.FunctionSymbolID
-	LexicalPath []uint32
-	Boundary    wir.BodyBoundary
-	Artifact    equation.Artifact
-	Cyclic      *equation.CyclicArtifact
+	Body          equation.BodyID
+	Prototype     wir.FunctionSymbolID
+	PrototypeName string
+	LexicalPath   []uint32
+	Boundary      wir.BodyBoundary
+	Artifact      equation.Artifact
+	Cyclic        *equation.CyclicArtifact
 }
 
 // Compile parses and lowers one complete body, retaining cyclic control-flow
@@ -136,7 +138,7 @@ func Compile(source string) (Compilation, error) {
 		return Compilation{}, err
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
-	compilation := newCompilation(rootBody, 0, body.LexicalPath(), body.Boundary(), artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
+	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -157,9 +159,9 @@ func Compile(source string) (Compilation, error) {
 	return compilation, nil
 }
 
-func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, lexicalPath []uint32, boundary wir.BodyBoundary, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
+func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
 	return Compilation{
-		Artifact: artifact, Body: body, Prototype: prototype,
+		Artifact: artifact, Body: body, Prototype: prototype, PrototypeName: prototypeName,
 		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary,
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
 		BranchSpans: branches, EffectSpans: effects,
@@ -201,7 +203,7 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
-		child := newCompilation(childBody, proto.Symbol, proto.LexicalPath, proto.Boundary, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
+		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
 		if graphHasCycle(proto.Graph) {
 			cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 			if err != nil {
@@ -218,6 +220,12 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 	return children, nil
 }
 
+// prototypeIdentity is lexical, not display-based: nested compiler-generated
+// names repeat across bodies, while a function symbol remains stable.
+func prototypeIdentity(proto wir.FuncProto) string {
+	return fmt.Sprintf("%s#%d", proto.Name, proto.Symbol)
+}
+
 func catalogBodies(root Compilation) (BodyCatalog, error) {
 	catalog := make(BodyCatalog)
 	var add func(Compilation) error
@@ -228,7 +236,7 @@ func catalogBodies(root Compilation) (BodyCatalog, error) {
 		if _, exists := catalog[compilation.Body]; exists {
 			return fmt.Errorf("front: duplicate lexical body identity")
 		}
-		catalog[compilation.Body] = BodyCatalogEntry{Body: compilation.Body, Prototype: compilation.Prototype, LexicalPath: append([]uint32(nil), compilation.LexicalPath...), Boundary: compilation.Boundary, Artifact: compilation.Artifact, Cyclic: compilation.Cyclic}
+		catalog[compilation.Body] = BodyCatalogEntry{Body: compilation.Body, Prototype: compilation.Prototype, PrototypeName: compilation.PrototypeName, LexicalPath: append([]uint32(nil), compilation.LexicalPath...), Boundary: compilation.Boundary, Artifact: compilation.Artifact, Cyclic: compilation.Cyclic}
 		for _, child := range compilation.Nested {
 			if err := add(child); err != nil {
 				return err
@@ -1746,11 +1754,11 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 		}
 		sets.template = append(sets.template,
 			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("allocation-kind/closure"))},
-			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + proto.Name))},
+			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + prototypeIdentity(proto)))},
 		)
 		sets.materialization = append(sets.materialization,
 			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("object-kind/closure"))},
-			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + proto.Name))},
+			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + prototypeIdentity(proto)))},
 		)
 		for index, capture := range body.Operands(instruction.List) {
 			value, err := allocationValueTerm(body, capture)

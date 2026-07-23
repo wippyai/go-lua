@@ -134,17 +134,18 @@ func Check(source string) (result Result, err error) {
 	if len(artifact.Equations) == 0 {
 		return Result{}, fmt.Errorf("engine: front returned an empty artifact")
 	}
+	evaluateStarted := time.Now()
 	entry := artifact.Equations[0].Entry
 	binding := equation.EntryBinding{Parameter: entry, Value: []byte(entryValue)}
+	lexical := newLexicalEvaluator(compilation)
 	closure := equation.OutputClosure{}
 	transactions := 0
-	evaluateStarted := time.Now()
 	if compilation.Cyclic == nil {
 		bound, bindErr := equation.BindEntry(artifact, binding)
 		if bindErr != nil {
 			return Result{}, fmt.Errorf("engine: bind entry: %w", bindErr)
 		}
-		kernelRegistry, registryErr := registry()
+		kernelRegistry, registryErr := registry(lexical)
 		if registryErr != nil {
 			return Result{}, registryErr
 		}
@@ -160,8 +161,6 @@ func Check(source string) (result Result, err error) {
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	} else {
-		// Admission compiles the compact cyclic schema while execution retains
-		// the source-owned WTO certificate from the front.
 		if _, compileErr := equation.CompileCyclicArtifact(*compilation.Cyclic); compileErr != nil {
 			return Result{}, fmt.Errorf("engine: compile cyclic artifact: %w", compileErr)
 		}
@@ -169,7 +168,7 @@ func Check(source string) (result Result, err error) {
 		if bindErr != nil {
 			return Result{}, fmt.Errorf("engine: bind cyclic entry: %w", bindErr)
 		}
-		kernelRegistry, registryErr := cyclicRegistry()
+		kernelRegistry, registryErr := cyclicRegistry(lexical)
 		if registryErr != nil {
 			return Result{}, registryErr
 		}
@@ -186,6 +185,12 @@ func Check(source string) (result Result, err error) {
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
 	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, closure.Diagnostics)
+	for key, span := range lexical.diagnosticSpans {
+		if diagnosticSpans == nil {
+			diagnosticSpans = make(map[string]wir.Span)
+		}
+		diagnosticSpans[key] = span
+	}
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
@@ -521,6 +526,12 @@ func cloneFact(fact equation.Fact) equation.Fact {
 }
 
 func diagnosticCode(key string) string {
+	if strings.HasPrefix(key, "child/") {
+		parts := strings.SplitN(key, "/", 3)
+		if len(parts) == 3 {
+			return diagnosticCode(parts[2])
+		}
+	}
 	switch {
 	case strings.HasPrefix(key, "advice.redundant_claim/"):
 		return "advice.redundant_claim"
@@ -652,7 +663,7 @@ func diagnosticResult(code string, cause error) Result {
 	}}}
 }
 
-func registry() (*equation.KernelRegistry, error) {
+func registry(lexical *lexicalEvaluator) (*equation.KernelRegistry, error) {
 	binding := func(kind string, kernel equation.Kernel) (equation.KernelBinding, error) {
 		kernelID, known := front.KernelID(kind)
 		contract, contracted := front.ContractID(kind)
@@ -669,7 +680,9 @@ func registry() (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(objectMaterializationKernel))
+	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return objectMaterializationKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -689,11 +702,15 @@ func registry() (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	apply, err := binding("apply", equation.KernelFunc(applyKernel))
+	apply, err := binding("apply", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return applyKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
-	results, err := binding("call-results", equation.KernelFunc(callResultsKernel))
+	results, err := binding("call-results", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return callResultsKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -744,7 +761,7 @@ func registry() (*equation.KernelRegistry, error) {
 // transaction interface. The adapter materializes the immutable snapshot as
 // the ordinary kernel partition, so no cyclic-only transfer semantics can
 // diverge from the established publication path.
-func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
+func cyclicRegistry(lexical *lexicalEvaluator) (*equation.CyclicKernelRegistry, error) {
 	binding := func(kind string, kernel equation.Kernel) (equation.CyclicKernelBinding, error) {
 		kernelID, known := front.KernelID(kind)
 		contract, contracted := front.ContractID(kind)
@@ -791,7 +808,9 @@ func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(objectMaterializationKernel))
+	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return objectMaterializationKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -827,11 +846,15 @@ func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	apply, err := binding("apply", equation.KernelFunc(applyKernel))
+	apply, err := binding("apply", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return applyKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
-	results, err := binding("call-results", equation.KernelFunc(callResultsKernel))
+	results, err := binding("call-results", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return callResultsKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -862,8 +885,322 @@ func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
 	return registry, nil
 }
 
-func entryKernel(equation.BoundEquation, equation.Partition) (equation.TransactionResult, error) {
-	return equation.TransactionResult{Complete: true}, nil
+// childEntryWire is deliberately a closed entry payload.  It is decoded only
+// by the entry transaction and becomes ordinary body-local seed facts; no
+// caller partition is ever shared with a child evaluator.
+type childEntryWire struct {
+	Version uint8       `json:"version"`
+	Seeds   []entrySeed `json:"seeds"`
+}
+
+type entrySeed struct {
+	Term  string `json:"term"`
+	Value []byte `json:"value"`
+}
+
+type closureHandle struct {
+	Prototype string   `json:"prototype"`
+	Captures  []string `json:"captures"`
+}
+
+type lexicalEvaluator struct {
+	byPrototype     map[string]front.Compilation
+	requiresBody    map[string]bool
+	diagnosticSpans map[string]wir.Span
+	active          map[equation.BodyID]bool
+}
+
+func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), active: make(map[equation.BodyID]bool)}
+	var add func(front.Compilation)
+	add = func(compilation front.Compilation) {
+		if compilation.PrototypeName != "" {
+			l.byPrototype[compilation.PrototypeName] = compilation
+		}
+		for _, child := range compilation.Nested {
+			add(child)
+		}
+	}
+	add(root)
+	var mark func(front.Compilation) bool
+	mark = func(compilation front.Compilation) bool {
+		required := len(compilation.Boundary.Captures) > 0
+		for _, child := range compilation.Nested {
+			required = mark(child) || required
+		}
+		if compilation.PrototypeName != "" {
+			l.requiresBody[compilation.PrototypeName] = required
+		}
+		return required
+	}
+	mark(root)
+	return l
+}
+
+func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []byte) (equation.OutputClosure, int, error) {
+	if l == nil || !compilation.Body.Valid() || len(compilation.Artifact.Equations) == 0 {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: incomplete lexical body admission")
+	}
+	if l.active[compilation.Body] {
+		// The existing evaluator has no SCC coordinator yet.  Treating this as
+		// a transaction failure preserves atomicity: no in-flight child closure
+		// is exposed as a partial recursive summary.
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: recursive lexical body requires SCC coordination")
+	}
+	l.active[compilation.Body] = true
+	defer delete(l.active, compilation.Body)
+	entry := compilation.Artifact.Equations[0].Entry
+	binding := equation.EntryBinding{Parameter: entry, Value: append([]byte(nil), entryValue...)}
+	if compilation.Cyclic == nil {
+		bound, err := equation.BindEntry(compilation.Artifact, binding)
+		if err != nil {
+			return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind lexical entry: %w", err)
+		}
+		kernelRegistry, err := registry(l)
+		if err != nil {
+			return equation.OutputClosure{}, 0, err
+		}
+		vm, err := equation.NewAcyclicVM(kernelRegistry)
+		if err != nil {
+			return equation.OutputClosure{}, 0, err
+		}
+		evaluation, err := vm.Evaluate(bound)
+		if err != nil {
+			return equation.OutputClosure{}, 0, err
+		}
+		return evaluation.Closure, evaluation.Transactions, nil
+	}
+	if _, err := equation.CompileCyclicArtifact(*compilation.Cyclic); err != nil {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: compile lexical cyclic artifact: %w", err)
+	}
+	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
+	if err != nil {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind lexical cyclic entry: %w", err)
+	}
+	kernelRegistry, err := cyclicRegistry(l)
+	if err != nil {
+		return equation.OutputClosure{}, 0, err
+	}
+	vm, err := equation.NewCyclicVM(kernelRegistry)
+	if err != nil {
+		return equation.OutputClosure{}, 0, err
+	}
+	evaluation, err := vm.Evaluate(context.Background(), bound, []string{"published"})
+	if err != nil {
+		return equation.OutputClosure{}, 0, err
+	}
+	return evaluation.Closure, evaluation.Transactions, nil
+}
+
+func encodeChildEntry(seeds []entrySeed) ([]byte, error) {
+	wire := childEntryWire{Version: 1, Seeds: append([]entrySeed(nil), seeds...)}
+	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
+	for index := range wire.Seeds {
+		if wire.Seeds[index].Term == "" || len(wire.Seeds[index].Value) == 0 || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
+			return nil, fmt.Errorf("engine: malformed child entry seed")
+		}
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("engine: encode child entry: %w", err)
+	}
+	return append([]byte("front/child-entry/v1/"), encoded...), nil
+}
+
+func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equation.TransactionResult, error) {
+	operands, err := operandsByRole(operation.Operands, "entry")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	const prefix = "front/child-entry/v1/"
+	if !strings.HasPrefix(string(operands["entry"]), prefix) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	var wire childEntryWire
+	if err := json.Unmarshal(operands["entry"][len(prefix):], &wire); err != nil || wire.Version != 1 {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
+	}
+	values := make([]equation.Fact, 0, len(wire.Seeds))
+	seen := make(map[string]bool, len(wire.Seeds))
+	for _, seed := range wire.Seeds {
+		if seed.Term == "" || len(seed.Value) == 0 || seen[seed.Term] || (!strings.HasPrefix(seed.Term, "path/") && !strings.HasPrefix(seed.Term, "temp/")) {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry seed")
+		}
+		seen[seed.Term] = true
+		values = append(values, equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)})
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+func closureHandleFor(term []byte, partition equation.Partition) (closureHandle, bool) {
+	prefix := "closure/" + string(term) + "/"
+	var encoded []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (encoded == nil || fact.Key > latest) {
+			encoded, latest = fact.Value, fact.Key
+		}
+	}
+	if encoded == nil {
+		return closureHandle{}, false
+	}
+	var handle closureHandle
+	if json.Unmarshal(encoded, &handle) != nil || handle.Prototype == "" {
+		return closureHandle{}, false
+	}
+	for _, capture := range handle.Captures {
+		if !strings.HasPrefix(capture, "path/") && !strings.HasPrefix(capture, "temp/") && !strings.HasPrefix(capture, "scalar/") {
+			return closureHandle{}, false
+		}
+	}
+	return handle, true
+}
+
+func boundaryTerm(symbol wir.SymbolID) string { return fmt.Sprintf("path/sym%d", symbol) }
+
+// applyKnown evaluates a complete lexical child privately, then projects only
+// caller-owned results, capture effects, and residual diagnostics. A malformed
+// entry or child failure returns an error, so the surrounding VM publishes no
+// partial child result.
+func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) (equation.TransactionResult, error) {
+	child, exists := l.byPrototype[handle.Prototype]
+	if !exists {
+		return equation.TransactionResult{}, fmt.Errorf("engine: known lexical target %q is unavailable", handle.Prototype)
+	}
+	if operands.spread || len(operands.arguments) != len(child.Boundary.Parameters) || len(handle.Captures) != len(child.Boundary.Captures) {
+		return equation.TransactionResult{}, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
+	}
+	seeds := make([]entrySeed, 0, len(operands.arguments)+len(handle.Captures))
+	for index, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg {
+			return equation.TransactionResult{}, fmt.Errorf("engine: vararg lexical boundary is unsupported")
+		}
+		value, known := resolveKnownCurrentValue(operands.arguments[index], partition)
+		if !known {
+			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical argument %d", index)
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+	}
+	for index, capture := range child.Boundary.Captures {
+		value, known := resolveKnownCurrentValue([]byte(handle.Captures[index]), partition)
+		if !known {
+			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical capture %q", capture.Name)
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
+	}
+	entry, err := encodeChildEntry(seeds)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	closure, _, err := l.evaluate(child, entry)
+	if err != nil {
+		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
+	}
+	returns, err := childReturnValues(closure)
+	if err != nil {
+		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
+	}
+	projected := equation.OutputClosure{}
+	for index, value := range returns {
+		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", operation.Target.Name, index), Value: value})
+	}
+	for index, capture := range child.Boundary.Captures {
+		value, found := latestClosedValue([]byte(boundaryTerm(capture.Symbol)), closure.Values)
+		if !found {
+			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted capture cell %q", handle.Prototype, capture.Name)
+		}
+		projected.Values = append(projected.Values, equation.Fact{Key: "value/" + handle.Captures[index] + "/" + operation.Target.Name, Value: value})
+	}
+	// A returned lexical closure is a capability, not merely its callable
+	// scalar. Preserve its environment lens under the call boundary so the
+	// caller can rebind it to its result slot.
+	if len(returns) == 1 && strings.HasPrefix(string(returns[0]), "scalar/function/") {
+		for _, fact := range closure.Values {
+			if strings.HasPrefix(fact.Key, "closure/") {
+				var returned closureHandle
+				if json.Unmarshal(fact.Value, &returned) != nil {
+					return equation.TransactionResult{}, fmt.Errorf("engine: malformed returned closure handle")
+				}
+				// Rebind captures of an escaping closure through this call's
+				// boundary lens. Formal captures therefore retain the caller cell
+				// instead of a child-local path that disappears at return.
+				for captureIndex, captureTerm := range returned.Captures {
+					for parameterIndex, parameter := range child.Boundary.Parameters {
+						if captureTerm == boundaryTerm(parameter.Symbol) {
+							returned.Captures[captureIndex] = string(operands.arguments[parameterIndex])
+							break
+						}
+					}
+				}
+				encoded, marshalErr := json.Marshal(returned)
+				if marshalErr != nil {
+					return equation.TransactionResult{}, marshalErr
+				}
+				projected.Values = append(projected.Values, equation.Fact{Key: "call-closure/" + strings.TrimPrefix(operation.Target.Name, "call/") + "/00000000", Value: encoded})
+				break
+			}
+		}
+	}
+	// Child diagnostics are retained in the private outcome. They need a
+	// body-qualified descriptor-to-span projection before becoming root facts;
+	// publishing them here would attach a child coordinate to an unrelated
+	// caller span.
+	return equation.TransactionResult{Complete: true, Closure: projected}, nil
+}
+
+func latestClosedValue(term []byte, facts []equation.Fact) ([]byte, bool) {
+	prefix := "value/" + string(term) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range facts {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
+			value, latest = fact.Value, fact.Key
+		}
+	}
+	return append([]byte(nil), value...), value != nil
+}
+
+func childReturnValues(closure equation.OutputClosure) ([][]byte, error) {
+	var prefix string
+	for _, outcome := range closure.Outcomes {
+		if strings.HasPrefix(outcome.Key, "return-candidate/") && strings.HasSuffix(outcome.Key, "/arity") {
+			candidate := strings.TrimSuffix(outcome.Key, "/arity") + "/"
+			if prefix != "" && prefix != candidate {
+				return nil, fmt.Errorf("multiple child return alternatives")
+			}
+			if _, err := strconv.Atoi(string(outcome.Value)); err != nil {
+				return nil, fmt.Errorf("malformed child return arity")
+			}
+			prefix = candidate
+		}
+	}
+	if prefix == "" {
+		// A body with no return statement has a complete zero-result outcome.
+		return nil, nil
+	}
+	values := map[int][]byte{}
+	for _, outcome := range closure.Outcomes {
+		if !strings.HasPrefix(outcome.Key, prefix) {
+			continue
+		}
+		indexText := strings.TrimPrefix(outcome.Key, prefix)
+		if indexText == "arity" {
+			continue
+		}
+		index, err := strconv.Atoi(indexText)
+		if err != nil || index < 0 || values[index] != nil {
+			return nil, fmt.Errorf("malformed child return slot")
+		}
+		values[index] = append([]byte(nil), outcome.Value...)
+	}
+	result := make([][]byte, len(values))
+	for index := range result {
+		if values[index] == nil {
+			return nil, fmt.Errorf("incomplete child return")
+		}
+		result[index] = values[index]
+	}
+	return result, nil
 }
 
 // allocationTemplateKernel admits only a sealed, complete allocation graph.
@@ -883,14 +1220,71 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 // current engine retains no heap state, but validates the sealed identity and
 // object-kind surface so unsupported materialization cannot pass as a hidden
 // fallback transaction.
-func objectMaterializationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
 	if _, err := requiredOperandsByRole(operation.Operands, "site", "result", "kind"); err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	if lexical == nil {
+		return equation.TransactionResult{}, fmt.Errorf("engine: missing lexical resolver")
+	}
+	var prototype, result string
+	captures := make([]string, 0)
+	for _, operand := range operation.Operands {
+		switch {
+		case operand.Role == "prototype":
+			if prototype != "" || !strings.HasPrefix(string(operand.Value), "prototype/") {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed closure prototype")
+			}
+			prototype = strings.TrimPrefix(string(operand.Value), "prototype/")
+		case operand.Role == "result":
+			result = string(operand.Value)
+		case strings.HasPrefix(operand.Role, "capture-"):
+			captures = append(captures, string(operand.Value))
+		}
+	}
+	if prototype == "" {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	if result == "" || (!strings.HasPrefix(result, "path/") && !strings.HasPrefix(result, "temp/")) {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed closure result")
+	}
+	if _, exists := lexical.byPrototype[prototype]; !exists {
+		// A syntactically known lexical closure with no admitted catalog body is
+		// not an unknown dynamic call.  Refusing it is the fail-closed boundary.
+		return equation.TransactionResult{}, fmt.Errorf("engine: known lexical prototype %q is not admitted", prototype)
+	}
+	handle, err := json.Marshal(closureHandle{Prototype: prototype, Captures: captures})
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "closure/" + result + "/" + operation.Target.Name, Value: handle}}}
+	child := lexical.byPrototype[prototype]
+	// A parameter-free, capture-free child has a complete diagnostic entry at
+	// allocation time. Demand it privately and qualify its facts by body before
+	// they enter the root publication closure.
+	if len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && child.Cyclic == nil && len(child.Artifact.Equations) <= 4 {
+		entry, entryErr := encodeChildEntry(nil)
+		if entryErr != nil {
+			return equation.TransactionResult{}, entryErr
+		}
+		outcome, _, evaluateErr := lexical.evaluate(child, entry)
+		if evaluateErr != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: uncalled lexical child %q: %w", prototype, evaluateErr)
+		}
+		body := fmt.Sprintf("%x", child.Body)
+		for _, diagnostic := range outcome.Diagnostics {
+			key := "child/" + body + "/" + diagnostic.Key
+			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
+			if span, ok := spans[diagnostic.Key]; ok {
+				lexical.diagnosticSpans[key] = span
+			}
+		}
+	}
+	return equation.TransactionResult{Complete: true, Closure: closure}, nil
 }
 
 func writeKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -913,9 +1307,15 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-		Key: "value/" + target + "/" + operation.Target.Name, Value: value,
-	}}}}, nil
+	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}
+	if handle, ok := closureHandleFor(operands["value"], partition); ok {
+		encoded, marshalErr := json.Marshal(handle)
+		if marshalErr != nil {
+			return equation.TransactionResult{}, marshalErr
+		}
+		values = append(values, equation.Fact{Key: "closure/" + target + "/" + operation.Target.Name, Value: encoded})
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
 // sealShapeValue resolves a literal's members when that literal is made. This
@@ -1769,7 +2169,7 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 // applyKernel validates the sealed direct or method-call shape and publishes
 // proven call-contract failures at this equation point. Unknown values are not
 // violations: diagnostics are proof outputs, never speculative findings.
-func applyKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if closure, recognized, err := freezeCallEpoch(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
@@ -1795,6 +2195,22 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	operands, err := callOperands(operation.Operands)
 	if err != nil {
 		return equation.TransactionResult{}, err
+	}
+	if lexical != nil && hasCallee {
+		if handle, found := closureHandleFor(operands.callee, partition); found {
+			if lexical.requiresBody[handle.Prototype] {
+				if outcome, err := lexical.applyKnown(operation, operands, handle, partition); err == nil {
+					return outcome, nil
+				} else if strings.Contains(err.Error(), "unsupported exact lexical boundary") {
+					// A missing certified selector is an admission failure: preserve
+					// atomicity rather than exposing a partial child result.
+					return equation.TransactionResult{}, err
+				}
+			}
+			// The existing root rule remains the conservative residue for a
+			// boundary that this compact bridge cannot yet certify. In particular,
+			// no incomplete child closure is published.
+		}
 	}
 	if state, handled := sendIsolationState(operation, operands, partition); handled {
 		return state, nil
@@ -2342,7 +2758,7 @@ func externalCallKernel(operation equation.BoundEquation, partition equation.Par
 
 // callResultsKernel publishes explicit Top facts for unresolved owned result
 // slots, never a missing slot or an invented concrete value.
-func callResultsKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -2375,10 +2791,28 @@ func callResultsKernel(operation equation.BoundEquation, partition equation.Part
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
 		value := []byte("scalar/top")
+		// A known lexical apply seals its child outcome under the same
+		// application coordinate. call-results is the sole owner of caller
+		// result terms, so it consumes that private projection rather than
+		// falling through to Top.
+		projectedKey := "call-result/" + strings.TrimPrefix(string(application), "call/") + "/" + key
+		for _, fact := range partition.Values() {
+			if fact.Key == projectedKey {
+				value = append([]byte(nil), fact.Value...)
+				break
+			}
+		}
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
 			value = []byte("scalar/boolean")
 		}
 		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value})
+		closureKey := "call-closure/" + strings.TrimPrefix(string(application), "call/") + "/" + key
+		for _, fact := range partition.Values() {
+			if fact.Key == closureKey {
+				values = append(values, equation.Fact{Key: "closure/" + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), fact.Value...)})
+				break
+			}
+		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
