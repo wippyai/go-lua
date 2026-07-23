@@ -77,18 +77,6 @@ func (p *formalRootAssignmentStep) valid(operator formalRelationOperatorRef) boo
 		p.values.valid() && len(p.components) != 0
 }
 
-func formalRootAssignmentHasSymbolicRootSource(arena *Arena, assignment rootAssignmentTerm) bool {
-	if arena == nil {
-		return false
-	}
-	for _, source := range assignment.sources {
-		if source != 0 && int(source) < len(arena.values) && arena.values[source].op == valueRoot {
-			return true
-		}
-	}
-	return false
-}
-
 func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationVar, operator formalRelationOperatorRef) (*formalRootAssignmentStep, error) {
 	if program == nil || variable == 0 || int(variable) > len(program.bodies) || operator.kind != formalRelationCellStep ||
 		operator.code == nil || operator.root == 0 || operator.step == 0 || int(operator.root) >= len(operator.code.nodes) ||
@@ -153,9 +141,6 @@ func freezeFormalRootAssignmentStep(program *RelationProgram, variable relationV
 	epoch, err := freezeFormalRootAssignmentEpochContract(program, body, variable, target)
 	if err != nil {
 		return nil, err
-	}
-	if len(epoch.close.ranks) != 0 && formalRootAssignmentHasSymbolicRootSource(operator.code.terms, step.rootAssignment) {
-		return nil, nil
 	}
 
 	sources := make([]formalQualifiedBinding, len(step.rootAssignment.sources))
