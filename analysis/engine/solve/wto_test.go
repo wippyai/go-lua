@@ -150,6 +150,33 @@ func TestFreezeWTOPlanRejectsInexactCoverageAndNonHeadBackedge(t *testing.T) {
 	}
 }
 
+func TestRestrictWTOPlanClosesDemandOverEnclosingSCCWithoutReplanning(t *testing.T) {
+	plan, err := FreezeWTOPlan(
+		[]int{0, 1, 2, 3, 4},
+		[]WTOElement[int]{
+			{Vertex: 0},
+			{Vertex: 1, Body: []WTOElement[int]{{Vertex: 2, Body: []WTOElement[int]{{Vertex: 3}}}, {Vertex: 4}}},
+		},
+		[]WTOInfluence[int]{{From: 3, To: 2}, {From: 4, To: 1}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restricted, err := RestrictWTOPlan(plan, []int{3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restricted.Matches([]int{1, 2, 3, 4}) || !reflect.DeepEqual(restricted.Elements(), plan.Elements()[1:]) {
+		t.Fatalf("restriction changed frozen component schedule: %#v", restricted.Elements())
+	}
+	if restricted.ComponentCount() != 2 || !restricted.CoversInfluence(3, 2) || !restricted.CoversInfluence(4, 1) {
+		t.Fatalf("restriction lost nested SCC schedule: %#v", restricted)
+	}
+	if _, err := RestrictWTOPlan(plan, []int{9}); !errors.Is(err, ErrWTOPlanRestrictionUncovered) {
+		t.Fatalf("unknown demand error = %v", err)
+	}
+}
+
 func TestSolveWTOFiniteLatticeExactSolution(t *testing.T) {
 	edges := map[int][]int{0: {1}, 1: {2, 3}, 2: {1}, 3: {4}}
 	sys := EquationSystem[int, int]{

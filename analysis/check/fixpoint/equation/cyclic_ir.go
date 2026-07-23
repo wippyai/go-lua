@@ -220,3 +220,14 @@ func (a CyclicArtifact) Demand(selectorIDs []string) ([]CellID, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
 }
+
+// RestrictPlan turns selector demand into an SCC-closed frozen schedule. It
+// delegates to solve.RestrictWTOPlan, which copies the selected structure but
+// never performs another graph decomposition.
+func (a CyclicArtifact) RestrictPlan(selectorIDs []string) (*solve.WTOPlan[CellID], error) {
+	demand, err := a.Demand(selectorIDs)
+	if err != nil {
+		return nil, err
+	}
+	return solve.RestrictWTOPlan(a.Plan, demand)
+}

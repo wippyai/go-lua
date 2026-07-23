@@ -38,6 +38,10 @@ func TestCyclicArtifactDemandRetainsContractReverseReachability(t *testing.T) {
 	if len(demand) != 3 || demand[0] != "loop" || demand[1] != "result" || demand[2] != "seed" {
 		t.Fatalf("demand = %#v, want complete reverse reachability", demand)
 	}
+	restricted, err := cyclic.RestrictPlan([]string{"normal"})
+	if err != nil || restricted.ComponentCount() != 1 {
+		t.Fatalf("restricted plan = %#v, %v", restricted, err)
+	}
 }
 
 func TestCyclicArtifactRejectsUnscheduleableContractEdge(t *testing.T) {

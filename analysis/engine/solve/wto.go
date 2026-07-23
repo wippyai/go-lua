@@ -16,6 +16,11 @@ var ErrWTOPlanUncovered = errors.New("solve: WTO plan does not cover dynamic dep
 // influences do not form an exact, closed schedule.
 var ErrWTOInvalidFrozenPlan = errors.New("solve: invalid frozen WTO plan")
 
+// ErrWTOPlanRestrictionUncovered reports a demand containing a cell which is
+// absent from the frozen plan. Restriction is not permitted to manufacture a
+// schedule for it.
+var ErrWTOPlanRestrictionUncovered = errors.New("solve: WTO restriction contains an uncovered cell")
+
 // WTOElement is one element of a deterministic Bourdoncle weak topological
 // ordering. A component has Vertex as its head and a non-nil Body; an ordinary
 // vertex has a nil Body.
@@ -101,6 +106,80 @@ type WTOPlan[Cell comparable] struct {
 	rank           map[Cell]int
 	edges          map[edge[Cell]]struct{}
 	componentCount int
+}
+
+// RestrictWTOPlan selects a demanded subset from an existing frozen plan
+// without computing another WTO.  Ordinary top-level vertices are retained
+// only when demanded.  A demand that touches a component retains the complete
+// enclosing component (including nested components), preserving its original
+// head, nesting, and visit order.  Thus the result is SCC-closed by
+// construction and cannot drift from the production widening schedule.
+func RestrictWTOPlan[Cell comparable](plan *WTOPlan[Cell], demanded []Cell) (*WTOPlan[Cell], error) {
+	if plan == nil || len(demanded) == 0 {
+		return nil, ErrWTOPlanRestrictionUncovered
+	}
+	wanted := make(map[Cell]struct{}, len(demanded))
+	for _, cell := range demanded {
+		if _, present := plan.index[cell]; !present {
+			return nil, ErrWTOPlanRestrictionUncovered
+		}
+		wanted[cell] = struct{}{}
+	}
+	var intersects func(WTOElement[Cell]) bool
+	intersects = func(element WTOElement[Cell]) bool {
+		if _, wanted := wanted[element.Vertex]; wanted {
+			return true
+		}
+		for _, child := range element.Body {
+			if intersects(child) {
+				return true
+			}
+		}
+		return false
+	}
+	elements := make([]WTOElement[Cell], 0, len(plan.elements))
+	for _, element := range plan.elements {
+		if !intersects(element) {
+			continue
+		}
+		// Components are indivisible for restriction. cloneWTOElements is
+		// intentionally used instead of NewWTOPlan: this preserves the exact
+		// schedule selected at production freeze time.
+		if element.IsComponent() {
+			elements = append(elements, cloneWTOElements([]WTOElement[Cell]{element})...)
+			continue
+		}
+		elements = append(elements, WTOElement[Cell]{Vertex: element.Vertex})
+	}
+	cells := flattenWTOElements(elements)
+	edges := make([]WTOInfluence[Cell], 0, len(plan.edges))
+	retained := make(map[Cell]struct{}, len(cells))
+	for _, cell := range cells {
+		retained[cell] = struct{}{}
+	}
+	for edge := range plan.edges {
+		if _, from := retained[edge.from]; !from {
+			continue
+		}
+		if _, to := retained[edge.to]; !to {
+			continue
+		}
+		edges = append(edges, WTOInfluence[Cell]{From: edge.from, To: edge.to})
+	}
+	return FreezeWTOPlan(cells, elements, edges)
+}
+
+func flattenWTOElements[Cell comparable](elements []WTOElement[Cell]) []Cell {
+	var cells []Cell
+	var visit func([]WTOElement[Cell])
+	visit = func(items []WTOElement[Cell]) {
+		for _, item := range items {
+			cells = append(cells, item.Vertex)
+			visit(item.Body)
+		}
+	}
+	visit(elements)
+	return cells
 }
 
 // FreezeWTOPlan validates and freezes a caller-computed WTO without running a
