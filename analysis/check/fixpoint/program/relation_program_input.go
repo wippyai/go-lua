@@ -2,6 +2,7 @@ package program
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -24,6 +25,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"
 )
+
+var errRelationDefinitionCoordinateAbsent = errors.New("definition coordinate is absent")
 
 // relationProgramExecutionFactories is the exact application-owned execution
 // authority for the lexical forest. A Static is immutable preparation; its
@@ -205,6 +208,12 @@ func relationProgramDefinitions(prepared preparedBodies) (map[lexicalidentity.St
 		}
 		point, err := relationDefinitionPoint(ownerStatic.OperationPlan().Facts(), ownerStatic.Graph(), origin.Symbol)
 		if err != nil {
+			// A closure retained only inside an object-literal graph can have no
+			// point-owned value source. It remains a lexical body, but this owner
+			// has no coordinate at which to publish its definition.
+			if errors.Is(err, errRelationDefinitionCoordinateAbsent) {
+				continue
+			}
 			return nil, fmt.Errorf("program: replacement definition for %s: %w", targetStatic.StableLexicalBodyID(), err)
 		}
 		owner := ownerStatic.StableLexicalBodyID()
@@ -291,6 +300,9 @@ func relationDefinitionPoint(facts factflow.Facts, graph cfg.Graph, function sym
 		if matched {
 			matches[point] = struct{}{}
 		}
+	}
+	if len(matches) == 0 {
+		return 0, fmt.Errorf("%w: function %d", errRelationDefinitionCoordinateAbsent, function)
 	}
 	if len(matches) != 1 {
 		return 0, fmt.Errorf("function %d has %d definition coordinates, want one", function, len(matches))

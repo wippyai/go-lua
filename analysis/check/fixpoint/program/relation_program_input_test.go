@@ -108,6 +108,31 @@ return caller("ok")
 	}
 }
 
+func TestRelationProgramInputFindsDefinitionNestedInDynamicObjectEntry(t *testing.T) {
+	const source = `
+local key = "handler"
+local registry = {
+    handlers = {
+        [key] = function(value: string): string
+            return value
+        end,
+    },
+}
+return registry
+`
+	stmts := parseRelationProgramInputChunk(t, source)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	reg := standard.Registry()
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), reg, nil, body.Config{}.ModuleExports, stmts)
+	prepared, err := prepareBoundChunkBodies(stmts, bindings, body.Config{Registry: reg}, keys)
+	if err != nil {
+		t.Fatalf("prepareBoundChunkBodies: %v", err)
+	}
+	if _, err := relationProgramInput(prepared, relationProgramFactories(t, prepared, nil), nil); err != nil {
+		t.Fatalf("relationProgramInput: %v", err)
+	}
+}
+
 func TestRelationProgramFreezeConsumesBinderSealedDirectLexicalDeclarations(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseRelationProgramInputChunk(t, `
