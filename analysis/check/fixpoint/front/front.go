@@ -1501,6 +1501,7 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 	}
 	operands = append(operands,
 		equation.Operand{Role: "context", Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
+		equation.Operand{Role: "result-arity", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Results.Len))))},
 		equation.Operand{Role: "list-spread", Term: boolTerm(instruction.ListSpread)},
 		equation.Operand{Role: "result-spread", Term: boolTerm(instruction.ResultSpread)},
 		equation.Operand{Role: "final", Term: boolTerm(instruction.CallFinal)},

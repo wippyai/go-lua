@@ -992,6 +992,15 @@ type closureHandle struct {
 	Captures  []string `json:"captures"`
 }
 
+// memberClosureWire keeps the lexical capability of a callable table member
+// beside its sealed table value. The shape itself remains the authority for
+// member presence and callable proof; this wire only supplies the private
+// child-entry lens needed to evaluate a known local member body.
+type memberClosureWire struct {
+	Suffix string        `json:"suffix"`
+	Handle closureHandle `json:"handle"`
+}
+
 type lexicalEvaluator struct {
 	byPrototype       map[string]front.Compilation
 	requiresBody      map[string]bool
@@ -1013,6 +1022,37 @@ func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
 	return false
 }
 
+func (l *lexicalEvaluator) hasClaim(prototype string) bool {
+	child, exists := l.byPrototype[prototype]
+	if !exists {
+		return true
+	}
+	for _, item := range child.Artifact.Equations {
+		if item.Occurrence.Kind == "claim" {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
+	child, exists := l.byPrototype[prototype]
+	if !exists {
+		return true
+	}
+	for _, item := range child.Artifact.Equations {
+		if item.Occurrence.Kind != "object-materialization" {
+			continue
+		}
+		for _, operand := range item.Operands {
+			if operand.Role == "kind" && string(operand.Term.Encoding) == "object-kind/table" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), active: make(map[equation.BodyID]bool)}
 	var add func(front.Compilation)
@@ -1027,12 +1067,9 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	add(root)
 	var mark func(front.Compilation) bool
 	mark = func(compilation front.Compilation) bool {
-		// A lexical call is admitted through the compact boundary bridge only
-		// when it can rebind a formal/capture cell, or when it transports an
-		// escaping nested closure. Member and index effects still belong to the
-		// root evaluator until the projected outcome includes heap transport.
-		// Sending those bodies through a value-only bridge would replace a
-		// caller's stronger container facts with an unchanged entry snapshot.
+		// Capture/writeback and escaping nested closures retain their established
+		// body admission. Ordinary capture-free calls are admitted separately
+		// only when their sealed result tuple has a caller-owned slot.
 		required := len(compilation.Boundary.Captures) != 0
 		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary {
 			required = false
@@ -1170,15 +1207,98 @@ func closureHandleFor(term []byte, partition equation.Partition) (closureHandle,
 		return closureHandle{}, false
 	}
 	var handle closureHandle
-	if json.Unmarshal(encoded, &handle) != nil || handle.Prototype == "" {
-		return closureHandle{}, false
+	return handle, json.Unmarshal(encoded, &handle) == nil && validClosureHandle(handle)
+}
+
+func validClosureHandle(handle closureHandle) bool {
+	if handle.Prototype == "" {
+		return false
 	}
 	for _, capture := range handle.Captures {
 		if !strings.HasPrefix(capture, "path/") && !strings.HasPrefix(capture, "temp/") && !strings.HasPrefix(capture, "scalar/") {
-			return closureHandle{}, false
+			return false
 		}
 	}
-	return handle, true
+	return true
+}
+
+func memberClosuresFor(term []byte, partition equation.Partition) []memberClosureWire {
+	prefix := "member-closure/" + string(term) + "/"
+	bySuffix := make(map[string]struct {
+		key  string
+		wire memberClosureWire
+	})
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		var wire memberClosureWire
+		if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+			continue
+		}
+		prior, exists := bySuffix[wire.Suffix]
+		if !exists || fact.Key > prior.key {
+			bySuffix[wire.Suffix] = struct {
+				key  string
+				wire memberClosureWire
+			}{key: fact.Key, wire: wire}
+		}
+	}
+	keys := make([]string, 0, len(bySuffix))
+	for suffix := range bySuffix {
+		keys = append(keys, suffix)
+	}
+	sort.Strings(keys)
+	out := make([]memberClosureWire, 0, len(keys))
+	for _, suffix := range keys {
+		out = append(out, bySuffix[suffix].wire)
+	}
+	return out
+}
+
+func projectMemberClosures(target string, source []byte, operation string, partition equation.Partition) ([]equation.Fact, error) {
+	wires := memberClosuresFor(source, partition)
+	values := make([]equation.Fact, 0, len(wires))
+	for index, wire := range wires {
+		encoded, err := json.Marshal(wire)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, equation.Fact{Key: fmt.Sprintf("member-closure/%s/%s/%08d", target, operation, index), Value: encoded})
+	}
+	return values, nil
+}
+
+func projectSealedTableMemberClosures(target string, tableValue []byte, operation string, partition equation.Partition) ([]equation.Fact, error) {
+	table, ok := shapefact.DecodeTable(tableValue)
+	if !ok {
+		return nil, nil
+	}
+	values := make([]equation.Fact, 0)
+	for _, member := range table.Members {
+		if !member.Present {
+			continue
+		}
+		handle, found := closureHandleFor([]byte(member.Value), partition)
+		if !found {
+			continue
+		}
+		encoded, err := json.Marshal(memberClosureWire{Suffix: member.Suffix, Handle: handle})
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, equation.Fact{Key: fmt.Sprintf("member-closure/%s/%s/literal-%08d", target, operation, len(values)), Value: encoded})
+	}
+	return values, nil
+}
+
+func methodClosureHandleFor(receiver []byte, method string, partition equation.Partition) (closureHandle, bool) {
+	for _, wire := range memberClosuresFor(receiver, partition) {
+		if wire.Suffix == "."+method {
+			return wire.Handle, true
+		}
+	}
+	return closureHandle{}, false
 }
 
 func boundaryTerm(symbol wir.SymbolID) string { return fmt.Sprintf("path/sym%d", symbol) }
@@ -1192,7 +1312,11 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	if !exists {
 		return equation.TransactionResult{}, fmt.Errorf("engine: known lexical target %q is unavailable", handle.Prototype)
 	}
-	if operands.spread || len(operands.arguments) != len(child.Boundary.Parameters) || len(handle.Captures) != len(child.Boundary.Captures) {
+	arguments := operands.arguments
+	if operands.receiver != nil {
+		arguments = append([][]byte{operands.receiver}, arguments...)
+	}
+	if operands.spread || len(arguments) != len(child.Boundary.Parameters) || len(handle.Captures) != len(child.Boundary.Captures) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
 	}
 	seeds := make([]entrySeed, 0, len(operands.arguments)+len(handle.Captures))
@@ -1200,15 +1324,15 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		if parameter.Vararg {
 			return equation.TransactionResult{}, fmt.Errorf("engine: vararg lexical boundary is unsupported")
 		}
-		value, known := resolveKnownCurrentValue(operands.arguments[index], partition)
-		if !known {
+		value, known := resolveKnownCurrentValue(arguments[index], partition)
+		if !known || isUnknownScalar(value) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical argument %d", index)
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	for index, capture := range child.Boundary.Captures {
 		value, known := resolveKnownCurrentValue([]byte(handle.Captures[index]), partition)
-		if !known {
+		if !known || isUnknownScalar(value) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical capture %q", capture.Name)
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
@@ -1229,6 +1353,38 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	for index, value := range returns {
 		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", operation.Target.Name, index), Value: value})
 	}
+	// Publication is the only child return authority. Its member-capability
+	// facts retain local closure handles for sealed table results without
+	// changing the table's ordinary callable/member facts.
+	for _, fact := range closure.Values {
+		const prefix = "return-member-closure/"
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(fact.Key, prefix), "/")
+		if len(parts) != 3 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure")
+		}
+		resultIndex, err := strconv.Atoi(parts[1])
+		if err != nil || resultIndex < 0 || resultIndex >= len(returns) {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure result")
+		}
+		var wire memberClosureWire
+		if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure handle")
+		}
+		rebound, values, err := rebindEscapingClosure(operation, child, arguments, handle, closure, wire.Handle)
+		if err != nil {
+			return equation.TransactionResult{}, err
+		}
+		wire.Handle = rebound
+		encoded, err := json.Marshal(wire)
+		if err != nil {
+			return equation.TransactionResult{}, err
+		}
+		projected.Values = append(projected.Values, values...)
+		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-member-closure/%s/%08d/%s", strings.TrimPrefix(operation.Target.Name, "call/"), resultIndex, parts[2]), Value: encoded})
+	}
 	for index, capture := range child.Boundary.Captures {
 		value, found := latestClosedValue([]byte(boundaryTerm(capture.Symbol)), closure.Values)
 		if !found {
@@ -1243,7 +1399,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		aliases := []string{handle.Captures[index]}
 		parameterAliasesCapture := false
 		for parameterIndex := range child.Boundary.Parameters {
-			parameterAliasesCapture = parameterAliasesCapture || string(operands.arguments[parameterIndex]) == handle.Captures[index]
+			parameterAliasesCapture = parameterAliasesCapture || string(arguments[parameterIndex]) == handle.Captures[index]
 		}
 		for other, term := range handle.Captures {
 			if other == index {
@@ -1253,7 +1409,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 				aliases = append(aliases, term)
 			}
 		}
-		for _, term := range operands.arguments {
+		for _, term := range arguments {
 			if string(term) == handle.Captures[index] {
 				aliases = append(aliases, string(term))
 			}
@@ -1278,7 +1434,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted parameter cell %q", handle.Prototype, parameter.Name)
 		}
 		for _, captureTerm := range handle.Captures {
-			if string(operands.arguments[parameterIndex]) == captureTerm {
+			if string(arguments[parameterIndex]) == captureTerm {
 				projected.Values = append(projected.Values, equation.Fact{Key: "value/" + captureTerm + "/" + operation.Target.Name, Value: value})
 			}
 		}
@@ -1293,21 +1449,15 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 				if json.Unmarshal(fact.Value, &returned) != nil {
 					return equation.TransactionResult{}, fmt.Errorf("engine: malformed returned closure handle")
 				}
-				// Rebind captures of an escaping closure through this call's
-				// boundary lens. Formal captures therefore retain the caller cell
-				// instead of a child-local path that disappears at return.
-				for captureIndex, captureTerm := range returned.Captures {
-					for parameterIndex, parameter := range child.Boundary.Parameters {
-						if captureTerm == boundaryTerm(parameter.Symbol) {
-							returned.Captures[captureIndex] = string(operands.arguments[parameterIndex])
-							break
-						}
-					}
+				returned, values, err := rebindEscapingClosure(operation, child, arguments, handle, closure, returned)
+				if err != nil {
+					return equation.TransactionResult{}, err
 				}
 				encoded, marshalErr := json.Marshal(returned)
 				if marshalErr != nil {
 					return equation.TransactionResult{}, marshalErr
 				}
+				projected.Values = append(projected.Values, values...)
 				projected.Values = append(projected.Values, equation.Fact{Key: "call-closure/" + strings.TrimPrefix(operation.Target.Name, "call/") + "/00000000", Value: encoded})
 				break
 			}
@@ -1316,7 +1466,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// A nested body's residual has a different entry lens and cannot be
 	// attributed to this call boundary. It is demanded at its own closure site;
 	// only direct-child residuals can cross this outcome boundary.
-	if len(child.Nested) == 0 {
+	if len(child.Nested) == 0 && l.requiresBody[handle.Prototype] {
 		// Child diagnostics are projected with a body-qualified key. The final
 		// Check closure is still the sole publication point, while the qualified
 		// key lets DiagnosticSpans retain the child operation's source location.
@@ -1399,6 +1549,48 @@ func childReturnValues(closure equation.OutputClosure) ([][]byte, error) {
 		result[index] = values[index]
 	}
 	return result, nil
+}
+
+func rebindEscapingClosure(operation equation.BoundEquation, child front.Compilation, arguments [][]byte, parent closureHandle, closure equation.OutputClosure, returned closureHandle) (closureHandle, []equation.Fact, error) {
+	if !validClosureHandle(returned) {
+		return closureHandle{}, nil, fmt.Errorf("malformed escaping closure handle")
+	}
+	projected := make([]equation.Fact, 0)
+	for captureIndex, capture := range returned.Captures {
+		rebound := false
+		for parameterIndex, parameter := range child.Boundary.Parameters {
+			if capture == boundaryTerm(parameter.Symbol) {
+				returned.Captures[captureIndex] = string(arguments[parameterIndex])
+				rebound = true
+				break
+			}
+		}
+		if rebound {
+			continue
+		}
+		for boundaryIndex, boundary := range child.Boundary.Captures {
+			if capture == boundaryTerm(boundary.Symbol) {
+				returned.Captures[captureIndex] = parent.Captures[boundaryIndex]
+				rebound = true
+				break
+			}
+		}
+		if rebound || strings.HasPrefix(capture, "scalar/") {
+			continue
+		}
+		// A local cell captured by an escaping closure has no caller spelling.
+		// Give it a fresh caller-owned lens and seed that lens from the completed
+		// child closure. Sibling closures from the same returned table use the
+		// same lens, so their later writeback composes in call order.
+		value, found := latestClosedValue([]byte(capture), closure.Values)
+		if !found {
+			return closureHandle{}, nil, fmt.Errorf("escaping closure omitted capture cell %q", capture)
+		}
+		lens := "temp/capture/" + operation.Target.Name + "/" + base64.RawURLEncoding.EncodeToString([]byte(capture))
+		returned.Captures[captureIndex] = lens
+		projected = append(projected, equation.Fact{Key: "value/" + lens + "/" + operation.Target.Name, Value: value})
+	}
+	return returned, projected, nil
 }
 
 // allocationTemplateKernel admits only a sealed, complete allocation graph.
@@ -1715,6 +1907,16 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 		}
 		values = append(values, equation.Fact{Key: "closure/" + target + "/" + operation.Target.Name, Value: encoded})
 	}
+	memberClosures, err := projectMemberClosures(target, operands["value"], operation.Target.Name, partition)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	values = append(values, memberClosures...)
+	literalMemberClosures, err := projectSealedTableMemberClosures(target, operands["value"], operation.Target.Name, partition)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	values = append(values, literalMemberClosures...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
@@ -2608,21 +2810,43 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if closure, recognized := resourceLifecycleEpoch(operation, operands, partition); recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
-	if lexical != nil && hasCallee {
-		if handle, found := closureHandleFor(operands.callee, partition); found {
-			if lexical.requiresBody[handle.Prototype] {
-				if outcome, err := lexical.applyKnown(operation, operands, handle, partition); err == nil {
-					return outcome, nil
-				} else if strings.Contains(err.Error(), "unsupported exact lexical boundary") && !lexical.hasVarargBoundary(handle.Prototype) {
-					// An admitted fixed-arity boundary must be atomic: a failed exact
-					// selector is not allowed to fall through to a partial projection.
-					return equation.TransactionResult{}, err
+	handle, localCallable := closureHandle{}, false
+	if lexical != nil {
+		if hasCallee {
+			handle, localCallable = closureHandleFor(operands.callee, partition)
+			if !localCallable {
+				// The normalized front represents a static member call as a direct
+				// callee path. Its sealed member capability has the same local-body
+				// authority as explicit receiver/method syntax.
+				if cut := strings.LastIndex(string(operands.callee), "."); cut > len("path/") {
+					handle, localCallable = methodClosureHandleFor(operands.callee[:cut], string(operands.callee[cut+1:]), partition)
 				}
 			}
-			// The existing root rule remains the conservative residue for a
-			// boundary that this compact bridge cannot yet certify. In particular,
-			// no incomplete child closure is published.
+		} else {
+			handle, localCallable = methodClosureHandleFor(operands.receiver, operands.method, partition)
 		}
+	}
+	applyLocal := func() (equation.TransactionResult, bool, error) {
+		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
+			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && (lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype))) {
+			return equation.TransactionResult{}, false, nil
+		}
+		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
+		if err != nil {
+			if operands.resultArity == 0 && (strings.Contains(err.Error(), "incomplete lexical argument") || strings.Contains(err.Error(), "incomplete lexical capture")) {
+				// Child entry seeding is atomic. A partially known local call must
+				// not leave its pre-call caller facts looking like a completed run.
+				return equation.TransactionResult{}, false, err
+			}
+			if operands.resultArity == 0 && operands.spread && strings.Contains(err.Error(), "unsupported exact lexical boundary") && !lexical.hasVarargBoundary(handle.Prototype) {
+				return equation.TransactionResult{}, false, err
+			}
+			// An incomplete local boundary is indistinguishable from an unresolved
+			// callable at this result owner. Keep its slots at Top rather than
+			// publishing a partial child result or a synthetic diagnostic.
+			return equation.TransactionResult{}, false, nil
+		}
+		return outcome, true, nil
 	}
 	if state, handled := sendIsolationState(operation, operands, partition); handled {
 		return state, nil
@@ -2684,13 +2908,34 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if !known {
+		if outcome, projected, err := applyLocal(); err != nil {
+			return equation.TransactionResult{}, err
+		} else if projected {
+			return outcome, nil
+		}
 		return equation.TransactionResult{Complete: true}, nil
 	}
 	if !isUnknownScalar(callee) && !isCallableValue(callee) {
 		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
 	}
 	signature, known := callableSignature(callee)
+	if known && localCallable && genericCallableSignature(signature) {
+		// Generic instantiation and constraint checking remain owned by the
+		// established call path. A body-local tuple cannot certify a particular
+		// instantiation before that boundary has supplied its substitution.
+		localCallable = false
+	}
 	if !known || operands.spread {
+		if string(callee) == "scalar/function" {
+			// An unshaped callable includes generic and otherwise uninstantiated
+			// lexical functions. Its body result is not a certified call result.
+			return equation.TransactionResult{Complete: true}, nil
+		}
+		if outcome, projected, err := applyLocal(); err != nil {
+			return equation.TransactionResult{}, err
+		} else if projected {
+			return outcome, nil
+		}
 		return equation.TransactionResult{Complete: true}, nil
 	}
 	if !hasCallee {
@@ -2715,12 +2960,38 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			break
 		}
 		argument, known := resolveKnownCurrentValue(term, partition)
+		if known && genericConstraintRefuted(argument, signature.Params[index]) {
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), strings.TrimSpace(strings.SplitN(signature.Params[index], ":", 2)[1]))), nil
+		}
 		if !known || !provenScalarNotSubtype(argument, signature.Params[index]) {
 			continue
 		}
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), signature.Params[index])), nil
 	}
+	if outcome, projected, err := applyLocal(); err != nil {
+		return equation.TransactionResult{}, err
+	} else if projected {
+		return outcome, nil
+	}
 	return equation.TransactionResult{Complete: true}, nil
+}
+
+func genericCallableSignature(signature callableShape) bool {
+	for _, parameter := range signature.Params {
+		if len(parameter) > 0 && parameter[0] >= 'A' && parameter[0] <= 'Z' && (len(parameter) == 1 || strings.HasPrefix(parameter[1:], " :")) {
+			return true
+		}
+	}
+	return false
+}
+
+func genericConstraintRefuted(value []byte, parameter string) bool {
+	parts := strings.SplitN(parameter, ":", 2)
+	if len(parts) != 2 || len(parts[0]) != 1 || parts[0][0] < 'A' || parts[0][0] > 'Z' || isUnknownScalar(value) {
+		return false
+	}
+	constraint := strings.TrimSpace(parts[1])
+	return strings.HasPrefix(constraint, "{") && !shapefact.IsTable(value)
 }
 
 // freezeCallEpoch captures only closed root-table identities. It publishes the
@@ -3011,12 +3282,13 @@ func isTransferScalar(value []byte) bool {
 }
 
 type directCallOperands struct {
-	callee    []byte
-	receiver  []byte
-	method    string
-	display   string
-	arguments [][]byte
-	spread    bool
+	callee      []byte
+	receiver    []byte
+	method      string
+	display     string
+	arguments   [][]byte
+	spread      bool
+	resultArity int
 }
 
 func callOperands(operands []equation.BoundOperand) (directCallOperands, error) {
@@ -3054,6 +3326,12 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 			} else if string(operand.Value) != "scalar/bool/false" {
 				return directCallOperands{}, fmt.Errorf("engine: malformed call argument spread")
 			}
+		case operand.Role == "result-arity":
+			arity, err := strconv.Atoi(string(operand.Value))
+			if err != nil || arity < 0 {
+				return directCallOperands{}, fmt.Errorf("engine: malformed call result arity")
+			}
+			result.resultArity = arity
 		case strings.HasPrefix(operand.Role, "argument-display-"):
 			continue
 		case strings.HasPrefix(operand.Role, "argument-"):
@@ -3386,6 +3664,17 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				break
 			}
 		}
+		memberPrefix := "call-member-closure/" + strings.TrimPrefix(string(application), "call/") + "/" + key + "/"
+		for _, fact := range partition.Values() {
+			if !strings.HasPrefix(fact.Key, memberPrefix) {
+				continue
+			}
+			var wire memberClosureWire
+			if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call member closure")
+			}
+			values = append(values, equation.Fact{Key: "member-closure/" + string(result) + "/" + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, memberPrefix), Value: append([]byte(nil), fact.Value...)})
+		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
@@ -3437,11 +3726,19 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	// publishedOutcomes joins them conservatively back into the public slots.
 	prefix := "return-candidate/" + operation.Target.Name + "/"
 	outcomes := make([]equation.Fact, 0, len(values)+1)
+	projected := make([]equation.Fact, 0)
 	outcomes = append(outcomes, equation.Fact{Key: prefix + "arity", Value: []byte(strconv.Itoa(len(values)))})
 	for index, value := range values {
 		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
+		for memberIndex, wire := range memberClosuresFor(operation.Operands[index].Value, partition) {
+			encoded, err := json.Marshal(wire)
+			if err != nil {
+				return equation.TransactionResult{}, err
+			}
+			projected = append(projected, equation.Fact{Key: fmt.Sprintf("return-member-closure/%s/%08d/%08d", operation.Target.Name, index, memberIndex), Value: encoded})
+		}
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Outcomes: outcomes}}, nil
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: projected, Outcomes: outcomes}}, nil
 }
 
 // branchTruth evaluates exactly one selector.  An unavailable selector is an
