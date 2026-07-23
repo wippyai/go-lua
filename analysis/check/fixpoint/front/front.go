@@ -69,6 +69,10 @@ type Compilation struct {
 	PrototypeName string
 	LexicalPath   []uint32
 	Boundary      wir.BodyBoundary
+	// RebindsBoundary records ordinary assignment to a formal or captured
+	// declaration. Member/index writes are deliberately excluded: their heap
+	// transport is a separate interprocedural boundary concern.
+	RebindsBoundary bool
 	// Nested holds the independently admitted lexical bodies owned by closure
 	// allocations in Artifact. They retain the same WIR-derived equation form
 	// and publication path as the enclosing body; a caller decides which body
@@ -138,7 +142,7 @@ func Compile(source string) (Compilation, error) {
 		return Compilation{}, err
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
-	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
+	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -159,10 +163,10 @@ func Compile(source string) (Compilation, error) {
 	return compilation, nil
 }
 
-func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
+func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, wirBody *wir.Body, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
 	return Compilation{
 		Artifact: artifact, Body: body, Prototype: prototype, PrototypeName: prototypeName,
-		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary,
+		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary, RebindsBoundary: bodyRebindsBoundary(wirBody, boundary),
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
 		BranchSpans: branches, EffectSpans: effects,
 		QualifiedClaimSpans:       qualifySpans(body, claims),
@@ -171,6 +175,23 @@ func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, protot
 		QualifiedBranchSpans:      qualifySpans(body, branches),
 		QualifiedEffectSpans:      qualifySpans(body, effects),
 	}
+}
+
+func bodyRebindsBoundary(body *wir.Body, boundary wir.BodyBoundary) bool {
+	if body == nil {
+		return false
+	}
+	for _, parameter := range boundary.Parameters {
+		if body.SymbolHasWrite(parameter.Symbol) {
+			return true
+		}
+	}
+	for _, capture := range boundary.Captures {
+		if body.SymbolHasWrite(capture.Symbol) {
+			return true
+		}
+	}
+	return false
 }
 
 func qualifySpans(body equation.BodyID, spans map[string]wir.Span) map[SpanKey]wir.Span {
@@ -203,7 +224,7 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
-		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
+		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
 		if graphHasCycle(proto.Graph) {
 			cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 			if err != nil {

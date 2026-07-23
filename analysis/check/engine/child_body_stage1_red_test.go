@@ -14,6 +14,23 @@ func TestStage1RedUncalledChildDiagnostics(t *testing.T) {
 	}
 }
 
+func TestStage1RedCalledChildDiagnosticUsesChildSpan(t *testing.T) {
+	r := checkChildAdmission(t, `
+local retained = 0
+local f = function(value)
+  local keep = retained
+  local bad: string = value
+end
+f(1)`)
+	if len(r.Diagnostics) != 1 || !strings.HasPrefix(r.Diagnostics[0].Key, "child/") || string(r.Diagnostics[0].Value) != "cannot assign value because it is number, not string" {
+		t.Fatalf("called child diagnostic = %#v", r.Diagnostics)
+	}
+	span, ok := r.DiagnosticSpans[r.Diagnostics[0].Key]
+	if !ok || !span.Valid() || span.StartLine != 5 {
+		t.Fatalf("called child span = %#v, want child assignment line", span)
+	}
+}
+
 func TestStage1RedThreeLevelCaptures(t *testing.T) {
 	r := checkChildAdmission(t, `local x = 1; return function() return function() return function() return x end end end`)
 	if got := valuesByName(r.Diagnostics); len(got) != 0 || valuesByName(r.Outcomes)["return/arity"] != "1" || !strings.HasPrefix(valuesByName(r.Outcomes)["return/0"], "scalar/function/") {
@@ -46,6 +63,13 @@ func TestStage1RedArgumentCaptureAliasing(t *testing.T) {
 	r := checkChildAdmission(t, `local x = {n = 0}; local f = function(a) x.n = 1; a.n = 2 end; f(x); local y: number = x.n`)
 	if len(r.Diagnostics) != 0 {
 		t.Fatalf("aliasing generated a speculative diagnostic: %#v", r.Diagnostics)
+	}
+}
+
+func TestStage1RedArgumentCaptureAliasWriteback(t *testing.T) {
+	r := checkChildAdmission(t, `local x = 0; local f = function(a) local keep = x; a = 2 end; f(x); local y: number = x`)
+	if len(r.Diagnostics) != 0 || valuesByName(r.Values)["y"] != "2" {
+		t.Fatalf("argument/capture alias writeback = diagnostics %#v values %#v", r.Diagnostics, r.Values)
 	}
 }
 

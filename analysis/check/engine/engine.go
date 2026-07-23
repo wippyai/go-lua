@@ -937,7 +937,16 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	add(root)
 	var mark func(front.Compilation) bool
 	mark = func(compilation front.Compilation) bool {
-		required := len(compilation.Boundary.Captures) > 0
+		// A lexical call is admitted through the compact boundary bridge only
+		// when it can rebind a formal/capture cell, or when it transports an
+		// escaping nested closure. Member and index effects still belong to the
+		// root evaluator until the projected outcome includes heap transport.
+		// Sending those bodies through a value-only bridge would replace a
+		// caller's stronger container facts with an unchanged entry snapshot.
+		required := len(compilation.Boundary.Captures) != 0
+		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary {
+			required = false
+		}
 		for _, child := range compilation.Nested {
 			required = mark(child) || required
 		}
@@ -948,6 +957,19 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	}
 	mark(root)
 	return l
+}
+
+// lexicalRequiresHeapTransport identifies child effects the value-only bridge
+// cannot preserve. Those bodies stay on the established root path unless they
+// also rebind a boundary cell, which is the one effect this bridge transports.
+func lexicalRequiresHeapTransport(compilation front.Compilation) bool {
+	for _, item := range compilation.Artifact.Equations {
+		switch item.Occurrence.Kind {
+		case "apply", "external-call", "index-mutation", "path-replacement", "path-invalidation":
+			return true
+		}
+	}
+	return false
 }
 
 func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []byte) (equation.OutputClosure, int, error) {
@@ -1122,7 +1144,54 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		if !found {
 			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted capture cell %q", handle.Prototype, capture.Name)
 		}
-		projected.Values = append(projected.Values, equation.Fact{Key: "value/" + handle.Captures[index] + "/" + operation.Target.Name, Value: value})
+		// A capture cell may be the same caller cell as another capture or a
+		// formal.  The entry contains the complete pre-call relation below, so
+		// a write through this lens must update every possible caller alias.
+		// This is a weak update at the boundary: each alias is retained as a
+		// separately owned caller fact rather than selecting one arbitrary
+		// spelling of an aliased cell.
+		aliases := []string{handle.Captures[index]}
+		parameterAliasesCapture := false
+		for parameterIndex := range child.Boundary.Parameters {
+			parameterAliasesCapture = parameterAliasesCapture || string(operands.arguments[parameterIndex]) == handle.Captures[index]
+		}
+		for other, term := range handle.Captures {
+			if other == index {
+				continue
+			}
+			if term == handle.Captures[index] {
+				aliases = append(aliases, term)
+			}
+		}
+		for _, term := range operands.arguments {
+			if string(term) == handle.Captures[index] {
+				aliases = append(aliases, string(term))
+			}
+		}
+		sort.Strings(aliases)
+		aliases = uniqueStrings(aliases)
+		// If a formal aliases this capture, the parameter cell is the latest
+		// write authority for this call. Its rebinding below performs the weak
+		// caller update without creating two conflicting facts for one target.
+		if !parameterAliasesCapture {
+			for _, alias := range aliases {
+				projected.Values = append(projected.Values, equation.Fact{Key: "value/" + alias + "/" + operation.Target.Name, Value: value})
+			}
+		}
+	}
+	// Parameter writes only escape when the caller supplied that parameter as
+	// a capture-cell alias.  Rebind those writes through every matching capture
+	// lens; ordinary pass-by-value parameters deliberately have no writeback.
+	for parameterIndex, parameter := range child.Boundary.Parameters {
+		value, found := latestClosedValue([]byte(boundaryTerm(parameter.Symbol)), closure.Values)
+		if !found {
+			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted parameter cell %q", handle.Prototype, parameter.Name)
+		}
+		for _, captureTerm := range handle.Captures {
+			if string(operands.arguments[parameterIndex]) == captureTerm {
+				projected.Values = append(projected.Values, equation.Fact{Key: "value/" + captureTerm + "/" + operation.Target.Name, Value: value})
+			}
+		}
 	}
 	// A returned lexical closure is a capability, not merely its callable
 	// scalar. Preserve its environment lens under the call boundary so the
@@ -1154,11 +1223,37 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			}
 		}
 	}
-	// Child diagnostics are retained in the private outcome. They need a
-	// body-qualified descriptor-to-span projection before becoming root facts;
-	// publishing them here would attach a child coordinate to an unrelated
-	// caller span.
+	// A nested body's residual has a different entry lens and cannot be
+	// attributed to this call boundary. It is demanded at its own closure site;
+	// only direct-child residuals can cross this outcome boundary.
+	if len(child.Nested) == 0 {
+		// Child diagnostics are projected with a body-qualified key. The final
+		// Check closure is still the sole publication point, while the qualified
+		// key lets DiagnosticSpans retain the child operation's source location.
+		body := fmt.Sprintf("%x", child.Body)
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, closure.Diagnostics)
+		for _, diagnostic := range closure.Diagnostics {
+			key := "child/" + body + "/" + diagnostic.Key
+			projected.Diagnostics = append(projected.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
+			if span, ok := spans[diagnostic.Key]; ok {
+				l.diagnosticSpans[key] = span
+			}
+		}
+	}
 	return equation.TransactionResult{Complete: true, Closure: projected}, nil
+}
+
+func uniqueStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := items[:1]
+	for _, item := range items[1:] {
+		if item != out[len(out)-1] {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func latestClosedValue(term []byte, facts []equation.Fact) ([]byte, bool) {
