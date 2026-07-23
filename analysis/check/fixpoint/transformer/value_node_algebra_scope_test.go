@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestValueNodeScopeCarriesSelectedResolverToDescendants(t *testing.T) {
@@ -29,5 +31,29 @@ func TestValueNodeScopeCarriesSelectedResolverToDescendants(t *testing.T) {
 	}
 	if _, exact := arena.evalValueCanonicalWithLeaves(term, resolver); !exact {
 		t.Fatal("selected resolver did not carry to the operand descendant")
+	}
+}
+
+func TestValueNodeConcatCompletesDiagnosedCompositeLeaves(t *testing.T) {
+	registry := standard.Registry()
+	want := typevalue.WithWitness(registry, typevalue.FromType(registry, typ.String), typ.String)
+	for _, invalid := range []product.Value{
+		typevalue.Nil(registry),
+		typevalue.LiteralBool(registry, false),
+		typevalue.LiteralBool(registry, true),
+	} {
+		arena := NewArena(registry)
+		left := arena.Constant(typevalue.LiteralString(registry, "owner:"))
+		concat := arena.StringConcatValue(left, arena.Constant(invalid))
+		if concat == 0 {
+			t.Fatal("concat construction failed")
+		}
+		value, exact := arena.evalValueCanonicalWithLeaves(concat, valueNodeLeafResolver{})
+		if !exact {
+			t.Fatalf("diagnosed concat %#v did not retain a composable result", invalid)
+		}
+		if !product.Equal(registry, value, want) {
+			t.Fatalf("diagnosed concat %#v = %#v, want conservative string %#v", invalid, value, want)
+		}
 	}
 }

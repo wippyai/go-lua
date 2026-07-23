@@ -282,9 +282,11 @@ func resolveValueNodeProduct(reg *axis.Registry, typeValues *typevalue.Cache, no
 				return value, true
 			}
 		}
-		if !possibleConcatOperand(reg, args[0]) || !possibleConcatOperand(reg, args[1]) {
-			return product.Value{}, false
-		}
+		// Concatenation still has a string-valued continuation when an operand
+		// is statically impossible. The operand obligation owns that diagnostic;
+		// refusing to materialize the expression here would turn an already
+		// diagnosed composite return into an unsupported formal tuple leaf.
+		// Keep the result conservative and do not manufacture literal evidence.
 		return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), true
 	case valueUnaryOperation:
 		if len(args) != 1 || !isPureUnaryOperator(node.operator) {
