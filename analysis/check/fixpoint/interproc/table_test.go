@@ -295,7 +295,7 @@ func countingRunner(executions *atomic.Int32) DirectCallRunner {
 	}
 }
 
-func tableEntry(t *testing.T, value, guard, diagnostic, unread string) EntryBinding {
+func tableEntry(t testing.TB, value, guard, diagnostic, unread string) EntryBinding {
 	t.Helper()
 	entry, err := NewEntryBinding([]EntryValue{
 		{Selector: "value", Encoding: []byte(value)},

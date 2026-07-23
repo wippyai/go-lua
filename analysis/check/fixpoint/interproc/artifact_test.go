@@ -92,7 +92,7 @@ func TestDemandedBodyArtifactDetachesItsBodyCertificate(t *testing.T) {
 	}
 }
 
-func demandedBodyArtifactFixture(t *testing.T) DemandedBodyArtifact {
+func demandedBodyArtifactFixture(t testing.TB) DemandedBodyArtifact {
 	t.Helper()
 	body := interprocCyclicFixture(t)
 	schema, err := NewParameterSchema("entry", []EntrySelector{"value", "guard", "diagnostic", "unread"})
@@ -123,7 +123,7 @@ func demandedBodyArtifactFixture(t *testing.T) DemandedBodyArtifact {
 	return artifact
 }
 
-func interprocCyclicFixture(t *testing.T) equation.CyclicArtifact {
+func interprocCyclicFixture(t testing.TB) equation.CyclicArtifact {
 	t.Helper()
 	var body equation.BodyID
 	body[0] = 73
