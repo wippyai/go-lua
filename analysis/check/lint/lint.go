@@ -18,10 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/source"
@@ -201,6 +198,24 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		byModule[entry.ModulePath] = entry
 	}
 	external := append([]*manifest.Manifest(nil), input.Manifests...)
+	// manifestByPath mirrors the last-wins order of the slice-based lookup
+	// views: later external manifests override earlier ones, and resolved
+	// entry summaries override external manifests. Each manifest is validated
+	// exactly once when it enters the map, so resolution stays linear in the
+	// number of imports instead of rescanning every manifest per import.
+	manifestByPath := make(map[string]*manifest.Manifest, len(external)+len(entries))
+	for i, item := range external {
+		if item == nil {
+			continue
+		}
+		if err := item.Validate(); err != nil {
+			if item.Path != "" {
+				return ProjectResult{}, fmt.Errorf("lint: validate imported signatures: signature manifest %q: %w", item.Path, err)
+			}
+			return ProjectResult{}, fmt.Errorf("lint: validate imported signatures: signature manifest %d: %w", i, err)
+		}
+		manifestByPath[item.Path] = item
+	}
 	resolved := make(map[string]*manifest.Manifest, len(entries))
 	results := make(map[string]EntryResult, len(entries))
 	visiting := make(map[string]bool, len(entries))
@@ -234,23 +249,12 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 					return err
 				}
 			}
-			available := append([]*manifest.Manifest(nil), external...)
-			for _, dependency := range resolved {
-				available = append(available, dependency)
-			}
-			exports := importlookup.Source{Manifests: available}
-			types := typelookup.Source{Manifests: available}
-			signatures := signaturelookup.Source{Manifests: available, IncludeStdlib: true}
-			_ = types // Constructing all three surviving lookup views is the module seam.
-			if err := signatures.Validate(); err != nil {
-				return fmt.Errorf("lint: validate imported signatures: %w", err)
-			}
-			export, found := exports.LookupExport(imported)
-			if !found {
+			item := manifestByPath[imported]
+			if item == nil || item.Export == nil {
 				preDiagnostics = append(preDiagnostics, moduleDiagnostic(entry, imported))
 				continue
 			}
-			resolvedImports = append(resolvedImports, ResolvedImport{ModulePath: imported, Manifest: manifestForPath(available, imported), Export: export})
+			resolvedImports = append(resolvedImports, ResolvedImport{ModulePath: imported, Manifest: item, Export: item.ScopeType(item.Export)})
 		}
 		resolveElapsed := time.Since(resolveStarted)
 		result, checkErr := engine.Check(entry.Source)
@@ -265,7 +269,11 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		// manifest exporter is promoted; it still lets importlookup resolve the
 		// module without fabricating a precise signature.
 		summary.SetExport(typ.Any)
+		if err := summary.Validate(); err != nil {
+			return fmt.Errorf("lint: validate imported signatures: signature manifest %q: %w", summary.Path, err)
+		}
 		resolved[module] = summary
+		manifestByPath[summary.Path] = summary
 		entryTiming := PhaseTimings{
 			LoadResolveNS:    resolveElapsed.Nanoseconds(),
 			ParseBindLowerNS: result.Timings.ParseBindLower.Nanoseconds(),
@@ -364,15 +372,6 @@ func discoverImports(content string) []string {
 		out = append(out, match[1])
 	}
 	return out
-}
-
-func manifestForPath(manifests []*manifest.Manifest, path string) *manifest.Manifest {
-	for index := len(manifests) - 1; index >= 0; index-- {
-		if item := manifests[index]; item != nil && item.Path == path {
-			return item
-		}
-	}
-	return nil
 }
 
 func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.Diagnostic) ([]diagnostic.Diagnostic, time.Duration) {
