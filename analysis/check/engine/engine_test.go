@@ -200,6 +200,30 @@ end
 	}
 }
 
+func TestCheckWholeModuleShapedFile(t *testing.T) {
+	result, err := engine.Check(`
+local dependency = require("dependency")
+
+local function first(value)
+    return value
+end
+
+local function second()
+    local local_value = first(42)
+    return local_value
+end
+
+local answer = second()
+return answer
+`)
+	if err != nil {
+		t.Fatalf("Check whole file: %v", err)
+	}
+	if len(result.Artifact.Equations) == 0 {
+		t.Fatal("Check whole file returned an empty artifact")
+	}
+}
+
 func valuesByName(values []equation.Fact) map[string]string {
 	result := make(map[string]string, len(values))
 	for _, value := range values {

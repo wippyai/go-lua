@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -12,6 +13,11 @@ import (
 )
 
 const entryValue = "front/closed-entry/v1"
+
+// ErrInternalPanic identifies an engine invariant failure that would otherwise
+// escape Check as a panic. Check is the public whole-file boundary, so callers
+// always receive a named error instead of an unclassified process crash.
+var ErrInternalPanic = errors.New("engine: internal panic")
 
 const branchPredicatePrefix = "front/branch-predicate/v1/"
 
@@ -47,10 +53,16 @@ type Result struct {
 
 // Check compiles source through the new front, binds its sole formal entry,
 // evaluates it with equation.AcyclicVM, and returns every output channel.
-func Check(source string) (Result, error) {
+func Check(source string) (result Result, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
+			result = Result{}
+		}
+	}()
 	artifact, err := front.CompileBody(source)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("engine: compile whole file: %w", err)
 	}
 	if len(artifact.Equations) == 0 {
 		return Result{}, fmt.Errorf("engine: front returned an empty artifact")
@@ -124,7 +136,31 @@ func registry() (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{entry, allocationTemplate, objectMaterialization, write, branch, apply, external, results, publication})
+	pathReplacement, err := binding("path-replacement", equation.KernelFunc(pathReplacementKernel))
+	if err != nil {
+		return nil, err
+	}
+	pathInvalidation, err := binding("path-invalidation", equation.KernelFunc(pathInvalidationKernel))
+	if err != nil {
+		return nil, err
+	}
+	indexMutation, err := binding("index-mutation", equation.KernelFunc(indexMutationKernel))
+	if err != nil {
+		return nil, err
+	}
+	genericFor, err := binding("generic-for", equation.KernelFunc(genericForKernel))
+	if err != nil {
+		return nil, err
+	}
+	channelSelect, err := binding("channel-select", equation.KernelFunc(channelSelectKernel))
+	if err != nil {
+		return nil, err
+	}
+	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{
+		entry, allocationTemplate, objectMaterialization, write,
+		pathReplacement, pathInvalidation, indexMutation,
+		branch, apply, external, results, genericFor, channelSelect, publication,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("engine: build kernel registry: %w", err)
 	}
@@ -181,6 +217,69 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
 		Key: "value/" + target + "/" + operation.Target.Name, Value: value,
 	}}}}, nil
+}
+
+// The path-store families are admitted whole-file operations. Their current
+// walking semantics validate the complete sealed shape and preserve ordering;
+// they intentionally do not manufacture heap facts that have not yet been
+// modeled by the equation domain.
+func pathReplacementKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	operands, err := requiredOperandsByRole(operation.Operands, "target", "display", "value")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	if !strings.HasPrefix(string(operands["target"]), "path/") || len(operands["display"]) == 0 || len(operands["value"]) == 0 {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed path replacement")
+	}
+	return equation.TransactionResult{Complete: true}, nil
+}
+
+func pathInvalidationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	if _, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix"); err != nil {
+		return equation.TransactionResult{}, err
+	}
+	return equation.TransactionResult{Complete: true}, nil
+}
+
+func indexMutationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	if _, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix", "value"); err != nil {
+		return equation.TransactionResult{}, err
+	}
+	return equation.TransactionResult{Complete: true}, nil
+}
+
+func genericForKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	if _, err := requiredOperandsByRole(operation.Operands, "iterator", "state", "control"); err != nil {
+		return equation.TransactionResult{}, err
+	}
+	return equation.TransactionResult{Complete: true}, nil
+}
+
+func channelSelectKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	operands, err := requiredOperandsByRole(operation.Operands, "result", "default")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	if !strings.HasPrefix(string(operands["result"]), "value/temp/") ||
+		(!strings.EqualFold(string(operands["default"]), "select/default/true") && !strings.EqualFold(string(operands["default"]), "select/default/false")) {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select")
+	}
+	return equation.TransactionResult{Complete: true}, nil
 }
 
 func branchKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
