@@ -161,7 +161,7 @@ func occurrence(kind string) equation.Occurrence {
 	return equation.Occurrence{Kind: kind, ContractID: contract}
 }
 
-func operationName(index int) string { return fmt.Sprintf("op/%08d", index) }
+func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 
 // ContractID returns the contract identity admitted by this front for kind.
 // The engine uses this exact content identity when registering its canonical

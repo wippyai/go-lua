@@ -220,7 +220,7 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
-		operands, err := operandsByRoleFromArtifact(operation.Operands, "target", "display")
+		operands, err := artifactOperandsByRole(operation.Operands, "target", "display")
 		if err != nil {
 			continue
 		}
@@ -244,15 +244,29 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 	return values
 }
 
-func operandsByRoleFromArtifact(operands []equation.Operand, roles ...string) (map[string][]byte, error) {
-	bound := make([]equation.BoundOperand, len(operands))
-	for index, operand := range operands {
+func artifactOperandsByRole(operands []equation.Operand, roles ...string) (map[string][]byte, error) {
+	wanted := make(map[string]bool, len(roles))
+	for _, role := range roles {
+		wanted[role] = true
+	}
+	result := make(map[string][]byte, len(roles))
+	for _, operand := range operands {
 		if operand.Term.Entry {
 			return nil, fmt.Errorf("engine: unexpected entry operand")
 		}
-		bound[index] = equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding}
+		if wanted[operand.Role] {
+			if result[operand.Role] != nil {
+				return nil, fmt.Errorf("engine: duplicate artifact operand %q", operand.Role)
+			}
+			result[operand.Role] = operand.Term.Encoding
+		}
 	}
-	return operandsByRole(bound, roles...)
+	for _, role := range roles {
+		if len(result[role]) == 0 {
+			return nil, fmt.Errorf("engine: missing artifact operand %q", role)
+		}
+	}
+	return result, nil
 }
 
 func displayValue(value []byte) ([]byte, error) {
