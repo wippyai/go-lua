@@ -116,6 +116,7 @@ type RootAssignmentDynamicSourceTransaction struct {
 	equality          pathevidence.BranchProof
 	hasEquality       bool
 	definitelyPresent bool
+	formal            bool
 	sealed            bool
 }
 
@@ -247,7 +248,7 @@ func (p RootAssignmentDynamicSourcePlan) Resolve(ctx context.Context, inputs Roo
 	if err != nil {
 		return RootAssignmentDynamicSourceTransaction{}, err
 	}
-	transaction := RootAssignmentDynamicSourceTransaction{domain: p.domain, dynamic: dynamic, sealed: true}
+	transaction := RootAssignmentDynamicSourceTransaction{domain: p.domain, dynamic: dynamic, formal: p.isFormal, sealed: true}
 	transaction.definitelyPresent = p.hasModulo && inputs.TableDefinitelyNonEmpty && inputs.HasModuloBaseValue &&
 		typevalue.HasIntegerType(reg, inputs.ModuloBaseValue)
 	if inputs.HasKeyValue {
@@ -311,6 +312,17 @@ func (t RootAssignmentDynamicSourceTransaction) PrepareCoordinatePathEquality(ca
 	}
 	transaction, err := t.domain.PrepareCoordinatePathEqualityTransaction(carrier, t.equality)
 	if err != nil {
+		// Dynamic keys can resolve to an unbounded set of static names. The
+		// concrete carrier owns the exact persistent coordinate, while the
+		// formally rekeyed carrier deliberately has only its finite frozen
+		// inventory. Preserve the point-local equality there without inventing
+		// a persistent coordinate outside that inventory.
+		if t.formal {
+			transaction, transientErr := t.domain.PrepareCoordinateTransientPathEqualityTransaction(carrier, t.equality)
+			if transientErr == nil {
+				return transaction, true, nil
+			}
+		}
 		return state.PathEqualityTransaction{}, false, err
 	}
 	return transaction, true, nil
