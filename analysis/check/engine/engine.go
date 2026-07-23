@@ -16,11 +16,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
+	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -35,6 +39,8 @@ var errUnknownScalar = errors.New("engine: unknown scalar")
 var ErrInternalPanic = errors.New("engine: internal panic")
 
 const branchPredicatePrefix = "front/branch-predicate/v1/"
+
+const memberMissingPrefix = "shape/member-missing/v1/"
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
 // It intentionally contains only resolved WIR data, never an AST expression or
@@ -194,10 +200,12 @@ func Check(source string) (result Result, err error) {
 		}
 		diagnosticSpans[key] = span
 	}
+	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
+	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, lexical.lifecycleEvidence, lexical.selectEvidence),
+		PublishedDiagnostics: published,
 		DiagnosticSpans:      diagnosticSpans,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
@@ -217,6 +225,8 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 			name = strings.TrimPrefix(item.Key, "claim/unproven/")
 		case strings.HasPrefix(item.Key, "type.assignment/"):
 			name = strings.TrimPrefix(item.Key, "type.assignment/")
+		case strings.HasPrefix(item.Key, "type.member.missing/"):
+			name = strings.TrimPrefix(item.Key, "type.member.missing/")
 		case strings.HasPrefix(item.Key, "advice.redundant_claim/"):
 			name = strings.TrimPrefix(item.Key, "advice.redundant_claim/")
 			if span, ok := callSpans[name+"/call"]; ok {
@@ -347,6 +357,13 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
 		if !assignment {
+			name, missing := strings.CutPrefix(fact.Key, "type.member.missing/")
+			if missing {
+				if operation, found := claims[name]; found {
+					out = append(out, enrichMissingMemberDiagnostic(item, operation, claimTargetSpans[name], closure))
+					continue
+				}
+			}
 			out = append(out, item)
 			continue
 		}
@@ -388,6 +405,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, item)
 			continue
 		}
+		if display := claimDeclaredDisplay(operation, operands["type"]); display != "" {
+			declared = display
+		}
 		valueDescription := assignmentEvidenceValue(value)
 		if anySource {
 			valueDescription = "any"
@@ -409,13 +429,22 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, item)
 			continue
 		}
-		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", display, valueDescription)},
-			{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
-		}
-		item.Labels = []DiagnosticLabel{
-			{Span: item.Span, Message: "assigned value " + valueDescription},
-			{Span: item.Span, Message: "declared type " + declared},
+		if _, typed := shapefact.DecodeTarget(value); typed {
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+			}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
+		} else {
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", display, valueDescription)},
+				{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+			}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: item.Span, Message: "declared type " + declared}}
 		}
 		item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
 		out = append(out, item)
@@ -480,6 +509,46 @@ func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.
 	} else {
 		item.Help = "Create a mutable copy before writing, or move this assignment before the table is frozen."
 	}
+	return item
+}
+
+func enrichMissingMemberDiagnostic(item PublishedDiagnostic, operation equation.Equation, targetSpan wir.Span, closure equation.OutputClosure) PublishedDiagnostic {
+	operands, err := artifactOperandsByRole(operation.Operands, "value")
+	if err != nil {
+		return item
+	}
+	value, available := claimDiagnosticValue(operands["value"], operation, closure)
+	source := "member"
+	for _, operand := range operation.Operands {
+		if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+			source = string(operand.Term.Encoding)
+		}
+	}
+	member := source[strings.LastIndex(source, ".")+1:]
+	if member == "" || member == source {
+		return item
+	}
+	if !targetSpan.Valid() {
+		targetSpan = item.Span
+	}
+	receiverText := ""
+	if available {
+		if receiver, ok := memberMissingReceiver(value); ok {
+			receiverText = typeformat.Short(receiver)
+		}
+	}
+	if receiverText == "" {
+		const marker = " has no member "
+		if cut := strings.Index(item.Message, marker); cut > 0 {
+			receiverText = item.Message[:cut]
+		}
+	}
+	if receiverText == "" {
+		return item
+	}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiverText)}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member read"}}
+	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", member, member)
 	return item
 }
 
@@ -623,6 +692,18 @@ func cloneFact(fact equation.Fact) equation.Fact {
 	return equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: append([]equation.Guard(nil), fact.Guards...)}
 }
 
+func mergeChildPublishedDiagnostics(items []PublishedDiagnostic, child map[string]PublishedDiagnostic) []PublishedDiagnostic {
+	if len(child) == 0 {
+		return items
+	}
+	for index := range items {
+		if replacement, ok := child[items[index].Fact.Key]; ok {
+			items[index] = replacement
+		}
+	}
+	return items
+}
+
 func diagnosticCode(key string) string {
 	if strings.HasPrefix(key, "child/") {
 		parts := strings.SplitN(key, "/", 3)
@@ -639,6 +720,8 @@ func diagnosticCode(key string) string {
 		return "lint.condition.redundant"
 	case strings.HasPrefix(key, "type.assignment/"):
 		return "type.assignment"
+	case strings.HasPrefix(key, "type.member.missing/"):
+		return "type.member.missing"
 	case strings.HasPrefix(key, "send.isolation/"):
 		return "send.isolation"
 	case strings.HasPrefix(key, "effect.freeze.mutation/"):
@@ -1026,6 +1109,7 @@ type lexicalEvaluator struct {
 	diagnosticSpans   map[string]wir.Span
 	lifecycleEvidence map[string][]DiagnosticEvidence
 	selectEvidence    map[string][]DiagnosticEvidence
+	childPublished    map[string]PublishedDiagnostic
 	active            map[equation.BodyID]bool
 }
 
@@ -1074,7 +1158,7 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 }
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), active: make(map[equation.BodyID]bool)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), active: make(map[equation.BodyID]bool)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		if compilation.PrototypeName != "" {
@@ -1785,6 +1869,35 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	if child.Cyclic == nil && childHasSelect(child) {
 		body := fmt.Sprintf("%x", child.Body)
+		entry, entryErr := encodeChildEntry(nil)
+		if entryErr != nil {
+			return equation.TransactionResult{}, entryErr
+		}
+		outcome, _, evaluateErr := lexical.evaluate(child, entry)
+		if evaluateErr != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
+		}
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
+		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, nil, nil)
+		for _, diagnostic := range outcome.Diagnostics {
+			if !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+				continue
+			}
+			key := "child/" + body + "/" + diagnostic.Key
+			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
+			if span, ok := spans[diagnostic.Key]; ok {
+				lexical.diagnosticSpans[key] = span
+			}
+			for _, item := range childPublished {
+				if item.Fact.Key != diagnostic.Key {
+					continue
+				}
+				item = enrichChildSelectDiagnostic(item, child, child.ClaimTargetSpans)
+				item.Fact.Key = key
+				lexical.childPublished[key] = item
+				break
+			}
+		}
 		consumers := append(channelSelectCoverageConsumers(child), channelSelectUnionConsumers(child)...)
 		for _, consumer := range consumers {
 			key := "child/" + body + "/" + consumer.Key
@@ -1794,6 +1907,54 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func enrichChildSelectDiagnostic(item PublishedDiagnostic, child front.Compilation, targets map[string]wir.Span) PublishedDiagnostic {
+	name, assignment := strings.CutPrefix(item.Fact.Key, "type.assignment/")
+	if !assignment || len(item.Evidence) != 0 {
+		return item
+	}
+	var operation equation.Equation
+	found := false
+	for _, candidate := range child.Artifact.Equations {
+		if candidate.Occurrence.Kind == "claim" && candidate.Target.Name == name {
+			operation, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return item
+	}
+	source, display := "value", "value"
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "source-display":
+			source = string(operand.Term.Encoding)
+		case "display":
+			display = string(operand.Term.Encoding)
+		}
+	}
+	const prefix = " because it is "
+	_, after, ok := strings.Cut(item.Message, prefix)
+	if !ok {
+		return item
+	}
+	valueType, _, ok := strings.Cut(after, ", not ")
+	if !ok {
+		return item
+	}
+	declared := claimDeclaredDisplay(operation, nil)
+	if declared == "" {
+		return item
+	}
+	target := targets[name]
+	if !target.Valid() {
+		target = item.Span
+	}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", source, valueType)}, {Span: target, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueType}, {Span: target, Message: "declared type " + declared}}
+	item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
+	return item
 }
 
 func childHasChannelLifecycle(child front.Compilation) bool {
@@ -2329,8 +2490,16 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 		}
 	}
 	anySource := isExplicitAnyValue(value) || sourceHasExplicitAny(source, partition.Values())
-	if kind == "claim-kind/3" && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
+	if kind == "claim-kind/3" && available && memberMissing(value) {
+		closure.Diagnostics = []equation.Fact{{
+			Key:   "type.member.missing/" + operation.Target.Name,
+			Value: []byte(memberMissingMessage(sourceDisplay, value)),
+		}}
+	} else if kind == "claim-kind/3" && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
+		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
+			message = "cannot assign " + sourceDisplay + " because it is " + assignmentValueType(value) + ", not " + declared
+		}
 		if anySource {
 			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
 		}
@@ -2367,6 +2536,12 @@ func assignmentShapeRelation(value, encodedTarget []byte) shapeRelation {
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	if target == nil || isUnknownScalar(value) {
 		return shapeUnknown
+	}
+	if source, ok := shapefact.DecodeTarget(value); ok {
+		if subtype.IsSubtype(source, target) {
+			return shapeProven
+		}
+		return shapeRefuted
 	}
 	// Structural claims compare the fully instantiated alias target. A named
 	// alias can hide another generic instantiation (DoubleBox<T> = Box<Box<T>>),
@@ -2607,8 +2782,48 @@ func assignmentMismatchMessage(target string, value []byte, targetType string) s
 	return "cannot assign " + target + " because it is " + assignmentValueType(value) + ", not " + declared
 }
 
+// claimDeclaredDisplay preserves a discriminated record's user-facing alias
+// spelling when the front has already expanded that alias for checking.
+func claimDeclaredDisplay(operation equation.Equation, fallback []byte) string {
+	for _, operand := range operation.Operands {
+		if operand.Role != "shape-target" {
+			continue
+		}
+		return declaredDisplayFromShape(operand.Term.Encoding, string(fallback))
+	}
+	return declaredDisplayFromShape(nil, string(fallback))
+}
+
+func boundClaimDeclaredDisplay(operation equation.BoundEquation, fallback string) string {
+	for _, operand := range operation.Operands {
+		if operand.Role == "shape-target" {
+			return declaredDisplayFromShape(operand.Value, fallback)
+		}
+	}
+	return declaredDisplayFromShape(nil, fallback)
+}
+
+func declaredDisplayFromShape(shape []byte, fallback string) string {
+	if target, ok := shapefact.DecodeTarget(shape); ok {
+		kindType, found := variant.FieldAtPath(target, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}})
+		if literal, literalOK := kindType.(*typ.Literal); found && literalOK && literal.Base == kind.String {
+			if name, nameOK := literal.Value.(string); nameOK && name != "" {
+				return strings.ToUpper(name[:1]) + name[1:]
+			}
+		}
+	}
+	declared, err := strconv.Unquote(strings.TrimPrefix(fallback, "claim-type/"))
+	if err != nil {
+		return ""
+	}
+	return declared
+}
+
 func assignmentValueType(value []byte) string {
 	switch {
+	case func() bool { _, ok := shapefact.DecodeTarget(value); return ok }():
+		valueType, _ := shapefact.DecodeTarget(value)
+		return typeformat.Short(valueType)
 	case shapefact.IsTable(value):
 		return "table"
 	case string(value) == "scalar/nil":
@@ -2930,6 +3145,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	} else if recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
+	if closure, recognized, err := typedLiteralBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	frozenCondition := false
 	for _, operand := range operation.Operands {
 		if operand.Role == "predicate" && frozenPredicate(operand.Value) {
@@ -2975,6 +3195,65 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// typedLiteralBranchClosure consumes a value type already carried by an
+// ordinary assignment. It is deliberately limited to a strict discriminant
+// narrowing: unsupported values continue through the scalar branch rule.
+func typedLiteralBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	var encoded []byte
+	for _, operand := range operation.Operands {
+		if operand.Role == "predicate" {
+			if encoded != nil {
+				return equation.OutputClosure{}, false, fmt.Errorf("engine: duplicate branch predicate")
+			}
+			encoded = operand.Value
+		}
+	}
+	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
+		return equation.OutputClosure{}, false, nil
+	}
+	var predicate branchPredicateWire
+	if err := json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate); err != nil {
+		return equation.OutputClosure{}, false, fmt.Errorf("engine: decode typed literal branch predicate: %w", err)
+	}
+	if (predicate.Kind != "literal-equal" && predicate.Kind != "literal-not") || predicate.Path == "" || predicate.Literal == "" || predicate.Negated {
+		return equation.OutputClosure{}, false, nil
+	}
+	literal, ok := literalType(predicate.Literal)
+	if !ok {
+		return equation.OutputClosure{}, false, nil
+	}
+	root, suffix, source, ok := typedAncestor([]byte("path/"+predicate.Path), partition)
+	if !ok || len(suffix) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	trueType, trueOK := variant.NarrowByPathLiteral(source, suffix, literal)
+	falseType, falseOK := variant.NarrowByPathLiteralNot(source, suffix, literal)
+	if predicate.Kind == "literal-not" {
+		trueType, falseType = falseType, trueType
+		trueOK, falseOK = falseOK, trueOK
+	}
+	if !trueOK || !falseOK {
+		return equation.OutputClosure{}, false, nil
+	}
+	closure := equation.OutputClosure{}
+	for _, edge := range []struct {
+		name  string
+		type_ typ.Type
+	}{{"true", trueType}, {"false", falseType}} {
+		value, encoded := shapefact.EncodeTarget(edge.type_)
+		if !encoded {
+			return equation.OutputClosure{}, false, nil
+		}
+		guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge.name)}
+		closure.Outcomes = append(closure.Outcomes,
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge.name), Guards: []equation.Guard{guard}},
+			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("typed/" + edge.name), Guards: []equation.Guard{guard}},
+		)
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(root) + "/" + operation.Target.Name, Value: value, Guards: []equation.Guard{guard}})
+	}
+	return closure, true, nil
 }
 
 // selectBranchClosure recognizes only a complete, epoch-current select result
@@ -4515,6 +4794,12 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if cutoff == "" {
 		return nil, fmt.Errorf("engine: empty assignment read boundary")
 	}
+	if value, found := selectPayloadValue(term, partition); found {
+		return value, nil
+	}
+	if value, found := typedPathValue(term, partition); found {
+		return value, nil
+	}
 	prefix := "value/" + string(term) + "/"
 	var value []byte
 	latestKey := ""
@@ -4556,6 +4841,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
+	if value, found := selectPayloadValue(term, partition); found {
+		return value, nil
+	}
 	prefix := "value/" + string(term) + "/"
 	var value []byte
 	latestKey := ""
@@ -4566,6 +4854,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		}
 	}
 	if value == nil {
+		if value, found := typedPathValue(term, partition); found {
+			return value, nil
+		}
 		if joined, found := joinedGuardedValue(term, partition); found {
 			return joined, nil
 		}
@@ -4636,6 +4927,196 @@ func shapeMemberValue(term []byte, partition equation.Partition) ([]byte, bool) 
 		return []byte(member.Value), true
 	}
 	return nil, false
+}
+
+// selectPayloadValue is the sole bridge from a selected result's guarded arm
+// constraint to an ordinary `result.value` read. The absence of a complete
+// select catalog or an active constraint stays unknown.
+func selectPayloadValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	path := strings.TrimPrefix(string(term), "path/")
+	if path == string(term) || !strings.HasSuffix(path, ".value") {
+		return nil, false
+	}
+	result := []byte("path/" + strings.TrimSuffix(path, ".value"))
+	selectID, ok := currentEpochFact("select/origin/", result, partition)
+	if !ok || len(selectID) == 0 {
+		return nil, false
+	}
+	metaFact, ok := exactFact("select/meta/"+string(selectID), partition)
+	if !ok {
+		return nil, false
+	}
+	var meta selectMetaWire
+	if json.Unmarshal(metaFact, &meta) != nil || meta.Cases <= 0 {
+		return nil, false
+	}
+	arms := make(map[int]bool, meta.Cases)
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, "select/constraint/") {
+			continue
+		}
+		var constraint selectConstraintWire
+		if json.Unmarshal(fact.Value, &constraint) != nil || constraint.Select != string(selectID) || constraint.Default {
+			continue
+		}
+		for _, arm := range constraint.Arms {
+			if arm >= 0 && arm < meta.Cases {
+				arms[arm] = true
+			}
+		}
+	}
+	if len(arms) == 0 {
+		for arm := 0; arm < meta.Cases; arm++ {
+			arms[arm] = true
+		}
+	}
+	members := make([]typ.Type, 0, len(arms))
+	for arm := 0; arm < meta.Cases; arm++ {
+		if !arms[arm] {
+			continue
+		}
+		fact, found := exactFact("select/arm/"+string(selectID)+"/"+fmt.Sprintf("%08d", arm), partition)
+		if !found {
+			return nil, false
+		}
+		var wire selectArmWire
+		if json.Unmarshal(fact, &wire) != nil || wire.Index != arm || wire.Payload == "" {
+			return nil, false
+		}
+		encoded, err := base64.RawURLEncoding.DecodeString(wire.Payload)
+		if err != nil {
+			return nil, false
+		}
+		payload, err := typ.DecodeCanonical(context.Background(), encoded)
+		if err != nil || payload == nil {
+			return nil, false
+		}
+		members = append(members, payload)
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	value, ok := shapefact.EncodeTarget(typ.MaterializeUnion(members))
+	return value, ok
+}
+
+func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	_, _, source, ok := typedAncestor(term, partition)
+	if !ok {
+		return nil, false
+	}
+	root, suffix, _, ok := typedAncestor(term, partition)
+	if !ok || len(suffix) == 0 || len(root) == 0 {
+		return nil, false
+	}
+	field, found := variant.FieldAtPath(source, suffix)
+	if !found {
+		if !closedMemberSurface(source) {
+			return []byte("scalar/top"), true
+		}
+		return memberMissingValue(source)
+	}
+	value, ok := shapefact.EncodeTarget(field)
+	return value, ok
+}
+
+func closedMemberSurface(value typ.Type) bool {
+	value = unwrap.Alias(subst.ExpandInstantiated(value))
+	switch item := value.(type) {
+	case *typ.Record:
+		return item != nil && !item.Open
+	case *typ.Union:
+		if item == nil || len(item.Members) == 0 {
+			return false
+		}
+		for _, member := range item.Members {
+			if !closedMemberSurface(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment.Segment, typ.Type, bool) {
+	path := strings.TrimPrefix(string(term), "path/")
+	if path == string(term) {
+		return nil, nil, nil, false
+	}
+	for cut := len(path); cut > 0; {
+		cut = strings.LastIndexAny(path[:cut], ".[")
+		if cut < 0 {
+			return nil, nil, nil, false
+		}
+		root, suffix := path[:cut], path[cut:]
+		segs, valid := segment.ParseFormattedSegments(suffix)
+		if !valid {
+			return nil, nil, nil, false
+		}
+		value, found := latestValue([]byte("path/"+root), partition)
+		if !found {
+			value, found = selectPayloadValue([]byte("path/"+root), partition)
+			if !found {
+				continue
+			}
+		}
+		typeValue, decoded := shapefact.DecodeTarget(value)
+		if !decoded {
+			continue
+		}
+		return []byte("path/" + root), segs, typeValue, true
+	}
+	return nil, nil, nil, false
+}
+
+func literalType(value string) (typ.Type, bool) {
+	switch {
+	case strings.HasPrefix(value, "scalar/string/"):
+		decoded, err := strconv.Unquote(strings.TrimPrefix(value, "scalar/string/"))
+		return typ.LiteralString(decoded), err == nil
+	case strings.HasPrefix(value, "scalar/bool/"):
+		decoded, err := strconv.ParseBool(strings.TrimPrefix(value, "scalar/bool/"))
+		if err != nil {
+			return nil, false
+		}
+		return typ.LiteralBool(decoded), true
+	case strings.HasPrefix(value, "scalar/number/"):
+		decoded, err := strconv.ParseInt(strings.TrimPrefix(value, "scalar/number/"), 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		return typ.LiteralInt(decoded), true
+	default:
+		return nil, false
+	}
+}
+
+func memberMissingValue(receiver typ.Type) ([]byte, bool) {
+	encoded, ok := shapefact.EncodeTarget(receiver)
+	if !ok {
+		return nil, false
+	}
+	return append([]byte(memberMissingPrefix), encoded...), true
+}
+
+func memberMissing(value []byte) bool { _, ok := memberMissingReceiver(value); return ok }
+
+func memberMissingReceiver(value []byte) (typ.Type, bool) {
+	if !strings.HasPrefix(string(value), memberMissingPrefix) {
+		return nil, false
+	}
+	return shapefact.DecodeTarget(value[len(memberMissingPrefix):])
+}
+
+func memberMissingMessage(source string, value []byte) string {
+	receiver, ok := memberMissingReceiver(value)
+	if !ok {
+		return "member read is not available"
+	}
+	member := source[strings.LastIndex(source, ".")+1:]
+	return fmt.Sprintf("%s has no member %q", typeformat.Short(receiver), member)
 }
 
 func latestValue(term []byte, partition equation.Partition) ([]byte, bool) {
