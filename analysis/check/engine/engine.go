@@ -194,7 +194,7 @@ func Check(source string) (result Result, err error) {
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans),
+		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, lexical.lifecycleEvidence),
 		DiagnosticSpans:      diagnosticSpans,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
@@ -243,6 +243,18 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 				out[item.Key] = span
 			}
 			continue
+		case strings.HasPrefix(item.Key, "channel.send.closed/"), strings.HasPrefix(item.Key, "channel.close.closed/"):
+			name = item.Key[strings.LastIndexByte(item.Key, '/')+1:]
+			if span, ok := callSpans[name+"/call"]; ok {
+				out[item.Key] = span
+			}
+			continue
+		case strings.HasPrefix(item.Key, "effect.lifecycle.unreleased/"):
+			name = strings.TrimPrefix(item.Key, "effect.lifecycle.unreleased/")
+			if span, ok := callSpans[name+"/call"]; ok {
+				out[item.Key] = span
+			}
+			continue
 		case strings.HasPrefix(item.Key, "effect.freeze.mutation/"):
 			parts := strings.Split(item.Key, "/")
 			if len(parts) == 3 {
@@ -266,7 +278,7 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans map[string]wir.Span) []PublishedDiagnostic {
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans map[string]wir.Span, lifecycleEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
@@ -283,6 +295,17 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
 	for _, fact := range closure.Diagnostics {
 		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: string(fact.Value)}
+		if inner, ok := childDiagnosticKey(fact.Key); ok {
+			item.Code = diagnosticCode(inner)
+		}
+		if isChannelLifecycleDiagnostic(fact.Key) {
+			out = append(out, enrichChannelLifecycleDiagnostic(item))
+			continue
+		}
+		if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "effect.lifecycle.unreleased/") {
+			out = append(out, enrichUnreleasedLifecycleDiagnostic(item, lifecycleEvidence[fact.Key]))
+			continue
+		}
 		if strings.HasPrefix(fact.Key, "effect.freeze.mutation/") {
 			out = append(out, enrichFrozenMutationDiagnostic(item, artifact, callSpans))
 			continue
@@ -445,6 +468,66 @@ func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.
 	return item
 }
 
+func childDiagnosticKey(key string) (string, bool) {
+	if !strings.HasPrefix(key, "child/") {
+		return key, false
+	}
+	parts := strings.SplitN(key, "/", 3)
+	if len(parts) != 3 {
+		return key, false
+	}
+	return parts[2], true
+}
+
+func isChannelLifecycleDiagnostic(key string) bool {
+	inner, _ := childDiagnosticKey(key)
+	return strings.HasPrefix(inner, "channel.send.closed/") || strings.HasPrefix(inner, "channel.close.closed/")
+}
+
+func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnostic {
+	inner, _ := childDiagnosticKey(item.Fact.Key)
+	display := "channel"
+	if start := strings.LastIndex(item.Message, "`"); start >= 0 {
+		if end := strings.LastIndex(item.Message[:start], "`"); end >= 0 && end+1 < start {
+			display = item.Message[end+1 : start]
+		}
+	}
+	if strings.HasPrefix(inner, "channel.send.closed/") {
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this send call runs after `" + display + "` is proven closed"}}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel lifecycle call"}}
+		item.Help = "Send before closing the channel."
+		return item
+	}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this close call runs after `" + display + "` is proven closed"}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel lifecycle call"}}
+	item.Help = "Avoid closing the same channel twice."
+	return item
+}
+
+func enrichUnreleasedLifecycleDiagnostic(item PublishedDiagnostic, transition []DiagnosticEvidence) PublishedDiagnostic {
+	display := "resource"
+	if start := strings.Index(item.Message, "`"); start >= 0 {
+		if end := strings.Index(item.Message[start+1:], "`"); end >= 0 {
+			display = item.Message[start+1 : start+1+end]
+		}
+	}
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this call acquires `" + display + "` as connection:`open` and requires `closed` before local ownership ends"},
+	}
+	item.Evidence = append(item.Evidence, transition...)
+	missing := "exit state still has `" + display + "` in protocol connection at `open`; no proof reaches `closed` or escapes ownership on every path"
+	if len(transition) != 0 {
+		missing = "exit state still has `" + display + "` in protocol connection at a non-final state; no proof reaches `closed` or escapes ownership on every path"
+	}
+	item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: "missing proof", Trust: "refuted", Message: missing})
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "resource acquired"}}
+	if len(transition) != 0 {
+		item.Labels = append(item.Labels, DiagnosticLabel{Span: transition[0].Span, Message: "lifecycle transition"})
+	}
+	item.Help = "Transition `" + display + "` to `closed` or escape ownership on every return path."
+	return item
+}
+
 func claimDiagnosticValue(term []byte, operation equation.Equation, closure equation.OutputClosure) ([]byte, bool) {
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), true
@@ -467,7 +550,7 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
 			return name
 		}
@@ -545,6 +628,12 @@ func diagnosticCode(key string) string {
 		return "send.isolation"
 	case strings.HasPrefix(key, "effect.freeze.mutation/"):
 		return "effect.freeze.mutation"
+	case strings.HasPrefix(key, "effect.lifecycle.unreleased/"):
+		return "effect.lifecycle.unreleased"
+	case strings.HasPrefix(key, "channel.send.closed/"):
+		return "channel.send.closed"
+	case strings.HasPrefix(key, "channel.close.closed/"):
+		return "channel.close.closed"
 	case strings.HasPrefix(key, "claim/unproven/"):
 		return "lint.claim.unproven"
 	case strings.HasPrefix(key, "type.call.direct."):
@@ -904,10 +993,11 @@ type closureHandle struct {
 }
 
 type lexicalEvaluator struct {
-	byPrototype     map[string]front.Compilation
-	requiresBody    map[string]bool
-	diagnosticSpans map[string]wir.Span
-	active          map[equation.BodyID]bool
+	byPrototype       map[string]front.Compilation
+	requiresBody      map[string]bool
+	diagnosticSpans   map[string]wir.Span
+	lifecycleEvidence map[string][]DiagnosticEvidence
+	active            map[equation.BodyID]bool
 }
 
 func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
@@ -924,7 +1014,7 @@ func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
 }
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), active: make(map[equation.BodyID]bool)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), active: make(map[equation.BodyID]bool)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		if compilation.PrototypeName != "" {
@@ -1392,7 +1482,203 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 		}
 	}
+	// Lifecycle epochs are self-contained proof facts: a channel created and
+	// consumed within a declared body needs no caller value to establish its
+	// identity. Publish only those closed facts for otherwise uncalled bodies;
+	// all ordinary diagnostics retain the existing demand-driven boundary.
+	if child.Cyclic == nil && (childHasChannelLifecycle(child) || childHasResourceLifecycle(child)) {
+		seeds := make([]entrySeed, 0, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
+		for _, parameter := range child.Boundary.Parameters {
+			seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte("scalar/top")})
+		}
+		for _, capture := range child.Boundary.Captures {
+			seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: []byte("scalar/top")})
+		}
+		entry, entryErr := encodeChildEntry(seeds)
+		if entryErr != nil {
+			return equation.TransactionResult{}, entryErr
+		}
+		outcome, _, evaluateErr := lexical.evaluate(child, entry)
+		if evaluateErr != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: lifecycle child %q: %w", prototype, evaluateErr)
+		}
+		body := fmt.Sprintf("%x", child.Body)
+		for _, diagnostic := range outcome.Diagnostics {
+			if !isChannelLifecycleDiagnostic(diagnostic.Key) {
+				continue
+			}
+			key := "child/" + body + "/" + diagnostic.Key
+			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
+			if span, ok := spans[diagnostic.Key]; ok {
+				lexical.diagnosticSpans[key] = span
+			}
+		}
+		for _, diagnostic := range resourceUnreleasedDiagnostics(child, outcome) {
+			key := "child/" + body + "/" + diagnostic.Key
+			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
+			acquire := strings.TrimPrefix(diagnostic.Key, "effect.lifecycle.unreleased/")
+			if span, ok := child.CallSpans[acquire+"/call"]; ok {
+				lexical.diagnosticSpans[key] = span
+			}
+			if close := firstResourceCloseOperation(child); close != "" {
+				if span, ok := child.CallSpans[close+"/call"]; ok {
+					lexical.lifecycleEvidence[key] = []DiagnosticEvidence{{Span: span, Kind: "abstract fact", Trust: "proven", Message: "this call transitions `" + resourceDisplay(child, acquire) + "` in protocol connection from `open` to `closed` on a reachable path"}}
+				}
+			}
+		}
+	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func childHasChannelLifecycle(child front.Compilation) bool {
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "channel.new" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func childHasResourceLifecycle(child front.Compilation) bool {
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "resource.connect" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.OutputClosure) []equation.Fact {
+	if childHasPCall(child) && childHasNestedResourceClose(child) {
+		return nil
+	}
+	latest := make(map[string]equation.Fact)
+	for _, fact := range closure.Values {
+		if !strings.HasPrefix(fact.Key, resourceLifecyclePrefix) {
+			continue
+		}
+		identity := strings.TrimPrefix(fact.Key, resourceLifecyclePrefix)
+		slash := strings.LastIndexByte(identity, '/')
+		if slash < 0 {
+			continue
+		}
+		identity = identity[:slash]
+		if previous, found := latest[identity]; !found || fact.Key > previous.Key {
+			latest[identity] = fact
+		}
+	}
+	var diagnostics []equation.Fact
+	for encoded, state := range latest {
+		identity, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil || !isResourceIdentity(identity) || string(state.Value) != "open" {
+			continue
+		}
+		acquire := strings.TrimPrefix(string(identity), "scalar/resource/")
+		display := resourceDisplay(child, acquire)
+		message := fmt.Sprintf("resource `%s` remains in connection state `open` at function exit; expected `closed`", display)
+		if childHasResourceClose(child) {
+			message = fmt.Sprintf("resource `%s` remains in a non-final connection state at function exit; expected `closed`", display)
+		}
+		diagnostics = append(diagnostics, equation.Fact{Key: "effect.lifecycle.unreleased/" + acquire, Value: []byte(message)})
+	}
+	return diagnostics
+}
+
+func childHasResourceClose(child front.Compilation) bool {
+	for _, operation := range child.Artifact.Equations {
+		for _, operand := range operation.Operands {
+			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "resource.close" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstResourceCloseOperation(child front.Compilation) string {
+	for _, operation := range child.Artifact.Equations {
+		for _, operand := range operation.Operands {
+			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "resource.close" {
+				return operation.Target.Name
+			}
+		}
+	}
+	return ""
+}
+
+func childHasPCall(child front.Compilation) bool {
+	for _, operation := range child.Artifact.Equations {
+		for _, operand := range operation.Operands {
+			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "pcall" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func childHasNestedResourceClose(child front.Compilation) bool {
+	for _, nested := range child.Nested {
+		if childHasResourceClose(nested) || childHasNestedResourceClose(nested) {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceDisplay(child front.Compilation, acquire string) string {
+	application := "call/" + acquire
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		matches, target := false, ""
+		for _, operand := range operation.Operands {
+			if operand.Role == "application" {
+				matches = string(operand.Term.Encoding) == application
+			}
+			if operand.Role == "target-00000000" {
+				target = string(operand.Term.Encoding)
+			}
+		}
+		if !matches || target == "" {
+			continue
+		}
+		index := strings.LastIndex(target, "/path/")
+		if index < 0 {
+			continue
+		}
+		path := target[index+1:]
+		for _, write := range child.Artifact.Equations {
+			if write.Occurrence.Kind != "environment-write" {
+				continue
+			}
+			var writeTarget, display string
+			for _, operand := range write.Operands {
+				if operand.Role == "target" {
+					writeTarget = string(operand.Term.Encoding)
+				}
+				if operand.Role == "display" {
+					display = string(operand.Term.Encoding)
+				}
+			}
+			if writeTarget == path && display != "" {
+				return display
+			}
+		}
+	}
+	return "resource"
 }
 
 func writeKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -1416,6 +1702,12 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 		return equation.TransactionResult{}, err
 	}
 	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}
+	if isChannelIdentity(value) {
+		values = append(values, equation.Fact{
+			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
+			Value: append([]byte(nil), operands["display"]...),
+		})
+	}
 	if handle, ok := closureHandleFor(operands["value"], partition); ok {
 		encoded, marshalErr := json.Marshal(handle)
 		if marshalErr != nil {
@@ -1658,6 +1950,12 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
 	})
+	if isChannelIdentity(value) {
+		result.Closure.Values = append(result.Closure.Values, equation.Fact{
+			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
+			Value: append([]byte(nil), operands["display"]...),
+		})
+	}
 	return result, nil
 }
 
@@ -2304,6 +2602,12 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	if closure, recognized := channelLifecycleEpoch(operation, operands, partition); recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
+	if closure, recognized := resourceLifecycleEpoch(operation, operands, partition); recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if lexical != nil && hasCallee {
 		if handle, found := closureHandleFor(operands.callee, partition); found {
 			if lexical.requiresBody[handle.Prototype] {
@@ -2322,6 +2626,16 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if state, handled := sendIsolationState(operation, operands, partition); handled {
 		return state, nil
+	}
+	if closure, escaped := channelLifecycleEscape(operation, operands, partition); escaped {
+		// Passing an exact channel identity through an otherwise opaque call
+		// transfers lifecycle authority out of this local epoch. The state is
+		// now may-closed, so subsequent channel operations deliberately remain
+		// silent unless a fresh identity is established.
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
+	if closure, escaped := resourceLifecycleEscape(operation, operands, partition); escaped {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if operands.display == "table.isfrozen" {
 		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
@@ -2449,6 +2763,157 @@ func freezeCallEpoch(operation equation.BoundEquation, partition equation.Partit
 		Value: []byte(value),
 	})
 	return closure, true, nil
+}
+
+const channelLifecyclePrefix = "effect.lifecycle.channel/"
+
+// channelLifecycleEpoch reuses the established fact epoch discipline: a
+// recognized constructor creates a fresh opaque identity, and later exact
+// method calls read and strongly replace that identity's state. No fact is
+// inferred for an unknown receiver or for an identity that has escaped.
+func channelLifecycleEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
+	if operands.display == "channel.new" && !operands.spread && len(operands.arguments) == 0 {
+		identity := []byte("scalar/channel/" + operation.Target.Name)
+		return equation.OutputClosure{Values: []equation.Fact{
+			{Key: "call-result/" + operation.Target.Name + "/00000000", Value: identity},
+			channelLifecycleStateFact(identity, operation.Target.Name, "open"),
+		}}, true
+	}
+	if operands.receiver == nil || (operands.method != "close" && operands.method != "send" && operands.method != "receive") {
+		return equation.OutputClosure{}, false
+	}
+	identity, known := resolveKnownCurrentValue(operands.receiver, partition)
+	if !known || !isChannelIdentity(identity) {
+		return equation.OutputClosure{}, false
+	}
+	state, proven := channelLifecycleState(partition, identity)
+	if !proven || state == "escaped" {
+		return equation.OutputClosure{}, true
+	}
+	if operands.method == "receive" {
+		return equation.OutputClosure{}, true
+	}
+	closure := equation.OutputClosure{}
+	if state == "closed" {
+		code, message := "channel.send.closed", "cannot send on closed channel"
+		if operands.method == "close" {
+			code, message = "channel.close.closed", "cannot close already closed channel"
+		}
+		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{
+			Key:   code + "/" + operation.Target.Name,
+			Value: []byte(message + " `" + channelDisplay(partition, operands.receiver) + "`"),
+		})
+	}
+	if operands.method == "close" {
+		closure.Values = append(closure.Values, channelLifecycleStateFact(identity, operation.Target.Name, "closed"))
+	}
+	return closure, true
+}
+
+const resourceLifecyclePrefix = "effect.lifecycle.resource/"
+
+// resourceLifecycleEpoch is the same closed-identity epoch used for channels,
+// specialized to the declared connection acquire/release pair. The acquire
+// result is opaque and therefore cannot be fabricated by an unknown call.
+func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
+	if operands.display == "resource.connect" && !operands.spread && len(operands.arguments) == 0 {
+		identity := []byte("scalar/resource/" + operation.Target.Name)
+		return equation.OutputClosure{Values: []equation.Fact{
+			{Key: "call-result/" + operation.Target.Name + "/00000000", Value: identity},
+			resourceLifecycleStateFact(identity, operation.Target.Name, "open"),
+		}}, true
+	}
+	if operands.display != "resource.close" || operands.spread || len(operands.arguments) != 1 {
+		return equation.OutputClosure{}, false
+	}
+	identity, known := resolveKnownCurrentValue(operands.arguments[0], partition)
+	if !known || !isResourceIdentity(identity) {
+		return equation.OutputClosure{}, false
+	}
+	return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "closed")}}, true
+}
+
+func resourceLifecycleStateFact(identity []byte, operation, state string) equation.Fact {
+	return equation.Fact{Key: resourceLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte(state)}
+}
+
+func resourceLifecycleEscape(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
+	identities := make(map[string][]byte)
+	for _, term := range operands.arguments {
+		if value, known := resolveKnownCurrentValue(term, partition); known && isResourceIdentity(value) {
+			identities[string(value)] = value
+		}
+	}
+	if len(identities) == 0 {
+		return equation.OutputClosure{}, false
+	}
+	closure := equation.OutputClosure{}
+	for _, identity := range identities {
+		closure.Values = append(closure.Values, resourceLifecycleStateFact(identity, operation.Target.Name, "escaped"))
+	}
+	return closure, true
+}
+
+func isResourceIdentity(value []byte) bool {
+	return strings.HasPrefix(string(value), "scalar/resource/op-")
+}
+
+func channelLifecycleEscape(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
+	identities := make(map[string][]byte)
+	for _, term := range operands.arguments {
+		if value, known := resolveKnownCurrentValue(term, partition); known && isChannelIdentity(value) {
+			identities[string(value)] = value
+		}
+	}
+	if operands.receiver != nil {
+		if value, known := resolveKnownCurrentValue(operands.receiver, partition); known && isChannelIdentity(value) {
+			identities[string(value)] = value
+		}
+	}
+	if len(identities) == 0 {
+		return equation.OutputClosure{}, false
+	}
+	closure := equation.OutputClosure{}
+	for _, identity := range identities {
+		closure.Values = append(closure.Values, channelLifecycleStateFact(identity, operation.Target.Name, "escaped"))
+	}
+	return closure, true
+}
+
+func channelLifecycleStateFact(identity []byte, operation, state string) equation.Fact {
+	return equation.Fact{
+		Key:   channelLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation,
+		Value: []byte(state),
+	}
+}
+
+func channelLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
+	prefix := channelLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	state, latest := "", ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (state == "" || fact.Key > latest) {
+			state, latest = string(fact.Value), fact.Key
+		}
+	}
+	return state, state == "open" || state == "closed" || state == "escaped"
+}
+
+func isChannelIdentity(value []byte) bool {
+	return strings.HasPrefix(string(value), "scalar/channel/op-")
+}
+
+func channelDisplay(partition equation.Partition, receiver []byte) string {
+	prefix := "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(receiver) + "/"
+	display, latest := "", ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (display == "" || fact.Key > latest) {
+			display, latest = string(fact.Value), fact.Key
+		}
+	}
+	if display != "" {
+		return display
+	}
+	return strings.TrimPrefix(string(receiver), "path/")
 }
 
 func callArgumentDisplay(operands []equation.BoundOperand, index int) string {
