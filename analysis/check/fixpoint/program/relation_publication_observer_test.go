@@ -104,6 +104,9 @@ func (r *relationDifferentialReport) compareAcyclicBody(
 	if err != nil {
 		return fmt.Errorf("bind real relation body: %w", err)
 	}
+	if gaps := binding.BindingGaps(); len(gaps) != 0 {
+		return fmt.Errorf("binder gaps: %s", formatRelationBindingGaps(gaps))
+	}
 	artifact, err := binding.Compile()
 	if err != nil {
 		return fmt.Errorf("compile relation body: %w", err)
@@ -148,6 +151,14 @@ func (r *relationDifferentialReport) compareAcyclicBody(
 		return fmt.Errorf("closure inequality")
 	}
 	return nil
+}
+
+func formatRelationBindingGaps(gaps []transformer.RelationBindingGap) string {
+	parts := make([]string, len(gaps))
+	for index, gap := range gaps {
+		parts[index] = fmt.Sprintf("%s occurrence=%d point=%d: %s", gap.Family, gap.Occurrence, gap.Point, gap.Reason)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func emptyPublishedRelationClosure() transformer.PublishedRelationClosure {
