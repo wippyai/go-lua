@@ -9,6 +9,31 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
+// bindExternalCallAccessToDeclaredInputs preserves every compiler-sealed read
+// while binding a source without a PublishedRead wire to the primary input
+// frame. The primary tuple is already available to the provider; this is a
+// declaration completion, not a new production dependency.
+func bindExternalCallAccessToDeclaredInputs(access []valueAccessTerm, inputPoints []cfg.Point) []valueAccessTerm {
+	if len(inputPoints) == 0 {
+		return nil
+	}
+	declared := make(map[cfg.Point]struct{}, len(inputPoints))
+	for _, point := range inputPoints {
+		declared[point] = struct{}{}
+	}
+	primary := inputPoints[0]
+	out := cloneValueAccessTerms(access)
+	for index := range out {
+		if !out[index].hasPoint {
+			continue
+		}
+		if _, present := declared[out[index].point]; !present {
+			out[index].point = primary
+		}
+	}
+	return out
+}
+
 // externalCallTransferAccess seals the provider's exact observations directly
 // from the canonical ValueTerm DAG. It is the sole bridge from relation syntax
 // to the carrier-neutral external-call factor programs; no executor-specific

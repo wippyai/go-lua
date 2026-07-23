@@ -574,6 +574,8 @@ func freezeFormalExternalCallStep(
 	if err != nil {
 		return nil, err
 	}
+	boundAccess := bindExternalCallAccessToDeclaredInputs(prefix.access, inputPoints)
+	prefix.access = boundAccess
 	preparedSite, prepared := program.formalFibers.externalCallSite(variable, step.point)
 	if !prepared {
 		return nil, fmt.Errorf("transformer: formal ExternalCall point %d has no prepared site", step.point)
