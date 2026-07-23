@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // FastInstanceKey is the fixed-width primary index used by RuntimeCache.  It
@@ -14,6 +15,76 @@ import (
 type FastInstanceKey struct {
 	ArtifactID   ContentID
 	ProjectionID ContentID
+}
+
+// SummaryInstanceRef is the actor-facing reference to a shared summary
+// instance. It is deliberately three scalar words: actors never retain a Go
+// pointer to an artifact, cache cell, closure, or callback. Artifact and
+// instance handles are resolved through their owning slabs, while Generation
+// carries invalidation/lease state.
+type SummaryInstanceRef struct {
+	ArtifactHandle uint32
+	InstanceHandle uint32
+	Generation     uint32
+}
+
+// SummaryInstanceSlab retains scalar actor-to-instance references in one
+// contiguous backing array. Its capacity is fixed at creation: exhaustion is
+// visible to the owner instead of silently allocating a pointer-bearing graph.
+type SummaryInstanceSlab struct {
+	references []SummaryInstanceRef
+	requested  uint64
+	highWater  uint64
+}
+
+// NewSummaryInstanceSlab reserves capacity for actor references. Negative
+// capacities are treated as zero so callers can safely propagate a measured
+// configuration value.
+func NewSummaryInstanceSlab(capacity int) *SummaryInstanceSlab {
+	if capacity < 0 {
+		capacity = 0
+	}
+	return &SummaryInstanceSlab{references: make([]SummaryInstanceRef, 0, capacity)}
+}
+
+// Retain appends one scalar reference and returns false when the preallocated
+// slab is full. It never grows the slab.
+func (s *SummaryInstanceSlab) Retain(reference SummaryInstanceRef) bool {
+	if s == nil || len(s.references) == cap(s.references) {
+		return false
+	}
+	s.references = append(s.references, reference)
+	bytes := uint64(len(s.references)) * uint64(unsafe.Sizeof(SummaryInstanceRef{}))
+	s.requested = bytes
+	if bytes > s.highWater {
+		s.highWater = bytes
+	}
+	return true
+}
+
+// Len reports retained actor references.
+func (s *SummaryInstanceSlab) Len() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.references)
+}
+
+// RequestedBytes reports currently retained scalar reference storage.
+func (s *SummaryInstanceSlab) RequestedBytes() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.requested
+}
+
+// HighWaterBytes reports the largest scalar reference payload retained by the
+// slab since construction.
+func (s *SummaryInstanceSlab) HighWaterBytes() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.highWater
 }
 
 // Valid reports whether both halves of a primary key are available.
