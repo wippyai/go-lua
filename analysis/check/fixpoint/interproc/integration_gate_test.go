@@ -3,6 +3,7 @@ package interproc_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -118,6 +119,72 @@ func TestIntegrationGateCallerInvariance1_10_100(t *testing.T) {
 			t.Fatalf("distinct certified entries did not produce exactly two instances: metrics=%+v runs=%d", metrics, h.runs.Load())
 		}
 	})
+}
+
+// TestIntegrationGateInvalidationRacesSourceChangeMidFlight holds an owner
+// after it has installed Solving, changes the source snapshot concurrently,
+// and proves the old result is never published.
+func TestIntegrationGateInvalidationRacesSourceChangeMidFlight(t *testing.T) {
+	snapshots := newGateSnapshots(map[string]interproc.ContentID{
+		"registry": gateID("registry-v1"), "source": gateID("module-a-source-v1"), "codec": gateID("codec-v1"),
+	})
+	h := newIntegrationGateHarness(t)
+	h.table = interproc.NewProjectedTableWithDependencyResolver(snapshots)
+	entry := gateEntry(t, "strict", "number", "race-caller", "race-site")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	var once sync.Once
+	blockedRunner := func(ctx context.Context, artifact interproc.DemandedBodyArtifact, bound interproc.EntryBinding) (interproc.ClosedOutcome, []interproc.ReadObservation, error) {
+		once.Do(func() { close(entered) })
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return interproc.ClosedOutcome{}, nil, ctx.Err()
+		}
+		return h.runner()(ctx, artifact, bound)
+	}
+	go func() {
+		_, err := h.table.Resolve(context.Background(), h.moduleA, entry, blockedRunner)
+		result <- err
+	}()
+	<-entered
+
+	snapshots.set("source", gateID("module-a-source-v2"))
+	evicted, err := h.table.InvalidateStale(context.Background())
+	if err != nil || evicted != 1 {
+		t.Fatalf("mid-flight source invalidation = (%d, %v), want (1, nil)", evicted, err)
+	}
+	if metrics := h.table.Metrics(); metrics.Cells != 0 || metrics.Evictions != 1 {
+		t.Fatalf("invalidation exposed a stale or partial cell: %+v", metrics)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, interproc.ErrInstanceInvalidated) {
+		t.Fatalf("old owner error = %v, want ErrInstanceInvalidated", err)
+	}
+	if metrics := h.table.Metrics(); metrics.Cells != 0 {
+		t.Fatalf("stale instance survived owner completion: %+v", metrics)
+	}
+
+	v2 := gateArtifact(t, "module-a", gateID("module-a-source-v2"))
+	freshRunner := func(ctx context.Context, artifact interproc.DemandedBodyArtifact, bound interproc.EntryBinding) (interproc.ClosedOutcome, []interproc.ReadObservation, error) {
+		out, err := h.specializeModuleA(ctx, artifact, bound)
+		return out, gateReadAudit(artifact), err
+	}
+	got, err := h.table.Resolve(context.Background(), v2, entry, freshRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := h.specializeModuleA(context.Background(), v2, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.CanonicalBytes(), want.CanonicalBytes()) {
+		t.Fatal("replacement artifact did not publish its complete v2 result")
+	}
+	if metrics := h.table.Metrics(); metrics.Cells != 1 || metrics.Executions != 2 || metrics.Evictions != 1 {
+		t.Fatalf("post-race cache shape = %+v, want one committed v2 instance only", metrics)
+	}
 }
 
 type integrationGateHarness struct {
@@ -312,4 +379,33 @@ func gateDependencyIDs(artifact interproc.DemandedBodyArtifact) []interproc.Cont
 
 func gateID(text string) interproc.ContentID {
 	return interproc.ContentIDFromCanonicalBytes([]byte(text))
+}
+
+type gateSnapshots struct {
+	mu  sync.Mutex
+	ids map[string]interproc.ContentID
+}
+
+func newGateSnapshots(ids map[string]interproc.ContentID) *gateSnapshots {
+	copy := make(map[string]interproc.ContentID, len(ids))
+	for kind, id := range ids {
+		copy[kind] = id
+	}
+	return &gateSnapshots{ids: copy}
+}
+
+func (s *gateSnapshots) ResolveContentID(_ context.Context, dependency interproc.Dependency) (interproc.ContentID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.ids[dependency.Kind]
+	if !ok {
+		return interproc.ContentID{}, fmt.Errorf("missing dependency %q", dependency.Kind)
+	}
+	return id, nil
+}
+
+func (s *gateSnapshots) set(kind string, id interproc.ContentID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ids[kind] = id
 }
