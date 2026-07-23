@@ -91,6 +91,7 @@ type DiagnosticEvidence struct {
 	Span    wir.Span
 	Kind    string
 	Trust   string
+	Reason  string
 	Message string
 }
 
@@ -184,7 +185,7 @@ func Check(source string) (result Result, err error) {
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans),
+		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans),
 		DiagnosticSpans:      diagnosticSpans,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
@@ -226,7 +227,7 @@ func diagnosticSpans(claimSpans, callSpans map[string]wir.Span, diagnostics []eq
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans map[string]wir.Span) []PublishedDiagnostic {
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans map[string]wir.Span) []PublishedDiagnostic {
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
@@ -263,13 +264,24 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			continue
 		}
 		display := strings.TrimPrefix(string(operands["target"]), "path/")
+		sourceDisplay := display
 		for _, operand := range operation.Operands {
 			if operand.Role == "display" && len(operand.Term.Encoding) != 0 {
 				display = string(operand.Term.Encoding)
-				break
+			}
+			if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+				sourceDisplay = string(operand.Term.Encoding)
 			}
 		}
 		value, available := claimDiagnosticValue(operands["value"], operation, closure)
+		// An explicit any may be carried by an ancestor path (for example
+		// raw.id).  The scalar read can still retain a literal heap fact, but the
+		// ancestor boundary is the authoritative assignment source and is itself
+		// sufficient closed evidence for the diagnostic projection.
+		anySource := (available && isExplicitAnyValue(value)) || sourceHasExplicitAny(operands["value"], closure.Values)
+		if !available && anySource {
+			value, available = []byte("scalar/claim/claim-kind/3/\"any\""), true
+		}
 		if !available {
 			out = append(out, item)
 			continue
@@ -280,6 +292,26 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			continue
 		}
 		valueDescription := assignmentEvidenceValue(value)
+		if anySource {
+			valueDescription = "any"
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", sourceDisplay)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", sourceDisplay)},
+				{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s satisfies the declared type", sourceDisplay)},
+			}
+			item.Labels = []DiagnosticLabel{
+				{Span: item.Span, Message: "assigned value " + valueDescription},
+				{Span: targetSpan, Message: "declared type " + declared},
+			}
+			item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
+			out = append(out, item)
+			continue
+		}
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", display, valueDescription)},
 			{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
@@ -916,12 +948,24 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	// the equation has already derived can refute it; top and refinements stay
 	// unproven and deliberately publish no assignment failure.  This keeps the
 	// diagnostic in the operation that owns both the guard and abstract value.
-	if kind == "claim-kind/3" && available && assignmentMismatchProven(value, targetType) {
+	sourceDisplay := display
+	for _, operand := range operation.Operands {
+		if operand.Role == "source-display" && len(operand.Value) != 0 {
+			sourceDisplay = string(operand.Value)
+			break
+		}
+	}
+	anySource := isExplicitAnyValue(value) || sourceHasExplicitAny(source, partition.Values())
+	if kind == "claim-kind/3" && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType)) {
+		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
+		if anySource {
+			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
+		}
 		closure.Diagnostics = []equation.Fact{{
 			Key:   "type.assignment/" + operation.Target.Name,
-			Value: []byte(assignmentMismatchMessage(display, value, targetType)),
+			Value: []byte(message),
 		}}
-	} else {
+	} else if !claimTypeIsAny(targetType) {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
@@ -960,6 +1004,57 @@ func assignmentMismatchProven(value []byte, targetType string) bool {
 	default:
 		return false
 	}
+}
+
+func claimTypeIsAny(targetType string) bool {
+	target, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	return err == nil && target == "any"
+}
+
+// Explicit any is a proven precision-boundary fact, unlike scalar/top (an
+// unknown value).  It therefore fails a declared assignment contract only
+// when that contract requires evidence the boundary cannot supply.
+func isExplicitAnyValue(value []byte) bool {
+	return strings.HasSuffix(string(value), "/\"any\"") && strings.HasPrefix(string(value), "scalar/claim/")
+}
+
+func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
+	path := strings.TrimPrefix(string(source), "path/")
+	if path == string(source) || path == "" {
+		return false
+	}
+	for {
+		prefix := "value/path/" + path + "/"
+		for _, fact := range values {
+			if strings.HasPrefix(fact.Key, prefix) && isExplicitAnyValue(fact.Value) {
+				return true
+			}
+		}
+		cut := strings.LastIndexAny(path, ".[")
+		if cut < 0 {
+			return false
+		}
+		path = path[:cut]
+	}
+}
+
+func assignmentTargetRequiresProof(targetType string) bool {
+	if claimTypeIsAny(targetType) {
+		return false
+	}
+	target, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	return err == nil && target != ""
+}
+
+func assignmentAnyMismatchMessage(source string, targetType string) string {
+	declared, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	if err != nil {
+		declared = strings.TrimPrefix(targetType, "claim-type/")
+	}
+	if strings.HasPrefix(declared, "{") {
+		return "cannot assign " + source + " because " + source + " comes from any/unknown; no proof shows it satisfies the declared type"
+	}
+	return "cannot assign " + source + " because it is any, not " + declared
 }
 
 func assignmentMismatchMessage(target string, value []byte, targetType string) string {

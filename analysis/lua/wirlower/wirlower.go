@@ -559,19 +559,52 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		b.bindInto(dst, values[i].withTarget(wir.CallResultTargetLocalAssignment, i))
 		b.markAssignmentTargetSpan(b.curPoint, 0, dst, localNameSpan(s, i))
 		if declared != 0 {
+			source := b.annotationSourceOperand(values[i], dst)
+			var sourceSpan wir.Span
+			if source.Kind == wir.OperandPath && source != dst && i < len(s.Exprs) {
+				sourceSpan = wirSpanFromSource(ast.SpanOf(s.Exprs[i]))
+			}
 			b.emit(wir.Instruction{
-				Op:         wir.OpClaim,
-				Dst:        dst,
-				A:          dst,
-				Claim:      wir.ClaimAnnotation,
-				Type:       declared,
-				TargetSpan: localNameSpan(s, i),
+				Op:  wir.OpClaim,
+				Dst: dst,
+				// Keep the assignment source separate from the target.  An
+				// annotation is a contract on the value that flowed into this
+				// declaration, not a claim that the newly-bound local proves
+				// itself.  In particular this preserves an explicit `any` source
+				// through the equation claim instead of losing it to the target
+				// write.
+				A:            source,
+				Claim:        wir.ClaimAnnotation,
+				Type:         declared,
+				TargetSpan:   localNameSpan(s, i),
+				DeclaredSpan: wirSpanFromSource(ast.SpanOf(s.Types[i])),
+				ExprSpan:     sourceSpan,
 			})
 		}
 		if symbol, ok := b.bindings.LocalSymbolAt(s, i); ok {
 			b.debugDeclareAt(b.curPoint, symbol)
 		}
 	}
+}
+
+// annotationSourceOperand returns an already-materialized source operand when
+// one is available without re-lowering an expression.  Compound expressions
+// produce directly into dst, so dst remains the faithful source in that case.
+func (b *builder) annotationSourceOperand(v binding, dst wir.Operand) wir.Operand {
+	switch v.kind {
+	case bindOperand:
+		return v.op
+	case bindExpr:
+		switch expr := v.expr.(type) {
+		case *ast.IdentExpr:
+			return b.lowerExpr(expr)
+		case *ast.AttrGetExpr:
+			if path, ok := pathexpr.Resolve(expr, b.bindings); ok {
+				return b.pathOperand(path)
+			}
+		}
+	}
+	return dst
 }
 
 func (b *builder) recordLocalRequireModule(s *ast.LocalAssignStmt, index int, dst wir.Operand) {

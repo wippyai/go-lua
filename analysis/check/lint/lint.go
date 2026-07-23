@@ -352,7 +352,8 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	for _, item := range projection.Evidence {
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind: evidenceKind(item.Kind), Trust: evidenceTrust(item.Trust),
-			Span: spanForFact(entry.Source, item.Span), Message: item.Message,
+			Reason: evidenceReason(item.Reason),
+			Span:   spanForFact(entry.Source, item.Span), Message: item.Message,
 		})
 	}
 	labels := make([]diagnostic.Label, 0, len(projection.Labels))
@@ -386,6 +387,17 @@ func evidenceTrust(trust string) diagnostic.TrustKind {
 		return diagnostic.TrustRefuted
 	default:
 		return diagnostic.TrustUnknown
+	}
+}
+
+func evidenceReason(reason string) diagnostic.EvidenceReason {
+	switch reason {
+	case "boundary validation missing":
+		return diagnostic.EvidenceReasonBoundaryValidationMissing
+	case "explicit boundary validation":
+		return diagnostic.EvidenceReasonExplicitBoundaryValidation
+	default:
+		return diagnostic.EvidenceReasonUnspecified
 	}
 }
 

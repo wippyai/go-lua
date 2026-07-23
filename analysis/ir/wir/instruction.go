@@ -305,6 +305,11 @@ type Instruction struct {
 	// facts without retaining assignment AST sidecars.
 	TargetSpan Span
 
+	// DeclaredSpan is the declared type in an annotation claim.  It is separate
+	// from TargetSpan because assignment failures point at the assigned source,
+	// while the asserted contract is best explained at its type annotation.
+	DeclaredSpan Span
+
 	// ContainerSpan is source-only metadata for the container being assigned
 	// through by member/index writes. It lets diagnostics point at the nil-risk
 	// receiver separately from the full assignment target.

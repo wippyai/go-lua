@@ -58,10 +58,11 @@ const (
 // present; Cyclic is present exactly when the source CFG has a recurrence and
 // carries the source-frozen WTO certificate for that same artifact.
 type Compilation struct {
-	Artifact   equation.Artifact
-	Cyclic     *equation.CyclicArtifact
-	ClaimSpans map[string]wir.Span
-	CallSpans  map[string]wir.Span
+	Artifact         equation.Artifact
+	Cyclic           *equation.CyclicArtifact
+	ClaimSpans       map[string]wir.Span
+	ClaimTargetSpans map[string]wir.Span
+	CallSpans        map[string]wir.Span
 }
 
 // Compile parses and lowers one complete body, retaining cyclic control-flow
@@ -90,7 +91,8 @@ func Compile(source string) (Compilation, error) {
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans(body, artifact), CallSpans: callSpans(body, artifact)}
+	claimSpans, claimTargetSpans := claimSpans(body, artifact)
+	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans, ClaimTargetSpans: claimTargetSpans, CallSpans: callSpans(body, artifact)}
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -145,9 +147,9 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 // claimSpans retains the source anchors needed to render claim failures after
 // equation evaluation. Equation facts name their owning operation, while WIR
 // remains the authority for source coordinates.
-func claimSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+func claimSpans(body *wir.Body, artifact equation.Artifact) (map[string]wir.Span, map[string]wir.Span) {
 	if body == nil {
-		return nil
+		return nil, nil
 	}
 	claims := make([]wir.Instruction, 0)
 	for index := 0; index < body.Len(); index++ {
@@ -157,24 +159,34 @@ func claimSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span 
 		}
 	}
 	spans := make(map[string]wir.Span, len(claims))
+	targets := make(map[string]wir.Span, len(claims))
 	claimIndex := 0
 	for _, item := range artifact.Equations {
 		if item.Occurrence.Kind != "claim" || claimIndex >= len(claims) {
 			continue
 		}
-		span := claims[claimIndex].TargetSpan
-		if !span.Valid() {
-			span = claims[claimIndex].ExprSpan
+		claim := claims[claimIndex]
+		span := claim.TargetSpan
+		if claim.Claim == wir.ClaimAnnotation && claim.ExprSpan.Valid() {
+			span = claim.ExprSpan
 		}
 		if !span.Valid() {
-			span = claims[claimIndex].CallSpan
+			span = claim.ExprSpan
+		}
+		if !span.Valid() {
+			span = claim.CallSpan
 		}
 		if span.Valid() {
 			spans[item.Target.Name] = span
 		}
+		if claim.DeclaredSpan.Valid() {
+			targets[item.Target.Name] = claim.DeclaredSpan
+		} else if claim.TargetSpan.Valid() {
+			targets[item.Target.Name] = claim.TargetSpan
+		}
 		claimIndex++
 	}
-	return spans
+	return spans, targets
 }
 
 // CompileBody is retained for consumers that only need the equation artifact.
@@ -478,6 +490,13 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 					return equation.Artifact{}, fmt.Errorf("front: claim %s: empty path target", operation.target.Name)
 				}
 				draft.Operands = append(draft.Operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
+			}
+			if instruction.Claim == wir.ClaimAnnotation && instruction.A.Kind == wir.OperandPath {
+				sourceDisplay := body.Path(wir.PathRef(instruction.A.Ref)).String()
+				if sourceDisplay == "" {
+					return equation.Artifact{}, fmt.Errorf("front: claim %s: empty path source", operation.target.Name)
+				}
+				draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
 			}
 		case instruction.Op == wir.OpBinOp, instruction.Op == wir.OpUnOp, instruction.Op == wir.OpConcat, instruction.Op == wir.OpLogical:
 			operands, err := expressionOperands(body, instruction)
