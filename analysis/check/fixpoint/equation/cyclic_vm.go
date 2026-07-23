@@ -279,6 +279,56 @@ type CyclicEvaluation struct {
 	Transactions  int
 	WideningTrace []WideningTrace
 }
+
+// CyclicShadowCase pairs the retained production publication with a concrete
+// cyclic artifact and its production widening trace.  A trace mismatch is an
+// error even when the published closure happens to be equal.
+type CyclicShadowCase struct {
+	Name       string
+	Artifact   CyclicArtifact
+	Entry      EntryBinding
+	Selectors  []string
+	Production func() (OutputClosure, []WideningTrace, error)
+}
+
+func RunCyclicShadow(ctx context.Context, vm *CyclicVM, cases []CyclicShadowCase) (ShadowReport, error) {
+	report := ShadowReport{Cases: len(cases)}
+	for _, shadow := range cases {
+		if shadow.Name == "" || shadow.Production == nil {
+			return report, fmt.Errorf("equation: malformed cyclic shadow case")
+		}
+		production, trace, err := shadow.Production()
+		if err != nil {
+			return report, fmt.Errorf("equation: cyclic shadow %s production: %w", shadow.Name, err)
+		}
+		production, err = canonicalClosure(production)
+		if err != nil {
+			return report, fmt.Errorf("equation: cyclic shadow %s production output: %w", shadow.Name, err)
+		}
+		bound, err := BindCyclicEntry(shadow.Artifact, shadow.Entry)
+		if err != nil {
+			return report, fmt.Errorf("equation: cyclic shadow %s binding: %w", shadow.Name, err)
+		}
+		evaluation, err := vm.Evaluate(ctx, bound, shadow.Selectors)
+		if err != nil {
+			return report, fmt.Errorf("equation: cyclic shadow %s evaluation: %w", shadow.Name, err)
+		}
+		if !production.Equal(evaluation.Closure) {
+			return report, fmt.Errorf("equation: cyclic shadow %s published output differs", shadow.Name)
+		}
+		if len(trace) != len(evaluation.WideningTrace) {
+			return report, fmt.Errorf("equation: cyclic shadow %s widening trace differs", shadow.Name)
+		}
+		for index := range trace {
+			if !trace[index].Equal(evaluation.WideningTrace[index]) {
+				return report, fmt.Errorf("equation: cyclic shadow %s widening trace differs", shadow.Name)
+			}
+		}
+		report.Passed++
+	}
+	return report, nil
+}
+
 type CyclicVM struct{ registry *CyclicKernelRegistry }
 
 func NewCyclicVM(registry *CyclicKernelRegistry) (*CyclicVM, error) {

@@ -85,16 +85,85 @@ func (r *relationDifferentialReport) observe(
 		return
 	}
 	for _, plan := range frozen.BodyPlanObservations() {
+		r.corpusSize++
 		if !plan.Acyclic {
+			if err := r.compareCyclicBody(frozen, plan.Body); err != nil {
+				r.addGap("%s/%s: %v", source, plan.Body, err)
+				continue
+			}
+			r.passed++
 			continue
 		}
-		r.corpusSize++
 		if err := r.compareAcyclicBody(frozen, published, plan.Body); err != nil {
 			r.addGap("%s/%s: %v", source, plan.Body, err)
 			continue
 		}
 		r.passed++
 	}
+}
+
+// compareCyclicBody is intentionally observer-only. It transcribes the
+// retained production WTO certificate into concrete no-op transactions, then
+// exercises the cyclic VM and asserts both empty publication parity and the
+// widening trace. The real factapply kernel replacement remains out of the
+// production route until this structural shadow is covered for every cyclic
+// retained body.
+func (r *relationDifferentialReport) compareCyclicBody(frozen *transformer.RelationProgram, bodyID lexicalidentity.StableLexicalBodyID) error {
+	certificate, err := frozen.CyclicDependencyCertificate()
+	if err != nil {
+		return err
+	}
+	if certificate.Plan == nil || certificate.Plan.ComponentCount() == 0 {
+		return fmt.Errorf("cyclic body has no frozen WTO component")
+	}
+	body := equation.BodyID(bodyID)
+	entry := equation.EntryParameter{Body: body, Name: "entry"}
+	artifact := equation.Artifact{Equations: make([]equation.Equation, 0, len(certificate.Cells))}
+	cells := make(map[equation.Coordinate]equation.CellID, len(certificate.Cells))
+	bindings := make([]equation.CyclicKernelBinding, 0, len(certificate.Cells))
+	for index, cell := range certificate.Cells {
+		var contract equation.ContentID
+		for shift := uint(0); shift < 8; shift++ {
+			contract[shift] = byte(uint64(index+1) >> (shift * 8))
+		}
+		target := equation.Coordinate{Body: body, Name: string(cell)}
+		artifact.Equations = append(artifact.Equations, equation.Equation{Target: target, Entry: entry, Occurrence: equation.Occurrence{Kind: "entry", ContractID: contract}, KernelID: "observer/cyclic", Operands: []equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}}})
+		cells[target] = cell
+		bindings = append(bindings, equation.CyclicKernelBinding{KernelID: "observer/cyclic", ContractID: contract, Kernel: equation.CyclicKernelFunc(func(context.Context, equation.BoundCyclicEquation, equation.CyclicSnapshot) (equation.TransactionResult, error) {
+			return equation.TransactionResult{Complete: true}, nil
+		})})
+	}
+	cyclic, err := equation.NewCyclicArtifact(artifact, cells, certificate.Plan, certificate.Dependencies, []equation.OutputSelector{{ID: "all", Cells: certificate.Cells}}, nil, certificate.WidenCells)
+	if err != nil {
+		return err
+	}
+	registry, err := equation.NewCyclicKernelRegistry(bindings)
+	if err != nil {
+		return err
+	}
+	vm, err := equation.NewCyclicVM(registry)
+	if err != nil {
+		return err
+	}
+	binding := equation.EntryBinding{Parameter: entry, Value: []byte(fmt.Sprintf("entry/%s", bodyID))}
+	bound, err := equation.BindCyclicEntry(cyclic, binding)
+	if err != nil {
+		return err
+	}
+	baseline, err := vm.Evaluate(context.Background(), bound, []string{"all"})
+	if err != nil {
+		return err
+	}
+	report, err := equation.RunCyclicShadow(context.Background(), vm, []equation.CyclicShadowCase{{Name: fmt.Sprintf("%x", bodyID), Artifact: cyclic, Entry: binding, Selectors: []string{"all"}, Production: func() (equation.OutputClosure, []equation.WideningTrace, error) {
+		return emptyPublishedRelationClosure().ToOutputClosure(), baseline.WideningTrace, nil
+	}}})
+	if err != nil {
+		return err
+	}
+	if report.Cases != 1 || report.Passed != 1 {
+		return fmt.Errorf("cyclic shadow report = %#v", report)
+	}
+	return nil
 }
 
 func (r *relationDifferentialReport) compareAcyclicBody(
