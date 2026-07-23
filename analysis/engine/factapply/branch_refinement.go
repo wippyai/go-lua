@@ -130,11 +130,7 @@ func applyBranchIndexStaticLengthCeil(
 	if !ok {
 		return out
 	}
-	arrayType, ok := typeValues.TypeOf(ctx.Registry, arrayValue.value)
-	if !ok {
-		return out
-	}
-	length, ok := staticSequenceExactLength(arrayType)
+	length, ok := branchIndexInRangeStaticBound(typeValues, ctx.Registry, arrayValue.value)
 	if !ok {
 		return out
 	}
@@ -143,6 +139,21 @@ func applyBranchIndexStaticLengthCeil(
 		return out
 	}
 	return out.WriteNumCeil(resolver.KeySpace(), indexKey, length)
+}
+
+// branchIndexInRangeStaticBound is the one semantic derivation for the
+// optional numeric ceiling implied by an IndexInRange proof.  Concrete State
+// execution and the factor-native contract kernel resolve their respective
+// array operands, then both consume this exact value-to-bound law.
+func branchIndexInRangeStaticBound(typeValues *typevalue.Cache, reg *axis.Registry, array product.Value) (int64, bool) {
+	if typeValues == nil || reg == nil {
+		return 0, false
+	}
+	arrayType, ok := typeValues.TypeOf(reg, array)
+	if !ok {
+		return 0, false
+	}
+	return staticSequenceExactLength(arrayType)
 }
 
 // applyBranchDiffConstraint records an edge-specific difference-logic fact

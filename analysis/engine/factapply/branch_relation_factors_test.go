@@ -517,6 +517,62 @@ func TestStaticBranchPathEvidenceUsesExactCoordinateAccess(t *testing.T) {
 	}
 }
 
+// IndexInRange has two coupled consequences: its path proof and a ceiling
+// supplied only when the resolved array type has an exact static length.  The
+// concrete State adapter and the factor-native contract path must consume the
+// same bound derivation and produce the same product image.
+func TestIndexInRangeFactorMatchesConcreteStateKernel(t *testing.T) {
+	reg := standard.Registry()
+	domain := state.RegisteredProductDomain(reg)
+	point := cfg.Point(9221)
+	index, array := symbol.ID(9221), symbol.ID(9222)
+	indexPath, arrayPath := pathdom.NewPath(index, "index"), pathdom.NewPath(array, "array")
+	builder := visibility.NewBuilder()
+	builder.Define(point, index, "index")
+	builder.Define(point, array, "array")
+	resolver := visibility.NewResolver(builder.Build())
+	types := typevalue.NewCache()
+	authority := NewPathSemanticAuthority(resolver, nil, types)
+	proof := factflow.NewBranchIndexInRangeEvidenceOnEdge(indexPath, arrayPath, true)
+	facts := factflow.NewFacts(factflow.FactsInput{BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+		point: factflow.NewBranchPathEvidenceSet(proof),
+	}})
+	factors, err := authority.PrepareBranchRelationFactors(
+		domain, PlanBranchRelationTransaction(facts, point, true),
+		mustCoordinateFactorInventory(t, authority, domain, nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arrayValue := types.FromTypeWithWitness(reg, typ.NewTuple(typ.String, typ.Integer))
+	input := state.Reachable(state.State{}).
+		WriteValue(reg, statekey.SymbolValue(index), typevalue.FromType(reg, typ.Integer)).
+		WriteValue(reg, statekey.SymbolValue(array), arrayValue)
+	edge := transfer.EdgeContext{Context: context.Background(), Registry: reg, Edge: cfg.Edge{From: point, Cond: true}, HasCond: true}
+	want := applyBranchIndexStaticLengthCeil(types, edge, resolver, nil, input, proof)
+	want = applyBranchPathEvidence(types, edge, resolver, nil, want, proof)
+	got := input
+	for _, stage := range factors.Stages() {
+		for _, factor := range stage.Factors() {
+			result := factors.ApplyFactor(factor, edge, input, got)
+			if result.Err != nil || result.Canceled {
+				t.Fatalf("factor %d = canceled %t err %v", factor, result.Canceled, result.Err)
+			}
+			got = result.Output
+		}
+	}
+	if !domain.Lattice().Equal(got, want) {
+		t.Fatalf("IndexInRange factor image differs from concrete State kernel\nwant: %#v\n got: %#v", want, got)
+	}
+	indexKey, ok := visibility.AddressAt(resolver, point, indexPath).RootOrVisibleStateKey()
+	if !ok {
+		t.Fatal("index key is unresolved")
+	}
+	if ceiling, present := got.ReadNumCeil(resolver.KeySpace(), indexKey); !present || ceiling != 2 {
+		t.Fatalf("IndexInRange ceiling = %d/%t, want 2/true", ceiling, present)
+	}
+}
+
 func TestStaticPresenceFactorCarriesEqualitySupportForCanonicalClosure(t *testing.T) {
 	reg := standard.Registry()
 	domain := state.RegisteredProductDomain(reg)

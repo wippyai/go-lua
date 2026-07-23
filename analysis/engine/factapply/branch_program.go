@@ -426,6 +426,7 @@ type branchAtomDraft struct {
 	refinement       *branchValueRefinementDraft
 	equality         *branchPathEqualityDraft
 	pathRelation     *branchPathRelationDraft
+	indexInRange     *branchIndexInRangeDraft
 	evidenceProof    *pathevidence.BranchProof
 	source           BranchRelationStepKind
 }
@@ -986,8 +987,6 @@ func (b *branchProgramBuilder) evidenceAtoms(proof factflow.BranchPathEvidence) 
 		seed.ReadPaths = append(seed.ReadPaths, primary...)
 		seed.ResolvePaths = append(seed.ResolvePaths, secondary...)
 		reads = b.resolveLanes(other)
-		reads = appendProductLanes(reads, b.lane(state.LaneNumCeils)...)
-		writes = appendProductLanes(writes, b.lane(state.LaneNumCeils)...)
 	case factflow.BranchPathEvidenceFrozenTable:
 		seed.ResolvePaths = primary
 		reads = appendProductLanes(b.resolveLanes(proof.PathRef()), b.lane(state.LaneFrozenTables)...)
@@ -1020,6 +1019,31 @@ func (b *branchProgramBuilder) evidenceAtoms(proof factflow.BranchPathEvidence) 
 		return nil
 	}
 	factorNativeProof := proof.Kind() == factflow.BranchPathEvidencePresence
+	if proof.Kind() == factflow.BranchPathEvidenceIndexInRange && ok && hasOther {
+		index, indexOK := visibility.AddressAt(b.authority.resolver, b.transaction.point, proof.PathRef()).RootOrVisibleKeyspaceKey()
+		array, arrayOK := b.equalityKey(other)
+		indexRole, indexRoleOK := branchLexicalValueRoleSource(proof.PathRef().Symbol)
+		arrayRole, arrayRoleOK := branchLexicalValueRoleSource(other.Symbol)
+		if indexOK && arrayOK && indexRoleOK && arrayRoleOK {
+			mutation, mutationErr := b.domain.PrepareCoordinateBranchBound(
+				state.CoordinateBoundValue, state.CoordinateBoundUpper,
+				b.authority.resolver.KeySpace(), index, 0,
+			)
+			if mutationErr != nil {
+				return nil, mutationErr
+			}
+			slot := mutation.Slot()
+			action.access.coordinateReads = appendBranchCoordinateSlots(b.domain, action.access.coordinateReads, slot)
+			action.access.coordinateWrites = appendBranchCoordinateSlots(b.domain, action.access.coordinateWrites, slot)
+			action.access.coordinateFamilyWrites = appendCoordinateFamilies(action.access.coordinateFamilyWrites, slot.Family())
+			proofCopy := stateProof
+			action.indexInRange = &branchIndexInRangeDraft{
+				proof: proofCopy, index: index, array: array, arraySymbol: other.Symbol,
+			}
+			action.valueRoleSources.currentReads = append(action.valueRoleSources.currentReads, indexRole, arrayRole)
+			factorNativeProof = true
+		}
+	}
 	// Channel-select result/case comparisons have an existing factor-native
 	// relation law.  The State adapter below predates that law and therefore
 	// used to leave these evidence atoms apply-only; formal execution correctly
@@ -1319,6 +1343,13 @@ func (b *branchProgramBuilder) seal(inventory state.CoordinateFactorInventory) (
 				if draft.evidenceProof != nil {
 					atom.factor = branchPathRelationProofKernel(atom.pathRelation, *draft.evidenceProof)
 				}
+			}
+			if draft.indexInRange != nil {
+				factor, factorErr := freezeBranchIndexInRangeFactor(b, draft.indexInRange, seal)
+				if factorErr != nil {
+					return preparedBranchTransaction{}, factorErr
+				}
+				atom.factor = branchIndexInRangeKernel(*factor)
 			}
 			atom.mutation = draft.mutation
 			atom.valueRoles.currentReads, err = sealBranchValueRoleSources(draft.valueRoleSources.currentReads, seal)
