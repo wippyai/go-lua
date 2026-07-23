@@ -39,6 +39,63 @@ func TestFormalEffectPathReplacementPreservesLexicalRepeatedWriteOrder(t *testin
 	formalEffectTestPathValue(t, result, secondEquation.Operator, result.values[secondCell], second)
 }
 
+func TestFormalEffectPathStoreListFloorUsesRegisteredLengthFactor(t *testing.T) {
+	reg := standard.Registry()
+	program := formalPathReplacementTestProgram(t, nil, typevalue.LiteralString(reg, "discarded"))
+	body := &program.bodies[0]
+	code, arena, effects := body.relation.code, body.relation.arena, body.relation.effects
+	arena.sealed, effects.sealed, code.sealed = false, false, false
+	step := &code.nodes[1].steps[0]
+	node := &effects.nodes[step.effect]
+	root := identityvalue.Present(reg, identity.ID{Kind: "formal.effect.list", Site: "path-store", Index: 1})
+	node.pathStoreAssignment.Value = arena.Constant(root)
+	node.pathStoreObject = PathStoreObjectConfig{
+		ListFloor: 3,
+		Heaps: []PathStoreHeapObjectConfig{{
+			Root: node.pathStoreAssignment.Value,
+			Members: []PathStoreHeapMemberConfig{{
+				Suffix: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}},
+				Value:  arena.Constant(typevalue.LiteralString(reg, "item")),
+			}},
+		}},
+	}
+	arena.Seal()
+	effects.Seal()
+	code.sealed = true
+	refreezeFormalTestStaticTopology(t, program)
+	refreezeFormalEffectTestProgram(t, program)
+
+	execution, err := executeFormalRelation(context.Background(), program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := formalRelationCell{Variable: 1, Root: 1, Step: 1, Kind: formalRelationCellStep}
+	equation, ok := program.formalTemplate.equation(cell)
+	if !ok || equation.Operator.pathReplacement == nil || !equation.Operator.pathReplacement.hasListFloor {
+		t.Fatal("list-floor PathStore adapter is absent")
+	}
+	span, _, _, ok := execution.algebra.span(1)
+	if !ok {
+		t.Fatal("list-floor formal span")
+	}
+	regions, err := execution.algebra.tupleLeafRegions(execution.values[cell])
+	if err != nil || len(regions) != 1 {
+		t.Fatalf("list-floor regions=%d err=%v", len(regions), err)
+	}
+	complete, err := regions[0].evaluator.completeLeaves()
+	if err != nil {
+		t.Fatal(err)
+	}
+	factor, err := execution.algebra.materializeFormalEffectLane(regions[0].evaluator.authority, span, equation.Operator.pathReplacement.lengthGroup, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	floor, present, err := body.productDomain.ReadLengthFloorFactor(factor, span.keys, equation.Operator.pathReplacement.target)
+	if err != nil || !present || floor != 3 {
+		t.Fatalf("formal list floor=%d present=%t err=%v", floor, present, err)
+	}
+}
+
 func TestFormalEffectPathReplacementBottomStaysBottom(t *testing.T) {
 	reg := standard.Registry()
 	program := formalPathReplacementTestProgram(t, nil, typevalue.LiteralString(reg, "value"))

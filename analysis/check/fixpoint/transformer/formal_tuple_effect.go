@@ -89,6 +89,10 @@ func formalEffectTransferLaneSets(domain state.ProductDomain, operator formalRel
 		if plan.hasAssignment {
 			writes = writes.With(state.LaneValues)
 		}
+		if plan.hasListFloor {
+			reads = reads.With(plan.lengthGroup.lane.ID())
+			writes = writes.With(plan.lengthGroup.lane.ID())
+		}
 		reads = reads.With(writes.IDs()...)
 	case EffectIndexMutation:
 		plan := operator.indexMutation
@@ -212,6 +216,9 @@ type formalPathReplacementStep struct {
 	staticValue   ValueTerm
 	staticPlan    state.StaticMemberFactorPlan
 	staticGroup   formalFiberGroupDescriptor
+	hasListFloor  bool
+	lengthPlan    state.LengthFloorFactorPlan
+	lengthGroup   formalFiberGroupDescriptor
 	valueAccess   state.TransferInputAccess
 	valueGroups   []formalFiberGroupDescriptor
 	demands       []formalQualifiedGuardDemand
@@ -239,7 +246,8 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 	// Object construction owns a distinct graph mutation. The two ordered
 	// PathStore writes, however, are one lexical transaction: destructive path
 	// replacement followed by persistent static-member publication.
-	if !node.pathStoreHasAssignment && !node.pathStoreHasStatic || node.pathStoreObject.ListFloor != 0 {
+	if !node.pathStoreHasAssignment && !node.pathStoreHasStatic ||
+		node.pathStoreObject.ListFloor != 0 && len(node.pathStoreObject.Heaps) == 0 {
 		return nil, nil
 	}
 	if operator.code.terms == nil || operator.code.terms != operator.code.effects.terms ||
@@ -278,6 +286,13 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 				return nil, fmt.Errorf("path replacement source: %w", err)
 			}
 			plan.hasSource = true
+		}
+		if node.pathStoreObject.ListFloor > 0 {
+			plan.lengthPlan, err = body.productDomain.PrepareLengthFloorFactorPlan(span.keys, plan.target, node.pathStoreObject.ListFloor)
+			if err != nil {
+				return nil, fmt.Errorf("path replacement length floor: %w", err)
+			}
+			plan.hasListFloor = true
 		}
 	}
 	if plan.hasStatic {
@@ -359,8 +374,20 @@ func freezeFormalPathReplacementStep(program *RelationProgram, variable relation
 		}
 		plan.staticGroup = group
 	}
+	if plan.hasListFloor {
+		lengthLane, laneErr := body.productDomain.LengthFloorFactorLane(plan.lengthPlan)
+		if laneErr != nil {
+			return nil, laneErr
+		}
+		group, present := byLane[lengthLane]
+		if !present {
+			return nil, fmt.Errorf("path replacement length-floor lane %s is outside the frozen product", lengthLane.ID())
+		}
+		plan.lengthGroup = group
+	}
 	if plan.hasAssignment && (plan.value == 0 || plan.target.Kind == keyspace.KindInvalid || plan.hasSource != (plan.source.Kind != keyspace.KindInvalid)) ||
-		plan.hasStatic && (plan.staticValue == 0 || !plan.staticPlan.Valid() || !plan.staticGroup.valid()) {
+		plan.hasStatic && (plan.staticValue == 0 || !plan.staticPlan.Valid() || !plan.staticGroup.valid()) ||
+		plan.hasListFloor && (!plan.lengthPlan.Valid() || !plan.lengthGroup.valid()) {
 		return nil, fmt.Errorf("path replacement adapter is incomplete")
 	}
 	return plan, nil
@@ -743,6 +770,17 @@ func (a *formalTupleAlgebra) applyFormalPathReplacementLeaf(operator formalRelat
 		next, laneErr := domain.ApplyStaticMemberFactor(bound, current)
 		if laneErr != nil {
 			return state.ValueFactor[FormalSlot]{}, nil, laneErr
+		}
+		factors[position] = next
+	}
+	if plan.hasListFloor {
+		position, present := factorIndex(plan.lengthGroup.lane)
+		if !present {
+			return state.ValueFactor[FormalSlot]{}, nil, errFormalComponentMalformed
+		}
+		next, floorErr := domain.ApplyLengthFloorFactor(plan.lengthPlan, factors[position])
+		if floorErr != nil {
+			return state.ValueFactor[FormalSlot]{}, nil, floorErr
 		}
 		factors[position] = next
 	}

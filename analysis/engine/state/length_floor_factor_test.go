@@ -22,6 +22,14 @@ func TestLengthFloorFactorMatchesCanonicalConcreteWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	writes, err := domain.LengthFloorFactorCoordinateWrites(plan)
+	if err != nil || len(writes) != 1 {
+		t.Fatalf("length floor coordinate writes = %#v, err=%v", writes, err)
+	}
+	lane, err := domain.LengthFloorFactorLane(plan)
+	if err != nil || writes[0].Family().Lane() != lane {
+		t.Fatalf("length floor coordinate lane = %v, want %v (err=%v)", writes[0].Family().Lane(), lane, err)
+	}
 	got, err := domain.ApplyLengthFloor(plan, input)
 	if err != nil {
 		t.Fatal(err)

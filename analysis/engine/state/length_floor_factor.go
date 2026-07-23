@@ -35,6 +35,16 @@ func (d ProductDomain) LengthFloorFactorLane(plan LengthFloorFactorPlan) (Produc
 	return plan.mutation.family.Lane(), nil
 }
 
+// LengthFloorFactorCoordinateWrites reports the one registered coordinate
+// owned by a sealed length-floor mutation. Formal topology sealing uses this
+// before execution so the later factor write cannot escape its fiber slice.
+func (d ProductDomain) LengthFloorFactorCoordinateWrites(plan LengthFloorFactorPlan) ([]CoordinateSlot, error) {
+	if !plan.Valid() || plan.seal != d.seal {
+		return nil, ErrInvalidLaneFactor
+	}
+	return []CoordinateSlot{plan.mutation.slot}, nil
+}
+
 func (d ProductDomain) ApplyLengthFloorFactor(plan LengthFloorFactorPlan, current LaneFactor) (LaneFactor, error) {
 	lane, err := d.LengthFloorFactorLane(plan)
 	if err != nil || current.lane != lane {

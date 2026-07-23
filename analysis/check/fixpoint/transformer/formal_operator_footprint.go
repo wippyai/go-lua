@@ -694,6 +694,17 @@ func freezeFormalEffectCoordinateSlots(telemetry *FreezeTelemetry, body *relatio
 				}
 				slots = append(slots, selected...)
 			}
+			if effect.pathStoreObject.ListFloor > 0 {
+				plan, planErr := body.productDomain.PrepareLengthFloorFactorPlan(formalKeys, target, effect.pathStoreObject.ListFloor)
+				if planErr != nil {
+					return nil, planErr
+				}
+				floorSlots, slotsErr := body.productDomain.LengthFloorFactorCoordinateWrites(plan)
+				if slotsErr != nil {
+					return nil, slotsErr
+				}
+				slots = append(slots, floorSlots...)
+			}
 		}
 		if effect.pathStoreHasStatic {
 			target, err := freezeFormalEffectPathKey(body, formalFiberDescriptorSpan{keys: formalKeys, rekey: rekey}, effect.pathStoreStatic.Target)
