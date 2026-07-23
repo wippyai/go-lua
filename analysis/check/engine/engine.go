@@ -181,11 +181,11 @@ func Check(source string) (result Result, err error) {
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
-	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, closure.Diagnostics)
+	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, closure.Diagnostics)
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans),
+		PublishedDiagnostics: publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans),
 		DiagnosticSpans:      diagnosticSpans,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
@@ -193,8 +193,8 @@ func Check(source string) (result Result, err error) {
 	return result, nil
 }
 
-func diagnosticSpans(claimSpans, callSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
-	if (len(claimSpans) == 0 && len(callSpans) == 0) || len(diagnostics) == 0 {
+func diagnosticSpans(claimSpans, callSpans, branchSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
 	out := make(map[string]wir.Span)
@@ -205,6 +205,18 @@ func diagnosticSpans(claimSpans, callSpans map[string]wir.Span, diagnostics []eq
 			name = strings.TrimPrefix(item.Key, "claim/unproven/")
 		case strings.HasPrefix(item.Key, "type.assignment/"):
 			name = strings.TrimPrefix(item.Key, "type.assignment/")
+		case strings.HasPrefix(item.Key, "advice.redundant_claim/"):
+			name = strings.TrimPrefix(item.Key, "advice.redundant_claim/")
+			if span, ok := callSpans[name+"/call"]; ok {
+				out[item.Key] = span
+				continue
+			}
+		case strings.HasPrefix(item.Key, "advice.always_true_guard/"), strings.HasPrefix(item.Key, "lint.condition.redundant/"):
+			name = item.Key[strings.LastIndexByte(item.Key, '/')+1:]
+			if span, ok := branchSpans[name]; ok {
+				out[item.Key] = span
+			}
+			continue
 		case strings.HasPrefix(item.Key, "type.call.direct."):
 			if slash := strings.IndexByte(item.Key, '/'); slash >= 0 {
 				if span, ok := callSpans[item.Key[slash+1:]]; ok {
@@ -227,7 +239,7 @@ func diagnosticSpans(claimSpans, callSpans map[string]wir.Span, diagnostics []eq
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans map[string]wir.Span) []PublishedDiagnostic {
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans map[string]wir.Span) []PublishedDiagnostic {
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
@@ -246,6 +258,18 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: string(fact.Value)}
 		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.argument_type/") {
 			out = append(out, enrichCallArgumentDiagnostic(item, operation))
+			continue
+		}
+		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
+			out = append(out, enrichRedundantCastDiagnostic(item, operation, callSpans))
+			continue
+		}
+		if operation, ok := claims[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
+			out = append(out, enrichRedundantClaimDiagnostic(item, operation))
+			continue
+		}
+		if operation, ok := branchOperation(artifact, diagnosticOperationName(fact.Key)); ok && (strings.HasPrefix(fact.Key, "advice.always_true_guard/") || strings.HasPrefix(fact.Key, "lint.condition.redundant/")) {
+			out = append(out, enrichConstantGuardDiagnostic(item, operation, fact.Key))
 			continue
 		}
 		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
@@ -348,6 +372,11 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/"} {
+		if name, ok := strings.CutPrefix(key, prefix); ok {
+			return name
+		}
+	}
 	parts := strings.Split(key, "/")
 	if len(parts) < 3 {
 		return ""
@@ -403,6 +432,12 @@ func cloneFact(fact equation.Fact) equation.Fact {
 
 func diagnosticCode(key string) string {
 	switch {
+	case strings.HasPrefix(key, "advice.redundant_claim/"):
+		return "advice.redundant_claim"
+	case strings.HasPrefix(key, "advice.always_true_guard/"):
+		return "advice.always_true_guard"
+	case strings.HasPrefix(key, "lint.condition.redundant/"):
+		return "lint.condition.redundant"
 	case strings.HasPrefix(key, "type.assignment/"):
 		return "type.assignment"
 	case strings.HasPrefix(key, "claim/unproven/"):
@@ -413,6 +448,93 @@ func diagnosticCode(key string) string {
 		}
 	}
 	return "lint." + strings.ReplaceAll(key, "/", ".")
+}
+
+func branchOperation(artifact equation.Artifact, name string) (equation.Equation, bool) {
+	for _, operation := range artifact.Equations {
+		if operation.Target.Name == name && operation.Occurrence.Kind == "branch-relations" {
+			return operation, true
+		}
+	}
+	return equation.Equation{}, false
+}
+
+func enrichRedundantClaimDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	operands, err := artifactOperandsByRole(operation.Operands, "value", "type")
+	if err != nil {
+		return item
+	}
+	target, err := strconv.Unquote(strings.TrimPrefix(string(operands["type"]), "claim-type/"))
+	if err != nil {
+		return item
+	}
+	value := strings.TrimPrefix(string(operands["value"]), "path/")
+	for _, operand := range operation.Operands {
+		if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+			value = string(operand.Term.Encoding)
+		}
+	}
+	item.Message = "type claim is redundant; value is already " + target
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s is proven to be %s before the claim", value, target)},
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("claim checks %s at this site", target)},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "claim site"}, {Span: item.Span, Message: "proven value"}}
+	item.Help = "Remove the runtime type claim when the proven source type is sufficient."
+	return item
+}
+
+func enrichRedundantCastDiagnostic(item PublishedDiagnostic, operation equation.Equation, callSpans map[string]wir.Span) PublishedDiagnostic {
+	var argument []byte
+	value := "value"
+	for _, operand := range operation.Operands {
+		if operand.Role == "argument-00000000" {
+			argument = operand.Term.Encoding
+		}
+		if operand.Role == "argument-display-00000000" {
+			value = string(operand.Term.Encoding)
+		}
+	}
+	if len(argument) == 0 {
+		return item
+	}
+	argumentSpan := callSpans[operation.Target.Name+"/argument-00000000"]
+	if !argumentSpan.Valid() {
+		argumentSpan = item.Span
+	}
+	if value == "value" {
+		value = strings.TrimPrefix(string(argument), "path/")
+	}
+	item.Message = "type cast call is redundant; value is already string"
+	item.Evidence = []DiagnosticEvidence{
+		{Span: argumentSpan, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s is proven to be string before the claim", value)},
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "claim checks string at this site"},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "claim site"}, {Span: argumentSpan, Message: "proven value"}}
+	item.Help = "Remove the runtime type claim when the proven source type is sufficient."
+	return item
+}
+
+func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.Equation, key string) PublishedDiagnostic {
+	if strings.HasPrefix(key, "advice.always_true_guard/") {
+		item.Message = "condition is proven always true"
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
+		item.Help = "Remove the guard or move the guarded code out of the branch."
+	}
+	if strings.HasPrefix(key, "lint.condition.redundant/") {
+		always := string(item.Fact.Value) == "true"
+		if always {
+			item.Message = "condition is always true here"
+			item.Help = "Remove this repeated check, or move any needed work into the branch already guarded above."
+		} else {
+			item.Message = "condition is always false here"
+			item.Help = "Remove this unreachable branch, or change the prior guard if this path should still run."
+		}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven constant under its enclosing guard"}}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
+	}
+	return item
 }
 
 func assignmentEvidenceValue(value []byte) string {
@@ -938,9 +1060,11 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 		return equation.TransactionResult{}, err
 	}
 	if available && claimProven(value, kind, targetType) {
-		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-			Key: "value/" + target + "/" + operation.Target.Name, Value: value,
-		}}}}, nil
+		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
+		if kind == "claim-kind/1" {
+			closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
+		}
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
@@ -1231,10 +1355,17 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if truth {
 		narrowing = "truthy"
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Outcomes: []equation.Fact{
+	closure := equation.OutputClosure{Outcomes: []equation.Fact{
 		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
-	}}}, nil
+	}}
+	if truth {
+		closure.Diagnostics = []equation.Fact{{Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard")}}
+	}
+	if len(operation.Guards) != 0 {
+		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
+	}
+	return equation.TransactionResult{Complete: true, Closure: closure}, nil
 }
 
 // applyKernel validates the sealed direct or method-call shape and publishes
@@ -1264,6 +1395,11 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	operands, err := callOperands(operation.Operands)
 	if err != nil {
 		return equation.TransactionResult{}, err
+	}
+	if operands.display == "string" && !operands.spread && len(operands.arguments) == 1 {
+		if argument, known := resolveKnownCurrentValue(operands.arguments[0], partition); known && strings.HasPrefix(string(argument), "scalar/string/") {
+			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven string cast")}}}}, nil
+		}
 	}
 	callee, known := resolveKnownCurrentValue(operands.callee, partition)
 	if !known {
@@ -1323,6 +1459,8 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 			} else if string(operand.Value) != "scalar/bool/false" {
 				return directCallOperands{}, fmt.Errorf("engine: malformed call argument spread")
 			}
+		case strings.HasPrefix(operand.Role, "argument-display-"):
+			continue
 		case strings.HasPrefix(operand.Role, "argument-"):
 			index, err := callArgumentIndex(operand.Role)
 			if err != nil || arguments[index] != nil {

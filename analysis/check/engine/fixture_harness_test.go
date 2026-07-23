@@ -234,7 +234,14 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
 	for _, file := range files {
 		entries = append(entries, lint.Entry{Path: file, ModulePath: strings.TrimSuffix(file, ".lua"), Source: readFixtureFile(s.Dir, file)})
 	}
-	input := lint.ProjectInput{Entries: entries, Targets: []string{strings.TrimSuffix(files[len(files)-1], ".lua")}}
+	input := lint.ProjectInput{Entries: entries, Targets: []string{strings.TrimSuffix(files[len(files)-1], ".lua")}, DiagnosticRules: make(map[diag.Code]bool)}
+	if s.Suite.Check != nil {
+		for _, rule := range s.Suite.Check.DiagnosticRules {
+			if rule.Enabled != nil && *rule.Enabled {
+				input.DiagnosticRules[diag.Code(rule.Code)] = true
+			}
+		}
+	}
 	// The legacy package list supplies host modules. The current lint adapter's
 	// conservative Any exports preserve import availability without claiming the
 	// legacy checker semantics or fabricating diagnostics.
@@ -348,10 +355,6 @@ func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic
 	if s.Suite.Check != nil && s.Suite.Check.Placement != nil {
 		v.passed = false
 		v.missing = append(v.missing, "placement expectation not evaluated: new engine publishes no placement plan")
-	}
-	if s.Suite.Check != nil && len(s.Suite.Check.DiagnosticRules) > 0 {
-		v.passed = false
-		v.missing = append(v.missing, "diagnostic_rules expectation not evaluated: new lint adapter has no rule configuration")
 	}
 	return v
 }
