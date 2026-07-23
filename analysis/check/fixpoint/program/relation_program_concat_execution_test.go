@@ -40,7 +40,7 @@ func solveCanonicalExportedFieldConcat(t *testing.T, source string) canonicalCon
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, err := runPreparedRelationProgram(check.Context, prepared, prepared.root, check, keys, []transformer.ObservationContract{SummaryProjectionObservationContract()}, nil)
+	published, err := runPreparedRelationProgram(check.Context, prepared, prepared.root, check, keys, []transformer.ObservationContract{SummaryProjectionObservationContract()}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

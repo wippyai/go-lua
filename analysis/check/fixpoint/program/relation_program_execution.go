@@ -71,6 +71,7 @@ func runPreparedRelationProgram(
 	keys programKeys,
 	contracts []transformer.ObservationContract,
 	stats *Stats,
+	observer relationPublicationObserver,
 ) (formalLexicalPublishedProgram, error) {
 	if rootStatic == nil || config.Registry == nil {
 		return formalLexicalPublishedProgram{}, fmt.Errorf("program: formal transaction has no root or registry")
@@ -104,7 +105,14 @@ func runPreparedRelationProgram(
 	if rootBody == (lexicalidentity.StableLexicalBodyID{}) {
 		return formalLexicalPublishedProgram{}, fmt.Errorf("program: formal root has no stable lexical identity")
 	}
-	view, err := program.Solve(ctx, rootBody, config.EntryState)
+	var view transformer.StabilizedRelationView
+	var retained transformer.RetainedRelationSolve
+	if observer == nil {
+		view, err = program.Solve(ctx, rootBody, config.EntryState)
+	} else {
+		retained, err = program.SolveRetained(ctx, rootBody, config.EntryState)
+		view = retained.View()
+	}
 	if err != nil {
 		return formalLexicalPublishedProgram{}, err
 	}
@@ -115,7 +123,18 @@ func runPreparedRelationProgram(
 	if err != nil {
 		return formalLexicalPublishedProgram{}, err
 	}
-	return publishFormalLexicalProgram(ctx, view.LexicalBodies(), factories, rootBody, config.EntryState, config.Initial, config, bodyKeys, prepared, keys)
+	published, err := publishFormalLexicalProgram(ctx, view.LexicalBodies(), factories, rootBody, config.EntryState, config.Initial, config, bodyKeys, prepared, keys)
+	if err != nil {
+		return formalLexicalPublishedProgram{}, err
+	}
+	if observer != nil {
+		if err := retained.Observe(func(observed *transformer.RelationProgram, execution transformer.RelationSolveExecution) error {
+			return observer(observed, execution, published)
+		}); err != nil {
+			return formalLexicalPublishedProgram{}, err
+		}
+	}
+	return published, nil
 }
 
 func relationProgramBodyKeys(prepared preparedBodies, rootStatic *body.Static, keys programKeys) (map[lexicalidentity.StableLexicalBodyID]summary.SummaryKey, error) {

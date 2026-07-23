@@ -34,7 +34,24 @@ type Config struct {
 	ObservationContracts []transformer.ObservationContract
 
 	Stats *Stats
+
+	// relationPublicationObserver is test-scoped retention for the Stage-3
+	// corpus differential. It is intentionally private so normal callers
+	// cannot turn a production check into a solve-retention API.
+	relationPublicationObserver relationPublicationObserver
 }
+
+// relationPublicationObserver runs synchronously at the sole publication
+// boundary, after Results have been materialized and before the frozen
+// relation program and its solve execution are discarded.
+//
+// It is package-private by design: only the in-package differential harness
+// may install it through Config, and production configurations leave it nil.
+type relationPublicationObserver func(
+	*transformer.RelationProgram,
+	transformer.RelationSolveExecution,
+	formalLexicalPublishedProgram,
+) error
 
 // Stats holds caller-owned observational counters for a program fixed-point
 // analysis run.
@@ -81,7 +98,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	if err := contextErr(config.Context); err != nil {
 		return Result{}, err
 	}
-	published, err := runPreparedRelationProgram(config.Context, prepared, prepared.root, config.Check, keys, config.ObservationContracts, config.Stats)
+	published, err := runPreparedRelationProgram(config.Context, prepared, prepared.root, config.Check, keys, config.ObservationContracts, config.Stats, config.relationPublicationObserver)
 	if err != nil {
 		return Result{}, err
 	}
@@ -144,7 +161,7 @@ func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config
 		return Result{}, err
 	}
 	rootPrepared := prepared.function(fn)
-	published, err := runPreparedRelationProgram(config.Context, prepared, rootPrepared, config.Check, keys, config.ObservationContracts, config.Stats)
+	published, err := runPreparedRelationProgram(config.Context, prepared, rootPrepared, config.Check, keys, config.ObservationContracts, config.Stats, config.relationPublicationObserver)
 	if err != nil {
 		return Result{}, err
 	}
