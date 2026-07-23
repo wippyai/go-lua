@@ -67,29 +67,6 @@ func pathStaticMemberMap(reg *axis.Registry) factmap.Map[pathValueFactKey, PathS
 	}
 }
 
-// pathStaticMemberDeltaMap is the canonical may map for structural param
-// additions. Unlike PathStaticMembers, it keeps branch-local writes so consumers
-// can materialize them as optional members.
-func pathStaticMemberDeltaMap(reg *axis.Registry) factmap.Map[pathValueFactKey, PathStaticMemberDeltaFact, product.Value] {
-	return factmap.Map[pathValueFactKey, PathStaticMemberDeltaFact, product.Value]{
-		Key:   func(f PathStaticMemberDeltaFact) pathValueFactKey { return pathValueFactKey(f.Path.Key()) },
-		Value: func(f PathStaticMemberDeltaFact) product.Value { return f.Value },
-		WithValue: func(f PathStaticMemberDeltaFact, v product.Value) PathStaticMemberDeltaFact {
-			f.Value = v
-			return f
-		},
-		Less: func(a, b PathStaticMemberDeltaFact) bool { return a.Path.Less(b.Path) },
-		Valid: func(f PathStaticMemberDeltaFact) bool {
-			return f.Path.IsPlaceholder() || boundaryReturnSlotPath(f.Path) || f.Path.Symbol != 0
-		},
-		CloneFact: func(f PathStaticMemberDeltaFact) PathStaticMemberDeltaFact {
-			f.Path = f.Path.Clone()
-			return f
-		},
-		Domain: product.Domain(reg),
-	}
-}
-
 func clonePathValueFacts(in []PathValueFact) []PathValueFact {
 	if len(in) == 0 {
 		return nil

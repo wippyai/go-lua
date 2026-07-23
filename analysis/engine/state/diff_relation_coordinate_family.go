@@ -756,14 +756,6 @@ func diffRelationCoordinateKeyRelOperands(key diffRelationCoordinateKey) []RelOp
 	}
 	return out
 }
-func diffRelationCoordinateKeyIncident(key diffRelationCoordinateKey, operand RelOperand) bool {
-	for _, candidate := range diffRelationCoordinateKeyRelOperands(key) {
-		if candidate == operand {
-			return true
-		}
-	}
-	return false
-}
 func diffRelationCoordinateKeyLess(a, b diffRelationCoordinateKey, keys *keyspace.KeySpace) bool {
 	if a.coA != b.coA {
 		return a.coA < b.coA
@@ -948,19 +940,6 @@ func diffRelationShapesEqual(a, b []diffRelationCoordinateKey) bool {
 		if a[i] != b[i] {
 			return false
 		}
-	}
-	return true
-}
-func diffRelationShapesSubset(a, b []diffRelationCoordinateKey, keys *keyspace.KeySpace) bool {
-	i := 0
-	for _, want := range a {
-		for i < len(b) && diffRelationCoordinateKeyLess(b[i], want, keys) {
-			i++
-		}
-		if i == len(b) || b[i] != want {
-			return false
-		}
-		i++
 	}
 	return true
 }
@@ -1192,15 +1171,4 @@ func preimageDiffRelationCoordinateKey(ctx *boundaryRebaseContext, key diffRelat
 		}
 	}
 	return newDiffRelationCoordinateSkeleton(ctx.fromKeys, false, out).shapes, true
-}
-
-func hashRelConstraint(hash uint64, constraint RelConstraint) uint64 {
-	hash = internal.MixHash(hash, uint64(constraint.CoA))
-	hash = internal.MixHash(hash, uint64(constraint.CoB))
-	hash = internal.MixHash(hash, uint64(constraint.K))
-	for _, operand := range []RelOperand{constraint.A, constraint.B, constraint.C} {
-		hash = internal.MixHash(hash, uint64(operand.Kind))
-		hash = internal.MixHash(hash, internal.FnvString(string(operand.Key)))
-	}
-	return hash
 }

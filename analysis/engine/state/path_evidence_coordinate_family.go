@@ -679,30 +679,3 @@ func applyPathEvidenceCoordinateScalar(key coordinateKeyPayload, destination, fr
 		pathEvidenceCoordinateKey(key), pathEvidenceCoordinateScalar(destination), pathEvidenceCoordinateScalar(fragment), func(keyspace.Key) bool { return affected },
 	)), true
 }
-
-func applyPathEvidenceCoordinateRoots(ctx *boundaryApplyContext, skeleton coordinateSkeletonPayload, entries []coordinateEntry, roots boundaryRootPlan) (coordinateSkeletonPayload, []coordinateEntry, bool) {
-	typedSkeleton := pathEvidenceCoordinateSkeleton(skeleton)
-	typedEntries := make([]pathevidence.CoordinateEntry, len(entries))
-	for index, entry := range entries {
-		typedEntries[index] = pathevidence.CoordinateEntry{Key: pathEvidenceCoordinateKey(entry.key), Scalar: pathEvidenceCoordinateScalar(entry.scalar)}
-	}
-	typedRoots := make([]pathevidence.CoordinateRoot, len(roots.paths))
-	for index, root := range roots.paths {
-		typedRoots[index] = pathevidence.CoordinateRoot{Path: root.Path, Value: root.Value}
-	}
-	var ok bool
-	typedSkeleton, typedEntries, ok = pathevidence.ApplyCoordinateRoots(
-		typedSkeleton, typedEntries, ctx.reg, ctx.keys, typedRoots, roots.establishesReachability,
-	)
-	if !ok {
-		return nil, nil, false
-	}
-	out := make([]coordinateEntry, len(typedEntries))
-	for index, entry := range typedEntries {
-		out[index] = coordinateEntry{
-			key:    typedCoordinateKeyPayload[pathevidence.CoordinateKey]{value: entry.Key},
-			scalar: typedCoordinateScalarPayload[pathevidence.CoordinateScalar]{value: entry.Scalar},
-		}
-	}
-	return wrapPathEvidenceCoordinateSkeleton(typedSkeleton), out, true
-}

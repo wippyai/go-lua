@@ -454,16 +454,3 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 	}
 	return s.materialize(), nil
 }
-
-func uniqueCells[Cell comparable](cells []Cell) []Cell {
-	out := make([]Cell, 0, len(cells))
-	seen := make(map[Cell]struct{}, len(cells))
-	for _, cell := range cells {
-		if _, ok := seen[cell]; ok {
-			continue
-		}
-		seen[cell] = struct{}{}
-		out = append(out, cell)
-	}
-	return out
-}

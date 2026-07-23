@@ -282,13 +282,6 @@ func withBoundaryEffectStructuralTargets(
 // authority, so collisions only share a bucket.
 func hashMix(hash, value uint64) uint64 { return (hash ^ value) * 1099511628211 }
 
-func hashString(hash uint64, value string) uint64 {
-	for index := 0; index < len(value); index++ {
-		hash = hashMix(hash, uint64(value[index]))
-	}
-	return hashMix(hash, uint64(len(value)))
-}
-
 func hashBoundaryKey(hash uint64, value keyspace.Key) uint64 {
 	hash = hashMix(hash, uint64(value.Sym))
 	hash = hashMix(hash, uint64(value.Ver))

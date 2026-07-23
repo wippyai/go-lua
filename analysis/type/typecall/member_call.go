@@ -167,10 +167,6 @@ func memberCallSeen(t typ.Type, name string, depth int, active *graph.Path) memb
 	}
 }
 
-func memberCallUnion(u *typ.Union, name string, depth int) memberCallResult {
-	return memberCallUnionSeen(u, name, depth, &graph.Path{})
-}
-
 func memberCallUnionSeen(u *typ.Union, name string, depth int, active *graph.Path) memberCallResult {
 	if u == nil || len(u.Members) == 0 {
 		return memberCallResult{status: MemberCallMissing}
@@ -178,10 +174,6 @@ func memberCallUnionSeen(u *typ.Union, name string, depth int, active *graph.Pat
 	return memberCallDistributeUnion(u.Members, depth, func(member typ.Type, depth int) memberCallResult {
 		return memberCallSeen(member, name, depth, active)
 	})
-}
-
-func memberCallIntersection(in *typ.Intersection, name string, depth int) memberCallResult {
-	return memberCallIntersectionSeen(in, name, depth, &graph.Path{})
 }
 
 func memberCallIntersectionSeen(in *typ.Intersection, name string, depth int, active *graph.Path) memberCallResult {
@@ -236,10 +228,6 @@ func indexedMemberCallSeen(t typ.Type, key typ.Type, depth int, active *graph.Pa
 	}
 }
 
-func indexedMemberCallUnion(u *typ.Union, key typ.Type, depth int) memberCallResult {
-	return indexedMemberCallUnionSeen(u, key, depth, &graph.Path{})
-}
-
 func indexedMemberCallUnionSeen(u *typ.Union, key typ.Type, depth int, active *graph.Path) memberCallResult {
 	if u == nil || len(u.Members) == 0 {
 		return memberCallResult{status: MemberCallMissing}
@@ -247,10 +235,6 @@ func indexedMemberCallUnionSeen(u *typ.Union, key typ.Type, depth int, active *g
 	return memberCallDistributeUnion(u.Members, depth, func(member typ.Type, depth int) memberCallResult {
 		return indexedMemberCallSeen(member, key, depth, active)
 	})
-}
-
-func indexedMemberCallIntersection(in *typ.Intersection, key typ.Type, depth int) memberCallResult {
-	return indexedMemberCallIntersectionSeen(in, key, depth, &graph.Path{})
 }
 
 func indexedMemberCallIntersectionSeen(in *typ.Intersection, key typ.Type, depth int, active *graph.Path) memberCallResult {

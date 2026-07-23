@@ -217,10 +217,6 @@ func (w *fingerprintWriter) uint64(label string, value uint64) {
 	_ = w.h.WriteByte(';')
 }
 
-func (w *fingerprintWriter) identity(label string, id identity.ID) {
-	w.identityTerm(label, identity.ConcreteTerm(id))
-}
-
 func (w *fingerprintWriter) identityTerm(label string, term identity.Term) {
 	w.uint64(label+":term-kind", uint64(term.Kind()))
 	if id, ok := term.Concrete(); ok {

@@ -35,11 +35,6 @@ func (o SignatureAllocationOperation) Template() signature.ReturnAllocationTempl
 func (o SignatureAllocationOperation) valid() bool {
 	return o.site.Owner != 0 && o.site.Template != "" && o.site.Ordinal != 0 && o.template.Root == o.site.Template && len(o.template.Objects) != 0
 }
-func (o SignatureAllocationOperation) clone() SignatureAllocationOperation {
-	o.template = cloneReturnAllocationTemplate(o.template)
-	return o
-}
-
 func cloneReturnAllocationTemplate(in signature.ReturnAllocationTemplate) signature.ReturnAllocationTemplate {
 	out := in
 	out.Objects = make([]signature.AllocationObjectTemplate, len(in.Objects))

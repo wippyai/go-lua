@@ -387,17 +387,6 @@ func (p coordinateBoundaryRoutePlan) applyTargetScalar(index int, destination Co
 	return CoordinateScalarFactor{slot: target.slot, payload: payload}, nil
 }
 
-func (p coordinateBoundaryRoutePlan) rootTarget(root int) (int, bool) {
-	for target := range p.targets {
-		for _, candidate := range p.targets[target].roots {
-			if candidate == root {
-				return target, true
-			}
-		}
-	}
-	return 0, false
-}
-
 // applyRootScalar wraps one already-rebased destination root as the exact
 // coordinate written after ordinary family application.
 func (p coordinateBoundaryRoutePlan) applyRootScalar(target int, value product.Value) (CoordinateScalarFactor, error) {

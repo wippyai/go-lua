@@ -608,30 +608,6 @@ func applyPathReplacementHeapLane(d ProductDomain, _ heapTableIdentityLane, curr
 	return current, changed, true
 }
 
-func applyPathReplacementSubtreeAndQuotient[T any](subtree func(T, *keyspace.KeySpace, []pathdom.PathKey, pathdom.PathKey) (T, bool, bool), quotient func(T, *axis.Registry, *keyspace.KeySpace, pathevidence.EqualityQuotient) (T, bool, bool)) func(ProductDomain, T, T, PathReplacementTransaction) (T, bool, bool) {
-	return func(d ProductDomain, _ T, current T, tx PathReplacementTransaction) (T, bool, bool) {
-		next, changed, valid := subtree(current, tx.keys, tx.subtreePrefixes, tx.keys.FormatReadOnly(tx.target))
-		if !valid {
-			return current, false, false
-		}
-		if tx.hasQuotient && quotient != nil {
-			var quotientChanged bool
-			next, quotientChanged, valid = quotient(next, d.reg, tx.keys, tx.quotient)
-			changed = changed || quotientChanged
-		}
-		return next, changed, valid
-	}
-}
-
-func applyPathReplacementQuotientOnly[T any](quotient func(T, *axis.Registry, *keyspace.KeySpace, pathevidence.EqualityQuotient) (T, bool, bool)) func(ProductDomain, T, T, PathReplacementTransaction) (T, bool, bool) {
-	return func(d ProductDomain, _ T, current T, tx PathReplacementTransaction) (T, bool, bool) {
-		if !tx.hasQuotient {
-			return current, false, true
-		}
-		return quotient(current, d.reg, tx.keys, tx.quotient)
-	}
-}
-
 func applyPathReplacementUserLane(d ProductDomain, point, current userLatticeLane, tx PathReplacementTransaction) (userLatticeLane, bool, bool) {
 	rt := userlattice.RuntimeFor(d.reg)
 	changed := false

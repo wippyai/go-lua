@@ -842,16 +842,6 @@ type blockRepairActionsSession struct {
 	once    sync.Once
 }
 
-func (s *blockRepairActionsSession) RepairActions(ctx context.Context, request service.RepairActionsRequest) (service.RepairActionsResponse, error) {
-	s.once.Do(func() { close(s.started) })
-	select {
-	case <-s.release:
-	case <-ctx.Done():
-		return service.RepairActionsResponse{}, ctx.Err()
-	}
-	return s.WorkspaceSession.RepairActions(ctx, request)
-}
-
 type blockPositionLookupSession struct {
 	service.WorkspaceSession
 	started chan struct{}

@@ -350,10 +350,6 @@ func freshPrecisionArgumentAssignable(actual typ.Type, formal typ.Type, depth in
 	return hasFreshPrecisionShapeSeen(actual, formal, depth+1, &graph.PairPath{})
 }
 
-func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
-	return hasFreshPrecisionShapeSeen(actual, formal, depth, &graph.PairPath{})
-}
-
 // hasFreshPrecisionShapeSeen is a may-contain query (invariants.md Rule 1
 // dual): it looks for at least one nested position where fresh-literal
 // precision must be preserved. A cycle repeat without having found one

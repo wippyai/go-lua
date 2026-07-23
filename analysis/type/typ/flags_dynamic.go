@@ -26,10 +26,6 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, _ int) bool {
 	return containsDynamicFlag(t, seen, containmentInstantiated)
 }
 
-func containsGenericDynamic(t Type, seen map[Type]bool, _ int) bool {
-	return containsDynamicFlag(t, seen, containmentGeneric)
-}
-
 func containsDynamicFlag(
 	t Type,
 	seen map[Type]bool,

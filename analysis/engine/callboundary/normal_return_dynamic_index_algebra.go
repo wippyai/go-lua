@@ -49,10 +49,6 @@ func cloneDynamicIndexFacts(in []DynamicIndexFact) []DynamicIndexFact {
 	return out
 }
 
-func dynamicIndexFactEqual(reg *axis.Registry, a, b DynamicIndexFact) bool {
-	return dynamicindex.Domain(reg).Equal(a.Value, b.Value)
-}
-
 func dynamicIndexKeyOf(fact DynamicIndexFact) dynamicIndexFactKey {
 	return dynamicIndexFactKey{table: fact.Table.Key(), site: fact.Site}
 }

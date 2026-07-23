@@ -69,13 +69,3 @@ func (r StructuralExpressionRegion) RHSOnTrue() bool        { return r.rhsOnTrue
 func (r StructuralExpressionRegion) OwnedRHSPoints() []cfg.Point {
 	return append([]cfg.Point(nil), r.ownedRHSPoints...)
 }
-
-func (r StructuralExpressionRegion) copy() StructuralExpressionRegion {
-	r.ownedRHSPoints = append([]cfg.Point(nil), r.ownedRHSPoints...)
-	return r
-}
-
-func (r StructuralExpressionRegion) valid() bool {
-	_, ok := NewStructuralExpressionRegion(r.branch, r.trueTarget, r.falseTarget, r.join, r.rhsOnTrue, r.ownedRHSPoints)
-	return ok
-}

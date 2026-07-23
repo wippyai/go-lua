@@ -398,17 +398,6 @@ func projectBoundaryWorld(reg *axis.Registry, keys *keyspace.KeySpace, source St
 	out.canonical = true
 	return out, nil
 }
-func boundaryClosureSubset(a, b BoundaryClosure) bool {
-	return (!a.allIdentities || b.allIdentities) && setSubset(a.slots, b.slots) && setSubset(a.paths, b.paths) && (b.allIdentities || setSubset(a.identities, b.identities)) && setSubset(a.heapSuffixes, b.heapSuffixes)
-}
-func setSubset[T comparable](a, b map[T]struct{}) bool {
-	for value := range a {
-		if _, ok := b[value]; !ok {
-			return false
-		}
-	}
-	return true
-}
 func rebaseBoundaryClosure(from, to *keyspace.KeySpace, in BoundaryClosure, roots boundaryPathMap, slots map[key.Value][]key.Value, lens *BoundaryAllocationAuthority) (BoundaryClosure, error) {
 	out := BoundaryClosure{
 		slots: make(map[key.Value]struct{}, len(in.slots)), paths: make(map[keyspace.Key]struct{}, len(in.paths)),

@@ -825,37 +825,6 @@ func (r Reader) pathHasRuntimeProof(point cfg.Point, p path.Path) bool {
 	return r.result != nil && r.result.PathHasRuntimeProof(point, p)
 }
 
-func (r Reader) untrustedRootDeclarationValue(point cfg.Point, p path.Path) (product.Value, factflow.ValueSource, bool) {
-	if r.result == nil || p.IsEmpty() || p.Symbol == 0 || len(p.Segments) != 0 {
-		return product.Value{}, factflow.ValueSource{}, false
-	}
-	declaration, ok := r.result.DominatingPathRootDeclarationSource(point, p)
-	if !ok {
-		return product.Value{}, factflow.ValueSource{}, false
-	}
-	value, ok := r.result.SourceValueAtBoundary(declaration.Point, declaration.Source)
-	if !ok || !r.ValueHasUntrustedTopOrigin(value) {
-		return product.Value{}, factflow.ValueSource{}, false
-	}
-	return value, declaration.Source, true
-}
-
-func (r Reader) untrustedDeclarationStillDescribesValue(declared, current product.Value, source factflow.ValueSource) bool {
-	declaredType, declaredOK := r.ValueTypeWithPresence(declared)
-	currentType, currentOK := r.ValueTypeWithPresence(current)
-	if !declaredOK || !currentOK {
-		return false
-	}
-	if typ.TypeEquals(declaredType, currentType) {
-		return true
-	}
-	if (typ.IsAny(declaredType) || typ.IsUnknown(declaredType)) && source.HasExpr && source.ExprRef != 0 {
-		_, operationOK := r.result.ExpressionOperationRef(source.ExprRef)
-		return operationOK
-	}
-	return false
-}
-
 func (r Reader) explicitTopDeclaredPathTypeAt(p path.Path) (typ.Type, bool) {
 	if r.result == nil {
 		return nil, false

@@ -771,10 +771,6 @@ func equalSlice[T any](a, b []T, equal func(T, T) bool) bool {
 	return true
 }
 
-func equalComparableSlice[T comparable](a, b []T) bool {
-	return equalSlice(a, b, func(x, y T) bool { return x == y })
-}
-
 func equalPlacementMaps(a, b map[identity.ID]placement.Value) bool {
 	if len(a) != len(b) {
 		return false

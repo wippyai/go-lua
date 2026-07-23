@@ -475,15 +475,6 @@ func paramExposureEqual(reg *axis.Registry, a, b CallParamExposure) bool {
 	return a.Source.Equal(b.Source) && a.Kind == b.Kind && product.Equal(reg, a.Contract, b.Contract)
 }
 
-func containsParamExposure(reg *axis.Registry, in []CallParamExposure, fact CallParamExposure) bool {
-	for _, existing := range in {
-		if paramExposureEqual(reg, existing, fact) {
-			return true
-		}
-	}
-	return false
-}
-
 func paramExposureLess(a, b CallParamExposure) bool {
 	if !a.Source.Equal(b.Source) {
 		return a.Source.Less(b.Source)

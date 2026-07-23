@@ -752,13 +752,6 @@ func joinHeapObjectSkeleton(
 	}
 }
 
-func (d ProductDomain) meetHeapObjectSkeleton(
-	keys *keyspace.KeySpace,
-	left, right heapTableIdentityObjectSkeleton,
-) heapTableIdentityObjectSkeleton {
-	return meetHeapObjectSkeleton(d.reg, keys, left, right)
-}
-
 func meetHeapObjectSkeleton(
 	reg *axis.Registry,
 	keys *keyspace.KeySpace,

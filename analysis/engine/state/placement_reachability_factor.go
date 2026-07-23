@@ -274,13 +274,3 @@ func coordinateScalarPosition(d ProductDomain, scalars []CoordinateScalarFactor,
 	}
 	return len(scalars), false, nil
 }
-
-func concreteIdentityLess(left, right identity.ID) bool {
-	if left.Kind != right.Kind {
-		return left.Kind < right.Kind
-	}
-	if left.Site != right.Site {
-		return left.Site < right.Site
-	}
-	return left.Index < right.Index
-}

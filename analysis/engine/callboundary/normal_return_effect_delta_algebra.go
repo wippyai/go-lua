@@ -40,10 +40,6 @@ func cloneEffectDeltas(in []EffectDelta) []EffectDelta {
 	return out
 }
 
-func effectDeltaEqual(reg *axis.Registry, a, b EffectDelta) bool {
-	return effectdelta.Domain(reg).Equal(a.Value, b.Value)
-}
-
 func effectDeltaKeyOf(delta EffectDelta) effectDeltaFactKey {
 	return effectDeltaFactKey{target: delta.Target.Key(), site: delta.Site, kind: delta.Kind}
 }

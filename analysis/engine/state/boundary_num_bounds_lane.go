@@ -48,11 +48,6 @@ func rebaseNumFloorsBoundary(ctx *boundaryRebaseContext, source State, out *Stat
 	setStateNumFloors(out, lane)
 	return ok
 }
-func applyNumFloorsBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	lane, ok := applyNumBoundBoundary(ctx, destination.numFloors, fragment.numFloors)
-	setStateNumFloors(out, lane)
-	return ok
-}
 func equalNumFloorsBoundary(_ *axis.Registry, a, b State) bool {
 	return numBoundLaneDomain(numbound.Lower, nil).Equal(a.numFloors, b.numFloors)
 }
@@ -62,11 +57,6 @@ func projectNumCeilsBoundary(ctx *boundaryProjectContext, source State, out *Sta
 }
 func rebaseNumCeilsBoundary(ctx *boundaryRebaseContext, source State, out *State) bool {
 	lane, ok := rebaseNumBoundBoundary(ctx, source.numCeils, numbound.Upper)
-	setStateNumCeils(out, lane)
-	return ok
-}
-func applyNumCeilsBoundary(ctx *boundaryApplyContext, destination, fragment State, out *State) bool {
-	lane, ok := applyNumBoundBoundary(ctx, destination.numCeils, fragment.numCeils)
 	setStateNumCeils(out, lane)
 	return ok
 }

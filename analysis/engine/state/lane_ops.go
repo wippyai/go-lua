@@ -518,15 +518,6 @@ func genericForBindingFixed(sourceRead, currentRead, write bool) laneSemanticLaw
 	})
 }
 
-func genericForBindingIndexed(sourceRead, currentRead, write bool) laneSemanticLaw {
-	return genericForBindingLaw(sourceRead || currentRead || write, func(request genericForBindingRequest) genericForLaneBinding {
-		if !request.indexedValue {
-			return genericForLaneBinding{}
-		}
-		return genericForLaneBinding{sourceRead: sourceRead, currentRead: currentRead, write: write}
-	})
-}
-
 func genericForBindingLaw(participates bool, resolve func(genericForBindingRequest) genericForLaneBinding) laneSemanticLaw {
 	return laneSemanticLaw{
 		id: laneSemanticGenericForBinding, participates: participates,

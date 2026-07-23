@@ -165,23 +165,6 @@ func visitPlacementLaneIdentities(_ *axis.Registry, source placementLane, visit 
 	return true
 }
 
-// collectStateIdentities folds the one mandatory catalog-owned identity policy
-// for every enabled lane. It intentionally performs no fingerprint encoding,
-// ordering, hashing, or KeySpace serialization.
-func collectStateIdentities(ctx context.Context, reg *axis.Registry, source State) (map[identity.Term]struct{}, error) {
-	out := make(map[identity.Term]struct{})
-	_, err := visitStateIdentities(ctx, reg, source, func(term identity.Term) bool {
-		if term.Valid() {
-			out[term] = struct{}{}
-		}
-		return true
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // stateContainsAllocationTemplate is the support-map-free common-path query.
 // It traverses the same mandatory policy as complete support collection and
 // stops at the first exact lexical template.
