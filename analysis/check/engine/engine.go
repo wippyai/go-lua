@@ -185,7 +185,7 @@ func Check(source string) (result Result, err error) {
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
-	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, closure.Diagnostics)
+	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, closure.Diagnostics)
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
@@ -197,8 +197,8 @@ func Check(source string) (result Result, err error) {
 	return result, nil
 }
 
-func diagnosticSpans(claimSpans, callSpans, branchSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
-	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0) || len(diagnostics) == 0 {
+func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
 	out := make(map[string]wir.Span)
@@ -238,6 +238,14 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans map[string]wir.Span, dia
 				out[item.Key] = span
 			}
 			continue
+		case strings.HasPrefix(item.Key, "effect.freeze.mutation/"):
+			parts := strings.Split(item.Key, "/")
+			if len(parts) == 3 {
+				if span, ok := effectSpans[parts[1]]; ok {
+					out[item.Key] = span
+				}
+			}
+			continue
 		default:
 			continue
 		}
@@ -270,6 +278,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
 	for _, fact := range closure.Diagnostics {
 		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: string(fact.Value)}
+		if strings.HasPrefix(fact.Key, "effect.freeze.mutation/") {
+			out = append(out, enrichFrozenMutationDiagnostic(item, artifact, callSpans))
+			continue
+		}
 		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.argument_type/") {
 			out = append(out, enrichCallArgumentDiagnostic(item, operation))
 			continue
@@ -368,6 +380,66 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	return out
 }
 
+func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.Artifact, callSpans map[string]wir.Span) PublishedDiagnostic {
+	parts := strings.Split(item.Fact.Key, "/")
+	if len(parts) != 3 {
+		return item
+	}
+	action, proof := parts[1], parts[2]
+	var operation equation.Equation
+	found := false
+	for _, candidate := range artifact.Equations {
+		if candidate.Target.Name == action {
+			operation, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return item
+	}
+	display, callMutation := "", operation.Occurrence.Kind == "apply"
+	for _, operand := range operation.Operands {
+		if operand.Role == "freeze-display" || (callMutation && operand.Role == "argument-display-00000000") {
+			display = string(operand.Term.Encoding)
+		}
+	}
+	if display == "" {
+		return item
+	}
+	mutation := "this assignment mutates table " + strconv.Quote(display)
+	label := "mutation of frozen table"
+	if callMutation {
+		mutation = "this call mutates table " + strconv.Quote(display)
+		label = "mutating call on frozen table"
+	}
+	proofMessage := "table " + strconv.Quote(display) + " is already frozen here"
+	if proof != "guard" {
+		suffix := "assignment"
+		if callMutation {
+			suffix = "mutating call"
+		}
+		proofMessage = "table " + strconv.Quote(display) + " was frozen by this call before the " + suffix
+	}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: mutation}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: label}}
+	if proof != "guard" {
+		if span, ok := callSpans[proof+"/call"]; ok {
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: span, Kind: "abstract fact", Trust: "proven", Message: proofMessage})
+			item.Labels = append(item.Labels, DiagnosticLabel{Span: span, Message: "freeze proof"})
+		} else {
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: "abstract fact", Trust: "proven", Message: proofMessage})
+		}
+	} else {
+		item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: "abstract fact", Trust: "proven", Message: proofMessage})
+	}
+	if callMutation {
+		item.Help = "Create a mutable copy before calling the mutator, or call it before the table is frozen."
+	} else {
+		item.Help = "Create a mutable copy before writing, or move this assignment before the table is frozen."
+	}
+	return item
+}
+
 func claimDiagnosticValue(term []byte, operation equation.Equation, closure equation.OutputClosure) ([]byte, bool) {
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), true
@@ -390,7 +462,7 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
 			return name
 		}
@@ -460,6 +532,8 @@ func diagnosticCode(key string) string {
 		return "type.assignment"
 	case strings.HasPrefix(key, "send.isolation/"):
 		return "send.isolation"
+	case strings.HasPrefix(key, "effect.freeze.mutation/"):
+		return "effect.freeze.mutation"
 	case strings.HasPrefix(key, "claim/unproven/"):
 		return "lint.claim.unproven"
 	case strings.HasPrefix(key, "type.call.direct."):
@@ -1069,9 +1143,14 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	if err != nil {
 		value = []byte("scalar/top")
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+	result, err := frozenMutationDiagnostic(operation, partition, "assignment")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
-	}}}}, nil
+	})
+	return result, nil
 }
 
 // dynamicIndexReadKernel has no closed heap fact to project at this stage.
@@ -1350,7 +1429,7 @@ func assignmentMismatchProven(value []byte, targetType string) bool {
 	case "nil":
 		return string(value) != "scalar/nil"
 	case "boolean":
-		return !strings.HasPrefix(string(value), "scalar/bool/")
+		return !strings.HasPrefix(string(value), "scalar/bool/") && string(value) != "scalar/boolean"
 	case "string":
 		return !strings.HasPrefix(string(value), "scalar/string/")
 	case "number":
@@ -1489,7 +1568,7 @@ func claimProven(value []byte, kind, targetType string) bool {
 	case "nil":
 		return string(value) == "scalar/nil"
 	case "boolean":
-		return strings.HasPrefix(string(value), "scalar/bool/")
+		return strings.HasPrefix(string(value), "scalar/bool/") || string(value) == "scalar/boolean"
 	case "string":
 		return strings.HasPrefix(string(value), "scalar/string/")
 	case "number":
@@ -1515,6 +1594,81 @@ func pathInvalidationKernel(operation equation.BoundEquation, partition equation
 	return equation.TransactionResult{Complete: true}, nil
 }
 
+// frozenMutationDiagnostic is deliberately fact-only: a prior freeze epoch,
+// or the true edge of table.isfrozen, is the complete proof. It never turns an
+// unknown heap value or a merely reachable freeze into a violation.
+func frozenMutationDiagnostic(operation equation.BoundEquation, partition equation.Partition, action string) (equation.TransactionResult, error) {
+	var subject, display []byte
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "freeze-subject":
+			subject = operand.Value
+		case "freeze-display":
+			display = operand.Value
+		}
+	}
+	if !strings.HasPrefix(string(subject), "path/") || len(display) == 0 {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	freeze, guarded := frozenProof(operation, subject, partition)
+	if freeze == "" && !guarded {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	proof := freeze
+	if guarded {
+		proof = "guard"
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+		Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
+		Value: []byte(fmt.Sprintf("cannot mutate frozen table %q", display)),
+	}}}}, nil
+}
+
+// frozenProof observes only facts already published into the partition. A
+// guarded epoch is usable on its true edge; complementary guarded epochs prove
+// a post-join freeze without treating either arm as globally executed.
+func frozenProof(operation equation.BoundEquation, subject []byte, partition equation.Partition) (string, bool) {
+	prefix := "effect.freeze/" + strings.TrimPrefix(string(subject), "path/") + "/"
+	seen := make(map[string]map[string]string)
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		op := strings.TrimPrefix(fact.Key, prefix)
+		if string(fact.Value) == "unconditional" {
+			return op, false
+		}
+		parts := strings.Split(string(fact.Value), "/")
+		if len(parts) == 3 && parts[0] == "guard" && (parts[2] == "true" || parts[2] == "false") {
+			if seen[parts[1]] == nil {
+				seen[parts[1]] = make(map[string]string)
+			}
+			seen[parts[1]][parts[2]] = op
+		}
+	}
+	for _, guard := range operation.Guards {
+		parts := strings.Split(string(guard.Encoding), "/")
+		if len(parts) == 4 && parts[0] == "front" && parts[1] == "branch" && parts[3] == "true" && hasOutcome(partition, "frozen-branch/"+parts[2]) {
+			return "", true
+		}
+	}
+	for _, arms := range seen {
+		if arms["true"] != "" && arms["false"] != "" {
+			return arms["false"], false
+		}
+	}
+	return "", false
+}
+
+func hasOutcome(partition equation.Partition, key string) bool {
+	for _, item := range partition.Outcomes() {
+		if item.Key == key && string(item.Value) == "proven" {
+			return true
+		}
+	}
+	return false
+}
+
 func indexMutationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
@@ -1522,7 +1676,7 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	if _, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix", "value"); err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	return frozenMutationDiagnostic(operation, partition, "assignment")
 }
 
 func genericForKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -1565,6 +1719,13 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	frozenCondition := false
+	for _, operand := range operation.Operands {
+		if operand.Role == "predicate" && frozenPredicate(operand.Value) {
+			frozenCondition = true
+			break
+		}
+	}
 	for _, operand := range operation.Operands {
 		if operand.Role != "condition" {
 			continue
@@ -1573,11 +1734,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		if err != nil {
 			return equation.TransactionResult{}, err
 		}
-		if isUnknownScalar(value) {
+		if isUnknownScalar(value) && !frozenCondition {
 			return equation.TransactionResult{Complete: true}, nil
 		}
 	}
-	truth, err := branchTruth(operation.Operands, partition)
+	truth, frozenGuard, err := branchTruth(operation.Operands, partition)
 	if errors.Is(err, errUnknownScalar) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -1593,6 +1754,9 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
 	}}
+	if frozenGuard && truth {
+		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
+	}
 	if truth {
 		closure.Diagnostics = []equation.Fact{{Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard")}}
 	}
@@ -1606,6 +1770,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 // proven call-contract failures at this equation point. Unknown values are not
 // violations: diagnostics are proof outputs, never speculative findings.
 func applyKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if closure, recognized, err := freezeCallEpoch(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -1629,6 +1798,27 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	}
 	if state, handled := sendIsolationState(operation, operands, partition); handled {
 		return state, nil
+	}
+	if operands.display == "table.isfrozen" {
+		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+			Key: "effect.call-bool/" + operation.Target.Name, Value: []byte("scalar/boolean"),
+		}}}}, nil
+	}
+	if operands.display == "table.insert" && len(operands.arguments) != 0 && strings.HasPrefix(string(operands.arguments[0]), "path/") {
+		display := callArgumentDisplay(operation.Operands, 0)
+		if display != "" {
+			freeze, guarded := frozenProof(operation, operands.arguments[0], partition)
+			if freeze != "" || guarded {
+				proof := freeze
+				if guarded {
+					proof = "guard"
+				}
+				return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+					Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
+					Value: []byte(fmt.Sprintf("cannot call mutator on frozen table %q", display)),
+				}}}}, nil
+			}
+		}
 	}
 	if operands.display == "string" && !operands.spread && len(operands.arguments) == 1 {
 		if argument, known := resolveKnownCurrentValue(operands.arguments[0], partition); known && strings.HasPrefix(string(argument), "scalar/string/") {
@@ -1693,6 +1883,58 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), signature.Params[index])), nil
 	}
 	return equation.TransactionResult{Complete: true}, nil
+}
+
+// freezeCallEpoch captures only closed root-table identities. It publishes the
+// existing send-isolation state only on the same selected path as the prior
+// send-isolation implementation, so a guarded epoch cannot become an
+// unconditional send proof.
+func freezeCallEpoch(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	callee, subject := "", []byte(nil)
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "callee-display":
+			callee = string(operand.Value)
+		case "argument-00000000":
+			subject = operand.Value
+		}
+	}
+	if callee != "table.freeze" {
+		return equation.OutputClosure{}, false, nil
+	}
+	closure := equation.OutputClosure{}
+	if guardsHold(operation.Guards, partition) && len(subject) != 0 {
+		closure = isolationStateFact(isolationFrozenPrefix, subject).Closure
+	}
+	if !strings.HasPrefix(string(subject), "path/") {
+		return closure, true, nil
+	}
+	value := "unconditional"
+	if len(operation.Guards) == 1 {
+		parts := strings.Split(string(operation.Guards[0].Encoding), "/")
+		if len(parts) == 4 && parts[0] == "front" && parts[1] == "branch" && (parts[3] == "true" || parts[3] == "false") {
+			value = "guard/" + parts[2] + "/" + parts[3]
+		} else {
+			return closure, true, nil
+		}
+	} else if len(operation.Guards) != 0 {
+		return closure, true, nil
+	}
+	closure.Values = append(closure.Values, equation.Fact{
+		Key:   "effect.freeze/" + strings.TrimPrefix(string(subject), "path/") + "/" + operation.Target.Name,
+		Value: []byte(value),
+	})
+	return closure, true, nil
+}
+
+func callArgumentDisplay(operands []equation.BoundOperand, index int) string {
+	want := fmt.Sprintf("argument-display-%08d", index)
+	for _, operand := range operands {
+		if operand.Role == want {
+			return string(operand.Value)
+		}
+	}
+	return ""
 }
 
 const sendIsolationHelp = "No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
@@ -2107,6 +2349,7 @@ func callResultsKernel(operation equation.BoundEquation, partition equation.Part
 	resultTerms := map[string][]byte{}
 	targetTerms := map[string][]byte{}
 	hasApplication := false
+	var application []byte
 	for _, operand := range operation.Operands {
 		switch {
 		case operand.Role == "application":
@@ -2114,6 +2357,7 @@ func callResultsKernel(operation equation.BoundEquation, partition equation.Part
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result application")
 			}
 			hasApplication = true
+			application = operand.Value
 		case strings.HasPrefix(operand.Role, "result-"):
 			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
 		case strings.HasPrefix(operand.Role, "target-"):
@@ -2130,9 +2374,22 @@ func callResultsKernel(operation equation.BoundEquation, partition equation.Part
 		if len(result) == 0 || !strings.HasPrefix(string(result), "temp/") || (len(targetTerms) != 0 && len(targetTerms[key]) == 0) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
-		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: []byte("scalar/top")})
+		value := []byte("scalar/top")
+		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
+			value = []byte("scalar/boolean")
+		}
+		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value})
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+func hasValue(partition equation.Partition, key string) bool {
+	for _, item := range partition.Values() {
+		if item.Key == key && string(item.Value) == "scalar/boolean" {
+			return true
+		}
+	}
+	return false
 }
 
 // publicationKernel resolves every selected return slot before publishing any
@@ -2183,39 +2440,54 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 // branchTruth evaluates exactly one selector.  An unavailable selector is an
 // error, not a false edge: absence, bottom, and a complete falsy value stay
 // distinct throughout a branch transaction.
-func branchTruth(operands []equation.BoundOperand, partition equation.Partition) (bool, error) {
+func branchTruth(operands []equation.BoundOperand, partition equation.Partition) (bool, bool, error) {
 	var condition, predicate []byte
 	for _, operand := range operands {
 		switch operand.Role {
 		case "condition":
 			if condition != nil {
-				return false, fmt.Errorf("engine: duplicate branch condition")
+				return false, false, fmt.Errorf("engine: duplicate branch condition")
 			}
 			condition = operand.Value
 		case "predicate":
 			if predicate != nil {
-				return false, fmt.Errorf("engine: duplicate branch predicate")
+				return false, false, fmt.Errorf("engine: duplicate branch predicate")
 			}
 			predicate = operand.Value
 		default:
 			// Evidence, arm boundaries, and difference constraints are closed
 			// branch metadata. They are intentionally not alternate selectors.
 			if !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
-				return false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
+				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}
+	}
+	if frozenPredicate(predicate) {
+		// The true edge of table.isfrozen is a direct runtime witness. This does
+		// not assert global truth; it records proof for equations guarded by it.
+		return true, true, nil
 	}
 	if condition != nil {
 		value, err := resolveCurrentValue(condition, partition)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
-		return luaTruthy(value)
+		truth, err := luaTruthy(value)
+		return truth, false, err
 	}
 	if predicate == nil {
-		return false, fmt.Errorf("engine: branch has no selector")
+		return false, false, fmt.Errorf("engine: branch has no selector")
 	}
-	return evaluateBranchPredicate(predicate, partition)
+	truth, err := evaluateBranchPredicate(predicate, partition)
+	return truth, false, err
+}
+
+func frozenPredicate(encoded []byte) bool {
+	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
+		return false
+	}
+	var predicate branchPredicateWire
+	return json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) == nil && predicate.Kind == "frozen-table"
 }
 
 func evaluateBranchPredicate(encoded []byte, partition equation.Partition) (bool, error) {
@@ -2583,6 +2855,8 @@ func luaTruthy(value []byte) (bool, error) {
 		return true, nil
 	}
 	switch string(value) {
+	case "scalar/boolean":
+		return false, errUnknownScalar
 	case "scalar/nil", "scalar/bool/false":
 		return false, nil
 	case "scalar/bool/true":

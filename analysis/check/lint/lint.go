@@ -386,6 +386,9 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	if code == "lint.condition.redundant" || code == "advice.always_true_guard" || code == "advice.redundant_claim" || code == "send.isolation" {
 		result.Severity = diagnostic.SeverityHint
 	}
+	if code == "effect.freeze.mutation" {
+		result.Severity = diagnostic.SeverityWarning
+	}
 	return result
 }
 

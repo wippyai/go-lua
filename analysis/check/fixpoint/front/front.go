@@ -70,6 +70,7 @@ type Compilation struct {
 	ClaimTargetSpans map[string]wir.Span
 	CallSpans        map[string]wir.Span
 	BranchSpans      map[string]wir.Span
+	EffectSpans      map[string]wir.Span
 }
 
 // Compile parses and lowers one complete body, retaining cyclic control-flow
@@ -99,7 +100,7 @@ func Compile(source string) (Compilation, error) {
 		return Compilation{}, err
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
-	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans, ClaimTargetSpans: claimTargetSpans, CallSpans: callSpans(body, artifact), BranchSpans: branchSpans(body, artifact)}
+	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans, ClaimTargetSpans: claimTargetSpans, CallSpans: callSpans(body, artifact), BranchSpans: branchSpans(body, artifact), EffectSpans: effectSpans(body, artifact)}
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -139,6 +140,7 @@ func compileNestedBodies(parent *wir.Body) ([]Compilation, error) {
 			ClaimTargetSpans: claimTargetSpans,
 			CallSpans:        callSpans(proto.Body, artifact),
 			BranchSpans:      branchSpans(proto.Body, artifact),
+			EffectSpans:      effectSpans(proto.Body, artifact),
 		}
 		if graphHasCycle(proto.Graph) {
 			cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
@@ -154,6 +156,61 @@ func compileNestedBodies(parent *wir.Body) ([]Compilation, error) {
 		children = append(children, child)
 	}
 	return children, nil
+}
+
+// effectSpans retains WIR's operation anchors for facts owned by a mutation
+// or call effect. It is source metadata only; the effect facts themselves stay
+// entirely in the equation closure.
+func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	static, dynamic, calls := make([]wir.Instruction, 0), make([]wir.Instruction, 0), make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		switch instruction.Op {
+		case wir.OpStaticMemberWrite:
+			static = append(static, instruction)
+		case wir.OpDynamicIndexWrite:
+			dynamic = append(dynamic, instruction)
+		case wir.OpCall:
+			calls = append(calls, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(static)+len(dynamic)+len(calls))
+	staticIndex, dynamicIndex, callIndex := 0, 0, 0
+	for _, operation := range artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "path-replacement":
+			if staticIndex < len(static) && static[staticIndex].TargetSpan.Valid() {
+				out[operation.Target.Name] = static[staticIndex].TargetSpan
+			}
+			staticIndex++
+		case "index-mutation":
+			if dynamicIndex < len(dynamic) {
+				span := dynamic[dynamicIndex].ContainerSpan
+				if !span.Valid() {
+					span = dynamic[dynamicIndex].TargetSpan
+				}
+				if span.Valid() {
+					out[operation.Target.Name] = span
+				}
+			}
+			dynamicIndex++
+		case "apply":
+			if callIndex < len(calls) {
+				span := calls[callIndex].CallSpan
+				if !span.Valid() {
+					span = calls[callIndex].CalleeSpan
+				}
+				if span.Valid() {
+					out[operation.Target.Name] = span
+				}
+			}
+			callIndex++
+		}
+	}
+	return out
 }
 
 // callSpans binds source call anchors to their apply operations.  The apply
@@ -465,6 +522,12 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 					{Role: "suffix", Term: suffixTerm(body, instruction.DynamicSuffix)},
 					{Role: "value", Term: value},
 				}
+				if subject, display, ok := frozenTableSubject(body, instruction.Dst, true); ok {
+					draft.Operands = append(draft.Operands,
+						equation.Operand{Role: "freeze-subject", Term: subject},
+						equation.Operand{Role: "freeze-display", Term: equation.ClosedTerm([]byte(display))},
+					)
+				}
 			}
 		case instruction.Op == wir.OpEntry:
 			draft.Occurrence = occurrence("entry")
@@ -520,6 +583,14 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				{Role: "target", Term: target},
 				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
 				{Role: "value", Term: value},
+			}
+			// table.freeze is deliberately shallow. A direct member write can
+			// mutate the frozen table itself; deeper writes affect a child table.
+			if subject, rootDisplay, ok := frozenTableSubject(body, instruction.Dst, false); ok {
+				draft.Operands = append(draft.Operands,
+					equation.Operand{Role: "freeze-subject", Term: subject},
+					equation.Operand{Role: "freeze-display", Term: equation.ClosedTerm([]byte(rootDisplay))},
+				)
 			}
 		case instruction.Op == wir.OpDynamicIndexRead:
 			target, err := scalarTerm(body, instruction.Dst)
@@ -1084,6 +1155,27 @@ func memberPathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string,
 		return equation.Term{}, "", fmt.Errorf("static member target has no member path")
 	}
 	return term, display, nil
+}
+
+// frozenTableSubject returns the root table identity carried by a mutation.
+// Static member writes are shallow: only root.field mutates root itself. A
+// dynamic index always mutates its container, even when the suffix is unknown.
+func frozenTableSubject(body *wir.Body, operand wir.Operand, dynamic bool) (equation.Term, string, bool) {
+	if body == nil || operand.Kind != wir.OperandPath {
+		return equation.Term{}, "", false
+	}
+	target := body.Path(wir.PathRef(operand.Ref))
+	if target.IsEmpty() || target.Key() == "" || target.String() == "" {
+		return equation.Term{}, "", false
+	}
+	if !dynamic && len(target.Segments) != 1 {
+		return equation.Term{}, "", false
+	}
+	root := target.RootOnly()
+	if root.IsEmpty() || root.Key() == "" || root.String() == "" {
+		return equation.Term{}, "", false
+	}
+	return equation.ClosedTerm([]byte("path/" + root.Key())), root.String(), true
 }
 
 // pathStoreTerm preserves every operand shape this family can consume.  In

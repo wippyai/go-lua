@@ -55,6 +55,42 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 }
 
+func TestCheckPublishesFrozenTableMutation(t *testing.T) {
+	result, err := engine.Check(`
+local root = { value = 1 }
+table.freeze(root)
+root.value = 2
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "effect.freeze.mutation/") && strings.Contains(string(item.Value), `cannot mutate frozen table "root"`) {
+			return
+		}
+	}
+	t.Fatalf("frozen table mutation was not proven: %#v", result.Diagnostics)
+}
+
+func TestCheckPublishesFrozenGuardedIndexMutation(t *testing.T) {
+	result, err := engine.Check(`
+local dyn = { x = 1 }
+local key = "x"
+if table.isfrozen(dyn) then
+    dyn[key] = 1
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "effect.freeze.mutation/") && strings.Contains(string(item.Value), `cannot mutate frozen table "dyn"`) {
+			return
+		}
+	}
+	t.Fatalf("guarded frozen index mutation was not proven: diagnostics=%#v outcomes=%#v artifact=%#v", result.Diagnostics, result.Outcomes, result.Artifact.Equations)
+}
+
 func TestCheckPublishesSendIsolationJudgmentsFromClosedCallFacts(t *testing.T) {
 	result, err := engine.Check(`
 local pid = "worker"
