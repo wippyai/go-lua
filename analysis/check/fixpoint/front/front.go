@@ -1880,23 +1880,62 @@ func functionValue(t typ.Type) string {
 	if !ok || fn == nil {
 		return "scalar/function"
 	}
-	type signature struct {
-		Params   []string `json:"params"`
-		Required int      `json:"required"`
-		Variadic bool     `json:"variadic"`
+	type typeParam struct {
+		Name       string `json:"name"`
+		Constraint string `json:"constraint,omitempty"`
 	}
-	wire := signature{Params: make([]string, len(fn.Params)), Variadic: fn.Variadic != nil}
+	type signature struct {
+		Params     []string    `json:"params"`
+		Returns    []string    `json:"returns"`
+		TypeParams []typeParam `json:"type_params"`
+		Required   int         `json:"required"`
+		Variadic   bool        `json:"variadic"`
+	}
+	wire := signature{
+		Params:   make([]string, len(fn.Params)),
+		Returns:  make([]string, len(fn.Returns)),
+		Variadic: fn.Variadic != nil,
+	}
+	for _, param := range fn.TypeParams {
+		if param == nil || param.Name == "" {
+			return "scalar/function"
+		}
+		item := typeParam{Name: param.Name}
+		if param.Constraint != nil {
+			item.Constraint = param.Constraint.String()
+		}
+		wire.TypeParams = append(wire.TypeParams, item)
+	}
 	for index, param := range fn.Params {
 		if param.Type == nil {
 			return "scalar/function"
 		}
 		wire.Params[index] = param.Type.String()
+		if bound, ok := unwrap.Annotations(param.Type).(*typ.TypeParam); ok && bound.Name != "" {
+			found := false
+			for _, existing := range wire.TypeParams {
+				found = found || existing.Name == bound.Name
+			}
+			if !found {
+				item := typeParam{Name: bound.Name}
+				if bound.Constraint != nil {
+					item.Constraint = bound.Constraint.String()
+				}
+				wire.TypeParams = append(wire.TypeParams, item)
+			}
+		}
 		// Lua's annotated optional parameter surface (T?) is callable with an
 		// omitted trailing argument even when the parser has no default-value
 		// marker on the parameter slot.
 		if !param.Optional && !strings.HasSuffix(wire.Params[index], "?") {
 			wire.Required++
 		}
+	}
+	for index, result := range fn.Returns {
+		if result == nil {
+			return "scalar/function"
+		}
+		wire.Returns[index] = result.String()
 	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {

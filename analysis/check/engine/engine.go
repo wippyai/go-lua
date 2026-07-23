@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -2278,7 +2279,12 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	if target == nil || isUnknownScalar(value) {
 		return shapeUnknown
 	}
-	target = unwrap.Alias(target)
+	// Structural claims compare the fully instantiated alias target. A named
+	// alias can hide another generic instantiation (DoubleBox<T> = Box<Box<T>>),
+	// so stopping after Alias would discard the only concrete record shape that
+	// can prove the claim. Expand first, then retain the existing alias policy;
+	// malformed or recursive forms still fall through to unknown.
+	target = unwrap.Alias(subst.ExpandInstantiated(target))
 	if target == nil {
 		return shapeUnknown
 	}
@@ -2919,12 +2925,6 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
 	}
 	signature, known := callableSignature(callee)
-	if known && localCallable && genericCallableSignature(signature) {
-		// Generic instantiation and constraint checking remain owned by the
-		// established call path. A body-local tuple cannot certify a particular
-		// instantiation before that boundary has supplied its substitution.
-		localCallable = false
-	}
 	if !known || operands.spread {
 		if string(callee) == "scalar/function" {
 			// An unshaped callable includes generic and otherwise uninstantiated
@@ -2968,6 +2968,16 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), signature.Params[index])), nil
 	}
+	if genericCallableSignature(signature) {
+		var instantiated bool
+		signature, instantiated = instantiateCallableSignature(signature, operands.arguments, partition)
+		if !instantiated {
+			// The existing contract checks above remain authoritative. Once they
+			// have accepted the call, a missing concrete substitution still cannot
+			// admit a local result projection.
+			return equation.TransactionResult{Complete: true}, nil
+		}
+	}
 	if outcome, projected, err := applyLocal(); err != nil {
 		return equation.TransactionResult{}, err
 	} else if projected {
@@ -2987,7 +2997,11 @@ func genericCallableSignature(signature callableShape) bool {
 
 func genericConstraintRefuted(value []byte, parameter string) bool {
 	parts := strings.SplitN(parameter, ":", 2)
-	if len(parts) != 2 || len(parts[0]) != 1 || parts[0][0] < 'A' || parts[0][0] > 'Z' || isUnknownScalar(value) {
+	name := ""
+	if len(parts) == 2 {
+		name = strings.TrimSpace(parts[0])
+	}
+	if len(parts) != 2 || len(name) != 1 || name[0] < 'A' || name[0] > 'Z' || isUnknownScalar(value) {
 		return false
 	}
 	constraint := strings.TrimSpace(parts[1])
@@ -3494,9 +3508,16 @@ func indexedCallSubject(prefix string, index int) string {
 }
 
 type callableShape struct {
-	Params   []string `json:"params"`
-	Required int      `json:"required"`
-	Variadic bool     `json:"variadic"`
+	Params     []string            `json:"params"`
+	Returns    []string            `json:"returns"`
+	TypeParams []callableTypeParam `json:"type_params"`
+	Required   int                 `json:"required"`
+	Variadic   bool                `json:"variadic"`
+}
+
+type callableTypeParam struct {
+	Name       string `json:"name"`
+	Constraint string `json:"constraint,omitempty"`
 }
 
 func isCallableValue(value []byte) bool {
@@ -3521,7 +3542,108 @@ func callableSignature(value []byte) (callableShape, bool) {
 			return callableShape{}, false
 		}
 	}
+	seen := make(map[string]bool, len(signature.TypeParams))
+	for _, parameter := range signature.TypeParams {
+		if parameter.Name == "" || seen[parameter.Name] {
+			return callableShape{}, false
+		}
+		seen[parameter.Name] = true
+	}
+	for _, result := range signature.Returns {
+		if result == "" {
+			return callableShape{}, false
+		}
+	}
 	return signature, true
+}
+
+// instantiateCallableSignature applies only substitutions proven from the
+// concrete call operands. It is intentionally summary-local: child execution
+// remains the sole producer of result values, and an incomplete substitution
+// leaves the existing result projection fail-closed.
+func instantiateCallableSignature(signature callableShape, arguments [][]byte, partition equation.Partition) (callableShape, bool) {
+	if !genericCallableSignature(signature) {
+		return signature, true
+	}
+	bindings := make(map[string]string, len(signature.TypeParams))
+	for index, parameter := range signature.Params {
+		name, generic := callableTypeParameterName(parameter, signature.TypeParams)
+		if !generic || index >= len(arguments) {
+			continue
+		}
+		value, known := resolveKnownCurrentValue(arguments[index], partition)
+		if !known || isUnknownScalar(value) {
+			return callableShape{}, false
+		}
+		argumentType, ok := callableArgumentType(value)
+		if !ok {
+			return callableShape{}, false
+		}
+		if prior, exists := bindings[name]; exists && prior != argumentType {
+			return callableShape{}, false
+		}
+		bindings[name] = argumentType
+	}
+	for _, parameter := range signature.TypeParams {
+		if _, bound := bindings[parameter.Name]; !bound {
+			return callableShape{}, false
+		}
+	}
+	signature.Params = substituteCallableTypes(signature.Params, bindings)
+	signature.Returns = substituteCallableTypes(signature.Returns, bindings)
+	signature.TypeParams = nil
+	return signature, true
+}
+
+func callableTypeParameterName(parameter string, parameters []callableTypeParam) (string, bool) {
+	name := strings.TrimSpace(strings.SplitN(parameter, ":", 2)[0])
+	for _, candidate := range parameters {
+		if name == candidate.Name {
+			return name, true
+		}
+	}
+	// Older front artifacts did not carry an explicit binder list. Their
+	// parameter spelling remains authoritative for the one-letter generic
+	// surface, so keep those summaries compatible while new artifacts carry
+	// TypeParams explicitly.
+	if len(parameters) == 0 && len(name) == 1 && name[0] >= 'A' && name[0] <= 'Z' {
+		return name, true
+	}
+	return "", false
+}
+
+func callableArgumentType(value []byte) (string, bool) {
+	switch {
+	case strings.HasPrefix(string(value), "scalar/number/"):
+		return "number", true
+	case strings.HasPrefix(string(value), "scalar/string/"):
+		return "string", true
+	case strings.HasPrefix(string(value), "scalar/bool/"):
+		return "boolean", true
+	case string(value) == "scalar/nil":
+		return "nil", true
+	case shapefact.IsTable(value):
+		return "table", true
+	default:
+		return "", false
+	}
+}
+
+func substituteCallableTypes(types []string, bindings map[string]string) []string {
+	if len(types) == 0 || len(bindings) == 0 {
+		return types
+	}
+	out := make([]string, len(types))
+	for index, value := range types {
+		out[index] = value
+		for parameter, replacement := range bindings {
+			if value == parameter {
+				out[index] = replacement
+				break
+			}
+		}
+	}
+	return out
 }
 
 func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte, bool) {
