@@ -55,13 +55,16 @@ func TestNewOracleCorpus(t *testing.T) {
 		case panicked != nil:
 			failures = append(failures, corpusFailure{file: filepath.ToSlash(rel), class: "panic/" + fmt.Sprintf("%T", panicked)})
 		case err != nil:
-			failures = append(failures, corpusFailure{file: filepath.ToSlash(rel), class: corpusErrorClass(err)})
+			failures = append(failures, corpusFailure{file: filepath.ToSlash(rel), class: corpusErrorClass(err), err: err})
 		}
 	}
 
 	sort.Slice(failures, func(i, j int) bool { return failures[i].file < failures[j].file })
 	for _, failure := range failures {
 		t.Logf("NEW_ORACLE failure %s -> %s", failure.file, failure.class)
+		if os.Getenv("NEW_ORACLE_FULL") == "1" && failure.err != nil {
+			t.Logf("NEW_ORACLE detail %s -> %s", failure.file, failure.err)
+		}
 	}
 	p50, p95, max := corpusPercentiles(timings)
 	t.Logf("NEW_ORACLE total=%d completed=%d named_failures=%d", len(files), completed, len(failures))
@@ -71,6 +74,7 @@ func TestNewOracleCorpus(t *testing.T) {
 type corpusFailure struct {
 	file  string
 	class string
+	err   error
 }
 
 type corpusCheckResult struct {

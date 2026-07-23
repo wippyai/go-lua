@@ -68,7 +68,14 @@ func checkProduction(source string) (Results, error) {
 	}
 	diagnostics := make([]DiagnosticCandidate, 0, len(result.Diagnostics))
 	for _, fact := range result.Diagnostics {
-		diagnostics = append(diagnostics, DiagnosticCandidate{Code: fact.Key, Detail: string(fact.Value)})
+		code := fact.Key
+		// The equation closure gives each claim diagnostic an operation-scoped
+		// identity so multiple unproven claims can coexist. The corpus observes
+		// the language-level diagnostic family, not that internal identity.
+		if strings.HasPrefix(code, "claim/unproven/") {
+			code = "claim/unproven"
+		}
+		diagnostics = append(diagnostics, DiagnosticCandidate{Code: code, Detail: string(fact.Value)})
 	}
 	return Results{Published: canonicalPublished(published), Diagnostics: canonicalDiagnostics(diagnostics)}, nil
 }

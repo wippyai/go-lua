@@ -262,6 +262,55 @@ local greeting = "hello"
 			Expect: Expectation{Published: []PublishedOutcome{value("greeting", `"hello"`)}},
 		},
 		{
+			Name: "assignment/unmaterialized-member-read-is-unknown",
+			Source: `
+local record = provider()
+local name = record.name
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("name", "unknown"), value("record", "unknown")}},
+		},
+		{
+			Name: "assignment/unmaterialized-member-read-through-alias-is-unknown",
+			Source: `
+local record = provider()
+local alias = record
+local name = alias.name
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("alias", "unknown"), value("name", "unknown"), value("record", "unknown")}},
+		},
+		{
+			Name: "assignment/unmaterialized-nested-member-read-is-unknown",
+			Source: `
+local record = provider()
+local name = record.profile.name
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("name", "unknown"), value("record", "unknown")}},
+		},
+		{
+			Name: "expression/unmaterialized-member-arithmetic-is-unknown",
+			Source: `
+local record = provider()
+local count = record.count + 1
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("count", "unknown"), value("record", "unknown")}},
+		},
+		{
+			Name: "expression/unmaterialized-member-concat-is-unknown",
+			Source: `
+local record = provider()
+local label = record.label .. "!"
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("label", "unknown"), value("record", "unknown")}},
+		},
+		{
+			Name: "outcome/unmaterialized-member-return-is-unknown",
+			Source: `
+local record = provider()
+return record.enabled
+`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "unknown"), value("record", "unknown")}},
+		},
+		{
 			Name:   "expression/arithmetic-precedence-publishes-number",
 			Source: `local result = 1 + 2 * 3`,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", "7")}},
@@ -294,6 +343,49 @@ else
 end
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"else"`)}},
+		},
+		{
+			Name: "branch/unknown-member-truthiness-selects-no-arm",
+			Source: `
+local record = provider()
+local result
+if record.enabled then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("record", "unknown"), value("result", "nil")}},
+		},
+		{
+			Name: "branch/unknown-member-type-test-selects-no-arm",
+			Source: `
+local record = provider()
+local result
+if type(record.enabled) == "string" then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("record", "unknown"), value("result", "nil")}},
+		},
+		{
+			Name: "branch/unproven-claim-truthiness-selects-no-arm",
+			Source: `
+local raw = provider()
+local value = raw :: string
+local result
+if value then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{
+				Published:   []PublishedOutcome{value("raw", "unknown"), value("result", "nil"), value("value", "unknown")},
+				Diagnostics: []DiagnosticCandidate{{Code: "claim/unproven", Detail: `claim "string" is not proven`}},
+			},
 		},
 		{
 			Name: "branch/false-is-falsy",
@@ -647,6 +739,49 @@ local selected = channel.select { first:case_receive(), second:case_receive() }
 			Expect: Expectation{
 				Published:   []PublishedOutcome{value("value", "unknown")},
 				Diagnostics: []DiagnosticCandidate{{Code: "claim/unproven", Subject: "", Detail: `claim "string" is not proven`}},
+			},
+		},
+		{
+			Name: "claim/distinct-annotation-mismatches-retain-both-diagnostics",
+			Source: `
+local text: string = 1
+local count: number = "one"
+`,
+			Expect: Expectation{
+				Published: []PublishedOutcome{value("count", "unknown"), value("text", "unknown")},
+				Diagnostics: []DiagnosticCandidate{
+					{Code: "claim/unproven", Detail: `claim "number" is not proven`},
+					{Code: "claim/unproven", Detail: `claim "string" is not proven`},
+				},
+			},
+		},
+		{
+			Name: "claim/distinct-casts-of-unknown-retain-both-diagnostics",
+			Source: `
+local text = provider() :: string
+local count = provider() :: number
+`,
+			Expect: Expectation{
+				Published: []PublishedOutcome{value("count", "unknown"), value("text", "unknown")},
+				Diagnostics: []DiagnosticCandidate{
+					{Code: "claim/unproven", Detail: `claim "number" is not proven`},
+					{Code: "claim/unproven", Detail: `claim "string" is not proven`},
+				},
+			},
+		},
+		{
+			Name: "claim/non-nil-and-annotation-mismatches-retain-both-diagnostics",
+			Source: `
+local source = nil
+local required = source!
+local label: string = 1
+`,
+			Expect: Expectation{
+				Published: []PublishedOutcome{value("label", "unknown"), value("required", "unknown"), value("source", "nil")},
+				Diagnostics: []DiagnosticCandidate{
+					{Code: "claim/unproven", Detail: `claim "string" is not proven`},
+					{Code: "claim/unproven", Detail: "claim non-nil is not proven"},
+				},
 			},
 		},
 		{

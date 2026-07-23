@@ -17,6 +17,8 @@ import (
 
 const entryValue = "front/closed-entry/v1"
 
+var errUnknownScalar = errors.New("engine: unknown scalar")
+
 // ErrInternalPanic identifies an engine invariant failure that would otherwise
 // escape Check as a panic. Check is the public whole-file boundary, so callers
 // always receive a named error instead of an unclassified process crash.
@@ -583,8 +585,11 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
-		Values:      []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}},
-		Diagnostics: []equation.Fact{{Key: "claim/unproven", Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}},
+		Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}},
+		// The closure keys facts by identity, so separate unproven claims must
+		// retain their operation identity. The public adapter intentionally
+		// presents this family under the stable claim/unproven code.
+		Diagnostics: []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}},
 	}}, nil
 }
 
@@ -708,11 +713,14 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		if err != nil {
 			return equation.TransactionResult{}, err
 		}
-		if string(value) == "scalar/top" {
+		if isUnknownScalar(value) {
 			return equation.TransactionResult{Complete: true}, nil
 		}
 	}
 	truth, err := branchTruth(operation.Operands, partition)
+	if errors.Is(err, errUnknownScalar) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -1001,6 +1009,9 @@ func branchPathValue(key string, partition equation.Partition) ([]byte, error) {
 }
 
 func scalarType(value []byte) (string, error) {
+	if isUnknownScalar(value) {
+		return "", errUnknownScalar
+	}
 	switch {
 	case string(value) == "scalar/nil":
 		return "nil", nil
@@ -1020,6 +1031,9 @@ func scalarType(value []byte) (string, error) {
 }
 
 func scalarString(value []byte) (string, error) {
+	if isUnknownScalar(value) {
+		return "", errUnknownScalar
+	}
 	if !strings.HasPrefix(string(value), "scalar/string/") {
 		return "", fmt.Errorf("engine: type predicate path is not a string")
 	}
@@ -1039,6 +1053,9 @@ func scalarLength(value []byte) (int64, error) {
 }
 
 func scalarNumber(value []byte) (float64, error) {
+	if isUnknownScalar(value) {
+		return 0, errUnknownScalar
+	}
 	if !strings.HasPrefix(string(value), "scalar/number/") {
 		return 0, fmt.Errorf("engine: numeric predicate path is not a number")
 	}
@@ -1141,6 +1158,8 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 		switch string(absence) {
 		case "front/absence/nil":
 			return []byte("scalar/nil"), nil
+		case "front/absence/top":
+			return []byte("scalar/top"), nil
 		case "front/absence/error":
 			return nil, fmt.Errorf("engine: value path %q has no completed write before %q", term, cutoff)
 		default:
@@ -1170,12 +1189,21 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		}
 	}
 	if value == nil {
+		// A member/index path has a concrete Lua source but its heap write can
+		// be outside this scalar model. Root paths remain strict so an absent
+		// variable is never fabricated as a truthy or falsy value.
+		if derivedPathTerm(term) {
+			return []byte("scalar/top"), nil
+		}
 		return nil, fmt.Errorf("engine: value path %q has no completed write", term)
 	}
 	return append([]byte(nil), value...), nil
 }
 
 func luaTruthy(value []byte) (bool, error) {
+	if isUnknownScalar(value) {
+		return false, errUnknownScalar
+	}
 	switch string(value) {
 	case "scalar/nil", "scalar/bool/false":
 		return false, nil
@@ -1187,6 +1215,15 @@ func luaTruthy(value []byte) (bool, error) {
 		}
 		return false, fmt.Errorf("engine: malformed scalar value %q", value)
 	}
+}
+
+func isUnknownScalar(value []byte) bool {
+	return string(value) == "scalar/top" || strings.HasPrefix(string(value), "scalar/claim/")
+}
+
+func derivedPathTerm(term []byte) bool {
+	path := strings.TrimPrefix(string(term), "path/")
+	return strings.Contains(path, ".") || strings.Contains(path, "[")
 }
 
 func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equation.Fact {

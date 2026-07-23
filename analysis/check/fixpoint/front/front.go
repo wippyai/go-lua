@@ -300,12 +300,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
 			}
-			absence := "front/absence/error"
-			if instruction.A.Kind == wir.OperandPath && implicitGlobalPath(body, instruction.A) {
-				// Lua resolves an unread, implicit global to nil.  This is an
-				// explicit source rule, not a fallback for a missing local fact.
-				absence = "front/absence/nil"
-			}
+			absence := assignmentAbsencePolicy(body, instruction.A)
 			draft.Operands = []equation.Operand{
 				{Role: "target", Term: target},
 				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
@@ -599,6 +594,20 @@ func implicitGlobalPath(body *wir.Body, operand wir.Operand) bool {
 		return false
 	}
 	return body.IsImplicitGlobalSymbol(body.Path(wir.PathRef(operand.Ref)).Symbol)
+}
+
+// assignmentAbsencePolicy makes the source-level distinction between an
+// unread implicit global and a path whose producing heap write is outside the
+// current scalar model. Lua reads the former as nil; the latter is an unknown
+// value and must not be turned into false or rejected as an incomplete fact.
+func assignmentAbsencePolicy(body *wir.Body, operand wir.Operand) string {
+	if operand.Kind != wir.OperandPath {
+		return "front/absence/error"
+	}
+	if implicitGlobalPath(body, operand) {
+		return "front/absence/nil"
+	}
+	return "front/absence/top"
 }
 
 func bodyID(source string) equation.BodyID {

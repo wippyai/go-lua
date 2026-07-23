@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
@@ -178,6 +179,76 @@ func TestCheckPublishesEmptyReturnTuple(t *testing.T) {
 	}
 	if _, found := got["return/0"]; found {
 		t.Fatalf("empty return published a first value: %#v", result.Outcomes)
+	}
+}
+
+func TestCheckRetainsDistinctUnprovenClaimDiagnostics(t *testing.T) {
+	result, err := engine.Check(`
+local text: string = 1
+local count: number = "one"
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	got := valuesByName(result.Diagnostics)
+	if len(got) != 2 {
+		t.Fatalf("claim diagnostics = %#v, want two distinct facts", result.Diagnostics)
+	}
+	for _, want := range []string{`claim "number" is not proven`, `claim "string" is not proven`} {
+		found := false
+		for key, detail := range got {
+			if strings.HasPrefix(key, "claim/unproven/op-") && detail == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("claim diagnostics = %#v, missing %q", result.Diagnostics, want)
+		}
+	}
+}
+
+func TestCheckUsesTopForUnmaterializedMemberRead(t *testing.T) {
+	result, err := engine.Check(`
+local record = provider()
+local name = record.name
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["name"]; got != "unknown" {
+		t.Fatalf("member read = %q, want unknown; values = %#v", got, result.Values)
+	}
+}
+
+func TestCheckUnknownClaimDoesNotChooseABranch(t *testing.T) {
+	result, err := engine.Check(`
+local raw = provider()
+local value = raw :: string
+local result
+if value then
+    result = "then"
+else
+    result = "else"
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["result"]; got != "nil" {
+		t.Fatalf("unknown claim selected a branch: result=%q values=%#v", got, result.Values)
+	}
+}
+
+func TestCheckUsesTopForUnmaterializedCurrentMemberRead(t *testing.T) {
+	result, err := engine.Check(`
+local record = provider()
+local count = record.count + 1
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["count"]; got != "unknown" {
+		t.Fatalf("member arithmetic = %q, want unknown; values = %#v", got, result.Values)
 	}
 }
 
