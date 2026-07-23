@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -56,7 +55,7 @@ func freezeFormalIndexMutationStep(program *RelationProgram, variable relationVa
 	if node.kind != EffectIndexMutation {
 		return nil, nil
 	}
-	if node.invalidation.Scope != InvalidationScopeDescendants || node.invalidation.Precise != nil || !node.invalidation.PreserveStructuralWitness || !node.invalidation.PreserveDynamicValueMemberships || node.table.kind != effectTargetPath || node.table.path == 0 || node.invalidation.Target != node.table || node.readback != factflow.DynamicIndexReadbackKeyAndValue {
+	if node.invalidation.Scope != InvalidationScopeDescendants || node.invalidation.Precise != nil || !node.invalidation.PreserveStructuralWitness || !node.invalidation.PreserveDynamicValueMemberships || node.table.kind != effectTargetPath || node.table.path == 0 || node.invalidation.Target != node.table || !node.readback.ReadsValue() {
 		return nil, fmt.Errorf("transformer: formal IndexMutation requires the exact direct N3+N4 shape")
 	}
 	body := &program.bodies[variable-1]

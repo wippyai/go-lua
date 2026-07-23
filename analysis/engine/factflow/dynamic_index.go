@@ -57,6 +57,14 @@ const (
 	DynamicIndexReadbackKeyAndValue
 )
 
+// ReadsValue reports whether the intent retains the written value for
+// post-write consumers. A dynamic write always has an exact write key; the
+// key's readback dependency is optional when lowering cannot retain that
+// source independently.
+func (i DynamicIndexReadbackIntent) ReadsValue() bool {
+	return i == DynamicIndexReadbackValue || i == DynamicIndexReadbackKeyAndValue
+}
+
 // DynamicIndexWrite describes a write through a dynamic table index at a CFG
 // point. Key/value products remain unresolved ValueSource evidence here.
 type DynamicIndexWrite struct {

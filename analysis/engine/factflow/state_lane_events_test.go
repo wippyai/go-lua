@@ -10,6 +10,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+func TestDynamicIndexReadbackIntentReadsValue(t *testing.T) {
+	for _, tc := range []struct {
+		intent DynamicIndexReadbackIntent
+		want   bool
+	}{
+		{DynamicIndexReadbackNone, false},
+		{DynamicIndexReadbackKey, false},
+		{DynamicIndexReadbackValue, true},
+		{DynamicIndexReadbackKeyAndValue, true},
+	} {
+		if got := tc.intent.ReadsValue(); got != tc.want {
+			t.Fatalf("readback %v reads value = %v, want %v", tc.intent, got, tc.want)
+		}
+	}
+}
+
 func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(1), HasExpr: true}
 	keySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(2), HasExpr: true}

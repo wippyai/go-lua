@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -158,7 +157,7 @@ func lowerResolvedAllocations(reg *axis.Registry, effects []transformer.Resolved
 func safeResolvedBoundaryMutation(reg *axis.Registry, mutation transformer.ResolvedIndexMutation) bool {
 	if mutation.AppendCandidate || mutation.Site.Owner == 0 || mutation.Site.Ordinal == 0 ||
 		mutation.Admission == dynamicindex.AdmissionBottom ||
-		mutation.Readback != factflow.DynamicIndexReadbackKeyAndValue ||
+		!mutation.Readback.ReadsValue() ||
 		mutation.Invalidation.Scope != transformer.InvalidationScopeDescendants ||
 		!mutation.Invalidation.PreserveStructuralWitness ||
 		!mutation.Invalidation.PreserveDynamicValueMemberships ||

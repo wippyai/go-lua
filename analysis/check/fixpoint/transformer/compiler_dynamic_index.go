@@ -81,7 +81,7 @@ func buildBoundaryDynamicIndexEffect(ctx planCompileContext, point cfg.Point) (E
 		return 0, fmt.Errorf("dynamic index: value: %w", err)
 	}
 	if write.Admission() == dynamicindex.AdmissionBottom ||
-		write.ReadbackIntent() != factflow.DynamicIndexReadbackKeyAndValue {
+		!write.ReadbackIntent().ReadsValue() {
 		return 0, fmt.Errorf("dynamic index: admission/readback is outside exact boundary slice")
 	}
 	if point <= 0 {
