@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -44,7 +45,7 @@ func CompileBody(source string) (equation.Artifact, error) {
 	if body == nil {
 		return equation.Artifact{}, fmt.Errorf("front: lower WIR")
 	}
-	return compileWIR(source, body, built.Graph)
+	return compileWIR(source, body, built.Graph, assignmentSnapshotStarts(stmts, built))
 }
 
 type operation struct {
@@ -52,7 +53,7 @@ type operation struct {
 	target      equation.Coordinate
 }
 
-func compileWIR(source string, body *wir.Body, graph cfg.Graph) (equation.Artifact, error) {
+func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
 	if body == nil || graph == nil {
 		return equation.Artifact{}, fmt.Errorf("front: nil WIR body")
 	}
@@ -112,10 +113,22 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph) (equation.Artifa
 			}
 			draft.Occurrence = occurrence("environment-write")
 			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			readBefore, err := readBeforeTerm(operation, operations, snapshots)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: assignment %s: %w", operation.target.Name, err)
+			}
+			absence := "front/absence/error"
+			if instruction.A.Kind == wir.OperandPath && implicitGlobalPath(body, instruction.A) {
+				// Lua resolves an unread, implicit global to nil.  This is an
+				// explicit source rule, not a fallback for a missing local fact.
+				absence = "front/absence/nil"
+			}
 			draft.Operands = []equation.Operand{
 				{Role: "target", Term: target},
 				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
 				{Role: "value", Term: value},
+				{Role: "read-before", Term: readBefore},
+				{Role: "absence", Term: equation.ClosedTerm([]byte(absence))},
 			}
 		case wir.OpBranch:
 			if body.Check(instruction.Check).Kind != wir.CheckNone {
@@ -150,6 +163,77 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph) (equation.Artifa
 		return equation.Artifact{}, fmt.Errorf("front: compile equations: %w", err)
 	}
 	return artifact, nil
+}
+
+// assignmentSnapshotStarts maps each ordinary/local assignment point to the
+// first point in its source statement. Lua evaluates every right-hand side
+// before writing any left-hand target, so all targets in one statement must
+// resolve path operands at that common pre-write boundary.
+func assignmentSnapshotStarts(stmts []ast.Stmt, built *cfgbuild.Result) map[cfg.Point]cfg.Point {
+	starts := make(map[cfg.Point]cfg.Point)
+	if built == nil {
+		return starts
+	}
+	var visit func([]ast.Stmt)
+	mark := func(stmt ast.Stmt, targets int) {
+		points := built.StmtPoints.PointsFor(stmt)
+		if targets == 0 || len(points) < targets {
+			return
+		}
+		assignmentPoints := points[len(points)-targets:]
+		for _, point := range assignmentPoints {
+			starts[point] = assignmentPoints[0]
+		}
+	}
+	visit = func(items []ast.Stmt) {
+		for _, stmt := range items {
+			switch node := stmt.(type) {
+			case *ast.LocalAssignStmt:
+				mark(node, len(node.Names))
+			case *ast.AssignStmt:
+				mark(node, len(node.Lhs))
+			case *ast.IfStmt:
+				visit(node.Then)
+				visit(node.Else)
+			case *ast.DoBlockStmt:
+				visit(node.Stmts)
+			case *ast.WhileStmt:
+				visit(node.Stmts)
+			case *ast.RepeatStmt:
+				visit(node.Stmts)
+			case *ast.NumberForStmt:
+				visit(node.Stmts)
+			case *ast.GenericForStmt:
+				visit(node.Stmts)
+			}
+		}
+	}
+	visit(stmts)
+	return starts
+}
+
+func readBeforeTerm(current operation, operations []operation, snapshots map[cfg.Point]cfg.Point) (equation.Term, error) {
+	start, found := snapshots[current.instruction.Point]
+	if !found {
+		return equation.Term{}, fmt.Errorf("missing assignment snapshot boundary at CFG point %d", current.instruction.Point)
+	}
+	for index, candidate := range operations {
+		if candidate.instruction.Point != start {
+			continue
+		}
+		if index == 0 {
+			return equation.Term{}, fmt.Errorf("assignment snapshot has no predecessor")
+		}
+		return equation.ClosedTerm([]byte("front/read-before/" + operations[index-1].target.Name)), nil
+	}
+	return equation.Term{}, fmt.Errorf("assignment snapshot boundary %d has no operation", start)
+}
+
+func implicitGlobalPath(body *wir.Body, operand wir.Operand) bool {
+	if body == nil || operand.Kind != wir.OperandPath {
+		return false
+	}
+	return body.IsImplicitGlobalSymbol(body.Path(wir.PathRef(operand.Ref)).Symbol)
 }
 
 func bodyID(source string) equation.BodyID {

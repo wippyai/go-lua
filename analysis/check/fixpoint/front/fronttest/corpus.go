@@ -41,6 +41,15 @@ type DiagnosticCandidate struct {
 func StarterCorpus() []Case {
 	cases := []Case{
 		{
+			Name: "assignment/empty-declaration-is-nil",
+			Source: `
+local first, second
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("first", "nil"), value("second", "nil"),
+			}},
+		},
+		{
 			Name: "assignment/extra-results-are-discarded",
 			Source: `
 local first, second = 1, 2, 3
@@ -48,6 +57,27 @@ local first, second = 1, 2, 3
 			Expect: Expectation{Published: []PublishedOutcome{
 				value("first", "1"), value("second", "2"),
 			}},
+		},
+		{
+			Name: "assignment/explicit-nil-is-a-value",
+			Source: `
+local value = nil
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("value", "nil")}},
+		},
+		{
+			Name: "assignment/false-is-a-value",
+			Source: `
+local disabled = false
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("disabled", "false")}},
+		},
+		{
+			Name: "assignment/implicit-global-read-is-nil",
+			Source: `
+local value = missing_global
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("value", "nil")}},
 		},
 		{
 			Name: "assignment/local-literal",
@@ -66,6 +96,16 @@ local first, second = "present"
 			}},
 		},
 		{
+			Name: "assignment/parallel-assignment-keeps-all-old-values",
+			Source: `
+local first, second, third = 1, 2, 3
+first, second, third = third, first, second
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("first", "3"), value("second", "1"), value("third", "2"),
+			}},
+		},
+		{
 			Name: "assignment/parallel-assignment-reads-old-values",
 			Source: `
 local left, right = "left", "right"
@@ -76,12 +116,40 @@ left, right = right, left
 			}},
 		},
 		{
+			Name: "assignment/parallel-assignment-snapshots-path-before-literal-write",
+			Source: `
+local left, right = 1, 2
+left, right = 9, left
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("left", "9"), value("right", "1"),
+			}},
+		},
+		{
 			Name: "assignment/reassignment-overwrites-value",
 			Source: `
 local count = 1
 count = 2
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("count", "2")}},
+		},
+		{
+			Name: "assignment/reassignment-reads-prior-write",
+			Source: `
+local original = 1
+original = 2
+local copied = original
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("original", "2"), value("copied", "2"),
+			}},
+		},
+		{
+			Name: "assignment/string-values-use-lua-spelling",
+			Source: `
+local greeting = "hello"
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("greeting", `"hello"`)}},
 		},
 		{
 			Name: "branch/false-is-falsy",

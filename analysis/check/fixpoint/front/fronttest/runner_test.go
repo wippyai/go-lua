@@ -11,8 +11,8 @@ import (
 
 func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 	cases := StarterCorpus()
-	if len(cases) != 21 {
-		t.Fatalf("starter corpus has %d cases, want 21", len(cases))
+	if len(cases) != 29 {
+		t.Fatalf("starter corpus has %d cases, want 29", len(cases))
 	}
 	families := map[string]int{}
 	for index, test := range cases {
@@ -29,6 +29,25 @@ func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 		if families[family] == 0 {
 			t.Fatalf("starter corpus has no %s case", family)
 		}
+	}
+}
+
+func TestProductionRunnerExecutesAssignmentCases(t *testing.T) {
+	var assignments []Case
+	for _, test := range StarterCorpus() {
+		if strings.HasPrefix(test.Name, "assignment/") {
+			assignments = append(assignments, test)
+		}
+	}
+	if len(assignments) < 8 {
+		t.Fatalf("assignment harness cases = %d, want at least 8", len(assignments))
+	}
+	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(assignments)
+	if err != nil {
+		t.Fatalf("assignment production harness: %v", err)
+	}
+	if len(reports) != len(assignments) {
+		t.Fatalf("assignment reports = %d, want %d", len(reports), len(assignments))
 	}
 }
 

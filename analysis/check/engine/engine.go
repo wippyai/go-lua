@@ -93,7 +93,7 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	operands, err := operandsByRole(operation.Operands, "target", "display", "value")
+	operands, err := operandsByRole(operation.Operands, "target", "display", "value", "read-before", "absence")
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -101,7 +101,7 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if !strings.HasPrefix(target, "path/") {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed assignment target")
 	}
-	value, err := resolveValue(operands["value"], partition)
+	value, err := resolveValue(operands["value"], operands["read-before"], operands["absence"], partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -118,7 +118,7 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	value, err := resolveValue(operands["condition"], partition)
+	value, err := resolveCurrentValue(operands["condition"], partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -174,7 +174,48 @@ func guardsHold(guards []equation.Guard, partition equation.Partition) bool {
 	return true
 }
 
-func resolveValue(term []byte, partition equation.Partition) ([]byte, error) {
+func resolveValue(term, readBefore, absence []byte, partition equation.Partition) ([]byte, error) {
+	if strings.HasPrefix(string(term), "scalar/") {
+		return append([]byte(nil), term...), nil
+	}
+	if !strings.HasPrefix(string(term), "path/") {
+		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
+	}
+	const readBeforePrefix = "front/read-before/"
+	if !strings.HasPrefix(string(readBefore), readBeforePrefix) {
+		return nil, fmt.Errorf("engine: malformed assignment read boundary %q", readBefore)
+	}
+	cutoff := strings.TrimPrefix(string(readBefore), readBeforePrefix)
+	if cutoff == "" {
+		return nil, fmt.Errorf("engine: empty assignment read boundary")
+	}
+	prefix := "value/" + string(term) + "/"
+	var value []byte
+	latestKey := ""
+	for _, fact := range partition.Values() {
+		name := strings.TrimPrefix(fact.Key, prefix)
+		if strings.HasPrefix(fact.Key, prefix) && name <= cutoff && (value == nil || fact.Key > latestKey) {
+			value = fact.Value
+			latestKey = fact.Key
+		}
+	}
+	if value == nil {
+		switch string(absence) {
+		case "front/absence/nil":
+			return []byte("scalar/nil"), nil
+		case "front/absence/error":
+			return nil, fmt.Errorf("engine: value path %q has no completed write before %q", term, cutoff)
+		default:
+			return nil, fmt.Errorf("engine: malformed assignment absence policy %q", absence)
+		}
+	}
+	return append([]byte(nil), value...), nil
+}
+
+// resolveCurrentValue is for non-assignment families whose own contract owns
+// their read timing. Environment-write deliberately does not use it: every
+// assignment read carries an explicit pre-write boundary instead.
+func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, error) {
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), nil
 	}
@@ -283,7 +324,7 @@ func displayValue(value []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return []byte(stringValue), nil
+		return []byte(strconv.Quote(stringValue)), nil
 	default:
 		return nil, fmt.Errorf("engine: invalid stored scalar")
 	}
