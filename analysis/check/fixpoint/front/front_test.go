@@ -1,7 +1,6 @@
 package front_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -29,6 +28,143 @@ end
 	}
 	if got["entry"] != 1 || got["environment-write"] != 3 || got["branch-relations"] != 1 {
 		t.Fatalf("lowered occurrence kinds = %#v", got)
+	}
+}
+
+func TestCompileBodyLowersGenericForWithAdjustedTupleAndBindings(t *testing.T) {
+	artifact, err := front.CompileBody(`
+for key, value in next do
+end
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	var loopOperands map[string]string
+	for _, lowered := range artifact.Equations {
+		if lowered.Occurrence.Kind != "generic-for" {
+			continue
+		}
+		loopOperands = operands(lowered)
+	}
+	if loopOperands == nil {
+		t.Fatalf("generic-for occurrence missing from %#v", artifact.Equations)
+	}
+	for role, want := range map[string]string{"state": "scalar/nil", "control": "scalar/nil", "display-00000000": "key", "display-00000001": "value"} {
+		if got := loopOperands[role]; got != want {
+			t.Errorf("generic-for operand %s = %q, want %q", role, got, want)
+		}
+	}
+	for _, role := range []string{"iterator", "result-00000000", "result-00000001"} {
+		if !strings.HasPrefix(loopOperands[role], "path/") {
+			t.Errorf("generic-for operand %s = %q, want closed path", role, loopOperands[role])
+		}
+	}
+}
+
+func TestCompileBodyStillRejectsNonGenericCycles(t *testing.T) {
+	_, err := front.CompileBody(`
+while true do
+end
+`)
+	if err == nil {
+		t.Fatal("CompileBody accepted a cyclic body outside the generic-for slice")
+	}
+}
+
+func TestCompileBodyLowersCallsAndTheirResultCarriers(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		apply       int
+		results     int
+		role        string
+		wantGuard   bool
+		wantContext string
+	}{
+		{name: "direct assignment", source: `local value = invoke("argument")`, apply: 1, results: 1, role: "callee", wantContext: "call-context/2"},
+		{name: "method assignment", source: `local value = receiver:invoke(1)`, apply: 1, results: 1, role: "receiver", wantContext: "call-context/2"},
+		{name: "statement result discard", source: `invoke()`, apply: 1, results: 1, role: "callee", wantContext: "call-context/1"},
+		{name: "nested call", source: `local value = outer(inner(1))`, apply: 2, results: 2, role: "callee", wantContext: "call-context/6"},
+		{name: "condition call is guarded by selected branch", source: `
+if predicate() then
+    local value = invoke()
+end
+`, apply: 2, results: 2, role: "callee", wantGuard: true, wantContext: "call-context/5"},
+		{name: "expanded final result list", source: `local first, second = invoke()`, apply: 1, results: 1, role: "callee", wantContext: "call-context/2"},
+		{name: "adjusted parenthesized result", source: `local first, second = (invoke())`, apply: 1, results: 1, role: "callee", wantContext: "call-context/2"},
+		{name: "assert predicate call", source: `assert(value)`, apply: 1, results: 1, role: "check", wantContext: "call-context/1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			artifact, err := front.CompileBody(test.source)
+			if err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+			applies, results := 0, 0
+			var firstApply, firstResults *struct {
+				operands map[string]string
+				guards   int
+			}
+			for _, operation := range artifact.Equations {
+				operands := make(map[string]string, len(operation.Operands))
+				for _, operand := range operation.Operands {
+					operands[operand.Role] = string(operand.Term.Encoding)
+				}
+				switch operation.Occurrence.Kind {
+				case "apply":
+					applies++
+					if firstApply == nil {
+						firstApply = &struct {
+							operands map[string]string
+							guards   int
+						}{operands: operands, guards: len(operation.Guards)}
+					}
+				case "call-results":
+					results++
+					if firstResults == nil {
+						firstResults = &struct {
+							operands map[string]string
+							guards   int
+						}{operands: operands, guards: len(operation.Guards)}
+					}
+				}
+			}
+			if applies != test.apply || results != test.results {
+				t.Fatalf("apply/results = %d/%d, want %d/%d", applies, results, test.apply, test.results)
+			}
+			if firstApply == nil || firstApply.operands[test.role] == "" {
+				t.Fatalf("first apply operands = %#v, want role %q", firstApply, test.role)
+			}
+			if firstResults == nil || firstResults.operands["application"] == "" {
+				t.Fatalf("first result operands = %#v, want application carrier", firstResults)
+			}
+			if test.wantContext != "" && firstApply.operands["context"] != test.wantContext {
+				t.Fatalf("first call context = %q, want %q", firstApply.operands["context"], test.wantContext)
+			}
+			if test.wantGuard {
+				guarded := false
+				for _, operation := range artifact.Equations {
+					if operation.Occurrence.Kind == "apply" && len(operation.Guards) > 0 {
+						guarded = true
+					}
+				}
+				if !guarded {
+					t.Fatal("selected-arm call has no branch guard")
+				}
+			}
+			if test.name == "expanded final result list" && firstApply.operands["expanded"] != "scalar/bool/true" {
+				t.Fatalf("expanded call marker = %q", firstApply.operands["expanded"])
+			}
+			if test.name == "adjusted parenthesized result" && (firstApply.operands["adjusted"] != "scalar/bool/true" || firstApply.operands["result-spread"] != "scalar/bool/false") {
+				t.Fatalf("adjusted call operands = %#v", firstApply.operands)
+			}
+			if test.name == "method assignment" && firstApply.operands["method"] != `method/"invoke"` {
+				t.Fatalf("method operand = %q", firstApply.operands["method"])
+			}
+			if test.name == "assert predicate call" && !strings.HasPrefix(firstApply.operands["check"], "check/") {
+				t.Fatalf("assert check = %q", firstApply.operands["check"])
+			}
+		})
 	}
 }
 
@@ -67,14 +203,144 @@ left, right = right, left
 	}
 }
 
-func TestCompileBodyRejectsUnsupportedInstructionWithoutArtifact(t *testing.T) {
-	artifact, err := front.CompileBody(`local value = source()`) // calls are the call-results family, not environment-write.
-	if !errors.Is(err, front.ErrUnsupportedInstruction) {
-		t.Fatalf("CompileBody error = %v, want unsupported instruction", err)
+func TestCompileBodyLowersCallInsteadOfRejectingIt(t *testing.T) {
+	artifact, err := front.CompileBody(`local value = source()`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
 	}
-	if len(artifact.Equations) != 0 {
-		t.Fatalf("CompileBody returned %d equations with a rejected instruction", len(artifact.Equations))
+	got := occurrenceCounts(artifact)
+	if got["apply"] != 1 || got["call-results"] != 1 {
+		t.Fatalf("call occurrence kinds = %#v", got)
 	}
+}
+
+func TestCompileBodyLowersCompleteTableAllocationGraph(t *testing.T) {
+	artifact, err := front.CompileBody(`
+local seed = 1
+local object = { seed, enabled = false, child = { answer = 42 } }
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	got := occurrenceCounts(artifact)
+	if got["allocation-template"] != 2 || got["object-materialization"] != 2 {
+		t.Fatalf("allocation occurrence kinds = %#v", got)
+	}
+	for _, equation := range artifact.Equations {
+		if equation.Occurrence.Kind != "object-materialization" {
+			continue
+		}
+		if operand(equation.Operands, "site") == nil || operand(equation.Operands, "result") == nil {
+			t.Fatalf("object materialization omitted exact site/result: %#v", equation.Operands)
+		}
+	}
+}
+
+func TestTableAllocationKeepsTemplateAndMaterializationOnOneSite(t *testing.T) {
+	artifact, err := front.CompileBody(`local object = { answer = 42 }`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	var templateSite, materializedSite string
+	for _, equation := range artifact.Equations {
+		switch equation.Occurrence.Kind {
+		case "allocation-template":
+			templateSite = string(operand(equation.Operands, "site").Term.Encoding)
+		case "object-materialization":
+			materializedSite = string(operand(equation.Operands, "site").Term.Encoding)
+		}
+	}
+	if templateSite == "" || templateSite != materializedSite {
+		t.Fatalf("allocation sites = template %q, materialization %q", templateSite, materializedSite)
+	}
+}
+
+func TestTableAllocationRepresentsNilAsAbsenceAndContiguousFloor(t *testing.T) {
+	artifact, err := front.CompileBody(`local values = { 1, nil, 3, missing = nil }`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	for _, equation := range artifact.Equations {
+		if equation.Occurrence.Kind != "object-materialization" {
+			continue
+		}
+		if got := string(operand(equation.Operands, "list-floor").Term.Encoding); got != "list-floor/1" {
+			t.Fatalf("list floor = %q, want contiguous exact prefix of one", got)
+		}
+		for _, candidate := range equation.Operands {
+			if strings.HasPrefix(candidate.Role, "member-") && strings.Contains(string(candidate.Term.Encoding), ".missing/") {
+				t.Fatalf("nil field was materialized as a member: %#v", candidate)
+			}
+		}
+	}
+}
+
+func TestCompileBodyGuardsAllocationWithItsBranch(t *testing.T) {
+	artifact, err := front.CompileBody(`
+if true then
+    local object = { answer = 42 }
+end
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	for _, equation := range artifact.Equations {
+		if equation.Occurrence.Kind == "allocation-template" || equation.Occurrence.Kind == "object-materialization" {
+			if len(equation.Guards) != 1 || !strings.HasSuffix(string(equation.Guards[0].Encoding), "/true") {
+				t.Fatalf("guarded allocation guards = %#v", equation.Guards)
+			}
+		}
+	}
+}
+
+func TestCompileBodyLowersClosureAllocationAndCaptures(t *testing.T) {
+	artifact, err := front.CompileBody(`
+local captured = "value"
+local read = function() return captured end
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	var materialized bool
+	for _, equation := range artifact.Equations {
+		if equation.Occurrence.Kind != "object-materialization" || string(operand(equation.Operands, "kind").Term.Encoding) != "object-kind/closure" {
+			continue
+		}
+		materialized = true
+		if operand(equation.Operands, "prototype") == nil || operand(equation.Operands, "capture-00000000") == nil {
+			t.Fatalf("closure materialization lost its prototype or capture: %#v", equation.Operands)
+		}
+	}
+	if !materialized {
+		t.Fatal("missing closure object materialization")
+	}
+}
+
+func TestCompileBodyRejectsInexactAllocationKeys(t *testing.T) {
+	_, err := front.CompileBody(`
+local key = "answer"
+local object = { [key] = 42 }
+`)
+	if err == nil || !strings.Contains(err.Error(), "non-exact key") {
+		t.Fatalf("CompileBody error = %v, want inexact allocation rejection", err)
+	}
+}
+
+func occurrenceCounts(artifact equation.Artifact) map[string]int {
+	result := make(map[string]int)
+	for _, equation := range artifact.Equations {
+		result[equation.Occurrence.Kind]++
+	}
+	return result
+}
+
+func operand(operands []equation.Operand, role string) *equation.Operand {
+	for index := range operands {
+		if operands[index].Role == role {
+			return &operands[index]
+		}
+	}
+	return nil
 }
 
 func TestCompileBodyLowersPathStoreInvalidationAndIndexMutationTogether(t *testing.T) {
@@ -197,8 +463,8 @@ end
 	t.Fatal("artifact had no branch relation")
 }
 
-func TestCompileBodyRejectsBranchWithoutACompleteSelector(t *testing.T) {
-	_, err := front.CompileBody(`
+func TestCompileBodyLowersBranchWithCallSelector(t *testing.T) {
+	artifact, err := front.CompileBody(`
 local function predicate()
     return true
 end
@@ -206,10 +472,11 @@ if predicate() then
     local selected = true
 end
 `)
-	if err == nil {
-		t.Fatal("CompileBody accepted a branch whose call result family is not lowered")
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unsupported WIR instruction") {
-		t.Fatalf("CompileBody error = %v, want unsupported instruction", err)
+	got := occurrenceCounts(artifact)
+	if got["apply"] != 1 || got["call-results"] != 1 || got["branch-relations"] != 1 {
+		t.Fatalf("call selector occurrence kinds = %#v", got)
 	}
 }

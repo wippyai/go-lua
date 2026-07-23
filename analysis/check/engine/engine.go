@@ -108,7 +108,15 @@ func registry() (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{entry, allocationTemplate, objectMaterialization, write, branch})
+	apply, err := binding("apply", equation.KernelFunc(applyKernel))
+	if err != nil {
+		return nil, err
+	}
+	results, err := binding("call-results", equation.KernelFunc(callResultsKernel))
+	if err != nil {
+		return nil, err
+	}
+	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{entry, allocationTemplate, objectMaterialization, write, branch, apply, results})
 	if err != nil {
 		return nil, fmt.Errorf("engine: build kernel registry: %w", err)
 	}
@@ -171,6 +179,18 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	for _, operand := range operation.Operands {
+		if operand.Role != "condition" {
+			continue
+		}
+		value, err := resolveCurrentValue(operand.Value, partition)
+		if err != nil {
+			return equation.TransactionResult{}, err
+		}
+		if string(value) == "scalar/top" {
+			return equation.TransactionResult{Complete: true}, nil
+		}
+	}
 	truth, err := branchTruth(operation.Operands, partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
@@ -184,6 +204,66 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
 	}}}, nil
+}
+
+// applyKernel validates the sealed direct or method-call shape without
+// inventing a callee outcome.
+func applyKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	hasCallee, hasReceiver, hasMethod := false, false, false
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "callee":
+			hasCallee = true
+		case "receiver":
+			hasReceiver = true
+		case "method":
+			hasMethod = true
+		}
+	}
+	if hasCallee == (hasReceiver && hasMethod) || hasReceiver != hasMethod {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed call application shape")
+	}
+	return equation.TransactionResult{Complete: true}, nil
+}
+
+// callResultsKernel publishes explicit Top facts for unresolved owned result
+// slots, never a missing slot or an invented concrete value.
+func callResultsKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	resultTerms := map[string][]byte{}
+	targetTerms := map[string][]byte{}
+	hasApplication := false
+	for _, operand := range operation.Operands {
+		switch {
+		case operand.Role == "application":
+			if hasApplication || !strings.HasPrefix(string(operand.Value), "call/") {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result application")
+			}
+			hasApplication = true
+		case strings.HasPrefix(operand.Role, "result-"):
+			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
+		case strings.HasPrefix(operand.Role, "target-"):
+			targetTerms[strings.TrimPrefix(operand.Role, "target-")] = operand.Value
+		default:
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result role %q", operand.Role)
+		}
+	}
+	if !hasApplication || len(resultTerms) != len(targetTerms) {
+		return equation.TransactionResult{}, fmt.Errorf("engine: incomplete call result transaction")
+	}
+	values := make([]equation.Fact, 0, len(resultTerms))
+	for key, result := range resultTerms {
+		if len(result) == 0 || len(targetTerms[key]) == 0 || !strings.HasPrefix(string(result), "temp/") {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
+		}
+		values = append(values, equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: []byte("scalar/top")})
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
 // branchTruth evaluates exactly one selector.  An unavailable selector is an
@@ -441,7 +521,7 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), nil
 	}
-	if !strings.HasPrefix(string(term), "path/") {
+	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
 	const readBeforePrefix = "front/read-before/"
@@ -482,7 +562,7 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	if strings.HasPrefix(string(term), "scalar/") {
 		return append([]byte(nil), term...), nil
 	}
-	if !strings.HasPrefix(string(term), "path/") {
+	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
 	prefix := "value/" + string(term) + "/"
@@ -588,6 +668,8 @@ func displayValue(value []byte) ([]byte, error) {
 			return nil, err
 		}
 		return []byte(strconv.Quote(stringValue)), nil
+	case encoded == "scalar/top":
+		return []byte("unknown"), nil
 	default:
 		return nil, fmt.Errorf("engine: invalid stored scalar")
 	}

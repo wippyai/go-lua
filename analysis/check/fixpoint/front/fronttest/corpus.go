@@ -41,6 +41,74 @@ type DiagnosticCandidate struct {
 func StarterCorpus() []Case {
 	cases := []Case{
 		{
+			Name: "allocation/array-constructor-has-contiguous-prefix",
+			Source: `
+local values = { "first", "second" }
+local result = values[2]
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"second"`)}},
+		},
+		{
+			Name: "allocation/closure-captures-the-current-binding",
+			Source: `
+local captured = "before"
+local read = function() return captured end
+captured = "after"
+local result = read()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"after"`)}},
+		},
+		{
+			Name: "allocation/dynamic-key-materializes-the-runtime-key",
+			Source: `
+local key = "selected"
+local object = { [key] = 9 }
+local result = object.selected
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "9")}},
+		},
+		{
+			Name: "allocation/empty-table-member-is-absent",
+			Source: `
+local object = {}
+local result = object.missing
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name: "allocation/false-member-remains-present",
+			Source: `
+local object = { enabled = false }
+local result = object.enabled
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "false")}},
+		},
+		{
+			Name: "allocation/fresh-table-literals-are-distinct",
+			Source: `
+local left = {}
+local right = {}
+local result = left == right
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "false")}},
+		},
+		{
+			Name: "allocation/nested-table-materializes-its-own-object",
+			Source: `
+local outer = { child = { answer = 42 } }
+local result = outer.child.answer
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "42")}},
+		},
+		{
+			Name: "allocation/nil-field-is-absent-not-bottom",
+			Source: `
+local object = { missing = nil }
+local result = object.missing
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
 			Name: "assignment/empty-declaration-is-nil",
 			Source: `
 local first, second
@@ -319,6 +387,26 @@ end
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
 		},
 		{
+			Name: "call/empty-argument-list-is-valid",
+			Source: `
+local function answer()
+    return 42
+end
+local result = answer()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "42")}},
+		},
+		{
+			Name: "call/false-result-is-not-absent",
+			Source: `
+local function disabled()
+    return false
+end
+local result = disabled()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "false")}},
+		},
+		{
 			Name: "call/final-call-expands-results",
 			Source: `
 local function pair()
@@ -328,6 +416,68 @@ local first, second, third = 1, pair()
 `,
 			Expect: Expectation{Published: []PublishedOutcome{
 				value("first", "1"), value("second", `"left"`), value("third", `"right"`),
+			}},
+		},
+		{
+			Name: "call/missing-result-slot-is-nil",
+			Source: `
+local function one()
+    return "only"
+end
+local first, second = one()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("first", `"only"`), value("second", "nil"),
+			}},
+		},
+		{
+			Name: "call/multret-tail-forwards-through-wrapper",
+			Source: `
+local function pair()
+    return "left", "right"
+end
+local function forward(...)
+    return ...
+end
+local first, second = forward(pair())
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("first", `"left"`), value("second", `"right"`),
+			}},
+		},
+		{
+			Name: "call/nested-call-argument-evaluates-first",
+			Source: `
+local function addOne(value)
+    return value + 1
+end
+local function double(value)
+    return value * 2
+end
+local result = double(addOne(3))
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "8")}},
+		},
+		{
+			Name: "call/nil-result-is-not-absent",
+			Source: `
+local function none()
+    return nil
+end
+local result = none()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name: "call/nonfinal-call-is-adjusted-to-one-result",
+			Source: `
+local function pair()
+    return "first", "second"
+end
+local first, second = pair(), "tail"
+`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("first", `"first"`), value("second", `"tail"`),
 			}},
 		},
 		{
@@ -363,6 +513,18 @@ local result = empty()
 			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
 		},
 		{
+			Name: "call/statement-call-discards-results",
+			Source: `
+local observed = "before"
+local function writeAndReturn()
+    observed = "written"
+    return "discarded"
+end
+writeAndReturn()
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("observed", `"written"`)}},
+		},
+		{
 			Name: "call/table-method-receives-self",
 			Source: `
 local object = { base = 4 }
@@ -372,6 +534,82 @@ end
 local result = object:add(3)
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", "7")}},
+		},
+		{
+			Name: "channel-select/default-has-no-receive-payload",
+			Source: `
+local inbox: Channel<string>
+local selected = channel.select { inbox:case_receive(), default = true }
+local payload = selected.value
+`,
+			// A default selection is not a receive: its value field is Lua nil.
+			// This is a concrete nil, not an absent channel-select payload fact.
+			Expect: Expectation{Published: []PublishedOutcome{value("payload", "nil")}},
+		},
+		{
+			Name: "channel-select/default-is-explicitly-marked",
+			Source: `
+local inbox: Channel<string>
+local selected = channel.select { inbox:case_receive(), default = true }
+local is_default = selected.default
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("is_default", "true")}},
+		},
+		{
+			Name: "channel-select/default-keeps-case-channel-absent",
+			Source: `
+local inbox: Channel<string>
+local selected = channel.select { inbox:case_receive(), default = true }
+local no_payload = selected.value == nil
+`,
+			// No receive case was selected. The observable result carries Lua nil
+			// rather than a fabricated Bottom or unknown payload.
+			Expect: Expectation{Published: []PublishedOutcome{value("no_payload", "true")}},
+		},
+		{
+			Name: "channel-select/multiple-cases-retain-source-order",
+			Source: `
+local first: Channel<string>
+local second: Channel<string>
+local selected = channel.select { first:case_receive(), second:case_receive() }
+`,
+			// Readiness is unknown, so Lua permits either case; this corpus does
+			// not fabricate a selected payload.
+			Expect: Expectation{},
+		},
+		{
+			Name: "channel-select/no-default-may-block-without-publication",
+			Source: `
+local inbox: Channel<string>
+local selected = channel.select { inbox:case_receive() }
+`,
+			Expect: Expectation{},
+		},
+		{
+			Name: "channel-select/receive-payload-is-unknown-until-a-case-wins",
+			Source: `
+local inbox: Channel<string>
+local selected = channel.select { inbox:case_receive() }
+`,
+			// Unknown readiness is neither a nil payload nor Bottom.  It produces
+			// no concrete observation before a case is chosen.
+			Expect: Expectation{},
+		},
+		{
+			Name: "channel-select/receive-result-keeps-ok-distinct-from-value",
+			Source: `
+local inbox: Channel<string>
+local selected = channel.select { inbox:case_receive() }
+`,
+			Expect: Expectation{},
+		},
+		{
+			Name: "channel-select/zero-cases-with-default-is-nonblocking",
+			Source: `
+local selected = channel.select { default = true }
+local payload = selected.value
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("payload", "nil")}},
 		},
 		{
 			Name: "diagnostic/nil-arithmetic-raises-error",
@@ -399,6 +637,113 @@ for index, item in once, nil, nil do
 end
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"only"`)}},
+		},
+		{
+			Name: "loop/generic-for-break-stops-after-first-result",
+			Source: `
+local function count(_, control)
+    if control == nil then return 1 end
+    return control + 1
+end
+local result = 0
+for index in count, nil, nil do
+    result = index
+    break
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "1")}},
+		},
+		{
+			Name: "loop/generic-for-control-uses-first-result",
+			Source: `
+local function count(_, control)
+    if control == nil then return 1 end
+    if control < 3 then return control + 1 end
+end
+local result = 0
+for index in count, nil, nil do
+    result = index
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "3")}},
+		},
+		{
+			Name: "loop/generic-for-extra-sources-are-discarded",
+			Source: `
+local function once(state, control)
+    if state == "state" and control == "control" then return 1 end
+end
+local result = 0
+for index in once, "state", "control", "ignored" do
+    result = index
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "1")}},
+		},
+		{
+			Name: "loop/generic-for-false-first-result-continues",
+			Source: `
+local function once(_, control)
+    if control == nil then return false, "value" end
+end
+local result = "before"
+for key, item in once, nil, nil do
+    result = item
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"value"`)}},
+		},
+		{
+			Name: "loop/generic-for-missing-state-and-control-are-nil",
+			Source: `
+local function once(state, control)
+    if state == nil and control == nil then return "key", "value" end
+end
+local result = "before"
+for key, item in once do
+    result = item
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"value"`)}},
+		},
+		{
+			Name: "loop/generic-for-missing-secondary-results-become-nil",
+			Source: `
+local function once(_, control)
+    if control == nil then return "key" end
+end
+local result = "before"
+for key, item in once, nil, nil do
+    result = item
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name: "loop/generic-for-nil-first-result-stops",
+			Source: `
+local function none()
+    return nil, "ignored"
+end
+local result = "before"
+for key, item in none, nil, nil do
+    result = item
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"before"`)}},
+		},
+		{
+			Name: "loop/generic-for-nil-secondary-result-is-bound",
+			Source: `
+local function once(_, control)
+    if control == nil then return "key", nil end
+end
+local result = "before"
+for key, item in once, nil, nil do
+    result = item
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
 		},
 		{
 			Name: "loop/numeric-for-has-inclusive-limit",

@@ -118,6 +118,33 @@ local object = { first = 1, child = { second = 2 } }
 	}
 }
 
+func TestCheckUnknownCallPublishesExplicitUnknownResult(t *testing.T) {
+	result, err := engine.Check(`local value = provider()`) // provider has no local outcome.
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["value"]; got != "unknown" {
+		t.Fatalf("published value = %q, want explicit unknown; values = %#v", got, result.Values)
+	}
+	if result.Transactions != 4 { // entry, apply, call-results, assignment
+		t.Fatalf("transactions = %d, want entry plus complete call sequence and assignment", result.Transactions)
+	}
+}
+
+func TestCheckUnknownCallConditionDoesNotAuthorizeEitherGuardedArm(t *testing.T) {
+	result, err := engine.Check(`
+if provider() then
+    local value = 1
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Values) != 0 || len(result.Outcomes) != 0 {
+		t.Fatalf("unknown condition published guarded facts: values=%#v outcomes=%#v", result.Values, result.Outcomes)
+	}
+}
+
 func valuesByName(values []equation.Fact) map[string]string {
 	result := make(map[string]string, len(values))
 	for _, value := range values {

@@ -30,6 +30,10 @@ const (
 	pathInvalidationKernel      = "front/path-invalidation/v1"
 	indexMutationKernel         = "front/index-mutation/v1"
 	branchKernel                = "front/branch-relations/v1"
+	applyKernel                 = "front/apply/v1"
+	resultsKernel               = "front/call-results/v1"
+	genericForKernel            = "front/generic-for/v1"
+	selectKernel                = "front/channel-select/v1"
 	entryName                   = "entry"
 )
 
@@ -42,8 +46,14 @@ func CompileBody(source string) (equation.Artifact, error) {
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: parse body: %w", err)
 	}
-	bindings := bind.BindChunk(stmts, bind.Options{})
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	// channel is the ambient runtime module whose select form has a dedicated
+	// WIR operation.  A local binding still shadows it, so arbitrary
+	// user-authored .select methods remain ordinary calls.
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	// The sealed call-order view keeps recognized channel.select case calls
+	// inside the select operation rather than emitting independent calls before
+	// the select transaction.
+	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	if built == nil || built.Graph == nil {
 		return equation.Artifact{}, fmt.Errorf("front: build CFG")
 	}
@@ -59,27 +69,54 @@ type operation struct {
 	target         equation.Coordinate
 	family         string
 	allocationSite string
+	callResults    bool
 }
 
 func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
 	if body == nil || graph == nil {
 		return equation.Artifact{}, fmt.Errorf("front: nil WIR body")
 	}
-	if graphHasCycle(graph) {
-		return equation.Artifact{}, fmt.Errorf("front: cyclic CFG is outside the acyclic walking slice")
-	}
 	bodyID := bodyID(source)
 	entry := equation.EntryParameter{Body: bodyID, Name: entryName}
+	loopBindings, err := genericForBindings(body, graph)
+	if err != nil {
+		return equation.Artifact{}, err
+	}
+	if graphHasCycle(graph) && len(loopBindings) == 0 {
+		return equation.Artifact{}, fmt.Errorf("front: cyclic CFG is outside the generic-for walking slice")
+	}
+	loopBindingPoints := make(map[cfg.Point]bool)
+	for _, bindings := range loopBindings {
+		for _, binding := range bindings {
+			loopBindingPoints[binding.point] = true
+		}
+	}
 	operations := make([]operation, 0, body.Len())
 	entries := 0
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		switch instruction.Op {
-		case wir.OpEntry, wir.OpAssign, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch:
+		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpSelect:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 			if instruction.Op == wir.OpEntry {
 				entries++
 			}
+		case wir.OpAssign:
+			if instruction.A.Kind == wir.OperandNone {
+				if loopBindingPoints[instruction.Point] {
+					continue
+				}
+				return equation.Artifact{}, fmt.Errorf("front: assignment at point %d has no value source", instruction.Point)
+			}
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
+		case wir.OpIterate:
+			if instruction.Iter != wir.IterGeneric {
+				return equation.Artifact{}, fmt.Errorf("front: iterate at point %d has kind %d, want generic", instruction.Point, instruction.Iter)
+			}
+			if len(loopBindings[instruction.Point]) == 0 {
+				return equation.Artifact{}, fmt.Errorf("front: generic-for at point %d has no bound variables", instruction.Point)
+			}
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 		case wir.OpDynamicIndexWrite:
 			// A dynamic store has two inseparable semantic occurrences: the
 			// mutation itself and the invalidation of every path below the
@@ -94,6 +131,13 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			operations = append(operations,
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: site}, family: "allocation-template", allocationSite: site},
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, family: "object-materialization", allocationSite: site},
+			)
+		case wir.OpCall:
+			// Application and result materialization are an inseparable ordered
+			// pair: a partial application cannot expose an unowned result.
+			operations = append(operations,
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}},
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, callResults: true},
 			)
 		case wir.OpExit, wir.OpNoop:
 			// These WIR operations carry no transfer occurrence. They are CFG
@@ -239,6 +283,53 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
 			}
 			draft.Operands = operands
+		case instruction.Op == wir.OpCall:
+			if !operation.callResults {
+				operands, err := applyOperands(body, instruction)
+				if err != nil {
+					return equation.Artifact{}, fmt.Errorf("front: call %s: %w", operation.target.Name, err)
+				}
+				draft.Occurrence = occurrence("apply")
+				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+				draft.Operands = operands
+			} else {
+				apply := operations[index-1]
+				operands, err := callResultOperands(body, instruction, apply.target)
+				if err != nil {
+					return equation.Artifact{}, fmt.Errorf("front: call results %s: %w", operation.target.Name, err)
+				}
+				draft.Occurrence = occurrence("call-results")
+				draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+				draft.Operands = operands
+			}
+		case instruction.Op == wir.OpIterate:
+			operands, err := genericForOperands(body, instruction, loopBindings[instruction.Point])
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: generic-for %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("generic-for")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = operands
+		case instruction.Op == wir.OpSelect:
+			result, err := selectResultTerm(instruction.Dst)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: channel select %s: %w", operation.target.Name, err)
+			}
+			operands := make([]equation.Operand, 0, 2+instruction.List.Len)
+			operands = append(operands,
+				equation.Operand{Role: "result", Term: result},
+				equation.Operand{Role: "default", Term: equation.ClosedTerm([]byte("select/default/" + strconv.FormatBool(instruction.SelectDefault)))},
+			)
+			for caseIndex, candidate := range body.Operands(instruction.List) {
+				channel, err := selectCaseTerm(body, candidate)
+				if err != nil {
+					return equation.Artifact{}, fmt.Errorf("front: channel select %s case %d: %w", operation.target.Name, caseIndex, err)
+				}
+				operands = append(operands, equation.Operand{Role: fmt.Sprintf("case-%08d", caseIndex), Term: channel})
+			}
+			draft.Occurrence = occurrence("channel-select")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = operands
 		default:
 			return equation.Artifact{}, fmt.Errorf("%w: %d", ErrUnsupportedInstruction, instruction.Op)
 		}
@@ -275,6 +366,22 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	compiler, err = compiler.With("branch-relations", equation.BindExistingKernel(branchKernel))
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure branch compiler: %w", err)
+	}
+	compiler, err = compiler.With("apply", equation.BindExistingKernel(applyKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure apply compiler: %w", err)
+	}
+	compiler, err = compiler.With("call-results", equation.BindExistingKernel(resultsKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure call-results compiler: %w", err)
+	}
+	compiler, err = compiler.With("generic-for", equation.BindExistingKernel(genericForKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure generic-for compiler: %w", err)
+	}
+	compiler, err = compiler.With("channel-select", equation.BindExistingKernel(selectKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure channel-select compiler: %w", err)
 	}
 	artifact, err := compiler.Compile(equation.Source{Drafts: drafts})
 	if err != nil {
@@ -370,7 +477,7 @@ func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 // kernels; unknown kinds deliberately have no binding.
 func ContractID(kind string) (equation.ContentID, bool) {
 	switch kind {
-	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations":
+	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "generic-for", "channel-select":
 		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
 	default:
 		return equation.ContentID{}, false
@@ -397,9 +504,120 @@ func KernelID(kind string) (string, bool) {
 		return indexMutationKernel, true
 	case "branch-relations":
 		return branchKernel, true
+	case "apply":
+		return applyKernel, true
+	case "call-results":
+		return resultsKernel, true
+	case "generic-for":
+		return genericForKernel, true
+	case "channel-select":
+		return selectKernel, true
 	default:
 		return "", false
 	}
+}
+
+type loopBinding struct {
+	point   cfg.Point
+	term    equation.Term
+	display string
+}
+
+func genericForBindings(body *wir.Body, graph cfg.Graph) (map[cfg.Point][]loopBinding, error) {
+	bindings := make(map[cfg.Point][]loopBinding)
+	for index := 0; index < body.Len(); index++ {
+		header := body.Instr(index)
+		if header.Op != wir.OpIterate || header.Iter != wir.IterGeneric {
+			continue
+		}
+		var next cfg.Point
+		found := false
+		for _, successor := range graph.Successors(header.Point) {
+			condition, branchEdge := graph.EdgeCond(header.Point, successor)
+			if branchEdge && condition {
+				if found {
+					return nil, fmt.Errorf("front: generic-for at point %d has multiple true successors", header.Point)
+				}
+				next, found = successor, true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("front: generic-for at point %d has no true successor", header.Point)
+		}
+		seen := map[cfg.Point]bool{}
+		for {
+			if seen[next] {
+				return nil, fmt.Errorf("front: generic-for at point %d has cyclic binding path", header.Point)
+			}
+			seen[next] = true
+			instructions := body.PointInstructions(next)
+			if len(instructions) != 1 || instructions[0].Op != wir.OpAssign || instructions[0].A.Kind != wir.OperandNone {
+				break
+			}
+			term, display, err := pathTerm(body, instructions[0].Dst)
+			if err != nil {
+				return nil, fmt.Errorf("front: generic-for at point %d: %w", header.Point, err)
+			}
+			bindings[header.Point] = append(bindings[header.Point], loopBinding{point: next, term: term, display: display})
+			successors := graph.Successors(next)
+			if len(successors) != 1 {
+				break
+			}
+			next = successors[0]
+		}
+		if len(bindings[header.Point]) == 0 {
+			return nil, fmt.Errorf("front: generic-for at point %d has no binding assignments", header.Point)
+		}
+	}
+	return bindings, nil
+}
+
+func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []loopBinding) ([]equation.Operand, error) {
+	if instruction.Iter != wir.IterGeneric {
+		return nil, fmt.Errorf("iterator kind %d is not generic", instruction.Iter)
+	}
+	if instruction.ListSpread {
+		return nil, fmt.Errorf("open iterator result tail has no closed generic-for tuple")
+	}
+	sources := body.Operands(instruction.List)
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("iterator has no source values")
+	}
+	roles := []string{"iterator", "state", "control"}
+	operands := make([]equation.Operand, 0, len(roles)+2*len(bindings))
+	for index, role := range roles {
+		term := equation.ClosedTerm([]byte("scalar/nil"))
+		if index < len(sources) {
+			resolved, err := scalarTerm(body, sources[index])
+			if err != nil {
+				return nil, fmt.Errorf("%s source: %w", role, err)
+			}
+			term = resolved
+		}
+		operands = append(operands, equation.Operand{Role: role, Term: term})
+	}
+	for index, binding := range bindings {
+		name := fmt.Sprintf("%08d", index)
+		operands = append(operands,
+			equation.Operand{Role: "result-" + name, Term: binding.term},
+			equation.Operand{Role: "display-" + name, Term: equation.ClosedTerm([]byte(binding.display))},
+		)
+	}
+	return operands, nil
+}
+
+func selectResultTerm(operand wir.Operand) (equation.Term, error) {
+	if operand.Kind != wir.OperandTemp {
+		return equation.Term{}, fmt.Errorf("result is operand kind %d, want temporary", operand.Kind)
+	}
+	return equation.ClosedTerm([]byte("value/temp/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
+}
+
+func selectCaseTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
+	if operand.Kind != wir.OperandPath {
+		return equation.Term{}, fmt.Errorf("case is operand kind %d, want path", operand.Kind)
+	}
+	return scalarTerm(body, operand)
 }
 
 func pathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string, error) {
@@ -472,8 +690,141 @@ func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 		default:
 			return equation.Term{}, fmt.Errorf("unknown constant kind %d", constant.Kind)
 		}
+	case wir.OperandTemp:
+		return equation.ClosedTerm([]byte("temp/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
+	case wir.OperandVararg:
+		return equation.ClosedTerm([]byte("vararg")), nil
 	default:
 		return equation.Term{}, fmt.Errorf("operand kind %d is outside the scalar slice", operand.Kind)
+	}
+}
+
+// applyOperands preserves the complete source-side call shape. The kernel,
+// rather than this front, owns dispatch and outcome semantics.
+func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
+	operands := make([]equation.Operand, 0, 12+int(instruction.List.Len)+int(instruction.CallTypeArgs.Len))
+	if instruction.Call.Method != 0 {
+		if instruction.Call.Callee.Kind != wir.OperandNone || instruction.Call.Receiver.Kind == wir.OperandNone {
+			return nil, fmt.Errorf("malformed method call shape")
+		}
+		receiver, err := scalarTerm(body, instruction.Call.Receiver)
+		if err != nil {
+			return nil, fmt.Errorf("receiver: %w", err)
+		}
+		method := body.Const(instruction.Call.Method)
+		if method.Kind != wir.ConstString || method.Str == "" {
+			return nil, fmt.Errorf("malformed method name")
+		}
+		operands = append(operands,
+			equation.Operand{Role: "receiver", Term: receiver},
+			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
+		)
+	} else {
+		if instruction.Call.Callee.Kind == wir.OperandNone || instruction.Call.Receiver.Kind != wir.OperandNone {
+			return nil, fmt.Errorf("malformed direct call shape")
+		}
+		callee, err := scalarTerm(body, instruction.Call.Callee)
+		if err != nil {
+			return nil, fmt.Errorf("callee: %w", err)
+		}
+		operands = append(operands, equation.Operand{Role: "callee", Term: callee})
+	}
+	for index, argument := range body.Operands(instruction.List) {
+		term, err := scalarTerm(body, argument)
+		if err != nil {
+			return nil, fmt.Errorf("argument %d: %w", index, err)
+		}
+		operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
+	}
+	if instruction.Type != 0 {
+		typeName := body.TypeDisplay(instruction.Type)
+		if typeName == "" {
+			return nil, fmt.Errorf("empty callee type")
+		}
+		operands = append(operands, equation.Operand{Role: "callee-type", Term: equation.ClosedTerm([]byte("type/" + strconv.Quote(typeName)))})
+	}
+	for index, ref := range body.TypeRefs(instruction.CallTypeArgs) {
+		typeName := body.TypeDisplay(ref)
+		if typeName == "" {
+			return nil, fmt.Errorf("empty type argument %d", index)
+		}
+		operands = append(operands, equation.Operand{Role: indexedRole("type-argument", index), Term: equation.ClosedTerm([]byte("type/" + strconv.Quote(typeName)))})
+	}
+	if instruction.Check != 0 {
+		check, err := callCheckTerm(body.Check(instruction.Check))
+		if err != nil {
+			return nil, err
+		}
+		operands = append(operands, equation.Operand{Role: "check", Term: check})
+	}
+	operands = append(operands,
+		equation.Operand{Role: "context", Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
+		equation.Operand{Role: "list-spread", Term: boolTerm(instruction.ListSpread)},
+		equation.Operand{Role: "result-spread", Term: boolTerm(instruction.ResultSpread)},
+		equation.Operand{Role: "final", Term: boolTerm(instruction.CallFinal)},
+		equation.Operand{Role: "expanded", Term: boolTerm(instruction.CallExpanded)},
+		equation.Operand{Role: "adjusted", Term: boolTerm(instruction.CallAdjusted)},
+		equation.Operand{Role: "open-tail", Term: boolTerm(instruction.CallOpenTail)},
+		equation.Operand{Role: "condition-negated", Term: boolTerm(instruction.CallConditionNegated)},
+	)
+	return operands, nil
+}
+
+func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equation.Coordinate) ([]equation.Operand, error) {
+	results := body.Operands(instruction.Results)
+	targets := body.CallResultTargets(instruction.Point)
+	if len(targets) != len(results) {
+		return nil, fmt.Errorf("result target count %d, want %d", len(targets), len(results))
+	}
+	operands := make([]equation.Operand, 1, 1+len(results)*2)
+	operands[0] = equation.Operand{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))}
+	for index, result := range results {
+		term, err := scalarTerm(body, result)
+		if err != nil {
+			return nil, fmt.Errorf("result %d: %w", index, err)
+		}
+		target, err := callResultTargetTerm(targets[index])
+		if err != nil {
+			return nil, fmt.Errorf("result target %d: %w", index, err)
+		}
+		operands = append(operands,
+			equation.Operand{Role: indexedRole("result", index), Term: term},
+			equation.Operand{Role: indexedRole("target", index), Term: target},
+		)
+	}
+	return operands, nil
+}
+
+func indexedRole(prefix string, index int) string { return fmt.Sprintf("%s-%08d", prefix, index) }
+
+func boolTerm(value bool) equation.Term {
+	return equation.ClosedTerm([]byte("scalar/bool/" + strconv.FormatBool(value)))
+}
+
+func callCheckTerm(check wir.Check) (equation.Term, error) {
+	if check.Kind == wir.CheckNone {
+		return equation.Term{}, fmt.Errorf("empty normalized call check")
+	}
+	return equation.ClosedTerm([]byte(fmt.Sprintf("check/%d/path/%s/other/%s/type/%q/literal/%q/string/%q/len/%d/floor/%d/ceil/%d/has-ceil/%t/ceil-negated/%t/negated/%t/producer/%d/has-producer/%t",
+		check.Kind, check.Path.Key(), check.OtherPath.Key(), check.TypeName, fmt.Sprint(check.Literal), check.LiteralString, check.LenFloor, check.NumFloor, check.NumCeil, check.HasNumCeil, check.NumCeilNegated, check.Negated, check.ProducerPoint, check.HasProducerPoint))), nil
+}
+
+func callResultTargetTerm(target wir.CallResultTarget) (equation.Term, error) {
+	if target.Index < 0 || target.ResultIndex < 0 {
+		return equation.Term{}, fmt.Errorf("negative result index")
+	}
+	base := fmt.Sprintf("result-target/%d/index/%d/result/%d", target.Kind, target.Index, target.ResultIndex)
+	if !target.Path.IsEmpty() {
+		if target.Path.Key() == "" {
+			return equation.Term{}, fmt.Errorf("empty target path key")
+		}
+		base += "/path/" + string(target.Path.Key())
+	}
+	switch target.Kind {
+	case wir.CallResultTargetLocalAssignment, wir.CallResultTargetOrdinaryAssignment, wir.CallResultTargetReturn, wir.CallResultTargetExpression:
+		return equation.ClosedTerm([]byte(base)), nil
+	default:
+		return equation.Term{}, fmt.Errorf("unknown result target kind %d", target.Kind)
 	}
 }
 
