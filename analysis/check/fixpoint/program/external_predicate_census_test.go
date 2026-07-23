@@ -70,3 +70,28 @@ end
 return { f = f }
 `)
 }
+
+func TestExternalCensusLogicalPredicateRHSIsAValueProducer(t *testing.T) {
+	for _, src := range []string{
+		`
+local function key(prefix: string, suffix: string?): string
+	return prefix .. (suffix and (":" .. suffix) or "")
+end
+return { key = key }
+`,
+		`
+local function label(value: string?): string
+	return value or ("value:" .. value)
+end
+return { label = label }
+`,
+		`
+local function label(value: string?): string
+	return value and ("value:" .. value) or ""
+end
+return { label = label }
+`,
+	} {
+		runExternalPredicateCensusChunk(t, src)
+	}
+}

@@ -423,7 +423,12 @@ func validatePredicateExprScope(ctx *planCompileContext, ref factflow.ExprRef, a
 	}
 	active[ref] = true
 	sources := []factflow.ValueSource{op.Left()}
-	if validBinary {
+	// and/or certify only their controlling left operand. Their RHS is an
+	// independently CFG-owned value producer selected by the structural
+	// region; requiring it to be a predicate would reject ordinary composite
+	// values (for example a guarded concat) despite never using that value as
+	// branch evidence. Exact comparisons still require both scalar operands.
+	if validBinary && op.Op() != "and" && op.Op() != "or" {
 		sources = append(sources, op.Right())
 	}
 	for _, source := range sources {
