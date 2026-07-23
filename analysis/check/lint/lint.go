@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	"github.com/wippyai/go-lua/analysis/check/exporter"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/embedding"
@@ -264,11 +265,10 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		diagnostics, renderElapsed := projectDiagnostics(entry, result, preDiagnostics)
 		diagnostics = applyDiagnosticPolicy(diagnostics, input.DiagnosticRules, input.DiagnosticPolicy)
 		summary := manifest.New(entry.ModulePath)
-		// The current engine publishes runtime facts rather than a static export
-		// type. Any is an explicit, conservative module boundary until its
-		// manifest exporter is promoted; it still lets importlookup resolve the
-		// module without fabricating a precise signature.
-		summary.SetExport(typ.Any)
+		// Project only facts closed by this entry's equation evaluation. The
+		// exporter leaves opaque results and unknown members conservative, while
+		// preserving proven records, callable signatures, unions, and scalars.
+		summary.SetExport(exporter.Derive(result))
 		if err := summary.Validate(); err != nil {
 			return fmt.Errorf("lint: validate imported signatures: signature manifest %q: %w", summary.Path, err)
 		}

@@ -38,7 +38,7 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 	if len(consumer.Imports) != 1 || consumer.Imports[0].ModulePath != "app.provider" {
 		t.Fatalf("consumer imports = %#v", consumer.Imports)
 	}
-	if consumer.Imports[0].Manifest == nil || consumer.Imports[0].Export != typ.Any {
+	if consumer.Imports[0].Manifest == nil || consumer.Imports[0].Export == typ.Any {
 		t.Fatalf("module summary was not resolved through importlookup: %#v", consumer.Imports[0])
 	}
 	if len(result.Diagnostics) != 1 {
@@ -60,6 +60,29 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 	}
 	if consumer.Timings.ParseBindLowerNS <= 0 || consumer.Timings.EvaluateNS <= 0 || result.Timings.ProjectRenderNS <= 0 {
 		t.Fatalf("structured timings missing: entry=%#v project=%#v", consumer.Timings, result.Timings)
+	}
+}
+
+func TestCheckProjectResolvesAProviderExportInsteadOfAny(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "provider.lua", ModulePath: "provider", Source: `return { answer = 42 }`},
+		{Path: "main.lua", ModulePath: "main", Source: `local provider = require("provider")`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	var consumer EntryResult
+	for _, entry := range result.Entries {
+		if entry.Entry.ModulePath == "main" {
+			consumer = entry
+		}
+	}
+	if len(consumer.Imports) != 1 || consumer.Imports[0].Export == typ.Any {
+		t.Fatalf("consumer imports = %#v, want typed provider export", consumer.Imports)
+	}
+	record, ok := consumer.Imports[0].Export.(*typ.Record)
+	if !ok || record.GetField("answer") == nil || record.GetField("answer").Type.String() != "42" {
+		t.Fatalf("provider export = %T %[1]v, want answer: 42", consumer.Imports[0].Export)
 	}
 }
 

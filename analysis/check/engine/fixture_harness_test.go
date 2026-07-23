@@ -240,9 +240,9 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
 	} else {
 		input.DiagnosticPolicy = policy
 	}
-	// The legacy package list supplies host modules. The current lint adapter's
-	// conservative Any exports preserve import availability without claiming the
-	// legacy checker semantics or fabricating diagnostics.
+	// The legacy package list supplies host modules. Local fixture modules are
+	// resolved through lint's derived manifests, so each require observes the
+	// producer's closed static export rather than the former Any placeholder.
 	for _, pkg := range s.Suite.Packages {
 		m := manifest.New(pkg)
 		m.SetExport(typ.Any)

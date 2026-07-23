@@ -65,9 +65,18 @@ type branchPredicateWire struct {
 // names for this small entrypoint; outcomes and diagnostics retain their
 // equation-kernel candidate keys.
 type Result struct {
-	Artifact    equation.Artifact
-	Values      []equation.Fact
-	Outcomes    []equation.Fact
+	Artifact equation.Artifact
+	Values   []equation.Fact
+	Outcomes []equation.Fact
+	// ReturnCandidates retains the closed, equation-owned return facts before
+	// their source-display projection. Tables and callable values remain sealed
+	// here even when Outcomes renders them as "unknown". Module-boundary
+	// exporters consume this evidence without re-evaluating source.
+	ReturnCandidates []equation.Fact
+	// ValueFacts is the complete closed value partition. It lets module export
+	// projection retain static writes made to a returned table after allocation
+	// without consulting source syntax.
+	ValueFacts  []equation.Fact
 	Diagnostics []equation.Fact
 	// PublishedDiagnostics is the source-facing projection of diagnostic facts.
 	// Diagnostics remains the canonical equation publication; this companion
@@ -205,12 +214,25 @@ func Check(source string) (result Result, err error) {
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
+		ReturnCandidates:     cloneFacts(closure.Outcomes),
+		ValueFacts:           cloneFacts(closure.Values),
 		PublishedDiagnostics: published,
 		DiagnosticSpans:      diagnosticSpans,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
 	}
 	return result, nil
+}
+
+func cloneFacts(in []equation.Fact) []equation.Fact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]equation.Fact, len(in))
+	for index, fact := range in {
+		out[index] = cloneFact(fact)
+	}
+	return out
 }
 
 func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
