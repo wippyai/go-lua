@@ -234,7 +234,7 @@ func (c *checker) prepare(
 		return nil, errors.New("check: prepared parameter tuple has no finalized entry-seed authority")
 	}
 	operationPlan = operationPlan.WithBoundaryParamContracts(paramContracts)
-	signatureCalls := signatureCallOperations(config.Registry, bindings, built.Graph, facts, operationPlan, signatureProducer)
+	signatureCalls := signatureCallOperations(config.Registry, bindings, typeResolver, built.Graph, facts, operationPlan, signatureProducer)
 	genericForOperations := compileGenericForOperations(genericFors, typeResolver, func(expr ast.Expr) (pathdom.Path, bool) {
 		return pathexpr.Resolve(expr, bindings)
 	}, signatureCalls, func(point cfg.Point, ref effect.ParamRef) (int, typ.Type, bool) {

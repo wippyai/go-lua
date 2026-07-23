@@ -13,12 +13,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cfg.Graph, facts factflow.Facts, plan *operationplan.Plan, producer *effectlowering.SignatureProducer) map[cfg.Point]operationplan.SignatureCallOperation {
-	if reg == nil || bindings == nil || graph == nil || plan == nil || producer == nil {
+func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, types *typeresolve.Resolver, graph cfg.Graph, facts factflow.Facts, plan *operationplan.Plan, producer *effectlowering.SignatureProducer) map[cfg.Point]operationplan.SignatureCallOperation {
+	if reg == nil || bindings == nil || types == nil || graph == nil || plan == nil || producer == nil {
 		return nil
 	}
 	out := make(map[cfg.Point]operationplan.SignatureCallOperation, facts.CallSiteCount())
@@ -28,7 +29,9 @@ func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cf
 			continue
 		}
 		sig, ok := producer.SignatureForSite(transfer.NodeContext{Point: point}, site)
-		if !ok && (exactGuardedStringMethodReceiver(reg, bindings, graph, facts, point, site) || exactBoundaryStringMethodReceiver(reg, bindings, plan, site)) {
+		if !ok && (exactGuardedStringMethodReceiver(reg, bindings, graph, facts, point, site) ||
+			exactBoundaryStringMethodReceiver(reg, bindings, plan, site) ||
+			exactDeclaredStringMethodReceiver(reg, bindings, types, plan, site)) {
 			sig, ok = producer.LookupStringMethodSignature(site.MethodName())
 			if ok {
 				sig, ok = effectlowering.RefineStaticStringMethodSignature(reg, sig, site)
@@ -62,6 +65,33 @@ func signatureCallOperations(reg *axis.Registry, bindings *bind.Result, graph cf
 		out[point] = op
 	}
 	return out
+}
+
+// exactDeclaredStringMethodReceiver extends the canonical method-signature
+// surface to an explicitly annotated local root. This is intentionally
+// independent of solve-time value state: the annotation is the checked
+// contract for every assignment to the local. Descendants, aliases, optional
+// types, and missing annotations remain outside the signature surface.
+func exactDeclaredStringMethodReceiver(reg *axis.Registry, bindings *bind.Result, types *typeresolve.Resolver, plan *operationplan.Plan, site factflow.CallSiteView) bool {
+	if reg == nil || bindings == nil || types == nil || plan == nil {
+		return false
+	}
+	receiver, ok := exactStringMethodReceiverRoot(site)
+	if !ok {
+		return false
+	}
+	if _, boundary := plan.BoundaryParamIndex(receiver.Symbol); boundary {
+		return false
+	}
+	if _, capture := plan.BoundaryCaptureIndex(receiver.Symbol); capture {
+		return false
+	}
+	annotation, ok := bindings.SymbolTypeAnnotation(receiver.Symbol)
+	if !ok || annotation == nil {
+		return false
+	}
+	declared, ok := types.Type(annotation)
+	return ok && typ.TypeEquals(declared, typ.String)
 }
 
 // exactBoundaryStringMethodReceiver grants canonical string-method lookup only

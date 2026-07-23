@@ -81,3 +81,37 @@ end
 		t.Fatalf("canonical callable-iterator plan did not compile: %v", err)
 	}
 }
+
+func TestGenericForAnnotatedLocalMethodIteratorComesFromCanonicalSignatureCallDescriptor(t *testing.T) {
+	stmts := parseChunk(t, `
+local s: string = "hello world"
+for word in s:gmatch("%a+") do
+	break
+end
+`)
+	prepared, err := PrepareChunk(stmts, Config{
+		Registry: standard.Registry(), Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for point := cfg.Point(0); int(point) < prepared.operationPlan.PointCount(); point++ {
+		generic, ok := prepared.operationPlan.GenericForOperation(point)
+		if !ok {
+			continue
+		}
+		source, ok := generic.ProtocolSource(0)
+		if !ok || !source.HasCallPoint {
+			t.Fatalf("generic-for point %d has no exact call producer", point)
+		}
+		call, ok := prepared.operationPlan.SignatureCallOperation(source.CallPoint)
+		if !ok {
+			t.Fatalf("generic-for point %d source call %d has no canonical descriptor", point, source.CallPoint)
+		}
+		if _, ok := effectlowering.CallableIteratorSignature(call.Signature()); !ok || !generic.CallableIterator() {
+			t.Fatalf("generic-for callable iterator = %t/%t, want canonical function-result descriptor", ok, generic.CallableIterator())
+		}
+		return
+	}
+	t.Fatal("generic-for operation missing")
+}

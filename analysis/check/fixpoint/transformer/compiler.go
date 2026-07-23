@@ -867,27 +867,33 @@ func lowerGenericForBinding(ctx planCompileContext, point cfg.Point, publish boo
 		}
 		iterator, collectionIterator := op.Iterator()
 		if !collectionIterator {
-			if !op.CallableIterator() {
-				return symbolicGenericBinding{}, fmt.Errorf("generic-for: canonical signature iterator missing")
-			}
-			call, sealed := ctx.plan.SignatureCallOperation(source.CallPoint)
-			if !sealed {
-				return symbolicGenericBinding{}, fmt.Errorf("generic-for: callable iterator signature missing")
-			}
-			if _, callable := effectlowering.CallableIteratorSignature(call.Signature()); !callable {
-				return symbolicGenericBinding{}, fmt.Errorf("generic-for: callable iterator signature drifted")
+			// A sealed callable signature, when the operation was admitted with
+			// one, remains an exact consistency obligation.  An unclassified
+			// generic-for call has no separate transfer: it is represented by the
+			// canonical protocol-result term below, whose evaluator either projects
+			// the function result from the existing value carrier or takes its
+			// explicit no-write fallback.
+			if op.CallableIterator() {
+				call, sealed := ctx.plan.SignatureCallOperation(source.CallPoint)
+				if !sealed {
+					return symbolicGenericBinding{}, fmt.Errorf("generic-for: callable iterator signature missing")
+				}
+				if _, callable := effectlowering.CallableIteratorSignature(call.Signature()); !callable {
+					return symbolicGenericBinding{}, fmt.Errorf("generic-for: callable iterator signature drifted")
+				}
 			}
 			ref, hasExpr := site.Expr()
 			terms := ctx.expressions[ref]
-			if !hasExpr || len(terms) == 0 || terms[0] == 0 {
-				return symbolicGenericBinding{}, fmt.Errorf("generic-for: callable iterator result term missing")
-			}
 			fallback := ctx.locals[op.Target()]
 			if fallback == 0 {
 				fallback = ctx.builder.Arena().Constant(product.Bottom(ctx.builder.Arena().reg))
 			}
+			iteratorTerm := fallback
+			if hasExpr && len(terms) != 0 && terms[0] != 0 {
+				iteratorTerm = terms[0]
+			}
 			nilTerm := ctx.builder.Arena().Constant(typevalue.Nil(ctx.builder.Arena().reg))
-			projection := ctx.builder.Arena().genericForResultValue(op.VariableIndex(), terms[0], nilTerm, nilTerm, fallback)
+			projection := ctx.builder.Arena().genericForResultValue(op.VariableIndex(), iteratorTerm, nilTerm, nilTerm, fallback)
 			if projection == 0 {
 				return symbolicGenericBinding{}, fmt.Errorf("generic-for: callable iterator projection unsupported")
 			}
@@ -895,7 +901,7 @@ func lowerGenericForBinding(ctx planCompileContext, point cfg.Point, publish boo
 			if err != nil {
 				return symbolicGenericBinding{}, err
 			}
-			binding := symbolicGenericBinding{Transaction: transaction, Container: terms[0], Projection: projection, FirstTarget: op.FirstTarget(), Identity: identityPublication}
+			binding := symbolicGenericBinding{Transaction: transaction, Container: iteratorTerm, Projection: projection, FirstTarget: op.FirstTarget(), Identity: identityPublication}
 			if publish {
 				ctx.locals[op.Target()] = projection
 				ctx.genericBindings[op.Target()] = binding
