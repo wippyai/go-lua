@@ -208,9 +208,8 @@ func TestMaterializeUnionNotEqualToPrimitive(t *testing.T) {
 func TestMaterializeUnionString(t *testing.T) {
 	u := MaterializeUnion([]Type{Number, String}).(*Union)
 
-	s := u.String()
-	if s == "" {
-		t.Error("union String() should not be empty")
+	if got, want := u.String(), "number | string"; got != want {
+		t.Errorf("union String() = %q, want %q", got, want)
 	}
 }
 

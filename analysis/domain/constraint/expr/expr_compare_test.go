@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -139,9 +140,7 @@ func TestNeExpr(t *testing.T) {
 
 	cmp := NeExpr(left, right)
 
-	if cmp.Rel != ExprNe {
-		t.Errorf("NeExpr().Rel = %v, want ExprNe", cmp.Rel)
-	}
+	assertExprCompare(t, "NeExpr", cmp, ExprNe, left, right)
 }
 
 func TestLtExpr(t *testing.T) {
@@ -150,9 +149,7 @@ func TestLtExpr(t *testing.T) {
 
 	cmp := LtExpr(left, right)
 
-	if cmp.Rel != ExprLt {
-		t.Errorf("LtExpr().Rel = %v, want ExprLt", cmp.Rel)
-	}
+	assertExprCompare(t, "LtExpr", cmp, ExprLt, left, right)
 }
 
 func TestLeExpr(t *testing.T) {
@@ -161,9 +158,7 @@ func TestLeExpr(t *testing.T) {
 
 	cmp := LeExpr(left, right)
 
-	if cmp.Rel != ExprLe {
-		t.Errorf("LeExpr().Rel = %v, want ExprLe", cmp.Rel)
-	}
+	assertExprCompare(t, "LeExpr", cmp, ExprLe, left, right)
 }
 
 func TestGtExpr(t *testing.T) {
@@ -172,9 +167,7 @@ func TestGtExpr(t *testing.T) {
 
 	cmp := GtExpr(left, right)
 
-	if cmp.Rel != ExprGt {
-		t.Errorf("GtExpr().Rel = %v, want ExprGt", cmp.Rel)
-	}
+	assertExprCompare(t, "GtExpr", cmp, ExprGt, left, right)
 }
 
 func TestGeExpr(t *testing.T) {
@@ -183,9 +176,7 @@ func TestGeExpr(t *testing.T) {
 
 	cmp := GeExpr(left, right)
 
-	if cmp.Rel != ExprGe {
-		t.Errorf("GeExpr().Rel = %v, want ExprGe", cmp.Rel)
-	}
+	assertExprCompare(t, "GeExpr", cmp, ExprGe, left, right)
 }
 
 func TestExprCompare_FactoryRoundTrip(t *testing.T) {
@@ -237,19 +228,29 @@ func TestExprCompare_Equals_NilExprs(t *testing.T) {
 }
 
 func TestExprCompare_ComplexExprs(t *testing.T) {
-	// Test with more complex expression types using BinOp
 	add := Add(Var{Name: "x"}, Const{Value: 1})
 	sub := Sub(Var{Name: "y"}, Const{Value: 2})
 
 	cmp := LtExpr(add, sub)
 
-	if cmp.Rel != ExprLt {
-		t.Error("Complex expr comparison should preserve relation")
+	assertExprCompare(t, "LtExpr(complex)", cmp, ExprLt,
+		BinOp{Op: OpAdd, Left: Var{Name: "x"}, Right: Const{Value: 1}},
+		BinOp{Op: OpSub, Left: Var{Name: "y"}, Right: Const{Value: 2}},
+	)
+	if got, want := cmp.String(), "((x + 1) < (y - 2))"; got != want {
+		t.Fatalf("LtExpr(complex).String() = %q, want %q", got, want)
 	}
+}
 
-	// String should still work
-	s := cmp.String()
-	if s == "" {
-		t.Error("Complex expr comparison String() should not be empty")
+func assertExprCompare(t *testing.T, factory string, got ExprCompare, wantRel ExprRel, wantLeft, wantRight Expr) {
+	t.Helper()
+	if got.Rel != wantRel {
+		t.Errorf("%s().Rel = %v, want %v", factory, got.Rel, wantRel)
+	}
+	if !reflect.DeepEqual(got.Left, wantLeft) {
+		t.Errorf("%s().Left = %#v, want %#v", factory, got.Left, wantLeft)
+	}
+	if !reflect.DeepEqual(got.Right, wantRight) {
+		t.Errorf("%s().Right = %#v, want %#v", factory, got.Right, wantRight)
 	}
 }

@@ -19,15 +19,26 @@ end
 	if err != nil {
 		t.Fatalf("CompileBody: %v", err)
 	}
-	if artifact.CanonicalBytes() == nil {
-		t.Fatal("CompileBody returned a non-canonical artifact")
+	byKind := equationsByKind(artifact)
+	if len(byKind["entry"]) != 1 || operands(byKind["entry"][0])["entry"] != "entry" {
+		t.Fatalf("entry lowering = %#v", byKind["entry"])
 	}
-	got := make(map[string]int)
-	for _, equation := range artifact.Equations {
-		got[equation.Occurrence.Kind]++
+	if len(byKind["branch-relations"]) != 1 || operands(byKind["branch-relations"][0])["condition"] != "scalar/bool/true" {
+		t.Fatalf("branch lowering = %#v", byKind["branch-relations"])
 	}
-	if got["entry"] != 1 || got["environment-write"] != 3 || got["branch-relations"] != 1 {
-		t.Fatalf("lowered occurrence kinds = %#v", got)
+	writes := make(map[string]equation.Equation)
+	for _, write := range byKind["environment-write"] {
+		writes[operands(write)["display"]] = write
+	}
+	if len(writes) != 3 {
+		t.Fatalf("assignment writes = %#v, want first, second, and third", writes)
+	}
+	first, second, third := operands(writes["first"]), operands(writes["second"]), operands(writes["third"])
+	if first["value"] != "scalar/number/1" || first["absence"] != "front/absence/error" || second["value"] != first["target"] || third["value"] != second["target"] {
+		t.Fatalf("assignment value flow = first=%#v second=%#v third=%#v", first, second, third)
+	}
+	if guards := writes["third"].Guards; len(guards) != 1 || !strings.HasSuffix(string(guards[0].Encoding), "/true") {
+		t.Fatalf("branch-local third write guards = %#v", guards)
 	}
 }
 
@@ -133,14 +144,43 @@ end`,
 }
 
 func TestCompileBodyLowersNumericForBoundsAndBinding(t *testing.T) {
-	for name, source := range map[string]string{
-		"implicit step":   `for i = 1, 3 do local value = i end`,
-		"explicit step":   `for i = 1, 6, 2 do local value = i end`,
-		"computed bounds": `local limit = 3; for i = 1, limit do local value = i end`,
+	for name, test := range map[string]struct {
+		source       string
+		wantState    string
+		wantControl  string
+		wantPrewrite bool
+	}{
+		"implicit step": {source: `for i = 1, 3 do local value = i end`, wantState: "scalar/number/3", wantControl: "scalar/number/1"},
+		"explicit step": {source: `for i = 1, 6, 2 do local value = i end`, wantState: "scalar/number/6", wantControl: "scalar/number/2"},
+		"computed bounds": {source: `local limit = 3; for i = 1, limit do local value = i end`, wantControl: "scalar/number/1", wantPrewrite: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := front.CompileBody(source); err != nil {
+			artifact, err := front.CompileBody(test.source)
+			if err != nil {
 				t.Fatalf("CompileBody: %v", err)
+			}
+			byKind := equationsByKind(artifact)
+			if len(byKind["generic-for"]) != 1 {
+				t.Fatalf("numeric for lowering = %#v", byKind["generic-for"])
+			}
+			loop := operands(byKind["generic-for"][0])
+			if loop["iterator"] != "scalar/number/1" || loop["control"] != test.wantControl || loop["display-00000000"] != "i" || !strings.HasPrefix(loop["result-00000000"], "path/") {
+				t.Fatalf("numeric for operands = %#v", loop)
+			}
+			if test.wantPrewrite {
+				if len(byKind["environment-write"]) != 2 {
+					t.Fatalf("computed numeric-for writes = %#v", byKind["environment-write"])
+				}
+				limit := operands(byKind["environment-write"][0])
+				if limit["display"] != "limit" || limit["value"] != "scalar/number/3" || loop["state"] != limit["target"] {
+					t.Fatalf("computed bound lowering = loop=%#v limit=%#v", loop, limit)
+				}
+			} else if loop["state"] != test.wantState {
+				t.Fatalf("numeric for state = %q, want %q", loop["state"], test.wantState)
+			}
+			value := operands(byKind["environment-write"][len(byKind["environment-write"])-1])
+			if value["display"] != "value" || value["value"] != loop["result-00000000"] {
+				t.Fatalf("numeric for binding = loop=%#v write=%#v", loop, value)
 			}
 		})
 	}
@@ -283,9 +323,13 @@ func TestCompileBodyLowersCallInsteadOfRejectingIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileBody: %v", err)
 	}
-	got := occurrenceCounts(artifact)
-	if got["apply"] != 1 || got["call-results"] != 1 {
-		t.Fatalf("call occurrence kinds = %#v", got)
+	byKind := equationsByKind(artifact)
+	if len(byKind["apply"]) != 1 || len(byKind["call-results"]) != 1 || len(byKind["environment-write"]) != 1 {
+		t.Fatalf("call lowering = %#v", byKind)
+	}
+	apply, results, write := operands(byKind["apply"][0]), operands(byKind["call-results"][0]), operands(byKind["environment-write"][0])
+	if !strings.HasPrefix(apply["callee"], "path/") || apply["context"] != "call-context/2" || apply["expanded"] != "scalar/bool/true" || results["result-00000000"] != "temp/0" || results["target-00000000"] == "" || write["display"] != "value" || write["value"] != results["result-00000000"] {
+		t.Fatalf("call result carrier lowering = apply=%#v results=%#v write=%#v", apply, results, write)
 	}
 }
 
@@ -406,17 +450,25 @@ local object = { seed, enabled = false, child = { answer = 42 } }
 	if err != nil {
 		t.Fatalf("CompileBody: %v", err)
 	}
-	got := occurrenceCounts(artifact)
-	if got["allocation-template"] != 2 || got["object-materialization"] != 2 {
-		t.Fatalf("allocation occurrence kinds = %#v", got)
+	byKind := equationsByKind(artifact)
+	if len(byKind["allocation-template"]) != 2 || len(byKind["object-materialization"]) != 2 {
+		t.Fatalf("allocation lowering = %#v", byKind)
 	}
-	for _, equation := range artifact.Equations {
-		if equation.Occurrence.Kind != "object-materialization" {
-			continue
+	var outerTemplate, outerMaterialization map[string]string
+	for _, lowered := range byKind["allocation-template"] {
+		roles := operands(lowered)
+		if roles["value-00000001"] == "scalar/bool/false" {
+			outerTemplate = roles
 		}
-		if operand(equation.Operands, "site") == nil || operand(equation.Operands, "result") == nil {
-			t.Fatalf("object materialization omitted exact site/result: %#v", equation.Operands)
+	}
+	for _, lowered := range byKind["object-materialization"] {
+		roles := operands(lowered)
+		if roles["member-00000001"] == "member/.enabled/scalar/bool/false" {
+			outerMaterialization = roles
 		}
+	}
+	if outerTemplate == nil || outerMaterialization == nil || outerTemplate["site"] != outerMaterialization["site"] || outerTemplate["result"] != outerMaterialization["result"] || outerMaterialization["list-floor"] != "list-floor/1" || outerMaterialization["member-00000000"] == "" || outerMaterialization["member-00000002"] == "" || outerMaterialization["member-00000003"] != "member/.child.answer/scalar/number/42" {
+		t.Fatalf("complete outer table graph = template=%#v materialization=%#v", outerTemplate, outerMaterialization)
 	}
 }
 
@@ -647,28 +699,58 @@ func TestCompileBodyKeepsUntargetedCallResultsAsWholeTuples(t *testing.T) {
 }
 
 func TestCompileBodyAdmitsTemporaryAssignmentDestinations(t *testing.T) {
-	for name, source := range map[string]string{
-		"call member chain":    `local result = provider().field`,
-		"nested dynamic read":  `local key = "field"; local result = record[key].field`,
-		"logical member chain": `local result = (primary or fallback).field`,
+	for name, test := range map[string]struct {
+		source string
+		reads  int
+	}{
+		"call member chain":    {source: `local result = provider().field`, reads: 1},
+		"nested dynamic read":  {source: `local key = "field"; local result = record[key].field`, reads: 2},
+		"logical member chain": {source: `local result = (primary or fallback).field`, reads: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := front.CompileBody(source); err != nil {
+			artifact, err := front.CompileBody(test.source)
+			if err != nil {
 				t.Fatalf("CompileBody: %v", err)
+			}
+			reads := equationsByKind(artifact)["dynamic-index-read"]
+			if len(reads) != test.reads {
+				t.Fatalf("temporary destination reads = %#v, want %d", reads, test.reads)
+			}
+			last := operands(reads[len(reads)-1])
+			if !strings.HasPrefix(last["target"], "path/") || last["key"] != `scalar/string/"field"` {
+				t.Fatalf("temporary destination lowering = %#v", last)
+			}
+			if name == "call member chain" && last["container"] != "temp/0" {
+				t.Fatalf("call member did not index its call-result temporary: %#v", last)
+			}
+			if name == "logical member chain" && last["container"] != "temp/0" {
+				t.Fatalf("logical member did not index its expression temporary: %#v", last)
 			}
 		})
 	}
 }
 
 func TestCompileBodyAdmitsUnknownDynamicIndexWriteContainers(t *testing.T) {
-	for name, source := range map[string]string{
-		"call result":         `factory()["key"] = 1`,
-		"call member":         `factory().items["key"] = 1`,
-		"dynamic then member": `factory()["key"].field = 1`,
+	for name, test := range map[string]struct {
+		source string
+		key    string
+	}{
+		"call result":         {source: `factory()["key"] = 1`, key: `scalar/string/"key"`},
+		"call member":         {source: `factory().items["key"] = 1`, key: `scalar/string/"key"`},
+		"dynamic then member": {source: `factory()["key"].field = 1`, key: `scalar/string/"field"`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := front.CompileBody(source); err != nil {
+			artifact, err := front.CompileBody(test.source)
+			if err != nil {
 				t.Fatalf("CompileBody: %v", err)
+			}
+			byKind := equationsByKind(artifact)
+			if len(byKind["path-invalidation"]) != 1 || len(byKind["index-mutation"]) != 1 {
+				t.Fatalf("unknown container write lowering = %#v", byKind)
+			}
+			invalidation, mutation := operands(byKind["path-invalidation"][0]), operands(byKind["index-mutation"][0])
+			if invalidation["container"] != "scalar/top" || invalidation["key"] != test.key || invalidation["suffix"] != "suffix/" || mutation["container"] != invalidation["container"] || mutation["key"] != invalidation["key"] || mutation["suffix"] != invalidation["suffix"] || mutation["value"] != "scalar/number/1" {
+				t.Fatalf("unknown container write operands = invalidation=%#v mutation=%#v", invalidation, mutation)
 			}
 		})
 	}

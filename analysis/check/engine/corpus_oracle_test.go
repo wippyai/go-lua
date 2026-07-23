@@ -17,12 +17,12 @@ import (
 
 const corpusFileTimeout = 5 * time.Second
 
-// TestNewOracleCorpus is deliberately an availability probe, not a legacy
-// oracle. Fixture source is the only input: manifests, expected diagnostics,
-// and every other legacy expectation remain unread.
-func TestNewOracleCorpus(t *testing.T) {
-	if os.Getenv("NEW_ORACLE") != "1" {
-		t.Skip("set NEW_ORACLE=1 to sweep the legacy fixture source corpus")
+// TestCorpusSmoke is deliberately an availability probe, not an oracle.
+// Fixture source is the only input: manifests, expected diagnostics, and every
+// other oracle assertion remain unread.
+func TestCorpusSmoke(t *testing.T) {
+	if os.Getenv("CORPUS_SMOKE") != "1" {
+		t.Skip("set CORPUS_SMOKE=1 to sweep the legacy fixture source corpus")
 	}
 	root := corpusRepositoryRoot(t)
 	fixtures := filepath.Join(root, "__legacy", "harness_data", "fixtures")
@@ -69,16 +69,16 @@ func TestNewOracleCorpus(t *testing.T) {
 
 	sort.Slice(failures, func(i, j int) bool { return failures[i].file < failures[j].file })
 	for _, failure := range failures {
-		t.Logf("NEW_ORACLE failure %s -> %s", failure.file, failure.class)
-		if os.Getenv("NEW_ORACLE_FULL") == "1" && failure.err != nil {
-			t.Logf("NEW_ORACLE detail %s -> %s", failure.file, failure.err)
+		t.Logf("CORPUS_SMOKE failure %s -> %s", failure.file, failure.class)
+		if os.Getenv("CORPUS_SMOKE_FULL") == "1" && failure.err != nil {
+			t.Logf("CORPUS_SMOKE detail %s -> %s", failure.file, failure.err)
 		}
 	}
 	p50, p95, max := corpusPercentiles(timings)
-	t.Logf("NEW_ORACLE total=%d completed=%d named_failures=%d", len(files), completed, len(failures))
-	t.Logf("NEW_ORACLE WALL TIME total=%s p50=%s p95=%s max=%s", time.Since(started), p50, p95, max)
+	t.Logf("CORPUS_SMOKE total=%d completed=%d named_failures=%d", len(files), completed, len(failures))
+	t.Logf("CORPUS_SMOKE WALL TIME total=%s p50=%s p95=%s max=%s", time.Since(started), p50, p95, max)
 	if maxDuration > 2*time.Second {
-		t.Logf("NEW_ORACLE PERF file=%s duration=%s exceeds=2s", maxFile, maxDuration)
+		t.Logf("CORPUS_SMOKE PERF file=%s duration=%s exceeds=2s", maxFile, maxDuration)
 	}
 }
 

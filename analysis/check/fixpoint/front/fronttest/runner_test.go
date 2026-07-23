@@ -47,13 +47,7 @@ func TestProductionRunnerExecutesAdversarialLuaSemanticsCases(t *testing.T) {
 	if len(adversarial) < 16 {
 		t.Fatalf("adversarial Lua semantics cases = %d, want at least 16", len(adversarial))
 	}
-	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(adversarial)
-	if err != nil {
-		t.Fatalf("adversarial Lua semantics production harness: %v", err)
-	}
-	if len(reports) != len(adversarial) {
-		t.Fatalf("adversarial Lua semantics reports = %d, want %d", len(reports), len(adversarial))
-	}
+	assertProductionCaseResults(t, adversarial)
 }
 
 func TestProductionRunnerExecutesExpressionCases(t *testing.T) {
@@ -66,13 +60,7 @@ func TestProductionRunnerExecutesExpressionCases(t *testing.T) {
 	if len(expressions) < 4 {
 		t.Fatalf("expression harness cases = %d, want at least 4", len(expressions))
 	}
-	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(expressions)
-	if err != nil {
-		t.Fatalf("expression production harness: %v", err)
-	}
-	if len(reports) != len(expressions) {
-		t.Fatalf("expression reports = %d, want %d", len(reports), len(expressions))
-	}
+	assertProductionCaseResults(t, expressions)
 }
 
 func TestProductionRunnerExecutesClaimCases(t *testing.T) {
@@ -85,13 +73,7 @@ func TestProductionRunnerExecutesClaimCases(t *testing.T) {
 	if len(claims) < 4 {
 		t.Fatalf("claim harness cases = %d, want at least 4", len(claims))
 	}
-	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(claims)
-	if err != nil {
-		t.Fatalf("claim production harness: %v", err)
-	}
-	if len(reports) != len(claims) {
-		t.Fatalf("claim reports = %d, want %d", len(reports), len(claims))
-	}
+	assertProductionCaseResults(t, claims)
 }
 
 func TestProductionRunnerExecutesAdjustedReturnAndMemberWriteCases(t *testing.T) {
@@ -110,13 +92,7 @@ func TestProductionRunnerExecutesAdjustedReturnAndMemberWriteCases(t *testing.T)
 	if len(selected) != len(wanted) {
 		t.Fatalf("adjusted return/member-write harness cases = %d, want %d", len(selected), len(wanted))
 	}
-	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(selected)
-	if err != nil {
-		t.Fatalf("adjusted return/member-write production harness: %v", err)
-	}
-	if len(reports) != len(selected) {
-		t.Fatalf("adjusted return/member-write reports = %d, want %d", len(reports), len(selected))
-	}
+	assertProductionCaseResults(t, selected)
 }
 
 func TestProductionRunnerExecutesAllocationCompletedWriteCases(t *testing.T) {
@@ -129,9 +105,7 @@ func TestProductionRunnerExecutesAllocationCompletedWriteCases(t *testing.T) {
 	if len(allocations) != 4 {
 		t.Fatalf("allocation completed-write harness cases = %d, want 4", len(allocations))
 	}
-	if _, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(allocations); err != nil {
-		t.Fatalf("allocation completed-write production harness: %v", err)
-	}
+	assertProductionCaseResults(t, allocations)
 }
 
 func TestProductionRunnerExecutesAssignmentCases(t *testing.T) {
@@ -144,12 +118,28 @@ func TestProductionRunnerExecutesAssignmentCases(t *testing.T) {
 	if len(assignments) < 8 {
 		t.Fatalf("assignment harness cases = %d, want at least 8", len(assignments))
 	}
-	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(assignments)
-	if err != nil {
-		t.Fatalf("assignment production harness: %v", err)
-	}
-	if len(reports) != len(assignments) {
-		t.Fatalf("assignment reports = %d, want %d", len(reports), len(assignments))
+	assertProductionCaseResults(t, assignments)
+}
+
+// assertProductionCaseResults verifies every case's language-semantic
+// contract, rather than merely that the batch produced one report per input.
+func assertProductionCaseResults(t *testing.T, cases []Case) {
+	t.Helper()
+	runner := Runner{Front: ProductionFront, Engine: ProductionEngine}
+	for _, test := range cases {
+		t.Run(test.Name, func(t *testing.T) {
+			report, err := runner.Run(test)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := Expectation{
+				Published:   canonicalPublished(test.Expect.Published),
+				Diagnostics: canonicalDiagnostics(test.Expect.Diagnostics),
+			}
+			if !samePublished(want.Published, report.Actual.Published) || !sameDiagnostics(want.Diagnostics, report.Actual.Diagnostics) {
+				t.Fatalf("production output = %#v, want published=%#v diagnostics=%#v", report.Actual, want.Published, want.Diagnostics)
+			}
+		})
 	}
 }
 

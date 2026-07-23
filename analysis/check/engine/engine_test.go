@@ -168,6 +168,11 @@ local object = { first = 1, child = { second = 2 } }
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
+	kinds := make([]string, len(result.Artifact.Equations))
+	for index, operation := range result.Artifact.Equations {
+		kinds[index] = operation.Occurrence.Kind
+	}
+	t.Logf("allocation kinds=%#v values=%#v outcomes=%#v diagnostics=%#v transactions=%d", kinds, result.Values, result.Outcomes, result.Diagnostics, result.Transactions)
 	if result.Transactions != 10 { // entry plus constructor topology, result, and closed-entry writes
 		t.Fatalf("transactions = %d, want complete allocation writes", result.Transactions)
 	}
@@ -429,6 +434,7 @@ return answer
 	if err != nil {
 		t.Fatalf("Check whole file: %v", err)
 	}
+	t.Logf("whole-module values=%#v outcomes=%#v diagnostics=%#v transactions=%d", result.Values, result.Outcomes, result.Diagnostics, result.Transactions)
 	if len(result.Artifact.Equations) == 0 {
 		t.Fatal("Check whole file returned an empty artifact")
 	}

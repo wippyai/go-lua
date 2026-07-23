@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -22,15 +23,60 @@ func TestRecursiveBasic(t *testing.T) {
 		t.Errorf("Name: got %q, want %q", rec.Name, "Node")
 	}
 
-	// Body should be a record
-	body := rec.Body
-	if body == nil {
-		t.Fatal("Body should not be nil")
-	}
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
+}
 
-	if body.Kind() != kind.Record {
-		t.Errorf("Body kind: got %v, want Record", body.Kind())
+func assertRecursiveRecord(t *testing.T, rec *Recursive, wantName string, wantFields []Field) {
+	t.Helper()
+	if got, want := rec.Name, wantName; got != want {
+		t.Fatalf("recursive name = %q, want %q", got, want)
 	}
+	if got, want := rec.String(), fmt.Sprintf("%s#%d", wantName, rec.ID); got != want {
+		t.Fatalf("recursive String() = %q, want %q", got, want)
+	}
+	body, ok := rec.Body.(*Record)
+	if !ok {
+		t.Fatalf("recursive body = %T %[1]v, want record", rec.Body)
+	}
+	if got, want := body.String(), recursiveRecordString(wantFields); got != want {
+		t.Fatalf("recursive body String() = %q, want %q", got, want)
+	}
+	if len(body.Fields) != len(wantFields) {
+		t.Fatalf("recursive body fields = %#v, want %#v", body.Fields, wantFields)
+	}
+	for i, want := range wantFields {
+		got := body.Fields[i]
+		if got.Name != want.Name || got.Type != want.Type || got.Optional != want.Optional || got.Readonly != want.Readonly {
+			t.Fatalf("recursive body field[%d] = %#v, want %#v", i, got, want)
+		}
+	}
+}
+
+func recursiveRecordString(fields []Field) string {
+	parts := make([]string, len(fields))
+	for i, field := range fields {
+		optional := ""
+		if field.Optional {
+			optional = "?"
+		}
+		readonly := ""
+		if field.Readonly {
+			readonly = "readonly "
+		}
+		parts[i] = fmt.Sprintf("%s%s%s: %s", readonly, field.Name, optional, field.Type.String())
+	}
+	return "{" + joinRecursiveFields(parts) + "}"
+}
+
+func joinRecursiveFields(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	joined := parts[0]
+	for _, part := range parts[1:] {
+		joined += ", " + part
+	}
+	return joined
 }
 
 // TestRecursiveEqualsSelf tests that a recursive type equals itself (no infinite loop).
@@ -102,8 +148,10 @@ func TestRecursiveHashNoPanic(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	// Should not panic
-	_ = rec.Hash()
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
+	if got, want := rec.Hash(), rec.Hash(); got != want {
+		t.Fatalf("recursive hash = %d, want stable %d", got, want)
+	}
 }
 
 func TestRecursiveSetBodyInvalidatesCachedHash(t *testing.T) {
@@ -124,15 +172,10 @@ func TestRecursiveString(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	s := rec.String()
-	if s == "" {
-		t.Error("String() should not be empty")
+	if got, want := rec.String(), fmt.Sprintf("Node#%d", rec.ID); got != want {
+		t.Errorf("String() = %q, want %q", got, want)
 	}
-
-	// Should contain the name and ID for stable ordering
-	if len(s) < 5 { // "X#1" minimum
-		t.Errorf("String format unexpected: %s", s)
-	}
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 }
 
 // TestRecursiveStringNoPanic tests that String() on recursive type doesn't infinite loop.
@@ -141,8 +184,10 @@ func TestRecursiveStringNoPanic(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	// Should not panic or hang
-	_ = rec.String()
+	if got, want := rec.String(), fmt.Sprintf("Node#%d", rec.ID); got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 }
 
 // TestRecursiveMutualRecursion tests two mutually recursive types.
@@ -212,13 +257,17 @@ func TestRecursiveInUnion(t *testing.T) {
 
 	union := MaterializeUnion([]Type{rec, Nil})
 
-	if union == nil {
-		t.Fatal("union should not be nil")
+	u, ok := union.(*Union)
+	if !ok {
+		t.Fatalf("MaterializeUnion() = %T %[1]v, want union", union)
 	}
-
-	// Should not panic
-	_ = union.String()
-	_ = union.Hash()
+	if got, want := u.String(), "nil | "+rec.String(); got != want {
+		t.Fatalf("union String() = %q, want %q", got, want)
+	}
+	if len(u.Members) != 2 || u.Members[0] != Nil || u.Members[1] != rec {
+		t.Fatalf("union members = %#v, want [nil, recursive Node]", u.Members)
+	}
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 }
 
 // TestRecursiveAsAliasTarget tests recursive type wrapped in alias.
@@ -233,9 +282,13 @@ func TestRecursiveAsAliasTarget(t *testing.T) {
 		t.Error("alias to recursive type should equal the recursive type")
 	}
 
-	// Should not panic
-	_ = alias.String()
-	_ = alias.Hash()
+	if got, want := alias.String(), "MyNode"; got != want {
+		t.Fatalf("alias String() = %q, want %q", got, want)
+	}
+	if got, want := alias.Hash(), rec.Hash(); got != want {
+		t.Fatalf("alias Hash() = %d, want recursive target hash %d", got, want)
+	}
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 }
 
 // TestRecursiveListType tests a classic recursive list type.
@@ -249,7 +302,17 @@ func TestRecursiveListType(t *testing.T) {
 			Build()
 	})
 
+	assertRecursiveRecord(t, rec, "List", []Field{
+		{Name: "head", Type: Number},
+		{Name: "tail", Type: rec, Optional: true},
+	})
+
 	// Should handle equality
+	assertRecursiveRecord(t, rec, "Tree", []Field{
+		{Name: "left", Type: rec, Optional: true},
+		{Name: "right", Type: rec, Optional: true},
+		{Name: "value", Type: Number},
+	})
 	if !typeEquals(rec, rec) {
 		t.Error("list type should equal itself")
 	}
@@ -486,15 +549,14 @@ func TestRecursiveTripleMutual(t *testing.T) {
 func TestRecursivePlaceholderNilBody(t *testing.T) {
 	rec := NewRecursivePlaceholder("Empty")
 
-	// Should not panic
-	h := rec.Hash()
-	if h == 0 {
-		t.Error("placeholder hash should be non-zero")
+	if rec.Body != nil {
+		t.Fatalf("placeholder body = %T %[1]v, want nil", rec.Body)
 	}
-
-	s := rec.String()
-	if s == "" {
-		t.Error("placeholder string should not be empty")
+	if got, want := rec.String(), fmt.Sprintf("Empty#%d", rec.ID); got != want {
+		t.Fatalf("placeholder String() = %q, want %q", got, want)
+	}
+	if got, want := rec.Hash(), rec.Hash(); got != want {
+		t.Fatalf("placeholder hash = %d, want stable %d", got, want)
 	}
 }
 

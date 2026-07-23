@@ -150,9 +150,8 @@ func TestMaterializeIntersectionNotEqualToPrimitive(t *testing.T) {
 func TestMaterializeIntersectionString(t *testing.T) {
 	i := MaterializeIntersection([]Type{Number, String}).(*Intersection)
 
-	s := i.String()
-	if s == "" {
-		t.Error("intersection String() should not be empty")
+	if got, want := i.String(), "number & string"; got != want {
+		t.Errorf("intersection String() = %q, want %q", got, want)
 	}
 }
 

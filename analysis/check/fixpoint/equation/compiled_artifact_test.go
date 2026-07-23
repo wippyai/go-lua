@@ -86,6 +86,15 @@ func TestCompileCyclicArtifactKeepsFrozenWTOAndTraceOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	baseline, err := vm.Evaluate(context.Background(), mustBindCyclicEntry(t, artifact, entry), []string{"normal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiledEvaluation, err := vm.Evaluate(context.Background(), mustBindCyclicEntry(t, compiled.frozen, entry), []string{"normal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("blocks=%#v plan=%#v baseline=%#v compiled=%#v", compiled.Blocks(), artifact.Plan.Elements(), baseline, compiledEvaluation)
 	if err := RunCompiledCyclicDifferential(context.Background(), vm, artifact, compiled, entry, []string{"normal"}); err != nil {
 		t.Fatal(err)
 	}

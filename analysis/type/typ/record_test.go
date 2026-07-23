@@ -74,8 +74,17 @@ func TestRecordWithFields(t *testing.T) {
 		Field("y", String).
 		Build()
 
-	if len(r.Fields) != 2 {
-		t.Errorf("Fields: got %d, want 2", len(r.Fields))
+	want := []Field{{Name: "x", Type: Number}, {Name: "y", Type: String}}
+	if len(r.Fields) != len(want) {
+		t.Fatalf("Fields: got %#v, want %#v", r.Fields, want)
+	}
+	for i, wantField := range want {
+		if got := r.Fields[i]; got != wantField {
+			t.Errorf("Field[%d]: got %#v, want %#v", i, got, wantField)
+		}
+	}
+	if got, want := r.String(), "{x: number, y: string}"; got != want {
+		t.Errorf("String: got %q, want %q", got, want)
 	}
 }
 
@@ -240,11 +249,8 @@ func TestRecordString(t *testing.T) {
 		ReadonlyField("z", Boolean).
 		Build()
 
-	s := r.String()
-	if s != "{x: number, readonly y?: string, z: boolean}" &&
-		s != "{x: number, y?: string, readonly z: boolean}" {
-		// Fields are sorted, so exact string depends on sort order
-		t.Logf("String: %s", s)
+	if got, want := r.String(), "{x: number, y?: string, readonly z: boolean}"; got != want {
+		t.Errorf("String: got %q, want %q", got, want)
 	}
 }
 

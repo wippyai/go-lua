@@ -178,12 +178,31 @@ func TestAcyclicBoundEvaluatorShadowDifferentialCorpus(t *testing.T) {
 		{Name: "guarded-return", Artifact: artifact, Entry: entry, Production: func() (OutputClosure, error) { return production, nil }},
 		{Name: "copied-store", Artifact: artifact, Entry: entry, Production: func() (OutputClosure, error) { return production, nil }},
 	}
+	for _, shadow := range cases {
+		t.Run(shadow.Name, func(t *testing.T) {
+			want, err := shadow.Production()
+			if err != nil {
+				t.Fatalf("production: %v", err)
+			}
+			bound, err := BindEntry(shadow.Artifact, shadow.Entry)
+			if err != nil {
+				t.Fatalf("BindEntry: %v", err)
+			}
+			evaluation, err := stage3VM(t, contracts).Evaluate(bound)
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if !want.Equal(evaluation.Closure) {
+				t.Fatalf("published closure = %#v, want %#v", evaluation.Closure, want)
+			}
+		})
+	}
 	report, err := RunShadow(stage3VM(t, contracts), cases)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Cases != 3 || report.Passed != 3 {
-		t.Fatalf("shadow report = %#v", report)
+	if report.Cases != len(cases) || report.Passed != len(cases) {
+		t.Fatalf("shadow report = %#v, want every per-case output comparison to pass", report)
 	}
 }
 
