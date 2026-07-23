@@ -281,6 +281,7 @@ func filterOptionalHints(in []diagnostic.Diagnostic, enabled map[diagnostic.Code
 		"lint.condition.redundant": true,
 		"advice.always_true_guard": true,
 		"advice.redundant_claim":   true,
+		"send.isolation":           true,
 	}
 	out := in[:0]
 	for _, item := range in {
@@ -382,7 +383,7 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 		labels = append(labels, diagnostic.Label{File: entry.Path, Span: labelSpan, Message: item.Message})
 	}
 	result := newDiagnosticSpec(entry, span, code, message, diagnostic.NewExplanation(evidence...), projection.Help, labels)
-	if code == "lint.condition.redundant" || code == "advice.always_true_guard" || code == "advice.redundant_claim" {
+	if code == "lint.condition.redundant" || code == "advice.always_true_guard" || code == "advice.redundant_claim" || code == "send.isolation" {
 		result.Severity = diagnostic.SeverityHint
 	}
 	return result

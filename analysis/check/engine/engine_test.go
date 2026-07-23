@@ -55,6 +55,39 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 }
 
+func TestCheckPublishesSendIsolationJudgmentsFromClosedCallFacts(t *testing.T) {
+	result, err := engine.Check(`
+local pid = "worker"
+process.send(pid, "fresh", { id = "fresh" })
+local alias = { id = "alias" }
+process.send(pid, "alias", alias)
+table.freeze(alias)
+process.send(pid, "sealed", alias)
+ownership.store(alias, {})
+process.send(pid, "stored", alias)
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	want := map[string]bool{
+		"send payload is proven isolated for zero-copy transfer":                   false,
+		"send payload is not proven isolated or immutable; runtime will copy":      false,
+		"send payload is proven immutable for zero-copy sharing":                   false,
+		"send payload has a proven escaping alias; zero-copy transfer is rejected": false,
+	}
+	for _, item := range result.PublishedDiagnostics {
+		if _, found := want[item.Message]; !found {
+			continue
+		}
+		want[item.Message] = item.Code == "send.isolation" && item.Span.Valid() && len(item.Evidence) > 0
+	}
+	for message, found := range want {
+		if !found {
+			t.Fatalf("send-isolation diagnostic %q absent from %#v", message, result.PublishedDiagnostics)
+		}
+	}
+}
+
 func TestCheckProvesSealedRecordAndUnionLiteralAssignments(t *testing.T) {
 	result, err := engine.Check(`
 local record: {name: string, nested: {count: number}} = {name = "ok", nested = {count = 1}}

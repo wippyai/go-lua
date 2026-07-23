@@ -228,6 +228,16 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans map[string]wir.Span, dia
 				}
 			}
 			continue
+		case strings.HasPrefix(item.Key, "send.isolation/"):
+			name = strings.TrimPrefix(item.Key, "send.isolation/")
+			if span, ok := callSpans[name+"/argument-00000002"]; ok {
+				out[item.Key] = span
+				continue
+			}
+			if span, ok := callSpans[name+"/call"]; ok {
+				out[item.Key] = span
+			}
+			continue
 		default:
 			continue
 		}
@@ -266,6 +276,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
 			out = append(out, enrichRedundantCastDiagnostic(item, operation, callSpans))
+			continue
+		}
+		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "send.isolation/") {
+			out = append(out, enrichSendIsolationDiagnostic(item, operation))
 			continue
 		}
 		if operation, ok := claims[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
@@ -376,7 +390,7 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
 			return name
 		}
@@ -444,6 +458,8 @@ func diagnosticCode(key string) string {
 		return "lint.condition.redundant"
 	case strings.HasPrefix(key, "type.assignment/"):
 		return "type.assignment"
+	case strings.HasPrefix(key, "send.isolation/"):
+		return "send.isolation"
 	case strings.HasPrefix(key, "claim/unproven/"):
 		return "lint.claim.unproven"
 	case strings.HasPrefix(key, "type.call.direct."):
@@ -1611,6 +1627,9 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	if state, handled := sendIsolationState(operation, operands, partition); handled {
+		return state, nil
+	}
 	if operands.display == "string" && !operands.spread && len(operands.arguments) == 1 {
 		if argument, known := resolveKnownCurrentValue(operands.arguments[0], partition); known && strings.HasPrefix(string(argument), "scalar/string/") {
 			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven string cast")}}}}, nil
@@ -1674,6 +1693,90 @@ func applyKernel(operation equation.BoundEquation, partition equation.Partition)
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), signature.Params[index])), nil
 	}
 	return equation.TransactionResult{Complete: true}, nil
+}
+
+const sendIsolationHelp = "No checker error is emitted by default; unknown send-safety uses the runtime copy fallback."
+
+// sendIsolationState is deliberately a small extension of the existing apply
+// equation. It records only closed, syntactic boundary facts (freeze/store),
+// then lets the send application publish a judgement from those facts. There
+// is no source-side second pass and unknown aliasing remains a copy fallback.
+func sendIsolationState(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.TransactionResult, bool) {
+	if len(operands.arguments) == 0 {
+		return equation.TransactionResult{}, false
+	}
+	switch operands.display {
+	case "table.freeze":
+		return isolationStateFact(isolationFrozenPrefix, operands.arguments[0]), true
+	case "ownership.store":
+		return isolationStateFact(isolationEscapedPrefix, operands.arguments[0]), true
+	case "process.send":
+		if operands.spread || len(operands.arguments) < 3 {
+			return equation.TransactionResult{Complete: true}, true
+		}
+		payload := operands.arguments[2]
+		if isolationStatePresent(partition, isolationEscapedPrefix, payload) {
+			return sendIsolationDiagnostic(operation, "send payload has a proven escaping alias; zero-copy transfer is rejected"), true
+		}
+		if isolationStatePresent(partition, isolationFrozenPrefix, payload) {
+			return sendIsolationDiagnostic(operation, "send payload is proven immutable for zero-copy sharing"), true
+		}
+		value, known := resolveKnownCurrentValue(payload, partition)
+		if strings.HasPrefix(string(payload), "temp/") && known && isIsolatedLiteral(value) {
+			return sendIsolationDiagnostic(operation, "send payload is proven isolated for zero-copy transfer"), true
+		}
+		return sendIsolationDiagnostic(operation, "send payload is not proven isolated or immutable; runtime will copy"), true
+	default:
+		return equation.TransactionResult{}, false
+	}
+}
+
+const (
+	isolationFrozenPrefix  = "send.isolation.state/frozen/"
+	isolationEscapedPrefix = "send.isolation.state/escaped/"
+)
+
+func isolationStateFact(prefix string, term []byte) equation.TransactionResult {
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+		Key: prefix + base64.RawURLEncoding.EncodeToString(term), Value: []byte("proven"),
+	}}}}
+}
+
+func isolationStatePresent(partition equation.Partition, prefix string, term []byte) bool {
+	key := prefix + base64.RawURLEncoding.EncodeToString(term)
+	for _, fact := range partition.Values() {
+		if fact.Key == key && string(fact.Value) == "proven" {
+			return true
+		}
+	}
+	return false
+}
+
+func sendIsolationDiagnostic(operation equation.BoundEquation, message string) equation.TransactionResult {
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+		Key: "send.isolation/" + operation.Target.Name, Value: []byte(message),
+	}}}}
+}
+
+// isIsolatedLiteral recognizes only a sealed table whose complete graph is
+// made of scalar leaves. A named local is intentionally not admitted: its
+// alias set is not closed at the send operation.
+func isIsolatedLiteral(value []byte) bool {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return false
+	}
+	for _, member := range table.Members {
+		if !member.Present || !isTransferScalar([]byte(member.Value)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTransferScalar(value []byte) bool {
+	return string(value) == "scalar/nil" || strings.HasPrefix(string(value), "scalar/bool/") ||
+		strings.HasPrefix(string(value), "scalar/string/") || strings.HasPrefix(string(value), "scalar/number/")
 }
 
 type directCallOperands struct {
@@ -1833,6 +1936,48 @@ func callDiagnostic(operation equation.BoundEquation, code, subject, message str
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
 		Key: "type.call.direct." + code + "/" + operation.Target.Name + "/" + subject, Value: []byte(message),
 	}}}}
+}
+
+func enrichSendIsolationDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	item.Help = sendIsolationHelp
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "send payload"}}
+	switch item.Message {
+	case "send payload is proven isolated for zero-copy transfer":
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "isolation proof: direct fresh object literal has no retained graph identity"},
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "direct literal birth site has no retained graph identity"},
+		}
+		item.Labels = append(item.Labels, DiagnosticLabel{Span: item.Span, Message: "send-safety proof"})
+	case "send payload is proven immutable for zero-copy sharing":
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "immutable proof: sent exact identity is frozen"},
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "exact identity is frozen before send"},
+		}
+		item.Labels = append(item.Labels, DiagnosticLabel{Span: item.Span, Message: "send-safety proof"})
+	case "send payload has a proven escaping alias; zero-copy transfer is rejected":
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "escape proof: payload has already crossed a retaining boundary"}}
+	case "send payload is not proven isolated or immutable; runtime will copy":
+		payload, reason := sendIsolationPayload(operation)
+		_ = payload
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "unknown", Message: reason},
+			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: reason},
+		}
+	}
+	return item
+}
+
+func sendIsolationPayload(operation equation.Equation) ([]byte, string) {
+	for _, operand := range operation.Operands {
+		if operand.Role != "argument-00000002" {
+			continue
+		}
+		if strings.HasPrefix(string(operand.Term.Encoding), "temp/") {
+			return operand.Term.Encoding, "copy fallback: object graph contains another identity that may still be aliased"
+		}
+		return operand.Term.Encoding, "copy fallback: stack-local path may have aliases across the send"
+	}
+	return nil, "copy fallback: stack-local path may have aliases across the send"
 }
 
 func indexedCallSubject(prefix string, index int) string {
