@@ -511,11 +511,12 @@ func (c RootAssignmentFactorComponent) applyScalarComponent(input RootAssignment
 		return state.ProductFactorFrame{}, err
 	}
 	if c.ordinary.ID() != "" {
-		current, point := input.Current.OrdinaryFactors(), input.PointEntry.OrdinaryFactors()
-		if len(current) != 1 || len(point) != 1 {
+		current, currentPresent := rootAssignmentFrameOrdinary(input.Current, c.ordinary)
+		point, pointPresent := rootAssignmentFrameOrdinary(input.PointEntry, c.ordinary)
+		if !currentPresent || !pointPresent {
 			return state.ProductFactorFrame{}, fmt.Errorf("factapply: incomplete RootAssignment scalar lane frames")
 		}
-		output, applyErr := c.program.ApplyScalarFactor(point[0], current[0])
+		output, applyErr := c.program.ApplyScalarFactor(point, current)
 		if applyErr != nil {
 			return state.ProductFactorFrame{}, applyErr
 		}

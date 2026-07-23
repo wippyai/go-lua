@@ -62,6 +62,18 @@ func TestRootAssignmentScalarComponentsMatchCanonicalStateTransaction(t *testing
 			continue
 		}
 		seen++
+		// The contract frame retains dynamic-source sidecars so a component can
+		// resolve its source from the same complete carrier as State. The scalar
+		// transfer must still select its own registered lane rather than infer it
+		// from the frame's cardinality.
+		if component.ordinary.ID() != "" {
+			lanes := append(domain.RootAssignmentDynamicSourceLanes(), component.ordinary)
+			expanded, sealErr := domain.SealProductFactorSelection(lanes, inventory, nil, false)
+			if sealErr != nil {
+				t.Fatal(sealErr)
+			}
+			component.current = expanded
+		}
 		currentSelection, _ := component.CurrentInputs()
 		pointSelection, _ := component.PointEntryInputs()
 		outputSelection, _ := component.Outputs()
