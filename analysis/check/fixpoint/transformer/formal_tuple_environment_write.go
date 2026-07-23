@@ -225,6 +225,15 @@ func (l formalSparseLeafView) evaluateEnvironmentWrite(plan *formalEnvironmentWr
 		allocationResult: func(candidate valueNode) (product.Value, bool) {
 			return arena.allocationResult(candidate.allocation, candidate.resultIndex)
 		},
+		completeImpossibleConcat: func() (product.Value, bool) {
+			return product.Bottom(l.authority.product.Registry()), true
+		},
+	}
+	resolver.scope = func(current ValueTerm, inherited valueNodeLeafResolver) valueNodeLeafResolver {
+		if current != plan.value.value.term {
+			inherited.completeImpossibleConcat = nil
+		}
+		return inherited
 	}
 	value, exact := arena.evalValueCanonicalWithLeaves(plan.value.value.term, resolver)
 	if !exact || !product.BelongsToRegistry(l.authority.product.Registry(), value) {
