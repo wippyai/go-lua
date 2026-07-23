@@ -226,5 +226,18 @@ func resolveFormalDynamicValue(
 	if err != nil {
 		return product.Value{}, false
 	}
-	return sourcevalue.ResolveDynamicRead(query, evidence)
+	value, exact := sourcevalue.ResolveDynamicRead(query, evidence)
+	if exact {
+		return value, true
+	}
+	// A selected dynamic read can have an imported nominal owner that this
+	// factor-only boundary cannot dereference without the module resolver. The
+	// concrete checker retains that resolver and already owns diagnostics. Keep
+	// the formal leaf executable with the conservative registered Top rather
+	// than rejecting the enclosing relation transaction for an absent local
+	// evidence payload.
+	if query.ProjectPath && !product.Equal(body.productDomain.Registry(), query.TableValue, product.Bottom(body.productDomain.Registry())) {
+		return product.Top(), true
+	}
+	return product.Value{}, false
 }
