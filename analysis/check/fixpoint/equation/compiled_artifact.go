@@ -81,6 +81,7 @@ type CompiledArtifact struct {
 	deps      []uint32
 	blocks    []CompiledBlock
 	layout    CompiledCellLayout
+	runtime   RuntimeProjection
 }
 
 type compiledRange struct{ offset, length uint32 }
@@ -93,6 +94,11 @@ func (a CompiledArtifact) Operands() []CompiledOperand {
 	return append([]CompiledOperand(nil), a.operands...)
 }
 func (a CompiledArtifact) Blocks() []CompiledBlock { return append([]CompiledBlock(nil), a.blocks...) }
+
+// RuntimeProjection returns the immutable VM-shape metadata admitted with the
+// artifact.  It is proof-carrying metadata for a runtime consumer, never an
+// alternate evaluator or semantic analysis.
+func (a CompiledArtifact) RuntimeProjection() RuntimeProjection { return a.runtime }
 
 // OperandBytes returns the canonical operand spelling.  Entry projection
 // operands have their formal name here, never a caller-owned entry value.
@@ -173,6 +179,11 @@ func compileArtifact(artifact Artifact, ordered []Equation, body BodyID, entry E
 	if reconstructed, err := result.ReferenceArtifact(); err != nil || !bytes.Equal(reconstructed.CanonicalBytes(), result.canonical) {
 		return CompiledArtifact{}, fmt.Errorf("equation: compiled admission changed canonical artifact")
 	}
+	projection, err := AdmitRuntimeProjection(result)
+	if err != nil {
+		return CompiledArtifact{}, err
+	}
+	result.runtime = projection
 	return result, nil
 }
 
@@ -404,6 +415,10 @@ func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, err
 	if err != nil {
 		return CompiledCyclicArtifact{}, err
 	}
+	// The acyclic compact schema is also reused to describe cyclic operations,
+	// but its negative loop facts are not valid in a WTO artifact. Until a
+	// lowering identifies each precise region, publish unknown boundaries.
+	compiled.runtime = cyclicRuntimeProjection(compiled.runtime)
 	return CompiledCyclicArtifact{Artifact: compiled, blocks: blocks, frozen: canonical}, nil
 }
 
