@@ -125,6 +125,32 @@ func closeRelationCallResultMiddleSchemas(prepared []*PreparedPlanCompiler, code
 			return fmt.Errorf("transformer: relation %d call-result Middle closure is not open", callerIndex+1)
 		}
 		arena := code.terms
+		// N0 materialization is point-local and is also used for calls which
+		// have no lexical target frame (for example, a runtime type predicate).
+		// Its result coordinates must enter the sealed Middle vocabulary before
+		// formal CallResults binds them, independently of call-frame closure.
+		facts := caller.plan.Facts()
+		for raw := 0; raw < caller.plan.PointCount(); raw++ {
+			point := cfg.Point(raw)
+			values := facts.CallResultValues(point)
+			if len(values) == 0 {
+				continue
+			}
+			slots := make([]statekey.Value, 0, len(values))
+			for _, value := range values {
+				if value.Index() < 0 {
+					return fmt.Errorf("transformer: call-result materialization at point %d has invalid result %d", point, value.Index())
+				}
+				slot := statekey.CallResult(uint32(point), uint32(value.Index()))
+				if slot == 0 {
+					return fmt.Errorf("transformer: call-result materialization at point %d has unrepresentable result %d", point, value.Index())
+				}
+				slots = append(slots, slot)
+			}
+			if err := arena.includeMiddleRegisterInventory(slots); err != nil {
+				return fmt.Errorf("transformer: call-result materialization at point %d Middle closure: %w", point, err)
+			}
+		}
 		receivers := indexRelationCallReceivers(code)
 		for frameTerm := callFrameTerm(1); int(frameTerm) < len(arena.callFrames); frameTerm++ {
 			frame := &arena.callFrames[frameTerm]

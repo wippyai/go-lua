@@ -20,6 +20,7 @@ func TestCloseRelationCallResultMiddleSchemasOwnsCompleteLexicalWidth(t *testing
 	callerGraph := cfg.New()
 	callPoint := callerGraph.AddNode(cfg.NodeCall)
 	definitionPoint := callerGraph.AddNode(cfg.NodeAssign)
+	orphanMaterializePoint := callerGraph.AddNode(cfg.NodeCall)
 	pathTarget := symbol.ID(9001)
 	// Deliberately non-ordinal target order. Slot 1 is absent from caller syntax
 	// but present in the callee outcome; slot 2 is path-only; slots 3 and 4 are
@@ -32,7 +33,12 @@ func TestCloseRelationCallResultMiddleSchemasOwnsCompleteLexicalWidth(t *testing
 			factflow.NewCallResultTarget(factflow.CallResultTargetExpression, 2, 3, 0, pathdom.Path{}),
 		},
 	})
-	callerPlan := operationplan.New(callerGraph, factflow.FactsInput{CallSites: map[cfg.Point]factflow.CallSite{callPoint: site}})
+	callerPlan := operationplan.New(callerGraph, factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{callPoint: site},
+		CallResultValues: map[cfg.Point]factflow.CallResultValueSet{
+			orphanMaterializePoint: factflow.NewCallResultValueSet(factflow.NewCallResultValue(2, product.Top())),
+		},
+	})
 	targetPlan := operationplan.New(cfg.New(), factflow.FactsInput{})
 	callerBuilder := NewBuilder(reg, Shape{}, DefaultOutputCapabilityRegistry(), callerPlan)
 	targetBuilder := NewBuilder(reg, Shape{}, DefaultOutputCapabilityRegistry(), targetPlan)
@@ -88,6 +94,9 @@ func TestCloseRelationCallResultMiddleSchemasOwnsCompleteLexicalWidth(t *testing
 	if _, present := callerBuilder.arena.environment[statekey.CallResult(uint32(definitionPoint), 0)]; present {
 		t.Fatal("definition frame manufactured a call-result Middle register")
 	}
+	if _, present := callerBuilder.arena.environment[statekey.CallResult(uint32(orphanMaterializePoint), 2)]; !present {
+		t.Fatal("unframed call-result materialization has no Middle register")
+	}
 	frameResults := make(map[uint32]bool)
 	for term := ValueTerm(1); int(term) < len(callerBuilder.arena.values); term++ {
 		node := callerBuilder.arena.values[term]
@@ -110,8 +119,8 @@ func TestCloseRelationCallResultMiddleSchemasOwnsCompleteLexicalWidth(t *testing
 	if _, err := newRelationTermClosure(targetBuilder.arena, Shape{}, targetPlan, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(callerBuilder.arena.middle.registers); got != 7 {
-		t.Fatalf("sealed caller Middle width = %d, want 7", got)
+	if got := len(callerBuilder.arena.middle.registers); got != 8 {
+		t.Fatalf("sealed caller Middle width = %d, want 8", got)
 	}
 
 	namespace := lexicalidentity.UnitNamespaceFromContent([]byte("call-result-middle-complete-width"))
@@ -124,7 +133,15 @@ func TestCloseRelationCallResultMiddleSchemasOwnsCompleteLexicalWidth(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundOrphanMaterialization := false
 	for ordinal, register := range callerBuilder.arena.middle.registers {
+		if register.point == orphanMaterializePoint {
+			if register.kind != relationMiddleRegisterCallResult || register.ordinal != 2 {
+				t.Fatalf("unframed materialization register %d = %#v", ordinal, register)
+			}
+			foundOrphanMaterialization = true
+			continue
+		}
 		if register.kind != relationMiddleRegisterCallResult || register.point != callPoint || register.ordinal != uint32(ordinal) {
 			t.Fatalf("Middle register %d = %#v; want deterministic call-result point/ordinal", ordinal, register)
 		}
@@ -137,6 +154,9 @@ func TestCloseRelationCallResultMiddleSchemasOwnsCompleteLexicalWidth(t *testing
 		if !ok || !rootOK || formalRoot.Owner() != callerID || formalRoot.Vocabulary() != formal.Middle || formalRoot.Ordinal() != uint64(ordinal+1) {
 			t.Fatalf("call-result FormalSlot %d = %#v/%t/%t", ordinal, formalRoot, ok, rootOK)
 		}
+	}
+	if !foundOrphanMaterialization {
+		t.Fatal("unframed materialization register was not sealed")
 	}
 	for ordinal := uint32(0); ordinal < 7; ordinal++ {
 		if _, ok := slots.Slot(targetID, Root{Kind: RootResult, Index: ordinal}); !ok {

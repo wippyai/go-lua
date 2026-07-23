@@ -480,9 +480,9 @@ func (a *formalTupleAlgebra) factorFormalProductFactorFrame(
 			out = append(out, formalClosedFactorLeafWrite{ordinal: selected.family.scalars[position], leaf: leaf})
 		}
 	}
-	coordinateWrites := make(map[formalFiberOrdinal]decisionLeaf, len(out)-coordinateWriteStart)
-	for _, write := range out[coordinateWriteStart:] {
-		coordinateWrites[write.ordinal] = write.leaf
+	coordinateWrites := make(map[formalFiberOrdinal]int, len(out)-coordinateWriteStart)
+	for index := coordinateWriteStart; index < len(out); index++ {
+		coordinateWrites[out[index].ordinal] = index
 	}
 	seenCoordinateLanes := make(map[state.LaneOrdinal]struct{})
 	for _, selected := range binding.coordinates {
@@ -517,10 +517,13 @@ func (a *formalTupleAlgebra) factorFormalProductFactorFrame(
 			return nil, factorErr
 		}
 		for memberIndex, ordinal := range group.members {
-			if selectedLeaf, selectedWrite := coordinateWrites[ordinal]; selectedWrite {
-				if fullLeaves[memberIndex] != selectedLeaf {
-					return nil, fmt.Errorf("transformer: selected coordinate publication differs from its registered lane spelling")
-				}
+			if writeIndex, selectedWrite := coordinateWrites[ordinal]; selectedWrite {
+				// Coordinate factors can be rebuilt through a selected-family
+				// overlay, but that reconstruction may choose an equivalent sparse
+				// leaf spelling. The lane registry owns the one canonical spelling
+				// for every coordinate, so publish its leaf rather than the
+				// provisional selected-family leaf.
+				out[writeIndex].leaf = fullLeaves[memberIndex]
 				continue
 			}
 			prior, present := view.leaf(ordinal)
