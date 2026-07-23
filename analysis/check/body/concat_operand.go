@@ -51,8 +51,9 @@ type concatSeenKey struct {
 }
 
 type concatOperandContext struct {
-	present map[pathdom.PathKey]struct{}
-	absent  map[pathdom.PathKey]struct{}
+	present  map[pathdom.PathKey]struct{}
+	absent   map[pathdom.PathKey]struct{}
+	fallback map[pathdom.PathKey]struct{}
 }
 
 func (c concatOperandContext) withPresent(p pathdom.Path) concatOperandContext {
@@ -81,8 +82,20 @@ func (c concatOperandContext) withAbsent(p pathdom.Path) concatOperandContext {
 	return next
 }
 
+func (c concatOperandContext) withFallback(p pathdom.Path) concatOperandContext {
+	if p.IsEmpty() {
+		return c
+	}
+	next := c.clone()
+	if next.fallback == nil {
+		next.fallback = make(map[pathdom.PathKey]struct{}, 1)
+	}
+	next.fallback[p.Key()] = struct{}{}
+	return next
+}
+
 func (c concatOperandContext) clone() concatOperandContext {
-	if len(c.present) == 0 && len(c.absent) == 0 {
+	if len(c.present) == 0 && len(c.absent) == 0 && len(c.fallback) == 0 {
 		return c
 	}
 	next := concatOperandContext{}
@@ -98,6 +111,12 @@ func (c concatOperandContext) clone() concatOperandContext {
 			next.absent[key] = struct{}{}
 		}
 	}
+	if len(c.fallback) != 0 {
+		next.fallback = make(map[pathdom.PathKey]struct{}, len(c.fallback))
+		for key := range c.fallback {
+			next.fallback[key] = struct{}{}
+		}
+	}
 	return next
 }
 
@@ -108,6 +127,11 @@ func (c concatOperandContext) hasPresent(p pathdom.Path) bool {
 
 func (c concatOperandContext) hasAbsent(p pathdom.Path) bool {
 	_, ok := c.absent[p.Key()]
+	return ok
+}
+
+func (c concatOperandContext) hasFallback(p pathdom.Path) bool {
+	_, ok := c.fallback[p.Key()]
 	return ok
 }
 
@@ -189,6 +213,9 @@ func (r *Result) walkConcatOperandsMode(
 				rightContext, reachable = r.concatExpressionEdgeContext(node.Lhs, true, current.ctx)
 			} else if node.Operator == "or" {
 				rightContext, reachable = r.concatExpressionEdgeContext(node.Lhs, false, current.ctx)
+				if p, ok := r.ExpressionPath(node.Lhs); ok {
+					rightContext = rightContext.withFallback(p)
+				}
 			}
 			if reachable {
 				stack = append(stack, frame{expr: node.Rhs, ctx: rightContext})
@@ -288,11 +315,20 @@ func (r *Result) concatOperand(point cfg.Point, operand ast.Expr, side string, c
 		return ConcatOperandOccurrence{}, false
 	}
 	t, ok := r.concatOperandType(point, operand)
+	if p, pathOK := r.ExpressionPath(operand); pathOK && ctx.hasFallback(p) {
+		// A logical fallback reaches this occurrence only after its source path
+		// was falsy. Do not let a completed expression leaf launder that
+		// absence into a present operand at the concat boundary.
+		if ok && t != nil {
+			t = normalize.Optional(t)
+		}
+	}
 	if !ok || (!concatOperandNilRisk(t) && !r.concatOperandExplicitTop(point, operand)) {
 		return ConcatOperandOccurrence{}, false
 	}
 	if withoutNil := proof.ProjectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
-		if r.concatOperandProvenPresentBySolvedValue(point, operand) {
+		p, pathOK := r.ExpressionPath(operand)
+		if (!pathOK || !ctx.hasFallback(p)) && r.concatOperandProvenPresentBySolvedValue(point, operand) {
 			return ConcatOperandOccurrence{}, false
 		}
 	}
@@ -393,6 +429,9 @@ func (r *Result) concatDominatingLocalDeclaredOperandType(point cfg.Point, opera
 }
 
 func (r *Result) concatOperandProvenPresent(point cfg.Point, operand ast.Expr, ctx concatOperandContext) bool {
+	if p, ok := r.ExpressionPath(operand); ok && ctx.hasFallback(p) {
+		return false
+	}
 	if r.concatOperandProvenPresentBySolvedValue(point, operand) {
 		return true
 	}
