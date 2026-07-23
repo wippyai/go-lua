@@ -150,8 +150,8 @@ func TestCompileBodyLowersNumericForBoundsAndBinding(t *testing.T) {
 		wantControl  string
 		wantPrewrite bool
 	}{
-		"implicit step": {source: `for i = 1, 3 do local value = i end`, wantState: "scalar/number/3", wantControl: "scalar/number/1"},
-		"explicit step": {source: `for i = 1, 6, 2 do local value = i end`, wantState: "scalar/number/6", wantControl: "scalar/number/2"},
+		"implicit step":   {source: `for i = 1, 3 do local value = i end`, wantState: "scalar/number/3", wantControl: "scalar/number/1"},
+		"explicit step":   {source: `for i = 1, 6, 2 do local value = i end`, wantState: "scalar/number/6", wantControl: "scalar/number/2"},
 		"computed bounds": {source: `local limit = 3; for i = 1, limit do local value = i end`, wantControl: "scalar/number/1", wantPrewrite: true},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -570,6 +570,14 @@ func occurrenceCounts(artifact equation.Artifact) map[string]int {
 	return result
 }
 
+func equationsByKind(artifact equation.Artifact) map[string][]equation.Equation {
+	result := make(map[string][]equation.Equation)
+	for _, lowered := range artifact.Equations {
+		result[lowered.Occurrence.Kind] = append(result[lowered.Occurrence.Kind], lowered)
+	}
+	return result
+}
+
 func operand(operands []equation.Operand, role string) *equation.Operand {
 	for index := range operands {
 		if operands[index].Role == role {
@@ -803,8 +811,16 @@ end
 	if err != nil {
 		t.Fatalf("CompileBody: %v", err)
 	}
-	got := occurrenceCounts(artifact)
-	if got["apply"] != 1 || got["call-results"] != 1 || got["branch-relations"] != 1 {
-		t.Fatalf("call selector occurrence kinds = %#v", got)
+	byKind := equationsByKind(artifact)
+	if len(byKind["apply"]) != 1 || len(byKind["call-results"]) != 1 || len(byKind["branch-relations"]) != 1 || len(byKind["environment-write"]) != 2 {
+		t.Fatalf("call selector lowering = %#v", byKind)
+	}
+	apply, results, branch := operands(byKind["apply"][0]), operands(byKind["call-results"][0]), operands(byKind["branch-relations"][0])
+	if apply["callee"] == "" || apply["context"] != "call-context/5" || apply["adjusted"] != "scalar/bool/true" || results["result-00000000"] != "temp/0" || branch["condition"] != results["result-00000000"] {
+		t.Fatalf("call-selector value flow = apply=%#v results=%#v branch=%#v", apply, results, branch)
+	}
+	selected := operands(byKind["environment-write"][1])
+	if selected["display"] != "selected" || selected["value"] != "scalar/bool/true" || len(byKind["environment-write"][1].Guards) != 1 {
+		t.Fatalf("selected-arm write = %#v guards=%#v", selected, byKind["environment-write"][1].Guards)
 	}
 }

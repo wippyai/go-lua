@@ -15,35 +15,43 @@ func TestTypePropertiesPromotedThroughSimpleCompositeNodes(t *testing.T) {
 			Type
 			propertyCarrier
 		}
+		want typeProperties
 	}{
-		{name: "alias", node: NewAlias("A", Any)},
-		{name: "meta", node: NewMeta(typeParam)},
-		{name: "annotated", node: NewAnnotated(Any, ann).(*Annotated)},
-		{name: "optional", node: MaterializeOptional(typeParam).(*Optional)},
-		{name: "union", node: MaterializeUnion([]Type{String, typeParam}).(*Union)},
-		{name: "intersection", node: MaterializeIntersection([]Type{String, Any}).(*Intersection)},
-		{name: "array", node: NewArray(Any)},
-		{name: "map", node: RebuildMap(String, Any)},
-		{name: "readonly map", node: RebuildReadonlyMap(typeParam, String)},
-		{name: "tuple", node: NewTuple(String, Any, typeParam)},
-		{name: "interface", node: NewInterface("Reader", []Method{{Name: "read", Type: Func().Returns(Any).Build()}})},
-		{name: "type param", node: NewTypeParam("U", String)},
-		{name: "instantiated", node: Instantiate(NewGeneric("Box", []*TypeParam{typeParam}, NewArray(typeParam)), Any)},
+		{name: "alias", node: NewAlias("A", Any), want: typeProperties{containsAny: true}},
+		{name: "meta", node: NewMeta(typeParam), want: typeProperties{containsTypeParam: true}},
+		{name: "annotated", node: NewAnnotated(Any, ann).(*Annotated), want: typeProperties{containsAny: true}},
+		{name: "optional", node: MaterializeOptional(typeParam).(*Optional), want: typeProperties{containsTypeParam: true}},
+		{name: "union", node: MaterializeUnion([]Type{String, typeParam}).(*Union), want: typeProperties{containsTypeParam: true}},
+		{name: "intersection", node: MaterializeIntersection([]Type{String, Any}).(*Intersection), want: typeProperties{containsAny: true}},
+		{name: "array", node: NewArray(Any), want: typeProperties{containsAny: true}},
+		{name: "map", node: RebuildMap(String, Any), want: typeProperties{containsAny: true}},
+		{name: "readonly map", node: RebuildReadonlyMap(typeParam, String), want: typeProperties{containsTypeParam: true}},
+		{name: "tuple", node: NewTuple(String, Any, typeParam), want: typeProperties{containsAny: true, containsTypeParam: true}},
+		{name: "interface", node: NewInterface("Reader", []Method{{Name: "read", Type: Func().Returns(Any).Build()}}), want: typeProperties{containsAny: true}},
+		{name: "type param", node: NewTypeParam("U", String), want: typeProperties{containsTypeParam: true}},
+		{name: "instantiated", node: Instantiate(NewGeneric("Box", []*TypeParam{typeParam}, NewArray(typeParam)), Any), want: typeProperties{containsAny: true, containsTypeParam: true, containsInstantiated: true, containsGeneric: true}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.node.hasAnyOrTypeParam() {
-				t.Fatalf("%s properties were not promoted from child types", tc.name)
+			got := tc.node.propertyValues()
+			if got.containsAny != tc.want.containsAny ||
+				got.containsNever != tc.want.containsNever ||
+				got.containsTypeParam != tc.want.containsTypeParam ||
+				got.containsInstantiated != tc.want.containsInstantiated ||
+				got.containsGeneric != tc.want.containsGeneric ||
+				got.containsRecursive != tc.want.containsRecursive ||
+				got.containsOpenRecursive != tc.want.containsOpenRecursive {
+				t.Fatalf("promoted properties = %#v, want %#v", got, tc.want)
 			}
 		})
 	}
 }
 
 type propertyCarrier interface {
-	hasAnyOrTypeParam() bool
+	propertyValues() typeProperties
 }
 
-func (p typeProperties) hasAnyOrTypeParam() bool {
-	return p.containsAny || p.containsTypeParam
+func (p typeProperties) propertyValues() typeProperties {
+	return p
 }

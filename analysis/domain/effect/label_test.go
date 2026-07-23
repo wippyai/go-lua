@@ -2,6 +2,8 @@ package effect
 
 import "testing"
 
+var _ Label = testLabel{}
+
 type testLabel struct {
 	name string
 	id   int
@@ -38,14 +40,20 @@ func TestParamRef_String(t *testing.T) {
 }
 
 func TestLabelInterface(t *testing.T) {
-	labels := []Label{
-		testLabel{name: "a"},
-		testLabel{name: "b", id: 1},
+	tests := []struct {
+		label Label
+		want  string
+	}{
+		{label: testLabel{name: "a"}, want: "a"},
+		{label: testLabel{name: "b", id: 1}, want: "b"},
 	}
-
-	for _, l := range labels {
-		_ = l.String()
-		_ = l.Equals(l)
+	for _, test := range tests {
+		if got := test.label.String(); got != test.want {
+			t.Errorf("Label.String() = %q, want %q", got, test.want)
+		}
+		if !test.label.Equals(test.label) {
+			t.Errorf("Label.Equals(%#v) = false, want true", test.label)
+		}
 	}
 }
 
@@ -65,5 +73,11 @@ func TestNormalizeLabelHandlesPointersAndTypedNil(t *testing.T) {
 }
 
 func TestMarkerMethods(t *testing.T) {
-	testLabel{}.EffectLabel()
+	label := testLabel{name: "marker", id: 9}
+	if got := label.String(); got != "marker" {
+		t.Fatalf("testLabel.String() = %q, want marker", got)
+	}
+	if !label.Equals(testLabel{name: "marker", id: 9}) || label.Equals(testLabel{name: "marker", id: 10}) {
+		t.Fatalf("testLabel equality did not retain the marker label identity")
+	}
 }

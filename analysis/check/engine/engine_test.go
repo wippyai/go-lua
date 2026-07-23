@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -168,13 +169,21 @@ local object = { first = 1, child = { second = 2 } }
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	kinds := make([]string, len(result.Artifact.Equations))
+	gotKinds := make([]string, len(result.Artifact.Equations))
 	for index, operation := range result.Artifact.Equations {
-		kinds[index] = operation.Occurrence.Kind
+		gotKinds[index] = operation.Occurrence.Kind
 	}
-	t.Logf("allocation kinds=%#v values=%#v outcomes=%#v diagnostics=%#v transactions=%d", kinds, result.Values, result.Outcomes, result.Diagnostics, result.Transactions)
-	if result.Transactions != 10 { // entry plus constructor topology, result, and closed-entry writes
-		t.Fatalf("transactions = %d, want complete allocation writes", result.Transactions)
+	wantKinds := []string{
+		"entry",
+		"allocation-template", "object-materialization", "environment-write",
+		"allocation-template", "object-materialization", "environment-write",
+		"environment-write", "environment-write", "environment-write",
+	}
+	if !reflect.DeepEqual(gotKinds, wantKinds) {
+		t.Fatalf("closed allocation topology = %#v, want %#v", gotKinds, wantKinds)
+	}
+	if !reflect.DeepEqual(result.Values, []equation.Fact{}) || !reflect.DeepEqual(result.Outcomes, []equation.Fact{}) || result.Diagnostics != nil {
+		t.Fatalf("closed allocations published values=%#v outcomes=%#v diagnostics=%#v; want no public scalar, return, or diagnostic facts", result.Values, result.Outcomes, result.Diagnostics)
 	}
 }
 
@@ -434,9 +443,16 @@ return answer
 	if err != nil {
 		t.Fatalf("Check whole file: %v", err)
 	}
-	t.Logf("whole-module values=%#v outcomes=%#v diagnostics=%#v transactions=%d", result.Values, result.Outcomes, result.Diagnostics, result.Transactions)
-	if len(result.Artifact.Equations) == 0 {
-		t.Fatal("Check whole file returned an empty artifact")
+	wantValues := []equation.Fact{
+		{Key: "answer", Value: []byte("unknown")},
+		{Key: "dependency", Value: []byte("unknown")},
+	}
+	wantOutcomes := []equation.Fact{
+		{Key: "return/0", Value: []byte("unknown")},
+		{Key: "return/arity", Value: []byte("1")},
+	}
+	if !reflect.DeepEqual(result.Values, wantValues) || !reflect.DeepEqual(result.Outcomes, wantOutcomes) || result.Diagnostics != nil {
+		t.Fatalf("whole-module result values=%#v outcomes=%#v diagnostics=%#v; want values=%#v outcomes=%#v and no diagnostics", result.Values, result.Outcomes, result.Diagnostics, wantValues, wantOutcomes)
 	}
 }
 

@@ -44,6 +44,7 @@ func TestKindStringOutOfRange(t *testing.T) {
 
 func TestKindValuesUnique(t *testing.T) {
 	seen := make(map[Kind]string)
+	seenNames := make(map[string]Kind)
 	kinds := []Kind{
 		Nil, Boolean, Number, Integer, String, Any, Unknown, Never,
 		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
@@ -59,21 +60,26 @@ func TestKindValuesUnique(t *testing.T) {
 		}
 
 		seen[k] = name
+		if existing, ok := seenNames[name]; ok {
+			t.Errorf("duplicate Kind name: %q used for both %d and %d", name, existing, k)
+		}
+		seenNames[name] = k
 	}
 }
 
 func TestKindNamesComplete(t *testing.T) {
-	kinds := []Kind{
-		Nil, Boolean, Number, Integer, String, Any, Unknown, Never,
-		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
-		Interface, Alias, Generic, Instantiated, Literal,
-		Self, Ref, Meta, TypeParam, Refined, Recursive, ReadonlyMap,
+	wants := map[Kind]string{
+		Nil: "nil", Boolean: "boolean", Number: "number", Integer: "integer", String: "string",
+		Any: "any", Unknown: "unknown", Never: "never", Optional: "optional", Union: "union",
+		Intersection: "intersection", Tuple: "tuple", Function: "function", Array: "array", Map: "map",
+		Record: "record", Interface: "interface", Alias: "alias", Generic: "generic", Instantiated: "instantiated",
+		Literal: "literal", Self: "self", Ref: "ref", Meta: "meta", TypeParam: "typeparam",
+		Refined: "refined", Recursive: "recursive", ReadonlyMap: "readonlymap",
 	}
 
-	for _, k := range kinds {
-		name := k.String()
-		if name == "" {
-			t.Errorf("Kind(%d) has no name", k)
+	for k, want := range wants {
+		if got := k.String(); got != want {
+			t.Errorf("Kind(%d).String() = %q, want %q", k, got, want)
 		}
 	}
 }

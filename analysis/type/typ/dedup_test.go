@@ -33,24 +33,33 @@ func TestDeduplicateTypesWithHashes_Empty(t *testing.T) {
 func TestDeduplicateTypesWithHashes_NoDuplicates(t *testing.T) {
 	types := []Type{String, Number, Boolean}
 	result, hashes := deduplicateTypesWithHashes(types)
-	if len(result) != 3 || len(hashes) != 3 {
-		t.Errorf("len = %d/%d, want 3/3", len(result), len(hashes))
-	}
+	assertDeduplicatedTypes(t, result, hashes, []Type{String, Number, Boolean})
 }
 
 func TestDeduplicateTypesWithHashes_WithDuplicates(t *testing.T) {
 	types := []Type{String, Number, String, Number, Boolean}
 	result, hashes := deduplicateTypesWithHashes(types)
-	if len(result) != 3 || len(hashes) != 3 {
-		t.Errorf("len = %d/%d, want 3/3", len(result), len(hashes))
-	}
+	assertDeduplicatedTypes(t, result, hashes, []Type{String, Number, Boolean})
 }
 
 func TestDeduplicateTypesWithHashes_AllSame(t *testing.T) {
 	types := []Type{String, String, String}
 	result, hashes := deduplicateTypesWithHashes(types)
-	if len(result) != 1 || len(hashes) != 1 {
-		t.Errorf("len = %d/%d, want 1/1", len(result), len(hashes))
+	assertDeduplicatedTypes(t, result, hashes, []Type{String})
+}
+
+func assertDeduplicatedTypes(t *testing.T, got []Type, hashes []uint64, want []Type) {
+	t.Helper()
+	if len(got) != len(want) || len(hashes) != len(want) {
+		t.Fatalf("deduplicated result/hashes = %#v/%#v, want %v survivors", got, hashes, len(want))
+	}
+	for i, wantType := range want {
+		if got[i] != wantType {
+			t.Fatalf("survivor[%d] = %T %v, want original %T %v", i, got[i], got[i], wantType, wantType)
+		}
+		if wantHash := unionMemberHash(wantType); hashes[i] != wantHash {
+			t.Fatalf("survivor[%d] hash = %d, want %d for %v", i, hashes[i], wantHash, wantType)
+		}
 	}
 }
 

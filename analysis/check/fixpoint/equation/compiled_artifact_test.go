@@ -2,7 +2,10 @@ package equation
 
 import (
 	"context"
+	"reflect"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 )
 
 func TestCompileArtifactBuildsConservativeCompactPlan(t *testing.T) {
@@ -62,8 +65,19 @@ func TestCompileCyclicArtifactKeepsFrozenWTOAndTraceOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compiled.Blocks()) != 2 {
-		t.Fatalf("compiled WTO blocks = %#v", compiled.Blocks())
+	wantPlan := []solve.WTOElement[CellID]{
+		{Vertex: "seed"},
+		{Vertex: "loop", Body: []solve.WTOElement[CellID]{}},
+	}
+	if !reflect.DeepEqual(artifact.Plan.Elements(), wantPlan) || !reflect.DeepEqual(compiled.frozen.Plan.Elements(), wantPlan) {
+		t.Fatalf("frozen WTO differs: source=%#v compiled=%#v want=%#v", artifact.Plan.Elements(), compiled.frozen.Plan.Elements(), wantPlan)
+	}
+	wantBlocks := []CompiledWTOBlock{
+		{Operation: 1, ChildStart: 1, ChildCount: 0},
+		{Operation: 0, ChildStart: 2, ChildCount: 0},
+	}
+	if !reflect.DeepEqual(compiled.Blocks(), wantBlocks) {
+		t.Fatalf("compiled WTO blocks = %#v, want %#v", compiled.Blocks(), wantBlocks)
 	}
 	registry, err := NewCyclicKernelRegistry([]CyclicKernelBinding{
 		{KernelID: "seed", ContractID: contracts[0], Kernel: CyclicKernelFunc(func(_ context.Context, _ BoundCyclicEquation, _ CyclicSnapshot) (TransactionResult, error) {
@@ -94,8 +108,53 @@ func TestCompileCyclicArtifactKeepsFrozenWTOAndTraceOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("blocks=%#v plan=%#v baseline=%#v compiled=%#v", compiled.Blocks(), artifact.Plan.Elements(), baseline, compiledEvaluation)
-	if err := RunCompiledCyclicDifferential(context.Background(), vm, artifact, compiled, entry, []string{"normal"}); err != nil {
-		t.Fatal(err)
+	wantClosure := OutputClosure{Values: []Fact{
+		{Key: "round-0", Value: []byte("v")},
+		{Key: "round-1", Value: []byte("v")},
+		{Key: "seed", Value: []byte("concrete")},
+	}}
+	if !baseline.Closure.Equal(wantClosure) {
+		t.Fatalf("source cyclic closure = %#v, want %#v", baseline.Closure, wantClosure)
+	}
+	wantTrace := []struct {
+		Cell    CellID
+		Visit   int
+		Widened bool
+	}{
+		{Cell: "loop", Visit: 0, Widened: false},
+		{Cell: "loop", Visit: 1, Widened: true},
+		{Cell: "loop", Visit: 2, Widened: true},
+	}
+	traceShape := func(traces []WideningTrace) []struct {
+		Cell    CellID
+		Visit   int
+		Widened bool
+	} {
+		shape := make([]struct {
+			Cell    CellID
+			Visit   int
+			Widened bool
+		}, len(traces))
+		for index, trace := range traces {
+			shape[index] = struct {
+			Cell    CellID
+			Visit   int
+			Widened bool
+		}{Cell: trace.Cell, Visit: trace.Visit, Widened: trace.Widened}
+		}
+		return shape
+	}
+	gotTrace := traceShape(baseline.WideningTrace)
+	if !reflect.DeepEqual(gotTrace, wantTrace) {
+		t.Fatalf("source widening schedule = %#v, want %#v", gotTrace, wantTrace)
+	}
+	compiledTrace := traceShape(compiledEvaluation.WideningTrace)
+	if !compiledEvaluation.Closure.Equal(baseline.Closure) || !reflect.DeepEqual(compiledTrace, wantTrace) {
+		t.Fatalf("compiled cyclic evaluation differs: source=%#v compiled=%#v", baseline, compiledEvaluation)
+	}
+	for index, sourceTrace := range baseline.WideningTrace {
+		if !sourceTrace.Equal(compiledEvaluation.WideningTrace[index]) {
+			t.Fatalf("widening trace[%d] differs: source=%#v compiled=%#v", index, sourceTrace, compiledEvaluation.WideningTrace[index])
+		}
 	}
 }

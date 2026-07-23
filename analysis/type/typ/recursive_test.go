@@ -308,11 +308,6 @@ func TestRecursiveListType(t *testing.T) {
 	})
 
 	// Should handle equality
-	assertRecursiveRecord(t, rec, "Tree", []Field{
-		{Name: "left", Type: rec, Optional: true},
-		{Name: "right", Type: rec, Optional: true},
-		{Name: "value", Type: Number},
-	})
 	if !typeEquals(rec, rec) {
 		t.Error("list type should equal itself")
 	}
@@ -334,6 +329,11 @@ func TestRecursiveTreeType(t *testing.T) {
 			OptField("left", self).
 			OptField("right", self).
 			Build()
+	})
+	assertRecursiveRecord(t, rec, "Tree", []Field{
+		{Name: "left", Type: rec, Optional: true},
+		{Name: "right", Type: rec, Optional: true},
+		{Name: "value", Type: Number},
 	})
 
 	if !typeEquals(rec, rec) {

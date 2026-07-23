@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -70,6 +71,39 @@ func TestRecursiveProductCloneDoesNotCopyPublishedMemoSlot(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 	fn := Func().Param("node", node).Returns(node).Build()
+	if got, want := fn.String(), "fun(node: Node#"+fmt.Sprint(node.ID)+") -> Node#"+fmt.Sprint(node.ID); got != want {
+		t.Fatalf("function String() = %q, want %q", got, want)
+	}
+	if knownContainsOpenRecursive(fn) {
+		t.Fatal("original closed function signature reported open")
+	}
+	originalMemo := fn.loadOpenRecursiveMemo()
+	if originalMemo == nil || originalMemo.contains {
+		t.Fatalf("original memo = %#v, want closed-graph proof", originalMemo)
+	}
+	initialClone := CloneFunction(fn)
+	if initialClone == nil {
+		t.Fatal("CloneFunction returned nil")
+	}
+	if cloneMemo := initialClone.loadOpenRecursiveMemo(); cloneMemo != nil {
+		t.Fatalf("clone inherited original published memo slot: %#v", cloneMemo)
+	}
+	if got, want := initialClone.String(), fn.String(); got != want {
+		t.Fatalf("clone String() = %q, want %q", got, want)
+	}
+	if knownContainsOpenRecursive(initialClone) {
+		t.Fatal("clone recomputed an open graph for the same recursive signature")
+	}
+	cloneMemo := initialClone.loadOpenRecursiveMemo()
+	if cloneMemo == nil || cloneMemo.contains {
+		t.Fatalf("clone memo = %#v, want independently published closed-graph proof", cloneMemo)
+	}
+	if cloneMemo == originalMemo {
+		t.Fatal("clone and original share the same published memo record")
+	}
+	if got := fn.loadOpenRecursiveMemo(); got != originalMemo {
+		t.Fatal("computing the clone memo replaced or shared the original memo slot")
+	}
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
