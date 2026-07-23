@@ -36,10 +36,23 @@ func TestIterator(t *testing.T) {
 }
 
 func TestIteratorImplementsLabel(t *testing.T) {
-	var label effect.Label = Iterator{}
-	_ = label.String()
-	_ = label.Equals(label)
-	Iterator{}.EffectLabel()
+	var _ effect.Label = Iterator{}
+
+	indexed := Iterator{Source: effect.ParamRef{Index: 3}, Kind: IterateIndexed}
+	if indexed.Kind != IterateIndexed {
+		t.Errorf("indexed iterator Kind = %d, want %d", indexed.Kind, IterateIndexed)
+	}
+	if got := indexed.String(); got != "iterator(param[3], indexed)" {
+		t.Errorf("indexed iterator.String() = %q, want %q", got, "iterator(param[3], indexed)")
+	}
+
+	keyed := Iterator{Source: effect.ParamRef{Index: 4}, Kind: IterateKeyed}
+	if keyed.Kind != IterateKeyed {
+		t.Errorf("keyed iterator Kind = %d, want %d", keyed.Kind, IterateKeyed)
+	}
+	if got := keyed.String(); got != "iterator(param[4], keyed)" {
+		t.Errorf("keyed iterator.String() = %q, want %q", got, "iterator(param[4], keyed)")
+	}
 }
 
 func TestIteratorEffects(t *testing.T) {

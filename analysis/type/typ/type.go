@@ -65,76 +65,76 @@ func (c *stringCache) get(build func() string) string {
 //   - Unknown: missing or unresolved information. It should force narrowing/inference
 //     rather than silently permitting operations.
 var (
-	Nil     Type = nilType{}
-	Boolean Type = booleanType{}
-	Number  Type = numberType{}
-	Integer Type = integerType{}
-	String  Type = stringType{}
-	Any     Type = anyType{}
-	Unknown Type = unknownType{}
-	Never   Type = neverType{}
-	Self    Type = selfType{}
+	Nil     Type = &nilType{}
+	Boolean Type = &booleanType{}
+	Number  Type = &numberType{}
+	Integer Type = &integerType{}
+	String  Type = &stringType{}
+	Any     Type = &anyType{}
+	Unknown Type = &unknownType{}
+	Never   Type = &neverType{}
+	Self    Type = &selfType{}
 )
 
 // Primitive type implementations
 
-type nilType struct{}
+type nilType struct{ _ byte }
 
 func (nilType) Kind() kind.Kind    { return kind.Nil }
 func (nilType) String() string     { return "nil" }
 func (nilType) Hash() uint64       { return uint64(kind.Nil) }
 func (nilType) Equals(o Type) bool { return o.Kind() == kind.Nil }
 
-type booleanType struct{}
+type booleanType struct{ _ byte }
 
 func (booleanType) Kind() kind.Kind    { return kind.Boolean }
 func (booleanType) String() string     { return "boolean" }
 func (booleanType) Hash() uint64       { return uint64(kind.Boolean) }
 func (booleanType) Equals(o Type) bool { return o.Kind() == kind.Boolean }
 
-type numberType struct{}
+type numberType struct{ _ byte }
 
 func (numberType) Kind() kind.Kind    { return kind.Number }
 func (numberType) String() string     { return "number" }
 func (numberType) Hash() uint64       { return uint64(kind.Number) }
 func (numberType) Equals(o Type) bool { return o.Kind() == kind.Number }
 
-type integerType struct{}
+type integerType struct{ _ byte }
 
 func (integerType) Kind() kind.Kind    { return kind.Integer }
 func (integerType) String() string     { return "integer" }
 func (integerType) Hash() uint64       { return uint64(kind.Integer) }
 func (integerType) Equals(o Type) bool { return o.Kind() == kind.Integer }
 
-type stringType struct{}
+type stringType struct{ _ byte }
 
 func (stringType) Kind() kind.Kind    { return kind.String }
 func (stringType) String() string     { return "string" }
 func (stringType) Hash() uint64       { return uint64(kind.String) }
 func (stringType) Equals(o Type) bool { return o.Kind() == kind.String }
 
-type anyType struct{}
+type anyType struct{ _ byte }
 
 func (anyType) Kind() kind.Kind    { return kind.Any }
 func (anyType) String() string     { return "any" }
 func (anyType) Hash() uint64       { return uint64(kind.Any) }
 func (anyType) Equals(o Type) bool { return IsAny(o) }
 
-type unknownType struct{}
+type unknownType struct{ _ byte }
 
 func (unknownType) Kind() kind.Kind    { return kind.Unknown }
 func (unknownType) String() string     { return "unknown" }
 func (unknownType) Hash() uint64       { return uint64(kind.Unknown) }
 func (unknownType) Equals(o Type) bool { return IsUnknown(o) }
 
-type neverType struct{}
+type neverType struct{ _ byte }
 
 func (neverType) Kind() kind.Kind    { return kind.Never }
 func (neverType) String() string     { return "never" }
 func (neverType) Hash() uint64       { return uint64(kind.Never) }
 func (neverType) Equals(o Type) bool { return IsNever(o) }
 
-type selfType struct{}
+type selfType struct{ _ byte }
 
 func (selfType) Kind() kind.Kind    { return kind.Self }
 func (selfType) String() string     { return "self" }

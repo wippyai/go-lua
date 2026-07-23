@@ -1,7 +1,6 @@
 package typ
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 )
@@ -71,7 +70,7 @@ func TestRecursiveProductCloneDoesNotCopyPublishedMemoSlot(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 	fn := Func().Param("node", node).Returns(node).Build()
-	if got, want := fn.String(), "fun(node: Node#"+fmt.Sprint(node.ID)+") -> Node#"+fmt.Sprint(node.ID); got != want {
+	if got, want := fn.String(), "fun(node: μNode. {next?: Node}) -> μNode. {next?: Node}"; got != want {
 		t.Fatalf("function String() = %q, want %q", got, want)
 	}
 	if knownContainsOpenRecursive(fn) {

@@ -188,6 +188,18 @@ func TestFreeze(t *testing.T) {
 }
 
 func TestAllLabelsImplementInterface(t *testing.T) {
+	var (
+		_ effect.Label = Borrow{}
+		_ effect.Label = Retain{}
+		_ effect.Label = Store{}
+		_ effect.Label = BorrowAll{}
+		_ effect.Label = Send{}
+		_ effect.Label = SendParam{}
+		_ effect.Label = Export{}
+		_ effect.Label = Opaque{}
+		_ effect.Label = Freeze{}
+	)
+
 	labels := []struct {
 		label effect.Label
 		want  string
@@ -206,13 +218,22 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 		if got := test.label.String(); got != test.want {
 			t.Errorf("%T.String() = %q, want %q", test.label, got, test.want)
 		}
-		if !test.label.Equals(test.label) {
-			t.Errorf("%T did not equal itself", test.label)
-		}
 	}
 }
 
 func TestMarkerMethods(t *testing.T) {
+	var (
+		_ effect.Label = Borrow{}
+		_ effect.Label = Retain{}
+		_ effect.Label = Store{}
+		_ effect.Label = BorrowAll{}
+		_ effect.Label = Send{}
+		_ effect.Label = SendParam{}
+		_ effect.Label = Export{}
+		_ effect.Label = Opaque{}
+		_ effect.Label = Freeze{}
+	)
+
 	labels := []struct {
 		label effect.Label
 		want  string
@@ -228,8 +249,8 @@ func TestMarkerMethods(t *testing.T) {
 		{Freeze{Param: effect.ParamRef{Index: 16}}, "freeze(param[16])"},
 	}
 	for _, test := range labels {
-		if got := test.label.String(); got != test.want || !test.label.Equals(test.label) {
-			t.Errorf("marker-backed %T rendered/equalled as %q/%t, want %q/true", test.label, got, test.label.Equals(test.label), test.want)
+		if got := test.label.String(); got != test.want {
+			t.Errorf("marker-backed %T.String() = %q, want %q", test.label, got, test.want)
 		}
 	}
 }

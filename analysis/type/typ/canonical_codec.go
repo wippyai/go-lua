@@ -182,23 +182,23 @@ func (e *CanonicalEncoder) visit(input Type) (int, error) {
 	var children []Type
 
 	switch value := t.(type) {
-	case nilType:
+	case *nilType:
 		node.scalar = []byte{canonicalPrimitiveNil}
-	case booleanType:
+	case *booleanType:
 		node.scalar = []byte{canonicalBoolean}
-	case numberType:
+	case *numberType:
 		node.scalar = []byte{canonicalNumber}
-	case integerType:
+	case *integerType:
 		node.scalar = []byte{canonicalInteger}
-	case stringType:
+	case *stringType:
 		node.scalar = []byte{canonicalString}
-	case anyType:
+	case *anyType:
 		node.scalar = []byte{canonicalAny}
-	case unknownType:
+	case *unknownType:
 		node.scalar = []byte{canonicalUnknown}
-	case neverType:
+	case *neverType:
 		node.scalar = []byte{canonicalNever}
-	case selfType:
+	case *selfType:
 		node.scalar = []byte{canonicalSelf}
 	case *Literal:
 		node.scalar, err = canonicalLiteralScalar(value)

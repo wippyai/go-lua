@@ -31,9 +31,6 @@ func assertRecursiveRecord(t *testing.T, rec *Recursive, wantName string, wantFi
 	if got, want := rec.Name, wantName; got != want {
 		t.Fatalf("recursive name = %q, want %q", got, want)
 	}
-	if got, want := rec.String(), fmt.Sprintf("%s#%d", wantName, rec.ID); got != want {
-		t.Fatalf("recursive String() = %q, want %q", got, want)
-	}
 	body, ok := rec.Body.(*Record)
 	if !ok {
 		t.Fatalf("recursive body = %T %[1]v, want record", rec.Body)
@@ -155,8 +152,10 @@ func TestRecursiveHashNoPanic(t *testing.T) {
 	})
 
 	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
-	if got, want := rec.Hash(), rec.Hash(); got != want {
-		t.Fatalf("recursive hash = %d, want stable %d", got, want)
+	first, second := rec.Hash(), rec.Hash()
+	const wantHash uint64 = 17775587563959000762
+	if first != wantHash || second != wantHash {
+		t.Fatalf("recursive hash calls = %d, %d; want %d", first, second, wantHash)
 	}
 }
 
@@ -179,7 +178,7 @@ func TestRecursiveString(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	if got, want := rec.String(), fmt.Sprintf("Node#%d", rec.ID); got != want {
+	if got, want := rec.String(), "μNode. {next?: Node}"; got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
@@ -191,8 +190,8 @@ func TestRecursiveStringNoPanic(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	if got, want := rec.String(), fmt.Sprintf("Node#%d", rec.ID); got != want {
-		t.Errorf("String() = %q, want %q", got, want)
+	if got, want := rec.String(), "μNode. {next?: Node}"; got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
 	}
 	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 }
@@ -561,7 +560,7 @@ func TestRecursivePlaceholderNilBody(t *testing.T) {
 	if rec.Body != nil {
 		t.Fatalf("placeholder body = %T %[1]v, want nil", rec.Body)
 	}
-	if got, want := rec.String(), fmt.Sprintf("Empty#%d", rec.ID); got != want {
+	if got, want := rec.String(), "μEmpty"; got != want {
 		t.Fatalf("placeholder String() = %q, want %q", got, want)
 	}
 	if got, want := rec.Hash(), rec.Hash(); got != want {

@@ -193,13 +193,7 @@ func TestBuildFunctionAllowsChannelReceiveMultiAssign(t *testing.T) {
 	bindings := bind.BindFunction(fn, bind.Options{})
 
 	result := BuildFunction(fn, bindings)
-	if result == nil || result.Graph == nil {
-		t.Fatal("BuildFunction returned nil for channel receive multi-assign")
-	}
-	assigns := pointsOfKind(result.Graph, cfg.NodeAssign)
-	if len(assigns) < 4 {
-		t.Fatalf("assign points = %v, want params, receive result assignments, and branch local", assigns)
-	}
+	assertChannelReceiveMultiAssignCFG(t, result, stmt, fn.Stmts[1].(*ast.IfStmt), fn.Stmts[1].(*ast.IfStmt).Then[0])
 }
 
 func TestBuildParsedFunctionAllowsChannelReceiveMultiAssign(t *testing.T) {
@@ -220,8 +214,89 @@ end
 		t.Fatalf("nested functions = %d, want 1", len(functions))
 	}
 	result := BuildFunction(functions[0], bindings)
+	if len(functions[0].Stmts) != 2 {
+		t.Fatalf("parsed function statements = %d, want receive assignment and if", len(functions[0].Stmts))
+	}
+	receive, ok := functions[0].Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("parsed first statement = %T, want *ast.LocalAssignStmt", functions[0].Stmts[0])
+	}
+	ifStmt, ok := functions[0].Stmts[1].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("parsed second statement = %T, want *ast.IfStmt", functions[0].Stmts[1])
+	}
+	if len(ifStmt.Then) != 1 {
+		t.Fatalf("parsed if body statements = %d, want 1", len(ifStmt.Then))
+	}
+	assertChannelReceiveMultiAssignCFG(t, result, receive, ifStmt, ifStmt.Then[0])
+}
+
+func assertChannelReceiveMultiAssignCFG(t *testing.T, result *Result, receive *ast.LocalAssignStmt, ifStmt *ast.IfStmt, idStmt ast.Stmt) {
+	t.Helper()
 	if result == nil || result.Graph == nil {
-		t.Fatal("BuildFunction returned nil for parsed channel receive multi-assign")
+		t.Fatal("BuildFunction returned no CFG")
+	}
+
+	graph := result.Graph
+	receivePoints := requireStmtPoints(t, result, receive, 3)
+	requirePointKind(t, graph, receivePoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, receivePoints[1], cfg.NodeAssign)
+	requirePointKind(t, graph, receivePoints[2], cfg.NodeAssign)
+	ifPoints := requireStmtPoints(t, result, ifStmt, 1)
+	requirePointKind(t, graph, ifPoints[0], cfg.NodeBranch)
+	idPoints := requireStmtPoints(t, result, idStmt, 1)
+	requirePointKind(t, graph, idPoints[0], cfg.NodeAssign)
+
+	wantKinds := []cfg.NodeKind{
+		cfg.NodeEntry,
+		cfg.NodeExit,
+		cfg.NodeAssign,
+		cfg.NodeCall,
+		cfg.NodeAssign,
+		cfg.NodeAssign,
+		cfg.NodeBranch,
+		cfg.NodeJoin,
+		cfg.NodeAssign,
+		cfg.NodeNoop,
+	}
+	nodes := graph.NodeSnapshot()
+	if len(nodes) != len(wantKinds) {
+		t.Fatalf("CFG nodes = %v, want %d nodes", nodes, len(wantKinds))
+	}
+	for point, wantKind := range wantKinds {
+		if nodes[point].Point != cfg.Point(point) || nodes[point].Kind != wantKind {
+			t.Fatalf("node %d = %#v, want point %d kind %v", point, nodes[point], point, wantKind)
+		}
+	}
+
+	param, call, value, okPoint := cfg.Point(2), receivePoints[0], receivePoints[1], receivePoints[2]
+	branch, join, id, elseExit := ifPoints[0], cfg.Point(7), idPoints[0], cfg.Point(9)
+	requirePointKind(t, graph, join, cfg.NodeJoin)
+	requirePointKind(t, graph, elseExit, cfg.NodeNoop)
+	requireEdges(t, graph, []cfg.Edge{
+		{From: graph.Entry(), To: param},
+		{From: param, To: call},
+		{From: call, To: value},
+		{From: value, To: okPoint},
+		{From: okPoint, To: branch},
+		{From: branch, To: id, Cond: true},
+		{From: id, To: join},
+		{From: branch, To: elseExit},
+		{From: elseExit, To: join},
+		{From: join, To: graph.Exit()},
+	})
+}
+
+func requireEdges(t *testing.T, graph *cfg.CFG, want []cfg.Edge) {
+	t.Helper()
+	got := graph.Edges()
+	if len(got) != len(want) {
+		t.Fatalf("CFG edges = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("CFG edge %d = %#v, want %#v; all edges=%v", i, got[i], want[i], got)
+		}
 	}
 }
 

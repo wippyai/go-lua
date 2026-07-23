@@ -32,10 +32,18 @@ func TestEnvironmentWriteExemplarBindsExistingKernel(t *testing.T) {
 }
 
 func TestAuditHarnessRejectsPartialPublication(t *testing.T) {
-	for _, execution := range []Execution{{}, {Published: true}} {
-		err := RunAndVerify(func() (Execution, error) { return execution, nil }, func(AccessRecord) error { return nil })
-		if !errors.Is(err, ErrPartialExecution) {
-			t.Fatalf("partial execution %#v error = %v, want ErrPartialExecution", execution, err)
-		}
+	verified := false
+	err := RunAndVerify(
+		func() (Execution, error) { return Execution{Published: true}, nil },
+		func(AccessRecord) error {
+			verified = true
+			return nil
+		},
+	)
+	if err != ErrPartialExecution {
+		t.Fatalf("Complete=false, Published=true, err=nil produced %v, want %v", err, ErrPartialExecution)
+	}
+	if verified {
+		t.Fatal("partial execution reached audit verification")
 	}
 }

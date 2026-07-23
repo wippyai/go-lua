@@ -1,6 +1,9 @@
 package effect
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestUnionEmpty(t *testing.T) {
 	result := Union(Empty, Empty)
@@ -10,11 +13,12 @@ func TestUnionEmpty(t *testing.T) {
 }
 
 func TestUnionWithEmpty(t *testing.T) {
-	r := Empty.With(testLabel{name: "a"})
-	result := Union(r, Empty)
-
-	if len(result.Labels) != 1 {
-		t.Errorf("expected 1 label, got %d", len(result.Labels))
+	r := Open("rho", testLabel{name: "a", id: 1})
+	if result := Union(r, Empty); !reflect.DeepEqual(result, r) {
+		t.Errorf("Union(%v, Empty) = %v, want %v", r, result, r)
+	}
+	if result := Union(Empty, r); !reflect.DeepEqual(result, r) {
+		t.Errorf("Union(Empty, %v) = %v, want %v", r, result, r)
 	}
 }
 
@@ -23,19 +27,23 @@ func TestUnionCombinesLabels(t *testing.T) {
 	r2 := Empty.With(testLabel{name: "b"})
 	result := Union(r1, r2)
 
-	if len(result.Labels) != 2 {
-		t.Errorf("expected 2 labels, got %d", len(result.Labels))
+	want := Row{Labels: []Label{testLabel{name: "a"}, testLabel{name: "b"}}}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("Union(%v, %v) = %v, want label set %v", r1, r2, result, want)
 	}
 }
 
 func TestUnionDeduplicates(t *testing.T) {
-	label := testLabel{name: "a"}
-	r1 := Empty.With(label)
-	r2 := Empty.With(label)
+	a := testLabel{name: "a", id: 1}
+	b := testLabel{name: "b", id: 2}
+	c := testLabel{name: "c", id: 3}
+	r1 := Row{Labels: []Label{a, b}}
+	r2 := Row{Labels: []Label{b, c, a}}
 	result := Union(r1, r2)
 
-	if len(result.Labels) != 1 {
-		t.Errorf("expected 1 label (deduplicated), got %d", len(result.Labels))
+	want := Row{Labels: []Label{a, b, c}}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("Union(%v, %v) = %v, want exactly the deduplicated members %v", r1, r2, result, want)
 	}
 }
 

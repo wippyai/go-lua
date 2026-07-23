@@ -1,6 +1,9 @@
 package effect
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func hasTestLabel(r Row, label testLabel) bool {
 	return r.Has(func(l Label) bool {
@@ -194,8 +197,8 @@ func TestRowCloneCopiesTailAndLabels(t *testing.T) {
 
 func TestReads(t *testing.T) {
 	r := Empty
-	if !r.Pure() {
-		t.Error("Reads should be pure (empty)")
+	if !reflect.DeepEqual(r, Row{}) {
+		t.Errorf("reads row = %#v, want an empty row", r)
 	}
 
 	if r.String() != "{}" {

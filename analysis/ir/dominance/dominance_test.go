@@ -337,6 +337,20 @@ func TestComputeDomInfo(t *testing.T) {
 	if info.DominanceFrontier == nil {
 		t.Fatal("DominanceFrontier is nil")
 	}
+
+	assertImmediateDominators(t, info.ImmediateDominators, map[cfg.Point]cfg.Point{
+		f.g.Entry(): f.g.Entry(),
+		f.branch:    f.g.Entry(),
+		f.thenN:     f.branch,
+		f.elseN:     f.branch,
+		f.join:      f.branch,
+		f.g.Exit():  f.join,
+	})
+	assertPointSlice(t, info.DominatorTree[f.g.Entry()], []cfg.Point{f.branch}, "domTree[entry]")
+	assertPointSlice(t, info.DominatorTree[f.branch], []cfg.Point{f.elseN, f.thenN, f.join}, "domTree[branch]")
+	assertFrontier(t, info.DominanceFrontier, f.thenN, []cfg.Point{f.join})
+	assertFrontier(t, info.DominanceFrontier, f.elseN, []cfg.Point{f.join})
+	assertFrontier(t, info.DominanceFrontier, f.branch, nil)
 }
 
 func TestEmptyGraph(t *testing.T) {

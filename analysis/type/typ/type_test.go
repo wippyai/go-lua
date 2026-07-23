@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -150,16 +151,27 @@ func TestPrimitiveEquality(t *testing.T) {
 }
 
 func TestPrimitivesAreSingletons(t *testing.T) {
-	if Nil != Nil {
-		t.Error("Nil should be singleton")
+	for _, name := range []string{"nil", "boolean", "number", "integer", "string", "any", "unknown", "never", "self"} {
+		first, ok := BuiltinPrimitiveType(name)
+		if !ok {
+			t.Fatalf("BuiltinPrimitiveType(%q) returned ok=false", name)
+		}
+		second, ok := BuiltinPrimitiveType(name)
+		if !ok {
+			t.Fatalf("second BuiltinPrimitiveType(%q) returned ok=false", name)
+		}
+		if reflect.ValueOf(first).Kind() != reflect.Ptr {
+			t.Fatalf("BuiltinPrimitiveType(%q) = %T, want pointer-backed singleton", name, first)
+		}
+		if first != second {
+			t.Fatalf("BuiltinPrimitiveType(%q) returned distinct singleton pointers: %p and %p", name, first, second)
+		}
 	}
-
-	if Boolean != Boolean {
-		t.Error("Boolean should be singleton")
+	if Nil == Boolean {
+		t.Fatal("different primitive singletons Nil and Boolean share a pointer")
 	}
-
-	if Any != Any {
-		t.Error("Any should be singleton")
+	if Number == String {
+		t.Fatal("different primitive singletons Number and String share a pointer")
 	}
 }
 

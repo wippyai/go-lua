@@ -136,11 +136,17 @@ func TestEqualityHashSelfInstantiatingGenericTerminates(t *testing.T) {
 	}))
 	inst := Instantiate(g, String)
 
-	if EqualityHash(inst) == 0 {
-		t.Fatal("self-instantiating generic should produce a non-zero equality hash")
+	first, second := EqualityHash(inst), EqualityHash(inst)
+	const wantHash uint64 = 4478555391772677995
+	if first != wantHash || second != wantHash {
+		t.Fatalf("self-instantiating generic equality hash calls = %d, %d; want %d", first, second, wantHash)
 	}
-	if got := EqualityHash(inst); got != EqualityHash(inst) {
-		t.Fatalf("self-instantiating generic equality hash should be stable: %d vs %d", got, EqualityHash(inst))
+	equal := Instantiate(g, String)
+	if !inst.Equals(equal) {
+		t.Fatal("independently instantiated equal self-instantiating generics should compare equal")
+	}
+	if got := EqualityHash(equal); got != wantHash {
+		t.Fatalf("equal self-instantiating generic equality hash = %d, want %d", got, wantHash)
 	}
 }
 

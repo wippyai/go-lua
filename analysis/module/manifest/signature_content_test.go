@@ -265,8 +265,9 @@ func TestCanonicalFunctionSignatureContentSupportsRecursiveBinder(t *testing.T) 
 		return &typ.Record{Fields: []typ.Field{{Name: "next", Type: self}}}
 	})
 	sig := signature.Function{Type: typ.Func().Param("node", node).Returns(node).Build()}
-	if got := canonicalSignatureBytes(t, sig); len(got) == 0 {
-		t.Fatal("recursive binder produced empty canonical content")
+	want := []byte(`{"schema":"go-lua.signature.content/v1","hasType":true,"type":{"kind":"function","params":[{"type":{"kind":"recursive","name":"Node","binder":1,"body":{"kind":"record","fields":[{"name":"next","type":{"kind":"recursiveRef","binder":1}}]}}}],"returns":[{"kind":"recursiveRef","binder":1}]},"hasOperationalEffects":false}`)
+	if got := canonicalSignatureBytes(t, sig); !bytes.Equal(got, want) {
+		t.Fatalf("recursive binder canonical content = %s, want %s", got, want)
 	}
 }
 

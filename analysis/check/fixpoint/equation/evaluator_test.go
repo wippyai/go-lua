@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -97,9 +98,17 @@ func TestAcyclicBoundEvaluatorCopiedStoreWitness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(evaluation.Closure.AllocationRekeys) != 1 || evaluation.Closure.AllocationRekeys[0] != (AllocationRekey{From: "formal:table", To: "caller:table"}) ||
-		!bytes.Equal(evaluation.Closure.Values[0].Value, evaluation.Closure.Values[1].Value) {
-		t.Fatalf("copied-store witness closure = %#v", evaluation.Closure)
+	want := OutputClosure{
+		Values: []Fact{
+			{Key: "copied-store", Value: []byte("caller-entry")},
+			{Key: "identity", Value: []byte("caller-entry")},
+		},
+		Outcomes:         []Fact{{Key: "return", Value: []byte("normal")}},
+		Diagnostics:      []Fact{{Key: "guard-witness", Value: []byte("not-nil")}},
+		AllocationRekeys: []AllocationRekey{{From: "formal:table", To: "caller:table"}},
+	}
+	if !reflect.DeepEqual(evaluation.Closure, want) {
+		t.Fatalf("copied-store published closure = %#v, want %#v", evaluation.Closure, want)
 	}
 }
 
