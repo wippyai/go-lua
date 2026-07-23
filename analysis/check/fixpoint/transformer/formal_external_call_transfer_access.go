@@ -177,14 +177,12 @@ func externalCallTransferInput(body *relationProgramBody, access valueAccessTerm
 	if body == nil || body.relation.arena == nil || access.term == 0 || int(access.term) >= len(body.relation.arena.values) {
 		return state.TransferInputAccess{}, fmt.Errorf("transformer: external-call provider access has a foreign term")
 	}
-	// Lua type-name is a transparent wrapper over its operand. Preserve its
-	// exact value closure at the selected source point; constructors and other
-	// stateful forms retain their direct declaration so this boundary cannot
-	// import an unselected operand subtree.
-	if body.relation.arena.values[access.term].op == valueLuaTypeName {
+	switch body.relation.arena.values[access.term].op {
+	case valueLuaTypeName, valueDynamicRead, valueDynamicTableRead:
 		return body.valueTermFactorAccess(access.term)
+	default:
+		return body.valueTermNodeFactorAccess(access.term)
 	}
-	return body.valueTermNodeFactorAccess(access.term)
 }
 
 func mergeExternalCallTransferInput(destination *state.TransferInputAccess, source state.TransferInputAccess) {

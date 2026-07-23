@@ -3,7 +3,12 @@ package transformer
 import (
 	"testing"
 
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestBindExternalCallAccessToDeclaredInputsDerivesUndeclaredPoint(t *testing.T) {
@@ -18,5 +23,24 @@ func TestBindExternalCallAccessToDeclaredInputsDerivesUndeclaredPoint(t *testing
 	}
 	if access[0].point != 7 {
 		t.Fatalf("binding mutated compiler access declaration: %#v", access)
+	}
+}
+
+func TestExternalCallTransferInputClosesSelectedOperandTerm(t *testing.T) {
+	registry := standard.Registry()
+	arena := NewArena(registry)
+	global := arena.bindEnvironmentSymbol(symbol.ID(41))
+	operand := arena.DynamicReadTableValue(global, 0, arena.Constant(product.Bottom(registry)))
+	if global == 0 || operand == 0 {
+		t.Fatal("operand construction failed")
+	}
+	body := &relationProgramBody{relation: Relation{arena: arena}, productDomain: state.RegisteredProductDomain(registry)}
+	got, err := externalCallTransferInput(body, valueAccessTerm{term: operand})
+	if err != nil {
+		t.Fatalf("external-call operand input: %v", err)
+	}
+	want := statekey.SymbolValue(symbol.ID(41))
+	if len(got.Values) != 1 || got.Values[0] != want {
+		t.Fatalf("operand closure values = %#v, want [%d]", got.Values, want)
 	}
 }
