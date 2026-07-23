@@ -51,3 +51,32 @@ end
 		)
 	}
 }
+
+func TestLowerSpreadVarargArgumentIsOpenTail(t *testing.T) {
+	fn, bindings, built := parseSemanticFunction(t, `
+function f(...): ()
+    consume(...)
+end
+`, "consume")
+	stmt, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want call statement", fn.Stmts[0])
+	}
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	facts := LowerDetailed(built.Graph, Config{
+		Registry: standard.Registry(),
+		WIR:      wirlower.LowerFunction("spread-vararg-shape", fn, bindings, built),
+	}).Facts
+
+	site, ok := facts.CallSiteView(point)
+	if !ok {
+		t.Fatalf("missing consumer call site at point %d", point)
+	}
+	source, ok := site.ArgumentSourceAt(0)
+	if !ok || source.Kind != factflow.ValueSourceVararg {
+		t.Fatalf("consumer argument source = %#v/%v, want vararg", source, ok)
+	}
+	if !source.Final || !source.Expanded || !source.OpenTail || source.Adjusted {
+		t.Fatalf("consumer vararg shape = final:%v expanded:%v open:%v adjusted:%v, want open expanded tail", source.Final, source.Expanded, source.OpenTail, source.Adjusted)
+	}
+}

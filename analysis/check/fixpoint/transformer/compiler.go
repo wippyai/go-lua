@@ -464,6 +464,10 @@ func externalCallAccessTerms(ctx planCompileContext, point cfg.Point) (externalC
 	collector := newValueAccessCollector(point)
 	ctx.valueAccess = collector
 	appendSource := func(label string, source factflow.ValueSource) (ValueTerm, error) {
+		if term, exact := exactExternalVariadicTailTerm(ctx, point, source); exact {
+			ctx.valueAccess.record(source, term)
+			return term, nil
+		}
 		term, err := exactCompilerSourceTerm(ctx, source)
 		if err != nil {
 			return 0, fmt.Errorf("external call at point %d %s: %w", point, label, err)
@@ -501,6 +505,25 @@ func externalCallAccessTerms(ctx planCompileContext, point cfg.Point) (externalC
 		return externalCallAccessPlan{}, sourceErr
 	}
 	return externalCallAccessPlan{access: collector.frozen(), operands: operands}, nil
+}
+
+// exactExternalVariadicTailTerm supplies the sole scalar envelope for an open
+// final vararg tail. The tail has no selected Lua value, so Top is its exact
+// context-independent abstract payload; it never asserts a value, arity, or
+// per-element fact. This form is admitted only at a declared variadic call
+// boundary. All other vararg shapes remain unsupported rather than being
+// silently projected to one argument.
+func exactExternalVariadicTailTerm(ctx planCompileContext, point cfg.Point, source factflow.ValueSource) (ValueTerm, bool) {
+	if ctx.builder == nil || source.Kind != factflow.ValueSourceVararg || !source.Valid() ||
+		!source.Final || !source.Expanded || !source.OpenTail {
+		return 0, false
+	}
+	operation, ok := ctx.plan.SignatureCallOperation(point)
+	if !ok || operation.Signature().Type == nil || operation.Signature().Type.Variadic == nil {
+		return 0, false
+	}
+	term := ctx.builder.Arena().Constant(product.Top())
+	return term, term != 0
 }
 
 // withExpressionValueFreeze binds the caller's opaque expression authority to

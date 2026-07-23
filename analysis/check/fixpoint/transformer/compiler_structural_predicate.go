@@ -121,11 +121,11 @@ func prepareCertifiedScalarExpressions(ctx *planCompileContext) error {
 		if region.RHSOnTrue() != wantRHSOnTrue {
 			return fmt.Errorf("expression %d logical %s region has wrong RHS polarity", owner, op.Op())
 		}
-		source, ok := ctx.facts.BranchConditionSource(region.Branch())
+		condition, ok := ctx.facts.BranchCondition(region.Branch())
 		if !ok {
 			return fmt.Errorf("expression %d structural branch has no condition source", owner)
 		}
-		if !samePredicateSource(ctx.facts, op.Left(), source) {
+		if !exactStructuralBranchCondition(ctx.facts, op.Left(), condition) {
 			return fmt.Errorf("expression %d structural branch condition is not its exact left operand", owner)
 		}
 		rhs := op.Right()
@@ -174,6 +174,23 @@ func prepareCertifiedScalarExpressions(ctx *planCompileContext) error {
 		// this one.
 	}
 	return nil
+}
+
+// exactStructuralBranchCondition recognizes the two lossless lowerings of a
+// logical owner's left operand. Most guards retain the operand itself and use
+// the true edge for truthiness. WIR normalizes `not x` to a falsy x check;
+// that is equally exact only when the branch polarity records the inversion.
+// No other unary form, source rewrite, or polarity mismatch is admitted.
+func exactStructuralBranchCondition(facts factflow.Facts, left factflow.ValueSource, condition factflow.BranchCondition) bool {
+	if condition.TruthyOnTrueEdge() && samePredicateSource(facts, left, condition.Source()) {
+		return true
+	}
+	if condition.TruthyOnTrueEdge() || !left.HasExpr {
+		return false
+	}
+	operation, ok := facts.ExpressionOperation(left.ExprRef)
+	return ok && operation.Kind() == factflow.ExpressionOperationUnary && operation.Op() == "not" &&
+		samePredicateSource(facts, operation.Left(), condition.Source())
 }
 
 func samePredicateSource(facts factflow.Facts, left, right factflow.ValueSource) bool {

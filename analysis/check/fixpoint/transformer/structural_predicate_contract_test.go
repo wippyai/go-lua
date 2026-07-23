@@ -264,6 +264,47 @@ func TestSamePredicateSourceOperationTreeSemantics(t *testing.T) {
 	})
 }
 
+func TestExactStructuralBranchConditionRecognizesOnlyNormalizedNot(t *testing.T) {
+	shape := mustScalarShape(t)
+	path := pathdom.NewPath(symbol.ID(47), "enabled")
+	operand, ok := factflow.NewPathValueSource(path.Key(), 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("operand source rejected")
+	}
+	not, ok := factflow.NewUnaryExpressionOperation("not", operand)
+	if !ok {
+		t.Fatal("not operation rejected")
+	}
+	left, ok := factflow.NewExpressionValueSource(1, 0, 0, 0, shape)
+	if !ok {
+		t.Fatal("not expression source rejected")
+	}
+	facts := factflow.NewFacts(factflow.FactsInput{ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{1: not}})
+
+	falsy, ok := factflow.NewBranchCondition(operand, false)
+	if !ok {
+		t.Fatal("falsy branch condition rejected")
+	}
+	if !exactStructuralBranchCondition(facts, left, falsy) {
+		t.Fatal("normalized falsy operand did not certify exact not expression")
+	}
+
+	truthy, ok := factflow.NewBranchCondition(operand, true)
+	if !ok {
+		t.Fatal("truthy branch condition rejected")
+	}
+	if exactStructuralBranchCondition(facts, left, truthy) {
+		t.Fatal("truthy operand incorrectly certified as a not expression")
+	}
+
+	otherPath := pathdom.NewPath(symbol.ID(48), "other")
+	other, _ := factflow.NewPathValueSource(otherPath.Key(), 0, 0, 0, shape)
+	wrong, _ := factflow.NewBranchCondition(other, false)
+	if exactStructuralBranchCondition(facts, left, wrong) {
+		t.Fatal("different falsy operand incorrectly certified as exact")
+	}
+}
+
 // TestSamePredicateSourceRecognizesRepeatedDynamicIndexRead mirrors
 // TestExternalCensusStructuralBranchConditionNotExactLeftOperand
 // (analysis/check/fixpoint/program/external_predicate_census_test.go):

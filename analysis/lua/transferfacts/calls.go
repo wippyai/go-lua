@@ -308,7 +308,12 @@ func (l *lowerer) callArgumentSourcesFromWIR(point cfg.Point) ([]factflow.ValueS
 	out := make([]factflow.ValueSource, len(ops))
 	for i, op := range ops {
 		final := i == len(ops)-1
-		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, inst.ListSpread && final)
+		expanded := inst.ListSpread && final
+		// A spread vararg remains an open value list. Unlike a final call
+		// result, it has no statically bounded tail that could be represented as
+		// a closed expanded source.
+		openTail := expanded && op.Kind == wir.OperandVararg
+		source, ok := l.callArgumentSourceFromWIROperand(point, op, i, i, final, expanded, openTail)
 		if !ok {
 			source = factflow.NewUnknownValueSource(i)
 		}
@@ -324,6 +329,7 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	targetIndex int,
 	final bool,
 	expanded bool,
+	openTail bool,
 ) (factflow.ValueSource, bool) {
 	if source, ok := l.localRootPathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false); ok {
 		return source, true
@@ -334,7 +340,7 @@ func (l *lowerer) callArgumentSourceFromWIROperand(
 	if source, ok := l.pathExpressionSourceFromWIR("call-arg", point, op, exprIndex, targetIndex, final, false, false, wir.SymbolLocal, wir.SymbolParam, wir.SymbolGlobal, wir.SymbolUpvalue); ok {
 		return source, true
 	}
-	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, false)
+	return l.valueSourceFromWIROperand(op, exprIndex, targetIndex, final, expanded, openTail)
 }
 
 func (l *lowerer) wirCallInstruction(point cfg.Point) (wir.Instruction, bool) {

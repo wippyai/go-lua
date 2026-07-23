@@ -94,6 +94,51 @@ func TestExactCompilerSourceTermRawResolvesLiteralScalar(t *testing.T) {
 	}
 }
 
+func TestExactExternalVariadicTailTermRequiresDeclaredOpenTail(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeCall)
+	sig := signature.Function{Type: typ.Func().Param("prefix", typ.String).Variadic(typ.Any).Build()}
+	op, ok := operationplan.NewSignatureCallOperation(sig)
+	if !ok {
+		t.Fatal("variadic signature operation rejected")
+	}
+	plan := operationplan.New(graph, factflow.FactsInput{}).WithSignatureCalls(map[cfg.Point]operationplan.SignatureCallOperation{point: op})
+	builder := NewBuilder(reg, Shape{}, DefaultOutputCapabilityRegistry(), plan)
+	ctx := planCompileContext{registry: reg, plan: plan, facts: plan.Facts(), builder: builder}
+	openShape, ok := factflow.NewValueSourceShape(true, true, false, true)
+	if !ok {
+		t.Fatal("open vararg shape rejected")
+	}
+	tail, ok := factflow.NewVarargValueSource(0, 1, 1, 0, openShape)
+	if !ok {
+		t.Fatal("open vararg source rejected")
+	}
+	term, exact := exactExternalVariadicTailTerm(ctx, point, tail)
+	if !exact || term == 0 {
+		t.Fatalf("open variadic tail term = %d/%t, want a scalar Top envelope", term, exact)
+	}
+	value, evaluated := builder.Arena().evalValue(term, BindingCursor{}, SpecializationContext{})
+	if !evaluated || !product.Equal(reg, value, product.Top()) {
+		t.Fatalf("open variadic tail value = %#v/%t, want Top", value, evaluated)
+	}
+
+	closed := tail
+	closed.OpenTail = false
+	if term, exact := exactExternalVariadicTailTerm(ctx, point, closed); exact || term != 0 {
+		t.Fatalf("closed vararg tail admitted as envelope: %d/%t", term, exact)
+	}
+	nonVariadicOp, ok := operationplan.NewSignatureCallOperation(signature.Function{Type: typ.Func().Build()})
+	if !ok {
+		t.Fatal("non-variadic signature operation rejected")
+	}
+	nonVariadicPlan := operationplan.New(graph, factflow.FactsInput{}).WithSignatureCalls(map[cfg.Point]operationplan.SignatureCallOperation{point: nonVariadicOp})
+	nonVariadic := planCompileContext{registry: reg, plan: nonVariadicPlan, facts: nonVariadicPlan.Facts(), builder: NewBuilder(reg, Shape{}, DefaultOutputCapabilityRegistry(), nonVariadicPlan)}
+	if term, exact := exactExternalVariadicTailTerm(nonVariadic, point, tail); exact || term != 0 {
+		t.Fatalf("tail admitted at a non-variadic call boundary: %d/%t", term, exact)
+	}
+}
+
 func TestExactExternalCallResultTermSelectsImplicitOpenTailStaticResult(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
