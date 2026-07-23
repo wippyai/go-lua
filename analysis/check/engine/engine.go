@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
@@ -50,11 +51,23 @@ type branchPredicateWire struct {
 // names for this small entrypoint; outcomes and diagnostics retain their
 // equation-kernel candidate keys.
 type Result struct {
-	Artifact     equation.Artifact
-	Values       []equation.Fact
-	Outcomes     []equation.Fact
-	Diagnostics  []equation.Fact
-	Transactions int
+	Artifact    equation.Artifact
+	Values      []equation.Fact
+	Outcomes    []equation.Fact
+	Diagnostics []equation.Fact
+	// DiagnosticSpans maps an operation-scoped diagnostic fact key to the WIR
+	// source span that produced it. It is intentionally source-only metadata:
+	// equation facts remain portable and position-free.
+	DiagnosticSpans map[string]wir.Span
+	Transactions    int
+	Timings         Timings
+}
+
+// Timings records the two engine-owned phases. Hosts add loading/resolution
+// and rendering measurements around this boundary.
+type Timings struct {
+	ParseBindLower time.Duration
+	Evaluate       time.Duration
 }
 
 // Check compiles source through the new front, binds its sole formal entry,
@@ -67,9 +80,13 @@ func Check(source string) (result Result, err error) {
 			result = Result{}
 		}
 	}()
+	parseStarted := time.Now()
 	compilation, err := front.Compile(source)
+	parseElapsed := time.Since(parseStarted)
 	if err != nil {
-		return diagnosticResult("analysis/front", err), nil
+		result = diagnosticResult("analysis/front", err)
+		result.Timings.ParseBindLower = parseElapsed
+		return result, nil
 	}
 	artifact := compilation.Artifact
 	if len(artifact.Equations) == 0 {
@@ -79,6 +96,7 @@ func Check(source string) (result Result, err error) {
 	binding := equation.EntryBinding{Parameter: entry, Value: []byte(entryValue)}
 	closure := equation.OutputClosure{}
 	transactions := 0
+	evaluateStarted := time.Now()
 	if compilation.Cyclic == nil {
 		bound, bindErr := equation.BindEntry(artifact, binding)
 		if bindErr != nil {
@@ -94,7 +112,9 @@ func Check(source string) (result Result, err error) {
 		}
 		evaluation, evaluateErr := vm.Evaluate(bound)
 		if evaluateErr != nil {
-			return diagnosticResult("analysis/conservative", evaluateErr), nil
+			result = diagnosticResult("analysis/conservative", evaluateErr)
+			result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
+			return result, nil
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	} else {
@@ -117,15 +137,37 @@ func Check(source string) (result Result, err error) {
 		}
 		evaluation, evaluateErr := vm.Evaluate(context.Background(), bound, []string{"published"})
 		if evaluateErr != nil {
-			return diagnosticResult("analysis/conservative", evaluateErr), nil
+			result = diagnosticResult("analysis/conservative", evaluateErr)
+			result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
+			return result, nil
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
-	return Result{
+	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
-		Transactions: transactions,
-	}, nil
+		DiagnosticSpans: diagnosticSpans(compilation.ClaimSpans, closure.Diagnostics),
+		Transactions:    transactions,
+		Timings:         Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
+	}
+	return result, nil
+}
+
+func diagnosticSpans(claimSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+	if len(claimSpans) == 0 || len(diagnostics) == 0 {
+		return nil
+	}
+	out := make(map[string]wir.Span)
+	for _, item := range diagnostics {
+		if !strings.HasPrefix(item.Key, "claim/unproven/") {
+			continue
+		}
+		name := strings.TrimPrefix(item.Key, "claim/unproven/")
+		if span, ok := claimSpans[name]; ok {
+			out[item.Key] = span
+		}
+	}
+	return out
 }
 
 // diagnosticResult is the whole-file recovery boundary for source-driven

@@ -53,8 +53,9 @@ const (
 // present; Cyclic is present exactly when the source CFG has a recurrence and
 // carries the source-frozen WTO certificate for that same artifact.
 type Compilation struct {
-	Artifact equation.Artifact
-	Cyclic   *equation.CyclicArtifact
+	Artifact   equation.Artifact
+	Cyclic     *equation.CyclicArtifact
+	ClaimSpans map[string]wir.Span
 }
 
 // Compile parses and lowers one complete body, retaining cyclic control-flow
@@ -83,7 +84,7 @@ func Compile(source string) (Compilation, error) {
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation := Compilation{Artifact: artifact}
+	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans(body, artifact)}
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -92,6 +93,41 @@ func Compile(source string) (Compilation, error) {
 		compilation.Cyclic = &cyclic
 	}
 	return compilation, nil
+}
+
+// claimSpans retains the source anchors needed to render claim failures after
+// equation evaluation. Equation facts name their owning operation, while WIR
+// remains the authority for source coordinates.
+func claimSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	claims := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpClaim {
+			claims = append(claims, instruction)
+		}
+	}
+	spans := make(map[string]wir.Span, len(claims))
+	claimIndex := 0
+	for _, item := range artifact.Equations {
+		if item.Occurrence.Kind != "claim" || claimIndex >= len(claims) {
+			continue
+		}
+		span := claims[claimIndex].TargetSpan
+		if !span.Valid() {
+			span = claims[claimIndex].ExprSpan
+		}
+		if !span.Valid() {
+			span = claims[claimIndex].CallSpan
+		}
+		if span.Valid() {
+			spans[item.Target.Name] = span
+		}
+		claimIndex++
+	}
+	return spans
 }
 
 // CompileBody is retained for consumers that only need the equation artifact.

@@ -560,11 +560,12 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		b.markAssignmentTargetSpan(b.curPoint, 0, dst, localNameSpan(s, i))
 		if declared != 0 {
 			b.emit(wir.Instruction{
-				Op:    wir.OpClaim,
-				Dst:   dst,
-				A:     dst,
-				Claim: wir.ClaimAnnotation,
-				Type:  declared,
+				Op:         wir.OpClaim,
+				Dst:        dst,
+				A:          dst,
+				Claim:      wir.ClaimAnnotation,
+				Type:       declared,
+				TargetSpan: localNameSpan(s, i),
 			})
 		}
 		if symbol, ok := b.bindings.LocalSymbolAt(s, i); ok {
@@ -1538,9 +1539,9 @@ func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	case *ast.FuncCallExpr:
 		b.emitAssign(dst, b.callValue(e))
 	case *ast.CastExpr:
-		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimCast, Type: b.internType(e.Type), ExprID: expressionid.Of(e)})
+		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimCast, Type: b.internType(e.Type), ExprID: expressionid.Of(e), ExprSpan: wirSpanFromSource(ast.SpanOf(e))})
 	case *ast.NonNilAssertExpr:
-		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimAssert, ExprID: expressionid.Of(e)})
+		b.emit(wir.Instruction{Op: wir.OpClaim, Dst: dst, A: b.lowerExpr(e.Expr), Claim: wir.ClaimAssert, ExprID: expressionid.Of(e), ExprSpan: wirSpanFromSource(ast.SpanOf(e))})
 	case *ast.LogicalOpExpr:
 		b.lowerLogicalInto(dst, e)
 	case *ast.FunctionExpr:
