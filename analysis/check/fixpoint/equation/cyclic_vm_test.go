@@ -109,3 +109,63 @@ func TestCyclicVMCancellationPublishesNoPartialResult(t *testing.T) {
 		t.Fatalf("canceled evaluation = %#v, %v; calls=%d", evaluation, err, calls)
 	}
 }
+
+func TestRunCyclicShadowRejectsClosureAndWideningTraceDifferences(t *testing.T) {
+	artifact, entry, contracts := cyclicVMFixture(t)
+	registry, err := NewCyclicKernelRegistry([]CyclicKernelBinding{
+		{KernelID: "seed", ContractID: contracts[0], Kernel: CyclicKernelFunc(func(context.Context, BoundCyclicEquation, CyclicSnapshot) (TransactionResult, error) {
+			return TransactionResult{Complete: true, Closure: OutputClosure{Values: []Fact{{Key: "seed", Value: []byte("concrete")}}}}, nil
+		})},
+		{KernelID: "loop", ContractID: contracts[1], Kernel: CyclicKernelFunc(func(context.Context, BoundCyclicEquation, CyclicSnapshot) (TransactionResult, error) {
+			return TransactionResult{Complete: true}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm, err := NewCyclicVM(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := vm.Evaluate(context.Background(), mustBindCyclicEntry(t, artifact, entry), []string{"normal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name       string
+		production func() (OutputClosure, []WideningTrace, error)
+	}{
+		{
+			name: "closure",
+			production: func() (OutputClosure, []WideningTrace, error) {
+				return OutputClosure{Values: []Fact{{Key: "wrong", Value: []byte("output")}}}, baseline.WideningTrace, nil
+			},
+		},
+		{
+			name: "trace",
+			production: func() (OutputClosure, []WideningTrace, error) {
+				trace := append([]WideningTrace(nil), baseline.WideningTrace...)
+				trace = append(trace, WideningTrace{Cell: "wrong"})
+				return baseline.Closure, trace, nil
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := RunCyclicShadow(context.Background(), vm, []CyclicShadowCase{{
+				Name: "mismatch", Artifact: artifact, Entry: entry, Selectors: []string{"normal"}, Production: test.production,
+			}})
+			if err == nil {
+				t.Fatal("cyclic shadow accepted a published difference")
+			}
+		})
+	}
+}
+
+func mustBindCyclicEntry(t *testing.T, artifact CyclicArtifact, entry EntryBinding) BoundCyclicArtifact {
+	t.Helper()
+	bound, err := BindCyclicEntry(artifact, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bound
+}

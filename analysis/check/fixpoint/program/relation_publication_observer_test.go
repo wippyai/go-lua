@@ -47,10 +47,13 @@ type relationDifferentialSource struct {
 }
 
 type relationDifferentialReport struct {
-	corpusSize int
-	passed     int
-	gaps       []string
-	exclusions []string
+	corpusSize                int
+	passed                    int
+	gaps                      []string
+	exclusions                []string
+	cyclicChecktestCorpusSize int
+	cyclicChecktestPassed     int
+	cyclicChecktestGaps       []string
 }
 
 // relationDifferentialWorkerReport is deliberately wire-only: a corpus body
@@ -87,11 +90,22 @@ func (r *relationDifferentialReport) observe(
 	for _, plan := range frozen.BodyPlanObservations() {
 		r.corpusSize++
 		if !plan.Acyclic {
+			checktest := strings.HasPrefix(source, "checktest/")
+			if checktest {
+				r.cyclicChecktestCorpusSize++
+			}
 			if err := r.compareCyclicBody(frozen, plan.Body); err != nil {
-				r.addGap("%s/%s: %v", source, plan.Body, err)
+				gap := fmt.Sprintf("%s/%s: %v", source, plan.Body, err)
+				r.gaps = append(r.gaps, gap)
+				if checktest {
+					r.cyclicChecktestGaps = append(r.cyclicChecktestGaps, gap)
+				}
 				continue
 			}
 			r.passed++
+			if checktest {
+				r.cyclicChecktestPassed++
+			}
 			continue
 		}
 		if err := r.compareAcyclicBody(frozen, published, plan.Body); err != nil {
@@ -290,6 +304,7 @@ func TestRelationPublicationDifferentialCorpus(t *testing.T) {
 	t.Run("checktest", func(t *testing.T) {
 		runRelationDifferentialCorpusInProcess(t, report, sources)
 	})
+	report.assertCyclicChecktest(t)
 	fixtureSources := relationFixtureCorpus(t)
 	if len(fixtureSources) == 0 {
 		t.Fatal("fixture corpus has no Lua sources")
@@ -587,6 +602,29 @@ func (r *relationDifferentialReport) assert(t *testing.T) {
 	}
 	if r.corpusSize == 0 || r.passed != r.corpusSize || len(r.gaps) != 0 {
 		t.Fatalf("CORPUS SIZE %d; PASS RATE %d/%d; NAMED INEQUALITIES %s", r.corpusSize, r.passed, r.corpusSize, strings.Join(r.gaps, "; "))
+	}
+}
+
+// assertCyclicChecktest prevents the broad corpus's acyclic majority (and
+// its separately-workered fixture sources) from hiding a skipped Stage-4
+// surface. Every captured checktest body reached compareCyclicBody, which
+// binds it to the CyclicVM and calls RunCyclicShadow for closure and trace
+// parity.
+func (r *relationDifferentialReport) assertCyclicChecktest(t *testing.T) {
+	t.Helper()
+	sort.Strings(r.cyclicChecktestGaps)
+	summary := fmt.Sprintf("CYCLIC CHECKTEST CORPUS SIZE %d; PASS RATE %d/%d", r.cyclicChecktestCorpusSize, r.cyclicChecktestPassed, r.cyclicChecktestCorpusSize)
+	t.Log(summary)
+	if len(r.cyclicChecktestGaps) == 0 {
+		t.Log("CYCLIC NAMED GAP FAMILIES none")
+	} else {
+		t.Logf("CYCLIC NAMED GAP FAMILIES %s", strings.Join(r.cyclicChecktestGaps, "; "))
+	}
+	if os.Getenv("GO_LUA_RELATION_DIFFERENTIAL_REPORT") != "" {
+		fmt.Printf("%s; CYCLIC NAMED GAP FAMILIES %s\n", summary, namedRelationDifferentialGaps(r.cyclicChecktestGaps))
+	}
+	if r.cyclicChecktestCorpusSize == 0 || r.cyclicChecktestPassed != r.cyclicChecktestCorpusSize || len(r.cyclicChecktestGaps) != 0 {
+		t.Fatalf("CYCLIC CHECKTEST CORPUS SIZE %d; PASS RATE %d/%d; CYCLIC NAMED GAP FAMILIES %s", r.cyclicChecktestCorpusSize, r.cyclicChecktestPassed, r.cyclicChecktestCorpusSize, strings.Join(r.cyclicChecktestGaps, "; "))
 	}
 }
 
