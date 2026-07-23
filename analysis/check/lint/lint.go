@@ -53,6 +53,16 @@ type ProjectInput struct {
 	// Targets limits checking to named modules plus their transitive local
 	// imports. An empty list checks every discovered entry.
 	Targets []string
+	// LoadFailures are discovered files that could not be read. Each one is
+	// reported as a lint.load.unreadable diagnostic instead of aborting the
+	// whole project load.
+	LoadFailures []LoadFailure
+}
+
+// LoadFailure records a discovered file that could not be read.
+type LoadFailure struct {
+	Path string
+	Err  string
 }
 
 // ResolvedImport is the module-boundary summary used while checking an entry.
@@ -123,6 +133,7 @@ func LoadDirectory(root string, entryPaths []string) (ProjectInput, error) {
 	}
 	entries := make([]Entry, 0)
 	targets := make([]string, 0, len(wanted))
+	failures := make([]LoadFailure, 0)
 	err = filepath.WalkDir(root, func(path string, item os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -132,7 +143,18 @@ func LoadDirectory(root string, entryPaths []string) (ProjectInput, error) {
 		}
 		content, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return readErr
+			// An explicitly requested entry must fail loudly; a discovered
+			// file (e.g. a broken symlink) becomes a per-file load failure so
+			// one unreadable path cannot abort the whole project.
+			if wanted[path] {
+				return readErr
+			}
+			relative, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			failures = append(failures, LoadFailure{Path: filepath.ToSlash(relative), Err: readErr.Error()})
+			return nil
 		}
 		relative, relErr := filepath.Rel(root, path)
 		if relErr != nil {
@@ -152,7 +174,7 @@ func LoadDirectory(root string, entryPaths []string) (ProjectInput, error) {
 	if len(targets) != len(wanted) {
 		return ProjectInput{}, fmt.Errorf("lint: one or more entry paths are not Lua files below %s", root)
 	}
-	return ProjectInput{Entries: entries, Targets: targets}, nil
+	return ProjectInput{Entries: entries, Targets: targets, LoadFailures: failures}, nil
 }
 
 func modulePath(path string) string {
@@ -268,6 +290,14 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		}
 	}
 	out := ProjectResult{Entries: make([]EntryResult, 0, len(entries))}
+	for _, failure := range input.LoadFailures {
+		out.Diagnostics = append(out.Diagnostics, newDiagnostic(
+			Entry{Path: failure.Path},
+			source.Span{StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1},
+			"lint.load.unreadable",
+			fmt.Sprintf("file %s cannot be read: %s", failure.Path, failure.Err),
+		))
+	}
 	for _, entry := range entries {
 		item, checked := results[entry.ModulePath]
 		if !checked {
