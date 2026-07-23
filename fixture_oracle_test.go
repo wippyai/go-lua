@@ -248,87 +248,118 @@ func TestFullOracle(t *testing.T) {
 	if len(suites) == 0 {
 		t.Fatal("full oracle discovered no fixture suites")
 	}
-	var mu sync.Mutex
-	var verdicts []fixtureExpectationVerdict
-	pass, fail, deadlockPass, deadlockFail := 0, 0, 0, 0
+	reporter := newFixtureOracleReporter()
 	t.Cleanup(func() {
-		total := pass + fail
-		t.Logf("FULL ORACLE SCORECARD: %d/%d fixtures PASS against fixture expectations (%d fail); deadlock-* %d pass / %d fail",
-			pass, total, fail, deadlockPass, deadlockFail)
-
-		// Bucket the failures by dominant cause for the worklist.
-		codeBuckets := make(map[string]int)
-		var failNames []fixtureExpectationVerdict
-		for _, v := range verdicts {
-			if v.passed {
-				continue
-			}
-			failNames = append(failNames, v)
-			for _, u := range v.unexpected {
-				if code := extractCode(u); code != "" {
-					codeBuckets[code]++
-				}
-			}
-		}
-
-		sort.Slice(failNames, func(i, j int) bool { return failNames[i].name < failNames[j].name })
-		for _, v := range failNames {
-			t.Logf("FAIL %s: %d missing, %d unexpected", v.name, len(v.missing), len(v.unexpected))
-			for _, m := range v.missing {
-				t.Logf("    MISS: %s", m)
-			}
-			for _, u := range v.unexpected {
-				t.Logf("    FALSE+: %s", u)
-			}
-		}
-
-		var codes []string
-		for c := range codeBuckets {
-			codes = append(codes, c)
-		}
-		sort.Slice(codes, func(i, j int) bool { return codeBuckets[codes[i]] > codeBuckets[codes[j]] })
-		t.Logf("--- FALSE-POSITIVE CODE HISTOGRAM ---")
-		for _, c := range codes {
-			t.Logf("  %s: %d", c, codeBuckets[c])
-		}
+		reporter.finish(t)
 	})
 
 	fixtureSlots := make(chan struct{}, fixtureParallelism())
 	traceFixtures := os.Getenv("FULL_ORACLE_TRACE") != ""
-	runFixtureSuites(t, suites, fixtureSlots, func(t *testing.T, s namedSuite) {
-		started := time.Now()
-		if traceFixtures {
-			fmt.Fprintf(os.Stderr, "FULL_ORACLE_BEGIN %s\n", s.Name)
+	for batchNumber, first := 0, 0; first < len(suites); batchNumber, first = batchNumber+1, first+fixtureOracleBatchSize {
+		last := first + fixtureOracleBatchSize
+		if last > len(suites) {
+			last = len(suites)
 		}
-		deadlock := isDeadlockFixtureSuite(s)
-		v := fullOracleFixtureVerdict(s)
-		if traceFixtures {
-			fmt.Fprintf(os.Stderr, "FULL_ORACLE_END %s pass=%t elapsed=%s\n", s.Name, v.passed, time.Since(started))
+		batch := suites[first:last]
+		t.Run(fmt.Sprintf("batch-%04d", batchNumber), func(t *testing.T) {
+			runFixtureSuites(t, batch, fixtureSlots, func(t *testing.T, s namedSuite) {
+				started := time.Now()
+				if traceFixtures {
+					fmt.Fprintf(os.Stderr, "FULL_ORACLE_BEGIN %s\n", s.Name)
+				}
+				v := fullOracleFixtureVerdict(s)
+				if traceFixtures {
+					fmt.Fprintf(os.Stderr, "FULL_ORACLE_END %s pass=%t elapsed=%s\n", s.Name, v.passed, time.Since(started))
+				}
+				reporter.record(v, isDeadlockFixtureSuite(s))
+				if !v.passed {
+					t.Errorf("fixture fails checked-in expectations (%d missing, %d unexpected)", len(v.missing), len(v.unexpected))
+					for _, m := range v.missing {
+						t.Errorf("    MISS: %s", m)
+					}
+					for _, u := range v.unexpected {
+						t.Errorf("    FALSE+: %s", u)
+					}
+				}
+			})
+		})
+		reporter.logBatch(t, batchNumber, len(batch))
+	}
+}
+
+const fixtureOracleBatchSize = 16
+
+// fixtureOracleReporter deliberately retains only scalar counters and a compact
+// code histogram. Full verdicts can contain every diagnostic from a large
+// fixture, so retaining them until the final scoreboard needlessly keeps the
+// aggregate process above its RSS limit.
+type fixtureOracleReporter struct {
+	mu                                     sync.Mutex
+	pass, fail, deadlockPass, deadlockFail int
+	batchPass, batchFail                   int
+	codeBuckets                            map[string]int
+}
+
+func newFixtureOracleReporter() *fixtureOracleReporter {
+	return &fixtureOracleReporter{codeBuckets: make(map[string]int)}
+}
+
+func (r *fixtureOracleReporter) record(v fixtureExpectationVerdict, deadlock bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if v.passed {
+		r.pass++
+		r.batchPass++
+		if deadlock {
+			r.deadlockPass++
 		}
-		mu.Lock()
-		verdicts = append(verdicts, v)
-		if v.passed {
-			pass++
-			if deadlock {
-				deadlockPass++
-			}
-		} else {
-			fail++
-			if deadlock {
-				deadlockFail++
-			}
+		return
+	}
+	r.fail++
+	r.batchFail++
+	if deadlock {
+		r.deadlockFail++
+	}
+	for _, unexpected := range v.unexpected {
+		if code := extractCode(unexpected); code != "" {
+			r.codeBuckets[code]++
 		}
-		mu.Unlock()
-		if !v.passed {
-			t.Errorf("fixture fails checked-in expectations (%d missing, %d unexpected)", len(v.missing), len(v.unexpected))
-			for _, m := range v.missing {
-				t.Errorf("    MISS: %s", m)
-			}
-			for _, u := range v.unexpected {
-				t.Errorf("    FALSE+: %s", u)
-			}
+	}
+}
+
+func (r *fixtureOracleReporter) logBatch(t *testing.T, batchNumber, batchSize int) {
+	t.Helper()
+	r.mu.Lock()
+	pass, fail := r.batchPass, r.batchFail
+	r.batchPass, r.batchFail = 0, 0
+	r.mu.Unlock()
+	t.Logf("FULL ORACLE BATCH %04d: %d/%d fixtures PASS (%d fail)", batchNumber, pass, batchSize, fail)
+}
+
+func (r *fixtureOracleReporter) finish(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	total := r.pass + r.fail
+	t.Logf("FULL ORACLE SCORECARD: %d/%d fixtures PASS against fixture expectations (%d fail); deadlock-* %d pass / %d fail",
+		r.pass, total, r.fail, r.deadlockPass, r.deadlockFail)
+	if len(r.codeBuckets) == 0 {
+		return
+	}
+	codes := make([]string, 0, len(r.codeBuckets))
+	for code := range r.codeBuckets {
+		codes = append(codes, code)
+	}
+	sort.Slice(codes, func(i, j int) bool {
+		if r.codeBuckets[codes[i]] != r.codeBuckets[codes[j]] {
+			return r.codeBuckets[codes[i]] > r.codeBuckets[codes[j]]
 		}
+		return codes[i] < codes[j]
 	})
+	t.Log("--- FALSE-POSITIVE CODE HISTOGRAM ---")
+	for _, code := range codes {
+		t.Logf("  %s: %d", code, r.codeBuckets[code])
+	}
 }
 
 func TestFullOracleRejectsCheckerInfrastructureDiagnostic(t *testing.T) {
@@ -350,6 +381,29 @@ func TestFullOracleRejectsCheckerInfrastructureDiagnostic(t *testing.T) {
 	}
 	if len(verdict.unexpected) != 1 || !strings.Contains(verdict.unexpected[0], "checker infrastructure failure") {
 		t.Fatalf("unexpected infrastructure verdict: %#v", verdict)
+	}
+}
+
+func TestFixtureOracleReporterAggregatesCompactly(t *testing.T) {
+	reporter := newFixtureOracleReporter()
+	reporter.record(fixtureExpectationVerdict{name: "clean", passed: true}, false)
+	reporter.record(fixtureExpectationVerdict{
+		name:       "deadlock-failure",
+		passed:     false,
+		unexpected: []string{"main.lua:1:1 [E1000] first", "main.lua:2:1 [E1000] second", "plain failure"},
+	}, true)
+
+	if reporter.pass != 1 || reporter.fail != 1 {
+		t.Fatalf("reporter totals = %d pass, %d fail, want 1 each", reporter.pass, reporter.fail)
+	}
+	if reporter.deadlockPass != 0 || reporter.deadlockFail != 1 {
+		t.Fatalf("reporter deadlock totals = %d pass, %d fail, want 0/1", reporter.deadlockPass, reporter.deadlockFail)
+	}
+	if reporter.codeBuckets["E1000"] != 2 || len(reporter.codeBuckets) != 1 {
+		t.Fatalf("reporter code histogram = %#v, want E1000:2", reporter.codeBuckets)
+	}
+	if reporter.batchPass != 1 || reporter.batchFail != 1 {
+		t.Fatalf("reporter batch totals = %d pass, %d fail, want 1 each", reporter.batchPass, reporter.batchFail)
 	}
 }
 
