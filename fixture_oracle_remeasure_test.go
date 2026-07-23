@@ -6,9 +6,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 )
 
 const stage6OracleDenominator = 106.5
@@ -37,7 +34,6 @@ func TestNewEngineOracleRemeasure(t *testing.T) {
 	reporter := newFixtureOracleReporter()
 	var measurementsMu sync.Mutex
 	measurements := make([]newEnginePerFileMeasurement, 0, len(suites))
-	var functionalBodies, formalEquations, applyInstantiations int
 	fixtureSlots := make(chan struct{}, fixtureParallelism())
 	for batchNumber, first := 0, 0; first < len(suites); batchNumber, first = batchNumber+1, first+fixtureOracleBatchSize {
 		last := first + fixtureOracleBatchSize
@@ -48,8 +44,7 @@ func TestNewEngineOracleRemeasure(t *testing.T) {
 		t.Run(fmt.Sprintf("batch-%04d", batchNumber), func(t *testing.T) {
 			runFixtureSuites(t, batch, fixtureSlots, func(t *testing.T, suite namedSuite) {
 				fixtureStarted := time.Now()
-				stats := &program.Stats{}
-				diagnostics, entryFile := fixtureDiagnosticsWithOptions(suite, testutil.WithStats(stats))
+				diagnostics, entryFile := fixtureDiagnostics(suite)
 				verdict := fullOracleVerdictFromDiagnostics(suite, diagnostics, entryFile)
 				reporter.record(verdict, isDeadlockFixtureSuite(suite))
 				if !verdict.passed {
@@ -57,9 +52,6 @@ func TestNewEngineOracleRemeasure(t *testing.T) {
 				}
 				measurementsMu.Lock()
 				measurements = append(measurements, newEnginePerFileMeasurement{name: suite.Name, elapsed: time.Since(fixtureStarted), passed: verdict.passed})
-				functionalBodies += stats.FunctionalSummary.LexicalBodies
-				formalEquations += stats.FunctionalSummary.FormalEquations
-				applyInstantiations += stats.FunctionalSummary.ApplyInstantiations
 				measurementsMu.Unlock()
 			})
 		})
@@ -69,6 +61,5 @@ func TestNewEngineOracleRemeasure(t *testing.T) {
 	reporter.finish(t)
 	reportNewEnginePerFileDistribution(t, measurements)
 	t.Logf("ORACLE_REMEASURE wall=%s denominator=%.1fs speedup=%.3fx fixtures=%d", wall.Round(time.Millisecond), stage6OracleDenominator, stage6OracleDenominator/wall.Seconds(), len(measurements))
-	t.Logf("ORACLE_REMEASURE functional_summary bodies=%d formal_equations=%d apply_instantiations=%d", functionalBodies, formalEquations, applyInstantiations)
 	t.Log("ORACLE_REMEASURE cache_hits=unwired-pre-cut cache_misses=unwired-pre-cut cache_joins=unwired-pre-cut cache_overflows=unwired-pre-cut unique_projections=unwired-pre-cut")
 }
