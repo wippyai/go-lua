@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -37,6 +38,86 @@ func TestIntegrationGateFromScratchEquality(t *testing.T) {
 	if metrics.Cells != 2 || metrics.Executions != 2 || metrics.Misses != 2 {
 		t.Fatalf("two-module summary check did not use exactly its two specialized instances: %+v", metrics)
 	}
+}
+
+// TestIntegrationGateCallerInvariance1_10_100 proves the read projection is
+// the sole specialization dimension: arbitrary caller-only coordinates do
+// not create instances, while a certified read creates a distinct exact one.
+func TestIntegrationGateCallerInvariance1_10_100(t *testing.T) {
+	for _, callers := range []int{1, 10, 100} {
+		t.Run(fmt.Sprintf("%d-callers", callers), func(t *testing.T) {
+			h := newIntegrationGateHarness(t)
+			entries := make([]interproc.EntryBinding, callers)
+			for i := range entries {
+				entries[i] = gateEntry(t, "strict", "number", fmt.Sprintf("caller-%03d", i), fmt.Sprintf("site-%03d", i))
+			}
+			outcomes := make([]interproc.ClosedOutcome, callers)
+			errs := make([]error, callers)
+			start := make(chan struct{})
+			var group sync.WaitGroup
+			for i := range entries {
+				group.Add(1)
+				go func(i int) {
+					defer group.Done()
+					<-start
+					outcomes[i], errs[i] = (interproc.DirectCall{Table: h.table, Runner: h.runner()}).Resolve(context.Background(), h.moduleA, entries[i])
+				}(i)
+			}
+			close(start)
+			group.Wait()
+
+			fresh, err := h.specializeModuleA(context.Background(), h.moduleA, entries[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range outcomes {
+				if errs[i] != nil {
+					t.Fatalf("caller %d: %v", i, errs[i])
+				}
+				if !bytes.Equal(outcomes[i].CanonicalBytes(), fresh.CanonicalBytes()) {
+					t.Fatalf("caller %d received a result different from fresh specialization", i)
+				}
+			}
+			metrics := h.table.Metrics()
+			if metrics.Cells != 1 || metrics.Executions != 1 || metrics.Misses != 1 || metrics.Lookups != uint64(callers) {
+				t.Fatalf("%d equal-projection callers produced the wrong cache shape: %+v", callers, metrics)
+			}
+			if h.runs.Load() != 1 {
+				t.Fatalf("%d equal-projection callers executed body %d times", callers, h.runs.Load())
+			}
+		})
+	}
+
+	t.Run("distinct-certified-entries", func(t *testing.T) {
+		h := newIntegrationGateHarness(t)
+		strict := gateEntry(t, "strict", "number", "strict-caller", "strict-site")
+		loose := gateEntry(t, "loose", "number", "loose-caller", "loose-site")
+		strictOutcome, err := (interproc.DirectCall{Table: h.table, Runner: h.runner()}).Resolve(context.Background(), h.moduleA, strict)
+		if err != nil {
+			t.Fatal(err)
+		}
+		looseOutcome, err := (interproc.DirectCall{Table: h.table, Runner: h.runner()}).Resolve(context.Background(), h.moduleA, loose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		strictFresh, err := h.specializeModuleA(context.Background(), h.moduleA, strict)
+		if err != nil {
+			t.Fatal(err)
+		}
+		looseFresh, err := h.specializeModuleA(context.Background(), h.moduleA, loose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(strictOutcome.CanonicalBytes(), strictFresh.CanonicalBytes()) ||
+			!bytes.Equal(looseOutcome.CanonicalBytes(), looseFresh.CanonicalBytes()) ||
+			bytes.Equal(strictOutcome.CanonicalBytes(), looseOutcome.CanonicalBytes()) {
+			t.Fatal("distinct read projections cross-contaminated their exact results")
+		}
+		metrics := h.table.Metrics()
+		if metrics.Cells != 2 || metrics.Executions != 2 || metrics.Misses != 2 || h.runs.Load() != 2 {
+			t.Fatalf("distinct certified entries did not produce exactly two instances: metrics=%+v runs=%d", metrics, h.runs.Load())
+		}
+	})
 }
 
 type integrationGateHarness struct {
