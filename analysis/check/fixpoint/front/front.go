@@ -20,7 +20,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -650,7 +652,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			}
 		case instruction.Op == wir.OpEntry:
 			draft.Occurrence = occurrence("entry")
-			draft.Operands = []equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}}
+			draft.Operands = append([]equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}}, entryDeclaredOperands(body)...)
 		case instruction.Op == wir.OpAssign:
 			target, err := scalarTerm(body, instruction.Dst)
 			if err != nil {
@@ -836,7 +838,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: channel select %s: %w", operation.target.Name, err)
 			}
-			operands := make([]equation.Operand, 0, 2+instruction.List.Len)
+			operands := make([]equation.Operand, 0, 2+3*instruction.List.Len)
 			operands = append(operands,
 				equation.Operand{Role: "result", Term: result},
 				equation.Operand{Role: "default", Term: equation.ClosedTerm([]byte("select/default/" + strconv.FormatBool(instruction.SelectDefault)))},
@@ -846,7 +848,14 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: channel select %s case %d: %w", operation.target.Name, caseIndex, err)
 				}
-				operands = append(operands, equation.Operand{Role: fmt.Sprintf("case-%08d", caseIndex), Term: channel})
+				caseName := fmt.Sprintf("%08d", caseIndex)
+				operands = append(operands,
+					equation.Operand{Role: "case-" + caseName, Term: channel},
+					equation.Operand{Role: "case-display-" + caseName, Term: equation.ClosedTerm([]byte(selectCaseDisplay(body, candidate)))},
+				)
+				if payload, ok := selectCasePayloadTerm(body, candidate); ok {
+					operands = append(operands, equation.Operand{Role: "payload-type-" + caseName, Term: payload})
+				}
 			}
 			draft.Occurrence = occurrence("channel-select")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
@@ -1252,7 +1261,7 @@ func selectResultTerm(operand wir.Operand) (equation.Term, error) {
 	if operand.Kind != wir.OperandTemp {
 		return equation.Term{}, fmt.Errorf("result is operand kind %d, want temporary", operand.Kind)
 	}
-	return equation.ClosedTerm([]byte("value/temp/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
+	return equation.ClosedTerm([]byte("temp/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
 }
 
 func selectCaseTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
@@ -1260,6 +1269,95 @@ func selectCaseTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) 
 		return equation.Term{}, fmt.Errorf("case is operand kind %d, want path", operand.Kind)
 	}
 	return scalarTerm(body, operand)
+}
+
+// entryDeclaredOperands retains the closed type evidence available at a
+// lexical boundary.  The entry kernel treats a concrete caller seed as the
+// value authority, while these paired operands provide only guarded abstract
+// type and exact Channel identity evidence when no concrete identity exists.
+func entryDeclaredOperands(body *wir.Body) []equation.Operand {
+	if body == nil {
+		return nil
+	}
+	type declared struct {
+		term string
+		typ  typ.Type
+	}
+	byTerm := make(map[string]typ.Type)
+	for _, root := range body.RootTypes() {
+		if root.Path.IsEmpty() || root.Path.Key() == "" || body.Type(root.Type) == nil {
+			continue
+		}
+		byTerm["path/"+string(root.Path.Key())] = body.Type(root.Type)
+	}
+	for _, capture := range body.Boundary().Captures {
+		if capture.Symbol == 0 || capture.Type == 0 || body.Type(capture.Type) == nil {
+			continue
+		}
+		byTerm[fmt.Sprintf("path/sym%d", capture.Symbol)] = body.Type(capture.Type)
+	}
+	items := make([]declared, 0, len(byTerm))
+	for term, declaredType := range byTerm {
+		items = append(items, declared{term: term, typ: declaredType})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].term < items[j].term })
+	operands := make([]equation.Operand, 0, len(items)*2)
+	for index, item := range items {
+		encoded, ok := shapefact.EncodeTarget(item.typ)
+		if !ok {
+			continue
+		}
+		name := fmt.Sprintf("%08d", index)
+		operands = append(operands,
+			equation.Operand{Role: "declared-root-" + name, Term: equation.ClosedTerm([]byte(item.term))},
+			equation.Operand{Role: "declared-type-" + name, Term: equation.ClosedTerm(encoded)},
+		)
+	}
+	return operands
+}
+
+func selectCaseDisplay(body *wir.Body, operand wir.Operand) string {
+	if body == nil || operand.Kind != wir.OperandPath {
+		return ""
+	}
+	return body.Path(wir.PathRef(operand.Ref)).String()
+}
+
+func selectCasePayloadTerm(body *wir.Body, operand wir.Operand) (equation.Term, bool) {
+	if body == nil || operand.Kind != wir.OperandPath {
+		return equation.Term{}, false
+	}
+	p := body.Path(wir.PathRef(operand.Ref))
+	if p.IsEmpty() || p.Symbol == 0 {
+		return equation.Term{}, false
+	}
+	var root typ.Type
+	for _, candidate := range body.RootTypes() {
+		if candidate.Path.Symbol == p.Symbol && candidate.Path.Segments == nil {
+			root = body.Type(candidate.Type)
+			break
+		}
+	}
+	if root == nil {
+		return equation.Term{}, false
+	}
+	channel := root
+	if len(p.Segments) != 0 {
+		var ok bool
+		channel, ok = luatypeprojection.ApplySegments(root, p.Segments)
+		if !ok {
+			return equation.Term{}, false
+		}
+	}
+	payload, ok := ambient.ChannelPayloadType(channel)
+	if !ok || payload == nil {
+		return equation.Term{}, false
+	}
+	encoded, ok := shapefact.EncodeTarget(payload)
+	if !ok {
+		return equation.Term{}, false
+	}
+	return equation.ClosedTerm(encoded), true
 }
 
 func pathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string, error) {

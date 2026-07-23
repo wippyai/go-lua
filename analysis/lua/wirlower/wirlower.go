@@ -185,11 +185,17 @@ func recordFunctionBoundary(body *wir.Body, fn *ast.FunctionExpr, bindings *bind
 				continue
 			}
 			recordSymbolInfo(body, bindings, capture.Captured)
-			boundary.Captures = append(boundary.Captures, wir.BoundaryCapture{
+			boundaryCapture := wir.BoundaryCapture{
 				Symbol:  capture.Captured,
 				Name:    capture.CapturedName,
 				Mutable: bindings.HasWrite(capture.Captured),
-			})
+			}
+			if declared, ok := bindings.SymbolTypeAnnotation(capture.Captured); ok && resolver != nil {
+				if resolved, ok := resolver.Type(declared); ok {
+					boundaryCapture.Type = body.InternType(resolved)
+				}
+			}
+			boundary.Captures = append(boundary.Captures, boundaryCapture)
 		}
 		for _, global := range bindings.DirectGlobalReads(fn) {
 			if global == 0 {
@@ -304,6 +310,7 @@ func lowerInto(name string, stmts []ast.Stmt, fn *ast.FunctionExpr, bindings *bi
 		evalByExpr:          make(map[ast.Expr]cfg.Point),
 		logicalGuardEmitted: make(map[*ast.LogicalOpExpr]bool),
 		logicalValues:       make(map[*ast.LogicalOpExpr]wir.Operand),
+		ifChainMembers:      make(map[*ast.IfStmt]bool),
 		debugScopes:         [][]symbol.ID{{}},
 		debugBefore:         make(map[cfg.Point][]symbol.ID),
 		debugAfter:          make(map[cfg.Point][]symbol.ID),
@@ -374,6 +381,8 @@ type builder struct {
 	evalByExpr          map[ast.Expr]cfg.Point
 	logicalGuardEmitted map[*ast.LogicalOpExpr]bool
 	logicalValues       map[*ast.LogicalOpExpr]wir.Operand
+	ifChainMembers      map[*ast.IfStmt]bool
+	ifChainSeq          uint32
 
 	// debugScopes mirrors lexical value visibility while lowering. It stores
 	// only source symbol identities; WIR SymbolInfo and codegen still own names
@@ -1343,6 +1352,7 @@ func (b *builder) lowerReturn(s *ast.ReturnStmt) {
 // ---- branches -----------------------------------------------------------
 
 func (b *builder) lowerIf(s *ast.IfStmt) {
+	b.recordIfChain(s)
 	pts := b.stmtPoints(s)
 	nCalls := b.condCallCount(s.Condition)
 	if len(pts) != nCalls+1 {
@@ -1357,6 +1367,43 @@ func (b *builder) lowerIf(s *ast.IfStmt) {
 	b.debugPushScope()
 	b.lowerStmts(s.Else)
 	b.debugPopScope()
+}
+
+// recordIfChain retains authored if/elseif topology while the AST is still
+// available. CFG lowering represents elseif as a nested IfStmt in Else, so the
+// whole chain must be captured here rather than reconstructed by a later pass.
+func (b *builder) recordIfChain(head *ast.IfStmt) {
+	if b == nil || head == nil || b.ifChainMembers[head] {
+		return
+	}
+	branches := make([]wir.IfChainBranch, 0, 1)
+	current := head
+	for current != nil {
+		b.ifChainMembers[current] = true
+		points := b.stmtPoints(current)
+		calls := b.condCallCount(current.Condition)
+		if calls < 0 || len(points) != calls+1 {
+			return
+		}
+		span := tableEntryValueSpan(current.Condition)
+		if !span.Valid() {
+			return
+		}
+		branches = append(branches, wir.IfChainBranch{Point: points[calls], Span: span})
+		if len(current.Else) != 1 {
+			break
+		}
+		next, ok := current.Else[0].(*ast.IfStmt)
+		if !ok {
+			break
+		}
+		current = next
+	}
+	if len(branches) == 0 {
+		return
+	}
+	b.ifChainSeq++
+	b.body.SetIfChainDescriptor(wir.IfChainDescriptor{ID: b.ifChainSeq, HeadSpan: branches[0].Span, Branches: branches, HasElse: current != nil && current.HasElse})
 }
 
 func (b *builder) lowerWhile(s *ast.WhileStmt) {

@@ -76,6 +76,7 @@ type IfStmt struct {
 	Condition Expr   // Branch condition
 	Then      []Stmt // Statements when condition is true
 	Else      []Stmt // Statements when condition is false (may contain nested IfStmt for elseif)
+	HasElse   bool   // Source contained a terminal else, including an empty body
 }
 
 // NumberForStmt represents a numeric for loop (for i = start, limit, step do ... end).

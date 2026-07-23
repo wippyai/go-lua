@@ -228,7 +228,8 @@ stat:
                 cur.(*ast.IfStmt).Else = []ast.Stmt{elseif}
                 cur = elseif
             }
-            cur.(*ast.IfStmt).Else = $7
+			cur.(*ast.IfStmt).Else = $7
+			cur.(*ast.IfStmt).HasElse = true
             $$.SetPosFromToken($1.Pos)
             $$.SetLastPosFromToken($8.Pos)
         } |

@@ -17,6 +17,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -606,7 +608,7 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, operation equation.E
 }
 
 func cloneFact(fact equation.Fact) equation.Fact {
-	return equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)}
+	return equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: append([]equation.Guard(nil), fact.Guards...)}
 }
 
 func diagnosticCode(key string) string {
@@ -1171,26 +1173,69 @@ func encodeChildEntry(seeds []entrySeed) ([]byte, error) {
 }
 
 func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equation.TransactionResult, error) {
-	operands, err := operandsByRole(operation.Operands, "entry")
-	if err != nil {
-		return equation.TransactionResult{}, err
+	var entryValue []byte
+	declaredRoots := make(map[string][]byte)
+	declaredTypes := make(map[string][]byte)
+	for _, operand := range operation.Operands {
+		switch {
+		case operand.Role == "entry":
+			if entryValue != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate entry operand")
+			}
+			entryValue = operand.Value
+		case strings.HasPrefix(operand.Role, "declared-root-"):
+			declaredRoots[strings.TrimPrefix(operand.Role, "declared-root-")] = operand.Value
+		case strings.HasPrefix(operand.Role, "declared-type-"):
+			declaredTypes[strings.TrimPrefix(operand.Role, "declared-type-")] = operand.Value
+		default:
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed entry operand %q", operand.Role)
+		}
+	}
+	if entryValue == nil || len(declaredRoots) != len(declaredTypes) {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed entry operands")
 	}
 	const prefix = "front/child-entry/v1/"
-	if !strings.HasPrefix(string(operands["entry"]), prefix) {
-		return equation.TransactionResult{Complete: true}, nil
-	}
 	var wire childEntryWire
-	if err := json.Unmarshal(operands["entry"][len(prefix):], &wire); err != nil || wire.Version != 1 {
-		return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
+	if strings.HasPrefix(string(entryValue), prefix) {
+		if err := json.Unmarshal(entryValue[len(prefix):], &wire); err != nil || wire.Version != 1 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
+		}
 	}
-	values := make([]equation.Fact, 0, len(wire.Seeds))
+	values := make([]equation.Fact, 0, len(wire.Seeds)+len(declaredRoots)*3)
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if seed.Term == "" || len(seed.Value) == 0 || seen[seed.Term] || (!strings.HasPrefix(seed.Term, "path/") && !strings.HasPrefix(seed.Term, "temp/")) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry seed")
 		}
 		seen[seed.Term] = true
-		values = append(values, equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)})
+		values = append(values,
+			equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)},
+			equation.Fact{Key: "epoch/" + seed.Term + "/entry", Value: []byte("entry")},
+		)
+	}
+	for name, root := range declaredRoots {
+		declared, ok := shapefact.DecodeTarget(declaredTypes[name])
+		if !ok || declared == nil || (!strings.HasPrefix(string(root), "path/") && !strings.HasPrefix(string(root), "temp/")) {
+			// Boundary type metadata is optional for a lexical body.  An invalid
+			// descriptive entry row cannot become a value fact; skip it rather
+			// than rejecting an otherwise independently evaluable child.
+			continue
+		}
+		// A concrete seed is the value authority.  Declarations fill only absent
+		// entries, which prevents a caller's channel identity from being replaced
+		// by a callee-local symbolic one.
+		if seen[string(root)] {
+			continue
+		}
+		values = append(values,
+			equation.Fact{Key: "value/" + string(root) + "/entry", Value: []byte("scalar/top")},
+			equation.Fact{Key: "epoch/" + string(root) + "/entry", Value: []byte("entry")},
+			equation.Fact{Key: "type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)},
+		)
+		if _, channel := ambient.ChannelPayloadType(declared); channel {
+			identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
+			values = append(values, equation.Fact{Key: "identity/" + string(root) + "/entry", Value: identity})
+		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
@@ -1894,7 +1939,15 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}
+	values := []equation.Fact{
+		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
+		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+	}
+	for _, prefix := range []string{"identity/", "type/", "select/origin/"} {
+		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
+			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
+		}
+	}
 	if isChannelIdentity(value) {
 		values = append(values, equation.Fact{
 			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
@@ -2644,7 +2697,7 @@ func frozenMutationDiagnostic(operation equation.BoundEquation, partition equati
 func frozenProof(operation equation.BoundEquation, subject []byte, partition equation.Partition) (string, bool) {
 	prefix := "effect.freeze/" + strings.TrimPrefix(string(subject), "path/") + "/"
 	seen := make(map[string]map[string]string)
-	for _, fact := range partition.Values() {
+	for _, fact := range partition.AllValues() {
 		if !strings.HasPrefix(fact.Key, prefix) {
 			continue
 		}
@@ -2722,16 +2775,124 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	if !strings.HasPrefix(string(operands["result"]), "value/temp/") ||
+	if !strings.HasPrefix(string(operands["result"]), "temp/") ||
 		(!strings.EqualFold(string(operands["default"]), "select/default/true") && !strings.EqualFold(string(operands["default"]), "select/default/false")) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select")
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	type selectCase struct {
+		term, display string
+		payload       typ.Type
+		identity      []byte
+	}
+	cases := make(map[string]*selectCase)
+	for _, operand := range operation.Operands {
+		switch {
+		case strings.HasPrefix(operand.Role, "case-") && !strings.HasPrefix(operand.Role, "case-display-"):
+			name := strings.TrimPrefix(operand.Role, "case-")
+			if cases[name] != nil || !strings.HasPrefix(string(operand.Value), "path/") {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed select case")
+			}
+			cases[name] = &selectCase{term: string(operand.Value)}
+		case strings.HasPrefix(operand.Role, "case-display-"):
+			name := strings.TrimPrefix(operand.Role, "case-display-")
+			item := cases[name]
+			if item == nil || item.display != "" || len(operand.Value) == 0 {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed select case display")
+			}
+			item.display = string(operand.Value)
+		case strings.HasPrefix(operand.Role, "payload-type-"):
+			name := strings.TrimPrefix(operand.Role, "payload-type-")
+			item := cases[name]
+			if item == nil || item.payload != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed select payload")
+			}
+			payload, ok := shapefact.DecodeTarget(operand.Value)
+			if !ok || payload == nil || payload == typ.Any || payload == typ.Unknown {
+				return equation.TransactionResult{Complete: true}, nil
+			}
+			item.payload = payload
+		case operand.Role == "result" || operand.Role == "default":
+		default:
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select role %q", operand.Role)
+		}
+	}
+	ordered := make([]string, 0, len(cases))
+	for name := range cases {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	selectID := fmt.Sprintf("%x/%s", operation.Target.Body, operation.Target.Name)
+	resultCases := make([]channelselect.ResultCase, 0, len(ordered))
+	armFacts := make([]equation.Fact, 0, len(ordered))
+	for index, name := range ordered {
+		item := cases[name]
+		if item == nil || item.display == "" || item.payload == nil {
+			return equation.TransactionResult{Complete: true}, nil
+		}
+		identity, ok := resolveCurrentIdentity([]byte(item.term), partition)
+		if !ok || !isChannelIdentity(identity) {
+			return equation.TransactionResult{Complete: true}, nil
+		}
+		item.identity = identity
+		resultCases = append(resultCases, channelselect.ResultCase{Index: index, Payload: item.payload})
+		wire, marshalErr := json.Marshal(selectArmWire{Index: index, Term: item.term, Display: item.display, Identity: base64.RawURLEncoding.EncodeToString(identity), Payload: base64.RawURLEncoding.EncodeToString(mustCanonicalType(item.payload))})
+		if marshalErr != nil {
+			return equation.TransactionResult{}, marshalErr
+		}
+		armFacts = append(armFacts, equation.Fact{Key: "select/arm/" + selectID + "/" + fmt.Sprintf("%08d", index), Value: wire})
+	}
+	resultType, ok := channelselect.ResultValueTypeWithDefault(selectID, resultCases, string(operands["default"]) == "select/default/true")
+	if !ok {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	encodedResult, ok := shapefact.EncodeTarget(resultType)
+	if !ok {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	meta, marshalErr := json.Marshal(selectMetaWire{Cases: len(ordered), HasDefault: string(operands["default"]) == "select/default/true"})
+	if marshalErr != nil {
+		return equation.TransactionResult{}, marshalErr
+	}
+	values := []equation.Fact{
+		{Key: "value/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte("scalar/top")},
+		{Key: "epoch/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+		{Key: "type/" + string(operands["result"]) + "/" + operation.Target.Name, Value: encodedResult},
+		{Key: "select/origin/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(selectID)},
+		{Key: "select/meta/" + selectID, Value: meta},
+	}
+	values = append(values, armFacts...)
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+type selectMetaWire struct {
+	Cases      int  `json:"cases"`
+	HasDefault bool `json:"has_default"`
+}
+
+type selectArmWire struct {
+	Index    int    `json:"index"`
+	Term     string `json:"term"`
+	Display  string `json:"display"`
+	Identity string `json:"identity"`
+	Payload  string `json:"payload"`
+}
+
+func mustCanonicalType(value typ.Type) []byte {
+	encoded, err := typ.EncodeCanonical(context.Background(), value)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 func branchKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
+	}
+	if closure, recognized, err := selectBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	frozenCondition := false
 	for _, operand := range operation.Operands {
@@ -2778,6 +2939,127 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// selectBranchClosure recognizes only a complete, epoch-current select result
+// compared to an exact channel identity.  It emits finite edge facts rather
+// than guessing a winner: unknown or partial select catalogs remain silent.
+func selectBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	var encoded []byte
+	for _, operand := range operation.Operands {
+		if operand.Role == "predicate" {
+			if encoded != nil {
+				return equation.OutputClosure{}, false, fmt.Errorf("engine: duplicate branch predicate")
+			}
+			encoded = operand.Value
+		}
+	}
+	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
+		return equation.OutputClosure{}, false, nil
+	}
+	var predicate branchPredicateWire
+	if err := json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate); err != nil {
+		return equation.OutputClosure{}, false, fmt.Errorf("engine: decode select branch predicate: %w", err)
+	}
+	if predicate.Kind != "path-equal" || predicate.Path == "" || predicate.OtherPath == "" {
+		return equation.OutputClosure{}, false, nil
+	}
+	resultPath, channelPath := "", ""
+	if strings.HasSuffix(predicate.Path, ".channel") {
+		resultPath, channelPath = strings.TrimSuffix(predicate.Path, ".channel"), predicate.OtherPath
+	} else if strings.HasSuffix(predicate.OtherPath, ".channel") {
+		resultPath, channelPath = strings.TrimSuffix(predicate.OtherPath, ".channel"), predicate.Path
+	} else {
+		return equation.OutputClosure{}, false, nil
+	}
+	result := []byte("path/" + resultPath)
+	selectID, ok := currentEpochFact("select/origin/", result, partition)
+	if !ok || len(selectID) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	metaFact, ok := exactFact("select/meta/"+string(selectID), partition)
+	if !ok {
+		return equation.OutputClosure{}, false, nil
+	}
+	var meta selectMetaWire
+	if json.Unmarshal(metaFact, &meta) != nil || meta.Cases <= 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	other, ok := resolveCurrentIdentity([]byte("path/"+channelPath), partition)
+	if !ok {
+		return equation.OutputClosure{}, false, nil
+	}
+	all, matching := make([]int, 0, meta.Cases), make([]int, 0, meta.Cases)
+	for index := 0; index < meta.Cases; index++ {
+		fact, found := exactFact("select/arm/"+string(selectID)+"/"+fmt.Sprintf("%08d", index), partition)
+		if !found {
+			return equation.OutputClosure{}, false, nil
+		}
+		var arm selectArmWire
+		if json.Unmarshal(fact, &arm) != nil || arm.Index != index || arm.Identity == "" {
+			return equation.OutputClosure{}, false, nil
+		}
+		identity, decodeErr := base64.RawURLEncoding.DecodeString(arm.Identity)
+		if decodeErr != nil || !isChannelIdentity(identity) {
+			return equation.OutputClosure{}, false, nil
+		}
+		all = append(all, index)
+		if string(identity) == string(other) {
+			matching = append(matching, index)
+		}
+	}
+	if len(matching) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	remaining := make([]int, 0, len(all)-len(matching))
+	matched := make(map[int]bool, len(matching))
+	for _, index := range matching {
+		matched[index] = true
+	}
+	for _, index := range all {
+		if !matched[index] {
+			remaining = append(remaining, index)
+		}
+	}
+	closure := equation.OutputClosure{}
+	emit := func(edge string, selectors []int, possible bool) error {
+		if !possible {
+			return nil
+		}
+		wire, err := json.Marshal(selectConstraintWire{Select: string(selectID), Arms: selectors, Default: edge == "false" && meta.HasDefault})
+		if err != nil {
+			return err
+		}
+		guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge)}
+		closure.Outcomes = append(closure.Outcomes,
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge), Guards: []equation.Guard{guard}},
+			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("select/" + edge), Guards: []equation.Guard{guard}},
+		)
+		closure.Values = append(closure.Values, equation.Fact{Key: "select/constraint/" + operation.Target.Name + "/" + edge, Value: wire, Guards: []equation.Guard{guard}})
+		return nil
+	}
+	if err := emit("true", matching, true); err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	if err := emit("false", remaining, len(remaining) != 0 || meta.HasDefault); err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	return closure, true, nil
+}
+
+type selectConstraintWire struct {
+	Select  string `json:"select"`
+	Arms    []int  `json:"arms"`
+	Default bool   `json:"default"`
+}
+
+func exactFact(key string, partition equation.Partition) ([]byte, bool) {
+	for _, fact := range partition.Values() {
+		if fact.Key == key {
+			return append([]byte(nil), fact.Value...), true
+		}
+	}
+	return nil, false
 }
 
 // applyKernel validates the sealed direct or method-call shape and publishes
@@ -3184,7 +3466,39 @@ func channelLifecycleState(partition equation.Partition, identity []byte) (strin
 }
 
 func isChannelIdentity(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/channel/op-")
+	return strings.HasPrefix(string(value), "scalar/channel/op-") || strings.HasPrefix(string(value), "scalar/channel-entry/")
+}
+
+// resolveCurrentIdentity uses the same operation-key epoch discipline as
+// normal value reads.  A symbolic entry identity is intentionally accepted
+// only when it was published by entryKernel for an exact Channel<T> root.
+func resolveCurrentIdentity(term []byte, partition equation.Partition) ([]byte, bool) {
+	if identity, ok := currentEpochFact("identity/", term, partition); ok {
+		return identity, true
+	}
+	value, known := resolveKnownCurrentValue(term, partition)
+	return value, known && isChannelIdentity(value)
+}
+
+func currentEpochFact(prefix string, term []byte, partition equation.Partition) ([]byte, bool) {
+	epochPrefix := "epoch/" + string(term) + "/"
+	latestEpoch := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, epochPrefix) && fact.Key > latestEpoch {
+			latestEpoch = fact.Key
+		}
+	}
+	if latestEpoch == "" {
+		return nil, false
+	}
+	operation := strings.TrimPrefix(latestEpoch, epochPrefix)
+	key := prefix + string(term) + "/" + operation
+	for _, fact := range partition.Values() {
+		if fact.Key == key {
+			return append([]byte(nil), fact.Value...), true
+		}
+	}
+	return nil, false
 }
 
 func channelDisplay(partition equation.Partition, receiver []byte) string {
@@ -4176,6 +4490,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 		}
 	}
 	if value == nil {
+		if joined, found := joinedGuardedValue(term, partition); found {
+			return joined, nil
+		}
 		switch string(absence) {
 		case "front/absence/nil":
 			return []byte("scalar/nil"), nil
@@ -4213,6 +4530,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		}
 	}
 	if value == nil {
+		if joined, found := joinedGuardedValue(term, partition); found {
+			return joined, nil
+		}
 		if member, found := shapeMemberValue(term, partition); found {
 			return member, nil
 		}
@@ -4225,6 +4545,27 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		return nil, fmt.Errorf("engine: value path %q has no completed write", term)
 	}
 	return append([]byte(nil), value...), nil
+}
+
+// joinedGuardedValue is the only post-join fallback for ordinary values.  A
+// single guarded value remains precise; multiple incompatible values collapse
+// to Top rather than selecting a writer by operation-name ordering.
+func joinedGuardedValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := "value/" + string(term) + "/"
+	var value []byte
+	for _, fact := range partition.AllValues() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		if value == nil {
+			value = fact.Value
+			continue
+		}
+		if string(value) != string(fact.Value) {
+			return []byte("scalar/top"), true
+		}
+	}
+	return append([]byte(nil), value...), value != nil
 }
 
 // shapeMemberValue projects a member only from a prior, sealed literal fact.

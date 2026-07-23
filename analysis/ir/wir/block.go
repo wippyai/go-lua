@@ -44,6 +44,7 @@ type Body struct {
 	branchDiffs          []BranchDiffConstraint
 	callTargets          map[callResultTargetKey]CallResultTarget
 	evaluations          map[cfg.Point]ExpressionEvaluation
+	ifChains             map[uint32]IfChainDescriptor
 	structuralRegions    map[StructuralExpressionOwner]StructuralExpressionRegion
 	symbols              map[SymbolID]SymbolInfo
 	globalSymbols        map[string]SymbolID
@@ -104,8 +105,11 @@ type BoundaryParameter struct {
 // stages turn this declarative bit into a capture-cell lens rather than a
 // captured value snapshot.
 type BoundaryCapture struct {
-	Symbol  SymbolID
-	Name    string
+	Symbol SymbolID
+	Name   string
+	// Type retains the declared capture root for typed private child entry.
+	// It is descriptive WIR metadata, never a runtime value.
+	Type    TypeRef
 	Mutable bool
 }
 
@@ -173,6 +177,24 @@ type ReturnValueMeta struct {
 type ExpressionEvaluation struct {
 	ExprID ExpressionID
 	Span   Span
+}
+
+// IfChainDescriptor is passive source topology for one authored if/elseif
+// chain. It is deliberately independent of the CFG: later consumers can
+// associate branch facts with their original chain without reconstructing a
+// source tree after solving.
+type IfChainDescriptor struct {
+	ID       uint32
+	HeadSpan Span
+	Branches []IfChainBranch
+	HasElse  bool
+}
+
+// IfChainBranch identifies one condition in source order. Point is the CFG
+// point that owns the corresponding OpBranch.
+type IfChainBranch struct {
+	Point cfg.Point
+	Span  Span
 }
 
 // StructuralExpressionRegion preserves source-authored short-circuit topology
@@ -953,6 +975,59 @@ func (b *Body) ExpressionEvaluation(point cfg.Point) (ExpressionEvaluation, bool
 	}
 	eval, ok := b.evaluations[point]
 	return eval, ok
+}
+
+// SetIfChainDescriptor records complete source topology for an if/elseif
+// chain. Malformed descriptors are rejected so downstream consumers fail
+// closed rather than infer a chain from solved control flow.
+func (b *Body) SetIfChainDescriptor(descriptor IfChainDescriptor) {
+	if b == nil || descriptor.ID == 0 || !descriptor.HeadSpan.Valid() || len(descriptor.Branches) == 0 {
+		return
+	}
+	branches := append([]IfChainBranch(nil), descriptor.Branches...)
+	seen := make(map[cfg.Point]bool, len(branches))
+	for _, branch := range branches {
+		if branch.Point == 0 || !branch.Span.Valid() || seen[branch.Point] {
+			return
+		}
+		seen[branch.Point] = true
+	}
+	if b.ifChains == nil {
+		b.ifChains = make(map[uint32]IfChainDescriptor)
+	}
+	b.ifChains[descriptor.ID] = IfChainDescriptor{ID: descriptor.ID, HeadSpan: descriptor.HeadSpan, Branches: branches, HasElse: descriptor.HasElse}
+}
+
+// IfChainDescriptor returns a defensive copy of the retained descriptor.
+func (b *Body) IfChainDescriptor(id uint32) (IfChainDescriptor, bool) {
+	if b == nil || id == 0 {
+		return IfChainDescriptor{}, false
+	}
+	descriptor, ok := b.ifChains[id]
+	if !ok {
+		return IfChainDescriptor{}, false
+	}
+	descriptor.Branches = append([]IfChainBranch(nil), descriptor.Branches...)
+	return descriptor, true
+}
+
+// ForEachIfChainDescriptor visits descriptors in stable chain-ID order.
+func (b *Body) ForEachIfChainDescriptor(fn func(IfChainDescriptor) bool) {
+	if b == nil || fn == nil || len(b.ifChains) == 0 {
+		return
+	}
+	ids := make([]uint32, 0, len(b.ifChains))
+	for id := range b.ifChains {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		descriptor := b.ifChains[id]
+		descriptor.Branches = append([]IfChainBranch(nil), descriptor.Branches...)
+		if !fn(descriptor) {
+			return
+		}
+	}
 }
 
 // SetStructuralExpressionRegion records an exact region for a result temp.

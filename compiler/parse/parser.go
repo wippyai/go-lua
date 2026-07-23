@@ -1192,6 +1192,7 @@ yydefault:
 				cur = elseif
 			}
 			cur.(*ast.IfStmt).Else = yyDollar[7].stmts
+			cur.(*ast.IfStmt).HasElse = true
 			yyVAL.stmt.SetPosFromToken(yyDollar[1].token.Pos)
 			yyVAL.stmt.SetLastPosFromToken(yyDollar[8].token.Pos)
 		}

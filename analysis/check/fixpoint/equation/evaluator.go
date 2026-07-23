@@ -84,6 +84,11 @@ func BindEntry(artifact Artifact, entry EntryBinding) (BoundArtifact, error) {
 type Fact struct {
 	Key   string
 	Value []byte
+	// Guards retain the CFG provenance of a fact.  A fact is usable only in a
+	// partition whose active guards include every guard recorded here.  Keeping
+	// this on the published fact, rather than in evaluator-local state, means a
+	// closure can safely cross the lexical evaluator boundary.
+	Guards []Guard
 }
 
 // AllocationRekey records the complete allocation identity transport emitted
@@ -117,6 +122,11 @@ func (c OutputClosure) bytes() []byte {
 		for _, fact := range facts {
 			out = appendText(out, fact.Key)
 			out = appendBytes(out, fact.Value)
+			out = appendU64(out, uint64(len(fact.Guards)))
+			for _, guard := range fact.Guards {
+				out = appendBytes(out, guard.Body[:])
+				out = appendBytes(out, guard.Encoding)
+			}
 		}
 	}
 	appendFacts(c.Values)
@@ -141,11 +151,22 @@ func canonicalClosure(in OutputClosure) (OutputClosure, error) {
 				return nil, fmt.Errorf("equation: output fact has no key")
 			}
 			facts[index].Value = append([]byte(nil), facts[index].Value...)
+			facts[index].Guards = canonicalGuards(facts[index].Guards)
+			for _, guard := range facts[index].Guards {
+				if !guard.valid() {
+					return nil, fmt.Errorf("equation: malformed output fact guard")
+				}
+			}
 		}
-		sort.Slice(facts, func(i, j int) bool { return facts[i].Key < facts[j].Key })
+		sort.Slice(facts, func(i, j int) bool {
+			if facts[i].Key != facts[j].Key {
+				return facts[i].Key < facts[j].Key
+			}
+			return guardsKey(facts[i].Guards) < guardsKey(facts[j].Guards)
+		})
 		unique := facts[:0]
 		for _, fact := range facts {
-			if len(unique) > 0 && unique[len(unique)-1].Key == fact.Key {
+			if len(unique) > 0 && unique[len(unique)-1].Key == fact.Key && sameGuards(unique[len(unique)-1].Guards, fact.Guards) {
 				if !bytes.Equal(unique[len(unique)-1].Value, fact.Value) {
 					return nil, fmt.Errorf("equation: conflicting output for %q", fact.Key)
 				}
@@ -198,7 +219,10 @@ func mergeClosure(left, right OutputClosure) (OutputClosure, error) {
 // Partition is the read-only, fully closed result of completed prior
 // transactions.  It is the Stage-3 partition-kernel input; callers cannot
 // mutate a partially-built output closure through it.
-type Partition struct{ closure OutputClosure }
+type Partition struct {
+	closure OutputClosure
+	guards  []Guard
+}
 
 // PartitionFromClosure closes a published snapshot for a contract kernel.
 // It is used by the cyclic adapter to present the same complete read surface
@@ -226,9 +250,14 @@ func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
 	return Partition{closure: canonical}, nil
 }
 
-func (p Partition) Values() []Fact      { return cloneFacts(p.closure.Values) }
-func (p Partition) Outcomes() []Fact    { return cloneFacts(p.closure.Outcomes) }
-func (p Partition) Diagnostics() []Fact { return cloneFacts(p.closure.Diagnostics) }
+func (p Partition) Values() []Fact      { return visibleFacts(p.closure.Values, p.guards) }
+func (p Partition) Outcomes() []Fact    { return visibleFacts(p.closure.Outcomes, p.guards) }
+func (p Partition) Diagnostics() []Fact { return visibleFacts(p.closure.Diagnostics, p.guards) }
+
+// AllValues is deliberately an explicit escape hatch for a consumer that is
+// joining mutually exclusive values at a post-dominator.  Ordinary reads use
+// Values and therefore cannot accidentally observe an incompatible guard.
+func (p Partition) AllValues() []Fact { return cloneFacts(p.closure.Values) }
 func (p Partition) AllocationRekeys() []AllocationRekey {
 	return append([]AllocationRekey(nil), p.closure.AllocationRekeys...)
 }
@@ -236,9 +265,84 @@ func (p Partition) AllocationRekeys() []AllocationRekey {
 func cloneFacts(facts []Fact) []Fact {
 	out := make([]Fact, len(facts))
 	for index, fact := range facts {
-		out[index] = Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)}
+		out[index] = Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)}
 	}
 	return out
+}
+
+func visibleFacts(facts []Fact, active []Guard) []Fact {
+	out := make([]Fact, 0, len(facts))
+	for _, fact := range facts {
+		if guardsIncluded(fact.Guards, active) {
+			out = append(out, Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)})
+		}
+	}
+	return out
+}
+
+func cloneGuards(in []Guard) []Guard {
+	out := make([]Guard, len(in))
+	for i, guard := range in {
+		out[i] = Guard{Body: guard.Body, Encoding: append([]byte(nil), guard.Encoding...)}
+	}
+	return out
+}
+
+func canonicalGuards(in []Guard) []Guard {
+	if len(in) == 0 {
+		return nil
+	}
+	out := cloneGuards(in)
+	sort.Slice(out, func(i, j int) bool { return out[i].less(out[j]) })
+	unique := out[:0]
+	for _, guard := range out {
+		if len(unique) != 0 && unique[len(unique)-1].Body == guard.Body && bytes.Equal(unique[len(unique)-1].Encoding, guard.Encoding) {
+			continue
+		}
+		unique = append(unique, guard)
+	}
+	return unique
+}
+
+func guardsKey(guards []Guard) string {
+	var out []byte
+	for _, guard := range guards {
+		out = append(out, guard.Body[:]...)
+		out = append(out, 0)
+		out = append(out, guard.Encoding...)
+		out = append(out, 0)
+	}
+	return string(out)
+}
+
+func sameGuards(left, right []Guard) bool { return guardsKey(left) == guardsKey(right) }
+
+func guardsIncluded(required, active []Guard) bool {
+	for _, guard := range required {
+		found := false
+		for _, candidate := range active {
+			if guard.Body == candidate.Body && bytes.Equal(guard.Encoding, candidate.Encoding) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func stampClosure(closure OutputClosure, guards []Guard) OutputClosure {
+	stamp := func(facts []Fact) {
+		for index := range facts {
+			facts[index].Guards = canonicalGuards(append(facts[index].Guards, guards...))
+		}
+	}
+	stamp(closure.Values)
+	stamp(closure.Outcomes)
+	stamp(closure.Diagnostics)
+	return closure
 }
 
 // TransactionResult is returned by exactly one existing canonical kernel.
@@ -337,7 +441,7 @@ func (vm *AcyclicVM) Evaluate(bound BoundArtifact) (Evaluation, error) {
 		if !found {
 			return Evaluation{}, fmt.Errorf("equation: no contract-bound kernel for %s", equation.Target.Name)
 		}
-		result, err := binding.Kernel.Execute(equation, Partition{closure: closure})
+		result, err := binding.Kernel.Execute(equation, Partition{closure: closure, guards: equation.Guards})
 		if err != nil {
 			return Evaluation{}, fmt.Errorf("equation: transaction %s: %w", equation.Target.Name, err)
 		}
@@ -349,7 +453,7 @@ func (vm *AcyclicVM) Evaluate(bound BoundArtifact) (Evaluation, error) {
 				return Evaluation{}, fmt.Errorf("equation: transaction %s access audit: %w", equation.Target.Name, err)
 			}
 		}
-		closure, err = mergeClosure(closure, result.Closure)
+		closure, err = mergeClosure(closure, stampClosure(result.Closure, equation.Guards))
 		if err != nil {
 			return Evaluation{}, fmt.Errorf("equation: transaction %s output: %w", equation.Target.Name, err)
 		}

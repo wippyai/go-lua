@@ -103,8 +103,8 @@ func TestAcyclicBoundEvaluatorCopiedStoreWitness(t *testing.T) {
 			{Key: "copied-store", Value: []byte("caller-entry")},
 			{Key: "identity", Value: []byte("caller-entry")},
 		},
-		Outcomes:         []Fact{{Key: "return", Value: []byte("normal")}},
-		Diagnostics:      []Fact{{Key: "guard-witness", Value: []byte("not-nil")}},
+		Outcomes:         []Fact{{Key: "return", Value: []byte("normal"), Guards: []Guard{{Body: entry.Parameter.Body, Encoding: []byte("not-nil")}}}},
+		Diagnostics:      []Fact{{Key: "guard-witness", Value: []byte("not-nil"), Guards: []Guard{{Body: entry.Parameter.Body, Encoding: []byte("not-nil")}}}},
 		AllocationRekeys: []AllocationRekey{{From: "formal:table", To: "caller:table"}},
 	}
 	if !reflect.DeepEqual(evaluation.Closure, want) {
@@ -178,8 +178,9 @@ func TestAcyclicBoundEvaluatorRejectsCyclicArtifact(t *testing.T) {
 func TestAcyclicBoundEvaluatorShadowDifferentialCorpus(t *testing.T) {
 	artifact, entry, contracts := stage3Artifact(t)
 	production := OutputClosure{
-		Values:   []Fact{{Key: "identity", Value: []byte("caller-entry")}, {Key: "copied-store", Value: []byte("caller-entry")}},
-		Outcomes: []Fact{{Key: "return", Value: []byte("normal")}}, Diagnostics: []Fact{{Key: "guard-witness", Value: []byte("not-nil")}},
+		Values:           []Fact{{Key: "identity", Value: []byte("caller-entry")}, {Key: "copied-store", Value: []byte("caller-entry")}},
+		Outcomes:         []Fact{{Key: "return", Value: []byte("normal"), Guards: []Guard{{Body: entry.Parameter.Body, Encoding: []byte("not-nil")}}}},
+		Diagnostics:      []Fact{{Key: "guard-witness", Value: []byte("not-nil"), Guards: []Guard{{Body: entry.Parameter.Body, Encoding: []byte("not-nil")}}}},
 		AllocationRekeys: []AllocationRekey{{From: "formal:table", To: "caller:table"}},
 	}
 	cases := []ShadowCase{

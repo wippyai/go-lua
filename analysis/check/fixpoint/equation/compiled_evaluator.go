@@ -138,7 +138,7 @@ func (e *FastEvaluator) Evaluate(artifact CompiledArtifact, entry EntryBinding, 
 			if !found {
 				return Evaluation{}, fmt.Errorf("equation: no contract-bound kernel for %s", equation.Target.Name)
 			}
-			result, executeErr := binding.Kernel.Execute(equation, Partition{closure: closure})
+			result, executeErr := binding.Kernel.Execute(equation, Partition{closure: closure, guards: equation.Guards})
 			if executeErr != nil {
 				return Evaluation{}, fmt.Errorf("equation: transaction %s: %w", equation.Target.Name, executeErr)
 			}
@@ -150,7 +150,7 @@ func (e *FastEvaluator) Evaluate(artifact CompiledArtifact, entry EntryBinding, 
 					return Evaluation{}, fmt.Errorf("equation: transaction %s access audit: %w", equation.Target.Name, verifyErr)
 				}
 			}
-			closure, err = mergeClosure(closure, result.Closure)
+			closure, err = mergeClosure(closure, stampClosure(result.Closure, equation.Guards))
 			if err != nil {
 				return Evaluation{}, fmt.Errorf("equation: transaction %s output: %w", equation.Target.Name, err)
 			}

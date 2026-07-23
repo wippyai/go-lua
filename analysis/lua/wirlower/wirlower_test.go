@@ -89,6 +89,31 @@ end
 	}
 }
 
+func TestLowerIfRetainsElseIfChainDescriptor(t *testing.T) {
+	body := lowerBody(t, `
+if first then
+elseif second then
+elseif third then
+else
+end
+`, "first", "second", "third")
+	descriptor, ok := body.IfChainDescriptor(1)
+	if !ok {
+		t.Fatal("missing if/elseif chain descriptor")
+	}
+	if !descriptor.HasElse || len(descriptor.Branches) != 3 {
+		t.Fatalf("descriptor = %#v, want three branches and else", descriptor)
+	}
+	for index, branch := range descriptor.Branches {
+		if branch.Point == 0 || !branch.Span.Valid() {
+			t.Fatalf("branch %d = %#v, want point and span", index, branch)
+		}
+		if index > 0 && descriptor.Branches[index-1].Point == branch.Point {
+			t.Fatalf("branch %d repeats previous point", index)
+		}
+	}
+}
+
 func containsImpliedCheckKind(checks []wir.ImpliedCheck, kind wir.CheckKind) bool {
 	for _, check := range checks {
 		if check.Check.Kind == kind {
