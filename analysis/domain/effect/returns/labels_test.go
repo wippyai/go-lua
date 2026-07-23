@@ -8,6 +8,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/projection"
 )
 
+var (
+	_ effect.Label = Return{}
+	_ effect.Label = ErrorReturn{}
+	_ effect.Label = ReturnLength{}
+	_ effect.Label = CorrelatedReturn{}
+
+	_ ReturnType = ElementOf{}
+	_ ReturnType = OptionalElementOf{}
+	_ ReturnType = CallbackReturn{}
+	_ ReturnType = ArrayOfCallbackReturn{}
+	_ ReturnType = SameAs{}
+	_ ReturnType = DeepElementOf{}
+	_ ReturnType = StringUnpackValue{}
+	_ ReturnType = TypeProjection{}
+	_ ReturnType = SelectCaseOfParam{}
+	_ ReturnType = SelectResultOfCases{}
+)
+
 func TestReturn_String(t *testing.T) {
 	r := Return{
 		ReturnIndex: 0,
@@ -477,66 +495,76 @@ func TestTypeProjectionTransform(t *testing.T) {
 }
 
 func TestLabelInterface(t *testing.T) {
-	labels := []effect.Label{
-		Return{},
-		ErrorReturn{},
-		ReturnLength{},
+	labels := []struct {
+		label effect.Label
+		want  string
+	}{
+		{Return{ReturnIndex: 1, Transform: SameAs{Source: effect.ParamRef{Index: 2}}}, "ret[1].type = same(param[2])"},
+		{ErrorReturn{ValueIndex: 3, ErrorIndex: 4}, "errret(val[3], err[4])"},
+		{ReturnLength{ReturnIndex: 5, Length: expr.C(6)}, "ret[5].len = 6"},
 	}
-
-	for _, l := range labels {
-		_ = l.String()
-		_ = l.Equals(l)
+	for _, test := range labels {
+		if got := test.label.String(); got != test.want {
+			t.Errorf("%T.String() = %q, want %q", test.label, got, test.want)
+		}
+		if !test.label.Equals(test.label) {
+			t.Errorf("%T did not equal itself", test.label)
+		}
 	}
 }
 
 func TestReturnTypeInterface(t *testing.T) {
-	returnTypes := []ReturnType{
-		ElementOf{},
-		OptionalElementOf{},
-		CallbackReturn{},
-		ArrayOfCallbackReturn{},
-		SameAs{},
-		DeepElementOf{},
-		StringUnpackValue{},
-		TypeProjection{},
-		SelectCaseOfParam{},
-		SelectResultOfCases{},
+	returnTypes := []struct {
+		transform ReturnType
+		want      string
+	}{
+		{ElementOf{Source: effect.ParamRef{Index: 0}}, "elem(param[0])"},
+		{OptionalElementOf{Source: effect.ParamRef{Index: 1}}, "elem(param[1]) | nil"},
+		{CallbackReturn{CallbackParam: effect.ParamRef{Index: 2}}, "callback_ret(param[2])"},
+		{ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 3}}, "array(callback_ret(param[3]))"},
+		{SameAs{Source: effect.ParamRef{Index: 4}}, "same(param[4])"},
+		{DeepElementOf{Source: effect.ParamRef{Index: 5}}, "deep_elem(param[5])"},
+		{StringUnpackValue{Format: effect.ParamRef{Index: 6}}, "string_unpack(param[6])"},
+		{TypeProjection{Source: effect.ParamRef{Index: 7}, Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}}}, "project_type(param[7].payload)"},
+		{SelectCaseOfParam{Source: effect.ParamRef{Index: 8}}, "select_case(param[8])"},
+		{SelectResultOfCases{Cases: effect.ParamRef{Index: 9}, Default: effect.ParamRef{Index: 10}}, "select_result(param[9], param[10])"},
 	}
-
-	for _, rt := range returnTypes {
-		_ = rt.String()
+	for _, test := range returnTypes {
+		if got := test.transform.String(); got != test.want {
+			t.Errorf("%T.String() = %q, want %q", test.transform, got, test.want)
+		}
 	}
 }
 
 func TestAllLabelsImplementInterface(t *testing.T) {
-	labels := []effect.Label{
-		Return{},
-		ErrorReturn{},
-		ReturnLength{},
-		CorrelatedReturn{},
+	labels := []struct {
+		label effect.Label
+		want  string
+	}{
+		{Return{ReturnIndex: 11, Transform: ElementOf{Source: effect.ParamRef{Index: 12}}}, "ret[11].type = elem(param[12])"},
+		{ErrorReturn{ValueIndex: 13, ErrorIndex: 14}, "errret(val[13], err[14])"},
+		{ReturnLength{ReturnIndex: 15, Length: expr.PL(16)}, "ret[15].len = len(param[16])"},
+		{CorrelatedReturn{Indices: []int{17, 18}}, "correlated_return([17 18])"},
 	}
-
-	for _, l := range labels {
-		_ = l.String()
-		_ = l.Equals(l)
+	for _, test := range labels {
+		if got := test.label.String(); got != test.want {
+			t.Errorf("%T.String() = %q, want %q", test.label, got, test.want)
+		}
+		if !test.label.Equals(test.label) {
+			t.Errorf("%T did not equal itself", test.label)
+		}
 	}
 }
 
 func TestMarkerMethods(t *testing.T) {
-	Return{}.EffectLabel()
-	ErrorReturn{}.EffectLabel()
-	ReturnLength{}.EffectLabel()
-	CorrelatedReturn{}.EffectLabel()
-
-	ElementOf{}.returnType()
-	OptionalElementOf{}.returnType()
-	CallbackReturn{}.returnType()
-	ArrayOfCallbackReturn{}.returnType()
-	SameAs{}.returnType()
-	DeepElementOf{}.returnType()
-	StringUnpackValue{}.returnType()
-	SelectCaseOfParam{}.returnType()
-	SelectResultOfCases{}.returnType()
+	label := CorrelatedReturn{Indices: []int{19, 20, 21}}
+	if got := label.String(); got != "correlated_return([19 20 21])" || !label.Equals(CorrelatedReturn{Indices: []int{19, 20, 21}}) || label.Equals(CorrelatedReturn{Indices: []int{19, 21, 20}}) {
+		t.Errorf("marker-backed CorrelatedReturn rendered/equalled as %q", got)
+	}
+	transform := SelectResultOfCases{Cases: effect.ParamRef{Index: 22}, Default: effect.ParamRef{Index: 23}}
+	if got := transform.String(); got != "select_result(param[22], param[23])" {
+		t.Errorf("marker-backed SelectResultOfCases.String() = %q", got)
+	}
 }
 
 func TestRowNormalization(t *testing.T) {

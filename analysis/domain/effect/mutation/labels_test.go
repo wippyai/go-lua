@@ -8,6 +8,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
+var (
+	_ effect.Label  = Mutate{}
+	_ effect.Label  = LengthChange{}
+	_ effect.Label  = TableMutator{}
+	_ TypeTransform = ElementUnion{}
+	_ TypeTransform = ContainerElementUnion{}
+	_ TypeTransform = ToArray{}
+	_ TypeTransform = Unchanged{}
+)
+
 func TestMutate_String(t *testing.T) {
 	m := Mutate{
 		Target:    effect.ParamRef{Index: 0},
@@ -200,40 +210,58 @@ func TestTableMutator(t *testing.T) {
 }
 
 func TestLabelInterface(t *testing.T) {
-	labels := []effect.Label{
-		Mutate{},
-		LengthChange{},
-		TableMutator{},
+	labels := []struct {
+		label effect.Label
+		want  string
+	}{
+		{Mutate{Target: effect.ParamRef{Index: 0}, Transform: Unchanged{}}, "mutate(param[0], unchanged)"},
+		{LengthChange{Target: effect.ParamRef{Index: 1}, Delta: -2}, "len(param[1]) -= 2"},
+		{TableMutator{Target: effect.ParamRef{Index: 2}, Value: effect.ParamRef{Index: 3}}, "table_mutator(param[2], param[3])"},
 	}
-
-	for _, l := range labels {
-		_ = l.String()
-		_ = l.Equals(l)
+	for _, test := range labels {
+		if got := test.label.String(); got != test.want {
+			t.Errorf("%T.String() = %q, want %q", test.label, got, test.want)
+		}
+		if !test.label.Equals(test.label) {
+			t.Errorf("%T did not equal itself", test.label)
+		}
 	}
 }
 
 func TestTransformInterface(t *testing.T) {
-	transforms := []TypeTransform{
-		ElementUnion{},
-		ContainerElementUnion{},
-		ToArray{},
-		Unchanged{},
+	transforms := []struct {
+		transform TypeTransform
+		want      string
+	}{
+		{ElementUnion{Source: effect.ParamRef{Index: 4}}, "union_elem(param[4])"},
+		{ContainerElementUnion{Container: effect.ParamRef{Index: 5}, Value: effect.ParamRef{Index: 6}}, "union_elem(param[5], param[6])"},
+		{ToArray{Element: effect.ParamRef{Index: 7}}, "to_array(param[7])"},
+		{Unchanged{}, "unchanged"},
 	}
-
-	for _, tr := range transforms {
-		_ = tr.String()
+	for _, test := range transforms {
+		if got := test.transform.String(); got != test.want {
+			t.Errorf("%T.String() = %q, want %q", test.transform, got, test.want)
+		}
 	}
 }
 
 func TestMarkerMethods(t *testing.T) {
-	Mutate{}.EffectLabel()
-	LengthChange{}.EffectLabel()
-	TableMutator{}.EffectLabel()
-
-	ElementUnion{}.transform()
-	ContainerElementUnion{}.transform()
-	ToArray{}.transform()
-	Unchanged{}.transform()
+	labels := []struct {
+		label effect.Label
+		want  string
+	}{
+		{Mutate{Target: effect.ParamRef{Index: 8}, Transform: ElementUnion{Source: effect.ParamRef{Index: 9}}}, "mutate(param[8], union_elem(param[9]))"},
+		{LengthChange{Target: effect.ParamRef{Index: 10}, Delta: 3}, "len(param[10]) += 3"},
+		{TableMutator{Target: effect.ParamRef{Index: 11}, Value: effect.ParamRef{Index: 12}}, "table_mutator(param[11], param[12])"},
+	}
+	for _, test := range labels {
+		if got := test.label.String(); got != test.want || !test.label.Equals(test.label) {
+			t.Errorf("marker-backed %T rendered/equalled as %q/%t, want %q/true", test.label, got, test.label.Equals(test.label), test.want)
+		}
+	}
+	if !transformEquals(ElementUnion{Source: effect.ParamRef{Index: 13}}, &ElementUnion{Source: effect.ParamRef{Index: 13}}) {
+		t.Error("marker-backed ElementUnion did not preserve value/pointer transform equality")
+	}
 }
 
 func TestMutateEffect(t *testing.T) {

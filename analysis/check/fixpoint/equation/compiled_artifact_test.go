@@ -137,10 +137,10 @@ func TestCompileCyclicArtifactKeepsFrozenWTOAndTraceOracle(t *testing.T) {
 		}, len(traces))
 		for index, trace := range traces {
 			shape[index] = struct {
-			Cell    CellID
-			Visit   int
-			Widened bool
-		}{Cell: trace.Cell, Visit: trace.Visit, Widened: trace.Widened}
+				Cell    CellID
+				Visit   int
+				Widened bool
+			}{Cell: trace.Cell, Visit: trace.Visit, Widened: trace.Widened}
 		}
 		return shape
 	}

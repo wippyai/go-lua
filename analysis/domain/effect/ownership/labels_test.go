@@ -7,6 +7,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
+var (
+	_ effect.Label = Borrow{}
+	_ effect.Label = Retain{}
+	_ effect.Label = Store{}
+	_ effect.Label = BorrowAll{}
+	_ effect.Label = Send{}
+	_ effect.Label = SendParam{}
+	_ effect.Label = Export{}
+	_ effect.Label = Opaque{}
+	_ effect.Label = Freeze{}
+)
+
 func TestBorrow(t *testing.T) {
 	b := Borrow{Param: effect.ParamRef{Index: 0}}
 	if got := b.String(); got != "borrow(param[0])" {
@@ -176,34 +188,50 @@ func TestFreeze(t *testing.T) {
 }
 
 func TestAllLabelsImplementInterface(t *testing.T) {
-	labels := []effect.Label{
-		Borrow{},
-		Retain{},
-		Store{},
-		BorrowAll{},
-		Send{},
-		SendParam{},
-		Export{},
-		Opaque{},
-		Freeze{},
+	labels := []struct {
+		label effect.Label
+		want  string
+	}{
+		{Borrow{Param: effect.ParamRef{Index: 0}}, "borrow(param[0])"},
+		{Retain{Param: effect.ParamRef{Index: 1}}, "retain(param[1])"},
+		{Store{Param: effect.ParamRef{Index: 2}, Into: effect.ParamRef{Index: 3}}, "store(param[2] into param[3])"},
+		{BorrowAll{}, "borrow_all"},
+		{Send{FromParam: 4}, "send(params[4:])"},
+		{SendParam{Param: effect.ParamRef{Index: 5}}, "send(param[5])"},
+		{Export{Param: effect.ParamRef{Index: 6}}, "export(param[6])"},
+		{Opaque{Param: effect.ParamRef{Index: 7}}, "opaque(param[7])"},
+		{Freeze{Param: effect.ParamRef{Index: 8}}, "freeze(param[8])"},
 	}
-
-	for _, l := range labels {
-		_ = l.String()
-		_ = l.Equals(l)
+	for _, test := range labels {
+		if got := test.label.String(); got != test.want {
+			t.Errorf("%T.String() = %q, want %q", test.label, got, test.want)
+		}
+		if !test.label.Equals(test.label) {
+			t.Errorf("%T did not equal itself", test.label)
+		}
 	}
 }
 
 func TestMarkerMethods(t *testing.T) {
-	Borrow{}.EffectLabel()
-	Retain{}.EffectLabel()
-	Store{}.EffectLabel()
-	BorrowAll{}.EffectLabel()
-	Send{}.EffectLabel()
-	SendParam{}.EffectLabel()
-	Export{}.EffectLabel()
-	Opaque{}.EffectLabel()
-	Freeze{}.EffectLabel()
+	labels := []struct {
+		label effect.Label
+		want  string
+	}{
+		{Borrow{Param: effect.ParamRef{Index: 9}}, "borrow(param[9])"},
+		{Retain{Param: effect.ParamRef{Index: 10}}, "retain(param[10])"},
+		{Store{Param: effect.ParamRef{Index: 11}, Into: effect.ParamRef{Index: -1}}, "store(param[11])"},
+		{BorrowAll{}, "borrow_all"},
+		{Send{FromParam: 12}, "send(params[12:])"},
+		{SendParam{Param: effect.ParamRef{Index: 13}}, "send(param[13])"},
+		{Export{Param: effect.ParamRef{Index: 14}}, "export(param[14])"},
+		{Opaque{Param: effect.ParamRef{Index: 15}}, "opaque(param[15])"},
+		{Freeze{Param: effect.ParamRef{Index: 16}}, "freeze(param[16])"},
+	}
+	for _, test := range labels {
+		if got := test.label.String(); got != test.want || !test.label.Equals(test.label) {
+			t.Errorf("marker-backed %T rendered/equalled as %q/%t, want %q/true", test.label, got, test.label.Equals(test.label), test.want)
+		}
+	}
 }
 
 func TestRowNormalization(t *testing.T) {

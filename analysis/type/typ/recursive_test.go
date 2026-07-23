@@ -85,6 +85,7 @@ func TestRecursiveEqualsSelf(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
 		return newRecord().OptField("next", self).Build()
 	})
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 
 	// Should equal itself without stack overflow
 	if !typeEquals(rec, rec) {
@@ -106,6 +107,8 @@ func TestRecursiveEqualsEquivalent(t *testing.T) {
 	rec2 := NewRecursive("Node", func(self Type) Type {
 		return newRecord().OptField("next", self).Build()
 	})
+	assertRecursiveRecord(t, rec1, "Node", []Field{{Name: "next", Type: rec1, Optional: true}})
+	assertRecursiveRecord(t, rec2, "Node", []Field{{Name: "next", Type: rec2, Optional: true}})
 
 	// They should be structurally equal
 	if !typeEquals(rec1, rec2) {
@@ -118,6 +121,7 @@ func TestRecursiveNotEqualsNonRecursive(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
 		return newRecord().OptField("next", self).Build()
 	})
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
 
 	// A non-recursive record
 	plain := newRecord().OptField("next", Number).Build()
@@ -136,6 +140,8 @@ func TestRecursiveHashConsistency(t *testing.T) {
 	rec2 := NewRecursive("Node", func(self Type) Type {
 		return newRecord().OptField("next", self).Build()
 	})
+	assertRecursiveRecord(t, rec1, "Node", []Field{{Name: "next", Type: rec1, Optional: true}})
+	assertRecursiveRecord(t, rec2, "Node", []Field{{Name: "next", Type: rec2, Optional: true}})
 
 	if rec1.Hash() != rec2.Hash() {
 		t.Error("structurally equal recursive types should have same hash")
@@ -161,6 +167,7 @@ func TestRecursiveSetBodyInvalidatesCachedHash(t *testing.T) {
 
 	rec.SetBody(newRecord().Field("value", Number).Build())
 	second := rec.Hash()
+	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "value", Type: Number}})
 	if first == second {
 		t.Fatalf("SetBody should invalidate cached recursive hash")
 	}
@@ -201,6 +208,8 @@ func TestRecursiveMutualRecursion(t *testing.T) {
 	// Now set the bodies
 	recA.SetBody(newRecord().OptField("b", recB).Build())
 	recB.SetBody(newRecord().OptField("a", recA).Build())
+	assertRecursiveRecord(t, recA, "A", []Field{{Name: "b", Type: recB, Optional: true}})
+	assertRecursiveRecord(t, recB, "B", []Field{{Name: "a", Type: recA, Optional: true}})
 
 	// Neither should cause infinite loops
 	if !typeEquals(recA, recA) {
