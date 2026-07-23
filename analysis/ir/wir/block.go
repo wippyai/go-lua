@@ -51,6 +51,12 @@ type Body struct {
 	debugPointOrder      []cfg.Point
 	debugLocalVisibility []debugVisibilityAtPoint
 
+	// lexicalPath is the source-order path from the containing chunk to this
+	// body.  It is structural metadata only: front derives its content-addressed
+	// BodyID from this path and the root source identity.
+	lexicalPath []uint32
+	boundary    BodyBoundary
+
 	pathIndex     map[path.PathKey]PathRef
 	constIndex    map[Const]ConstRef
 	typeIndex     map[uint64]TypeRef
@@ -66,6 +72,12 @@ type FuncProto struct {
 	Name  string
 	Body  *Body
 	Graph *cfg.CFG
+	// LexicalPath is the stable source-order prototype path.  It deliberately
+	// does not use Name: sibling names are not a lexical identity.
+	LexicalPath []uint32
+	// Boundary is the child body's passive interprocedural boundary schema.
+	// Stage 2 records it here but does not admit or evaluate child bodies.
+	Boundary BodyBoundary
 	// Symbol is the binder-owned identity of the function literal this proto
 	// came from. It lets transfer publish expression-function facts from WIR
 	// without reaching back to the AST.
@@ -74,6 +86,37 @@ type FuncProto struct {
 	// annotation/binding identity; transfer decides how that type contributes to
 	// value evidence.
 	Type typ.Type
+}
+
+// BoundaryParameter identifies one formal slot at a lexical-body boundary.
+// The declared type is a body-local TypeRef and is deliberately descriptive;
+// it has no transfer semantics until the entry wire stage.
+type BoundaryParameter struct {
+	Symbol       SymbolID
+	Name         string
+	Type         TypeRef
+	Vararg       bool
+	ImplicitSelf bool
+}
+
+// BoundaryCapture identifies an ordered captured declaration. Mutable means
+// the declaration has a lexical write somewhere in the bound unit; later
+// stages turn this declarative bit into a capture-cell lens rather than a
+// captured value snapshot.
+type BoundaryCapture struct {
+	Symbol  SymbolID
+	Name    string
+	Mutable bool
+}
+
+// BodyBoundary is immutable-by-convention WIR metadata for an independently
+// admitted lexical body. It is intentionally transport-free: no entry values,
+// effects, summaries, or evaluator hooks live here.
+type BodyBoundary struct {
+	Parameters      []BoundaryParameter
+	Captures        []BoundaryCapture
+	DirectGlobals   []SymbolID
+	DeclaredReturns []TypeRef
 }
 
 // CallResultTargetKind classifies the syntactic consumer of a call result.
@@ -737,6 +780,68 @@ func (b *Body) SetDeclaredReturnTypes(types []typ.Type) {
 	}
 }
 
+// DeclaredReturnRefs returns the body-local declared contract slots.
+func (b *Body) DeclaredReturnRefs() []TypeRef {
+	if b == nil {
+		return nil
+	}
+	return append([]TypeRef(nil), b.declaredReturns...)
+}
+
+// SetLexicalPath records this body's source-order path below the chunk. The
+// input is copied so later lowering of siblings cannot mutate an identity that
+// has already been handed to the front.
+func (b *Body) SetLexicalPath(lexicalPath []uint32) {
+	if b == nil {
+		return
+	}
+	b.lexicalPath = append(b.lexicalPath[:0], lexicalPath...)
+	// A child finishes lowering before its parent attaches the parent path.
+	// Repair its already-created descendants here, preserving source order at
+	// every depth without needing a second AST traversal.
+	for index := 1; index < len(b.protos); index++ {
+		childPath := append(append([]uint32(nil), b.lexicalPath...), uint32(index-1))
+		b.protos[index].LexicalPath = childPath
+		if b.protos[index].Body != nil {
+			b.protos[index].Body.SetLexicalPath(childPath)
+		}
+	}
+}
+
+// LexicalPath returns an owned copy of this body's source-order identity.
+func (b *Body) LexicalPath() []uint32 {
+	if b == nil {
+		return nil
+	}
+	return append([]uint32(nil), b.lexicalPath...)
+}
+
+// SetBoundary records passive lexical boundary metadata.  Stage 2 must retain
+// this information without changing how the current single-body evaluator
+// executes, so every slice is copied on both sides of the API.
+func (b *Body) SetBoundary(boundary BodyBoundary) {
+	if b == nil {
+		return
+	}
+	b.boundary = cloneBodyBoundary(boundary)
+}
+
+// Boundary returns a copy of this body's passive lexical boundary metadata.
+func (b *Body) Boundary() BodyBoundary {
+	if b == nil {
+		return BodyBoundary{}
+	}
+	return cloneBodyBoundary(b.boundary)
+}
+
+func cloneBodyBoundary(boundary BodyBoundary) BodyBoundary {
+	boundary.Parameters = append([]BoundaryParameter(nil), boundary.Parameters...)
+	boundary.Captures = append([]BoundaryCapture(nil), boundary.Captures...)
+	boundary.DirectGlobals = append([]SymbolID(nil), boundary.DirectGlobals...)
+	boundary.DeclaredReturns = append([]TypeRef(nil), boundary.DeclaredReturns...)
+	return boundary
+}
+
 // InternCheck appends a branch check and returns its 1-based ref. Checks are not
 // deduplicated: each branch owns exactly one.
 func (b *Body) InternCheck(c Check) CheckRef {
@@ -747,6 +852,8 @@ func (b *Body) InternCheck(c Check) CheckRef {
 
 // AddProto appends a nested function proto and returns its 1-based ref.
 func (b *Body) AddProto(p FuncProto) FuncRef {
+	p.LexicalPath = append([]uint32(nil), p.LexicalPath...)
+	p.Boundary = cloneBodyBoundary(p.Boundary)
 	ref := FuncRef(len(b.protos))
 	b.protos = append(b.protos, p)
 	return ref
@@ -757,7 +864,10 @@ func (b *Body) Proto(ref FuncRef) FuncProto {
 	if ref == 0 || int(ref) >= len(b.protos) {
 		return FuncProto{}
 	}
-	return b.protos[ref]
+	proto := b.protos[ref]
+	proto.LexicalPath = append([]uint32(nil), proto.LexicalPath...)
+	proto.Boundary = cloneBodyBoundary(proto.Boundary)
+	return proto
 }
 
 // Protos returns the nested function protos (excluding the index-0 sentinel).
@@ -765,7 +875,11 @@ func (b *Body) Protos() []FuncProto {
 	if len(b.protos) <= 1 {
 		return nil
 	}
-	return b.protos[1:]
+	out := make([]FuncProto, len(b.protos)-1)
+	for index := range out {
+		out[index] = b.Proto(FuncRef(index + 1))
+	}
+	return out
 }
 
 // SetCallResultTarget records the syntactic consumer of one result from the

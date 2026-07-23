@@ -3,6 +3,7 @@ package front
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,16 +62,50 @@ const (
 type Compilation struct {
 	Artifact equation.Artifact
 	Cyclic   *equation.CyclicArtifact
+	// Body is the stable lexical identity for this independently admitted WIR
+	// body. Evaluation still starts exclusively at the root artifact.
+	Body        equation.BodyID
+	Prototype   wir.FunctionSymbolID
+	LexicalPath []uint32
+	Boundary    wir.BodyBoundary
 	// Nested holds the independently admitted lexical bodies owned by closure
 	// allocations in Artifact. They retain the same WIR-derived equation form
 	// and publication path as the enclosing body; a caller decides which body
 	// entries are available to evaluate.
-	Nested           []Compilation
-	ClaimSpans       map[string]wir.Span
-	ClaimTargetSpans map[string]wir.Span
-	CallSpans        map[string]wir.Span
-	BranchSpans      map[string]wir.Span
-	EffectSpans      map[string]wir.Span
+	Nested                    []Compilation
+	ClaimSpans                map[string]wir.Span
+	ClaimTargetSpans          map[string]wir.Span
+	CallSpans                 map[string]wir.Span
+	BranchSpans               map[string]wir.Span
+	EffectSpans               map[string]wir.Span
+	QualifiedClaimSpans       map[SpanKey]wir.Span
+	QualifiedClaimTargetSpans map[SpanKey]wir.Span
+	QualifiedCallSpans        map[SpanKey]wir.Span
+	QualifiedBranchSpans      map[SpanKey]wir.Span
+	QualifiedEffectSpans      map[SpanKey]wir.Span
+	// Catalog on the root indexes every complete lexical body. It remains
+	// passive until child admission is enabled by the engine.
+	Catalog BodyCatalog
+}
+
+// SpanKey makes source anchors unambiguous across lexical bodies, whose local
+// operation names all begin at op-00000000.
+type SpanKey struct {
+	Body       equation.BodyID
+	Occurrence string
+}
+
+type BodyCatalog map[equation.BodyID]BodyCatalogEntry
+
+// BodyCatalogEntry retains the frozen body data for later demand-driven
+// admission. No incomplete child is inserted into a returned catalog.
+type BodyCatalogEntry struct {
+	Body        equation.BodyID
+	Prototype   wir.FunctionSymbolID
+	LexicalPath []uint32
+	Boundary    wir.BodyBoundary
+	Artifact    equation.Artifact
+	Cyclic      *equation.CyclicArtifact
 }
 
 // Compile parses and lowers one complete body, retaining cyclic control-flow
@@ -95,12 +130,13 @@ func Compile(source string) (Compilation, error) {
 	if body == nil {
 		return Compilation{}, fmt.Errorf("front: lower WIR")
 	}
-	artifact, err := compileWIR(source, body, built.Graph, assignmentSnapshotStarts(stmts, built))
+	rootBody := bodyID(source)
+	artifact, err := compileWIRForBody(rootBody, body, built.Graph, assignmentSnapshotStarts(stmts, built))
 	if err != nil {
 		return Compilation{}, err
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
-	compilation := Compilation{Artifact: artifact, ClaimSpans: claimSpans, ClaimTargetSpans: claimTargetSpans, CallSpans: callSpans(body, artifact), BranchSpans: branchSpans(body, artifact), EffectSpans: effectSpans(body, artifact)}
+	compilation := newCompilation(rootBody, 0, body.LexicalPath(), body.Boundary(), artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
 	if graphHasCycle(built.Graph) {
 		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 		if err != nil {
@@ -108,18 +144,48 @@ func Compile(source string) (Compilation, error) {
 		}
 		compilation.Cyclic = &cyclic
 	}
-	nested, err := compileNestedBodies(body)
+	nested, err := compileNestedBodies(body, rootBody)
 	if err != nil {
 		return Compilation{}, err
 	}
 	compilation.Nested = nested
+	catalog, err := catalogBodies(compilation)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Catalog = catalog
 	return compilation, nil
+}
+
+func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, lexicalPath []uint32, boundary wir.BodyBoundary, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
+	return Compilation{
+		Artifact: artifact, Body: body, Prototype: prototype,
+		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary,
+		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
+		BranchSpans: branches, EffectSpans: effects,
+		QualifiedClaimSpans:       qualifySpans(body, claims),
+		QualifiedClaimTargetSpans: qualifySpans(body, claimTargets),
+		QualifiedCallSpans:        qualifySpans(body, calls),
+		QualifiedBranchSpans:      qualifySpans(body, branches),
+		QualifiedEffectSpans:      qualifySpans(body, effects),
+	}
+}
+
+func qualifySpans(body equation.BodyID, spans map[string]wir.Span) map[SpanKey]wir.Span {
+	if len(spans) == 0 {
+		return nil
+	}
+	qualified := make(map[SpanKey]wir.Span, len(spans))
+	for occurrence, span := range spans {
+		qualified[SpanKey{Body: body, Occurrence: occurrence}] = span
+	}
+	return qualified
 }
 
 // compileNestedBodies admits every complete WIR lexical child through the
 // ordinary equation front. The parent WIR already owns the child body and CFG,
 // so this is neither a second source traversal nor a child evaluator.
-func compileNestedBodies(parent *wir.Body) ([]Compilation, error) {
+func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation, error) {
 	if parent == nil {
 		return nil, nil
 	}
@@ -129,19 +195,13 @@ func compileNestedBodies(parent *wir.Body) ([]Compilation, error) {
 		if proto.Body == nil || proto.Graph == nil || proto.Name == "" {
 			return nil, fmt.Errorf("front: nested prototype is incomplete")
 		}
-		artifact, err := compileWIR(proto.Name, proto.Body, proto.Graph, nil)
+		childBody := lexicalBodyID(root, proto.LexicalPath)
+		artifact, err := compileWIRForBody(childBody, proto.Body, proto.Graph, nil)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
-		child := Compilation{
-			Artifact:         artifact,
-			ClaimSpans:       claimSpans,
-			ClaimTargetSpans: claimTargetSpans,
-			CallSpans:        callSpans(proto.Body, artifact),
-			BranchSpans:      branchSpans(proto.Body, artifact),
-			EffectSpans:      effectSpans(proto.Body, artifact),
-		}
+		child := newCompilation(childBody, proto.Symbol, proto.LexicalPath, proto.Boundary, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
 		if graphHasCycle(proto.Graph) {
 			cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 			if err != nil {
@@ -149,13 +209,37 @@ func compileNestedBodies(parent *wir.Body) ([]Compilation, error) {
 			}
 			child.Cyclic = &cyclic
 		}
-		child.Nested, err = compileNestedBodies(proto.Body)
+		child.Nested, err = compileNestedBodies(proto.Body, root)
 		if err != nil {
 			return nil, err
 		}
 		children = append(children, child)
 	}
 	return children, nil
+}
+
+func catalogBodies(root Compilation) (BodyCatalog, error) {
+	catalog := make(BodyCatalog)
+	var add func(Compilation) error
+	add = func(compilation Compilation) error {
+		if !compilation.Body.Valid() {
+			return fmt.Errorf("front: catalog body has no lexical identity")
+		}
+		if _, exists := catalog[compilation.Body]; exists {
+			return fmt.Errorf("front: duplicate lexical body identity")
+		}
+		catalog[compilation.Body] = BodyCatalogEntry{Body: compilation.Body, Prototype: compilation.Prototype, LexicalPath: append([]uint32(nil), compilation.LexicalPath...), Boundary: compilation.Boundary, Artifact: compilation.Artifact, Cyclic: compilation.Cyclic}
+		for _, child := range compilation.Nested {
+			if err := add(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := add(root); err != nil {
+		return nil, err
+	}
+	return catalog, nil
 }
 
 // effectSpans retains WIR's operation anchors for facts owned by a mutation
@@ -346,10 +430,16 @@ type operation struct {
 }
 
 func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
+	return compileWIRForBody(bodyID(source), body, graph, snapshots)
+}
+
+func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
 	if body == nil || graph == nil {
 		return equation.Artifact{}, fmt.Errorf("front: nil WIR body")
 	}
-	bodyID := bodyID(source)
+	if !bodyID.Valid() {
+		return equation.Artifact{}, fmt.Errorf("front: invalid lexical body identity")
+	}
 	entry := equation.EntryParameter{Body: bodyID, Name: entryName}
 	loopBindings, err := genericForBindings(body, graph)
 	if err != nil {
@@ -911,6 +1001,18 @@ func assignmentAbsencePolicy(body *wir.Body, operand wir.Operand) string {
 
 func bodyID(source string) equation.BodyID {
 	return equation.BodyID(sha256.Sum256(append([]byte("front/lua-body/v1\x00"), []byte(source)...)))
+}
+
+func lexicalBodyID(root equation.BodyID, lexicalPath []uint32) equation.BodyID {
+	bytes := make([]byte, 0, len("front/lua-lexical-body/v1\x00")+len(root)+4*len(lexicalPath))
+	bytes = append(bytes, []byte("front/lua-lexical-body/v1\x00")...)
+	bytes = append(bytes, root[:]...)
+	var encoded [4]byte
+	for _, ordinal := range lexicalPath {
+		binary.BigEndian.PutUint32(encoded[:], ordinal)
+		bytes = append(bytes, encoded[:]...)
+	}
+	return equation.BodyID(sha256.Sum256(bytes))
 }
 
 func occurrence(kind string) equation.Occurrence {

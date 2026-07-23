@@ -149,6 +149,65 @@ func recordFunctionBodyMetadata(body *wir.Body, fn *ast.FunctionExpr, bindings *
 	body.SetDeclaredReturnTypes(resolveDeclaredReturns(fn, resolver))
 	recordFunctionParamRootTypes(body, fn, bindings, resolver, options)
 	recordExternalFunctionRootTypes(body, fn, bindings, resolver)
+	recordFunctionBoundary(body, fn, bindings, resolver)
+}
+
+// recordFunctionBoundary records lexical metadata needed by the future
+// child-body admission boundary. It is intentionally passive in Stage 2: the
+// current evaluator still uses the existing single root entry and never reads
+// these fields while deriving facts.
+func recordFunctionBoundary(body *wir.Body, fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver) {
+	if body == nil || bindings == nil {
+		return
+	}
+	boundary := wir.BodyBoundary{DeclaredReturns: body.DeclaredReturnRefs()}
+	if fn != nil {
+		for _, slot := range bindings.ParamSlots(fn) {
+			if slot.Symbol == 0 {
+				continue
+			}
+			recordSymbolInfo(body, bindings, slot.Symbol)
+			parameter := wir.BoundaryParameter{
+				Symbol:       slot.Symbol,
+				Name:         slot.Name,
+				Vararg:       slot.Vararg,
+				ImplicitSelf: slot.ImplicitSelf,
+			}
+			if slot.Type != nil && resolver != nil {
+				if resolved, ok := resolver.Type(slot.Type); ok {
+					parameter.Type = body.InternType(resolved)
+				}
+			}
+			boundary.Parameters = append(boundary.Parameters, parameter)
+		}
+		for _, capture := range bindings.DirectCaptures(fn) {
+			if capture.Captured == 0 {
+				continue
+			}
+			recordSymbolInfo(body, bindings, capture.Captured)
+			boundary.Captures = append(boundary.Captures, wir.BoundaryCapture{
+				Symbol:  capture.Captured,
+				Name:    capture.CapturedName,
+				Mutable: bindings.HasWrite(capture.Captured),
+			})
+		}
+		for _, global := range bindings.DirectGlobalReads(fn) {
+			if global == 0 {
+				continue
+			}
+			recordSymbolInfo(body, bindings, global)
+			boundary.DirectGlobals = append(boundary.DirectGlobals, global)
+		}
+	} else {
+		for _, global := range bindings.ChunkGlobalReads() {
+			if global == 0 {
+				continue
+			}
+			recordSymbolInfo(body, bindings, global)
+			boundary.DirectGlobals = append(boundary.DirectGlobals, global)
+		}
+	}
+	body.SetBoundary(boundary)
 }
 
 func recordFunctionParamRootTypes(body *wir.Body, fn *ast.FunctionExpr, bindings *bind.Result, resolver *typeresolve.Resolver, options Options) {
@@ -1457,6 +1516,7 @@ func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
 // graph) and emits an OpClosure into dst carrying the capture operands in bind
 // order.
 func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
+	ordinal := uint32(b.protoSeq)
 	name := b.body.Name + ".fn" + strconv.Itoa(b.protoSeq)
 	b.protoSeq++
 	var ref wir.FuncRef
@@ -1477,9 +1537,11 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 		}
 	}
 	if childBody != nil && childGraph != nil {
+		lexicalPath := append(b.body.LexicalPath(), ordinal)
+		childBody.SetLexicalPath(lexicalPath)
 		sym, _ := b.bindings.FunctionSymbol(fn)
 		fnType, _ := functiontype.ValueExpression(fn, b.bindings, b.resolver)
-		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childGraph, Symbol: wir.FunctionSymbolID(sym), Type: fnType})
+		ref = b.body.AddProto(wir.FuncProto{Name: name, Body: childBody, Graph: childGraph, LexicalPath: lexicalPath, Boundary: childBody.Boundary(), Symbol: wir.FunctionSymbolID(sym), Type: fnType})
 	}
 
 	caps := b.bindings.DirectCaptures(fn)
