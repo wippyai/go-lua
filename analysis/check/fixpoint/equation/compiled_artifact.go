@@ -285,9 +285,8 @@ func (a CompiledArtifact) ReferenceArtifact() (Artifact, error) {
 	return artifact, nil
 }
 
-// CompiledDifferentialCase compares the retained VM input with the compact
-// plan reconstructed VM input.  It is the admission gate for the generated
-// evaluator lane: later executors plug into this same closure-equality oracle.
+// CompiledDifferentialCase compares the retained VM input with direct compact
+// plan execution.  It is the admission gate for the generated evaluator lane.
 type CompiledDifferentialCase struct {
 	Name     string
 	Artifact Artifact
@@ -297,6 +296,10 @@ type CompiledDifferentialCase struct {
 
 func RunCompiledDifferential(vm *AcyclicVM, cases []CompiledDifferentialCase) (ShadowReport, error) {
 	report := ShadowReport{Cases: len(cases)}
+	evaluator, err := NewFastEvaluator(vm)
+	if err != nil {
+		return report, err
+	}
 	for _, test := range cases {
 		if test.Name == "" {
 			return report, fmt.Errorf("equation: malformed compiled differential case")
@@ -308,21 +311,17 @@ func RunCompiledDifferential(vm *AcyclicVM, cases []CompiledDifferentialCase) (S
 		if err != nil {
 			return report, fmt.Errorf("equation: compiled differential %s reference binding: %w", test.Name, err)
 		}
-		compiledArtifact, err := test.Compiled.ReferenceArtifact()
+		scratch, err := NewEvaluatorScratch(test.Compiled)
 		if err != nil {
-			return report, fmt.Errorf("equation: compiled differential %s plan: %w", test.Name, err)
-		}
-		bound, err := BindEntry(compiledArtifact, test.Entry)
-		if err != nil {
-			return report, fmt.Errorf("equation: compiled differential %s compiled binding: %w", test.Name, err)
+			return report, fmt.Errorf("equation: compiled differential %s scratch: %w", test.Name, err)
 		}
 		want, err := vm.Evaluate(reference)
 		if err != nil {
 			return report, fmt.Errorf("equation: compiled differential %s reference evaluation: %w", test.Name, err)
 		}
-		got, err := vm.Evaluate(bound)
+		got, err := evaluator.Evaluate(test.Compiled, test.Entry, scratch)
 		if err != nil {
-			return report, fmt.Errorf("equation: compiled differential %s compiled evaluation: %w", test.Name, err)
+			return report, fmt.Errorf("equation: compiled differential %s compiled execution: %w", test.Name, err)
 		}
 		if !want.Closure.Equal(got.Closure) || want.Transactions != got.Transactions {
 			return report, fmt.Errorf("equation: compiled differential %s published output differs", test.Name)
