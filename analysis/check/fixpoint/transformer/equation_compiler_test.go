@@ -519,3 +519,155 @@ func channelSelectEquationDraft(occurrence RelationEquationOccurrence, contract 
 	}
 	return draft
 }
+
+func TestCompileEquationIRWalksRootAssignmentThroughLowering(t *testing.T) {
+	registry := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+	const target = symbol.ID(2401)
+	source, ok := factflow.NewStringLiteralValueSource("equation-root-assignment", 0, 0, 0, factflow.ValueSourceShape{})
+	if !ok {
+		t.Fatal("root-assignment literal source")
+	}
+	facts := factflow.FactsInput{RootAssignments: map[cfg.Point]factflow.RootAssignment{
+		assign: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, pathdom.NewPath(target, "target"), source),
+	}}
+	visibilityBuilder := visibility.NewBuilder()
+	for _, point := range cfg.RPOReadOnly(graph) {
+		visibilityBuilder.Define(point, target, "target")
+	}
+	program, _ := freezeFormalRootAssignmentTestProgram(t, registry, graph, facts, visibility.NewResolver(visibilityBuilder.Build()), []symbol.ID{target})
+
+	compiler, err := equation.Skeleton().With(string(OperatorRootAssignment), RootAssignmentEquationLowerer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err = compiler.With(string(OperatorOutcome), equation.BindExistingKernel("transformer/formal-outcome/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err = compiler.With(string(OperatorNonreturning), equation.BindExistingKernel("transformer/formal-nonreturning/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls uint64
+	artifact, err := program.CompileEquationIR(compiler, func(occurrence RelationEquationOccurrence) (equation.Draft, error) {
+		calls++
+		if occurrence.Kind == OperatorRootAssignment {
+			draft, _, bindingErr := rootAssignmentEquationDraft(occurrence.Body, calls, "root-assignment-state")
+			return draft, bindingErr
+		}
+		contract, contractErr := NewOperatorContract(occurrence.Kind, formal.NewOccurrenceID(occurrence.Body, calls))
+		if contractErr != nil {
+			return equation.Draft{}, contractErr
+		}
+		body := equation.BodyID(occurrence.Body)
+		entry := equation.EntryParameter{Body: body, Name: "entry"}
+		operands := make([]equation.Operand, 0, len(contract.Operands))
+		for _, role := range contract.Operands {
+			operands = append(operands, equation.Operand{Role: string(role), Term: equation.ClosedTerm([]byte(role))})
+		}
+		return equation.Draft{Target: equation.Coordinate{Body: body, Name: string(occurrence.Kind) + "-output"}, Entry: entry, Occurrence: equation.Occurrence{Kind: string(contract.Kind), ContractID: equation.ContentID(contract.ContentID())}, Operands: operands}, nil
+	})
+	if err != nil {
+		t.Fatalf("CompileEquationIR: %v", err)
+	}
+	if calls != 3 || len(artifact.Equations) != 3 {
+		t.Fatalf("walker calls/artifact = %d/%d, want 3/3", calls, len(artifact.Equations))
+	}
+	for _, lowered := range artifact.Equations {
+		if lowered.Occurrence.Kind == string(OperatorRootAssignment) {
+			if lowered.KernelID != FormalRootAssignmentEquationKernel {
+				t.Fatalf("root-assignment kernel = %q", lowered.KernelID)
+			}
+			return
+		}
+	}
+	t.Fatal("root-assignment equation was not lowered")
+}
+
+func TestRootAssignmentEquationLoweringIsCanonicalAndFailClosed(t *testing.T) {
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("root-assignment-equation-lowering")))
+	draft, _, err := rootAssignmentEquationDraft(owner, 1, "state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := equation.Skeleton().Compile(equation.Source{Drafts: []equation.Draft{draft}}); !errors.Is(err, equation.ErrUnimplementedLowering) {
+		t.Fatalf("missing root-assignment hook error = %v", err)
+	}
+	compiler, err := equation.Skeleton().With(string(OperatorRootAssignment), RootAssignmentEquationLowerer())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{draft}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reorderedBinding := rootAssignmentEquationBinding(owner, 1, "state")
+	reorderedBinding.Reads[0], reorderedBinding.Reads[3] = reorderedBinding.Reads[3], reorderedBinding.Reads[0]
+	reorderedBinding.GuardAtoms[0], reorderedBinding.GuardAtoms[1] = reorderedBinding.GuardAtoms[1], reorderedBinding.GuardAtoms[0]
+	reordered, _, err := NewRootAssignmentEquationDraft(reorderedBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The helper intentionally receives its declaration in a different order.
+	// Both contract and equation codecs must retain only canonical content.
+	reordered.Guards[0], reordered.Guards[1] = reordered.Guards[1], reordered.Guards[0]
+	reordered.Operands[1], reordered.Operands[3] = reordered.Operands[3], reordered.Operands[1]
+	second, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{reordered}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ContentID() != second.ContentID() {
+		t.Fatal("reordered root-assignment declaration changed equation identity")
+	}
+	changed, _, err := rootAssignmentEquationDraft(owner, 1, "different-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{changed}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ContentID() == third.ContentID() {
+		t.Fatal("semantic root-assignment operand did not change equation identity")
+	}
+	incomplete, _, err := rootAssignmentEquationDraft(owner, 1, "state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	incomplete.Operands[2].Term = equation.Term{}
+	failed, err := compiler.Compile(equation.Source{Drafts: []equation.Draft{incomplete}})
+	if err == nil || len(failed.Equations) != 0 {
+		t.Fatalf("incomplete root-assignment transaction published %#v, %v", failed, err)
+	}
+}
+
+func rootAssignmentEquationDraft(owner lexicalidentity.StableLexicalBodyID, ordinal uint64, state string) (equation.Draft, OperatorContract, error) {
+	return NewRootAssignmentEquationDraft(rootAssignmentEquationBinding(owner, ordinal, state))
+}
+
+func rootAssignmentEquationBinding(owner lexicalidentity.StableLexicalBodyID, ordinal uint64, state string) RootAssignmentEquationBinding {
+	body := equation.BodyID(owner)
+	entry := equation.EntryParameter{Body: body, Name: "entry"}
+	return RootAssignmentEquationBinding{
+		Target: equation.Coordinate{Body: body, Name: "root-assignment-output"},
+		Entry:  entry, Occurrence: formal.NewOccurrenceID(owner, ordinal),
+		Guards: []equation.Guard{{Body: body, Encoding: []byte("assignment-guard-b")}, {Body: body, Encoding: []byte("assignment-guard-a")}},
+		Flow:   equation.EntryTerm(entry), NodeEntry: equation.ClosedTerm([]byte("point-entry")),
+		State: equation.ClosedTerm([]byte(state)), Guard: equation.ClosedTerm([]byte("assignment-guard")),
+		Reads: []ContractSelector{
+			{Role: AccessState, Name: "values/current"},
+			{Role: AccessFlow, Name: "predecessor"},
+			{Role: AccessGuard, Name: "assignment-guard"},
+			{Role: AccessNodeEntry, Name: "point-entry"},
+		},
+		Writes:     []ContractSelector{{Role: AccessState, Name: "values/target"}},
+		GuardAtoms: []string{"assignment-guard-b", "assignment-guard-a"},
+		Outcomes:   []OutcomeKind{OutcomeNormal},
+	}
+}

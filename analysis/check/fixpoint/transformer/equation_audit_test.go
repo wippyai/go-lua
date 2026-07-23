@@ -159,3 +159,37 @@ func TestChannelSelectLoweringAuditsExistingFactapplyExecution(t *testing.T) {
 		t.Fatal("channel-select lowering published a partial transaction")
 	}
 }
+
+func TestRootAssignmentLoweringAuditsRecordedExecution(t *testing.T) {
+	owner := lexicalidentity.RootBody(lexicalidentity.UnitNamespaceFromContent([]byte("root-assignment-equation-audit")))
+	occurrence := formal.NewOccurrenceID(owner, 1)
+	contract, err := NewOperatorContract(OperatorRootAssignment, occurrence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract.Reads = []ContractSelector{
+		{Role: AccessFlow, Name: "predecessor"},
+		{Role: AccessNodeEntry, Name: "point-entry"},
+		{Role: AccessState, Name: "values/current"},
+		{Role: AccessGuard, Name: "assignment-guard"},
+	}
+	contract.Writes = []ContractSelector{{Role: AccessState, Name: "values/target"}}
+	contract.GuardAtoms = []string{"assignment-guard"}
+	contract.Outcomes = []OutcomeKind{OutcomeNormal}
+
+	access := OperatorAccess{
+		Kind: OperatorRootAssignment, Occurrence: occurrence,
+		Reads: append([]ContractSelector(nil), contract.Reads...), Writes: append([]ContractSelector(nil), contract.Writes...),
+		Outcomes: append([]OutcomeKind(nil), contract.Outcomes...),
+	}
+	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
+		t.Fatalf("root-assignment audit: %v", err)
+	}
+
+	access.Reads = append(access.Reads, ContractSelector{Role: AccessState, Name: "undeclared-reduction"})
+	execution.Access.Payload = access
+	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
+		t.Fatal("root-assignment audit accepted undeclared read")
+	}
+}
