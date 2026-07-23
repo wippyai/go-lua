@@ -61,13 +61,19 @@ end
 	}
 }
 
-func TestCompileBodyStillRejectsNonGenericCycles(t *testing.T) {
-	_, err := front.CompileBody(`
+func TestCompileFreezesNonGenericCycles(t *testing.T) {
+	compilation, err := front.Compile(`
 while true do
 end
 `)
-	if err == nil {
-		t.Fatal("CompileBody accepted a cyclic body outside the generic-for slice")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if compilation.Cyclic == nil || compilation.Cyclic.Plan == nil {
+		t.Fatalf("Compile did not retain a cyclic certificate: %#v", compilation)
+	}
+	if compilation.Cyclic.Plan.ComponentCount() == 0 {
+		t.Fatal("cyclic certificate has no WTO component")
 	}
 }
 

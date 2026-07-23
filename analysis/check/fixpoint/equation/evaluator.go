@@ -200,6 +200,32 @@ func mergeClosure(left, right OutputClosure) (OutputClosure, error) {
 // mutate a partially-built output closure through it.
 type Partition struct{ closure OutputClosure }
 
+// PartitionFromClosure closes a published snapshot for a contract kernel.
+// It is used by the cyclic adapter to present the same complete read surface
+// that the acyclic VM supplies to established kernels.
+func PartitionFromClosure(closure OutputClosure) (Partition, error) {
+	return PartitionFromClosures(closure)
+}
+
+// PartitionFromClosures joins complete snapshot leaves into one kernel read
+// partition.  It is intentionally a value constructor: neither VM exposes
+// mutable evaluator state through this bridge.
+func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
+	combined := OutputClosure{}
+	var err error
+	for _, closure := range closures {
+		combined, err = mergeClosure(combined, closure)
+		if err != nil {
+			return Partition{}, err
+		}
+	}
+	canonical, err := canonicalClosure(combined)
+	if err != nil {
+		return Partition{}, err
+	}
+	return Partition{closure: canonical}, nil
+}
+
 func (p Partition) Values() []Fact      { return cloneFacts(p.closure.Values) }
 func (p Partition) Outcomes() []Fact    { return cloneFacts(p.closure.Outcomes) }
 func (p Partition) Diagnostics() []Fact { return cloneFacts(p.closure.Diagnostics) }

@@ -786,6 +786,30 @@ end
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"before"`)}},
 		},
 		{
+			Name: "loop/while-accumulates-until-its-bound",
+			Source: `
+local total = 0
+local current = 0
+while current < 3 do
+    total = total + current
+    current = current + 1
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("current", "3"), value("total", "3")}},
+		},
+		{
+			Name: "loop/repeat-accumulates-before-its-condition",
+			Source: `
+local total = 0
+local current = 0
+repeat
+    total = total + current
+    current = current + 1
+until current == 3
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("current", "3"), value("total", "3")}},
+		},
+		{
 			Name: "pathstore/absent-index-read-is-nil",
 			Source: `
 local record = {}
@@ -899,6 +923,22 @@ local result = record.status
 			Name:   "provider/tonumber-nil-remains-nil",
 			Source: `local result = tonumber(nil)`,
 			Expect: Expectation{Published: []PublishedOutcome{value("result", "nil")}},
+		},
+		{
+			Name: "recursion/mutual-functions-resolve-in-one-file",
+			Source: `
+local even, odd
+even = function(value)
+    if value == 0 then return true end
+    return odd(value - 1)
+end
+odd = function(value)
+    if value == 0 then return false end
+    return even(value - 1)
+end
+local result = even(6)
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "true")}},
 		},
 		{
 			Name:   "outcome/bare-return-has-zero-results",

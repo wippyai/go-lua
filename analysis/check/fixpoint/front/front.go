@@ -4,10 +4,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -43,10 +45,20 @@ const (
 // wirlower before compiling the resulting complete equation source. The
 // walking skeleton admits only the structural entry operation; later families
 // are added explicitly rather than being skipped.
-func CompileBody(source string) (equation.Artifact, error) {
+// Compilation is the front's complete admission result.  Artifact is always
+// present; Cyclic is present exactly when the source CFG has a recurrence and
+// carries the source-frozen WTO certificate for that same artifact.
+type Compilation struct {
+	Artifact equation.Artifact
+	Cyclic   *equation.CyclicArtifact
+}
+
+// Compile parses and lowers one complete body, retaining cyclic control-flow
+// as a frozen equation certificate rather than rejecting it at the front door.
+func Compile(source string) (Compilation, error) {
 	stmts, err := parse.ParseString(source, "<front>")
 	if err != nil {
-		return equation.Artifact{}, fmt.Errorf("front: parse body: %w", err)
+		return Compilation{}, fmt.Errorf("front: parse body: %w", err)
 	}
 	// channel is the ambient runtime module whose select form has a dedicated
 	// WIR operation.  A local binding still shadows it, so arbitrary
@@ -57,13 +69,35 @@ func CompileBody(source string) (equation.Artifact, error) {
 	// the select transaction.
 	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	if built == nil || built.Graph == nil {
-		return equation.Artifact{}, fmt.Errorf("front: build CFG")
+		return Compilation{}, fmt.Errorf("front: build CFG")
 	}
 	body := wirlower.Lower("chunk", stmts, bindings, built)
 	if body == nil {
-		return equation.Artifact{}, fmt.Errorf("front: lower WIR")
+		return Compilation{}, fmt.Errorf("front: lower WIR")
 	}
-	return compileWIR(source, body, built.Graph, assignmentSnapshotStarts(stmts, built))
+	artifact, err := compileWIR(source, body, built.Graph, assignmentSnapshotStarts(stmts, built))
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation := Compilation{Artifact: artifact}
+	if graphHasCycle(built.Graph) {
+		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
+		if err != nil {
+			return Compilation{}, err
+		}
+		compilation.Cyclic = &cyclic
+	}
+	return compilation, nil
+}
+
+// CompileBody is retained for consumers that only need the equation artifact.
+// Check uses Compile so it can select the acyclic or cyclic execution path.
+func CompileBody(source string) (equation.Artifact, error) {
+	compilation, err := Compile(source)
+	if err != nil {
+		return equation.Artifact{}, err
+	}
+	return compilation.Artifact, nil
 }
 
 type operation struct {
@@ -85,9 +119,6 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	loopBindings, err := genericForBindings(body, graph)
 	if err != nil {
 		return equation.Artifact{}, err
-	}
-	if graphHasCycle(graph) && len(loopBindings) == 0 {
-		return equation.Artifact{}, fmt.Errorf("front: cyclic CFG is outside the generic-for walking slice")
 	}
 	loopBindingPoints := make(map[cfg.Point]bool)
 	for _, bindings := range loopBindings {
@@ -1169,6 +1200,142 @@ func graphHasCycle(graph cfg.Graph) bool {
 		return false
 	}
 	return visit(graph.Entry())
+}
+
+// freezeCyclicArtifact translates the already-admitted equation stream and
+// CFG topology into a closed cyclic certificate. The resulting WTO is
+// computed once here and retained verbatim by the evaluator -- execution
+// never discovers or rebuilds a schedule.
+func freezeCyclicArtifact(artifact equation.Artifact, body *wir.Body, graph cfg.Graph) (equation.CyclicArtifact, error) {
+	if len(artifact.Equations) == 0 {
+		return equation.CyclicArtifact{}, fmt.Errorf("front: cannot freeze an empty cyclic artifact")
+	}
+	cells := make([]equation.CellID, 0, len(artifact.Equations))
+	byTarget := make(map[equation.Coordinate]equation.CellID, len(artifact.Equations))
+	for _, operation := range artifact.Equations {
+		cell := equation.CellID("front/" + operation.Target.Name)
+		cells = append(cells, cell)
+		byTarget[operation.Target] = cell
+	}
+	pointCells, err := cyclicOperationCells(artifact, body, graph, byTarget)
+	if err != nil {
+		return equation.CyclicArtifact{}, err
+	}
+	edges := make(map[equation.CellID][]equation.CellID, len(cells))
+	dependencies := make([]equation.SemanticDependency, 0, len(cells))
+	for _, operation := range artifact.Equations {
+		to := byTarget[operation.Target]
+		for _, target := range operation.Dependencies {
+			from, ok := byTarget[target]
+			if !ok {
+				return equation.CyclicArtifact{}, fmt.Errorf("front: cyclic dependency %s has no cell", target.Name)
+			}
+			edges[from] = append(edges[from], to)
+			dependencies = append(dependencies, equation.SemanticDependency{From: from, To: to, Reason: equation.EdgeContractRead, Evidence: "front/operation-order"})
+		}
+	}
+	for point, sources := range pointCells {
+		from := sources[len(sources)-1]
+		for _, next := range graph.Successors(point) {
+			for _, to := range cyclicReachableOperationCells(graph, next, pointCells) {
+				edges[from] = append(edges[from], to)
+				dependencies = append(dependencies, equation.SemanticDependency{From: from, To: to, Reason: equation.EdgeContractAdvance, Evidence: "front/cfg-edge"})
+			}
+		}
+	}
+	plan := solve.NewWTOPlan(cells, func(cell equation.CellID) []equation.CellID {
+		return append([]equation.CellID(nil), edges[cell]...)
+	})
+	cyclic, err := equation.NewCyclicArtifact(artifact, byTarget, plan, dependencies,
+		[]equation.OutputSelector{{ID: "published", Cells: append([]equation.CellID(nil), cells...)}},
+		[]equation.CellID{cells[0]}, append([]equation.CellID(nil), cells...))
+	if err != nil {
+		return equation.CyclicArtifact{}, fmt.Errorf("front: freeze cyclic artifact: %w", err)
+	}
+	return cyclic, nil
+}
+
+// cyclicOperationCells repeats only the front's operation cardinality pass.
+// The produced coordinates are the already-compiled operation names, so this
+// cannot create a second lowering or infer an alternate equation topology.
+func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.Graph, byTarget map[equation.Coordinate]equation.CellID) (map[cfg.Point][]equation.CellID, error) {
+	if body == nil || graph == nil || len(artifact.Equations) == 0 {
+		return nil, fmt.Errorf("front: cyclic operation map has no body")
+	}
+	loopBindings, err := genericForBindings(body, graph)
+	if err != nil {
+		return nil, err
+	}
+	loopBindingPoints := make(map[cfg.Point]bool)
+	for _, bindings := range loopBindings {
+		for _, binding := range bindings {
+			loopBindingPoints[binding.point] = true
+		}
+	}
+	bodyID := artifact.Equations[0].Target.Body
+	points := make(map[cfg.Point][]equation.CellID)
+	index := 0
+	appendAt := func(point cfg.Point, count int) error {
+		for offset := 0; offset < count; offset++ {
+			target := equation.Coordinate{Body: bodyID, Name: operationName(index)}
+			cell, ok := byTarget[target]
+			if !ok {
+				return fmt.Errorf("front: cyclic operation %s has no compiled cell", target.Name)
+			}
+			points[point] = append(points[point], cell)
+			index++
+		}
+		return nil
+	}
+	for instructionIndex := 0; instructionIndex < body.Len(); instructionIndex++ {
+		instruction := body.Instr(instructionIndex)
+		count := 0
+		switch instruction.Op {
+		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpSelect, wir.OpAssign, wir.OpIterate, wir.OpReturn:
+			count = 1
+			if instruction.Op == wir.OpAssign && instruction.A.Kind == wir.OperandNone && loopBindingPoints[instruction.Point] {
+				count = 0
+			}
+		case wir.OpDynamicIndexWrite, wir.OpMakeTable, wir.OpClosure:
+			count = 2
+		case wir.OpCall:
+			count = 2
+			if _, external := externalProvider(body, instruction); external {
+				count++
+			}
+		case wir.OpExit, wir.OpNoop:
+		default:
+			return nil, fmt.Errorf("front: cyclic operation map: %w: %d", ErrUnsupportedInstruction, instruction.Op)
+		}
+		if err := appendAt(instruction.Point, count); err != nil {
+			return nil, err
+		}
+	}
+	if index != len(artifact.Equations) {
+		return nil, fmt.Errorf("front: cyclic operation map has %d cells, want %d", index, len(artifact.Equations))
+	}
+	return points, nil
+}
+
+func cyclicReachableOperationCells(graph cfg.Graph, start cfg.Point, points map[cfg.Point][]equation.CellID) []equation.CellID {
+	seen := make(map[cfg.Point]bool)
+	stack := []cfg.Point{start}
+	var cells []equation.CellID
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[point] {
+			continue
+		}
+		seen[point] = true
+		if atPoint := points[point]; len(atPoint) != 0 {
+			cells = append(cells, atPoint[0])
+			continue
+		}
+		stack = append(stack, graph.Successors(point)...)
+	}
+	sort.Slice(cells, func(i, j int) bool { return cells[i] < cells[j] })
+	return cells
 }
 
 func reachable(graph cfg.Graph, from, target cfg.Point) bool {

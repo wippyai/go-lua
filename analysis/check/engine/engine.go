@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,7 +53,8 @@ type Result struct {
 }
 
 // Check compiles source through the new front, binds its sole formal entry,
-// evaluates it with equation.AcyclicVM, and returns every output channel.
+// and evaluates the front-selected acyclic or frozen-cyclic artifact. Both
+// paths publish the identical result channels.
 func Check(source string) (result Result, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -60,34 +62,64 @@ func Check(source string) (result Result, err error) {
 			result = Result{}
 		}
 	}()
-	artifact, err := front.CompileBody(source)
+	compilation, err := front.Compile(source)
 	if err != nil {
 		return Result{}, fmt.Errorf("engine: compile whole file: %w", err)
 	}
+	artifact := compilation.Artifact
 	if len(artifact.Equations) == 0 {
 		return Result{}, fmt.Errorf("engine: front returned an empty artifact")
 	}
 	entry := artifact.Equations[0].Entry
-	bound, err := equation.BindEntry(artifact, equation.EntryBinding{Parameter: entry, Value: []byte(entryValue)})
-	if err != nil {
-		return Result{}, fmt.Errorf("engine: bind entry: %w", err)
-	}
-	registry, err := registry()
-	if err != nil {
-		return Result{}, err
-	}
-	vm, err := equation.NewAcyclicVM(registry)
-	if err != nil {
-		return Result{}, err
-	}
-	evaluation, err := vm.Evaluate(bound)
-	if err != nil {
-		return Result{}, fmt.Errorf("engine: evaluate: %w", err)
+	binding := equation.EntryBinding{Parameter: entry, Value: []byte(entryValue)}
+	closure := equation.OutputClosure{}
+	transactions := 0
+	if compilation.Cyclic == nil {
+		bound, bindErr := equation.BindEntry(artifact, binding)
+		if bindErr != nil {
+			return Result{}, fmt.Errorf("engine: bind entry: %w", bindErr)
+		}
+		kernelRegistry, registryErr := registry()
+		if registryErr != nil {
+			return Result{}, registryErr
+		}
+		vm, vmErr := equation.NewAcyclicVM(kernelRegistry)
+		if vmErr != nil {
+			return Result{}, vmErr
+		}
+		evaluation, evaluateErr := vm.Evaluate(bound)
+		if evaluateErr != nil {
+			return Result{}, fmt.Errorf("engine: evaluate: %w", evaluateErr)
+		}
+		closure, transactions = evaluation.Closure, evaluation.Transactions
+	} else {
+		// Admission compiles the compact cyclic schema while execution retains
+		// the source-owned WTO certificate from the front.
+		if _, compileErr := equation.CompileCyclicArtifact(*compilation.Cyclic); compileErr != nil {
+			return Result{}, fmt.Errorf("engine: compile cyclic artifact: %w", compileErr)
+		}
+		bound, bindErr := equation.BindCyclicEntry(*compilation.Cyclic, binding)
+		if bindErr != nil {
+			return Result{}, fmt.Errorf("engine: bind cyclic entry: %w", bindErr)
+		}
+		kernelRegistry, registryErr := cyclicRegistry()
+		if registryErr != nil {
+			return Result{}, registryErr
+		}
+		vm, vmErr := equation.NewCyclicVM(kernelRegistry)
+		if vmErr != nil {
+			return Result{}, vmErr
+		}
+		evaluation, evaluateErr := vm.Evaluate(context.Background(), bound, []string{"published"})
+		if evaluateErr != nil {
+			return Result{}, fmt.Errorf("engine: evaluate cyclic: %w", evaluateErr)
+		}
+		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
 	return Result{
-		Artifact: artifact, Values: publishedValues(artifact, evaluation.Closure.Values),
-		Outcomes: publishedOutcomes(evaluation.Closure.Outcomes), Diagnostics: evaluation.Closure.Diagnostics,
-		Transactions: evaluation.Transactions,
+		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
+		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
+		Transactions: transactions,
 	}, nil
 }
 
@@ -163,6 +195,116 @@ func registry() (*equation.KernelRegistry, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("engine: build kernel registry: %w", err)
+	}
+	return registry, nil
+}
+
+// cyclicRegistry binds the same source-owned semantic kernels to the cyclic
+// transaction interface. The adapter materializes the immutable snapshot as
+// the ordinary kernel partition, so no cyclic-only transfer semantics can
+// diverge from the established publication path.
+func cyclicRegistry() (*equation.CyclicKernelRegistry, error) {
+	binding := func(kind string, kernel equation.Kernel) (equation.CyclicKernelBinding, error) {
+		kernelID, known := front.KernelID(kind)
+		contract, contracted := front.ContractID(kind)
+		if !known || !contracted {
+			return equation.CyclicKernelBinding{}, fmt.Errorf("engine: missing front cyclic kernel contract for %q", kind)
+		}
+		return equation.CyclicKernelBinding{
+			KernelID: kernelID, ContractID: contract,
+			Kernel: equation.CyclicKernelFunc(func(ctx context.Context, operation equation.BoundCyclicEquation, snapshot equation.CyclicSnapshot) (equation.TransactionResult, error) {
+				if err := ctx.Err(); err != nil {
+					return equation.TransactionResult{}, err
+				}
+				closures := make([]equation.OutputClosure, 0)
+				seen := make(map[equation.CellID]bool)
+				var collect func(equation.CellID)
+				collect = func(cell equation.CellID) {
+					if seen[cell] {
+						return
+					}
+					seen[cell] = true
+					for _, predecessor := range snapshot.Predecessors(cell) {
+						collect(predecessor)
+					}
+					for _, leaf := range snapshot.Read(cell).Leaves {
+						closures = append(closures, leaf.Closure)
+					}
+				}
+				for _, predecessor := range snapshot.Predecessors(operation.Cell) {
+					collect(predecessor)
+				}
+				partition, err := equation.PartitionFromClosures(closures...)
+				if err != nil {
+					return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
+				}
+				return kernel.Execute(operation.Equation, partition)
+			}),
+		}, nil
+	}
+	entry, err := binding("entry", equation.KernelFunc(entryKernel))
+	if err != nil {
+		return nil, err
+	}
+	allocationTemplate, err := binding("allocation-template", equation.KernelFunc(allocationTemplateKernel))
+	if err != nil {
+		return nil, err
+	}
+	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(objectMaterializationKernel))
+	if err != nil {
+		return nil, err
+	}
+	write, err := binding("environment-write", equation.KernelFunc(writeKernel))
+	if err != nil {
+		return nil, err
+	}
+	pathReplacement, err := binding("path-replacement", equation.KernelFunc(pathReplacementKernel))
+	if err != nil {
+		return nil, err
+	}
+	pathInvalidation, err := binding("path-invalidation", equation.KernelFunc(pathInvalidationKernel))
+	if err != nil {
+		return nil, err
+	}
+	indexMutation, err := binding("index-mutation", equation.KernelFunc(indexMutationKernel))
+	if err != nil {
+		return nil, err
+	}
+	branch, err := binding("branch-relations", equation.KernelFunc(branchKernel))
+	if err != nil {
+		return nil, err
+	}
+	apply, err := binding("apply", equation.KernelFunc(applyKernel))
+	if err != nil {
+		return nil, err
+	}
+	results, err := binding("call-results", equation.KernelFunc(callResultsKernel))
+	if err != nil {
+		return nil, err
+	}
+	external, err := binding("external-call", equation.KernelFunc(externalCallKernel))
+	if err != nil {
+		return nil, err
+	}
+	genericFor, err := binding("generic-for", equation.KernelFunc(genericForKernel))
+	if err != nil {
+		return nil, err
+	}
+	channelSelect, err := binding("channel-select", equation.KernelFunc(channelSelectKernel))
+	if err != nil {
+		return nil, err
+	}
+	publication, err := binding("publication", equation.KernelFunc(publicationKernel))
+	if err != nil {
+		return nil, err
+	}
+	registry, err := equation.NewCyclicKernelRegistry([]equation.CyclicKernelBinding{
+		entry, allocationTemplate, objectMaterialization, write,
+		pathReplacement, pathInvalidation, indexMutation,
+		branch, apply, external, results, genericFor, channelSelect, publication,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("engine: build cyclic kernel registry: %w", err)
 	}
 	return registry, nil
 }

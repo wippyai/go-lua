@@ -204,13 +204,22 @@ func guardKey(guards []Guard) string {
 
 // CyclicSnapshot is the immutable current solution visible to one concrete
 // kernel. Read is dynamically audited by solve against the frozen WTO plan.
-type CyclicSnapshot struct{ read func(CellID) GuardedPartition }
+type CyclicSnapshot struct {
+	read         func(CellID) GuardedPartition
+	predecessors map[CellID][]CellID
+}
 
 func (s CyclicSnapshot) Read(cell CellID) GuardedPartition {
 	if s.read == nil {
 		return GuardedPartition{}
 	}
 	return s.read(cell).clone()
+}
+
+// Predecessors returns the explicit equation dependencies for cell. Control
+// recurrence stays in the WTO certificate, not in this data-read inventory.
+func (s CyclicSnapshot) Predecessors(cell CellID) []CellID {
+	return append([]CellID(nil), s.predecessors[cell]...)
 }
 
 // CyclicKernel is the concrete transaction boundary for cyclic execution.
@@ -353,6 +362,20 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 		return CyclicEvaluation{}, err
 	}
 	cells := flattenCyclicPlan(plan.Elements())
+	predecessors := make(map[CellID][]CellID, len(cells))
+	for _, cell := range cells {
+		equation, ok := bound.ByCell[cell]
+		if !ok {
+			return CyclicEvaluation{}, fmt.Errorf("equation: cyclic plan has no bound concrete cell %q", cell)
+		}
+		for _, target := range equation.Equation.Dependencies {
+			dependency, ok := bound.Artifact.CellForTarget[target]
+			if !ok {
+				return CyclicEvaluation{}, fmt.Errorf("equation: cyclic dependency has no cell for %s", target.Name)
+			}
+			predecessors[cell] = append(predecessors[cell], dependency)
+		}
+	}
 	widenAt := make(map[CellID]bool, len(bound.Artifact.WidenCells))
 	for _, cell := range bound.Artifact.WidenCells {
 		widenAt[cell] = true
@@ -381,7 +404,7 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 				executionErr = fmt.Errorf("equation: no contract-bound cyclic kernel for %s", equation.Equation.Target.Name)
 				return GuardedPartition{}
 			}
-			result, callErr := binding.Kernel.Execute(ctx, equation, CyclicSnapshot{read: read})
+			result, callErr := binding.Kernel.Execute(ctx, equation, CyclicSnapshot{read: read, predecessors: predecessors})
 			if callErr != nil {
 				executionErr = fmt.Errorf("equation: cyclic transaction %s: %w", equation.Equation.Target.Name, callErr)
 				return GuardedPartition{}

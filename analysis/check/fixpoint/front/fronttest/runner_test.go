@@ -11,8 +11,8 @@ import (
 
 func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 	cases := StarterCorpus()
-	if len(cases) != 95 {
-		t.Fatalf("starter corpus has %d cases, want 95", len(cases))
+	if len(cases) != 98 {
+		t.Fatalf("starter corpus has %d cases, want 98", len(cases))
 	}
 	families := map[string]int{}
 	for index, test := range cases {

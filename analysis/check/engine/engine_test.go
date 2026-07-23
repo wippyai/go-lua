@@ -20,6 +20,21 @@ func TestCheckPublishesScalarAssignment(t *testing.T) {
 	}
 }
 
+func TestCheckRoutesWhileThroughFrozenCyclicVM(t *testing.T) {
+	result, err := engine.Check(`
+local total = 0
+while false do
+    total = 1
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["total"]; got != "0" {
+		t.Fatalf("published total = %q, want 0; values = %#v", got, result.Values)
+	}
+}
+
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {
 	result, err := engine.Check(`
 local value = 1
