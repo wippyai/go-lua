@@ -100,21 +100,40 @@ func (c BoundApplicationContext) ContentID() ContentID {
 // guarded state that evaluated an Application predicate. Unknown is never a
 // certificate and therefore cannot cause publication.
 type FeasibilityCertificate struct {
-	Descriptor ContentID
-	BoundState ContentID
-	Guard      ContentID
-	Feasible   bool
+	Descriptor  ContentID
+	BoundState  ContentID
+	Guard       ContentID
+	Binding     ContentID
+	Application ContentID
+	Verdict     FeasibilityVerdict
+}
+
+// FeasibilityVerdict deliberately distinguishes a proof from a conservative
+// widening.  In particular, PossiblyFeasible is useful semantic evidence but
+// is never authority to publish a caller diagnostic.
+type FeasibilityVerdict string
+
+const (
+	FeasibilityInfeasible       FeasibilityVerdict = "infeasible"
+	FeasibilityPossiblyFeasible FeasibilityVerdict = "possibly-feasible"
+	FeasibilityProven           FeasibilityVerdict = "proven-feasible"
+)
+
+func (c FeasibilityCertificate) Positive() bool {
+	return c.Descriptor.Valid() && c.BoundState.Valid() && c.Guard.Valid() && c.Binding.Valid() && c.Application.Valid() && c.Verdict == FeasibilityProven
 }
 
 func (c FeasibilityCertificate) CanonicalBytes() []byte {
-	if !c.Descriptor.Valid() || !c.BoundState.Valid() || !c.Guard.Valid() || !c.Feasible {
+	if !c.Positive() {
 		return nil
 	}
 	encoded := make([]byte, 0, 112)
 	encoded = appendCanonicalText(encoded, "feasibility-certificate/content-v1")
 	encoded = append(encoded, c.Descriptor[:]...)
 	encoded = append(encoded, c.BoundState[:]...)
-	return append(encoded, c.Guard[:]...)
+	encoded = append(encoded, c.Guard[:]...)
+	encoded = append(encoded, c.Binding[:]...)
+	return append(encoded, c.Application[:]...)
 }
 
 func (c FeasibilityCertificate) ContentID() ContentID {
@@ -145,7 +164,7 @@ func (p DiagnosticPublication) Validate() error {
 			return fmt.Errorf("transformer: callee diagnostic publication has caller state")
 		}
 	case DiagnosticOwnerApplication:
-		if !p.Application.ContentID().Valid() || !p.Feasibility.ContentID().Valid() || p.Feasibility.Descriptor != p.Descriptor {
+		if !p.Application.ContentID().Valid() || !p.Feasibility.Positive() || p.Feasibility.Descriptor != p.Descriptor || p.Feasibility.Binding != p.Application.Binding || p.Feasibility.Application != p.Application.ContentID() {
 			return fmt.Errorf("transformer: application diagnostic publication lacks a positive feasibility proof")
 		}
 	default:
