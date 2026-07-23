@@ -14,6 +14,7 @@ type CyclicDependencyCertificate struct {
 	Cells        []equation.CellID
 	Plan         *solve.WTOPlan[equation.CellID]
 	Dependencies []equation.SemanticDependency
+	WidenCells   []equation.CellID
 }
 
 // CyclicDependencyCertificate returns the complete semantic graph for the
@@ -45,7 +46,15 @@ func (p *RelationProgram) CyclicDependencyCertificate() (CyclicDependencyCertifi
 	cellIDs = cyclicPlanCells(elements)
 	influences := make([]solve.WTOInfluence[equation.CellID], 0)
 	dependencies := make([]equation.SemanticDependency, 0)
+	widenCells := make([]equation.CellID, 0)
 	for _, target := range region.cells {
+		if region.widen[target] {
+			certificateCell, ok := byCell[target]
+			if !ok {
+				return CyclicDependencyCertificate{}, fmt.Errorf("transformer: cyclic dependency certificate has foreign widening cell")
+			}
+			widenCells = append(widenCells, certificateCell)
+		}
 		for _, influence := range region.incoming[target] {
 			from, fromOK := byCell[influence.Source]
 			to, toOK := byCell[influence.Target]
@@ -60,7 +69,7 @@ func (p *RelationProgram) CyclicDependencyCertificate() (CyclicDependencyCertifi
 	if err != nil {
 		return CyclicDependencyCertificate{}, fmt.Errorf("transformer: cyclic dependency certificate freezes WTO: %w", err)
 	}
-	return CyclicDependencyCertificate{Cells: cellIDs, Plan: plan, Dependencies: dependencies}, nil
+	return CyclicDependencyCertificate{Cells: cellIDs, Plan: plan, Dependencies: dependencies, WidenCells: widenCells}, nil
 }
 
 func cyclicPlanCells(elements []solve.WTOElement[equation.CellID]) []equation.CellID {

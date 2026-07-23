@@ -143,6 +143,21 @@ type EquationSystem[Cell comparable, State any] struct {
 
 	// Stats, when non-nil, receives observational counters for this solve run.
 	Stats *Stats
+
+	// UpdateObserver receives solve-local ascent updates after Join/Widen and
+	// abstraction. It is observational only and cannot alter scheduling.
+	UpdateObserver func(Cell, UpdateEvent[State])
+}
+
+// UpdateEvent records one candidate considered during WTO ascent. Visit is the
+// number of completed visits of the destination before this update.
+type UpdateEvent[State any] struct {
+	Previous State
+	Joined   State
+	Result   State
+	Visit    int
+	Widened  bool
+	Changed  bool
 }
 
 type cancellationGuard struct {
@@ -210,6 +225,7 @@ type solveState[Cell comparable, State any] struct {
 	widenDelay        func(Cell) int
 	abstract          func(Cell, State) State
 	stats             *Stats
+	updateObserver    func(Cell, UpdateEvent[State])
 	hasWiden          bool
 
 	// order is the canonical index of each cell, fixing deterministic
@@ -287,6 +303,7 @@ func newStructuredState[Cell comparable, State any](sys EquationSystem[Cell, Sta
 		widenDelay:        widenDelay,
 		abstract:          abstract,
 		stats:             sys.Stats,
+		updateObserver:    sys.UpdateObserver,
 		order:             make(map[Cell]int, n),
 		cells:             make([]Cell, 0, n),
 		cur:               make(map[Cell]State, n),
@@ -371,17 +388,24 @@ func (s *solveState[Cell, State]) emitStructured(d Cell, v State) {
 
 func (s *solveState[Cell, State]) emitWithRequeue(d Cell, v State) {
 	prev := s.curOf(d)
-	next := s.domain.Join(prev, v)
+	joined := s.domain.Join(prev, v)
+	next := joined
 	delayConsumed := false
+	widened := false
 	if s.widenAt(d) && s.visitCount(d) > 0 {
 		if s.widenChangeCount(d) >= max(0, s.widenDelay(d)) {
 			next = s.domain.Widen(prev, next)
+			widened = true
 		} else {
 			delayConsumed = true
 		}
 	}
 	next = s.abstract(d, next)
-	if s.domain.Equal(next, prev) {
+	changed := !s.domain.Equal(next, prev)
+	if s.updateObserver != nil {
+		s.updateObserver(d, UpdateEvent[State]{Previous: prev, Joined: joined, Result: next, Visit: s.visitCount(d), Widened: widened, Changed: changed})
+	}
+	if !changed {
 		return
 	}
 	s.cur[d] = next

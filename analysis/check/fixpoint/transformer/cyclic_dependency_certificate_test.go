@@ -25,6 +25,9 @@ func TestCyclicDependencyCertificateCopiesFrozenPlanAndTypedEdges(t *testing.T) 
 	if len(certificate.Dependencies) == 0 {
 		t.Fatal("certificate omitted region influences")
 	}
+	if len(certificate.WidenCells) == 0 {
+		t.Fatal("certificate omitted production widening bitmap")
+	}
 	for _, dependency := range certificate.Dependencies {
 		if !certificate.Plan.CoversInfluence(dependency.From, dependency.To) || dependency.Evidence == "" {
 			t.Fatalf("certificate dependency is not frozen/auditable: %#v", dependency)
