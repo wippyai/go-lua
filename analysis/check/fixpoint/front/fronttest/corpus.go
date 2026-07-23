@@ -59,6 +59,48 @@ local result = read()
 			Expect: Expectation{Published: []PublishedOutcome{value("result", `"after"`)}},
 		},
 		{
+			Name: "allocation/constructor-closure-is-truthy",
+			Source: `
+local callback = function() end
+local result = "before"
+if callback then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+		},
+		{
+			Name: "allocation/constructor-nested-member-has-completed-write",
+			Source: `
+local object = { child = { answer = 42 } }
+local result = object.child.answer
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "42")}},
+		},
+		{
+			Name: "allocation/constructor-static-member-has-completed-write",
+			Source: `
+local object = { answer = 42 }
+local result = object.answer
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "42")}},
+		},
+		{
+			Name: "allocation/constructor-table-is-truthy",
+			Source: `
+local object = {}
+local result = "before"
+if object then
+    result = "then"
+else
+    result = "else"
+end
+`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"then"`)}},
+		},
+		{
 			Name: "allocation/dynamic-key-materializes-the-runtime-key",
 			Source: `
 local key = "selected"
@@ -218,6 +260,28 @@ local copied = original
 local greeting = "hello"
 `,
 			Expect: Expectation{Published: []PublishedOutcome{value("greeting", `"hello"`)}},
+		},
+		{
+			Name:   "expression/arithmetic-precedence-publishes-number",
+			Source: `local result = 1 + 2 * 3`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "7")}},
+		},
+		{
+			Name:   "expression/concat-coerces-numbers-left-to-right",
+			Source: `local result = "id-" .. 4 .. "-ok"`,
+			Expect: Expectation{Published: []PublishedOutcome{value("result", `"id-4-ok"`)}},
+		},
+		{
+			Name:   "expression/logical-uses-lua-truth-and-value-flow",
+			Source: `local left = false and "no"; local right = nil or 0`,
+			Expect: Expectation{Published: []PublishedOutcome{
+				value("left", "false"), value("right", "0"),
+			}},
+		},
+		{
+			Name:   "expression/unary-not-and-length-use-lua-values",
+			Source: `local negated = not 0; local length = #"hello"`,
+			Expect: Expectation{Published: []PublishedOutcome{value("negated", "false"), value("length", "5")}},
 		},
 		{
 			Name: "branch/absent-global-is-nil-at-runtime",
@@ -576,6 +640,38 @@ local selected = channel.select { first:case_receive(), second:case_receive() }
 			// Readiness is unknown, so Lua permits either case; this corpus does
 			// not fabricate a selected payload.
 			Expect: Expectation{},
+		},
+		{
+			Name:   "claim/annotation-mismatch-is-diagnostic-refinement",
+			Source: `local value: string = 1`,
+			Expect: Expectation{
+				Published:   []PublishedOutcome{value("value", "unknown")},
+				Diagnostics: []DiagnosticCandidate{{Code: "claim/unproven", Subject: "", Detail: `claim "string" is not proven`}},
+			},
+		},
+		{
+			Name:   "claim/annotation-proven-literal-keeps-lua-value",
+			Source: `local value: string = "ready"`,
+			Expect: Expectation{Published: []PublishedOutcome{value("value", `"ready"`)}},
+		},
+		{
+			Name:   "claim/cast-of-unknown-is-diagnostic-refinement",
+			Source: `local value = provider() :: string`,
+			Expect: Expectation{
+				Published:   []PublishedOutcome{value("value", "unknown")},
+				Diagnostics: []DiagnosticCandidate{{Code: "claim/unproven", Subject: "", Detail: `claim "string" is not proven`}},
+			},
+		},
+		{
+			Name: "claim/non-nil-assertion-of-nil-is-diagnostic-refinement",
+			Source: `
+local source = nil
+local value = source!
+`,
+			Expect: Expectation{
+				Published:   []PublishedOutcome{value("source", "nil"), value("value", "unknown")},
+				Diagnostics: []DiagnosticCandidate{{Code: "claim/unproven", Subject: "", Detail: "claim non-nil is not proven"}},
+			},
 		},
 		{
 			Name: "channel-select/no-default-may-block-without-publication",
@@ -989,6 +1085,30 @@ local result = even(6)
 			Name:   "outcome/zero-is-a-result",
 			Source: `return 0`,
 			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "0")}},
+		},
+		{
+			Name:   "outcome/open-return-tail-publishes-head-result",
+			Source: `return provider()`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "unknown")}},
+		},
+		{
+			Name:   "outcome/open-return-tail-keeps-preceding-slot",
+			Source: `return "prefix", provider()`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "2"), outcome("return/0", `"prefix"`), outcome("return/1", "unknown")}},
+		},
+		{
+			Name:   "outcome/parenthesized-return-call-is-one-adjusted-slot",
+			Source: `return (provider())`,
+			Expect: Expectation{Published: []PublishedOutcome{outcome("return/arity", "1"), outcome("return/0", "unknown")}},
+		},
+		{
+			Name: "pathstore/member-write-from-first-temporary-is-admitted",
+			Source: `
+function module.answer()
+    return 7
+end
+`,
+			Expect: Expectation{},
 		},
 	}
 	for index := range cases {

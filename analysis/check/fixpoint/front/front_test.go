@@ -31,6 +31,27 @@ end
 	}
 }
 
+func TestCompileBodyLowersClaimAsCheckedRefinement(t *testing.T) {
+	artifact, err := front.CompileBody(`
+local source = nil
+local value = source!
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "claim" {
+			continue
+		}
+		got := operands(operation)
+		if got["target"] == "" || got["value"] == "" || got["kind"] != "claim-kind/2" || got["type"] != "claim-type/non-nil" || got["display"] != "value" {
+			t.Fatalf("claim operands = %#v", got)
+		}
+		return
+	}
+	t.Fatal("claim occurrence missing")
+}
+
 func TestCompileBodyLowersGenericForWithAdjustedTupleAndBindings(t *testing.T) {
 	artifact, err := front.CompileBody(`
 for key, value in next do
@@ -264,6 +285,69 @@ func TestCompileBodyLowersExactPublicationSlots(t *testing.T) {
 		return
 	}
 	t.Fatal("publication occurrence missing")
+}
+
+func TestCompileBodyKeepsTemporaryBindingForStaticMemberWrite(t *testing.T) {
+	artifact, err := front.CompileBody(`
+function module.answer()
+    return 7
+end
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "path-replacement" {
+			continue
+		}
+		if got := operands(operation)["value"]; got != "temp/0" {
+			t.Fatalf("static member temporary = %q, want first temporary binding temp/0", got)
+		}
+		return
+	}
+	t.Fatal("static member write occurrence missing")
+}
+
+func TestCompileBodyLowersAdjustedOpenReturnTailSlots(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   map[string]string
+	}{
+		{name: "open tail", source: `return provider()`, want: map[string]string{"return-value-00000000": "temp/0"}},
+		{name: "prefix and open tail", source: `return "prefix", provider()`, want: map[string]string{"return-value-00000000": `scalar/string/"prefix"`, "return-value-00000001": "temp/0"}},
+		{name: "parenthesized tail is adjusted", source: `return (provider())`, want: map[string]string{"return-value-00000000": "temp/0"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			artifact, err := front.CompileBody(test.source)
+			if err != nil {
+				t.Fatalf("CompileBody: %v", err)
+			}
+			for _, operation := range artifact.Equations {
+				if operation.Occurrence.Kind != "publication" {
+					continue
+				}
+				if got := operands(operation); !mapsEqual(got, test.want) {
+					t.Fatalf("publication slots = %#v, want %#v", got, test.want)
+				}
+				return
+			}
+			t.Fatal("publication occurrence missing")
+		})
+	}
+}
+
+func mapsEqual(got, want map[string]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for key, value := range want {
+		if got[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func TestCompileBodyLowersCompleteTableAllocationGraph(t *testing.T) {

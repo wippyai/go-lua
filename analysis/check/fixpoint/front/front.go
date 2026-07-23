@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -38,6 +39,8 @@ const (
 	genericForKernel            = "front/generic-for/v1"
 	selectKernel                = "front/channel-select/v1"
 	publicationKernel           = "front/publication/v1"
+	claimKernel                 = "front/claim/v1"
+	expressionKernel            = "front/expression/v1"
 	entryName                   = "entry"
 )
 
@@ -101,13 +104,14 @@ func CompileBody(source string) (equation.Artifact, error) {
 }
 
 type operation struct {
-	instruction    wir.Instruction
-	target         equation.Coordinate
-	family         string
-	allocationSite string
-	callResults    bool
-	callApply      equation.Coordinate
-	external       equation.Term
+	instruction     wir.Instruction
+	target          equation.Coordinate
+	family          string
+	allocationSite  string
+	allocationEntry *wir.TableEntry
+	callResults     bool
+	callApply       equation.Coordinate
+	external        equation.Term
 }
 
 func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
@@ -131,7 +135,7 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		switch instruction.Op {
-		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpSelect:
+		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpLogical:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 			if instruction.Op == wir.OpEntry {
 				entries++
@@ -166,7 +170,22 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			operations = append(operations,
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: site}, family: "allocation-template", allocationSite: site},
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, family: "object-materialization", allocationSite: site},
+				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 2)}, family: "allocation-write"},
 			)
+			// Constructors publish a completed value just as assignments do. The
+			// allocation pair records topology; these writes close value chains for
+			// later reads and returns.
+			if instruction.Op == wir.OpMakeTable && instruction.Dst.Kind == wir.OperandPath {
+				for _, entry := range body.TableEntries(instruction.TableEntries) {
+					entry := entry
+					operations = append(operations, operation{
+						instruction:     instruction,
+						target:          equation.Coordinate{Body: bodyID, Name: operationName(len(operations))},
+						family:          "allocation-entry-write",
+						allocationEntry: &entry,
+					})
+				}
+			}
 		case wir.OpCall:
 			// Calls exclusively own their application/result pair.  An external
 			// provider contributes one sealed boundary factor between those two
@@ -218,6 +237,22 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 			} else {
 				draft.Operands = terms.materialization
 			}
+		case operation.family == "allocation-write":
+			operands, err := allocationWriteOperands(body, instruction, operation, operations)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: allocation write %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("environment-write")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = operands
+		case operation.family == "allocation-entry-write":
+			operands, err := allocationEntryWriteOperands(body, instruction, operation, operations)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: allocation entry write %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("environment-write")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = operands
 		case operation.family == "path-invalidation" || operation.family == "index-mutation":
 			container, _, err := pathTerm(body, instruction.Dst)
 			if err != nil {
@@ -315,6 +350,40 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 				{Role: "container", Term: container},
 				{Role: "key", Term: key},
 			}
+		case instruction.Op == wir.OpClaim:
+			target, err := scalarTerm(body, instruction.Dst)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: claim %s: target: %w", operation.target.Name, err)
+			}
+			value, err := scalarTerm(body, instruction.A)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: claim %s: value: %w", operation.target.Name, err)
+			}
+			claimType, err := claimTypeTerm(body, instruction)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: claim %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence = occurrence("claim")
+			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
+			draft.Operands = []equation.Operand{
+				{Role: "target", Term: target},
+				{Role: "value", Term: value},
+				{Role: "kind", Term: equation.ClosedTerm([]byte("claim-kind/" + strconv.Itoa(int(instruction.Claim))))},
+				{Role: "type", Term: claimType},
+			}
+			if instruction.Dst.Kind == wir.OperandPath {
+				display := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
+				if display == "" {
+					return equation.Artifact{}, fmt.Errorf("front: claim %s: empty path target", operation.target.Name)
+				}
+				draft.Operands = append(draft.Operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
+			}
+		case instruction.Op == wir.OpBinOp, instruction.Op == wir.OpUnOp, instruction.Op == wir.OpConcat, instruction.Op == wir.OpLogical:
+			operands, err := expressionOperands(body, instruction)
+			if err != nil {
+				return equation.Artifact{}, fmt.Errorf("front: expression %s: %w", operation.target.Name, err)
+			}
+			draft.Occurrence, draft.Guards, draft.Operands = occurrence("expression"), guardsForPoint(graph, instruction.Point, bodyID, branchTargets), operands
 		case instruction.Op == wir.OpBranch:
 			draft.Occurrence = occurrence("branch-relations")
 			draft.Guards = guardsForPoint(graph, instruction.Point, bodyID, branchTargets)
@@ -446,6 +515,14 @@ func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cf
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure publication compiler: %w", err)
 	}
+	compiler, err = compiler.With("claim", equation.BindExistingKernel(claimKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure claim compiler: %w", err)
+	}
+	compiler, err = compiler.With("expression", equation.BindExistingKernel(expressionKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure expression compiler: %w", err)
+	}
 	artifact, err := compiler.Compile(equation.Source{Drafts: drafts})
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: compile equations: %w", err)
@@ -540,7 +617,7 @@ func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 // kernels; unknown kinds deliberately have no binding.
 func ContractID(kind string) (equation.ContentID, bool) {
 	switch kind {
-	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication":
+	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication", "claim", "expression":
 		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
 	default:
 		return equation.ContentID{}, false
@@ -579,6 +656,10 @@ func KernelID(kind string) (string, bool) {
 		return selectKernel, true
 	case "publication":
 		return publicationKernel, true
+	case "claim":
+		return claimKernel, true
+	case "expression":
+		return expressionKernel, true
 	default:
 		return "", false
 	}
@@ -715,24 +796,66 @@ func memberPathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string,
 
 // pathStoreTerm preserves every operand shape this family can consume.  In
 // particular, scalar/nil is a real Lua value, while OperandNone is absence and
-// therefore an error.  A temp is a closed body-local reference, not a guessed
-// fallback value.
+// therefore an error. A temp uses the same body-local value namespace as every
+// other consumer: temp zero is the first valid temporary, not a sentinel.
 func pathStoreTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
-	switch operand.Kind {
-	case wir.OperandTemp:
-		if operand.Ref == 0 {
-			return equation.Term{}, fmt.Errorf("zero temporary operand")
-		}
-		return equation.ClosedTerm([]byte("temporary/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
-	case wir.OperandVararg:
-		return equation.ClosedTerm([]byte("vararg")), nil
-	default:
-		return scalarTerm(body, operand)
-	}
+	return scalarTerm(body, operand)
 }
 
 func suffixTerm(body *wir.Body, suffix wir.SegmentRange) equation.Term {
 	return equation.ClosedTerm([]byte("suffix/" + segment.FormatSegments(body.Segments(suffix))))
+}
+
+func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
+	result, display, err := pathTerm(body, instruction.Dst)
+	if instruction.Dst.Kind != wir.OperandPath {
+		result, err = scalarTerm(body, instruction.Dst)
+		display = ""
+	}
+	if err != nil {
+		return nil, fmt.Errorf("result: %w", err)
+	}
+	if instruction.Op != wir.OpConcat && instruction.Operator == wir.OperatorNone {
+		return nil, fmt.Errorf("missing operator")
+	}
+	operands := []equation.Operand{{Role: "result", Term: result}, {Role: "kind", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Op))))}, {Role: "operator", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Operator))))}}
+	if display != "" {
+		operands = append(operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
+	}
+	appendOperand := func(role string, value wir.Operand) error {
+		term, err := scalarTerm(body, value)
+		if err != nil {
+			return fmt.Errorf("%s: %w", role, err)
+		}
+		operands = append(operands, equation.Operand{Role: role, Term: term})
+		return nil
+	}
+	switch instruction.Op {
+	case wir.OpBinOp, wir.OpLogical:
+		if err := appendOperand("left", instruction.A); err != nil {
+			return nil, err
+		}
+		if err := appendOperand("right", instruction.B); err != nil {
+			return nil, err
+		}
+	case wir.OpUnOp:
+		if err := appendOperand("value", instruction.A); err != nil {
+			return nil, err
+		}
+	case wir.OpConcat:
+		values := body.Operands(instruction.List)
+		if len(values) < 2 {
+			return nil, fmt.Errorf("concat has %d operands", len(values))
+		}
+		for i, value := range values {
+			if err := appendOperand(indexedRole("value", i), value); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("not expression")
+	}
+	return operands, nil
 }
 
 func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
@@ -764,6 +887,25 @@ func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 	default:
 		return equation.Term{}, fmt.Errorf("operand kind %d is outside the scalar slice", operand.Kind)
 	}
+}
+
+// claimTypeTerm seals the only type information an OpClaim may carry.  A
+// non-nil assertion has no type target; every type-bearing claim must resolve
+// to an interned WIR type instead of falling back to source spelling.
+func claimTypeTerm(body *wir.Body, instruction wir.Instruction) (equation.Term, error) {
+	if instruction.Claim == wir.ClaimAssert {
+		if instruction.Type != 0 {
+			return equation.Term{}, fmt.Errorf("non-nil assertion has a type target")
+		}
+		return equation.ClosedTerm([]byte("claim-type/non-nil")), nil
+	}
+	if instruction.Claim != wir.ClaimCast && instruction.Claim != wir.ClaimAnnotation && instruction.Claim != wir.ClaimAssertsPredicate {
+		return equation.Term{}, fmt.Errorf("unknown claim kind %d", instruction.Claim)
+	}
+	if instruction.Type == 0 || body.Type(instruction.Type) == nil || body.TypeDisplay(instruction.Type) == "" {
+		return equation.Term{}, fmt.Errorf("type-bearing claim has no resolved target type")
+	}
+	return equation.ClosedTerm([]byte("claim-type/" + strconv.Quote(body.TypeDisplay(instruction.Type)))), nil
 }
 
 // applyOperands preserves the complete source-side call shape. The kernel,
@@ -910,13 +1052,12 @@ func externalCallOperands(body *wir.Body, instruction wir.Instruction, apply equ
 	return operands, nil
 }
 
-// publicationOperands resolves the syntactically sealed return inventory to
-// stable slots.  Open tails have no exact slot inventory and are rejected
-// before the VM can publish a partial tuple.
+// publicationOperands resolves the normalized return inventory to stable
+// slots. ListSpread records how the final producer was evaluated; the List
+// already carries the adjusted result coordinates consumed by publication.
+// In particular, the head result of an open tail is a real, exact slot rather
+// than a reason to discard the entire return operation.
 func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
-	if instruction.ListSpread {
-		return nil, fmt.Errorf("open result tail has no exact publication slots")
-	}
 	values := body.Operands(instruction.List)
 	operands := make([]equation.Operand, 0, len(values))
 	for index, value := range values {
@@ -1102,6 +1243,94 @@ func allocationValueTerm(body *wir.Body, operand wir.Operand) (equation.Term, er
 	default:
 		return equation.Term{}, fmt.Errorf("operand kind %d is not a sealed value", operand.Kind)
 	}
+}
+
+// allocationWriteOperands closes the value produced by every constructor.
+func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, current operation, operations []operation) ([]equation.Operand, error) {
+	target, err := allocationTargetTerm(body, instruction.Dst)
+	if err != nil {
+		return nil, err
+	}
+	value := "scalar/table"
+	if instruction.Op == wir.OpClosure {
+		value = "scalar/function"
+	}
+	readBefore, err := precedingReadBoundary(current, operations)
+	if err != nil {
+		return nil, err
+	}
+	return []equation.Operand{
+		{Role: "target", Term: target},
+		{Role: "display", Term: hiddenAllocationDisplay(current.target)},
+		{Role: "value", Term: equation.ClosedTerm([]byte(value))},
+		{Role: "read-before", Term: readBefore},
+		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
+	}, nil
+}
+
+// allocationEntryWriteOperands projects a closed constructor entry onto its
+// root path. The lowering layer already flattens nested static table entries.
+func allocationEntryWriteOperands(body *wir.Body, instruction wir.Instruction, current operation, operations []operation) ([]equation.Operand, error) {
+	if instruction.Dst.Kind != wir.OperandPath || current.allocationEntry == nil {
+		return nil, fmt.Errorf("missing static table entry target")
+	}
+	root := body.Path(wir.PathRef(instruction.Dst.Ref))
+	targetPath := root.AppendPathSuffix(current.allocationEntry.Suffix)
+	target, display, err := closedPathTerm(targetPath)
+	if err != nil {
+		return nil, err
+	}
+	value, err := allocationValueTerm(body, current.allocationEntry.Value)
+	if err != nil {
+		return nil, fmt.Errorf("entry value: %w", err)
+	}
+	readBefore, err := precedingReadBoundary(current, operations)
+	if err != nil {
+		return nil, err
+	}
+	return []equation.Operand{
+		{Role: "target", Term: target},
+		{Role: "display", Term: equation.ClosedTerm([]byte("front/hidden/allocation/" + display))},
+		{Role: "value", Term: value},
+		{Role: "read-before", Term: readBefore},
+		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
+	}, nil
+}
+
+func allocationTargetTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
+	switch operand.Kind {
+	case wir.OperandPath:
+		term, _, err := pathTerm(body, operand)
+		return term, err
+	case wir.OperandTemp:
+		return equation.ClosedTerm([]byte("temp/" + strconv.FormatUint(uint64(operand.Ref), 10))), nil
+	default:
+		return equation.Term{}, fmt.Errorf("destination is operand kind %d", operand.Kind)
+	}
+}
+
+func closedPathTerm(value path.Path) (equation.Term, string, error) {
+	if value.IsEmpty() || value.Key() == "" || value.String() == "" {
+		return equation.Term{}, "", fmt.Errorf("empty static table entry path")
+	}
+	return equation.ClosedTerm([]byte("path/" + value.Key())), value.String(), nil
+}
+
+func precedingReadBoundary(current operation, operations []operation) (equation.Term, error) {
+	for index, candidate := range operations {
+		if candidate.target != current.target {
+			continue
+		}
+		if index == 0 {
+			return equation.Term{}, fmt.Errorf("write has no predecessor")
+		}
+		return equation.ClosedTerm([]byte("front/read-before/" + operations[index-1].target.Name)), nil
+	}
+	return equation.Term{}, fmt.Errorf("write operation is absent")
+}
+
+func hiddenAllocationDisplay(target equation.Coordinate) equation.Term {
+	return equation.ClosedTerm([]byte("front/hidden/allocation/" + target.Name))
 }
 
 func allocationTypeTerm(body *wir.Body, ref wir.TypeRef) (equation.Term, error) {

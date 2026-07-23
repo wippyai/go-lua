@@ -128,8 +128,8 @@ local object = { first = 1, child = { second = 2 } }
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if result.Transactions != 5 { // entry plus template/materialization for each table
-		t.Fatalf("transactions = %d, want complete allocation pairs", result.Transactions)
+	if result.Transactions != 10 { // entry plus constructor topology, result, and closed-entry writes
+		t.Fatalf("transactions = %d, want complete allocation writes", result.Transactions)
 	}
 }
 
@@ -178,6 +178,35 @@ func TestCheckPublishesEmptyReturnTuple(t *testing.T) {
 	}
 	if _, found := got["return/0"]; found {
 		t.Fatalf("empty return published a first value: %#v", result.Outcomes)
+	}
+}
+
+func TestCheckPublishesAdjustedOpenReturnTailSlots(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   map[string]string
+	}{
+		{name: "open tail", source: `return provider()`, want: map[string]string{"return/arity": "1", "return/0": "unknown"}},
+		{name: "prefix and open tail", source: `return "prefix", provider()`, want: map[string]string{"return/arity": "2", "return/0": `"prefix"`, "return/1": "unknown"}},
+		{name: "parenthesized tail is adjusted", source: `return (provider())`, want: map[string]string{"return/arity": "1", "return/0": "unknown"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := engine.Check(test.source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			got := valuesByName(result.Outcomes)
+			for key, want := range test.want {
+				if got[key] != want {
+					t.Errorf("published %s = %q, want %q; outcomes = %#v", key, got[key], want, result.Outcomes)
+				}
+			}
+			if len(got) != len(test.want) {
+				t.Errorf("published outcomes = %#v, want exactly %#v", got, test.want)
+			}
+		})
 	}
 }
 

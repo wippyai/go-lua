@@ -11,8 +11,8 @@ import (
 
 func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 	cases := StarterCorpus()
-	if len(cases) != 98 {
-		t.Fatalf("starter corpus has %d cases, want 98", len(cases))
+	if len(cases) != 114 {
+		t.Fatalf("starter corpus has %d cases, want 114", len(cases))
 	}
 	families := map[string]int{}
 	for index, test := range cases {
@@ -25,7 +25,7 @@ func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 		}
 		families[family]++
 	}
-	for _, family := range []string{"allocation", "assignment", "branch", "call", "channel-select", "diagnostic", "loop", "outcome", "pathstore", "provider"} {
+	for _, family := range []string{"allocation", "assignment", "branch", "call", "channel-select", "claim", "diagnostic", "expression", "loop", "outcome", "pathstore", "provider"} {
 		if families[family] == 0 {
 			t.Fatalf("starter corpus has no %s case", family)
 		}
@@ -34,6 +34,84 @@ func TestStarterCorpusIsSortedAndCoversLanguageFamilies(t *testing.T) {
 		if families[family] < 8 {
 			t.Fatalf("%s harness cases = %d, want at least 8", family, families[family])
 		}
+	}
+}
+
+func TestProductionRunnerExecutesExpressionCases(t *testing.T) {
+	var expressions []Case
+	for _, test := range StarterCorpus() {
+		if strings.HasPrefix(test.Name, "expression/") {
+			expressions = append(expressions, test)
+		}
+	}
+	if len(expressions) < 4 {
+		t.Fatalf("expression harness cases = %d, want at least 4", len(expressions))
+	}
+	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(expressions)
+	if err != nil {
+		t.Fatalf("expression production harness: %v", err)
+	}
+	if len(reports) != len(expressions) {
+		t.Fatalf("expression reports = %d, want %d", len(reports), len(expressions))
+	}
+}
+
+func TestProductionRunnerExecutesClaimCases(t *testing.T) {
+	var claims []Case
+	for _, test := range StarterCorpus() {
+		if strings.HasPrefix(test.Name, "claim/") {
+			claims = append(claims, test)
+		}
+	}
+	if len(claims) < 4 {
+		t.Fatalf("claim harness cases = %d, want at least 4", len(claims))
+	}
+	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(claims)
+	if err != nil {
+		t.Fatalf("claim production harness: %v", err)
+	}
+	if len(reports) != len(claims) {
+		t.Fatalf("claim reports = %d, want %d", len(reports), len(claims))
+	}
+}
+
+func TestProductionRunnerExecutesAdjustedReturnAndMemberWriteCases(t *testing.T) {
+	wanted := map[string]bool{
+		"outcome/open-return-tail-publishes-head-result":          true,
+		"outcome/open-return-tail-keeps-preceding-slot":           true,
+		"outcome/parenthesized-return-call-is-one-adjusted-slot":  true,
+		"pathstore/member-write-from-first-temporary-is-admitted": true,
+	}
+	var selected []Case
+	for _, test := range StarterCorpus() {
+		if wanted[test.Name] {
+			selected = append(selected, test)
+		}
+	}
+	if len(selected) != len(wanted) {
+		t.Fatalf("adjusted return/member-write harness cases = %d, want %d", len(selected), len(wanted))
+	}
+	reports, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(selected)
+	if err != nil {
+		t.Fatalf("adjusted return/member-write production harness: %v", err)
+	}
+	if len(reports) != len(selected) {
+		t.Fatalf("adjusted return/member-write reports = %d, want %d", len(reports), len(selected))
+	}
+}
+
+func TestProductionRunnerExecutesAllocationCompletedWriteCases(t *testing.T) {
+	var allocations []Case
+	for _, test := range StarterCorpus() {
+		if strings.HasPrefix(test.Name, "allocation/constructor-") {
+			allocations = append(allocations, test)
+		}
+	}
+	if len(allocations) != 4 {
+		t.Fatalf("allocation completed-write harness cases = %d, want 4", len(allocations))
+	}
+	if _, err := (Runner{Front: ProductionFront, Engine: ProductionEngine}).RunAll(allocations); err != nil {
+		t.Fatalf("allocation completed-write production harness: %v", err)
 	}
 }
 

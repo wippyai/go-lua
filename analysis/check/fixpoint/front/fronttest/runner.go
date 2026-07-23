@@ -57,6 +57,13 @@ func checkProduction(source string) (Results, error) {
 		published = append(published, PublishedOutcome{Channel: "value", Subject: fact.Key, Value: string(fact.Value)})
 	}
 	for _, fact := range result.Outcomes {
+		// Branch selectors and narrowing markers are intermediate equation
+		// evidence. The corpus observes Lua-visible values and returns, not
+		// internal control-flow coordinates whose operation names change as the
+		// front gains the writes needed to close a value chain.
+		if strings.HasPrefix(fact.Key, "branch/") || strings.HasPrefix(fact.Key, "narrowing/") {
+			continue
+		}
 		published = append(published, PublishedOutcome{Channel: "outcome", Subject: fact.Key, Value: string(fact.Value)})
 	}
 	diagnostics := make([]DiagnosticCandidate, 0, len(result.Diagnostics))

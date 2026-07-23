@@ -15,7 +15,8 @@ var FrozenKinds = []string{
 	"channel-select", "branch-relations", "call-results", "presence-implications",
 	"loop-control", "generic-for", "root-assignment", "covariant-exposure",
 	"contribution", "external-call", "outcome", "nonreturning", "definition",
-	"resource", "entry", "publication",
+	"resource", "entry", "publication", "expression",
+	"claim",
 }
 
 var ErrUnimplementedLowering = errors.New("equation: lowering is not implemented")
