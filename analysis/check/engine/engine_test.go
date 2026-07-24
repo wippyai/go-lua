@@ -513,10 +513,11 @@ func TestFixtureNilableDirectCallsPublishStructuredProjection(t *testing.T) {
 		if !selected {
 			continue
 		}
-		diagnostics, _, _, err := fixtureDiagnostics(suite)
+		publication, err := fixtureDiagnostics(suite)
 		if err != nil {
 			t.Fatalf("%s: fixture diagnostics: %v", suite.Name, err)
 		}
+		diagnostics := publication.Diagnostics
 		var expectation fixtureDiagnosticExpectation
 		for _, candidate := range suite.Suite.Check.Diagnostics {
 			if candidate.Code == "type.call.direct.argument_type" && candidate.Line == line {

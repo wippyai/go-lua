@@ -138,6 +138,9 @@ type Result struct {
 	DiagnosticSpans map[string]wir.Span
 	// Placement is nil unless the closure establishes an allocation-site fact.
 	Placement *PlacementPlan
+	// Native projects every published fact row for native code generators.
+	// It reads the same closure channels this result already carries.
+	Native *NativeFactIndex
 	// TypeDefinitions preserve provider-owned declaration identity at consumers.
 	TypeDefinitions map[string]typ.Type
 	Transactions    int
@@ -406,11 +409,13 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		}
 		placement.HoistableLoads = append(placement.HoistableLoads, PlacementHoistableLoad{Target: item.Fact.Key})
 	}
+	outcomes, valueFacts := publishedOutcomes(closure.Outcomes), cloneFacts(closure.Values)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
-		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
+		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
 		ReturnCandidates:     cloneFacts(closure.Outcomes),
-		ValueFacts:           cloneFacts(closure.Values),
+		ValueFacts:           valueFacts,
+		Native:               publishedNativeFacts(artifact, valueFacts, outcomes, closure.Diagnostics),
 		PublishedDiagnostics: published,
 		PolicyDiagnostics:    publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
 		DiagnosticSpans:      diagnosticSpans,
@@ -17571,38 +17576,18 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 	// identity.  Display names deliberately do not participate in identity:
 	// several source operations may display as the same local variable.
 	byIdentity := make(map[string]candidate)
-	for _, operation := range artifact.Equations {
-		var target, display []byte
-		switch operation.Occurrence.Kind {
-		case "environment-write", "claim":
-			operands, err := artifactOperandsByRole(operation.Operands, "target", "display")
-			if err != nil {
-				continue
-			}
-			target, display = operands["target"], operands["display"]
-		case "expression":
-			operands, err := artifactOperandsByRole(operation.Operands, "result", "display")
-			if err != nil || !strings.HasPrefix(string(operands["result"]), "path/") {
-				continue
-			}
-			target, display = operands["result"], operands["display"]
-		default:
-			continue
-		}
-		if strings.HasPrefix(string(display), "front/hidden/") {
-			continue
-		}
-		key := "value/" + string(target) + "/" + operation.Target.Name
+	artifactDisplayBindings(artifact, func(target, display []byte, coordinate equation.Coordinate) {
+		key := "value/" + string(target) + "/" + coordinate.Name
 		value, found := storedByKey[key]
 		if !found {
-			continue
+			return
 		}
 		decoded, err := displayValue(value)
 		if err != nil {
-			continue
+			return
 		}
-		byIdentity[key] = candidate{fact: equation.Fact{Key: key, Value: decoded}, display: string(display), coordinate: operation.Target}
-	}
+		byIdentity[key] = candidate{fact: equation.Fact{Key: key, Value: decoded}, display: string(display), coordinate: coordinate}
+	})
 
 	dependencies := make(map[equation.Coordinate][]equation.Coordinate, len(artifact.Equations))
 	for _, operation := range artifact.Equations {

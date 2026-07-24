@@ -1,0 +1,76 @@
+{
+  "description": "check.native negative exemplar: a record produced at a host boundary has no local allocation, no closed-table proof and no constant content, and every one of those facts must be withheld rather than defaulted.",
+  "packages": ["stream"],
+  "check": {
+    "errors": 0,
+    "native": {
+      "min_facts": 8,
+      "facts": [
+        {
+          "name": "a host-produced record is not a proven closed table",
+          "key_prefix": "heap/table-closed/",
+          "max": 0
+        },
+        {
+          "name": "a host-produced record has no sealed heap identity",
+          "key_prefix": "heap/table-identity/",
+          "max": 0
+        },
+        {
+          "name": "a host-produced record publishes no element content",
+          "key_prefix": "heap/member",
+          "max": 0
+        },
+        {
+          "name": "a host boundary result is not an allocation site",
+          "key_prefix": "placement/allocation/",
+          "max": 0
+        },
+        {
+          "name": "the field read of an unknown host string is not a constant",
+          "lane": "values",
+          "family": "value",
+          "subject": "id",
+          "value_prefix": "scalar/",
+          "max": 0
+        },
+        {
+          "name": "the returned value is not a constant",
+          "lane": "outcomes",
+          "key": "return/0",
+          "value_prefix": "scalar/",
+          "max": 0
+        },
+        {
+          "name": "the unknown field is still published, as its declared type",
+          "lane": "values",
+          "family": "value",
+          "subject": "id",
+          "value_prefix": "shape/target/v1/",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the same analysis does publish the constant it can prove",
+          "family": "call-argument",
+          "value": "scalar/string/\"audit\"",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the module returns exactly one value",
+          "lane": "outcomes",
+          "key": "return/arity",
+          "value": "1",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "nothing is published on the diagnostic lane",
+          "lane": "diagnostics",
+          "max": 0
+        }
+      ]
+    }
+  }
+}

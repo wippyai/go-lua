@@ -42,7 +42,10 @@ type fixtureCheck struct {
 	DiagnosticRules []fixtureDiagnosticRule        `json:"diagnostic_rules,omitempty"`
 	RenderOptions   fixtureDiagnosticRenderConfig  `json:"render_options,omitempty"`
 	Placement       *fixturePlacement              `json:"placement,omitempty"`
-	Skip            string                         `json:"skip,omitempty"`
+	// Native is decoded strictly at assertion time so a misspelled field is a
+	// malformed assertion rather than one that silently passes.
+	Native json.RawMessage `json:"native,omitempty"`
+	Skip   string          `json:"skip,omitempty"`
 }
 
 type fixtureDiagnosticRenderConfig struct {
@@ -231,15 +234,16 @@ func parseExpectations(filename, source string) []inlineExpectation {
 // fixtureDiagnostics is the only execution adaptation. The lint adapter owns
 // project ordering, import resolution, engine.Check invocation, and conversion
 // from engine facts to source diagnostics. The manifest oracle remains intact.
-func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, *engine.PlacementPlan, string, error) {
+func fixtureDiagnostics(s namedSuite) (fixturePublication, error) {
 	files := resolveFiles(s)
 	entries := make([]lint.Entry, 0, len(files))
 	for _, file := range files {
 		entries = append(entries, lint.Entry{Path: file, ModulePath: strings.TrimSuffix(file, ".lua"), Source: readFixtureFile(s.Dir, file)})
 	}
+	publication := fixturePublication{EntryFile: files[len(files)-1]}
 	input := lint.ProjectInput{Entries: entries, Targets: []string{strings.TrimSuffix(files[len(files)-1], ".lua")}}
 	if policy, err := fixtureDiagnosticPolicy(s.Suite.Check); err != nil {
-		return nil, nil, files[len(files)-1], fmt.Errorf("diagnostic_rules: %w", err)
+		return publication, fmt.Errorf("diagnostic_rules: %w", err)
 	} else {
 		input.DiagnosticPolicy = policy
 	}
@@ -251,9 +255,22 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, *engine.PlacementPlan,
 	}
 	result, err := lint.CheckProject(context.Background(), input)
 	if err != nil {
-		return nil, nil, files[len(files)-1], err
+		return publication, err
 	}
-	return result.Diagnostics, result.Placement, files[len(files)-1], nil
+	publication.Diagnostics, publication.Placement = result.Diagnostics, result.Placement
+	publication.Native, publication.NativeFailures = fixtureNativeRows(result)
+	return publication, nil
+}
+
+// fixturePublication is everything one fixture run publishes. The oracle judges
+// diagnostics, the placement plan, and the native fact index from this single
+// publication; it never re-runs the checker for a second assertion family.
+type fixturePublication struct {
+	Diagnostics    []diag.Diagnostic
+	Placement      *engine.PlacementPlan
+	Native         []nativeFactRow
+	NativeFailures []string
+	EntryFile      string
 }
 
 // fixtureHostManifest is the fixture adapter's host-publication registry.
@@ -351,20 +368,21 @@ func fullOracleFixtureVerdict(s namedSuite) (v fixtureExpectationVerdict) {
 			v.unexpected = append(v.unexpected, fmt.Sprintf("panic: %v", recovered))
 		}
 	}()
-	diagnostics, plan, entryFile, err := fixtureDiagnostics(s)
+	publication, err := fixtureDiagnostics(s)
 	if err != nil {
 		v.passed = false
 		v.unexpected = append(v.unexpected, "checker infrastructure failure: "+err.Error())
 		return v
 	}
-	return judgeAgainstFixtureExpectations(s, diagnostics, plan, entryFile)
+	return judgeAgainstFixtureExpectations(s, publication)
 }
 
 // judgeAgainstFixtureExpectations preserves the original precedence exactly:
 // inline markers first, then manifest diagnostics (missing-only when inline
 // markers exist), then error count, otherwise clean check. Check.Skip and
 // fixture Skip are intentionally not consulted by the hard oracle.
-func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic, plan *engine.PlacementPlan, entryFile string) fixtureExpectationVerdict {
+func judgeAgainstFixtureExpectations(s namedSuite, publication fixturePublication) fixtureExpectationVerdict {
+	diagnostics, plan, entryFile := publication.Diagnostics, publication.Placement, publication.EntryFile
 	v := fixtureExpectationVerdict{name: s.Name, passed: true}
 	var inline []inlineExpectation
 	for _, file := range resolveFiles(s) {
@@ -435,6 +453,12 @@ func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic
 		for _, missing := range placementExpectationMisses(s.Suite.Check.Placement, plan) {
 			v.passed = false
 			v.missing = append(v.missing, "placement: "+missing)
+		}
+	}
+	if s.Suite.Check != nil && len(s.Suite.Check.Native) > 0 {
+		for _, missing := range nativeExpectationMisses(s.Suite.Check.Native, publication.Native, publication.NativeFailures) {
+			v.passed = false
+			v.missing = append(v.missing, "native: "+missing)
 		}
 	}
 	return v

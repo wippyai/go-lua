@@ -1,0 +1,120 @@
+{
+  "description": "check.native positive exemplar: the sealed-table, record-entry, constant, callee-identity, call-result, epoch and outcome facts a native code generator consumes are published with exact content.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "min_facts": 20,
+      "facts": [
+        {
+          "name": "the record literal is a proven closed table",
+          "family": "heap",
+          "key_prefix": "heap/table-closed/",
+          "value": "closed",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the closed table has a sealed heap identity",
+          "family": "heap",
+          "key_prefix": "heap/table-identity/",
+          "value_prefix": "sealed-table/",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the retries entry (member suffix segment LnJldHJpZXM = .retries) carries its constructed element value",
+          "family": "heap",
+          "key_prefix": "heap/member/",
+          "key_contains": ["/LnJldHJpZXM/"],
+          "value": "scalar/number/3",
+          "min": 1
+        },
+        {
+          "name": "the name entry (member suffix segment Lm5hbWU = .name) carries its constructed element value",
+          "family": "heap",
+          "key_prefix": "heap/member/",
+          "key_contains": ["/Lm5hbWU/"],
+          "value": "scalar/string/\"audit\"",
+          "min": 1
+        },
+        {
+          "name": "the member read of retries is a constant",
+          "lane": "values",
+          "family": "value",
+          "subject": "config.retries",
+          "value": "scalar/number/3",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the callee's prototype identity and empty capture set",
+          "family": "closure",
+          "subject": "scale",
+          "value": "{\"prototype\":\"chunk.fn0#4\",\"captures\":[]}",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the call site publishes exactly one result value",
+          "family": "call-result",
+          "key_prefix": "call-result/",
+          "key_suffix": "/00000000",
+          "value": "scalar/number/6",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the result binding is anchored at its own write occurrence",
+          "family": "value",
+          "subject": "budget",
+          "occurrence": "op-00000011",
+          "value": "scalar/number/6",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the invalidation epoch of the result binding",
+          "family": "epoch",
+          "subject": "budget",
+          "occurrence": "op-00000011",
+          "value": "op-00000011",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the table allocation site is complete and decomposable",
+          "family": "placement",
+          "key_prefix": "placement/allocation/",
+          "value_contains": [
+            "\"kind\":\"lua.table\"",
+            "\"complete\":true",
+            "\"decomposable\":true"
+          ],
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the module returns exactly one value",
+          "lane": "outcomes",
+          "key": "return/arity",
+          "value": "1",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the returned value is the proven constant",
+          "lane": "outcomes",
+          "key": "return/0",
+          "value": "6",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "nothing is published on the diagnostic lane",
+          "lane": "diagnostics",
+          "max": 0
+        }
+      ]
+    }
+  }
+}
