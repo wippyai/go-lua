@@ -1389,13 +1389,22 @@ func cyclicRegistry(lexical *lexicalEvaluator) (*equation.CyclicKernelRegistry, 
 // by the entry transaction and becomes ordinary body-local seed facts; no
 // caller partition is ever shared with a child evaluator.
 type childEntryWire struct {
-	Version uint8       `json:"version"`
-	Seeds   []entrySeed `json:"seeds"`
+	Version      uint8              `json:"version"`
+	Seeds        []entrySeed        `json:"seeds"`
+	ClosureSeeds []entryClosureSeed `json:"closure_seeds,omitempty"`
 }
 
 type entrySeed struct {
 	Term  string `json:"term"`
 	Value []byte `json:"value"`
+}
+
+// entryClosureSeed carries an already-published lexical capability across a
+// private child entry. It is deliberately separate from a value seed: an
+// ordinary scalar/function proof does not authorize local-body demand.
+type entryClosureSeed struct {
+	Term   string        `json:"term"`
+	Handle closureHandle `json:"handle"`
 }
 
 type closureHandle struct {
@@ -1568,19 +1577,25 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 	return evaluation.Closure, evaluation.Transactions, nil
 }
 
-func encodeChildEntry(seeds []entrySeed) ([]byte, error) {
-	wire := childEntryWire{Version: 1, Seeds: append([]entrySeed(nil), seeds...)}
+func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]byte, error) {
+	wire := childEntryWire{Version: 2, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...)}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
 		if !validEntrySeed(wire.Seeds[index]) || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
 			return nil, fmt.Errorf("engine: malformed child entry seed")
 		}
 	}
+	sort.Slice(wire.ClosureSeeds, func(i, j int) bool { return wire.ClosureSeeds[i].Term < wire.ClosureSeeds[j].Term })
+	for index, seed := range wire.ClosureSeeds {
+		if seed.Term == "" || !validClosureHandle(seed.Handle) || (index > 0 && wire.ClosureSeeds[index-1].Term == seed.Term) {
+			return nil, fmt.Errorf("engine: malformed child entry closure seed")
+		}
+	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return nil, fmt.Errorf("engine: encode child entry: %w", err)
 	}
-	return append([]byte("front/child-entry/v1/"), encoded...), nil
+	return append([]byte("front/child-entry/v2/"), encoded...), nil
 }
 
 // importEntryValue makes project-resolved exports ordinary entry seeds. The
@@ -1652,14 +1667,19 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	if entryValue == nil || len(declaredRoots) != len(declaredTypes) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed entry operands")
 	}
-	const prefix = "front/child-entry/v1/"
+	const prefixV1 = "front/child-entry/v1/"
+	const prefixV2 = "front/child-entry/v2/"
 	var wire childEntryWire
-	if strings.HasPrefix(string(entryValue), prefix) {
-		if err := json.Unmarshal(entryValue[len(prefix):], &wire); err != nil || wire.Version != 1 {
+	if strings.HasPrefix(string(entryValue), prefixV1) || strings.HasPrefix(string(entryValue), prefixV2) {
+		prefix := prefixV1
+		if strings.HasPrefix(string(entryValue), prefixV2) {
+			prefix = prefixV2
+		}
+		if err := json.Unmarshal(entryValue[len(prefix):], &wire); err != nil || (prefix == prefixV1 && wire.Version != 1) || (prefix == prefixV2 && wire.Version != 2) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
 		}
 	}
-	values := make([]equation.Fact, 0, len(wire.Seeds)+len(declaredRoots)*3)
+	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(declaredRoots)*3)
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if !validEntrySeed(seed) || seen[seed.Term] {
@@ -1670,6 +1690,18 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)},
 			equation.Fact{Key: "epoch/" + seed.Term + "/entry", Value: []byte("entry")},
 		)
+	}
+	closureTerms := make(map[string]bool, len(wire.ClosureSeeds))
+	for _, seed := range wire.ClosureSeeds {
+		if seed.Term == "" || !seen[seed.Term] || closureTerms[seed.Term] || !validClosureHandle(seed.Handle) {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry closure seed")
+		}
+		encoded, err := json.Marshal(seed.Handle)
+		if err != nil {
+			return equation.TransactionResult{}, err
+		}
+		closureTerms[seed.Term] = true
+		values = append(values, equation.Fact{Key: "closure/" + seed.Term + "/entry", Value: encoded})
 	}
 	for name, root := range declaredRoots {
 		declared, ok := shapefact.DecodeTarget(declaredTypes[name])
@@ -1805,6 +1837,40 @@ func methodClosureHandleFor(receiver []byte, method string, partition equation.P
 	return closureHandle{}, false
 }
 
+// closureDemandRecurses proves a lexical feedback edge from the already
+// published closure capabilities in this caller partition. Missing or opaque
+// capabilities contribute no edge; only a closed path returning to root
+// activates recursive body demand.
+func (l *lexicalEvaluator) closureDemandRecurses(root closureHandle, partition equation.Partition) bool {
+	if l == nil || !validClosureHandle(root) {
+		return false
+	}
+	queue := []closureHandle{root}
+	seen := make(map[string]bool)
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if seen[current.Prototype] {
+			continue
+		}
+		seen[current.Prototype] = true
+		if _, exists := l.byPrototype[current.Prototype]; !exists {
+			return false
+		}
+		for _, capture := range current.Captures {
+			next, found := closureHandleFor([]byte(capture), partition)
+			if !found {
+				continue
+			}
+			if next.Prototype == root.Prototype {
+				return true
+			}
+			queue = append(queue, next)
+		}
+	}
+	return false
+}
+
 func boundaryTerm(symbol wir.SymbolID) string { return fmt.Sprintf("path/sym%d", symbol) }
 
 // applyKnown evaluates a complete lexical child privately, then projects only
@@ -1841,7 +1907,18 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
 	}
-	entry, err := encodeChildEntry(seeds)
+	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
+	if l.closureDemandRecurses(handle, partition) {
+		for index, capture := range child.Boundary.Captures {
+			// A local capability is admitted only from the same closed caller
+			// partition that supplied the capture value. In particular, a plain
+			// scalar/function entry value cannot manufacture a recursive edge.
+			if captured, found := closureHandleFor([]byte(handle.Captures[index]), partition); found {
+				closureSeeds = append(closureSeeds, entryClosureSeed{Term: boundaryTerm(capture.Symbol), Handle: captured})
+			}
+		}
+	}
+	entry, err := encodeChildEntry(seeds, closureSeeds...)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -3985,8 +4062,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	applyLocal := func() (equation.TransactionResult, bool, error) {
+		recursiveDemand := lexical != nil && lexical.closureDemandRecurses(handle, partition)
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
-			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && (lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype))) {
+			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && (lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype) && !recursiveDemand)) {
 			return equation.TransactionResult{}, false, nil
 		}
 		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
