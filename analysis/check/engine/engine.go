@@ -2941,7 +2941,12 @@ func projectCallResults(operation equation.BoundEquation, returns [][]byte, clos
 }
 
 func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, child front.Compilation, handle closureHandle, closure equation.OutputClosure) {
-	if len(child.Nested) != 0 || !l.requiresBody[handle.Prototype] {
+	// applyKnown reaches this projector only after it has built an exact child
+	// entry from the current caller partition and completed the child run.  That
+	// call evidence is the publication authority; requiresBody is merely an
+	// allocation-time demand hint and must not suppress diagnostics from an
+	// already-admitted invocation.
+	if len(child.Nested) != 0 {
 		return
 	}
 	// A normal call does not create the allocation-time declaration boundary
@@ -2952,15 +2957,28 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	body := fmt.Sprintf("%x", child.Body)
 	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
 	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+		if !childCallDiagnostic(item.Fact) {
+			continue
+		}
 		l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{Fact: equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)}, Code: item.Code, Span: item.Span, Message: item.Message, Evidence: append([]DiagnosticEvidence(nil), item.Evidence...), Labels: append([]DiagnosticLabel(nil), item.Labels...), Help: item.Help}
 	}
 	for _, diagnostic := range closure.Diagnostics {
+		if !childCallDiagnostic(diagnostic) {
+			continue
+		}
 		key := "child/" + body + "/" + diagnostic.Key
 		projected.Diagnostics = append(projected.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 		if span, ok := spans[diagnostic.Key]; ok {
 			l.diagnosticSpans[key] = span
 		}
 	}
+}
+
+// childCallDiagnostic accepts contract facts whose consumer is already owned
+// by an exact child entry. Branch advice and other body-local conclusions have
+// no caller-owned consumer and remain private.
+func childCallDiagnostic(fact equation.Fact) bool {
+	return strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/")
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
