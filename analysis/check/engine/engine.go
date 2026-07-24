@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
@@ -43,6 +44,9 @@ var ErrInternalPanic = errors.New("engine: internal panic")
 const branchPredicatePrefix = "front/branch-predicate/v1/"
 
 const memberMissingPrefix = "shape/member-missing/v1/"
+
+const summaryTypePrefix = "summary-type/"
+const channelPayloadPrefix = "channel-payload/"
 
 // Heap facts are deliberately keyed by a sealed allocation identity, never by
 // a source path.  Paths are merely lenses: assignments copy an identity and
@@ -2538,7 +2542,30 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	if child.Cyclic == nil && childHasSelect(child) {
 		body := fmt.Sprintf("%x", child.Body)
-		entry, entryErr := encodeChildEntry(nil)
+		// The select-only publication pass may inspect a closure before an
+		// ordinary call supplies its parameters. Its declared channel entries
+		// are sufficient for those formals, but captured module tables are not
+		// declarations: they must retain the exact require-seeded value already
+		// closed by the parent partition. Transport only complete capture facts;
+		// an unavailable capture leaves this optional diagnostic pass silent
+		// rather than manufacturing a module value.
+		seeds := closedImportEntrySeeds(partition)
+		complete := len(captures) == len(child.Boundary.Captures)
+		for index, capture := range child.Boundary.Captures {
+			if !complete {
+				break
+			}
+			value, known := resolveKnownCurrentValue([]byte(captures[index]), partition)
+			if !known || isUnknownScalar(value) {
+				complete = false
+				break
+			}
+			seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
+		}
+		if !complete {
+			return equation.TransactionResult{Complete: true, Closure: closure}, nil
+		}
+		entry, entryErr := encodeChildEntry(seeds)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -2576,6 +2603,40 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// closedImportEntrySeeds reuses only import values already published by the
+// parent's entry transaction. Child evaluation needs these same module facts
+// to project an imported member call's result; the captured table value alone
+// cannot recreate the provider's exact module identity.
+func closedImportEntrySeeds(partition equation.Partition) []entrySeed {
+	const prefix = "value/import/"
+	byTerm := make(map[string][]byte)
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(fact.Key, "value/")
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 {
+			continue
+		}
+		term := rest[:cut]
+		if !validEntrySeed(entrySeed{Term: term, Value: fact.Value}) {
+			continue
+		}
+		byTerm[term] = append([]byte(nil), fact.Value...)
+	}
+	terms := make([]string, 0, len(byTerm))
+	for term := range byTerm {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	seeds := make([]entrySeed, 0, len(terms))
+	for _, term := range terms {
+		seeds = append(seeds, entrySeed{Term: term, Value: byTerm[term]})
+	}
+	return seeds
 }
 
 func enrichChildSelectDiagnostic(item PublishedDiagnostic, child front.Compilation, targets map[string]wir.Span) PublishedDiagnostic {
@@ -2814,11 +2875,21 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	// applied to the same heap cell. Without this fact, alias[key] loses the
 	// authority needed by indexMutationKernel and a subsequent static read can
 	// only fall back to an optional shape.
-	for _, prefix := range []string{"identity/", "type/", "select/origin/", heapTableIdentityPrefix} {
+	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, "select/origin/", heapTableIdentityPrefix} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		}
 	}
+	if _, inherited := currentEpochFact(summaryTypePrefix, operands["value"], partition); !inherited {
+		if summary, known := typedPathType(operands["value"], partition); known {
+			encoded, encodeErr := typ.EncodeCanonical(context.Background(), summary)
+			if encodeErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: encode derived summary type: %w", encodeErr)
+			}
+			values = append(values, equation.Fact{Key: summaryTypePrefix + target + "/" + operation.Target.Name, Value: encoded})
+		}
+	}
+	values = append(values, rebaseChannelPayloadFacts(operands["value"], target, operation.Target.Name, partition)...)
 	identity, hasIdentity := tableIdentityForTerm(operands["value"], partition)
 	if !hasIdentity && (shapefact.IsTable(value) || string(value) == "scalar/table") {
 		identity, hasIdentity = sealedTableIdentity(operation), true
@@ -4162,8 +4233,20 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	armFacts := make([]equation.Fact, 0, len(ordered))
 	for index, name := range ordered {
 		item := cases[name]
-		if item == nil || item.display == "" || item.payload == nil {
+		if item == nil || item.display == "" {
 			return equation.TransactionResult{Complete: true}, nil
+		}
+		if item.payload == nil {
+			// The front carries a payload operand when the WIR root has a
+			// declaration. Imported summaries instead make the channel type
+			// available only after the member path is closed. Recover that exact
+			// witness here; an absent or non-channel type still produces no
+			// select fact.
+			payload, known := typedChannelPayload([]byte(item.term), partition)
+			if !known {
+				return equation.TransactionResult{Complete: true}, nil
+			}
+			item.payload = payload
 		}
 		identity, ok := resolveCurrentIdentity([]byte(item.term), partition)
 		if !ok || !isChannelIdentity(identity) {
@@ -4340,8 +4423,8 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 	if (predicate.Kind != "literal-equal" && predicate.Kind != "literal-not") || predicate.Path == "" || predicate.Literal == "" || predicate.Negated {
 		return equation.OutputClosure{}, false, nil
 	}
-	literal, ok := literalType(predicate.Literal)
-	if !ok {
+	literal, literalOK := literalType(predicate.Literal)
+	if !literalOK {
 		return equation.OutputClosure{}, false, nil
 	}
 	root, suffix, source, ok := typedAncestor([]byte("path/"+predicate.Path), partition)
@@ -5050,7 +5133,7 @@ func channelLifecycleState(partition equation.Partition, identity []byte) (strin
 }
 
 func isChannelIdentity(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/channel/op-") || strings.HasPrefix(string(value), "scalar/channel-entry/")
+	return strings.HasPrefix(string(value), "scalar/channel/op-") || strings.HasPrefix(string(value), "scalar/channel-entry/") || strings.HasPrefix(string(value), "scalar/channel-summary/")
 }
 
 // resolveCurrentIdentity uses the same operation-key epoch discipline as
@@ -5061,7 +5144,94 @@ func resolveCurrentIdentity(term []byte, partition equation.Partition) ([]byte, 
 		return identity, true
 	}
 	value, known := resolveKnownCurrentValue(term, partition)
-	return value, known && isChannelIdentity(value)
+	if known && isChannelIdentity(value) {
+		return value, true
+	}
+	if _, known := currentEpochFact(channelPayloadPrefix, term, partition); known {
+		return []byte("scalar/channel-summary/" + base64.RawURLEncoding.EncodeToString(term)), true
+	}
+	// A typed module summary can prove that a derived field is a Channel<T>,
+	// but it has no heap allocation fact in this local partition. Preserve a
+	// stable identity witness tied to that already-published path so a select
+	// can compose its payload summary without inventing a channel for an
+	// untyped or unresolved member.
+	if _, channelOK := typedChannelPayload(term, partition); !channelOK {
+		return nil, false
+	}
+	return []byte("scalar/channel-summary/" + base64.RawURLEncoding.EncodeToString(term)), true
+}
+
+// typedChannelPayload keeps an instantiated Channel<T> intact while walking
+// a summary record. shapefact's value encoding deliberately erases generic
+// arguments from a runtime-shaped interface, so this projection starts from
+// the closed ancestor type instead of decoding the projected value again.
+func typedChannelPayload(term []byte, partition equation.Partition) (typ.Type, bool) {
+	if encoded, ok := currentEpochFact(channelPayloadPrefix, term, partition); ok {
+		payload, decoded := shapefact.DecodeTarget(encoded)
+		return payload, decoded && payload != nil
+	}
+	channel, ok := typedPathType(term, partition)
+	if !ok || channel == nil {
+		return nil, false
+	}
+	payload, ok := ambient.ChannelPayloadType(channel)
+	return payload, ok && payload != nil
+}
+
+func typedPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
+	_, suffix, source, ok := typedAncestor(term, partition)
+	if !ok || len(suffix) == 0 || source == nil {
+		return nil, false
+	}
+	projected, ok := luatypeprojection.ApplySegments(source, suffix)
+	return projected, ok && projected != nil
+}
+
+func channelPayloadSummaryFacts(root, operation string, value typ.Type) []equation.Fact {
+	var facts []equation.Fact
+	var walk func(typ.Type, []segment.Segment)
+	walk = func(current typ.Type, suffix []segment.Segment) {
+		if current == nil {
+			return
+		}
+		if payload, ok := ambient.ChannelPayloadType(current); ok && payload != nil {
+			if encoded, ok := shapefact.EncodeTarget(payload); ok {
+				facts = append(facts, equation.Fact{Key: channelPayloadPrefix + root + segment.FormatSegments(suffix) + "/" + operation, Value: encoded})
+			}
+			return
+		}
+		current = unwrap.Annotations(current)
+		if alias, ok := current.(*typ.Alias); ok && alias != nil {
+			walk(alias.UnaliasedTarget(), suffix)
+			return
+		}
+		record, ok := current.(*typ.Record)
+		if !ok || record == nil {
+			return
+		}
+		for _, field := range record.Fields {
+			walk(field.Type, append(append([]segment.Segment(nil), suffix...), segment.Segment{Kind: segment.SegmentField, Name: field.Name}))
+		}
+	}
+	walk(value, nil)
+	return facts
+}
+
+func rebaseChannelPayloadFacts(source []byte, target, operation string, partition equation.Partition) []equation.Fact {
+	prefix := channelPayloadPrefix + string(source)
+	var facts []equation.Fact
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(fact.Key, prefix)
+		cut := strings.LastIndexByte(rest, '/')
+		if cut < 0 {
+			continue
+		}
+		facts = append(facts, equation.Fact{Key: channelPayloadPrefix + target + rest[:cut] + "/" + operation, Value: append([]byte(nil), fact.Value...)})
+	}
+	return facts
 }
 
 func currentEpochFact(prefix string, term []byte, partition equation.Partition) ([]byte, bool) {
@@ -5860,6 +6030,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
 		value := []byte("scalar/top")
+		var importedSummary typ.Type
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
 		// result terms, so it consumes that private projection rather than
@@ -5903,12 +6074,23 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if imported, ok := importedProviderResultValue(provider, index, argumentTerms, partition); ok {
 					value = imported
 				}
+				if summary, ok := importedProviderResultType(provider, index, argumentTerms, partition); ok {
+					importedSummary = summary
+				}
 			}
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		if importedSummary != nil && !requiresLocalUnionProof(importedSummary) {
+			encoded, encodeErr := typ.EncodeCanonical(context.Background(), importedSummary)
+			if encodeErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: encode imported result summary: %w", encodeErr)
+			}
+			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
+			values = append(values, channelPayloadSummaryFacts(string(result), operation.Target.Name, importedSummary)...)
+		}
 		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
 		for _, fact := range partition.Values() {
 			if fact.Key == heapKey {
@@ -6126,12 +6308,41 @@ func providerResultValue(provider []byte, index int, arguments map[int][]byte, p
 	return providerReturnTypeValue(result)
 }
 
+// requiresLocalUnionProof keeps a declared discriminated-record union from
+// becoming a value proof at an import boundary. Its selected arm is a runtime
+// fact, so member publication must wait for the caller's local guard.
+func requiresLocalUnionProof(value typ.Type) bool {
+	union, ok := unwrap.Alias(unwrap.Annotations(value)).(*typ.Union)
+	if !ok || union == nil {
+		return false
+	}
+	records := 0
+	for _, member := range union.Members {
+		if _, ok := unwrap.Alias(unwrap.Annotations(member)).(*typ.Record); ok {
+			records++
+		}
+	}
+	return records > 1
+}
+
 // importedProviderResultValue projects the export seeded at the consumer
 // entry into either require's result or a statically selected require-member
 // call result. The provider identity is emitted by the front from the exact
 // local-require binding, so a source spelling or global lookup cannot select
 // an import fact.
 func importedProviderResultValue(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	result, ok := importedProviderResultType(provider, index, arguments, partition)
+	if !ok {
+		return nil, false
+	}
+	return importedReturnValue(result)
+}
+
+// importedProviderResultType is the exact resolved return slot of a module
+// provider. It is derived solely from the require-seeded entry export and
+// closed call arguments, so callers may carry it as summary metadata without
+// turning an absent provider result into a type witness.
+func importedProviderResultType(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
 	modulePath, suffix, requireResult, ok := importedProviderTarget(provider)
 	if !ok {
 		return nil, false
@@ -6144,7 +6355,7 @@ func importedProviderResultValue(provider []byte, index int, arguments map[int][
 		if index != 0 {
 			return nil, false
 		}
-		return shapefact.EncodeTarget(imported)
+		return imported, true
 	}
 	segments, valid := segment.ParseFormattedSegments(suffix)
 	if !valid && suffix != "" {
@@ -6166,10 +6377,7 @@ func importedProviderResultValue(provider []byte, index int, arguments map[int][
 	if !ok {
 		return nil, false
 	}
-	// Keep module-call result admission aligned with the established provider
-	// boundary: optional, union, and unresolved generic slots are not concrete
-	// runtime values until a dedicated result-correlation proof selects them.
-	return importedReturnValue(returnType)
+	return returnType, true
 }
 
 // importedReturnValue keeps an explicit any only when it is the sealed result
@@ -7005,9 +7213,16 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 		if !valid {
 			return nil, nil, nil, false
 		}
-		value, found := latestValue([]byte("path/"+root), partition)
+		rootTerm := []byte("path/" + root)
+		if encoded, found := currentEpochFact(summaryTypePrefix, rootTerm, partition); found {
+			typeValue, decodeErr := typ.DecodeCanonical(context.Background(), encoded)
+			if decodeErr == nil && typeValue != nil {
+				return rootTerm, segs, typeValue, true
+			}
+		}
+		value, found := latestValue(rootTerm, partition)
 		if !found {
-			value, found = selectPayloadValue([]byte("path/"+root), partition)
+			value, found = selectPayloadValue(rootTerm, partition)
 			if !found {
 				continue
 			}
@@ -7016,10 +7231,16 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 		if !decoded {
 			continue
 		}
-		return []byte("path/" + root), segs, typeValue, true
+		return rootTerm, segs, typeValue, true
 	}
 	return nil, nil, nil, false
 }
+
+// summaryPartialProjection recognizes an import summary that cannot prove a
+// requested member on every arm. It is an explicit absence of a boundary
+// proof, not a missing-member fact: a local guard may still establish the arm
+// before a later read. Keeping it unpublished preserves the ordinary value
+// path's fail-closed semantics.
 
 func literalType(value string) (typ.Type, bool) {
 	switch {
