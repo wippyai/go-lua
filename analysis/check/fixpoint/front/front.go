@@ -976,11 +976,11 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 					return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: %w", operation.target.Name, err)
 				}
 			}
-			key, err := pathStoreTerm(body, instruction.A)
+			key, err := dynamicStoreTerm(body, instruction.A)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: key: %w", operation.target.Name, err)
 			}
-			value, err := pathStoreTerm(body, instruction.B)
+			value, err := dynamicStoreTerm(body, instruction.B)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: dynamic index write %s: value: %w", operation.target.Name, err)
 			}
@@ -1790,6 +1790,18 @@ func frozenTableSubject(body *wir.Body, operand wir.Operand, dynamic bool) (equa
 // other consumer: temp zero is the first valid temporary, not a sentinel.
 func pathStoreTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 	return scalarTerm(body, operand)
+}
+
+// dynamicStoreTerm preserves the fail-closed meaning of an incomplete dynamic
+// store.  WIR's absent operand is not Lua nil, so a mutation with an omitted
+// key or value cannot contribute a precise heap fact; it must instead retain
+// the existing Top boundary.  This keeps the paired invalidation/mutation
+// transactions total without inventing a key or value.
+func dynamicStoreTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
+	if operand.Kind == wir.OperandNone {
+		return equation.ClosedTerm([]byte("scalar/top")), nil
+	}
+	return pathStoreTerm(body, operand)
 }
 
 func suffixTerm(body *wir.Body, suffix wir.SegmentRange) equation.Term {
