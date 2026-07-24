@@ -7045,12 +7045,97 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if memberSurface != nil {
 			closure.Values = append(closure.Values, equation.Fact{Key: "assignment-member-surface/" + operation.Target.Name, Value: memberSurface})
 		}
-	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") {
+	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") && !guardedLocalCallResultClaim(lexical, operation, source) {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// guardedLocalCallResultClaim recognizes an annotation immediately consuming a
+// result from a local closure beneath an existing branch guard. The compiled
+// apply -> call-results -> write chain is the only authority: an imported or
+// unknown call keeps the ordinary fail-closed unproven-claim lint.
+func guardedLocalCallResultClaim(lexical *lexicalEvaluator, operation equation.BoundEquation, source []byte) bool {
+	if lexical == nil || len(operation.Guards) == 0 || (!strings.HasPrefix(string(source), "path/") && !strings.HasPrefix(string(source), "temp/")) {
+		return false
+	}
+	compilation, found := lexical.byBody[operation.Target.Body]
+	if !found {
+		return false
+	}
+	result := string(source)
+	if strings.HasPrefix(result, "path/") {
+		result = ""
+		for _, candidate := range compilation.Artifact.Equations {
+			if candidate.Occurrence.Kind != "environment-write" {
+				continue
+			}
+			target, hasTarget := artifactOperand(candidate.Operands, "target")
+			value, hasValue := artifactOperand(candidate.Operands, "value")
+			if hasTarget && hasValue && string(target) == string(source) && strings.HasPrefix(string(value), "temp/") {
+				result = string(value)
+				break
+			}
+		}
+	}
+	if result == "" {
+		return false
+	}
+	for _, candidate := range compilation.Artifact.Equations {
+		if candidate.Occurrence.Kind != "call-results" {
+			continue
+		}
+		if _, external := artifactOperand(candidate.Operands, "provider"); external {
+			continue
+		}
+		for _, operand := range candidate.Operands {
+			if strings.HasPrefix(operand.Role, "result-") && string(operand.Term.Encoding) == result {
+				return !guardWindowHasMutation(compilation.Artifact, operation, candidate.Target.Name)
+			}
+		}
+	}
+	return false
+}
+
+// guardWindowHasMutation rejects suppression when any concrete write lies
+// between this annotation's active guard and the local call that produced its
+// source. The order comes from sealed operation coordinates; no path or value
+// is reconstructed here.
+func guardWindowHasMutation(artifact equation.Artifact, claim equation.BoundEquation, resultOperation string) bool {
+	resultIndex, valid := operationIndex(resultOperation)
+	if !valid {
+		return true
+	}
+	guardIndex := -1
+	for _, guard := range claim.Guards {
+		parts := strings.Split(string(guard.Encoding), "/")
+		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" {
+			return true
+		}
+		index, valid := operationIndex(parts[2])
+		if !valid {
+			return true
+		}
+		if guardIndex < 0 || index < guardIndex {
+			guardIndex = index
+		}
+	}
+	if guardIndex < 0 || guardIndex >= resultIndex {
+		return true
+	}
+	for _, candidate := range artifact.Equations {
+		index, valid := operationIndex(candidate.Target.Name)
+		if !valid || index <= guardIndex || index >= resultIndex {
+			continue
+		}
+		switch candidate.Occurrence.Kind {
+		case "environment-write", "path-replacement", "index-mutation", "path-invalidation":
+			return true
+		}
+	}
+	return false
 }
 
 func importedResultPath(source string, paths map[string]bool) bool {

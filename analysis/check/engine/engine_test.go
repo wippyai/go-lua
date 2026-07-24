@@ -1751,6 +1751,35 @@ func TestCheckUnknownCallPublishesExplicitUnknownResult(t *testing.T) {
 	}
 }
 
+func TestCheckGuardedLocalCallSuppressesOnlyPreMutationUnprovenClaim(t *testing.T) {
+	result, err := engine.Check(`
+local raw: any = {id = "cfg"}
+local function read_id()
+    return raw.id
+end
+if type(raw.id) == "string" then
+    local before: string = read_id()
+    raw.id = 7
+    local after: string = read_id()
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	foundMutation := false
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "lint.claim.unproven" && diagnostic.Span.StartLine == 7 {
+			t.Fatalf("guarded pre-mutation call emitted unproven lint: %#v", result.PublishedDiagnostics)
+		}
+		if diagnostic.Code == "lint.claim.unproven" && diagnostic.Span.StartLine == 9 && strings.Contains(diagnostic.Message, `"string"`) {
+			foundMutation = true
+		}
+	}
+	if !foundMutation {
+		t.Fatalf("post-mutation call lost unproven diagnostic: %#v", result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckMethodCallUsesSealedMemberCallable(t *testing.T) {
 	result, err := engine.Check(`
 type Object = {
