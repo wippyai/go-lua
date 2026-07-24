@@ -14,6 +14,23 @@ func TestStage1RedUncalledChildDiagnostics(t *testing.T) {
 	}
 }
 
+func TestTypedUncalledChildPublishesChannelSendPayloadViolation(t *testing.T) {
+	r := checkChildAdmission(t, `
+type Job = { id: string, meta: { attempt: number } }
+local function dispatch(out: Channel<Job>)
+    out:send({ id = 1, meta = { attempt = 1 } })
+end
+`)
+	if len(r.Diagnostics) != 1 || !strings.HasPrefix(r.Diagnostics[0].Key, "child/") ||
+		string(r.Diagnostics[0].Value) != "argument 1.id is 1, not string" {
+		t.Fatalf("typed child channel-send diagnostics = %#v", r.Diagnostics)
+	}
+	if len(r.PublishedDiagnostics) != 1 || r.PublishedDiagnostics[0].Code != "type.call.direct.argument_type" ||
+		r.PublishedDiagnostics[0].Span.StartLine != 4 || r.PublishedDiagnostics[0].Span.StartCol != 21 {
+		t.Fatalf("typed child published diagnostics = %#v", r.PublishedDiagnostics)
+	}
+}
+
 func TestStage1RedCalledChildDiagnosticUsesChildSpan(t *testing.T) {
 	r := checkChildAdmission(t, `
 local retained = 0

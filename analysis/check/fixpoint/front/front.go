@@ -579,8 +579,20 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 		return nil
 	}
 	calls := make([]wir.Instruction, 0)
+	literalMembers := make(map[uint32]map[string]wir.Span)
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
+		if instruction.Op == wir.OpMakeTable && instruction.Dst.Kind == wir.OperandTemp {
+			members := make(map[string]wir.Span)
+			for _, entry := range body.TableEntries(instruction.TableEntries) {
+				if entry.ValueSpan.Valid() {
+					members[segment.FormatSegments(entry.Suffix.Segments)] = entry.ValueSpan
+				}
+			}
+			if len(members) != 0 {
+				literalMembers[instruction.Dst.Ref] = members
+			}
+		}
 		if instruction.Op == wir.OpCall {
 			calls = append(calls, instruction)
 		}
@@ -605,6 +617,14 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 		for index, argument := range body.CallArgumentMeta(call.CallArgs) {
 			if argument.Span.Valid() {
 				out[item.Target.Name+"/"+indexedRole("argument", index)] = argument.Span
+			}
+		}
+		for index, argument := range body.Operands(call.List) {
+			if argument.Kind != wir.OperandTemp {
+				continue
+			}
+			for suffix, span := range literalMembers[argument.Ref] {
+				out[item.Target.Name+"/"+indexedRole("argument", index)+suffix] = span
 			}
 		}
 		callIndex++
@@ -1799,6 +1819,11 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 			equation.Operand{Role: "receiver", Term: receiver},
 			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
 		)
+		if instruction.Call.Receiver.Kind == wir.OperandPath {
+			if display := body.Path(wir.PathRef(instruction.Call.Receiver.Ref)).String(); display != "" {
+				operands = append(operands, equation.Operand{Role: "receiver-display", Term: equation.ClosedTerm([]byte(display))})
+			}
+		}
 	} else {
 		if instruction.Call.Callee.Kind == wir.OperandNone || instruction.Call.Receiver.Kind != wir.OperandNone {
 			return nil, fmt.Errorf("malformed direct call shape")

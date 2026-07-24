@@ -880,6 +880,11 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 	if callee == "" {
 		callee = strings.TrimPrefix(operands["callee"], "path/")
 	}
+	if callee == "" && operands["receiver-display"] != "" {
+		if method, ok := callMethodName([]byte(operands["method"])); ok {
+			callee = operands["receiver-display"] + "." + method
+		}
+	}
 	if callee == "" {
 		return item
 	}
@@ -983,12 +988,12 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	if start < 0 || end <= start+4 {
 		return item
 	}
-	argumentIndex, ok := callArgumentSubjectIndex(subject)
+	argumentIndex, suffix, ok := callArgumentSubject(subject)
 	if !ok {
 		return item
 	}
 	value, expected := message[start+4:end], message[end+6:]
-	argument := fmt.Sprintf("argument %d", argumentIndex)
+	argument := fmt.Sprintf("argument %d", argumentIndex) + suffix
 	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
 		argument += " (" + display + ")"
 	}
@@ -997,7 +1002,7 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	if callDiagnosticValueIsLiteral(value) {
 		valueFact = fmt.Sprintf("%s has literal value %s", argument, value)
 	}
-	parameter := fmt.Sprintf("%s parameter %d", callee, argumentIndex)
+	parameter := fmt.Sprintf("%s parameter %d", callee, argumentIndex) + suffix
 	missingProof := fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", argument)
 	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
 		missingProof = fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)
@@ -1037,12 +1042,27 @@ func directCallDiagnosticParts(key string) (code, operation, subject string, ok 
 }
 
 func callArgumentSubjectIndex(subject string) (int, bool) {
-	encoded, ok := strings.CutPrefix(subject, "argument-")
+	index, _, ok := callArgumentSubject(subject)
+	return index, ok
+}
+
+func callArgumentSubject(subject string) (int, string, bool) {
+	encoded, suffix, found := strings.Cut(subject, ".")
+	if !found {
+		encoded = subject
+	}
+	encoded, ok := strings.CutPrefix(encoded, "argument-")
 	if !ok || len(encoded) != 8 {
-		return 0, false
+		return 0, "", false
 	}
 	index, err := strconv.Atoi(encoded)
-	return index + 1, err == nil
+	if err != nil || index < 0 {
+		return 0, "", false
+	}
+	if found {
+		suffix = "." + suffix
+	}
+	return index + 1, suffix, true
 }
 
 func callArityMessage(message string) (callee string, expected, got int, ok bool) {
@@ -2282,6 +2302,47 @@ func uncalledExplicitAnyDiagnostic(artifact equation.Artifact, diagnostic equati
 	return false
 }
 
+// uncalledTypedChannelSendBoundary recognizes the narrow declaration-owned
+// contract that can be checked before a function is called. The receiver must
+// be an exact typed Channel<T> formal already published by the child entry;
+// no runtime value or type spelling is invented for a different boundary.
+func uncalledTypedChannelSendBoundary(child front.Compilation) bool {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+		return false
+	}
+	channels := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			continue
+		}
+		if _, ok := ambient.ChannelPayloadType(child.WIR.Type(parameter.Type)); ok {
+			channels[boundaryTerm(parameter.Symbol)] = true
+		}
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		var receiver, method string
+		for _, operand := range operation.Operands {
+			switch operand.Role {
+			case "receiver":
+				receiver = string(operand.Term.Encoding)
+			case "method":
+				method, _ = callMethodName(operand.Term.Encoding)
+			}
+		}
+		if method == "send" && channels[receiver] {
+			return true
+		}
+	}
+	return false
+}
+
+func uncalledTypedChannelSendDiagnostic(diagnostic equation.Fact) bool {
+	return strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/")
+}
+
 // applyKnown evaluates a complete lexical child privately, then projects only
 // caller-owned results, capture effects, and residual diagnostics. A malformed
 // entry or child failure returns an error, so the surrounding VM publishes no
@@ -2803,7 +2864,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || explicitAnyBoundary) {
+	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || explicitAnyBoundary || typedChannelSendBoundary) {
 		entry, entryErr := encodeChildEntry(uncalledSeeds)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -2822,6 +2884,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if explicitAnyBoundary && !uncalledExplicitAnyDiagnostic(child.Artifact, diagnostic) {
 				continue
 			}
+			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -2833,6 +2898,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// allocation-time diagnostics retain the evidence published by their
 		// owning claim rather than falling back to an unadorned parent fact.
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(item.Fact) {
+				continue
+			}
 			key := "child/" + body + "/" + item.Fact.Key
 			lexical.childPublished[key] = PublishedDiagnostic{
 				Fact:     equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)},
@@ -5531,6 +5599,14 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if !receiverKnown {
 			return equation.TransactionResult{Complete: true}, nil
 		}
+		if payload, channel := typedChannelPayload(operands.receiver, partition); channel && operands.method == "send" && !operands.spread && len(operands.arguments) == 1 {
+			if argument, available := resolveKnownCurrentValue(operands.arguments[0], partition); available {
+				if subject, actual, expected, mismatch := firstChannelPayloadMismatch(argument, payload, "argument-00000000"); mismatch {
+					return callDiagnostic(operation, "argument_type", subject, fmt.Sprintf("%s is %s, not %s", channelPayloadDisplay(subject), actual, expected)), nil
+				}
+			}
+			return equation.TransactionResult{Complete: true}, nil
+		}
 		callee, known = currentMethodCallable(operands.receiver, receiver, operands.method, partition)
 		if !known && isClaimRefinement(receiver) {
 			// An unproven annotation is a downstream assumption, not a new
@@ -6066,12 +6142,71 @@ func typedChannelPayload(term []byte, partition equation.Partition) (typ.Type, b
 		payload, decoded := shapefact.DecodeTarget(encoded)
 		return payload, decoded && payload != nil
 	}
+	if encoded, ok := currentEpochFact("type/", term, partition); ok {
+		if channel, decoded := shapefact.DecodeTarget(encoded); decoded {
+			if payload, ok := ambient.ChannelPayloadType(channel); ok && payload != nil {
+				return payload, true
+			}
+		}
+	}
 	channel, ok := typedPathType(term, partition)
 	if !ok || channel == nil {
 		return nil, false
 	}
 	payload, ok := ambient.ChannelPayloadType(channel)
 	return payload, ok && payload != nil
+}
+
+// firstChannelPayloadMismatch walks only a sealed argument shape against the
+// declared channel payload. Unknown or open values remain unavailable rather
+// than becoming a speculative send diagnostic.
+func firstChannelPayloadMismatch(value []byte, target typ.Type, subject string) (string, string, string, bool) {
+	target = unwrap.Alias(subst.ExpandInstantiated(target))
+	if target == nil || isUnknownScalar(value) {
+		return "", "", "", false
+	}
+	if union, ok := target.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if valueAgainstType(value, member) == shapeProven {
+				return "", "", "", false
+			}
+		}
+		if valueAgainstType(value, target) == shapeRefuted {
+			return subject, assignmentEvidenceValue(value), typeformat.Short(target), true
+		}
+		return "", "", "", false
+	}
+	if record, ok := target.(*typ.Record); ok {
+		table, sealed := shapefact.DecodeTable(value)
+		if !sealed || !table.Closed {
+			return "", "", "", false
+		}
+		for _, field := range record.Fields {
+			member, found := table.Lookup("." + field.Name)
+			if !found || !member.Present {
+				if field.Optional {
+					continue
+				}
+				return subject + "." + field.Name, "nil", typeformat.Short(field.Type), true
+			}
+			if nested, actual, expected, mismatch := firstChannelPayloadMismatch([]byte(member.Value), field.Type, subject+"."+field.Name); mismatch {
+				return nested, actual, expected, true
+			}
+		}
+		return "", "", "", false
+	}
+	if valueAgainstType(value, target) == shapeRefuted {
+		return subject, assignmentEvidenceValue(value), typeformat.Short(target), true
+	}
+	return "", "", "", false
+}
+
+func channelPayloadDisplay(subject string) string {
+	base, suffix, found := strings.Cut(subject, ".")
+	if !found {
+		return strings.Replace(base, "argument-00000000", "argument 1", 1)
+	}
+	return strings.Replace(base, "argument-00000000", "argument 1", 1) + "." + suffix
 }
 
 func typedPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
@@ -6482,6 +6617,11 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 				return directCallOperands{}, fmt.Errorf("engine: malformed call display")
 			}
 			result.display = string(operand.Value)
+		case operand.Role == "receiver-display":
+			if result.display != "target" || len(operand.Value) == 0 {
+				return directCallOperands{}, fmt.Errorf("engine: malformed receiver display")
+			}
+			result.display = string(operand.Value) + "." + result.method
 		case operand.Role == "list-spread":
 			if string(operand.Value) == "scalar/bool/true" {
 				result.spread = true
