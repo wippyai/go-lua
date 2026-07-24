@@ -63,6 +63,27 @@ local value = source!
 	t.Fatal("claim occurrence missing")
 }
 
+func TestCompileBodyLowersAnnotatedNonNilAssertionBeforeAnnotation(t *testing.T) {
+	artifact, err := front.CompileBody(`local value: string = source!`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	claims := equationsByKind(artifact)["claim"]
+	if len(claims) != 2 {
+		t.Fatalf("claim equations = %#v, want assertion and annotation", claims)
+	}
+	assertion, annotation := operands(claims[0]), operands(claims[1])
+	if assertion["kind"] != "claim-kind/2" || assertion["type"] != "claim-type/non-nil" {
+		t.Fatalf("assertion operands = %#v", assertion)
+	}
+	if annotation["kind"] != "claim-kind/3" || annotation["type"] != `claim-type/"string"` {
+		t.Fatalf("annotation operands = %#v", annotation)
+	}
+	if annotation["value"] != assertion["target"] || annotation["target"] != assertion["target"] {
+		t.Fatalf("claim flow = assertion=%#v annotation=%#v, want assert-then-check-annotation", assertion, annotation)
+	}
+}
+
 func TestCompileBodyLowersGenericForWithAdjustedTupleAndBindings(t *testing.T) {
 	artifact, err := front.CompileBody(`
 for key, value in next do

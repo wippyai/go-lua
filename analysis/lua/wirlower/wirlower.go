@@ -1136,6 +1136,13 @@ func (b *builder) markAssignmentContextType(point cfg.Point, start int, dst wir.
 	}
 	insts := b.pointInstrs[point]
 	for i := start; i < len(insts); i++ {
+		// A non-nil assertion is deliberately type-free. A declared local
+		// such as `local value: T = source!` lowers as an assertion followed
+		// by the declaration annotation; assigning T to the assertion would
+		// conflate those two authored claims and make the front reject it.
+		if insts[i].Op == wir.OpClaim && insts[i].Claim == wir.ClaimAssert {
+			continue
+		}
 		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() && insts[i].Type == 0 {
 			insts[i].Type = typeref
 		}

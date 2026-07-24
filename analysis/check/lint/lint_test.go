@@ -91,6 +91,24 @@ local second: string = 2
 	}
 }
 
+func TestCheckProjectAdmitsAnnotatedNonNilLocal(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{{
+		Path:       "main.lua",
+		ModulePath: "main",
+		Source: `local source: string? = "ready"
+local value: string = source!
+`,
+	}}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if item.Code == "lint.analysis.front" {
+			t.Fatalf("annotated non-nil local produced a front failure: %#v", item)
+		}
+	}
+}
+
 func TestCheckProjectPublishesImportedOwnershipStorePlacement(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{{
 		Path:       "storage.lua",

@@ -235,6 +235,16 @@ b1: y = claim.assert x
 b2: exit
 `,
 		},
+		{
+			name: "annotated_nonnil_assert",
+			src:  "local y: string = x!",
+			want: `body main
+b0: entry
+b1: y = claim.assert x
+    y = claim.annotation y : string
+b2: exit
+`,
+		},
 	}
 
 	for _, tc := range cases {
