@@ -1846,6 +1846,20 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 			operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
 		}
 	}
+	if instruction.Call.Method != 0 {
+		receiver, err := scalarTerm(body, instruction.Call.Receiver)
+		if err != nil {
+			return nil, fmt.Errorf("call result method receiver: %w", err)
+		}
+		method := body.Const(instruction.Call.Method)
+		if method.Kind != wir.ConstString || method.Str == "" {
+			return nil, fmt.Errorf("call result method selector")
+		}
+		operands = append(operands,
+			equation.Operand{Role: "receiver", Term: receiver},
+			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
+		)
+	}
 	for index, result := range results {
 		term, err := scalarTerm(body, result)
 		if err != nil {

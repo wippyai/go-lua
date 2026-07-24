@@ -3111,6 +3111,17 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		}
 		return shapeRefuted
 	}
+	// Function literals carry their canonical function type inside the sealed
+	// callable value.  That is an ordinary closed fact emitted by the front,
+	// not an annotation-derived assumption, so it can discharge a later
+	// annotation claim (and, symmetrically, refute an incompatible contract).
+	// An unsealed callable has no such witness and remains unknown.
+	if source, ok := sealedFunctionType(value); ok {
+		if subtype.IsSubtype(source, target) {
+			return shapeProven
+		}
+		return shapeRefuted
+	}
 	// Structural claims compare the fully instantiated alias target. A named
 	// alias can hide another generic instantiation (DoubleBox<T> = Box<Box<T>>),
 	// so stopping after Alias would discard the only concrete record shape that
@@ -3166,6 +3177,24 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		return shapeProven
 	case kind.Record:
 		return tableAgainstRecord(value, target)
+	case kind.Array:
+		array, ok := target.(*typ.Array)
+		if !ok || array.Element == nil {
+			return shapeUnknown
+		}
+		return tableAgainstContainer(value, array.Element, nil)
+	case kind.Map:
+		mapping, ok := target.(*typ.Map)
+		if !ok || mapping.Key == nil || mapping.Value == nil {
+			return shapeUnknown
+		}
+		return tableAgainstContainer(value, mapping.Value, mapping.Key)
+	case kind.ReadonlyMap:
+		mapping, ok := target.(*typ.ReadonlyMap)
+		if !ok || mapping.Key == nil || mapping.Value == nil {
+			return shapeUnknown
+		}
+		return tableAgainstContainer(value, mapping.Value, mapping.Key)
 	case kind.Nil:
 		return scalarRelation(value, func() bool { return string(value) == "scalar/nil" })
 	case kind.Boolean:
@@ -3189,6 +3218,38 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	default:
 		return shapeUnknown
 	}
+}
+
+// sealedFunctionType decodes only the canonical witness produced by
+// front.functionValue.  The signature text is intentionally not used as a
+// type parser: absent or malformed canonical data is not proof.
+func sealedFunctionType(value []byte) (typ.Type, bool) {
+	encoded := strings.TrimPrefix(string(value), "scalar/function/")
+	if encoded == string(value) || encoded == "" {
+		return nil, false
+	}
+	wire, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, false
+	}
+	var payload struct {
+		Canonical string `json:"canonical,omitempty"`
+	}
+	if err := json.Unmarshal(wire, &payload); err != nil || payload.Canonical == "" {
+		return nil, false
+	}
+	canonical, err := base64.RawURLEncoding.DecodeString(payload.Canonical)
+	if err != nil {
+		return nil, false
+	}
+	function, err := typ.DecodeCanonical(context.Background(), canonical)
+	if err != nil || function == nil {
+		return nil, false
+	}
+	if _, ok := unwrap.Alias(function).(*typ.Function); !ok {
+		return nil, false
+	}
+	return function, true
 }
 
 func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
@@ -3226,6 +3287,69 @@ func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
 		return shapeUnknown
 	}
 	return shapeProven
+}
+
+// tableAgainstContainer proves a homogeneous array or map only from every
+// direct member in a sealed literal.  Nested members describe the member's
+// own shape, not another container entry.  A field key is a string key; an
+// integer index is the sole array-key form.  Unknown member/key relations
+// stay unknown, so an open or partially described shape never becomes proof.
+func tableAgainstContainer(value []byte, element, key typ.Type) shapeRelation {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed || element == nil {
+		return shapeUnknown
+	}
+	unknown := false
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) == 0 {
+			return shapeUnknown
+		}
+		if len(segments) != 1 {
+			continue
+		}
+		entry := segments[0]
+		if key == nil {
+			if entry.Kind != segment.SegmentIndexInt {
+				return shapeRefuted
+			}
+		} else {
+			keyValue, encoded := containerKeyValue(entry)
+			if !encoded {
+				return shapeRefuted
+			}
+			relation := valueAgainstType(keyValue, key)
+			if relation == shapeRefuted {
+				return shapeRefuted
+			}
+			unknown = unknown || relation == shapeUnknown
+		}
+		// A nil constructor member is an absent entry, which carries no
+		// element obligation for a homogeneous container.
+		if !member.Present {
+			continue
+		}
+		relation := valueAgainstType([]byte(member.Value), element)
+		if relation == shapeRefuted {
+			return shapeRefuted
+		}
+		unknown = unknown || relation == shapeUnknown
+	}
+	if unknown {
+		return shapeUnknown
+	}
+	return shapeProven
+}
+
+func containerKeyValue(entry segment.Segment) ([]byte, bool) {
+	switch entry.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return []byte("scalar/string/" + strconv.Quote(entry.Name)), true
+	case segment.SegmentIndexInt:
+		return []byte("scalar/number/" + strconv.Itoa(entry.Index)), true
+	default:
+		return nil, false
+	}
 }
 
 func scalarRelation(value []byte, compatible func() bool) shapeRelation {
@@ -5280,6 +5404,8 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	hasApplication := false
 	var application []byte
 	var provider []byte
+	var receiver []byte
+	var method []byte
 	for _, operand := range operation.Operands {
 		switch {
 		case operand.Role == "application":
@@ -5299,6 +5425,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result argument %q", operand.Role)
 			}
 			argumentTerms[index] = operand.Value
+		case operand.Role == "receiver":
+			if receiver != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate call result receiver")
+			}
+			receiver = operand.Value
+		case operand.Role == "method":
+			if method != nil || !strings.HasPrefix(string(operand.Value), "method/") {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result method")
+			}
+			method = operand.Value
 		case strings.HasPrefix(operand.Role, "result-"):
 			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
 		case strings.HasPrefix(operand.Role, "target-"):
@@ -5307,7 +5443,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result role %q", operand.Role)
 		}
 	}
-	if !hasApplication || (len(targetTerms) != 0 && len(resultTerms) != len(targetTerms)) {
+	if !hasApplication || (receiver == nil) != (method == nil) || (len(targetTerms) != 0 && len(resultTerms) != len(targetTerms)) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: incomplete call result transaction")
 	}
 	values := make([]equation.Fact, 0, len(resultTerms))
@@ -5330,12 +5466,17 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
 			value = []byte("scalar/boolean")
 		}
-		if index, err := strconv.Atoi(key); err == nil && provider != nil {
-			if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
+		if index, err := strconv.Atoi(key); err == nil {
+			if contract, ok := stdlibMethodResultValue(receiver, method, index, partition); ok {
 				value = contract
 			}
-			if imported, ok := importedProviderResultValue(provider, index, argumentTerms, partition); ok {
-				value = imported
+			if provider != nil {
+				if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
+					value = contract
+				}
+				if imported, ok := importedProviderResultValue(provider, index, argumentTerms, partition); ok {
+					value = imported
+				}
 			}
 		}
 		values = append(values,
@@ -5369,6 +5510,42 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// stdlibMethodResultValue crosses only a sealed receiver fact into the
+// existing standard-library signature registry.  It neither recognizes a
+// method by source spelling nor trusts the call's annotation: an unknown or
+// non-string receiver leaves the result at Top.
+func stdlibMethodResultValue(receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if receiver == nil || method == nil || index < 0 {
+		return nil, false
+	}
+	name, ok := callMethodName(method)
+	if !ok {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return nil, false
+	}
+	receiverType := typ.Type(nil)
+	if strings.HasPrefix(string(value), "scalar/string/") {
+		receiverType = typ.String
+	} else if decoded, decodedOK := shapefact.DecodeTarget(value); decodedOK {
+		receiverType = decoded
+	}
+	if receiverType == nil {
+		return nil, false
+	}
+	provider, ok := signaturelookup.StdlibMethodProvider(receiverType, name)
+	if !ok {
+		return nil, false
+	}
+	result, ok := signaturelookup.StdlibResultSlot(provider, index)
+	if !ok {
+		return nil, false
+	}
+	return providerReturnTypeValue(result)
 }
 
 // providerResultValue turns a finite, declared stdlib result slot into a
