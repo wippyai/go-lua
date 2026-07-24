@@ -203,7 +203,7 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 		if bindErr != nil {
 			return Result{}, fmt.Errorf("engine: bind entry: %w", bindErr)
 		}
-		kernelRegistry, registryErr := registry(lexical)
+		kernelRegistry, registryErr := registry(lexical, importedResultPaths(artifact))
 		if registryErr != nil {
 			return Result{}, registryErr
 		}
@@ -226,7 +226,7 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 		if bindErr != nil {
 			return Result{}, fmt.Errorf("engine: bind cyclic entry: %w", bindErr)
 		}
-		kernelRegistry, registryErr := cyclicRegistry(lexical)
+		kernelRegistry, registryErr := cyclicRegistry(lexical, importedResultPaths(artifact))
 		if registryErr != nil {
 			return Result{}, registryErr
 		}
@@ -1285,7 +1285,7 @@ func diagnosticResult(code string, cause error) Result {
 	}}}
 }
 
-func registry(lexical *lexicalEvaluator) (*equation.KernelRegistry, error) {
+func registry(lexical *lexicalEvaluator, imported map[string]bool) (*equation.KernelRegistry, error) {
 	binding := func(kind string, kernel equation.Kernel) (equation.KernelBinding, error) {
 		kernelID, known := front.KernelID(kind)
 		contract, contracted := front.ContractID(kind)
@@ -1312,7 +1312,9 @@ func registry(lexical *lexicalEvaluator) (*equation.KernelRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	claim, err := binding("claim", equation.KernelFunc(claimKernel))
+	claim, err := binding("claim", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return claimKernel(operation, partition, imported)
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -1383,7 +1385,7 @@ func registry(lexical *lexicalEvaluator) (*equation.KernelRegistry, error) {
 // transaction interface. The adapter materializes the immutable snapshot as
 // the ordinary kernel partition, so no cyclic-only transfer semantics can
 // diverge from the established publication path.
-func cyclicRegistry(lexical *lexicalEvaluator) (*equation.CyclicKernelRegistry, error) {
+func cyclicRegistry(lexical *lexicalEvaluator, imported map[string]bool) (*equation.CyclicKernelRegistry, error) {
 	binding := func(kind string, kernel equation.Kernel) (equation.CyclicKernelBinding, error) {
 		kernelID, known := front.KernelID(kind)
 		contract, contracted := front.ContractID(kind)
@@ -1440,7 +1442,9 @@ func cyclicRegistry(lexical *lexicalEvaluator) (*equation.CyclicKernelRegistry, 
 	if err != nil {
 		return nil, err
 	}
-	claim, err := binding("claim", equation.KernelFunc(claimKernel))
+	claim, err := binding("claim", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return claimKernel(operation, partition, imported)
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -1688,7 +1692,7 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 		if err != nil {
 			return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind lexical entry: %w", err)
 		}
-		kernelRegistry, err := registry(l)
+		kernelRegistry, err := registry(l, importedResultPaths(compilation.Artifact))
 		if err != nil {
 			return equation.OutputClosure{}, 0, err
 		}
@@ -1709,7 +1713,7 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 	if err != nil {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind lexical cyclic entry: %w", err)
 	}
-	kernelRegistry, err := cyclicRegistry(l)
+	kernelRegistry, err := cyclicRegistry(l, importedResultPaths(compilation.Artifact))
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
@@ -3581,7 +3585,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 
 // claimKernel makes user claims explicit checked refinements. An unproven
 // claim remains a downstream assumption but never becomes reusable proof.
-func claimKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func claimKernel(operation equation.BoundEquation, partition equation.Partition, imported map[string]bool) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -3674,12 +3678,70 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 			Key:   "type.assignment/" + operation.Target.Name,
 			Value: []byte(message),
 		}}
-	} else if !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") {
+	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func importedResultPath(source string, paths map[string]bool) bool {
+	for source != "" {
+		if paths[source] {
+			return true
+		}
+		cut := strings.LastIndexAny(source, ".[ ")
+		if cut < 0 {
+			return false
+		}
+		source = source[:cut]
+	}
+	return false
+}
+
+// importedResultPaths follows only closed artifact edges from a resolved module
+// provider result. This prevents a provisional Top from becoming a permanent
+// lint before its imported summary reaches a later write or indexed read.
+func importedResultPaths(artifact equation.Artifact) map[string]bool {
+	paths := make(map[string]bool)
+	for changed := true; changed; {
+		changed = false
+		for _, operation := range artifact.Equations {
+			var provider, result, target, value, container string
+			for _, operand := range operation.Operands {
+				switch operand.Role {
+				case "provider":
+					provider = string(operand.Term.Encoding)
+				case "target":
+					target = string(operand.Term.Encoding)
+				case "value":
+					value = string(operand.Term.Encoding)
+				case "container":
+					container = string(operand.Term.Encoding)
+				default:
+					if strings.HasPrefix(operand.Role, "result-") {
+						result = string(operand.Term.Encoding)
+					}
+				}
+			}
+			switch operation.Occurrence.Kind {
+			case "call-results":
+				if _, _, _, ok := importedProviderTarget([]byte(provider)); ok && result != "" && !paths[result] {
+					paths[result], changed = true, true
+				}
+			case "environment-write":
+				if paths[value] && target != "" && !paths[target] {
+					paths[target], changed = true, true
+				}
+			case "dynamic-index-read":
+				if paths[container] && target != "" && !paths[target] {
+					paths[target], changed = true, true
+				}
+			}
+		}
+	}
+	return paths
 }
 
 type shapeRelation uint8
