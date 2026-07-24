@@ -3799,9 +3799,9 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 // is assigned and read through an exact static key. The call capability and
 // declared return are supplied by the enclosing allocation partition; the
 // child receives neither an invented value nor an arbitrary capture. This is
-// sufficient to check an unguarded union member assignment while leaving
-// branches, dynamic keys, external calls, and all other child effects
-// demand-driven.
+// sufficient to check an unguarded union member assignment and one closed
+// equality discriminant over that result. Other branches, dynamic keys,
+// external calls, and child effects remain demand-driven.
 func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySeed, bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 {
 		return nil, false
@@ -3884,6 +3884,11 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 		switch operation.Occurrence.Kind {
 		case "entry", "apply", "call-results", "environment-write", "claim":
 			continue
+		case "branch-relations":
+			if !uncalledDeclaredLocalUnionBranch(operation, paths, formals) {
+				return nil, false
+			}
+			continue
 		case "external-call":
 			application, found := artifactOperand(operation.Operands, "application")
 			if !found || !applications[string(application)] {
@@ -3921,6 +3926,37 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 	return nil, false
 }
 
+// uncalledDeclaredLocalUnionBranch accepts the branch relation that is
+// already justified by the child entry: one returned union member is compared
+// with one exact declared formal. It rejects negation, compound evidence, and
+// any relation not rooted in the admitted call result, so a declaration-only
+// entry cannot import arbitrary caller control flow.
+func uncalledDeclaredLocalUnionBranch(operation equation.Equation, results map[string]bool, formals map[string]entrySeed) bool {
+	if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 {
+		return false
+	}
+	predicate, found := artifactOperand(operation.Operands, "predicate")
+	if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
+		return false
+	}
+	var relation branchPredicateWire
+	if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil || relation.Kind != "path-equal" || relation.Negated || relation.Path == "" || relation.OtherPath == "" {
+		return false
+	}
+	left, right := "path/"+relation.Path, "path/"+relation.OtherPath
+	rootedInResult := func(path string) bool {
+		for result := range results {
+			if strings.HasPrefix(path, result+".") || strings.HasPrefix(path, result+"[") {
+				return true
+			}
+		}
+		return false
+	}
+	_, leftFormal := formals[left]
+	_, rightFormal := formals[right]
+	return (rootedInResult(left) && rightFormal) || (rootedInResult(right) && leftFormal)
+}
+
 // uncalledLocalUnionReadEntry carries the exact direct-call capability already
 // published at the enclosing allocation point into the admitted child. The
 // child artifact itself names that path, while closureHandleFor verifies it is
@@ -3939,7 +3975,7 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, 
 		}
 		value, known := resolveKnownCurrentValue(callee, partition)
 		handle, callable := closureHandleFor(callee, partition)
-		if !known || isUnknownScalar(value) || !callable {
+		if !known || isUnknownScalar(value) || !callable || !l.uncalledLocalUnionCalleeHasAlternativeReturns(handle) {
 			return nil, false, nil
 		}
 		seen[string(callee)] = true
@@ -3954,6 +3990,28 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, 
 		return nil, false, err
 	}
 	return entry, true, nil
+}
+
+// uncalledLocalUnionCalleeHasAlternativeReturns requires the callee's own
+// front artifact to publish more than one normal return candidate. A single
+// concrete return is not a union witness: admitting it through the
+// declaration-only path would make an unreachable else arm look like an
+// ordinary assignment error.
+func (l *lexicalEvaluator) uncalledLocalUnionCalleeHasAlternativeReturns(handle closureHandle) bool {
+	child, found := l.byPrototype[handle.Prototype]
+	if !found {
+		return false
+	}
+	returns := 0
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		if _, found := artifactOperand(operation.Operands, "return-value-00000000"); found {
+			returns++
+		}
+	}
+	return returns > 1
 }
 
 // publishStaticNilCallDiagnostic projects a call contract from an existing
