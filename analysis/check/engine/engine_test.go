@@ -214,6 +214,34 @@ local answer: string = res.answer`,
 	}
 }
 
+func TestCheckProjectsReassignedNestedMemberClosureResult(t *testing.T) {
+	result, err := engine.Check(`local M = {
+	dep = {
+		get = function()
+			return nil
+		end,
+	},
+}
+
+M.dep = {
+	get = function()
+		return { answer = "ok" }
+	end,
+}
+
+local res = M.dep.get()
+local answer: string = res.answer`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("reassigned nested member result diagnostics = %#v", result.Diagnostics)
+	}
+	if got := valuesByName(result.Values)["answer"]; got != `"ok"` {
+		t.Fatalf("reassigned nested member answer = %q, want \"ok\"; values=%#v", got, result.Values)
+	}
+}
+
 func TestCheckPublishesUncalledExplicitAnyBoundaryViolation(t *testing.T) {
 	result, err := engine.Check(`
 local function validate(data: any)

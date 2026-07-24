@@ -4493,6 +4493,12 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
 	})
+	// Every replacement advances the target's current version.  Nested member
+	// cells resolve their parent through this epoch, so omitting it would leave
+	// a replacement table reachable only by its stale predecessor identity.
+	result.Closure.Values = append(result.Closure.Values, equation.Fact{
+		Key: "epoch/" + string(operands["target"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name),
+	})
 	memberValues, memberValueErr := projectSealedTableMemberValues(string(operands["target"]), value, operation.Target.Name)
 	if memberValueErr != nil {
 		return equation.TransactionResult{}, memberValueErr
