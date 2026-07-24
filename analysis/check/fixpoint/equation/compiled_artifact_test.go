@@ -72,9 +72,9 @@ func TestCompileCyclicArtifactKeepsFrozenWTOAndTraceOracle(t *testing.T) {
 	if !reflect.DeepEqual(artifact.Plan.Elements(), wantPlan) || !reflect.DeepEqual(compiled.frozen.Plan.Elements(), wantPlan) {
 		t.Fatalf("frozen WTO differs: source=%#v compiled=%#v want=%#v", artifact.Plan.Elements(), compiled.frozen.Plan.Elements(), wantPlan)
 	}
-	wantBlocks := []CompiledWTOBlock{
-		{Operation: 1, ChildStart: 1, ChildCount: 0},
-		{Operation: 0, ChildStart: 2, ChildCount: 0},
+	wantBlocks := []CompiledBlock{
+		{OpStart: 1, OpCount: 1, ChildStart: 1, ChildCount: 0},
+		{OpStart: 0, OpCount: 1, ChildStart: 2, ChildCount: 0},
 	}
 	if !reflect.DeepEqual(compiled.Blocks(), wantBlocks) {
 		t.Fatalf("compiled WTO blocks = %#v, want %#v", compiled.Blocks(), wantBlocks)

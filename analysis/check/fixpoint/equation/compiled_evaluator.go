@@ -150,7 +150,7 @@ func (e *FastEvaluator) Evaluate(artifact CompiledArtifact, entry EntryBinding, 
 					return Evaluation{}, fmt.Errorf("equation: transaction %s access audit: %w", equation.Target.Name, verifyErr)
 				}
 			}
-			closure, err = mergeClosure(closure, stampClosure(result.Closure, equation.Guards))
+			closure, err = joinClosure(closure, stampClosure(result.Closure, equation.Guards))
 			if err != nil {
 				return Evaluation{}, fmt.Errorf("equation: transaction %s output: %w", equation.Target.Name, err)
 			}

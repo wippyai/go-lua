@@ -122,12 +122,12 @@ func TestPartitionFromClosuresMatchesSequentialClosedJoin(t *testing.T) {
 	want := OutputClosure{}
 	for _, closure := range closures {
 		var err error
-		want, err = mergeClosure(want, closure)
+		want, err = joinClosure(want, closure)
 		if err != nil {
 			t.Fatalf("sequential closed join: %v", err)
 		}
 	}
-	partition, err := PartitionFromClosures(closures...)
+	partition, err := PartitionFromClosuresWithGuards(nil, closures...)
 	if err != nil {
 		t.Fatalf("aggregate closed join: %v", err)
 	}

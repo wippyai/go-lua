@@ -52,11 +52,10 @@ type CompiledOp struct {
 	DependencyStart, DependencyCount   uint32
 }
 
-// CompiledBlock identifies an admission-proven straight-line block.  Cyclic
-// WTO regions are retained separately by CompiledCyclicArtifact; this avoids
-// accidentally treating an SCC as a fusion opportunity.
+// CompiledBlock identifies an admission-proven operation range. Child ranges
+// retain WTO nesting for cyclic artifacts; acyclic blocks have no children.
 type CompiledBlock struct {
-	OpStart, OpCount uint32
+	OpStart, OpCount, ChildStart, ChildCount uint32
 }
 
 // CompiledCellLayout declares the normal-path scalar capacity needed by the
@@ -135,10 +134,24 @@ func compileAdmittedArtifact(canonical []byte, ordered []Equation, body BodyID, 
 	if canonical == nil || len(ordered) == 0 || !body.Valid() || !entry.valid() {
 		return CompiledArtifact{}, fmt.Errorf("equation: invalid artifact for compiled admission")
 	}
-	result := CompiledArtifact{
+	result := newCompiledArtifact(canonical, ordered, body, entry)
+	if err := serializeCompiledEquations(&result, ordered); err != nil {
+		return CompiledArtifact{}, err
+	}
+	if err := admitCompiledArtifact(&result); err != nil {
+		return CompiledArtifact{}, err
+	}
+	return result, nil
+}
+
+func newCompiledArtifact(canonical []byte, ordered []Equation, body BodyID, entry EntryParameter) CompiledArtifact {
+	return CompiledArtifact{
 		id: contentID(canonical), canonical: append([]byte(nil), canonical...), body: body, entryName: entry.Name,
 		text: make(map[compiledRange]string), ops: make([]CompiledOp, 0, len(ordered)), blocks: []CompiledBlock{{OpStart: 0, OpCount: uint32(len(ordered))}},
 	}
+}
+
+func serializeCompiledEquations(result *CompiledArtifact, ordered []Equation) error {
 	byTarget := make(map[Coordinate]uint32, len(ordered))
 	for index, equation := range ordered {
 		byTarget[equation.Target] = uint32(index)
@@ -178,7 +191,7 @@ func compileAdmittedArtifact(canonical []byte, ordered []Equation, body BodyID, 
 		for _, dependency := range equation.Dependencies {
 			index, ok := byTarget[dependency]
 			if !ok {
-				return CompiledArtifact{}, fmt.Errorf("equation: compiled dependency %s has no operation", dependency.Name)
+				return fmt.Errorf("equation: compiled dependency %s has no operation", dependency.Name)
 			}
 			result.deps = append(result.deps, index)
 		}
@@ -188,15 +201,19 @@ func compileAdmittedArtifact(canonical []byte, ordered []Equation, body BodyID, 
 		result.ops = append(result.ops, op)
 	}
 	result.layout = CompiledCellLayout{OperationCount: uint32(len(result.ops)), OperandCount: uint32(len(result.operands)), GuardCount: uint32(len(result.guards))}
+	return nil
+}
+
+func admitCompiledArtifact(result *CompiledArtifact) error {
 	if reconstructed, err := result.ReferenceArtifact(); err != nil || !bytes.Equal(reconstructed.CanonicalBytes(), result.canonical) {
-		return CompiledArtifact{}, fmt.Errorf("equation: compiled admission changed canonical artifact")
+		return fmt.Errorf("equation: compiled admission changed canonical artifact")
 	}
-	projection, err := AdmitRuntimeProjection(result)
+	projection, err := AdmitRuntimeProjection(*result)
 	if err != nil {
-		return CompiledArtifact{}, err
+		return err
 	}
 	result.runtime = projection
-	return result, nil
+	return nil
 }
 
 func compiledAcyclicOrder(artifact Artifact) ([]byte, []Equation, BodyID, EntryParameter, error) {
@@ -369,17 +386,12 @@ func RunCompiledDifferential(vm *AcyclicVM, cases []CompiledDifferentialCase) (S
 // compiled execution for the generated-stencil slice.
 type CompiledCyclicArtifact struct {
 	Artifact CompiledArtifact
-	blocks   []CompiledWTOBlock
+	blocks   []CompiledBlock
 	frozen   CyclicArtifact
 }
 
-type CompiledWTOBlock struct {
-	Operation              uint32
-	ChildStart, ChildCount uint32
-}
-
-func (a CompiledCyclicArtifact) Blocks() []CompiledWTOBlock {
-	return append([]CompiledWTOBlock(nil), a.blocks...)
+func (a CompiledCyclicArtifact) Blocks() []CompiledBlock {
+	return append([]CompiledBlock(nil), a.blocks...)
 }
 
 func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, error) {
@@ -403,7 +415,7 @@ func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, err
 	for index, equation := range equations {
 		opForCell[artifact.CellForTarget[equation.Target]] = uint32(index)
 	}
-	blocks := make([]CompiledWTOBlock, 0, len(equations))
+	blocks := make([]CompiledBlock, 0, len(equations))
 	var appendPlan func([]solve.WTOElement[CellID]) (uint32, uint32, error)
 	appendPlan = func(elements []solve.WTOElement[CellID]) (uint32, uint32, error) {
 		start := uint32(len(blocks))
@@ -413,7 +425,7 @@ func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, err
 				return 0, 0, fmt.Errorf("equation: compiled cyclic plan has unknown cell %q", element.Vertex)
 			}
 			index := uint32(len(blocks))
-			blocks = append(blocks, CompiledWTOBlock{Operation: op})
+			blocks = append(blocks, CompiledBlock{OpStart: op, OpCount: 1})
 			childStart, childCount, err := appendPlan(element.Body)
 			if err != nil {
 				return 0, 0, err

@@ -7,7 +7,7 @@ import (
 )
 
 func TestCallResultsConsumesExactPublishedApplyArguments(t *testing.T) {
-	partition, err := equation.PartitionFromClosures(equation.OutputClosure{Values: callArgumentFacts("op-00000007", [][]byte{
+	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: callArgumentFacts("op-00000007", [][]byte{
 		[]byte("scalar/number/42"),
 		[]byte("temp/1"),
 	})})

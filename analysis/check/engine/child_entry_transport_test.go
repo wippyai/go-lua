@@ -41,7 +41,7 @@ func TestChildEntryTransportsPublishedDescendantAndMemberCapability(t *testing.T
 }
 
 func TestChildEntryDescendantsChooseLatestExactFact(t *testing.T) {
-	partition, err := equation.PartitionFromClosures(equation.OutputClosure{Values: []equation.Fact{
+	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		{Key: "value/path/root.dep/op-00000001", Value: []byte("scalar/old")},
 		{Key: "value/path/root.dep/op-00000002", Value: []byte("scalar/new")},
 		{Key: "value/path/rootish.dep/op-00000002", Value: []byte("scalar/foreign")},

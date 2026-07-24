@@ -58,7 +58,7 @@ type GuardedPartition struct{ Leaves []GuardedLeaf }
 func (p GuardedPartition) clone() GuardedPartition {
 	out := GuardedPartition{Leaves: make([]GuardedLeaf, len(p.Leaves))}
 	for i, leaf := range p.Leaves {
-		closure, err := canonicalClosure(leaf.Closure)
+		closure, err := joinClosure(leaf.Closure)
 		if err != nil {
 			return GuardedPartition{}
 		}
@@ -84,7 +84,7 @@ func canonicalPartition(in GuardedPartition) (GuardedPartition, error) {
 			merged = append(merged, leaf)
 			continue
 		}
-		closure, err := mergeClosure(merged[len(merged)-1].Closure, leaf.Closure)
+		closure, err := joinClosure(merged[len(merged)-1].Closure, leaf.Closure)
 		if err != nil {
 			return GuardedPartition{}, err
 		}
@@ -121,7 +121,7 @@ func partitionJoin(left, right GuardedPartition) GuardedPartition {
 				byGuard[leaf.Guard] = leaf.Closure
 				continue
 			}
-			joined, err := mergeClosure(current, leaf.Closure)
+			joined, err := joinClosure(current, leaf.Closure)
 			if err != nil {
 				return GuardedPartition{}
 			}
@@ -154,8 +154,8 @@ func partitionLessOrEqual(left, right GuardedPartition) bool {
 }
 
 func closureContainedBy(left, right OutputClosure) bool {
-	left, leftErr := canonicalClosure(left)
-	right, rightErr := canonicalClosure(right)
+	left, leftErr := joinClosure(left)
+	right, rightErr := joinClosure(right)
 	if leftErr != nil || rightErr != nil {
 		return false
 	}
@@ -310,7 +310,7 @@ func RunCyclicShadow(ctx context.Context, vm *CyclicVM, cases []CyclicShadowCase
 		if err != nil {
 			return report, fmt.Errorf("equation: cyclic shadow %s production: %w", shadow.Name, err)
 		}
-		production, err = canonicalClosure(production)
+		production, err = joinClosure(production)
 		if err != nil {
 			return report, fmt.Errorf("equation: cyclic shadow %s production output: %w", shadow.Name, err)
 		}
@@ -419,7 +419,7 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 					return GuardedPartition{}
 				}
 			}
-			closure, canonicalErr := canonicalClosure(result.Closure)
+			closure, canonicalErr := joinClosure(result.Closure)
 			if canonicalErr != nil {
 				executionErr = fmt.Errorf("equation: cyclic transaction %s output: %w", equation.Equation.Target.Name, canonicalErr)
 				return GuardedPartition{}
@@ -446,7 +446,7 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 	closure := OutputClosure{}
 	for _, cell := range cells {
 		for _, leaf := range values[cell].Leaves {
-			closure, err = mergeClosure(closure, leaf.Closure)
+			closure, err = joinClosure(closure, leaf.Closure)
 			if err != nil {
 				return CyclicEvaluation{}, fmt.Errorf("equation: cyclic closure: %w", err)
 			}

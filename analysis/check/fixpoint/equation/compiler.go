@@ -21,20 +21,13 @@ var FrozenKinds = []string{
 
 var ErrUnimplementedLowering = errors.New("equation: lowering is not implemented")
 
-// Draft is the relation-program projection passed to a family lowerer.  It
-// deliberately has no State field.  Terms and guards were sealed by the
-// source program before this compiler was called.
-type Draft struct {
-	Target       Coordinate
-	Entry        EntryParameter
-	Guards       []Guard
-	Dependencies []Coordinate
-	Occurrence   Occurrence
-	Operands     []Operand
-}
+// Draft is Equation's pre-lowering constructor view. Terms and guards were
+// sealed by the source program before this compiler was called.
+type Draft = Equation
 
-func (d Draft) valid() error {
-	probe := canonicalEquationSlices(Equation{Target: d.Target, Entry: d.Entry, Guards: d.Guards, Dependencies: d.Dependencies, Occurrence: d.Occurrence, Operands: d.Operands, KernelID: "draft"})
+func validDraft(d Draft) error {
+	probe := canonicalEquationSlices(d)
+	probe.KernelID = "draft"
 	return probe.valid()
 }
 
@@ -109,7 +102,7 @@ func (c *Compiler) Compile(source Source) (Artifact, error) {
 	}
 	equations := make([]Equation, 0, len(source.Drafts))
 	for index, draft := range source.Drafts {
-		if err := draft.valid(); err != nil {
+		if err := validDraft(draft); err != nil {
 			return Artifact{}, fmt.Errorf("equation: draft %d: %w", index, err)
 		}
 		hook, present := c.hooks[draft.Occurrence.Kind]

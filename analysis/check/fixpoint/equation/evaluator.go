@@ -112,8 +112,8 @@ type OutputClosure struct {
 // Equal compares canonical published results.  It is used by shadow mode and
 // intentionally includes every output channel, not just normal values.
 func (c OutputClosure) Equal(other OutputClosure) bool {
-	left, leftErr := canonicalClosure(c)
-	right, rightErr := canonicalClosure(other)
+	left, leftErr := joinClosure(c)
+	right, rightErr := joinClosure(other)
 	return leftErr == nil && rightErr == nil && bytes.Equal(left.bytes(), right.bytes())
 }
 
@@ -142,10 +142,13 @@ func (c OutputClosure) bytes() []byte {
 	return out
 }
 
-func canonicalClosure(in OutputClosure) (OutputClosure, error) {
-	out := OutputClosure{
-		Values: append([]Fact(nil), in.Values...), Outcomes: append([]Fact(nil), in.Outcomes...),
-		Diagnostics: append([]Fact(nil), in.Diagnostics...), AllocationRekeys: append([]AllocationRekey(nil), in.AllocationRekeys...),
+func joinClosure(closures ...OutputClosure) (OutputClosure, error) {
+	var out OutputClosure
+	for _, closure := range closures {
+		out.Values = append(out.Values, closure.Values...)
+		out.Outcomes = append(out.Outcomes, closure.Outcomes...)
+		out.Diagnostics = append(out.Diagnostics, closure.Diagnostics...)
+		out.AllocationRekeys = append(out.AllocationRekeys, closure.AllocationRekeys...)
 	}
 	canonicalFacts := func(facts []Fact) ([]Fact, error) {
 		for index := range facts {
@@ -208,29 +211,12 @@ func canonicalClosure(in OutputClosure) (OutputClosure, error) {
 	return out, nil
 }
 
-func mergeClosure(left, right OutputClosure) (OutputClosure, error) {
-	joined := OutputClosure{
-		Values:           append(append([]Fact(nil), left.Values...), right.Values...),
-		Outcomes:         append(append([]Fact(nil), left.Outcomes...), right.Outcomes...),
-		Diagnostics:      append(append([]Fact(nil), left.Diagnostics...), right.Diagnostics...),
-		AllocationRekeys: append(append([]AllocationRekey(nil), left.AllocationRekeys...), right.AllocationRekeys...),
-	}
-	return canonicalClosure(joined)
-}
-
 // Partition is the read-only, fully closed result of completed prior
 // transactions.  It is the Stage-3 partition-kernel input; callers cannot
 // mutate a partially-built output closure through it.
 type Partition struct {
 	closure OutputClosure
 	guards  []Guard
-}
-
-// PartitionFromClosures joins complete snapshot leaves into one kernel read
-// partition.  It is intentionally a value constructor: neither VM exposes
-// mutable evaluator state through this bridge.
-func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
-	return PartitionFromClosuresWithGuards(nil, closures...)
 }
 
 // PartitionFromClosuresWithGuards constructs a closed predecessor snapshot for
@@ -242,14 +228,7 @@ func PartitionFromClosuresWithGuards(guards []Guard, closures ...OutputClosure) 
 	// already closed publications, so aggregate their fact lanes before the
 	// single canonical merge.  Re-canonicalizing after each append is the same
 	// lattice join, but turns one snapshot read into a quadratic sort/copy path.
-	combined := OutputClosure{}
-	for _, closure := range closures {
-		combined.Values = append(combined.Values, closure.Values...)
-		combined.Outcomes = append(combined.Outcomes, closure.Outcomes...)
-		combined.Diagnostics = append(combined.Diagnostics, closure.Diagnostics...)
-		combined.AllocationRekeys = append(combined.AllocationRekeys, closure.AllocationRekeys...)
-	}
-	canonical, err := canonicalClosure(combined)
+	canonical, err := joinClosure(closures...)
 	if err != nil {
 		return Partition{}, err
 	}
@@ -267,12 +246,10 @@ func (p Partition) Diagnostics() []Fact {
 // AllValues is deliberately an explicit escape hatch for a consumer that is
 // joining mutually exclusive values at a post-dominator.  Ordinary reads use
 // Values and therefore cannot accidentally observe an incompatible guard.
-func (p Partition) AllValues() []Fact { return cloneFacts(p.closure.Values) }
+func (p Partition) AllValues() []Fact { return copyFacts(p.closure.Values, nil) }
 func (p Partition) AllocationRekeys() []AllocationRekey {
 	return append([]AllocationRekey(nil), p.closure.AllocationRekeys...)
 }
-
-func cloneFacts(facts []Fact) []Fact { return copyFacts(facts, nil) }
 
 func visibleFacts(facts, evidence []Fact, active []Guard) []Fact {
 	active = resolvedBranchGuards(evidence, active)
@@ -503,7 +480,7 @@ func (vm *AcyclicVM) Evaluate(bound BoundArtifact) (Evaluation, error) {
 				return Evaluation{}, fmt.Errorf("equation: transaction %s access audit: %w", equation.Target.Name, err)
 			}
 		}
-		closure, err = mergeClosure(closure, stampClosure(result.Closure, equation.Guards))
+		closure, err = joinClosure(closure, stampClosure(result.Closure, equation.Guards))
 		if err != nil {
 			return Evaluation{}, fmt.Errorf("equation: transaction %s output: %w", equation.Target.Name, err)
 		}
@@ -565,49 +542,7 @@ func acyclicOrder(bound BoundArtifact) ([]BoundEquation, error) {
 	return ordered, nil
 }
 
-// ShadowCase has a production publication and its independently bound
-// equation artifact.  Shadow mode is test-only: this package never changes
-// the production callback's result or routes it to callers.
-type ShadowCase struct {
-	Name       string
-	Artifact   Artifact
-	Entry      EntryBinding
-	Production func() (OutputClosure, error)
-}
-
 type ShadowReport struct {
 	Cases  int
 	Passed int
-}
-
-// RunShadow requires exact published equality for every supplied acyclic
-// case, including values, outcomes, diagnostic candidates, and rekeys.
-func RunShadow(vm *AcyclicVM, cases []ShadowCase) (ShadowReport, error) {
-	report := ShadowReport{Cases: len(cases)}
-	for _, shadow := range cases {
-		if shadow.Name == "" || shadow.Production == nil {
-			return report, fmt.Errorf("equation: malformed shadow case")
-		}
-		production, err := shadow.Production()
-		if err != nil {
-			return report, fmt.Errorf("equation: shadow %s production: %w", shadow.Name, err)
-		}
-		production, err = canonicalClosure(production)
-		if err != nil {
-			return report, fmt.Errorf("equation: shadow %s production output: %w", shadow.Name, err)
-		}
-		bound, err := BindEntry(shadow.Artifact, shadow.Entry)
-		if err != nil {
-			return report, fmt.Errorf("equation: shadow %s binding: %w", shadow.Name, err)
-		}
-		evaluation, err := vm.Evaluate(bound)
-		if err != nil {
-			return report, fmt.Errorf("equation: shadow %s bound evaluation: %w", shadow.Name, err)
-		}
-		if !production.Equal(evaluation.Closure) {
-			return report, fmt.Errorf("equation: shadow %s published output differs", shadow.Name)
-		}
-		report.Passed++
-	}
-	return report, nil
 }

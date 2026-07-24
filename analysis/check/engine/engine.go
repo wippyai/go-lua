@@ -2178,7 +2178,7 @@ func cyclicKernel(kernel equation.Kernel) equation.CyclicKernel {
 		for _, predecessor := range snapshot.Predecessors(operation.Cell) {
 			collect(predecessor)
 		}
-		partition, err := equation.PartitionFromClosures(closures...)
+		partition, err := equation.PartitionFromClosuresWithGuards(nil, closures...)
 		if err != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
 		}
