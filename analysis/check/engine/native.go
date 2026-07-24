@@ -99,7 +99,8 @@ type NativeFact struct {
 	// nothing in the analysed body revokes the row.
 	Revoked string
 	// Event is the artifact's occurrence kind of the operation named by
-	// Revoked: what kind of program event ends the row's validity.
+	// Revoked. Contract validity can name a comma-separated set of deopt event
+	// classes when no one concrete source operation supplies the interval.
 	Event string
 }
 
