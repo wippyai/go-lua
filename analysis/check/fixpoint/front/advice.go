@@ -165,20 +165,112 @@ func adviceRedundantGuards(body *wir.Body, graph cfg.Graph) []ControlDiagnostic 
 			continue
 		}
 		check := body.Check(inner.Check)
-		for j := 0; j < i; j++ {
+		for j := 0; j < body.Len(); j++ {
+			if j == i {
+				continue
+			}
 			outer := body.Instr(j)
 			if outer.Op != wir.OpBranch || outer.Check == 0 {
 				continue
 			}
 			prior := body.Check(outer.Check)
-			if !adviceImplies(prior, check) || adviceWriteBetween(body, outer.Point, inner.Point, check.Path.String()) {
+			implies := adviceImplies(prior, check) && adviceTrueEdgeDominates(graph, outer.Point, inner.Point) && !advicePathMutatedBetween(body, graph, outer.Point, inner.Point, check.Path)
+			redundant, always := adviceRedundantNilGuard(body, graph, outer, prior, inner, check)
+			if !implies && !redundant {
 				continue
 			}
-			out = append(out, ControlDiagnostic{Key: fmt.Sprintf("advice.always_true_guard/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "advice.always_true_guard", Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
+			if implies {
+				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("advice.always_true_guard/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "advice.always_true_guard", Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
+			}
+			if redundant {
+				message, help := "condition is always false here", "Remove this unreachable branch, or change the prior guard if this path should still run."
+				if always {
+					message, help = "condition is always true here", "Remove this repeated check, or move any needed work into the branch already guarded above."
+				}
+				current := check.Path.String() + " ~= nil"
+				priorMessage := check.Path.String() + " is nil"
+				if prior.Kind == wir.CheckNotNil {
+					priorMessage = check.Path.String() + " is not nil"
+				}
+				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("lint.condition.redundant/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "lint.condition.redundant", Message: message, Span: inner.ExprSpan,
+					Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "current check: " + current}, {Span: outer.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "prior guard established " + priorMessage}, {Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: check.Path.String() + " is unchanged between the prior guard and this check"}},
+					Labels:   []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "current check"}, {Span: outer.ExprSpan, Message: "prior guard"}}, Help: help})
+			}
 			break
 		}
 	}
 	return out
+}
+
+// adviceRedundantNilGuard admits a source-local lint fact only when the true
+// edge of an earlier exact nil predicate dominates the later predicate and no
+// write or opaque call can intervene.  The proof is entirely WIR/CFG-owned;
+// it does not expose a child refinement to its caller.
+func adviceRedundantNilGuard(body *wir.Body, graph cfg.Graph, outer wir.Instruction, prior wir.Check, inner wir.Instruction, current wir.Check) (bool, bool) {
+	if current.Kind != wir.CheckNotNil || !adviceSamePath(prior.Path, current.Path) {
+		return false, false
+	}
+	if prior.Kind != wir.CheckNotNil && prior.Kind != wir.CheckNil {
+		return false, false
+	}
+	if !adviceTrueEdgeDominates(graph, outer.Point, inner.Point) || advicePathMutatedBetween(body, graph, outer.Point, inner.Point, current.Path) {
+		return false, false
+	}
+	return true, prior.Kind == wir.CheckNotNil
+}
+
+func adviceTrueEdgeDominates(graph cfg.Graph, branch, target cfg.Point) bool {
+	var trueSuccessors []cfg.Point
+	for _, next := range graph.Successors(branch) {
+		if truth, ok := graph.EdgeCond(branch, next); ok && truth {
+			trueSuccessors = append(trueSuccessors, next)
+		}
+	}
+	if len(trueSuccessors) != 1 || !graphReachable(graph, trueSuccessors[0], target) {
+		return false
+	}
+	seen := map[cfg.Point]bool{graph.Entry(): true}
+	queue := []cfg.Point{graph.Entry()}
+	for len(queue) != 0 {
+		point := queue[0]
+		queue = queue[1:]
+		for _, next := range graph.Successors(point) {
+			if point == branch && next == trueSuccessors[0] {
+				continue
+			}
+			if next == target {
+				return false
+			}
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return true
+}
+
+func advicePathMutatedBetween(body *wir.Body, graph cfg.Graph, from, to cfg.Point, path pathdom.Path) bool {
+	root := path.Root
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if !graphReachable(graph, from, inst.Point) || !graphReachable(graph, inst.Point, to) {
+			continue
+		}
+		switch inst.Op {
+		case wir.OpCall:
+			return true
+		case wir.OpAssign, wir.OpStaticMemberWrite:
+			if inst.Dst.Kind == wir.OperandPath && adviceSamePath(body.Path(wir.PathRef(inst.Dst.Ref)), path) {
+				return true
+			}
+		case wir.OpDynamicIndexWrite:
+			if inst.Dst.Kind == wir.OperandPath && body.Path(wir.PathRef(inst.Dst.Ref)).Root == root {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func adviceInvariantLoopReads(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
@@ -270,15 +362,6 @@ func adviceSamePath(left, right pathdom.Path) bool {
 		}
 	}
 	return true
-}
-func adviceWriteBetween(body *wir.Body, from, to cfg.Point, path string) bool {
-	for i := 0; i < body.Len(); i++ {
-		inst := body.Instr(i)
-		if inst.Op == wir.OpAssign && inst.Dst.Kind == wir.OperandPath && body.Path(wir.PathRef(inst.Dst.Ref)).String() == path && inst.Point > from && inst.Point < to {
-			return true
-		}
-	}
-	return false
 }
 func graphReachable(graph cfg.Graph, from, to cfg.Point) bool {
 	if from == to {

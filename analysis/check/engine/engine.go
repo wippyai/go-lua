@@ -1987,17 +1987,21 @@ func branchPredicateDescription(operation equation.Equation) (string, bool) {
 			display = string(operand.Term.Encoding)
 		}
 	}
-	if display == "" || predicate.Literal == "" {
-		return "", false
-	}
-	literal, err := displayValue([]byte(predicate.Literal))
-	if err != nil {
+	if display == "" {
 		return "", false
 	}
 	switch predicate.Kind {
 	case "literal-equal":
+		literal, err := displayValue([]byte(predicate.Literal))
+		if predicate.Literal == "" || err != nil {
+			return "", false
+		}
 		return display + " equals " + string(literal), true
 	case "literal-not":
+		literal, err := displayValue([]byte(predicate.Literal))
+		if predicate.Literal == "" || err != nil {
+			return "", false
+		}
 		return display + " does not equal " + string(literal), true
 	default:
 		return "", false
@@ -10515,6 +10519,12 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
+	if closure, recognized, err := typedNilBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		closure = appendClosedGuardAdvice(closure, operation, partition)
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if closure, recognized, err := selectBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
@@ -10695,6 +10705,65 @@ func appendClosedGuardAdvice(closure equation.OutputClosure, operation equation.
 		Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard"),
 	})
 	return closure
+}
+
+// typedNilBranchClosure projects an existing optional member witness through
+// the exact nil predicate that selects it.  It does not infer a member type:
+// correlationMemberType accepts either the current closed value or the
+// declaration already published for that exact path.  Both edge values stay
+// under the front-owned branch guard, so a write on another epoch cannot leak
+// the refinement past this branch.
+func typedNilBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	var predicate branchPredicateWire
+	found := false
+	for _, operand := range operation.Operands {
+		if operand.Role != "predicate" {
+			continue
+		}
+		if found || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+			return equation.OutputClosure{}, false, nil
+		}
+		if err := json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate); err != nil {
+			return equation.OutputClosure{}, false, fmt.Errorf("engine: decode nil branch predicate: %w", err)
+		}
+		found = true
+	}
+	if !found || predicate.Path == "" || predicate.Negated || (predicate.Kind != "nil" && predicate.Kind != "not-nil") {
+		return equation.OutputClosure{}, false, nil
+	}
+	term := []byte("path/" + predicate.Path)
+	if !derivedPathTerm(term) {
+		return equation.OutputClosure{}, false, nil
+	}
+	source, known := correlationMemberType(term, partition)
+	if !known || !optionalConcreteWitnessType(source) {
+		return equation.OutputClosure{}, false, nil
+	}
+	nonNil := proof.ProjectionWithoutNil(source)
+	if nonNil == nil || typ.IsNever(nonNil) {
+		return equation.OutputClosure{}, false, nil
+	}
+	trueType, falseType := nonNil, typ.Type(typ.Nil)
+	if predicate.Kind == "nil" {
+		trueType, falseType = typ.Nil, nonNil
+	}
+	closure := equation.OutputClosure{}
+	for _, edge := range []struct {
+		name  string
+		type_ typ.Type
+	}{{"true", trueType}, {"false", falseType}} {
+		value, encoded := shapefact.EncodeTarget(edge.type_)
+		if !encoded {
+			return equation.OutputClosure{}, false, nil
+		}
+		guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge.name)}
+		closure.Outcomes = append(closure.Outcomes,
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge.name), Guards: []equation.Guard{guard}},
+			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("typed-nil/" + edge.name), Guards: []equation.Guard{guard}},
+		)
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(term) + "/" + operation.Target.Name, Value: value, Guards: []equation.Guard{guard}})
+	}
+	return closure, true, nil
 }
 
 type correlationConeEpoch struct {
