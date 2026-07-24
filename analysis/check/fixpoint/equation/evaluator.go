@@ -151,11 +151,16 @@ func joinClosure(closures ...OutputClosure) (OutputClosure, error) {
 		out.AllocationRekeys = append(out.AllocationRekeys, closure.AllocationRekeys...)
 	}
 	canonicalFacts := func(facts []Fact) ([]Fact, error) {
+		payload := 0
+		for index := range facts {
+			payload += len(facts[index].Value)
+		}
+		values := make([]byte, 0, payload)
 		for index := range facts {
 			if facts[index].Key == "" {
 				return nil, fmt.Errorf("equation: output fact has no key")
 			}
-			facts[index].Value = append([]byte(nil), facts[index].Value...)
+			facts[index].Value = cutBytes(&values, facts[index].Value)
 			facts[index].Guards = canonicalGuards(facts[index].Guards)
 			for _, guard := range facts[index].Guards {
 				if !guard.valid() {
@@ -166,6 +171,9 @@ func joinClosure(closures ...OutputClosure) (OutputClosure, error) {
 		sort.Slice(facts, func(i, j int) bool {
 			if facts[i].Key != facts[j].Key {
 				return facts[i].Key < facts[j].Key
+			}
+			if len(facts[i].Guards) == 0 || len(facts[j].Guards) == 0 {
+				return len(facts[i].Guards) < len(facts[j].Guards)
 			}
 			return guardsKey(facts[i].Guards) < guardsKey(facts[j].Guards)
 		})
@@ -289,14 +297,58 @@ func visibleFacts(facts, evidence []Fact, active []Guard) []Fact {
 	return copyFacts(facts, func(fact Fact) bool { return guardsIncluded(fact.Guards, active) })
 }
 
+// copyFacts detaches the selected facts from the closed snapshot. The payloads
+// are cut from one backing array per copy instead of one allocation per fact:
+// a partition read is the hottest operation in the solver, and per-fact
+// payload allocation dominated both its cost and the collector's scan set.
+//
+// Each returned payload keeps the same guarantee as an individual copy. The
+// ranges are disjoint and cut with full slice bounds, so a kernel can reach
+// neither the snapshot nor another fact's payload through the one it was
+// given, and an append on it always reallocates.
 func copyFacts(facts []Fact, include func(Fact) bool) []Fact {
-	out := make([]Fact, 0, len(facts))
+	selected, valueBytes, guardCount, guardBytes := 0, 0, 0, 0
 	for _, fact := range facts {
-		if include == nil || include(fact) {
-			out = append(out, cloneFact(fact))
+		if include != nil && !include(fact) {
+			continue
+		}
+		selected++
+		valueBytes += len(fact.Value)
+		guardCount += len(fact.Guards)
+		for _, guard := range fact.Guards {
+			guardBytes += len(guard.Encoding)
 		}
 	}
+	out := make([]Fact, 0, selected)
+	values := make([]byte, 0, valueBytes)
+	guards := make([]Guard, 0, guardCount)
+	encodings := make([]byte, 0, guardBytes)
+	for _, fact := range facts {
+		if include != nil && !include(fact) {
+			continue
+		}
+		out = append(out, Fact{Key: fact.Key, Value: cutBytes(&values, fact.Value), Guards: cutGuards(&guards, &encodings, fact.Guards)})
+	}
 	return out
+}
+
+// cutBytes appends src to batch and returns exactly the range that holds it.
+// An empty payload stays nil, matching a standalone copy.
+func cutBytes(batch *[]byte, src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	start := len(*batch)
+	*batch = append(*batch, src...)
+	return (*batch)[start:len(*batch):len(*batch)]
+}
+
+func cutGuards(batch *[]Guard, encodings *[]byte, in []Guard) []Guard {
+	start := len(*batch)
+	for _, guard := range in {
+		*batch = append(*batch, Guard{Body: guard.Body, Encoding: cutBytes(encodings, guard.Encoding)})
+	}
+	return (*batch)[start:len(*batch):len(*batch)]
 }
 
 func cloneFact(fact Fact) Fact {
@@ -379,7 +431,20 @@ func guardsKey(guards []Guard) string {
 	return string(out)
 }
 
-func sameGuards(left, right []Guard) bool { return guardsKey(left) == guardsKey(right) }
+// sameGuards compares two canonical guard sets element-wise. Both sides come
+// from canonicalGuards, so ordering is already fixed and no key has to be
+// materialized to decide equality.
+func sameGuards(left, right []Guard) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Body != right[index].Body || !bytes.Equal(left[index].Encoding, right[index].Encoding) {
+			return false
+		}
+	}
+	return true
+}
 
 func guardsIncluded(required, active []Guard) bool {
 	for _, guard := range required {
