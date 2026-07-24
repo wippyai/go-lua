@@ -86,6 +86,7 @@ const (
 	heapIndexRevokePrefix    = "heap/index-revoke/"
 	heapIndexLowerPrefix     = "heap/index-lower/"
 	heapIndexUpperPrefix     = "heap/index-upper/"
+	indexReadDisplayPrefix   = "index-read-display/"
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -758,6 +759,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
 				concrete = typeformat.Short(proof.ProjectionWithoutNil(witness))
 			}
+			if declared, found := indexReadDeclaredDisplay(operands["value"], operation, closure.Values); found {
+				concrete = declared
+			}
 			item.Message = fmt.Sprintf("cannot assign %s because it may be nil", sourceDisplay)
 			item.Evidence = []DiagnosticEvidence{
 				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", sourceDisplay, concrete)},
@@ -894,6 +898,47 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 func diagnosticValueMayBeNil(value []byte) bool {
 	witness, ok := shapefact.DecodeTarget(value)
 	return ok && witness != nil && unwrap.IsOptionalLike(witness)
+}
+
+// indexReadDeclaredDisplay carries the already-resolved present element type
+// of one dynamic read through its exact write/claim chain. It is diagnostic
+// provenance, not a fallback type inference: callers receive no display when
+// the runtime index transaction did not publish the corresponding witness.
+func indexReadDeclaredDisplay(term []byte, operation equation.Equation, values []equation.Fact) (string, bool) {
+	if len(term) == 0 {
+		return "", false
+	}
+	prefix := indexReadDisplayPrefix + string(term) + "/"
+	latest, display := "", ""
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest && len(fact.Value) != 0 {
+			latest, display = fact.Key, string(fact.Value)
+		}
+	}
+	if display != "" {
+		return display, true
+	}
+	// An annotation can retain its original static path while the immediately
+	// preceding write owns the concrete read result. That write is an explicit
+	// claim dependency, so accept exactly one matching display publication and
+	// leave ambiguous graphs without a narrator.
+	for _, dependency := range operation.Dependencies {
+		suffix := "/" + dependency.Name
+		found := ""
+		for _, fact := range values {
+			if !strings.HasPrefix(fact.Key, indexReadDisplayPrefix) || !strings.HasSuffix(fact.Key, suffix) || len(fact.Value) == 0 {
+				continue
+			}
+			if found != "" && found != string(fact.Value) {
+				return "", false
+			}
+			found = string(fact.Value)
+		}
+		if found != "" {
+			return found, true
+		}
+	}
+	return "", false
 }
 
 func functionContractDiagnostic(operation string, facts []equation.Fact) bool {
@@ -5144,6 +5189,17 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if staticBracketMemberPath(operands["value"]) && scalarLiteralDiagnosticValue(value) {
 		values = append(values, equation.Fact{Key: literalDiagnosticPrefix + target + "/" + operation.Target.Name, Value: append([]byte(nil), value...)})
 	}
+	// A static bracket path may already have a closed declared type through its
+	// source root. Preserve only its present element display for the exact
+	// destination: the value equation remains the authority for nilability.
+	if derivedIndexedPath(operands["value"]) {
+		if sourceType, known := typedPathType(operands["value"], partition); known && sourceType != nil && proof.OptionalTypeHasConcreteValue(sourceType) {
+			values = append(values, equation.Fact{
+				Key:   indexReadDisplayPrefix + target + "/" + operation.Target.Name,
+				Value: []byte(typeformat.Short(proof.ProjectionWithoutNil(sourceType))),
+			})
+		}
+	}
 	var diagnostics []equation.Fact
 	if memberMissing(value) {
 		root, _, declaredSource := tableAddress(operands["value"])
@@ -5171,7 +5227,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// applied to the same heap cell. Without this fact, alias[key] loses the
 	// authority needed by indexMutationKernel and a subsequent static read can
 	// only fall back to an optional shape.
-	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, methodReturnSummaryPrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/"} {
+	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, methodReturnSummaryPrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/", indexReadDisplayPrefix} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		} else if prefix == "select/origin/" {
@@ -6109,8 +6165,9 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// slot nilability, and providerReturnTypeValue rejects open, generic, and
 	// any-shaped answers before they can reach this result slot.
 	if string(values[0].Value) == "scalar/top" {
-		if projected, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
+		if projected, display, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
 			values[0].Value = projected
+			values = append(values, equation.Fact{Key: indexReadDisplayPrefix + target + "/" + operation.Target.Name, Value: []byte(display)})
 		}
 	}
 	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
@@ -6119,10 +6176,10 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
-func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, bool) {
+func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, string, bool) {
 	containerValue, err := resolveCurrentValue(container, partition)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
 	containerType, ok := shapefact.DecodeTarget(containerValue)
 	if !ok && strings.HasPrefix(string(containerValue), "scalar/claim/claim-kind/1/") {
@@ -6132,26 +6189,30 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	// still derives only the selected member, so an exact selected member stays
 	// available without treating the container itself as a closed return value.
 	if !ok || containerType == nil {
-		return nil, false
+		return nil, "", false
 	}
 	keyValue, err := resolveCurrentValue(key, partition)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
 	keyType, ok := expressionValueType(keyValue)
 	if !ok || keyType == nil {
-		return nil, false
+		return nil, "", false
 	}
 	result, ok := access.RuntimeIndex(containerType, keyType)
 	if !ok {
-		return nil, false
+		return nil, "", false
 	}
 	if indexPresenceProven(container, key, partition) {
 		if present := typetable.PresentReadonlyEntryValue(result); present != nil {
 			result = present
 		}
 	}
-	return finiteReturnWitnessValue(result)
+	encoded, ok := finiteReturnWitnessValue(result)
+	if !ok {
+		return nil, "", false
+	}
+	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), true
 }
 
 func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
