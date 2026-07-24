@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -183,6 +184,12 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 // they are not require results and therefore cannot be reconstructed from an
 // import path or source spelling.
 func CheckWithImportsResolverAndGlobals(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver) (result Result, err error) {
+	return CheckWithImportsResolverAndGlobalsAndRelations(source, imports, globals, resolver, nil)
+}
+
+// CheckWithImportsResolverAndGlobalsAndRelations consumes project-selected
+// finite module result relations alongside their ordinary export types.
+func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary) (result Result, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
@@ -203,6 +210,7 @@ func CheckWithImportsResolverAndGlobals(source string, imports, globals map[stri
 	defer cancel()
 	lexical := newLexicalEvaluator(compilation)
 	lexical.setImportedTypes(imports)
+	lexical.setImportedRelations(relations)
 	lexical.setGlobalTypes(globals)
 	lexical.setTypeOrigins(compilation)
 	lexical.ctx = fileContext
@@ -1816,6 +1824,7 @@ type lexicalEvaluator struct {
 	// this evaluator and exists only for exact result paths published by those
 	// imports; no structural reconstruction is admitted as an authority.
 	importedTypes       map[string]typ.Type
+	importedRelations   map[string]exportrelation.Summary
 	globalTypes         map[string]typ.Type
 	importedAuthorities map[string]typ.Type
 	typeOrigins         map[string]typ.Type
@@ -1833,6 +1842,20 @@ func (l *lexicalEvaluator) setImportedTypes(types map[string]typ.Type) {
 	for path, value := range types {
 		if path != "" && value != nil {
 			l.importedTypes[path] = value
+		}
+	}
+}
+
+func (l *lexicalEvaluator) setImportedRelations(relations map[string]exportrelation.Summary) {
+	if l == nil || len(relations) == 0 {
+		return
+	}
+	l.importedAuthorityMu.Lock()
+	defer l.importedAuthorityMu.Unlock()
+	l.importedRelations = make(map[string]exportrelation.Summary, len(relations))
+	for path, summary := range relations {
+		if path != "" && summary.Type != nil {
+			l.importedRelations[path] = summary
 		}
 	}
 }
@@ -8689,6 +8712,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if imported, ok := importedProviderResultValue(lexical, provider, index, argumentTerms, partition); ok {
 					value = imported
 				}
+				if relation, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
+					value = relation
+				}
 				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					importedSummary = summary
 					lexical.setImportedAuthority(string(result), summary)
@@ -9173,6 +9199,101 @@ func hostGlobalProviderResultType(lexical *lexicalEvaluator, provider []byte, in
 // provider. It is derived solely from the require-seeded entry export and
 // closed call arguments, so callers may carry it as summary metadata without
 // turning an absent provider result into a type witness.
+func importedProviderRelationValue(lexical *lexicalEvaluator, provider, application []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	if lexical == nil || index != 0 {
+		return nil, false
+	}
+	module, suffix, load, ok := importedProviderTarget(provider)
+	if !ok || load || suffix == "" {
+		return nil, false
+	}
+	suffix = strings.TrimPrefix(suffix, ".")
+	lexical.importedAuthorityMu.RLock()
+	summary, found := lexical.importedRelations[module]
+	lexical.importedAuthorityMu.RUnlock()
+	if !found {
+		return nil, false
+	}
+	function, found := summary.Function(suffix, len(arguments))
+	if !found {
+		return nil, false
+	}
+	declared, found := importedProviderResultType(lexical, provider, index, arguments, partition)
+	if found && !relationReturnTypeSafe(declared, make(map[typ.Type]bool)) {
+		return nil, false
+	}
+	return materializeImportedReturn(function.Return, application, arguments, partition)
+}
+
+// A literal template has no dynamic-key lane.  Keep declared map components
+// authoritative instead of replacing them with a finite sample of entries.
+func relationReturnTypeSafe(value typ.Type, seen map[typ.Type]bool) bool {
+	value = unwrap.Alias(value)
+	if value == nil || seen[value] {
+		return value != nil
+	}
+	seen[value] = true
+	switch item := value.(type) {
+	case *typ.Map, *typ.ReadonlyMap:
+		return false
+	case *typ.Array:
+		return relationReturnTypeSafe(item.Element, seen)
+	case *typ.Tuple:
+		for _, element := range item.Elements {
+			if !relationReturnTypeSafe(element, seen) {
+				return false
+			}
+		}
+		return true
+	case *typ.Optional:
+		return relationReturnTypeSafe(item.Inner, seen)
+	case *typ.Record:
+		if item.MapKey != nil || item.MapValue != nil {
+			return false
+		}
+		for _, field := range item.Fields {
+			if !relationReturnTypeSafe(field.Type, seen) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func materializeImportedReturn(template exportrelation.Value, application []byte, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	if template.Parameter != nil {
+		argumentKey := "call-argument/" + strings.TrimPrefix(string(application), "call/") + "/" + fmt.Sprintf("%08d", *template.Parameter)
+		for _, fact := range partition.Values() {
+			if fact.Key == argumentKey {
+				return append([]byte(nil), fact.Value...), true
+			}
+		}
+		term, found := arguments[*template.Parameter]
+		if !found {
+			return nil, false
+		}
+		return resolveKnownCurrentValue(term, partition)
+	}
+	if template.Scalar != "" {
+		return []byte(template.Scalar), true
+	}
+	if len(template.Table) == 0 {
+		return nil, false
+	}
+	table := shapefact.Table{Closed: true, Members: make([]shapefact.Member, 0, len(template.Table))}
+	for _, member := range template.Table {
+		value, ok := materializeImportedReturn(member.Value, application, arguments, partition)
+		if !ok {
+			return nil, false
+		}
+		table.Members = append(table.Members, shapefact.Member{Suffix: member.Suffix, Present: string(value) != "scalar/nil", Value: string(value)})
+		if string(value) == "scalar/nil" {
+			table.Members[len(table.Members)-1].Value = ""
+		}
+	}
+	return shapefact.EncodeTable(table)
+}
+
 func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
 	modulePath, suffix, requireResult, ok := importedProviderTarget(provider)
 	if !ok {

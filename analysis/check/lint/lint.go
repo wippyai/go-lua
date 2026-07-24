@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -222,6 +223,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		manifestByPath[item.Path] = item
 	}
 	resolved := make(map[string]*manifest.Manifest, len(entries))
+	relationByPath := make(map[string]exportrelation.Summary, len(entries))
 	results := make(map[string]EntryResult, len(entries))
 	visiting := make(map[string]bool, len(entries))
 	hostGlobals := make(map[string]typ.Type)
@@ -289,7 +291,13 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		typeManifests = append(typeManifests, external...)
 		typeManifests = append(typeManifests, importManifests...)
 		typeSource := typelookup.Source{Manifests: typeManifests, Aliases: requireAliases(entry.Source, imports)}
-		result, checkErr := engine.CheckWithImportsResolverAndGlobals(entry.Source, importBindings, hostGlobals, typeSource)
+		importRelations := make(map[string]exportrelation.Summary, len(resolvedImports))
+		for _, resolvedImport := range resolvedImports {
+			if relation, ok := relationByPath[resolvedImport.ModulePath]; ok {
+				importRelations[resolvedImport.ModulePath] = relation
+			}
+		}
+		result, checkErr := engine.CheckWithImportsResolverAndGlobalsAndRelations(entry.Source, importBindings, hostGlobals, typeSource, importRelations)
 		if checkErr != nil {
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
 		}
@@ -302,11 +310,13 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		// Project only facts closed by this entry's equation evaluation. The
 		// exporter leaves opaque results and unknown members conservative, while
 		// preserving proven records, callable signatures, unions, and scalars.
-		summary.SetExport(exporter.Derive(result))
+		exportSummary := exporter.DeriveSummary(result, entry.Source)
+		summary.SetExport(exportSummary.Type)
 		if err := summary.Validate(); err != nil {
 			return fmt.Errorf("lint: validate imported signatures: signature manifest %q: %w", summary.Path, err)
 		}
 		resolved[module] = summary
+		relationByPath[module] = exportSummary
 		manifestByPath[summary.Path] = summary
 		entryTiming := PhaseTimings{
 			LoadResolveNS:    resolveElapsed.Nanoseconds(),

@@ -109,3 +109,23 @@ func TestDeriveRejectsARecordShapeInvalidatedByUnknownIndexMutation(t *testing.T
 		t.Fatalf("export = %T %[1]v, want unknown after unknown mutation", got)
 	}
 }
+
+func TestDeriveSummaryPublishesOnlyClosedMemberReturnTemplates(t *testing.T) {
+	source := `local M = {}
+local function identity(value: string) return value end
+M.identity = identity
+function M.make() return { id = "p1", nested = { theme = "dark" } } end
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	summary := exporter.DeriveSummary(result, source)
+	if _, ok := summary.Function("identity", 1); ok {
+		t.Fatal("parameter-derived relation was published")
+	}
+	make, ok := summary.Function("make", 0)
+	if !ok || len(make.Return.Table) != 2 || !make.Valid() {
+		t.Fatalf("export = %v; literal relation = %#v", summary.Type, make)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,9 +13,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 // Derive returns the sound static type of a module's first return value. It
@@ -34,6 +38,210 @@ func Derive(result engine.Result) typ.Type {
 		return typ.Unknown
 	}
 	return typ.MaterializeUnion(alternatives)
+}
+
+// DeriveSummary adds finite return templates to the existing type export.  It
+// accepts only direct, unconditional return expressions from a parsed producer
+// body; unsupported control flow and expressions simply publish no relation.
+func DeriveSummary(result engine.Result, source string) exportrelation.Summary {
+	export := Derive(result)
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export)}
+}
+
+func deriveFunctions(source string, export typ.Type) []exportrelation.Function {
+	stmts, err := parse.ParseString(source, "<export-relation>")
+	if err != nil {
+		return nil
+	}
+	locals := make(map[string]*ast.FunctionExpr)
+	functions := make(map[string]*ast.FunctionExpr)
+	for _, stmt := range stmts {
+		switch item := stmt.(type) {
+		case *ast.LocalAssignStmt:
+			for i, name := range item.Names {
+				if i < len(item.Exprs) {
+					if fn, ok := item.Exprs[i].(*ast.FunctionExpr); ok {
+						locals[name] = fn
+						continue
+					}
+				}
+				delete(locals, name)
+			}
+		case *ast.FuncDefStmt:
+			if item == nil || item.Func == nil {
+				continue
+			}
+			if path, ok := functionPath(item.Name); ok {
+				functions[path] = item.Func
+			} else if item.Name != nil {
+				if ident, ok := item.Name.Func.(*ast.IdentExpr); ok {
+					locals[ident.Value] = item.Func
+				}
+			}
+		case *ast.AssignStmt:
+			for i, left := range item.Lhs {
+				if i >= len(item.Rhs) {
+					continue
+				}
+				path, ok := memberPath(left)
+				if !ok {
+					if ident, identOK := left.(*ast.IdentExpr); identOK {
+						delete(locals, ident.Value)
+						invalidateFunctions(functions, ident.Value)
+					}
+					continue
+				}
+				if ident, ok := item.Rhs[i].(*ast.IdentExpr); ok && locals[ident.Value] != nil {
+					functions[path] = locals[ident.Value]
+					continue
+				}
+				delete(functions, path)
+			}
+		}
+	}
+	paths := make([]string, 0, len(functions))
+	for path := range functions {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	out := make([]exportrelation.Function, 0, len(paths))
+	for _, path := range paths {
+		relative := path
+		if cut := strings.IndexByte(path, '.'); cut > 0 {
+			relative = path[cut+1:]
+		}
+		if relation, ok := functionRelation(relative, functions[path]); ok && publishedFunction(export, relative, relation.Arity) {
+			out = append(out, relation)
+		}
+	}
+	return out
+}
+
+func invalidateFunctions(functions map[string]*ast.FunctionExpr, root string) {
+	for path := range functions {
+		if path == root || strings.HasPrefix(path, root+".") {
+			delete(functions, path)
+		}
+	}
+}
+
+// publishedFunction ties a source-level candidate to the checked module
+// export. A parsed member name alone is not authority to create an import fact.
+func publishedFunction(export typ.Type, path string, arity int) bool {
+	if path == "" || arity < 0 {
+		return false
+	}
+	current := export
+	for _, name := range strings.Split(path, ".") {
+		record, ok := unwrap.Alias(current).(*typ.Record)
+		if !ok || record == nil {
+			return false
+		}
+		field := record.GetField(name)
+		if field == nil || field.Optional || field.Type == nil {
+			return false
+		}
+		current = field.Type
+	}
+	function, ok := unwrap.Alias(current).(*typ.Function)
+	return ok && function != nil && function.Variadic == nil && len(function.Params) == arity
+}
+
+func functionPath(name *ast.FuncName) (string, bool) {
+	if name == nil {
+		return "", false
+	}
+	if name.Method != "" {
+		base, ok := memberPath(name.Receiver)
+		if !ok {
+			return "", false
+		}
+		return base + "." + name.Method, true
+	}
+	return memberPath(name.Func)
+}
+
+func memberPath(expr ast.Expr) (string, bool) {
+	switch value := expr.(type) {
+	case *ast.IdentExpr:
+		return value.Value, value.Value != ""
+	case *ast.AttrGetExpr:
+		base, ok := memberPath(value.Object)
+		key := ast.KeyName(value.Key)
+		return base + "." + key, ok && key != ""
+	default:
+		return "", false
+	}
+}
+
+func functionRelation(path string, fn *ast.FunctionExpr) (exportrelation.Function, bool) {
+	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
+		return exportrelation.Function{}, false
+	}
+	params := make(map[string]int, len(fn.ParList.Names))
+	for i, name := range fn.ParList.Names {
+		params[name] = i
+	}
+	relation := exportrelation.Function{Path: path, Arity: len(params)}
+	if len(fn.Stmts) == 1 {
+		if ret, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(ret.Exprs) == 1 {
+			value, ok := templateValue(ret.Exprs[0], params)
+			relation.Return = value
+			return relation, ok && relation.Valid()
+		}
+	}
+	return exportrelation.Function{}, false
+}
+
+func templateValue(expr ast.Expr, params map[string]int) (exportrelation.Value, bool) {
+	switch value := expr.(type) {
+	case *ast.IdentExpr:
+		i, ok := params[value.Value]
+		if !ok {
+			return exportrelation.Value{}, false
+		}
+		return exportrelation.Value{Parameter: &i}, true
+	case *ast.StringExpr:
+		return exportrelation.Value{Scalar: "scalar/string/" + strconv.Quote(value.Value)}, true
+	case *ast.NumberExpr:
+		if _, err := strconv.ParseFloat(value.Value, 64); err != nil {
+			return exportrelation.Value{}, false
+		}
+		return exportrelation.Value{Scalar: "scalar/number/" + value.Value}, true
+	case *ast.TrueExpr:
+		return exportrelation.Value{Scalar: "scalar/bool/true"}, true
+	case *ast.FalseExpr:
+		return exportrelation.Value{Scalar: "scalar/bool/false"}, true
+	case *ast.NilExpr:
+		return exportrelation.Value{Scalar: "scalar/nil"}, true
+	case *ast.TableExpr:
+		members := make([]exportrelation.Member, 0, len(value.Fields))
+		array := 1
+		for _, field := range value.Fields {
+			if field == nil {
+				return exportrelation.Value{}, false
+			}
+			suffix := ""
+			if field.Key == nil {
+				suffix = "[" + strconv.Itoa(array) + "]"
+				array++
+			} else if name := ast.KeyName(field.Key); name != "" {
+				suffix = "." + name
+			} else if number, ok := field.Key.(*ast.NumberExpr); ok {
+				suffix = "[" + number.Value + "]"
+			} else {
+				return exportrelation.Value{}, false
+			}
+			child, ok := templateValue(field.Value, params)
+			if !ok {
+				return exportrelation.Value{}, false
+			}
+			members = append(members, exportrelation.Member{Suffix: suffix, Value: child})
+		}
+		return exportrelation.Value{Table: members}, len(members) != 0
+	default:
+		return exportrelation.Value{}, false
+	}
 }
 
 func returnCandidate(fact equation.Fact) (candidate, slot string, ok bool) {
