@@ -561,6 +561,35 @@ end
 	}
 }
 
+func TestNestedFunctionRetainsSealedTypeGuardBody(t *testing.T) {
+	body := lowerBody(t, `
+local function validate(value: any)
+    if type(value.item) == "table" then
+        local labels: {string} = value.item
+        return labels
+    end
+    return nil
+end
+`, "type")
+	protos := body.Protos()
+	if len(protos) != 1 || protos[0].Body == nil {
+		t.Fatalf("nested prototypes = %#v", protos)
+	}
+	child := protos[0].Body
+	var branch, claim bool
+	for index := 0; index < child.Len(); index++ {
+		switch child.Instr(index).Op {
+		case wir.OpBranch:
+			branch = true
+		case wir.OpClaim:
+			claim = true
+		}
+	}
+	if !branch || !claim {
+		t.Fatalf("sealed nested type guard lost its body: branch=%t claim=%t", branch, claim)
+	}
+}
+
 func TestCallCarriesExplicitTypeArguments(t *testing.T) {
 	call := &ast.FuncCallExpr{
 		Func: ident("send"),

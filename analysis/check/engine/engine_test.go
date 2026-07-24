@@ -126,6 +126,24 @@ end
 	}
 }
 
+func TestCheckPublishesUncalledExplicitAnyBoundaryViolationThroughClosedCapture(t *testing.T) {
+	result, err := engine.Check(`
+local function consume(value: any)
+  return value
+end
+local function validate(data: any)
+  consume(data)
+  local point: {x: number, y: number} = data
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Key, "/type.assignment/") || !strings.Contains(string(result.Diagnostics[0].Value), "data comes from any/unknown") {
+		t.Fatalf("uncalled captured explicit-any boundary diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckPublishesExplicitAnyBoundaryViolationThroughGuardedMemberRead(t *testing.T) {
 	result, err := engine.Check(`
 local raw: any = {kind = "task", route_id = "start"}

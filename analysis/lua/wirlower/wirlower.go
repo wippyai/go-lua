@@ -1576,7 +1576,14 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 			childGraph = prepared.Graph
 		}
 	} else {
+		// A child with a canonical type predicate needs the matching sealed CFG
+		// topology. Giving that topology to unrelated child bodies changes their
+		// ordinary cast-call scheduling, so derive the authority from the child
+		// body itself and keep the CFG/lowering pair identical.
 		childBuilt := cfgbuild.BuildFunction(fn, b.bindings)
+		if b.options.SealedLuaTypeChecks && functionRequiresSealedTypeChecks(fn, b.bindings) {
+			childBuilt = cfgbuild.BuildFunctionWithOptions(fn, b.bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
+		}
 		if childBuilt != nil && childBuilt.Graph != nil {
 			childBody = lowerInto(name, fn.Stmts, fn, b.bindings, childBuilt, b.resolver, b.options)
 			recordFunctionBodyMetadata(childBody, fn, b.bindings, b.resolver, b.options)
@@ -1603,6 +1610,76 @@ func (b *builder) emitClosure(dst wir.Operand, fn *ast.FunctionExpr) {
 		List:   b.body.AppendOperands(ops),
 		ExprID: expressionid.Of(fn),
 	})
+}
+
+func functionRequiresSealedTypeChecks(fn *ast.FunctionExpr, bindings *bind.Result) bool {
+	if fn == nil || bindings == nil {
+		return false
+	}
+	var requiresStatements func([]ast.Stmt) bool
+	var requiresExpression func(ast.Expr) bool
+	requiresExpression = func(expr ast.Expr) bool {
+		switch value := expr.(type) {
+		case *ast.FunctionExpr:
+			return requiresStatements(value.Stmts)
+		case *ast.FuncCallExpr:
+			if requiresExpression(value.Func) || requiresExpression(value.Receiver) {
+				return true
+			}
+			for _, argument := range value.Args {
+				if requiresExpression(argument) {
+					return true
+				}
+			}
+		case *ast.TableExpr:
+			for _, field := range value.Fields {
+				if field != nil && (requiresExpression(field.Key) || requiresExpression(field.Value)) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	requiresStatements = func(statements []ast.Stmt) bool {
+		for _, statement := range statements {
+			switch value := statement.(type) {
+			case *ast.IfStmt:
+				if branchcond.SupportsTypeComparison(value.Condition, bindings) || requiresStatements(value.Then) || requiresStatements(value.Else) {
+					return true
+				}
+			case *ast.WhileStmt:
+				if branchcond.SupportsTypeComparison(value.Condition, bindings) || requiresStatements(value.Stmts) {
+					return true
+				}
+			case *ast.RepeatStmt:
+				if branchcond.SupportsTypeComparison(value.Condition, bindings) || requiresStatements(value.Stmts) {
+					return true
+				}
+			case *ast.DoBlockStmt:
+				if requiresStatements(value.Stmts) {
+					return true
+				}
+			case *ast.FuncDefStmt:
+				if functionRequiresSealedTypeChecks(value.Func, bindings) {
+					return true
+				}
+			case *ast.LocalAssignStmt:
+				for _, expression := range value.Exprs {
+					if requiresExpression(expression) {
+						return true
+					}
+				}
+			case *ast.AssignStmt:
+				for _, expression := range value.Rhs {
+					if requiresExpression(expression) {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	return requiresStatements(fn.Stmts)
 }
 
 // ---- channel select recognition ----------------------------------------

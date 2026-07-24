@@ -2239,12 +2239,12 @@ func (l *lexicalEvaluator) closureDemandRecurses(root closureHandle, partition e
 
 func boundaryTerm(symbol wir.SymbolID) string { return fmt.Sprintf("path/sym%d", symbol) }
 
-// uncalledExplicitAnyBoundary returns the only non-empty lexical entry that
-// may be published before a call: every formal is an explicit any boundary
-// supplied by the declaration itself. Other annotations remain descriptive
-// metadata and must wait for a concrete caller seed.
+// uncalledExplicitAnyBoundary returns the declaration-owned formal seeds that
+// may be published before a call. Captures are admitted separately, and only
+// when their exact values and closure capabilities are already published by
+// the allocating partition.
 func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || len(child.Boundary.Parameters) == 0 || len(child.Boundary.Captures) != 0 {
+	if child.WIR == nil || len(child.Boundary.Parameters) == 0 {
 		return nil, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -2259,6 +2259,44 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte("scalar/claim/claim-kind/3/\"any\"")})
 	}
 	return seeds, true
+}
+
+// uncalledChildEntry closes an allocation-time child entry from the same
+// caller partition that allocated it. This allocation-time admission is
+// limited to exact local closure captures: an arbitrary captured value can
+// participate in later validation, while a sealed local closure contributes
+// only its already-published call capability. Unknown or non-callable captures
+// therefore leave the child dormant rather than receiving a synthetic entry.
+func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
+	seeds := append([]entrySeed(nil), formalSeeds...)
+	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
+	for _, capture := range child.Boundary.Captures {
+		term := boundaryTerm(capture.Symbol)
+		value, known := resolveKnownCurrentValue([]byte(term), partition)
+		if !known || isUnknownScalar(value) {
+			return nil, false, nil
+		}
+		handle, found := closureHandleFor([]byte(term), partition)
+		if !found {
+			return nil, false, nil
+		}
+		captured, found := l.byPrototype[handle.Prototype]
+		if !found {
+			return nil, false, nil
+		}
+		if _, explicitAny := uncalledExplicitAnyBoundary(captured); !explicitAny {
+			return nil, false, nil
+		}
+		seeds = append(seeds, entrySeed{Term: term, Value: value})
+		closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: handle})
+	}
+	boundarySeeds := append([]entrySeed(nil), seeds...)
+	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
+	entry, err := encodeChildEntryWithCapabilities(seeds, closureSeeds, childEntryMemberClosureSeeds(seeds, partition))
+	if err != nil {
+		return nil, false, err
+	}
+	return entry, true, nil
 }
 
 // uncalledExplicitAnyDiagnostic retains only strict assignment contracts. A
@@ -2866,9 +2904,17 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || explicitAnyBoundary || typedChannelSendBoundary) {
-		entry, entryErr := encodeChildEntry(uncalledSeeds)
+		entry, admitted, entryErr := []byte(nil), true, error(nil)
+		if len(child.Boundary.Captures) == 0 {
+			entry, entryErr = encodeChildEntry(uncalledSeeds)
+		} else {
+			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition)
+		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
+		}
+		if !admitted {
+			return equation.TransactionResult{Complete: true, Closure: closure}, nil
 		}
 		outcome, _, evaluateErr := lexical.evaluate(child, entry)
 		if evaluateErr != nil {
