@@ -379,8 +379,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, enrichFrozenMutationDiagnostic(item, artifact, callSpans))
 			continue
 		}
-		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.argument_type/") {
-			out = append(out, enrichCallArgumentDiagnostic(item, operation))
+		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
+			out = append(out, enrichDirectCallDiagnostic(item, operation))
 			continue
 		}
 		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
@@ -690,7 +690,11 @@ func diagnosticOperationName(key string) string {
 	return parts[1]
 }
 
-func enrichCallArgumentDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+// enrichDirectCallDiagnostic is the canonical source-facing form of a closed
+// call-contract fact. The equation key remains the violation identity; this
+// projection adds only source labels and presentation derived from the apply
+// operation that produced that fact.
+func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
 	operands := make(map[string]string, len(operation.Operands))
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = string(operand.Term.Encoding)
@@ -702,34 +706,147 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, operation equation.E
 	if callee == "" {
 		return item
 	}
+	code, _, subject, ok := directCallDiagnosticParts(item.Fact.Key)
+	if !ok {
+		return item
+	}
+	switch code {
+	case "argument_type":
+		return enrichCallArgumentDiagnostic(item, callee, subject, operands)
+	case "too_few_args", "too_many_args":
+		count, expected, got, ok := callArityMessage(item.Message)
+		if !ok {
+			return item
+		}
+		_ = count
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("call to %s passes %d argument%s", callee, got, plural(got))},
+			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s declares %d parameter%s", callee, expected, plural(expected))},
+		}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "call expression"}}
+		if code == "too_few_args" {
+			item.Help = "Pass the missing required arguments, or change the callee signature if fewer arguments are valid."
+		} else {
+			item.Help = "Remove the extra arguments, or change the callee signature if they are valid."
+		}
+	case "not_callable":
+		value, found := strings.CutSuffix(item.Message, ", not callable")
+		if !found {
+			return item
+		}
+		_, value, found = strings.Cut(value, " is ")
+		if !found {
+			return item
+		}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", callee, value)}}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "call target"}}
+		item.Help = fmt.Sprintf("Call a function value, or replace `%s` with a callable expression before this call.", callee)
+	}
+	return item
+}
+
+func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject string, operands map[string]string) PublishedDiagnostic {
 	message := item.Message
 	start := strings.Index(message, " is ")
 	end := strings.LastIndex(message, ", not ")
 	if start < 0 || end <= start+4 {
 		return item
 	}
-	parts := strings.Split(strings.TrimPrefix(item.Fact.Key, "type.call.direct.argument_type/"), "/")
-	if len(parts) != 2 {
+	argumentIndex, ok := callArgumentSubjectIndex(subject)
+	if !ok {
 		return item
 	}
-	argument := strings.TrimPrefix(parts[1], "argument-")
-	argument = strings.TrimLeft(argument, "0")
-	if argument == "" {
-		argument = "0"
-	}
-	argumentIndex, err := strconv.Atoi(argument)
-	if err != nil {
-		return item
-	}
-	argumentIndex++
 	value, expected := message[start+4:end], message[end+6:]
+	argument := fmt.Sprintf("argument %d", argumentIndex)
+	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
+		argument += " (" + display + ")"
+	}
+	item.Message = fmt.Sprintf("%s is %s, not %s", argument, value, expected)
+	valueFact := fmt.Sprintf("%s has type %s", argument, value)
+	if callDiagnosticValueIsLiteral(value) {
+		valueFact = fmt.Sprintf("%s has literal value %s", argument, value)
+	}
+	parameter := fmt.Sprintf("%s parameter %d", callee, argumentIndex)
+	missingProof := fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", argument)
+	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
+		missingProof = fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)
+	}
+	if field, record := firstRequiredRecordField(expected); record {
+		parameter += "." + field
+		if strings.HasPrefix(value, "{") {
+			missingProof = fmt.Sprintf("object literal does not provide field %q", field)
+		}
+	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("argument %d has literal value %s", argumentIndex, value)},
-		{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueFact},
+		{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s expects %s", parameter, expected)},
+		{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: missingProof},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value " + value}}
-	item.Help = fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature.", argumentIndex)
+	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
+		item.Help = fmt.Sprintf("Pass `%s` as a value compatible with the parameter type, or change the callee signature if that argument is valid.", display)
+	} else {
+		item.Help = fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature if that argument is valid.", argumentIndex)
+	}
 	return item
+}
+
+func directCallDiagnosticParts(key string) (code, operation, subject string, ok bool) {
+	const prefix = "type.call.direct."
+	if !strings.HasPrefix(key, prefix) {
+		return "", "", "", false
+	}
+	rest := strings.TrimPrefix(key, prefix)
+	code, rest, ok = strings.Cut(rest, "/")
+	if !ok {
+		return "", "", "", false
+	}
+	operation, subject, ok = strings.Cut(rest, "/")
+	return code, operation, subject, ok && code != "" && operation != "" && subject != ""
+}
+
+func callArgumentSubjectIndex(subject string) (int, bool) {
+	encoded, ok := strings.CutPrefix(subject, "argument-")
+	if !ok || len(encoded) != 8 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(encoded)
+	return index + 1, err == nil
+}
+
+func callArityMessage(message string) (callee string, expected, got int, ok bool) {
+	before, after, found := strings.Cut(message, " expects ")
+	if !found {
+		return "", 0, 0, false
+	}
+	if _, err := fmt.Sscanf(after, "%d arguments, got %d", &expected, &got); err != nil {
+		return "", 0, 0, false
+	}
+	return before, expected, got, true
+}
+
+func callDiagnosticValueIsLiteral(value string) bool {
+	if value == "nil" || value == "true" || value == "false" || strings.HasPrefix(value, "\"") {
+		return true
+	}
+	_, err := strconv.ParseFloat(value, 64)
+	return err == nil
+}
+
+func firstRequiredRecordField(value string) (string, bool) {
+	if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
+		return "", false
+	}
+	field, _, found := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(value, "{"), "}"), ":")
+	field = strings.TrimSpace(field)
+	return field, found && field != ""
+}
+
+func plural(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func cloneFact(fact equation.Fact) equation.Fact {

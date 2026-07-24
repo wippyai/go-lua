@@ -45,6 +45,45 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckCanonicalizesDirectCallDiagnosticsAtPublication(t *testing.T) {
+	result, err := engine.Check(`
+local function takes_string(s: string): string return s end
+local value: number = 5
+takes_string(value)
+takes_string()
+local target: number = 1
+target()
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	got := make(map[string]engine.PublishedDiagnostic)
+	for _, item := range result.PublishedDiagnostics {
+		got[item.Code] = item
+	}
+	argument, ok := got["type.call.direct.argument_type"]
+	if !ok {
+		t.Fatalf("published diagnostics = %#v, want argument contract violation", result.PublishedDiagnostics)
+	}
+	if argument.Message != "argument 1 (value) is 5, not string" || !argument.Span.Valid() {
+		t.Fatalf("argument diagnostic = %#v, want canonical message and argument span", argument)
+	}
+	if len(argument.Evidence) != 3 || argument.Evidence[0].Message != "argument 1 (value) has literal value 5" || argument.Evidence[1].Message != "takes_string parameter 1 expects string" || argument.Evidence[2].Trust != "refuted" || !strings.Contains(argument.Evidence[2].Message, "value satisfies the parameter type") {
+		t.Fatalf("argument evidence = %#v, want closed value, contract, and missing-proof chain", argument.Evidence)
+	}
+	if !strings.Contains(argument.Help, "Pass `value`") || len(argument.Labels) != 1 {
+		t.Fatalf("argument help/labels = %q / %#v", argument.Help, argument.Labels)
+	}
+	arity, ok := got["type.call.direct.too_few_args"]
+	if !ok || len(arity.Evidence) != 2 || !strings.Contains(arity.Evidence[0].Message, "passes 0 arguments") || !strings.Contains(arity.Help, "missing required arguments") {
+		t.Fatalf("arity diagnostic = %#v, want canonical call-contract explanation", arity)
+	}
+	nonCallable, ok := got["type.call.direct.not_callable"]
+	if !ok || len(nonCallable.Evidence) != 1 || nonCallable.Evidence[0].Message != "target has literal value 1" || !strings.Contains(nonCallable.Help, "replace `target`") {
+		t.Fatalf("non-callable diagnostic = %#v, want canonical callable explanation", nonCallable)
+	}
+}
+
 func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	result, err := engine.Check(`local value: string = provider()`)
 	if err != nil {
