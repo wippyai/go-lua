@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/lint"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -766,6 +767,42 @@ local answer: number = object:answer()`
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("typed imported interface receiver diagnostics = %#v", result.Diagnostics)
 	}
+}
+
+func TestCheckWithImportsRejectsAnyAtPublishedInterfaceMethodBoundary(t *testing.T) {
+	duration := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	timeValue := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(duration).Build()},
+	})
+	host := manifest.New("time")
+	host.SetExport(typetable.NewRecord().Field("now", typ.Func().Returns(timeValue).Build()).Build())
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
+		{Path: "session.lua", ModulePath: "session", Source: `
+type ActiveSession = { created_at: any, last_activity: any }
+local M = {}
+function M.new(): ActiveSession end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local time = require("time")
+local session = require("session")
+local now = time.now()
+local state = session.new()
+local activity = state.last_activity or state.created_at
+local elapsed = now:sub(activity)`},
+	}, Targets: []string{"main"}, Manifests: []*manifest.Manifest{host}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	for _, entry := range result.Entries {
+		for _, diagnostic := range entry.Engine.PublishedDiagnostics {
+			if diagnostic.Code == "type.call.direct.argument_type" && strings.Contains(diagnostic.Message, "argument 1") && strings.Contains(diagnostic.Message, "time.Time") {
+				return
+			}
+		}
+	}
+	t.Fatalf("published interface method did not reject any argument")
 }
 
 func TestCheckWithImportsJoinsInstantiatedGenericSummaryAcrossCalls(t *testing.T) {

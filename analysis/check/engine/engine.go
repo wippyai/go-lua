@@ -622,7 +622,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, projected)
 			continue
 		}
-		if projected, ok := projectOperationDiagnostic(item, fact, key, artifact, claims, applies, expressions, callSpans, branchSpans); ok {
+		if projected, ok := projectOperationDiagnostic(item, fact, key, artifact, claims, applies, expressions, callSpans, branchSpans, closure.Values); ok {
 			out = append(out, projected)
 			continue
 		}
@@ -995,12 +995,12 @@ func projectSelectDiagnostic(item PublishedDiagnostic, fact equation.Fact, evide
 	return item, true
 }
 
-func projectOperationDiagnostic(item PublishedDiagnostic, fact equation.Fact, key string, artifact equation.Artifact, claims, applies, expressions map[string]equation.Equation, callSpans, branchSpans map[string]wir.Span) (PublishedDiagnostic, bool) {
+func projectOperationDiagnostic(item PublishedDiagnostic, fact equation.Fact, key string, artifact equation.Artifact, claims, applies, expressions map[string]equation.Equation, callSpans, branchSpans map[string]wir.Span, values []equation.Fact) (PublishedDiagnostic, bool) {
 	if strings.HasPrefix(fact.Key, "effect.freeze.mutation/") {
 		return enrichFrozenMutationDiagnostic(item, artifact, callSpans), true
 	}
 	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
-		return enrichDirectCallDiagnostic(item, operation), true
+		return enrichDirectCallDiagnostic(item, operation, values), true
 	}
 	if operation, ok := expressions[diagnosticOperationName(key)]; ok && strings.HasPrefix(key, "type.operator.concat_operand/") {
 		return enrichConcatOperandDiagnostic(item, operation), true
@@ -1327,7 +1327,7 @@ func diagnosticOperationName(key string) string {
 // call-contract fact. The equation key remains the violation identity; this
 // projection adds only source labels and presentation derived from the apply
 // operation that produced that fact.
-func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equation, values []equation.Fact) PublishedDiagnostic {
 	operands := make(map[string]string, len(operation.Operands))
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = string(operand.Term.Encoding)
@@ -1350,7 +1350,7 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 	}
 	switch code {
 	case "argument_type":
-		return enrichCallArgumentDiagnostic(item, callee, subject, operands)
+		return enrichCallArgumentDiagnostic(item, callee, subject, operands, values)
 	case "too_few_args", "too_many_args":
 		count, expected, got, ok := callArityMessage(item.Message)
 		if !ok {
@@ -1437,7 +1437,7 @@ func concatOperandIndex(subject string) (int, bool) {
 	return index, err == nil && index >= 0
 }
 
-func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject string, operands map[string]string) PublishedDiagnostic {
+func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject string, operands map[string]string, values []equation.Fact) PublishedDiagnostic {
 	message := item.Message
 	start := strings.Index(message, " is ")
 	end := strings.LastIndex(message, ", not ")
@@ -1452,6 +1452,24 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	argument := fmt.Sprintf("argument %d", argumentIndex) + suffix
 	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
 		argument += " (" + display + ")"
+	}
+	argumentTerm := []byte(operands[fmt.Sprintf("argument-%08d", argumentIndex-1)])
+	if summaryTypeIsAny(argumentTerm, values) {
+		display := strings.TrimPrefix(argument, fmt.Sprintf("argument %d (", argumentIndex))
+		display = strings.TrimSuffix(display, ")")
+		if display == argument {
+			display = argument
+		}
+		item.Message = fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", argument, expected)
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", argument)},
+			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d%s expects %s", callee, argumentIndex, suffix, expected)},
+			{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", display)},
+			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)},
+		}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value any"}}
+		item.Help = fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display)
+		return item
 	}
 	item.Message = fmt.Sprintf("%s is %s, not %s", argument, value, expected)
 	valueFact := fmt.Sprintf("%s has type %s", argument, value)
@@ -6651,12 +6669,53 @@ func sourceHasAnyBoundary(source []byte, values []equation.Fact) bool {
 				return true
 			}
 		}
+		if summaryTypeIsAny([]byte("path/"+path), values) {
+			return true
+		}
 		cut := strings.LastIndexAny(path, ".[")
 		if cut < 0 {
 			return false
 		}
 		path = path[:cut]
 	}
+}
+
+// summaryTypeIsAny recognizes the current, project-published summary at a
+// path.  Imported and joined values carry this canonical fact rather than a
+// local declaration; matching it to the term's current epoch prevents an old
+// Any summary from surviving a later write.
+func summaryTypeIsAny(term []byte, values []equation.Fact) bool {
+	if !strings.HasPrefix(string(term), "path/") {
+		return false
+	}
+	epochPrefix := "epoch/" + string(term) + "/"
+	latest := ""
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, epochPrefix) && fact.Key > latest {
+			latest = fact.Key
+		}
+	}
+	if latest == "" {
+		return false
+	}
+	operation := strings.TrimPrefix(latest, epochPrefix)
+	for _, fact := range values {
+		if fact.Key != summaryTypePrefix+string(term)+"/"+operation {
+			continue
+		}
+		summary, err := typ.DecodeCanonical(context.Background(), fact.Value)
+		return err == nil && summary != nil && unwrap.Alias(subst.ExpandInstantiated(summary)).Kind() == kind.Any
+	}
+	return false
+}
+
+func hasSummaryAnyArgument(arguments [][]byte, values []equation.Fact) bool {
+	for _, argument := range arguments {
+		if summaryTypeIsAny(argument, values) {
+			return true
+		}
+	}
+	return false
 }
 
 func gradualAnyBoundaryFact(target string, source []byte, operation string, values []equation.Fact) (equation.Fact, bool) {
@@ -8288,6 +8347,8 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	callee, known := resolveKnownCurrentValue(operands.callee, partition)
+	typedMethodSignature := callableShape{}
+	typedMethodContract := false
 	if hasCallee && (!known || isUnknownScalar(callee)) {
 		// A static member read is a derived use of an already-published declared
 		// receiver, rather than a direct value cell. Preserve the ordinary
@@ -8330,18 +8391,26 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if optionalMethodReceiver(operands.receiver, receiver, operands.method) {
 				return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)), nil
 			}
-			if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
-				if missing, encoded := memberMissingValue(receiverType); encoded {
-					return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-						Key:   "type.member.missing/" + operation.Target.Name,
-						Value: []byte(memberMissingMessage(operands.display, missing)),
-					}}}}, nil
+			// A typed receiver's member contract is a published value witness,
+			// even when the receiver is an opaque interface rather than a sealed
+			// table.  Reuse that canonical member contract for argument checking;
+			// do not materialize a member value or inspect a provider body.
+			if signature, available := typedMethodCallableSignature(operands.receiver, operands.method, partition); available && hasSummaryAnyArgument(operands.arguments, partition.Values()) {
+				typedMethodSignature, typedMethodContract = signature, true
+			} else {
+				if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
+					if missing, encoded := memberMissingValue(receiverType); encoded {
+						return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+							Key:   "type.member.missing/" + operation.Target.Name,
+							Value: []byte(memberMissingMessage(operands.display, missing)),
+						}}}}, nil
+					}
 				}
+				return equation.TransactionResult{Complete: true}, nil
 			}
-			return equation.TransactionResult{Complete: true}, nil
 		}
 	}
-	if !known {
+	if !known && !typedMethodContract {
 		if outcome, projected, err := applyLocal(); err != nil {
 			return equation.TransactionResult{}, err
 		} else if projected {
@@ -8349,11 +8418,14 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	if !isUnknownScalar(callee) && !isCallableValue(callee) {
+	if !typedMethodContract && !isUnknownScalar(callee) && !isCallableValue(callee) {
 		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
 	}
-	signature, known := callableSignature(callee)
-	if !known || operands.spread {
+	signature, signatureKnown := callableSignature(callee)
+	if typedMethodContract {
+		signature, signatureKnown = typedMethodSignature, true
+	}
+	if !signatureKnown || operands.spread {
 		if string(callee) == "scalar/function" {
 			// An unshaped callable includes generic and otherwise uninstantiated
 			// lexical functions. Its body result is not a certified call result.
@@ -10681,6 +10753,89 @@ func typedMethodResultValue(receiver, method []byte, index int, partition equati
 		return nil, false
 	}
 	return providerReturnTypeValue(function.Returns[index])
+}
+
+// typedMethodCallableSignature exposes a callable contract only from the
+// receiver's already-published canonical type witness. It is deliberately
+// transient: unlike a sealed table member, an interface member is not a new
+// runtime value that can be published into the partition.
+func typedMethodCallableSignature(receiver []byte, method string, partition equation.Partition) (callableShape, bool) {
+	if receiver == nil || method == "" {
+		return callableShape{}, false
+	}
+	value, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return callableShape{}, false
+	}
+	receiverType, ok := shapefact.DecodeTarget(value)
+	if !ok {
+		return callableShape{}, false
+	}
+	callee, ok := variant.FieldAtPath(receiverType, []segment.Segment{{Kind: segment.SegmentField, Name: method}})
+	if !ok {
+		callee, ok = access.Field(receiverType, method)
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	if !ok || function == nil {
+		return callableShape{}, false
+	}
+	signature := callableShape{
+		Params:   make([]string, len(function.Params)),
+		Returns:  make([]string, len(function.Returns)),
+		Variadic: function.Variadic != nil,
+	}
+	for index, parameter := range function.Params {
+		if parameter.Type == nil {
+			return callableShape{}, false
+		}
+		signature.Params[index] = parameter.Type.String()
+		if bound, ok := unwrap.Annotations(parameter.Type).(*typ.TypeParam); ok && bound.Name != "" {
+			found := false
+			for _, existing := range signature.TypeParams {
+				found = found || existing.Name == bound.Name
+			}
+			if !found {
+				item := callableTypeParam{Name: bound.Name}
+				if bound.Constraint != nil {
+					item.Constraint = bound.Constraint.String()
+				}
+				signature.TypeParams = append(signature.TypeParams, item)
+			}
+		}
+		if !parameter.Optional && !strings.HasSuffix(signature.Params[index], "?") {
+			signature.Required++
+		}
+	}
+	for index, result := range function.Returns {
+		if result == nil {
+			return callableShape{}, false
+		}
+		signature.Returns[index] = result.String()
+	}
+	if function.Variadic != nil {
+		signature.VariadicType = function.Variadic.String()
+		if signature.VariadicType == "" {
+			return callableShape{}, false
+		}
+	}
+	for _, parameter := range function.TypeParams {
+		if parameter == nil || parameter.Name == "" {
+			return callableShape{}, false
+		}
+		duplicate := false
+		for _, existing := range signature.TypeParams {
+			duplicate = duplicate || existing.Name == parameter.Name
+		}
+		if duplicate {
+			continue
+		}
+		item := callableTypeParam{Name: parameter.Name}
+		if parameter.Constraint != nil {
+			item.Constraint = parameter.Constraint.String()
+		}
+		signature.TypeParams = append(signature.TypeParams, item)
+	}
+	return signature, true
 }
 
 func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {
