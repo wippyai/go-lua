@@ -6012,7 +6012,18 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// assignment contract. The boundary itself is already-published evidence
 	// and remains authoritative until validation supplies a separate proof.
 	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(source, partition.Values())
-	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, partition)
+	// An explicit-any declaration remains a boundary, but an exact sealed
+	// member may still be the concrete counterexample for its assignment
+	// diagnostic. Keep that existing heap publication separate from the
+	// boundary's proof status: it explains a refutation without validating the
+	// surrounding aggregate.
+	boundaryShape := []byte(nil)
+	if anySource {
+		if sealed, found := heapMemberValue(source, partition); found && shapefact.IsTable(sealed) {
+			boundaryShape = sealed
+		}
+	}
+	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, shapeTarget, partition)
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
 	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
@@ -6112,6 +6123,11 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		if anySource {
 			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
+			if len(boundaryShape) != 0 {
+				if declared, decoded := shapefact.DecodeTarget(shapeTarget); decoded && declared != nil && valueAgainstType(boundaryShape, declared) == shapeRefuted {
+					message = "cannot assign " + sourceDisplay + " because it is " + assignmentEvidenceValue(boundaryShape) + ", not " + typeformat.Short(declared)
+				}
+			}
 		} else if memberSurface != nil {
 			if _, ok := lexicalMemberCallableDisplay(lexical, operation); ok {
 				message = "cannot assign " + sourceDisplay + " because it is fun() -> " + assignmentEvidenceValue(memberSurface) + ", not " + callableClaimDisplay(lexical, operation)
@@ -7867,6 +7883,7 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		}
 	}
 	boundaryPossible := false
+	unknownCondition := false
 	var boundarySource, boundaryValue, boundaryConsumer []byte
 	acceptBoundary := func(source []byte) bool {
 		term, value, found := explicitAnySourceFact(source, partition.Values())
@@ -7892,19 +7909,23 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 			if acceptBoundary(operand.Value) {
 				continue
 			}
-			return equation.TransactionResult{Complete: true}, nil
+			// A compound condition can carry its exact source path only in
+			// normalized branch evidence. Defer the fail-closed decision until
+			// that closed evidence has been inspected below.
+			unknownCondition = true
 		}
 	}
 	if !boundaryPossible {
 		for _, operand := range operation.Operands {
-			if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+			predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+			if !recognized || !trueEdge || predicate.Path == "" {
 				continue
 			}
-			var predicate branchPredicateWire
-			if json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate) == nil && predicate.Path != "" {
-				acceptBoundary([]byte("path/" + predicate.Path))
-			}
+			acceptBoundary([]byte("path/" + predicate.Path))
 		}
+	}
+	if unknownCondition && !boundaryPossible {
+		return equation.TransactionResult{Complete: true}, nil
 	}
 	truth, frozenGuard := true, false
 	var err error
@@ -7940,9 +7961,9 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
 	}
 	if truth {
-		if path, typeName, proven := runtimeTypeBranchProof(operation); proven {
+		for _, proof := range runtimeTypeBranchProofs(operation) {
 			guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
-			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(path, typeName), Value: []byte("proven"), Guards: []equation.Guard{guard}})
+			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(proof.path, proof.typeName), Value: []byte("proven"), Guards: []equation.Guard{guard}})
 		}
 	}
 	if truth && !boundaryPossible {
@@ -8180,21 +8201,29 @@ func correlationConeEpochs(source, target string, partition equation.Partition) 
 	return epochs, true
 }
 
-func runtimeTypeBranchProof(operation equation.BoundEquation) (path, typeName string, proven bool) {
+type runtimeTypeBranchProof struct{ path, typeName string }
+
+func runtimeTypeBranchProofs(operation equation.BoundEquation) []runtimeTypeBranchProof {
+	seen := make(map[string]bool)
+	proofs := make([]runtimeTypeBranchProof, 0)
 	for _, operand := range operation.Operands {
-		if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		if !recognized || !trueEdge {
 			continue
 		}
-		var predicate branchPredicateWire
-		if json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate) != nil || predicate.Kind != "type-equal" || predicate.Path == "" || predicate.TypeName == "" {
-			return "", "", false
+		if predicate.Kind != "type-equal" || predicate.Path == "" || predicate.TypeName == "" {
+			continue
 		}
 		switch predicate.TypeName {
 		case "nil", "boolean", "number", "string", "table", "function":
-			return predicate.Path, predicate.TypeName, true
+			key := predicate.Path + "\x00" + predicate.TypeName
+			if !seen[key] {
+				seen[key] = true
+				proofs = append(proofs, runtimeTypeBranchProof{path: predicate.Path, typeName: predicate.TypeName})
+			}
 		}
 	}
-	return "", "", false
+	return proofs
 }
 
 func runtimeTypeProofKey(path, typeName string) string {
@@ -8204,9 +8233,16 @@ func runtimeTypeProofKey(path, typeName string) string {
 // runtimeTypeValidationProves consumes only the fact emitted by a true edge
 // of `type(path) == name`. It never treats a literal value carried through an
 // any boundary as proof: sibling paths remain unvalidated.
-func runtimeTypeValidationProves(source []byte, targetType string, partition equation.Partition) bool {
+func runtimeTypeValidationProves(source []byte, targetType string, shapeTarget []byte, partition equation.Partition) bool {
 	name, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil || source == nil || !strings.HasPrefix(string(source), "path/") {
+		return false
+	}
+	// Lua's type predicate certifies only the runtime kind. A record, array,
+	// map, tuple, or other structural target can share the "table" runtime
+	// kind without satisfying its member contract, so it must retain the
+	// explicit-any boundary until an existing structural validator proves it.
+	if target, decoded := shapefact.DecodeTarget(shapeTarget); decoded && target != nil && !runtimeTypeProofAdmitsTarget(name, target) {
 		return false
 	}
 	prefix := runtimeTypeProofKey(strings.TrimPrefix(string(source), "path/"), name)
@@ -8216,6 +8252,27 @@ func runtimeTypeValidationProves(source []byte, targetType string, partition equ
 		}
 	}
 	return false
+}
+
+func runtimeTypeProofAdmitsTarget(name string, target typ.Type) bool {
+	target = unwrap.Alias(subst.ExpandInstantiated(target))
+	if target == nil {
+		return false
+	}
+	switch name {
+	case "nil":
+		return target.Kind() == kind.Nil
+	case "boolean":
+		return target.Kind() == kind.Boolean
+	case "number":
+		return target.Kind() == kind.Number || target.Kind() == kind.Integer
+	case "string":
+		return target.Kind() == kind.String
+	case "function":
+		return target.Kind() == kind.Function
+	default:
+		return false
+	}
 }
 
 // typedIndexBranchClosure carries normalized numeric/index relations through
@@ -8228,6 +8285,20 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	for _, operand := range operation.Operands {
 		if operand.Role == "index-presence-consumer" && string(operand.Value) == "scalar/bool/true" {
 			hasConsumer = true
+		}
+		if operand.Role == "predicate" {
+			predicate, _, ok := branchEvidencePredicate(operand)
+			if !ok {
+				return equation.OutputClosure{}, false, nil
+			}
+			// A direct runtime-type predicate must remain on the ordinary branch
+			// path, which owns explicit-any validation. Compound numeric guards,
+			// however, carry their individual bounds as normalized evidence rather
+			// than as this direct predicate and must retain the established index
+			// narrowing path.
+			if predicate.Kind == "type-equal" {
+				return equation.OutputClosure{}, false, nil
+			}
 		}
 		predicate, trueEdge, ok := branchEvidencePredicate(operand)
 		if !ok || !trueEdge {

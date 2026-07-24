@@ -1395,6 +1395,27 @@ end
 	}
 }
 
+func TestCheckElementGuardRetainsUntrustedArrayShape(t *testing.T) {
+	result, err := engine.Check(`
+local raw: any = {
+    items = {"ok", 42},
+}
+
+if type(raw.items) == "table" and type(raw.items[1]) == "string" then
+    local first: string = raw.items[1]
+    local allItems: {string} = raw.items
+end`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "cannot assign raw.items because it is any, not string[]") {
+			return
+		}
+	}
+	t.Fatalf("element guard manufactured an array-wide proof: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {
 	result, err := engine.Check(`
 local value = 1
