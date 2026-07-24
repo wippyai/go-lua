@@ -2931,20 +2931,37 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 	return seeds, true, hasDirectMethod
 }
 
-// uncalledDeclaredFormalAssignment identifies an annotation claim from a
-// static member path of a declared formal. The value has the same
+// uncalledDeclaredFormalAssignment identifies an annotation claim from an
+// exact declared formal or its static member path. The value has the same
 // declaration-owned witness as an admitted missing-member read; arbitrary
 // locals and branch-only refinements remain demand-driven.
 func uncalledDeclaredFormalAssignment(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
-	if !uncalledDeclaredFormalMemberRead(child, operation, formals) {
+	if operation.Occurrence.Kind != "claim" {
 		return false
 	}
+	var value []byte
+	assignment := false
 	for _, operand := range operation.Operands {
-		if operand.Role == "kind" && string(operand.Term.Encoding) == "claim-kind/3" {
-			return true
+		switch operand.Role {
+		case "value":
+			value = operand.Term.Encoding
+		case "kind":
+			assignment = string(operand.Term.Encoding) == "claim-kind/3"
 		}
 	}
-	return false
+	if !assignment || len(value) == 0 {
+		return false
+	}
+	if formals[string(value)] {
+		// A direct boundary assignment is publication-safe only before control
+		// flow can refine that formal. Guarded direct assignments retain the
+		// ordinary demand-driven path, where the branch proof is caller-owned.
+		if len(operation.Guards) != 0 {
+			return false
+		}
+		return uncalledDeclaredFormalValue(child, value)
+	}
+	return uncalledDeclaredFormalMemberRead(child, operation, formals)
 }
 
 // uncalledDeclaredFormalMemberRead identifies an annotation claim whose value
@@ -2961,21 +2978,25 @@ func uncalledDeclaredFormalMemberRead(child front.Compilation, operation equatio
 		return false
 	}
 	root, suffix, member := tableAddress(value)
-	if !member || !formals[string(root)] {
+	if !member || !formals[string(root)] || !uncalledDeclaredFormalValue(child, root) {
 		return false
-	}
-	for _, parameter := range child.Boundary.Parameters {
-		if boundaryTerm(parameter.Symbol) != string(root) || parameter.Type == 0 {
-			continue
-		}
-		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
-		if declared == nil || declared.Kind() == kind.Any {
-			return false
-		}
-		break
 	}
 	segments, static := segment.ParseFormattedSegments(suffix)
 	return static && len(segments) != 0
+}
+
+// uncalledDeclaredFormalValue accepts only an exact, non-gradual boundary
+// formal. Its type is emitted by the front end and encoded as an entry seed;
+// no call result, branch result, or inferred local is used as authority.
+func uncalledDeclaredFormalValue(child front.Compilation, value []byte) bool {
+	for _, parameter := range child.Boundary.Parameters {
+		if boundaryTerm(parameter.Symbol) != string(value) || parameter.Type == 0 {
+			continue
+		}
+		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		return declared != nil && declared.Kind() != kind.Any
+	}
+	return false
 }
 
 // uncalledStaticAssignmentBoundary admits a straight-line lexical body whose
@@ -5521,6 +5542,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				continue
 			}
 			if witness, ok := shapefact.DecodeTarget(operand.Value); ok && finiteReturnWitness(witness, make(map[typ.Type]bool)) {
+				// The cast witness belongs only to this exact result term. It may
+				// drive a direct consumer (such as an indexed read), but must not
+				// become member-origin authority for a later aggregate claim.
 				closure.Values = append(closure.Values, equation.Fact{Key: "cast-target/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), operand.Value...)})
 			}
 			break
@@ -5761,14 +5785,6 @@ func publishedContainerOriginRelation(source, value []byte, target typ.Type, par
 		originType, found := typedPathType(origin, partition)
 		if !found {
 			originType, found = declaredTypeForTerm(origin, partition)
-		}
-		if !found {
-			// A cast result is an existing, closed type witness for this exact
-			// element. It may be a temporary rather than a path, so neither
-			// typedPathType nor declaredTypeForTerm can recover it. Reuse only
-			// the cast target published by claimKernel; an unproven annotation
-			// still has no authority here.
-			originType, found = castTargetWitness(origin, partition)
 		}
 		if !found || originType == nil {
 			return shapeUnknown

@@ -49,6 +49,19 @@ end`)
 	}
 }
 
+func TestStage1RedUncalledDeclaredOptionalFormalPublishesAssignmentMismatch(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function require_name(name: string?)
+  local exact: string = name
+end`)
+	if len(r.Diagnostics) != 1 || !strings.HasPrefix(r.Diagnostics[0].Key, "child/") || string(r.Diagnostics[0].Value) != "cannot assign name because it is string?, not string" {
+		t.Fatalf("declared optional child diagnostics = %#v", r.Diagnostics)
+	}
+	if len(r.PublishedDiagnostics) != 1 || r.PublishedDiagnostics[0].Code != "type.assignment" || r.PublishedDiagnostics[0].Span.StartLine != 3 {
+		t.Fatalf("declared optional child publication = %#v", r.PublishedDiagnostics)
+	}
+}
+
 func TestStage1RedUncalledDeclaredUnionBoundaryPublishesMissingMethod(t *testing.T) {
 	r := checkChildAdmission(t, `
 type Dog = {kind: "dog", bark: () -> ()}
