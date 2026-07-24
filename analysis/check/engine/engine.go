@@ -57,6 +57,7 @@ const literalDiagnosticPrefix = "diagnostic/literal-source/"
 
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
+const assignmentMapReadMissingPrefix = "assignment-map-read-missing/v1/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
 const iteratorKeyPrefix = "iterator-key/"
@@ -749,6 +750,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		for _, operand := range operation.Operands {
 			methodSelector = methodSelector || operand.Role == "source-method-selector"
 		}
+		mapReadMissing := strings.HasPrefix(item.Message, assignmentMapReadMissingPrefix)
+		if mapReadMissing {
+			item.Message = strings.TrimPrefix(item.Message, assignmentMapReadMissingPrefix)
+		}
 		mayBeNil := strings.HasSuffix(item.Message, " because it may be nil") || (methodSelector && diagnosticValueMayBeNil(value))
 		if mayBeNil {
 			targetSpan := claimTargetSpans[name]
@@ -762,9 +767,16 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			if declared, found := indexReadDeclaredDisplay(operands["value"], operation, closure.Values); found {
 				concrete = declared
 			}
+			if mapReadMissing {
+				concrete = "nil"
+			}
+			valueEvidence := fmt.Sprintf("%s can be %s or nil here", sourceDisplay, concrete)
+			if concrete == "nil" {
+				valueEvidence = fmt.Sprintf("%s can be nil here", sourceDisplay)
+			}
 			item.Message = fmt.Sprintf("cannot assign %s because it may be nil", sourceDisplay)
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", sourceDisplay, concrete)},
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueEvidence},
 				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			missing, reason := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay), "boundary validation missing"
@@ -6495,6 +6507,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			break
 		}
 	}
+	mapReadMissing := declaredOptionalMapReadMissingSlot(source, partition)
 	if kind == "claim-kind/3" && available && memberMissing(value) {
 		closure.Diagnostics = []equation.Fact{{
 			Key:   "type.member.missing/" + operation.Target.Name,
@@ -6503,7 +6516,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// A declaration without an initializer reads its own Lua nil slot. That
 		// slot establishes the declared local's downstream contract; it is not an
 		// assignment of nil to the declaration type.
-	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition)) {
+	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition) || mapReadMissing) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
 		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition) || publishedOptionalAssignmentWitness(source, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
@@ -6541,6 +6554,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		if !anySource && optionalAssignmentWitness(source, value, shapeTarget, partition) {
 			message = "cannot assign " + sourceDisplay + " because it may be nil"
+		}
+		if mapReadMissing {
+			message = assignmentMapReadMissingPrefix + message
 		}
 		closure.Diagnostics = []equation.Fact{{
 			Key:   "type.assignment/" + operation.Target.Name,
@@ -7691,6 +7707,9 @@ func resolveClaimValue(term []byte, partition equation.Partition) ([]byte, bool,
 	}
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, false, fmt.Errorf("engine: unsupported claim value %q", term)
+	}
+	if value, found := declaredOptionalMapReadValue(term, partition); found {
+		return value, true, nil
 	}
 	value, err := resolveCurrentValue(term, partition)
 	if err != nil {
@@ -10641,39 +10660,154 @@ func declaredOptionalMemberValue(term []byte, partition equation.Partition) ([]b
 	return value, ok
 }
 
-// declaredOptionalMapReadValue carries the existing typed entry witness for a
-// static callable read from a declared map. A concrete heap cell can describe
-// one write retained through a fluent self-return, but it is not a presence
-// proof for a later handler lookup: the declared map contract still makes that
-// selected callable optional. The final segment must be an exact bracket index
-// over a declared map and its non-nil projection must be a function, so other
-// map reads and ordinary child publication remain on their existing
-// fail-closed paths.
+// declaredOptionalMapReadValue carries the existing typed entry witness for an
+// exact static read from a declared map. A concrete heap cell can describe one
+// retained write, but it is not a presence proof for a later lookup: the
+// declared map contract still makes the selected element optional. This admits
+// only a final bracket index over a declared map and an already-optional
+// element witness, so dynamic/open reads and ordinary child publication remain
+// on their existing fail-closed paths.
 func declaredOptionalMapReadValue(term []byte, partition equation.Partition) ([]byte, bool) {
-	_, segments, source, ok := typedAncestor(term, partition)
-	if !ok || source == nil || len(segments) == 0 {
+	if closedUnmutatedHeapRead(term, partition) {
 		return nil, false
 	}
-	last := segments[len(segments)-1]
-	if last.Kind != segment.SegmentIndexString && last.Kind != segment.SegmentIndexInt {
-		return nil, false
-	}
-	container, ok := luatypeprojection.ApplySegments(source, segments[:len(segments)-1])
-	if !ok || container == nil {
-		return nil, false
-	}
-	base := unwrap.Alias(subst.ExpandInstantiated(container))
-	if base == nil || (base.Kind() != kind.Map && base.Kind() != kind.ReadonlyMap) {
-		return nil, false
-	}
-	value, ok := luatypeprojection.ApplySegments(source, segments)
-	if !ok || !optionalConcreteWitnessType(value) {
-		return nil, false
-	}
-	if _, callable := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(value))).(*typ.Function); !callable {
+	value, found, missingSlot := declaredOptionalMapReadWitness(term, partition)
+	if !found || !missingSlot || !mapReadNeedsNilWitness(value) {
 		return nil, false
 	}
 	return shapefact.EncodeTarget(value)
+}
+
+// declaredOptionalMapReadMissingSlot reports whether an exact declared map
+// supplied nilability solely because this selected slot can be absent. The
+// claim carries that closed distinction to its publisher so diagnostic text
+// need not guess from a rendered structural type.
+func declaredOptionalMapReadMissingSlot(term []byte, partition equation.Partition) bool {
+	if closedUnmutatedHeapRead(term, partition) {
+		return false
+	}
+	value, found, missingSlot := declaredOptionalMapReadWitness(term, partition)
+	return found && missingSlot && mapReadNeedsNilWitness(value)
+}
+
+// mapReadNeedsNilWitness is deliberately limited to non-scalar map elements.
+// Scalars already have an existing exact index-read transaction that retains
+// their declared display and handles their missing-slot diagnostic. Aggregate
+// and callable elements need the type witness here because their heap fallback
+// is only nil and loses the published declared member contract.
+func mapReadNeedsNilWitness(value typ.Type) bool {
+	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(value)))
+	if base == nil {
+		return false
+	}
+	switch base.Kind() {
+	case kind.Boolean, kind.Number, kind.Integer, kind.String:
+		return false
+	default:
+		return true
+	}
+}
+
+// closedUnmutatedHeapRead preserves an exact selected member of a sealed
+// literal until an indexed mutation revokes that fact. A declaration describes
+// fallback absence only; it cannot displace a closed, unmutated concrete slot.
+func closedUnmutatedHeapRead(term []byte, partition equation.Partition) bool {
+	root, suffix, member := tableAddress(term)
+	if !member || suffix == "" {
+		return false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 {
+		return false
+	}
+	last := segment.FormatSegments(segments[len(segments)-1:])
+	container := append(append([]byte(nil), root...), []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
+	identity, found := tableIdentityForTerm(container, partition)
+	if !found || !heapTableClosed(identity, partition) || heapMetaAttached(identity, partition) {
+		return false
+	}
+	prefix := heapIndexRevokePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "revoked" {
+			return false
+		}
+	}
+	value, found := heapMemberCurrent(heapMemberPrefix, identity, last, partition)
+	return found && string(value) != "scalar/nil" && !isUnknownScalar(value)
+}
+
+func declaredOptionalMapReadWitness(term []byte, partition equation.Partition) (typ.Type, bool, bool) {
+	_, segments, source, ok := declaredMapReadAncestor(term, partition)
+	if !ok || source == nil || len(segments) == 0 {
+		return nil, false, false
+	}
+	last := segments[len(segments)-1]
+	if last.Kind != segment.SegmentIndexString && last.Kind != segment.SegmentIndexInt {
+		return nil, false, false
+	}
+	container, ok := luatypeprojection.ApplySegments(source, segments[:len(segments)-1])
+	if !ok || container == nil {
+		return nil, false, false
+	}
+	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(container)))
+	if base == nil || (base.Kind() != kind.Map && base.Kind() != kind.ReadonlyMap) {
+		return nil, false, false
+	}
+	var declaredElement typ.Type
+	switch mapping := base.(type) {
+	case *typ.Map:
+		declaredElement = mapping.Value
+	case *typ.ReadonlyMap:
+		declaredElement = mapping.Value
+	}
+	if declaredElement == nil {
+		return nil, false, false
+	}
+	if _, union := unwrap.Alias(subst.ExpandInstantiated(declaredElement)).(*typ.Union); union {
+		return nil, false, false
+	}
+	value, ok := luatypeprojection.ApplySegments(source, segments)
+	if !ok || value == nil {
+		return nil, false, false
+	}
+	missingSlot := !optionalConcreteWitnessType(container) && !optionalConcreteWitnessType(declaredElement)
+	if !optionalConcreteWitnessType(value) {
+		value = typ.MaterializeUnion([]typ.Type{value, typ.Nil})
+	}
+	if !optionalConcreteWitnessType(value) {
+		return nil, false, false
+	}
+	return value, true, missingSlot
+}
+
+// declaredMapReadAncestor finds the nearest existing type publication for an
+// indexed map read. Unlike typedAncestor, its root may be non-optional: the
+// optionality being diagnosed belongs to the selected map element, not to the
+// map container. The caller still admits only a typed final map index.
+func declaredMapReadAncestor(term []byte, partition equation.Partition) ([]byte, []segment.Segment, typ.Type, bool) {
+	if root, suffix, source, ok := typedAncestor(term, partition); ok {
+		return root, suffix, source, true
+	}
+	path := strings.TrimPrefix(string(term), "path/")
+	if path == string(term) {
+		return nil, nil, nil, false
+	}
+	for cut := len(path); cut > 0; {
+		cut = strings.LastIndexAny(path[:cut], ".[")
+		if cut < 0 {
+			return nil, nil, nil, false
+		}
+		root, suffix := path[:cut], path[cut:]
+		segments, valid := segment.ParseFormattedSegments(suffix)
+		if !valid || len(segments) == 0 {
+			return nil, nil, nil, false
+		}
+		rootTerm := []byte("path/" + root)
+		if source, declared := declaredTypeForTerm(rootTerm, partition); declared && source != nil {
+			return rootTerm, segments, source, true
+		}
+	}
+	return nil, nil, nil, false
 }
 
 // closedLiteralDeclaredOptionalMemberSource identifies the one optional value
