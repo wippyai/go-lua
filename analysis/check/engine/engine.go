@@ -13044,6 +13044,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	var placementFacts []equation.Fact
 	var metatableFacts []equation.Fact
 	var argumentFacts []equation.Fact
+	var assertionFacts []equation.Fact
 	// captureInvalidations revokes the caller proofs that a callee this
 	// application does not evaluate would otherwise keep refuting. They publish
 	// with the call's other completed outputs so the revocation shares its epoch.
@@ -13053,6 +13054,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			result.Closure.Values = append(result.Closure.Values, placementFacts...)
 			result.Closure.Values = append(result.Closure.Values, metatableFacts...)
 			result.Closure.Values = append(result.Closure.Values, argumentFacts...)
+			result.Closure.Values = append(result.Closure.Values, assertionFacts...)
 			result.Closure.Values = append(result.Closure.Values, captureInvalidations...)
 		}
 	}()
@@ -13092,6 +13094,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	assertionFacts = assertedPathNarrowingFacts(operation, operands, partition)
 	argumentFacts = callArgumentFacts(operation.Target.Name, operands.arguments)
 	placementFacts = placementApplyFacts(operation, operands, partition)
 	placementFacts = append(placementFacts, placementSuspensionFacts(operation, operands, partition)...)
@@ -15129,13 +15132,14 @@ func isTransferScalar(value []byte) bool {
 }
 
 type directCallOperands struct {
-	callee      []byte
-	receiver    []byte
-	method      string
-	display     string
-	arguments   [][]byte
-	spread      bool
-	resultArity int
+	callee       []byte
+	receiver     []byte
+	method       string
+	display      string
+	arguments    [][]byte
+	assertedPath []byte
+	spread       bool
+	resultArity  int
 }
 
 func callOperands(operands []equation.BoundOperand) (directCallOperands, error) {
@@ -15184,6 +15188,11 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 				return directCallOperands{}, fmt.Errorf("engine: malformed call result arity")
 			}
 			result.resultArity = arity
+		case operand.Role == "asserted-path":
+			if result.assertedPath != nil || !strings.HasPrefix(string(operand.Value), "path/") || len(operand.Value) == len("path/") {
+				return directCallOperands{}, fmt.Errorf("engine: malformed asserted call path")
+			}
+			result.assertedPath = append([]byte(nil), operand.Value...)
 		case strings.HasPrefix(operand.Role, "argument-display-"):
 			continue
 		case strings.HasPrefix(operand.Role, "argument-"):
@@ -15207,6 +15216,45 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 		result.arguments[index] = arguments[index]
 	}
 	return result, nil
+}
+
+// assertedPathNarrowingFacts publishes the postcondition of a direct global
+// assert. The front emits asserted-path only for a normalized truthy/not-nil
+// check on that runtime-validating call. The value itself is never invented:
+// it is the non-nil projection of the exact current or declared witness
+// already available for the asserted path.
+func assertedPathNarrowingFacts(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) []equation.Fact {
+	if len(operands.assertedPath) == 0 {
+		return nil
+	}
+	source, known := assertionPathType(operands.assertedPath, partition)
+	if !known || source == nil {
+		return nil
+	}
+	narrowed := proof.ProjectionWithoutNil(source)
+	if narrowed == nil || typ.IsNever(narrowed) {
+		return nil
+	}
+	value, encoded := shapefact.EncodeTarget(narrowed)
+	if !encoded {
+		return nil
+	}
+	return []equation.Fact{{
+		Key:   "assertion-value/" + string(operands.assertedPath) + "/" + operation.Target.Name,
+		Value: value,
+	}}
+}
+
+func assertionPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
+	if value, err := resolveCurrentValue(term, partition); err == nil {
+		if source, known := expressionValueType(value); known && source != nil {
+			return source, true
+		}
+	}
+	if source, known := correlationMemberType(term, partition); known && source != nil {
+		return source, true
+	}
+	return declaredTypeForTerm(term, partition)
 }
 
 func callMethodName(value []byte) (string, bool) {
@@ -18259,6 +18307,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if value, found := heapMemberValue(term, partition); found {
 		return value, nil
 	}
+	if value, found := assertionNarrowedValue(term, cutoff, partition); found {
+		return value, nil
+	}
 	if value, found := typedPathValue(term, partition); found {
 		return value, nil
 	}
@@ -18290,6 +18341,37 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	return append([]byte(nil), value...), nil
 }
 
+// assertionNarrowedValue reads a completed assert postcondition. Its operation
+// coordinate is compared with ordinary value publications, so the proof lasts
+// only until a later write to the same path and only through the caller's
+// explicit read boundary. Partition.Values keeps a guarded postcondition
+// private to the guard partition that established it.
+func assertionNarrowedValue(term []byte, before string, partition equation.Partition) ([]byte, bool) {
+	assertionPrefix := "assertion-value/" + string(term) + "/"
+	valuePrefix := "value/" + string(term) + "/"
+	assertion, assertionPoint := []byte(nil), ""
+	latestValuePoint := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, assertionPrefix) {
+			point := strings.TrimPrefix(fact.Key, assertionPrefix)
+			if point != "" && (before == "" || point <= before) && point > assertionPoint {
+				assertion, assertionPoint = fact.Value, point
+			}
+			continue
+		}
+		if strings.HasPrefix(fact.Key, valuePrefix) {
+			point := strings.TrimPrefix(fact.Key, valuePrefix)
+			if point != "" && (before == "" || point <= before) && point > latestValuePoint {
+				latestValuePoint = point
+			}
+		}
+	}
+	if assertion == nil || latestValuePoint > assertionPoint {
+		return nil, false
+	}
+	return append([]byte(nil), assertion...), true
+}
+
 // resolveCurrentValue is for non-assignment families whose own contract owns
 // their read timing. Environment-write deliberately does not use it: every
 // assignment read carries an explicit pre-write boundary instead.
@@ -18313,6 +18395,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		return value, nil
 	}
 	if value, found := heapMemberValue(term, partition); found {
+		return value, nil
+	}
+	if value, found := assertionNarrowedValue(term, "", partition); found {
 		return value, nil
 	}
 	prefix := "value/" + string(term) + "/"

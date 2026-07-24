@@ -2538,6 +2538,16 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 			return nil, err
 		}
 		operands = append(operands, equation.Operand{Role: "check", Term: check})
+		// A direct global assert is a runtime-validating operation. Keep its
+		// exact checked path beside the application so the kernel can publish
+		// the postcondition without reparsing the diagnostic check encoding.
+		checked := body.Check(instruction.Check)
+		if checked.Kind == wir.CheckTruthy || checked.Kind == wir.CheckNotNil {
+			if checked.Path.IsEmpty() || checked.Path.Key() == "" {
+				return nil, fmt.Errorf("assertion check has no path")
+			}
+			operands = append(operands, equation.Operand{Role: "asserted-path", Term: equation.ClosedTerm([]byte("path/" + checked.Path.Key()))})
+		}
 	}
 	operands = append(operands,
 		equation.Operand{Role: "context", Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
