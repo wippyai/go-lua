@@ -1,3 +1,6 @@
+// Shared test helpers for the fixture harness. This file intentionally
+// contains no tests: corpusRepositoryRoot locates the repository root for
+// TestFullOracle's fixture discovery.
 package engine_test
 
 import (
