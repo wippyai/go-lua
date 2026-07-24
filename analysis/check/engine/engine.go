@@ -16000,6 +16000,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 		value := []byte("scalar/top")
 		localCallableResult := false
+		projectedLocalResult := false
 		importedRelation := false
 		receiverResult := false
 		receiverResultTerm := receiver
@@ -16018,6 +16019,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			for _, fact := range partition.Values() {
 				if fact.Key == projectedKey {
 					value = append([]byte(nil), fact.Value...)
+					projectedLocalResult = true
 					break
 				}
 			}
@@ -16191,7 +16193,10 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if optionalProvider == "" && hasMethodProvider {
 				optionalProvider = methodProvider
 			}
-			if providerAnyResult(optionalProvider, resultIndex, len(resultTerms)) {
+			// A completed local child has already published this exact result slot.
+			// A same-named stdlib provider is only a fallback for unresolved calls;
+			// its any boundary cannot taint the local publication.
+			if !projectedLocalResult && providerAnyResult(optionalProvider, resultIndex, len(resultTerms)) {
 				values = append(values, equation.Fact{
 					Key:   "provider-any-result/" + string(result) + "/" + operation.Target.Name,
 					Value: []byte("unvalidated"),

@@ -1506,6 +1506,30 @@ local value = first({"ready"})
 	}
 }
 
+func TestCheckLocalResultDoesNotInheritSameNamedProviderAnyBoundary(t *testing.T) {
+	result, err := engine.Check(`
+type Type<T> = { decode: (any) -> T }
+type Payload = { id: string }
+local PayloadType: Type<Payload> = {
+  decode = function(raw: any): Payload return {id = tostring(raw)} end,
+}
+local json = {}
+function json.decode<T>(data: string, witness: Type<T>): T
+  return witness.decode(data)
+end
+local payload = json.decode("{}", PayloadType)
+local accepted: Payload = payload
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Span.StartLine == 10 && diagnostic.Code == "type.assignment" {
+			t.Fatalf("local typed result inherited provider any boundary: %#v", diagnostic)
+		}
+	}
+}
+
 func TestCheckWithImportsRetainsChainedGenericArrayResult(t *testing.T) {
 	item := typ.NewTypeParam("T", nil)
 	u := typ.NewTypeParam("U", nil)
