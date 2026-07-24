@@ -104,9 +104,11 @@ end`)
 		case 4:
 			proven = true
 		case 7:
-			unproven = strings.Contains(diagnostic.Message, "number?")
+			unproven = diagnostic.Message == "cannot assign unproven because it may be nil" &&
+				len(diagnostic.Evidence) == 3 && strings.Contains(diagnostic.Evidence[0].Message, "unproven can be number or nil")
 		case 11:
-			invalidated = strings.Contains(diagnostic.Message, "number?")
+			invalidated = diagnostic.Message == "cannot assign invalidated because it may be nil" &&
+				len(diagnostic.Evidence) == 3 && strings.Contains(diagnostic.Evidence[0].Message, "invalidated can be number or nil")
 		}
 	}
 	if proven || !unproven || !invalidated {
