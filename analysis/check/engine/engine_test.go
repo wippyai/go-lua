@@ -1014,6 +1014,32 @@ local answer: number = object:answer()`
 	}
 }
 
+func TestCheckWithImportsComposesCurrentTypedMethodAndOptionalResultSummaries(t *testing.T) {
+	source := `local provider = require("provider")
+local store = provider.new()
+local missing: { id: string } = store:lookup("missing")
+local source: string = provider.meta().tags["source"]`
+	item := typetable.NewRecord().Field("id", typ.String).Build()
+	meta := typetable.NewRecord().Field("tags", typ.MaterializeOptional(typ.NewMap(typ.String, typ.String))).Build()
+	store := typetable.NewRecord().Field("lookup", typ.Func().Returns(typ.MaterializeOptional(item)).Build()).Build()
+	provider := typetable.NewRecord().
+		Field("new", typ.Func().Returns(store).Build()).
+		Field("meta", typ.Func().Returns(typ.MaterializeOptional(meta)).Build()).
+		Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	var missing, tag bool
+	for _, diagnostic := range result.PublishedDiagnostics {
+		missing = missing || diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 3 && strings.Contains(diagnostic.Message, "store:lookup(...)") && strings.Contains(diagnostic.Message, "may be nil")
+		tag = tag || diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 4 && strings.Contains(diagnostic.Message, "provider.meta(...).tags[\"source\"]") && strings.Contains(diagnostic.Message, "may be nil")
+	}
+	if !missing || !tag {
+		t.Fatalf("current method/result summaries lost optional assignment diagnostics: %#v", result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckWithImportsProjectsPublishedInterfaceMethodResult(t *testing.T) {
 	source := `local provider = require("provider")
 local object = provider.new()

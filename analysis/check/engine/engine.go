@@ -90,6 +90,7 @@ const (
 	heapIndexUpperPrefix       = "heap/index-upper/"
 	indexReadDisplayPrefix     = "index-read-display/"
 	indexReadScalarPrefix      = "index-read-scalar/"
+	typedOptionalReadPrefix    = "typed-optional-read/"
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -721,7 +722,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		value, available := claimDiagnosticValue(operands["value"], operation, closure)
 		resultDisplay, callResultOperation, hasResultDisplay := callResultDisplay(artifact, operands["value"])
-		hasResultDisplay = hasResultDisplay && (hasImportedRelationResult(closure.Values, operands["value"]) || isUnvalidatedAnyValue(value))
+		hasResultDisplay = hasResultDisplay && (hasImportedRelationResult(closure.Values, operands["value"]) || hasCurrentSummaryFact(methodReturnSummaryPrefix, operands["value"], closure.Values) || isUnvalidatedAnyValue(value))
 		if hasResultDisplay {
 			sourceDisplay = resultDisplay
 			if span := callSpans[callResultOperation+"/call"]; span.Valid() {
@@ -6947,11 +6948,14 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// slot nilability, and providerReturnTypeValue rejects open, generic, and
 	// any-shaped answers before they can reach this result slot.
 	if string(values[0].Value) == "scalar/top" {
-		if projected, display, scalar, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
+		if projected, display, scalar, optional, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
 			values[0].Value = projected
 			values = append(values, equation.Fact{Key: indexReadDisplayPrefix + target + "/" + operation.Target.Name, Value: []byte(display)})
 			if scalar {
 				values = append(values, equation.Fact{Key: indexReadScalarPrefix + target + "/" + operation.Target.Name, Value: []byte("scalar")})
+			}
+			if optional {
+				values = append(values, equation.Fact{Key: typedOptionalReadPrefix + target + "/" + operation.Target.Name, Value: []byte("typed")})
 			}
 		}
 	}
@@ -6961,10 +6965,10 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
-func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, string, bool, bool) {
+func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, string, bool, bool, bool) {
 	containerValue, err := resolveCurrentValue(container, partition)
 	if err != nil {
-		return nil, "", false, false
+		return nil, "", false, false, false
 	}
 	containerType, ok := shapefact.DecodeTarget(containerValue)
 	if !ok && isUnknownScalar(containerValue) {
@@ -6993,19 +6997,25 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	// still derives only the selected member, so an exact selected member stays
 	// available without treating the container itself as a closed return value.
 	if !ok || containerType == nil {
-		return nil, "", false, false
+		return nil, "", false, false, false
 	}
 	keyValue, err := resolveCurrentValue(key, partition)
 	if err != nil {
-		return nil, "", false, false
+		return nil, "", false, false, false
 	}
 	keyType, ok := expressionValueType(keyValue)
 	if !ok || keyType == nil {
-		return nil, "", false, false
+		return nil, "", false, false, false
 	}
 	result, ok := access.RuntimeIndex(containerType, keyType)
+	if !ok && optionalConcreteWitnessType(containerType) {
+		result, ok = access.RuntimeIndex(proof.ProjectionWithoutNil(containerType), keyType)
+		if ok {
+			result = typ.MaterializeOptional(result)
+		}
+	}
 	if !ok {
-		return nil, "", false, false
+		return nil, "", false, false, false
 	}
 	if indexPresenceProven(container, key, partition) {
 		if present := typetable.PresentReadonlyEntryValue(result); present != nil {
@@ -7014,10 +7024,10 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	}
 	encoded, ok := finiteReturnWitnessValue(result)
 	if !ok {
-		return nil, "", false, false
+		return nil, "", false, false, false
 	}
 	_, scalar := optionalEvidenceDisplay(result)
-	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), scalar, true
+	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), scalar, optionalConcreteWitnessType(result), true
 }
 
 func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
@@ -7633,7 +7643,9 @@ func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, targ
 // ordinary path.
 func optionalAssignmentWitness(path, value, encodedTarget []byte, partition equation.Partition) bool {
 	if !derivedIndexedPath(path) && !localCallableResultAncestor(path, partition) && !methodReturnSummaryAncestor(path, partition) {
-		return false
+		if _, optionalRead := currentEpochFact(typedOptionalReadPrefix, path, partition); !optionalRead {
+			return false
+		}
 	}
 	witness, ok := shapefact.DecodeTarget(value)
 	if !ok || witness == nil || !proof.OptionalTypeHasConcreteValue(witness) {
@@ -7675,7 +7687,7 @@ func methodReturnSummaryAncestor(term []byte, partition equation.Partition) bool
 	for {
 		if encoded, current := currentEpochFact(methodReturnSummaryPrefix, term, partition); current {
 			summary, err := typ.DecodeCanonical(context.Background(), encoded)
-			if err == nil && rootOptionalRecordSummary(summary) {
+			if err == nil && rootOptionalClosedSummary(summary) {
 				return true
 			}
 		}
@@ -9817,7 +9829,8 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 		if predicate.Kind != "truthy" {
 			return equation.OutputClosure{}, false, nil
 		}
-		encoded, found := currentEpochFact(methodReturnSummaryPrefix, term, partition)
+		encoded, methodResult := currentEpochFact(methodReturnSummaryPrefix, term, partition)
+		found := methodResult
 		if !found {
 			encoded, found = currentEpochFact(summaryTypePrefix, term, partition)
 		}
@@ -9853,11 +9866,17 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 	return closure, true, nil
 }
 
-// rootOptionalRecordSummary recognizes the finite imported-result surface that
+// rootOptionalClosedSummary recognizes the finite imported-result surface that
 // can cross a root truthiness guard without source reconstruction. Scalars and
-// open values retain the ordinary branch path: this rule is limited to an
-// existing optional record publication, whose non-nil projection is a closed
-// runtime table shape.
+// open values retain the ordinary branch path; the non-nil projection must be
+// an existing closed record surface (including a finite record union).
+func rootOptionalClosedSummary(source typ.Type) bool {
+	if source == nil || !proof.OptionalTypeHasConcreteValue(source) {
+		return false
+	}
+	return closedMemberSurface(proof.ProjectionWithoutNil(source))
+}
+
 func rootOptionalRecordSummary(source typ.Type) bool {
 	if source == nil || !proof.OptionalTypeHasConcreteValue(source) {
 		return false
@@ -13036,11 +13055,7 @@ func typedMethodReturnType(receiver, method []byte, index int, partition equatio
 	if !ok {
 		return nil, false
 	}
-	value, err := resolveCurrentValue(receiver, partition)
-	if err != nil {
-		return nil, false
-	}
-	receiverType, ok := shapefact.DecodeTarget(value)
+	receiverType, ok := currentTypedReceiverType(receiver, partition)
 	if !ok {
 		return nil, false
 	}
@@ -13059,6 +13074,47 @@ func typedMethodReturnType(receiver, method []byte, index int, partition equatio
 		return nil, false
 	}
 	return function.Returns[index], true
+}
+
+// currentTypedReceiverType reads only the value witness or canonical summary
+// published at the receiver's current epoch. A method result may itself be an
+// imported typed record, whose runtime value intentionally remains Top while
+// its sealed summary is the sole authority for the next method lookup.
+func currentTypedReceiverType(receiver []byte, partition equation.Partition) (typ.Type, bool) {
+	if value, err := resolveCurrentValue(receiver, partition); err == nil {
+		if receiverType, ok := shapefact.DecodeTarget(value); ok {
+			return receiverType, true
+		}
+	}
+	encoded, found := currentEpochFact(summaryTypePrefix, receiver, partition)
+	if !found {
+		return nil, false
+	}
+	receiverType, err := typ.DecodeCanonical(context.Background(), encoded)
+	return receiverType, err == nil && methodSummaryComposable(receiverType, make(map[typ.Type]bool))
+}
+
+// methodSummaryComposable admits current summaries that can be consumed by
+// static member and map-read composers. Sequences stay at their established
+// iterator boundary: projecting an imported method summary through an array
+// would otherwise create a second element authority alongside the iterator's
+// own guarded publication.
+func methodSummaryComposable(value typ.Type, seen map[typ.Type]bool) bool {
+	if value == nil {
+		return false
+	}
+	value = unwrap.Alias(subst.ExpandInstantiated(value))
+	if value == nil || seen[value] {
+		return value != nil
+	}
+	seen[value] = true
+	switch value.Kind() {
+	case kind.Any, kind.Unknown, kind.Never, kind.TypeParam, kind.Generic, kind.Ref, kind.Array, kind.Tuple:
+		return false
+	}
+	return !typ.WalkChildren(value, func(child typ.Type) bool {
+		return !methodSummaryComposable(child, seen)
+	})
 }
 
 // typedMethodCallableSignature exposes a callable contract only from the
@@ -14783,12 +14839,19 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	field, found := variant.FieldAtPath(source, suffix)
-	// The exact local-call result marker identifies a result that entered this
-	// path through the ordinary sealed call-results publication. Preserve its
-	// optional receiver across a static projection; other optional sources keep
-	// the existing structural lookup and cannot gain this fact.
-	if optionalConcreteWitnessType(source) && localCallableResultAncestor(root, partition) {
-		if projected, projectedFound := typedPathSegments(source, suffix); projectedFound {
+	if !found && methodReturnSummaryAncestor(root, partition) {
+		// A closed union can omit a field on some arms. The projection helper
+		// retains that absence as nil, whereas FieldAtPath intentionally refuses
+		// partial members for branch-dispatch decisions. The method summary is
+		// the existing current fact that authorizes this consumer projection.
+		field, found = luatypeprojection.ApplySegments(source, suffix)
+	}
+	// Preserve an optional receiver across a static projection only when its
+	// exact current call-result publication carries the sealed type summary.
+	// This includes local callable results and resolved imported/method results;
+	// arbitrary annotations and stale summaries remain unavailable.
+	if optionalConcreteWitnessType(source) && currentCallResultSummary(root, partition) {
+		if projected, projectedFound := typedPathSegments(source, suffix); projectedFound && methodSummaryComposable(projected, make(map[typ.Type]bool)) {
 			field, found = projected, true
 		}
 	}
@@ -14815,6 +14878,34 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 	}
 	value, ok := shapefact.EncodeTarget(field)
 	return value, ok
+}
+
+func currentCallResultSummary(term []byte, partition equation.Partition) bool {
+	return localCallableResultAncestor(term, partition) || methodReturnSummaryAncestor(term, partition)
+}
+
+// hasCurrentSummaryFact is the rich-diagnostic counterpart of
+// currentEpochFact. Diagnostic projection receives a closed value slice rather
+// than a partition, but it must use the same current-epoch rule before
+// replacing a generated temporary with its call-site display.
+func hasCurrentSummaryFact(prefix string, term []byte, facts []equation.Fact) bool {
+	valuePrefix := "value/" + string(term) + "/"
+	latest := ""
+	for _, fact := range facts {
+		if strings.HasPrefix(fact.Key, valuePrefix) && fact.Key > latest {
+			latest = fact.Key
+		}
+	}
+	if latest == "" {
+		return false
+	}
+	operation := strings.TrimPrefix(latest, valuePrefix)
+	for _, fact := range facts {
+		if fact.Key == prefix+string(term)+"/"+operation {
+			return true
+		}
+	}
+	return false
 }
 
 // typedPathSegments walks a sealed static path one segment at a time so an

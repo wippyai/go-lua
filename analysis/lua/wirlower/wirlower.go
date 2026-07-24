@@ -632,17 +632,16 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		}
 		if declared != 0 {
 			source := b.annotationSourceOperand(values[i], dst)
-			// Keep the authored expression span even when lowering materializes it
-			// into dst. The claim still consumes the exact lowered operand; this
-			// metadata only prevents a method-result selector from being reported
-			// at the destination local.
+			// Keep the authored expression span when lowering materializes it into
+			// dst. The claim still consumes the exact lowered operand; selected
+			// call-result displays are presentation-only.
 			sourceSpan := bindingSpan(values[i])
 			methodResultSelector := bindingMethodResultSelector(values[i])
 			claimSourceDisplay := ""
-			if source == dst && methodResultSelector {
-				// A compound expression has been materialized into its destination.
-				// Preserve its existing AST display only in that case; a path source
-				// is rendered from its canonical WIR segments by the front.
+			if source == dst && bindingCallResultSelector(values[i]) {
+				// A call-result member chain has been materialized into its
+				// destination; direct paths remain rendered from canonical WIR
+				// segments, and non-call expressions retain their prior projection.
 				claimSourceDisplay = bindingDisplay(values[i])
 			}
 			b.emit(wir.Instruction{
@@ -689,6 +688,19 @@ func bindingMethodResultSelector(value binding) bool {
 		return false
 	}
 	_, ok = member.Object.(*ast.FuncCallExpr)
+	return ok
+}
+
+func bindingCallResultSelector(value binding) bool {
+	expr := value.expr
+	for {
+		attr, ok := expr.(*ast.AttrGetExpr)
+		if !ok || attr == nil {
+			break
+		}
+		expr = attr.Object
+	}
+	_, ok := expr.(*ast.FuncCallExpr)
 	return ok
 }
 
