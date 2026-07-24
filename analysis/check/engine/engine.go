@@ -7649,6 +7649,13 @@ func scalarString(value []byte) (string, error) {
 func scalarLength(value []byte) (int64, error) {
 	decoded, err := scalarString(value)
 	if err != nil {
+		// Lua's length operator applies to tables as well as strings.  The
+		// scalar domain has no table-cardinality value, so an array length is
+		// unavailable here rather than a malformed string.  Keep the branch
+		// fail-closed: callers turn this into an unselected, unproven edge.
+		if !strings.HasPrefix(string(value), "scalar/string/") {
+			return 0, errUnknownScalar
+		}
 		return 0, err
 	}
 	return int64(len(decoded)), nil

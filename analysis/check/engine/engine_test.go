@@ -513,6 +513,25 @@ end
 	}
 }
 
+func TestCheckTreatsUnknownArrayLengthAsUnprovenBranch(t *testing.T) {
+	result, err := engine.Check(`
+local function first(values: {string}, index: integer): string
+	if #values >= 1 and index >= 1 then
+		return values[index]
+	end
+	return "fallback"
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "lint.analysis.conservative/") {
+			t.Fatalf("unknown table length aborted evaluation: %#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckExactDynamicWriteThroughAliasPublishesHeapMember(t *testing.T) {
 	result, err := engine.Check(`
 type Box = { value: string? }
