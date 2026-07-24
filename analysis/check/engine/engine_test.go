@@ -49,6 +49,29 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckRejectsBroadWriteToSealedLiteralRecord(t *testing.T) {
+	result, err := engine.Check(`
+local item = { count = 1, name = "ready" }
+for key, value in pairs(item) do
+  item[key] = tostring(value)
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.assignment" || !strings.Contains(diagnostic.Message, "tostring(...)") || !strings.Contains(diagnostic.Message, `not 1 & "ready"`) {
+			continue
+		}
+		for _, evidence := range diagnostic.Evidence {
+			if strings.Contains(evidence.Message, "assignment target item[key] requires 1 & \"ready\"") {
+				return
+			}
+		}
+	}
+	t.Fatalf("broad dynamic write did not reject sealed literal contract: diagnostics=%#v facts=%#v", result.PublishedDiagnostics, result.ValueFacts)
+}
+
 func TestCheckProjectsRecursiveRecordFieldMismatch(t *testing.T) {
 	source := `
 type Tree = { root: TreeNode? }

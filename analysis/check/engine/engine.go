@@ -464,6 +464,8 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 		}
 		if span, ok := claimSpans[name]; ok {
 			out[item.Key] = span
+		} else if span, ok := effectSpans[name]; ok {
+			out[item.Key] = span
 		}
 	}
 	return out
@@ -560,6 +562,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	applies := make(map[string]equation.Equation)
 	expressions := make(map[string]equation.Equation)
 	writes := make(map[string]equation.Equation)
+	indexMutations := make(map[string]equation.Equation)
 	for _, operation := range artifact.Equations {
 		if operation.Occurrence.Kind == "claim" {
 			claims[operation.Target.Name] = operation
@@ -572,6 +575,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if operation.Occurrence.Kind == "environment-write" {
 			writes[operation.Target.Name] = operation
+		}
+		if operation.Occurrence.Kind == "index-mutation" {
+			indexMutations[operation.Target.Name] = operation
 		}
 	}
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
@@ -612,6 +618,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		operation, found := claims[name]
 		if !found {
+			if mutation, found := indexMutations[name]; found {
+				out = append(out, enrichClosedDynamicWriteDiagnostic(item, mutation, claimTargetSpans[name]))
+				continue
+			}
 			out = append(out, item)
 			continue
 		}
@@ -5682,6 +5692,9 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	if diagnostic, found := closedDynamicWriteDiagnostic(operation, operands, partition); found {
+		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnostic)
+	}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
 		key, keyErr := resolveCurrentValue(operands["key"], partition)
 		if suffix, exact := tableMemberSuffix(key, operands["suffix"]); keyErr == nil && exact {
@@ -5695,6 +5708,162 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 		}
 	}
 	return result, nil
+}
+
+// closedDynamicWriteDiagnostic rejects a broad write only when the exact
+// table shape, every member value, and the assigned value have already been
+// published. A prior dynamic mutation invalidates this narrow literal-shape
+// authority, so later writes deliberately receive no inferred contract.
+func closedDynamicWriteDiagnostic(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
+	identity, found := tableIdentityForTerm(operands["container"], partition)
+	if !found || !heapTableClosed(identity, partition) || heapIndexWasMutated(identity, operation.Target.Name, partition) {
+		return equation.Fact{}, false
+	}
+	container, containerErr := resolveCurrentValue(operands["container"], partition)
+	table, sealed := shapefact.DecodeTable(container)
+	if containerErr != nil || !sealed || !table.Closed || len(table.Members) == 0 {
+		return equation.Fact{}, false
+	}
+	key, keyErr := resolveCurrentValue(operands["key"], partition)
+	if keyErr != nil || dynamicKeyIsExact(key) {
+		return equation.Fact{}, false
+	}
+	value, valueErr := resolveCurrentValue(operands["value"], partition)
+	if valueErr != nil || isUnknownScalar(value) {
+		return equation.Fact{}, false
+	}
+	mismatch := false
+	contracts := make([]string, 0, len(table.Members))
+	for _, member := range table.Members {
+		if !member.Present {
+			return equation.Fact{}, false
+		}
+		memberValue, current := heapMemberCurrent(heapMemberPrefix, identity, member.Suffix, partition)
+		if !current {
+			return equation.Fact{}, false
+		}
+		contract, exact := literalValueContract(memberValue)
+		if !exact {
+			return equation.Fact{}, false
+		}
+		contracts = append(contracts, contract)
+		if !literalValueSatisfies(value, memberValue) {
+			mismatch = true
+		}
+	}
+	if !mismatch {
+		return equation.Fact{}, false
+	}
+	contracts = uniqueOrderedStrings(contracts)
+	source := "value"
+	for _, operand := range operation.Operands {
+		if operand.Role == "source-display" {
+			source = string(operand.Value)
+		}
+	}
+	return equation.Fact{
+		Key:   "type.assignment/" + operation.Target.Name,
+		Value: []byte("cannot assign " + source + " because it is " + assignmentValueType(value) + ", not " + strings.Join(contracts, " & ")),
+	}, true
+}
+
+func uniqueOrderedStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if item != "" && !seen[item] {
+			seen[item] = true
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func heapIndexWasMutated(identity []byte, before string, partition equation.Partition) bool {
+	prefix := heapIndexRevokePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	beforeIndex, valid := operationIndex(before)
+	if !valid {
+		return true
+	}
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != "revoked" {
+			continue
+		}
+		if mutationIndex, valid := operationIndex(factOperation(fact.Key)); valid && mutationIndex+1 < beforeIndex {
+			return true
+		}
+	}
+	return false
+}
+
+func operationIndex(operation string) (int, bool) {
+	value, found := strings.CutPrefix(operation, "op-")
+	if !found || value == "" {
+		return 0, false
+	}
+	index, err := strconv.Atoi(value)
+	return index, err == nil
+}
+
+func dynamicKeyIsExact(value []byte) bool {
+	return strings.HasPrefix(string(value), "scalar/string/") || strings.HasPrefix(string(value), "scalar/number/")
+}
+
+func literalValueContract(value []byte) (string, bool) {
+	switch {
+	case strings.HasPrefix(string(value), "scalar/string/"):
+		raw := strings.TrimPrefix(string(value), "scalar/string/")
+		text, err := strconv.Unquote(raw)
+		if err != nil {
+			return "", false
+		}
+		return strconv.Quote(text), true
+	case strings.HasPrefix(string(value), "scalar/number/"):
+		return strings.TrimPrefix(string(value), "scalar/number/"), true
+	case string(value) == "scalar/bool/true":
+		return "true", true
+	case string(value) == "scalar/bool/false":
+		return "false", true
+	case string(value) == "scalar/nil":
+		return "nil", true
+	default:
+		return "", false
+	}
+}
+
+func literalValueSatisfies(value, contract []byte) bool {
+	if string(value) == string(contract) {
+		return true
+	}
+	// A non-literal scalar cannot establish equality with a literal member.
+	return false
+}
+
+func enrichClosedDynamicWriteDiagnostic(item PublishedDiagnostic, operation equation.Equation, targetSpan wir.Span) PublishedDiagnostic {
+	source, target := "value", "value"
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "source-display":
+			source = string(operand.Term.Encoding)
+		case "display":
+			target = string(operand.Term.Encoding)
+		}
+	}
+	valueType, contract, found := strings.Cut(strings.TrimPrefix(item.Message, "cannot assign "+source+" because it is "), ", not ")
+	if !found || valueType == "" || contract == "" {
+		return item
+	}
+	if !targetSpan.Valid() {
+		targetSpan = item.Span
+	}
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", source, valueType)},
+		{Span: targetSpan, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("assignment target %s requires %s", target, contract)},
+		{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s is %s", source, contract)},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueType}, {Span: targetSpan, Message: "assignment target " + target}}
+	item.Help = "Use a value compatible with the expected type, or change the target type if `" + source + "` is valid."
+	return item
 }
 
 func genericForKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {

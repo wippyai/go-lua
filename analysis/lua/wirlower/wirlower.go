@@ -741,13 +741,15 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 			v = v.withContextType(context)
 		}
 		b.emit(wir.Instruction{
-			Op:            wir.OpDynamicIndexWrite,
-			Dst:           b.pathOperand(target.Table),
-			A:             b.lowerExpr(target.Key),
-			B:             b.bindingOperand(v),
-			DynamicSuffix: b.body.AppendSegments(target.Suffix),
-			TargetSpan:    tableEntryValueSpan(t),
-			ContainerSpan: assignmentTargetContainerSpan(t),
+			Op:                   wir.OpDynamicIndexWrite,
+			Dst:                  b.pathOperand(target.Table),
+			A:                    b.lowerExpr(target.Key),
+			B:                    b.bindingOperand(v),
+			DynamicSuffix:        b.body.AppendSegments(target.Suffix),
+			DynamicTargetDisplay: dynamicWriteTargetDisplay(t),
+			DynamicValueDisplay:  bindingDisplay(v),
+			TargetSpan:           bindingSpan(v),
+			ContainerSpan:        assignmentTargetContainerSpan(t),
 		})
 		if v.hasCallResult {
 			b.recordCallResultTargetPath(v, path.Path{})
@@ -756,6 +758,65 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 		dst := b.newTemp()
 		b.bindInto(dst, v)
 	}
+}
+
+// dynamicWriteTargetDisplay and dynamicWriteValueDisplay preserve only a
+// compact source rendering for diagnostics. They do not participate in
+// lowering authority or fact derivation.
+func dynamicWriteTargetDisplay(target *ast.AttrGetExpr) string {
+	if target == nil {
+		return "value"
+	}
+	return dynamicWriteValueDisplay(target.Object) + "[" + dynamicWriteValueDisplay(target.Key) + "]"
+}
+
+func dynamicWriteValueDisplay(expr ast.Expr) string {
+	switch value := expr.(type) {
+	case nil:
+		return "value"
+	case *ast.IdentExpr:
+		return value.Value
+	case *ast.StringExpr:
+		return strconv.Quote(value.Value)
+	case *ast.NumberExpr:
+		return value.Value
+	case *ast.TrueExpr:
+		return "true"
+	case *ast.FalseExpr:
+		return "false"
+	case *ast.NilExpr:
+		return "nil"
+	case *ast.AttrGetExpr:
+		if value.KeySyntax == ast.AttrKeyDot {
+			return dynamicWriteValueDisplay(value.Object) + "." + dynamicWriteValueDisplay(value.Key)
+		}
+		return dynamicWriteValueDisplay(value.Object) + "[" + dynamicWriteValueDisplay(value.Key) + "]"
+	case *ast.FuncCallExpr:
+		if value.Method != "" {
+			return dynamicWriteValueDisplay(value.Receiver) + ":" + value.Method + "(...)"
+		}
+		return dynamicWriteValueDisplay(value.Func) + "(...)"
+	case *ast.CastExpr:
+		return dynamicWriteValueDisplay(value.Expr)
+	case *ast.NonNilAssertExpr:
+		return dynamicWriteValueDisplay(value.Expr)
+	default:
+		return "value"
+	}
+}
+
+func bindingDisplay(value binding) string {
+	if value.display != "" {
+		return value.display
+	}
+	return dynamicWriteValueDisplay(value.expr)
+}
+
+func bindingSpan(value binding) wir.Span {
+	if value.span.Valid() {
+		return value.span
+	}
+	return tableEntryValueSpan(value.expr)
 }
 
 // ---- value binding plan -------------------------------------------------
@@ -787,6 +848,8 @@ type binding struct {
 	claimType wir.TypeRef
 
 	contextType wir.TypeRef
+	display     string
+	span        wir.Span
 }
 
 func (v binding) withTarget(kind wir.CallResultTargetKind, index int) binding {
@@ -852,7 +915,7 @@ func (b *builder) planValues(n int, exprs []ast.Expr) []binding {
 // tempBinding returns the operand for the k-th result of a pre-lowered call,
 // falling back to the head when the call bound fewer explicit temps than k.
 func (b *builder) tempBinding(cr *callResult, k int, expr ast.Expr) binding {
-	out := binding{kind: bindOperand, callPoint: cr.point, resultIndex: k, hasCallResult: true}
+	out := binding{kind: bindOperand, callPoint: cr.point, resultIndex: k, hasCallResult: true, display: dynamicWriteValueDisplay(expr), span: wirSpanFromSource(ast.SpanOf(expr))}
 	if k < len(cr.temps) {
 		out.op = cr.temps[k]
 	} else {

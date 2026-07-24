@@ -185,7 +185,8 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		return Compilation{}, err
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
-	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact), expressionSpans(body, artifact))
+	effects := effectSpans(body, artifact)
+	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, mergeSpans(claimSpans, effectValueSpans(body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(body, artifact)), callSpans(body, artifact), branchSpans(body, artifact), effects, expressionSpans(body, artifact))
 	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 	if err != nil {
 		return Compilation{}, err
@@ -400,7 +401,8 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
-		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact), expressionSpans(proto.Body, artifact))
+		effects := effectSpans(proto.Body, artifact)
+		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, mergeSpans(claimSpans, effectValueSpans(proto.Body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(proto.Body, artifact)), callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effects, expressionSpans(proto.Body, artifact))
 		cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
@@ -513,6 +515,77 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 				}
 			}
 			callIndex++
+		}
+	}
+	return out
+}
+
+// effectTargetSpans retain the assignment-target side of a dynamic mutation.
+// ClaimTargetSpans is the existing secondary-label channel, so merging these
+// source-only anchors keeps effect diagnostics equally precise without adding
+// a parallel diagnostic publication path.
+func effectTargetSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	dynamic := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		if instruction := body.Instr(index); instruction.Op == wir.OpDynamicIndexWrite {
+			dynamic = append(dynamic, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(dynamic))
+	index := 0
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "index-mutation" {
+			continue
+		}
+		if index < len(dynamic) && dynamic[index].ContainerSpan.Valid() {
+			out[operation.Target.Name] = dynamic[index].ContainerSpan
+		}
+		index++
+	}
+	return out
+}
+
+// effectValueSpans supply the primary source anchor for type assignments that
+// are owned by an index-mutation operation. Other effect diagnostics retain
+// their container anchor through EffectSpans.
+func effectValueSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	dynamic := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		if instruction := body.Instr(index); instruction.Op == wir.OpDynamicIndexWrite {
+			dynamic = append(dynamic, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(dynamic))
+	index := 0
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "index-mutation" {
+			continue
+		}
+		if index < len(dynamic) && dynamic[index].TargetSpan.Valid() {
+			out[operation.Target.Name] = dynamic[index].TargetSpan
+		}
+		index++
+	}
+	return out
+}
+
+func mergeSpans(first, second map[string]wir.Span) map[string]wir.Span {
+	if len(first) == 0 && len(second) == 0 {
+		return nil
+	}
+	out := make(map[string]wir.Span, len(first)+len(second))
+	for key, span := range first {
+		out[key] = span
+	}
+	for key, span := range second {
+		if _, exists := out[key]; !exists {
+			out[key] = span
 		}
 	}
 	return out
@@ -925,6 +998,12 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 					{Role: "key", Term: key},
 					{Role: "suffix", Term: suffixTerm(body, instruction.DynamicSuffix)},
 					{Role: "value", Term: value},
+				}
+				if instruction.DynamicTargetDisplay != "" {
+					draft.Operands = append(draft.Operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(instruction.DynamicTargetDisplay))})
+				}
+				if instruction.DynamicValueDisplay != "" {
+					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(instruction.DynamicValueDisplay))})
 				}
 				if subject, display, ok := frozenTableSubject(body, instruction.Dst, true); ok {
 					draft.Operands = append(draft.Operands,

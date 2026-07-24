@@ -240,6 +240,12 @@ type Instruction struct {
 	// for OpDynamicIndexWrite targets such as t[k].field.
 	DynamicSuffix SegmentRange
 
+	// DynamicTargetDisplay and DynamicValueDisplay retain the authored surface
+	// for a dynamic write diagnostic. They are source metadata only: the
+	// equation still derives validity exclusively from the closed heap facts.
+	DynamicTargetDisplay string
+	DynamicValueDisplay  string
+
 	// ImpliedChecks is the normalized leaf-check window for OpBranch compound
 	// conditions. Check carries the direct condition when one exists; this range
 	// carries edge-specific leaves proven by and/or/not structure.
