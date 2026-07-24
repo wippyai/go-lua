@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
@@ -3891,10 +3892,62 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			}
 		}
 	}
+	// A sealed type witness is a separate, already-published authority from a
+	// heap identity. It can describe a cast or provider result whose members
+	// have not been materialized locally. RuntimeIndex preserves Lua's missing
+	// slot nilability, and providerReturnTypeValue rejects open, generic, and
+	// any-shaped answers before they can reach this result slot.
+	if string(values[0].Value) == "scalar/top" {
+		if projected, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
+			values[0].Value = projected
+		}
+	}
 	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
 		values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "dynamic-index"))
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, bool) {
+	containerValue, err := resolveCurrentValue(container, partition)
+	if err != nil {
+		return nil, false
+	}
+	containerType, ok := shapefact.DecodeTarget(containerValue)
+	if !ok && strings.HasPrefix(string(containerValue), "scalar/claim/claim-kind/1/") {
+		containerType, ok = castTargetWitness(container, partition)
+	}
+	if !ok || containerType == nil || !finiteReturnWitness(containerType, make(map[typ.Type]bool)) {
+		return nil, false
+	}
+	keyValue, err := resolveCurrentValue(key, partition)
+	if err != nil {
+		return nil, false
+	}
+	keyType, ok := expressionValueType(keyValue)
+	if !ok || keyType == nil {
+		return nil, false
+	}
+	result, ok := access.RuntimeIndex(containerType, keyType)
+	if !ok {
+		return nil, false
+	}
+	return finiteReturnWitnessValue(result)
+}
+
+func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
+	prefix := "cast-target/" + string(term) + "/"
+	var witness []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (witness == nil || fact.Key > latest) {
+			witness, latest = fact.Value, fact.Key
+		}
+	}
+	if witness == nil {
+		return nil, false
+	}
+	return shapefact.DecodeTarget(witness)
 }
 
 // claimKernel makes user claims explicit checked refinements. An unproven
@@ -3951,6 +4004,17 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
+	if kind == "claim-kind/1" {
+		for _, operand := range operation.Operands {
+			if operand.Role != "shape-target" {
+				continue
+			}
+			if witness, ok := shapefact.DecodeTarget(operand.Value); ok && finiteReturnWitness(witness, make(map[typ.Type]bool)) {
+				closure.Values = append(closure.Values, equation.Fact{Key: "cast-target/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), operand.Value...)})
+			}
+			break
+		}
+	}
 	if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 		closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
 	}
@@ -7183,19 +7247,10 @@ func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {
 		return nil, false
 	}
 	function, ok := unwrap.Alias(decoded).(*typ.Function)
-	if !ok || function == nil || len(function.TypeParams) != 0 || len(function.Returns) != 1 || index != 0 {
+	if !ok || function == nil || len(function.TypeParams) != 0 || index < 0 || index >= len(function.Returns) {
 		return nil, false
 	}
-	result := unwrap.Alias(subst.ExpandInstantiated(function.Returns[0]))
-	if result == nil {
-		return nil, false
-	}
-	switch result.Kind() {
-	case kind.Nil, kind.Boolean, kind.String, kind.Number, kind.Integer, kind.Function:
-	default:
-		return nil, false
-	}
-	return providerReturnTypeValue(function.Returns[0])
+	return finiteReturnWitnessValue(function.Returns[index])
 }
 
 // stdlibMethodResultValue crosses only a sealed receiver fact into the
@@ -7584,6 +7639,53 @@ func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
 		return nil, false
 	}
 	return shapefact.EncodeTarget(result)
+}
+
+func finiteReturnWitnessValue(result typ.Type) ([]byte, bool) {
+	if result == nil || !finiteReturnWitness(result, make(map[typ.Type]bool)) {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(result)
+}
+
+// finiteReturnWitness admits only a declared, finite slot that can retain
+// nilability without standing in for an unbounded union, generic parameter, or
+// explicit any result. A union is accepted solely when it is an optional
+// witness: every member is concrete and one member is nil.
+func finiteReturnWitness(result typ.Type, seen map[typ.Type]bool) bool {
+	if typ.ContainsAny(result) || typ.ContainsTypeParam(result) {
+		return false
+	}
+	result = unwrap.Alias(subst.ExpandInstantiated(result))
+	if result == nil || seen[result] {
+		return result != nil
+	}
+	seen[result] = true
+	switch value := result.(type) {
+	case *typ.Optional:
+		return value != nil && finiteReturnWitness(value.Inner, seen)
+	case *typ.Union:
+		if value == nil || len(value.Members) == 0 {
+			return false
+		}
+		hasNil := false
+		for _, member := range value.Members {
+			if member == nil {
+				return false
+			}
+			hasNil = hasNil || unwrap.Alias(member).Kind() == kind.Nil
+			if !finiteReturnWitness(member, seen) {
+				return false
+			}
+		}
+		return hasNil
+	}
+	switch result.Kind() {
+	case kind.Any, kind.Unknown, kind.Never, kind.TypeParam, kind.Union:
+		return false
+	default:
+		return true
+	}
 }
 
 func hasValue(partition equation.Partition, key string) bool {

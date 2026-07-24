@@ -96,6 +96,22 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 }
 
+func TestCheckCarriesCastIndexOptionalWitnessToAssignment(t *testing.T) {
+	result, err := engine.Check(`
+local value: any = {}
+local item: number = (value :: {number})[1]
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "item") && strings.Contains(diagnostic.Message, "number?") && strings.Contains(diagnostic.Message, "not number") {
+			return
+		}
+	}
+	t.Fatalf("cast index optional witness did not reach assignment: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckPublishesUncalledExplicitAnyBoundaryViolation(t *testing.T) {
 	result, err := engine.Check(`
 local function validate(data: any)
