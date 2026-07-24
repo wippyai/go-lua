@@ -626,6 +626,9 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		}
 		b.bindInto(dst, values[i].withTarget(wir.CallResultTargetLocalAssignment, i))
 		b.markAssignmentTargetSpan(b.curPoint, 0, dst, localNameSpan(s, i))
+		if i < len(s.Exprs) {
+			b.markAssignmentSourceSpan(b.curPoint, 0, dst, wirSpanFromSource(ast.SpanOf(s.Exprs[i])))
+		}
 		if declared != 0 {
 			source := b.annotationSourceOperand(values[i], dst)
 			var sourceSpan wir.Span
@@ -1032,6 +1035,19 @@ func (b *builder) markAssignmentTargetSpan(point cfg.Point, start int, dst wir.O
 	for i := start; i < len(insts); i++ {
 		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() && !insts[i].TargetSpan.Valid() {
 			insts[i].TargetSpan = span
+		}
+	}
+	b.pointInstrs[point] = insts
+}
+
+func (b *builder) markAssignmentSourceSpan(point cfg.Point, start int, dst wir.Operand, span wir.Span) {
+	if !span.Valid() || dst.Kind == wir.OperandNone {
+		return
+	}
+	insts := b.pointInstrs[point]
+	for i := start; i < len(insts); i++ {
+		if rootAssignmentSourceInstruction(insts[i]) && insts[i].Dst == dst && insts[i].WritesAssignmentPoint() && !insts[i].ExprSpan.Valid() {
+			insts[i].ExprSpan = span
 		}
 	}
 	b.pointInstrs[point] = insts

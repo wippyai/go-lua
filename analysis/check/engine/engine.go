@@ -288,6 +288,11 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 
 func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
 	artifact := compilation.Artifact
+	// Static-member-read facts are produced while a child closure is evaluated
+	// so object materialization can selectively publish its declared-boundary
+	// result. A root write has no allocation boundary to authorize that extra
+	// publication; keep the pre-existing root surface unchanged.
+	closure.Diagnostics = rootPublishedDiagnostics(artifact, closure.Diagnostics)
 	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, compilation.ReturnSpans, closure.Diagnostics)
 	for key, span := range lexical.diagnosticSpans {
 		if diagnosticSpans == nil {
@@ -342,6 +347,33 @@ func cloneFacts(in []equation.Fact) []equation.Fact {
 	return out
 }
 
+func rootPublishedDiagnostics(artifact equation.Artifact, diagnostics []equation.Fact) []equation.Fact {
+	staticReads := make(map[string]bool)
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "source-display" {
+				staticReads[operation.Target.Name] = true
+				break
+			}
+		}
+	}
+	if len(staticReads) == 0 {
+		return diagnostics
+	}
+	filtered := make([]equation.Fact, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		name, missing := strings.CutPrefix(diagnostic.Key, "type.member.missing/")
+		if missing && staticReads[name] {
+			continue
+		}
+		filtered = append(filtered, diagnostic)
+	}
+	return filtered
+}
+
 func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expressionSpans, returnSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
 	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0 && len(expressionSpans) == 0 && len(returnSpans) == 0) || len(diagnostics) == 0 {
 		return nil
@@ -356,6 +388,10 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 			name = strings.TrimPrefix(item.Key, "type.assignment/")
 		case strings.HasPrefix(item.Key, "type.member.missing/"):
 			name = strings.TrimPrefix(item.Key, "type.member.missing/")
+			if span, ok := effectSpans[name]; ok {
+				out[item.Key] = span
+				continue
+			}
 		case strings.HasPrefix(item.Key, "advice.redundant_claim/"):
 			name = strings.TrimPrefix(item.Key, "advice.redundant_claim/")
 			if span, ok := callSpans[name+"/call"]; ok {
@@ -444,6 +480,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	claims := make(map[string]equation.Equation)
 	applies := make(map[string]equation.Equation)
 	expressions := make(map[string]equation.Equation)
+	writes := make(map[string]equation.Equation)
 	for _, operation := range artifact.Equations {
 		if operation.Occurrence.Kind == "claim" {
 			claims[operation.Target.Name] = operation
@@ -453,6 +490,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if operation.Occurrence.Kind == "expression" {
 			expressions[operation.Target.Name] = operation
+		}
+		if operation.Occurrence.Kind == "environment-write" {
+			writes[operation.Target.Name] = operation
 		}
 	}
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
@@ -481,6 +521,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			if missing {
 				if operation, found := claims[name]; found {
 					out = append(out, enrichMissingMemberDiagnostic(item, operation, claimTargetSpans[name], closure))
+					continue
+				}
+				if operation, found := writes[name]; found {
+					out = append(out, enrichMissingStaticPathDiagnostic(item, operation))
 					continue
 				}
 			}
@@ -570,6 +614,30 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		out = append(out, item)
 	}
 	return out
+}
+
+func enrichMissingStaticPathDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	operands, err := artifactOperandsByRole(operation.Operands, "source-display")
+	if err != nil {
+		return item
+	}
+	source := string(operands["source-display"])
+	member := source[strings.LastIndex(source, ".")+1:]
+	if bracket := strings.LastIndex(member, "["); bracket >= 0 {
+		member = strings.Trim(strings.TrimSuffix(member[bracket+1:], "]"), "\"")
+	}
+	if source == "" || member == "" {
+		return item
+	}
+	separator := strings.Index(item.Message, " has no member ")
+	if separator < 0 {
+		return item
+	}
+	receiver := item.Message[:separator]
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiver)}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member read"}}
+	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", member, member)
+	return item
 }
 
 func projectLifecycleDiagnostic(item PublishedDiagnostic, fact equation.Fact, evidence map[string][]DiagnosticEvidence) (PublishedDiagnostic, bool) {
@@ -2636,6 +2704,11 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	if len(child.Nested) != 0 || !l.requiresBody[handle.Prototype] {
 		return
 	}
+	// A normal call does not create the allocation-time declaration boundary
+	// used by static-member-read admission. Keep those write-owned facts local;
+	// objectMaterializationKernel publishes them only after its closed formal
+	// seeds have established that boundary.
+	closure.Diagnostics = rootPublishedDiagnostics(child.Artifact, closure.Diagnostics)
 	body := fmt.Sprintf("%x", child.Body)
 	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
 	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
@@ -2963,7 +3036,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		declaredBoundary = true
 	}
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || typedChannelSendBoundary) {
+	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
+	if staticMemberReadBoundary {
+		uncalledSeeds = staticSeeds
+		explicitAnyBoundary = false
+	}
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || typedChannelSendBoundary || staticMemberReadBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
@@ -2999,6 +3077,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
+			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -3014,6 +3095,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
+				continue
+			}
+			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key
@@ -3155,6 +3239,44 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func uncalledStaticMemberReadSeeds(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+		return nil, false
+	}
+	formals := make(map[string]entrySeed, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 || child.WIR.Type(parameter.Type) == nil {
+			continue
+		}
+		encoded, ok := shapefact.EncodeTarget(child.WIR.Type(parameter.Type))
+		if !ok {
+			return nil, false
+		}
+		formals[boundaryTerm(parameter.Symbol)] = entrySeed{Term: boundaryTerm(parameter.Symbol), Value: encoded}
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role != "value" {
+				continue
+			}
+			root, suffix, ok := tableAddress(operand.Term.Encoding)
+			segments, static := segment.ParseFormattedSegments(suffix)
+			if _, found := formals[string(root)]; ok && found && static && len(segments) == 1 && segments[0].Kind == segment.SegmentIndexString {
+				seeds := make([]entrySeed, 0, len(formals))
+				for _, item := range formals {
+					seeds = append(seeds, item)
+				}
+				sort.Slice(seeds, func(i, j int) bool { return seeds[i].Term < seeds[j].Term })
+				return seeds, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // closedImportEntrySeeds reuses only import values already published by the
@@ -3422,6 +3544,19 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}
+	var diagnostics []equation.Fact
+	if memberMissing(value) {
+		root, _, declaredSource := tableAddress(operands["value"])
+		_, declared := declaredTypeForTerm(root, partition)
+		if declaredSource && declared {
+			for _, operand := range operation.Operands {
+				if operand.Role == "source-display" {
+					diagnostics = append(diagnostics, equation.Fact{Key: "type.member.missing/" + operation.Target.Name, Value: []byte(memberMissingMessage(string(operand.Value), value))})
+					break
+				}
+			}
+		}
+	}
 	if boundary, ok := gradualAnyBoundaryFact(target, operands["value"], operation.Target.Name, partition.Values()); ok {
 		values = append(values, boundary)
 	}
@@ -3541,7 +3676,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return equation.TransactionResult{}, err
 	}
 	values = append(values, literalMemberClosures...)
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
 }
 
 // sealShapeValue resolves a literal's members when that literal is made. This
@@ -6696,6 +6831,20 @@ func typedPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
 	return projected, ok && projected != nil
 }
 
+func declaredTypeForTerm(term []byte, partition equation.Partition) (typ.Type, bool) {
+	var encoded []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if (strings.HasPrefix(fact.Key, "type/"+string(term)+"/") || strings.HasPrefix(fact.Key, "declared-type/"+string(term)+"/")) && fact.Key > latest {
+			encoded, latest = fact.Value, fact.Key
+		}
+	}
+	if len(encoded) == 0 {
+		return nil, false
+	}
+	return shapefact.DecodeTarget(encoded)
+}
+
 func channelPayloadSummaryFacts(root, operation string, value typ.Type) []equation.Fact {
 	var facts []equation.Fact
 	var walk func(typ.Type, []segment.Segment)
@@ -9375,6 +9524,9 @@ func memberMissingMessage(source string, value []byte) string {
 		return "member read is not available"
 	}
 	member := source[strings.LastIndex(source, ".")+1:]
+	if bracket := strings.LastIndex(member, "["); bracket >= 0 {
+		member = strings.Trim(strings.TrimSuffix(member[bracket+1:], "]"), "\"")
+	}
 	return fmt.Sprintf("%s has no member %q", typeformat.Short(receiver), member)
 }
 

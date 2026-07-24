@@ -455,7 +455,7 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 	if body == nil {
 		return nil
 	}
-	static, dynamic, calls := make([]wir.Instruction, 0), make([]wir.Instruction, 0), make([]wir.Instruction, 0)
+	static, dynamic, reads, calls := make([]wir.Instruction, 0), make([]wir.Instruction, 0), make([]wir.Instruction, 0), make([]wir.Instruction, 0)
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		switch instruction.Op {
@@ -463,12 +463,16 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 			static = append(static, instruction)
 		case wir.OpDynamicIndexWrite:
 			dynamic = append(dynamic, instruction)
+		case wir.OpAssign:
+			if instruction.A.Kind == wir.OperandPath && len(body.Path(wir.PathRef(instruction.A.Ref)).Segments) != 0 {
+				reads = append(reads, instruction)
+			}
 		case wir.OpCall:
 			calls = append(calls, instruction)
 		}
 	}
-	out := make(map[string]wir.Span, len(static)+len(dynamic)+len(calls))
-	staticIndex, dynamicIndex, callIndex := 0, 0, 0
+	out := make(map[string]wir.Span, len(static)+len(dynamic)+len(reads)+len(calls))
+	staticIndex, dynamicIndex, readIndex, callIndex := 0, 0, 0, 0
 	for _, operation := range artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "path-replacement":
@@ -487,6 +491,17 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 				}
 			}
 			dynamicIndex++
+		case "environment-write":
+			isStaticRead := false
+			for _, operand := range operation.Operands {
+				isStaticRead = isStaticRead || operand.Role == "source-display"
+			}
+			if isStaticRead && readIndex < len(reads) && reads[readIndex].ExprSpan.Valid() {
+				out[operation.Target.Name] = reads[readIndex].ExprSpan
+			}
+			if isStaticRead {
+				readIndex++
+			}
 		case "apply":
 			if callIndex < len(calls) {
 				span := calls[callIndex].CallSpan
@@ -956,6 +971,18 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				{Role: "value", Term: value},
 				{Role: "read-before", Term: readBefore},
 				{Role: "absence", Term: equation.ClosedTerm([]byte(absence))},
+			}
+			if instruction.A.Kind == wir.OperandPath {
+				source := body.Path(wir.PathRef(instruction.A.Ref))
+				if len(source.Segments) != 0 && source.String() != "" {
+					sourceDisplay := source.String()
+					last := source.Segments[len(source.Segments)-1]
+					if last.Kind == segment.SegmentIndexString {
+						suffix := "[" + last.Name + "]"
+						sourceDisplay = strings.TrimSuffix(sourceDisplay, suffix) + "[" + strconv.Quote(last.Name) + "]"
+						draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
+					}
+				}
 			}
 		case instruction.Op == wir.OpStaticMemberWrite:
 			target, display, err := memberPathTerm(body, instruction.Dst)
