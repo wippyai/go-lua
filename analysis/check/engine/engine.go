@@ -6067,6 +6067,23 @@ func rebaseChannelPayloadFacts(source []byte, target, operation string, partitio
 }
 
 func currentEpochFact(prefix string, term []byte, partition equation.Partition) ([]byte, bool) {
+	operation, ok := currentEpoch(term, partition)
+	if !ok {
+		return nil, false
+	}
+	key := prefix + string(term) + "/" + operation
+	for _, fact := range partition.Values() {
+		if fact.Key == key {
+			return append([]byte(nil), fact.Value...), true
+		}
+	}
+	return nil, false
+}
+
+// currentEpoch is the sole current-version lookup for a path.  Consumers that
+// publish guarded predicate facts must compare against this existing
+// publication rather than retaining evaluator-local mutation state.
+func currentEpoch(term []byte, partition equation.Partition) (string, bool) {
 	epochPrefix := "epoch/" + string(term) + "/"
 	latestEpoch := ""
 	for _, fact := range partition.Values() {
@@ -6075,16 +6092,9 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 		}
 	}
 	if latestEpoch == "" {
-		return nil, false
+		return "", false
 	}
-	operation := strings.TrimPrefix(latestEpoch, epochPrefix)
-	key := prefix + string(term) + "/" + operation
-	for _, fact := range partition.Values() {
-		if fact.Key == key {
-			return append([]byte(nil), fact.Value...), true
-		}
-	}
-	return nil, false
+	return strings.TrimPrefix(latestEpoch, epochPrefix), true
 }
 
 func sealedTableIdentity(operation equation.BoundEquation) []byte {
