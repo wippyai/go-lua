@@ -34,6 +34,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -589,6 +590,13 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 					if span, ok := expressionSpans[name+"/"+parts[2]]; ok {
 						out[item.Key] = span
 					}
+				}
+			}
+			continue
+		case strings.HasPrefix(item.Key, "type.operator.comparison_operand/"):
+			if name := diagnosticOperationName(item.Key); name != "" {
+				if span, ok := expressionSpans[name]; ok {
+					out[item.Key] = span
 				}
 			}
 			continue
@@ -1564,7 +1572,7 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/", "type.operator.concat_operand/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/", "type.operator.concat_operand/", "type.operator.comparison_operand/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
 			if prefix == "type.operator.concat_operand/" {
 				name, _, _ = strings.Cut(name, "/")
@@ -1897,6 +1905,8 @@ func diagnosticCode(key string) string {
 		return "type.member.missing"
 	case strings.HasPrefix(key, "type.operator.concat_operand/"):
 		return "type.operator.concat_operand"
+	case strings.HasPrefix(key, "type.operator.comparison_operand/"):
+		return "type.operator.comparison_operand"
 	case strings.HasPrefix(key, "send.isolation/"):
 		return "send.isolation"
 	case strings.HasPrefix(key, "effect.freeze.mutation/"):
@@ -2748,6 +2758,9 @@ func compilationRequiresDiagnosticPublication(compilation front.Compilation) boo
 				if operand.Role == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
 					return true
 				}
+			}
+			if declaredOrderedComparisonExpression(operation) {
+				return true
 			}
 			return false
 		case "apply":
@@ -3969,9 +3982,9 @@ func (l *lexicalEvaluator) publishesClosureReturn(body equation.BodyID, result s
 // declared union/optional relation for the child's ordinary claim and branch
 // consumers. A missing, variadic, recursive, or captured boundary stays
 // dormant.
-func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool, map[string]bool) {
+func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool, map[string]bool, map[string]bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
-		return nil, false, false, nil
+		return nil, false, false, nil, nil
 	}
 	// The declaration-only entry supports a closed discriminant proof, not an
 	// arbitrary body execution. A direct static member call is also admissible
@@ -3983,7 +3996,7 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false, false, nil
+			return nil, false, false, nil, nil
 		}
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
@@ -4007,16 +4020,16 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 		switch operation.Occurrence.Kind {
 		case "apply":
 			if !memberCalls["call/"+operation.Target.Name] {
-				return nil, false, false, nil
+				return nil, false, false, nil, nil
 			}
 			hasDeclaredMemberCall = true
 		case "external-call":
 			application, found := artifactOperand(operation.Operands, "application")
 			if !found || !memberCalls[string(application)] {
-				return nil, false, false, nil
+				return nil, false, false, nil, nil
 			}
 		case "dynamic-index-read", "channel-select":
-			return nil, false, false, nil
+			return nil, false, false, nil, nil
 		case "branch-relations":
 			hasBranch = true
 		case "claim":
@@ -4028,25 +4041,26 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 	// allocation-time boundary is therefore limited to straight-line bodies;
 	// declared missing-member reads retain their independent diagnostic path.
 	if hasDirectMethod && hasBranch {
-		return nil, false, false, nil
+		return nil, false, false, nil, nil
 	}
 	concatOperations := uncalledDeclaredFormalConcatOperations(child.Artifact.Equations, memberCalls)
-	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && len(concatOperations) == 0 {
-		return nil, false, false, nil
+	comparisonOperations := uncalledDeclaredFormalOrderedComparisonOperations(child, formals)
+	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && len(concatOperations) == 0 && len(comparisonOperations) == 0 {
+		return nil, false, false, nil, nil
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false, false, nil
+			return nil, false, false, nil, nil
 		}
 		declared := child.WIR.Type(parameter.Type)
 		value, ok := shapefact.EncodeTarget(declared)
 		if !ok || declared == nil {
-			return nil, false, false, nil
+			return nil, false, false, nil, nil
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
-	return seeds, true, hasDirectMethod, concatOperations
+	return seeds, true, hasDirectMethod, concatOperations, comparisonOperations
 }
 
 // uncalledDeclaredLocalUnionReadBoundary admits one allocation-time relay:
@@ -4810,6 +4824,49 @@ func uncalledDeclaredFormalConcatOperations(operations []equation.Equation, memb
 		}
 	}
 	return concat
+}
+
+// uncalledDeclaredFormalOrderedComparisonOperations admits only an ordered
+// comparison between one declared formal and a closed numeric literal. Both
+// facts are already published at the declaration boundary, so this adds no
+// inference for an opaque operand or a branch-selected value.
+func uncalledDeclaredFormalOrderedComparisonOperations(child front.Compilation, formals map[string]bool) map[string]bool {
+	allowed := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if !declaredOrderedComparisonExpression(operation) {
+			continue
+		}
+		left, hasLeft := artifactOperand(operation.Operands, "left")
+		right, hasRight := artifactOperand(operation.Operands, "right")
+		if !hasLeft || !hasRight {
+			continue
+		}
+		leftFormal := formals[string(left)] && uncalledDeclaredFormalValue(child, left)
+		rightFormal := formals[string(right)] && uncalledDeclaredFormalValue(child, right)
+		leftNumber := strings.HasPrefix(string(left), "scalar/number/")
+		rightNumber := strings.HasPrefix(string(right), "scalar/number/")
+		if leftFormal && rightNumber || rightFormal && leftNumber {
+			allowed[operation.Target.Name] = true
+		}
+	}
+	return allowed
+}
+
+func declaredOrderedComparisonExpression(operation equation.Equation) bool {
+	if operation.Occurrence.Kind != "expression" {
+		return false
+	}
+	kindValue, hasKind := artifactOperand(operation.Operands, "kind")
+	operatorValue, hasOperator := artifactOperand(operation.Operands, "operator")
+	if !hasKind || !hasOperator || string(kindValue) != strconv.Itoa(int(wir.OpBinOp)) {
+		return false
+	}
+	operatorID, err := strconv.Atoi(string(operatorValue))
+	if err != nil {
+		return false
+	}
+	_, ordered := orderedComparisonOperator(wir.Operator(operatorID))
+	return ordered
 }
 
 // uncalledDeclaredFormalAssignment identifies an annotation claim from an
@@ -7339,7 +7396,7 @@ func lexicalSpanKey(body equation.BodyID, occurrence string) string {
 // is already owned by an exact child entry. Branch advice and other body-local
 // conclusions have no caller-owned consumer and remain private.
 func childCallDiagnostic(fact equation.Fact) bool {
-	return strings.HasPrefix(fact.Key, "type.assignment/") || strings.HasPrefix(fact.Key, "type.return.contract/") || strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/")
+	return strings.HasPrefix(fact.Key, "type.assignment/") || strings.HasPrefix(fact.Key, "type.return.contract/") || strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/") || strings.HasPrefix(fact.Key, "type.operator.comparison_operand/")
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
@@ -7666,15 +7723,18 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
 	gradualLogicalTerms := []string(nil)
 	gradualLogicalBoundary := false
-	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false
+	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, declaredComparisonBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false, false
 	declaredConcatOperations := map[string]bool(nil)
-	if declaredSeeds, admitted, methodBoundary, concatOperations := uncalledDeclaredBoundary(child); admitted {
+	declaredComparisonOperations := map[string]bool(nil)
+	if declaredSeeds, admitted, methodBoundary, concatOperations, comparisonOperations := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
 		explicitAnyBoundary = false
 		declaredBoundary = true
 		declaredMethodBoundary = methodBoundary
 		declaredConcatOperations = concatOperations
 		declaredConcatBoundary = len(concatOperations) != 0
+		declaredComparisonOperations = comparisonOperations
+		declaredComparisonBoundary = len(comparisonOperations) != 0
 		formals := make(map[string]bool, len(child.Boundary.Parameters))
 		for _, parameter := range child.Boundary.Parameters {
 			formals[boundaryTerm(parameter.Symbol)] = true
@@ -7765,6 +7825,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
+				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
 				continue
 			}
@@ -7806,6 +7867,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) &&
+				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, item.Fact.Key)) &&
+				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, item.Fact.Key)) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, item.Fact.Key) {
 				continue
 			}
@@ -8012,6 +8075,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
 	_, operation, subject, ok := concatOperandDiagnosticParts(key)
 	return ok && allowed[operation+"/"+subject]
+}
+
+func declaredOrderedComparisonDiagnostic(allowed map[string]bool, key string) bool {
+	name, ok := strings.CutPrefix(key, "type.operator.comparison_operand/")
+	return ok && allowed[name]
 }
 
 func uncalledStaticMemberReadSeeds(child front.Compilation) ([]entrySeed, bool) {
@@ -8746,6 +8814,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	if string(value) == "scalar/top" && wir.Op(kind) == wir.OpBinOp {
+		if message, refuted := orderedComparisonUnionDiagnostic(wir.Operator(op), by["left"], by["right"], partition); refuted {
+			diagnostics = append(diagnostics, equation.Fact{
+				Key:   "type.operator.comparison_operand/" + operation.Target.Name,
+				Value: []byte(message),
+			})
+		}
+	}
 	// Exact scalar evaluation deliberately leaves broad, sealed type witnesses
 	// at Top.  Before publishing that loss of precision, let the existing type
 	// operator derive the result from those already-published witnesses.  This
@@ -8976,6 +9052,62 @@ func expressionValueType(value []byte) (typ.Type, bool) {
 		}
 	}
 	return nil, false
+}
+
+// orderedComparisonUnionDiagnostic publishes only a runtime failure already
+// established by closed operand witnesses. A broad scalar or gradual type has
+// no such proof and remains silent.
+func orderedComparisonUnionDiagnostic(operator wir.Operator, leftTerm, rightTerm []byte, partition equation.Partition) (string, bool) {
+	operatorText, ordered := orderedComparisonOperator(operator)
+	if !ordered {
+		return "", false
+	}
+	leftValue, leftErr := resolveCurrentValue(leftTerm, partition)
+	rightValue, rightErr := resolveCurrentValue(rightTerm, partition)
+	if leftErr != nil || rightErr != nil {
+		return "", false
+	}
+	left, leftTyped := expressionValueType(leftValue)
+	right, rightTyped := expressionValueType(rightValue)
+	if !leftTyped || !rightTyped {
+		return "", false
+	}
+	if _, valid := typeoperator.BinaryOp(left, operatorText, right); valid {
+		return "", false
+	}
+	if unionAdmitsProvenNonNumber(left) || unionAdmitsProvenNonNumber(right) {
+		return fmt.Sprintf("operator %s cannot compare %s with %s", operatorText, typeformat.Short(left), typeformat.Short(right)), true
+	}
+	return "", false
+}
+
+func orderedComparisonOperator(operator wir.Operator) (string, bool) {
+	switch operator {
+	case wir.BinLt:
+		return "<", true
+	case wir.BinLe:
+		return "<=", true
+	case wir.BinGt:
+		return ">", true
+	case wir.BinGe:
+		return ">=", true
+	default:
+		return "", false
+	}
+}
+
+func unionAdmitsProvenNonNumber(value typ.Type) bool {
+	value = unwrap.Alias(unwrap.Annotations(value))
+	union, ok := value.(*typ.Union)
+	if !ok || union == nil || len(union.Members) == 0 || typ.ContainsAny(value) || typ.ContainsTypeParam(value) || inspect.ContainsUnknown(value) {
+		return false
+	}
+	for _, member := range union.Members {
+		if member != nil && !subtype.IsSubtype(member, typ.Number) {
+			return true
+		}
+	}
+	return false
 }
 
 // sealedShapeReceiverType reconstructs a diagnostic-only receiver type from

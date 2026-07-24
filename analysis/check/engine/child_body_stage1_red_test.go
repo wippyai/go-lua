@@ -147,6 +147,43 @@ end`)
 	t.Fatalf("declared stdlib optional concat warning = %#v", r.PublishedDiagnostics)
 }
 
+func TestStage1RedUncalledDeclaredUnionOrderedComparisonDiagnosesNonNumber(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function before_zero(x: number | string): boolean
+  return x < 0
+end`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.operator.comparison_operand" && diagnostic.Message == "operator < cannot compare number | string with 0" {
+			return
+		}
+	}
+	t.Fatalf("declared union ordered comparison diagnostic = %#v", r.PublishedDiagnostics)
+}
+
+func TestStage1RedUncalledDeclaredNumericUnionOrderedComparisonStaysSilent(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function before_zero(x: integer | number): boolean
+  return x < 0
+end`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.operator.comparison_operand" {
+			t.Fatalf("numeric union ordered comparison diagnosed: %#v", r.PublishedDiagnostics)
+		}
+	}
+}
+
+func TestStage1RedUncalledDeclaredUnknownUnionOrderedComparisonStaysSilent(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function before_zero(x: number | unknown): boolean
+  return x < 0
+end`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.operator.comparison_operand" {
+			t.Fatalf("unknown union ordered comparison diagnosed: %#v", r.PublishedDiagnostics)
+		}
+	}
+}
+
 func TestStage1RedUncalledDeclaredUnionBoundaryPublishesMissingMethod(t *testing.T) {
 	r := checkChildAdmission(t, `
 type Dog = {kind: "dog", bark: () -> ()}
