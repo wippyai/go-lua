@@ -564,7 +564,7 @@ end
 func TestNestedFunctionRetainsSealedTypeGuardBody(t *testing.T) {
 	body := lowerBody(t, `
 local function validate(value: any)
-    if type(value.item) == "table" then
+    if value.kind == "ready" and type(value.item) == "table" then
         local labels: {string} = value.item
         return labels
     end

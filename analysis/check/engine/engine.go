@@ -11663,6 +11663,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		}
 	}
 	if unknownCondition && !boundaryPossible {
+		if closure, recognized, compoundErr := compoundTypeEqualityBranchClosure(operation, partition); compoundErr != nil {
+			return equation.TransactionResult{}, compoundErr
+		} else if recognized {
+			return equation.TransactionResult{Complete: true, Closure: closure}, nil
+		}
 		return equation.TransactionResult{Complete: true}, nil
 	}
 	truth, frozenGuard := true, false
@@ -11711,6 +11716,90 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// compoundTypeEqualityBranchClosure closes a short-circuit branch only when
+// every front-published true-edge predicate is decidable from current facts.
+// The logical result temp is deliberately Top (the type() call has no ordinary
+// scalar producer), so this existing compound evidence is the authority for
+// reaching the guarded body. A false conjunct proves the false edge; an
+// unknown conjunct leaves both edges unselected.
+func compoundTypeEqualityBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	hasTypeEquality, hasUnknown, predicates := false, false, 0
+	typePredicates := make([]branchPredicateWire, 0)
+	for _, operand := range operation.Operands {
+		if !strings.HasPrefix(operand.Role, "implied-") {
+			continue
+		}
+		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		if !recognized || !trueEdge {
+			continue
+		}
+		predicates++
+		hasTypeEquality = hasTypeEquality || predicate.Kind == "type-equal"
+		if predicate.Kind == "type-equal" {
+			typePredicates = append(typePredicates, predicate)
+		}
+		truth, err := evaluateBranchPredicateWire(predicate, partition)
+		if errors.Is(err, errUnknownScalar) {
+			hasUnknown = true
+			continue
+		}
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
+		if !truth {
+			return compoundBranchOutcome(operation, false), true, nil
+		}
+	}
+	if !hasTypeEquality || predicates == 0 || hasUnknown {
+		return equation.OutputClosure{}, false, nil
+	}
+	closure := compoundBranchOutcome(operation, true)
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	for _, predicate := range typePredicates {
+		typeName, err := compoundTypeName(predicate, partition)
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
+		closure.Values = append(closure.Values, equation.Fact{
+			Key:    runtimeTypeProofKey(predicate.Path, typeName),
+			Value:  []byte("proven"),
+			Guards: []equation.Guard{guard},
+		})
+	}
+	return closure, true, nil
+}
+
+func compoundTypeName(predicate branchPredicateWire, partition equation.Partition) (string, error) {
+	if predicate.TypeName != "" {
+		return predicate.TypeName, nil
+	}
+	if predicate.OtherPath == "" {
+		return "", errUnknownScalar
+	}
+	other, err := branchPathValue(predicate.OtherPath, partition)
+	if err != nil {
+		return "", err
+	}
+	return scalarString(other)
+}
+
+func compoundBranchOutcome(operation equation.BoundEquation, truth bool) equation.OutputClosure {
+	edge, narrowing := "false", "falsy"
+	if truth {
+		edge, narrowing = "true", "truthy"
+	}
+	return equation.OutputClosure{
+		Outcomes: []equation.Fact{
+			{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
+			{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
+		},
+		Values: []equation.Fact{{
+			Key:   "branch-proof/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + operation.Target.Name + "/" + edge,
+			Value: []byte("proven"),
+		}},
+	}
 }
 
 func typePredicateBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool) {
@@ -12843,12 +12932,12 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expectedType)), nil
 		}
 		if known && genericConstraintRefuted(argument, expected) {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
 		}
 		if !known || !provenScalarNotSubtype(argument, expected) {
 			continue
 		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), expected)), nil
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), nil
 	}
 	if genericCallableSignature(signature) {
 		var instantiated bool
@@ -12933,7 +13022,7 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 		if valueAgainstType(argument, expected) != shapeRefuted {
 			continue
 		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), typeformat.Short(expected))), true
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(arguments[index], argument, partition), typeformat.Short(expected))), true
 	}
 	return equation.TransactionResult{}, false
 }
@@ -15026,15 +15115,24 @@ func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, false
 	}
-	prefix := "value/" + string(term) + "/"
-	var value []byte
-	latestKey := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latestKey) {
-			value, latestKey = fact.Value, fact.Key
+	if value, found := latestValue(term, partition); found {
+		return value, true
+	}
+	// A member path can be a formal-derived read with no independent write.
+	// resolveCurrentValue already projects it from the same sealed ancestor
+	// shape. Dynamic/indexed paths retain their dedicated heap-current readers;
+	// they cannot reuse an allocation-time table shape after a mutation.
+	_, suffix, member := tableAddress(term)
+	segments, static := segment.ParseFormattedSegments(suffix)
+	if !member || !static || len(segments) == 0 {
+		return nil, false
+	}
+	for _, item := range segments {
+		if item.Kind != segment.SegmentField {
+			return nil, false
 		}
 	}
-	return append([]byte(nil), value...), value != nil
+	return shapeMemberValue(term, partition)
 }
 
 func provenScalarNotSubtype(value []byte, expected string) bool {
@@ -15073,6 +15171,39 @@ func callDisplayValue(value []byte) string {
 		return boundaryShapeEvidenceValue(value)
 	}
 	return string(display)
+}
+
+// callDisplayValueForTerm preserves a runtime type witness when a guarded
+// value is reported at a local function boundary. The kernel has already
+// established the refutation; this only avoids presenting a pre-guard literal
+// value in place of the currently published runtime type.
+func callDisplayValueForTerm(term, value []byte, partition equation.Partition) string {
+	if typeName, proven := runtimeTypeProofDisplay(term, partition); proven {
+		return typeName
+	}
+	return callDisplayValue(value)
+}
+
+func runtimeTypeProofDisplay(term []byte, partition equation.Partition) (string, bool) {
+	if !strings.HasPrefix(string(term), "path/") {
+		return "", false
+	}
+	prefix := "runtime-type-proof/" + base64.RawURLEncoding.EncodeToString(term) + "/"
+	var typeName string
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != "proven" {
+			continue
+		}
+		candidate := strings.TrimPrefix(fact.Key, prefix)
+		if candidate == "" || strings.Contains(candidate, "/") {
+			return "", false
+		}
+		if typeName != "" && typeName != candidate {
+			return "", false
+		}
+		typeName = candidate
+	}
+	return typeName, typeName != ""
 }
 
 // externalCallKernel is a sealed provider-boundary factor.  It intentionally
@@ -17107,6 +17238,10 @@ func evaluateBranchPredicate(encoded []byte, partition equation.Partition) (bool
 		}
 		return false, fmt.Errorf("engine: branch predicate has no kind")
 	}
+	return evaluateBranchPredicateWire(predicate, partition)
+}
+
+func evaluateBranchPredicateWire(predicate branchPredicateWire, partition equation.Partition) (bool, error) {
 	value, err := branchPathValue(predicate.Path, partition)
 	if err != nil {
 		return false, err

@@ -1827,15 +1827,15 @@ func functionRequiresSealedTypeChecks(fn *ast.FunctionExpr, bindings *bind.Resul
 		for _, statement := range statements {
 			switch value := statement.(type) {
 			case *ast.IfStmt:
-				if branchcond.SupportsTypeComparison(value.Condition, bindings) || requiresStatements(value.Then) || requiresStatements(value.Else) {
+				if conditionRequiresSealedTypeChecks(value.Condition, bindings) || requiresStatements(value.Then) || requiresStatements(value.Else) {
 					return true
 				}
 			case *ast.WhileStmt:
-				if branchcond.SupportsTypeComparison(value.Condition, bindings) || requiresStatements(value.Stmts) {
+				if conditionRequiresSealedTypeChecks(value.Condition, bindings) || requiresStatements(value.Stmts) {
 					return true
 				}
 			case *ast.RepeatStmt:
-				if branchcond.SupportsTypeComparison(value.Condition, bindings) || requiresStatements(value.Stmts) {
+				if conditionRequiresSealedTypeChecks(value.Condition, bindings) || requiresStatements(value.Stmts) {
 					return true
 				}
 			case *ast.DoBlockStmt:
@@ -1863,6 +1863,20 @@ func functionRequiresSealedTypeChecks(fn *ast.FunctionExpr, bindings *bind.Resul
 		return false
 	}
 	return requiresStatements(fn.Stmts)
+}
+
+// conditionRequiresSealedTypeChecks walks short-circuit condition structure
+// before the child CFG is built. A type predicate in either operand needs the
+// sealed call-order topology: without it callorder correctly rejects the
+// unsealed logical call and the child body would have no branch/application
+// equations at all. This recognizes only the existing normalized predicate;
+// it does not grant intrinsic authority to another call shape.
+func conditionRequiresSealedTypeChecks(expr ast.Expr, bindings *bind.Result) bool {
+	if branchcond.SupportsTypeComparison(expr, bindings) {
+		return true
+	}
+	logical, ok := sourceprovenance.AssertionInner(expr).(*ast.LogicalOpExpr)
+	return ok && (conditionRequiresSealedTypeChecks(logical.Lhs, bindings) || conditionRequiresSealedTypeChecks(logical.Rhs, bindings))
 }
 
 // ---- channel select recognition ----------------------------------------
