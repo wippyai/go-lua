@@ -618,6 +618,34 @@ end
 	}
 }
 
+func TestCheckProjectsBoundaryStringMethodResultPrecisely(t *testing.T) {
+	result := checkChildAdmission(t, `
+local function precise(s: string): number
+    return s:upper()
+end
+`)
+	for _, item := range result.PublishedDiagnostics {
+		if strings.Contains(item.Fact.Key, "/type.return.contract/") && item.Span.StartLine == 3 && strings.Contains(item.Message, "not number") {
+			return
+		}
+	}
+	t.Fatalf("boundary string method result remained unproven: %#v", result.PublishedDiagnostics)
+}
+
+func TestCheckRejectsMethodUnavailableOnDeclaredPrimitiveUnion(t *testing.T) {
+	result := checkChildAdmission(t, `
+local function invoke(value: string | number)
+    value:upper()
+end
+`)
+	for _, item := range result.PublishedDiagnostics {
+		if item.Code == "type.member.missing" && item.Span.StartLine == 3 && strings.Contains(item.Message, `has no member "upper"`) {
+			return
+		}
+	}
+	t.Fatalf("declared primitive-union method remained unreported: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckInstantiatesGenericOptionalStdlibResult(t *testing.T) {
 	result, err := engine.Check(`
 local items: {string} = {"one", "two"}

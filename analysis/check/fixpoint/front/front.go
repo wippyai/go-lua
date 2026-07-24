@@ -2128,6 +2128,16 @@ func methodReceiverType(body *wir.Body, instruction wir.Instruction, seen map[ui
 		return t, t != nil
 	}
 	receiver := instruction.Call.Receiver
+	if receiver.Kind == wir.OperandPath {
+		path := body.Path(wir.PathRef(receiver.Ref)).RootOnly()
+		for _, parameter := range body.Boundary().Parameters {
+			if parameter.Symbol != path.Symbol || parameter.Type == 0 {
+				continue
+			}
+			t := body.Type(parameter.Type)
+			return t, t != nil
+		}
+	}
 	if receiver.Kind != wir.OperandTemp || seen[receiver.Ref] {
 		return nil, false
 	}

@@ -2750,9 +2750,9 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 // declared union/optional relation for the child's ordinary claim and branch
 // consumers. A missing, variadic, recursive, or captured boundary stays
 // dormant.
-func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool) {
+func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
-		return nil, false
+		return nil, false, false
 	}
 	// The declaration-only entry supports a closed discriminant proof, not an
 	// arbitrary body execution. A direct static member call is also admissible
@@ -2764,32 +2764,35 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool) {
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false
+			return nil, false, false
 		}
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	memberCalls := make(map[string]bool)
+	hasDirectMethod := false
 	for _, operation := range child.Artifact.Equations {
-		if operation.Occurrence.Kind != "apply" || !uncalledDeclaredMemberCall(operation, formals) {
+		if operation.Occurrence.Kind != "apply" || !uncalledDeclaredMemberCall(child, operation, formals) {
 			continue
 		}
 		memberCalls["call/"+operation.Target.Name] = true
+		hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
 	}
-	hasLiteralBranch := false
+	hasBranch, hasLiteralBranch := false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
-			if !uncalledDeclaredMemberCall(operation, formals) {
-				return nil, false
+			if !uncalledDeclaredMemberCall(child, operation, formals) {
+				return nil, false, false
 			}
 		case "external-call":
 			application, found := artifactOperand(operation.Operands, "application")
 			if !found || !memberCalls[string(application)] {
-				return nil, false
+				return nil, false, false
 			}
 		case "dynamic-index-read", "channel-select":
-			return nil, false
+			return nil, false, false
 		case "branch-relations":
+			hasBranch = true
 			for _, operand := range operation.Operands {
 				if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Term.Encoding), branchPredicatePrefix) {
 					continue
@@ -2801,22 +2804,29 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool) {
 			}
 		}
 	}
-	if !hasLiteralBranch {
-		return nil, false
+	// A direct declared method is self-contained only in a straight-line body.
+	// Once a branch exists, its result can depend on a path-specific refinement
+	// (for example string.byte's optional result), so retain the ordinary
+	// demand-driven boundary.
+	if hasDirectMethod && hasBranch {
+		return nil, false, false
+	}
+	if !hasLiteralBranch && !hasDirectMethod {
+		return nil, false, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false
+			return nil, false, false
 		}
 		declared := child.WIR.Type(parameter.Type)
 		value, ok := shapefact.EncodeTarget(declared)
 		if !ok || declared == nil {
-			return nil, false
+			return nil, false, false
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
-	return seeds, true
+	return seeds, true, hasDirectMethod
 }
 
 func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
@@ -2831,7 +2841,10 @@ func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
 // uncalledDeclaredMemberCall recognizes the narrow call shape that can only
 // report a missing declared member. It accepts neither a dynamic index nor a
 // receiver whose identity was not supplied by the declaration-owned entry.
-func uncalledDeclaredMemberCall(operation equation.Equation, formals map[string]bool) bool {
+func uncalledDeclaredMemberCall(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
+	if hasDeclaredFormalMethodCall(child, operation, formals) {
+		return true
+	}
 	for _, operand := range operation.Operands {
 		if operand.Role != "callee" {
 			continue
@@ -2839,6 +2852,43 @@ func uncalledDeclaredMemberCall(operation equation.Equation, formals map[string]
 		root, suffix, member := tableAddress(operand.Term.Encoding)
 		segments, static := segment.ParseFormattedSegments(suffix)
 		return member && formals[string(root)] && static && len(segments) == 1 && (segments[0].Kind == segment.SegmentField || segments[0].Kind == segment.SegmentIndexString)
+	}
+	return false
+}
+
+// hasDeclaredFormalMethodCall recognizes a colon call whose receiver is an
+// exact declared formal.  Its capability can only come from the receiver's
+// published boundary type, so it is safe to evaluate solely for a missing
+// member or declared-return diagnostic.
+func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
+	if child.WIR == nil || operation.Occurrence.Kind != "apply" {
+		return false
+	}
+	var receiver []byte
+	var method string
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "receiver":
+			receiver = operand.Term.Encoding
+		case "method":
+			method, _ = callMethodName(operand.Term.Encoding)
+		}
+	}
+	if method == "" || !formals[string(receiver)] {
+		return false
+	}
+	for _, parameter := range child.Boundary.Parameters {
+		if boundaryTerm(parameter.Symbol) != string(receiver) || parameter.Type == 0 {
+			continue
+		}
+		receiverType := child.WIR.Type(parameter.Type)
+		if receiverType == nil {
+			return false
+		}
+		if _, provider := signaturelookup.StdlibMethodProvider(receiverType, method); provider {
+			return true
+		}
+		return declaredMethodMissing(receiverType, method)
 	}
 	return false
 }
@@ -3516,11 +3566,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	declaredBoundary := false
-	if declaredSeeds, admitted := uncalledDeclaredBoundary(child); admitted {
+	declaredBoundary, declaredMethodBoundary := false, false
+	if declaredSeeds, admitted, methodBoundary := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
 		explicitAnyBoundary = false
 		declaredBoundary = true
+		declaredMethodBoundary = methodBoundary
 	}
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
@@ -3561,7 +3612,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			// A declaration-only entry is sufficient for a member that is absent
 			// from a reachable declared union arm. Other obligations may depend on
 			// a call-specific refinement and therefore remain demand-driven.
-			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
+				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
@@ -3581,7 +3633,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(item.Fact) {
 				continue
 			}
-			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
+			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
+				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
@@ -7164,6 +7217,14 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 		if !known {
+			if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
+				if missing, encoded := memberMissingValue(receiverType); encoded {
+					return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+						Key:   "type.member.missing/" + operation.Target.Name,
+						Value: []byte(memberMissingMessage(operands.display, missing)),
+					}}}}, nil
+				}
+			}
 			return equation.TransactionResult{Complete: true}, nil
 		}
 	}
@@ -10697,6 +10758,50 @@ func closedMemberSurface(value typ.Type) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// declaredMethodMissing admits a missing-method diagnostic only when the
+// declared receiver is a closed surface and neither the ordinary member graph
+// nor the standard-library contract publishes the requested capability.  This
+// keeps open, interface, and unknown receivers fail-closed while treating a
+// mixed primitive union (such as string | number) as unavailable whenever its
+// members do not share the same published method provider.
+func declaredMethodMissing(receiver typ.Type, method string) bool {
+	if receiver == nil || method == "" {
+		return false
+	}
+	if _, available := signaturelookup.StdlibMethodProvider(receiver, method); available {
+		return false
+	}
+	if _, available := variant.FieldAtPath(receiver, []segment.Segment{{Kind: segment.SegmentField, Name: method}}); available {
+		return false
+	}
+	return closedMethodSurface(receiver)
+}
+
+func closedMethodSurface(value typ.Type) bool {
+	value = unwrap.Alias(subst.ExpandInstantiated(value))
+	switch item := value.(type) {
+	case *typ.Record:
+		return item != nil && !item.Open
+	case *typ.Union:
+		if item == nil || len(item.Members) == 0 {
+			return false
+		}
+		for _, member := range item.Members {
+			if !closedMethodSurface(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		switch value.Kind() {
+		case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String:
+			return true
+		default:
+			return false
+		}
 	}
 }
 
