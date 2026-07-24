@@ -2261,6 +2261,54 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 	return seeds, true
 }
 
+// uncalledDeclaredBoundary materializes only the checker-owned type witnesses
+// already present on a capture-free function boundary.  These are not runtime
+// values and carry no invented member facts: the shape encoder preserves the
+// declared union/optional relation for the child's ordinary claim and branch
+// consumers. A missing, variadic, recursive, or captured boundary stays
+// dormant.
+func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	// The declaration-only entry supports a closed discriminant proof, not an
+	// arbitrary body execution. Calls, dynamic reads, and select operations
+	// need a caller-owned value/heap entry and remain demand-driven.
+	hasLiteralBranch := false
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "apply", "external-call", "dynamic-index-read", "channel-select":
+			return nil, false
+		case "branch-relations":
+			for _, operand := range operation.Operands {
+				if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Term.Encoding), branchPredicatePrefix) {
+					continue
+				}
+				var predicate branchPredicateWire
+				if json.Unmarshal(operand.Term.Encoding[len(branchPredicatePrefix):], &predicate) == nil && (predicate.Kind == "literal-equal" || predicate.Kind == "literal-not") {
+					hasLiteralBranch = true
+				}
+			}
+		}
+	}
+	if !hasLiteralBranch {
+		return nil, false
+	}
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := child.WIR.Type(parameter.Type)
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok || declared == nil {
+			return nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+	}
+	return seeds, true
+}
+
 // uncalledChildEntry closes an allocation-time child entry from the same
 // caller partition that allocated it. This allocation-time admission is
 // limited to exact local closure captures: an arbitrary captured value can
@@ -2902,8 +2950,14 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
+	declaredBoundary := false
+	if declaredSeeds, admitted := uncalledDeclaredBoundary(child); admitted {
+		uncalledSeeds = declaredSeeds
+		explicitAnyBoundary = false
+		declaredBoundary = true
+	}
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || explicitAnyBoundary || typedChannelSendBoundary) {
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || typedChannelSendBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
@@ -2933,6 +2987,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
 				continue
 			}
+			// A declaration-only entry is sufficient for a member that is absent
+			// from a reachable declared union arm. Other obligations may depend on
+			// a call-specific refinement and therefore remain demand-driven.
+			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -2945,6 +3005,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// owning claim rather than falling back to an unadorned parent fact.
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(item.Fact) {
+				continue
+			}
+			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key

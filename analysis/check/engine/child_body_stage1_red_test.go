@@ -31,6 +31,24 @@ end
 	}
 }
 
+func TestStage1RedUncalledDeclaredUnionBoundaryPublishesMemberMismatch(t *testing.T) {
+	r := checkChildAdmission(t, `
+type Event = {kind: "event"}
+type Timer = {kind: "timer", elapsed: number}
+type Result = Event | Timer
+local function inspect(result: Result)
+  if result.kind == "event" then
+    local elapsed: number = result.elapsed
+  end
+end`)
+	if len(r.Diagnostics) != 1 || !strings.HasPrefix(r.Diagnostics[0].Key, "child/") || !strings.Contains(string(r.Diagnostics[0].Value), "has no member \"elapsed\"") {
+		t.Fatalf("declared union child diagnostics = %#v", r.Diagnostics)
+	}
+	if len(r.PublishedDiagnostics) != 1 || r.PublishedDiagnostics[0].Code != "type.member.missing" {
+		t.Fatalf("declared union child published diagnostics = %#v", r.PublishedDiagnostics)
+	}
+}
+
 func TestStage1RedCalledChildDiagnosticUsesChildSpan(t *testing.T) {
 	r := checkChildAdmission(t, `
 local retained = 0
