@@ -556,6 +556,20 @@ func (b *Body) Type(ref TypeRef) typ.Type {
 	return b.types[ref].T
 }
 
+// ForEachType visits each resolved type identity interned by this body. The
+// callback receives only fully resolved entries; callers must not infer a
+// type from a display spelling when an exact provider identity is required.
+func (b *Body) ForEachType(fn func(typ.Type) bool) {
+	if b == nil || fn == nil {
+		return
+	}
+	for i := 1; i < len(b.types); i++ {
+		if b.types[i].T != nil && !fn(b.types[i].T) {
+			return
+		}
+	}
+}
+
 // TypeDisplay returns the interned type's display spelling for ref.
 func (b *Body) TypeDisplay(ref TypeRef) string {
 	if ref == 0 || int(ref) >= len(b.types) {

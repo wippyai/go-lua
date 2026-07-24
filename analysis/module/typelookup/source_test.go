@@ -52,6 +52,16 @@ func TestSourceResolveTypeRefWithModulePrefix(t *testing.T) {
 	}
 }
 
+func TestSourceResolveTypeRefUsesSelectedRequireAlias(t *testing.T) {
+	m := manifest.New("app.store")
+	m.DefineType("Record", typ.String)
+	source := Source{Manifests: []*manifest.Manifest{m}, Aliases: map[string]string{"store_mod": "app.store"}}
+	got, ok := source.ResolveTypeRef([]string{"store_mod", "Record"})
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("ResolveTypeRef(store_mod.Record) = %v/%v, want string", got, ok)
+	}
+}
+
 func TestSourceLookupResolvesNestedBareReferenceInOwningManifest(t *testing.T) {
 	entry := typetable.NewRecord().Field("id", typ.String).Build()
 	registry := manifest.New("registry")

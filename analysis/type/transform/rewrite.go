@@ -170,11 +170,18 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), memo map[rewri
 		args, changed := typ.MapMembers(tt.TypeArgs, func(a typ.Type) typ.Type {
 			return rewriteDepth(a, fn, memo)
 		})
+		generic := tt.Generic
+		if replacement, ok := fn(generic); ok {
+			if resolved, ok := replacement.(*typ.Generic); ok && resolved != nil {
+				generic = resolved
+				changed = true
+			}
+		}
 		if !changed {
 			out = t
 			break
 		}
-		out = typ.Instantiate(tt.Generic, args...)
+		out = typ.Instantiate(generic, args...)
 	case *typ.Interface:
 		var methods []typ.Method
 		for idx, m := range tt.Methods {

@@ -166,6 +166,69 @@ local wrong: number = user.id
 	}
 }
 
+func TestCheckProjectPublishesRecursiveTypesFromTheirDefiningResolver(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "store.lua", ModulePath: "store", Source: `
+type Store = {
+    entries: {[string]: string},
+    put: (self: Store, key: string, value: string) -> (),
+}
+local Store = {}
+function Store:put(key: string, value: string)
+    self.entries[key] = value
+end
+local M = {}
+function M.new(): Store
+    return { entries = {}, put = Store.put }
+end
+return M
+`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local store = require("store")
+local value: store.Store = store.new()
+value:put("key", "value")
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	var provider EntryResult
+	for _, entry := range result.Entries {
+		if entry.Entry.ModulePath == "store" {
+			provider = entry
+			break
+		}
+	}
+	if provider.Manifest == nil || provider.Manifest.Types["Store"] == nil {
+		t.Fatalf("provider manifest = %#v, want published Store definition", provider.Manifest)
+	}
+	if provider.Engine.TypeDefinitions["Store"] != provider.Manifest.Types["Store"] {
+		t.Fatal("manifest Store must retain the provider resolver's declaration graph")
+	}
+	var consumer EntryResult
+	for _, entry := range result.Entries {
+		if entry.Entry.ModulePath == "main" {
+			consumer = entry
+			break
+		}
+	}
+	if len(consumer.Imports) != 1 || consumer.Imports[0].Export == nil {
+		t.Fatalf("consumer imports = %#v, want scoped store export", consumer.Imports)
+	}
+	export, ok := consumer.Imports[0].Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("scoped export = %T/%v, want record", consumer.Imports[0].Export, consumer.Imports[0].Export)
+	}
+	newMember := export.GetField("new")
+	newFn, ok := newMember.Type.(*typ.Function)
+	if !ok || len(newFn.Returns) != 1 || newFn.Returns[0] != provider.Manifest.Types["Store"] {
+		t.Fatalf("scoped new = %#v, want provider Store identity %v", newMember, provider.Manifest.Types["Store"])
+	}
+}
+
 func TestDiagnosticPolicyConfiguresOptionalHintsAndSeverity(t *testing.T) {
 	input := []diagnostic.Diagnostic{
 		{Code: "lint.condition.redundant", Severity: diagnostic.SeverityError},

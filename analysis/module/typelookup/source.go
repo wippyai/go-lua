@@ -13,6 +13,7 @@ import (
 // manifests. It intentionally does not read runtime module export values.
 type Source struct {
 	Manifests []*manifest.Manifest
+	Aliases   map[string]string
 }
 
 // ResolveTypeRef resolves a qualified type path such as protocol.User against
@@ -23,6 +24,9 @@ func (s Source) ResolveTypeRef(path []string) (typ.Type, bool) {
 	}
 	if len(path) < 2 {
 		return nil, false
+	}
+	if modulePath := s.Aliases[path[0]]; modulePath != "" {
+		return s.ResolveTypeRefWithModulePrefix(modulePath, path[1:])
 	}
 	modulePath := strings.Join(path[:len(path)-1], ".")
 	return s.Lookup(modulePath, path[len(path)-1])

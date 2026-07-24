@@ -19,12 +19,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
-	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/source"
 )
@@ -115,6 +112,7 @@ type ProjectResult struct {
 }
 
 var requirePattern = regexp.MustCompile(`(?m)\brequire\s*\(\s*["']([^"']+)["']\s*\)`)
+var requireAliasPattern = regexp.MustCompile(`(?m)^[\t ]*local[\t ]+([A-Za-z_][A-Za-z0-9_]*)[\t ]*=[\t ]*require\s*\(\s*["']([^"']+)["']\s*\)`)
 
 // LoadDirectory discovers .lua files below root. Paths and module names are
 // slash/dot normalized so reports are stable across host operating systems.
@@ -276,7 +274,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 				importManifests = append(importManifests, resolvedImport.Manifest)
 			}
 		}
-		typeSource := typelookup.Source{Manifests: importManifests}
+		typeSource := typelookup.Source{Manifests: importManifests, Aliases: requireAliases(entry.Source, imports)}
 		result, checkErr := engine.CheckWithImportsAndResolver(entry.Source, importBindings, typeSource)
 		if checkErr != nil {
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
@@ -284,7 +282,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		diagnostics, renderElapsed := projectDiagnostics(entry, result, preDiagnostics)
 		diagnostics = applyDiagnosticPolicy(diagnostics, input.DiagnosticRules, input.DiagnosticPolicy)
 		summary := manifest.New(entry.ModulePath)
-		for name, definition := range moduleTypes(entry.Source, typeSource) {
+		for name, definition := range result.TypeDefinitions {
 			summary.DefineType(name, definition)
 		}
 		// Project only facts closed by this entry's equation evaluation. The
@@ -340,37 +338,6 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 	out.Placement = projectPlacement(out.Entries)
 	diagnostic.Sort(out.Diagnostics)
 	return out, nil
-}
-
-// moduleTypes records only lexical top-level definitions that the parser and
-// resolver can close against the already-selected import manifests. A failed
-// parse or unresolved definition is deliberately omitted: consumers then keep
-// the ordinary unavailable-type behavior instead of receiving a guessed name.
-func moduleTypes(sourceText string, external typelookup.Source) map[string]typ.Type {
-	stmts, err := parse.ParseString(sourceText, "<module-types>")
-	if err != nil {
-		return nil
-	}
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
-	resolver := typeresolve.NewWithExternal(bindings, external)
-	definitions := make(map[string]typ.Type)
-	for _, statement := range stmts {
-		var declaration bind.TypeDecl
-		var found bool
-		switch typed := statement.(type) {
-		case *ast.TypeDefStmt:
-			declaration, found = bindings.TypeDef(typed)
-		case *ast.InterfaceDefStmt:
-			declaration, found = bindings.InterfaceDef(typed)
-		}
-		if !found || declaration.Name == "" {
-			continue
-		}
-		if resolved, ok := resolver.Decl(declaration); ok && resolved != nil {
-			definitions[declaration.Name] = resolved
-		}
-	}
-	return definitions
 }
 
 func projectPlacement(entries []EntryResult) *engine.PlacementPlan {
@@ -442,6 +409,25 @@ func discoverImports(content string) []string {
 		out = append(out, match[1])
 	}
 	return out
+}
+
+func requireAliases(source string, imports []string) map[string]string {
+	selected := make(map[string]bool, len(imports))
+	for _, path := range imports {
+		if path != "" {
+			selected[path] = true
+		}
+	}
+	aliases := make(map[string]string)
+	for _, match := range requireAliasPattern.FindAllStringSubmatch(source, -1) {
+		if len(match) == 3 && match[1] != "" && selected[match[2]] {
+			aliases[match[1]] = match[2]
+		}
+	}
+	if len(aliases) == 0 {
+		return nil
+	}
+	return aliases
 }
 
 func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.Diagnostic) ([]diagnostic.Diagnostic, time.Duration) {

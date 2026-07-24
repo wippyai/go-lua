@@ -112,6 +112,12 @@ type Compilation struct {
 	// retained with the compiled body so the engine can publish them through the
 	// same source-diagnostic boundary as equation facts.
 	ControlDiagnostics []ControlDiagnostic
+	// TypeDefinitions are the top-level declarations resolved by the exact
+	// resolver that lowered WIR. Module publication uses these values directly:
+	// reconstructing them with a second resolver would allocate a different
+	// recursive identity graph from the declaration that annotates exported
+	// values.
+	TypeDefinitions map[string]typ.Type
 }
 
 type ControlDiagnostic struct {
@@ -168,6 +174,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		return Compilation{}, fmt.Errorf("front: build CFG")
 	}
 	resolver := typeresolve.NewWithExternal(bindings, external)
+	typeDefinitions := resolveTopLevelTypeDefinitions(stmts, bindings, resolver)
 	body := wirlower.LowerWithResolver("chunk", stmts, bindings, built, resolver)
 	if body == nil {
 		return Compilation{}, fmt.Errorf("front: lower WIR")
@@ -198,7 +205,36 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	}
 	compilation.Catalog = catalog
 	compilation.ControlDiagnostics = controlDiagnostics
+	compilation.TypeDefinitions = typeDefinitions
 	return compilation, nil
+}
+
+// resolveTopLevelTypeDefinitions resolves each provider declaration before WIR
+// lowering. The shared resolver is the declaration authority for both the
+// exported runtime shape and qualified consumer annotations, including
+// recursive graphs and generic arguments.
+func resolveTopLevelTypeDefinitions(stmts []ast.Stmt, bindings *bind.Result, resolver *typeresolve.Resolver) map[string]typ.Type {
+	if bindings == nil || resolver == nil {
+		return nil
+	}
+	definitions := make(map[string]typ.Type)
+	for _, statement := range stmts {
+		var declaration bind.TypeDecl
+		var found bool
+		switch typed := statement.(type) {
+		case *ast.TypeDefStmt:
+			declaration, found = bindings.TypeDef(typed)
+		case *ast.InterfaceDefStmt:
+			declaration, found = bindings.InterfaceDef(typed)
+		}
+		if !found || declaration.Name == "" {
+			continue
+		}
+		if resolved, ok := resolver.Decl(declaration); ok && resolved != nil {
+			definitions[declaration.Name] = resolved
+		}
+	}
+	return definitions
 }
 
 func validateControl(stmts []ast.Stmt) []ControlDiagnostic {

@@ -35,12 +35,13 @@ type manifestTypeScoper struct {
 
 func (s manifestTypeScoper) scope(t typ.Type) typ.Type {
 	return transform.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
-		// A recursive definition is already its own identity boundary. Descending
-		// into its body would re-expand its local self references every time a
-		// manifest source returns the type, turning a finite recursive graph into
-		// an ever-growing tree at successive lookup boundaries.
-		if _, ok := node.(*typ.Recursive); ok {
-			return node, true
+		// A structural function value can cross the equation boundary with a
+		// freshly decoded recursive or generic graph. Reattach such a graph only
+		// when the defining manifest publishes an exact matching declaration.
+		// This preserves the provider's identity rather than treating a consumer
+		// reconstruction as a new recursive family.
+		if provider, ok := s.providerType(node); ok {
+			return provider, true
 		}
 		ref, ok := node.(*typ.Ref)
 		if !ok || ref.Module != "" || ref.Name == "" || ref.Name == "self" {
@@ -61,6 +62,34 @@ func (s manifestTypeScoper) scope(t typ.Type) typ.Type {
 		}
 		return typ.NewRef(s.manifest.Path, ref.Name), true
 	})
+}
+
+func (s manifestTypeScoper) providerType(node typ.Type) (typ.Type, bool) {
+	if s.manifest == nil || len(s.manifest.Types) == 0 {
+		return nil, false
+	}
+	var name string
+	switch value := node.(type) {
+	case *typ.Recursive:
+		name = value.Name
+	case *typ.Generic:
+		name = value.Name
+	default:
+		return nil, false
+	}
+	if name == "" {
+		return nil, false
+	}
+	provider := s.manifest.Types[name]
+	if provider == node {
+		// The provider graph is already authoritative. Do not descend into its
+		// recursive body, which would rebuild a local-only graph.
+		return node, true
+	}
+	if provider == nil || !typ.TypeEquals(provider, node) {
+		return nil, false
+	}
+	return provider, true
 }
 
 // ScopeSignature applies the manifest's module identity to the callable type

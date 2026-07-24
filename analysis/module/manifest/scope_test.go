@@ -100,3 +100,20 @@ func TestScopeTypePreservesRecursiveLocalIdentityAcrossLookups(t *testing.T) {
 		t.Fatalf("second ScopeType(return Node) = %v, want the same recursive identity %v", rescoped, node)
 	}
 }
+
+func TestScopeTypeReattachesStructuralRecursiveGraphToDefiningType(t *testing.T) {
+	provider := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().Field("next", typeexpr.Optional(self)).Build()
+	})
+	decoded := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().Field("next", typeexpr.Optional(self)).Build()
+	})
+	m := New("tree")
+	m.DefineType("Node", provider)
+
+	scoped := m.ScopeType(typ.Func().Returns(decoded).Build())
+	fn, ok := scoped.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || fn.Returns[0] != provider {
+		t.Fatalf("ScopeType(structural Node) = %v, want provider identity %v", scoped, provider)
+	}
+}

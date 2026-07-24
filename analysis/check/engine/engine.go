@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -112,9 +113,13 @@ type Result struct {
 	// facts in the completed equation closure. A nil plan means the closure
 	// established no allocation-site fact; callers must not substitute a
 	// source-derived guess.
-	Placement    *PlacementPlan
-	Transactions int
-	Timings      Timings
+	Placement *PlacementPlan
+	// TypeDefinitions are the provider-owned declaration graph admitted during
+	// compilation. They are published by module hosts without re-resolving
+	// source, preserving recursive and generic identity at consumers.
+	TypeDefinitions map[string]typ.Type
+	Transactions    int
+	Timings         Timings
 }
 
 // PublishedDiagnostic enriches one equation diagnostic fact at the public
@@ -204,6 +209,8 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 	fileContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	lexical := newLexicalEvaluator(compilation)
+	lexical.setImportedTypes(imports)
+	lexical.setTypeOrigins(compilation)
 	lexical.ctx = fileContext
 	closure := equation.OutputClosure{}
 	transactions := 0
@@ -275,10 +282,24 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 		PublishedDiagnostics: published,
 		DiagnosticSpans:      diagnosticSpans,
 		Placement:            publishedPlacement(closure.Values),
+		TypeDefinitions:      cloneTypeDefinitions(compilation.TypeDefinitions),
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
 	}
 	return result, nil
+}
+
+func cloneTypeDefinitions(in map[string]typ.Type) map[string]typ.Type {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]typ.Type, len(in))
+	for name, definition := range in {
+		if name != "" && definition != nil {
+			out[name] = definition
+		}
+	}
+	return out
 }
 
 func cloneFacts(in []equation.Fact) []equation.Fact {
@@ -1317,12 +1338,14 @@ func registry(lexical *lexicalEvaluator, imported map[string]bool) (*equation.Ke
 	if err != nil {
 		return nil, err
 	}
-	write, err := binding("environment-write", equation.KernelFunc(writeKernel))
+	write, err := binding("environment-write", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return writeKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
 	claim, err := binding("claim", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return claimKernel(operation, partition, imported)
+		return claimKernel(lexical, operation, partition, imported)
 	}))
 	if err != nil {
 		return nil, err
@@ -1447,12 +1470,14 @@ func cyclicRegistry(lexical *lexicalEvaluator, imported map[string]bool) (*equat
 	if err != nil {
 		return nil, err
 	}
-	write, err := binding("environment-write", equation.KernelFunc(writeKernel))
+	write, err := binding("environment-write", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+		return writeKernel(lexical, operation, partition)
+	}))
 	if err != nil {
 		return nil, err
 	}
 	claim, err := binding("claim", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return claimKernel(operation, partition, imported)
+		return claimKernel(lexical, operation, partition, imported)
 	}))
 	if err != nil {
 		return nil, err
@@ -1568,6 +1593,97 @@ type lexicalEvaluator struct {
 	coordinator       *interproc.RecursionCoordinator
 	admissions        map[string]lexicalSCCAdmission
 	run               *lexicalSCCRun
+	// Imported authority is selected at the project boundary. It is scoped to
+	// this evaluator and exists only for exact result paths published by those
+	// imports; no structural reconstruction is admitted as an authority.
+	importedTypes       map[string]typ.Type
+	importedAuthorities map[string]typ.Type
+	typeOrigins         map[string]typ.Type
+	importedAuthorityMu sync.RWMutex
+}
+
+func (l *lexicalEvaluator) setImportedTypes(types map[string]typ.Type) {
+	if l == nil || len(types) == 0 {
+		return
+	}
+	l.importedAuthorityMu.Lock()
+	defer l.importedAuthorityMu.Unlock()
+	l.importedTypes = make(map[string]typ.Type, len(types))
+	for path, value := range types {
+		if path != "" && value != nil {
+			l.importedTypes[path] = value
+		}
+	}
+}
+
+func (l *lexicalEvaluator) setTypeOrigins(root front.Compilation) {
+	if l == nil {
+		return
+	}
+	origins := make(map[string]typ.Type)
+	var collect func(front.Compilation)
+	collect = func(compilation front.Compilation) {
+		if compilation.WIR != nil {
+			compilation.WIR.ForEachType(func(value typ.Type) bool {
+				if encoded, ok := shapefact.EncodeTarget(value); ok {
+					origins[string(encoded)] = value
+				}
+				return true
+			})
+		}
+		for _, child := range compilation.Nested {
+			collect(child)
+		}
+	}
+	collect(root)
+	if len(origins) == 0 {
+		return
+	}
+	l.importedAuthorityMu.Lock()
+	defer l.importedAuthorityMu.Unlock()
+	l.typeOrigins = origins
+}
+
+func (l *lexicalEvaluator) typeOrigin(encoded []byte) (typ.Type, bool) {
+	if l == nil || len(encoded) == 0 {
+		return nil, false
+	}
+	l.importedAuthorityMu.RLock()
+	defer l.importedAuthorityMu.RUnlock()
+	value, ok := l.typeOrigins[string(encoded)]
+	return value, ok
+}
+
+func (l *lexicalEvaluator) importedType(path string) (typ.Type, bool) {
+	if l == nil || path == "" {
+		return nil, false
+	}
+	l.importedAuthorityMu.RLock()
+	defer l.importedAuthorityMu.RUnlock()
+	value, ok := l.importedTypes[path]
+	return value, ok
+}
+
+func (l *lexicalEvaluator) setImportedAuthority(term string, value typ.Type) {
+	if l == nil || term == "" || value == nil {
+		return
+	}
+	l.importedAuthorityMu.Lock()
+	defer l.importedAuthorityMu.Unlock()
+	if l.importedAuthorities == nil {
+		l.importedAuthorities = make(map[string]typ.Type)
+	}
+	l.importedAuthorities[term] = value
+}
+
+func (l *lexicalEvaluator) importedAuthority(term string) (typ.Type, bool) {
+	if l == nil || term == "" {
+		return nil, false
+	}
+	l.importedAuthorityMu.RLock()
+	defer l.importedAuthorityMu.RUnlock()
+	value, ok := l.importedAuthorities[term]
+	return value, ok
 }
 
 func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
@@ -2966,7 +3082,7 @@ func resourceDisplay(child front.Compilation, acquire string) string {
 	return "resource"
 }
 
-func writeKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -2989,6 +3105,9 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	values := []equation.Fact{
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+	}
+	if authority, ok := lexical.importedAuthority(string(operands["value"])); ok {
+		lexical.setImportedAuthority(target, authority)
 	}
 	// An ordinary write can establish a table alias. Preserve the table identity
 	// through that already-published write so a later exact dynamic mutation is
@@ -3648,7 +3767,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 
 // claimKernel makes user claims explicit checked refinements. An unproven
 // claim remains a downstream assumption but never becomes reusable proof.
-func claimKernel(operation equation.BoundEquation, partition equation.Partition, imported map[string]bool) (equation.TransactionResult, error) {
+func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition, imported map[string]bool) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -3673,7 +3792,7 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition,
 	shapeRelation := shapeUnknown
 	for _, operand := range operation.Operands {
 		if operand.Role == "shape-target" {
-			shapeRelation = assignmentShapeRelation(value, operand.Value)
+			shapeRelation = assignmentShapeRelation(lexical, source, value, operand.Value)
 			break
 		}
 	}
@@ -3817,10 +3936,19 @@ const (
 
 // assignmentShapeRelation is deliberately proof-oriented: a malformed or
 // unsupported target/type member is unknown, never a compatibility result.
-func assignmentShapeRelation(value, encodedTarget []byte) shapeRelation {
+func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTarget []byte) shapeRelation {
 	target, ok := shapefact.DecodeTarget(encodedTarget)
 	if !ok {
 		return shapeUnknown
+	}
+	if authoritative, ok := lexical.importedAuthority(string(source)); ok {
+		if resolved, found := lexical.typeOrigin(encodedTarget); found {
+			target = resolved
+		}
+		if subtype.IsSubtype(authoritative, target) {
+			return shapeProven
+		}
+		return shapeRefuted
 	}
 	return valueAgainstType(value, target)
 }
@@ -6682,11 +6810,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
 					value = contract
 				}
-				if imported, ok := importedProviderResultValue(provider, index, argumentTerms, partition); ok {
+				if imported, ok := importedProviderResultValue(lexical, provider, index, argumentTerms, partition); ok {
 					value = imported
 				}
-				if summary, ok := importedProviderResultType(provider, index, argumentTerms, partition); ok {
+				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					importedSummary = summary
+					lexical.setImportedAuthority(string(result), summary)
 				}
 			}
 		}
@@ -7031,8 +7160,8 @@ func requiresLocalUnionProof(value typ.Type) bool {
 // call result. The provider identity is emitted by the front from the exact
 // local-require binding, so a source spelling or global lookup cannot select
 // an import fact.
-func importedProviderResultValue(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
-	result, ok := importedProviderResultType(provider, index, arguments, partition)
+func importedProviderResultValue(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	result, ok := importedProviderResultType(lexical, provider, index, arguments, partition)
 	if !ok {
 		return nil, false
 	}
@@ -7043,12 +7172,15 @@ func importedProviderResultValue(provider []byte, index int, arguments map[int][
 // provider. It is derived solely from the require-seeded entry export and
 // closed call arguments, so callers may carry it as summary metadata without
 // turning an absent provider result into a type witness.
-func importedProviderResultType(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
+func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
 	modulePath, suffix, requireResult, ok := importedProviderTarget(provider)
 	if !ok {
 		return nil, false
 	}
-	imported, ok := importedEntryType(modulePath, partition)
+	imported, ok := lexical.importedType(modulePath)
+	if !ok {
+		imported, ok = importedEntryType(modulePath, partition)
+	}
 	if !ok {
 		return nil, false
 	}
