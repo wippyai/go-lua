@@ -7,6 +7,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestCheckPublishesScalarAssignment(t *testing.T) {
@@ -91,6 +93,29 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 	if got := valuesByName(result.Diagnostics)["type.assignment/op-00000002"]; got != "" {
 		t.Fatalf("unknown value emitted assignment mismatch: %#v", result.Diagnostics)
+	}
+}
+
+func TestCheckWithImportsSeedsExactRequireExportAndOmitsAny(t *testing.T) {
+	source := `local provider = require("provider")
+local answer: string = provider.answer`
+	typed, err := engine.CheckWithImports(source, map[string]typ.Type{
+		"provider": typetable.NewRecord().Field("answer", typ.LiteralInt(42)).Build(),
+	})
+	if err != nil {
+		t.Fatalf("CheckWithImports typed: %v", err)
+	}
+	if got := valuesByName(typed.Diagnostics)["type.assignment/op-00000006"]; !strings.Contains(got, "42") || !strings.Contains(got, "string") {
+		t.Fatalf("typed require diagnostic = %#v", typed.Diagnostics)
+	}
+	unknown, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": typ.Any})
+	if err != nil {
+		t.Fatalf("CheckWithImports unknown: %v", err)
+	}
+	for _, diagnostic := range unknown.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+			t.Fatalf("unknown import emitted assignment violation: %#v", unknown.Diagnostics)
+		}
 	}
 }
 

@@ -1,0 +1,7 @@
+{
+  "description": "Cross-module require aliases consume the producer's closed export fact instead of an unresolved value.",
+  "files": [
+    "protocol.lua",
+    "main.lua"
+  ]
+}

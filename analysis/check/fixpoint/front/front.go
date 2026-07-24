@@ -1660,6 +1660,9 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 		return equation.ClosedTerm([]byte("provider/module/" + strconv.Quote(module))), true
 	}
 	kind, global := body.SymbolKind(root.Symbol)
+	if module, ok := exactRequireModule(body, instruction, root.Symbol, kind, global); ok {
+		return equation.ClosedTerm([]byte("provider/module-load/" + strconv.Quote(module))), true
+	}
 	if !global && kind != wir.SymbolGlobal && !body.IsImplicitGlobalSymbol(root.Symbol) {
 		return equation.Term{}, false
 	}
@@ -1668,6 +1671,26 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 		return equation.Term{}, false
 	}
 	return equation.ClosedTerm([]byte("provider/global/" + strconv.Quote(name))), true
+}
+
+// exactRequireModule recognizes Lua's direct require("module") form before
+// the result is assigned a local alias. Once the alias exists,
+// SymbolRequireModulePath carries the same identity for downstream calls.
+// Dynamic paths and shadowed locals stay outside this provider boundary.
+func exactRequireModule(body *wir.Body, instruction wir.Instruction, symbol wir.SymbolID, symbolKind wir.SymbolKind, global bool) (string, bool) {
+	if body == nil || instruction.Op != wir.OpCall || instruction.Call.Method != 0 || instruction.ListSpread ||
+		(!global && symbolKind != wir.SymbolGlobal && !body.IsImplicitGlobalSymbol(symbol)) || body.SymbolName(symbol) != "require" {
+		return "", false
+	}
+	arguments := body.Operands(instruction.List)
+	if len(arguments) != 1 || arguments[0].Kind != wir.OperandConst {
+		return "", false
+	}
+	constant := body.Const(wir.ConstRef(arguments[0].Ref))
+	if constant.Kind != wir.ConstString || constant.Str == "" {
+		return "", false
+	}
+	return constant.Str, true
 }
 
 // methodReceiverType recovers a method receiver's declared type directly or

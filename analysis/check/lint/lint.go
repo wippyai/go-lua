@@ -260,7 +260,13 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 			resolvedImports = append(resolvedImports, ResolvedImport{ModulePath: imported, Manifest: item, Export: item.ScopeType(item.Export)})
 		}
 		resolveElapsed := time.Since(resolveStarted)
-		result, checkErr := engine.Check(entry.Source)
+		importBindings := make(map[string]typ.Type, len(resolvedImports))
+		for _, resolvedImport := range resolvedImports {
+			if resolvedImport.ModulePath != "" && resolvedImport.Export != nil {
+				importBindings[resolvedImport.ModulePath] = resolvedImport.Export
+			}
+		}
+		result, checkErr := engine.CheckWithImports(entry.Source, importBindings)
 		if checkErr != nil {
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
 		}

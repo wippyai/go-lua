@@ -86,6 +86,25 @@ func TestCheckProjectResolvesAProviderExportInsteadOfAny(t *testing.T) {
 	}
 }
 
+func TestCheckProjectSeedsResolvedExportIntoRequireResult(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "provider.lua", ModulePath: "provider", Source: `return { answer = 42 }`},
+		{Path: "main.lua", ModulePath: "main", Source: `local provider = require("provider")
+local answer: string = provider.answer
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one imported-member assignment diagnostic", result.Diagnostics)
+	}
+	diagnostic := result.Diagnostics[0]
+	if diagnostic.Code != "type.assignment" || diagnostic.Position.File != "main.lua" || diagnostic.Position.Line != 2 || !strings.Contains(diagnostic.Message, "42") || !strings.Contains(diagnostic.Message, "string") {
+		t.Fatalf("seeded require diagnostic = %#v", diagnostic)
+	}
+}
+
 func TestDiagnosticPolicyConfiguresOptionalHintsAndSeverity(t *testing.T) {
 	input := []diagnostic.Diagnostic{
 		{Code: "lint.condition.redundant", Severity: diagnostic.SeverityError},

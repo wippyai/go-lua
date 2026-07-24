@@ -152,6 +152,15 @@ type Timings struct {
 // and evaluates the front-selected acyclic or frozen-cyclic artifact. Both
 // paths publish the identical result channels.
 func Check(source string) (result Result, err error) {
+	return CheckWithImports(source, nil)
+}
+
+// CheckWithImports admits resolved module exports as closed entry facts. It
+// does not resolve imports itself: callers provide only the manifest exports
+// already selected at their project boundary. An unknown export is omitted so
+// the equation remains fail-closed rather than treating an unresolved module
+// as any.
+func CheckWithImports(source string, imports map[string]typ.Type) (result Result, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
@@ -172,7 +181,11 @@ func Check(source string) (result Result, err error) {
 	}
 	evaluateStarted := time.Now()
 	entry := artifact.Equations[0].Entry
-	binding := equation.EntryBinding{Parameter: entry, Value: []byte(entryValue)}
+	boundEntry, entryErr := importEntryValue(imports)
+	if entryErr != nil {
+		return Result{}, entryErr
+	}
+	binding := equation.EntryBinding{Parameter: entry, Value: boundEntry}
 	fileContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	lexical := newLexicalEvaluator(compilation)
@@ -1497,7 +1510,7 @@ func encodeChildEntry(seeds []entrySeed) ([]byte, error) {
 	wire := childEntryWire{Version: 1, Seeds: append([]entrySeed(nil), seeds...)}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
-		if wire.Seeds[index].Term == "" || len(wire.Seeds[index].Value) == 0 || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
+		if !validEntrySeed(wire.Seeds[index]) || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
 			return nil, fmt.Errorf("engine: malformed child entry seed")
 		}
 	}
@@ -1506,6 +1519,53 @@ func encodeChildEntry(seeds []entrySeed) ([]byte, error) {
 		return nil, fmt.Errorf("engine: encode child entry: %w", err)
 	}
 	return append([]byte("front/child-entry/v1/"), encoded...), nil
+}
+
+// importEntryValue makes project-resolved exports ordinary entry seeds. The
+// child-entry packet is the one entry transport in the engine; imports use an
+// import term rather than a path term because no source-local require alias is
+// authoritative until the require call's result slot is evaluated.
+func importEntryValue(imports map[string]typ.Type) ([]byte, error) {
+	if len(imports) == 0 {
+		return []byte(entryValue), nil
+	}
+	seeds := make([]entrySeed, 0, len(imports))
+	for modulePath, exported := range imports {
+		if modulePath == "" || exported == nil {
+			continue
+		}
+		resolved := unwrap.Alias(exported)
+		if resolved == nil || resolved.Kind() == kind.Any || resolved.Kind() == kind.Unknown {
+			continue
+		}
+		encoded, ok := shapefact.EncodeTarget(exported)
+		if !ok {
+			continue
+		}
+		seeds = append(seeds, entrySeed{Term: importEntryTerm(modulePath), Value: encoded})
+	}
+	if len(seeds) == 0 {
+		return []byte(entryValue), nil
+	}
+	encoded, err := encodeChildEntry(seeds)
+	if err != nil {
+		return nil, fmt.Errorf("engine: encode import entry: %w", err)
+	}
+	return encoded, nil
+}
+
+func importEntryTerm(modulePath string) string {
+	return "import/" + base64.RawURLEncoding.EncodeToString([]byte(modulePath))
+}
+
+func validEntrySeed(seed entrySeed) bool {
+	if seed.Term == "" || len(seed.Value) == 0 {
+		return false
+	}
+	if strings.HasPrefix(seed.Term, "path/") || strings.HasPrefix(seed.Term, "temp/") {
+		return true
+	}
+	return strings.HasPrefix(seed.Term, "import/") && strings.TrimPrefix(seed.Term, "import/") != ""
 }
 
 func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equation.TransactionResult, error) {
@@ -1540,7 +1600,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	values := make([]equation.Fact, 0, len(wire.Seeds)+len(declaredRoots)*3)
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
-		if seed.Term == "" || len(seed.Value) == 0 || seen[seed.Term] || (!strings.HasPrefix(seed.Term, "path/") && !strings.HasPrefix(seed.Term, "temp/")) {
+		if !validEntrySeed(seed) || seen[seed.Term] {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry seed")
 		}
 		seen[seed.Term] = true
@@ -4983,7 +5043,7 @@ func externalCallKernel(operation equation.BoundEquation, partition equation.Par
 		return equation.TransactionResult{}, err
 	}
 	if !strings.HasPrefix(string(operands["application"]), "call/") ||
-		(!strings.HasPrefix(string(operands["provider"]), "provider/global/") && !strings.HasPrefix(string(operands["provider"]), "provider/module/")) ||
+		(!strings.HasPrefix(string(operands["provider"]), "provider/global/") && !strings.HasPrefix(string(operands["provider"]), "provider/module/") && !strings.HasPrefix(string(operands["provider"]), "provider/module-load/")) ||
 		(string(operands["argument-spread"]) != "scalar/bool/true" && string(operands["argument-spread"]) != "scalar/bool/false") ||
 		(string(operands["result-spread"]) != "scalar/bool/true" && string(operands["result-spread"]) != "scalar/bool/false") ||
 		!strings.HasPrefix(string(operands["context"]), "call-context/") {
@@ -5067,6 +5127,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
 				value = contract
 			}
+			if imported, ok := importedProviderResultValue(provider, index, partition); ok {
+				value = imported
+			}
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
@@ -5135,6 +5198,39 @@ func providerResultValue(provider []byte, index int, arguments map[int][]byte, p
 		return nil, false
 	}
 	return providerReturnTypeValue(result)
+}
+
+// importedProviderResultValue projects the export seeded at the consumer
+// entry into require's only result slot. The provider identity comes from the
+// front's exact local-require annotation, so neither source spelling nor an
+// untrusted global lookup can select an import fact.
+func importedProviderResultValue(provider []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if index != 0 {
+		return nil, false
+	}
+	encoded := strings.TrimPrefix(string(provider), "provider/module-load/")
+	if encoded == string(provider) || encoded == "" {
+		return nil, false
+	}
+	modulePath, err := strconv.Unquote(encoded)
+	if err != nil || modulePath == "" {
+		return nil, false
+	}
+	prefix := "value/" + importEntryTerm(modulePath) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
+			value, latest = fact.Value, fact.Key
+		}
+	}
+	if value == nil {
+		return nil, false
+	}
+	if _, ok := shapefact.DecodeTarget(value); !ok {
+		return nil, false
+	}
+	return append([]byte(nil), value...), true
 }
 
 func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
