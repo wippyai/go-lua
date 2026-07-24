@@ -633,13 +633,14 @@ func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, item diag.Di
 	return containsAll(item.Help, exp.HelpContains) && (exp.MinLabels == 0 || len(item.Labels) >= exp.MinLabels) && containsAll(formatLabels(item.Labels), exp.LabelContains) && matchesLabels(exp.Labels, item, entryFile)
 }
 func matchesEvidence(expectations []fixtureDiagnosticEvidenceExpectation, item diag.Diagnostic, entryFile string) bool {
-	offset := 0
 	evidence := item.Explanation.Evidence()
+	used := make([]bool, len(evidence))
 	for _, exp := range expectations {
 		found := false
-		for offset < len(evidence) {
-			candidate := evidence[offset]
-			offset++
+		for index, candidate := range evidence {
+			if used[index] {
+				continue
+			}
 			file := candidate.File
 			if file == "" {
 				file = item.Position.File
@@ -648,6 +649,7 @@ func matchesEvidence(expectations []fixtureDiagnosticEvidenceExpectation, item d
 			copy.Position.File = file
 			if matchesDiagnosticFile(exp.File, copy, entryFile) && (exp.Line == 0 || candidate.Span.StartLine == exp.Line) && (exp.Column == 0 || candidate.Span.StartCol == exp.Column) && (exp.Kind == "" || candidate.Kind.String() == exp.Kind) && (exp.Trust == "" || candidate.Trust.String() == exp.Trust) && (exp.Reason == "" || candidate.Reason.String() == exp.Reason) && containsAll(diag.NewExplanation(candidate).String(), exp.Contains) {
 				found = true
+				used[index] = true
 				break
 			}
 		}
