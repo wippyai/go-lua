@@ -239,6 +239,22 @@ sum(1, 2, "three")
 	t.Fatalf("typed variadic argument mismatch was not proven: %#v", result.Diagnostics)
 }
 
+func TestCheckDoesNotPublishUncheckedCastTypeWitness(t *testing.T) {
+	result, err := engine.Check(`
+local value = 5 :: string
+local values: {string} = {value}
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.Contains(string(fact.Value), `claim "string[]" is not proven`) {
+			return
+		}
+	}
+	t.Fatalf("unchecked cast made aggregate annotation pass: %#v", result.Diagnostics)
+}
+
 func TestCheckRendersOptionalRecursiveAssignmentAsNilability(t *testing.T) {
 	result, err := engine.Check(`
 type Node = {

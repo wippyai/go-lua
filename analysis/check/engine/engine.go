@@ -5294,6 +5294,13 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if kind == "claim-kind/3" && len(shapeTarget) != 0 {
 			closure.Values = append(closure.Values, equation.Fact{Key: "type/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
 		}
+		// A cast becomes a reusable type witness only when the cast's own
+		// structural relation has already been proven. The assertion target on
+		// an unchecked cast remains non-authoritative, so it cannot make a
+		// later aggregate annotation pass by itself.
+		if kind == "claim-kind/1" && shapeRelation == shapeProven && len(shapeTarget) != 0 {
+			closure.Values = append(closure.Values, equation.Fact{Key: "type/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
+		}
 		if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
 		}
