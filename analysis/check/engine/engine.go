@@ -18,7 +18,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -4180,7 +4182,8 @@ func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.
 		for _, operand := range candidate.Operands {
 			if strings.HasPrefix(operand.Role, "argument-") && string(operand.Term.Encoding) == source {
 				callee, hasCallee := artifactOperand(candidate.Operands, "callee")
-				if hasCallee && l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) {
+				if hasCallee && (l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) ||
+					l.uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee, partition)) {
 					continue
 				}
 				return false
@@ -4226,6 +4229,79 @@ func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedValidation(callee
 	return foundValidation
 }
 
+// uncalledCapturedHelperHasOnlyGuardedNonValidationEffect recognizes a closed
+// local helper whose only action is a guarded call to a registered stdlib
+// provider, without a check operand. Such a helper cannot establish a caller
+// proof: it has no writes, claims, result slots, captures, or validation call.
+// Its provider identity comes from the existing stdlib publication, rather
+// than from a source-level callee spelling.
+func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee []byte, partition equation.Partition) bool {
+	if l == nil {
+		return false
+	}
+	handle, found := closureHandleFor(callee, partition)
+	if !found {
+		return false
+	}
+	child, found := l.byPrototype[handle.Prototype]
+	if !found || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+		return false
+	}
+	applications := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry", "branch-relations":
+			continue
+		case "apply":
+			arity, hasArity := artifactOperand(operation.Operands, "result-arity")
+			if !hasArity || string(arity) != "0" || len(operation.Guards) == 0 {
+				return false
+			}
+			for _, operand := range operation.Operands {
+				if operand.Role == "check" {
+					return false
+				}
+			}
+			applications["call/"+operation.Target.Name] = true
+		case "external-call":
+			application, hasApplication := artifactOperand(operation.Operands, "application")
+			provider, hasProvider := artifactOperand(operation.Operands, "provider")
+			if !hasApplication || !applications[string(application)] || !hasProvider {
+				return false
+			}
+			if !nonValidatingNoResultStdlibProvider(provider) {
+				return false
+			}
+		case "call-results":
+			application, hasApplication := artifactOperand(operation.Operands, "application")
+			if !hasApplication || !applications[string(application)] {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return len(applications) != 0
+}
+
+// nonValidatingNoResultStdlibProvider accepts only an existing, closed stdlib
+// contract that cannot return, mutate, retain, dispatch, or publish control
+// flow. BorrowAll is the sole permitted effect: it consumes arguments without
+// producing a postcondition. This keeps an error-like zero-result statement
+// from being mistaken for a no-op helper.
+func nonValidatingNoResultStdlibProvider(provider []byte) bool {
+	signature, published := (signaturelookup.Source{IncludeStdlib: true}).LookupView(providerName(provider))
+	if !published || signature.Type == nil || len(signature.Type.Returns) != 0 || !signature.Effect.IsClosed() {
+		return false
+	}
+	for _, label := range signature.Effect.Labels {
+		if _, borrowsOnly := effect.NormalizeLabel(label).(ownership.BorrowAll); !borrowsOnly {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child front.Compilation, partition equation.Partition) bool {
 	captures := make(map[string]bool, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
@@ -4238,7 +4314,8 @@ func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child
 		callee, hasCallee := artifactOperand(operation.Operands, "callee")
 		arity, hasArity := artifactOperand(operation.Operands, "result-arity")
 		if hasCallee && hasArity && string(arity) == "0" && captures[string(callee)] &&
-			!l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) {
+			!l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) &&
+			!l.uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee, partition) {
 			return false
 		}
 	}

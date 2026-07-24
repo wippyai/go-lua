@@ -106,6 +106,51 @@ end
 	t.Fatalf("conditional assertion helper hid optional-formal assignment failure: %#v", result.PublishedDiagnostics)
 }
 
+func TestCheckRejectsOptionalFormalAfterGuardedNonValidationHelper(t *testing.T) {
+	result, err := engine.Check(`
+local function maybeCheck(val: any)
+    if val == nil then
+        print("warning: nil value")
+    end
+end
+function process(x: string?)
+    maybeCheck(x)
+    local s: string = x
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 9 && strings.Contains(diagnostic.Message, "string?") {
+			return
+		}
+	}
+	t.Fatalf("guarded non-validation helper hid optional-formal assignment failure: %#v", result.PublishedDiagnostics)
+}
+
+func TestCheckKeepsTerminationProofFromGuardedErrorHelper(t *testing.T) {
+	result, err := engine.Check(`
+local function maybeError(cond: boolean)
+    if cond then
+        error("condition was true")
+    end
+end
+function process(x: string?)
+    maybeError(x == nil)
+    local s: string = x
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 8 {
+			t.Fatalf("termination helper lost its narrowing proof: %#v", result.PublishedDiagnostics)
+		}
+	}
+}
+
 func TestCheckProjectProvesImportedSealedNestedRecordAssignment(t *testing.T) {
 	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
 		{Path: "types.lua", ModulePath: "types", Source: `
