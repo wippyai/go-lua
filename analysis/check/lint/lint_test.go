@@ -122,6 +122,27 @@ storage.store_item(item, box)`,
 	}
 }
 
+func TestCheckProjectOmitsFrameLocalClosureCapabilityBesideDataSite(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{{
+		Path:       "main.lua",
+		ModulePath: "main",
+		Source: `local scratch = { value = 1 }
+local callback = function(): integer
+    return scratch.value
+end`,
+	}}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 1 {
+		t.Fatalf("placement = %#v, want only the materialized scratch table", result.Placement)
+	}
+	item := result.Placement.Allocations[0]
+	if item.Kind != "lua.table" || !item.FrameLocal {
+		t.Fatalf("allocation = %#v, want the materialized table without its closure capability", item)
+	}
+}
+
 func TestCheckProjectResolvesAProviderExportInsteadOfAny(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
 		{Path: "provider.lua", ModulePath: "provider", Source: `return { answer = 42 }`},

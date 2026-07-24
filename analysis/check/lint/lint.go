@@ -375,13 +375,19 @@ func projectPlacement(entries []EntryResult) *engine.PlacementPlan {
 		if entry.Placement != nil {
 			plan.Complete = plan.Complete && entry.Placement.Complete
 			hasTableReturn := relationHasTableReturn(entry.Relation)
+			hasLocalTable := false
 			for _, allocation := range entry.Placement.Allocations {
-				// Module member functions are immutable code publications. Their
-				// data-return sites are represented below by the checked relation;
-				// the closure cell itself is not a per-call placement allocation.
-				if allocation.Kind != "lua.closure" || !hasTableReturn {
-					plan.Allocations = append(plan.Allocations, allocation)
+				hasLocalTable = hasLocalTable || allocation.Kind == "lua.table"
+			}
+			for _, allocation := range entry.Placement.Allocations {
+				// A frame-local closure fact identifies executable code whose
+				// environment has not escaped. It is not a materialized data
+				// allocation site; retained closures remain visible because their
+				// environment is part of the ownership result.
+				if allocation.Kind == "lua.closure" && (hasTableReturn || allocation.FrameLocal && hasLocalTable) {
+					continue
 				}
+				plan.Allocations = append(plan.Allocations, allocation)
 			}
 			plan.HoistableLoads = append(plan.HoistableLoads, entry.Placement.HoistableLoads...)
 		}
