@@ -2092,7 +2092,8 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 		return nil, fmt.Errorf("iterator has no source values")
 	}
 	roles := []string{"iterator", "state", "control"}
-	operands := make([]equation.Operand, 0, len(roles)+2*len(bindings))
+	operands := make([]equation.Operand, 0, len(roles)+1+2*len(bindings))
+	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/generic"))})
 	for index, role := range roles {
 		term := equation.ClosedTerm([]byte("scalar/nil"))
 		// An open iterator tail carries no closed state/control coordinates. It
@@ -2128,7 +2129,8 @@ func numericForOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 	if len(sources) != 3 || len(results) != 1 {
 		return nil, fmt.Errorf("numeric-for has %d bounds and %d bindings, want 3 and 1", len(sources), len(results))
 	}
-	operands := make([]equation.Operand, 0, 5)
+	operands := make([]equation.Operand, 0, 6)
+	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/numeric"))})
 	for index, role := range []string{"iterator", "state", "control"} {
 		term, err := scalarTerm(body, sources[index])
 		if err != nil {

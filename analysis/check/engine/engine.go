@@ -67,6 +67,7 @@ const assignmentMapReadMissingPrefix = "assignment-map-read-missing/v1/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
 const iteratorKeyPrefix = "iterator-key/"
+const numericForInductionPrefix = "numeric-for-induction/"
 
 // correlationConeValuePrefix carries a branch-local projection whose authority
 // is the exact set of path versions that established it.  It is deliberately
@@ -11538,34 +11539,37 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	operands, err := requiredOperandsByRole(operation.Operands, "iterator", "state", "control")
+	operands, err := requiredOperandsByRole(operation.Operands, "iteration-kind", "iterator", "state", "control")
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	// Numeric and generic for-loops share the same frozen operation family.
-	// Recover a number witness only from the already-published control triple:
-	// the numeric lowering supplies start, limit, and step there, while an
-	// ordinary iterator cannot prove all three numeric.  This is a type fact,
-	// not a concrete counter value, so it remains sound across widening.
-	numeric := true
-	for _, role := range []string{"iterator", "state", "control"} {
-		value, valueErr := resolveCurrentValue(operands[role], partition)
-		if valueErr != nil {
-			numeric = false
-			break
-		}
-		name, typeErr := scalarType(value)
-		if typeErr != nil || name != "number" {
-			numeric = false
-			break
-		}
-	}
 	value := []byte("scalar/top")
-	if numeric {
-		var encoded bool
-		value, encoded = shapefact.EncodeTarget(typ.Number)
-		if !encoded {
-			return equation.TransactionResult{}, fmt.Errorf("engine: encode numeric loop witness")
+	numericInduction := false
+	// The front carries the iteration form as part of the same closed loop
+	// carrier as the control triple. A numeric loop counter is therefore typed
+	// only from its already-published start, limit, and step; a generic iterator
+	// with numerically shaped state/control cannot borrow this induction proof.
+	if string(operands["iteration-kind"]) == "iteration-kind/numeric" {
+		numeric, integral := true, true
+		for _, role := range []string{"iterator", "state", "control"} {
+			bound, boundErr := resolveCurrentValue(operands[role], partition)
+			if boundErr != nil || valueAgainstType(bound, typ.Number) != shapeProven {
+				numeric = false
+				break
+			}
+			integral = integral && valueAgainstType(bound, typ.Integer) == shapeProven
+		}
+		if numeric {
+			numericInduction = true
+			inductionType := typ.Number
+			if integral {
+				inductionType = typ.Integer
+			}
+			var encoded bool
+			value, encoded = shapefact.EncodeTarget(inductionType)
+			if !encoded {
+				return equation.TransactionResult{}, fmt.Errorf("engine: encode numeric loop witness")
+			}
 		}
 	}
 	iteratorElement, indexedIterator := currentEpochFact(iteratorElementPrefix, operands["iterator"], partition)
@@ -11606,6 +11610,9 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 		}
 		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: append([]byte(nil), resultValue...)})
+		if numericInduction {
+			values = append(values, equation.Fact{Key: numericForInductionPrefix + result + "/" + operation.Target.Name, Value: append([]byte(nil), resultValue...)})
+		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
@@ -13267,7 +13274,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if known && genericConstraintRefuted(argument, expected) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
 		}
-		if !known || !provenValueNotSubtype(argument, expected) {
+		if !known || numericForInductionSatisfies(term, argument, expected, partition) || !provenValueNotSubtype(argument, expected) {
 			continue
 		}
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), nil
@@ -15479,6 +15486,49 @@ func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte
 		}
 	}
 	return shapeMemberValue(term, partition)
+}
+
+func numericForInductionSatisfies(term, value []byte, expected string, partition equation.Partition) bool {
+	if strings.HasSuffix(expected, "?") {
+		return string(value) != "scalar/nil" && numericForInductionSatisfies(term, value, strings.TrimSuffix(expected, "?"), partition)
+	}
+	valuePrefix := "value/" + string(term) + "/"
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, valuePrefix) && fact.Key > latest {
+			latest = fact.Key
+		}
+	}
+	if latest == "" {
+		return false
+	}
+	operation := strings.TrimPrefix(latest, valuePrefix)
+	witness, current := partition.Value(numericForInductionPrefix + string(term) + "/" + operation)
+	if !current || !bytes.Equal(witness.Value, value) {
+		return false
+	}
+	source, encoded := shapefact.DecodeTarget(value)
+	if !encoded || source == nil {
+		return false
+	}
+	source = unwrap.Alias(subst.ExpandInstantiated(source))
+	if source == nil {
+		return false
+	}
+	switch expected {
+	case "nil":
+		return source.Kind() == kind.Nil
+	case "boolean":
+		return source.Kind() == kind.Boolean
+	case "string":
+		return source.Kind() == kind.String
+	case "number":
+		return source.Kind() == kind.Number || source.Kind() == kind.Integer
+	case "integer":
+		return source.Kind() == kind.Integer
+	default:
+		return false
+	}
 }
 
 // provenValueNotSubtype refutes a declared primitive contract from a published

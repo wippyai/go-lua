@@ -102,7 +102,7 @@ end
 	if loopOperands == nil {
 		t.Fatalf("generic-for occurrence missing from %#v", artifact.Equations)
 	}
-	for role, want := range map[string]string{"state": "scalar/nil", "control": "scalar/nil", "display-00000000": "key", "display-00000001": "value"} {
+	for role, want := range map[string]string{"iteration-kind": "iteration-kind/generic", "state": "scalar/nil", "control": "scalar/nil", "display-00000000": "key", "display-00000001": "value"} {
 		if got := loopOperands[role]; got != want {
 			t.Errorf("generic-for operand %s = %q, want %q", role, got, want)
 		}
@@ -209,7 +209,7 @@ func TestCompileBodyLowersNumericForBoundsAndBinding(t *testing.T) {
 				t.Fatalf("numeric for lowering = %#v", byKind["generic-for"])
 			}
 			loop := operands(byKind["generic-for"][0])
-			if loop["iterator"] != "scalar/number/1" || loop["control"] != test.wantControl || loop["display-00000000"] != "i" || !strings.HasPrefix(loop["result-00000000"], "path/") {
+			if loop["iteration-kind"] != "iteration-kind/numeric" || loop["iterator"] != "scalar/number/1" || loop["control"] != test.wantControl || loop["display-00000000"] != "i" || !strings.HasPrefix(loop["result-00000000"], "path/") {
 				t.Fatalf("numeric for operands = %#v", loop)
 			}
 			if test.wantPrewrite {

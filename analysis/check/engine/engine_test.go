@@ -1768,20 +1768,71 @@ end
 	}
 }
 
-func TestCheckNumericForPreservesNumberWitness(t *testing.T) {
+func TestCheckNumericForPublishesInductionTypeThroughLoopCarrier(t *testing.T) {
+	for name, source := range map[string]string{
+		"passes induction variable to number parameter": `
+local function accept(value: number): number
+    return value
+end
+for i = 1, 4 do
+    local result = accept(i)
+end
+`,
+		"integral bounds permit integer annotation": `
+for i = 1, 4 do
+    local current: integer = i
+end
+`,
+		"nested numeric loops retain separate induction types": `
+local function accept(value: number): number
+    return value
+end
+for outer = 1, 2 do
+    local outerInteger: integer = outer
+    for inner = 1, 3 do
+        local innerInteger: integer = inner
+        local result = accept(inner)
+    end
+end
+`,
+		"generic loop does not borrow numeric induction proof": `
+local function accept(value: string): string
+    return value
+end
+for value in 1, 2, 3 do
+    local result = accept(value)
+end
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := engine.Check(source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			for _, item := range result.Diagnostics {
+				if strings.HasPrefix(item.Key, "claim/unproven/") || strings.HasPrefix(item.Key, "type.assignment/") || strings.HasPrefix(item.Key, "type.call.direct.argument_type/") {
+					t.Fatalf("numeric induction carrier published an incompatible type: %#v", result.Diagnostics)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckNumericForNonIntegralBoundsRemainNumber(t *testing.T) {
 	result, err := engine.Check(`
-for i = 1, 3 do
-	local current: number = i
+for i = 1.5, 4.5 do
+    local current: integer = i
 end
 `)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
 	for _, item := range result.Diagnostics {
-		if strings.HasPrefix(item.Key, "claim/unproven/") {
-			t.Fatalf("numeric loop counter lost its number witness: %#v", result.Diagnostics)
+		if strings.HasPrefix(item.Key, "type.assignment/") {
+			return
 		}
 	}
+	t.Fatalf("non-integral numeric loop bounds were accepted as integer: %#v", result.Diagnostics)
 }
 
 func TestCheckTreatsUnknownArrayLengthAsUnprovenBranch(t *testing.T) {
