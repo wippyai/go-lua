@@ -251,6 +251,39 @@ func (p Partition) AllocationRekeys() []AllocationRekey {
 	return append([]AllocationRekey(nil), p.closure.AllocationRekeys...)
 }
 
+// Value returns one visible value fact by its already-published key.  Like
+// Values, it returns a detached copy: a kernel must not be able to mutate the
+// closed predecessor snapshot it was given.  Point lookups keep consumers
+// that need one current publication from copying every visible fact first.
+func (p Partition) Value(key string) (Fact, bool) {
+	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	for _, fact := range p.closure.Values {
+		if fact.Key == key && guardsIncluded(fact.Guards, active) {
+			return cloneFact(fact), true
+		}
+	}
+	return Fact{}, false
+}
+
+// LatestValuePrefix returns the lexically latest visible publication under
+// prefix.  Versioned engine facts encode their current epoch in the key, so
+// this preserves the same selection as a Values scan without materializing
+// unrelated guarded facts.
+func (p Partition) LatestValuePrefix(prefix string) (Fact, bool) {
+	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	var latest Fact
+	found := false
+	for _, fact := range p.closure.Values {
+		if strings.HasPrefix(fact.Key, prefix) && guardsIncluded(fact.Guards, active) && (!found || fact.Key > latest.Key) {
+			latest, found = fact, true
+		}
+	}
+	if !found {
+		return Fact{}, false
+	}
+	return cloneFact(latest), true
+}
+
 func visibleFacts(facts, evidence []Fact, active []Guard) []Fact {
 	active = resolvedBranchGuards(evidence, active)
 	return copyFacts(facts, func(fact Fact) bool { return guardsIncluded(fact.Guards, active) })
@@ -260,10 +293,14 @@ func copyFacts(facts []Fact, include func(Fact) bool) []Fact {
 	out := make([]Fact, 0, len(facts))
 	for _, fact := range facts {
 		if include == nil || include(fact) {
-			out = append(out, Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)})
+			out = append(out, cloneFact(fact))
 		}
 	}
 	return out
+}
+
+func cloneFact(fact Fact) Fact {
+	return Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)}
 }
 
 // resolvedBranchGuards promotes only an already-published deterministic branch

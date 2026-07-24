@@ -136,6 +136,30 @@ func TestPartitionFromClosuresMatchesSequentialClosedJoin(t *testing.T) {
 	}
 }
 
+func TestPartitionPointLookupsKeepGuardedFactsPrivate(t *testing.T) {
+	body := testBody(52)
+	visible := Guard{Body: body, Encoding: []byte("visible")}
+	hidden := Guard{Body: body, Encoding: []byte("hidden")}
+	partition := Partition{closure: OutputClosure{Values: []Fact{
+		{Key: "epoch/path/item/0001", Value: []byte("old"), Guards: []Guard{visible}},
+		{Key: "epoch/path/item/0002", Value: []byte("current"), Guards: []Guard{visible}},
+		{Key: "epoch/path/item/9999", Value: []byte("hidden"), Guards: []Guard{hidden}},
+	}}, guards: []Guard{visible}}
+
+	latest, ok := partition.LatestValuePrefix("epoch/path/item/")
+	if !ok || latest.Key != "epoch/path/item/0002" || string(latest.Value) != "current" {
+		t.Fatalf("latest visible point lookup = %#v, %v", latest, ok)
+	}
+	latest.Value[0] = 'X'
+	value, ok := partition.Value("epoch/path/item/0002")
+	if !ok || string(value.Value) != "current" {
+		t.Fatalf("point lookup leaked mutable snapshot storage: %#v, %v", value, ok)
+	}
+	if _, ok := partition.Value("epoch/path/item/9999"); ok {
+		t.Fatal("point lookup exposed a fact outside the active guards")
+	}
+}
+
 func TestAcyclicBoundEvaluatorDoesNotPublishPartialTransaction(t *testing.T) {
 	artifact, entry, contracts := stage3Artifact(t)
 	registry, err := NewKernelRegistry([]KernelBinding{

@@ -11092,10 +11092,8 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 		return nil, false
 	}
 	key := prefix + string(term) + "/" + operation
-	for _, fact := range partition.Values() {
-		if fact.Key == key {
-			return append([]byte(nil), fact.Value...), true
-		}
+	if fact, found := partition.Value(key); found {
+		return fact.Value, true
 	}
 	return nil, false
 }
@@ -11105,16 +11103,11 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 // publication rather than retaining evaluator-local mutation state.
 func currentEpoch(term []byte, partition equation.Partition) (string, bool) {
 	epochPrefix := "epoch/" + string(term) + "/"
-	latestEpoch := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, epochPrefix) && fact.Key > latestEpoch {
-			latestEpoch = fact.Key
-		}
-	}
-	if latestEpoch == "" {
+	latest, found := partition.LatestValuePrefix(epochPrefix)
+	if !found {
 		return "", false
 	}
-	return strings.TrimPrefix(latestEpoch, epochPrefix), true
+	return strings.TrimPrefix(latest.Key, epochPrefix), true
 }
 
 func sealedTableIdentity(operation equation.BoundEquation) []byte {
