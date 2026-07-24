@@ -2278,6 +2278,7 @@ type childEntryWire struct {
 	TableIdentitySeeds []entryTableIdentitySeed `json:"table_identity_seeds,omitempty"`
 	MemberCellSeeds    []entryMemberCellSeed    `json:"member_cell_seeds,omitempty"`
 	GradualAnyTerms    []string                 `json:"gradual_any_terms,omitempty"`
+	DeclaredBoundary   bool                     `json:"declared_boundary,omitempty"`
 }
 
 type entrySeed struct {
@@ -2721,12 +2722,29 @@ func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]by
 	return encodeChildEntryWithCapabilities(seeds, closureSeeds, nil, nil, nil)
 }
 
+// encodeDeclaredChildEntry marks the private entry used solely for a
+// declaration-owned boundary. Kernels may consume that marker only together
+// with a separately published contract fact; the marker itself is neither a
+// value nor a type witness.
+func encodeDeclaredChildEntry(seeds []entrySeed) ([]byte, error) {
+	wire := childEntryWire{Version: 5, Seeds: append([]entrySeed(nil), seeds...), DeclaredBoundary: true}
+	return encodeChildEntryWire(wire)
+}
+
+func encodeDeclaredChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed, tableIdentitySeeds []entryTableIdentitySeed, memberCellSeeds []entryMemberCellSeed) ([]byte, error) {
+	wire := childEntryWire{Version: 5, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), DeclaredBoundary: true}
+	return encodeChildEntryWire(wire)
+}
+
 func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed, tableIdentitySeeds []entryTableIdentitySeed, memberCellSeeds []entryMemberCellSeed, gradualAnyTerms ...[]string) ([]byte, error) {
 	var terms []string
 	for _, supplied := range gradualAnyTerms {
 		terms = append(terms, supplied...)
 	}
-	wire := childEntryWire{Version: 4, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), GradualAnyTerms: terms}
+	return encodeChildEntryWire(childEntryWire{Version: 4, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), GradualAnyTerms: terms})
+}
+
+func encodeChildEntryWire(wire childEntryWire) ([]byte, error) {
 	if err := validateChildEntryWire(&wire); err != nil {
 		return nil, err
 	}
@@ -2734,10 +2752,13 @@ func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClo
 	if err != nil {
 		return nil, fmt.Errorf("engine: encode child entry: %w", err)
 	}
-	return append([]byte("front/child-entry/v4/"), encoded...), nil
+	return append([]byte(fmt.Sprintf("front/child-entry/v%d/", wire.Version)), encoded...), nil
 }
 
 func validateChildEntryWire(wire *childEntryWire) error {
+	if wire.Version < 1 || wire.Version > 5 || (wire.DeclaredBoundary && wire.Version != 5) {
+		return fmt.Errorf("engine: malformed child entry version")
+	}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
 		if !validEntrySeed(wire.Seeds[index]) || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
@@ -2791,7 +2812,7 @@ func validateChildEntryWire(wire *childEntryWire) error {
 }
 
 func decodeChildEntryWire(value []byte) (childEntryWire, error) {
-	for version := uint8(1); version <= 4; version++ {
+	for version := uint8(1); version <= 5; version++ {
 		prefix := fmt.Sprintf("front/child-entry/v%d/", version)
 		if !strings.HasPrefix(string(value), prefix) {
 			continue
@@ -2879,6 +2900,9 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		return equation.TransactionResult{}, err
 	}
 	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(wire.MemberCellSeeds)*3+len(wire.GradualAnyTerms)+len(declaredRoots)*4)
+	if wire.DeclaredBoundary {
+		values = append(values, equation.Fact{Key: declaredEntryBoundaryKey(operation.Target.Body), Value: []byte("declared")})
+	}
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if !validEntrySeed(seed) || seen[seed.Term] {
@@ -3285,17 +3309,23 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 	memberCalls := make(map[string]bool)
 	hasDirectMethod := false
 	for _, operation := range child.Artifact.Equations {
-		if operation.Occurrence.Kind != "apply" || !uncalledDeclaredMemberCall(child, operation, formals) {
+		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
-		memberCalls["call/"+operation.Target.Name] = true
-		hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
+		if uncalledDeclaredMemberCall(child, operation, formals) {
+			memberCalls["call/"+operation.Target.Name] = true
+			hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
+			continue
+		}
+		if uncalledDeclaredExpandedStdlibCall(child.Artifact.Equations, operation, formals) {
+			memberCalls["call/"+operation.Target.Name] = true
+		}
 	}
 	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment := false, false, false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
-			if !uncalledDeclaredMemberCall(child, operation, formals) {
+			if !memberCalls["call/"+operation.Target.Name] {
 				return nil, false, false, nil
 			}
 			hasDeclaredMemberCall = true
@@ -4064,6 +4094,52 @@ func uncalledStaticResultCallDiagnostic(artifact equation.Artifact, key string) 
 	return false
 }
 
+// uncalledDeclaredProviderResultDiagnostic retains an assignment or argument
+// contract only when its source is the local write of a standard-library
+// result from a call that the declaration-only boundary already admits. The
+// exact apply -> external-call -> call-results -> write chain prevents an
+// opaque call or source spelling from entering the private evaluation.
+func uncalledDeclaredProviderResultDiagnostic(child front.Compilation, key string) bool {
+	if !strings.HasPrefix(key, "type.assignment/") && !strings.HasPrefix(key, "type.call.direct.argument_type/") {
+		return false
+	}
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	applications := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind == "apply" && uncalledDeclaredStdlibCall(child.Artifact.Equations, operation, formals) {
+			applications["call/"+operation.Target.Name] = true
+		}
+	}
+	paths := uncalledPublishedResultPaths(child.Artifact.Equations, applications)
+	if len(paths) == 0 {
+		return false
+	}
+	operationName := strings.TrimPrefix(key, "type.assignment/")
+	if operationName == key {
+		operationName = diagnosticOperationName(key)
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Target.Name != operationName {
+			continue
+		}
+		switch operation.Occurrence.Kind {
+		case "claim":
+			value, found := artifactOperand(operation.Operands, "value")
+			return found && paths[string(value)]
+		case "apply":
+			for _, operand := range operation.Operands {
+				if _, err := callArgumentIndex(operand.Role); err == nil && paths[string(operand.Term.Encoding)] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func uncalledPublishedResultPaths(operations []equation.Equation, applications map[string]bool) map[string]bool {
 	results := make(map[string]bool)
 	for _, operation := range operations {
@@ -4187,6 +4263,74 @@ func uncalledDeclaredMemberCall(child front.Compilation, operation equation.Equa
 	return false
 }
 
+// uncalledDeclaredStdlibCall identifies only a registered standard-library
+// result reached from exact child formals or scalar literals. It is a result
+// provenance check, not an admission rule: the declaration boundary still
+// decides independently whether the call itself can be evaluated.
+func uncalledDeclaredStdlibCall(operations []equation.Equation, apply equation.Equation, formals map[string]bool) bool {
+	application := "call/" + apply.Target.Name
+	for _, operand := range apply.Operands {
+		if _, err := callArgumentIndex(operand.Role); err != nil {
+			continue
+		}
+		argument := string(operand.Term.Encoding)
+		if !formals[argument] && !strings.HasPrefix(argument, "scalar/") {
+			return false
+		}
+	}
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "external-call" {
+			continue
+		}
+		candidate, hasApplication := artifactOperand(operation.Operands, "application")
+		provider, hasProvider := artifactOperand(operation.Operands, "provider")
+		if !hasApplication || !hasProvider || string(candidate) != application {
+			continue
+		}
+		_, published := signaturelookup.StdlibResultSlot(providerName(provider), 0)
+		return published
+	}
+	return false
+}
+
+// uncalledDeclaredExpandedStdlibCall is the narrow declaration-only admission
+// for Lua's open multi-return boundary. A global call remains dormant unless
+// its published registry contract has exactly one explicit-any result and the
+// front has expanded that result into additional slots. The later slots are
+// therefore real conservative contract boundaries, not inferred values.
+func uncalledDeclaredExpandedStdlibCall(operations []equation.Equation, apply equation.Equation, formals map[string]bool) bool {
+	if !uncalledDeclaredStdlibCall(operations, apply, formals) {
+		return false
+	}
+	resultArity := 0
+	for _, operand := range apply.Operands {
+		if operand.Role != "result-arity" {
+			continue
+		}
+		value, err := strconv.Atoi(string(operand.Term.Encoding))
+		if err != nil || value <= 1 {
+			return false
+		}
+		resultArity = value
+		break
+	}
+	if resultArity <= 1 {
+		return false
+	}
+	application := "call/" + apply.Target.Name
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "external-call" {
+			continue
+		}
+		candidate, hasApplication := artifactOperand(operation.Operands, "application")
+		provider, hasProvider := artifactOperand(operation.Operands, "provider")
+		if hasApplication && hasProvider && string(candidate) == application {
+			return providerAnyResult(providerName(provider), 1, resultArity)
+		}
+	}
+	return false
+}
+
 // hasDeclaredFormalMethodCall recognizes a colon call whose receiver is an
 // exact declared formal.  Its capability can only come from the receiver's
 // published boundary type, so it is safe to evaluate solely for a missing
@@ -4230,7 +4374,7 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 // participate in later validation, while a sealed local closure contributes
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
-func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]byte, bool, error) {
+func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool) ([]byte, bool, error) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
@@ -4310,7 +4454,16 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	}
 	boundarySeeds := append([]entrySeed(nil), seeds...)
 	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
-	entry, err := encodeChildEntryWithCapabilities(seeds, closureSeeds, childEntryMemberClosureSeeds(seeds, nil, partition), tableIdentitySeedsForEntry(seeds, partition), memberCellSeedsForEntry(seeds, partition))
+	memberClosureSeeds := childEntryMemberClosureSeeds(seeds, nil, partition)
+	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, partition)
+	memberCellSeeds := memberCellSeedsForEntry(seeds, partition)
+	var entry []byte
+	var err error
+	if declaredProviderBoundary {
+		entry, err = encodeDeclaredChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds)
+	} else {
+		entry, err = encodeChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds)
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -5236,10 +5389,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
+		} else if declaredBoundary {
+			entry, entryErr = encodeDeclaredChildEntry(uncalledSeeds)
 		} else if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -5270,7 +5425,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) &&
-				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) {
+				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
+				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
@@ -5304,7 +5460,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
-				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) {
+				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) &&
+				!uncalledDeclaredProviderResultDiagnostic(child, item.Fact.Key) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
@@ -5360,7 +5517,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// declared formals and already-published captures form a closed entry; only
 	// stack witnesses without any boundary evidence cross the child projector.
 	if seeds, eligible := cyclicPlacementWitnessEntry(child); eligible {
-		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, true, false, false)
+		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, true, false, false, false)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -5840,6 +5997,9 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if optional, ok := currentEpochFact("optional-provider-result/", operands["value"], partition); ok {
 		values = append(values, equation.Fact{Key: "optional-provider-result/" + target + "/" + operation.Target.Name, Value: optional})
+	}
+	if providerAny, ok := currentEpochFact("provider-any-result/", operands["value"], partition); ok {
+		values = append(values, equation.Fact{Key: "provider-any-result/" + target + "/" + operation.Target.Name, Value: providerAny})
 	}
 	if authority, ok := lexical.importedAuthority(string(operands["value"])); ok {
 		lexical.setImportedAuthority(target, authority)
@@ -6967,7 +7127,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// an explicit-any boundary, but it cannot discharge a later declared
 	// assignment contract. The boundary itself is already-published evidence
 	// and remains authoritative until validation supplies a separate proof.
-	anySource := isUnvalidatedAnyValue(value) || sourceHasAnyBoundary(source, partition.Values())
+	anySource := isUnvalidatedAnyValue(value) || sourceHasAnyBoundary(source, partition.Values()) || providerAnyResultBoundary(source, partition)
 	// An explicit-any declaration remains a boundary, but an exact sealed
 	// member may still be the concrete counterexample for its assignment
 	// diagnostic. Keep that existing heap publication separate from the
@@ -10117,7 +10277,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// intentionally Top.  Reuse that existing pair of publications to
 		// reject only the proven nilability conflict; neither an annotation nor
 		// an unknown scalar is treated as evidence for this boundary.
-		if !hasCallee && callableParameterRejectsNil(expected) && optionalArgumentMayBeNil(term, partition) {
+		if callableParameterRejectsNil(expected) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) || (declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), nil
 		}
 		argument, known := resolveKnownCurrentValue(term, partition)
@@ -12551,6 +12711,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if optionalProvider == "" && hasMethodProvider {
 				optionalProvider = methodProvider
 			}
+			if providerAnyResult(optionalProvider, resultIndex, len(resultTerms)) {
+				values = append(values, equation.Fact{
+					Key:   "provider-any-result/" + string(result) + "/" + operation.Target.Name,
+					Value: []byte("unvalidated"),
+				})
+			}
 			if optional, ok := optionalProviderResultValue(optionalProvider, resultIndex); ok {
 				values = append(values, equation.Fact{
 					Key:   "optional-provider-result/" + string(result) + "/" + operation.Target.Name,
@@ -12993,6 +13159,27 @@ func callableParameterRejectsNil(parameter string) bool {
 func optionalArgumentMayBeNil(argument []byte, partition equation.Partition) bool {
 	actual, available := typedPathType(argument, partition)
 	return available && actual != nil && proof.OptionalTypeHasConcreteValue(actual)
+}
+
+func declaredEntryBoundaryKey(body equation.BodyID) string {
+	return "declared-entry-boundary/" + fmt.Sprintf("%x", body)
+}
+
+// declaredEntryBoundary is present only in a versioned private entry for a
+// capture-free, declaration-owned body. It does not establish nilability; it
+// merely scopes consumption of the separate optional provider result fact.
+func declaredEntryBoundary(body equation.BodyID, partition equation.Partition) bool {
+	for _, fact := range partition.Values() {
+		if fact.Key == declaredEntryBoundaryKey(body) && string(fact.Value) == "declared" {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalProviderArgumentMayBeNil(argument []byte, partition equation.Partition) bool {
+	_, found := currentEpochFact("optional-provider-result/", argument, partition)
+	return found
 }
 
 func hasPublishedOptionalArgument(arguments [][]byte, partition equation.Partition) bool {
@@ -13788,6 +13975,31 @@ func optionalProviderResultValue(provider string, index int) ([]byte, bool) {
 		return nil, false
 	}
 	return shapefact.EncodeTarget(result)
+}
+
+// providerAnyResult identifies a declared finite result slot whose canonical
+// standard-library contract is an explicit any boundary. The call-result value
+// remains Top, while this separate fact preserves the registry's requirement
+// that a later typed assignment validate the boundary.
+func providerAnyResult(provider string, index, resultArity int) bool {
+	result, found := signaturelookup.StdlibResultSlot(provider, index)
+	if found {
+		return result != nil && unwrap.Alias(result).Kind() == kind.Any
+	}
+	// A one-slot any declaration is the registry's conservative description of
+	// an open Lua result tail. Only an expanded call result may carry that tail
+	// to later slots; a fixed one-slot call remains governed by the exact slot.
+	if resultArity <= 1 || index <= 0 {
+		return false
+	}
+	first, firstFound := signaturelookup.StdlibResultSlot(provider, 0)
+	_, secondFound := signaturelookup.StdlibResultSlot(provider, 1)
+	return firstFound && !secondFound && first != nil && unwrap.Alias(first).Kind() == kind.Any
+}
+
+func providerAnyResultBoundary(term []byte, partition equation.Partition) bool {
+	_, found := currentEpochFact("provider-any-result/", term, partition)
+	return found
 }
 
 func finiteReturnWitnessValue(result typ.Type) ([]byte, bool) {
