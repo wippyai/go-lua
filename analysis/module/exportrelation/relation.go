@@ -23,6 +23,7 @@ type Function struct {
 	Path        string
 	Arity       int
 	Return      Value
+	Forwarded   bool
 	NormalEqual *Equality
 }
 

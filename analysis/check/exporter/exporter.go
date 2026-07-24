@@ -200,6 +200,7 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 			}
 			if value, ok := forwardedImportedReturn(ret.Exprs[0], params, imports, aliases); ok {
 				relation.Return = value
+				relation.Forwarded = true
 				return relation, relation.Valid()
 			}
 		}

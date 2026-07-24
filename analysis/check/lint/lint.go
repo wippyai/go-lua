@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/exporter"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
@@ -98,6 +99,7 @@ type EntryResult struct {
 	Engine      engine.Result
 	Diagnostics []diagnostic.Diagnostic
 	Placement   *engine.PlacementPlan
+	Relation    exportrelation.Summary
 	Timings     PhaseTimings
 }
 
@@ -324,7 +326,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 			EvaluateNS:       result.Timings.Evaluate.Nanoseconds(),
 			ProjectRenderNS:  renderElapsed.Nanoseconds(),
 		}
-		results[module] = EntryResult{Entry: entry, Manifest: summary, Imports: resolvedImports, Engine: result, Diagnostics: diagnostics, Placement: result.Placement, Timings: entryTiming}
+		results[module] = EntryResult{Entry: entry, Manifest: summary, Imports: resolvedImports, Engine: result, Diagnostics: diagnostics, Placement: result.Placement, Relation: exportSummary, Timings: entryTiming}
 		return nil
 	}
 	targets := append([]string(nil), input.Targets...)
@@ -367,17 +369,73 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 func projectPlacement(entries []EntryResult) *engine.PlacementPlan {
 	var plan *engine.PlacementPlan
 	for _, entry := range entries {
-		if entry.Placement == nil {
-			continue
-		}
-		if plan == nil {
+		if entry.Placement != nil && plan == nil {
 			plan = &engine.PlacementPlan{Complete: true}
 		}
-		plan.Complete = plan.Complete && entry.Placement.Complete
-		plan.Allocations = append(plan.Allocations, entry.Placement.Allocations...)
-		plan.HoistableLoads = append(plan.HoistableLoads, entry.Placement.HoistableLoads...)
+		if entry.Placement != nil {
+			plan.Complete = plan.Complete && entry.Placement.Complete
+			hasTableReturn := relationHasTableReturn(entry.Relation)
+			for _, allocation := range entry.Placement.Allocations {
+				// Module member functions are immutable code publications. Their
+				// data-return sites are represented below by the checked relation;
+				// the closure cell itself is not a per-call placement allocation.
+				if allocation.Kind != "lua.closure" || !hasTableReturn {
+					plan.Allocations = append(plan.Allocations, allocation)
+				}
+			}
+			plan.HoistableLoads = append(plan.HoistableLoads, entry.Placement.HoistableLoads...)
+		}
+		templates := placementRelationTemplates(entry.Entry.ModulePath, entry.Relation)
+		if len(templates) != 0 {
+			if plan == nil {
+				plan = &engine.PlacementPlan{Complete: true}
+			}
+			plan.Allocations = append(plan.Allocations, templates...)
+		}
 	}
 	return plan
+}
+
+func relationHasTableReturn(summary exportrelation.Summary) bool {
+	for _, function := range summary.Functions {
+		if function.Valid() && len(function.Return.Table) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// placementRelationTemplates projects only table sites already published by a
+// validated export relation. Direct literal returns retain their producer
+// allocation kind; a one-step imported forwarder retains the manifest-backed
+// boundary kind. No source-only function or opaque result contributes a site.
+func placementRelationTemplates(module string, summary exportrelation.Summary) []engine.PlacementAllocation {
+	var out []engine.PlacementAllocation
+	for _, function := range summary.Functions {
+		if !function.Valid() || len(function.Return.Table) == 0 {
+			continue
+		}
+		kind := "lua.table"
+		if function.Forwarded {
+			kind = "manifest.allocation"
+		}
+		var add func(exportrelation.Value, string) int
+		add = func(value exportrelation.Value, suffix string) int {
+			if len(value.Table) == 0 {
+				return 0
+			}
+			depth := 1
+			for _, member := range value.Table {
+				if candidate := 1 + add(member.Value, suffix+member.Suffix); candidate > depth {
+					depth = candidate
+				}
+			}
+			out = append(out, engine.PlacementAllocation{Identity: "relation/" + module + "/" + function.Path + "/" + suffix, Kind: kind, Placement: placement.OwnedHeap, Complete: true, Depth: depth, OwnerIdentity: true})
+			return depth
+		}
+		add(function.Return, "root")
+	}
+	return out
 }
 
 func applyDiagnosticPolicy(in []diagnostic.Diagnostic, enabled map[diagnostic.Code]bool, policy diagnostic.Policy) []diagnostic.Diagnostic {

@@ -11158,6 +11158,17 @@ func materializeImportedReturn(template exportrelation.Value, application []byte
 		if string(value) == "scalar/nil" {
 			table.Members[len(table.Members)-1].Value = ""
 		}
+		// A nested finite member is already part of the same validated return
+		// relation. Publish its exact path as well as the parent table so a
+		// later dotted read consumes the relation witness instead of treating
+		// the nested cell as absent.
+		if nested, nestedOK := shapefact.DecodeTable(value); nestedOK && nested.Closed {
+			for _, child := range nested.Members {
+				if child.Present && child.Suffix != "" {
+					table.Members = append(table.Members, shapefact.Member{Suffix: member.Suffix + child.Suffix, Present: true, Value: child.Value})
+				}
+			}
+		}
 	}
 	return shapefact.EncodeTable(table)
 }

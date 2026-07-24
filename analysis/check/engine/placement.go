@@ -273,7 +273,15 @@ func placementImportedReturnFacts(template exportrelation.Value, result, applica
 			Identity: identity, Result: target, Kind: "manifest.allocation", Complete: true, Children: children,
 		})
 		if err == nil {
-			facts = append(facts, equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded})
+			facts = append(facts,
+				equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded},
+				// The imported relation is a fresh graph that has crossed its
+				// producer's return boundary. Its exact call result is therefore
+				// retained by this caller; it cannot remain frame-local even when
+				// the caller only reads it. A later send may still promote this
+				// same owned graph to shared.
+				placementEventFact(identity, application, placementEventOwned),
+			)
 			return identity
 		}
 		return ""
