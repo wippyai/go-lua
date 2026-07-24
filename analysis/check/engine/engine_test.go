@@ -49,6 +49,45 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckProjectProvesImportedSealedNestedRecordAssignment(t *testing.T) {
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
+		{Path: "types.lua", ModulePath: "types", Source: `
+type Tool = string | { id: string, context: {[string]: any}?, description: string?, alias: string? }
+type Entry = {
+  id: string,
+  meta: { type: string?, name: string?, comment: string? }?,
+  data: { prompt: string?, tools: {Tool}?, context: {[string]: any}? }?,
+}
+local M = {}
+M.Entry = Entry
+M.KIND = "agent.trait"
+return M
+`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local types = require("types")
+local entry: types.Entry = {
+  id = "search-trait",
+  meta = {type = types.KIND, name = "Search", comment = "Web search capability"},
+  data = {
+    prompt = "You can search the web using the search tool.",
+    tools = {
+      "tool:web-search",
+      {id = "tool:scrape", description = "Scrape a URL", alias = "fetch"},
+      {id = "tool:summarize", context = {max_length = 500}},
+    },
+    context = {api_key = "sk-123"},
+  },
+}
+`},
+	}, Targets: []string{"main"}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("imported sealed nested record assignment diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckRejectsBroadWriteToSealedLiteralRecord(t *testing.T) {
 	result, err := engine.Check(`
 local item = { count = 1, name = "ready" }

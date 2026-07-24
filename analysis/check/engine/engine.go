@@ -5576,7 +5576,8 @@ func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparis
 			unknown = true
 			continue
 		}
-		relation := valueAgainstTypeSeen([]byte(member.Value), field.Type, comparison)
+		memberValue := tableDescendantEvidence(table, member.Suffix, []byte(member.Value))
+		relation := valueAgainstTypeSeen(memberValue, field.Type, comparison)
 		if relation == shapeRefuted {
 			return shapeRefuted
 		}
@@ -5586,6 +5587,48 @@ func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparis
 		return shapeUnknown
 	}
 	return shapeProven
+}
+
+// tableDescendantEvidence reconciles a nested literal member with the direct
+// descendants sealed by its containing literal.  Lowering emits both forms so
+// later path writes can retain precise locations; the outer fact is the newer
+// publication when an imported static member was unavailable during the
+// nested object's first materialization.  Only members already sealed in the
+// same closed table participate, and malformed or non-table members remain
+// unchanged.
+func tableDescendantEvidence(table shapefact.Table, prefix string, value []byte) []byte {
+	nested, ok := shapefact.DecodeTable(value)
+	if !ok || prefix == "" {
+		return value
+	}
+	positions := make(map[string]int, len(nested.Members))
+	for index, member := range nested.Members {
+		positions[member.Suffix] = index
+	}
+	changed := false
+	for _, member := range table.Members {
+		if !strings.HasPrefix(member.Suffix, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(member.Suffix, prefix)
+		if suffix == "" || (suffix[0] != '.' && suffix[0] != '[') {
+			continue
+		}
+		if index, found := positions[suffix]; found {
+			nested.Members[index] = shapefact.Member{Suffix: suffix, Present: member.Present, Value: member.Value}
+		} else {
+			nested.Members = append(nested.Members, shapefact.Member{Suffix: suffix, Present: member.Present, Value: member.Value})
+		}
+		changed = true
+	}
+	if !changed {
+		return value
+	}
+	encoded, ok := shapefact.EncodeTable(nested)
+	if !ok {
+		return value
+	}
+	return encoded
 }
 
 // assignmentMismatch identifies the first closed record member that refutes a
