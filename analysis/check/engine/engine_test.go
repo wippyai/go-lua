@@ -196,10 +196,17 @@ local answer: string = provider.answer`
 	if err != nil {
 		t.Fatalf("CheckWithImports unknown: %v", err)
 	}
+	// A sound checker rejects an any-typed value assigned to a declared type:
+	// any proves nothing, so the annotation is an unproven claim. This mirrors
+	// the oracle's annotation-lie family.
+	rejected := false
 	for _, diagnostic := range unknown.Diagnostics {
-		if strings.HasPrefix(diagnostic.Key, "type.assignment/") {
-			t.Fatalf("unknown import emitted assignment violation: %#v", unknown.Diagnostics)
+		if strings.HasPrefix(diagnostic.Key, "type.assignment/") && strings.Contains(string(diagnostic.Value), "any") {
+			rejected = true
 		}
+	}
+	if !rejected {
+		t.Fatalf("any import assignment to declared string must be rejected, got %#v", unknown.Diagnostics)
 	}
 }
 
