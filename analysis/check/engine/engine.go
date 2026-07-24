@@ -432,7 +432,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
 		ReturnCandidates:     cloneFacts(closure.Outcomes),
 		ValueFacts:           valueFacts,
-		Native:               publishedNativeFacts(artifact, valueFacts, outcomes, closure.Diagnostics),
+		Native:               publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, closure.Diagnostics),
 		PublishedDiagnostics: published,
 		PolicyDiagnostics:    publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
 		DiagnosticSpans:      diagnosticSpans,

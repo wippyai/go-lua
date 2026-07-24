@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
 // Publication lanes of one engine evaluation. They are named after the output
@@ -53,6 +54,7 @@ type NativeFactIndex struct {
 	values      []equation.Fact
 	outcomes    []equation.Fact
 	diagnostics []equation.Fact
+	derived     []NativeFact
 	once        sync.Once
 	facts       []NativeFact
 }
@@ -108,6 +110,16 @@ func publishedNativeFacts(artifact equation.Artifact, values, outcomes, diagnost
 	return &NativeFactIndex{artifact: artifact, values: values, outcomes: outcomes, diagnostics: diagnostics}
 }
 
+// publishedNativeFactsForCompilation adds native rows which are a direct
+// projection of the resolved WIR carried by every admitted lexical body.  It
+// deliberately consumes no source spelling and no inferred fallback: absent
+// operand representation leaves the row absent.
+func publishedNativeFactsForCompilation(compilation front.Compilation, values, outcomes, diagnostics []equation.Fact) *NativeFactIndex {
+	index := publishedNativeFacts(compilation.Artifact, values, outcomes, diagnostics)
+	index.derived = numericNativeFacts(compilation)
+	return index
+}
+
 // Facts returns every published row in a deterministic order: lane, then key,
 // then value. Two evaluations of the same program yield the same slice.
 func (index *NativeFactIndex) Facts() []NativeFact {
@@ -120,7 +132,7 @@ func (index *NativeFactIndex) Facts() []NativeFact {
 
 func (index *NativeFactIndex) build() {
 	anchors := newNativeAnchors(index.artifact)
-	total := len(index.values) + len(index.outcomes) + len(index.diagnostics)
+	total := len(index.values) + len(index.outcomes) + len(index.diagnostics) + len(index.derived)
 	facts := make([]NativeFact, 0, total)
 	for _, lane := range []struct {
 		name  string
@@ -134,6 +146,7 @@ func (index *NativeFactIndex) build() {
 			facts = append(facts, anchors.project(lane.name, fact))
 		}
 	}
+	facts = append(facts, index.derived...)
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Lane != facts[j].Lane {
 			return facts[i].Lane < facts[j].Lane
