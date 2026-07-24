@@ -42,6 +42,23 @@ local count: number = #values
 	}
 }
 
+func TestCheckKeepsConcatResultStringAfterOptionalOperandWarning(t *testing.T) {
+	result, err := engine.Check(`
+local value: string?
+local output: string = "value:" .. value`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	concatWarning, assignmentFailure := false, false
+	for _, diagnostic := range result.PublishedDiagnostics {
+		concatWarning = concatWarning || diagnostic.Code == "type.operator.concat_operand"
+		assignmentFailure = assignmentFailure || diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 3
+	}
+	if !concatWarning || assignmentFailure {
+		t.Fatalf("optional concat diagnostics = %#v, want warning without assignment failure", result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	result, err := engine.Check(`local value: string = 42`)
 	if err != nil {
@@ -731,6 +748,27 @@ local answer: string = provider.answer()`
 		}
 	}
 	t.Fatalf("typed imported callable diagnostic = %#v", typed.Diagnostics)
+}
+
+func TestCheckWithImportsRootTruthinessNarrowingUsesCurrentOptionalResultSummary(t *testing.T) {
+	source := `local provider = require("provider")
+local err = provider.fetch()
+if err then
+  return
+end
+local bad: number = "not a number"`
+	errType := typetable.NewRecord().Field("message", typ.String).Build()
+	provider := typetable.NewRecord().Field("fetch", typ.Func().Returns(typ.MaterializeOptional(errType)).Build()).Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 6 && strings.Contains(diagnostic.Message, "not number") {
+			return
+		}
+	}
+	t.Fatalf("root truthiness guard did not retain its false-edge continuation: diagnostics=%#v", result.PublishedDiagnostics)
 }
 
 func TestCheckWithImportsProjectsTypedDirectCallableRecordResult(t *testing.T) {

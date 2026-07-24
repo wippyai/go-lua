@@ -5220,6 +5220,16 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		if value == nil && err == nil {
 			value = []byte("scalar/string/" + strconv.Quote(b.String()))
 		}
+		// Concatenation that reaches its normal result still produces a string.
+		// A nilable operand remains a separately published warning, but must not
+		// turn a following string annotation into an unrelated unproven claim.
+		// The result type comes from this already-lowered operator, not an
+		// annotation or a source-level special case.
+		if len(diagnostics) != 0 && string(value) == "scalar/top" {
+			if encoded, ok := shapefact.EncodeTarget(typ.String); ok {
+				value = encoded
+			}
+		}
 	case wir.OpBinOp:
 		left, er := resolve("left")
 		if er != nil {
@@ -8376,19 +8386,24 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 		}
 	} else {
 		// A root truthiness guard has no member suffix for typedAncestor to
-		// traverse. It may still narrow an exact method-result summary that is
-		// current for this path. The false edge conservatively retains the
-		// broader source type, so false-like concrete values cannot be lost.
+		// traverse. It may still narrow an exact current call-result summary.
+		// The summary must have been published at this path's current epoch;
+		// annotations and historical writes remain unavailable. The false edge
+		// conservatively retains the broader source type, so false-like concrete
+		// values cannot be lost.
 		if predicate.Kind != "truthy" {
 			return equation.OutputClosure{}, false, nil
 		}
 		encoded, found := currentEpochFact(methodReturnSummaryPrefix, term, partition)
 		if !found {
+			encoded, found = currentEpochFact(summaryTypePrefix, term, partition)
+		}
+		if !found {
 			return equation.OutputClosure{}, false, nil
 		}
 		var decodeErr error
 		source, decodeErr = typ.DecodeCanonical(context.Background(), encoded)
-		if decodeErr != nil || !proof.OptionalTypeHasConcreteValue(source) {
+		if decodeErr != nil || !rootOptionalRecordSummary(source) {
 			return equation.OutputClosure{}, false, nil
 		}
 		trueType, falseType, root = proof.ProjectionWithoutNil(source), source, term
@@ -8413,6 +8428,19 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(root) + "/" + operation.Target.Name, Value: value, Guards: []equation.Guard{guard}})
 	}
 	return closure, true, nil
+}
+
+// rootOptionalRecordSummary recognizes the finite imported-result surface that
+// can cross a root truthiness guard without source reconstruction. Scalars and
+// open values retain the ordinary branch path: this rule is limited to an
+// existing optional record publication, whose non-nil projection is a closed
+// runtime table shape.
+func rootOptionalRecordSummary(source typ.Type) bool {
+	if source == nil || !proof.OptionalTypeHasConcreteValue(source) {
+		return false
+	}
+	_, record := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(source))).(*typ.Record)
+	return record
 }
 
 // selectBranchClosure recognizes only a complete, epoch-current select result
