@@ -35,7 +35,7 @@ return value`
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	lexical := newLexicalEvaluator(compilation, newWorkBudget(defaultWorkBudget))
+	lexical := newLexicalEvaluator(compilation)
 	closure, _, err := lexical.evaluate(compilation, []byte(entryValue))
 	if err != nil {
 		t.Fatalf("evaluate recursive lexical closure: %v", err)
