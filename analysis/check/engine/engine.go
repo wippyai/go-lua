@@ -4630,7 +4630,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// applied to the same heap cell. Without this fact, alias[key] loses the
 	// authority needed by indexMutationKernel and a subsequent static read can
 	// only fall back to an optional shape.
-	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, "select/origin/", heapTableIdentityPrefix} {
+	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/"} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		} else if prefix == "select/origin/" {
@@ -5800,7 +5800,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if optionalSource {
 			message = "cannot assign " + sourceDisplay + " because it may be nil"
 		}
-		if !anySource && optionalAssignmentWitness(source, value, shapeTarget) {
+		if !anySource && optionalAssignmentWitness(source, value, shapeTarget, partition) {
 			message = "cannot assign " + sourceDisplay + " because it may be nil"
 		}
 		closure.Diagnostics = []equation.Fact{{
@@ -6083,10 +6083,12 @@ func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, targ
 }
 
 // optionalAssignmentWitness accepts only a sealed source type that explicitly
-// admits nil and a concrete declared target that excludes it. An annotation,
-// Top, or an unsealed scalar remains unproven and follows the ordinary path.
-func optionalAssignmentWitness(path, value, encodedTarget []byte) bool {
-	if !derivedIndexedPath(path) {
+// admits nil and a concrete declared target that excludes it. Indexed reads
+// retain their established missing-slot witness; a non-indexed field needs the
+// narrower exact local-call result publication below. An annotation, Top, or
+// an unsealed scalar remains unproven and follows the ordinary path.
+func optionalAssignmentWitness(path, value, encodedTarget []byte, partition equation.Partition) bool {
+	if !derivedIndexedPath(path) && !localCallableResultAncestor(path, partition) {
 		return false
 	}
 	witness, ok := shapefact.DecodeTarget(value)
@@ -6098,6 +6100,24 @@ func optionalAssignmentWitness(path, value, encodedTarget []byte) bool {
 		return false
 	}
 	return !subtype.IsSubtype(typ.Nil, declared)
+}
+
+// localCallableResultAncestor follows a static result descendant back to the
+// exact local callable result that published it. A result marker is propagated
+// only by the ordinary call-results and local-write ownership chain, so an
+// imported summary, annotation, or unrelated optional field cannot claim this
+// diagnostic boundary.
+func localCallableResultAncestor(term []byte, partition equation.Partition) bool {
+	for {
+		if _, found := currentEpochFact("local-call-result/", term, partition); found {
+			return true
+		}
+		root, suffix, member := tableAddress(term)
+		if !member || suffix == "" {
+			return false
+		}
+		term = root
+	}
 }
 
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
@@ -10382,6 +10402,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
 		value := []byte("scalar/top")
+		localCallableResult := false
 		importedRelation := false
 		receiverResult := false
 		receiverResultTerm := receiver
@@ -10417,6 +10438,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if string(value) == "scalar/top" {
 				if contract, ok := sealedCallableResultValue(lexical, callee, index, argumentTerms, partition); ok {
 					value = contract
+					localCallableResult = true
 				}
 			}
 			if string(value) == "scalar/top" {
@@ -10482,6 +10504,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		if localCallableResult {
+			// The value came from this exact local callable's sealed contract.
+			// Later static reads may preserve only its explicit nilability after
+			// the owning environment write transports this marker.
+			values = append(values, equation.Fact{Key: "local-call-result/" + string(result) + "/" + operation.Target.Name, Value: []byte("sealed")})
+		}
 		if importedRelation {
 			values = append(values, equation.Fact{
 				Key:   "imported-relation-result/" + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name,
@@ -12339,6 +12367,15 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	field, found := variant.FieldAtPath(source, suffix)
+	// The exact local-call result marker identifies a result that entered this
+	// path through the ordinary sealed call-results publication. Preserve its
+	// optional receiver across a static projection; other optional sources keep
+	// the existing structural lookup and cannot gain this fact.
+	if optionalConcreteWitnessType(source) && localCallableResultAncestor(root, partition) {
+		if projected, projectedFound := typedPathSegments(source, suffix); projectedFound {
+			field, found = projected, true
+		}
+	}
 	if !found && hasIndexSegment(suffix) {
 		if indexed, indexedFound := typedPathSegments(source, suffix); indexedFound && optionalConcreteWitnessType(indexed) {
 			field, found = indexed, true

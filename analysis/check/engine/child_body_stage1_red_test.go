@@ -144,6 +144,25 @@ local value: number = make()`)
 	}
 }
 
+func TestStage1RedClosedCallableContractRetainsOptionalTupleSlot(t *testing.T) {
+	r := checkChildAdmission(t, `
+type Config = { host: string }
+local function parse(ok: boolean): (Config?, string?)
+  if ok then
+    return { host = "localhost" }, nil
+  end
+  return nil, "missing"
+end
+local cfg, err = parse(false)
+local host: string = cfg.host`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "cfg.host") && strings.Contains(diagnostic.Message, "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("optional tuple slot did not reach the local assignment: diagnostics=%#v values=%#v facts=%#v", r.PublishedDiagnostics, r.Values, r.ValueFacts)
+}
+
 func TestStage1RedClosedMethodContractFillsUnavailableChildResult(t *testing.T) {
 	r := checkChildAdmission(t, `
 local Counter = {count = 0}
