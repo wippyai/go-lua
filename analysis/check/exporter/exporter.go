@@ -294,6 +294,10 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		relation.Store = store
 		return relation, relation.Valid()
 	}
+	if tuples, ok := completeLiteralReturnTuples(fn.Stmts, params); ok && multiReturnTuples(tuples) {
+		relation.ReturnTuples = tuples
+		return relation, relation.Valid()
+	}
 	if len(fn.Stmts) == 1 {
 		if ret, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(ret.Exprs) == 1 {
 			if value, ok := remapValue(ret.Exprs[0], params, nil); ok {
@@ -323,6 +327,67 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		return relation, relation.Valid()
 	}
 	return exportrelation.Function{}, false
+}
+
+func multiReturnTuples(tuples []exportrelation.ReturnTuple) bool {
+	if len(tuples) == 0 {
+		return false
+	}
+	for _, tuple := range tuples {
+		if len(tuple.Values) < 2 {
+			return false
+		}
+	}
+	return true
+}
+
+// completeLiteralReturnTuples accepts only a complete finite control tree made
+// from return statements and if statements. It publishes each tuple exactly
+// as the exporter already publishes ordinary scalar/table return templates;
+// an open fallthrough, loop, call, or unsupported expression rejects the
+// whole catalog rather than inventing a provider fact.
+func completeLiteralReturnTuples(stmts []ast.Stmt, params map[string]int) ([]exportrelation.ReturnTuple, bool) {
+	var walk func([]ast.Stmt) ([]exportrelation.ReturnTuple, bool)
+	walk = func(sequence []ast.Stmt) ([]exportrelation.ReturnTuple, bool) {
+		for index, stmt := range sequence {
+			switch value := stmt.(type) {
+			case *ast.ReturnStmt:
+				if len(value.Exprs) == 0 {
+					return nil, false
+				}
+				tuple := exportrelation.ReturnTuple{Values: make([]exportrelation.Value, 0, len(value.Exprs))}
+				for _, expr := range value.Exprs {
+					item, ok := remapValue(expr, params, nil)
+					if !ok {
+						return nil, false
+					}
+					tuple.Values = append(tuple.Values, item)
+				}
+				return []exportrelation.ReturnTuple{tuple}, true
+			case *ast.IfStmt:
+				thenTuples, thenComplete := walk(value.Then)
+				if !thenComplete {
+					return nil, false
+				}
+				if value.HasElse {
+					elseTuples, elseComplete := walk(value.Else)
+					if !elseComplete {
+						return nil, false
+					}
+					return append(thenTuples, elseTuples...), true
+				}
+				tail, tailComplete := walk(sequence[index+1:])
+				if !tailComplete {
+					return nil, false
+				}
+				return append(thenTuples, tail...), true
+			default:
+				return nil, false
+			}
+		}
+		return nil, false
+	}
+	return walk(stmts)
 }
 
 // conditionalReturnRelation accepts one complete source-level literal branch

@@ -80,6 +80,7 @@ const numericForInductionPrefix = "numeric-for-induction/"
 // separate from ordinary value facts: a correlation is not a heap write and
 // must disappear as soon as any path in its own proof cone is replaced.
 const correlationConeValuePrefix = "correlation-cone/value/"
+const returnTupleTruePrefix = "return-tuple-true/"
 
 // Heap facts are deliberately keyed by a sealed allocation identity, never by
 // a source path.  Paths are merely lenses: assignments copy an identity and
@@ -8534,6 +8535,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	values = append(values, projectTypePredicateWriteRelation(target, operands["value"], operation.Target.Name, partition)...)
+	values = append(values, projectReturnTupleWriteRelation(target, operands["value"], operation.Target.Name, partition)...)
 	if isChannelIdentity(value) {
 		values = append(values, equation.Fact{
 			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
@@ -8585,6 +8587,40 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	values = append(values, literalMemberClosures...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+// projectReturnTupleWriteRelation follows the same explicit assignment chain
+// as the existing type-predicate pair transport. A call result relation is
+// not a path alias: each side is rebound only by the exact ordinary write that
+// owns that result slot, and any unrelated write leaves the relation absent.
+func projectReturnTupleWriteRelation(target string, source []byte, operation string, partition equation.Partition) []equation.Fact {
+	if !strings.HasPrefix(target, "path/") || (!strings.HasPrefix(string(source), "path/") && !strings.HasPrefix(string(source), "temp/")) {
+		return nil
+	}
+	encodedSource := base64.RawURLEncoding.EncodeToString(source)
+	encodedTarget := base64.RawURLEncoding.EncodeToString([]byte(target))
+	var facts []equation.Fact
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, returnTupleTruePrefix) || string(fact.Value) != "proven" {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(fact.Key, returnTupleTruePrefix), "/")
+		if len(parts) != 2 {
+			continue
+		}
+		left, right := parts[0], parts[1]
+		if left == encodedSource {
+			left = encodedTarget
+		}
+		if right == encodedSource {
+			right = encodedTarget
+		}
+		if left == parts[0] && right == parts[1] {
+			continue
+		}
+		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + left + "/" + right, Value: []byte("proven")})
+	}
+	return facts
 }
 
 // sealShapeValue resolves a literal's members when that literal is made. This
@@ -11856,6 +11892,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
+	if closure, recognized, err := returnTupleTrueBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if closure, recognized, err := typedNilBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
@@ -12379,6 +12420,53 @@ func correlationBranchClosure(operation equation.BoundEquation, partition equati
 	if len(closure.Values) == 0 {
 		return equation.OutputClosure{}, false, nil
 	}
+	return closure, true, nil
+}
+
+// returnTupleTrueBranchClosure applies the one directional fact carried by an
+// imported finite return catalog: when its exact boolean result slot is true,
+// the paired result slot is present. Both branch outcomes remain guarded; a
+// catalog with no true tuple, a nil true companion, or a stale/untyped target
+// is deliberately unavailable.
+func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	predicate, found, err := soleBranchPredicate(operation)
+	if err != nil || !found || predicate.Kind != "truthy" || predicate.Negated || predicate.Path == "" {
+		return equation.OutputClosure{}, false, err
+	}
+	trigger := []byte("path/" + predicate.Path)
+	prefix := returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/"
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	closure := equation.OutputClosure{}
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != "proven" {
+			continue
+		}
+		encoded := strings.TrimPrefix(fact.Key, prefix)
+		target, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
+		if decodeErr != nil || !strings.HasPrefix(string(target), "path/") {
+			continue
+		}
+		valueType, known := correlationMemberType(target, partition)
+		if !known || !optionalConcreteWitnessType(valueType) {
+			continue
+		}
+		narrowed := proof.ProjectionWithoutNil(valueType)
+		value, valueEncoded := shapefact.EncodeTarget(narrowed)
+		if !valueEncoded || narrowed == nil || typ.IsNever(narrowed) {
+			continue
+		}
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(target) + "/" + operation.Target.Name, Value: value, Guards: []equation.Guard{guard}})
+	}
+	if len(closure.Values) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	falseGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}
+	closure.Outcomes = append(closure.Outcomes,
+		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: []equation.Guard{guard}},
+		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: []equation.Guard{falseGuard}},
+		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/true"), Guards: []equation.Guard{guard}},
+		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/false"), Guards: []equation.Guard{falseGuard}},
+	)
 	return closure, true, nil
 }
 
@@ -16059,7 +16147,71 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 		}
 	}
+	values = append(values, importedReturnTupleFacts(lexical, provider, resultTerms, argumentTerms)...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// importedReturnTupleFacts transports only the already-exported finite tuple
+// catalog to the exact local result targets of this call. A tuple is useful
+// here solely as a branch implication; it never replaces a call result value
+// or infers a relation from a provider name, declaration, or source spelling.
+func importedReturnTupleFacts(lexical *lexicalEvaluator, provider []byte, targets map[string][]byte, arguments map[int][]byte) []equation.Fact {
+	if lexical == nil || provider == nil || len(targets) < 2 {
+		return nil
+	}
+	module, suffix, load, ok := importedProviderTarget(provider)
+	if !ok || load || suffix == "" {
+		return nil
+	}
+	lexical.importedAuthorityMu.RLock()
+	summary, found := lexical.importedRelations[module]
+	lexical.importedAuthorityMu.RUnlock()
+	if !found {
+		return nil
+	}
+	function, found := summary.Function(strings.TrimPrefix(suffix, "."), len(arguments))
+	if !found || len(function.ReturnTuples) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(targets))
+	for index := range targets {
+		keys = append(keys, index)
+	}
+	sort.Strings(keys)
+	facts := make([]equation.Fact, 0)
+	for _, triggerIndex := range keys {
+		trigger := targets[triggerIndex]
+		triggerSlot, err := strconv.Atoi(triggerIndex)
+		if err != nil || !strings.HasPrefix(string(trigger), "temp/") {
+			continue
+		}
+		for _, targetIndex := range keys {
+			target := targets[targetIndex]
+			targetSlot, err := strconv.Atoi(targetIndex)
+			if err != nil || triggerSlot == targetSlot || !strings.HasPrefix(string(target), "temp/") {
+				continue
+			}
+			valid, witnessed := true, false
+			for _, tuple := range function.ReturnTuples {
+				if triggerSlot >= len(tuple.Values) || targetSlot >= len(tuple.Values) {
+					valid = false
+					break
+				}
+				if tuple.Values[triggerSlot].Scalar != "scalar/bool/true" {
+					continue
+				}
+				witnessed = true
+				if tuple.Values[targetSlot].Scalar == "scalar/nil" || tuple.Values[targetSlot].Scalar == "" {
+					valid = false
+					break
+				}
+			}
+			if valid && witnessed {
+				facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/" + base64.RawURLEncoding.EncodeToString(target), Value: []byte("proven")})
+			}
+		}
+	}
+	return facts
 }
 
 func mustCallResultIndex(key string) int {

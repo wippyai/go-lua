@@ -24,10 +24,19 @@ type Function struct {
 	Arity       int
 	Return      Value
 	Conditional *ConditionalReturn
-	Forwarded   bool
-	Store       *OwnershipStore
-	NormalEqual *Equality
+	// ReturnTuples is a finite catalog of complete, literal return alternatives
+	// published by the exporter. Unlike the ordinary function type, it retains
+	// slot correlation without reconstructing a provider body at import sites.
+	ReturnTuples []ReturnTuple
+	Forwarded    bool
+	Store        *OwnershipStore
+	NormalEqual  *Equality
 }
+
+// ReturnTuple is one complete positional return alternative. Every value is a
+// normal export-relation value, so malformed or partial tuples cannot become a
+// cross-module fact.
+type ReturnTuple struct{ Values []Value }
 
 // ConditionalReturn is a closed, producer-evaluated two-way return relation.
 // It records the one literal test that selects Match; Otherwise is selected
@@ -74,14 +83,33 @@ func (s Summary) Function(path string, arity int) (Function, bool) {
 }
 
 func (f Function) Valid() bool {
-	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !f.Store.Valid(f.Arity)) {
+	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !validReturnTuples(f.ReturnTuples, f.Arity) && !f.Store.Valid(f.Arity)) {
 		return false
 	}
-	if f.Return.Valid(f.Arity) && f.Conditional != nil {
+	if (f.Return.Valid(f.Arity) && f.Conditional != nil) ||
+		(f.Return.Valid(f.Arity) && len(f.ReturnTuples) != 0) ||
+		(f.Conditional != nil && len(f.ReturnTuples) != 0) {
 		return false
 	}
 	if f.NormalEqual != nil && (f.NormalEqual.Left < 0 || f.NormalEqual.Right < 0 || f.NormalEqual.Left >= f.Arity || f.NormalEqual.Right >= f.Arity) {
 		return false
+	}
+	return true
+}
+
+func validReturnTuples(tuples []ReturnTuple, arity int) bool {
+	if len(tuples) == 0 {
+		return false
+	}
+	for _, tuple := range tuples {
+		if len(tuple.Values) == 0 {
+			return false
+		}
+		for _, value := range tuple.Values {
+			if !value.Valid(arity) {
+				return false
+			}
+		}
 	}
 	return true
 }

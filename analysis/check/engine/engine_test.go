@@ -43,6 +43,97 @@ local count: number = #values
 	}
 }
 
+func TestCheckNonemptyLengthGuardProvesStaticFirstIndex(t *testing.T) {
+	result, err := engine.Check(`
+local xs: {number}
+if #xs >= 1 then
+    local value: number = xs[1]
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 4 {
+			t.Fatalf("#xs >= 1 did not prove xs[1] present: %#v", result.PublishedDiagnostics)
+		}
+	}
+}
+
+func TestCheckCompoundGuardAppliesEveryTrueConjunct(t *testing.T) {
+	result, err := engine.Check(`
+type Ready = { ok: true, value: {string} }
+type Failed = { ok: false, error: string }
+local response: Ready | Failed
+if response.ok and type(response.value) == "table" then
+    local value: string = response.value[1]
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 6 {
+			t.Fatalf("compound true arm lost a conjunct refinement: %#v", result.PublishedDiagnostics)
+		}
+	}
+}
+
+func TestCheckTrueFirstReturnNarrowsSecondReturn(t *testing.T) {
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
+		{Path: "provider.lua", ModulePath: "provider", Source: `local M = {}
+function M.status(flag: boolean): (boolean, string?)
+    if flag then
+        return true, "failed"
+    end
+    return false, nil
+end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Imports: []string{"provider"}, Source: `local provider = require("provider")
+local flag: boolean
+local ok, err = provider.status(flag)
+if ok then
+    local message: string = err
+end
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Position.File == "main.lua" && diagnostic.Position.Line == 5 {
+			t.Fatalf("true first result did not prove the imported correlated second result: %#v", result.Diagnostics)
+		}
+	}
+}
+
+func TestCheckImportedReturnTupleCorrelationDoesNotOutliveWrite(t *testing.T) {
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
+		{Path: "provider.lua", ModulePath: "provider", Source: `local M = {}
+function M.status(flag: boolean): (boolean, string?)
+    if flag then return true, "failed" end
+    return false, nil
+end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Imports: []string{"provider"}, Source: `local provider = require("provider")
+local flag: boolean
+local ok, err = provider.status(flag)
+err = nil
+if ok then
+    local message: string = err
+end`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Position.File == "main.lua" && diagnostic.Position.Line == 6 {
+			return
+		}
+	}
+	t.Fatalf("stale imported tuple correlation accepted a rewritten result: %#v", result.Diagnostics)
+}
+
 func TestCheckKeepsConcatResultStringAfterOptionalOperandWarning(t *testing.T) {
 	result, err := engine.Check(`
 local value: string?
