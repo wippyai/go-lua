@@ -1,7 +1,0 @@
-{
-  "description": "A resolved module record is seeded at the consuming require boundary, so its exported literal members remain available to assignment checking.",
-  "files": [
-    "provider.lua",
-    "main.lua"
-  ]
-}
