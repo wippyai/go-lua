@@ -5769,32 +5769,49 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
-// sealedCallableResultValue bridges the one local boundary that the private
-// evaluator deliberately cannot enter: a declared vararg child. Its sealed
-// function type is already published at the closure allocation; no source
-// annotation or open callable is admitted. Other local bodies retain their
-// concrete publication path, preserving body diagnostics and refinements.
+// sealedCallableResultValue bridges a local boundary whose body projection is
+// unavailable. The closure capability and canonical function type are both
+// already published by the allocation transaction. Requiring both means an
+// imported declaration, an open callable, and a bare source annotation cannot
+// manufacture a result fact here. This bridge transports only runtime scalar
+// and callable facts; records and containers retain their child projection so
+// a declared structural contract never becomes a synthetic shape witness.
+// Generic closures likewise remain with their ordinary child projection:
+// without an explicit instantiated canonical witness their result slots stay
+// Top.
 func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) ([]byte, bool) {
 	if lexical == nil || callee == nil || index < 0 {
 		return nil, false
 	}
-	handle, local := closureHandleFor(callee, partition)
-	if !local || !lexical.hasVarargBoundary(handle.Prototype) {
+	if _, local := closureHandleFor(callee, partition); !local {
 		return nil, false
 	}
 	value, err := resolveCurrentValue(callee, partition)
 	if err != nil {
 		return nil, false
 	}
+	return sealedFunctionResultValue(value, index)
+}
+
+func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {
 	decoded, ok := sealedFunctionType(value)
 	if !ok {
 		return nil, false
 	}
 	function, ok := unwrap.Alias(decoded).(*typ.Function)
-	if !ok || function == nil || len(function.TypeParams) != 0 || index >= len(function.Returns) {
+	if !ok || function == nil || len(function.TypeParams) != 0 || len(function.Returns) != 1 || index != 0 {
 		return nil, false
 	}
-	return providerReturnTypeValue(function.Returns[index])
+	result := unwrap.Alias(subst.ExpandInstantiated(function.Returns[0]))
+	if result == nil {
+		return nil, false
+	}
+	switch result.Kind() {
+	case kind.Nil, kind.Boolean, kind.String, kind.Number, kind.Integer, kind.Function:
+	default:
+		return nil, false
+	}
+	return providerReturnTypeValue(function.Returns[0])
 }
 
 // stdlibMethodResultValue crosses only a sealed receiver fact into the

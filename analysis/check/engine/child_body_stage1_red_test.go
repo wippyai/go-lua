@@ -52,6 +52,18 @@ func TestStage1RedReturnedClosures(t *testing.T) {
 	}
 }
 
+func TestStage1RedClosedCallableContractFillsUnavailableChildResult(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function make(): number
+  local witness: number = 1
+  return witness
+end
+local value: number = make()`)
+	if len(r.Diagnostics) != 0 {
+		t.Fatalf("closed callable contract did not fill result: diagnostics=%#v values=%#v", r.Diagnostics, r.Values)
+	}
+}
+
 func TestStage1RedMutableCaptureWriteback(t *testing.T) {
 	r := checkChildAdmission(t, `local x = 0; local set = function() x = 2 end; set(); local y: number = x`)
 	if len(r.Diagnostics) != 0 || valuesByName(r.Values)["y"] != "2" {
