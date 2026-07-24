@@ -306,6 +306,11 @@ func validateControl(stmts []ast.Stmt) []ControlDiagnostic {
 				case *ast.RepeatStmt:
 					visit(stmt.Stmts, loops+1)
 				case *ast.NumberForStmt:
+					for _, bound := range []ast.Expr{stmt.Init, stmt.Limit, stmt.Step} {
+						if numericForBoundIsRefuted(bound) {
+							diagnostics = append(diagnostics, controlDiagnostic("numeric_for_bound_type", "numeric for loop bound must be a number", ast.SpanOf(bound)))
+						}
+					}
 					visit(stmt.Stmts, loops+1)
 				case *ast.GenericForStmt:
 					visit(stmt.Stmts, loops+1)
@@ -331,6 +336,24 @@ func validateControl(stmts []ast.Stmt) []ControlDiagnostic {
 	}
 	visitFunction(stmts)
 	return diagnostics
+}
+
+// numericForBoundIsRefuted recognizes only source-literal bounds whose Lua
+// runtime class cannot be numeric. Non-literals remain a normal equation
+// obligation, so this lexical check never substitutes a guessed type for a
+// variable, call result, or computed expression.
+func numericForBoundIsRefuted(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch expr.(type) {
+	case *ast.NumberExpr:
+		return false
+	case *ast.StringExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr:
+		return true
+	default:
+		return false
+	}
 }
 
 func controlDiagnostic(kind, message string, span ast.Span) ControlDiagnostic {

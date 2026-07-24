@@ -93,6 +93,30 @@ end
 	}
 }
 
+func TestCompileReportsOnlyRefutedNumericForLiteralBounds(t *testing.T) {
+	for name, source := range map[string]string{
+		"string initializer": `for i = "start", 10 do end`,
+		"boolean limit":      `for i = 1, false do end`,
+		"nil step":           `for i = 1, 10, nil do end`,
+		"dynamic bound": `local limit = unknown
+for i = 1, limit do end`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			compilation, err := front.Compile(source)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			want := name != "dynamic bound"
+			if got := len(compilation.ControlDiagnostics) != 0; got != want {
+				t.Fatalf("ControlDiagnostics = %#v, want diagnostic=%t", compilation.ControlDiagnostics, want)
+			}
+			if want && compilation.ControlDiagnostics[0].Key != "control.numeric_for_bound_type" {
+				t.Fatalf("control diagnostic = %#v", compilation.ControlDiagnostics[0])
+			}
+		})
+	}
+}
+
 func TestCompileFreezesNonGenericCycles(t *testing.T) {
 	compilation, err := front.Compile(`
 while true do
